@@ -1,0 +1,17 @@
+{
+  "sourceDir": "tutorials",
+  "sourcePatterns": ["tutorials/0*/README.md", "pcie_host/tutorials/0*/README.md"],
+  "translationPath": "{sourceDirectory}/i18n/{locale}/{sourceBasename}",
+  "manifest": "tutorials/i18n/translation-sources.json",
+  "canonicalTerms": ["Palette Neat Library", "Palette Neat", "Neat SDK", "Neat Library", "Neat Examples", "Model Compiler", "Model Zoo", "Modalix", "DevKit Sync", "DevKit", "PyNeat", "Insight", "Sentinel", "LLiMa", "Hugging Face", "SiMa.ai", "GStreamer", "Neat"],
+  "preservedHeadings": ["Metadata", "Concept", "Learning Process", "Walkthrough", "Run", "In Practice"],
+  "preservedTableSections": ["Metadata"],
+  "preservedLines": ["**Python:**", "**C++ (prebuilt):**", "**C++ (build from source):**"],
+  "locales": {
+    "ko": {"name": "Korean", "code": "ko", "terms": {"graph": "그래프", "pipeline": "파이프라인", "runtime": "런타임", "model archive": "모델 아카이브", "artifact": "아티팩트"}},
+    "ja": {"name": "Japanese", "code": "ja", "terms": {"graph": "グラフ", "pipeline": "パイプライン", "runtime": "ランタイム", "model archive": "モデルアーカイブ", "artifact": "アーティファクト"}},
+    "zh-Hant": {"name": "Traditional Chinese (Taiwan)", "code": "zh-TW", "terms": {"graph": "圖", "pipeline": "管線", "runtime": "執行階段", "model archive": "模型封存檔", "artifact": "成品"}, "proseReplacements": [["默認值", "預設值"], ["插件", "外掛程式"], ["配置", "設定"], ["構建", "建置"], ["加載", "載入"], ["支持", "支援"], ["數據", "資料"], ["鏈接", "連結"], ["用戶", "使用者"], ["優化", "最佳化"], ["信息", "資訊"], ["返回", "傳回"], ["創建", "建立"], ["文件", "檔案"], ["線程", "執行緒"]]},
+    "uk": {"name": "Ukrainian", "code": "uk-UA", "terms": {"graph": "граф", "pipeline": "конвеєр", "runtime": "середовище виконання", "model archive": "архів моделі", "artifact": "артефакт"}}
+  },
+  "provider": {"type": "ollama", "model": "translategemma:27b", "endpoint": "http://127.0.0.1:11434/api/chat", "sshHost": "macstudio", "timeoutMs": 300000}
+}

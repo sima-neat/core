@@ -1,0 +1,135 @@
+---
+title: "安裝或更新 Neat Library"
+description: "安裝或更新 Neat Library 執行階段、C++ 檔案、GStreamer 元件，以及預設的 PyNeat 環境。"
+sidebar_position: 2
+---
+
+請使用此頁面來安裝或更新 Palette Neat Library。
+
+:::tip Neat Library 位於 Neat SDK 之中。
+當您在執行 `sima-cli sdk setup` 時配對一個 DevKit，SDK 會自動在其 DevKit 上安裝包含的 Neat Library 和捆綁的 PyNeat 環境，並將其安裝在 `~/pyneat` 上。
+:::
+
+## 選擇安裝位置
+
+從您建立或執行 Neat 應用程式的環境中執行安裝程式：
+
+| 環境 | 何時使用 |
+| --- | --- |
+| Neat SDK | 當您想要在不安裝新的 SDK 版本的情況下，升級 Neat SDK 中的 Neat Library 時。 |
+| ROS2 SDK | 當您想要在容器的系統路徑中安裝 Neat 標頭和函式庫後，在 ARM64 上原生編譯 ROS 2 應用程式時。 |
+| DevKit | 當您想要直接在裝置上安裝或更新執行階段時。 |
+
+## 先決條件
+
+在您打算安裝 Neat Library 的環境中安裝 `sima-cli`。
+請參考 [sima-cli 安裝指南](/tools/sima-cli/)。
+
+在 [community.sima.ai](https://community.sima.ai) 建立帳戶，即可存取
+SiMa.ai 資源，例如用於測試的預先編譯模型。
+
+驗證環境，以便安裝程式可以下載 SiMa.ai 的成品。請參閱 [sima-cli 登入](/tools/sima-cli/login/) 以取得詳細資訊。
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli login
+</ShellCommand>
+
+確認環境是否能夠連接到 SiMa.ai 成品的主機：
+
+<ShellCommand prompt="sdk-or-devkit">
+curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
+</ShellCommand>
+
+顯示「`artifacts reachable`」表示主機可連線。如果出現 `curl` 錯誤，例如逾時、連線被拒絕，或「無法解析主機」，則表示已封鎖外向連線——請檢查您的主機網路、Proxy 或防火牆（請參閱 [Neat SDK 網路功能](/tools/sima-cli/sdk-networking/) 和 [主機設定注意事項](/reference/elxr-sdk-host-setup/ubuntu)），或者如果機器無法直接連線到 SiMa.ai 服務，請使用 [離線安裝](/getting-started/dev-environment/offline-installation)。
+
+## 安裝 Neat Library
+
+:::note 套件相容性
+安裝程式會使用選取的「核心」成品中列出的所有 Debian 套件，且不會選擇不同的「內部元件」或 LLiMa 版本。已安裝的平台必須滿足該成品未提供的相依性。如果 APT 會移除平台套件以完成安裝，安裝程式將停止；請更新平台，而不是在「核心」或 LLiMa 中替換套件。
+:::
+
+在執行安裝程式之前，請選擇一個工作目錄。在 DevKit 上，將安裝程式安裝在 `/media/nvme` 目錄下，以避免填滿根檔案系統。在 SDK 容器中，請使用容器內的本地路徑，例如 `$HOME/neat`。
+
+選擇您的環境，然後依序執行步驟。在 **Neat SDK** 容器中安裝，以進行跨平台編譯 C++ 應用程式。在 **ROS2 SDK** 中安裝，以在 ARM64 上進行原生編譯；其 Debian 套件會安裝到 `/usr`，而不是 Neat 跨平台編譯的系統根目錄。在 **DevKit** 上安裝，以設定該處的執行階段，同時也會在 `~/pyneat` 中設定 PyNeat。安裝程式指令在每個環境中都相同。
+
+<CodeTabs>
+<CodeTab label="Neat SDK" lang="bash">
+
+準備一個容器本地安裝目錄，例如：`$HOME/neat`。
+
+<ShellCommand prompt="username@neat-sdk-latest">
+cd $HOME && mkdir -p neat && cd neat
+</ShellCommand>
+
+安裝 `sima-cli` 預設選取的 Neat Library 套件。您可以選擇性地安裝額外內容，包括預先建置的教學課程、原始碼教學課程和測試：
+
+<ShellCommand prompt="username@neat-sdk-latest">
+sima-cli neat install core@v0.4.0
+</ShellCommand>
+
+</CodeTab>
+
+<CodeTab label="ROS2 SDK" lang="bash">
+
+確認容器已正確識別自己為原生 ROS2 SDK，並回報 Neat 套件預期的平台相容性基礎：
+
+<ShellCommand prompt="username@ros2-sdk-latest">
+grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
+</ShellCommand>
+
+安裝一個相容的 Neat 套件。安裝程式會驗證原生 ARM64 Debian 環境，模擬 APT 交易（停用套件移除功能），並將執行階段和開發套件安裝到容器的系統路徑中。由於 PyNeat 仍然是 DevKit 執行階段功能，因此不會安裝它。
+
+<ShellCommand prompt="username@ros2-sdk-latest">
+cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
+sima-cli neat install core@release-0.3
+</ShellCommand>
+
+</CodeTab>
+
+<CodeTab label="DevKit" lang="bash">
+
+:::note 請先更新 DevKit 的韌體。
+在將 Neat Library 安裝到 DevKit 之前，請確認 DevKit 軟體的版本與 Neat Library 相容。請參閱
+[相容性指南](/getting-started/compatibility/) 以取得更多資訊。
+:::
+
+請在 `/media/nvme` 下建立一個安裝目錄，以避免填滿根檔案系統：
+
+<ShellCommand prompt="modalix">
+cd /media/nvme && mkdir -p neat && cd neat
+</ShellCommand>
+
+安裝 `sima-cli` 預設選取的 Neat Library 套件。您可以選擇性地安裝額外內容，包括預先建置的教學課程、原始碼教學課程和測試：
+
+<ShellCommand prompt="modalix">
+sima-cli neat install core@v0.2.2
+</ShellCommand>
+
+</CodeTab>
+</CodeTabs>
+
+## 預設 PyNeat 環境
+
+在 DevKit 上安裝 Neat Library，同時也會在 DevKit 上的 `~/pyneat` 位置建立一個預設的 PyNeat
+虛擬環境。這是支援的 PyNeat
+環境——請直接啟用它：
+
+<ShellCommand prompt="modalix">
+source ~/pyneat/bin/activate
+</ShellCommand>
+
+如果您從與 DevKit Sync 配對的 SDK 容器內部執行安裝程式，則安裝程式不僅會在 SDK 容器內部，還會在配對的 DevKit 上設定 PyNeat。PyNeat 會安裝到 DevKit 上的 `~/pyneat` 中的虛擬環境中。
+
+對於自訂的 Python 虛擬環境，請參閱 [安裝 PyNeat](/getting-started/neat-library/pyneat/)。
+
+## 原始碼建置
+
+當您需要使用尚未發布的變更、自訂建置設定，或參與 Neat Library 的開發時，請從原始碼進行建置。大多數使用者應該改用上述的套件安裝方式。
+
+如果您偏好從原始碼開始建置，請遵循「[建造](/develop-apps/contribute/build)」指南。
+
+如需了解 SDK 的設定和 DevKit Sync 的導入流程，請參閱 [Neat SDK](/getting-started/dev-environment/)。
+
+## 下一步
+
+繼續進行 [安裝 PyNeat](/getting-started/neat-library/pyneat/)，以設定自訂的 Python 環境，或使用 [Neat 指令列介面](/getting-started/neat-library/neat-cli/) 來檢查已安裝的環境。

@@ -1,0 +1,369 @@
+---
+title: "Тензор і зразок."
+description: "Переміщуйте корисне навантаження у вигляді тензорів і метадані між Моделлю, Графом і середовищем виконання."
+sidebar_position: 3
+---
+
+# Тензор і зразок.
+
+Байти не несуть жодного змісту. Метадані несуть зміст.
+
+Neat переміщує дані в середовищі виконання, використовуючи два загальнодоступні типи:
+
+- [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor): числовий набір даних із зазначенням розмірності, типу даних, структури, місця зберігання та необов’язкових семантичних метаданих.
+- [`Sample`](/reference/{lsa}/structs/simaai-neat-sample): оболонка, що містить один або декілька тензорів, а також дані про потік, кадр, мітку часу, корисне навантаження та маршрут.
+
+Використовуйте `Tensor`, коли вам потрібні лише вхідні або вихідні дані моделі. Використовуйте `Sample`, коли граф повинен зберігати ідентичність потоку, мітки часу, кодовані метадані або структуру з кількома виходами.
+
+## Оберіть TensorList або Sample.
+
+| Завдання | Формат вхідних даних C++ | Формат вхідних даних Python. | Повертає |
+| --- | --- | --- | --- |
+| Запустіть модель, використовуючи тензори. | `model.run(TensorList{tensor})` | `model.run([tensor])` | `TensorList` / Колекція тензорів, що нагадує список Python. |
+| Запустіть модель із метаданими. | `model.run(sample)` | `model.run([sample])` | `Sample` |
+| Передавайте тензори в `Run`. | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
+| Завантажте зразки в `Run`. | `run.push(sample)` | `run.push([sample])` | `bool` |
+| Отримайте лише тензорний вихід. | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / Колекція тензорів, що нагадує список Python. |
+| Отримайте вихідні дані, зберігаючи метадані. | `run.pull(...)` або `run.pull_samples(...)` | `run.pull(...)` або `run.pull_samples(...)` | `Sample` |
+
+У Python завжди передавайте вхідні дані моделі або графа у вигляді списку або кортежу. `[tensor]` означає «один вхідний тензор». Це не створює розмірність пакета (batch).
+
+Розмір пакета належить до форми тензора та контракту скомпільованої моделі. Перевірте `model.input_specs()` та `model.compiled_batch_size()` перед тим, як обробляти список вхідних даних як пакет.
+
+## Створюйте тензори в Python.
+
+Використовуйте конструктор, який відповідає структурі ваших вихідних даних.
+
+| Вихідні дані | Використовуйте |
+| --- | --- |
+| Масив NumPy | `pyneat.Tensor.from_numpy(array, copy=True, layout=..., image_format=...)` |
+| Тензор Torch. | `pyneat.Tensor.from_torch(tensor, copy=True, layout=..., image_format=...)` |
+| Об’єкт, сумісний із DLPack. | `pyneat.Tensor.from_dlpack(obj, copy=True, layout=...)` |
+| Список Python | `pyneat.Tensor.from_list(data, shape=..., dtype=...)` |
+| Закодовані байти мультимедійних даних. | `pyneat.Sample.from_encoded(data, caps_string, port_name=...)` |
+
+Використовуйте `copy=True`, коли вихідний буфер може бути видалено до того, як Neat завершить його читання. Використовуйте `copy=False` лише тоді, коли ваш застосунок контролює час існування буфера. Не використовуйте незрозумілі буфери.
+
+<CodeTabs>
+<CodeTab label="NumPy" lang="python">
+
+```python
+import numpy as np
+import pyneat
+
+frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+outputs = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+<CodeTab label="PyTorch" lang="python">
+
+```python
+import torch
+import pyneat
+
+torch_tensor = torch.zeros((480, 640, 3), dtype=torch.uint8)
+
+tensor = pyneat.Tensor.from_torch(
+    torch_tensor,
+    copy=True,
+    image_format=pyneat.PixelFormat.RGB,
+)
+
+outputs = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Перетворюйте дані, коли вашій програмі потрібні дані у форматі, сумісному з платформою:
+
+```python
+array = outputs[0].to_numpy(copy=True)
+torch_tensor = outputs[0].to_torch(copy=True)
+```
+
+Більшість програм, які запускаються вперше, не повинні вручну визначати розміщення пам’яті. Якщо це необхідно, Python надає доступ до `TensorMemory.Auto`, `CPU`, `A65`, `EV74` та `MLA` через аргумент `memory=`.
+
+Використовуйте `byte_format=` лише для тензорних даних у байтовому форматі. Не поєднуйте `byte_format=` з `image_format=`.
+
+### Створіть закодовані зразки за допомогою Python.
+
+Використовуйте `Sample.from_encoded(...)`, коли для вхідних даних графа потрібні кодовані медіафайли, наприклад H.264 або H.265, і застосунок має доступ до цих даних.
+
+```python
+sample = pyneat.Sample.from_encoded(
+    data,
+    caps_string="video/x-h264,stream-format=byte-stream,alignment=au",
+    pts_ns=pts_ns,
+    duration_ns=duration_ns,
+    port_name="video",
+)
+
+run.push("video", [sample])
+```
+
+`caps_string` повідомляє графу, яке значення мають ці байти. `port_name` пов’язує зразок із назвою вхідних даних графа. Якщо у вас є декодовані пікселі, не використовуйте цей шлях; натомість створіть тензор зображення або зразок зображення.
+
+Для розібраного блоку доступу H.265 використовуйте `video/x-h265,parsed=true,stream-format=byte-stream,alignment=au`. Для шляху декодера H.265 потрібен профіль HEVC Main, 8 біт, вхід 4:2:0.
+
+## Створюйте тензори мовою C++.
+
+Використовуйте `TensorList` для вхідних даних, що містять лише тензори. `TensorList` містить один тензор для кожної моделі або вхідного графа.
+
+```cpp
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+Для моделей із кількома вхідними даними передавайте по одному тензору для кожного вхідного сигналу в тому ж порядку, що й у `model.input_specs()`, якщо тільки граф не містить іменовані вхідні дані.
+
+### Використовуйте зображення OpenCV у C++.
+
+Зображення OpenCV зазвичай мають колірний простір BGR. Промовте це вголос у коді.
+
+Для безпосереднього запуску `Model`, найпростіший спосіб – перетворити `cv::Mat` на `Tensor` і передати `TensorList`:
+
+```cpp
+cv::Mat image = cv::imread("image.jpg");
+
+auto input = simaai::neat::Tensor::from_cv_mat(
+    image,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+auto outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+Коли Neat збирається з підтримкою OpenCV, `Model`, `Graph` і `Run` також надають зручні перевантаження для `std::vector<cv::Mat>`. Передавайте по одному `cv::Mat` для кожного вхідного потоку:
+
+```cpp
+auto model_outputs = model.run(std::vector<cv::Mat>{image});
+auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
+
+auto run = graph.build();
+run.push("image", std::vector<cv::Mat>{image});
+```
+
+Віддавайте перевагу використанню `Tensor::from_cv_mat(...)`, коли в прикладі необхідно явно вказати формат пікселів, обсяг пам’яті або час існування. Використовуйте зручну перевантажену версію OpenCV, коли параметри графа/моделі вже описують структуру вхідних даних.
+
+## Читайте про тензорні скорочення.
+
+Перевірте технічні характеристики, перш ніж призначати вхідні дані або декодувати вихідні дані.
+
+```python
+for spec in model.input_specs():
+    print(spec.shape, spec.dtype, spec.layout)
+
+for spec in model.output_specs():
+    print(spec.shape, spec.dtype, spec.layout)
+```
+
+Тензорний договір може містити:
+
+- форма та розмір у байтах;
+- `TensorDType`, наприклад, цілі числа, числа з плаваючою комою або дані у форматі BF16;
+- `TensorLayout`, наприклад, HWC або специфічний для моделі формат розташування тензора;
+- формат пікселів зображення за допомогою семантичних метаданих зображення;
+- квантування, теселяція, виявлення, текст, аудіо, потік байтів, кодовані або попередньо оброблені семантичні метадані.
+
+Не припускайте, що кожна загальнодоступна межа має тип FP32. Ознайомтеся зі специфікацією.
+
+## Розшифруйте вихідні дані моделі.
+
+Почніть із необроблених тензорів. Розкодовуйте лише тоді, коли вихідний контракт вказує на те, що корисне навантаження має формат детекції, пози або сегментації.
+
+| Вихідний контракт | Використовуйте | Результат |
+| --- | --- | --- |
+| Необроблений тензор. | Використовуйте отриманий тензор безпосередньо або конвертуйте його за допомогою `to_numpy(...)` / `to_torch(...)`. | Дані у вигляді тензора в моделі, тип даних і розмірність вихідних даних. |
+| Зібрані в коробки об’єкти, представлені у вигляді тензорів. | `pyneat.decode_bbox(outputs, clamp_to=(width, height), top_k=..., strict=...)` | Один тензор типу float32 для кожного вхідного значення: `[N, 6]`, `x1`, `y1`, `x2`, `y2`, `score`, `class_id`. |
+| Одна запакована коробка, що містить тензор у вигляді структурованих записів. | `pyneat.detections.decode_bbox_tensor(tensor, width, height, expected_topk=..., strict=...)` | `BoxDecodeResult` із записами `boxes` та збереженими необробленими байтами. |
+| Згрупована поза. | `pyneat.decode_pose(outputs, clamp_to=(width, height), top_k=..., strict=...)` | Блоки та основні моменти |
+| Ущільнена сегментація | `pyneat.decode_segmentation(outputs, clamp_to=(width, height), top_k=..., strict=...)` | Коробки та маски. |
+
+```python
+outputs = model.run([tensor], timeout_ms=2000)
+boxes = pyneat.decode_bbox(outputs, clamp_to=(image_width, image_height), strict=True)
+box_array = boxes[0].to_numpy(copy=True)
+```
+
+Використовуйте допоміжні функції декодування лише для тих форматів вихідних даних, які вони підтримують.
+
+## Використовуйте зразок для метаданих.
+
+Використовуйте `Sample`, коли дані корисного навантаження потребують ідентифікації або синхронізації.
+
+Загальні конструктори та допоміжні функції:
+
+| Потрібно | C++ | Python |
+| --- | --- | --- |
+| Огорніть тензор назвою порту. | `make_tensor_sample("image", tensor)` | `pyneat.make_tensor_sample("image", tensor)` |
+| Огорніть зображення OpenCV. | `make_image_sample(image, PixelFormat::BGR, TensorMemory::CPU)` | Створіть `Tensor` за допомогою `Tensor.from_numpy(...)`, а потім викличте `make_tensor_sample(...)`. |
+| Упакуйте закодовані медіабай ти. | `make_encoded_sample(bytes, caps_string, pts_ns, dts_ns, duration_ns)` | `pyneat.make_encoded_sample(...)` або `pyneat.Sample.from_encoded(data, caps_string, port_name=...)` |
+| Переносити текст | `Tensor::from_text(...)` плюс `make_tensor_sample(...)` | `pyneat.make_text_sample("text", text)` |
+| Об’єднайте кілька логічних полів. | `make_bundle_sample({field0, field1})` | Створіть `pyneat.Sample()` і викличте `append(...)`. |
+
+Загальні поля:
+
+| Поле | Використовуйте |
+| --- | --- |
+| `kind` | Вказує, чи є корисне навантаження `Tensor`, `TensorSet`, `Bundle` або `Unknown`. |
+| `tensor` | Один тензор у корисних даних, коли `kind == Tensor`. |
+| `tensors` | Кілька тензорів на одному логічному виході, коли `kind == TensorSet`. |
+| `fields` | Вкладені зразки, коли `kind == Bundle`. |
+| `stream_id` | Стабільна ідентифікація потоків для графів із багатьма потоками. |
+| `frame_id` | Ідентифікатор вихідного кадру для об’єднання, візуалізації та обчислення показників. |
+| `pts_ns`, `dts_ns`, `duration_ns` | Метадані, що стосуються часу. |
+| `port_name` | Ідентифікатор вхідного або вихідного порту. |
+| `payload_type`, `media_type`, `payload_tag`, `caps_string` | Тип корисного навантаження та метадані медіа/капсул. |
+| `logical_output_index` | Логічна ідентифікація вихідних даних для моделей із кількома виходами. |
+
+Python `Sample` є ітерабельним об’єктом. Окремий зразок поводиться як один логічний елемент; зразок, що містить кілька елементів, ітерується за всіма своїми `fields`.
+
+### Оберіть `TensorSet` або `Bundle`.
+
+`TensorSet` і `Bundle` містять більше ніж один набір даних, але вони означають різні речі:
+
+| Форма | Використовуйте його для | Зчитати з |
+| --- | --- | --- |
+| `TensorSet` | Кілька тензорів, які разом утворюють один логічний вхід або вихід, наприклад, набір обмежувальних рамок і масок на одному вихідному порту. | `sample.tensors` |
+| `Bundle` | Кілька логічних полів, які використовуються разом, наприклад, поле для зображення та поле для метаданих. | `sample.fields`, ітерація або `sample[index]`. |
+
+Використовуйте `TensorSet`, коли подальший код має обробляти тензори як один результат. Використовуйте `Bundle`, коли подальший код має обробляти або перевіряти поля окремо. Якщо ви переплутаєте їх, дані все ще можуть передаватися, але сенс буде втрачено.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto image = simaai::neat::make_tensor_sample("image", image_tensor);
+auto metadata = simaai::neat::make_tensor_sample(
+    "metadata",
+    simaai::neat::Tensor::from_text(metadata_json));
+
+auto bundle = simaai::neat::make_bundle_sample({image, metadata});
+bundle.stream_id = "camera-0";
+bundle.frame_id = frame_number;
+
+run.push("request", bundle);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = pyneat.make_tensor_sample("image", image_tensor)
+metadata = pyneat.make_text_sample("metadata", metadata_json)
+
+bundle = pyneat.Sample()
+bundle.append(image)
+bundle.append(metadata)
+bundle.stream_id = "camera-0"
+bundle.frame_id = frame_number
+
+run.push("request", [bundle])
+```
+
+</CodeTab>
+</CodeTabs>
+
+Коли ви отримуєте `TensorSet`, переберіть `sample.tensors`. Коли ви отримуєте `Bundle`, переберіть сам зразок або `sample.fields`. Зберігайте правильну форму; ви в майбутньому будете кінцевим споживачем даних.
+
+### Надсилайте метадані потоку, що належать застосунку.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto sample = simaai::neat::make_tensor_sample("image", input_tensor);
+sample.stream_id = "camera-0";
+sample.frame_id = frame_number++;
+
+run.push("image", sample);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+sample = pyneat.make_tensor_sample("image", tensor)
+sample.stream_id = "camera-0"
+sample.frame_id = frame_number
+
+run.push("image", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+Якщо в багатопотоковому графі немає `stream_id`, він не зможе відображати справедливу пропускну здатність для кожного потоку. Присвойте кожному потоку назву, перш ніж налаштовувати його.
+
+### Зчитано отримані зразки.
+
+```python
+sample = run.pull("detections", timeout_ms=2000)
+
+if sample is not None:
+    print(sample.kind, sample.stream_id, sample.frame_id)
+    if sample.kind == pyneat.SampleKind.TensorSet:
+        for tensor in sample.tensors:
+            print(tensor.shape, tensor.dtype)
+```
+
+## Зрозумійте різні типи корисних даних.
+
+`PayloadType` повідомляє Neat, який тип даних передається через межу графа.
+
+| Сімейство корисних навантажень. | Використовуйте / перевірте |
+| --- | --- |
+| `PayloadType.Image` | Декодовані пікселі. Перевірте формат зображення, ширину, висоту та метадані пікселів. |
+| `PayloadType.Tensor` | Тензори моделі або застосунку. Перевірте тип даних, розмірність, структуру та семантичні метадані. |
+| `PayloadType.Encoded` | Закодовані медіафайли, такі як H.264 або H.265. Перевірте `caps_string`, кодек, мітки часу та тег корисного навантаження. |
+| `PayloadType.Auto` | Нехай Neat за можливості робить висновки на основі метаданих тензора/зразка. |
+
+Текст, аудіо, потік байтів і непрозорі байти передаються як семантика тензорів або за допомогою спеціалізованих специфікацій, а не як окремі значення переліку `PayloadType`.
+
+Для чіткого визначення меж вхідних даних використовуйте `InputOptions` разом із `payload_type`, `format`, полями розміру, динамічними обмеженнями, частотою кадрів, налаштуваннями, поведінкою в режимі реального часу/з позначенням часу та політикою пам’яті. У Python встановлюйте поля формату за допомогою `pyneat.Format` / `pyneat.FormatTag`, а не за допомогою звичайних рядків.
+
+## Удосконалена система навігації за типами
+
+Вам не потрібні ці типи для первинного висновування, але вони корисні під час перевірки умов або збору даних для діагностики.
+
+| Тип | Використовуйте його, коли |
+| --- | --- |
+| `TensorConstraint` / `TensorSpec` | Перед відправкою тензора необхідно перевірити тип даних, ранг, розмірність, пристрій, формат зображення або обмеження сегментів. |
+| `DeviceType` | Вам потрібно перевірити, чи пов’язано тензор із центральним процесором (CPU), прискореним процесорним блоком (APU), обчислювальним візуальним блоком (CVU), блоком множення-додавання (MLA) або невідомим пристроєм. |
+| `StorageKind` | Вам потрібно з’ясувати, чи є пам’ять, що використовується для зберігання даних, власністю процесора, чи це зовнішня пам’ять процесора, чи це зразок GStreamer, чи дескриптор пристрою. |
+| `PlaneRole` | Ви перевіряєте багатошарові медіа, наприклад, площини Y, U, V або UV. |
+| `BusMessage` | Ви переглядаєте `GraphReport.bus` після збою в середовищі виконання або під час збірки. |
+| `BoundaryFlowStats` | Ви перевіряєте, які граничні значення графа використовувалися для буферів під час діагностичного тестування. |
+| `MeasureOptions` / `MeasureReport` | Ви вимірюєте часовий проміжок `Run` і вам потрібні лічильники, показники затримки, додаткові параметри для вимірювання часу роботи плагіна або додаткове живлення. |
+
+Використовуйте їх як докази. Не перетворюйте їх на ручки, якщо це не є абсолютно необхідним для виконання завдання.
+
+## Див. також
+
+- [Модель](/develop-apps/development-workflow/model)
+- [Граф](/develop-apps/development-workflow/graph)
+- [Запуск графа](/develop-apps/development-workflow/pipeline)
+- [Node](/develop-apps/development-workflow/node)
+
+## Навчальні матеріали
+
+- [Pass NumPy Arrays to the Model](/tutorials/pass-numpy-to-model)
+- [Send Multiple Inputs in One Sample](/tutorials/feed-multi-input-model)
+- [Read and Interpret Model Output](/tutorials/interpret-model-output)

@@ -1,0 +1,18 @@
+{
+  "title": {
+    "message": "SiMa.ai Neat",
+    "description": "The title in the navbar"
+  },
+  "item.label.Getting Started": {
+    "message": "Початок роботи",
+    "description": "Navbar item with label Getting Started"
+  },
+  "item.label.C++ API": {
+    "message": "C++ API",
+    "description": "Navbar item with label C++ API"
+  },
+  "item.label.Python API": {
+    "message": "Python API",
+    "description": "Navbar item with label Python API"
+  }
+}

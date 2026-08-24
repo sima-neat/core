@@ -1,0 +1,632 @@
+---
+title: "노드"
+description: "원자 단위의 기본 구성 요소, 미리 만들어진 그룹, 그리고 그래프 경계 노드"
+sidebar_position: 7
+---
+
+# 노드
+
+`Node`는 SiMa.ai Neat에서 가장 작은 구성 단위입니다.
+노드는 [`Graph`](/develop-apps/development-workflow/graph)가 연결하는 요소입니다. 여기에는 디코딩 단계, 전처리 단계, 모델 단계, 후처리 단계, 소스, 싱크, 애플리케이션 경계 등이 포함됩니다.
+
+참조:
+- [`nodes` 네임스페이스](/reference/{lsa}/namespaces/simaai-neat-nodes)
+- [`nodes::groups` 네임스페이스](/reference/{lsa}/namespaces/simaai-neat-nodes-groups)
+
+## 노드가 나타내는 것
+
+노드는 하나의 논리적 작업과 빌더가 안전하게 연결하는 데 필요한 메타데이터를 제공합니다.
+
+- 런타임 작업(예: 디코딩, 변환, 전처리, 추론, 후처리 또는 싱크 동작)
+- 입력/출력 계약(예: 예상되는 미디어 유형, 텐서 모양, dtype 또는 캡)
+- 결정론적 백엔드 명명 규칙을 통해 `describe()`, 진단, 메트릭 및 프로브가 안정적으로 유지됩니다.
+
+주요 규칙은 간단합니다.
+
+```text
+Graph = nodes wired together
+```
+
+`Model`은 모델을 인식하는 노드 소스입니다. `Model`은 `Graph`에 직접 추가하거나, 전처리, 추론, 후처리 등과 같이 재사용 가능한 스테이지 조각을 제공할 수 있습니다.
+
+<a id="pre-built-node-groups"></a>
+## 미리 만들어진 노드 그룹
+
+일반적으로 사용되는 일부 패턴은 여러 개의 하위 수준 노드로 구성됩니다. Neat은 이러한 노드들을 미리 만들어진 그룹으로 제공하여 사용자가 모든 소스, 디코더, 변환기, 큐 또는 싱크를 수동으로 연결할 필요가 없도록 합니다.
+
+그룹은 재사용 가능한 작은 그래프로 생각할 수 있습니다. 즉, 명확한 인터페이스를 가진 이름이 지정된 노드들의 묶음입니다.
+
+예시:
+
+- `VideoInputGroup(...)`: 파일/비디오 소스 + 디코딩 경로.
+- `RtspDecodedInput(...)`: RTSP 소스 + 디코딩 경로.
+- 모델 라우트 조각: 전처리 + 추론 + 컴파일된 모델을 중심으로 하는 디코딩/후처리.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/runtime.h"
+#include "neat/node_groups.h"
+
+simaai::neat::Graph graph;
+
+simaai::neat::nodes::groups::VideoInputGroupOptions vopt;
+vopt.path = "/data/sample.mp4";
+graph.add(simaai::neat::nodes::groups::VideoInputGroup(vopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+
+vopt = pyneat.VideoInputGroupOptions()
+vopt.path = "/data/sample.mp4"
+graph.add(pyneat.groups.video_input(vopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+표준 형식을 사용하고 앱의 흥미로운 부분이 내부 미디어 파이프라인이 아닌 경우 미리 빌드된 그룹을 사용하세요. 사용자 지정 토폴로지가 필요한 경우 하위 수준 노드에서 해당 `Graph`를 직접 구축하세요.
+
+## 노드 또는 그룹 선택
+
+전체 API 참조를 열기 전에 이 지도를 사용하세요.
+
+| 작업 | C++ 시작점 | Python 시작점 |
+|---|---|---|
+| 앱이 텐서, 이미지 또는 샘플을 푸시 | `nodes::Input("name", options)` | `pyneat.nodes.input("name", options)` |
+| 앱이 전체 샘플을 가져옴 | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
+| 파일에서 프레임 읽기 | `nodes::FileInput(...)` 더하기 디코딩 노드, 또는 `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` 더하기 디코딩 노드, 또는 `pyneat.groups.video_input(...)` |
+| 소스로 단일 이미지 읽기 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| MIPI/libcamera 카메라 읽기 | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| RTSP 스트림 읽기 | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, 또는 `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, 또는 `pyneat.groups.rtsp_decoded_input(...)` |
+| HTTP 멀티파트 MJPEG 읽기 | `nodes::groups::HttpMjpegDecodedInput(...)`, 또는 `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` (수동 프레임 구성) | `pyneat.groups.http_mjpeg_decoded_input(...)`, 또는 `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
+| 이미지 디코딩 | `nodes::ImageDecode()` 또는 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 또는 `pyneat.nodes.jpeg_decode()` |
+| 인코딩된 비디오 디코딩 | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| 비디오 크기 조정 또는 속도 제한 | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
+| 재사용 가능한 이미지 입력 경로 구축 | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
+| 재사용 가능한 비디오 입력 경로 구축 | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
+| 비디오 출력 | `nodes::groups::VideoSender(...)` 또는 H.264/UDP 출력 도우미 | `pyneat.groups.video_sender(...)` 또는 H.264/UDP 출력 도우미 |
+| 메타데이터 출력 | `MetadataSender` | `pyneat.MetadataSender` |
+| 감지 결과 렌더링 | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
+| 로짓을 클래스 인덱스로 변환 | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+
+테스트된 조각을 원할 때 그룹을 사용하고, 명시적인 토폴로지가 필요할 때 개별 노드를 사용하세요. 중복된 출력을 통해 토폴로지를 숨기는 대신 `Graph`와 같은 도우미(예: `graphs::Branch(...)` 및 `graphs::Combine(...)`)를 사용하여 팬아웃 및 팬인을 수행하세요.
+
+`nodes::H264Decode(...)` 및 `pyneat.nodes.h264_decode(...)`는 더 이상 사용되지 않는 호환성 래퍼입니다. 새로운 H.264 디코딩 그래프는 `SimaDecode`와 `SimaDecodeType::H264`를 사용해야 합니다.
+
+## 인코딩된 디코딩 경로
+
+그래프에 제공되는 입력에 따라 API를 선택하세요.
+
+| 그래프에 제공되는 입력 | API | 출력 |
+|---|---|---|
+| 완전하고 파싱된 인코딩된 액세스 단위 | `SimaDecode(...)` | 원시 디코딩된 비디오 |
+| 인코딩된 상태를 유지해야 하는 RTSP 스트림 | `RtspEncodedInput(...)` | 파싱된 인코딩된 액세스 단위 |
+| 디코딩해야 하는 RTSP 스트림 | `RtspDecodedInput(...)` | 원시 디코딩된 비디오 |
+
+`SimaDecode`는 RTSP에 연결하거나, RTP을 디패킷화하거나, 기본 스트림을 파싱하지 않습니다. 상위 단계 또는 애플리케이션이 이미 완전한 인코딩된 샘플을 제공하는 경우에 사용하세요.
+
+| 인코딩된 입력 | 기본 디코더 옵션 | 일반적인 상위 경로 |
+|---|---|---|
+| H.264/AVC 액세스 단위 | `SimaDecodeType::H264` 또는 `SimaDecodeType::AVC` | RTSP H.264 디패킷화 + 파싱, 또는 다른 파싱된 H.264 소스 |
+| H.265/HEVC 액세스 단위 | `SimaDecodeType::H265` 또는 `SimaDecodeType::HEVC` | RTSP H.265 디패킷화 + 파싱, 또는 다른 파싱된 H.265 소스 |
+| 단일 JPEG 프레임 | `SimaDecodeType::JPEG` | `JpegParse()` 또는 애플리케이션에서 제공하는 인코딩된 JPEG 샘플 |
+| MJPEG 프레임 스트림 | `SimaDecodeType::MJPEG` | HTTP 멀티파트 디멀티플렉스 + `JpegParse()`, 또는 RTSP JPEG 디패킷화 + `JpegParse()` |
+
+별칭은 동일한 디코더 경로를 선택합니다. `H264`는 `AVC`와 같고, `H265`는 `HEVC`와 같습니다. 동일한 별칭은 C++ 및 Python에서 `RtspCodec` 및 `FormatTag`를 통해 사용할 수 있습니다.
+
+H.265 입력은 8비트, 4:2:0 크로마를 사용하는 HEVC Main 프로필을 사용해야 합니다. 직접 기본 스트림 입력은 파싱되고, Annex-B 바이트 스트림이며, 액세스 단위가 정렬되어야 합니다. 해당 매개변수 세트(VPS, SPS 및 PPS)는 해당 매개변수에 의존하는 프레임이 도달하기 전에 디코더에 도달해야 합니다. `RtspEncodedInput`는 RTSP 경로에 대한 RTP 디패킷화 및 H.265 파싱을 처리합니다. Main 10, 10비트, 4:2:2 및 모노크롬 4:0:0 비트스트림은 지원되지 않습니다. 회색조 콘텐츠의 경우, Y 평면에 회색조 이미지가 포함되고 U 및 V 샘플은 중립 값 128을 사용하는 8비트 4:2:0 스트림을 인코딩하세요.
+
+사용하기 전에 스트림을 확인하세요.
+
+```bash
+ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
+  -show_entries stream=codec_name,profile,pix_fmt \
+  -of default=noprint_wrappers=1 rtsp://camera.example/live
+```
+
+H.265 디코더는 `codec_name=hevc`, `profile=Main` 및 `pix_fmt=yuv420p`를 필요로 합니다.
+
+`SimaDecodeOptions::raw_output`은 디코더의 즉각적인 출력을 제어합니다.
+
+| 값 | 디코더 출력 |
+|---|---|
+| `true` (기본값) | SiMaAI 메모리의 기본 NV12 또는 I420. 디코더 제로 복사 출력에 NV12를 사용합니다. |
+| `false` | CPU 소비자를 위한 변환된 `video/x-raw(memory:SystemMemory)` 출력. |
+
+`raw_output`은 디코더의 `zero-copy-output`과 별개입니다. 코어는 그래프가 디코더의 기본 NV12 버퍼를 전달할 수 있을 때 디코더가 추가될 때 `zero-copy-output`을 활성화합니다. 하위 브랜치 중 하나라도 기본 플레인 레이아웃을 읽을 수 없는 인코더 입력을 사용하는 경우 코어는 제로 복사 출력 없이 디코더를 추가하므로 모든 브랜치가 패킹된 프레임을 받습니다. `RunOptions::output_memory`는 터미널 출력이 백업 버퍼를 공유하는지(`ZeroCopy`) 또는 프레임워크 소유 스토리지에 복사되는지(`Owned`)를 별도로 제어합니다.
+
+H.264/H.265에 대한 자동 추가는 디코더의 너비, 높이 및 프레임 속도를 알아야 합니다. `dec_width`, `dec_height` 및 `dec_fps`를 직접 설정하거나 `source_fps`를 사용하는 `RtspEncodedInput`와 같은 유형의 소스를 통해 제공합니다. 코어는 소스 속도가 알 수 없는 경우 30 FPS라고 가정하지 않습니다. 추가 작업은 리스의 안전 한계 미만인 경우 명시적인 `num_buffers` 값을 발생시킵니다. `num_buffers`를 설정하지 않으면 디코더 요소의 기본값이 유지됩니다.
+
+일반 스트림의 경우 `decoder_tuning`을 비워 두거나 `auto`로 설정합니다. B-프레임 없이 단일 참조 그림으로 인코딩된 스트림에만 `throughput-low-latency`를 사용합니다. 해당 모드는 디코딩된 그림의 재정렬을 비활성화합니다.
+
+`nodes::JpegDecode()` 및 `pyneat.nodes.jpeg_decode()`는 별도의 CPU/GStreamer JPEG 디코딩 노드입니다. 간단한 CPU 이미지 파이프라인에 사용합니다. 모델 전처리기 전에 기본 MJPEG 비디오 디코딩에는 사용하지 마십시오.
+
+RTSP의 경우 소스 형식이 표준일 때 코덱을 인식하는 그룹을 사용하는 것이 좋습니다. H.264는 기본값으로 유지됩니다. H.265 또는 HEVC를 명시적으로 선택합니다.
+
+### RTSP 입력을 인코딩된 상태로 유지
+
+`RtspEncodedInput(...)`을 사용하여 디코딩하지 않고 스트림을 디멀티플렉싱하고 구문 분석합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspEncodedInputOptions encoded;
+encoded.url = "rtsp://camera.example/live";
+encoded.codec = simaai::neat::nodes::groups::RtspCodec::HEVC;
+encoded.source_fps = 30;
+
+auto encoded_graph =
+    simaai::neat::nodes::groups::RtspEncodedInput(encoded);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+encoded = pyneat.RtspEncodedInputOptions()
+encoded.url = "rtsp://camera.example/live"
+encoded.codec = pyneat.RtspCodec.HEVC
+encoded.source_fps = 30
+
+encoded_graph = pyneat.groups.rtsp_encoded_input(encoded)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`RtspEncodedInput(...)`은 소스에서 패킷 분리 및 파싱/프레임 구성이 완료된 후 작동을 중단합니다.
+앱에서 인코딩된 샘플이 필요한 경우, 예를 들어 파싱된 스트림 하나를 디코딩 및 비디오 출력 그래프로 분할하려는 경우에 사용합니다. H.265의 경우, 유효한 프레임 속도가 스트림에 표시되지 않으면 파싱된 인코딩된 캡에 `source_fps`가 기록됩니다.
+
+### RTSP 입력 디코딩
+
+`SimaDecode(...)`를 추가하고 원시 디코딩된 비디오를 반환하려면 `RtspDecodedInput(...)`를 사용합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspDecodedInputOptions decoded;
+decoded.url = "rtsp://camera.example/live";
+decoded.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+decoded.source_fps = 30;
+
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(decoded));
+graph.add(simaai::neat::nodes::Output("frames"));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+decoded = pyneat.RtspDecodedInputOptions()
+decoded.url = "rtsp://camera.example/live"
+decoded.codec = pyneat.RtspCodec.H265
+decoded.source_fps = 30
+
+graph = pyneat.Graph()
+graph.add(pyneat.groups.rtsp_decoded_input(decoded))
+graph.add(pyneat.nodes.output("frames"))
+```
+
+</CodeTab>
+</CodeTabs>
+
+H.265의 경우, `RtspDecodedInput(...)`은 파싱된 캡과 디코더 `dec-fps` 모두에 대해 `source_fps`를 사용합니다. RTSP 캡에 유효한 프레임 속도가 포함되어 있지 않은 경우 이를 설정하십시오. 두 값 중 하나가 없으면 디코더 시작에 실패합니다. Neat는 이 값을 위해 RTSP URL을 확인하지 않습니다. 소스 캐던스를 선언하고 속도 변환을 요청하지 않습니다. 출력 캐던스를 변경하려면 `use_videorate`를 활성화하고 `video_rate_fps`를 설정하십시오.
+
+HTTP 멀티파트 MJPEG의 경우, `HttpMjpegDecodedInput(...)`을 사용하십시오. HTTP 멀티파트 MJPEG는 RTP가 아니므로 RTSP 디패킷화 대신 `HttpSource -> MultipartJpegDemux -> JpegParse ->
+SimaDecode(MJPEG)`를 사용합니다.
+
+## 소스 소유 및 싱크 그룹
+
+그래프가 자체적으로 미디어를 읽도록 해야 하는 경우 소스 소유 그룹을 사용하십시오. 앱 입력 없이 해당 그래프를 구축한 다음 출력을 가져오거나 싱크 노드가 전송을 처리하도록 합니다. 그래프가 앱이 모든 프레임을 가져오지 않고 비디오를 전송해야 하는 경우 싱크 그룹을 사용하십시오. 싱크 그래프는 `Input` 경계가 있는 경우에도 앱에서 푸시할 수 있습니다.
+
+| 필요 | 그룹 | 먼저 설정할 주요 필드 | 일반적인 후속 필드 |
+|---|---|---|---|
+| 정지 이미지 | `nodes::groups::ImageInputGroup(...)` / `pyneat.groups.image_input(...)` | `path` | `fps`, `imagefreeze_num_buffers`, `output_caps` |
+| 비디오 파일 | `nodes::groups::VideoInputGroup(...)` / `pyneat.groups.video_input(...)` | `path` | `out_format`, `output_caps`, `sync_mode` |
+| 라이브 MIPI/libcamera 카메라 | `nodes::CameraInput(...)` / `pyneat.nodes.camera_input(...)` | `width`, `height`, `framerate_num`, `format`; 선택 사항 `camera_name` | `allow_cpu_fallback`, 큐 필드, `buffer_name` |
+| 라이브 RTSP 인코딩된 H.264, H.265 또는 MJPEG 스트림 | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, H.264가 아닌 경우 `codec` | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, RTP 페이로드 유형 |
+| 라이브 RTSP 디코딩된 H.264, H.265 또는 MJPEG 스트림 | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, H.264가 아닌 경우 `codec` | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, 디코딩된 너비/높이, `out_format`, `output_caps` |
+| HTTP 멀티파트 MJPEG 스트림 | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, 디코딩된 너비/높이/FPS, `output_caps` |
+| 원시 또는 인코딩된 H.264/H.265 비디오 출력 | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`, 또는 `Passthrough(RtspCodec::H264 / RtspCodec::H265)` | `host`, `channel`, `video_port_base`, 인코더/RTP 옵션 |
+| RTP/H.264 over UDP 출력 | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | 기본값이 올바르지 않은 경우 대상 호스트/포트 | `h264_caps`, `payload_type`, `config_interval` |
+
+소스 소유 그래프는 앱에서 푸시하는 그래프와 다른 런타임 구조입니다.
+
+```text
+source group -> model -> output
+```
+
+MIPI 카메라의 경우, 앱에서 제공하는 `Input`으로 카메라를 감싸는 대신 [`CameraInput`](/reference/nodes/camera-input)을 직접 사용하십시오. 먼저 libcamera/GStreamer를 사용하여 카메라를 검증한 다음, `CameraInput -> model -> Output`로 그래프를 구축하십시오. 전체 경로는 [MIPI 카메라를 사용하세요.](/develop-apps/advanced-concepts/mipi-camera-input)를 참조하십시오.
+
+입력 인수를 사용하지 않고 `graph.build()` 또는 `graph.run()`을 사용하여 실행하십시오. 앱에 실제로 두 번째 공개 입력을 제공할 수 있는 경우가 아니라면 소스 그룹 앞에 `Input("image")`를 추가하지 마십시오.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspDecodedInputOptions source_options;
+source_options.url = "rtsp://camera.example/live";
+
+simaai::neat::Graph graph("rtsp_detector");
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source_options));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+
+auto run = graph.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+source_options = pyneat.RtspDecodedInputOptions()
+source_options.url = "rtsp://camera.example/live"
+
+graph = pyneat.Graph("rtsp_detector")
+graph.add(pyneat.groups.rtsp_decoded_input(source_options))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+
+run = graph.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+미디어 연결 방식이 표준일 때는 그룹으로 시작합니다. 사용자 지정 토폴로지나 그룹에서 지원하지 않는 소스 형식이 필요한 경우에만 개별 노드로 전환합니다.
+
+
+<a id="common-sima-nodes"></a>
+## 일반적인 SiMa 노드
+
+일부 SiMa 노드는 매우 일반적이어서 별도의 참고 자료 또는 사용 방법 페이지가 있습니다.
+
+- [`Preproc`](/reference/nodes/preproc): 크기 조정, 색상 변환, 정규화, 양자화, 테셀레이션 및 런타임 ROI 목록을 위한 통합 CVU 이미지 전처리.
+- [`CameraInput`](/reference/nodes/camera-input): 소스에서 소유한 MIPI/libcamera 프레임으로, 후속 CVU/MLA 단계를 위해 적응형 SiMaAI 메모리 핸드오프를 수행합니다.
+- [`SimaBoxDecode`](/reference/boxdecode_decode_types): 모델 헤드를 바운딩 박스로 디코딩하고 상위 전처리 메타데이터를 사용하여 좌표 매핑을 수행하는 감지 후처리.
+
+<a id="boundary-nodes"></a>
+## 경계 노드: `Input` 및 `Output`
+
+`Input` 및 `Output` 역시 노드입니다. 이들은 특별한데, 그 이유는 그래프 조각 내에서 데이터가 들어오거나 나가는 지점을 설명하기 때문입니다.
+
+중요한 개념 모델:
+
+> `Input("name")` 및 `Output("name")`은 이름이 지정된 게이트입니다.
+
+최종 애플리케이션 외부에서는 이러한 게이트가 공개 런타임 API가 됩니다.
+
+- `Input("image")`는 `run.push("image", ...)`가 됩니다.
+- `Output("classes")`는 `run.pull("classes", ...)`가 됩니다.
+
+더 큰 그래프 내에서는 동일한 게이트가 단순히 연결 지점일 뿐입니다. Neat은 실행 가능한 런타임 경로를 구축하는 동안 내부 경계 노드를 제거하고 실제 작업을 직접 연결합니다.
+
+```cpp
+simaai::neat::Graph route("route");
+route.add(simaai::neat::nodes::Input("image"));
+route.add(model);
+route.add(simaai::neat::nodes::Output("classes"));
+```
+
+완전한 앱으로 사용:
+
+```cpp
+auto run = route.build();
+run.push("image", simaai::neat::TensorList{image_tensor});
+auto classes = run.pull("classes");
+```
+
+더 큰 애플리케이션 내에서 사용:
+
+```cpp
+simaai::neat::Graph app("app");
+app.connect(camera, route);
+app.connect(route, telemetry);
+```
+
+개념적으로 내부 경계 노드는 배선을 안내하기 위해 더 낮은 위치로 이동합니다.
+
+```text
+camera -> model -> telemetry
+```
+
+이러한 이름은 여전히 진단, 엔드포인트 검사, 메트릭 및 시각화를 위해 유지됩니다. 이 이름들은 앱 중간에 추가 큐, 복사본 또는 가짜 런타임 싱크를 생성하지 않습니다.
+
+### 레이블은 엔드포인트가 아닙니다.
+
+다음 이름을 분리하여 사용하십시오.
+
+| 이름 | 설명 | `push(...)` / `pull(...)`를 생성합니까? |
+|---|---|---|
+| `Graph("detector")` | 진단, 내보내기 및 로그를 위한 그래프 레이블입니다. | 아니요. |
+| `nodes::Input("image")` / `pyneat.nodes.input("image")` | 최종 그래프 외부에서 유지될 때의 공개 입력 경계입니다. | 예: `run.push("image", ...)`. |
+| `nodes::Output("detections")` / `pyneat.nodes.output("detections")` | 최종 그래프 외부에서 유지될 때의 공개 출력 경계입니다. | 예: `run.pull("detections", ...)`. |
+| 노드 또는 요소 이름 | 진단 및 파이프라인 최적화에 사용되는 백엔드 이름입니다. | 아니요. 단, `Input` 또는 `Output` 경계를 통해 노출되는 경우는 예외입니다. |
+
+런타임 호출에서 엔드포인트 이름을 알 수 없다고 표시되면 추측하는 대신 `run.input_names()` 및 `run.output_names()`를 검사하십시오. 이름은 저렴하지만, 잘못된 이름은 비용이 많이 듭니다.
+
+### 앱에서 푸시하는 입력
+
+애플리케이션에 이미 프레임 또는 텐서가 있고 이를 Neat로 푸시하려는 경우 `nodes::Input`를 사용하십시오.
+
+경계에 명시적인 페이로드, 형식, 크기, 타이밍 또는 할당 계약이 필요한 경우 `InputOptions`를 사용하십시오.
+
+| 필요 사항 | 필드 |
+|---|---|
+| 페이로드 패밀리 | `payload_type` / `PayloadType` |
+| 형식 | `format` / `FormatTag` |
+| 고정된 차원 | `width`, `height`, `depth` |
+| 동적 입력 제한 | `max_width`, `max_height`, `max_depth`, `max_bytes` |
+| 타이밍 및 제한 | `fps_n`, `fps_d`, `caps_override` |
+| 라이브 소스 동작 | `is_live`, `do_timestamp`, `block`, `stream_type` |
+| 할당 | `memory_policy`, `pool_min_buffers`, `pool_max_buffers` |
+| 고급 메타데이터 | `buffer_name`, `preprocess_meta` |
+
+`use_simaai_pool`은 더 이상 사용되지 않습니다. 새 코드에서는 `memory_policy`를 사용하십시오.
+
+- 기존 코드에서 `use_simaai_pool=false`를 사용한 경우 `memory_policy=SystemMemory`를 사용하십시오.
+- 기본 SiMa 할당 동작의 경우 `memory_policy=Auto`를 사용하십시오.
+- 입력 경계에 특정 대상이 필요한 경우에만 `Ev74` 또는 `Dms0`를 사용하십시오.
+- 기존 코드 및 이전 버전의 그래프 JSON에서 `use_simaai_pool`을 사용하는 것은 호환성을 위해 허용됩니다.
+- 새 그래프 JSON을 저장할 때 `use_simaai_pool` 대신 `memory_policy`를 기록합니다.
+
+그래프 경계에 계약이 필요한 경우에만 필드를 설정하지 않은 상태로 두십시오. 제한을 추측하는 것은 문제를 야기할 수 있습니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Image;
+iopt.format = simaai::neat::FormatTag::RGB;
+iopt.width = 224;
+iopt.height = 224;
+graph.add(simaai::neat::nodes::Input("image", iopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Image
+iopt.format = pyneat.Format.RGB
+iopt.width = 224
+iopt.height = 224
+graph.add(pyneat.nodes.input("image", iopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+#### 입력 경계 레시피
+
+첫 번째 푸시 전에 경계 계약이 중요한 경우 다음 패턴을 사용합니다.
+
+| 경계 | 설정 | 다음 경우 설정하지 않음 |
+|---|---|---|
+| 고정 크기 디코딩된 이미지 | `payload_type`, `format`, `width`, `height` | 푸시된 텐서 또는 샘플에 이미 완전한 이미지 메타데이터가 포함되어 있음 |
+| 동적 디코딩된 이미지 | `payload_type`, `format`, `max_width`, `max_height` 및 선택 사항인 `max_bytes` | 그래프는 하나의 고정 크기만 허용함 |
+| 인코딩된 H.264 입력 | `payload_type = Encoded`, `format = H264` 및 푸시된 `Sample`에 대한 H.264 캡 | 그래프 소스가 RTSP 또는 파일 그룹을 통해 스트림을 소유함 |
+| 인코딩된 H.265 입력 | `payload_type = Encoded`, `format = H265` 및 푸시된 `Sample`에 대한 H.265 캡 | 그래프 소스가 RTSP 또는 파일 그룹을 통해 스트림을 소유하고 파싱함 |
+| 감지 좌표 매핑 | `preprocess_meta` | 모델 경로가 전처리를 수행하고 메타데이터 자체를 출력함 |
+
+동적 이미지 입력의 경우, 모든 프레임이 동일한 크기를 갖는다고 가정하지 않고 스트림을 제한합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Image;
+iopt.format = simaai::neat::FormatTag::BGR;
+iopt.max_width = 1920;
+iopt.max_height = 1080;
+iopt.max_bytes = 1920 * 1080 * 3;
+
+graph.add(simaai::neat::nodes::Input("image", iopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Image
+iopt.format = pyneat.Format.BGR
+iopt.max_width = 1920
+iopt.max_height = 1080
+iopt.max_bytes = 1920 * 1080 * 3
+
+graph.add(pyneat.nodes.input("image", iopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+앱에서 파싱된 H.265 액세스 유닛을 전송할 때, 경계선을 인코딩하고, `FormatTag::H265`를 선택하고, 해당 디코더 유형을 선택합니다. 미디어 유형은 태그에서 확인되므로, 캡스 문자열은 필요하지 않습니다. 디코더의 너비, 높이 및 FPS를 기본 스트림 값으로 설정합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Encoded;
+iopt.format = simaai::neat::FormatTag::H265;
+
+graph.add(simaai::neat::nodes::Input("video", iopt));
+
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::H265;
+decode.dec_width = 1280;
+decode.dec_height = 720;
+decode.dec_fps = 30;
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+graph.add(simaai::neat::nodes::Output("frames"));
+
+auto run = graph.build();
+
+auto push_h265_access_unit = [&run](std::vector<std::uint8_t> bytes) {
+  auto sample = simaai::neat::make_encoded_sample(
+      std::move(bytes),
+      "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au");
+  sample.port_name = "video";
+  run.push("video", sample);
+};
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = pyneat.Graph()
+
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Encoded
+iopt.format = pyneat.Format.H265
+
+graph.add(pyneat.nodes.input("video", iopt))
+
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.H265
+decode.dec_width = 1280
+decode.dec_height = 720
+decode.dec_fps = 30
+graph.add(pyneat.nodes.sima_decode(decode))
+graph.add(pyneat.nodes.output("frames"))
+
+run = graph.build()
+
+def push_h265_access_unit(run: pyneat.Run, data: bytes) -> None:
+    sample = pyneat.Sample.from_encoded(
+        data,
+        caps_string=(
+            "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au"
+        ),
+        port_name="video",
+    )
+    run.push("video", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+이미 `RtspDecodedInput(...)` 또는 `VideoInputGroup(...)`을 사용하고 있다면, 이 앱에서 추가하는 경계 조건을 그 앞에 추가하지 마십시오. 소스에서 관리하는 그룹은 자체 입력 경로를 소유합니다.
+
+### 샘플 출력
+
+소비자가 전체 [`Sample`](/develop-apps/development-workflow/core_types#sample) (페이로드와 스트림/프레임/타임스탬프 메타데이터 포함)을 필요로 할 때 `nodes::Output`을 사용하십시오.
+
+풀 동작이 중요할 때 `OutputOptions`을 사용하십시오.
+
+| 목표 | 사용 |
+|---|---|
+| 가장 최신 출력을 유지 | `OutputOptions::Latest()` / `pyneat.OutputOptions.latest()` |
+| 모든 프레임을 풀 | `OutputOptions::EveryFrame(...)` / `pyneat.OutputOptions.every_frame(...)` |
+| 그래프 클록에 맞춰 출력 속도 조절 | `OutputOptions::Clocked(...)` / `pyneat.OutputOptions.clocked(...)` |
+| 여러 프로듀서를 결합 | `combine_policy = CombinePolicy::ByFrame` 또는 `ByPts` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "classes",
+    simaai::neat::OutputOptions::EveryFrame()));
+
+const auto run = graph.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "classes",
+    pyneat.OutputOptions.every_frame(),
+))
+
+run = graph.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+`OutputOptions`에는 네 가지 조정 가능한 옵션이 있지만, 대부분의 애플리케이션을 지원하는 기본 설정이 제공됩니다.
+
+| 필드 | 제어하는 항목 | 권장 설정 |
+|---|---|---|
+| `max_buffers` | 백프레셔 또는 삭제 전에 대기할 수 있는 최대 출력 샘플 수 | `Latest()`, `EveryFrame(...)` 또는 `Clocked(...)` 기본 설정 |
+| `drop` | 오버플로우 시 가장 오래된 대기 중인 샘플을 삭제할지, 아니면 차단할지 여부 | 실시간 미리보기 스타일 출력의 경우 `Latest()` |
+| `sync` | 출력이 그래프 클록과 동기화되는지 여부 | 클록 기반 출력의 경우 `Clocked(...)` |
+| `combine_policy` | 여러 상위 프로듀서의 출력을 단일 공개 `Output`으로 결합하는 방법 | 유효한 `frame_id`가 있는 경우에만 `CombinePolicy::ByFrame`; 유효한 `pts_ns`가 있는 경우에만 `ByPts` |
+
+손실되지 않아야 하는 레코드의 경우 `EveryFrame(...)`을 사용하십시오. 최신 정보가 더 중요한 경우 `Latest()`을 사용하십시오. 실시간 미리보기가 법정 기록처럼 작동하지 않도록 하십시오.
+
+#### 고급: 이미지 또는 비디오 출력을 텐서에 맞게 조정
+
+일반적인 모델 또는 그래프 출력의 경우, 여기에서 중단하십시오. `nodes::Output`을 사용하십시오. 페이로드가 텐서만이고 전체 `Sample` 봉투가 필요하지 않은 경우 `pull_tensors(...)`를 사용하여 가져오십시오.
+
+이미지 또는 비디오 출력을 변환, 크기 조정 또는 프레임 속도 조절하여 애플리케이션이 가져오기 전에 CPU 친화적인 `UInt8` 텐서로 만들어야 하는 경우에만 `Graph::add_output_tensor(...)`를 사용하십시오. 이 헬퍼는 어댑터 경로를 삽입하고 이름이 없는 출력을 만듭니다. 하나의 출력으로, `run.pull_tensors(...)`를 사용하여 가져옵니다.
+
+`OutputTensorOptions`는 `format`, `target_width`, `target_height` 및 `target_fps`를 제어합니다. `dtype`을 `UInt8`로 유지하십시오. 현재 공개 경로는 다른 dtype을 거부합니다. 대부분의 모델 출력에는 이 헬퍼가 필요하지 않습니다.
+
+## 빠른 결정 가이드
+
+- 소스가 파일, 카메라 또는 RTSP인 경우: `nodes::groups`에서 미리 빌드된 입력 그룹을 사용하십시오.
+- 소스가 애플리케이션에서 생성된 텐서/프레임인 경우: `nodes::Input`을 사용하십시오.
+- 출력 소비자가 스트림/프레임/타임스탬프 메타데이터를 필요로 하는 경우: `nodes::Output`을 사용하고 `Sample` 객체를 가져옵니다.
+- 출력이 모델 또는 텐서 페이로드인 경우: `nodes::Output`을 사용하고 전체 `Sample`이 필요하지 않은 경우 `pull_tensors(...)`를 사용하여 텐서를 가져옵니다.
+- 출력이 크기 조정, 재구성 또는 프레임 속도 조절을 해야 하는 이미지 또는 비디오인 경우: 고급 `add_output_tensor(...)` 어댑터를 사용하십시오.
+- 재사용 가능한 번들이 필요한 경우: 노드에서 `Graph` 조각을 만들고 다른 빌딩 블록과 마찬가지로 추가/연결하십시오.
+
+## 이것이 중요한 이유
+
+- 하나의 개념이 원자적 단계, 경계 선언 및 미리 빌드된 그룹을 포괄합니다.
+- 재사용 가능한 그래프 조각은 함수처럼 작동합니다. 입력이 들어가고 출력이 나오며, 중간에 의도치 않은 런타임 소스/싱크가 없습니다.
+- 노드 이름과 경계 이름이 로우어링 과정에서 유지되므로 진단이 용이합니다.
+- 내부 경계가 불필요한 복사 또는 대기를 강제하지 않으므로 런타임 효율성이 유지됩니다.
+
+## 추가 정보
+
+- [그래프](/develop-apps/development-workflow/graph)
+- [모델](/develop-apps/development-workflow/model)
+- [텐서 및 샘플](/develop-apps/development-workflow/core_types)
+
+## 튜토리얼
+
+- [첫 번째 그래프를 만들어 보세요.](/tutorials/build-inference-pipeline)
+- [모델을 파이프라인에 연결하세요.](/tutorials/plug-model-into-pipeline)
+- [사용자 지정 데이터 그래프를 구축합니다.](/tutorials/build-a-custom-data-graph)

@@ -4,7 +4,15 @@
   "version": "0.0.0",
   "scripts": {
     "start": "docusaurus start",
+    "prebuild": "npm run check:i18n-complete && npm run check:i18n-navigation && npm run check:analytics",
     "build": "NO_UPDATE_NOTIFIER=1 docusaurus build",
+    "check:i18n": "sima-i18n check --config ../sima-i18n.config.json && node scripts/check-i18n-catalogs.js",
+    "check:i18n-complete": "sima-i18n check --config ../sima-i18n.config.json --require-complete && node scripts/check-i18n-catalogs.js",
+    "check:i18n-navigation": "node scripts/check-i18n-preview-navigation.js && node scripts/check-localized-developer-center-links.js",
+    "check:analytics": "node scripts/check-analytics-consent.js",
+    "check:i18n-pilot": "node scripts/check-i18n-pilot.js",
+    "translate:i18n": "sima-i18n translate --config ../sima-i18n.config.json",
+    "translate:i18n-tutorials": "sima-i18n translate --config ../sima-i18n.tutorials.json",
     "gen-api-docs": "node scripts/clean-insight-api-docs.js && docusaurus gen-api-docs insight && node scripts/configure-insight-api-category.js",
     "serve": "docusaurus serve",
     "swizzle": "docusaurus swizzle"

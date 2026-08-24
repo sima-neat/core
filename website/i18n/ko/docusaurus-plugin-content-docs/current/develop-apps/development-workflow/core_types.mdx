@@ -1,0 +1,369 @@
+---
+title: "텐서 및 샘플"
+description: "텐서 페이로드와 메타데이터를 모델, 그래프, 실행 영역 간에 이동합니다."
+sidebar_position: 3
+---
+
+# 텐서와 샘플
+
+바이트는 의미가 없습니다. 메타데이터가 의미입니다.
+
+Neat는 런타임 데이터를 다음 두 가지 공개 유형으로 처리합니다.
+
+- [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor): 모양, dtype, 레이아웃, 저장 공간 및 선택적 의미 메타데이터가 있는 숫자 페이로드입니다.
+- [`Sample`](/reference/{lsa}/structs/simaai-neat-sample): 하나 이상의 텐서와 스트림, 프레임, 타임스탬프, 페이로드 및 라우트 메타데이터를 포함하는 래퍼입니다.
+
+모델 입력 또는 출력 데이터만 필요한 경우 `Tensor`를 사용합니다. 그래프가 스트림 ID, 타임스탬프, 인코딩된 미디어 캡 또는 다중 출력 구조를 유지해야 하는 경우 `Sample`를 사용합니다.
+
+## TensorList 또는 Sample 선택
+
+| 작업 | C++ 입력 모양 | Python 입력 모양 | 반환 값 |
+|---|---|---|---|
+| 텐서로 모델 실행 | `model.run(TensorList{tensor})` | `model.run([tensor])` | `TensorList` / Python 리스트와 유사한 텐서 컬렉션 |
+| 메타데이터와 함께 모델 실행 | `model.run(sample)` | `model.run([sample])` | `Sample` |
+| `Run`에 텐서 푸시 | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
+| `Run`에 샘플 푸시 | `run.push(sample)` | `run.push([sample])` | `bool` |
+| 텐서 전용 출력 가져오기 | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / Python 리스트와 유사한 텐서 컬렉션 |
+| 메타데이터를 유지하는 출력 가져오기 | `run.pull(...)` 또는 `run.pull_samples(...)` | `run.pull(...)` 또는 `run.pull_samples(...)` | `Sample` |
+
+Python에서는 항상 모델 또는 그래프 입력을 리스트 또는 튜플로 전달합니다. `[tensor]`는 "하나의 입력"을 의미합니다. 배치 차원을 생성하지 않습니다.
+
+배치 크기는 텐서 모양과 컴파일된 모델 계약에 속합니다. 입력 리스트를 배치로 처리하기 전에 `model.input_specs()` 및 `model.compiled_batch_size()`를 검사합니다.
+
+## Python에서 텐서 생성
+
+소스 데이터와 일치하는 생성자를 사용합니다.
+
+| 소스 데이터 | 사용 |
+|---|---|
+| NumPy 배열 | `pyneat.Tensor.from_numpy(array, copy=True, layout=..., image_format=...)` |
+| Torch 텐서 | `pyneat.Tensor.from_torch(tensor, copy=True, layout=..., image_format=...)` |
+| DLPack 호환 객체 | `pyneat.Tensor.from_dlpack(obj, copy=True, layout=...)` |
+| Python 리스트 | `pyneat.Tensor.from_list(data, shape=..., dtype=...)` |
+| 인코딩된 미디어 바이트 | `pyneat.Sample.from_encoded(data, caps_string, port_name=...)` |
+
+Neat가 읽기를 완료하기 전에 소스 버퍼가 사라질 수 있는 경우 `copy=True`를 사용합니다. 앱이 수명을 소유하는 경우에만 `copy=False`를 사용합니다. 알 수 없는 버퍼는 사용하지 않습니다.
+
+<CodeTabs>
+<CodeTab label="NumPy" lang="python">
+
+```python
+import numpy as np
+import pyneat
+
+frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+outputs = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+<CodeTab label="PyTorch" lang="python">
+
+```python
+import torch
+import pyneat
+
+torch_tensor = torch.zeros((480, 640, 3), dtype=torch.uint8)
+
+tensor = pyneat.Tensor.from_torch(
+    torch_tensor,
+    copy=True,
+    image_format=pyneat.PixelFormat.RGB,
+)
+
+outputs = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+앱에서 프레임워크에 특화된 데이터가 필요할 때 출력 형식을 변환합니다.
+
+```python
+array = outputs[0].to_numpy(copy=True)
+torch_tensor = outputs[0].to_torch(copy=True)
+```
+
+대부분의 초기 실행 코드에서는 메모리 할당을 수동으로 지정하지 않아야 합니다. 필요한 경우 Python은 `TensorMemory.Auto`, `CPU`, `A65`, `EV74` 및 `MLA`를 `memory=` 인수를 통해 제공합니다.
+
+`byte_format=`은 바이트 형식의 텐서 페이로드에만 사용하십시오. `byte_format=`과 `image_format=`을 함께 사용하지 마십시오.
+
+### Python에서 인코딩된 샘플 생성
+
+그래프 입력이 H.264 또는 H.265와 같은 인코딩된 미디어를 예상하고 앱이 바이트 데이터를 소유하는 경우 `Sample.from_encoded(...)`를 사용하십시오.
+
+```python
+sample = pyneat.Sample.from_encoded(
+    data,
+    caps_string="video/x-h264,stream-format=byte-stream,alignment=au",
+    pts_ns=pts_ns,
+    duration_ns=duration_ns,
+    port_name="video",
+)
+
+run.push("video", [sample])
+```
+
+`caps_string`은 그래프에 바이트의 의미를 알려줍니다. `port_name`은 샘플을 그래프 입력 이름에 연결합니다. 디코딩된 픽셀이 있는 경우 이 경로를 사용하지 말고 대신 이미지 텐서 또는 이미지 샘플을 만드십시오.
+
+파싱된 H.265 액세스 유닛의 경우 `video/x-h265,parsed=true,stream-format=byte-stream,alignment=au`를 사용하십시오. H.265 디코더 경로는 HEVC Main 프로필, 8비트, 4:2:0 입력을 필요로 합니다.
+
+## C++에서 텐서 생성
+
+텐서만 사용하는 입력의 경우 `TensorList`를 사용하십시오. `TensorList`에는 모델 또는 그래프 입력당 하나의 텐서가 포함됩니다.
+
+```cpp
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+다중 입력 모델의 경우, 그래프가 명명된 입력을 노출하지 않는 한, `model.input_specs()`에 지정된 순서대로 각 입력에 대해 하나의 텐서를 전달합니다.
+
+### C++에서 OpenCV 이미지 사용
+
+OpenCV 이미지는 일반적으로 BGR 형식입니다. 코드에서 이를 명시적으로 지정합니다.
+
+직접적인 `Model` 실행을 위해, `cv::Mat`을 `Tensor`로 변환하고 `TensorList`를 전달하는 것이 일반적인 방법입니다.
+
+```cpp
+cv::Mat image = cv::imread("image.jpg");
+
+auto input = simaai::neat::Tensor::from_cv_mat(
+    image,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+auto outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+Neat가 OpenCV 지원을 포함하여 빌드되면, `Model`, `Graph` 및 `Run`도 `std::vector<cv::Mat>`에 대한 편리한 오버로드를 제공합니다. 각 입력에 대해 하나의 `cv::Mat`를 전달합니다.
+
+```cpp
+auto model_outputs = model.run(std::vector<cv::Mat>{image});
+auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
+
+auto run = graph.build();
+run.push("image", std::vector<cv::Mat>{image});
+```
+
+예제에서 픽셀 형식, 메모리 또는 수명을 명시적으로 지정해야 하는 경우 `Tensor::from_cv_mat(...)`을 사용하는 것이 좋습니다. 그래프/모델 옵션에서 이미 입력 계약을 설명하는 경우 OpenCV의 편리한 오버로드를 사용하십시오.
+
+## 텐서 계약 확인
+
+입력을 할당하거나 출력을 디코딩하기 전에 사양을 확인하십시오.
+
+```python
+for spec in model.input_specs():
+    print(spec.shape, spec.dtype, spec.layout)
+
+for spec in model.output_specs():
+    print(spec.shape, spec.dtype, spec.layout)
+```
+
+텐서 계약에는 다음이 포함될 수 있습니다.
+
+- 모양 및 바이트 크기
+- `TensorDType` (예: 정수, 부동 소수점 또는 BF16 페이로드)
+- `TensorLayout` (예: HWC 또는 모델별 텐서 레이아웃)
+- 이미지 시맨틱 메타데이터를 통한 이미지 픽셀 형식
+- 양자화, 테셀레이션, 감지, 텍스트, 오디오, 바이트 스트림, 인코딩 또는 전처리 시맨틱 메타데이터
+
+모든 공개 경계가 FP32라고 가정하지 마십시오. 사양을 참조하십시오.
+
+## 모델 출력 디코딩
+
+원시 텐서로 시작합니다. 출력 계약에서 페이로드가 감지, 포즈 또는 분할 형식인지 확인한 경우에만 디코딩합니다.
+
+| 출력 계약 | 사용법 | 결과 |
+|---|---|---|
+| 원시 텐서 | 반환된 텐서를 직접 사용하거나 `to_numpy(...)` / `to_torch(...)`를 사용하여 변환 | 모델 출력 dtype 및 모양의 텐서 데이터 |
+| 텐서로 패킹된 박스 | `pyneat.decode_bbox(outputs, clamp_to=(width, height), top_k=..., strict=...)` | 입력당 하나의 float32 `[N, 6]` 텐서: `x1`, `y1`, `x2`, `y2`, `score`, `class_id` |
+| 유형이 지정된 레코드로서의 단일 패킹된 박스 텐서 | `pyneat.detections.decode_bbox_tensor(tensor, width, height, expected_topk=..., strict=...)` | `boxes` 레코드와 보존된 원시 바이트가 있는 `BoxDecodeResult` |
+| 패킹된 포즈 | `pyneat.decode_pose(outputs, clamp_to=(width, height), top_k=..., strict=...)` | 박스 + 키포인트 |
+| 패킹된 분할 | `pyneat.decode_segmentation(outputs, clamp_to=(width, height), top_k=..., strict=...)` | 박스 + 마스크 |
+
+```python
+outputs = model.run([tensor], timeout_ms=2000)
+boxes = pyneat.decode_bbox(outputs, clamp_to=(image_width, image_height), strict=True)
+box_array = boxes[0].to_numpy(copy=True)
+```
+
+출력 형식에서 예상하는 경우에만 디코딩 도우미를 사용합니다.
+
+## 메타데이터에 샘플 사용
+
+페이로드 데이터에 식별 또는 타이밍 정보가 필요한 경우 `Sample`을 사용합니다.
+
+일반적인 생성자와 도우미:
+
+| 필요 | C++ | Python |
+|---|---|---|
+| 포트 이름으로 텐서를 래핑 | `make_tensor_sample("image", tensor)` | `pyneat.make_tensor_sample("image", tensor)` |
+| OpenCV 이미지를 래핑 | `make_image_sample(image, PixelFormat::BGR, TensorMemory::CPU)` | `Tensor.from_numpy(...)`를 사용하여 `Tensor`를 생성한 다음 `make_tensor_sample(...)`을 호출합니다. |
+| 인코딩된 미디어 바이트를 래핑 | `make_encoded_sample(bytes, caps_string, pts_ns, dts_ns, duration_ns)` | `pyneat.make_encoded_sample(...)` 또는 `pyneat.Sample.from_encoded(data, caps_string, port_name=...)` |
+| 텍스트를 래핑 | `Tensor::from_text(...)`와 `make_tensor_sample(...)`을 함께 사용 | `pyneat.make_text_sample("text", text)` |
+| 여러 개의 논리적 필드를 래핑 | `make_bundle_sample({field0, field1})` | `pyneat.Sample()`을 생성하고 `append(...)`을 호출합니다. |
+
+일반적인 필드:
+
+| 필드 | 사용 |
+|---|---|
+| `kind` | 페이로드가 `Tensor`, `TensorSet`, `Bundle` 또는 `Unknown`인지 알려줍니다. |
+| `tensor` | `kind == Tensor`인 경우 단일 텐서 페이로드입니다. |
+| `tensors` | `kind == TensorSet`인 경우 하나의 논리적 출력에서 여러 개의 텐서입니다. |
+| `fields` | `kind == Bundle`인 경우 중첩된 샘플입니다. |
+| `stream_id` | 다중 스트림 그래프의 안정적인 스트림 식별자입니다. |
+| `frame_id` | 결합, 렌더링 및 메트릭을 위한 소스 프레임 식별자입니다. |
+| `pts_ns`, `dts_ns`, `duration_ns` | 타이밍 메타데이터입니다. |
+| `port_name` | 입력 또는 출력 포트 식별자입니다. |
+| `payload_type`, `media_type`, `payload_tag`, `caps_string` | 페이로드 패밀리 및 미디어/캡스 메타데이터입니다. |
+| `logical_output_index` | 여러 출력을 가진 모델의 논리적 출력 식별자입니다. |
+
+Python `Sample`은 반복 가능합니다. 번들이 아닌 샘플은 하나의 논리적 항목처럼 작동합니다. 번들은 해당 `fields`를 반복합니다.
+
+### `TensorSet` 또는 `Bundle` 선택
+
+`TensorSet`과 `Bundle`은 둘 다 하나 이상의 페이로드를 포함하지만, 의미가 다릅니다.
+
+| 형태 | 사용 | 읽기 |
+|---|---|---|
+| `TensorSet` | 상자 및 마스크와 같이 하나의 출력 포트에서 하나의 논리적 입력 또는 출구를 구성하는 여러 텐서 | `sample.tensors` |
+| `Bundle` | 이미지 필드와 메타데이터 필드와 같이 함께 이동하는 여러 개의 논리적 필드 | `sample.fields`, 반복 또는 `sample[index]` |
+
+다운스트림 코드가 텐서를 하나의 결과로 처리해야 하는 경우 `TensorSet`을 사용합니다. 다운스트림 코드가 필드를 별도로 라우팅하거나 검사해야 하는 경우 `Bundle`을 사용합니다. 이러한 구분을 잘못 사용하면 바이트는 여전히 이동할 수 있지만 의미가 왜곡될 수 있습니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto image = simaai::neat::make_tensor_sample("image", image_tensor);
+auto metadata = simaai::neat::make_tensor_sample(
+    "metadata",
+    simaai::neat::Tensor::from_text(metadata_json));
+
+auto bundle = simaai::neat::make_bundle_sample({image, metadata});
+bundle.stream_id = "camera-0";
+bundle.frame_id = frame_number;
+
+run.push("request", bundle);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = pyneat.make_tensor_sample("image", image_tensor)
+metadata = pyneat.make_text_sample("metadata", metadata_json)
+
+bundle = pyneat.Sample()
+bundle.append(image)
+bundle.append(metadata)
+bundle.stream_id = "camera-0"
+bundle.frame_id = frame_number
+
+run.push("request", [bundle])
+```
+
+</CodeTab>
+</CodeTabs>
+
+`TensorSet`을 수신하면 `sample.tensors`를 반복합니다. `Bundle`을 수신하면 샘플 자체 또는 `sample.fields`를 반복합니다. 텐서의 형태를 일관되게 유지하십시오. 이는 향후 사용할 데이터이므로 주의해야 합니다.
+
+### 앱에서 관리하는 스트림 메타데이터 푸시
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto sample = simaai::neat::make_tensor_sample("image", input_tensor);
+sample.stream_id = "camera-0";
+sample.frame_id = frame_number++;
+
+run.push("image", sample);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+sample = pyneat.make_tensor_sample("image", tensor)
+sample.stream_id = "camera-0"
+sample.frame_id = frame_number
+
+run.push("image", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+다중 스트림 그래프에 `stream_id`가 없으면 각 스트림별 공정한 처리량을 보고할 수 없습니다. 각 스트림을 조정하기 전에 이름을 지정하십시오.
+
+### 추출된 샘플 읽기
+
+```python
+sample = run.pull("detections", timeout_ms=2000)
+
+if sample is not None:
+    print(sample.kind, sample.stream_id, sample.frame_id)
+    if sample.kind == pyneat.SampleKind.TensorSet:
+        for tensor in sample.tensors:
+            print(tensor.shape, tensor.dtype)
+```
+
+## 페이로드 유형 이해
+
+`PayloadType`은 Neat에 그래프 경계를 통과하는 데이터의 종류를 알려줍니다.
+
+| 페이로드 유형 | 사용/검사 |
+|---|---|
+| `PayloadType.Image` | 디코딩된 픽셀. 이미지 형식, 너비, 높이 및 픽셀 메타데이터를 검사합니다. |
+| `PayloadType.Tensor` | 모델 또는 애플리케이션 텐서. dtype, shape, 레이아웃 및 의미 메타데이터를 검사합니다. |
+| `PayloadType.Encoded` | H.264 또는 H.265와 같은 인코딩된 미디어. `caps_string`, 코덱, 타임스탬프 및 페이로드 태그를 검사합니다. |
+| `PayloadType.Auto` | 가능한 경우 Neat이 텐서/샘플 메타데이터에서 추론하도록 합니다. |
+
+텍스트, 오디오, 바이트 스트림 및 불투명 바이트는 별도의 `PayloadType` 열거형 값이 아닌 텐서 의미 또는 특수 사양으로 전송됩니다.
+
+명시적 입력 경계의 경우 `payload_type`, `format`, 크기 필드, 동적 제한, fps, caps 재정의, 실시간/타임스탬프 동작 및 메모리 정책과 함께 `InputOptions`를 사용합니다. Python에서는 원시 문자열 대신 `pyneat.Format` / `pyneat.FormatTag`를 사용하여 형식 필드를 설정합니다.
+
+## 고급 유형 탐색
+
+처음 추론에는 이러한 유형이 필요하지 않지만, 계약을 확인하거나 진단 정보를 수집할 때 유용합니다.
+
+| 유형 | 사용 시점 |
+|---|---|
+| `TensorConstraint` / `TensorSpec` | 텐서를 보내기 전에 dtype, 랭크, shape, 장치, 이미지 형식 또는 세그먼트 제약 조건을 확인해야 할 때. |
+| `DeviceType` | 텐서가 CPU, APU, CVU, MLA 또는 알 수 없는 장치와 연결되어 있는지 확인해야 할 때. |
+| `StorageKind` | 스토리지가 CPU 소유, 외부 CPU 메모리, GStreamer 샘플 또는 장치 핸들인지 확인해야 할 때. |
+| `PlaneRole` | Y, U, V 또는 UV 평면과 같은 다중 평면 미디어를 검사할 때. |
+| `BusMessage` | 런타임 또는 빌드 실패 후 `GraphReport.bus`를 읽을 때. |
+| `BoundaryFlowStats` | 진단 실행 중에 버퍼가 그래프 경계를 통과했는지 확인해야 할 때. |
+| `MeasureOptions` / `MeasureReport` | `Run` 기간을 측정하고 카운터, 지연 시간, 선택적 플러그인 타이밍 또는 선택적 전력이 필요할 때. |
+
+이러한 정보를 증거로 사용하십시오. 작업에 실제로 필요한 경우가 아니면 이를 제어 변수로 만들지 마십시오.
+
+## 추가 정보
+
+- [모델](/develop-apps/development-workflow/model)
+- [그래프](/develop-apps/development-workflow/graph)
+- [그래프 실행](/develop-apps/development-workflow/pipeline)
+- [노드](/develop-apps/development-workflow/node)
+
+## 튜토리얼
+
+- [NumPy 배열을 모델에 전달](/tutorials/pass-numpy-to-model)
+- [하나의 샘플에 여러 입력을 전송](/tutorials/feed-multi-input-model)
+- [모델 결과물을 읽고 해석합니다.](/tutorials/interpret-model-output)
