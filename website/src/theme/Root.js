@@ -77,6 +77,14 @@ function localizationEnabled(search, currentLocale) {
   return sessionPreviewEnabled || preferredDocsLocale() === currentLocale;
 }
 
+function tutorialAvailableInLocale(pathname, currentLocale, defaultLocale, localizedLocales) {
+  return (
+    currentLocale === defaultLocale ||
+    /\/tutorials\/before-you-run\/?$/.test(pathname) ||
+    localizedLocales.includes(currentLocale)
+  );
+}
+
 function I18nPreviewGate({children}) {
   const {i18n, siteConfig} = useDocusaurusContext();
   const location = useLocation();
@@ -113,9 +121,12 @@ function LocalizationScopeNotice() {
     (prefix) => location.pathname.includes(`${prefix}/`) || location.pathname.endsWith(prefix),
   );
   const isTutorial = /\/tutorials(?:\/|$)/.test(location.pathname);
-  const isLocalizedTutorial =
-    /\/tutorials\/before-you-run\/?$/.test(location.pathname) ||
-    tutorialLocales.locales.includes(i18n.currentLocale);
+  const isLocalizedTutorial = tutorialAvailableInLocale(
+    location.pathname,
+    i18n.currentLocale,
+    i18n.defaultLocale,
+    tutorialLocales.locales,
+  );
   const isEnglishOnlySection = isEnglishOnlyPrefix || (isTutorial && !isLocalizedTutorial);
   const ui = LOCALIZED_UI[i18n.currentLocale] || LOCALIZED_UI.en;
 

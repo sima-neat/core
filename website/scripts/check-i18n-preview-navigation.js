@@ -79,6 +79,47 @@ assert.equal(
   "A malformed locale cookie must be ignored",
 );
 
+const tutorialAvailabilityLogic = rootTheme.match(
+  /function tutorialAvailableInLocale\([\s\S]*?^\}/m,
+);
+assert.ok(tutorialAvailabilityLogic, "Tutorial locale availability must remain testable");
+
+const tutorialAvailabilityContext = {};
+vm.runInNewContext(
+  `${tutorialAvailabilityLogic[0]}; tutorialAvailable = tutorialAvailableInLocale;`,
+  tutorialAvailabilityContext,
+);
+assert.equal(
+  tutorialAvailabilityContext.tutorialAvailable(
+    "/develop-apps/tutorials/001_run_your_first_model/",
+    "en",
+    "en",
+    ["ko", "ja", "zh-Hant", "uk"],
+  ),
+  true,
+  "Tutorials in the default English locale must not show the English-only banner",
+);
+assert.equal(
+  tutorialAvailabilityContext.tutorialAvailable(
+    "/develop-apps/tutorials/001_run_your_first_model/",
+    "ja",
+    "en",
+    ["ko", "ja", "zh-Hant", "uk"],
+  ),
+  true,
+  "Tutorials translated into the current locale must not show the English-only banner",
+);
+assert.equal(
+  tutorialAvailabilityContext.tutorialAvailable(
+    "/develop-apps/tutorials/001_run_your_first_model/",
+    "fr",
+    "en",
+    ["ko", "ja", "zh-Hant", "uk"],
+  ),
+  false,
+  "Tutorials without a translation must retain the English-only banner",
+);
+
 assert.match(
   shellHostModule,
   /export function onRouteDidUpdate\(\)[\s\S]*requestAnimationFrame[\s\S]*mountShell\(\)/,
