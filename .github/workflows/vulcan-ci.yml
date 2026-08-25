@@ -140,10 +140,7 @@ jobs:
             echo "Tag build; treating changeset as code-impacting."
           elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "branch" ]]; then
             if [[ "${GITHUB_REF_NAME}" == "develop" || "${GITHUB_REF_NAME}" == "main" ]]; then
-              before_sha="${{ github.event.before }}"
-              if [[ -n "${before_sha}" && ! "${before_sha}" =~ ^0+$ ]]; then
-                compare_base="${before_sha}"
-              fi
+              echo "Protected branch push; treating changeset as code-impacting."
             else
               git fetch --no-tags origin develop
               compare_base="$(git merge-base HEAD origin/develop)"

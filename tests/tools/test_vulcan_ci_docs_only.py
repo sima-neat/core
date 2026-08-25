@@ -21,6 +21,19 @@ def job_block(name: str) -> str:
 
 
 class VulcanCiDocsOnlyTests(unittest.TestCase):
+    def test_protected_branch_pushes_are_never_docs_only(self) -> None:
+        detect = job_block("detect-changes")
+
+        self.assertIn(
+            '[[ "${GITHUB_REF_NAME}" == "develop" || "${GITHUB_REF_NAME}" == "main" ]]',
+            detect,
+        )
+        self.assertIn(
+            'echo "Protected branch push; treating changeset as code-impacting."',
+            detect,
+        )
+        self.assertNotIn("github.event.before", detect)
+
     def test_core_build_skips_docs_only_changes(self) -> None:
         build = job_block("build")
 
