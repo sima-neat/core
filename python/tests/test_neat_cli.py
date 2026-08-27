@@ -972,6 +972,16 @@ def test_matching_insight_sha_prefix_is_current_across_status_json_and_update(
         insight_latest_tag="5dd1a18b62a5",
         insight_version="0.0.0+main.5dd1a18",
     )
+    write_exe(
+        bin_dir / "dpkg-query",
+        """\
+        #!/usr/bin/env bash
+        case "${@: -1}" in
+          sima-neat|sima-neat-dev) printf '0.0.0+main-abcdef0' ;;
+          *) exit 1 ;;
+        esac
+        """,
+    )
     calls = tmp_path / "calls.log"
     make_insight_admin(bin_dir, calls=calls, running=True)
     env = base_env(tmp_path, bin_dir)
