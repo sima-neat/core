@@ -1017,6 +1017,38 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
           "Ensure stage contract injection is enabled.", build.pipeline_string);
     }
 
+    // Validate every cross-DSO layout and require the additive ProcessCVU V2
+    // entry points before build_prepared_runtime_context can pass a rich C++
+    // request to the prepared-runtime bridge.
+    if (std::string abi_error = validate_prepared_runtime_bridge_abi(); !abi_error.empty()) {
+      gst_object_unref(pipeline);
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build") +
+              ": failed to attach sima prepared runtime context: " + abi_error,
+          "Use a libneatpreparedruntimebridge.so built from the same source/runtime package as "
+          "libsima_neat.so.",
+          build.pipeline_string);
+    }
+    const bool has_processcvu_stage =
+        std::any_of(manifest.stages.begin(), manifest.stages.end(), [](const auto& stage) {
+          return stage.payload_kind == pipeline_internal::sima::StagePayloadKind::ProcessCvu;
+        });
+    if (has_processcvu_stage) {
+      if (std::string abi_error =
+              pipeline_internal::sima::validate_graph_processcvu_prepared_bridge_v2();
+          !abi_error.empty()) {
+        gst_object_unref(pipeline);
+        session_build_throw_session_error_simple(
+            error_codes::kPipelineShape,
+            std::string(where ? where : "Graph::build") +
+                ": failed to attach sima prepared runtime context: " + abi_error,
+            "Use a libneatpreparedruntimebridge.so built from the same source/runtime package as "
+            "libsima_neat.so.",
+            build.pipeline_string);
+      }
+    }
+
     std::string prepared_error;
     GstContext* static_manifest_context =
         gst_element_get_context(pipeline, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE);
@@ -1033,16 +1065,6 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
           std::string(where ? where : "Graph::build") +
               ": failed to build sima prepared runtime context: " + prepared_error,
           prepared_runtime_failure_hint(prepared_error), build.pipeline_string);
-    }
-    if (std::string abi_error = validate_prepared_runtime_bridge_abi(); !abi_error.empty()) {
-      gst_object_unref(pipeline);
-      session_build_throw_session_error_simple(
-          error_codes::kPipelineShape,
-          std::string(where ? where : "Graph::build") +
-              ": failed to attach sima prepared runtime context: " + abi_error,
-          "Use a libneatpreparedruntimebridge.so built from the same source/runtime package as "
-          "libsima_neat.so.",
-          build.pipeline_string);
     }
     std::string attach_prepared_error;
     if (!simaai::neat::attach_prepared_runtime_context(pipeline, std::move(*prepared_runtime),

@@ -191,6 +191,24 @@ struct DetessDequantHeadContractSubset {
   std::string output_dtype;
 };
 
+/**
+ * @brief Kernel descriptor projection for one fused DetessDequant head.
+ *
+ * Keeps published logical geometry separate from the per-frame descriptor geometry consumed by
+ * the kernel. In particular, an authored `[N,W,C]` tensor with a `[tile_W,C]` slice remains a
+ * rank-2 `[W,C]` kernel contract; the leading batch is carried by `batch_size` instead of being
+ * reinterpreted as a spatial axis.
+ */
+struct DetessDequantTensorDescriptorContract {
+  int per_frame_rank = 0;
+  int batch_size = 0;
+  std::vector<int> input_shape;
+  std::vector<int> tile_shape;
+  std::vector<int> output_shape;
+  sima_ev_tensor_desc input{};
+  sima_ev_tensor_desc output{};
+};
+
 /// Fused DetessDequant contract subset — one entry per output head.
 struct DetessDequantContractSubset {
   std::vector<DetessDequantHeadContractSubset> heads;
@@ -237,6 +255,17 @@ int derive_per_frame_rank_public(const std::vector<std::int64_t>& slice_shape_hi
 /// Infer the implicit batch size by collapsing leading dims beyond `per_frame_rank` of `shape`.
 int inferred_batch_size_from_shape_public(const std::vector<std::int64_t>& shape,
                                           int per_frame_rank = 3);
+
+/**
+ * @brief Build the single authoritative per-frame tensor-descriptor contract for a fused head.
+ *
+ * `canonical_output_shape` is the published/canonical output geometry selected by route
+ * compilation. When omitted, `head.per_head_input_shape` is used because DetessDequant is
+ * shape-preserving. Throws `std::invalid_argument` when the descriptor contract is incomplete.
+ */
+DetessDequantTensorDescriptorContract build_detessdequant_tensor_descriptor_contract(
+    const DetessDequantHeadContractSubset& head,
+    const std::vector<std::int64_t>& canonical_output_shape = {});
 
 /// True when two shapes describe the same element order and differ only by size-1 axes.
 bool unit_axis_shape_alias_public(const std::vector<std::int64_t>& lhs,
