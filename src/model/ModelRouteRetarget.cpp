@@ -14,6 +14,24 @@ Model::Options internal_retarget_model_options(Model::Options opt) {
   return opt;
 }
 
+bool has_exact_boxdecode_terminal(const Model::InferenceTerminalPolicy& terminal) {
+  return terminal.mla_only && !terminal.last_stage_index.has_value() &&
+         !terminal.last_stage_name.has_value() && !terminal.last_plugin_id.has_value() &&
+         !terminal.last_processor.has_value();
+}
+
+void select_exact_boxdecode_terminal(Model::Options* opt) {
+  if (!opt) {
+    return;
+  }
+  // A model-bound BoxDecode consumes the compiler-authored terminal MLA carrier directly.  Use
+  // the existing terminal policy to keep the model fragment and the BoxDecode source contract on
+  // that same boundary; rendering the MPK's dequant/detess tail as well would execute the
+  // conversion twice and hand BoxDecode bytes from a different contract.
+  opt->inference_terminal = {};
+  opt->inference_terminal.mla_only = true;
+}
+
 } // namespace
 
 RequestedPostRouteKind requested_post_route_from_stage_kind(PostRouteStageKind kind) {
@@ -100,11 +118,19 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
       requested_post_route_from_stage_kind(ModelAccess::resolved_post_kind(*model));
   const RequestedPostRouteKind requested = binding.requested_post;
   if (requested == RequestedPostRouteKind::Auto || requested == current) {
-    if (requested == RequestedPostRouteKind::BoxDecode &&
+    const bool boxdecode_type_changed =
+        requested == RequestedPostRouteKind::BoxDecode &&
         requested_decode_type != BoxDecodeType::Unspecified &&
-        base_opt.decode_type != requested_decode_type) {
+        base_opt.decode_type != requested_decode_type;
+    const bool boxdecode_terminal_changed =
+        requested == RequestedPostRouteKind::BoxDecode &&
+        !has_exact_boxdecode_terminal(base_opt.inference_terminal);
+    if (boxdecode_type_changed || boxdecode_terminal_changed) {
       Model::Options opt = base_opt;
-      opt.decode_type = requested_decode_type;
+      if (boxdecode_type_changed) {
+        opt.decode_type = requested_decode_type;
+      }
+      select_exact_boxdecode_terminal(&opt);
       auto rebuilt = std::make_shared<Model>(ModelAccess::clone_with_options(*model, opt));
       if (changed) {
         *changed = true;
@@ -133,6 +159,7 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
       }
       return nullptr;
     }
+    select_exact_boxdecode_terminal(&opt);
     break;
   case RequestedPostRouteKind::Auto:
   case RequestedPostRouteKind::Detess:
@@ -153,6 +180,13 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
              requested_post_route_name(
                  requested_post_route_from_stage_kind(ModelAccess::resolved_post_kind(*rebuilt))) +
              "' instead of requested '" + requested_post_route_name(requested) + "'";
+    }
+    return nullptr;
+  }
+  if (requested == RequestedPostRouteKind::BoxDecode &&
+      !has_exact_boxdecode_terminal(ModelAccess::options(*rebuilt).inference_terminal)) {
+    if (err) {
+      *err = "retargeted boxdecode model did not preserve the terminal MLA boundary";
     }
     return nullptr;
   }

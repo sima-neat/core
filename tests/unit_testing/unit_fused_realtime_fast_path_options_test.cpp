@@ -26,6 +26,7 @@
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
+#include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -158,7 +159,7 @@ std::vector<std::shared_ptr<simaai::neat::Node>> make_consumer_nodes() {
   nodes.push_back(std::make_shared<FragmentNode>(
       "ModelRoute", "neatprocesscvu", "preproc",
       " async=false num-buffers=4 ! neatprocessmla name=n0_mla async=false num-buffers=4 "
-      "defer-output-invalidate=false ! neatboxdecode name=n0_boxdecode ! appsink "
+      "defer-output-invalidate=true ! neatboxdecode name=n0_boxdecode num-buffers=2 ! appsink "
       "name=n0_output"));
   return nodes;
 }
@@ -169,7 +170,7 @@ simaai::neat::Graph make_composed_consumer_graph() {
   graph.add(std::make_shared<FragmentNode>(
       "ModelRoute", "neatprocesscvu", "preproc",
       " async=false num-buffers=4 ! neatprocessmla name=n1_mla async=false num-buffers=4 "
-      "defer-output-invalidate=false ! neatboxdecode name=n1_boxdecode"));
+      "defer-output-invalidate=true ! neatboxdecode name=n1_boxdecode num-buffers=2"));
   graph.add(simaai::neat::nodes::Output("detections"));
   return graph;
 }
@@ -341,8 +342,127 @@ RUN_TEST(
               "fused ProcessCVU and ProcessMLA must both receive the public async option");
       require_contains(pipeline, "num-buffers=7",
                        "fused ProcessMLA must receive the public output-pool option");
-      require_contains(pipeline, "defer-output-invalidate=true",
-                       "fused ProcessMLA must receive the public deferred-cache-sync option");
+      const std::string objectdecode_fragment =
+          simaai::neat::session_build_propagate_terminal_consumer_lane_window(
+              simaai::neat::session_build_select_terminal_objectdecode_cpu_visibility(
+                  simaai::neat::session_build_apply_fast_path_options_to_fragment(
+                      "neatprocessmla name=mla_1 defer-output-invalidate=true "
+                      "num-buffers=4 ! queue ! neatobjectdecode name=boxdecode_1 "
+                      "num-buffers=2",
+                      &options)));
+      require_contains(
+          objectdecode_fragment,
+          "neatobjectdecode name=boxdecode_1 num-buffers=7",
+          "a declared terminal lane window must use the resolved MLA route depth");
+      require_contains(pipeline, "neatboxdecode name=n0_boxdecode num-buffers=7",
+                       "rendered BoxDecode must share the exact MLA route depth");
+      require_contains(pipeline, "defer-output-invalidate=false",
+                       "terminal MLA-to-ObjectDecode must select producer CPU visibility");
+
+      const std::string scoped_visibility_fragment =
+          simaai::neat::session_build_propagate_terminal_consumer_lane_window(
+              simaai::neat::session_build_select_terminal_objectdecode_cpu_visibility(
+                  simaai::neat::session_build_apply_fast_path_options_to_fragment(
+                      "neatprocessmla name=device_mla ! queue ! neatprocesscvu "
+                      "name=device_consumer ! neatprocessmla name=terminal_mla "
+                      "defer-output-invalidate=true ! queue ! queue2 ! "
+                      "neatobjectdecode name=cpu_consumer num-buffers=2",
+                      &options)));
+      require_contains(
+          scoped_visibility_fragment,
+          "neatprocessmla name=device_mla async=true num-buffers=7 "
+          "defer-output-invalidate=true ! queue ! neatprocesscvu",
+          "MLA-to-device routes must remain device-produced");
+      require_contains(
+          scoped_visibility_fragment,
+          "neatprocessmla name=terminal_mla defer-output-invalidate=false",
+          "only the nearest MLA across queue-only segments may own the CPU READ epoch");
+      require_contains(scoped_visibility_fragment,
+                       "neatobjectdecode name=cpu_consumer num-buffers=7",
+                       "the terminal consumer must share the producer lane window");
+
+      const std::string generic_lane_window =
+          simaai::neat::session_build_propagate_terminal_consumer_lane_window(
+              "producer name=p num-buffers=4 defer-output-invalidate=false ! identity ! "
+              "genericterminal name=c num-buffers=2");
+      require_contains(generic_lane_window,
+                       "genericterminal name=c num-buffers=4",
+                       "lane propagation must depend on rendered contracts, not plugin names");
+      const std::string undeclared_lane_window =
+          simaai::neat::session_build_propagate_terminal_consumer_lane_window(
+              "producer name=p num-buffers=4 defer-output-invalidate=false ! queue ! "
+              "unboundedterminal name=c");
+      require(undeclared_lane_window.find("unboundedterminal name=c num-buffers=") ==
+                  std::string::npos,
+              "lane propagation must not invent a property for an undeclared consumer");
+
+      // Regression: ordinary Graph building renders each Node independently.
+      // The Model's terminal MLA and the public SimaBoxDecode therefore become
+      // adjacent only after build_pipeline_full inserts its inter-node queue.
+      const std::vector<std::shared_ptr<simaai::neat::Node>> split_cpu_nodes{
+          std::make_shared<FragmentNode>(
+              "Model", "identity", "model_fragment",
+              " ! neatprocessmla name=split_terminal_mla "
+              "defer-output-invalidate=true"),
+          std::make_shared<FragmentNode>("SimaBoxDecode", "neatboxdecode",
+                                         "split_boxdecode", " num-buffers=2")};
+      const auto split_cpu_pipeline = simaai::neat::build_pipeline_full(
+          split_cpu_nodes, false, "mysink", true, simaai::neat::NameTransform{},
+          &options);
+      require_contains(
+          split_cpu_pipeline.pipeline_string,
+          "neatprocessmla name=split_terminal_mla "
+          "defer-output-invalidate=false async=true num-buffers=7 ! queue ",
+          "final ordinary-pipeline pass must select CPU visibility across separate Nodes");
+      require_contains(split_cpu_pipeline.pipeline_string,
+                       "neatboxdecode name=n1_split_boxdecode num-buffers=7",
+                       "separate BoxDecode Node must share the exact route depth");
+
+      const std::vector<std::shared_ptr<simaai::neat::Node>> split_device_nodes{
+          std::make_shared<FragmentNode>(
+              "Model", "identity", "device_model_fragment",
+              " ! neatprocessmla name=split_device_mla "
+              "defer-output-invalidate=true"),
+          std::make_shared<FragmentNode>("DevicePost", "neatprocesscvu",
+                                         "split_device_post")};
+      const auto split_device_pipeline = simaai::neat::build_pipeline_full(
+          split_device_nodes, false, "mysink", true,
+          simaai::neat::NameTransform{}, &options);
+      require_contains(
+          split_device_pipeline.pipeline_string,
+          "neatprocessmla name=split_device_mla "
+          "defer-output-invalidate=true async=true num-buffers=7 ! queue ",
+          "final ordinary-pipeline pass must keep MLA-to-CVU device-produced");
+
+      simaai::neat::GraphOptions queue_independent_options = options;
+      queue_independent_options.processmla.output_pool_buffers = 0;
+      const std::string queue_independent_pipeline =
+          simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+              make_consumer_nodes(), queue_independent_options);
+      require_contains(
+          queue_independent_pipeline,
+          "neatprocessmla name=n0_mla async=true num-buffers=4",
+          "an unspecified ProcessMLA pool override must preserve the model-authored depth");
+      require(queue_independent_pipeline.find("neatprocessmla name=n0_mla async=true "
+                                              "num-buffers=1") == std::string::npos,
+              "a low-latency runtime queue must not rewrite the ProcessMLA lane depth");
+      const std::string queue_independent_linear_fragment =
+          simaai::neat::session_build_apply_fast_path_options_to_fragment(
+              "neatprocessmla name=linear_mla num-buffers=4", &queue_independent_options);
+      require_contains(queue_independent_linear_fragment,
+                       "neatprocessmla name=linear_mla num-buffers=4 async=true",
+                       "linear ProcessMLA must retain its authored pool depth");
+      const std::string queue_independent_objectdecode_fragment =
+          simaai::neat::session_build_apply_fast_path_options_to_fragment(
+              "neatobjectdecode name=linear_boxdecode", &queue_independent_options);
+      require(queue_independent_objectdecode_fragment ==
+                  "neatobjectdecode name=linear_boxdecode",
+              "an unspecified pool override must not invent an ObjectDecode depth");
+      const std::string queue_independent_boxdecode_fragment =
+          simaai::neat::session_build_apply_fast_path_options_to_fragment(
+              "neatboxdecode name=linear_boxdecode", &queue_independent_options);
+      require(queue_independent_boxdecode_fragment == "neatboxdecode name=linear_boxdecode",
+              "an unspecified pool override must not invent a BoxDecode depth");
 
       const std::string queue_properties = "max-size-buffers=4 max-size-bytes=0 max-size-time=0";
       require(count_occurrences(pipeline, queue_properties) == 3U,
@@ -358,10 +478,11 @@ RUN_TEST(
                            " ! neatprocessmla",
                        "second fused queue must decouple ProcessCVU from ProcessMLA");
       require_contains(pipeline,
-                       "defer-output-invalidate=true ! queue name=queue_neat_fused_stage_2 " +
+                       "defer-output-invalidate=false ! queue name=queue_neat_fused_stage_2 " +
                            queue_properties + " ! neatboxdecode",
-                       "third fused queue must decouple ProcessMLA from decode");
-      require_contains(pipeline, "neatboxdecode name=n0_boxdecode ! appsink name=n0_output",
+                       "third fused queue must preserve terminal CPU visibility selection");
+      require_contains(pipeline,
+                       "neatboxdecode name=n0_boxdecode num-buffers=7 ! appsink name=n0_output",
                        "terminal Output must stay directly connected to decode");
 
       {
@@ -582,6 +703,8 @@ RUN_TEST(
               "actual composed live graph must lower to fused realtime ingress");
       require(fused_segment->route_options.async_queue_depth == 3,
               "fused segment must preserve outer GraphOptions::async_queue_depth");
+      require(fused_segment->route_options.processmla.output_pool_buffers == 0,
+              "RunOptions queue_depth=1 must not become a ProcessMLA pool override");
       require(fused_segment->fused_realtime_ingress->branches.size() == 2U,
               "fused segment must preserve both source links");
       const auto& first_fused_edge = composed_plan.edges.at(
@@ -626,6 +749,18 @@ RUN_TEST(
                        "fused mux must receive public per-link admission limits");
       require_contains(composed_pipeline, "max-inflight-total=2",
                        "fused mux must apply the strictest public mux-wide admission limit");
+      const auto composed_mla_begin = composed_pipeline.find("neatprocessmla");
+      require(composed_mla_begin != std::string::npos,
+              "actual composed fused graph must retain ProcessMLA");
+      const auto composed_mla_end = composed_pipeline.find('!', composed_mla_begin);
+      const std::string composed_mla_segment = composed_pipeline.substr(
+          composed_mla_begin,
+          composed_mla_end == std::string::npos ? std::string::npos
+                                                : composed_mla_end - composed_mla_begin);
+      require_contains(composed_mla_segment, "num-buffers=4",
+                       "fused queue_depth=1 must preserve the model-authored MLA depth");
+      require(composed_mla_segment.find("num-buffers=1") == std::string::npos,
+              "fused queue_depth=1 must not become the ProcessMLA depth");
       const std::string composed_queue = "max-size-buffers=3 max-size-bytes=0 max-size-time=0";
       require(count_occurrences(composed_pipeline, composed_queue) == 3U,
               "actual composed fused graph must render the three selected stage queues");

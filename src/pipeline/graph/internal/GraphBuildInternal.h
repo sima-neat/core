@@ -77,6 +77,17 @@ std::string session_build_async_queue2_fragment(int requested_depth = 0,
                                                 std::string_view element_name = {});
 std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
                                                               const GraphOptions* sess_opt);
+// Final assembled-pipeline pass. This is the only place allowed to select the
+// producer-owned CPU visibility boundary because adjacent stages may be
+// rendered by distinct Nodes.
+std::string session_build_select_terminal_objectdecode_cpu_visibility(
+    std::string pipeline);
+// Propagate an authored producer lane window to its immediate terminal
+// consumer. Both endpoints opt in by rendering `num-buffers`; the producer is
+// selected by its CPU-visible handoff, so no consumer factory/plugin name is
+// encoded here.
+std::string session_build_propagate_terminal_consumer_lane_window(
+    std::string pipeline);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,

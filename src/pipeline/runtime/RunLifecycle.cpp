@@ -264,16 +264,19 @@ void runtime::RunCore::close() {
   if (pipeline_internal::env_bool("SIMA_PIPELINE_TEARDOWN_DEBUG", false)) {
     std::printf("[DBG] Run::close: teardown\n");
   }
+  const int drain_ms = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_BEFORE_TEARDOWN_MS", 1500);
+  const int drain_min_outputs = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_MIN_OUTPUTS", 1);
+  if (drain_ms > 0 && st->pipeline.supports_pull && !st->pipeline.stream.can_push() &&
+      st->outputs_pulled.load(std::memory_order_relaxed) <= drain_min_outputs) {
+    // EOS must reach stateful decoder/encoder elements while the pipeline is
+    // still running.  Stopping first destroys their channels and turns the
+    // normal live-source close into forced command cancellation.
+    st->pipeline.stream.drain_before_teardown(drain_ms);
+  }
   stop();
   // A detached worker owns the close; leaking until it exits beats blocking the host.
   if (!run_core_closes_stream(st->stream_close_state.load(std::memory_order_acquire))) {
     return;
-  }
-  const int drain_ms = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_BEFORE_TEARDOWN_MS", 1500);
-  const int drain_min_outputs = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_MIN_OUTPUTS", 1);
-  if (drain_ms > 0 && st->pipeline.supports_pull &&
-      st->outputs_pulled.load(std::memory_order_relaxed) <= drain_min_outputs) {
-    st->pipeline.stream.drain_before_teardown(drain_ms);
   }
   if (st->diag_enabled && !st->diag_logged.exchange(true)) {
     auto log_diag = [&](auto& st_ref) {

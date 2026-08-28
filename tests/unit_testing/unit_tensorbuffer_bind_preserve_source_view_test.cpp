@@ -76,8 +76,11 @@ RUN_TEST(
                   &err),
               std::string("failed to build strided publish view: ") + err);
       require(view.tensors.size() == 1U, "publish view should expose one logical tensor");
-      require(view.tensors.front().physical_span_bytes == 16U,
-              "publish view should preserve non-dense physical span");
+      // The authoritative span is the last byte addressable through shape/strides, not the
+      // allocation's trailing row padding: (4 - 1) * 4 + (3 - 1) * 1 + 1 = 15 bytes.
+      constexpr std::size_t kAddressedSpanBytes = 15U;
+      require(view.tensors.front().physical_span_bytes == kAddressedSpanBytes,
+              "publish view should preserve the exact non-dense addressed span");
 
       simaai::gst::TensorBufferReadRequest request;
       request.stage_key = "detesscast_test";
@@ -98,15 +101,18 @@ RUN_TEST(
       const auto& binding = bindings.bindings.front();
       require(binding.data != nullptr,
               "preserve-source-view binding should materialize source-view bytes");
-      require(binding.size_bytes == 16U, "binding bytes should match the physical source span");
+      require(binding.size_bytes == kAddressedSpanBytes,
+              "binding bytes should match the physical source span");
       require(binding.tensor.size_bytes == 12U,
               "binding tensor logical bytes should remain semantic/logical");
       require(binding.span.logical_size_bytes == 12U,
               "resolved span should preserve logical byte size");
-      require(binding.span.physical_span_bytes == 16U,
+      require(binding.span.physical_span_bytes == kAddressedSpanBytes,
               "resolved span should preserve physical source span");
 
       const std::vector<std::uint8_t> bound_bytes(binding.data, binding.data + binding.size_bytes);
-      require(bound_bytes == parent_bytes,
-              "preserve-source-view binding should copy the authoritative parent span bytes");
+      const std::vector<std::uint8_t> expected_bytes(parent_bytes.begin(),
+                                                     parent_bytes.begin() + kAddressedSpanBytes);
+      require(bound_bytes == expected_bytes,
+              "preserve-source-view binding should copy the exact addressed source bytes");
     }));

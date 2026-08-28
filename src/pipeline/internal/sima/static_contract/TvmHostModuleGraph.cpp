@@ -37,9 +37,10 @@ std::optional<HostTensorTypeSpec> tensor_type(const Json& shapes, const Json& dt
   }
   HostTensorTypeSpec result;
   result.scalar = dtypes[entry].get<std::string>();
-  if (result.scalar != "int8" && result.scalar != "uint8" && result.scalar != "int16" &&
+  if (result.scalar != "bool" && result.scalar != "int8" && result.scalar != "uint8" && result.scalar != "int16" &&
       result.scalar != "uint16" && result.scalar != "int32" && result.scalar != "uint32" &&
-      result.scalar != "float16" && result.scalar != "bfloat16" && result.scalar != "float32") {
+      result.scalar != "int64" && result.scalar != "uint64" && result.scalar != "float16" &&
+      result.scalar != "bfloat16" && result.scalar != "float32" && result.scalar != "float64") {
     fail(error, "TVM graph tensor dtype is not registered");
     return std::nullopt;
   }

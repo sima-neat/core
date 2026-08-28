@@ -9,8 +9,10 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/SimaaiMemory.h"
+#include "simaai/neat/internal/dmabuf/DmaBuf.h"
 
 #include <gst/gst.h>
+#include <gst/allocators/gstdmabuf.h>
 
 #include <dlfcn.h>
 
@@ -28,6 +30,18 @@
 namespace simaai::neat::pipeline_internal {
 
 namespace {
+
+internal::dmabuf::CpuAccess dmabuf_cpu_access(MapMode mode) {
+  switch (mode) {
+  case MapMode::Read:
+    return internal::dmabuf::CpuAccess::Read;
+  case MapMode::Write:
+    return internal::dmabuf::CpuAccess::Write;
+  case MapMode::ReadWrite:
+    return internal::dmabuf::CpuAccess::ReadWrite;
+  }
+  return internal::dmabuf::CpuAccess::ReadWrite;
+}
 
 struct CompositeHolder {
   std::shared_ptr<void> primary;
@@ -786,6 +800,67 @@ make_gst_sample_storage_impl(GstSample* sample,
   storage->sima_segments = (cached_segments && !cached_segments->empty())
                                ? *cached_segments
                                : extract_runtime_segments_from_buffer(buffer);
+
+  /*
+   * Standard DMA-BUF memory is the shared codec/CVU/MLA/A65 transport.  Map it
+   * through the existing DmaBufView authority so the actual CPU access is
+   * bracketed by DMA_BUF_IOCTL_SYNC START/END.  A raw GstDmaBufAllocator mmap
+   * has no ownership transition and can return stale decoder pixels from a
+   * recycled pool slot.  Device-only consumers never invoke this map function
+   * and therefore pay no CPU synchronization cost.
+   */
+  if (gst_buffer_n_memory(buffer) == 1U) {
+    GstMemory* memory = gst_buffer_peek_memory(buffer, 0U);
+    if (memory && gst_is_dmabuf_memory(memory)) {
+      struct DmaBufMapState {
+        std::mutex mutex;
+        std::optional<internal::dmabuf::CpuMapping> mapping;
+      };
+      auto dma_state = std::make_shared<DmaBufMapState>();
+      auto dma_holder = storage->holder;
+      storage->map_fn = [dma_holder, dma_state](MapMode mode) {
+        std::lock_guard<std::mutex> lock(dma_state->mutex);
+        if (dma_state->mapping.has_value()) {
+          return Mapping{};
+        }
+        auto* retained_sample = static_cast<GstSample*>(dma_holder.get());
+        GstBuffer* retained_buffer =
+            retained_sample && GST_IS_SAMPLE(retained_sample)
+                ? gst_sample_get_buffer(retained_sample)
+                : nullptr;
+        if (!retained_buffer || gst_buffer_n_memory(retained_buffer) != 1U) {
+          return Mapping{};
+        }
+
+        internal::dmabuf::Error error;
+        auto view = internal::dmabuf::DmaBufView::fromGstMemory(
+            gst_buffer_peek_memory(retained_buffer, 0U), &error);
+        if (!view) {
+          return Mapping{};
+        }
+        auto mapped = view->map(dmabuf_cpu_access(mode), &error);
+        if (!mapped) {
+          return Mapping{};
+        }
+        dma_state->mapping.emplace(std::move(*mapped));
+
+        Mapping result;
+        result.data = dma_state->mapping->data();
+        result.size_bytes = dma_state->mapping->size();
+        result.keepalive = dma_holder;
+        result.unmap = [dma_state]() {
+          std::lock_guard<std::mutex> lock(dma_state->mutex);
+          if (dma_state->mapping.has_value()) {
+            (void)dma_state->mapping->finish();
+            dma_state->mapping.reset();
+          }
+        };
+        return result;
+      };
+      return storage;
+    }
+  }
+
   const std::uint64_t mem_flags = mem_info.mem_flags;
   const std::uint64_t target_flags = mem_info.target_flags;
   storage->map_fn = [holder, map_state, mem_flags, target_flags](simaai::neat::MapMode mode) {

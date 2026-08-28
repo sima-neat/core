@@ -57,6 +57,14 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            stage.physical_outputs.push_back(output);
            stage.frame_arena_size_bytes = 4U * 1024U * 1024U;
            stage.frame_arena_role = FrameArenaRole::ReuseInput;
+           stage.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Dms;
+           stage.frame_arena_provenance =
+               static_contract::ArenaAllocationProvenance::CoreAllocated;
+           stage.frame_arena_required_device_access =
+               static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::CpuA65) |
+               static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::Mla);
+           stage.frame_arena_escape_policy =
+               static_contract::ArenaEscapePolicy::CpuMappablePublic;
            alignment_manifest.stages.push_back(std::move(stage));
 
            std::string parse_error;
@@ -76,6 +84,27 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            require(parsed->stages[0].frame_arena_size_bytes ==
                            4U * 1024U * 1024U &&
                        parsed->stages[0].frame_arena_role ==
-                           FrameArenaRole::ReuseInput,
-                   "frame-arena size/role must survive JSON round-trip");
+                           FrameArenaRole::ReuseInput &&
+                       parsed->stages[0].frame_arena_storage_domain ==
+                           static_contract::ArenaStorageDomain::Dms &&
+                       parsed->stages[0].frame_arena_provenance ==
+                           static_contract::ArenaAllocationProvenance::CoreAllocated &&
+                       parsed->stages[0].frame_arena_required_device_access == 3U &&
+                       parsed->stages[0].frame_arena_escape_policy ==
+                           static_contract::ArenaEscapePolicy::CpuMappablePublic,
+                   "frame-arena placement must survive JSON round-trip");
+
+           auto adopted_manifest = alignment_manifest;
+           adopted_manifest.stages[0].frame_arena_storage_domain =
+               static_contract::ArenaStorageDomain::Unknown;
+           adopted_manifest.stages[0].frame_arena_provenance =
+               static_contract::ArenaAllocationProvenance::ExternalAdopted;
+           const auto adopted = parse_manifest_json(
+               serialize_manifest_json(adopted_manifest), &parse_error);
+           require(adopted.has_value() &&
+                       adopted->stages[0].frame_arena_storage_domain ==
+                           static_contract::ArenaStorageDomain::Unknown &&
+                       adopted->stages[0].frame_arena_provenance ==
+                           static_contract::ArenaAllocationProvenance::ExternalAdopted,
+                   "an adopted reuse arena must remain unknown until dynamic driver admission");
          }));

@@ -30,6 +30,7 @@
 #include "pipeline/internal/sima/DTypeSource.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/SuperPointContract.h"
+#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include <ev/ev_tensor_abi.h>
 
 #include <cstdint>
@@ -252,6 +253,7 @@ struct ProcessCvuStagePayload {
   std::uint32_t binding_schema_version = 0U;
   std::uint32_t supported_placement_mask = 0U;
   std::uint32_t allowed_frame_patch_mask = 0U;
+  std::uint32_t maximum_members = 0U;
   std::vector<std::int64_t> slice_shape_raw;
   std::vector<std::int64_t> out_shape_raw;
   bool has_align_c16 = false;
@@ -383,11 +385,13 @@ struct ProcessCvuStagePayload {
 /// ProcessMla stage payload — model path + dispatcher fan-out.
 struct ProcessMlaStagePayload {
   std::string model_path;                             ///< Path to the MLA model artifact.
+  std::uint64_t executable_bytes = 0;                 ///< Bytes hashed at admission.
+  std::string executable_sha256;                      ///< Exact admitted ELF digest.
   int batch_size = 0;                                 ///< Effective batch size at this stage.
   int batch_sz_model = 0;                             ///< Batch size baked into the model.
   std::vector<std::string> dispatcher_output_names;   ///< Per-dispatcher-output names.
   std::vector<std::uint64_t> dispatcher_output_sizes; ///< Per-dispatcher-output byte sizes.
-  bool dmabuf_plan_contract = false; ///< Strict MPK+ELF plan was proved by Core.
+  bool dmabuf_plan_contract = false; ///< Strict physical execution plan was proved by Core.
 };
 
 /// BoxDecode stage payload — decode flavor, NMS / topK params, slice geometry.
@@ -443,6 +447,13 @@ struct StageStaticSpec {
   // ReuseInput stage retains that standard GstBuffer/GstMemory ownership.
   std::uint64_t frame_arena_size_bytes = 0;
   FrameArenaRole frame_arena_role = FrameArenaRole::None;
+  static_contract::ArenaStorageDomain frame_arena_storage_domain =
+      static_contract::ArenaStorageDomain::Unknown;
+  static_contract::ArenaAllocationProvenance frame_arena_provenance =
+      static_contract::ArenaAllocationProvenance::Unknown;
+  std::uint32_t frame_arena_required_device_access = 0U;
+  static_contract::ArenaEscapePolicy frame_arena_escape_policy =
+      static_contract::ArenaEscapePolicy::InternalOnly;
   // Mirrors CompiledRuntimeContract::consumer_keeps_distinct_physical_inputs.
   // Plumbed from the upstream MLA contract through ContractRender so that
   // publish-contract construction can stamp TensorBufferPublishContract::

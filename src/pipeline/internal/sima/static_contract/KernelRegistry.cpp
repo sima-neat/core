@@ -11,7 +11,7 @@ constexpr std::size_t kMany = std::numeric_limits<std::size_t>::max();
 
 // `cast_transform` is the frozen legacy spelling. `cast` is a separately
 // registered newer spelling; lookup never derives one from the other.
-constexpr std::array<KernelDescriptor, 25> kRegistry = {{
+constexpr std::array<KernelDescriptor, 26> kRegistry = {{
     {"2.0.0", "EV74", "cast_transform", OpKind::Cast, 1, 1, 1, 1},
     {"2.0.0", "EV74", "cast", OpKind::Cast, 1, 1, 1, 1},
     {"2.0.0", "EV74", "quantization_transform", OpKind::Quantize, 1, 1, 1, 1},
@@ -33,6 +33,7 @@ constexpr std::array<KernelDescriptor, 25> kRegistry = {{
     {"2.1.0", "EV74", "unpack_transform", OpKind::Unpack, 1, 1, 1, kMany},
     {"2.1.0", "EV74", "slice_transform", OpKind::Slice, 1, 1, 1, 1},
     {"2.1.0", "EV74", "reshape_transform", OpKind::Reshape, 1, 1, 1, 1},
+    {"2.1.0", "EV74", "batch_flatten_transform", OpKind::Reshape, 1, 1, 1, 1},
     {"2.1.0", "EV74", "detessellation_transform", OpKind::Detessellate, 1, 1, 1, 1},
     {"2.1.0", "EV74", "dequantization_transform", OpKind::Dequantize, 1, 1, 1, 1},
     {"2.1.0", "A65", "", OpKind::HostTvm, 1, kMany, 1, kMany},

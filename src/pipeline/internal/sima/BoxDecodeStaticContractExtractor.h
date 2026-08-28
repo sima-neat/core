@@ -135,6 +135,8 @@ struct ModelManagedRouteFlags {
   bool include_pre_stage =
       false; ///< Synthesize at least one pre-stage even if individually disabled.
   bool boxdecode_selected = false; ///< Indicates a box-decode terminal is part of the route.
+  bool terminal_consumer_owns_tensor_tail =
+      false; ///< Registered terminal consumes its tensor transforms from producer memory.
 };
 
 /// Derive the model-managed route flags from a fully-built `BoxDecodeStaticContract`.
@@ -145,11 +147,17 @@ model_route_flags_from_boxdecode_contract(const BoxDecodeStaticContract& contrac
 ModelManagedRouteFlags
 model_route_flags_from_boxdecode_semantics(const ModelBoxdecodeSemantics& semantics);
 
+/// Combine planner-owned pre-route fields with exact MPK-owned BoxDecode terminal fields.
+ModelManagedRouteFlags reconcile_exact_boxdecode_route_flags(
+    const ModelManagedRouteFlags& planner_flags,
+    const ModelManagedRouteFlags& exact_boxdecode_flags);
+
 /**
  * @brief Resolve route flags by inspecting the MPK contract.
  *
  * @param contract       Parsed MPK contract.
- * @param terminal_stage Optional explicit terminal stage; defaults to the auto-detected one.
+ * @param terminal_stage Exact authored terminal stage for a model-owned route, or null for an
+ *                       external/synthesized BoxDecode whose selected lineages end at true leaves.
  * @param error_message  Optional out-parameter populated on failure.
  * @return Resolved flags, or `std::nullopt` if the MPK lacks the required metadata.
  */

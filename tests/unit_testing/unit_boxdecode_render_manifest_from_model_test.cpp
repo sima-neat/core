@@ -148,11 +148,17 @@ RUN_TEST(
       const std::string tar_path = fixture.tar_path;
 
       Model::Options base_opt;
-      base_opt.preprocess.kind = InputKind::Image;
-      base_opt.preprocess.enable = AutoFlag::On;
-      base_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+      // This test renders an infer+BoxDecode fragment. Keep ingress as an
+      // already-prepared tensor so it does not claim graph-200 absorption
+      // without a compiler-authored physical graph-200 plan.
+      base_opt.preprocess.kind = InputKind::Tensor;
+      base_opt.preprocess.enable = AutoFlag::Off;
 
       Model default_model(tar_path, base_opt);
+      sima_test::require_exact_yolo_v9c_seg_parsed_contract(
+          internal::ModelAccess::pack(default_model));
+      require(!default_model.resolved_preprocess_plan().enabled,
+              "tensor/infer-only render fixture must keep user preprocess disabled");
       require(!internal::ModelAccess::has_model_managed_stage(default_model,
                                                               internal::StageNodeKind::BoxDecode),
               "default Model route must not auto-select BoxDecode from inferred MPK topology");
@@ -213,12 +219,50 @@ RUN_TEST(
               "rendered boxdecode stage should preserve compiled element name");
       require(rendered_box->logical_stage_id == boxdecode_stage->logical_stage_id,
               "rendered boxdecode stage should preserve compiled logical stage id");
-      require(rendered_box->logical_inputs.size() ==
-                  boxdecode_stage->boxdecode->runtime_contract.logical_inputs.size(),
-              "rendered boxdecode stage should preserve logical input count");
-      require(rendered_box->input_bindings.size() ==
-                  boxdecode_stage->boxdecode->runtime_contract.input_bindings.size(),
-              "rendered boxdecode stage should preserve binding count");
+      require(boxdecode_stage->boxdecode->runtime_contract.logical_inputs.size() == 10U &&
+                  boxdecode_stage->boxdecode->runtime_contract.input_bindings.size() == 10U,
+              "compiled boxdecode stage must preserve all ten segmentation heads and bindings");
+      require(rendered_box->logical_inputs.size() == 10U &&
+                  rendered_box->input_bindings.size() == 10U,
+              "rendered boxdecode stage must preserve all ten segmentation heads and bindings");
+      for (std::size_t index = 0; index < 10U; ++index) {
+        const auto& compiled_logical =
+            boxdecode_stage->boxdecode->runtime_contract.logical_inputs[index];
+        const auto& rendered_logical = rendered_box->logical_inputs[index];
+        const auto& compiled_binding =
+            boxdecode_stage->boxdecode->runtime_contract.input_bindings[index];
+        const auto& rendered_binding = rendered_box->input_bindings[index];
+        require(compiled_logical.logical_index == static_cast<int>(index) &&
+                    compiled_logical.backend_input_index == static_cast<int>(index) &&
+                    rendered_logical.logical_index == compiled_logical.logical_index &&
+                    rendered_logical.backend_input_index == compiled_logical.backend_input_index &&
+                    rendered_logical.logical_name == compiled_logical.logical_name,
+                "compiled and rendered segmentation logical inputs must preserve exact 0..9 "
+                "order and identity");
+        // All ten logical members travel in one grouped TensorBuffer/TensorList
+        // carrier on consumer sink pad 0. The exact member order is carried by
+        // local_logical_input_index and the producer logical output/slot.
+        require(compiled_binding.sink_pad_index == 0 && rendered_binding.sink_pad_index == 0 &&
+                    compiled_binding.local_logical_input_index == static_cast<int>(index) &&
+                    rendered_binding.sink_pad_index == compiled_binding.sink_pad_index &&
+                    rendered_binding.local_logical_input_index ==
+                        compiled_binding.local_logical_input_index &&
+                    compiled_binding.src_logical_output_index == static_cast<int>(index) &&
+                    rendered_binding.src_logical_output_index ==
+                        compiled_binding.src_logical_output_index &&
+                    compiled_binding.src_output_slot == static_cast<int>(index) &&
+                    rendered_binding.src_output_slot == compiled_binding.src_output_slot &&
+                    rendered_binding.src_physical_output_index ==
+                        compiled_binding.src_physical_output_index &&
+                    rendered_binding.src_physical_byte_offset ==
+                        compiled_binding.src_physical_byte_offset &&
+                    rendered_binding.src_physical_size_bytes ==
+                        compiled_binding.src_physical_size_bytes &&
+                    rendered_binding.source_segment_name ==
+                        compiled_binding.source_segment_name,
+                "compiled and rendered segmentation bindings must preserve exact 0..9 order "
+                "and source identity");
+      }
       require(!rendered_box->input_bindings.empty(),
               "rendered boxdecode stage should expose upstream MLA bindings");
       require(!rendered_box->input_bindings.front().source_segment_name.empty(),

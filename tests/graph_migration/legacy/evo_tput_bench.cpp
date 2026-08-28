@@ -6,19 +6,27 @@
 #include "pipeline/runtime/RunInternal.h"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <tuple>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 namespace neat = simaai::neat;
 
@@ -67,6 +75,83 @@ neat::Tensor make_tensor(const neat::TensorSpec& spec, float fill) {
   std::vector<float> data(element_count(shape), fill);
   return neat::Tensor::from_vector(data, shape, neat::TensorMemory::EV74);
 }
+std::size_t checked_static_element_count(const std::vector<int64_t>& shape) {
+  std::size_t count = 1U;
+  for (const int64_t dim : shape) {
+    if (dim <= 0) {
+      throw std::runtime_error("--input-fp32 requires a fully static positive input shape");
+    }
+    const auto extent = static_cast<std::size_t>(dim);
+    if (count > std::numeric_limits<std::size_t>::max() / extent) {
+      throw std::runtime_error("--input-fp32 shape element count overflows size_t");
+    }
+    count *= extent;
+  }
+  return count;
+}
+neat::Tensor load_fp32_tensor(const std::string& path, const neat::TensorSpec& spec) {
+  if (!spec.dtypes.empty() &&
+      std::find(spec.dtypes.begin(), spec.dtypes.end(), neat::TensorDType::Float32) ==
+          spec.dtypes.end()) {
+    throw std::runtime_error("--input-fp32 is incompatible with the model input dtype contract");
+  }
+  const std::vector<int64_t> shape =
+      spec.shape.empty() ? std::vector<int64_t>{1} : spec.shape;
+  const std::size_t elements = checked_static_element_count(shape);
+  if (elements > std::numeric_limits<std::size_t>::max() / sizeof(float)) {
+    throw std::runtime_error("--input-fp32 byte count overflows size_t");
+  }
+  const std::size_t expected_bytes = elements * sizeof(float);
+  std::error_code ec;
+  const std::uintmax_t actual_bytes = std::filesystem::file_size(path, ec);
+  if (ec) {
+    throw std::runtime_error("failed to stat --input-fp32 file '" + path + "': " +
+                             ec.message());
+  }
+  if (actual_bytes != expected_bytes) {
+    throw std::runtime_error("--input-fp32 file size mismatch: expected " +
+                             std::to_string(expected_bytes) + " bytes, got " +
+                             std::to_string(actual_bytes));
+  }
+  if constexpr (std::endian::native != std::endian::little) {
+    throw std::runtime_error("--input-fp32 supports exact little-endian FP32 files only");
+  }
+  if (expected_bytes > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
+    throw std::runtime_error("--input-fp32 file is too large for std::ifstream");
+  }
+  std::vector<float> data(elements);
+  std::ifstream input(path, std::ios::binary);
+  if (!input.is_open()) {
+    throw std::runtime_error("failed to open --input-fp32 file '" + path + "'");
+  }
+  input.read(reinterpret_cast<char*>(data.data()),
+             static_cast<std::streamsize>(expected_bytes));
+  if (!input || input.gcount() != static_cast<std::streamsize>(expected_bytes)) {
+    throw std::runtime_error("failed to read exact --input-fp32 bytes from '" + path + "'");
+  }
+  return neat::Tensor::from_vector(data, shape, neat::TensorMemory::EV74);
+}
+const char* dtype_token(neat::TensorDType dtype) {
+  switch (dtype) {
+  case neat::TensorDType::UInt8:
+    return "uint8";
+  case neat::TensorDType::Int8:
+    return "int8";
+  case neat::TensorDType::UInt16:
+    return "uint16";
+  case neat::TensorDType::Int16:
+    return "int16";
+  case neat::TensorDType::Int32:
+    return "int32";
+  case neat::TensorDType::BFloat16:
+    return "bfloat16";
+  case neat::TensorDType::Float32:
+    return "float32";
+  case neat::TensorDType::Float64:
+    return "float64";
+  }
+  throw std::runtime_error("cannot serialize unknown TensorDType");
+}
 double percentile_ms(std::vector<double> samples, double p) {
   if (samples.empty())
     return 0.0;
@@ -81,6 +166,11 @@ std::string base_name(const std::string& path) {
   const auto pos = path.find_last_of('/');
   return pos == std::string::npos ? path : path.substr(pos + 1);
 }
+bool no_external_stage(std::string token) {
+  std::transform(token.begin(), token.end(), token.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  return token == "NONE" || token == "OFF";
+}
 std::uint64_t fnv1a64_append(std::uint64_t hash, const void* data,
                              std::size_t size) {
   constexpr std::uint64_t kPrime = 1099511628211ULL;
@@ -90,6 +180,93 @@ std::uint64_t fnv1a64_append(std::uint64_t hash, const void* data,
     hash *= kPrime;
   }
   return hash;
+}
+std::string hex64(std::uint64_t value) {
+  std::ostringstream out;
+  out << std::hex << std::setw(16) << std::setfill('0') << value;
+  return out.str();
+}
+void persist_public_outputs(const std::filesystem::path& output_dir,
+                            const std::string& input_fp32,
+                            const std::vector<int64_t>& input_shape,
+                            const neat::TensorList& outputs,
+                            const std::vector<std::vector<std::uint8_t>>& output_bytes,
+                            const std::vector<std::uint64_t>& output_hashes,
+                            std::uint64_t combined_hash) {
+  std::error_code ec;
+  if (std::filesystem::exists(output_dir, ec)) {
+    throw std::runtime_error("--output-dir already exists: " + output_dir.string());
+  }
+  if (ec) {
+    throw std::runtime_error("failed to inspect --output-dir '" + output_dir.string() + "': " +
+                             ec.message());
+  }
+  if (!std::filesystem::create_directories(output_dir, ec) || ec) {
+    throw std::runtime_error("failed to create --output-dir '" + output_dir.string() + "': " +
+                             ec.message());
+  }
+
+  nlohmann::json manifest{
+      {"schema", "sima.neat.raw-public-outputs"},
+      {"version", 1},
+      {"byte_order", "little"},
+      {"storage", "dense-row-major"},
+      {"input",
+       {{"source", input_fp32.empty() ? "deterministic-fill" : "fp32-raw-file"},
+        {"file", input_fp32},
+        {"dtype", "float32"},
+        {"shape", input_shape},
+        {"bytes", checked_static_element_count(input_shape) * sizeof(float)}}},
+      {"combined_fnv1a64", hex64(combined_hash)},
+      {"outputs", nlohmann::json::array()},
+  };
+
+  for (std::size_t index = 0; index < outputs.size(); ++index) {
+    std::ostringstream filename;
+    filename << "output-" << std::setw(3) << std::setfill('0') << index << ".raw";
+    const std::filesystem::path output_path = output_dir / filename.str();
+    std::ofstream raw(output_path, std::ios::binary | std::ios::trunc);
+    if (!raw.is_open()) {
+      throw std::runtime_error("failed to create raw public output '" + output_path.string() +
+                               "'");
+    }
+    const auto& bytes = output_bytes[index];
+    if (!bytes.empty()) {
+      if (bytes.size() >
+          static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
+        throw std::runtime_error("raw public output is too large for std::ofstream");
+      }
+      raw.write(reinterpret_cast<const char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size()));
+    }
+    if (!raw.good()) {
+      throw std::runtime_error("failed to write raw public output '" + output_path.string() +
+                               "'");
+    }
+    const auto& tensor = outputs[index];
+    manifest["outputs"].push_back(
+        {{"ordinal", index},
+         {"file", filename.str()},
+         {"dtype", dtype_token(tensor.dtype)},
+         {"shape", tensor.shape},
+         {"bytes", bytes.size()},
+         {"fnv1a64", hex64(output_hashes[index])},
+         {"name", tensor.route.name},
+         {"logical_index", tensor.route.logical_index},
+         {"backend_name", tensor.route.backend_name}});
+  }
+
+  const std::filesystem::path manifest_path = output_dir / "manifest.json";
+  std::ofstream manifest_file(manifest_path, std::ios::binary | std::ios::trunc);
+  if (!manifest_file.is_open()) {
+    throw std::runtime_error("failed to create output manifest '" + manifest_path.string() +
+                             "'");
+  }
+  manifest_file << manifest.dump(2) << '\n';
+  if (!manifest_file.good()) {
+    throw std::runtime_error("failed to write output manifest '" + manifest_path.string() +
+                             "'");
+  }
 }
 } // namespace
 
@@ -107,6 +284,9 @@ int main(int argc, char** argv) {
   const bool verbose = bool_arg(argc, argv, "--verbose", false);
   const bool correctness_hash =
       bool_arg(argc, argv, "--correctness-hash", false);
+  const std::string input_fp32 = arg_value(argc, argv, "--input-fp32");
+  const std::string output_dir = arg_value(argc, argv, "--output-dir");
+  const std::string arena_dump = arg_value(argc, argv, "--arena-dump");
   const int early_stop_after =
       std::max(0, int_arg(argc, argv, "--early-stop-after", 0));
   const int early_stop_delay_ms =
@@ -115,10 +295,12 @@ int main(int argc, char** argv) {
       arg_value(argc, argv, "--mode").empty() ? "sync" : arg_value(argc, argv, "--mode");
   const int inflight = std::max(1, int_arg(argc, argv, "--inflight", 4));
   if (model_path.empty() || pre.empty() || post.empty() || measured <= 0 || warmup < 0) {
-    std::cerr << "Usage: evo_tput_bench --model <path> --pre <A65|EV74> --post <A65|EV74> "
+    std::cerr << "Usage: evo_tput_bench --model <path> --pre <A65|EV74|NONE> "
+                 "--post <A65|EV74|NONE> "
                  "[--warmup N] [--measured N] [--timeout-ms MS] [--cleanup 0|1] "
                  "[--mode sync|async] [--inflight N] [--mla-only 0|1] [--verbose 0|1] "
-                 "[--correctness-hash 0|1]\n";
+                 "[--correctness-hash 0|1] [--input-fp32 PATH] [--output-dir DIR] "
+                 "[--arena-dump PATH]\n";
     return 2;
   }
   if (mode != "sync" && mode != "async") {
@@ -128,9 +310,18 @@ int main(int argc, char** argv) {
   try {
     neat::Model::Options opt;
     opt.preprocess.kind = neat::InputKind::Tensor;
-    opt.preprocess.enable = neat::AutoFlag::On;
-    opt.processcvu.pre_run_target = pre;
-    opt.processcvu.post_run_target = post;
+    // A compiler-authored full ModelExecutionPlan may consume the public FP32
+    // tensor directly (RF-DETR is the qualification case). NONE means exactly
+    // that application boundary: do not invent a second pre/post adapter
+    // around the model-owned MLA/A65/CVU command schedule.
+    opt.preprocess.enable = no_external_stage(pre) ? neat::AutoFlag::Off
+                                                    : neat::AutoFlag::On;
+    if (!no_external_stage(pre)) {
+      opt.processcvu.pre_run_target = pre;
+    }
+    if (!no_external_stage(post)) {
+      opt.processcvu.post_run_target = post;
+    }
     opt.inference_terminal.mla_only = mla_only;
     if (verbose) {
       opt.verbose.level = neat::VerbosityLevel::Verbose;
@@ -147,6 +338,9 @@ int main(int argc, char** argv) {
               << " inflight=" << inflight << " mla_only=" << (mla_only ? 1 : 0)
               << " verbose=" << (verbose ? 1 : 0)
               << " correctness_hash=" << (correctness_hash ? 1 : 0)
+              << " input_fp32=" << (input_fp32.empty() ? "<generated>" : input_fp32)
+              << " output_dir=" << (output_dir.empty() ? "<none>" : output_dir)
+              << " arena_dump=" << (arena_dump.empty() ? "<none>" : arena_dump)
               << " early_stop_after=" << early_stop_after
               << " early_stop_delay_ms=" << early_stop_delay_ms << "\n"
               << std::flush;
@@ -162,10 +356,19 @@ int main(int argc, char** argv) {
     const auto specs = model.input_specs();
     inputs.reserve(specs.size());
     std::size_t elems = 0;
-    for (std::size_t i = 0; i < specs.size(); ++i) {
-      auto t = make_tensor(specs[i], 0.01f * static_cast<float>(i + 1));
-      elems += element_count(specs[i].shape.empty() ? std::vector<int64_t>{1} : specs[i].shape);
+    if (!input_fp32.empty()) {
+      if (specs.size() != 1U) {
+        throw std::runtime_error("--input-fp32 requires exactly one public model input");
+      }
+      auto t = load_fp32_tensor(input_fp32, specs.front());
+      elems = checked_static_element_count(t.shape);
       inputs.push_back(std::move(t));
+    } else {
+      for (std::size_t i = 0; i < specs.size(); ++i) {
+        auto t = make_tensor(specs[i], 0.01f * static_cast<float>(i + 1));
+        elems += element_count(specs[i].shape.empty() ? std::vector<int64_t>{1} : specs[i].shape);
+        inputs.push_back(std::move(t));
+      }
     }
     std::cout << "EVO_TPUT_INPUTS count=" << inputs.size() << " float_elements=" << elems << "\n"
               << std::flush;
@@ -173,6 +376,9 @@ int main(int argc, char** argv) {
     const auto build0 = std::chrono::steady_clock::now();
     neat::RunOptions run_opt;
     run_opt.startup_preflight = startup_preflight;
+    if (!arena_dump.empty()) {
+      run_opt.output_memory = neat::OutputMemory::ZeroCopy;
+    }
     auto runner = model.build(inputs, neat::Model::RouteOptions{}, run_opt);
     const auto build1 = std::chrono::steady_clock::now();
     if (!runner) {
@@ -195,10 +401,10 @@ int main(int argc, char** argv) {
               << " seconds=" << std::chrono::duration<double>(warm1 - warm0).count() << "\n"
               << std::flush;
 
-    if (correctness_hash) {
+    if (correctness_hash || !output_dir.empty() || !arena_dump.empty()) {
       auto outputs = runner.run(inputs, timeout_ms);
       if (outputs.empty()) {
-        std::cerr << "EVO_TPUT_FAIL stage=correctness_hash reason=no_outputs\n";
+        std::cerr << "EVO_TPUT_FAIL stage=output_capture reason=no_outputs\n";
         return 10;
       }
       constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;
@@ -206,11 +412,14 @@ int main(int argc, char** argv) {
       std::size_t total_bytes = 0U;
       std::ostringstream tensor_hashes;
       tensor_hashes << std::hex << std::setfill('0');
+      std::vector<std::vector<std::uint8_t>> captured_bytes;
+      std::vector<std::uint64_t> captured_hashes;
+      captured_bytes.reserve(outputs.size());
+      captured_hashes.reserve(outputs.size());
       for (std::size_t i = 0; i < outputs.size(); ++i) {
-        const std::vector<std::uint8_t> bytes =
-            outputs[i].copy_dense_bytes_tight();
+        std::vector<std::uint8_t> bytes = outputs[i].copy_dense_bytes_tight();
         if (bytes.empty() && outputs[i].dense_bytes_tight() != 0U) {
-          std::cerr << "EVO_TPUT_FAIL stage=correctness_hash tensor=" << i
+          std::cerr << "EVO_TPUT_FAIL stage=output_capture tensor=" << i
                     << " reason=copy_failed\n";
           return 11;
         }
@@ -224,13 +433,67 @@ int main(int argc, char** argv) {
           tensor_hashes << ',';
         }
         tensor_hashes << std::setw(16) << tensor_hash;
+        captured_hashes.push_back(tensor_hash);
+        captured_bytes.push_back(std::move(bytes));
+      }
+      if (!arena_dump.empty()) {
+        if (!outputs.front().storage) {
+          throw std::runtime_error("--arena-dump requires zero-copy output storage");
+        }
+        for (std::size_t i = 0; i < outputs.size(); ++i) {
+          if (!outputs[i].storage) {
+            throw std::runtime_error("--arena-dump output has no zero-copy storage");
+          }
+          std::cout << "EVO_ARENA_OUTPUT ordinal=" << i
+                    << " storage_bytes=" << outputs[i].storage->size_bytes
+                    << " byte_offset=" << outputs[i].byte_offset
+                    << " physical_byte_offset=" << outputs[i].route.physical_byte_offset
+                    << " memory_index=" << outputs[i].route.memory_index << "\n";
+        }
+        std::error_code ec;
+        if (std::filesystem::exists(arena_dump, ec)) {
+          throw std::runtime_error("--arena-dump path already exists: " + arena_dump);
+        }
+        if (ec) {
+          throw std::runtime_error("failed to inspect --arena-dump path '" + arena_dump +
+                                   "': " + ec.message());
+        }
+        const neat::Mapping arena = outputs.front().storage->map(neat::MapMode::Read);
+        if (!arena.data || arena.size_bytes == 0U ||
+            arena.size_bytes != outputs.front().storage->size_bytes) {
+          throw std::runtime_error("--arena-dump could not map the exact output carrier");
+        }
+        if (arena.size_bytes >
+            static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
+          throw std::runtime_error("--arena-dump carrier is too large for std::ofstream");
+        }
+        std::ofstream raw(arena_dump, std::ios::binary | std::ios::trunc);
+        if (!raw.is_open()) {
+          throw std::runtime_error("failed to create --arena-dump file '" + arena_dump + "'");
+        }
+        raw.write(static_cast<const char*>(arena.data),
+                  static_cast<std::streamsize>(arena.size_bytes));
+        if (!raw.good()) {
+          throw std::runtime_error("failed to write --arena-dump file '" + arena_dump + "'");
+        }
+        std::cout << "EVO_ARENA_DUMP status=PASS file=" << arena_dump
+                  << " bytes=" << arena.size_bytes << "\n";
+      }
+      if (!output_dir.empty()) {
+        persist_public_outputs(output_dir, input_fp32, inputs.front().shape, outputs,
+                               captured_bytes, captured_hashes, combined);
+        std::cout << "EVO_OUTPUT_DUMP status=PASS dir=" << output_dir
+                  << " outputs=" << outputs.size() << " bytes=" << total_bytes
+                  << " combined=" << hex64(combined) << "\n";
       }
       runner.close();
-      std::cout << "EVO_CORRECTNESS_HASH status=PASS pre=" << pre
-                << " post=" << post << " outputs=" << outputs.size()
-                << " bytes=" << total_bytes << " combined=" << std::hex
-                << std::setw(16) << std::setfill('0') << combined << std::dec
-                << " tensors=" << tensor_hashes.str() << "\n";
+      if (correctness_hash) {
+        std::cout << "EVO_CORRECTNESS_HASH status=PASS pre=" << pre
+                  << " post=" << post << " outputs=" << outputs.size()
+                  << " bytes=" << total_bytes << " combined=" << std::hex
+                  << std::setw(16) << std::setfill('0') << combined << std::dec
+                  << " tensors=" << tensor_hashes.str() << "\n";
+      }
       return 0;
     }
 

@@ -38,6 +38,7 @@ RUN_TEST(
           SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1;
       pre.processcvu.descriptor_contract_version = 1U;
       pre.processcvu.binding_schema_version = 1U;
+      pre.processcvu.maximum_members = 1U;
       pre.processcvu.supported_placement_mask =
           SIMA_PLUGIN_CVU_PLACEMENT_EV74;
       pre.processcvu.allowed_frame_patch_mask =
@@ -53,6 +54,14 @@ RUN_TEST(
       pre.processcvu.channel_stddev = {0.229, 0.224, 0.225};
       pre.frame_arena_size_bytes = 2U * 1024U * 1024U;
       pre.frame_arena_role = FrameArenaRole::Allocate;
+      pre.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Cma;
+      pre.frame_arena_provenance =
+          static_contract::ArenaAllocationProvenance::CoreAllocated;
+      pre.frame_arena_required_device_access =
+          static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::Ev74) |
+          static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::Mla);
+      pre.frame_arena_escape_policy =
+          static_contract::ArenaEscapePolicy::InternalOnly;
       pre.logical_inputs.push_back(LogicalInputStaticSpec{
           .logical_index = 0,
           .backend_input_index = 0,
@@ -181,6 +190,8 @@ RUN_TEST(
       mla.processmla.model_path = "/opt/models/model.bin";
       mla.processmla.batch_size = 1;
       mla.processmla.batch_sz_model = 1;
+      mla.elf_ifm_symbol_names = {"data.ifm.b0"};
+      mla.elf_ofm_symbol_names = {"data.ofm.b0"};
       manifest.stages.push_back(mla);
 
       std::string attach_error;
@@ -234,6 +245,7 @@ RUN_TEST(
                       SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1 &&
                   pre_stage->payload.processcvu.descriptor_contract_version == 1U &&
                   pre_stage->payload.processcvu.binding_schema_version == 1U &&
+                  pre_stage->payload.processcvu.maximum_members == 1U &&
                   pre_stage->payload.processcvu.supported_placement_mask ==
                       SIMA_PLUGIN_CVU_PLACEMENT_EV74 &&
                   pre_stage->payload.processcvu.allowed_frame_patch_mask ==
@@ -289,7 +301,16 @@ RUN_TEST(
               "pre stage physical output alignment mismatch");
       require(pre_stage->frame_arena_size_bytes == 2U * 1024U * 1024U &&
                   pre_stage->frame_arena_role ==
-                      SIMA_PLUGIN_FRAME_ARENA_ALLOCATE,
+                      SIMA_PLUGIN_FRAME_ARENA_ALLOCATE &&
+                  pre_stage->frame_arena_storage_domain ==
+                      SIMA_PLUGIN_FRAME_ARENA_STORAGE_CMA &&
+                  pre_stage->frame_arena_provenance ==
+                      SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_CORE_ALLOCATED &&
+                  pre_stage->frame_arena_required_device_access ==
+                      (SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74 |
+                       SIMA_PLUGIN_FRAME_ARENA_ACCESS_MLA) &&
+                  pre_stage->frame_arena_escape_policy ==
+                      SIMA_PLUGIN_FRAME_ARENA_ESCAPE_INTERNAL_ONLY,
               "pre stage frame-arena ownership contract mismatch");
       require(pre_stage->logical_outputs[0].backend_name != nullptr &&
                   std::string(pre_stage->logical_outputs[0].backend_name) == "output_rgb_image",
@@ -349,6 +370,16 @@ RUN_TEST(
       require(mla_stage->payload.processmla.batch_size == 1, "mla payload batch_size mismatch");
       require(mla_stage->payload.processmla.batch_sz_model == 1,
               "mla payload batch_sz_model mismatch");
+      require(mla_stage->payload.processmla.elf_ifm_symbol_names_len == 1U &&
+                  mla_stage->payload.processmla.elf_ifm_symbol_names != nullptr &&
+                  std::string(mla_stage->payload.processmla.elf_ifm_symbol_names[0]) ==
+                      "data.ifm.b0",
+              "mla ELF IFM symbol table mismatch");
+      require(mla_stage->payload.processmla.elf_ofm_symbol_names_len == 1U &&
+                  mla_stage->payload.processmla.elf_ofm_symbol_names != nullptr &&
+                  std::string(mla_stage->payload.processmla.elf_ofm_symbol_names[0]) ==
+                      "data.ofm.b0",
+              "mla ELF OFM symbol table mismatch");
 
       gst_context_unref(context);
       gst_object_unref(pipeline);

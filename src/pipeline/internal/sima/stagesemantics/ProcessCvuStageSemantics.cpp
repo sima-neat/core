@@ -1693,6 +1693,36 @@ void populate_preproc_payload_semantics(ProcessCvuStagePayload* payload) {
     return;
   }
 
+  // Graph 200 describes its hardware envelope in HWC, while a model-managed
+  // tensor boundary includes the batch axis.  Keep those two facts separate:
+  // output_shapes/output_tensors remain the physical graph-200 description,
+  // and an already-authored runtime_output_logical_shapes array is retained
+  // only when it is exactly the same HWC shape with one explicit batch prefix.
+  // This lets prepared caps publish NHWC without changing descriptor geometry
+  // or teaching a runtime component to infer a missing dimension.
+  const auto authored_runtime_shapes = payload->runtime_output_logical_shapes;
+  const bool has_authored_runtime_shapes = !authored_runtime_shapes.empty();
+  if (has_authored_runtime_shapes) {
+    if (authored_runtime_shapes.size() != payload->default_output_names.size()) {
+      throw std::invalid_argument(
+          "processcvu preproc runtime logical shape count contradicts runtime outputs");
+    }
+    for (const auto& authored : authored_runtime_shapes) {
+      const bool positive =
+          !authored.empty() &&
+          std::all_of(authored.begin(), authored.end(), [](const int dim) { return dim > 0; });
+      const bool exact_physical = authored == logical_shape;
+      const bool exact_batched =
+          payload->batch_size > 0 && authored.size() == logical_shape.size() + 1U &&
+          authored.front() == payload->batch_size &&
+          std::equal(logical_shape.begin(), logical_shape.end(), authored.begin() + 1);
+      if (!positive || (!exact_physical && !exact_batched)) {
+        throw std::invalid_argument(
+            "processcvu preproc runtime logical shape contradicts graph-200 HWC geometry");
+      }
+    }
+  }
+
   payload->output_shapes.clear();
   payload->runtime_output_logical_index_list.clear();
   payload->runtime_output_output_slot_list.clear();
@@ -1728,7 +1758,8 @@ void populate_preproc_payload_semantics(ProcessCvuStagePayload* payload) {
     payload->runtime_output_dtype_list.push_back(dtype);
     payload->runtime_output_transport_kind_list.push_back(transport_kind);
     payload->runtime_output_semantic_kind_list.push_back(semantic_kind);
-    payload->runtime_output_logical_shapes.push_back(logical_shape);
+    payload->runtime_output_logical_shapes.push_back(
+        has_authored_runtime_shapes ? authored_runtime_shapes[i] : logical_shape);
     payload->runtime_output_logical_layout_list.push_back(logical_layout);
 
     if (output_name == payload->primary_output_name) {
@@ -2553,10 +2584,12 @@ static TensorStaticSpec synthesize_preproc_input_tensor(const ProcessCvuStagePay
   const bool gray_input = input_img_type == "GRAY" || input_img_type == "GRAY8";
   if (in_d.width > 0 && in_d.height > 0 && planar_yuv_input) {
     input.max_h = in_d.height + (in_d.height / 2);
+    input.layout = "HW";
     input.shape = {input.max_h, in_d.width};
     return input;
   }
   if (in_d.width > 0 && in_d.height > 0 && gray_input) {
+    input.layout = "HW";
     input.shape = {in_d.height, in_d.width};
     return input;
   }
@@ -2670,6 +2703,7 @@ CompiledProcessCvuContract build_processcvu_mpk_compiled_contract_for_stage_kind
         contract, graph_family, exact_stage_name_or_id, canonical_handoff_segment_name));
   }
   case ExecutionStageKind::Mla:
+  case ExecutionStageKind::HostTvm:
   case ExecutionStageKind::BoxDecode:
   case ExecutionStageKind::Unknown:
     break;
@@ -2987,6 +3021,29 @@ std::uint64_t synthesize_preproc_packed_output_size_bytes(const ProcessCvuStageP
 
 std::uint64_t processcvu_dtype_size_bytes_from_token(const std::string& raw_dtype) {
   return specbuilders::dtype_size_bytes_from_token(raw_dtype);
+}
+
+std::string processcvu_dtype_token_from_ev_local(std::uint32_t dtype,
+                                                 const std::string& fallback) {
+  std::uint32_t fallback_dtype = 0U;
+  if (tensorsemantics::dtype_token_to_ev(fallback, &fallback_dtype) &&
+      fallback_dtype == dtype) {
+    return fallback;
+  }
+  switch (dtype) {
+  case SIMA_EV_DTYPE_FP32:
+    return "FP32";
+  case SIMA_EV_DTYPE_INT32:
+    return "INT32";
+  case SIMA_EV_DTYPE_FP16:
+    return "FP16";
+  case SIMA_EV_DTYPE_INT16:
+    return "INT16";
+  case SIMA_EV_DTYPE_INT8:
+    return "INT8";
+  default:
+    throw std::invalid_argument("processcvu typed input has an unknown dtype");
+  }
 }
 
 std::vector<std::int64_t>
@@ -4427,8 +4484,13 @@ build_multi_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& paylo
       throw std::invalid_argument("multi-io processcvu payload input shape missing");
     }
     std::string input_layout = payload_input_layout_token_local(payload, i);
-    const std::string input_dtype =
+    const std::string scalar_input_dtype =
         !payload.input_dtype.empty() ? payload.input_dtype : std::string("INT8");
+    const std::string input_dtype =
+        i < payload.input_tensors.size()
+            ? processcvu_dtype_token_from_ev_local(payload.input_tensors[i].dtype,
+                                                   scalar_input_dtype)
+            : scalar_input_dtype;
     facts.inputs.push_back(
         build_dense_processcvu_input_fact(static_cast<int>(i), static_cast<int>(i), input_name,
                                           input_shape, input_dtype, input_layout));
@@ -4438,6 +4500,9 @@ build_multi_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& paylo
     multi_binding.src_logical_output_index = static_cast<int>(i);
     multi_binding.src_output_slot = static_cast<int>(i);
     multi_binding.src_physical_output_index = static_cast<int>(i);
+    if (prefer_logical_input_shapes) {
+      multi_binding.src_physical_size_bytes = facts.inputs.back().size_bytes;
+    }
     multi_binding.required = true;
     multi_binding.cm_input_name = input_name;
     multi_binding.source_segment_name = input_name;
@@ -5408,11 +5473,36 @@ build_pre_mla_branch_runtime_config_local(const MpkContract& contract, const std
     if (!sib.tess) {
       throw std::runtime_error("processcvu MPK tessellate fan-in sibling missing tess stage");
     }
-    const auto cast_subset =
-        sib.cast ? plugin_contracts::extract_cast_contract_subset_from_stage(*sib.cast)
-                 : build_preadapter_cast_subset_for_tess_stage_local(contract, *sib.tess);
     const auto tess_subset =
         plugin_contracts::extract_tessellate_contract_subset_from_stage(*sib.tess);
+    const auto cast_subset = [&]() {
+      if (family == "casttess") {
+        if (!sib.cast) {
+          throw std::runtime_error(
+              "processcvu MPK casttess fan-in sibling missing cast stage");
+        }
+        return plugin_contracts::extract_cast_contract_subset_from_stage(*sib.cast);
+      }
+
+      // Standalone graph 2 has no cast semantics.  The shared tessellation
+      // runtime-config helper needs the tensor type entering tessellation, so
+      // describe an identity dtype edge from the tess stage itself rather
+      // than searching for or inventing an upstream cast operation.
+      plugin_contracts::CastContractSubset identity;
+      identity.input_shape = tess_subset.input_shape;
+      identity.output_shape = tess_subset.input_shape;
+      identity.input_layout = tess_subset.input_layout;
+      identity.input_dtype = normalize_dtype_token_local(
+          !sib.tess->canonical_input_dtype.empty()
+              ? sib.tess->canonical_input_dtype
+              : (sib.tess->input_tensors.empty()
+                     ? std::string{}
+                     : sib.tess->input_tensors.front().dtype));
+      identity.output_dtype = normalize_dtype_token_local(
+          !sib.tess->frame_type.empty() ? sib.tess->frame_type
+                                        : identity.input_dtype);
+      return identity;
+    }();
     auto runtime = plugin_contracts::build_tessellate_runtime_config_from_subsets(
         cast_subset, tess_subset, published_output_name, published_output_name);
     if (family == "casttess") {
@@ -6144,6 +6234,20 @@ build_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptions& o
     payload.q_zp_list = {static_cast<int>(*opt.q_zp)};
   }
   synthesize_runtime_output_arrays_from_payload(&payload);
+  if (opt.model_managed_contract) {
+    if (payload.batch_size <= 0 || payload.runtime_output_logical_shapes.empty()) {
+      throw std::invalid_argument(
+          "processcvu model-managed preproc requires a positive batch and logical outputs");
+    }
+    for (auto& shape : payload.runtime_output_logical_shapes) {
+      if (shape.size() != 3U ||
+          std::any_of(shape.begin(), shape.end(), [](const int dim) { return dim <= 0; })) {
+        throw std::invalid_argument(
+            "processcvu model-managed preproc requires exact HWC graph geometry");
+      }
+      shape.insert(shape.begin(), payload.batch_size);
+    }
+  }
   canonicalize_preproc_single_handoff_payload(&payload);
   return payload;
 }
@@ -7282,7 +7386,7 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
     // the explicit BF16 noncompact C16 lane-split reader required by the MPK
     // transport contract.
     out.payload.opt_flags |=
-        kDetesscastDefaultOptimizedFlags | kDetesscastOptBf16NoncompactC16LaneSplit;
+        processcvu_detesscast_optimized_flags(/*requires_bf16_noncompact_c16_lane_split=*/true);
   }
   if (out.payload.input_tensors.size() == packed_input_sizes.size()) {
     for (std::size_t i = 0; i < packed_input_sizes.size(); ++i) {
@@ -7341,22 +7445,21 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_dense_unary_post_ro
                              " route spec count does not match routed post stage count");
   }
 
-  const auto mla_published_outputs = get_mla_published_outputs_contract(contract);
-  if (mla_published_outputs.size() < stages.size()) {
-    throw std::runtime_error(route_name + " route requires MLA published boundary views");
-  }
-  std::vector<MpkTensorContract> routed_mla_published_outputs;
-  routed_mla_published_outputs.reserve(stages.size());
-  for (std::size_t i = 0; i < stages.size(); ++i) {
-    const auto* stage = stages[i];
-    const auto* published_ptr = plugin_contracts::match_published_output_for_transport(
-        mla_published_outputs,
-        stage && !stage->input_tensors.empty() ? stage->input_tensors.front().name : std::string(),
-        i);
-    if (published_ptr == nullptr) {
-      throw std::runtime_error(route_name + " route requires MLA published boundary views");
+  // The command's declared input is the authority. A standalone Cast or
+  // Dequantize may consume MLA directly, a Detessellate result, an affine
+  // view, or another registered command. Nearest-MLA lookup was a legacy
+  // fusion assumption and mis-described explicit Detess -> Dequant chains.
+  // Model-plan projection below resolves these names to the exact upstream
+  // physical catalogue, so this builder only retains each command-local
+  // tensor shape/dtype/span in canonical member order.
+  std::vector<MpkTensorContract> routed_command_inputs;
+  routed_command_inputs.reserve(stages.size());
+  for (const auto* stage : stages) {
+    if (!stage || stage->input_tensors.size() != 1U) {
+      throw std::runtime_error(route_name +
+                               " route requires one exact declared input per member");
     }
-    routed_mla_published_outputs.push_back(*published_ptr);
+    routed_command_inputs.push_back(stage->input_tensors.front());
   }
 
   const auto* terminal_stage = find_terminal_stage_after_outputs_local(contract, stages);
@@ -7534,21 +7637,21 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_dense_unary_post_ro
   out.facts = build_processcvu_packed_route_facts("input_tensor", "output_tensor", entries,
                                                   runtime.primary_output_name,
                                                   runtime.published_output_names);
-  apply_published_routed_input_bindings(&out, routed_mla_published_outputs, nullptr,
+  apply_published_routed_input_bindings(&out, routed_command_inputs, nullptr,
                                         runtime.graph_family);
-  if (published_inputs_share_single_physical_parent(routed_mla_published_outputs)) {
+  if (published_inputs_share_single_physical_parent(routed_command_inputs)) {
     enforce_packed_parent_input_views(&out, "input_tensor", entries, {},
-                                      &routed_mla_published_outputs);
+                                      &routed_command_inputs);
   } else {
     preserve_routed_source_segment_input_views(&out, "input_tensor");
   }
   for (std::size_t i = 0;
-       i < routed_mla_published_outputs.size() && i < out.payload.input_tensors.size(); ++i) {
+       i < routed_command_inputs.size() && i < out.payload.input_tensors.size(); ++i) {
     const std::string input_dtype =
         i < out.facts.inputs.size() && !out.facts.inputs[i].dtype.empty()
             ? out.facts.inputs[i].dtype
             : runtime.input_dtype;
-    override_payload_input_desc_from_published_view(&out, i, routed_mla_published_outputs[i],
+    override_payload_input_desc_from_published_view(&out, i, routed_command_inputs[i],
                                                     input_dtype);
   }
   force_direct_materialization_for_inputs(&out);
@@ -8132,35 +8235,6 @@ std::string canonical_family_name_internal(std::string graph_family) {
   return canonical_family_name(std::move(graph_family));
 }
 
-std::string fused_processcvu_stage_identity_local(const std::string& stage_name,
-                                                  const std::string& canonical_family) {
-  if (canonical_family != "detessdequant" || stage_name.empty()) {
-    return stage_name;
-  }
-  if (stage_name.rfind(canonical_family, 0) == 0) {
-    return stage_name;
-  }
-
-  const auto rewrite_prefix = [&](const char* prefix) -> std::string {
-    const std::string prefix_string = prefix ? std::string(prefix) : std::string();
-    if (!prefix_string.empty() && stage_name.rfind(prefix_string, 0) == 0) {
-      return canonical_family + stage_name.substr(prefix_string.size());
-    }
-    return {};
-  };
-
-  if (const std::string rewritten = rewrite_prefix("dequantize"); !rewritten.empty()) {
-    return rewritten;
-  }
-  if (const std::string rewritten = rewrite_prefix("detessellate"); !rewritten.empty()) {
-    return rewritten;
-  }
-  if (const std::string rewritten = rewrite_prefix("detess"); !rewritten.empty()) {
-    return rewritten;
-  }
-  return canonical_family + "_" + stage_name;
-}
-
 ProcessCvuGraphFamily family_enum_from_name_internal(const std::string& graph_family) {
   return family_enum_from_name(graph_family);
 }
@@ -8385,6 +8459,14 @@ std::string canonical_processcvu_graph_family(const std::string& graph_family) {
   return canonical_family_name(graph_family);
 }
 
+std::uint32_t processcvu_detesscast_optimized_flags(
+    const bool requires_bf16_noncompact_c16_lane_split) noexcept {
+  return requires_bf16_noncompact_c16_lane_split
+             ? kDetesscastDefaultOptimizedFlags |
+                   kDetesscastOptBf16NoncompactC16LaneSplit
+             : 0U;
+}
+
 namespace {} // namespace
 
 std::uint64_t processcvu_size_bytes_from_shape_dtype(const std::vector<std::int64_t>& shape,
@@ -8440,19 +8522,12 @@ void populate_processcvu_node_contract_common(const std::string& node_kind,
                                               const NodeContractDefinition& definition,
                                               CompiledProcessCvuContract compiled,
                                               CompiledNodeContract* out) {
-  const std::string canonical_family =
-      canonical_family_name(!compiled.payload.graph_family.empty() ? compiled.payload.graph_family
-                                                                   : compiled.payload.graph_name);
-  const std::string primary_element_name =
-      fused_processcvu_stage_identity_local(element_name, canonical_family);
-  const std::string primary_logical_stage_id = fused_processcvu_stage_identity_local(
-      logical_stage_id.empty() ? element_name : logical_stage_id, canonical_family);
   out->node_kind = node_kind;
   out->plugin_kind = compiled.runtime_contract.plugin_kind.empty()
                          ? "processcvu"
                          : compiled.runtime_contract.plugin_kind;
-  out->element_name = primary_element_name;
-  out->logical_stage_id = primary_logical_stage_id;
+  out->element_name = element_name;
+  out->logical_stage_id = logical_stage_id.empty() ? element_name : logical_stage_id;
   out->definition = definition;
   out->processcvu = std::move(compiled);
   out->renderable = true;

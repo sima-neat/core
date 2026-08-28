@@ -74,7 +74,20 @@ enum class ProcessCvuStageRole {
 };
 
 ProcessCvuStageRole processcvu_stage_role(const ProcessCvuStagePayload& payload,
-                                          std::string_view stage_identity = {}) {
+                                          std::string_view stage_identity,
+                                          const std::optional<static_contract::PhysicalCommandRole>
+                                              physical_command_role) {
+  if (physical_command_role.has_value()) {
+    switch (*physical_command_role) {
+    case static_contract::PhysicalCommandRole::Ingress:
+      return ProcessCvuStageRole::Pre;
+    case static_contract::PhysicalCommandRole::Egress:
+      return ProcessCvuStageRole::Post;
+    case static_contract::PhysicalCommandRole::Interstitial:
+    case static_contract::PhysicalCommandRole::NonCvu:
+      return ProcessCvuStageRole::Unknown;
+    }
+  }
   switch (payload.graph_family_enum) {
   case ProcessCvuGraphFamily::Preproc:
   case ProcessCvuGraphFamily::Quant:
@@ -148,9 +161,8 @@ struct ExplicitProcessCvuTarget {
 }
 
 std::optional<ExplicitProcessCvuTarget>
-explicit_prepost_target(const ProcessCvuStagePayload& payload, const ProcessCvuOptions& options,
-                        std::string_view stage_identity = {}) {
-  switch (processcvu_stage_role(payload, stage_identity)) {
+explicit_prepost_target(const ProcessCvuStageRole role, const ProcessCvuOptions& options) {
+  switch (role) {
   case ProcessCvuStageRole::Pre:
     if (explicit_run_target_token(options.pre_run_target)) {
       return ExplicitProcessCvuTarget{
@@ -284,17 +296,24 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
 ProcessCvuBackendDecision
 resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
                                     const ContractCompileInput& compile_input,
-                                    std::string_view stage_identity) {
+                                    std::string_view stage_identity,
+                                    const std::optional<static_contract::PhysicalCommandRole>
+                                        physical_command_role) {
   ProcessCvuBackendDecision decision;
+  const auto stage_role =
+      processcvu_stage_role(payload, stage_identity, physical_command_role);
   std::string requested_source = "legacy_or_env";
   if (explicit_run_target_token(payload.requested_run_target)) {
     decision.requested_run_target =
         normalize_processcvu_run_target_token_no_env(payload.requested_run_target);
     requested_source = "payload_stage";
-  } else if (auto match =
-                 explicit_prepost_target(payload, compile_input.processcvu, stage_identity)) {
+  } else if (auto match = explicit_prepost_target(stage_role, compile_input.processcvu)) {
     decision.requested_run_target = match->run_target;
     requested_source = match->source;
+  } else if (physical_command_role.has_value()) {
+    decision.requested_run_target = normalize_processcvu_run_target_token_no_env(
+        compile_input.processcvu_requested_run_target);
+    requested_source = "coarse_request";
   } else {
     decision.requested_run_target =
         normalize_processcvu_run_target_token(compile_input.processcvu_requested_run_target);
@@ -325,8 +344,7 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
     return decision;
   }
 
-  if (processcvu_stage_role(payload, stage_identity) == ProcessCvuStageRole::Post &&
-      caps.supports_a65) {
+  if (stage_role == ProcessCvuStageRole::Post && caps.supports_a65) {
     // AUTO should keep pre/adaptor stages on EV74, but post stages are CPU-facing
     // in the common terminal route and the A65 reference path is measurably
     // faster for YOLO INT8 post/dequant. Explicit per-stage/session/env targets
@@ -345,12 +363,15 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
 
 void resolve_processcvu_run_target(ProcessCvuStagePayload* payload,
                                    const ContractCompileInput& compile_input,
-                                   std::string_view stage_identity) {
+                                   std::string_view stage_identity,
+                                   const std::optional<static_contract::PhysicalCommandRole>
+                                       physical_command_role) {
   if (!payload) {
     return;
   }
   const ProcessCvuBackendDecision decision =
-      resolve_processcvu_backend_decision(*payload, compile_input, stage_identity);
+      resolve_processcvu_backend_decision(*payload, compile_input, stage_identity,
+                                          physical_command_role);
   payload->requested_run_target = decision.requested_run_target;
   payload->run_target = decision.effective_run_target;
   payload->resolved_exec_backend =

@@ -1,9 +1,11 @@
 #include "model/Model.h"
+#include "model/internal/ModelInternal.h"
 #include "model_archive_fixture_utils.h"
 #include "pipeline/NeatError.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <cstdlib>
 #include <unordered_map>
 
 namespace {
@@ -91,6 +93,20 @@ RUN_TEST(
         require(meta.at("labels") == "[\"cat\",\"dog\"]",
                 "Model::metadata should dump array values");
         require(meta.at("nested") == "{\"a\":1}", "Model::metadata should dump object values");
+
+        const char* backend = std::getenv("SIMA_NEAT_MEMORY_BACKEND");
+        if (backend != nullptr && std::string(backend) == "dmabuf-plan") {
+          bool admission_rejected = false;
+          try {
+            (void)internal::ModelAccess::pack(model).memory_backend_decision();
+          } catch (const std::exception& error) {
+            admission_rejected = true;
+            require_contains(std::string(error.what()), "missing-mla-executable",
+                             "execution admission must still fail closed without the MLA ELF");
+          }
+          require(admission_rejected,
+                  "metadata-only construction must not make a missing MLA ELF executable");
+        }
       }
 
       {
