@@ -1,0 +1,337 @@
+---
+title: "PCIe 協同處理"
+description: "在主機應用程式中執行已編譯的模型，並將其部署到 Modalix PCIe 卡上。"
+sidebar_position: 2
+---
+
+# PCIe 協同處理
+
+Neat PCIe 主機 API 允許主機上的應用程式將張量或影像傳送到連接的 Modalix PCIe 卡，並接收推論結果。當主機負責應用程式的 I/O 和協調，而卡則執行已編譯的模型及其設定的預處理或後處理時，請使用此 API。
+
+這是一個與直接在 DevKit 上執行的 Neat Library 不同的 API。
+公開的類型位於 `simaai::neat::pcie` C++ 命名空間和 `pyneatpcie` Python 套件中。
+
+:::note 安裝於主機。
+請在主機上安裝 `core/pciehost`，而不是在 Neat SDK 容器內或 Modalix PCIe 卡上。在使用本頁面之前，請參閱 [安裝 PCIe 主機](/getting-started/neat-library/pcie-host/)。
+:::
+
+## 協處理的運作方式
+
+一個 `pcie::Model` 代表一個已編譯的模型，在一個實體 PCIe 佇列上執行：
+
+1. 建構函式會讀取本機模型封存檔，並公開其輸入和輸出合約。
+2. `build()` 會透過 PCIe 虛擬網路將封存檔上傳到卡上，啟動卡端的管線，並等待其準備就緒。
+3. `run()` 或 `push()` 會透過 PCIe 傳送輸入負載。
+4. 卡會執行預處理、推論和已設定的後處理。
+5. `run()` 或 `pull()` 會將輸出張量傳回主機。
+6. `close()` 會停止卡端的管線並釋放佇列。
+
+模型封存檔會在 `build()` 期間傳輸。推論負載和結果會使用 PCIe 資料傳輸。
+
+## 設定連線
+
+`ConnectionOptions` 會識別此模型使用的卡和佇列。
+
+| 欄位 | 預設值 | 目的 |
+|---|---|---|
+| `card_host` | 空 | 明確的 SSH/SCP 位址。如果為空，卡 `N` 會使用 `10.0.N.2`。 |
+| `card_id` | `0` | 傳遞給主機 PCIe 外掛程式的卡編號。 |
+| `user` | `sima` | 卡端 SSH 和 SCP 的使用者。 |
+| `queue` | `0` | 協處理佇列，範圍從 `0` 到 `3`。 |
+| `max_inflight` | `10` | 最大允許的等待結果的輸入數量。 |
+
+對於佇列 0 上的 `10.0.0.2` 中的單張卡，請使用預設值。當卡使用不同的管理位址時，請明確設定 `card_host`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <simaai/neat/pcie/Model.h>
+
+namespace pcie = simaai::neat::pcie;
+
+pcie::ConnectionOptions connection;
+connection.card_host = "10.0.0.2";
+connection.card_id = 0;
+connection.queue = 0;
+connection.max_inflight = 10;
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneatpcie as pcie
+
+connection = pcie.ConnectionOptions(
+    card_host="10.0.0.2",
+    card_id=0,
+    queue=0,
+    max_inflight=10,
+)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## 檢查並建立模型
+
+建構作業是本地作業，不會啟動卡片。在分配輸入之前，請先檢查 `info()`，然後呼叫 `build()` 一次，以啟動協同處理階段。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::Model model("model.tar.gz", {}, connection);
+
+const pcie::ModelInfo info = model.info();
+for (const auto& input : info.inputs) {
+  std::cout << input.name << " requires " << input.size_bytes << " bytes\n";
+}
+
+model.build(/*readiness_timeout_ms=*/180000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pcie.Model("model.tar.gz", connection=connection)
+
+info = model.info()
+for input_spec in info.inputs:
+    print(input_spec.name, "requires", input_spec.size_bytes, "bytes")
+
+model.build(readiness_timeout_ms=180000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`input_specs()` 和 `output_specs()` 分別傳回相同的清單。
+在成功建置後，`running()` 會變成 `true`，然後在 `close()` 後會變回 `false`。
+
+## 執行同步推論
+
+使用 `run()` 來執行最簡單的請求/回應流程。首先建置模型，然後使用有限的逾時，以避免應用程式失敗時無限期地等待。
+以下範例為一個模型建構輸入，該模型的報告輸入資料類型為 FP32。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto& input_spec = info.inputs.front();
+if (input_spec.dtype != "FP32") {
+  throw std::runtime_error("this example requires an FP32 model input");
+}
+
+std::vector<float> values(input_spec.size_bytes / sizeof(float), 0.0f);
+pcie::Tensor input = pcie::Tensor::from_vector(
+    std::move(values), input_spec.shape, input_spec.name);
+
+pcie::TensorList outputs = model.run(input, /*timeout_ms=*/30000);
+
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import numpy as np
+
+input_spec = info.inputs[0]
+if input_spec.dtype != "FP32":
+    raise RuntimeError("this example requires an FP32 model input")
+
+array = np.zeros(input_spec.shape, dtype=np.float32)
+input_tensor = pcie.Tensor.from_numpy(
+    array,
+    copy=True,
+    route_name=input_spec.name,
+)
+
+outputs = model.run([input_tensor], timeout_ms=30000)
+
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+對於一個多輸入模型，請按照順序傳遞每個邏輯輸入的一個 `Tensor`，並使用 `info().inputs` 報告的路由名稱。
+
+`run()` 超時會停止等待，但不會取消卡片已經接受的輸入。 在捕獲到超時後，您可以選擇使用 `pull()` 來處理該未完成的結果，或者在開始新的請求序列之前，調用 `close()`。
+
+## 使用推送和拉取進行管線請求
+
+當輸入準備應與推論重疊時，請使用 `push()` 和 `pull()`。 `max_inflight` 限制了已接受但尚未傳回的工作量。 立即拉取結果，以便生產者可以繼續。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+std::size_t pushed = 0;
+std::size_t pulled = 0;
+while (pulled < inputs.size()) {
+  while (pushed < inputs.size() && pushed - pulled < 10) {
+    model.push(inputs[pushed++]);
+  }
+
+  auto outputs = model.pull(/*timeout_ms=*/30000);
+  if (!outputs) {
+    throw std::runtime_error("PCIe inference timed out");
+  }
+  consume(*outputs);
+  ++pulled;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+max_inflight = 10
+pushed = 0
+pulled = 0
+while pulled < len(inputs):
+    while pushed < len(inputs) and pushed - pulled < max_inflight:
+        model.push(inputs[pushed])
+        pushed += 1
+
+    outputs = model.pull(timeout_ms=30000)
+    if outputs is None:
+        raise TimeoutError("PCIe inference timed out")
+    consume(outputs)
+    pulled += 1
+```
+
+</CodeTab>
+</CodeTabs>
+
+`push()` 會在 `max_inflight` 達到上限時等待，因此請勿在未提取結果的情況下提交超過已設定的數量。`pull()` 會傳回此模型中下一個可用的結果。在呼叫 `run()` 之前，請先處理掉所有使用 `push()` 提交的結果。
+
+## 傳送影像並設定預處理
+
+在傳送已解碼的影像資料時，將 `preprocess.kind` 設定為 `Image`。卡片端的 Neat 管線可以調整大小、轉換顏色、正規化，並解碼支援的物件偵測輸出。
+
+此範例會傳送一張 BGR 影像，並將其調整為模型封存檔推斷出的模型輸入大小，然後傳回一個包含已解碼的 YOLOv8 BBOX 酬載的張量。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <opencv2/imgcodecs.hpp>
+
+pcie::ModelOptions options;
+options.preprocess.kind = pcie::InputKind::Image;
+options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
+options.preprocess.resize.enable = pcie::AutoFlag::On;
+options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
+options.decode_type = pcie::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+
+pcie::Model detector("yolo_v8n_mpk.tar.gz", options, connection);
+detector.build();
+
+cv::Mat image = cv::imread("image.jpg", cv::IMREAD_COLOR);
+pcie::TensorList detections = detector.run(image, /*timeout_ms=*/30000);
+detector.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import cv2
+import pyneatpcie as pcie
+
+options = pcie.ModelOptions()
+options.preprocess.kind = pcie.InputKind.Image
+options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
+options.preprocess.resize.enable = pcie.AutoFlag.On
+options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
+options.decode_type = pcie.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+
+detector = pcie.Model("yolo_v8n_mpk.tar.gz", options, connection)
+detector.build()
+
+image = cv2.imread("image.jpg", cv2.IMREAD_COLOR)
+detections = detector.run_image(
+    image,
+    timeout_ms=30000,
+    format=pcie.PixelFormat.BGR,
+)
+detector.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+請勿為無種子的模型設定 `input_max_width`、`input_max_height` 或 `input_max_depth`，除非應用程式需要明確的輸入限制。Neat 可以從模型封存檔推斷出模型端調整大小的目標。
+
+## 可靠地關閉
+
+當模型不再需要，且在重新使用其佇列之前，請呼叫 `close()`。多次呼叫是安全的：
+
+```python
+model = pcie.Model("model.tar.gz", connection=connection)
+model.build()
+outputs = model.run([input_tensor], timeout_ms=30000)
+model.close()
+```
+
+或者，使用上下文管理器來自動關閉模型：
+
+```python
+with pcie.Model("model.tar.gz", connection=connection) as model:
+    model.build()
+    outputs = model.run([input_tensor], timeout_ms=30000)
+```
+
+當程式區塊結束時，包括發生例外狀況時，內容管理程式會呼叫 `close()`。請勿在 `with` 程式區塊內新增另一個明確的 `close()`。
+
+## 建立 C++ 主機應用程式
+
+開發套件提供 `SimaPCIeHost` CMake 套件：
+
+```cmake title="CMakeLists.txt"
+cmake_minimum_required(VERSION 3.16)
+project(pcie_model LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(SimaPCIeHost REQUIRED CONFIG)
+
+add_executable(pcie_model main.cpp)
+target_link_libraries(pcie_model PRIVATE SimaPCIeHost::sima_neat_pcie_host)
+```
+
+在本機的主機上原生建置這個應用程式。
+
+C++ 影像範例也使用了 OpenCV。將其標頭檔和函式庫新增到該應用程式目標：
+
+```cmake
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs)
+target_include_directories(pcie_model PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
+```
+
+## 目前的範圍與限制
+
+- 一個 `pcie::Model` 擁有一個 PCIe 佇列。佇列範圍從 `0` 到 `3`。
+- Modalix EV74 最多支援四個並行的協同處理管線。
+- 請勿將兩個作用中的模型指派給同一個佇列。
+- 主機封裝和安裝在卡上的 Neat Library 必須來自相容的版本。
+- 在提交第一個有效負載之後，請保持輸入媒體類型和幾何形狀的穩定。後續的有效負載如果大於作用中的傳輸容量，則會被拒絕。
+- PCIe 主機 API 支援 Neat 模型預處理和物件解碼選項的精簡子集。
+- 此協同處理 API 不會公開主機端的 `Graph`、`Node` 或 `Run` 組成。對於原生應用程式圖，請在 DevKit 上使用標準的 Neat Library。
+
+如需安裝和連線檢查，請傳回
+[安裝 PCIe 主機](/getting-started/neat-library/pcie-host/)。

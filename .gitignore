@@ -112,6 +112,12 @@ docs/reference/pythonapi/*
 /docs/reference/model-sdk-api/
 /docs/tools/sima-cli/
 /docs/tools/insight/
+/docs/tools/sentinel/
+/website/i18n/*/docusaurus-plugin-content-docs/current/compile-a-model/
+/website/i18n/*/docusaurus-plugin-content-docs/current/genai-llima/
+/website/i18n/*/docusaurus-plugin-content-docs/current/tools/insight/
+/website/i18n/*/docusaurus-plugin-content-docs/current/tools/sentinel/
+/website/i18n/*/docusaurus-plugin-content-docs/current/tools/sima-cli/
 
 # Docusaurus
 website/node_modules/

@@ -1,0 +1,716 @@
+---
+title: "グラフ"
+description: "ノード、モデル、および再利用可能なグラフフラグメントから、実行可能なアプリケーションを構築します。"
+sidebar_position: 5
+---
+
+# グラフ
+
+SiMa.aiのNeatでは、アプリケーションを構築する方法として、`Graph` [API](/reference/{lsa}/classes/simaai-neat-graph)を使用します。`Graph`は、入力から処理ノードを経て出力に至るまでの流れを記述します。機械学習の経験がある方は、`Graph`を、モデルを中心としたアプリケーションの小さなモデルグラフとして捉えてください。
+
+- フレーム、テンソル、またはサンプルが**入力**から入り、**出力**から出ていきます。処理は、デコード、リサイズ、前処理、推論、後処理、分岐、およびカスタムロジックなどの**ノード**を通じて中間段階で行われます。
+
+![1つの Graph 境界内にある入力、処理ステップ、出力](@site/../docs/images/graph-input-output.svg)
+
+- グラフは単独で実行することも、より大きなグラフの中に組み込んで再利用することもできます。
+
+![より大規模なアプリケーションのグラフに挿入される、再利用可能なグラフフラグメント。](@site/../docs/images/graph-reusable-fragment.svg)
+
+Neat を使用すると、ランタイムを手動で設定する代わりに、アプリケーションを記述できます。入力、デコード、リサイズ、前処理、推論、後処理、出力などの一般的な処理には、あらかじめ作成された [ノード](/develop-apps/development-workflow/node) と [ノードグループ](/develop-apps/development-workflow/node#pre-built-node-groups) を使用します。`Graph` 内で、ノードを宣言し、パラメータを設定し、アプリケーションに必要な順序でそれらを接続します。
+
+内部的には、Neat が GStreamer 上に実行可能なランタイムグラフを構築します。Neat はその実装を抽象化するため、GStreamer 要素、`appsrc`、`appsink`、キュー、または内部ランタイムポートを管理する代わりに、公開されている `Graph` API を使用します。
+
+## ノード、グループ、境界
+
+`Graph` はアセンブリの境界線であり、[`Node`](/develop-apps/development-workflow/node) は構成要素です。
+
+これには、以下が含まれます。
+
+- デコード、前処理、後処理、ソース、シンクなどの段階を含む、アトミックなノード。
+- あらかじめ作成されたノードグループ。これは、再利用可能なノードの集合です。
+- `Input("image")`や`Output("classes")`などの境界ノード。
+
+あらかじめ定義されたグループと境界ノードに関する詳細なルールについては、[ノード → 事前に作成されたノードグループ](/develop-apps/development-workflow/node#pre-built-node-groups) および [ノード → 境界ノード](/develop-apps/development-workflow/node#boundary-nodes) を参照してください。
+
+`Graph::build()` を呼び出すと、Neat は公開されているグラフを、実行可能なランタイムグラフに変換し、診断および名前付きの `Run` API のためにエンドポイント名を保持します。
+
+## 入力と出力に名前を付ける
+
+`Input` および `Output` ノードに指定された名前は、グラフフラグメントの境界の端点を定義します。最終的に結合されたグラフ `Graph` の外側に残る境界は、公開ランタイムの端点になります。
+
+```cpp
+simaai::neat::Graph classifier("classifier");
+classifier.add(simaai::neat::nodes::Input("image"));
+classifier.add(model);
+classifier.add(simaai::neat::nodes::Output("classes"));
+```
+
+ここで、`image` は入力エンドポイントであり、`classes` は出力エンドポイントです。グラフ名である `classifier` は、診断や可視化のためのラベルにすぎず、入力や出力を生成するものではありません。
+
+### ビルド前にエンドポイントを検査してください。
+
+グラフを作成する前に、公開エンドポイントを出力してください。存在しないエンドポイントは許可されません。もし名前がこのリストにない場合、後で`Run`はそれを受け付けません。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+for (const auto& name : classifier.inputs()) {
+  std::cout << "graph input: " << name << "\n";
+}
+for (const auto& name : classifier.outputs()) {
+  std::cout << "graph output: " << name << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+print("graph inputs:", classifier.inputs())
+print("graph outputs:", classifier.outputs())
+```
+
+</CodeTab>
+</CodeTabs>
+
+`graph.build(...)` の後、実行中の `Run` で、`run.input_names()` と `run.output_names()` を確認してください。これらの名前は、公開する予定のインターフェースと一致している必要があります。
+
+## ソースが所有するトポロジーか、アプリがプッシュするトポロジーのどちらかを選択してください。
+
+すべてのグラフは、次の1つの質問に答えなければなりません。「入力データは誰のものか？」
+
+| トポロジー | 使用する際は | ランタイム時の形状 |
+| --- | --- | --- |
+| アプリ経由でプッシュ | お客様のアプリには、すでにフレーム、テンソル、またはサンプルが用意されています。 | `nodes.input("name")` を追加し、その後、`run.push("name", ...)` でプッシュするか、`Graph.run([...])` を使用します。 |
+| ソースが所有 | グラフは、ファイル、カメラ、RTSP、またはその他のソースノードからデータを読み取るように設定する必要があります。 | ソースノードまたはソースグループを追加し、次にアプリへの入力を行わずにビルド/実行します。 |
+
+アプリからプッシュされるグラフの場合、入力エンドポイントに、アプリケーションの概念に関連する名前を付けます：`image`、`left_camera`、`metadata`、`prompt`。ソースが所有するグラフの場合、出力コントラクトを調べて、ソースパスから出力されるものを取得します。
+
+## グラフのオプションを選択してください。
+
+グラフ全体の動作については、[`GraphOptions`](/reference/{lsa}/structs/simaai-neat-graphoptions) を使用してください。実行時の動作については、後で `RunOptions` を使用します。
+
+| 目標 | 使用する | 備考 |
+| --- | --- | --- |
+| ログやエクスポートにグラフのラベルを付ける。 | `Graph("name")` | これはラベルであり、エンドポイントではありません。 |
+| 1つのプロセスで複数のグラフを実行する。 | `element_name_prefix` / `element_name_suffix` | 生成された要素名の重複を避け、診断結果を読みやすくします。 |
+| グラフ診断の制御 | `VerboseOptions` | まず、本番環境での出力から始めます。証拠を収集する際にのみ、デバッグ出力を増やしてください。 |
+| 出力キューの動作を選択してください。 | `OutputOptions::Latest()`、`EveryFrame(...)`、または`Clocked(...)` | 新鮮さ、完全性、または指定時間内の配達のいずれかを選択してください。 |
+| ライブのグラフフラグメントを接続します。 | `GraphLinkOptions`、`RealtimeLatestByStream` を使用 | デコードされたフレームの受信を制御しながら、各ストリームを常に最新の状態に保ちます。 |
+| コールバック関数の実行範囲を制限する | `callback_timeout_ms` | C++のコールバック形式の出力処理と組み合わせて使用することで、コールバックの処理速度が遅くても、それがグラフの問題として誤認されるのを防ぐことができます。 |
+| 高度な実行を最適化する | `advanced_execution` | デフォルトのグラフに測定された基準値が設定されてからのみ使用してください。 |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphOptions options;
+options.element_name_prefix = "cam0_";
+
+simaai::neat::Graph graph("cam0_detector", options);
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.GraphOptions()
+options.element_name_prefix = "cam0_"
+
+graph = pyneat.Graph("cam0_detector", options)
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+```
+
+</CodeTab>
+</CodeTabs>
+
+`Latest()` は、アプリケーションがすべての出力を取得できない場合に、最新の結果を保持します。すべての出力が重要な場合は、`EveryFrame(...)` を使用してください。出力がパイプラインのクロックに従う必要がある場合は、`Clocked(...)` を使用してください。
+
+`RunOptions::queue_depth` は、グラフへの入力と内部ランタイムキューを制御します。これは、パブリックな `Output` のキューコントラクトを置き換えるものではありません。`OutputOptions::max_buffers` と `drop` は、そのターミナルキューを制御し、優先されます。フレームワークによって作成された出力キューは、`RunOptions` のデフォルト設定に戻ります。
+
+## 構築する前に検証してください。
+
+実際に実行を開始せずに、グラフの構築に関する証拠が必要な場合は、`graph.validate(...)` を使用してください。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphReport report = graph.validate();
+std::cout << report.to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = graph.validate()
+print(report.to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+`ValidateOptions.parse_launch` は、生成されたパイプライン文字列をチェックします。`ValidateOptions.enforce_names` は、名前が付けられていない、または予期しない要素を検出します。グラフのオプションを変更する前に、レポートを参照してください。まずは証拠を確認し、その後で調整を行います。
+
+## グラフの作成
+
+### 最も簡潔な思考モデル
+
+アプリケーションを構成するには、まず`Graph`を宣言し、次に線形チェーンの場合は`add()`を、明示的なトポロジーの場合は`connect()`を使用します。
+
+- 単純な単一モデルによる推論など、一般的な単一パス処理には、`add()` を使用してください。
+- ノードやフラグメントの接続方法を明示的に制御する必要がある場合は、`connect()` を使用してください。
+
+```cpp
+simaai::neat::Graph g;
+g.add(...);      // continue the same linear chain
+g.connect(...);  // add explicit graph topology
+
+auto run = g.build();
+```
+
+### `add()` を使用して構築します。
+
+次の例では、画像を読み込み、推論を実行し、モデルから予測されたクラスを出力します。
+
+```text
+image -> model inference -> classes
+```
+
+コードは次のようになります。
+
+```cpp
+simaai::neat::Model model("resnet50.tar.gz");  // Load a compiled model and prepare its Graph route.
+
+simaai::neat::Graph g("classifier");           // instantiate the Graph that will describe the app
+g.add(simaai::neat::nodes::Input("image"));    // adds an input Node named "image"
+g.add(model);                                  // adds the model Nodes connected to the Input
+g.add(simaai::neat::nodes::Output("classes")); // adds an output Node named "classes" connected to 'model'
+
+auto run = g.build();                          // build the Graph
+```
+
+:::note
+単純な線形シーケンスでノードを追加するには、`add()` を使用し、以前に追加したノードに続けてノードを追加します。
+:::
+
+### `connect()` を使用して構築します。
+
+トポロジーを明示的に制御する必要がある場合は、`connect()` を使用します。各 `add()` は、最初に前のノードまたはグラフフラグメントの後に、新しいノードまたはグラフフラグメントを接続します。両方のメソッドを組み合わせる場合、`connect()` は、関連する暗黙的な接続を、ユーザーが指定した特定の接続に置き換えます。また、名前付きのエンドポイント、ノード、モデル、または再利用可能なグラフフラグメント間で、`connect()` を直接使用することもできます。
+
+#### `connect()` を使用したファンアウト
+
+ファンアウトは、1つの入力を複数の出力に送信します。まず、グラフ内にエンドポイントが存在するように追加します。
+
+```cpp
+simaai::neat::Graph fan_out_graph("fan_out_graph");
+fan_out_graph.add(simaai::neat::nodes::Input("image_input"));
+fan_out_graph.add(simaai::neat::nodes::Output("original_image"));
+fan_out_graph.add(simaai::neat::nodes::Output("model_image"));
+```
+
+概念的には、`fan_out_graph` は次のようになります。
+
+```text
+image_input --> original_image --> model_image
+```
+
+次に、`connect()` を使用して、デフォルトの線形配線を、希望するトポロジーに置き換えます。
+
+```cpp
+fan_out_graph.connect("image_input", "original_image");
+fan_out_graph.connect("image_input", "model_image");
+```
+
+概念的には、`fan_out_graph` は現在、次のようになります。
+
+```text
+            /--> original_image
+image_input
+            \--> model_image
+```
+
+#### `Branch()` を使用する
+
+ファンアウトは一般的であるため、Neat は、そのための補助機能として [`graphs::Branch()`](/reference/{lsa}/namespaces/simaai-neat-graphs#a1feffc304100fd17cb99c5f5bff3c20c) を提供します。これにより、入力、出力、および `connect()` 呼び出しが内部で作成されます。
+
+```cpp
+auto fan_out_graph = simaai::neat::graphs::Branch(
+    "image_input",
+    {"original_image", "model_image"});
+```
+
+Pythonでは、同じエンドポイント名が使用されます。
+
+```python
+fan_out_graph = pyneat.graphs.branch(
+    "image_input",
+    ["original_image", "model_image"],
+)
+```
+
+`fan_out_graph` は、依然として通常の `Graph` の一部です。他の `Graph` と同様に、これをより大規模なアプリケーションに接続できます。
+
+:::note
+ブランチ処理は、バックプレッシャーを引き起こす可能性があります。あるブランチでデータの処理が停止すると、選択されたランタイムポリシーに応じて、データの生成速度が低下したり、完全に停止したりする可能性があります。`Branch()`は、意図しない重複した出力によって隠蔽されるのではなく、ファンアウトを明示的にします。
+:::
+
+#### `connect()` を使用したファンイン。
+
+ファンインは、複数の入力を1つの出力に集約します。単純なファンアウトとは異なり、ファンインでは、サンプルがどのように対応付けられるかを宣言する必要があります。このポリシーは、出力エンドポイントに適用されます。
+
+まず、出力を設定し、エンドポイントを追加して、それらがグラフに存在するようにします。
+
+```cpp
+simaai::neat::OutputOptions render_options;
+render_options.combine_policy = simaai::neat::CombinePolicy::ByFrame;
+
+simaai::neat::Graph render_inputs_graph("render_inputs_graph");
+render_inputs_graph.add(simaai::neat::nodes::Input("image"));
+render_inputs_graph.add(simaai::neat::nodes::Input("bbox"));
+render_inputs_graph.add(simaai::neat::nodes::Output("render_inputs", render_options));
+```
+
+概念的には、`render_inputs_graph` は次のようになります。
+
+```text
+image -> bbox -> render_inputs
+```
+
+次に、`connect()` を使用して、デフォルトの線形配線を、希望するトポロジーに置き換えます。
+
+```cpp
+render_inputs_graph.connect("image", "render_inputs");
+render_inputs_graph.connect("bbox", "render_inputs");
+```
+
+概念的には、`render_inputs_graph` は現在、次のようになります。
+
+```text
+image ----\
+           render_inputs
+bbox -----/
+```
+
+#### `Combine()` を使用する
+
+ファンインは一般的であるため、Neat は、そのためのヘルパーとして [`graphs::Combine()`](/reference/{lsa}/namespaces/simaai-neat-graphs#a6f1479674758179a4bbd72af1291ea47) を提供します。これにより、入力、出力、結合ポリシー、および `connect()` 呼び出しが内部で作成されます。
+
+```cpp
+auto render_inputs_graph = simaai::neat::graphs::Combine(
+    {"image", "bbox"},
+    "render_inputs",
+    simaai::neat::CombinePolicy::ByFrame);
+```
+
+Pythonでは、結合しないポリシーとして`None_`を使用します。これは、`None`が予約語であるためです。
+
+```python
+render_inputs_graph = pyneat.graphs.combine(
+    ["image", "bbox"],
+    "render_inputs",
+    pyneat.CombinePolicy.ByFrame,
+)
+```
+
+`render_inputs_graph` は、依然として通常の `Graph` の一部です。他の `Graph` と同様に、これをより大きなアプリケーションに接続できます。
+
+`graphs::Combine()` は、デフォルトの `OutputOptions` を使用して出力を生成します。具体的には、4つのキューに入れられたサンプル、ブロックによるオーバーフローの防止、およびクロック同期なしです。その出力がパブリックターミナルとして残っている場合は、生成中にそれを排出します。有限のバッチをプッシュしてからプルする必要がある場合は、上記の明示的なファンインを構築し、その出力を、そのバッチに合わせてサイズ調整された `OutputOptions::EveryFrame(...)` で構成します。Pythonでは、`pyneat.OutputOptions.every_frame(...)` を使用します。
+
+:::note
+`CombinePolicy` は、Neat が受信したサンプルをどのように照合するかを指示します。
+
+- `ByFrame`: 同じ`frame_id`を持つサンプルを結合します。
+- `ByPts`: 同じプレゼンテーションタイムスタンプを持つサンプルを結合します (`pts_ns`)。
+- `None`: 複数のプロデューサーを組み合わせないでください。グラフの処理に失敗し、明示的なポリシーを要求します。
+- Pythonのスペル：`pyneat.CombinePolicy.None_`、`ByFrame`、または`ByPts`。
+
+隠れたフォールバック機能はありません。`ByFrame`を使用する場合、フレームIDが欠落しているとエラーになります。`ByPts`を使用する場合、タイムスタンプが欠落しているとエラーになります。これにより、Neatが誤ったサンプルを無音で結合することを防ぎます。
+:::
+
+### ブランチ作成とマージの完全な例
+
+それでは、それぞれのパーツを組み合わせてみましょう。入力画像は2つのパスに分割されます。1つのパスはモデルを通過し、バウンディングボックスを生成します。もう一方のパスは、元の画像を保持し、後続のレンダリング段階で使用できるようにします。
+
+```text
+           /--> model_image -> model -> bbox --\
+image_input                                     render_inputs
+           \----------------> original_image --/
+```
+
+大まかに言うと、以下の手順に従ってください。
+
+1. まず、入力側のファンアウト `Graph` フラグメントを宣言します。
+2. `model_image` を入力として受け取り、`bbox` を出力するモデル推論の `Graph` フラグメントを作成します。
+3. 元の画像のパスと、`bbox` のパスを組み合わせて、`render_inputs` を作成します。
+4. それらをすべてつなぎ合わせて、最終的な`Graph`、つまり`app`を完成させます。
+
+#### 分岐とマージの例を作成する
+
+1. まず、上記のように、`Branch()` を使用して、ファンアウトを作成します。
+
+    ```cpp
+    auto image_input_graph = simaai::neat::graphs::Branch(
+        "image_input",
+        {"model_image", "original_image"});
+    ```
+
+    次に、`image_input_graph` が以下のように構築されます。
+
+    ```text
+                /--> original_image
+    image_input
+                \--> model_image
+    ```
+
+2. `model_inference_graph` を作成します。
+
+    ```cpp
+    simaai::neat::Graph model_inference_graph("model_inference_graph");
+    model_inference_graph.add(simaai::neat::nodes::Input("model_image"));
+    model_inference_graph.add(model);
+    model_inference_graph.add(simaai::neat::nodes::Output("bbox"));
+    ```
+
+    `model_inference_graph` は、その後、次のように構築されます。
+
+    ```text
+    model_image --> model --> bbox
+    ```
+
+    :::note
+    この例では、選択されたモデルの処理経路からデコードされた BBOX データが出力されることを前提としています。モデルが生の推論テンソルを出力する場合、`Output("bbox")` の前に、モデル固有の `SimaBoxDecode` ステージを追加してください。
+
+3. 次に、ファンインの`render_graph`を作成します。
+
+    ```cpp
+    auto render_graph = simaai::neat::graphs::Combine(
+        {"original_image", "bbox"},
+        "render_inputs",
+        simaai::neat::CombinePolicy::ByFrame);
+    ```
+
+    次に、`render_graph` が以下のように構築されます。
+
+    ```text
+    original_image ----\
+                        render_inputs
+    bbox --------------/
+    ```
+
+4. 最後に、断片を結合して単一の`Graph`を作成し、アプリケーション全体を構築します。
+
+    ```cpp
+    simaai::neat::Graph app("app");
+    app.connect(image_input_graph, model_inference_graph);
+    app.connect(image_input_graph, render_graph);
+    app.connect(model_inference_graph, render_graph);
+    ```
+
+**完全な例:**
+
+```cpp
+simaai::neat::Model model("yolov8s_model.tar.gz");
+
+auto image_input_graph = simaai::neat::graphs::Branch(
+    "image_input",
+    {"model_image", "original_image"});
+
+simaai::neat::Graph model_inference_graph("model_inference_graph");
+model_inference_graph.add(simaai::neat::nodes::Input("model_image"));
+model_inference_graph.add(model);
+model_inference_graph.add(simaai::neat::nodes::Output("bbox"));
+
+auto render_graph = simaai::neat::graphs::Combine(
+    {"original_image", "bbox"},
+    "render_inputs",
+    simaai::neat::CombinePolicy::ByFrame);
+
+simaai::neat::Graph app("app");
+app.connect(image_input_graph, model_inference_graph);
+app.connect(image_input_graph, render_graph);
+app.connect(model_inference_graph, render_graph);
+
+auto run = app.build();
+
+auto image_sample =
+    simaai::neat::make_tensor_sample("image_input", image_tensor);
+image_sample.frame_id = 0;
+run.push("image_input", image_sample);
+
+auto inputs = run.pull("render_inputs");
+```
+
+実行可能なサンプルは、対応する`original_image`と`bbox`の値を含む`render_inputs`で停止します。その結合された結果を後続のレンダリングまたは出力ノードで処理し、レンダリングされた画像をファイルに保存したり、表示したり、または他の場所に送信したりできます。
+
+## ランタイム時に名前付きエンドポイントを使用する
+
+`Graph` が作成された後、同じエンドポイント名を使用してデータを送信し、結果を読み出します。
+
+グラフに複数のパブリック入力または出力がある場合は、エンドポイント名を `push()` または `pull()` に渡します。
+
+```cpp
+run.push("image", simaai::neat::TensorList{image_tensor});
+run.push("metadata", simaai::neat::TensorList{metadata_tensor});
+
+auto classes = run.pull("classes");
+auto preview = run.pull("preview");
+```
+
+公開入力または出力が 1 つだけであるグラフの場合、ランタイムにおける名前はオプションです。
+
+```cpp
+run.push(simaai::neat::TensorList{image_tensor});
+auto classes = run.pull();
+```
+
+複数の入力または出力が利用可能な場合、名前のない`push(...)`または`pull()`が失敗し、ユーザーが意図したものを推測する代わりに、利用可能なエンドポイント名を一覧表示します。
+
+## ライブフラグメントを接続する
+
+ランタイムポリシーまたは明示的な生フレームの許容制限が必要な接続には、[`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions) を使用します。
+
+リアルタイムのマルチストリームファンインの場合、`RealtimeLatestByStream` は、各 `Sample::stream_id` ごとに最新のサンプルを保持し、準備完了したストリームを公平に下流にスケジュールします。ソースが `stream_id` をスタンプしていない場合は、リンクに安定した ID をスタンプします。デフォルトポリシーを使用したリアルタイムファンインは、自動的に最新のストリームに切り替わります。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphLinkOptions link;
+link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+link.queue_depth = 4;
+link.stream_id = "camera-0";
+link.max_inflight_per_stream = 4;
+link.max_inflight_total = 8;
+
+app.connect(camera_fragment, detector_fragment, link);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+link = pyneat.GraphLinkOptions()
+link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+link.queue_depth = 4
+link.stream_id = "camera-0"
+link.max_inflight_per_stream = 4
+link.max_inflight_total = 8
+
+app.connect(camera_fragment, detector_fragment, link)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`RealtimeLatestByStream` は、常に各ストリームに対して未処理のサンプルを1つ保持します。`queue_depth` は、ソースとの互換性を維持するために、`GraphLinkOptions` 内に保持され、このポリシー専用に予約されています。この値を変更しても、1つのスロットという上限は変わりません。
+
+通常の `build()` API を使用して、多数のチャンネルを持つリアルタイムのグラフを構築します。
+
+```cpp
+auto run = app.build(run_options);
+```
+
+```python
+run = app.build(run_options)
+```
+
+フュージョンは、ビルドモードではなく、内部コンパイラによる決定です。通常の`build()`では、利用可能なプライベートなソースブランチ、リアルタイムの多重化、およびモデルコンシューマを1つのGStreamerパイプラインにまとめて、appsink/appsrcデバイスとメモリ間のハンドオフを回避します。利用できない最新のストリームごとのトポロジでは、通常のセグメント化されたランタイムが使用されます。
+
+最上位のグラフで`graph_options.advanced_execution.internal_queue_depth`を設定すると、モデルのステージをオーバーラップさせることができます。正の値に設定すると、CVU、MLA、およびデコードステージの前に、境界があり、メモリリークが発生しないグローバルキューが挿入されますが、最終出力の前には挿入されません。`GraphLinkOptions::max_inflight_per_stream`は、各リンクのフュージョンされた多重化に引き継がれるため、プライベートな環境の切り替えなしで、`1`に設定することで、最新の状態を維持できます。単一のチェーンコンシューマパスを維持するために、`internal_queue_depth`を設定しないか、`0`に設定します。
+
+C++とPythonの両方で、これらのフィールドは`GraphLinkOptions`で公開されており、これは通常の`connect(...)`に渡されます。別のリアルタイム接続メソッドやビルドモードは必要ありません。
+
+| フィールド | 使用する際は |
+| --- | --- |
+| `policy` | リンクは、ストリームごとに最新フレームの情報を常に反映する必要があります。 |
+| `queue_depth` | 互換性フィールド。`RealtimeLatestByStream` は、このフィールドを予約し、常に各ストリームに対して未処理のサンプルを1つ保持します。 |
+| `stream_id` | 上流側のフラグメントは、`Sample::stream_id` を記録しませんが、このリンクは安定したストリームの1つを表します。 |
+| `max_inflight_per_stream` | リアルタイムストリームリンクは、デコードされた生のサンプルを伝送し、各ストリームに対して明示的な下流側の許容上限が必要です。フィールドのデフォルト値は`-1`です。Coreでは`4`を使用します。統合されたソースの最適化では、解決された値を対応する多重化ストリームに適用します。 |
+| `max_inflight_total` | ストリームごとにリアルタイムでリンクを確立するには、すべてのストリームに適用される上限値を設定する必要があります。デフォルト値は`-1`です。環境変数を設定しない場合、Coreは`min(max_inflight_per_stream * stream_count, 8)`を導出します。 |
+
+:::caution プレビュー版アプリケーションと保存済みのグラフを更新します。
+
+このバージョンでは、`GraphLinkOptions` に入力フィールドが追加されました。現在の Neat Library の C++ ABI と共有ライブラリの SONAME は 4 です。対応するコアパッケージに対して、C++ アプリケーションとプラグインを再ビルドしてください。以前の `libsima_neat` SONAME でビルドされたバイナリと、`libsima_neat.so.4` を混在させないでください。
+
+プレビューのソースコードを以下のように移行してください。
+
+| プレビュー API | 現在の API |
+| --- | --- |
+| `RealtimeGraphLinkOptions` | `GraphLinkOptions` |
+| `graph.connect_realtime(from, to, link)` | `graph.connect(from, to, link)` |
+| `graph.build_fused_realtime_sources(options)`（C++） | `graph.build(options)` |
+| `graph.build_fused_realtime_source(options)`（Python） | `graph.build(options)` |
+| `RealtimeEveryFrameByStream` | 最新の状態が維持され、必要に応じて交換できる場合に、`RealtimeLatestByStream` を使用します。 |
+
+`RealtimeLatestByStream` は、更新頻度を制御するポリシーであり、`RealtimeEveryFrameByStream` の完全な代替となるものではありません。各ストリームで最新のサンプルを1つ保持し、より新しいフレームが到着したときにそのサンプルを置き換えます。
+
+`Graph::load()` は、`"link_policy": "realtime_every_frame_by_stream"` を含む保存されたJSONを拒否します。更新されたソースからグラフを再生成してください。JSONが唯一のソースである場合は、古いフレームを破棄することが許容される場合にのみ、ポリシーを`realtime_latest_by_stream` に変更し、その後、このバージョンで再度ロードして保存します。
+
+:::
+
+
+## 単一のストリームから複数のストリームへ拡張する
+
+マルチストリームグラフでは、調整を行う前に、各ストリームを識別する必要があります。`stream_id`と`frame_id`を保持することで、ランタイムのメトリクス、結合ポリシー、およびドロップレポートを使用して、各ストリームを区別することができます。
+
+| パターン | 使用する際は | 見る |
+| --- | --- | --- |
+| 1つのストリーム → 1つのモデル → 1つの出力 | あなたは、そのグラフが機能することを示しています。 | 出力されるテンソルの形状、データ型、および終端の名前。 |
+| 複数のストリームを統合して、単一のモデルにまとめる | 統合された入力レートは、1つのモデルパスに適合します。 | ストリームごとの公平性と、古いストリーム。 |
+| 多数のストリーム → 複数のモデル系列 | 一つのモデルだけでは対応しきれない | ストリームの分割、ルートの命名、および出力の集計。 |
+| 1つのストリーム → 複数のモデル | 異なる決定を下す場合でも、同じ情報が必要となる。 | ブランチごとの遅延と、ターゲットを基準とした正規化された FPS。 |
+| 多数のストリーム → モデル + メタデータ/ビデオ出力 | 製造プロセスからは、いくつかのアーティファクトが生成されます。 | プレビューまたはテレメトリーとは別に、ターゲット出力の数をカウントしてください。 |
+
+最新のデータが必要なリアルタイム出力には、`OutputOptions::Latest()` を使用します。オフライン出力やロスレス出力には、`EveryFrame(...)` を使用します。複数の入力を統合する場合、すべての入力に `frame_id` が含まれている場合にのみ、`CombinePolicy::ByFrame` を使用し、タイムスタンプが含まれている場合にのみ、`CombinePolicy::ByPts` を使用します。
+
+ランタイムキュー、ドロップポリシー、測定、またはドレイン動作が必要な場合は、[グラフを実行する](/develop-apps/development-workflow/pipeline) に移行します。`Graph` でトポロジーを記述し、`Run` で実行します。
+
+## 具体的な例
+
+### 再利用可能なモデルルート
+
+```cpp
+simaai::neat::Graph make_classifier(simaai::neat::Model& model) {
+  simaai::neat::Graph classifier_route("classifier");           // create a reusable Graph fragment
+  classifier_route.add(simaai::neat::nodes::Input("image"));    // declare the fragment's input
+  classifier_route.add(model);                                  // add the model inference route
+  classifier_route.add(simaai::neat::nodes::Output("classes")); // declare the fragment's output
+  return classifier_route;                                      // return the fragment for reuse
+}
+```
+
+単独で使用する場合：
+
+```cpp
+auto classifier_route = make_classifier(model);      // create the classifier fragment
+auto run = classifier_route.build();                 // build it as a standalone application
+run.push("image", simaai::neat::TensorList{image});  // send data to its named input
+auto classes = run.pull("classes");                  // read from its named output
+```
+
+より大規模なアプリケーション内で使用する場合：
+
+```cpp
+simaai::neat::Graph app("app");            // create the larger application Graph
+app.connect(camera, classifier_route);     // connect the camera fragment to the classifier
+app.connect(classifier_route, telemetry);  // forward classification results to telemetry
+```
+
+大規模なアプリケーションでは、分類器のルーティングにおける境界ノードは内部宣言となります。これらのノードが最終的なグラフの外側に存在する場合に限り、追加の公開されたプッシュ/プルエンドポイントにはなりません。
+
+### パススルーアダプター
+
+場合によっては、フラグメントは単に境界の名前を変更するだけです。
+
+```cpp
+simaai::neat::Graph adapter("adapter");            // create a reusable adapter fragment
+adapter.add(simaai::neat::nodes::Input("raw"));    // declare the incoming endpoint name
+adapter.add(simaai::neat::nodes::Output("image")); // declare the outgoing endpoint name
+adapter.connect("raw", "image");                   // pass data directly between the endpoints
+```
+
+別のグラフ内で使用される場合、これは直接的な接続にコンパイルされる可能性があります。Neat は、可読性と診断のために名前を保持しますが、不要なランタイム処理は行いません。
+
+## 高度なグラフツール
+
+基本的なグラフのパスが正常に機能することを確認した後で、これらを使用してください。これらは、API の最初のパスではなく、あくまで参考となるツールです。
+
+| ツール | 言語 | 使用する際は |
+| --- | --- | --- |
+| `add_output_tensor(...)` | C++とPython | 高度なアダプター：画像またはビデオの出力は、要求された形式、サイズ、またはフレームレートで、CPUが処理しやすいテンソルとして`UInt8`形式に変換される必要があります。その後、データを取り出すことができます。 |
+| `Graph::save(...)` / `Graph::load(...)`; Python `graph.save(...)` / `pyneat.Graph.load(...)` | C++とPython | グラフの構成を保存し、再読み込みできるようにしたい。 |
+| `graph.custom(...)` | C++とPython | 線形のグラフに、バックエンドのフラグメントを組み込む必要があります。 |
+| `nodes::Custom(...)` / `pyneat.nodes.custom(...)` | C++とPython | 明示的なトポロジー内にカスタムノードが必要です。 |
+| `run_rtsp(...)` | C++とPython | このグラフは、RTSPを介してH.264形式の出力を提供する役割を担う必要があります。 |
+| `set_tensor_callback(...)` | C++ | C++コードでは、プルループの代わりに、コールバックベースのテンソル処理が必要です。コールバックの遅延が問題となる場合は、`GraphOptions.callback_timeout_ms`と組み合わせて使用してください。 |
+
+まず、公開されているノードとグループを優先的に使用してください。安定したノードがそのタスクに存在しない場合にのみ、生のカスタムフラグメントを使用してください。
+
+### グラフ定義を保存して再読み込み
+
+定義を別のツールに渡したい場合、CIで使用するアーティファクトを保存したい場合、または変更間でグラフの構築を比較したい場合に、グラフを保存します。保存した定義を、実行の際の信頼できる唯一の情報源として使用する場合は、それを読み込みます。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+graph.save("classifier.neat.json");
+
+simaai::neat::Graph loaded = simaai::neat::Graph::load("classifier.neat.json");
+auto run = loaded.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph.save("classifier.neat.json")
+
+loaded = pyneat.Graph.load("classifier.neat.json")
+run = loaded.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+保存されたグラフファイルを、アプリケーションが意図的にバージョン管理しない限り、ビルドのアーティファクトとして扱います。これらのファイルはグラフの構成を記録しますが、モデルのコントラクト、入力データ、またはランタイム測定データは置き換えないことに注意してください。
+
+## 推奨される方法
+
+### エンドポイントの命名
+
+アプリケーションにおけるその意味を説明するようなエンドポイント名を選択してください。
+
+```cpp
+nodes::Input("image");          // describes the data entering the Graph
+nodes::Input("left_camera");    // identifies the input's application role
+nodes::Output("classes");       // describes a classification result
+nodes::Output("detections");    // describes a detection result
+nodes::Output("preview");       // describes the output's intended use
+```
+
+内部のランタイムに関する詳細に基づいた名前は避けてください。
+
+```cpp
+nodes::Input("appsrc0");  // exposes an internal GStreamer implementation detail
+nodes::Output("sink1");   // describes runtime wiring instead of application meaning
+nodes::Output("out");     // acceptable for small tests, but unclear in applications
+```
+
+フラグメントに複数の名前のない出力が含まれている場合、Neat は、`classes_0`、`classes_1`、および `classes_2` のような決定的なサフィックスを割り当てます。アプリケーションコードでは、明確な名前を使用することを推奨します。
+
+### 経験則
+
+- アプリケーションや再利用可能なコード断片には、`Graph` を使用してください。
+- モデルの通常のルートを使用したい場合は、`Model`を`Graph::add(model)`に直接使用してください。
+- フラグメントの公開コントラクトを宣言するには、名前付きの`Input`ノードと`Output`ノードを使用してください。
+- 直線状のチェーンには、`add()` を使用してください。
+- 明示的なトポロジーとフラグメントの構成には、`connect()` を使用してください。
+- 複数の入力または複数の出力を持つアプリケーションには、それぞれ名前を付けて`run.push("name", ...)`と`run.pull("name")`を使用してください。
+- アプリケーションに必要な [ノード](/develop-apps/development-workflow/node)、[ノードグループ](/develop-apps/development-workflow/node#pre-built-node-groups)、パラメータ、接続を宣言し、低レベルのランタイム処理は Neat に任せます。
+
+## 関連項目
+
+- [ノード](/develop-apps/development-workflow/node)
+- [モデル](/develop-apps/development-workflow/model)
+- [グラフを実行する](/develop-apps/development-workflow/pipeline)
+- [公開 Graph とグラフヘルパー](/develop-apps/advanced-concepts/graphs)
+
+## チュートリアル
+
+- [カスタムデータグラフを構築する](/tutorials/build-a-custom-data-graph)
+- [Graph にモデルを組み込む](/tutorials/embed-model-inside-graph)
+- [1つの Graph で複数のストリームを実行する](/tutorials/run-multiple-streams)

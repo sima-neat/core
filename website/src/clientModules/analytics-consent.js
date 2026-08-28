@@ -68,10 +68,23 @@ const sanitizeUrl = (value) => {
   }
 };
 
+const normalizedDocsPath = (pathname) => {
+  const {baseUrl = "/", locales = []} = getAnalyticsConfig();
+  const segments = String(pathname || "/").split("/").filter(Boolean);
+  const baseSegments = String(baseUrl).split("/").filter(Boolean);
+  const hasBasePrefix = baseSegments.every(
+    (segment, index) => segments[index] === segment,
+  );
+  if (hasBasePrefix) segments.splice(0, baseSegments.length);
+  if (locales.includes(segments[0])) segments.shift();
+  return segments.length ? `/${segments.join("/")}` : "/";
+};
+
 const docSectionFromPath = (pathname) => {
-  const parts = pathname.split("/").filter(Boolean);
-  if (pathname.startsWith("/reference/cppapi")) return "api-reference-cpp";
-  if (pathname.startsWith("/reference/pythonapi")) return "api-reference-python";
+  const normalizedPath = normalizedDocsPath(pathname);
+  const parts = normalizedPath.split("/").filter(Boolean);
+  if (normalizedPath.startsWith("/reference/cppapi")) return "api-reference-cpp";
+  if (normalizedPath.startsWith("/reference/pythonapi")) return "api-reference-python";
   if (parts[0] === "getting-started") return "getting-started";
   if (parts[0] === "tutorials") return "tutorials";
   if (parts[0] === "reference") return "reference";
@@ -117,7 +130,7 @@ const trackEvent = (name, params = {}) => {
 };
 
 const tutorialIdFromPath = (pathname) => {
-  const match = pathname.match(/^\/tutorials\/([^/?#]+)/);
+  const match = normalizedDocsPath(pathname).match(/^\/tutorials\/([^/?#]+)/);
   return match ? match[1] : "";
 };
 
@@ -142,7 +155,8 @@ const trackRouteDerivedEvents = () => {
   if (pagePath === lastDerivedLocation) return;
   lastDerivedLocation = pagePath;
 
-  const pathname = window.location.pathname.replace(/\/$/, "") || "/";
+  const pathname =
+    normalizedDocsPath(window.location.pathname).replace(/\/$/, "") || "/";
   if (/^\/reference\/(cppapi|pythonapi)(\/|$)/.test(pathname)) {
     trackEvent("api_reference_view", {
       language: pathname.includes("/pythonapi/") ? "python" : "cpp",

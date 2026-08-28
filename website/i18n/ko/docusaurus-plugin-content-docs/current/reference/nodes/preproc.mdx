@@ -1,0 +1,256 @@
+---
+title: "전처리 노드"
+description: "CVU 전처리 노드를 구성하여 크기 조정, 색상 변환, 정규화, 테셀레이션 및 ROI 목록 전처리를 수행합니다."
+sidebar_position: 1
+---
+
+# 전처리 노드
+
+`Preproc`은 MLA 추론 전에 사용되는 통합 CVU 이미지 전처리 노드입니다. 이미지 크기를 조정하고, 레터박스 패딩을 사용하여 가로 세로 비율을 유지하고, 색상을 변환하고, 정규화하고, 양자화하고, 모델에서 예상하는 텐서 계약에 맞게 이미지를 분할할 수 있습니다.
+
+대부분의 애플리케이션에서는 `Model::Options::preprocess`를 통해 전처리를 구성하고 모델 라우트 플래너가 올바른 `Preproc` 노드를 생성하도록 합니다. 전체 입력 및 출력 계약을 이미 알고 있는 사용자 지정 그래프 조각을 빌드하는 경우에만 `nodes::Preproc(...)`를 직접 구성합니다.
+
+## 빠른 시작
+
+C++:
+
+```cpp
+#include <neat.h>
+#include <opencv2/imgcodecs.hpp>
+
+using namespace simaai::neat;
+
+Model::Options opt;
+opt.preprocess.resize.enable = AutoFlag::On;
+opt.preprocess.resize.width = 640;
+opt.preprocess.resize.height = 640;
+opt.preprocess.resize.mode = ResizeMode::Letterbox;
+opt.preprocess.resize.pad_value = 114;
+opt.preprocess.resize.scaling_type = "BILINEAR";
+opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+opt.preprocess.color_convert.output_format = PreprocessColorFormat::RGB;
+opt.preprocess.normalize.enable = AutoFlag::On;
+opt.preprocess.normalize.mean = {0.0f, 0.0f, 0.0f};
+opt.preprocess.normalize.stddev = {1.0f, 1.0f, 1.0f};
+
+Model model("/path/to/model.tar.gz", opt);
+
+cv::Mat image = cv::imread("/path/to/frame.jpg", cv::IMREAD_COLOR);
+TensorList tensors = stages::Preproc({image}, model);
+```
+
+파이썬:
+
+```python
+import cv2
+import pyneat
+
+opt = pyneat.ModelOptions()
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+opt.preprocess.resize.width = 640
+opt.preprocess.resize.height = 640
+opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+opt.preprocess.resize.pad_value = 114
+opt.preprocess.resize.scaling_type = "BILINEAR"
+opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.BGR
+opt.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.RGB
+opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+opt.preprocess.normalize.mean = [0.0, 0.0, 0.0]
+opt.preprocess.normalize.stddev = [1.0, 1.0, 1.0]
+
+model = pyneat.Model("/path/to/model.tar.gz", opt)
+
+image = cv2.imread("/path/to/frame.jpg", cv2.IMREAD_COLOR)
+tensors = pyneat.stages.preproc(
+    [image],
+    model,
+    image_format=pyneat.PixelFormat.BGR,
+)
+```
+
+## 사용 방법
+
+| 사용 사례 | API | 지침 |
+| --- | --- | --- |
+| 전체 모델 경로 | `Model model(path, opt); graph.add(model);` | 프로덕션 파이프라인에 권장됩니다. 모델 아카이브와 경로 플래너는 정확한 전처리 그래프 계열과 텐서 전달 방식을 결정합니다. |
+| 독립 실행형 단계 | `stages::Preproc(images, model)` | 이는 간단한 테스트, 전처리 디버깅 또는 MLA를 수동으로 입력하는 데 유용합니다. |
+| ROI 목록 단계 | `stages::Preproc(images, model, rois)` | 각 출력이 하나 이상의 소스 이미지에 대한 런타임 창에서 생성되어야 할 때 사용합니다. |
+| 수동 노드 | `nodes::Preproc(PreprocOptions{...})` | 고급 그래프 작성 기능만 제공합니다. 모델 아카이브가 있는 경우 모델에서 관리하는 방식으로 구성하는 것이 좋습니다. |
+
+## API 인터페이스
+
+C++:
+
+```cpp
+namespace simaai::neat::nodes {
+std::shared_ptr<Node> Preproc(PreprocOptions opt = {});
+}
+
+namespace simaai::neat::stages {
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const Model& model);
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const Model& model,
+                   const std::vector<PreprocessRoi>& rois);
+}
+```
+
+파이썬:
+
+```python
+pyneat.nodes.preproc(options: pyneat.PreprocOptions | None = None)
+
+pyneat.stages.preproc(
+    images: list,
+    model: pyneat.Model,
+    *,
+    rois: list[pyneat.PreprocessRoi] | None = None,
+    image_format: pyneat.PixelFormat | None = None,
+    copy: bool = False,
+) -> list[pyneat.Tensor]
+```
+
+`stages::Preproc`는 모델의 최종 전처리 계획을 사용합니다. 이를 통해 독립 실행형 호출이 전체 그래프가 실행될 때 사용되는 동일한 `Preproc` 노드와 일관성을 유지합니다.
+
+## 입력 및 출력 계약
+
+| 계약 항목 | 행동 |
+| --- | --- |
+| 입력 유형: | C++는 일반적으로 RGB/BGR의 경우 `CV_8UC3` 형식, 흑백의 경우 `CV_8UC1` 형식의 `cv::Mat` 이미지를 허용합니다. Python은 HW 또는 HWC 형태의 uint8 NumPy/Torch/`pyneat.Tensor` 텐서를 허용합니다. |
+<<번역>>
+| 소스 일괄 처리 | ROI가 아닌 영역에 대한 과부하 처리 방식은 각 이미지를 독립적으로 처리합니다. ROI 목록 과부하 처리 방식은 동일한 크기와 유형의 소스 이미지 일괄 처리를 허용합니다. |
+| 출력 순서 | ROI를 사용하지 않는 오버로드는 이미지 순서대로 출력을 반환합니다. ROI 목록 오버로드는 ROI 순서대로 출력을 반환합니다. |
+| 출력 데이터 유형/레이아웃은 다음과 같이 결정됩니다. | 모델 경로에 따라, 해결된 전처리 그래프 패밀리에 따라 밀집형 BF16/INT8/INT16 또는 타일링된 MLA 레이아웃이 사용됩니다. |
+| 메타데이터 | 출력 텐서에는 크기 조정, 레터박스, 정규화, 양자화, 테셀레이션 및 ROI 기하학을 설명하는 `tensor.semantic.preprocess` 메타데이터가 포함되어 있습니다. |
+
+## 모델 전처리 옵션
+
+이러한 옵션들은 애플리케이션 코드에서 사용자에게 보여줄 때 우선적으로 사용해야 하는 설정입니다.
+
+### 크기 조정 및 화면 비율
+
+| 옵션 | 의미 |
+| --- | --- |
+| `opt.preprocess.resize.enable`를 | `Auto`, `On` 또는 `Off`로 설정합니다. `Auto`는 플래너가 이미지 크기 조정이 필요한지 자동으로 판단하도록 합니다. |
+| `opt.preprocess.resize.width` / `height` | 대상 모델 입력 크기입니다. `0`는 가능한 경우 모델 계약에서 추론한다는 의미입니다. |
+| `opt.preprocess.resize.mode` | `ResizeMode::Stretch`, `ResizeMode::Letterbox`또는 `ResizeMode::Crop`. |
+| `opt.preprocess.resize.pad_value` | 레터박스 패딩에 사용되는 채우기 값입니다. `114`는 일반적인 YOLO 기본값입니다. |
+| `opt.preprocess.resize.scaling_type` | 보간 토큰입니다. 지원되는 토큰에는 `BILINEAR`, `NEAREST_NEIGHBOUR`, `BICUBIC`, `INTERAREA` 및 `NO_SCALING`이 포함됩니다. `NEAREST_NEIGHBOR` 및 `INTER_AREA`는 허용되는 별칭입니다. |
+
+`ResizeMode::Letterbox`는 이미지 또는 ROI를 대상에 맞게 조정하고 나머지 영역을 채워서 종횡비를 유지합니다. `ResizeMode::Stretch`는 너비와 높이를 독립적으로 조정합니다. `ResizeMode::Crop`는 등방성 조정 후 중앙 부분을 잘라냅니다.
+
+### 색상, 정규화, 양자화, 테셀레이션
+
+| 옵션 | 의미 |
+| --- | --- |
+| `opt.preprocess.color_convert.input_format` | 소스 형식 힌트: `RGB`, `BGR`, `GRAY8`, `NV12`, `I420` 또는 `Auto`. |
+| `opt.preprocess.color_convert.output_format` | 모델 입력 색 공간으로, 일반적으로 `RGB`, `BGR` 또는 `GRAY8`을 사용합니다. |
+| `opt.preprocess.normalize.enable` | 평균/표준 편차 정규화를 활성화하거나 비활성화합니다. |
+| `opt.preprocess.normalize.mean` | 채널별 평균. 모델 학습 시 사용된 전처리 방식과 일치시켜야 합니다. |
+| `opt.preprocess.normalize.stddev` | 채널별 나눗셈 값입니다. 모델 학습 중에 사용된 것과 동일한 정규화된 채널 통계(예: ImageNet 스타일 값)를 사용합니다. `{0.229,0.224,0.225}`. |
+| 모델이 양자화된 출력을 예상할 때, 양자화된 출력에 대한 플래너/사용자 제어 기능입니다. | `opt.preprocess.quantize.enable` |
+| `opt.preprocess.quantize.zero_point` / `scale` | 명시적인 양자화 매개변수입니다. 모델 보정 설정을 재정의하지 않는 한 설정하지 마십시오. |
+| `opt.preprocess.tessellate.enable` | MLA 타일 레이아웃 출력을 위한 플래너/사용자 제어 기능입니다. 활성화하면 `Preproc`에서 테셀레이션된 텐서를 반환합니다. |
+| `opt.preprocess.tessellate.slice_shape` | 고급 타일 기하학적 재정의. 모델 계약에서 재정의를 요구하는 경우가 아니면 비워 두십시오. |
+
+## 런타임 ROI 목록
+
+ROI 목록은 정적 `PreprocOptions` 필드가 아닌 런타임 입력 선택 메커니즘입니다. 독립 실행형 스테이지 오버로드에 전달합니다.
+
+C++:
+
+```cpp
+std::vector<cv::Mat> images = {image0, image1};
+std::vector<PreprocessRoi> rois = {
+    {0, 0, 0, 320, 240},      // ROI from images[0]
+    {1, 100, 50, 256, 256},   // ROI from images[1]
+    {0, -16, 32, 128, 128},   // partially outside images[0], padded by Preproc
+};
+
+TensorList roi_tensors = stages::Preproc(images, model, rois);
+```
+
+파이썬:
+
+```python
+images = [image0, image1]
+rois = [
+    pyneat.PreprocessRoi(0, 0, 0, 320, 240),
+    pyneat.PreprocessRoi(1, 100, 50, 256, 256),
+    pyneat.PreprocessRoi(0, -16, 32, 128, 128),
+]
+
+roi_tensors = pyneat.stages.preproc(
+    images,
+    model,
+    rois=rois,
+    image_format=pyneat.PixelFormat.BGR,
+)
+```
+
+`cv2.imread`로 읽은 이미지에는 `image_format=pyneat.PixelFormat.BGR`를, RGB 이미지에는 `RGB`를, HW 그레이스케일 이미지에는 `GRAY8`을 사용합니다. Python 이미지 버퍼가 스테이지가 완료되기 전에 변경되거나 해제될 수 있는 경우에만 `copy=True`로 설정합니다.
+
+### `PreprocessRoi`
+
+| 필드 | 의미 |
+| --- | --- |
+| `batch_index` |은 `images` 벡터 내의 원본 이미지의 인덱스입니다. |
+| `x`, `y` | 원본 이미지 픽셀 단위의 ROI 왼쪽 상단 좌표입니다. ROI가 프레임 바깥쪽에서 시작할 수 있도록 부호 있는 값을 사용할 수 있습니다. |
+| `width`, `height` | ROI 크기는 픽셀 단위로 지정합니다. 두 값 모두 양수여야 합니다. |
+
+### ROI 목록 의미론
+
+| 규칙 | 동작 |
+| --- | --- |
+| 출력 개수/순서 | 요청된 각 ROI에 대해 텐서를 반환하며, ROI 벡터와 동일한 순서로 반환됩니다. 빈 ROI 벡터는 빈 `TensorList`를 반환합니다. |
+| 이미지당 여러 개의 ROI(관심 영역) | 지원됩니다. 여러 항목이 동일한 값을 사용할 수 있습니다. `batch_index`. |
+| 일괄 처리된 원본 이미지. | 모든 원본 이미지의 크기, 유형 및 채널 수가 일치할 때 지원됩니다. |
+| 프레임 외부 픽셀 | RGB/BGR/GRAY 이미지에서 지원되며, 소스 경계 외부의 픽셀은 구성된 패딩 값으로 채워집니다. |
+| 입력 형식 | 런타임 ROI 목록 소스 이미지는 8비트 RGB/BGR 형식(`CV_8UC3`) 및 GRAY/GRAY8(`CV_8UC1`)을 지원합니다. NV12/I420 ROI 목록은 의도적으로 이 단계 API에 포함되지 않습니다. |
+| 크기 조정 동작 | ROI는 전체 프레임 전처리 방식과 동일한 크기 조정 모드, 스케일링 유형, 종횡비 정책, 정규화, 데이터 유형 및 테셀레이션 설정을 사용합니다. |
+| 메타데이터 | 각 출력 텐서에는 스칼라 ROI 메타데이터와 더불어 모델/전처리된 좌표에서 원본 프레임 좌표로의 변환을 수행하는 어파인 매핑이 포함됩니다. |
+
+## 직접 `PreprocOptions` 필드를 지정합니다.
+
+이러한 기능은 수동 노드 구성에만 사용됩니다. 모델에서 관리하는 구성은 대부분 아카이브와 해결된 전처리 계획에서 가져와 자동으로 채워집니다.
+
+| 필드 그룹 | 필드 |
+| --- | --- |
+| 셰이프 | `input_shape`, `output_shape`, `slice_shape`, `scaled_width`, `scaled_height`, `batch_size` |
+| 변환 컨트롤은 | `normalize`, `aspect_ratio`, `tessellate`, `dynamic_input_dims`, `channel_mean`, `channel_stddev`를 포함합니다. |
+| 형식은 | `input_img_type`, `output_img_type`, `output_dtype`, `scaling_type`, `padding_type`, `pad_value` 입니다. |
+| 양자화 | `q_zp`, `q_scale` |
+| 런타임 연결: | 그래프 이름: `graph_name`, 노드 이름: `node_name`, 요소 이름: `element_name`, CPU: `cpu`, 다음 CPU: `next_cpu`, 상위 이름: `upstream_name`, 그래프 입력 이름: `graph_input_name` |
+| 고급 버퍼 제어 | `single_output_handoff`, `num_buffers`, `num_buffers_model`, `num_buffers_locked`, `model_managed_contract` |
+
+## 메타데이터 및 BoxDecode
+
+`Preproc`는 후속 노드가 이미지 변환을 올바르게 되돌릴 수 있도록 전처리 메타데이터를 기록합니다. 특히 `SimaBoxDecode`는 이 메타데이터를 사용하여 감지 상자를 원래 이미지 또는 ROI 좌표 공간에 다시 매핑합니다.
+
+중요한 메타데이터 필드에는 다음이 포함됩니다.
+
+- `original_width` / `original_height`
+- `resized_width` / `resized_height`
+- `scaled_width` / `scaled_height`
+- `pad_left`, `pad_right`, `pad_top`, `pad_bottom`
+- `resize_mode`, `color_in`, `color_out`
+- `normalize`, `quantize`, `tessellate`
+- `affine_*` 변환 필드
+- `roi_list_enabled`, `rois`, `roi_affines` 및 ROI 개수/용량 필드
+
+## 문제 해결
+
+| 증상 | 확인 |
+| --- | --- |
+| 박스가 이동하거나 크기가 조정됩니다. | 다음을 확인합니다. `resize.mode`, letterbox, `pad_value` 및 후속 디코딩 단계에서 `tensor.semantic.preprocess` 텐서가 올바르게 처리되는지 확인합니다. |
+<<번역>>
+| ROI 출력 결과가 동일하게 보이는지 확인합니다. | `batch_index`, `x`, `y`, `width` 및 `height` 값이 예상대로 다르고 원본 이미지가 서로 다른지 확인합니다. |
+| ROI 목록 호출 시 오류 발생. | 이미지 배치에 이미지가 있는지, 모든 이미지의 크기/유형/채널이 일치하는지, `batch_index`가 유효한지, ROI 너비/높이가 양수인지 확인하십시오. |
+| 예상치 못한 dtype/레이아웃 | `model.resolved_preprocess_plan()`과 출력 텐서의 의미를 검토하십시오. 양자화/테셀레이션은 모델의 경로를 따릅니다. |
+| 레터박스 결과에 예상치 못한 패딩이 발생했습니다. | `ResizeMode::Letterbox` 설정, 대상 크기, ROI 가로 세로 비율, `pad_value` 값을 확인하세요. |
+
+## 참조:
+
+- [사전 처리된 ROI 목록](/reference/preproc_roi)
+- [추론 전에 이미지 전처리](/tutorials/preprocess-images)
+- [데이터 형식](/develop-apps/advanced-concepts/data_formats)
+- [노드 프로그래밍 모델](/develop-apps/development-workflow/node)
+- [BoxDecode 디코딩 유형](/reference/boxdecode_decode_types)

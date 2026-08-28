@@ -6,6 +6,7 @@ self-hosted-runner:
     - dvt-3
     - elxr-sdk
     - modalix
+    - pcie
     - vulcan-dev
     - vulcan-stg
     - vulcan-staging

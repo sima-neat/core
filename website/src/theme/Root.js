@@ -2,6 +2,142 @@ import React, {useEffect, useState} from "react";
 import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
 import useBaseUrl from "@docusaurus/useBaseUrl";
 import {useLocation} from "@docusaurus/router";
+import tutorialLocales from "@site/src/generated/tutorial-locales.json";
+
+const I18N_PREVIEW_PARAM = "i18n";
+const I18N_PREVIEW_SESSION_KEY = "neat-docs-i18n-preview";
+const DOCS_LOCALE_COOKIE = "sima-neat-locale";
+const ENGLISH_ONLY_ROUTE_PREFIXES = [
+  "/doxygen",
+  "/reference/cppapi",
+  "/reference/pythonapi",
+];
+const LOCALIZED_UI = {
+  en: {
+    code: "Code",
+    gettingStarted: "Getting Started",
+    generatedNotice:
+      "Generated API documentation in this section is currently available in English only.",
+    preferredCodeLanguage: "Preferred programming language",
+  },
+  ko: {
+    code: "코드",
+    gettingStarted: "시작하기",
+    generatedNotice: "이 섹션의 생성된 API 문서는 현재 영어로만 제공됩니다.",
+    preferredCodeLanguage: "선호하는 프로그래밍 언어",
+  },
+  ja: {
+    code: "コード",
+    gettingStarted: "はじめに",
+    generatedNotice:
+      "このセクションの生成 API ドキュメントは、現在英語版のみ提供しています。",
+    preferredCodeLanguage: "優先するプログラミング言語",
+  },
+  "zh-Hant": {
+    code: "程式碼",
+    gettingStarted: "開始使用",
+    generatedNotice: "本區段自動產生的 API 文件目前僅提供英文版。",
+    preferredCodeLanguage: "偏好的程式語言",
+  },
+  uk: {
+    code: "Код",
+    gettingStarted: "Початок роботи",
+    generatedNotice:
+      "Згенерована документація API в цьому розділі наразі доступна лише англійською мовою.",
+    preferredCodeLanguage: "Бажана мова програмування",
+  },
+};
+
+function preferredDocsLocale() {
+  if (typeof window === "undefined") return "";
+  if (window.__NEAT_DOCS_PREFERRED_LOCALE__) {
+    return window.__NEAT_DOCS_PREFERRED_LOCALE__;
+  }
+  const entry = document.cookie
+    .split("; ")
+    .find((cookie) => cookie.startsWith(`${DOCS_LOCALE_COOKIE}=`));
+  if (!entry) return "";
+  try {
+    return decodeURIComponent(entry.split("=").slice(1).join("="));
+  } catch {
+    return "";
+  }
+}
+
+function localizationEnabled(search, currentLocale) {
+  if (new URLSearchParams(search).get(I18N_PREVIEW_PARAM) === "1") return true;
+  if (typeof window === "undefined") return false;
+
+  let sessionPreviewEnabled = false;
+  try {
+    sessionPreviewEnabled =
+      window.sessionStorage.getItem(I18N_PREVIEW_SESSION_KEY) === "1";
+  } catch {}
+
+  return sessionPreviewEnabled || preferredDocsLocale() === currentLocale;
+}
+
+function tutorialAvailableInLocale(pathname, currentLocale, defaultLocale, localizedLocales) {
+  return (
+    currentLocale === defaultLocale ||
+    /\/tutorials\/before-you-run\/?$/.test(pathname) ||
+    localizedLocales.includes(currentLocale)
+  );
+}
+
+function I18nPreviewGate({children}) {
+  const {i18n, siteConfig} = useDocusaurusContext();
+  const location = useLocation();
+  const [mounted, setMounted] = useState(false);
+  const previewEnabled = localizationEnabled(location.search, i18n.currentLocale);
+  const isLocalized = i18n.currentLocale !== i18n.defaultLocale;
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted || !isLocalized || previewEnabled) return;
+
+    const baseUrl = siteConfig.baseUrl.endsWith("/")
+      ? siteConfig.baseUrl
+      : `${siteConfig.baseUrl}/`;
+    const localePrefix = `${baseUrl}${i18n.currentLocale}/`;
+    const englishPath = location.pathname.startsWith(localePrefix)
+      ? `${baseUrl}${location.pathname.slice(localePrefix.length)}`
+      : baseUrl;
+    window.location.replace(`${englishPath}${location.search}${location.hash}`);
+  }, [i18n.currentLocale, isLocalized, location, mounted, previewEnabled, siteConfig.baseUrl]);
+
+  if (mounted && isLocalized && !previewEnabled) return null;
+  return children;
+}
+
+function LocalizationScopeNotice() {
+  const {i18n} = useDocusaurusContext();
+  const location = useLocation();
+  const previewEnabled = localizationEnabled(location.search, i18n.currentLocale);
+  const isEnglishOnlyPrefix = ENGLISH_ONLY_ROUTE_PREFIXES.some(
+    (prefix) => location.pathname.includes(`${prefix}/`) || location.pathname.endsWith(prefix),
+  );
+  const isTutorial = /\/tutorials(?:\/|$)/.test(location.pathname);
+  const isLocalizedTutorial = tutorialAvailableInLocale(
+    location.pathname,
+    i18n.currentLocale,
+    i18n.defaultLocale,
+    tutorialLocales.locales,
+  );
+  const isEnglishOnlySection = isEnglishOnlyPrefix || (isTutorial && !isLocalizedTutorial);
+  const ui = LOCALIZED_UI[i18n.currentLocale] || LOCALIZED_UI.en;
+
+  if (!previewEnabled || !isEnglishOnlySection) return null;
+
+  return (
+    <aside className="localization-scope-notice" role="status">
+      {ui.generatedNotice}
+    </aside>
+  );
+}
 
 function BannerLink({href, children}) {
   if (!href) {
@@ -99,12 +235,13 @@ function BuildInfoBanner() {
 }
 
 function SoftwareSubnav() {
-  const {siteConfig} = useDocusaurusContext();
+  const {i18n, siteConfig} = useDocusaurusContext();
   const location = useLocation();
+  const ui = LOCALIZED_UI[i18n.currentLocale] || LOCALIZED_UI.en;
   const githubOrgUrl = siteConfig.customFields?.githubOrgUrl || "https://github.com/sima-neat";
   const links = [
     {
-      label: "Getting Started",
+      label: ui.gettingStarted,
       href: useBaseUrl("/getting-started/"),
       active: location.pathname.includes("/getting-started"),
     },
@@ -136,11 +273,11 @@ function SoftwareSubnav() {
         </div>
         <div className="software-subnav__controls">
           <div className="language-pref">
-            <label htmlFor="language-pref-select-subnav">Language</label>
+            <label htmlFor="language-pref-select-subnav">{ui.code}</label>
             <select
               id="language-pref-select-subnav"
               data-language-pref-select
-              aria-label="Preferred language"
+              aria-label={ui.preferredCodeLanguage}
             >
               <option value="cpp">C++</option>
               <option value="py">Python</option>
@@ -169,10 +306,11 @@ function SoftwareSubnav() {
 
 export default function Root({children}) {
   return (
-    <>
+    <I18nPreviewGate>
       <BuildInfoBanner />
       <SoftwareSubnav />
+      <LocalizationScopeNotice />
       {children}
-    </>
+    </I18nPreviewGate>
   );
 }

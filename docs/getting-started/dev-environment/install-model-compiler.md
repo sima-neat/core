@@ -32,13 +32,13 @@ command, and `x86_64` means use the `amd64` command.
 For `amd64` Neat SDK containers:
 
 <ShellCommand prompt="username@neat-sdk-latest">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
 For `arm64` Neat SDK containers:
 
 <ShellCommand prompt="username@neat-sdk-latest">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
+sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 After installation, activate the compiler environment from inside the Neat SDK
@@ -58,20 +58,20 @@ deactivate-model-compiler
 
 Standalone installation is supported only on host environments listed in
 [Compatibility](/getting-started/compatibility/#model-compiler). Run the
-matching `sima-cli install` command from the supported host environment. To
+matching `sima-cli neat install` command from the supported host environment. To
 check the host architecture, run `uname -m`: `x86_64` uses the `amd64` command,
 and `aarch64` uses the `arm64` command.
 
-For Model Compiler 2.1.2 on `amd64` hosts:
+For Model Compiler 2.1.3 on `amd64` hosts:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
-For Model Compiler 2.1.2 on `arm64` hosts:
+For Model Compiler 2.1.3 on `arm64` hosts:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
+sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 For Model Compiler 2.0.0 on `amd64` hosts:

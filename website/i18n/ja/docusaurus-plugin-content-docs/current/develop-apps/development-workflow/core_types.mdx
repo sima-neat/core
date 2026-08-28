@@ -1,0 +1,369 @@
+---
+title: "テンソルとサンプル"
+description: "テンソルペイロードとメタデータを、モデル、グラフ、および実行の境界を越えて移動させます。"
+sidebar_position: 3
+---
+
+# テンソルとサンプル
+
+単なるバイト列に意味はありません。メタデータに意味があります。
+
+Neat は、ランタイムデータを次の 2 つのパブリック型を使用して処理します。
+
+- [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor)：形状、dtype、レイアウト、ストレージ、およびオプションのセマンティックメタデータを持つ数値ペイロード。
+- [`Sample`](/reference/{lsa}/structs/simaai-neat-sample)：1 つまたは複数のテンソル、およびストリーム、フレーム、タイムスタンプ、ペイロード、およびルートメタデータを含むエンベロープ。
+
+モデルの入力または出力データのみが必要な場合は、`Tensor` を使用します。グラフがストリーム ID、タイムスタンプ、エンコードされたメディアのキャプチャ、またはマルチ出力構造を保持する必要がある場合は、`Sample` を使用します。
+
+## TensorList または Sample の選択
+
+| タスク | C++ 入力形状 | Python 入力形状 | 戻り値 |
+|---|---|---|---|
+| テンソルを使用してモデルを実行 | `model.run(TensorList{tensor})` | `model.run([tensor])` | `TensorList` / Python のリストのようなテンソルコレクション |
+| メタデータを使用してモデルを実行 | `model.run(sample)` | `model.run([sample])` | `Sample` |
+| `Run` にテンソルをプッシュ | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
+| `Run` にサンプルをプッシュ | `run.push(sample)` | `run.push([sample])` | `bool` |
+| テンソルのみの出力を取得 | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / Python のリストのようなテンソルコレクション |
+| メタデータを保持した出力を取得 | `run.pull(...)` または `run.pull_samples(...)` | `run.pull(...)` または `run.pull_samples(...)` | `Sample` |
+
+Python では、モデルまたはグラフの入力を常にリストまたはタプルとして渡します。`[tensor]` は「1 つの入力」を意味します。バッチ次元は作成されません。
+
+バッチサイズは、テンソルの形状とコンパイルされたモデルのコントラクトに属します。入力リストをバッチとして扱う前に、`model.input_specs()` と `model.compiled_batch_size()` を確認してください。
+
+## Python でテンソルを作成する
+
+ソースデータに一致するコンストラクターを使用します。
+
+| ソースデータ | 使用 |
+|---|---|
+| NumPy 配列 | `pyneat.Tensor.from_numpy(array, copy=True, layout=..., image_format=...)` |
+| Torch テンソル | `pyneat.Tensor.from_torch(tensor, copy=True, layout=..., image_format=...)` |
+| DLPack 互換オブジェクト | `pyneat.Tensor.from_dlpack(obj, copy=True, layout=...)` |
+| Python リスト | `pyneat.Tensor.from_list(data, shape=..., dtype=...)` |
+| エンコードされたメディアバイト | `pyneat.Sample.from_encoded(data, caps_string, port_name=...)` |
+
+Neat が読み込みを完了する前に、ソースバッファーが破棄される可能性がある場合は、`copy=True` を使用します。アプリケーションがライフサイクルを所有している場合にのみ、`copy=False` を使用します。不明なバッファーは使用しないでください。
+
+<CodeTabs>
+<CodeTab label="NumPy" lang="python">
+
+```python
+import numpy as np
+import pyneat
+
+frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+outputs = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+<CodeTab label="PyTorch" lang="python">
+
+```python
+import torch
+import pyneat
+
+torch_tensor = torch.zeros((480, 640, 3), dtype=torch.uint8)
+
+tensor = pyneat.Tensor.from_torch(
+    torch_tensor,
+    copy=True,
+    image_format=pyneat.PixelFormat.RGB,
+)
+
+outputs = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+アプリケーションでフレームワーク固有のデータが必要な場合は、出力形式を変換してください。
+
+```python
+array = outputs[0].to_numpy(copy=True)
+torch_tensor = outputs[0].to_torch(copy=True)
+```
+
+通常、初回実行時にコードはメモリの配置を手動で選択すべきではありません。もし必要であれば、Pythonは`TensorMemory.Auto`、`CPU`、`A65`、`EV74`、および`MLA`を、`memory=`引数を通じて公開します。
+
+`byte_format=`は、バイト形式のテンソルペイロードに対してのみ使用してください。`byte_format=`と`image_format=`を組み合わせて使用しないでください。
+
+### Pythonでエンコードされたサンプルを作成する
+
+グラフ入力が、H.264やH.265などのエンコードされたメディアを期待し、かつアプリケーションがバイトデータを所有している場合、`Sample.from_encoded(...)`を使用します。
+
+```python
+sample = pyneat.Sample.from_encoded(
+    data,
+    caps_string="video/x-h264,stream-format=byte-stream,alignment=au",
+    pts_ns=pts_ns,
+    duration_ns=duration_ns,
+    port_name="video",
+)
+
+run.push("video", [sample])
+```
+
+`caps_string` は、グラフに対して、バイト列が何を意味するかを伝えます。`port_name` は、サンプルをグラフの入力名に紐付けます。デコードされたピクセルがある場合は、このパスを使用しないでください。代わりに、画像テンソルまたは画像サンプルを作成してください。
+
+解析済みの H.265 アクセスユニットの場合は、`video/x-h265,parsed=true,stream-format=byte-stream,alignment=au` を使用します。H.265 デコーダーのパスには、HEVC Main プロファイル、8 ビット、4:2:0 入力が必要です。
+
+## C++ でテンソルを作成する
+
+テンソルのみの入力の場合は、`TensorList` を使用します。`TensorList` には、モデルまたはグラフの入力ごとに 1 つのテンソルが含まれます。
+
+```cpp
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+複数の入力を持つモデルの場合、グラフで名前付きの入力が公開されていない限り、`model.input_specs()` で指定された順序で、入力ごとに1つのテンソルを渡します。
+
+### C++ で OpenCV 画像を使用する
+
+OpenCV 画像は通常、BGR 形式です。コード内で明示的に記述しましょう。
+
+直接 `Model` を実行する場合、`cv::Mat` を `Tensor` に変換し、`TensorList` を渡すのが明確な方法です。
+
+```cpp
+cv::Mat image = cv::imread("image.jpg");
+
+auto input = simaai::neat::Tensor::from_cv_mat(
+    image,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+auto outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+OpenCVのサポートを組み込んでNeatを構築すると、`Model`、`Graph`、および`Run`も、`std::vector<cv::Mat>`の便利なオーバーロードを公開します。各入力に対して1つの`cv::Mat`を渡します。
+
+```cpp
+auto model_outputs = model.run(std::vector<cv::Mat>{image});
+auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
+
+auto run = graph.build();
+run.push("image", std::vector<cv::Mat>{image});
+```
+
+例でピクセル形式、メモリ、または有効期間を明示的に指定する必要がある場合は、`Tensor::from_cv_mat(...)` を使用してください。グラフ/モデルのオプションですでに入力の仕様が記述されている場合は、OpenCV の便利なオーバーロードを使用します。
+
+## テンソルの仕様を確認する
+
+入力の割り当てや出力のデコードを行う前に、仕様を確認してください。
+
+```python
+for spec in model.input_specs():
+    print(spec.shape, spec.dtype, spec.layout)
+
+for spec in model.output_specs():
+    print(spec.shape, spec.dtype, spec.layout)
+```
+
+テンソルの契約には、以下を含めることができます。
+
+- 形状とバイトサイズ
+- `TensorDType`。例えば、整数、浮動小数点、またはBF16ペイロードなど。
+- `TensorLayout`。例えば、HWCまたはモデル固有のテンソルレイアウトなど。
+- 画像のセマンティックメタデータを通じて、画像のピクセル形式を指定。
+- 量子化、テッセレーション、検出、テキスト、オーディオ、バイトストリーム、エンコード済み、または前処理されたセマンティックメタデータ。
+
+すべての公開境界がFP32であると仮定しないでください。仕様書を参照してください。
+
+## モデル出力のデコード
+
+生のテンソルから開始します。出力契約でペイロードが検出、ポーズ、またはセグメンテーション形式であると明示されている場合にのみデコードします。
+
+| 出力契約 | 使用方法 | 結果 |
+|---|---|---|
+| 生のテンソル | 返されたテンソルを直接使用するか、`to_numpy(...)` / `to_torch(...)` を使用して変換します | モデル出力のdtypeと形状のテンソルデータ |
+| テンソルとしてパックされたボックス | `pyneat.decode_bbox(outputs, clamp_to=(width, height), top_k=..., strict=...)` | 入力ごとに1つのfloat32 `[N, 6]` テンソル: `x1`、`y1`、`x2`、`y2`、`score`、`class_id` |
+| 型付きレコードとしてパックされた1つのボックステンソル | `pyneat.detections.decode_bbox_tensor(tensor, width, height, expected_topk=..., strict=...)` | `BoxDecodeResult`。`boxes` レコードと保持された生のバイトを含む |
+| パックされたポーズ | `pyneat.decode_pose(outputs, clamp_to=(width, height), top_k=..., strict=...)` | ボックスとキーポイント |
+| パックされたセグメンテーション | `pyneat.decode_segmentation(outputs, clamp_to=(width, height), top_k=..., strict=...)` | ボックスとマスク |
+
+```python
+outputs = model.run([tensor], timeout_ms=2000)
+boxes = pyneat.decode_bbox(outputs, clamp_to=(image_width, image_height), strict=True)
+box_array = boxes[0].to_numpy(copy=True)
+```
+
+出力形式が期待する形式でのみデコードヘルパーを使用してください。
+
+## メタデータには Sample を使用する
+
+ペイロードデータに識別情報またはタイミングが必要な場合は、`Sample` を使用します。
+
+一般的なコンストラクターとヘルパー：
+
+| 必要事項 | C++ | Python |
+|---|---|---|
+| ポート名とともにテンソルをラップする | `make_tensor_sample("image", tensor)` | `pyneat.make_tensor_sample("image", tensor)` |
+| OpenCV イメージをラップする | `make_image_sample(image, PixelFormat::BGR, TensorMemory::CPU)` | `Tensor` を `Tensor.from_numpy(...)` で作成し、次に `make_tensor_sample(...)` を呼び出す |
+| エンコードされたメディアバイトをラップする | `make_encoded_sample(bytes, caps_string, pts_ns, dts_ns, duration_ns)` | `pyneat.make_encoded_sample(...)` または `pyneat.Sample.from_encoded(data, caps_string, port_name=...)` |
+| テキストをラップする | `Tensor::from_text(...)` と `make_tensor_sample(...)` | `pyneat.make_text_sample("text", text)` |
+| 複数の論理フィールドをラップする | `make_bundle_sample({field0, field1})` | `pyneat.Sample()` を作成し、`append(...)` を呼び出す |
+
+一般的なフィールド：
+
+| フィールド | 使用方法 |
+|---|---|
+| `kind` | ペイロードが `Tensor`、`TensorSet`、`Bundle`、または `Unknown` のいずれであるかを示す。 |
+| `tensor` | `kind == Tensor` の場合、単一のテンソルペイロード。 |
+| `tensors` | `kind == TensorSet` の場合、1 つの論理出力における複数のテンソル。 |
+| `fields` | `kind == Bundle` の場合、ネストされたサンプル。 |
+| `stream_id` | 複数ストリームグラフの安定したストリーム識別子。 |
+| `frame_id` | 結合、レンダリング、およびメトリックのためのソースフレーム識別子。 |
+| `pts_ns`、`dts_ns`、`duration_ns` | タイミングメタデータ。 |
+| `port_name` | 入力または出力ポートの識別子。 |
+| `payload_type`、`media_type`、`payload_tag`、`caps_string` | ペイロードファミリーとメディア/キャップメタデータ。 |
+| `logical_output_index` | 複数の出力を持つモデルの論理出力識別子。 |
+
+Python の `Sample` はイテラブルです。バンドルでないサンプルは、1 つの論理アイテムのように動作します。バンドルは、その `fields` を反復処理します。
+
+### `TensorSet` または `Bundle` を選択する
+
+`TensorSet` と `Bundle` の両方で、1 つ以上のペイロードを伝送できますが、それぞれ意味が異なります。
+
+| 構造 | 使用する場面 | 読み取る場所 |
+|---|---|---|
+| `TensorSet` | 1 つの論理入力または出力を作成する複数のテンソル（例：1 つの出力ポートにおけるボックスとマスク）。 | `sample.tensors` |
+| `Bundle` | 一緒に伝送される複数の論理フィールド（例：画像フィールドとメタデータフィールド）。 | `sample.fields`、反復処理、または `sample[index]` |
+
+ダウンストリームコードでテンソルを 1 つの結果として扱う必要がある場合は、`TensorSet` を使用します。ダウンストリームコードでフィールドを個別にルーティングまたは検査する必要がある場合は、`Bundle` を使用します。これらを混同すると、バイトはまだ伝送される可能性がありますが、意味が損なわれる可能性があります。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto image = simaai::neat::make_tensor_sample("image", image_tensor);
+auto metadata = simaai::neat::make_tensor_sample(
+    "metadata",
+    simaai::neat::Tensor::from_text(metadata_json));
+
+auto bundle = simaai::neat::make_bundle_sample({image, metadata});
+bundle.stream_id = "camera-0";
+bundle.frame_id = frame_number;
+
+run.push("request", bundle);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = pyneat.make_tensor_sample("image", image_tensor)
+metadata = pyneat.make_text_sample("metadata", metadata_json)
+
+bundle = pyneat.Sample()
+bundle.append(image)
+bundle.append(metadata)
+bundle.stream_id = "camera-0"
+bundle.frame_id = frame_number
+
+run.push("request", [bundle])
+```
+
+</CodeTab>
+</CodeTabs>
+
+`TensorSet` を受信した場合は、`sample.tensors` を反復処理します。`Bundle` を受信した場合は、サンプル自体または `sample.fields` を反復処理します。テンソルの形状を正確に保ちます。将来の処理のために、そのテンソルを使用することを考慮してください。
+
+### アプリケーションが所有するストリームのメタデータをプッシュ
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto sample = simaai::neat::make_tensor_sample("image", input_tensor);
+sample.stream_id = "camera-0";
+sample.frame_id = frame_number++;
+
+run.push("image", sample);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+sample = pyneat.make_tensor_sample("image", tensor)
+sample.stream_id = "camera-0"
+sample.frame_id = frame_number
+
+run.push("image", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+マルチストリームのグラフに`stream_id`がない場合、ストリームごとの公平なスループットを報告できません。調整を行う前に、各ストリームに名前を付けてください。
+
+### 取得したサンプルを読み込む
+
+```python
+sample = run.pull("detections", timeout_ms=2000)
+
+if sample is not None:
+    print(sample.kind, sample.stream_id, sample.frame_id)
+    if sample.kind == pyneat.SampleKind.TensorSet:
+        for tensor in sample.tensors:
+            print(tensor.shape, tensor.dtype)
+```
+
+## ペイロードファミリーについて
+
+`PayloadType` は、Neat に、グラフの境界を通過するデータの種類を伝えます。
+
+| ペイロードファミリー | 使用方法 / 検査 |
+|---|---|
+| `PayloadType.Image` | デコードされたピクセル。画像の形式、幅、高さ、およびピクセルメタデータを検査します。 |
+| `PayloadType.Tensor` | モデルまたはアプリケーションのテンソル。dtype、形状、レイアウト、およびセマンティックメタデータを検査します。 |
+| `PayloadType.Encoded` | H.264またはH.265などのエンコードされたメディア。`caps_string`、コーデック、タイムスタンプ、およびペイロードタグを検査します。 |
+| `PayloadType.Auto` | 可能な場合は、Neat にテンソル/サンプルのメタデータから推測させます。 |
+
+テキスト、オーディオ、バイトストリーム、および不透明なバイトは、個別の `PayloadType` 列挙型の値としてではなく、テンソルのセマンティクスまたは特殊な仕様として送信されます。
+
+明示的な入力境界の場合、`payload_type`、`format`、サイズフィールド、動的制限、fps、capsの上書き、ライブ/タイムスタンプの動作、およびメモリポリシーとともに、`InputOptions` を使用します。Pythonでは、生の文字列ではなく、`pyneat.Format` / `pyneat.FormatTag` を使用して、フォーマットフィールドを設定します。
+
+## 高度なタイプ検出
+
+最初の推論にはこれらのタイプは必要ありませんが、コントラクトを検証したり、診断情報を収集したりする場合は役立ちます。
+
+| タイプ | 使用する場面 |
+|---|---|
+| `TensorConstraint` / `TensorSpec` | テンソルを送信する前に、dtype、ランク、形状、デバイス、画像形式、またはセグメントの制約を確認する必要がある場合。 |
+| `DeviceType` | テンソルがCPU、APU、CVU、MLA、または不明なデバイスに関連付けられているかどうかを検査する必要がある場合。 |
+| `StorageKind` | ストレージがCPUによって所有されているか、外部のCPUメモリであるか、GStreamer サンプルであるか、デバイスハンドルであるかを理解する必要がある場合。 |
+| `PlaneRole` | Y、U、V、またはUVプレーンなどのマルチプレーンメディアを検査している場合。 |
+| `BusMessage` | ランタイムまたはビルドの失敗後に、`GraphReport.bus` を読み取っている場合。 |
+| `BoundaryFlowStats` | 診断実行中に、どのグラフ境界がバッファを通過したかをチェックしている場合。 |
+| `MeasureOptions` / `MeasureReport` | `Run` ウィンドウを測定し、カウンター、レイテンシ、オプションのプラグインタイミング、またはオプションの電力が必要な場合。 |
+
+これらを証拠として使用します。タスクが本当に必要とする場合にのみ、これらを調整可能なパラメータにしないでください。
+
+## 関連項目
+
+- [モデル](/develop-apps/development-workflow/model)
+- [グラフ](/develop-apps/development-workflow/graph)
+- [グラフを実行する](/develop-apps/development-workflow/pipeline)
+- [ノード](/develop-apps/development-workflow/node)
+
+## チュートリアル
+
+- [NumPy配列をモデルに渡す](/tutorials/pass-numpy-to-model)
+- [1つのサンプルで複数の入力を送信する](/tutorials/feed-multi-input-model)
+- [モデルの出力結果を読み取り、解釈する](/tutorials/interpret-model-output)

@@ -1,0 +1,719 @@
+---
+title: "Граф"
+description: "Створіть виконуваний застосунок із використанням вузлів, моделей і повторно використовуваних фрагментів графа."
+sidebar_position: 5
+---
+
+# Граф
+
+У SiMa.ai Neat `Graph` [API](/reference/{lsa}/classes/simaai-neat-graph) використовується для створення застосунку. `Graph` описує потік даних від вхідних даних, через вузли обробки, до вихідних даних. Якщо ви маєте досвід у машинному навчанні, уявляйте `Graph` як невеликий граф моделі для застосунку, що використовує вашу модель.
+
+- Кадри, тензори або зразки надходять через **вхідні дані** та виходять через **вихідні дані**. Обробка відбувається посередині за допомогою **вузлів**, таких як декодування, зміна розміру, попередня обробка, виконання, подальша обробка, розгалуження та власна логіка.
+
+![Входи, етапи обробки та виходи в межах одного Graph](@site/../docs/images/graph-input-output.svg)
+
+- Графи можуть виконуватися як окремі одиниці або використовуватися повторно всередині більшого графа.
+
+![Фрагмент графа, який можна повторно використовувати, вбудований у більший граф застосунку.](@site/../docs/images/graph-reusable-fragment.svg)
+
+Neat дозволяє описувати застосунок замість ручного налаштування середовища виконання. Використовуйте попередньо створені [вузли](/develop-apps/development-workflow/node) та [групи вузлів](/develop-apps/development-workflow/node#pre-built-node-groups) для типових завдань, таких як обробка вхідних даних, декодування, зміна розміру, попередня обробка, виведення результатів, подальша обробка та виведення. У `Graph` ви визначаєте вузли, встановлюєте їхні параметри та з’єднуєте їх у порядку, необхідному для вашого застосунку.
+
+Під капотом Neat створює виконуваний граф середовища виконання на основі GStreamer. Neat абстрагує цю реалізацію, тому ви використовуєте загальнодоступний `Graph` API замість керування елементами GStreamer, `appsrc`, `appsink`, чергами або внутрішніми портами середовища виконання.
+
+## Вузли, групи та межі.
+
+`Graph` – це межа збірки; [`Node`](/develop-apps/development-workflow/node) – складова частина.
+
+Це включає:
+
+- атомні вузли, такі як етапи декодування, попередньої обробки, подальшої обробки, отримання даних і їх передачі;
+- попередньо створені групи вузлів, які є наборами вузлів, що можна повторно використовувати;
+- граничні вузли, такі як `Input("image")` і `Output("classes")`.
+
+Детальні правила щодо попередньо створених груп і граничних вузлів наведено в [Вузол → Попередньо створені групи вузлів](/develop-apps/development-workflow/node#pre-built-node-groups) і [Вузол → Межові вузли](/develop-apps/development-workflow/node#boundary-nodes).
+
+Коли ви викликаєте `Graph::build()`, Neat перетворює загальнодоступний граф на єдиний граф, придатний для виконання, зберігаючи імена кінцевих точок для діагностики та іменовані API `Run`.
+
+## Надання імен вхідним і вихідним даним
+
+Імена, вказані у вузлах `Input` та `Output`, визначають кінцеві точки межі фрагмента графа. Межі, які залишаються за межами остаточно зібраного `Graph`, стають загальнодоступними кінцевими точками в середовищі виконання:
+
+```cpp
+simaai::neat::Graph classifier("classifier");
+classifier.add(simaai::neat::nodes::Input("image"));
+classifier.add(model);
+classifier.add(simaai::neat::nodes::Output("classes"));
+```
+
+Тут `image` є вхідною точкою, а `classes` – вихідною точкою. Назва графа, `classifier`, є лише позначкою для діагностики та візуалізації; вона не створює вхідні або вихідні дані.
+
+### Перевірте кінцеві точки перед збіркою.
+
+Виведіть список публічних кінцевих точок перед тим, як створювати граф. Не повинно бути жодних неактивних кінцевих точок. Якщо назва відсутня в цьому списку, `Run` не прийме її пізніше.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+for (const auto& name : classifier.inputs()) {
+  std::cout << "graph input: " << name << "\n";
+}
+for (const auto& name : classifier.outputs()) {
+  std::cout << "graph output: " << name << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+print("graph inputs:", classifier.inputs())
+print("graph outputs:", classifier.outputs())
+```
+
+</CodeTab>
+</CodeTabs>
+
+Після створення `graph.build(...)`, перевірте `run.input_names()` та `run.output_names()` у робочому режимі `Run`. Назви мають відповідати публічному інтерфейсу, який ви планували зробити доступним.
+
+## Оберіть топологію, яка визначається вихідним кодом або застосунком.
+
+Кожен граф має відповідати на одне запитання: кому належать вхідні дані?
+
+| Топологія | Використовуйте його, коли | Форма під час виконання (у середовищі виконання). |
+| --- | --- | --- |
+| Надіслано через застосунок. | У вашому застосунку вже є кадри, тензори або зразки. | Додайте `nodes.input("name")`, потім запустіть за допомогою `run.push("name", ...)` або використайте `Graph.run([...])`. |
+| Належить джерелу. | Граф має зчитувати дані з файлу, камери, протоколу RTSP або іншого джерела. | Додайте вихідний вузол або вихідну групу, а потім створіть/запустіть проєкт, не передаючи вхідні дані програми. |
+
+Для графів, що надсилаються застосунком, назвіть вхідну кінцеву точку, орієнтуючись на концепцію застосунку: `image`, `left_camera`, `metadata`, `prompt`. Для графів, що належать джерелу, перевірте вихідний контракт і вилучіть те, що генерує шлях джерела.
+
+## Оберіть параметри графа.
+
+Використовуйте [`GraphOptions`](/reference/{lsa}/structs/simaai-neat-graphoptions) для налаштування поведінки на рівні графа. Використовуйте `RunOptions` пізніше для налаштування поведінки під час виконання.
+
+| Мета | Використовуйте | Примітки |
+| --- | --- | --- |
+| Додайте мітку до графа в журналах і експортованих даних. | `Graph("name")` | Це мітка, а не кінцева точка. |
+| Запустіть декілька графів в одному процесі. | `element_name_prefix` / `element_name_suffix` | Уникайте конфліктів імен згенерованих елементів і забезпечте читабельність діагностичних даних. |
+| Керування діагностикою графа. | `VerboseOptions` | Почніть з аналізу результатів роботи. Увімкніть детальну інформацію для налагодження лише під час збору даних. |
+| Оберіть бажану поведінку черги виводу. | `OutputOptions::Latest()`, `EveryFrame(...)` або `Clocked(...)`. | Обирайте: свіжість, повноту або доставку в узгоджений час. |
+| З’єднуйте динамічні фрагменти графа. | `GraphLinkOptions` з `RealtimeLatestByStream`. | Забезпечте безперервність кожного потоку даних, одночасно обмежуючи кількість декодованих кадрів, що надходять. |
+| Зв’язана функція зворотного виклику. | `callback_timeout_ms` | Використовуйте разом із функціями зворотного виклику в стилі C++, щоб повільна функція зворотного виклику не спричиняла проблем із відображенням графа. |
+| Налаштуйте розширені параметри виконання. | `advanced_execution` | Використовуйте лише після того, як для стандартного графа буде визначено базовий рівень. |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphOptions options;
+options.element_name_prefix = "cam0_";
+
+simaai::neat::Graph graph("cam0_detector", options);
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.GraphOptions()
+options.element_name_prefix = "cam0_"
+
+graph = pyneat.Graph("cam0_detector", options)
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+```
+
+</CodeTab>
+</CodeTabs>
+
+`Latest()` зберігає найновіший результат, коли програма не може отримати всі вихідні дані. Використовуйте `EveryFrame(...)`, коли важливі всі вихідні дані. Використовуйте `Clocked(...)`, коли вихідні дані повинні відповідати тактовій частоті конвеєра.
+
+`RunOptions::queue_depth` контролює вхідні дані графа та внутрішні черги середовища виконання. Він не замінює
+умову черги загальнодоступного `Output`: `OutputOptions::max_buffers` та `drop` контролюють
+цю кінцеву чергу та мають пріоритет. Черги вихідних даних, створені фреймворком, повертаються до значень за замовчуванням `RunOptions`.
+
+## Перевірте, перш ніж починати будувати.
+
+Використовуйте `graph.validate(...)`, коли вам потрібні дані для підтвердження побудови графа, не запускаючи при цьому повноцінний процес.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphReport report = graph.validate();
+std::cout << report.to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = graph.validate()
+print(report.to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+`ValidateOptions.parse_launch` перевіряє згенерований рядок конвеєра. `ValidateOptions.enforce_names` виявляє елементи, які не мають назви або є несподіваними. Перегляньте звіт перед зміною параметрів графа; спочатку перевірте дані, а потім налаштовуйте параметри.
+
+## Створення графів
+
+### Найпростіша когнітивна модель.
+
+Щоб створити застосунок, спочатку оголосіть `Graph`, потім використовуйте `add()` для лінійного ланцюга або `connect()` для визначення конкретної топології:
+
+- Використовуйте `add()` для типових сценаріїв обробки даних за одним шляхом, наприклад, для простого висновку на основі однієї моделі.
+- Використовуйте `connect()`, коли вам потрібен чіткий контроль над тим, як з’єднуються вузли або фрагменти.
+
+```cpp
+simaai::neat::Graph g;
+g.add(...);      // continue the same linear chain
+g.connect(...);  // add explicit graph topology
+
+auto run = g.build();
+```
+
+### Створіть, використовуючи `add()`.
+
+Наведений нижче приклад зчитує зображення, виконує обчислення та виводить передбачені класи, отримані з моделі.
+
+```text
+image -> model inference -> classes
+```
+
+Ось як виглядатиме код:
+
+```cpp
+simaai::neat::Model model("resnet50.tar.gz");  // Load a compiled model and prepare its Graph route.
+
+simaai::neat::Graph g("classifier");           // instantiate the Graph that will describe the app
+g.add(simaai::neat::nodes::Input("image"));    // adds an input Node named "image"
+g.add(model);                                  // adds the model Nodes connected to the Input
+g.add(simaai::neat::nodes::Output("classes")); // adds an output Node named "classes" connected to 'model'
+
+auto run = g.build();                          // build the Graph
+```
+
+:::note
+Використовуйте `add()`, щоб додавати вузли в просту лінійну послідовність, слідуючи за попередньо доданим вузлом.
+:::
+
+### Створіть, використовуючи `connect()`.
+
+Використовуйте `connect()`, коли вам потрібен явний контроль над топологією. Кожна команда `add()` спочатку з’єднує новий вузол або фрагмент після попереднього. Коли ви використовуєте обидва методи, `connect()` замінює відповідні неявні з’єднання на конкретні з’єднання, які ви визначаєте. Ви також можете використовувати `connect()` безпосередньо між іменованими кінцевими точками, вузлами, моделями або фрагментами графа, які можна повторно використовувати.
+
+#### Розгалуження за допомогою `connect()`.
+
+Функція розгалуження надсилає один вхідний сигнал на кілька вихідних. Спочатку додайте кінцеві точки, щоб вони існували в графі:
+
+```cpp
+simaai::neat::Graph fan_out_graph("fan_out_graph");
+fan_out_graph.add(simaai::neat::nodes::Input("image_input"));
+fan_out_graph.add(simaai::neat::nodes::Output("original_image"));
+fan_out_graph.add(simaai::neat::nodes::Output("model_image"));
+```
+
+У загальних рисах `fan_out_graph` виглядатиме так:
+
+```text
+image_input --> original_image --> model_image
+```
+
+Потім використайте `connect()`, щоб замінити стандартну лінійну схему з’єднань на потрібну вам топологію:
+
+```cpp
+fan_out_graph.connect("image_input", "original_image");
+fan_out_graph.connect("image_input", "model_image");
+```
+
+У загальних рисах, `fan_out_graph` зараз матиме такий вигляд:
+
+```text
+            /--> original_image
+image_input
+            \--> model_image
+```
+
+#### Використання `Branch()`
+
+Оскільки розгалуження є поширеним явищем, Neat надає [`graphs::Branch()`](/reference/{lsa}/namespaces/simaai-neat-graphs#a1feffc304100fd17cb99c5f5bff3c20c) як допоміжний інструмент. Це створює вхідні дані, вихідні дані та внутрішні виклики `connect()`:
+
+```cpp
+auto fan_out_graph = simaai::neat::graphs::Branch(
+    "image_input",
+    {"original_image", "model_image"});
+```
+
+У Python використовуються ті самі назви кінцевих точок:
+
+```python
+fan_out_graph = pyneat.graphs.branch(
+    "image_input",
+    ["original_image", "model_image"],
+)
+```
+
+`fan_out_graph` все ще є звичайним фрагментом `Graph`. Його можна під’єднати до більшої програми, як і будь-який інший `Graph`.
+
+:::note
+Розгалуження може спричинити зворотний тиск. Якщо одна з гілок припиняє обробку даних, це може уповільнити або заблокувати роботу виробника, залежно від обраної політики в середовищі виконання. `Branch()` робить процес розгалуження явним, замість того щоб приховувати його за допомогою випадкових дублікатів вихідних даних.
+:::
+
+#### Підключення за допомогою `connect()`.
+
+Схема «зведення» (fan-in) передає кілька вхідних сигналів на один вихід. На відміну від простої схеми «розгалуження» (fan-out), схема «зведення» також повинна визначати, як узгоджуються зразки. Ця політика застосовується до вихідної кінцевої точки.
+
+Спочатку налаштуйте вихід і додайте кінцеві точки, щоб вони існували в графі:
+
+```cpp
+simaai::neat::OutputOptions render_options;
+render_options.combine_policy = simaai::neat::CombinePolicy::ByFrame;
+
+simaai::neat::Graph render_inputs_graph("render_inputs_graph");
+render_inputs_graph.add(simaai::neat::nodes::Input("image"));
+render_inputs_graph.add(simaai::neat::nodes::Input("bbox"));
+render_inputs_graph.add(simaai::neat::nodes::Output("render_inputs", render_options));
+```
+
+У загальних рисах, `render_inputs_graph` виглядатиме так:
+
+```text
+image -> bbox -> render_inputs
+```
+
+Потім використайте `connect()`, щоб замінити стандартну лінійну схему з’єднань на потрібну вам топологію:
+
+```cpp
+render_inputs_graph.connect("image", "render_inputs");
+render_inputs_graph.connect("bbox", "render_inputs");
+```
+
+В концептуальному плані `render_inputs_graph` зараз виглядатиме так:
+
+```text
+image ----\
+           render_inputs
+bbox -----/
+```
+
+#### Використовуючи `Combine()`
+
+Оскільки широко використовується схема «багато до одного», Neat надає [`graphs::Combine()`](/reference/{lsa}/namespaces/simaai-neat-graphs#a6f1479674758179a4bbd72af1291ea47) як допоміжний інструмент. Це створює вхідні дані, вихідні дані, політику об’єднання та внутрішні виклики `connect()`:
+
+```cpp
+auto render_inputs_graph = simaai::neat::graphs::Combine(
+    {"image", "bbox"},
+    "render_inputs",
+    simaai::neat::CombinePolicy::ByFrame);
+```
+
+У Python використовується `None_` для політики, яка забороняє об’єднання, оскільки `None` є зарезервованим словом:
+
+```python
+render_inputs_graph = pyneat.graphs.combine(
+    ["image", "bbox"],
+    "render_inputs",
+    pyneat.CombinePolicy.ByFrame,
+)
+```
+
+`render_inputs_graph` все ще є звичайним фрагментом `Graph`. Ви можете під’єднати його до більшої програми, як і будь-який інший `Graph`.
+
+`graphs::Combine()` створює свій вихід, використовуючи стандартні `OutputOptions`: чотири збуферизовані зразки, блокування переповнення та відсутність синхронізації за часом. Якщо цей вихід залишається загальнодоступним терміналом, очищайте його під час генерації. Якщо перед отриманням даних необхідно передати скінченну партію, створіть явну структуру з’єднання, показану вище, і налаштуйте її вихід за допомогою `OutputOptions::EveryFrame(...)`, розмір якої відповідає цій партії.
+У Python використовуйте `pyneat.OutputOptions.every_frame(...)`.
+
+:::note
+`CombinePolicy` визначає, як Neat має зіставляти вхідні зразки:
+
+- `ByFrame`: об’єднайте зразки з однаковим `frame_id`.
+- `ByPts`: об’єднайте зразки, які мають однаковий час представлення (`pts_ns`).
+- `None`: не об’єднуйте декілька джерел даних; у такому разі граф не працюватиме і вимагатиме чітко визначеної політики.
+- Стиль написання коду на Python: `pyneat.CombinePolicy.None_`, `ByFrame` або `ByPts`.
+
+Немає прихованого механізму резервного копіювання. У випадку використання `ByFrame`, відсутність ідентифікаторів кадрів вважається помилкою. У випадку використання `ByPts`, відсутність міток часу вважається помилкою. Це запобігає тому, щоб Neat непомітно об’єднував неправильні зразки.
+:::
+
+### Повний приклад розгалуження та злиття
+
+Тепер з’єднайте всі частини докупи. Вхідне зображення поділяється на два потоки. Один потік проходить через модель і генерує обмежувальні рамки. Інший потік зберігає оригінальне зображення, щоб воно було доступне на пізнішому етапі рендерингу.
+
+```text
+           /--> model_image -> model -> bbox --\
+image_input                                     render_inputs
+           \----------------> original_image --/
+```
+
+Загалом, дотримуйтеся таких кроків:
+
+1. Спочатку оголосіть фрагмент вхідного графа розгалуження `Graph`.
+2. Створіть модель для здійснення висновків. `Graph` фрагмент, який використовує `model_image` і створює `bbox`
+3. Об’єднайте початковий шлях до зображення та шлях до `bbox` в `render_inputs`.
+4. З’єднайте їх усі разом, щоб створити остаточний `Graph`, який називатиметься `app`.
+
+#### Створення прикладу з розгалуженням і злиттям.
+
+1. Спочатку створіть розгалужену структуру, використовуючи `Branch()`, як показано вище:
+
+    ```cpp
+    auto image_input_graph = simaai::neat::graphs::Branch(
+        "image_input",
+        {"model_image", "original_image"});
+    ```
+
+    `image_input_graph` буде створено наступним чином:
+
+    ```text
+                /--> original_image
+    image_input
+                \--> model_image
+    ```
+
+2. Створіть `model_inference_graph`:
+
+    ```cpp
+    simaai::neat::Graph model_inference_graph("model_inference_graph");
+    model_inference_graph.add(simaai::neat::nodes::Input("model_image"));
+    model_inference_graph.add(model);
+    model_inference_graph.add(simaai::neat::nodes::Output("bbox"));
+    ```
+
+    `model_inference_graph` буде створено наступним чином:
+
+    ```text
+    model_image --> model --> bbox
+    ```
+
+    :::note
+    У цьому прикладі передбачається, що обраний шлях моделі генерує декодовані дані BBOX. Якщо модель генерує необроблені тензори для виведення, додайте специфічний для моделі етап `SimaBoxDecode` перед `Output("bbox")`.
+
+3. Потім створіть граф, що представляє вхідні дані: `render_graph`.
+
+    ```cpp
+    auto render_graph = simaai::neat::graphs::Combine(
+        {"original_image", "bbox"},
+        "render_inputs",
+        simaai::neat::CombinePolicy::ByFrame);
+    ```
+
+    `render_graph` буде створено наступним чином:
+
+    ```text
+    original_image ----\
+                        render_inputs
+    bbox --------------/
+    ```
+
+4. Насамкінець об’єднайте фрагменти в єдиний `Graph`, щоб створити цілісну програму:
+
+    ```cpp
+    simaai::neat::Graph app("app");
+    app.connect(image_input_graph, model_inference_graph);
+    app.connect(image_input_graph, render_graph);
+    app.connect(model_inference_graph, render_graph);
+    ```
+
+**Повний приклад:**
+
+```cpp
+simaai::neat::Model model("yolov8s_model.tar.gz");
+
+auto image_input_graph = simaai::neat::graphs::Branch(
+    "image_input",
+    {"model_image", "original_image"});
+
+simaai::neat::Graph model_inference_graph("model_inference_graph");
+model_inference_graph.add(simaai::neat::nodes::Input("model_image"));
+model_inference_graph.add(model);
+model_inference_graph.add(simaai::neat::nodes::Output("bbox"));
+
+auto render_graph = simaai::neat::graphs::Combine(
+    {"original_image", "bbox"},
+    "render_inputs",
+    simaai::neat::CombinePolicy::ByFrame);
+
+simaai::neat::Graph app("app");
+app.connect(image_input_graph, model_inference_graph);
+app.connect(image_input_graph, render_graph);
+app.connect(model_inference_graph, render_graph);
+
+auto run = app.build();
+
+auto image_sample =
+    simaai::neat::make_tensor_sample("image_input", image_tensor);
+image_sample.frame_id = 0;
+run.push("image_input", image_sample);
+
+auto inputs = run.pull("render_inputs");
+```
+
+Наведений приклад програми зупиняється на етапі `render_inputs`, де містяться відповідні значення `original_image` та `bbox`. Подальший вузол обробки або виведення може використати цей об’єднаний результат, а потім зберегти відтворене зображення у файл, відобразити його або надіслати в інше місце.
+
+## Використання іменованих кінцевих точок під час роботи програми (у середовищі виконання).
+
+Після створення `Graph`, ті самі імена кінцевих точок використовуються для надсилання даних і отримання результатів.
+
+Якщо граф має кілька загальнодоступних входів або виходів, передайте ім’я кінцевої точки до `push()` або `pull()`:
+
+```cpp
+run.push("image", simaai::neat::TensorList{image_tensor});
+run.push("metadata", simaai::neat::TensorList{metadata_tensor});
+
+auto classes = run.pull("classes");
+auto preview = run.pull("preview");
+```
+
+Для графа, який має рівно один загальнодоступний вхід або вихід, назва є необов’язковою під час виконання:
+
+```cpp
+run.push(simaai::neat::TensorList{image_tensor});
+auto classes = run.pull();
+```
+
+Якщо доступно більше одного вхідного або вихідного каналу, то неіменований канал `push(...)` або `pull()` не працює і натомість відображає список доступних імен кінцевих точок, замість того, щоб намагатися вгадати, який саме канал ви мали на увазі.
+
+## З’єднайте фрагменти в реальному часі.
+
+Використовуйте [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions), коли для з’єднання потрібна політика середовища виконання або чіткі обмеження на обробку необроблених кадрів.
+
+Для потокового об’єднання кількох потоків у реальному часі, `RealtimeLatestByStream` зберігає останній зразок для кожного `Sample::stream_id` і справедливо розподіляє готові потоки далі по ланцюжку. Якщо джерело не мітить `stream_id`, позначте стабільний ідентифікатор у з’єднанні. Потокове об’єднання кількох потоків із політикою за замовчуванням автоматично перемикається на режим «останній зразок для кожного потоку».
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphLinkOptions link;
+link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+link.queue_depth = 4;
+link.stream_id = "camera-0";
+link.max_inflight_per_stream = 4;
+link.max_inflight_total = 8;
+
+app.connect(camera_fragment, detector_fragment, link);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+link = pyneat.GraphLinkOptions()
+link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+link.queue_depth = 4
+link.stream_id = "camera-0"
+link.max_inflight_per_stream = 4
+link.max_inflight_total = 8
+
+app.connect(camera_fragment, detector_fragment, link)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`RealtimeLatestByStream` завжди зберігає один незавершений зразок для кожного потоку. `queue_depth` залишається в `GraphLinkOptions` для забезпечення сумісності з джерелом і призначений для цієї політики; зміна цього значення не збільшує обмеження в один слот.
+
+Створіть динамічний граф із великою кількістю каналів за допомогою звичайного API `build()`:
+
+```cpp
+auto run = app.build(run_options);
+```
+
+```python
+run = app.build(run_options)
+```
+
+Fusion — це внутрішнє рішення компілятора, а не режим збірки. Звичайний `build()` зберігає відповідні приватні вихідні гілки, їхні потокові мультиплексори та модуль споживання моделі в одному місці. GStreamer конвеєр, щоб уникнути передачі даних між пристроями appsink/appsrc у пам’яті. Непридатна для використання топологія «останній за потоком» використовує звичайне сегментоване середовище виконання.
+
+Встановити `graph_options.advanced_execution.internal_queue_depth` на верхньому рівні графа, щоб накласти етапи моделі. Додатне значення вставляє обмежені, нерозгалужені глобальні черги перед етапами CVU, MLA та декодування, але не перед кінцевим виходом. `GraphLinkOptions::max_inflight_per_stream` передається до об’єднаного мультиплексора для кожного каналу, щоб він міг залишатися на `1` щоб забезпечити оновлення даних без перемикання в приватне середовище. Залиште `internal_queue_depth` скасуйте або встановіть його на `0` щоб зберегти єдиний ланцюжок споживачів.
+
+І C++, і Python надають доступ до цих полів. `GraphLinkOptions`, який передається звичайним `connect(...)`Не потрібен окремий метод підключення в режимі реального часу або спеціальний режим збірки.
+
+| Поле | Використовуйте його, коли |
+| --- | --- |
+| `policy` | Для кожного потоку потрібне оновлення даних у режимі реального часу. |
+| `queue_depth` | Поле сумісності. `RealtimeLatestByStream` резервує його та завжди зберігає один незавершений зразок для кожного потоку. |
+| `stream_id` | Початковий фрагмент не містить маркер `Sample::stream_id`, але це посилання представляє один стабільний потік даних. |
+| `max_inflight_per_stream` | З’єднання, що забезпечує передавання даних у реальному часі по потоках, передає необроблені зразки, отримані від декодера, і потребує чіткого обмеження пропускної здатності для кожного потоку. Значення за замовчуванням для поля — `-1`; Core використовує `4`. Об’єднане зниження рівня джерела застосовує обчислене значення до відповідного потоку мультиплексування. |
+| `max_inflight_total` | Для з’єднання в режимі реального часу для кожного окремого потоку необхідне жорстке глобальне обмеження для всіх потоків. Значення за замовчуванням для поля становить `-1`; якщо не вказано інше значення в змінних середовища, Core визначає `min(max_inflight_per_stream * stream_count, 8)`. |
+
+:::caution Оновіть програми для попереднього перегляду та збережені графи.
+
+У цій версії до `GraphLinkOptions` додано поля для визначення параметрів. Поточний ABI C++ та ім’я спільної бібліотеки (SONAME) для Neat Library – 4. Перезберіть програми та плагіни C++, використовуючи відповідний пакет Core. Не змішуйте бінарні файли, створені для попередньої версії `libsima_neat` SONAME, з `libsima_neat.so.4`.
+
+Перенесіть вихідний код попередньої версії таким чином:
+
+| Інтерфейс API для попереднього перегляду | Поточний API |
+| --- | --- |
+| `RealtimeGraphLinkOptions` | `GraphLinkOptions` |
+| `graph.connect_realtime(from, to, link)` | `graph.connect(from, to, link)` |
+| `graph.build_fused_realtime_sources(options)` (C++) | `graph.build(options)` |
+| `graph.build_fused_realtime_source(options)` (Python) | `graph.build(options)` |
+| `RealtimeEveryFrameByStream` | `RealtimeLatestByStream`, коли допустимі оновлення та заміна даних. |
+
+`RealtimeLatestByStream` — це політика оновлення даних, а не безпосередня заміна для `RealtimeEveryFrameByStream`. Вона зберігає один очікуючий зразок для кожного потоку та замінює цей зразок, коли надходить новіший кадр.
+
+`Graph::load()` відхиляє збережений JSON, який містить `"link_policy": "realtime_every_frame_by_stream"`. Відтворіть граф на основі оновленого джерела. Якщо JSON є єдиним джерелом, змінюйте політику на `realtime_latest_by_stream` лише тоді, коли допустимо відкидати застарілі кадри, після чого знову завантажте та збережіть його з цією версією.
+
+:::
+
+
+## Збільшуйте обсяги від одного потоку даних до багатьох.
+
+Багатопотоковий граф потребує ідентифікації, перш ніж його можна буде налаштувати. Збережіть `stream_id` та `frame_id`, щоб показники середовища виконання, політики об’єднання та звіти про відхилення могли розрізняти один потік від іншого.
+
+| Зразок | Використовуйте його, коли | Дивіться |
+| --- | --- | --- |
+| Один потік даних -> одна модель -> один результат. | Ви доводите, що граф працює. | Форма вихідних даних, тип даних і назви кінцевих точок. |
+| Багато потоків -> одна модельна лінія. | Загальна швидкість подачі даних відповідає одному шляху моделі. | Справедливий розподіл ресурсів між окремими потоками та обробка застарілих потоків. |
+| Багато потоків -> декілька моделей/смуг | Одного варіанта моделі недостатньо, щоб забезпечити необхідний рівень. | Розподіл потоків, призначення імен маршрутам і ведення обліку вихідних даних. |
+| Один потік даних -> декілька моделей. | Для різних рішень потрібні однакові вхідні дані. | Затримка на рівні гілки та нормалізована кількість кадрів за секунду (FPS) для цільової платформи. |
+| Багато потоків -> модель + вихідні дані у вигляді метаданих/відео. | У процесі виробництва утворюється кілька артефактів. | Підраховуйте кількість цільових результатів окремо від попереднього перегляду або даних телеметрії. |
+
+Використовуйте `OutputOptions::Latest()` для виведення даних у реальному часі, коли важлива актуальність. Використовуйте `EveryFrame(...)` для виведення даних в автономному режимі або без втрат. Для об’єднання даних використовуйте `CombinePolicy::ByFrame` лише тоді, коли `frame_id` присутній у кожному вхідному потоці, а `CombinePolicy::ByPts` – лише тоді, коли присутні мітки часу.
+
+Якщо вам потрібні черги середовища виконання, політика відкидання, вимірювання або механізм обробки даних, перейдіть до [Запустіть граф.](/develop-apps/development-workflow/pipeline). `Graph` – це місце, де ви описуєте топологію; `Run` – це місце, де ви визначаєте її роботу.
+
+## Практичні приклади
+
+### Маршрут моделі, який можна повторно використовувати.
+
+```cpp
+simaai::neat::Graph make_classifier(simaai::neat::Model& model) {
+  simaai::neat::Graph classifier_route("classifier");           // create a reusable Graph fragment
+  classifier_route.add(simaai::neat::nodes::Input("image"));    // declare the fragment's input
+  classifier_route.add(model);                                  // add the model inference route
+  classifier_route.add(simaai::neat::nodes::Output("classes")); // declare the fragment's output
+  return classifier_route;                                      // return the fragment for reuse
+}
+```
+
+Використовуйте самостійно:
+
+```cpp
+auto classifier_route = make_classifier(model);      // create the classifier fragment
+auto run = classifier_route.build();                 // build it as a standalone application
+run.push("image", simaai::neat::TensorList{image});  // send data to its named input
+auto classes = run.pull("classes");                  // read from its named output
+```
+
+Використовуйте всередині більшої програми:
+
+```cpp
+simaai::neat::Graph app("app");            // create the larger application Graph
+app.connect(camera, classifier_route);     // connect the camera fragment to the classifier
+app.connect(classifier_route, telemetry);  // forward classification results to telemetry
+```
+
+У великому застосунку граничні вузли маршруту класифікатора є внутрішніми оголошеннями. Вони не стають додатковими загальнодоступними точками для надсилання/отримання даних, якщо вони все ще розташовані за межами остаточного графа.
+
+### Перехідник для прямого з’єднання.
+
+Іноді фрагмент просто перейменовує межу:
+
+```cpp
+simaai::neat::Graph adapter("adapter");            // create a reusable adapter fragment
+adapter.add(simaai::neat::nodes::Input("raw"));    // declare the incoming endpoint name
+adapter.add(simaai::neat::nodes::Output("image")); // declare the outgoing endpoint name
+adapter.connect("raw", "image");                   // pass data directly between the endpoints
+```
+
+Коли цей елемент використовується всередині іншого графа, його можна звести до прямого з’єднання. Neat зберігає імена для зручності читання та діагностики, але не створює непотрібної роботи в середовищі виконання.
+
+## Розширені інструменти для роботи з графами.
+
+Використовуйте їх після того, як основний алгоритм пошуку шляху в графі запрацює. Це допоміжні інструменти, а не первинний спосіб взаємодії з API.
+
+| Інструмент | Мова | Використовуйте його, коли |
+| --- | --- | --- |
+| `add_output_tensor(...)` | C++ і Python | Удосконалений адаптер: перед передачею даних зображення або відео має бути перетворено на тензор `UInt8`, який легко обробляється центральним процесором (CPU), із зазначеним форматом, розміром або частотою кадрів. |
+| `Graph::save(...)` / `Graph::load(...)`; Python `graph.save(...)` / `pyneat.Graph.load(...)` | C++ і Python | Ви хочете зберегти та повторно завантажити структуру графа. |
+| `graph.custom(...)` | C++ і Python | Вам потрібно вставити фрагмент бекенду в лінійний граф. |
+| `nodes::Custom(...)` / `pyneat.nodes.custom(...)` | C++ і Python | Вам потрібен спеціальний вузол у межах чітко визначеної топології. |
+| `run_rtsp(...)` | C++ і Python | Граф має забезпечувати виведення даних у форматі H.264 через протокол RTSP. |
+| `set_tensor_callback(...)` | C++ | Код на C++ потребує використання тензорів на основі зворотних викликів замість циклу вибірки. Використовуйте разом із `GraphOptions.callback_timeout_ms`, коли важлива затримка зворотного виклику. |
+
+Насамперед використовуйте загальнодоступні вузли та групи. Застосовуйте власні, необроблені фрагменти лише тоді, коли для виконання завдання не існує стабільного вузла.
+
+### Збережіть і повторно завантажте визначення графа.
+
+Зберігайте граф, коли потрібно передати створене визначення іншому інструменту, зберегти артефакт CI або порівняти процес створення графа між різними версіями. Завантажуйте його, коли збережене визначення є основним джерелом інформації для виконання.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+graph.save("classifier.neat.json");
+
+simaai::neat::Graph loaded = simaai::neat::Graph::load("classifier.neat.json");
+auto run = loaded.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph.save("classifier.neat.json")
+
+loaded = pyneat.Graph.load("classifier.neat.json")
+run = loaded.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Зберігайте файли графів як артефакти збірки, якщо ваша програма не передбачає їх версіонування. Вони містять інформацію про структуру графа, але не замінюють контракти моделі, вхідні дані або дані, отримані під час роботи в середовищі виконання.
+
+## Найкращі практики.
+
+### Найменування кінцевих точок
+
+Обирайте назви кінцевих точок, які відображають їхнє призначення в застосунку:
+
+```cpp
+nodes::Input("image");          // describes the data entering the Graph
+nodes::Input("left_camera");    // identifies the input's application role
+nodes::Output("classes");       // describes a classification result
+nodes::Output("detections");    // describes a detection result
+nodes::Output("preview");       // describes the output's intended use
+```
+
+Уникайте імен, що базуються на внутрішніх деталях середовища виконання:
+
+```cpp
+nodes::Input("appsrc0");  // exposes an internal GStreamer implementation detail
+nodes::Output("sink1");   // describes runtime wiring instead of application meaning
+nodes::Output("out");     // acceptable for small tests, but unclear in applications
+```
+
+Якщо фрагмент містить кілька вихідних даних без імен, Neat призначає їм детерміновані суфікси, такі як `classes_0`, `classes_1` і `classes_2`. У коді програми краще використовувати явні імена.
+
+### Загальні правила, практичні поради.
+
+- Використовуйте `Graph` для програм і повторно використовуваних фрагментів.
+- Використовуйте `Model` безпосередньо в `Graph::add(model)`, коли вам потрібен стандартний маршрут моделі.
+- Використовуйте іменовані вузли `Input` та `Output`, щоб оголосити загальнодоступний інтерфейс фрагмента.
+- Використовуйте `add()` для створення прямої послідовності.
+- Використовуйте `connect()` для явного визначення топології та композиції фрагментів.
+- Використовуйте іменовані параметри `run.push("name", ...)` та `run.pull("name")` для програм із кількома вхідними або вихідними даними.
+- Оголосіть параметри, з’єднання та [вузли](/develop-apps/development-workflow/node), [групи вузлів](/develop-apps/development-workflow/node#pre-built-node-groups), необхідні для вашої програми; дозвольте Neat обробляти деталі низькорівневого середовища виконання.
+
+## Див. також
+
+- [Node](/develop-apps/development-workflow/node)
+- [Модель](/develop-apps/development-workflow/model)
+- [Запуск графа](/develop-apps/development-workflow/pipeline)
+- [Public Graph and graph helpers](/develop-apps/advanced-concepts/graphs)
+
+## Навчальні матеріали
+
+- [Створення власного графа даних](/tutorials/build-a-custom-data-graph)
+- [Embed a Model Inside a Graph](/tutorials/embed-model-inside-graph)
+- [Run Multiple Streams in One Graph](/tutorials/run-multiple-streams)
