@@ -6,6 +6,7 @@
 #include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
 #include <filesystem>
 #include <optional>
@@ -70,11 +71,13 @@ struct DmabufEligibilityReport {
 struct DmabufPlanCompileResult {
   std::optional<sima::static_contract::ModelExecutionPlan> plan;
   std::optional<sima::static_contract::FrameSlotArenaPlan> arena_plan;
+  std::optional<sima::static_contract::PhysicalExecutionPlan> physical_plan;
   DmabufEligibilityReport report;
   std::string plan_digest;
 
   [[nodiscard]] bool eligible() const noexcept {
-    return plan.has_value() && arena_plan.has_value() && report.eligible() && !plan_digest.empty();
+    return plan.has_value() && arena_plan.has_value() && physical_plan.has_value() &&
+           report.eligible() && !plan_digest.empty();
   }
 };
 
@@ -110,6 +113,19 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
 // Stable canonical rendering and SHA-256 digest of the accepted immutable plan.
 std::string canonical_dmabuf_plan_json(const sima::static_contract::ModelExecutionPlan& plan);
 std::string dmabuf_plan_digest(const sima::static_contract::ModelExecutionPlan& plan);
+
+// Canonical immutable execution authority. Unlike the semantic-only helper
+// above, this binds physical lowering and the selected frame-arena placement
+// (including storage domain/provenance/access) into the digest consumed by a
+// strict ModelPack.
+std::string canonical_dmabuf_execution_json(
+    const sima::static_contract::ModelExecutionPlan& plan,
+    const sima::static_contract::PhysicalExecutionPlan& physical,
+    const sima::static_contract::FrameSlotArenaPlan& arena);
+std::string dmabuf_execution_digest(
+    const sima::static_contract::ModelExecutionPlan& plan,
+    const sima::static_contract::PhysicalExecutionPlan& physical,
+    const sima::static_contract::FrameSlotArenaPlan& arena);
 
 // Versioned, machine-readable audit record. Paths are represented by basenames
 // and content digests; customer filesystem paths are not emitted.

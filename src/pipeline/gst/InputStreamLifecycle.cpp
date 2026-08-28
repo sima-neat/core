@@ -97,6 +97,12 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
     throw std::runtime_error(msg.str());
   }
   state->alloc_bytes = spec.required_bytes_actual;
+  if (opt.materialize_device_visible_input) {
+    const SampleSpec transport =
+        device_visible_nv12_materialization_spec_or_throw(
+            spec, "InputStream::create");
+    state->alloc_bytes = transport.required_bytes_actual;
+  }
   return InputStream(std::move(state));
 }
 

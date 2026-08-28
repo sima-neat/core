@@ -5,10 +5,13 @@
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 
+#include <gst/SimaCvuCapabilityAbi.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -27,6 +30,137 @@ using pipeline_internal::sima::StageOutputRoute;
 using pipeline_internal::sima::StagePayloadKind;
 using pipeline_internal::sima::StageStaticSpec;
 using pipeline_internal::sima::TensorStaticSpec;
+
+bool checked_align_up(std::uint64_t value, std::uint64_t alignment,
+                      std::uint64_t* result) {
+  if (!result || alignment == 0U || (alignment & (alignment - 1U)) != 0U ||
+      value > std::numeric_limits<std::uint64_t>::max() - (alignment - 1U)) {
+    return false;
+  }
+  *result = (value + alignment - 1U) & ~(alignment - 1U);
+  return true;
+}
+
+bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage,
+                                                    std::string* error) {
+  using pipeline_internal::sima::FrameArenaRole;
+  using pipeline_internal::sima::static_contract::ArenaAllocationProvenance;
+  using pipeline_internal::sima::static_contract::ArenaDeviceAccess;
+  using pipeline_internal::sima::static_contract::ArenaEscapePolicy;
+  using pipeline_internal::sima::static_contract::ArenaStorageDomain;
+  using pipeline_internal::sima::static_contract::kLegacyEvoCmaRegionAlignmentBytes;
+
+  if (!stage || stage->payload_kind != StagePayloadKind::ProcessCvu) {
+    if (error) {
+      *error = "standalone ProcessCVU projection requires a ProcessCVU stage";
+    }
+    return false;
+  }
+  auto& payload = stage->processcvu;
+  if (payload.dmabuf_plan_contract) {
+    if (error) {
+      error->clear();
+    }
+    return true;
+  }
+  if (payload.graph_id < 0) {
+    if (error) {
+      *error = "standalone ProcessCVU stage has no graph id";
+    }
+    return false;
+  }
+
+  SimaCvuCapabilityAbiRecord capability{};
+  if (!sima_cvu_capability_abi_lookup(static_cast<std::uint32_t>(payload.graph_id),
+                                      &capability)) {
+    if (error) {
+      *error = "standalone ProcessCVU graph has no generated direct capability";
+    }
+    return false;
+  }
+  if ((!payload.graph_name.empty() && payload.graph_name != capability.canonical_token) ||
+      stage->physical_inputs.empty() || stage->physical_outputs.empty() ||
+      stage->logical_inputs.empty() || stage->input_bindings.empty()) {
+    if (error) {
+      *error = "standalone ProcessCVU direct contract is incomplete or contradictory";
+    }
+    return false;
+  }
+
+  payload.graph_name = capability.canonical_token;
+  payload.descriptor_abi_id = capability.descriptor_abi_id;
+  payload.descriptor_contract_version = capability.descriptor_contract_version;
+  payload.binding_schema_version = capability.binding_schema_version;
+  payload.supported_placement_mask = capability.supported_placement_mask;
+  payload.allowed_frame_patch_mask = capability.allowed_frame_patch_mask;
+  payload.maximum_members = capability.maximum_members;
+
+  if (payload.graph_id == 200 && payload.preproc_single_output_handoff) {
+    if (stage->logical_outputs.size() != 1U || stage->output_order.size() != 1U) {
+      if (error) {
+        *error = "standalone Preproc direct route must expose exactly one output";
+      }
+      return false;
+    }
+    const int selected_physical_index = stage->logical_outputs.front().physical_index;
+    const auto selected = std::find_if(
+        stage->physical_outputs.begin(), stage->physical_outputs.end(),
+        [selected_physical_index](const auto& output) {
+          return output.physical_index == selected_physical_index;
+        });
+    if (selected_physical_index < 0 || selected == stage->physical_outputs.end()) {
+      if (error) {
+        *error = "standalone Preproc output has no physical carrier";
+      }
+      return false;
+    }
+    // The firmware descriptor describes both possible Preproc outputs, while
+    // the compiled route chooses one.  Publish and allocate only that carrier;
+    // the backend_output_index on the logical output still identifies the
+    // corresponding descriptor field without a name-based convention.
+    stage->physical_outputs = {*selected};
+  }
+
+  constexpr std::uint64_t kOutputAlignment =
+      static_cast<std::uint64_t>(kLegacyEvoCmaRegionAlignmentBytes);
+  std::uint64_t cursor = 0U;
+  for (auto& output : stage->physical_outputs) {
+    std::uint64_t offset = 0U;
+    if (output.size_bytes == 0U || !checked_align_up(cursor, kOutputAlignment, &offset) ||
+        output.size_bytes > std::numeric_limits<std::uint64_t>::max() - offset) {
+      if (error) {
+        *error = "standalone ProcessCVU output arena overflows or has an empty carrier";
+      }
+      return false;
+    }
+    output.source_byte_offset = static_cast<std::int64_t>(offset);
+    output.required_alignment_bytes = kOutputAlignment;
+    cursor = offset + output.size_bytes;
+  }
+  if (!checked_align_up(cursor, kOutputAlignment, &stage->frame_arena_size_bytes) ||
+      stage->frame_arena_size_bytes == 0U) {
+    if (error) {
+      *error = "standalone ProcessCVU output arena size is invalid";
+    }
+    return false;
+  }
+
+  stage->frame_arena_role = FrameArenaRole::Allocate;
+  stage->frame_arena_storage_domain = ArenaStorageDomain::Cma;
+  stage->frame_arena_provenance = ArenaAllocationProvenance::CoreAllocated;
+  stage->frame_arena_required_device_access =
+      static_cast<std::uint32_t>(ArenaDeviceAccess::CpuA65);
+  if (payload.resolved_exec_backend == "EVXX") {
+    stage->frame_arena_required_device_access |=
+        static_cast<std::uint32_t>(ArenaDeviceAccess::Ev74);
+  }
+  stage->frame_arena_escape_policy = ArenaEscapePolicy::CpuMappablePublic;
+  payload.dmabuf_plan_contract = true;
+  if (error) {
+    error->clear();
+  }
+  return true;
+}
 
 std::string upper_copy_local(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
@@ -613,6 +747,11 @@ StageStaticSpec render_processcvu_stage(const CompiledNodeContract& compiled_sta
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
   stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
   stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
+  stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
+  stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
+  stage.frame_arena_required_device_access =
+      compiled.runtime_contract.frame_arena_required_device_access;
+  stage.frame_arena_escape_policy = compiled.runtime_contract.frame_arena_escape_policy;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   return stage;
@@ -640,6 +779,11 @@ StageStaticSpec render_processmla_stage(const CompiledNodeContract& compiled_sta
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
   stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
   stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
+  stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
+  stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
+  stage.frame_arena_required_device_access =
+      compiled.runtime_contract.frame_arena_required_device_access;
+  stage.frame_arena_escape_policy = compiled.runtime_contract.frame_arena_escape_policy;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   stage.elf_ifm_symbol_names = compiled.runtime_contract.elf_ifm_symbol_names;
@@ -706,6 +850,13 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
   stage.physical_outputs = compiled.runtime_contract.physical_outputs;
   stage.output_order = compiled.runtime_contract.output_order;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
+  stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
+  stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
+  stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
+  stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
+  stage.frame_arena_required_device_access =
+      compiled.runtime_contract.frame_arena_required_device_access;
+  stage.frame_arena_escape_policy = compiled.runtime_contract.frame_arena_escape_policy;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   if (compiled.payload_kind == StagePayloadKind::ProcessCvu &&
@@ -738,19 +889,22 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
 
 std::vector<StageStaticSpec>
 render_stages_from_compiled_contract(const CompiledNodeContract& stage,
+                                     const ContractCompileInput& compile_input,
                                      ManifestBuildDiagnostics* diagnostics) {
   if (!stage.child_stages.empty()) {
     std::vector<StageStaticSpec> rendered;
     for (const auto& child : stage.child_stages) {
-      auto child_rendered = render_stages_from_compiled_contract(child, diagnostics);
+      auto child_rendered =
+          render_stages_from_compiled_contract(child, compile_input, diagnostics);
       rendered.insert(rendered.end(), std::make_move_iterator(child_rendered.begin()),
                       std::make_move_iterator(child_rendered.end()));
     }
     return rendered;
   }
   if (stage.processcvu.has_value()) {
+    StageStaticSpec rendered;
     try {
-      return {render_processcvu_stage(stage)};
+      rendered = render_processcvu_stage(stage);
     } catch (const std::exception& ex) {
       if (diagnostics) {
         diagnostics->errors.push_back("contract render: processcvu stage '" + stage.node_kind +
@@ -758,6 +912,29 @@ render_stages_from_compiled_contract(const CompiledNodeContract& stage,
       }
       return {};
     }
+    const std::string stage_identity = !rendered.logical_stage_id.empty()
+                                           ? rendered.logical_stage_id
+                                           : rendered.element_name;
+    resolve_processcvu_run_target(&rendered.processcvu, compile_input, stage_identity,
+                                  stage.processcvu->physical_command_role);
+    if (!stage.processcvu->physical_command_role.has_value() &&
+        rendered.processcvu.graph_id >= 0) {
+      SimaCvuCapabilityAbiRecord capability{};
+      if (sima_cvu_capability_abi_lookup(
+              static_cast<std::uint32_t>(rendered.processcvu.graph_id), &capability)) {
+        std::string projection_error;
+        if (!project_standalone_processcvu_direct_contract(&rendered,
+                                                           &projection_error)) {
+          if (diagnostics) {
+            diagnostics->errors.push_back(
+                "contract render: standalone processcvu stage '" + stage.node_kind +
+                "' failed direct projection: " + projection_error);
+          }
+          return {};
+        }
+      }
+    }
+    return {std::move(rendered)};
   }
   if (stage.processmla.has_value()) {
     try {
@@ -819,14 +996,9 @@ render_manifest_from_compiled_contracts(
   SimaPluginStaticManifest manifest;
 
   for (const auto& stage : compiled.stages) {
-    for (const auto& rendered : render_stages_from_compiled_contract(stage, diagnostics)) {
-      StageStaticSpec resolved = rendered;
-      if (resolved.payload_kind == StagePayloadKind::ProcessCvu) {
-        const std::string stage_identity =
-            !resolved.logical_stage_id.empty() ? resolved.logical_stage_id : resolved.element_name;
-        resolve_processcvu_run_target(&resolved.processcvu, compile_input, stage_identity);
-      }
-      manifest.stages.push_back(std::move(resolved));
+    for (auto& rendered :
+         render_stages_from_compiled_contract(stage, compile_input, diagnostics)) {
+      manifest.stages.push_back(std::move(rendered));
     }
   }
 

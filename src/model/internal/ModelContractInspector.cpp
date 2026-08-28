@@ -210,6 +210,8 @@ std::string execution_stage_kind_name(const ExecutionStageKind kind) {
     return "quanttess";
   case ExecutionStageKind::Mla:
     return "mla";
+  case ExecutionStageKind::HostTvm:
+    return "a65";
   case ExecutionStageKind::Detess:
     return "detess";
   case ExecutionStageKind::DetessDequant:

@@ -169,6 +169,15 @@ RUN_TEST(
                   InputStreamTeardownPolicy::MustReachNull,
               "ProcessCVU appsrc pipelines must use synchronous teardown");
       require(inputstream_pipeline_teardown_policy(
+                  "appsrc name=mysrc ! h264parse ! neatdecoder name=decoder ! "
+                  "neatencoder name=encoder ! fakesink") ==
+                  InputStreamTeardownPolicy::MustReachNull,
+              "direct codec pipelines must use synchronous teardown");
+      require(inputstream_pipeline_teardown_policy(
+                  "appsrc name=mysrc ! neatencoder name=encoder ! fakesink") ==
+                  InputStreamTeardownPolicy::MustReachNull,
+              "direct encoder pipelines must use synchronous teardown");
+      require(inputstream_pipeline_teardown_policy(
                   "appsrc name=mysrc ! identity name=neatprocessmla_probe ! fakesink") ==
                   InputStreamTeardownPolicy::Deferred,
               "an element name containing a driver factory must not change teardown policy");

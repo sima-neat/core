@@ -457,6 +457,7 @@ endfunction()
 set(SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES "")
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   foreach(_simaneat_internals_target IN ITEMS
+      NeatInternals::DmaBuf
       NeatInternals::DmaBufPool
       NeatInternals::neatprocessmlaruntime
       NeatInternals::PreparedRuntimeBridge
@@ -525,6 +526,18 @@ list(APPEND SIMANEAT_NEAT_ALLOCATOR_HINTS
 )
 
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+  if (NOT TARGET NeatInternals::DmaBuf)
+    message(FATAL_ERROR
+      "NeatInternals package is missing the required shared DmaBuf runtime target")
+  endif()
+  simaneat_imported_target_location(_simaneat_dmabuf_imported_location
+    NeatInternals::DmaBuf)
+  if (_simaneat_dmabuf_imported_location)
+    set(SIMANEAT_NEAT_DMABUF_LIB
+      "${_simaneat_dmabuf_imported_location}"
+      CACHE FILEPATH "NEAT shared DMA-BUF runtime from exported NeatInternals package" FORCE)
+  endif()
+
   simaneat_imported_target_location(_simaneat_dmabufpool_imported_location
     NeatInternals::DmaBufPool)
   if (_simaneat_dmabufpool_imported_location)
@@ -610,6 +623,12 @@ find_library(SIMANEAT_NEAT_ALLOCATOR_LIB
 )
 find_library(SIMANEAT_NEAT_DMABUFPOOL_LIB
   NAMES neatdmabufpool
+  HINTS
+    ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
+    ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
+)
+find_library(SIMANEAT_NEAT_DMABUF_LIB
+  NAMES neatdmabuf
   HINTS
     ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
     ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
@@ -767,6 +786,8 @@ simaneat_require_dependency(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
   "Required NEAT tensor buffer headers not found: gstsimaaitensorbuffer.h.")
 simaneat_require_dependency(SIMANEAT_NEAT_DMABUFPOOL_LIB
   "Required NEAT DMA-BUF runtime not found: libneatdmabufpool.so.")
+simaneat_require_dependency(SIMANEAT_NEAT_DMABUF_LIB
+  "Required shared NEAT DMA-BUF implementation not found: libneatdmabuf.so.")
 simaneat_require_dependency(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
   "Required NEAT DMA-BUF headers not found: simaai/neat/internal/dmabuf/DmaBufPool.h.")
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
@@ -1076,6 +1097,7 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
     NeatInternals::Allocator
     NeatInternals::BufferPool
     NeatInternals::TensorBuffer
+    NeatInternals::DmaBuf
     NeatInternals::DmaBufPool)
 else()
   if (SIMANEAT_NEAT_ALLOCATOR_LIB)
@@ -1089,6 +1111,9 @@ else()
   endif()
   if (SIMANEAT_NEAT_DMABUFPOOL_LIB)
     target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_DMABUFPOOL_LIB})
+  endif()
+  if (SIMANEAT_NEAT_DMABUF_LIB)
+    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_DMABUF_LIB})
   endif()
 endif()
 if (SIMANEAT_SIMAAIMEM_LIB)

@@ -1,11 +1,14 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
 
+#include "pipeline/internal/sima/static_contract/AfePublicationLedger.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
 
+#include <glib.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -27,6 +30,17 @@ struct DecodeAbort final {
   std::string path;
   std::string detail;
 };
+
+std::string sha256_text(const std::string_view text) {
+  gchar* digest = g_compute_checksum_for_data(
+      G_CHECKSUM_SHA256, reinterpret_cast<const guchar*>(text.data()), text.size());
+  if (!digest) {
+    return {};
+  }
+  std::string result(digest);
+  g_free(digest);
+  return result;
+}
 
 [[noreturn]] void reject(const AfeMpkV2DecodeErrorCode code, std::string path, std::string detail) {
   throw DecodeAbort{code, std::move(path), std::move(detail)};
@@ -243,7 +257,7 @@ std::vector<Node> nodes(const Json& object, const char* key, const std::string& 
 }
 
 std::optional<std::uint64_t> element_width(const std::string& dtype) {
-  if (dtype == "int8" || dtype == "uint8") {
+  if (dtype == "bool" || dtype == "int8" || dtype == "uint8") {
     return 1U;
   }
   if (dtype == "int16" || dtype == "uint16" || dtype == "float16" || dtype == "bfloat16") {
@@ -251,6 +265,9 @@ std::optional<std::uint64_t> element_width(const std::string& dtype) {
   }
   if (dtype == "int32" || dtype == "uint32" || dtype == "float32") {
     return 4U;
+  }
+  if (dtype == "int64" || dtype == "uint64" || dtype == "float64") {
+    return 8U;
   }
   return std::nullopt;
 }
@@ -311,6 +328,149 @@ std::optional<std::uint64_t> exact_element_width(const std::uint64_t bytes,
   return bytes / elements;
 }
 
+std::optional<std::uint64_t> align_up_16(const std::uint64_t value) {
+  if (value > std::numeric_limits<std::uint64_t>::max() - 15U) {
+    return std::nullopt;
+  }
+  return (value + 15U) & ~std::uint64_t{15U};
+}
+
+bool is_qmla_dense_output_symbol(const std::string& symbol) {
+  return symbol.rfind("data.ofm.persistent.afe_mla_output_", 0U) == 0U &&
+         symbol.ends_with(".b0");
+}
+
+std::optional<std::vector<std::int64_t>> qmla_dense_last_axis_strides(
+    const ValueSpec& value, const std::uint64_t physical_extent) {
+  if (!value.logical_dtype || !value.logical_shape || value.logical_shape->empty()) {
+    return std::nullopt;
+  }
+  if (value.representation != ValueRepresentation::Dense ||
+      value.logical_layout != std::optional<std::string>{"normal"}) {
+    return std::nullopt;
+  }
+  const auto width = element_width(*value.logical_dtype);
+  const auto logical_bytes = dense_bytes(*value.logical_shape, *value.logical_dtype);
+  if (!width || !logical_bytes || *logical_bytes != value.required_bytes) {
+    return std::nullopt;
+  }
+  const auto last = value.logical_shape->back();
+  if (last <= 0 || static_cast<std::uint64_t>(last) >
+                       std::numeric_limits<std::uint64_t>::max() / *width) {
+    return std::nullopt;
+  }
+  const auto padded_row = align_up_16(static_cast<std::uint64_t>(last) * *width);
+  if (!padded_row) {
+    return std::nullopt;
+  }
+  std::uint64_t prefix = 1U;
+  for (std::size_t axis = 0U; axis + 1U < value.logical_shape->size(); ++axis) {
+    const auto dimension = value.logical_shape->at(axis);
+    if (dimension <= 0 || prefix > std::numeric_limits<std::uint64_t>::max() /
+                                      static_cast<std::uint64_t>(dimension)) {
+      return std::nullopt;
+    }
+    prefix *= static_cast<std::uint64_t>(dimension);
+  }
+  if (prefix > std::numeric_limits<std::uint64_t>::max() / *padded_row ||
+      prefix * *padded_row != physical_extent) {
+    return std::nullopt;
+  }
+  std::vector<std::int64_t> strides(value.logical_shape->size(), 0);
+  std::uint64_t stride = *width;
+  for (std::size_t reverse = value.logical_shape->size(); reverse > 0U; --reverse) {
+    const auto axis = reverse - 1U;
+    if (axis + 1U == value.logical_shape->size()) {
+      stride = *width;
+    } else if (axis + 2U == value.logical_shape->size()) {
+      stride = *padded_row;
+    } else {
+      const auto inner = value.logical_shape->at(axis + 1U);
+      if (inner <= 0 || stride > std::numeric_limits<std::uint64_t>::max() /
+                                    static_cast<std::uint64_t>(inner)) {
+        return std::nullopt;
+      }
+      stride *= static_cast<std::uint64_t>(inner);
+    }
+    if (stride > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      return std::nullopt;
+    }
+    strides[axis] = static_cast<std::int64_t>(stride);
+  }
+  return strides;
+}
+
+std::optional<std::uint64_t> affine_touched_span(
+    const ValueSpec& value, const std::vector<std::int64_t>& strides) {
+  const auto width = value.logical_dtype ? element_width(*value.logical_dtype) : std::nullopt;
+  if (!width || !value.logical_shape || value.logical_shape->size() != strides.size()) {
+    return std::nullopt;
+  }
+  std::uint64_t span = *width;
+  for (std::size_t axis = 0U; axis < strides.size(); ++axis) {
+    const auto dimension = value.logical_shape->at(axis);
+    if (dimension <= 0 || strides[axis] <= 0 ||
+        static_cast<std::uint64_t>(dimension - 1) >
+            (std::numeric_limits<std::uint64_t>::max() - span) /
+                static_cast<std::uint64_t>(strides[axis])) {
+      return std::nullopt;
+    }
+    span += static_cast<std::uint64_t>(dimension - 1) *
+            static_cast<std::uint64_t>(strides[axis]);
+  }
+  return span;
+}
+
+void author_mla_output_storage(ModelExecutionPlanData& data, const std::size_t mla_op_index,
+                               const std::size_t output_index, const std::string& symbol,
+                               const std::uint64_t physical_extent,
+                               std::vector<AfeMpkV2ProofFact>* proof) {
+  auto& value = data.values.at(data.ops.at(mla_op_index).outputs.at(output_index));
+  const std::string path = "$.plugins[" + std::to_string(mla_op_index) + "].output_nodes[" +
+                           std::to_string(output_index) + "]";
+  if (physical_extent < value.required_bytes) {
+    reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, path + ".size",
+           "QMLA OFM physical extent is smaller than its logical tensor");
+  }
+  if (physical_extent == value.required_bytes) {
+    return;
+  }
+  if (!is_qmla_dense_output_symbol(symbol)) {
+    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+           "larger MLA output carrier has no registered QMLA dense layout ABI");
+  }
+  const auto& mla = std::get<MlaOpConfig>(data.ops.at(mla_op_index).config);
+  if (output_index >= mla.output_types.size() || !value.logical_dtype ||
+      !value.logical_shape || *value.logical_dtype != mla.output_types[output_index].scalar ||
+      *value.logical_shape != mla.output_types[output_index].shape) {
+    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+           "larger MLA output carrier has no exact typed dense QMLA contract");
+  }
+  value.representation = ValueRepresentation::Dense;
+  value.logical_layout = "normal";
+  StorageBinding binding;
+  binding.kind = StorageBindingKind::Root;
+  binding.carrier_id = value.id;
+  binding.access = StorageAccess::ReadWrite;
+  if (const auto strides = qmla_dense_last_axis_strides(value, physical_extent)) {
+    const auto touched = affine_touched_span(value, *strides);
+    if (!touched || *touched > physical_extent) {
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+             "QMLA row-padded output has an invalid affine span");
+    }
+    binding.physical_span = *touched;
+    binding.stride_bytes = *strides;
+    if (proof) {
+      proof->push_back({"MLA.OFM[" + std::to_string(output_index) + "].layout",
+                        "QMLA SHT_DATA extent exactly proves a 16-byte dense-last-axis pitch"});
+    }
+  } else {
+    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+           "larger MLA output carrier does not match the exact dense-last-axis QMLA ABI");
+  }
+  value.storage_binding = std::move(binding);
+}
+
 void merge_dtype(ValueSpec& value, const std::string& dtype, const std::string& path) {
   if (value.logical_dtype.has_value() && *value.logical_dtype != dtype) {
     reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
@@ -325,6 +485,14 @@ void merge_shape(ValueSpec& value, const TensorShape& value_shape, const std::st
            "conflicting exact shape evidence for value '" + value.name + "'");
   }
   value.logical_shape = value_shape;
+}
+
+void merge_layout(ValueSpec& value, const std::string& layout, const std::string& path) {
+  if (value.logical_layout.has_value() && *value.logical_layout != layout) {
+    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+           "conflicting exact layout evidence for value '" + value.name + "'");
+  }
+  value.logical_layout = layout;
 }
 
 void merge_quantization(ValueSpec& value, const std::vector<QuantizationSpec>& q,
@@ -360,8 +528,8 @@ struct PluginRef {
   std::size_t manifest_index = 0;
 };
 
-OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& config,
-                            const Json& params, const std::string& path) {
+OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, const Json& plugin,
+                            const Json& config, const Json& params, const std::string& path) {
   switch (kind) {
   case OpKind::Cast: {
     require_exact_keys(params, {"out_dtype", "input_shapes", "output_shapes"},
@@ -422,7 +590,18 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
       reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params.number_of_quads_to_user",
              "number of MLA quads must be positive");
     }
-    return MlaOpConfig{required_string(resources, "executable", path + ".resources"), quads};
+    MlaOpConfig result;
+    result.executable = required_string(resources, "executable", path + ".resources");
+    result.number_of_quads = quads;
+    if (config.contains("input_types") || config.contains("output_types")) {
+      if (!config.contains("input_types") || !config.contains("output_types")) {
+        reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + ".config_params",
+               "typed MLA grammar requires both input_types and output_types");
+      }
+      result.input_types = host_tensor_types(config, "input_types", path + ".config_params");
+      result.output_types = host_tensor_types(config, "output_types", path + ".config_params");
+    }
+    return result;
   }
   case OpKind::Unpack: {
     require_exact_keys(params, {"tensor_types", "tensor_shapes", "input_shapes", "output_shapes"},
@@ -480,6 +659,22 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
     return result;
   }
   case OpKind::Reshape: {
+    if (kernel == "batch_flatten_transform") {
+      require_exact_keys(params, {"input_shapes", "output_shapes"},
+                         path + ".config_params.params");
+      auto output_shapes = shapes(params, "output_shapes", path + ".params", true);
+      if (output_shapes.size() != 1U) {
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+               path + ".config_params.params.output_shapes",
+               "batch flatten requires exactly one output shape");
+      }
+      return ReshapeOpConfig{std::move(output_shapes.front())};
+    }
+    if (kernel != "reshape_transform") {
+      reject(AfeMpkV2DecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
+             "reshape operation has no exact typed grammar for kernel '" +
+                 std::string(kernel) + "'");
+    }
     require_exact_keys(params, {"newshape", "input_shapes", "output_shapes"},
                        path + ".config_params.params");
     return ReshapeOpConfig{shape(*required_member_ptr(params, "newshape", path + ".params"),
@@ -558,18 +753,38 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
       reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
              "legacy cast_transform has an unsupported exact dtype transition");
     }
+    merge_layout(data.values[op.inputs.front()], "HWC", path);
+    break;
+  }
+  case OpKind::Mla: {
+    const auto& config = std::get<MlaOpConfig>(op.config);
+    for (std::size_t index = 0; index < config.input_types.size(); ++index) {
+      merge_dtype(data.values[op.inputs[index]], config.input_types[index].scalar, path);
+      merge_shape(data.values[op.inputs[index]], config.input_types[index].shape, path);
+    }
     break;
   }
   case OpKind::Quantize:
     merge_dtype(data.values[op.inputs.front()], "float32", path);
+    // Graph 222's registered dense quantize ABI (and graph 226's dense
+    // ingress) consumes canonical HWC geometry.  Seed that exact target ABI
+    // evidence here so standalone Quantize does not depend on a following
+    // Tessellate operation to recover its semantic axes.
+    merge_layout(data.values[op.inputs.front()], "HWC", path);
     break;
   case OpKind::Tessellate:
     merge_dtype(data.values[op.inputs.front()], std::get<TessellateOpConfig>(op.config).frame_type,
                 path);
+    // Graph 2's registered tensor-transform ABI consumes canonical HWC
+    // geometry. This is target ABI evidence, not a shape/name heuristic.
+    merge_layout(data.values[op.inputs.front()], "HWC", path);
     break;
   case OpKind::Detessellate:
     merge_dtype(data.values[op.inputs.front()],
                 std::get<DetessellateOpConfig>(op.config).frame_type, path);
+    // Graph 3 is the inverse of the same canonical HWC transform. Retain the
+    // semantic axes even though its input bytes are backend-native/tiled.
+    merge_layout(data.values[op.inputs.front()], "HWC", path);
     break;
   case OpKind::Dequantize: {
     const auto& config = std::get<DequantizeOpConfig>(op.config);
@@ -603,24 +818,41 @@ ValueSpec make_output_value(const ValueId id, const Node& node, const OpSpec& op
   switch (op.kind) {
   case OpKind::Cast:
     value.logical_dtype = std::get<CastOpConfig>(op.config).output_dtype;
+    value.logical_layout = data.values[op.inputs.front()].logical_layout;
     break;
   case OpKind::Quantize: {
     const auto& config = std::get<QuantizeOpConfig>(op.config);
     value.logical_dtype = config.output_dtype;
+    value.logical_layout = data.values[op.inputs.front()].logical_layout;
     value.quantization = config.channel_params;
     break;
   }
   case OpKind::Tessellate:
+    // AFE's tessellate output_shapes field describes the flattened packed
+    // carrier (for example [1, 1228800]), not a new logical tensor geometry.
+    // Graph 2/226 preserves the exact semantic frame authored on its input;
+    // keep that N/H/W/C shape on the materialized ValueSpec while the output
+    // node byte extent and Tessellated representation remain the independent
+    // physical-storage authority.
+    value.logical_shape = op.input_shapes.front();
     value.logical_dtype = std::get<TessellateOpConfig>(op.config).frame_type;
+    value.logical_layout = "HWC";
     value.representation = ValueRepresentation::Tessellated;
     break;
   case OpKind::Pack:
     value.representation = ValueRepresentation::Packed;
     break;
-  case OpKind::Mla:
-    value.representation =
-        op.outputs.size() == 1U ? ValueRepresentation::Packed : ValueRepresentation::BackendNative;
+  case OpKind::Mla: {
+    const auto& config = std::get<MlaOpConfig>(op.config);
+    if (!config.output_types.empty()) {
+      value.logical_dtype = config.output_types.at(output_index).scalar;
+      value.logical_shape = config.output_types.at(output_index).shape;
+    }
+    // Neither output count nor ELF topology proves a logical representation.
+    // Exact physical-layout admission may refine a typed QMLA output later.
+    value.representation = ValueRepresentation::BackendNative;
     break;
+  }
   case OpKind::Unpack: {
     // Legacy `tensor_types` describes the unpack carrier units, not always the
     // logical MLA tensor precision (BF16 EV-tess packages legitimately label
@@ -635,6 +867,7 @@ ValueSpec make_output_value(const ValueId id, const Node& node, const OpSpec& op
     if (const auto& input = data.values[op.inputs.front()]; input.logical_dtype.has_value()) {
       value.logical_dtype = input.logical_dtype;
       value.quantization = input.quantization;
+      value.logical_layout = input.logical_layout;
     }
     break;
   case OpKind::Reshape: {
@@ -647,9 +880,11 @@ ValueSpec make_output_value(const ValueId id, const Node& node, const OpSpec& op
   }
   case OpKind::Detessellate:
     value.logical_dtype = std::get<DetessellateOpConfig>(op.config).frame_type;
+    value.logical_layout = "HWC";
     break;
   case OpKind::Dequantize:
     value.logical_dtype = "float32";
+    value.logical_layout = data.values[op.inputs.front()].logical_layout;
     break;
   case OpKind::HostTvm: {
     const auto& type = std::get<HostTvmOpConfig>(op.config).output_types.at(output_index);
@@ -671,12 +906,47 @@ ValueSpec make_output_value(const ValueId id, const Node& node, const OpSpec& op
 }
 
 void propagate_identity_evidence(ModelExecutionPlanData& data) {
-  // Slice and PassThrough preserve dtype/quantization. Later operations often
-  // provide the only exact input-type evidence, so converge both directions.
+  // Slice and PassThrough preserve dtype/quantization. Cast, Quantize, and
+  // Dequantize preserve semantic axes only when both exact endpoint shapes
+  // prove that the edge is shape-preserving. Later operations often provide
+  // the only exact evidence, so converge these facts in both directions.
   bool changed = true;
   while (changed) {
     changed = false;
     for (const auto& op : data.ops) {
+      if (op.kind == OpKind::Cast || op.kind == OpKind::Quantize ||
+          op.kind == OpKind::Dequantize) {
+        if (op.inputs.size() != 1U || op.outputs.size() != 1U) {
+          continue;
+        }
+        auto& input = data.values[op.inputs.front()];
+        auto& output = data.values[op.outputs.front()];
+        if (!input.logical_shape.has_value() || !output.logical_shape.has_value()) {
+          continue;
+        }
+        if (*input.logical_shape != *output.logical_shape) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.ops[" + std::to_string(op.id) + "]",
+                 "shape-preserving transform '" + op.name +
+                     "' has contradictory exact endpoint shapes");
+        }
+        if (input.logical_layout.has_value() && output.logical_layout.has_value() &&
+            *input.logical_layout != *output.logical_layout) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.ops[" + std::to_string(op.id) + "]",
+                 "shape-preserving transform '" + op.name +
+                     "' has contradictory exact endpoint layouts");
+        }
+        if (!input.logical_layout.has_value() && output.logical_layout.has_value()) {
+          input.logical_layout = output.logical_layout;
+          changed = true;
+        }
+        if (!output.logical_layout.has_value() && input.logical_layout.has_value()) {
+          output.logical_layout = input.logical_layout;
+          changed = true;
+        }
+        continue;
+      }
       if (op.kind != OpKind::Slice && op.kind != OpKind::Reshape &&
           op.kind != OpKind::PassThrough) {
         continue;
@@ -699,6 +969,19 @@ void propagate_identity_evidence(ModelExecutionPlanData& data) {
         if (output.quantization.empty() && !input.quantization.empty()) {
           output.quantization = input.quantization;
           changed = true;
+        }
+        // Slice and publication retain axis meaning. Reshape is deliberately
+        // excluded: a byte-preserving reshape does not by itself prove how a
+        // changed rank maps to semantic axes.
+        if (op.kind != OpKind::Reshape) {
+          if (!input.logical_layout.has_value() && output.logical_layout.has_value()) {
+            input.logical_layout = output.logical_layout;
+            changed = true;
+          }
+          if (!output.logical_layout.has_value() && input.logical_layout.has_value()) {
+            output.logical_layout = input.logical_layout;
+            changed = true;
+          }
         }
       }
     }
@@ -853,6 +1136,22 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
                "$.ops[" + std::to_string(op.id) + "]",
                "reshape output has no exact contiguous byte equation");
       }
+      if (input.read_expression.has_value()) {
+        if (!input.logical_shape.has_value()) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.ops[" + std::to_string(op.id) + "]",
+                 "reshape input view has no exact logical shape");
+        }
+        const auto input_width = exact_element_width(input.required_bytes, *input.logical_shape);
+        const auto input_dense = input_width
+                                     ? contiguous_stride_bytes(*input.logical_shape, *input_width)
+                                     : std::nullopt;
+        if (!input_dense || input.read_expression->stride_bytes != *input_dense) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.ops[" + std::to_string(op.id) + "]",
+                 "reshape cannot reinterpret a non-contiguous input view");
+        }
+      }
       const auto root = input.read_expression ? input.read_expression->source_value_id : input.id;
       const auto offset = input.read_expression ? input.read_expression->byte_offset : 0U;
       output.read_expression = ReadExpression{root, offset, *strides};
@@ -901,8 +1200,60 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
         const auto& input = data.values[op.inputs[index]];
         if (input.read_expression.has_value()) {
           data.values[op.outputs[index]].read_expression = input.read_expression;
+        } else if (input.storage_binding.has_value() &&
+                   input.storage_binding->physical_span > input.required_bytes &&
+                   input.logical_shape.has_value() && input.logical_dtype.has_value()) {
+          auto strides = input.storage_binding->stride_bytes;
+          if (strides.empty()) {
+            const auto width = element_width(*input.logical_dtype);
+            const auto dense = width ? contiguous_stride_bytes(*input.logical_shape, *width)
+                                     : std::nullopt;
+            if (!dense) {
+              reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                     "$.ops[" + std::to_string(op.id) + "]",
+                     "padded MLA publication has no exact logical stride");
+            }
+            strides = *dense;
+          }
+          data.values[op.outputs[index]].read_expression =
+              ReadExpression{input.id, 0U, std::move(strides)};
         }
       }
+    }
+  }
+}
+
+void validate_view_consumers(const ModelExecutionPlanData& data) {
+  for (const auto& value : data.values) {
+    if (!value.read_expression.has_value()) {
+      continue;
+    }
+    bool contiguous = false;
+    if (value.logical_shape.has_value()) {
+      const auto width = exact_element_width(value.required_bytes, *value.logical_shape);
+      const auto dense = width ? contiguous_stride_bytes(*value.logical_shape, *width)
+                               : std::nullopt;
+      contiguous = dense && value.read_expression->stride_bytes == *dense;
+    }
+    if (contiguous) {
+      continue;
+    }
+    for (const auto& consumer : data.ops) {
+      if (std::find(consumer.inputs.begin(), consumer.inputs.end(), value.id) ==
+          consumer.inputs.end()) {
+        continue;
+      }
+      // These two retained graph ABIs have exact positive-stride descriptor
+      // domains. Dense-only graph 222/2, MLA ports, and GraphExecutor inputs do
+      // not acquire a strided contract from a stock MPK or ELF filename.
+      if (consumer.kind == OpKind::Cast || consumer.kind == OpKind::Dequantize ||
+          consumer.kind == OpKind::Slice) {
+        continue;
+      }
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+             "$.values[" + std::to_string(value.id) + "]",
+             "non-contiguous view '" + value.name + "' is consumed by dense-only operation '" +
+                 consumer.name + "'");
     }
   }
 }
@@ -917,6 +1268,14 @@ decode_impl(const std::string_view text,
     Json root = Json::parse(text.begin(), text.end(), nullptr, false);
     if (root.is_discarded() || !root.is_object()) {
       reject(AfeMpkV2DecodeErrorCode::InvalidJson, "$", "manifest is not valid JSON object syntax");
+    }
+    if (root.contains("execution_contract")) {
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, "$.execution_contract",
+             "stock-AFE admission does not accept a second execution authority");
+    }
+    const std::string manifest_sha256 = sha256_text(text);
+    if (manifest_sha256.empty()) {
+      reject(AfeMpkV2DecodeErrorCode::IoError, "$", "cannot hash the exact MPK manifest bytes");
     }
 
     ModelExecutionPlanData data;
@@ -1015,9 +1374,17 @@ decode_impl(const std::string_view text,
                "expected an object");
       }
       if (processor == "MLA") {
-        require_exact_keys(config,
-                           {"desired_batch_size", "actual_batch_size", "number_of_quads_to_user"},
-                           path + ".config_params");
+        const bool typed_mla = config.contains("input_types") || config.contains("output_types");
+        if (typed_mla) {
+          require_exact_keys(config,
+                             {"desired_batch_size", "actual_batch_size",
+                              "number_of_quads_to_user", "input_types", "output_types"},
+                             path + ".config_params");
+        } else {
+          require_exact_keys(
+              config, {"desired_batch_size", "actual_batch_size", "number_of_quads_to_user"},
+              path + ".config_params");
+        }
       } else if (processor == "A65") {
         if (data.contract_version != "2.1.0") {
           reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, path + ".config_params",
@@ -1101,8 +1468,16 @@ decode_impl(const std::string_view text,
         }
         params = &params_member;
       }
-      op.config = parse_typed_config(op.kind, plugin, config, *params, path);
-      if (op.kind == OpKind::HostTvm) {
+      op.config = parse_typed_config(op.kind, op.kernel, plugin, config, *params, path);
+      if (op.kind == OpKind::Mla) {
+        const auto& mla = std::get<MlaOpConfig>(op.config);
+        for (const auto& type : mla.input_types) {
+          op.input_shapes.push_back(type.shape);
+        }
+        for (const auto& type : mla.output_types) {
+          op.output_shapes.push_back(type.shape);
+        }
+      } else if (op.kind == OpKind::HostTvm) {
         const auto& host = std::get<HostTvmOpConfig>(op.config);
         for (const auto& type : host.input_types) {
           op.input_shapes.push_back(type.shape);
@@ -1146,6 +1521,31 @@ decode_impl(const std::string_view text,
             reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
                    path + ".config_params.output_types[" + std::to_string(index) + "]",
                    "host output dense byte equation disagrees with its MPK node");
+          }
+        }
+      }
+      if (op.kind == OpKind::Mla) {
+        const auto& mla = std::get<MlaOpConfig>(op.config);
+        if ((!mla.input_types.empty() && mla.input_types.size() != input_nodes.size()) ||
+            (!mla.output_types.empty() && mla.output_types.size() != output_nodes.size())) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params",
+                 "typed MLA port arity disagrees with MPK nodes");
+        }
+        for (std::size_t index = 0; index < mla.input_types.size(); ++index) {
+          const auto bytes = dense_bytes(mla.input_types[index].shape, mla.input_types[index].scalar);
+          if (!bytes || *bytes != input_nodes[index].bytes) {
+            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+                   path + ".config_params.input_types[" + std::to_string(index) + "]",
+                   "typed MLA input byte equation disagrees with its MPK node");
+          }
+        }
+        for (std::size_t index = 0; index < mla.output_types.size(); ++index) {
+          const auto bytes =
+              dense_bytes(mla.output_types[index].shape, mla.output_types[index].scalar);
+          if (!bytes || *bytes != output_nodes[index].bytes) {
+            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+                   path + ".config_params.output_types[" + std::to_string(index) + "]",
+                   "typed MLA output byte equation disagrees with its MPK node");
           }
         }
       }
@@ -1255,13 +1655,10 @@ decode_impl(const std::string_view text,
       reject(AfeMpkV2DecodeErrorCode::MissingMlaStage, "$.plugins",
              "no exact MLA operation exists");
     }
-    if (pass_count == 0U) {
-      reject(AfeMpkV2DecodeErrorCode::MissingPublicationStage, "$.plugins",
-             "no exact PassThrough publication operation exists");
-    }
-    if (pass_count != 1U || pass_op_index + 1U != data.ops.size()) {
+    if (pass_count > 1U ||
+        (pass_count == 1U && pass_op_index + 1U != data.ops.size())) {
       reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
-             "PassThrough must be the unique terminal operation");
+             "PassThrough, when present, must be the unique terminal publication operation");
     }
 
     if (executable_evidence.size() != mla_op_indices.size()) {
@@ -1275,7 +1672,7 @@ decode_impl(const std::string_view text,
     for (std::size_t stage_index = 0; stage_index < mla_op_indices.size(); ++stage_index) {
       const auto mla_op_index = mla_op_indices[stage_index];
       const auto& mla = data.ops[mla_op_index];
-      const auto& config = std::get<MlaOpConfig>(mla.config);
+      auto& config = std::get<MlaOpConfig>(data.ops[mla_op_index].config);
       const MlaStageExecutableEvidence* evidence = nullptr;
       std::size_t evidence_index = 0U;
       for (std::size_t index = 0; index < executable_evidence.size(); ++index) {
@@ -1298,6 +1695,8 @@ decode_impl(const std::string_view text,
                    config.executable + "'");
       }
       evidence_used[evidence_index] = true;
+      config.executable_bytes = evidence->byte_length;
+      config.executable_sha256 = evidence->sha256;
       const auto& topology = evidence->topology;
       const auto topology_validation =
           reconcile_mla_elf_io_topology_strict(topology, mla.inputs.size(), mla.outputs.size());
@@ -1319,9 +1718,16 @@ decode_impl(const std::string_view text,
         const std::string symbol =
             topology.monolithic_ifm ? "data.ifm.b0" : topology.ifm_symbol_names.at(index);
         const auto& value = data.values[mla.inputs[index]];
+        const auto physical_extent = mla_elf_ifm_extent_bytes(topology, index);
+        if (physical_extent != value.required_bytes) {
+          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+                 "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes[" +
+                     std::to_string(index) + "].size",
+                 "QMLA IFM extent does not exactly equal the logical tensor");
+        }
         data.backend_ports.push_back(
             {stage_index, BackendPortDirection::Input, index, symbol, value.id,
-             value.required_bytes, kLegacyEvoCmaRegionAlignmentBytes,
+             physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
              BackendPortAlignmentAuthority::LegacyPolicy, BackendPortAccess::ReadOnly});
         result.proof.push_back(
             {"MLA[" + std::to_string(stage_index) + "].IFM[" + std::to_string(index) + "]",
@@ -1330,10 +1736,13 @@ decode_impl(const std::string_view text,
       for (std::size_t index = 0; index < mla.outputs.size(); ++index) {
         const std::string symbol =
             topology.monolithic_ofm ? "data.ofm.b0" : topology.ofm_symbol_names.at(index);
+        const auto physical_extent = mla_elf_ofm_extent_bytes(topology, index);
+        author_mla_output_storage(data, mla_op_index, index, symbol, physical_extent,
+                                  &result.proof);
         const auto& value = data.values[mla.outputs[index]];
         data.backend_ports.push_back(
             {stage_index, BackendPortDirection::Output, index, symbol, value.id,
-             value.required_bytes, kLegacyEvoCmaRegionAlignmentBytes,
+             physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
              BackendPortAlignmentAuthority::LegacyPolicy, BackendPortAccess::WriteOnly});
         result.proof.push_back(
             {"MLA[" + std::to_string(stage_index) + "].OFM[" + std::to_string(index) + "]",
@@ -1407,6 +1816,8 @@ decode_impl(const std::string_view text,
         }
       }
       config.output_alias_input = evidence->output_alias_input;
+      config.executable_bytes = evidence->byte_length;
+      config.executable_sha256 = evidence->sha256;
       host_evidence_used[evidence_index] = true;
       result.proof.push_back({"A65[" + std::to_string(host_op_index) + "].identity",
                               "MPK logical stage and executable exactly match embedded "
@@ -1418,14 +1829,82 @@ decode_impl(const std::string_view text,
              "an A65 module evidence item is not selected by any exact host stage identity");
     }
 
-    const auto& publication = data.ops[pass_op_index];
-    for (std::size_t index = 0; index < publication.outputs.size(); ++index) {
-      const auto value_id = publication.outputs[index];
-      data.model_outputs.push_back({index, data.values[value_id].name, value_id});
-      result.proof.push_back(
-          {"model.output[" + std::to_string(index) + "]",
-           "terminal exact PassThrough output preserves tuple index and full name '" +
-               data.values[value_id].name + "'"});
+    if (pass_count == 1U) {
+      const auto publication_inputs = data.ops[pass_op_index].inputs;
+      const auto publication_output_count = data.ops[pass_op_index].outputs.size();
+      for (std::size_t index = 0; index < publication_inputs.size(); ++index) {
+        const auto value_id = publication_inputs[index];
+        data.model_outputs.push_back({index, data.values[value_id].name, value_id});
+        result.proof.push_back(
+            {"model.output[" + std::to_string(index) + "]",
+             "terminal PassThrough is removed as zero work; ordered input value '" +
+                 data.values[value_id].name + "' is published directly"});
+      }
+
+      // PassThrough is publication metadata, not a physical operation and not
+      // a second set of output carriers.  It is terminal, so its values form a
+      // suffix and can be removed without renumbering any retained identity.
+      data.ops.pop_back();
+      if (publication_output_count > data.values.size()) {
+        reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
+               "terminal PassThrough output suffix is malformed");
+      }
+      data.values.resize(data.values.size() - publication_output_count);
+    } else {
+      std::unordered_set<ValueId> consumed;
+      for (const auto& op : data.ops) {
+        consumed.insert(op.inputs.begin(), op.inputs.end());
+      }
+      std::vector<ValueId> terminal_values;
+      for (const auto& op : data.ops) {
+        for (const auto output : op.outputs) {
+          if (!consumed.contains(output)) {
+            terminal_values.push_back(output);
+          }
+        }
+      }
+      if (terminal_values.empty()) {
+        reject(AfeMpkV2DecodeErrorCode::MissingPublicationStage, "$.plugins",
+               "stock graph has no terminal produced value to publish");
+      }
+
+      if (terminal_values.size() == 1U) {
+        const auto value_id = terminal_values.front();
+        data.model_outputs.push_back({0U, data.values[value_id].name, value_id});
+        result.proof.push_back(
+            {"model.output[0]",
+             "the unique unconsumed terminal produced value '" + data.values[value_id].name +
+                 "' is published directly"});
+      } else {
+        const auto contract = lookup_afe_publication_contract(manifest_sha256);
+        if (!contract) {
+          reject(AfeMpkV2DecodeErrorCode::MissingPublicationStage, "$.plugins",
+                 "multiple terminal values require an exact digest-bound ordered output contract; "
+                 "manifest sha256=" + manifest_sha256);
+        }
+        std::unordered_set<ValueId> terminal_set(terminal_values.begin(), terminal_values.end());
+        std::unordered_set<ValueId> selected;
+        for (std::size_t index = 0; index < contract->ordered_value_names.size(); ++index) {
+          const std::string wanted(contract->ordered_value_names[index]);
+          const auto found = value_by_name.find(wanted);
+          if (found == value_by_name.end() || !terminal_set.contains(found->second) ||
+              !selected.emplace(found->second).second) {
+            reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
+                   "digest-bound output contract contains a missing, nonterminal, or duplicate "
+                   "value '" + wanted + "'");
+          }
+          data.model_outputs.push_back({index, wanted, found->second});
+          result.proof.push_back(
+              {"model.output[" + std::to_string(index) + "]",
+               "exact MPK sha256 " + manifest_sha256 + " publishes terminal value '" + wanted +
+                   "'"});
+        }
+        if (selected.size() != terminal_set.size()) {
+          reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
+                 "digest-bound output contract does not enumerate every terminal value exactly "
+                 "once");
+        }
+      }
     }
 
     std::unordered_set<ValueId> consumed_values;
@@ -1447,6 +1926,7 @@ decode_impl(const std::string_view text,
     propagate_identity_evidence(data);
     validate_dense_byte_equations(data);
     lower_read_expressions(data, &result.proof);
+    validate_view_consumers(data);
 
     std::string plan_error;
     result.plan = ModelExecutionPlan::create(std::move(data), &plan_error);

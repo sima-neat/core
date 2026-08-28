@@ -42,6 +42,8 @@ struct ProcessMlaLogicalOutputDesc {
 struct ProcessMlaRuntimeConfig {
   std::string stage_key;
   std::string model_path;
+  std::uint64_t executable_bytes = 0;
+  std::string executable_sha256;
   gint32 batch_size = 0;
   gint32 batch_model = 0;
   std::vector<std::string> dispatcher_input_names;

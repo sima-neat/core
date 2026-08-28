@@ -498,7 +498,7 @@ void validate_spec_with_limits(const InputStream::State& st, const SampleSpec& s
 
 std::function<void(GstBuffer**)>
 make_prepare_for_spec(const SampleSpec& spec, const char* where,
-                      GstBuffer* source_preproc_meta_buffer = nullptr,
+                      std::shared_ptr<GstBuffer> source_preproc_meta_buffer = {},
                       const TensorList* tensor_set_meta_tensors = nullptr,
                       std::optional<PreprocessRuntimeMeta> tensor_preprocess_meta = std::nullopt) {
   return [spec, where, source_preproc_meta_buffer, tensor_set_meta_tensors,
@@ -518,9 +518,10 @@ make_prepare_for_spec(const SampleSpec& spec, const char* where,
       return;
     }
 
-    if (source_preproc_meta_buffer && has_simaai_preprocess_meta(source_preproc_meta_buffer)) {
+    if (source_preproc_meta_buffer &&
+        has_simaai_preprocess_meta(source_preproc_meta_buffer.get())) {
       std::string copy_err;
-      if (!copy_simaai_preprocess_meta(*buf, source_preproc_meta_buffer, &copy_err)) {
+      if (!copy_simaai_preprocess_meta(*buf, source_preproc_meta_buffer.get(), &copy_err)) {
         throw std::runtime_error(std::string(where ? where : "InputStream::make_prepare_for_spec") +
                                  ": failed to preserve preprocess metadata: " + copy_err);
       }
@@ -680,6 +681,99 @@ make_tensor_copy_fill(const simaai::neat::Tensor& input, size_t input_bytes, con
                                (copy_err.empty() ? std::string("tensor copy failed") : copy_err));
     }
     return copy_bytes;
+  };
+}
+
+std::function<size_t(uint8_t*, size_t)> make_nv12_materialization_fill(
+    const simaai::neat::Tensor& input, const SampleSpec& source,
+    const SampleSpec& destination, const char* where) {
+  return [&input, source, destination, where](uint8_t* dst,
+                                               size_t dst_bytes) -> size_t {
+    const char* tag = where ? where : "InputStream::materialize_nv12";
+    if (!dst || dst_bytes < destination.required_bytes_actual ||
+        destination.planes.size() != 2U) {
+      throw std::runtime_error(std::string(tag) +
+                               ": destination NV12 allocation is invalid");
+    }
+
+    simaai::neat::Mapping mapping = input.map(simaai::neat::MapMode::Read);
+    if (!mapping.data || mapping.size_bytes < source.required_bytes_actual) {
+      throw std::runtime_error(std::string(tag) +
+                               ": source NV12 mapping is unavailable or short");
+    }
+
+    struct SourcePlane {
+      std::size_t offset;
+      std::size_t stride;
+      std::size_t rows;
+    };
+    SourcePlane y{};
+    SourcePlane uv{};
+    const std::size_t width = static_cast<std::size_t>(source.width);
+    const std::size_t height = static_cast<std::size_t>(source.height);
+    if (width == 0U || height == 0U || mapping.size_bytes < width) {
+      throw std::runtime_error(std::string(tag) +
+                               ": source NV12 geometry is invalid");
+    }
+    if (source.planes.empty()) {
+      y = SourcePlane{0U, width, height};
+      uv = SourcePlane{width * height, width, height / 2U};
+    } else if (source.planes.size() == 2U &&
+               source.planes[0].offset_bytes >= 0 &&
+               source.planes[1].offset_bytes >= 0 &&
+               source.planes[0].stride_bytes > 0 &&
+               source.planes[1].stride_bytes > 0) {
+      y = SourcePlane{static_cast<std::size_t>(source.planes[0].offset_bytes),
+                      static_cast<std::size_t>(source.planes[0].stride_bytes),
+                      height};
+      uv = SourcePlane{static_cast<std::size_t>(source.planes[1].offset_bytes),
+                       static_cast<std::size_t>(source.planes[1].stride_bytes),
+                       height / 2U};
+    } else {
+      throw std::runtime_error(std::string(tag) +
+                               ": source NV12 plane layout is invalid");
+    }
+
+    const auto plane_fits = [width, &mapping](const SourcePlane& plane) {
+      return plane.stride >= width && plane.rows > 0U &&
+             plane.offset <= mapping.size_bytes &&
+             (plane.rows - 1U) <=
+                 (mapping.size_bytes - plane.offset) / plane.stride &&
+             plane.offset + (plane.rows - 1U) * plane.stride <=
+                 mapping.size_bytes - width;
+    };
+    if (!plane_fits(y) || !plane_fits(uv)) {
+      throw std::runtime_error(std::string(tag) +
+                               ": source NV12 planes exceed their mapping");
+    }
+
+    const auto& dst_y = destination.planes[0];
+    const auto& dst_uv = destination.planes[1];
+    const std::size_t dst_y_offset =
+        static_cast<std::size_t>(dst_y.offset_bytes);
+    const std::size_t dst_uv_offset =
+        static_cast<std::size_t>(dst_uv.offset_bytes);
+    const std::size_t dst_y_stride =
+        static_cast<std::size_t>(dst_y.stride_bytes);
+    const std::size_t dst_uv_stride =
+        static_cast<std::size_t>(dst_uv.stride_bytes);
+
+    // Black-fill the storage padding once, then overwrite only visible rows.
+    // This is the sole CPU->CMA copy: the source is mapped read-only and the
+    // destination is already inside its checked DMA-BUF WRITE epoch.
+    std::memset(dst + dst_y_offset, 0, dst_uv_offset - dst_y_offset);
+    std::memset(dst + dst_uv_offset, 128,
+                destination.required_bytes_actual - dst_uv_offset);
+    const auto* src = static_cast<const std::uint8_t*>(mapping.data);
+    for (std::size_t row = 0; row < height; ++row) {
+      std::memcpy(dst + dst_y_offset + row * dst_y_stride,
+                  src + y.offset + row * y.stride, width);
+    }
+    for (std::size_t row = 0; row < height / 2U; ++row) {
+      std::memcpy(dst + dst_uv_offset + row * dst_uv_stride,
+                  src + uv.offset + row * uv.stride, width);
+    }
+    return destination.required_bytes_actual;
   };
 }
 
@@ -2119,7 +2213,8 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
   const bool tensor_like_message =
       sample_has_tensor_list(transport_msg) || transport_msg.kind == SampleKind::Bundle;
-  const bool allow_zero_copy_transport = !state_->opt.copy_input;
+  const bool allow_zero_copy_transport =
+      !state_->opt.copy_input && !state_->opt.materialize_device_visible_input;
   if (!tensor_like_message) {
     throw std::runtime_error("InputStream::try_push_message: missing tensor");
   }
@@ -2276,16 +2371,24 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
 
   const size_t input_bytes = spec.required_bytes_actual;
-  GstBuffer* source_preproc_meta_buffer = nullptr;
+  std::shared_ptr<GstBuffer> source_preproc_meta_buffer;
   if (input.storage && input.storage->holder) {
-    source_preproc_meta_buffer =
-        pipeline_internal::buffer_from_tensor_holder(input.storage->holder);
+    if (GstBuffer* retained = pipeline_internal::buffer_from_tensor_holder(input.storage->holder)) {
+      source_preproc_meta_buffer =
+          std::shared_ptr<GstBuffer>(retained, [](GstBuffer* buffer) { gst_buffer_unref(buffer); });
+    }
   }
   const TensorList* tensor_set_meta_tensors =
       sample_has_tensor_list(transport_msg) ? &transport_msg.tensors : nullptr;
-  const std::function<void(GstBuffer**)> prepare =
-      make_prepare_for_spec(spec, "InputStream::try_push_message", source_preproc_meta_buffer,
-                            tensor_set_meta_tensors, tensor_preprocess_meta);
+  const SampleSpec transport_spec =
+      state_->opt.materialize_device_visible_input
+          ? device_visible_nv12_materialization_spec_or_throw(
+                spec, "InputStream::try_push_message")
+          : spec;
+  const std::function<void(GstBuffer**)> prepare = make_prepare_for_spec(
+      transport_spec, "InputStream::try_push_message",
+      source_preproc_meta_buffer, tensor_set_meta_tensors,
+      tensor_preprocess_meta);
 
   if (allow_zero_copy_transport && cpu_owned_zero_copy_input_enabled()) {
     CpuZeroCopyFastPathResult cpu_zc_result = try_push_message_cpu_owned_zero_copy_fastpath(
@@ -2304,18 +2407,26 @@ bool InputStream::try_push_message(const Sample& msg) {
   // Device-visibility guard already enforced set-completely at the top of
   // try_push_message (covers this copy path too).
 
-  const auto fill = make_tensor_copy_fill(input, input_bytes, "InputStream::try_push_message");
+  const auto fill = state_->opt.materialize_device_visible_input
+                        ? make_nv12_materialization_fill(
+                              input, spec, transport_spec,
+                              "InputStream::try_push_message")
+                        : make_tensor_copy_fill(
+                              input, input_bytes,
+                              "InputStream::try_push_message");
   const std::function<void(GstBuffer**)> copy_prepare = make_copy_prepare_with_attributes(
       prepare, meta.attributes, "InputStream::try_push_message(copy)");
 
   if (auto admitted = admit_copy_payload_nonpush(
-          *st, decision, "InputStream::try_push_message", spec, fill, meta.frame_id, seq.input_seq,
+          *st, decision, "InputStream::try_push_message", transport_spec, fill, meta.frame_id,
+          seq.input_seq,
           seq.orig_input_seq, meta.stream_id, meta.stream_label, timing_override, copy_prepare);
       admitted.has_value()) {
     return *admitted;
   }
 
-  ensure_alloc_for_bytes(*state_, spec.required_bytes_actual, "InputStream::try_push_message");
+  ensure_alloc_for_bytes(*state_, transport_spec.required_bytes_actual,
+                         "InputStream::try_push_message");
 
   const char* where = "InputStream::try_push_message";
   std::string where_detail;
@@ -2324,9 +2435,10 @@ bool InputStream::try_push_message(const Sample& msg) {
         push_fail_context(where, msg, spec, st->src_opt, seq.input_seq, seq.orig_input_seq);
     where = where_detail.c_str();
   }
-  const bool pushed = push_with_fill(where, fill, input_bytes, meta.frame_id, seq.input_seq,
-                                     seq.orig_input_seq, meta.stream_id, meta.stream_label,
-                                     timing_override, copy_prepare, spec.width, spec.height);
+  const bool pushed = push_with_fill(
+      where, fill, transport_spec.required_bytes_actual, meta.frame_id,
+      seq.input_seq, seq.orig_input_seq, meta.stream_id, meta.stream_label,
+      timing_override, copy_prepare, spec.width, spec.height);
   if (pushed) {
     maybe_drop_holder_after_push(input, "InputStream::try_push_message(copy)");
   }

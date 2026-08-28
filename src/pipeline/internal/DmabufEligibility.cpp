@@ -2,8 +2,10 @@
 #include "pipeline/internal/DmabufEligibility.h"
 
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
+#include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "pipeline/internal/sima/static_contract/TvmHostModuleGraph.h"
 
 #include <glib.h>
@@ -14,6 +16,7 @@
 #include <exception>
 #include <fstream>
 #include <limits>
+#include <span>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -88,6 +91,21 @@ std::string sanitize_detail(std::string detail, const std::filesystem::path& mpk
   replace_all(mpk_manifest.string(), "<mpk-manifest>");
   replace_all(mla_executable.string(), "<mla-executable>");
   return detail;
+}
+
+std::string detached_root_proof(
+    const std::span<const sc::ValueId> detached_roots) {
+  std::string result = ";detached_count=" +
+                       std::to_string(detached_roots.size()) +
+                       ";detached_roots=[";
+  for (std::size_t index = 0; index < detached_roots.size(); ++index) {
+    if (index != 0U) {
+      result.push_back(',');
+    }
+    result += std::to_string(detached_roots[index]);
+  }
+  result.push_back(']');
+  return result;
 }
 
 const char* value_representation_name(const sc::ValueRepresentation value) noexcept {
@@ -165,11 +183,36 @@ Json op_config_json(const sc::OpConfig& config) {
                                     {"parent_offset", component.parent_offset},
                                     {"stored_bytes", component.stored_bytes}});
             }
-            return Json{{"components", std::move(components)}};
+            Json spans = Json::array();
+            for (const auto& span : value.spans) {
+              spans.push_back({{"value_id", span.value_id},
+                               {"batch_index", span.batch_index},
+                               {"source_byte_offset", span.source_byte_offset},
+                               {"parent_offset", span.parent_offset},
+                               {"logical_bytes", span.logical_bytes},
+                               {"stored_bytes", span.stored_bytes},
+                               {"padding_policy", span.padding_policy}});
+            }
+            return Json{{"components", std::move(components)},
+                        {"batch_count", value.batch_count},
+                        {"parent_required_bytes", value.parent_required_bytes},
+                        {"spans", std::move(spans)},
+                        {"materializes", value.materializes}};
           },
           [](const sc::MlaOpConfig& value) {
+            const auto types_json = [](const auto& types) {
+              Json result = Json::array();
+              for (const auto& type : types) {
+                result.push_back({{"scalar", type.scalar}, {"shape", type.shape}});
+              }
+              return result;
+            };
             return Json{{"executable", value.executable},
-                        {"number_of_quads", value.number_of_quads}};
+                        {"executable_bytes", value.executable_bytes},
+                        {"executable_sha256", value.executable_sha256},
+                        {"number_of_quads", value.number_of_quads},
+                        {"input_types", types_json(value.input_types)},
+                        {"output_types", types_json(value.output_types)}};
           },
           [](const sc::UnpackOpConfig& value) {
             return Json{{"tensor_types", value.tensor_types},
@@ -202,10 +245,13 @@ Json op_config_json(const sc::OpConfig& config) {
               return result;
             };
             return Json{{"executable", value.executable},
+                        {"executable_bytes", value.executable_bytes},
+                        {"executable_sha256", value.executable_sha256},
                         {"input_names", value.input_names},
                         {"input_types", types_json(value.input_types)},
                         {"output_types", types_json(value.output_types)},
-                        {"output_alias_input", value.output_alias_input}};
+                        {"output_alias_input", value.output_alias_input},
+                        {"linked_parameter_names", value.linked_parameter_names}};
           },
           [](const sc::PassThroughOpConfig&) { return Json::object(); }},
       config);
@@ -341,7 +387,7 @@ const char* dmabuf_eligibility_code_name(const DmabufEligibilityCode code) noexc
 
 std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
   Json root;
-  root["schema_version"] = 1;
+  root["schema_version"] = 2;
   root["contract_version"] = plan.contract_version();
   root["model_inputs"] = plan.model_inputs();
 
@@ -362,9 +408,39 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
     } else {
       entry["read_expression"] = nullptr;
     }
+    if (value.storage_binding) {
+      const auto& binding = *value.storage_binding;
+      const char* kind = binding.kind == sc::StorageBindingKind::External
+                             ? "external"
+                             : (binding.kind == sc::StorageBindingKind::View ? "view" : "root");
+      const char* access = binding.access == sc::StorageAccess::ReadOnly
+                               ? "read"
+                               : (binding.access == sc::StorageAccess::WriteOnly ? "write"
+                                                                                : "read-write");
+      entry["storage_binding"] = {
+          {"kind", kind},
+          {"carrier_id", binding.carrier_id},
+          {"byte_offset", binding.byte_offset},
+          {"physical_span", binding.physical_span},
+          {"stride_bytes", binding.stride_bytes},
+          {"access", access},
+          {"source_value_id", binding.source_value_id ? Json(*binding.source_value_id)
+                                                       : Json(nullptr)}};
+    } else {
+      entry["storage_binding"] = nullptr;
+    }
     values.push_back(std::move(entry));
   }
   root["values"] = std::move(values);
+
+  Json carriers = Json::array();
+  for (const auto& carrier : plan.carriers()) {
+    carriers.push_back({{"id", carrier.id},
+                        {"required_bytes", carrier.required_bytes},
+                        {"required_alignment_bytes", carrier.required_alignment_bytes},
+                        {"representation", value_representation_name(carrier.representation)}});
+  }
+  root["carriers"] = std::move(carriers);
 
   Json ops = Json::array();
   for (const auto& op : plan.ops()) {
@@ -374,6 +450,9 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
                    {"kind", op_kind_name(op.kind)},
                    {"processor", op.processor},
                    {"kernel", op.kernel},
+                   {"implementation_id", op.implementation_id},
+                   {"implementation_abi_version", op.implementation_abi_version},
+                   {"dependencies", op.dependencies},
                    {"inputs", op.inputs},
                    {"outputs", op.outputs},
                    {"input_shapes", op.input_shapes},
@@ -403,7 +482,7 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
          {"port_index", port.port_index},
          {"elf_symbol", port.elf_symbol},
          {"value_id", port.value_id},
-         {"required_bytes", port.required_bytes},
+         {"required_bytes", port.physical_extent_bytes},
          {"required_alignment_bytes", port.required_alignment_bytes},
          {"alignment_authority",
           port.alignment_authority == sc::BackendPortAlignmentAuthority::Contract
@@ -425,6 +504,77 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
 
 std::string dmabuf_plan_digest(const sc::ModelExecutionPlan& plan) {
   return sha256_text(canonical_dmabuf_plan_json(plan));
+}
+
+std::string canonical_dmabuf_execution_json(
+    const sc::ModelExecutionPlan& plan, const sc::PhysicalExecutionPlan& physical,
+    const sc::FrameSlotArenaPlan& arena) {
+  Json root = Json::parse(canonical_dmabuf_plan_json(plan));
+  root["schema_version"] = 3;
+
+  Json commands = Json::array();
+  for (const auto& command : physical.commands) {
+    const char* engine = "unknown";
+    switch (command.engine) {
+    case sc::PhysicalEngine::Mla: engine = "mla"; break;
+    case sc::PhysicalEngine::A65: engine = "a65"; break;
+    case sc::PhysicalEngine::Cvu: engine = "cvu"; break;
+    }
+    commands.push_back({{"id", command.id},
+                        {"engine", engine},
+                        {"inputs", command.inputs},
+                        {"outputs", command.outputs},
+                        {"predecessors", command.predecessors},
+                        {"successors", command.successors}});
+  }
+  root["physical_commands"] = std::move(commands);
+  root["physical_digest_material"] = physical.deterministic_digest_material;
+
+  const auto& placement = arena.placement();
+  const char* domain = placement.domain == sc::ArenaStorageDomain::Cma
+                           ? "cma"
+                           : (placement.domain == sc::ArenaStorageDomain::Dms ? "dms"
+                                                                              : "unknown");
+  const char* provenance =
+      placement.provenance == sc::ArenaAllocationProvenance::CoreAllocated
+          ? "core-allocated"
+          : (placement.provenance == sc::ArenaAllocationProvenance::ExternalAdopted
+                 ? "external-adopted"
+                 : "unknown");
+  const char* escape = placement.escape == sc::ArenaEscapePolicy::CpuMappablePublic
+                           ? "cpu-mappable-public"
+                           : "internal-only";
+  Json regions = Json::array();
+  for (const auto& region : arena.regions()) {
+    regions.push_back({{"carrier_id", region.carrier_id},
+                       {"value_id", region.value_id},
+                       {"byte_offset", region.byte_offset},
+                       {"size_bytes", region.size_bytes},
+                       {"required_alignment_bytes", region.required_alignment_bytes},
+                       {"first_sequence", region.lifetime.first_sequence},
+                       {"last_sequence", region.lifetime.last_sequence}});
+  }
+  Json detached_roots = Json::array();
+  for (const auto root_id : arena.detached_roots()) {
+    detached_roots.push_back(root_id);
+  }
+  root["frame_arena"] = {{"allocation_bytes", arena.allocation_bytes()},
+                         {"allocation_alignment_bytes",
+                          arena.allocation_alignment_bytes()},
+                         {"storage_domain", domain},
+                         {"allocation_provenance", provenance},
+                         {"required_device_access",
+                          placement.required_device_access},
+                         {"escape_policy", escape},
+                         {"detached_roots", std::move(detached_roots)},
+                         {"regions", std::move(regions)}};
+  return root.dump();
+}
+
+std::string dmabuf_execution_digest(const sc::ModelExecutionPlan& plan,
+                                    const sc::PhysicalExecutionPlan& physical,
+                                    const sc::FrameSlotArenaPlan& arena) {
+  return sha256_text(canonical_dmabuf_execution_json(plan, physical, arena));
 }
 
 DmabufPlanCompileResult
@@ -476,10 +626,22 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       return result;
     }
 
+    std::string physical_error;
+    auto physical = sc::PhysicalExecutionLowerer::lower(*decoded.plan, &physical_error);
+    if (!physical) {
+      auto result = rejected(DmabufEligibilityCode::PlanValidationFailed, mpk_source, "$.plugins",
+                             std::move(physical_error));
+      result.report.contract_version = decoded.plan->contract_version();
+      result.report.artifact_digest = sha256_text("mpk=" + *mpk_digest + ";elf=" + *elf_digest);
+      return result;
+    }
+
     std::string arena_error;
-    const auto arena =
-        sc::FrameSlotArenaPlan::compile(*decoded.plan, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                        sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error);
+    const auto detached_roots = sc::detached_mla_output_roots(*decoded.plan, *physical);
+    const auto arena = sc::FrameSlotArenaPlan::compile(
+        *decoded.plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+        sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error, sc::kModalixProductionArenaDmsPolicy,
+        detached_roots);
     if (!arena) {
       auto result = rejected(DmabufEligibilityCode::ArenaPlanInvalid, mpk_source, "$.plugins",
                              std::move(arena_error));
@@ -489,7 +651,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
     }
 
     DmabufPlanCompileResult result;
-    result.plan_digest = dmabuf_plan_digest(*decoded.plan);
+    result.plan_digest = dmabuf_execution_digest(*decoded.plan, *physical, *arena);
     if (result.plan_digest.empty()) {
       return rejected(DmabufEligibilityCode::InternalError, mpk_source, "$",
                       "failed to compute canonical plan digest");
@@ -507,9 +669,15 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
     result.report.proof.push_back(
         {"frame-slot-arena", "regions=" + std::to_string(arena->regions().size()) +
                                  ";used_bytes=" + std::to_string(arena->used_bytes()) +
-                                 ";allocation_bytes=" + std::to_string(arena->allocation_bytes())});
+                                 ";allocation_bytes=" + std::to_string(arena->allocation_bytes()) +
+                                 detached_root_proof(arena->detached_roots())});
+    result.report.proof.push_back(
+        {"physical-execution-plan",
+         "commands=" + std::to_string(physical->commands.size()) + ";aligned-cvu-member-capacity=" +
+             std::to_string(sc::minimum_cvu_member_capacity(*physical).value_or(0U))});
     result.plan = std::move(decoded.plan);
     result.arena_plan = *arena;
+    result.physical_plan = std::move(physical);
     return result;
   } catch (const std::exception& error) {
     return rejected(DmabufEligibilityCode::InternalError, mpk_source, "$",
@@ -589,7 +757,9 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       artifact_identity += ";stage=" + artifact.logical_stage_id +
                            ";executable=" + artifact.manifest_executable + ";elf=" + *digest;
       evidence.push_back(
-          {artifact.logical_stage_id, artifact.manifest_executable, std::move(topology)});
+          {artifact.logical_stage_id, artifact.manifest_executable, std::move(topology),
+           static_cast<std::uint64_t>(std::filesystem::file_size(artifact.resolved_path)),
+           *digest});
     }
     std::vector<sc::HostTvmExecutableEvidence> host_evidence;
     host_evidence.reserve(host_executables.size());
@@ -624,15 +794,22 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       }
       artifact_identity += ";host-stage=" + artifact.logical_stage_id +
                            ";executable=" + artifact.manifest_executable + ";so=" + *digest;
-      host_evidence.push_back({artifact.logical_stage_id, artifact.manifest_executable,
-                               std::move(graph->input_names), std::move(graph->input_types),
-                               std::move(graph->output_types),
-                               std::move(graph->output_alias_input)});
+      sc::HostTvmExecutableEvidence item{
+          artifact.logical_stage_id,
+          artifact.manifest_executable,
+          graph->input_names,
+          graph->input_types,
+          std::move(graph->output_types),
+          std::move(graph->output_alias_input),
+          static_cast<std::uint64_t>(std::filesystem::file_size(artifact.resolved_path)),
+          *digest};
+      item.argument_names = std::move(graph->input_names);
+      item.argument_types = std::move(graph->input_types);
+      host_evidence.push_back(std::move(item));
     }
     const auto artifact_digest = sha256_text(artifact_identity);
 
-    sc::AfeMpkV2Decoder decoder;
-    auto decoded = decoder.decode_file(mpk_manifest, evidence, host_evidence);
+    auto decoded = sc::AfeMpkV2Decoder{}.decode_file(mpk_manifest, evidence, host_evidence);
     if (!decoded || !decoded.plan) {
       const auto code = decoded.error ? map_decode_code(decoded.error->code)
                                       : DmabufEligibilityCode::InternalError;
@@ -643,10 +820,22 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       return result;
     }
 
+    std::string physical_error;
+    auto physical = sc::PhysicalExecutionLowerer::lower(*decoded.plan, &physical_error);
+    if (!physical) {
+      auto result = rejected(DmabufEligibilityCode::PlanValidationFailed, mpk_source, "$.plugins",
+                             std::move(physical_error));
+      result.report.contract_version = decoded.plan->contract_version();
+      result.report.artifact_digest = artifact_digest;
+      return result;
+    }
+
     std::string arena_error;
-    auto arena =
-        sc::FrameSlotArenaPlan::compile(*decoded.plan, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                        sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error);
+    const auto detached_roots = sc::detached_mla_output_roots(*decoded.plan, *physical);
+    auto arena = sc::FrameSlotArenaPlan::compile(
+        *decoded.plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+        sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error, sc::kModalixProductionArenaDmsPolicy,
+        detached_roots);
     if (!arena) {
       auto result = rejected(DmabufEligibilityCode::ArenaPlanInvalid, mpk_source, "$.plugins",
                              std::move(arena_error));
@@ -656,7 +845,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
     }
 
     DmabufPlanCompileResult result;
-    result.plan_digest = dmabuf_plan_digest(*decoded.plan);
+    result.plan_digest = dmabuf_execution_digest(*decoded.plan, *physical, *arena);
     if (result.plan_digest.empty()) {
       return rejected(DmabufEligibilityCode::InternalError, mpk_source, "$",
                       "failed to compute canonical plan digest");
@@ -675,9 +864,15 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
     result.report.proof.push_back(
         {"frame-slot-arena", "regions=" + std::to_string(arena->regions().size()) +
                                  ";used_bytes=" + std::to_string(arena->used_bytes()) +
-                                 ";allocation_bytes=" + std::to_string(arena->allocation_bytes())});
+                                 ";allocation_bytes=" + std::to_string(arena->allocation_bytes()) +
+                                 detached_root_proof(arena->detached_roots())});
+    result.report.proof.push_back(
+        {"physical-execution-plan",
+         "commands=" + std::to_string(physical->commands.size()) + ";aligned-cvu-member-capacity=" +
+             std::to_string(sc::minimum_cvu_member_capacity(*physical).value_or(0U))});
     result.plan = std::move(decoded.plan);
     result.arena_plan = std::move(arena);
+    result.physical_plan = std::move(physical);
     return result;
   } catch (const std::exception& error) {
     return rejected(DmabufEligibilityCode::InternalError, mpk_source, "$", error.what());

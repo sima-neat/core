@@ -3,8 +3,10 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <set>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -64,6 +66,243 @@ bool checked_add(const std::uint64_t lhs, const std::uint64_t rhs, std::uint64_t
   return true;
 }
 
+bool is_power_of_two(const std::size_t value) {
+  return value != 0U && (value & (value - 1U)) == 0U;
+}
+
+std::optional<std::uint64_t> physical_span_for(const ValueSpec& value,
+                                               const std::vector<std::int64_t>& strides) {
+  if (!value.logical_shape.has_value() || value.logical_shape->empty() ||
+      strides.size() != value.logical_shape->size()) {
+    return std::nullopt;
+  }
+  std::uint64_t element_count = 1U;
+  for (const auto dimension : *value.logical_shape) {
+    if (dimension <= 0 ||
+        !checked_mul(element_count, static_cast<std::uint64_t>(dimension), &element_count)) {
+      return std::nullopt;
+    }
+  }
+  if (element_count == 0U || value.required_bytes % element_count != 0U) {
+    return std::nullopt;
+  }
+  const std::uint64_t element_bytes = value.required_bytes / element_count;
+  if (element_bytes == 0U) {
+    return std::nullopt;
+  }
+  std::uint64_t span = element_bytes;
+  for (std::size_t reverse = strides.size(); reverse > 0U; --reverse) {
+    const std::size_t axis = reverse - 1U;
+    if (strides[axis] <= 0 || static_cast<std::uint64_t>(strides[axis]) < span) {
+      return std::nullopt;
+    }
+    std::uint64_t axis_span = 0U;
+    if (!checked_mul(static_cast<std::uint64_t>((*value.logical_shape)[axis] - 1),
+                     static_cast<std::uint64_t>(strides[axis]), &axis_span) ||
+        !checked_add(span, axis_span, &span)) {
+      return std::nullopt;
+    }
+  }
+  return span;
+}
+
+struct ByteInterval {
+  std::uint64_t begin = 0U;
+  std::uint64_t end = 0U;
+};
+
+std::optional<std::vector<ByteInterval>> authored_write_intervals(
+    const ValueSpec& value, const std::uint64_t backend_write_extent = 0U) {
+  if (!value.storage_binding) {
+    return std::nullopt;
+  }
+  const auto& binding = *value.storage_binding;
+  std::uint64_t contiguous_end = 0U;
+  // An MLA backend port owns its complete physical zone, including row or
+  // tail padding which is not part of the logical tensor view.
+  if (backend_write_extent != 0U) {
+    if (!checked_add(binding.byte_offset, backend_write_extent, &contiguous_end)) {
+      return std::nullopt;
+    }
+    return std::vector<ByteInterval>{{binding.byte_offset, contiguous_end}};
+  }
+  if (binding.stride_bytes.empty() || binding.physical_span == value.required_bytes) {
+    if (!checked_add(binding.byte_offset, binding.physical_span, &contiguous_end)) {
+      return std::nullopt;
+    }
+    return std::vector<ByteInterval>{{binding.byte_offset, contiguous_end}};
+  }
+  if (!value.logical_shape || value.logical_shape->empty()) {
+    return std::nullopt;
+  }
+
+  // Preserve the existing exact disjoint footprint for direct shared-carrier
+  // batch placement when its specialized form is proven.
+  const auto& shape = *value.logical_shape;
+  const auto& strides = binding.stride_bytes;
+  const auto exact_batch = [&]() -> std::optional<std::vector<ByteInterval>> {
+    if (strides.size() != shape.size() || shape.front() <= 0) {
+      return std::nullopt;
+    }
+    std::uint64_t elements = 1U;
+    for (const auto dimension : shape) {
+      if (dimension <= 0 ||
+          !checked_mul(elements, static_cast<std::uint64_t>(dimension), &elements)) {
+        return std::nullopt;
+      }
+    }
+    if (elements == 0U || value.required_bytes % elements != 0U) {
+      return std::nullopt;
+    }
+    const std::uint64_t element_bytes = value.required_bytes / elements;
+    std::uint64_t expected_stride = element_bytes;
+    for (std::size_t axis = shape.size(); axis-- > 1U;) {
+      if (strides[axis] <= 0 ||
+          static_cast<std::uint64_t>(strides[axis]) != expected_stride ||
+          !checked_mul(expected_stride, static_cast<std::uint64_t>(shape[axis]),
+                       &expected_stride)) {
+        return std::nullopt;
+      }
+    }
+    const std::uint64_t row_bytes =
+        value.required_bytes / static_cast<std::uint64_t>(shape.front());
+    if (expected_stride != row_bytes || strides.front() <= 0 ||
+        static_cast<std::uint64_t>(strides.front()) < row_bytes) {
+      return std::nullopt;
+    }
+    std::uint64_t expected_span = 0U;
+    if (!checked_mul(static_cast<std::uint64_t>(shape.front() - 1),
+                     static_cast<std::uint64_t>(strides.front()), &expected_span) ||
+        !checked_add(expected_span, row_bytes, &expected_span) ||
+        expected_span > binding.physical_span) {
+      return std::nullopt;
+    }
+    std::vector<ByteInterval> result;
+    result.reserve(static_cast<std::size_t>(shape.front()));
+    for (std::int64_t batch = 0; batch < shape.front(); ++batch) {
+      std::uint64_t row_offset = 0U;
+      std::uint64_t begin = 0U;
+      std::uint64_t end = 0U;
+      if (!checked_mul(static_cast<std::uint64_t>(batch),
+                       static_cast<std::uint64_t>(strides.front()), &row_offset) ||
+          !checked_add(binding.byte_offset, row_offset, &begin) ||
+          !checked_add(begin, row_bytes, &end)) {
+        return std::nullopt;
+      }
+      result.push_back({begin, end});
+    }
+    return result;
+  }();
+  if (exact_batch) {
+    return exact_batch;
+  }
+
+  // Any other validated positive monotonic affine root write is accounted as
+  // its complete physical span. This is conservative and never creates holes.
+  if (binding.kind != StorageBindingKind::Root) {
+    return std::nullopt;
+  }
+  std::uint64_t end = 0U;
+  if (!checked_add(binding.byte_offset, binding.physical_span, &end)) {
+    return std::nullopt;
+  }
+  return std::vector<ByteInterval>{{binding.byte_offset, end}};
+}
+
+bool normalize_storage(ModelExecutionPlanData* data, std::string* error) {
+  if (!data) {
+    return fail(error, "execution plan has no mutable construction data");
+  }
+  std::unordered_set<ValueId> model_inputs(data->model_inputs.begin(), data->model_inputs.end());
+  for (auto& value : data->values) {
+    if (!value.storage_binding.has_value()) {
+      StorageBinding binding;
+      if (value.read_expression.has_value()) {
+        const auto& expression = *value.read_expression;
+        if (expression.source_value_id >= value.id ||
+            expression.source_value_id >= data->values.size() ||
+            !data->values[expression.source_value_id].storage_binding.has_value()) {
+          return fail(error, "execution-plan read expression has no normalized root carrier");
+        }
+        const auto& source = *data->values[expression.source_value_id].storage_binding;
+        binding.kind = StorageBindingKind::View;
+        binding.carrier_id = source.carrier_id;
+        if (!checked_add(source.byte_offset, expression.byte_offset, &binding.byte_offset)) {
+          return fail(error, "execution-plan view offset overflows");
+        }
+        const auto span = physical_span_for(value, expression.stride_bytes);
+        if (!span) {
+          return fail(error, "execution-plan view '" + value.name +
+                                 "' has no exact physical span");
+        }
+        binding.physical_span = *span;
+        binding.stride_bytes = expression.stride_bytes;
+        binding.access = StorageAccess::ReadOnly;
+        binding.source_value_id = expression.source_value_id;
+      } else {
+        binding.kind = model_inputs.contains(value.id) ? StorageBindingKind::External
+                                                       : StorageBindingKind::Root;
+        binding.carrier_id = value.id;
+        binding.physical_span = value.required_bytes;
+        binding.access = model_inputs.contains(value.id) ? StorageAccess::ReadOnly
+                                                         : StorageAccess::ReadWrite;
+      }
+      value.storage_binding = std::move(binding);
+    } else if (value.storage_binding->kind == StorageBindingKind::View &&
+               !value.read_expression.has_value()) {
+      if (!value.storage_binding->source_value_id.has_value()) {
+        return fail(error, "execution-plan view binding has no source value");
+      }
+      value.read_expression = ReadExpression{*value.storage_binding->source_value_id,
+                                             value.storage_binding->byte_offset,
+                                             value.storage_binding->stride_bytes};
+    }
+  }
+
+  if (data->carriers.empty()) {
+    std::map<CarrierId, CarrierSpec> carriers;
+    for (const auto& value : data->values) {
+      const auto& binding = *value.storage_binding;
+      std::uint64_t end = 0U;
+      if (!checked_add(binding.byte_offset, binding.physical_span, &end)) {
+        return fail(error, "execution-plan carrier extent overflows");
+      }
+      auto [iterator, inserted] = carriers.emplace(
+          binding.carrier_id,
+          CarrierSpec{binding.carrier_id, end, kLegacyEvoCmaRegionAlignmentBytes,
+                      value.representation});
+      if (!inserted) {
+        iterator->second.required_bytes = std::max(iterator->second.required_bytes, end);
+      }
+    }
+    for (const auto& port : data->backend_ports) {
+      if (port.value_id >= data->values.size() ||
+          !data->values[port.value_id].storage_binding.has_value()) {
+        return fail(error, "execution-plan backend port has no storage binding");
+      }
+      const auto id = data->values[port.value_id].storage_binding->carrier_id;
+      const auto found = carriers.find(id);
+      if (found == carriers.end() || port.physical_extent_bytes == 0U) {
+        return fail(error, "execution-plan backend port has no storage carrier extent");
+      }
+      std::uint64_t port_end = 0U;
+      const auto& binding = *data->values[port.value_id].storage_binding;
+      if (!checked_add(binding.byte_offset, port.physical_extent_bytes, &port_end)) {
+        return fail(error, "execution-plan backend port carrier extent overflows");
+      }
+      found->second.required_bytes = std::max(found->second.required_bytes, port_end);
+      found->second.required_alignment_bytes =
+          std::max(found->second.required_alignment_bytes, port.required_alignment_bytes);
+    }
+    data->carriers.reserve(carriers.size());
+    for (auto& [id, carrier] : carriers) {
+      (void)id;
+      data->carriers.push_back(std::move(carrier));
+    }
+  }
+  return true;
+}
+
 bool validate_read_expression(const ModelExecutionPlanData& data, const ValueSpec& value,
                               std::string* error) {
   if (!value.read_expression.has_value()) {
@@ -82,37 +321,19 @@ bool validate_read_expression(const ModelExecutionPlanData& data, const ValueSpe
     return fail(error, "execution-plan read expression has no exact shape/stride relation");
   }
 
-  std::uint64_t element_count = 1U;
-  for (const auto dimension : *value.logical_shape) {
-    if (dimension <= 0 ||
-        !checked_mul(element_count, static_cast<std::uint64_t>(dimension), &element_count)) {
-      return fail(error, "execution-plan read expression shape overflows");
-    }
+  const auto required_span = physical_span_for(value, expression.stride_bytes);
+  if (!required_span) {
+    return fail(error, "execution-plan read expression has no exact physical span");
   }
-  if (element_count == 0U || value.required_bytes % element_count != 0U) {
-    return fail(error, "execution-plan read expression has no exact element width");
-  }
-  const std::uint64_t element_bytes = value.required_bytes / element_count;
-  if (element_bytes == 0U) {
-    return fail(error, "execution-plan read expression has a zero element width");
-  }
-
-  std::uint64_t physical_span = element_bytes;
-  for (std::size_t axis = 0; axis < expression.stride_bytes.size(); ++axis) {
-    const auto stride = expression.stride_bytes[axis];
-    if (stride <= 0) {
-      return fail(error, "execution-plan read expression has a non-positive byte stride");
-    }
-    std::uint64_t axis_span = 0U;
-    if (!checked_mul(static_cast<std::uint64_t>((*value.logical_shape)[axis] - 1),
-                     static_cast<std::uint64_t>(stride), &axis_span) ||
-        !checked_add(physical_span, axis_span, &physical_span)) {
-      return fail(error, "execution-plan read expression span overflows");
-    }
-  }
-  const std::uint64_t required_span = std::max(value.required_bytes, physical_span);
   std::uint64_t end = 0U;
-  if (!checked_add(expression.byte_offset, required_span, &end) || end > source.required_bytes) {
+  const auto& source_binding = *source.storage_binding;
+  const auto carrier = std::find_if(data.carriers.begin(), data.carriers.end(),
+                                    [&](const CarrierSpec& item) {
+                                      return item.id == source_binding.carrier_id;
+                                    });
+  if (carrier == data.carriers.end() ||
+      !checked_add(expression.byte_offset, *required_span, &end) ||
+      end > carrier->required_bytes) {
     return fail(error, "execution-plan read expression exceeds its root carrier");
   }
   return true;
@@ -124,6 +345,17 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
   }
   if (data.values.empty()) {
     return fail(error, "execution plan has no values");
+  }
+
+  std::unordered_set<CarrierId> carrier_ids;
+  for (const auto& carrier : data.carriers) {
+    if (!carrier_ids.emplace(carrier.id).second || carrier.required_bytes == 0U ||
+        !is_power_of_two(carrier.required_alignment_bytes)) {
+      return fail(error, "execution-plan carrier identity/extent/alignment is invalid");
+    }
+  }
+  if (data.carriers.empty()) {
+    return fail(error, "execution plan has no storage carriers");
   }
 
   std::unordered_set<std::string> value_names;
@@ -138,25 +370,71 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
     if (value.required_bytes == 0U) {
       return fail(error, "execution-plan values must have a non-zero byte extent");
     }
+    if (!value.storage_binding.has_value()) {
+      return fail(error, "execution-plan value has no storage binding");
+    }
+    const auto& binding = *value.storage_binding;
+    const auto carrier = std::find_if(data.carriers.begin(), data.carriers.end(),
+                                      [&](const CarrierSpec& item) {
+                                        return item.id == binding.carrier_id;
+                                      });
+    std::uint64_t binding_end = 0U;
+    if (carrier == data.carriers.end() || binding.physical_span == 0U ||
+        !checked_add(binding.byte_offset, binding.physical_span, &binding_end) ||
+        binding_end > carrier->required_bytes) {
+      return fail(error, "execution-plan value binding exceeds its carrier");
+    }
+    if (!binding.stride_bytes.empty()) {
+      const auto span = physical_span_for(value, binding.stride_bytes);
+      if (!span || *span > binding.physical_span) {
+        return fail(error, "execution-plan storage strides disagree with its physical span");
+      }
+    } else if (binding.physical_span < value.required_bytes) {
+      return fail(error, "execution-plan opaque storage is smaller than its logical value");
+    }
+    if (binding.kind == StorageBindingKind::View) {
+      if (!binding.source_value_id.has_value() || *binding.source_value_id >= value.id ||
+          *binding.source_value_id >= data.values.size() ||
+          !data.values[*binding.source_value_id].storage_binding.has_value() ||
+          data.values[*binding.source_value_id].storage_binding->carrier_id != binding.carrier_id) {
+        return fail(error, "execution-plan view binding has no earlier source on the same carrier");
+      }
+    } else if (binding.source_value_id.has_value()) {
+      return fail(error, "execution-plan root/external binding unexpectedly names a source value");
+    }
     if (!validate_read_expression(data, value, error)) {
       return false;
     }
   }
 
   std::unordered_set<ValueId> produced;
+  std::vector<std::optional<OpId>> value_producer(data.values.size());
   for (const ValueId id : data.model_inputs) {
     if (id >= data.values.size() || !produced.emplace(id).second) {
       return fail(error, "execution-plan model input is invalid or duplicated");
     }
   }
 
+  const auto value_is_available = [&](const ValueId id) {
+    if (produced.contains(id)) {
+      return true;
+    }
+    const auto& value = data.values[id];
+    return value.storage_binding->kind == StorageBindingKind::View &&
+           value.storage_binding->source_value_id.has_value() &&
+           produced.contains(*value.storage_binding->source_value_id);
+  };
+
   std::unordered_set<std::string> operation_names;
   std::vector<const OpSpec*> mla_stages;
+  std::unordered_map<CarrierId, std::vector<ByteInterval>> authored_writes;
+  std::uint64_t previous_sequence = 0U;
   for (std::size_t index = 0; index < data.ops.size(); ++index) {
     const auto& op = data.ops[index];
-    if (op.id != index || op.sequence != index + 1U) {
-      return fail(error, "execution-plan operations must have dense ids and sequences");
+    if (op.id != index || op.sequence == 0U || op.sequence <= previous_sequence) {
+      return fail(error, "execution-plan commands need dense ids and strictly increasing order");
     }
+    previous_sequence = op.sequence;
     if (op.name.empty() || !operation_names.emplace(op.name).second || op.processor.empty() ||
         !config_matches_kind(op)) {
       return fail(error, "execution-plan operation identity/configuration is invalid");
@@ -164,36 +442,188 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
     if (op.inputs.empty() || op.outputs.empty()) {
       return fail(error, "execution-plan operations must have input and output values");
     }
+    std::unordered_set<OpId> dependencies;
+    for (const auto dependency : op.dependencies) {
+      if (dependency >= op.id || !dependencies.emplace(dependency).second) {
+        return fail(error, "execution-plan command dependency is invalid or duplicated");
+      }
+    }
     for (const ValueId id : op.inputs) {
-      if (id >= data.values.size() || !produced.contains(id)) {
+      if (id >= data.values.size() || !value_is_available(id)) {
         return fail(error, "execution-plan operation references a missing or forward input");
+      }
+      const auto& binding = *data.values[id].storage_binding;
+      const ValueId producer_value =
+          binding.kind == StorageBindingKind::View && binding.source_value_id.has_value()
+              ? *binding.source_value_id
+              : id;
+      const auto producer = value_producer[producer_value];
+      if (producer.has_value() && !dependencies.empty() && !dependencies.contains(*producer)) {
+        return fail(error,
+                    "execution-plan command omits a dependency for an authored input producer");
       }
     }
     for (const ValueId id : op.outputs) {
       if (id >= data.values.size() || !produced.emplace(id).second) {
         return fail(error, "execution-plan value has duplicate producers");
       }
+      value_producer[id] = op.id;
+    }
+    const bool pack_relation =
+        op.kind == OpKind::Pack && !std::get<PackOpConfig>(op.config).materializes;
+    if (!pack_relation) {
+      for (const ValueId id : op.outputs) {
+        const auto& binding = *data.values[id].storage_binding;
+        // A view/alias output publishes existing storage; it is not a write.
+        if (binding.kind == StorageBindingKind::View) {
+          continue;
+        }
+        const auto& output_value = data.values[id];
+        const auto carrier = std::find_if(data.carriers.begin(), data.carriers.end(),
+                                          [&](const CarrierSpec& item) {
+                                            return item.id == binding.carrier_id;
+                                          });
+        std::uint64_t backend_write_extent = 0U;
+        if (op.kind == OpKind::Mla) {
+          const auto port = std::find_if(
+              data.backend_ports.begin(), data.backend_ports.end(),
+              [&](const BackendPortSpec& candidate) {
+                return candidate.stage_index == mla_stages.size() &&
+                       candidate.direction == BackendPortDirection::Output &&
+                       candidate.value_id == id;
+              });
+          if (port == data.backend_ports.end()) {
+            return fail(error,
+                        "execution-plan MLA output has no exact backend write extent");
+          }
+          backend_write_extent = port->physical_extent_bytes;
+        }
+        const auto intervals =
+            carrier == data.carriers.end()
+                ? std::optional<std::vector<ByteInterval>>{}
+                : authored_write_intervals(output_value, backend_write_extent);
+        if (!intervals) {
+          return fail(error,
+                      "execution-plan command output has no exact bounded write footprint");
+        }
+        auto& writes = authored_writes[binding.carrier_id];
+        for (const auto& interval : *intervals) {
+          for (const auto& previous : writes) {
+            if (interval.begin < previous.end && previous.begin < interval.end) {
+              return fail(error,
+                          "execution-plan commands have overlapping authored carrier writes");
+            }
+          }
+          writes.push_back(interval);
+        }
+      }
     }
     if (op.kind == OpKind::Pack) {
       const auto& pack = std::get<PackOpConfig>(op.config);
-      if (op.outputs.size() != 1U || pack.components.size() != op.inputs.size()) {
+      if (op.outputs.size() != 1U) {
         return fail(error, "execution-plan Pack has no exact component placement");
       }
-      std::uint64_t previous_end = 0U;
-      for (std::size_t component_index = 0; component_index < pack.components.size();
-           ++component_index) {
-        const auto& component = pack.components[component_index];
-        const auto input_id = op.inputs[component_index];
-        std::uint64_t component_end = 0U;
-        if (component.value_id != input_id || component.parent_offset != previous_end ||
-            component.parent_offset % 16U != 0U || component.stored_bytes == 0U ||
-            component.stored_bytes % 16U != 0U ||
-            component.stored_bytes < data.values[input_id].required_bytes ||
-            !checked_add(component.parent_offset, component.stored_bytes, &component_end) ||
-            component_end > data.values[op.outputs.front()].required_bytes) {
-          return fail(error, "execution-plan Pack component placement is invalid");
+      if (!pack.spans.empty()) {
+        if (pack.batch_count == 0U ||
+            pack.parent_required_bytes != data.values[op.outputs.front()].required_bytes ||
+            pack.spans.size() != op.inputs.size() * pack.batch_count) {
+          return fail(error, "execution-plan Pack span cardinality/parent extent is invalid");
         }
-        previous_end = component_end;
+        std::set<std::pair<ValueId, std::uint32_t>> members;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> destinations;
+        for (const auto& span : pack.spans) {
+          std::uint64_t source_end = 0U;
+          std::uint64_t destination_end = 0U;
+          if (std::find(op.inputs.begin(), op.inputs.end(), span.value_id) == op.inputs.end() ||
+              span.batch_index >= pack.batch_count ||
+              !members.emplace(span.value_id, span.batch_index).second ||
+              span.logical_bytes == 0U || span.stored_bytes < span.logical_bytes ||
+              span.padding_policy.empty() ||
+              !checked_add(span.source_byte_offset, span.logical_bytes, &source_end) ||
+              source_end > data.values[span.value_id].required_bytes ||
+              !checked_add(span.parent_offset, span.stored_bytes, &destination_end) ||
+              destination_end > pack.parent_required_bytes) {
+            return fail(error, "execution-plan Pack span is invalid");
+          }
+          for (const auto& [begin, end] : destinations) {
+            if (span.parent_offset < end && begin < destination_end) {
+              return fail(error, "execution-plan Pack destination spans overlap");
+            }
+          }
+          destinations.emplace_back(span.parent_offset, destination_end);
+        }
+        std::sort(destinations.begin(), destinations.end());
+        std::uint64_t covered = 0U;
+        for (const auto& [begin, end] : destinations) {
+          if (begin != covered) {
+            return fail(error, "execution-plan Pack destination has a gap");
+          }
+          covered = end;
+        }
+        if (covered != pack.parent_required_bytes) {
+          return fail(error, "execution-plan Pack does not cover its exact parent carrier");
+        }
+        if (!pack.materializes) {
+          const auto& parent = *data.values[op.outputs.front()].storage_binding;
+          if (pack.parent_required_bytes % pack.batch_count != 0U) {
+            return fail(error, "execution-plan direct Pack parent is not batch-divisible");
+          }
+          const std::uint64_t parent_row_bytes =
+              pack.parent_required_bytes / static_cast<std::uint64_t>(pack.batch_count);
+          for (const auto input_id : op.inputs) {
+            const auto& input = data.values[input_id];
+            const auto& binding = *input.storage_binding;
+            if (!input.logical_shape || input.logical_shape->empty() ||
+                input.logical_shape->front() != pack.batch_count ||
+                input.required_bytes % pack.batch_count != 0U ||
+                binding.kind == StorageBindingKind::View ||
+                binding.carrier_id != parent.carrier_id) {
+              return fail(error, "execution-plan direct Pack child has no shared carrier binding");
+            }
+            const auto footprint = authored_write_intervals(input);
+            if (!footprint || footprint->size() != pack.batch_count) {
+              return fail(error, "execution-plan direct Pack child has no pitched write footprint");
+            }
+            const std::uint64_t row_bytes = input.required_bytes / pack.batch_count;
+            for (std::uint32_t batch = 0U; batch < pack.batch_count; ++batch) {
+              const auto member = std::find_if(
+                  pack.spans.begin(), pack.spans.end(), [&](const PackSpan& span) {
+                    return span.value_id == input_id && span.batch_index == batch;
+                  });
+              if (member == pack.spans.end() ||
+                  member->source_byte_offset != batch * row_bytes ||
+                  member->logical_bytes != row_bytes || member->stored_bytes != row_bytes ||
+                  member->padding_policy != "none" ||
+                  member->parent_offset != (*footprint)[batch].begin ||
+                  member->parent_offset + member->stored_bytes != (*footprint)[batch].end ||
+                  (batch > 0U &&
+                   member->parent_offset - (*footprint)[batch - 1U].begin != parent_row_bytes)) {
+                return fail(error,
+                            "execution-plan direct Pack spans contradict child placement");
+              }
+            }
+          }
+        }
+      } else {
+        if (pack.components.size() != op.inputs.size()) {
+          return fail(error, "execution-plan Pack has no exact component placement");
+        }
+        std::uint64_t previous_end = 0U;
+        for (std::size_t component_index = 0; component_index < pack.components.size();
+             ++component_index) {
+          const auto& component = pack.components[component_index];
+          const auto input_id = op.inputs[component_index];
+          std::uint64_t component_end = 0U;
+          if (component.value_id != input_id || component.parent_offset != previous_end ||
+              component.parent_offset % 16U != 0U || component.stored_bytes == 0U ||
+              component.stored_bytes % 16U != 0U ||
+              component.stored_bytes < data.values[input_id].required_bytes ||
+              !checked_add(component.parent_offset, component.stored_bytes, &component_end) ||
+              component_end > data.values[op.outputs.front()].required_bytes) {
+            return fail(error, "execution-plan Pack component placement is invalid");
+          }
+          previous_end = component_end;
+        }
       }
     }
     if (op.kind == OpKind::Mla) {
@@ -219,6 +649,18 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
           host.output_alias_input.size() != op.outputs.size()) {
         return fail(error, "execution-plan HostTVM port contract is incomplete");
       }
+      std::unordered_set<std::string> host_arguments;
+      for (const auto& name : host.input_names) {
+        if (name.empty() || !host_arguments.emplace(name).second) {
+          return fail(error, "execution-plan HostTVM external input names are invalid");
+        }
+      }
+      for (const auto& name : host.linked_parameter_names) {
+        if (name.empty() || !host_arguments.emplace(name).second) {
+          return fail(error,
+                      "execution-plan HostTVM linked parameters overlap or are duplicated");
+        }
+      }
       for (std::size_t output_index = 0; output_index < host.output_alias_input.size();
            ++output_index) {
         const auto input_index = host.output_alias_input[output_index];
@@ -232,8 +674,13 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
       }
     }
   }
-  if (produced.size() != data.values.size()) {
-    return fail(error, "execution-plan contains a value without a producer");
+  for (const auto& value : data.values) {
+    if (!produced.contains(value.id) &&
+        !(value.storage_binding->kind == StorageBindingKind::View &&
+          value.storage_binding->source_value_id.has_value() &&
+          produced.contains(*value.storage_binding->source_value_id))) {
+      return fail(error, "execution-plan contains a value without a producer or view source");
+    }
   }
 
   std::set<std::tuple<std::size_t, BackendPortDirection, std::size_t>> port_keys;
@@ -246,10 +693,22 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
   }
   for (const auto& port : data.backend_ports) {
     if (port.value_id >= data.values.size() || port.elf_symbol.empty() ||
-        port.required_bytes != data.values[port.value_id].required_bytes ||
+        port.physical_extent_bytes < data.values[port.value_id].required_bytes ||
         port.required_alignment_bytes == 0U ||
         (port.required_alignment_bytes & (port.required_alignment_bytes - 1U)) != 0U) {
       return fail(error, "execution-plan backend port contract is invalid");
+    }
+    const auto& binding = *data.values[port.value_id].storage_binding;
+    const auto carrier = std::find_if(data.carriers.begin(), data.carriers.end(),
+                                      [&](const CarrierSpec& item) {
+                                        return item.id == binding.carrier_id;
+                                      });
+    std::uint64_t port_end = 0U;
+    if (carrier == data.carriers.end() ||
+        !checked_add(binding.byte_offset, port.physical_extent_bytes, &port_end) ||
+        port_end > carrier->required_bytes) {
+      return fail(error,
+                  "execution-plan backend extent exceeds its storage carrier");
     }
     if (port.alignment_authority == BackendPortAlignmentAuthority::LegacyPolicy &&
         port.required_alignment_bytes != kLegacyEvoCmaRegionAlignmentBytes) {
@@ -336,6 +795,9 @@ ModelExecutionPlan::ModelExecutionPlan(std::shared_ptr<const ModelExecutionPlanD
 
 std::optional<ModelExecutionPlan> ModelExecutionPlan::create(ModelExecutionPlanData data,
                                                              std::string* error) {
+  if (!normalize_storage(&data, error)) {
+    return std::nullopt;
+  }
   if (!validate(data, error)) {
     return std::nullopt;
   }
@@ -351,6 +813,9 @@ const std::string& ModelExecutionPlan::contract_version() const noexcept {
 }
 const std::vector<ValueSpec>& ModelExecutionPlan::values() const noexcept {
   return data_->values;
+}
+const std::vector<CarrierSpec>& ModelExecutionPlan::carriers() const noexcept {
+  return data_->carriers;
 }
 const std::vector<ValueId>& ModelExecutionPlan::model_inputs() const noexcept {
   return data_->model_inputs;
@@ -400,6 +865,11 @@ const std::vector<ModelOutputSpec>& ModelExecutionPlan::model_outputs() const no
 }
 const ValueSpec* ModelExecutionPlan::value(const ValueId id) const noexcept {
   return id < data_->values.size() ? &data_->values[id] : nullptr;
+}
+const CarrierSpec* ModelExecutionPlan::carrier(const CarrierId id) const noexcept {
+  const auto found = std::find_if(data_->carriers.begin(), data_->carriers.end(),
+                                  [id](const CarrierSpec& carrier) { return carrier.id == id; });
+  return found == data_->carriers.end() ? nullptr : &*found;
 }
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract

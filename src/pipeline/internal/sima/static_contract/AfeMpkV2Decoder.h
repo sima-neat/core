@@ -48,6 +48,8 @@ struct MlaStageExecutableEvidence {
   std::string logical_stage_id;
   std::string executable;
   MlaElfIoTopology topology;
+  std::uint64_t byte_length = 0;
+  std::string sha256;
 };
 
 struct HostTvmExecutableEvidence {
@@ -57,6 +59,14 @@ struct HostTvmExecutableEvidence {
   std::vector<HostTensorTypeSpec> input_types;
   std::vector<HostTensorTypeSpec> output_types;
   std::vector<std::int32_t> output_alias_input;
+  std::uint64_t byte_length = 0;
+  std::string sha256;
+  // Complete GraphExecutor arg-node table. For historical evidence producers
+  // these vectors may be empty and input_names/input_types remain the complete
+  // table. The target-ready decoder uses the complete table to prove the
+  // external-versus-linked classification.
+  std::vector<std::string> argument_names;
+  std::vector<HostTensorTypeSpec> argument_types;
 };
 
 struct AfeMpkV2DecodeError {

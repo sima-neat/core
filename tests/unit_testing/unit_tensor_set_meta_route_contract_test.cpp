@@ -461,6 +461,61 @@ void override_authoritative_over_stale_tensor_set_metadata() {
                                           "stale TensorSet authoritative override parity");
 }
 
+void override_preserves_matching_logical_parent_offsets() {
+  auto sample = make_sample_with_memories({128U});
+  auto storage = pipeline_internal::make_gst_sample_storage(sample.get());
+  require(storage != nullptr, "failed to wrap parent-offset test sample");
+
+  Tensor first;
+  first.storage = storage;
+  first.dtype = TensorDType::UInt8;
+  first.layout = TensorLayout::HW;
+  first.shape = {8};
+  first.strides_bytes = {1};
+  first.byte_offset = 32;
+  first.read_only = true;
+  first.route.logical_index = 0;
+  first.route.physical_index = 0;
+  first.route.memory_index = 0;
+  first.route.route_slot = 0;
+  first.route.physical_byte_offset = 32;
+  first.route.name = "runtime_first";
+  first.route.segment_name = "frame_arena";
+
+  Tensor second = first;
+  second.byte_offset = 64;
+  second.route.logical_index = 1;
+  second.route.physical_index = 1;
+  second.route.route_slot = 1;
+  second.route.physical_byte_offset = 64;
+  second.route.name = "runtime_second";
+
+  const Sample base = sample_from_tensors(TensorList{first, second});
+  OutputTensorOverride override;
+  override.outputs.push_back(
+      make_override_entry({8}, {1}, 0, 0, 0, 0, TensorDType::UInt8, "public_first"));
+  override.outputs.push_back(
+      make_override_entry({8}, {1}, 0, 1, 1, 1, TensorDType::UInt8, "public_second"));
+
+  const Sample view =
+      apply_output_tensor_override(base, override, /*materialize_output=*/false);
+  require(view.tensors.size() == 2U, "parent-offset view should expose two tensors");
+  require(view.tensors[0].byte_offset == 32 && view.tensors[1].byte_offset == 64,
+          "matching logical overrides must preserve live parent offsets");
+
+  const Sample owned =
+      apply_output_tensor_override(base, override, /*materialize_output=*/true);
+  require(owned.tensors.size() == 2U, "parent-offset owned output should expose two tensors");
+  for (std::size_t i = 0; i < owned.tensors.size(); ++i) {
+    const Mapping map = owned.tensors[i].view_read();
+    require(map.data != nullptr && map.size_bytes == 8U,
+            "parent-offset materialization should copy one exact logical span");
+    const auto expected = static_cast<std::uint8_t>(i == 0U ? 32U : 64U);
+    require(static_cast<const std::uint8_t*>(map.data)[0] == expected,
+            "parent-offset materialization copied from the arena base instead of its view");
+  }
+}
+
 void require_status_values_0101(const Tensor& tensor, const char* context) {
   const Mapping map = tensor.view_read();
   require(map.data != nullptr, std::string(context) + ": status tensor map failed");
@@ -648,6 +703,7 @@ int main() {
     override_owned_zero_copy_parity_multi_memory_nonzero_offset();
     override_owned_zero_copy_parity_padded_stride();
     override_authoritative_over_stale_tensor_set_metadata();
+    override_preserves_matching_logical_parent_offsets();
     override_segment_name_precedes_memory_index_for_segmented_sample();
 
     std::cout << "[OK] unit_tensor_set_meta_route_contract_test passed\n";

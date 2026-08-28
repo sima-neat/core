@@ -7,12 +7,16 @@
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "test_main.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 
 RUN_TEST(
     "unit_yolov8_mla_handoff_segment_test", ([] {
       using namespace simaai::neat;
+
+      require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
+              "failed to select the strict DMA-BUF backend for the YOLOv8 handoff test");
 
       const std::filesystem::path core_root = sima_test::test_source_root();
       const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
@@ -24,6 +28,8 @@ RUN_TEST(
       model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
       model_opt.upstream_name = "decoder";
       Model model(tar_path, model_opt);
+      const auto& pack = internal::ModelAccess::pack(model);
+      pack.prepare_for_execution();
 
       const auto infer_nodes = internal::ModelAccess::build_public_inference_nodes(model);
       require(!infer_nodes.empty(),
@@ -50,32 +56,26 @@ RUN_TEST(
 
       require(mla_stage != nullptr, "YOLOv8 inference fragment should include an MLA stage");
 
-      const auto& pack = internal::ModelAccess::pack(model);
-      const auto pre_stage_facts =
-          pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
       const auto infer_stage_facts =
           pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
 
       const internal::ModelFragment::StageFacts* preproc_stage_fact = nullptr;
-      for (const auto& fact : pre_stage_facts) {
+      for (const auto& fact : infer_stage_facts) {
+        if (fact.mla_compiled.has_value()) {
+          break;
+        }
         if (fact.processcvu_contract.has_value()) {
           preproc_stage_fact = &fact;
-          break;
         }
       }
       require(preproc_stage_fact != nullptr,
               "YOLOv8 should expose a canonical preproc processcvu stage fact");
       require(preproc_stage_fact->processcvu_contract.has_value(),
               "YOLOv8 preproc stage fact should cache a processcvu contract");
-      require(preproc_stage_fact->processcvu_preproc_single_output_handoff.value_or(false),
-              "YOLOv8 preproc stage fact should mark strict single-output handoff");
-
       const auto handoff = pipeline_internal::sima::resolve_processcvu_single_handoff_output(
           *preproc_stage_fact->processcvu_contract);
       require(handoff.has_value(),
               "YOLOv8 preproc contract should resolve one canonical MLA handoff output");
-      require(handoff->segment_name == "output_tessellated_image",
-              "YOLOv8 preproc handoff should preserve the tessellated MLA segment name");
 
       const internal::ModelFragment::StageFacts* mla_stage_fact = nullptr;
       for (const auto& fact : infer_stage_facts) {
@@ -90,6 +90,11 @@ RUN_TEST(
       // single-binding shape only.
       require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.size() == 1U,
               "YOLOv8 MLA stage fact should expose one input binding");
+      require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
+                      .src_logical_output_index == handoff->logical_output_index &&
+                  mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
+                          .src_output_slot == handoff->output_slot,
+              "YOLOv8 MLA stage fact should preserve the exact compiler-authored handoff");
       require(mla_stage_fact->mla_compiled->runtime_contract.logical_inputs.size() == 1U,
               "YOLOv8 MLA stage fact should expose one logical input");
       require(mla_stage->processmla->runtime_contract.input_bindings.size() == 1U,

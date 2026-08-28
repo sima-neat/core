@@ -316,6 +316,8 @@ BuiltBuffer build_buffer_with_fill(
 
 void apply_video_meta_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);
 void apply_tensor_size_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);
+SampleSpec device_visible_nv12_materialization_spec_or_throw(
+    const SampleSpec& source, const char* where);
 bool tensor_spec_matches(const SampleSpec& a, const SampleSpec& b);
 void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* where);
 

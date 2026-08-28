@@ -42,6 +42,11 @@ std::string join_shape_debug_local(const std::vector<std::int64_t>& shape) {
 
 std::uint64_t dtype_size_bytes_from_token(const std::string& raw_dtype) {
   const std::string token = upper_copy_local(raw_dtype);
+  if (token.find("INT64") != std::string::npos ||
+      token.find("FLOAT64") != std::string::npos ||
+      token.find("FP64") != std::string::npos) {
+    return 8U;
+  }
   if (token.find("BF16") != std::string::npos || token.find("FLOAT16") != std::string::npos ||
       token.find("FP16") != std::string::npos || token == "INT16" || token == "EVXX_INT16" ||
       token == "UINT16") {

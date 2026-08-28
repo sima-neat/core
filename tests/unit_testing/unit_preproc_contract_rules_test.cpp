@@ -438,6 +438,42 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
                 rendered_stage.processcvu.input_shapes.size() == 1U &&
                 rendered_stage.processcvu.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
             "rendered Preproc static contract must expose the full dynamic input capacity");
+    require(rendered_stage.processcvu.dmabuf_plan_contract &&
+                rendered_stage.processcvu.graph_id == 200 &&
+                rendered_stage.processcvu.descriptor_abi_id != 0U &&
+                rendered_stage.frame_arena_role ==
+                    pipeline_internal::sima::FrameArenaRole::Allocate &&
+                rendered_stage.frame_arena_storage_domain ==
+                    pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
+                rendered_stage.frame_arena_provenance ==
+                    pipeline_internal::sima::static_contract::ArenaAllocationProvenance::
+                        CoreAllocated &&
+                (rendered_stage.frame_arena_required_device_access &
+                 static_cast<std::uint32_t>(
+                     pipeline_internal::sima::static_contract::ArenaDeviceAccess::Ev74)) != 0U &&
+                rendered_stage.frame_arena_size_bytes > 0U &&
+                rendered_stage.input_bindings.size() == 1U &&
+                rendered_stage.input_bindings.front().src_stage_id.empty() &&
+                rendered_stage.input_bindings.front().src_stage_index < 0 &&
+                rendered_stage.input_bindings.front().src_logical_output_index < 0 &&
+                rendered_stage.physical_inputs.size() == 1U &&
+                rendered_stage.physical_inputs.front().size_bytes > 0U &&
+                rendered_stage.logical_outputs.size() == 1U &&
+                rendered_stage.physical_outputs.size() == 1U &&
+                rendered_stage.logical_outputs.front().backend_output_index >= 0 &&
+                rendered_stage.logical_outputs.front().physical_index ==
+                    rendered_stage.physical_outputs.front().physical_index,
+            "standalone Preproc must carry one compiler-proved direct CVU arena contract");
+    for (const auto& output : rendered_stage.physical_outputs) {
+      require(output.size_bytes > 0U && output.required_alignment_bytes > 0U &&
+                  output.source_byte_offset >= 0 &&
+                  static_cast<std::uint64_t>(output.source_byte_offset) %
+                          output.required_alignment_bytes ==
+                      0U &&
+                  static_cast<std::uint64_t>(output.source_byte_offset) + output.size_bytes <=
+                      rendered_stage.frame_arena_size_bytes,
+              "standalone Preproc output must be bounded and aligned inside its arena");
+    }
 
     InputContract capacity_contract = seed_contract;
     capacity_contract.width = 1920;

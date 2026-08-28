@@ -59,7 +59,10 @@ int main(int argc, char** argv) {
 
     for (const auto& tar : packs) {
       try {
-        auto model_options = canonical_model_options(boxdecode_mode);
+        auto model_options =
+            boxdecode_mode == BoxDecodeRunMode::Model
+                ? canonical_model_options(BoxDecodeRunMode::Model)
+                : canonical_model_bound_standalone_boxdecode_options();
         if (boxdecode_mode == BoxDecodeRunMode::Model) {
           model_options.boxdecode_original_width = img_bgr.cols;
           model_options.boxdecode_original_height = img_bgr.rows;
@@ -100,7 +103,10 @@ int main(int argc, char** argv) {
         const auto tensor_io_before = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
         const auto run_t0 = std::chrono::steady_clock::now();
         const simaai::neat::Sample infer_sample =
-            run_canonical_model_sample(img_bgr, model, route_opt, frames);
+            boxdecode_mode == BoxDecodeRunMode::Model
+                ? run_canonical_model_sample(img_bgr, model, route_opt, frames)
+                : run_canonical_standalone_boxdecode_sample_local(img_bgr, model, route_opt,
+                                                                  frames);
         const auto run_t1 = std::chrono::steady_clock::now();
         const double run_ms = std::chrono::duration<double, std::milli>(run_t1 - run_t0).count();
         const double fps =
@@ -120,13 +126,27 @@ int main(int argc, char** argv) {
                   << "\n";
         const auto tensor_io_after = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
         const auto tensor_io = tensor_io_delta(tensor_io_before, tensor_io_after);
+        const std::string output_payload_digest =
+            ordered_payload_digest_string_local(infer_sample);
 
         if (boxdecode_mode == BoxDecodeRunMode::NoModel) {
           require_preprocess_meta_on_output_local(infer_sample, img_bgr.cols, img_bgr.rows,
                                                   "canonical_e2e_output");
         }
+        if (const char* trace = std::getenv("SIMA_YOLOV8_HOST_ACCURACY_TRACE");
+            boxdecode_mode == BoxDecodeRunMode::Model && trace && *trace &&
+            std::strcmp(trace, "0") != 0) {
+          const AccuracyResult host_acc = run_hostdecode_accuracy_on_sample_local(
+              infer_sample, model, img_bgr, "hostdecode_trace");
+          std::cerr << "[matrix-host-accuracy] ok=" << (host_acc.ok ? 1 : 0)
+                    << " boxes=" << host_acc.parsed_boxes << " note=\""
+                    << host_acc.note << "\"\n";
+        }
         const AccuracyResult acc =
-            run_framework_boxdecode_accuracy(infer_sample, model, img_bgr, boxdecode_mode);
+            boxdecode_mode == BoxDecodeRunMode::Model
+                ? run_framework_boxdecode_accuracy(infer_sample, model, img_bgr, boxdecode_mode)
+                : run_framework_decoded_boxdecode_accuracy_local(
+                      infer_sample, img_bgr, "boxdecode=standalone_model_bound_stage");
         require(acc.ok, "accuracy check failed: " + acc.note);
 
         std::cout << "E2E model=" << tar.filename().string() << " backend=" << processcvu_run_target
@@ -134,6 +154,7 @@ int main(int argc, char** argv) {
                   << (processcvu_placement.empty() ? "default" : processcvu_placement)
                   << " boxdecode_mode=" << boxdecode_run_mode_name(boxdecode_mode)
                   << " signature=\"" << sample_output_signature_local(infer_sample) << "\""
+                  << " output_payload_digest=\"" << output_payload_digest << "\""
                   << " accuracy=\"" << acc.note << "\" tensor_io=\""
                   << tensor_io_stats_string(tensor_io) << "\"\n";
       } catch (const std::exception& ex) {

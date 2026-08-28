@@ -59,7 +59,7 @@ LogicalInputStaticSpec mla_logical_input_from_facts(const TensorStaticSpec& tens
       index, tensor.tensor_index >= 0 ? tensor.tensor_index : index,
       physical.physical_index >= 0 ? physical.physical_index : index, tensor.shape, tensor.dtype,
       tensor.layout, logical_name, logical_name, physical.segment_name,
-      std::max<std::int64_t>(0, physical.source_byte_offset), 0U,
+      tensor.parent_carrier ? std::max<std::int64_t>(0, physical.source_byte_offset) : 0, 0U,
       tensor.parent_carrier ? TensorMaterializationKind::OffsetView
                             : TensorMaterializationKind::Direct);
 }
@@ -182,6 +182,13 @@ build_mla_compiled_contract_from_subset(const plugin_contracts::ProcessMlaContra
   compiled.runtime_contract.frame_arena_size_bytes =
       contract.frame_arena_size_bytes;
   compiled.runtime_contract.frame_arena_role = contract.frame_arena_role;
+  compiled.runtime_contract.frame_arena_storage_domain =
+      contract.frame_arena_storage_domain;
+  compiled.runtime_contract.frame_arena_provenance = contract.frame_arena_provenance;
+  compiled.runtime_contract.frame_arena_required_device_access =
+      contract.frame_arena_required_device_access;
+  compiled.runtime_contract.frame_arena_escape_policy =
+      contract.frame_arena_escape_policy;
   compiled.runtime_contract.consumer_keeps_distinct_physical_inputs =
       contract.consumer_keeps_distinct_physical_inputs;
   compiled.runtime_contract.elf_ifm_symbol_names = contract.elf_ifm_symbol_names;

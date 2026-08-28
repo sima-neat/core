@@ -305,15 +305,14 @@ preproc_output_info_from_manifest(const sima::SimaPluginStaticManifest& manifest
       info.semantic_kind = preproc_semantic_kind_from_manifest(
           stage->processcvu.runtime_output_semantic_kind_list[primary_output_index]);
     }
-    if (primary_output_index < stage->processcvu.runtime_output_logical_shapes.size()) {
-      const auto& shape = stage->processcvu.runtime_output_logical_shapes[primary_output_index];
-      info.logical_dims.height = shape.size() >= 1 ? shape[0] : 0;
-      info.logical_dims.width = shape.size() >= 2 ? shape[1] : 0;
-      info.logical_dims.depth = shape.size() >= 3 ? shape[2] : 0;
-    }
     if (primary_output_index < stage->processcvu.runtime_output_logical_layout_list.size()) {
       info.logical_layout = layout_projection_from_contract_format(
           stage->processcvu.runtime_output_logical_layout_list[primary_output_index]);
+    }
+    if (primary_output_index < stage->processcvu.runtime_output_logical_shapes.size()) {
+      const auto& shape = stage->processcvu.runtime_output_logical_shapes[primary_output_index];
+      info.logical_dims = tensor_dims_projection_from_contract_shape(
+          std::vector<std::int64_t>(shape.begin(), shape.end()), info.logical_layout);
     }
   }
 

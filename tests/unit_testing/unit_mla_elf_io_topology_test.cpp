@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -53,11 +54,26 @@ struct Elf64SectionHeader {
 };
 #pragma pack(pop)
 
-// Build a minimal ELF64 file containing the listed section names plus a
-// shstrtab. Returns the path to the temp file. Sections are zero-sized; only
-// their names matter for the parser.
+constexpr std::uint32_t kQmlaShtData = 0x71ba0002U;
+
+bool is_mla_io_section(const std::string& name) {
+  return name == "data.ifm.b0" || name == "data.ofm.b0" ||
+         name.starts_with("data.ifm.persistent.") ||
+         name.starts_with("data.ofm.persistent.");
+}
+
+void append_u64_le(std::vector<std::uint8_t>& bytes, const std::uint64_t value) {
+  for (unsigned shift = 0; shift < 64U; shift += 8U) {
+    bytes.push_back(static_cast<std::uint8_t>((value >> shift) & 0xffU));
+  }
+}
+
+// Build a minimal ELF64 file containing compiler-authored 16-byte QMLA
+// SHT_DATA headers for every recognized I/O section plus a shstrtab.
 std::filesystem::path write_minimal_elf(const std::string& tag,
-                                        const std::vector<std::string>& section_names) {
+                                        const std::vector<std::string>& section_names,
+                                        const std::unordered_map<std::string, std::uint64_t>&
+                                            extent_overrides = {}) {
   // First section is always the NULL section (name index 0). We append the
   // requested names, then append ".shstrtab" as the final section so its name
   // is also represented in the table.
@@ -78,7 +94,21 @@ std::filesystem::path write_minimal_elf(const std::string& tag,
 
   const std::uint16_t shnum = static_cast<std::uint16_t>(names.size());
   const std::uint64_t header_bytes = sizeof(Elf64Header);
-  const std::uint64_t shstrtab_offset = header_bytes;
+  std::vector<std::uint8_t> qmla_headers;
+  std::vector<std::uint64_t> payload_offsets(names.size(), 0U);
+  for (std::size_t i = 1U; i + 1U < names.size(); ++i) {
+    if (!is_mla_io_section(names[i])) {
+      continue;
+    }
+    payload_offsets[i] = header_bytes + qmla_headers.size();
+    const auto override = extent_overrides.find(names[i]);
+    const auto extent = override == extent_overrides.end()
+                            ? static_cast<std::uint64_t>(i) * 16U
+                            : override->second;
+    append_u64_le(qmla_headers, extent);
+    append_u64_le(qmla_headers, 1U); // one address segment
+  }
+  const std::uint64_t shstrtab_offset = header_bytes + qmla_headers.size();
   const std::uint64_t shoff = shstrtab_offset + shstrtab.size();
 
   Elf64Header hdr;
@@ -87,15 +117,20 @@ std::filesystem::path write_minimal_elf(const std::string& tag,
   hdr.e_shstrndx = static_cast<std::uint16_t>(shnum - 1U); // last section is shstrtab
 
   std::vector<Elf64SectionHeader> sections(shnum);
+  sections[0].sh_type = 0; // SHT_NULL
   // Section 0: NULL.
   // Sections 1..shnum-2: requested user sections (names[1..shnum-2]).
   // Section shnum-1: .shstrtab itself, offset/size into the file.
-  for (std::size_t i = 0; i < sections.size(); ++i) {
+  for (std::size_t i = 1U; i < sections.size(); ++i) {
     sections[i].sh_name = name_offsets[i];
     if (i + 1U == sections.size()) {
       sections[i].sh_type = 3; // SHT_STRTAB
       sections[i].sh_offset = shstrtab_offset;
       sections[i].sh_size = static_cast<std::uint64_t>(shstrtab.size());
+    } else if (payload_offsets[i] != 0U) {
+      sections[i].sh_type = kQmlaShtData;
+      sections[i].sh_offset = payload_offsets[i];
+      sections[i].sh_size = 16U;
     }
   }
 
@@ -103,6 +138,8 @@ std::filesystem::path write_minimal_elf(const std::string& tag,
       std::filesystem::temp_directory_path() / ("mla_elf_io_topology_test_" + tag + ".elf");
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+  out.write(reinterpret_cast<const char*>(qmla_headers.data()),
+            static_cast<std::streamsize>(qmla_headers.size()));
   out.write(shstrtab.data(), static_cast<std::streamsize>(shstrtab.size()));
   out.write(reinterpret_cast<const char*>(sections.data()),
             static_cast<std::streamsize>(sections.size() * sizeof(Elf64SectionHeader)));
@@ -145,31 +182,65 @@ void test_multi_ifm_topology() {
 }
 
 void test_qmla_flat_topology() {
-  const auto path = write_minimal_elf("qmla_flat", {
-                                                       "code.r0.c0",
-                                                       "data.ifm.persistent.qmla_ifm_0.b0",
-                                                       "data.ifm.persistent.qmla_ifm_1.b0",
-                                                       "data.ifm.persistent.qmla_ifm_2.b0",
-                                                       "data.ofm.persistent.afe_mla_output_0.b0",
-                                                       "data.ofm.persistent.afe_mla_output_1.b0",
-                                                   });
+  std::vector<std::string> names{"code.r0.c0"};
+  std::unordered_map<std::string, std::uint64_t> extents;
+  // Deliberately put slot 10 before slots 0..9. Numeric port authority must
+  // never depend on lexical order or ELF section order.
+  names.push_back("data.ifm.persistent.afe_direct_input_10.b0");
+  extents.emplace(names.back(), 1010U);
+  for (std::size_t index = 0U; index < 10U; ++index) {
+    names.push_back("data.ifm.persistent.afe_direct_input_" + std::to_string(index) + ".b0");
+    extents.emplace(names.back(), 1000U + index);
+  }
+  names.push_back("data.ofm.persistent.afe_mla_output_1.b0");
+  extents.emplace(names.back(), 2001U);
+  names.push_back("data.ofm.persistent.afe_mla_output_0.b0");
+  extents.emplace(names.back(), 2000U);
+  const auto path = write_minimal_elf("qmla_flat", names, extents);
   simaai::neat::pipeline_internal::sima::MlaElfIoTopology topology;
   const bool ok = simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
   check(ok, "qmla_flat: parser returned ok");
   check(topology.valid, "qmla_flat: topology.valid");
   check(!topology.monolithic_ifm, "qmla_flat: !monolithic_ifm");
   check(!topology.monolithic_ofm, "qmla_flat: !monolithic_ofm");
-  check(topology.ifm_symbol_names.size() == 3U, "qmla_flat: 3 IFM slots");
+  check(topology.ifm_symbol_names.size() == 11U, "qmla_flat: 11 IFM slots");
   check(topology.ofm_symbol_names.size() == 2U, "qmla_flat: 2 OFM slots");
-  check(topology.ifm_symbol_names[0] == "data.ifm.persistent.qmla_ifm_0.b0", "qmla_flat: ifm[0]");
-  check(topology.ifm_symbol_names[2] == "data.ifm.persistent.qmla_ifm_2.b0", "qmla_flat: ifm[2]");
+  check(topology.ifm_symbol_names[0] == "data.ifm.persistent.afe_direct_input_0.b0",
+        "qmla_flat: ifm[0]");
+  check(topology.ifm_symbol_names[10] == "data.ifm.persistent.afe_direct_input_10.b0",
+        "qmla_flat: ifm[10]");
   check(topology.ofm_symbol_names[1] == "data.ofm.persistent.afe_mla_output_1.b0",
         "qmla_flat: ofm[1]");
+  check(topology.ifm_extent_bytes.size() == 11U && topology.ifm_extent_bytes[0] == 1000U &&
+            topology.ifm_extent_bytes[10] == 1010U,
+        "qmla_flat: IFM extents preserve numeric slot order");
+  check(topology.ofm_extent_bytes.size() == 2U && topology.ofm_extent_bytes[0] == 2000U &&
+            topology.ofm_extent_bytes[1] == 2001U,
+        "qmla_flat: OFM extents preserve numeric slot order");
   check(
       simaai::neat::pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(topology),
       "qmla_flat: requires_distinct_ifm_segments == true");
   std::filesystem::remove(path);
 }
+
+void test_afe_direct_input_topology() {
+  const auto path = write_minimal_elf(
+      "afe_direct_input",
+      {"code.r0.c0", "data.ifm.persistent.afe_direct_input_0.b0",
+       "data.ifm.persistent.afe_direct_input_1.b0",
+       "data.ofm.persistent.afe_mla_output_0.b0"});
+  simaai::neat::pipeline_internal::sima::MlaElfIoTopology topology;
+  const bool ok =
+      simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
+  check(ok && topology.valid, "afe_direct_input: parser accepted current AFE symbols");
+  check(topology.ifm_symbol_names.size() == 2U, "afe_direct_input: two IFM ports");
+  check(topology.ofm_symbol_names.size() == 1U, "afe_direct_input: one OFM port");
+  check(topology.ifm_symbol_names[1] ==
+            "data.ifm.persistent.afe_direct_input_1.b0",
+        "afe_direct_input: stable indexed order");
+  std::filesystem::remove(path);
+}
+
 
 void test_monolithic_topology() {
   const auto path = write_minimal_elf("monolithic", {
@@ -231,6 +302,20 @@ void test_strict_validation_and_reconciliation() {
         "strict valid: mismatch reports exact IFM counts");
   std::filesystem::remove(valid_path);
 
+  const std::string missing_extent_ifm =
+      "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0";
+  const auto missing_extent_path = write_minimal_elf(
+      "strict_missing_extent", {missing_extent_ifm, "data.ofm.b0"},
+      {{missing_extent_ifm, 0U}});
+  MlaElfIoTopology missing_extent;
+  check(read_mla_elf_io_topology(missing_extent_path, &missing_extent),
+        "strict missing extent: parser retains topology evidence");
+  const auto missing_extent_result = validate_mla_elf_io_topology_strict(missing_extent);
+  check(!missing_extent_result.ok &&
+            missing_extent_result.code == MlaElfIoTopologyError::MissingIfmExtent,
+        "strict missing extent: zero QMLA extent rejected");
+  std::filesystem::remove(missing_extent_path);
+
   const auto conflict_path = write_minimal_elf(
       "strict_conflict",
       {"data.ifm.b0", "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0", "data.ofm.b0"});
@@ -271,6 +356,7 @@ void test_strict_validation_and_reconciliation() {
 int main() {
   test_multi_ifm_topology();
   test_qmla_flat_topology();
+  test_afe_direct_input_topology();
   test_monolithic_topology();
   test_unknown_topology_fails_cleanly();
   test_missing_file_fails_cleanly();

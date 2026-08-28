@@ -16,6 +16,7 @@
 #include "pipeline/TensorTypes.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/InputStreamTeardownPolicy.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 
 #include <gst/gst.h>
 
@@ -149,6 +150,9 @@ struct SampleSpec {
   int fps_n = 0;
   int fps_d = 1;
   std::vector<PlaneInfo> planes;
+  // Selected tensor view bytes; required_bytes_actual may instead describe a
+  // larger TensorBuffer carrier transported without a copy.
+  size_t tensor_view_bytes_actual = 0;
   size_t required_bytes_actual = 0;
   CapKey caps_key;
   std::string caps_string;
@@ -210,6 +214,9 @@ SampleTimingOverrides sample_timing_overrides_from_sample(const Sample& sample);
 GstCaps* caps_from_spec(const SampleSpec& spec);
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                                  InputBufferPoolGuard& guard);
+GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
+                                 InputBufferPoolGuard& guard,
+                                 pipeline_internal::MemoryBackendPolicy backend);
 int64_t next_input_frame_id();
 bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptions& opt);
 void maybe_update_simaai_meta_name(GstBuffer* buffer, const std::string& name);

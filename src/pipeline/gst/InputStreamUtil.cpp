@@ -12,7 +12,9 @@
 #include "nodes/io/Input.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/SampleTimingGstUtil.h"
+#include "simaai/neat/internal/dmabuf/DmaBufPool.h"
 
+#include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
 
 #include <opencv2/core/mat.hpp>
@@ -1250,6 +1252,13 @@ void free_simaai_pool(GstBufferPool* pool) {
 #endif
 }
 
+void free_standard_dmabuf_pool(GstBufferPool* pool) {
+  if (!pool)
+    return;
+  (void)gst_buffer_pool_set_active(pool, FALSE);
+  gst_object_unref(pool);
+}
+
 } // namespace
 
 namespace {
@@ -1285,7 +1294,9 @@ bool contains_launch_factory_token(std::string_view pipeline, std::string_view f
 pipeline_internal::InputStreamTeardownPolicy
 inputstream_pipeline_teardown_policy(std::string_view pipeline) {
   if (contains_launch_factory_token(pipeline, "neatprocessmla") ||
-      contains_launch_factory_token(pipeline, "neatprocesscvu")) {
+      contains_launch_factory_token(pipeline, "neatprocesscvu") ||
+      contains_launch_factory_token(pipeline, "neatdecoder") ||
+      contains_launch_factory_token(pipeline, "neatencoder")) {
     return pipeline_internal::InputStreamTeardownPolicy::MustReachNull;
   }
   return pipeline_internal::InputStreamTeardownPolicy::Deferred;
@@ -1783,6 +1794,7 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
     }
     spec.shape = std::move(normalized_shape);
     spec.format = fmt;
+    spec.tensor_view_bytes_actual = bytes;
     spec.required_bytes_actual = bytes;
   } else {
     throw std::invalid_argument(tag + ": unsupported media_type: " + spec.media_type);
@@ -2206,7 +2218,8 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
 }
 
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
-                                 InputBufferPoolGuard& guard) {
+                                 InputBufferPoolGuard& guard,
+                                 const pipeline_internal::MemoryBackendPolicy backend) {
 #if SIMA_HAS_SIMAAI_POOL
   const std::string media_type_up = upper_copy(resolve_input_media_type(opt));
   const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
@@ -2220,22 +2233,41 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
     GstBufferPool* pool = guard.pool.get();
     if (!pool) {
       const auto t_create_start = std::chrono::steady_clock::now();
-      gst_simaai_segment_memory_init_once();
-      GstMemoryFlags flags =
-          static_cast<GstMemoryFlags>(target_flag | GST_SIMAAI_MEMORY_FLAG_CACHED);
-      const bool tensor_input = tensor_media;
-      const std::string segment_name =
-          !opt.buffer_name.empty() ? opt.buffer_name
-                                   : (tensor_input ? std::string("ifm0") : std::string("input"));
-      const gsize segment_size = static_cast<gsize>(bytes);
-      const char* segment_name_cstr = segment_name.c_str();
-      GstBufferPool* new_pool = gst_simaai_allocate_buffer_pool2(
-          /*allocator_user_data=*/nullptr, gst_simaai_memory_get_segment_allocator(),
-          opt.pool_min_buffers, opt.pool_max_buffers, flags,
-          /*num_segments=*/1, &segment_size, &segment_name_cstr);
+      GstBufferPool* new_pool = nullptr;
+      const bool standard_dmabuf =
+          backend == pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+      if (standard_dmabuf) {
+        simaai::neat::internal::dmabuf::Error error;
+        const auto heap = opt.memory_policy == InputMemoryPolicy::Dms0
+                              ? simaai::neat::internal::dmabuf::HeapKind::MlaDms
+                              : simaai::neat::internal::dmabuf::HeapKind::Cma;
+        new_pool = simaai::neat::internal::dmabuf::createDmaBufPool(
+            heap, bytes, static_cast<unsigned int>(opt.pool_min_buffers),
+            static_cast<unsigned int>(opt.pool_max_buffers), {}, &error);
+        if (!new_pool) {
+          debug_pool_log((std::string("Input: standard DMA-BUF pool creation failed: ") +
+                          error.message())
+                             .c_str());
+        }
+      } else {
+        gst_simaai_segment_memory_init_once();
+        GstMemoryFlags flags =
+            static_cast<GstMemoryFlags>(target_flag | GST_SIMAAI_MEMORY_FLAG_CACHED);
+        const bool tensor_input = tensor_media;
+        const std::string segment_name =
+            !opt.buffer_name.empty()
+                ? opt.buffer_name
+                : (tensor_input ? std::string("ifm0") : std::string("input"));
+        const gsize segment_size = static_cast<gsize>(bytes);
+        const char* segment_name_cstr = segment_name.c_str();
+        new_pool = gst_simaai_allocate_buffer_pool2(
+            /*allocator_user_data=*/nullptr, gst_simaai_memory_get_segment_allocator(),
+            opt.pool_min_buffers, opt.pool_max_buffers, flags,
+            /*num_segments=*/1, &segment_size, &segment_name_cstr);
+      }
       if (new_pool) {
-        guard.pool =
-            std::unique_ptr<GstBufferPool, void (*)(GstBufferPool*)>(new_pool, free_simaai_pool);
+        guard.pool = std::unique_ptr<GstBufferPool, void (*)(GstBufferPool*)>(
+            new_pool, standard_dmabuf ? free_standard_dmabuf_pool : free_simaai_pool);
         pool = new_pool;
       }
       debug_pool_state("pool_create", pool, opt, bytes);
@@ -2283,6 +2315,13 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
   GstBuffer* buf = gst_buffer_new_allocate(nullptr, bytes, nullptr);
   debug_pool_timing("system_alloc", opt, bytes, t_alloc_start, buf != nullptr, false);
   return buf;
+}
+
+GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
+                                 InputBufferPoolGuard& guard) {
+  return allocate_input_buffer(
+      bytes, opt, guard,
+      pipeline_internal::process_memory_backend_selection().policy);
 }
 
 int64_t next_input_frame_id() {
@@ -3278,7 +3317,10 @@ GstBuffer* attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt
   }
   gint64 phys_addr = 0;
   if (gst_buffer_n_memory(buffer) > 0) {
-    phys_addr = gst_simaai_segment_memory_get_phys_addr(gst_buffer_peek_memory(buffer, 0));
+    GstMemory* memory = gst_buffer_peek_memory(buffer, 0);
+    if (memory && !gst_is_dmabuf_memory(memory)) {
+      phys_addr = gst_simaai_segment_memory_get_phys_addr(memory);
+    }
   }
   const gint64 frame_id = frame_id_override.has_value()
                               ? static_cast<gint64>(*frame_id_override)

@@ -8,12 +8,16 @@
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "test_main.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 
 RUN_TEST(
     "unit_modelpack_mla_handoff_segment_test", ([] {
       using namespace simaai::neat;
+
+      require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
+              "failed to select the strict DMA-BUF backend for the handoff contract test");
 
       const std::filesystem::path core_root = sima_test::test_source_root();
       const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
@@ -25,6 +29,8 @@ RUN_TEST(
       model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
       model_opt.upstream_name = "decoder";
       Model model(tar_path, model_opt);
+      const auto& pack = internal::ModelAccess::pack(model);
+      pack.prepare_for_execution();
       const auto infer_nodes = internal::ModelAccess::build_public_inference_nodes(model);
       require(!infer_nodes.empty(), "inference fragment should compile from the YOLOv8 asset");
 
@@ -34,8 +40,6 @@ RUN_TEST(
       require(diagnostics.errors.empty(), "inference fragment contract compile failed");
       require(!compiled.stages.empty(),
               "compiled inference fragment should emit a container stage");
-      const auto& pack = internal::ModelAccess::pack(model);
-
       const CompiledNodeContract* mla_stage = nullptr;
       const auto visit_stage = [&](const auto& self, const CompiledNodeContract& stage) -> void {
         if (!mla_stage && stage.processmla.has_value()) {
@@ -50,13 +54,15 @@ RUN_TEST(
       }
 
       require(mla_stage != nullptr, "compiled full fragment should include an MLA stage");
-      const auto pre_stage_facts =
-          pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
+      const auto infer_stage_facts =
+          pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
       const internal::ModelFragment::StageFacts* preproc_stage_fact = nullptr;
-      for (const auto& fact : pre_stage_facts) {
+      for (const auto& fact : infer_stage_facts) {
+        if (fact.mla_compiled.has_value()) {
+          break;
+        }
         if (fact.processcvu_contract.has_value()) {
           preproc_stage_fact = &fact;
-          break;
         }
       }
       require(preproc_stage_fact != nullptr,
@@ -68,8 +74,6 @@ RUN_TEST(
               *preproc_stage_fact->processcvu_contract);
       require(preproc_handoff.has_value(),
               "YOLOv8 preproc contract should resolve one canonical MLA handoff output");
-      require(preproc_handoff->segment_name == "output_tessellated_image",
-              "YOLOv8 preproc handoff should preserve the tessellated MLA segment name");
       require(mla_stage->processmla->runtime_contract.input_bindings.size() == 1U,
               "YOLOv8 MLA stage should expose one input binding");
       // Binding source_segment is now the MPK transform name; the canonical
@@ -86,8 +90,6 @@ RUN_TEST(
         require(logical.physical_index == 0,
                 "YOLOv8 MLA logical outputs should all map to the single packed parent");
       }
-      const auto infer_stage_facts =
-          pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
       const internal::ModelFragment::StageFacts* mla_stage_fact = nullptr;
       for (const auto& fact : infer_stage_facts) {
         if (fact.mla_compiled.has_value()) {
@@ -98,6 +100,11 @@ RUN_TEST(
       require(mla_stage_fact != nullptr, "YOLOv8 should expose a canonical MLA stage fact");
       require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.size() == 1U,
               "YOLOv8 MLA stage fact should expose one input binding");
+      require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
+                      .src_logical_output_index == preproc_handoff->logical_output_index &&
+                  mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
+                          .src_output_slot == preproc_handoff->output_slot,
+              "YOLOv8 MLA stage fact should preserve the exact compiler-authored handoff");
 
       const auto post_plan = pack.execution_plan().post;
       const auto post_stage_facts =

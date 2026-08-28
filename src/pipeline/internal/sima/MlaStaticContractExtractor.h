@@ -51,6 +51,13 @@ struct MlaStaticContract {
   std::vector<QuantStaticSpec> output_quant;              ///< Per-output quant params, if any.
   std::uint64_t frame_arena_size_bytes = 0;
   FrameArenaRole frame_arena_role = FrameArenaRole::None;
+  static_contract::ArenaStorageDomain frame_arena_storage_domain =
+      static_contract::ArenaStorageDomain::Unknown;
+  static_contract::ArenaAllocationProvenance frame_arena_provenance =
+      static_contract::ArenaAllocationProvenance::Unknown;
+  std::uint32_t frame_arena_required_device_access = 0U;
+  static_contract::ArenaEscapePolicy frame_arena_escape_policy =
+      static_contract::ArenaEscapePolicy::InternalOnly;
   // True when this MLA stage's compiled .elf expects N>1 distinct physical
   // input segments (native multi-IFM dispatch, e.g. data.ifm.persistent.input_00
   // / input_01 placeholders). Derived from the absence of an upstream

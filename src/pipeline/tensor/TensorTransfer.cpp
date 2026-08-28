@@ -578,18 +578,6 @@ Tensor finalize_transfer_tensor(const Tensor& src, const std::shared_ptr<Storage
   return out;
 }
 
-internal::dmabuf::CpuAccess dmabuf_cpu_access(MapMode mode) {
-  switch (mode) {
-  case MapMode::Read:
-    return internal::dmabuf::CpuAccess::Read;
-  case MapMode::Write:
-    return internal::dmabuf::CpuAccess::Write;
-  case MapMode::ReadWrite:
-    return internal::dmabuf::CpuAccess::ReadWrite;
-  }
-  return internal::dmabuf::CpuAccess::ReadWrite;
-}
-
 std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample,
                                                     const Device& target,
                                                     std::uint64_t target_flags) {
@@ -604,51 +592,6 @@ std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample,
   storage->device = target;
   storage->sima_mem_target_flags = target_flags;
   storage->sima_mem_flags = 0U;
-
-  struct MapState {
-    std::mutex mutex;
-    std::optional<internal::dmabuf::CpuMapping> mapping;
-  };
-  auto state = std::make_shared<MapState>();
-  auto holder = storage->holder;
-  storage->map_fn = [holder, state](MapMode mode) {
-    std::lock_guard<std::mutex> lock(state->mutex);
-    if (state->mapping.has_value()) {
-      return Mapping{};
-    }
-    auto* sample = static_cast<GstSample*>(holder.get());
-    GstBuffer* buffer = sample && GST_IS_SAMPLE(sample)
-                            ? gst_sample_get_buffer(sample)
-                            : nullptr;
-    if (!buffer || gst_buffer_n_memory(buffer) != 1U) {
-      return Mapping{};
-    }
-
-    internal::dmabuf::Error error;
-    auto view = internal::dmabuf::DmaBufView::fromGstMemory(
-        gst_buffer_peek_memory(buffer, 0U), &error);
-    if (!view) {
-      return Mapping{};
-    }
-    auto mapping = view->map(dmabuf_cpu_access(mode), &error);
-    if (!mapping) {
-      return Mapping{};
-    }
-    state->mapping.emplace(std::move(*mapping));
-
-    Mapping result;
-    result.data = state->mapping->data();
-    result.size_bytes = state->mapping->size();
-    result.keepalive = holder;
-    result.unmap = [state]() {
-      std::lock_guard<std::mutex> lock(state->mutex);
-      if (state->mapping.has_value()) {
-        (void)state->mapping->finish();
-        state->mapping.reset();
-      }
-    };
-    return result;
-  };
   return storage;
 }
 
