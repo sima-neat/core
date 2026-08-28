@@ -1,6 +1,7 @@
 {
   "internals": {
-    "policy": "snap"
+    "branch": "codex/camera-memory-provider-v040",
+    "spec": "0d7f7edd7219"
   },
   "llima": {
     "policy": "snap"
