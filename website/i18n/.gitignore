@@ -1,0 +1,6 @@
+# Generated from source-owned tutorial translations by
+# tools/generate_tutorial_docs.py. Keep before-you-run.md tracked.
+*/docusaurus-plugin-content-docs/current/develop-apps/tutorials/index.md
+*/docusaurus-plugin-content-docs/current/develop-apps/tutorials/*/index.md
+*/docusaurus-plugin-content-docs/current/develop-apps/tutorials/*/_category_.json
+*/docusaurus-plugin-content-docs/current/develop-apps/tutorials/*/tutorial_*.mdx

@@ -1,0 +1,172 @@
+---
+title: "相機輸入節點"
+description: "為 MIPI/libcamera CameraInput 來源節點設定，使其擁有來源。 Neat 圖。"
+sidebar_position: 2
+---
+
+# 相機輸入節點
+
+`CameraInput` 是一個來源節點，用於透過 libcamera 和 GStreamer 的 `libcamerasrc` 暴露的 MIPI 攝影機。當您希望圖中的影格來自 DevKit 攝影機堆疊，而不是來自 `run.push(...)` 時，請將其用於由來源擁有的圖的開頭。
+
+如需任務指南，請參閱 [使用 MIPI 相機。](/develop-apps/advanced-concepts/mipi-camera-input)。
+
+## 先決條件
+
+在使用 `CameraInput` 之前，請先在 Neat 之外開啟相機：
+
+- 在 Modalix DevKit 關閉電源時，連接相機。
+- 選擇一個與載板、相機廠商、感測器和連接埠相符的 `.dtbo` 疊加層；
+- 確認 libcamera 是否已列出相機。
+- 確認 `libcamerasrc` 是否能夠串流您計畫要求的精確 `format,width,height,framerate`。
+
+`camera_name` 是 libcamera 相機的名稱。如果想要使用預設相機，請不要設定此參數；如果板子上有多個相機，請從 `cam -l` 複製相機名稱。
+
+## 快速入門
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace neat = simaai::neat;
+
+neat::CameraInputOptions opt;
+opt.width = 1920;
+opt.height = 1080;
+opt.framerate_num = 30;
+opt.framerate_den = 1;
+opt.format = "NV12";
+opt.buffer_name = "camera0";
+opt.allow_cpu_fallback = true;
+
+neat::Graph graph;
+graph.add(neat::nodes::CameraInput(opt));
+graph.add(neat::nodes::Output("frames"));
+
+neat::Run run = graph.build();
+std::optional<neat::Sample> frame = run.pull(/*timeout_ms=*/5000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+opt = pyneat.CameraInputOptions()
+opt.width = 1920
+opt.height = 1080
+opt.framerate_num = 30
+opt.framerate_den = 1
+opt.format = "NV12"
+opt.buffer_name = "camera0"
+opt.allow_cpu_fallback = True
+
+graph = pyneat.Graph()
+graph.add(pyneat.nodes.camera_input(opt))
+graph.add(pyneat.nodes.output("frames"))
+
+run = graph.build()
+frame = run.pull(timeout_ms=5000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+由於 `CameraInput` 擁有原始資料，因此在建立圖時，除非您的應用程式確實有另一個應用程式推送的輸入，否則請勿建立公開的 `Input` 節點。
+
+## API 介面
+
+```cpp
+namespace simaai::neat {
+struct CameraInputOptions;
+class CameraInput;
+}
+
+namespace simaai::neat::nodes {
+std::shared_ptr<simaai::neat::Node> CameraInput(
+    simaai::neat::CameraInputOptions opt = {});
+std::shared_ptr<simaai::neat::Node> CameraInputWithCaptureBuffers(
+    simaai::neat::CameraInputOptions opt,
+    std::uint32_t capture_buffer_count);
+}
+```
+
+Python：
+
+```python
+opt = pyneat.CameraInputOptions()
+node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
+```
+
+## 選項
+
+| 欄位 | 預設值 | 意義 |
+| --- | --- | --- |
+| `camera_name` | 未設定 | 這是 libcamera 相機名稱的選用參數，通常會從 `cam -l` 複製過來。如果未設定，libcamera 將會選擇預設相機。|
+| `width` | `1920` | 以像素為單位，指定所需的畫面寬度。必須受到相機模式和疊加層的支援。|
+| `height` | `1080` | 以像素為單位，指定要求的影格高度。|
+| `framerate_num` | `30` | 幀率分子。|
+| `framerate_den` | `1` | 幀率分母。`0` 已正規化為 `1`。|
+| `format` | `"NV12"` |。已要求使用 `video/x-raw` 格式。`NV12` 是建議的模型預處理路徑。|
+| `buffer_name` | `"camera"` | 邏輯緩衝區名稱，用於後續的中繼資料和模型路徑命名。|
+| `insert_queue` | `true` | 在設定器協商和零拷貝驗證之後，插入一個小型即時來源佇列。|
+| `leaky_queue` | `true` | 讓佇列在下游處具有「漏水」特性，這樣即時圖就會優先選擇較新的影格，而不是過時的後備資料。|
+| `queue_depth` | `2` | 當 `insert_queue` 為 true 時，佇列中最多可容納的緩衝區數量。|
+| `allow_cpu_fallback` | `false` | 如果設定為 `false`，則需要相機/裝置支援零拷貝功能。 僅將其設定為 `true`，才能選擇使用 Neat 的私有自適應橋接，連接到 SiMaAI 記憶體。|
+
+`capture_buffer_count` 是 `CameraInputWithCaptureBuffers` 的一個參數，而不是
+`CameraInputOptions` 欄位。其預設值為 `0`，這可保留相機
+管線本身的預設值。相機管線會驗證其限制；Neat 的
+提供者最多支援 `128`。
+
+## 輸入與輸出合約
+
+| 合約條款 | 行為 |
+| --- | --- |
+| 輸入角色 | 來源節點。圖形會從相機中提取畫面；應用程式不會將樣本推送至此節點。|
+| 輸出媒體類型為 | `video/x-raw`。|
+| 輸出格式 | 要求的 `format`，通常為 `NV12`。|
+| 記憶體合約 | 偏好使用裝置/SiMaAI 的零拷貝方式。啟用備援機制後，作業系統/libcamera 緩衝區會被轉換為 SiMaAI 記憶體，以便後續的 CVU/MLA 階段使用。|
+| 限制最大支援能力 | 根據使用者要求的選項，提供靜態提示。在執行階段進行的最大支援能力協商，仍然取決於相機堆疊。|
+
+## 零複製與備援機制
+
+`allow_cpu_fallback = false` 是預設值，它要求嚴格的相機/設備零拷貝。除非已安裝的 `libcamerasrc` 公開通用的 `external-buffer-mode` 屬性，並且記憶體庫可以將相機分配匯出為 DMA-BUF，否則建置將會失敗，並顯示可操作的錯誤。
+
+Neat 始終將其私有相機橋接直接放置在 capsfilter 之後，並在即時佇列之前。該橋接通過 GStreamer 的下游 `GST_QUERY_ALLOCATION` 提出一個標準池。該池從已驗證的 caps 中獲取平面大小和步長，從一個打包的 SiMaAI 分配中分配它們，並為每個平面匯出一個 DMA-BUF。`libcamerasrc` 將這些 DMA-BUF 導入到 ISP 捕獲佇列中。該橋接驗證結果，並在嚴格模式下解包相同的打包分配，而無需進行拷貝。
+
+根據下游所有者，將 `capture_buffer_count` 傳遞給相機工廠。一個時間編碼器或深度非同步 ML 圖可能需要 32 個緩衝區；一個低延遲的 CV 圖可能使用更少的緩衝區並丟棄過時的幀。此設定僅控制 ISP 輸出/應用程式週期。它不會擴大內核的私有 CSI 到 ISP RAW 傳輸環，並且與 GStreamer 的 `queue_depth` 丟棄策略無關。
+
+明確設定 `allow_cpu_fallback = true`，以允許已存在的橋接在相機堆疊無法滿足提出的分配器要求時進行拷貝。如果上游提供 SiMaAI/EV74 緩衝區，則橋接會直接傳遞這些緩衝區。否則，它會將相機幀複製到一個池化的 SiMaAI 緩衝區中，並附加下游階段所期望的元資料。該私有拷貝池會按需增長，而不是受到 `queue_depth` 的限制，這允許下游的「漏」佇列丟棄過時的幀，而無需橋接首先停止。
+
+回退名稱表示橋接可以接受作業系統/libcamera 緩衝區。這並不意味著您應該將調整大小、色彩轉換或正規化移動到 CPU。只要路徑支援，請將這些操作保留在模型管理的 CVU 預處理中。
+
+不要為 `CameraInput` 添加 `OsToSima` 節點。適配工作屬於相機源路徑。
+
+## 常見的圖形
+
+直接擷取相機畫面：
+
+```text
+CameraInput -> Output
+```
+
+將相機對準模型：
+
+```text
+CameraInput -> model.graph({include_input=false, include_output=true})
+```
+
+對於模型管線，請透過 `Model::Options::preprocess` 或 `pyneat.ModelOptions.preprocess` 來設定預處理，以確保調整大小、色彩轉換、正規化、量化和細分等操作都保留在模型管理的 CVU 流程中。
+
+## 失效模式
+
+| 錯誤 | 可能原因 |
+| --- | --- |
+| `build.plugin_missing` |，`libcamerasrc` 或 `neatcamerabridge` 缺少於執行階段的外掛程式集中。|
+| `misconfig.media_caps` / `not-negotiated` | 攝影機不支援您所要求的格式、解析度或幀率。|
+| 嚴格的零拷貝錯誤 |，`allow_cpu_fallback` 為「否」，且相機來源未公開 SiMaAI 零拷貝屬性。|
+| 讀取逾時 | 攝影機未傳輸畫面，圖的後壓過大，或攝影機堆疊已停止串流。|
+| 綠色、紫色或顏色過於鮮豔的相框。| 相框格式或模型的預處理色彩轉換可能出錯，或者相框的顏色已經存在於相機的 ISP/libcamera 輸出中。首先驗證一個 `NV12` 格式的圖像，看看是否在 Neat 之外也有同樣的問題。|

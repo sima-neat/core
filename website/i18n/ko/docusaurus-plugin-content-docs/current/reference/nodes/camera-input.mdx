@@ -1,0 +1,171 @@
+---
+title: "카메라 입력 노드"
+description: "소스에서 소유한 Neat 그래프를 위해 MIPI/libcamera CameraInput 소스 노드를 구성합니다."
+sidebar_position: 2
+---
+
+# 카메라 입력 노드
+
+`CameraInput`은 libcamera와 GStreamer의 `libcamerasrc`를 통해 노출된 MIPI 카메라에 대한 소스 노드입니다. 프레임이 `run.push(...)` 대신 DevKit 카메라 스택에서 가져와야 할 때 소스에서 소유한 그래프의 시작 부분에 사용합니다.
+
+작업 가이드는 [MIPI 카메라를 사용하세요.](/develop-apps/advanced-concepts/mipi-camera-input)를 참조하십시오.
+
+## 필수 조건
+
+`CameraInput`을 사용하기 전에, Neat 외부에서 카메라를 실행하세요.
+
+- Modalix DevKit의 전원이 꺼진 상태에서 카메라를 연결하십시오.
+- 캐리어 보드, 카메라 제조업체, 센서 및 포트에 맞는 `.dtbo` 오버레이를 선택합니다.
+- libcamera가 카메라 목록을 제대로 표시하는지 확인합니다.
+- 요청하려는 정확한 `format,width,height,framerate`로 `libcamerasrc`가 스트리밍할 수 있는지 확인하십시오.
+
+`camera_name`은 libcamera 카메라 이름입니다. 기본 카메라를 사용하려면 이 값을 설정하지 않고, 보드가 둘 이상의 카메라를 지원하는 경우 `cam -l`에서 카메라 이름을 복사하여 설정하십시오.
+
+## 빠른 시작
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace neat = simaai::neat;
+
+neat::CameraInputOptions opt;
+opt.width = 1920;
+opt.height = 1080;
+opt.framerate_num = 30;
+opt.framerate_den = 1;
+opt.format = "NV12";
+opt.buffer_name = "camera0";
+opt.allow_cpu_fallback = true;
+
+neat::Graph graph;
+graph.add(neat::nodes::CameraInput(opt));
+graph.add(neat::nodes::Output("frames"));
+
+neat::Run run = graph.build();
+std::optional<neat::Sample> frame = run.pull(/*timeout_ms=*/5000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+opt = pyneat.CameraInputOptions()
+opt.width = 1920
+opt.height = 1080
+opt.framerate_num = 30
+opt.framerate_den = 1
+opt.format = "NV12"
+opt.buffer_name = "camera0"
+opt.allow_cpu_fallback = True
+
+graph = pyneat.Graph()
+graph.add(pyneat.nodes.camera_input(opt))
+graph.add(pyneat.nodes.output("frames"))
+
+run = graph.build()
+frame = run.pull(timeout_ms=5000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`CameraInput`이 소스 데이터를 소유하므로, 애플리케이션에 다른 앱에서 제공하는 입력이 실제로 필요한 경우가 아니라면 공개 `Input` 노드를 생성하지 않고 그래프를 구축하십시오.
+
+## API 인터페이스
+
+```cpp
+namespace simaai::neat {
+struct CameraInputOptions;
+class CameraInput;
+}
+
+namespace simaai::neat::nodes {
+std::shared_ptr<simaai::neat::Node> CameraInput(
+    simaai::neat::CameraInputOptions opt = {});
+std::shared_ptr<simaai::neat::Node> CameraInputWithCaptureBuffers(
+    simaai::neat::CameraInputOptions opt,
+    std::uint32_t capture_buffer_count);
+}
+```
+
+파이썬:
+
+```python
+opt = pyneat.CameraInputOptions()
+node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
+```
+
+## 옵션
+
+| 필드 | 기본값 | 설명 |
+| --- | --- | --- |
+| `camera_name` | 설정 해제 | 선택 사항: libcamera 카메라 이름입니다. 일반적으로 `cam -l`에서 복사합니다. 설정 해두면 libcamera가 기본 카메라를 선택합니다. |
+| `width` | `1920` | 픽셀 단위로 요청하는 프레임 너비입니다. 카메라 모드 및 오버레이에서 지원해야 합니다. |
+| `height` | `1080` | 픽셀 단위로 요청된 프레임 높이입니다. |
+| `framerate_num` | `30` | 프레임 속도 분자. |
+| `framerate_den` | `1` | 프레임 속도 분모입니다. `0`은 `1`로 정규화됩니다. |
+| `format` | `"NV12"` | 형식의 `video/x-raw`가 요청되었습니다. `NV12`는 권장되는 모델 전처리 경로입니다. |
+<<번역>>
+| `buffer_name` | `"camera"` | 후속 메타데이터 및 모델 경로 이름 지정에 사용되는 논리적 버퍼 이름입니다. |
+| `insert_queue` | `true` | 할당자 협상 및 제로 복사 검증 후에 작은 실시간 소스 큐를 삽입합니다. |
+| `leaky_queue` | `true` | 큐를 하류에서 누수되도록 만들어 실시간 그래프가 오래된 백로그보다 최신 프레임을 선호하도록 합니다. |
+| `queue_depth` | `2` | `insert_queue`가 참일 때, 대기열에 쌓을 수 있는 최대 버퍼 수입니다. |
+| `allow_cpu_fallback` | `false` | `false`인 경우 카메라/장치의 제로 복사 지원을 필수로 설정합니다. `true`로 설정하는 것은 SiMaAI 메모리에 대한 Neat의 비공개 적응형 브리지를 사용하도록 선택하는 것입니다. |
+
+`capture_buffer_count`는 `CameraInputOptions` 필드가 아닌, `CameraInputWithCaptureBuffers`에 전달되는 인자입니다. 기본값은 `0`이며, 이는 카메라 파이프라인 자체의 기본값을 유지합니다. 카메라 파이프라인은 자체 제한을 검증하며, Neat의 공급자는 최대 `128`까지 지원합니다.
+
+## 입력 및 출력 계약
+
+| 계약 항목 | 행동 |
+| --- | --- |
+| 입력 역할: | 소스 노드. 이 그래프는 카메라에서 프레임을 가져옵니다. 앱에서 샘플을 이 노드로 보내지는 않습니다. |
+| 출력 미디어 유형: | `video/x-raw`. |
+| 출력 형식 | 요청된 형식은 일반적으로 `format`, 보통 `NV12`입니다. |
+| 메모리 계약 | 장치/SiMaAI 제로 복사 방식을 선호합니다. 폴백 기능이 활성화되면 OS/libcamera 버퍼가 후속 CVU/MLA 단계를 위해 SiMaAI 메모리로 조정됩니다. |
+| 요청된 옵션을 기반으로 정지된 힌트를 통해 기능 제한을 확정합니다. 런타임 기능 제한 협상은 여전히 카메라 스택에 따라 달라집니다. | |
+
+## 제로 복사 및 대체
+
+`allow_cpu_fallback = false`는 기본값이며 엄격한 카메라/장치 제로 복사 방식을 요청합니다. 설치된 `libcamerasrc`가 일반적인 `external-buffer-mode` 속성을 노출하고 메모리 라이브러리가 카메라 할당을 DMA-BUF로 내보낼 수 없는 경우 빌드가 실행 가능한 오류와 함께 실패합니다.
+
+Neat는 항상 자체 카메라 브리지를 capsfilter 바로 뒤, 라이브 큐 앞에 배치합니다. 브리지는 GStreamer의 다운스트림 `GST_QUERY_ALLOCATION`를 통해 표준 풀을 제안합니다. 풀은 유효성이 검사된 caps에서 평면 크기와 스트라이드를 파생시키고, 하나의 패킹된 SiMaAI 할당에서 할당하고, 평면당 하나의 DMA-BUF를 내보냅니다. `libcamerasrc`는 이러한 DMA-BUF를 ISP 캡처 큐로 가져옵니다. 브리지는 결과를 확인하고 엄격한 모드에서 복사 없이 동일한 패킹된 할당을 언래핑합니다.
+
+다운스트림 소유자를 기반으로 `capture_buffer_count`를 카메라 팩토리에 전달합니다. 임시 인코더 또는 딥 비동기 ML 그래프는 32개의 버퍼가 필요할 수 있습니다. 낮은 대기 시간의 CV 그래프는 더 적은 버퍼를 사용하고 오래된 프레임을 삭제할 수 있습니다. 이 설정은 ISP 출력/애플리케이션 주기를 제어합니다. 커널의 개인 CSI-to-ISP RAW 전송 링을 확장하지 않으며 GStreamer의 `queue_depth` 삭제 정책과 독립적입니다.
+
+카메라 스택이 제안된 할당자를 준수할 수 없는 경우 이미 존재하는 브리지가 복사할 수 있도록 `allow_cpu_fallback = true`를 명시적으로 설정합니다. 브리지는 업스트림에서 제공하는 경우 SiMaAI/EV74 버퍼를 통과시킵니다. 그렇지 않으면 카메라 프레임을 풀링된 SiMaAI 버퍼로 복사하고 다운스트림 단계에서 예상하는 메타데이터를 연결합니다. 이 개인 복사 풀은 `queue_depth`에 의해 제한되는 대신 필요에 따라 증가하므로 다운스트림의 누수 큐가 브리지가 먼저 중단되지 않고 오래된 프레임을 삭제할 수 있습니다.
+
+폴백 이름은 브리지가 OS/libcamera 버퍼를 허용할 수 있음을 의미합니다. 크기 조정, 색상 변환 또는 정규화를 CPU로 이동해야 한다는 의미는 아닙니다. 해당 경로를 지원하는 경우 모델에서 관리하는 CVU 전처리에서 이러한 작업을 수행하십시오.
+
+`CameraInput`에 대해 `OsToSima` 노드를 직접 추가하지 마십시오. 적응은 카메라 소스 경로에 속합니다.
+
+## 일반적인 그래프 모양
+
+카메라 프레임을 직접 가져오기:
+
+```text
+CameraInput -> Output
+```
+
+모델에 카메라를 적용하여 실행합니다.
+
+```text
+CameraInput -> model.graph({include_input=false, include_output=true})
+```
+
+모델 파이프라인의 경우, `Model::Options::preprocess` 또는 `pyneat.ModelOptions.preprocess`를 통해 전처리 설정을 구성하여 크기 조정, 색상 변환, 정규화, 양자화 및 테셀레이션이 모델에서 관리하는 CVU 경로 내에 있도록 합니다.
+
+## 고장 유형
+
+| 오류 | 발생 가능한 원인 |
+| --- | --- |
+| `build.plugin_missing` | 런타임 플러그인 세트에서 `libcamerasrc` 또는 `neatcamerabridge`가 누락되었습니다. |
+| `misconfig.media_caps` / `not-negotiated` | 카메라가 요청된 형식, 해상도 또는 프레임 속도를 지원하지 않습니다. |
+| 엄격한 제로 복사 오류, | `allow_cpu_fallback`은 false이고 카메라 소스에서 SiMaAI 제로 복사 속성을 제공하지 않습니다. |
+| 풀 타임아웃 | 카메라가 프레임을 전송하지 못했거나, 그래프에 역압력이 발생했거나, 카메라 스택이 스트리밍을 중단했습니다. |
+<<번역>>
+| 녹색, 보라색 또는 색조가 강한 프레임 | 프레임 형식 또는 모델의 색상 변환 전처리 과정에 오류가 있거나, 카메라 ISP/libcamera 출력에 이미 색조가 적용되어 있습니다. 먼저 `NV12` 캡처를 Neat에서 확인하십시오. |

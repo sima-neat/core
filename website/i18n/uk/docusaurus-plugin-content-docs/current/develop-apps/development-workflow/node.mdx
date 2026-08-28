@@ -1,0 +1,636 @@
+---
+title: "Вузол"
+description: "Атомні складові, попередньо створені групи та граничні вузли графа."
+sidebar_position: 7
+---
+
+# Вузол
+
+`Node` — це найменша складова одиниця в SiMa.ai Neat.
+Вузли — це елементи, які з’єднуються в [`Graph`](/develop-apps/development-workflow/graph): етапи декодування, етапи попередньої обробки, етапи моделювання, етапи подальшої обробки, джерела, приймачі та межі застосування.
+
+Посилання:
+- [`nodes` namespace](/reference/{lsa}/namespaces/simaai-neat-nodes)
+- [`nodes::groups` namespace](/reference/{lsa}/namespaces/simaai-neat-nodes-groups)
+
+## Що таке вузол
+
+Вузол надає один логічний елемент роботи, а також метадані, необхідні для безпечного об’єднання цього елемента з іншими:
+
+- робота під час виконання, наприклад, декодування, перетворення, попередня обробка, здійснення висновків, подальша обробка або поведінка приймача;
+- контракти введення/виведення, такі як очікуваний тип медіаданих, розмірність тензора, тип даних або обмеження;
+- детермінована схема іменування компонентів, завдяки чому `describe()`, діагностичні інструменти, показники та засоби моніторингу залишаються стабільними.
+
+Основне правило просте:
+
+```text
+Graph = nodes wired together
+```
+
+`Model` — це джерело вузлів, що враховує модель. `Model` можна безпосередньо додати до `Graph`, або він може надавати фрагменти, які можна повторно використовувати на різних етапах, наприклад, попередню обробку, обчислення та подальшу обробку.
+
+<a id="pre-built-node-groups"></a>
+## Попередньо створені групи вузлів.
+
+Деякі поширені шаблони містять більше ніж один низькорівневий вузол. Neat надає їх у вигляді попередньо створених груп, щоб користувачам не потрібно було вручну налаштовувати кожен джерельний, декодуючий, перетворюючий елемент, чергу або кінцевий пункт.
+
+Уявіть собі групу як міні-граф, який можна повторно використовувати: іменований набір вузлів із чітко визначеним призначенням.
+
+Приклади:
+
+- `VideoInputGroup(...)`: шлях до файлу/джерела відео + шлях декодування.
+- `RtspDecodedInput(...)`: джерело RTSP + шлях декодування.
+- фрагменти моделі маршруту: попередня обробка + виведення результатів + декодування/пост-обробка навколо скомпільованої моделі.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/runtime.h"
+#include "neat/node_groups.h"
+
+simaai::neat::Graph graph;
+
+simaai::neat::nodes::groups::VideoInputGroupOptions vopt;
+vopt.path = "/data/sample.mp4";
+graph.add(simaai::neat::nodes::groups::VideoInputGroup(vopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+
+vopt = pyneat.VideoInputGroupOptions()
+vopt.path = "/data/sample.mp4"
+graph.add(pyneat.groups.video_input(vopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+Використовуйте попередньо створені групи, коли структура є стандартною, а найцікавіша частина вашої програми не пов’язана з внутрішньою організацією обробки медіаданих. Якщо вам потрібна спеціальна топологія, створіть відповідний `Graph` самостійно, використовуючи більш низькорівневі вузли.
+
+## Оберіть вузол або групу.
+
+Перегляньте цю карту, перш ніж відкривати повний довідник API.
+
+| Завдання | З чого почати вивчення C++ | З чого почати вивчення Python. |
+| --- | --- | --- |
+| Програма передає тензори, зображення або зразки. | `nodes::Input("name", options)` | `pyneat.nodes.input("name", options)` |
+| Програма завантажує повний зразок. | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
+| Зчитуйте кадри з файлу. | `nodes::FileInput(...)` плюс вузли декодування або `nodes::groups::VideoInputGroup(...)`. | `pyneat.nodes.file_input(...)` плюс декодування вузлів, або `pyneat.groups.video_input(...)`. |
+| Зчитайте одне зображення як джерело. | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| Зчитайте дані з камери MIPI/libcamera. | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| Відтворіть RTSP-потік. | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)` або `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)` або `pyneat.groups.rtsp_decoded_input(...)` |
+| Зчитування HTTP-потоку, що складається з частин у форматі MJPEG. | `nodes::groups::HttpMjpegDecodedInput(...)`, або `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` для ручного налаштування кадру. | `pyneat.groups.http_mjpeg_decoded_input(...)`, або `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()`. |
+| Декодуйте зображення. | `nodes::ImageDecode()` або `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` або `pyneat.nodes.jpeg_decode()` |
+| Декодуйте відео, закодоване певним алгоритмом. | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| Змінюйте масштаб або встановлюйте обмеження частоти відтворення відео. | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
+| Створіть повторно використовуваний шлях для введення зображень. | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
+| Створіть повторно використовуваний шлях для введення відео. | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
+| Надсилайте відео. | `nodes::groups::VideoSender(...)` або допоміжні модулі для виведення даних у форматі H.264/UDP. | `pyneat.groups.video_sender(...)` або допоміжні інструменти для виведення даних у форматі H.264/UDP. |
+| Надсилайте метадані. | `MetadataSender` | `pyneat.MetadataSender` |
+| Відображати результати виявлення. | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
+| Перетворіть логіти на індекс класу. | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+
+Використовуйте групи, коли вам потрібен перевірений фрагмент. Використовуйте окремі вузли, коли вам потрібна чітка топологія. Використовуйте допоміжні функції `Graph`, такі як `graphs::Branch(...)` і `graphs::Combine(...)`, для розгалуження та зведення замість того, щоб приховувати топологію за допомогою дубльованих виходів.
+
+`nodes::H264Decode(...)` і `pyneat.nodes.h264_decode(...)` є застарілими обгортками для забезпечення сумісності. Для нових графів декодування H.264 слід використовувати `SimaDecode` з `SimaDecodeType::H264`.
+
+## Закодовані шляхи декодування.
+
+Обирайте API, виходячи з того, які дані отримує ваш граф:
+
+| Вхідні дані, доступні для графа. | API | Вивід |
+| --- | --- | --- |
+| Завершено розбір і декодування одиниць доступу. | `SimaDecode(...)` | Необроблений декодований відеопотік. |
+| Потік RTSP, який має залишатися в кодованому вигляді. | `RtspEncodedInput(...)` | Розпізнано закодовані блоки доступу. |
+| Потік RTSP, який потрібно декодувати. | `RtspDecodedInput(...)` | Необроблений декодований відеопотік. |
+
+`SimaDecode` не встановлює з’єднання з RTSP, не розпаковує пакети RTP і не аналізує елементарний потік. Використовуйте його, коли попередній етап або застосунок вже надають повністю кодовані зразки.
+
+| Закодовані вхідні дані. | Власна опція декодера. | Типовий шлях передавання даних від клієнта до сервера. |
+| --- | --- | --- |
+| Одиниці доступу H.264/AVC | `SimaDecodeType::H264` або `SimaDecodeType::AVC` | Розпакування та аналіз потоку RTSP H.264 або іншого проаналізованого джерела H.264. |
+| Одиниці доступу H.265/HEVC | `SimaDecodeType::H265` або `SimaDecodeType::HEVC` | Розпакування та аналіз потоку RTSP H.265 або іншого проаналізованого джерела H.265. |
+| Окремі кадри у форматі JPEG. | `SimaDecodeType::JPEG` | `JpegParse()` або зразок кодованого JPEG-файлу, наданий застосунком. |
+| Потік кадрів MJPEG | `SimaDecodeType::MJPEG` | HTTP-демультиплексування багаточастинних даних + `JpegParse()`, або депакетування JPEG за допомогою RTSP + `JpegParse()`. |
+
+Псевдоніми обирають ідентичні шляхи декодера: `H264` дорівнює `AVC`, а `H265` дорівнює `HEVC`. Ті самі псевдоніми доступні через `RtspCodec` та `FormatTag` у C++ та Python.
+
+Для вхідного потоку H.265 необхідно використовувати профіль HEVC Main з 8-бітною колірною субдискретизацією 4:2:0. Безпосередньо вхідний елементарний потік має бути розібраний, у форматі байтового потоку Annex-B, а також має бути вирівняний за одиницями доступу. Його набори параметрів (VPS, SPS та PPS) повинні бути передані декодеру до кадрів, які від них залежать. `RtspEncodedInput` обробляє демультиплексування RTP та розбір H.265 для шляху RTSP. Бітові потоки Main 10, 10-біт, 4:2:2 та монохромні 4:0:0 не підтримуються. Для контенту в градаціях сірого кодуйте 8-бітний потік 4:2:0, де площина Y містить зображення в градаціях сірого, а зразки U та V використовують нейтральне значення 128.
+
+Перевірте потік перед його використанням:
+
+```bash
+ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
+  -show_entries stream=codec_name,profile,pix_fmt \
+  -of default=noprint_wrappers=1 rtsp://camera.example/live
+```
+
+Декодер H.265 вимагає `codec_name=hevc`, `profile=Main` та `pix_fmt=yuv420p`.
+
+`SimaDecodeOptions::raw_output` визначає безпосередній вивід декодера:
+
+| Цінність | Вивід декодера |
+| --- | --- |
+| `true` (значення за замовчуванням) | Нативний формат NV12 або I420 у пам’яті SiMaAI. Використовуйте NV12 для виводу декодера без копіювання даних. |
+| `false` | Перетворено вихідні дані `video/x-raw(memory:SystemMemory)` для використання центральним процесором. |
+
+`raw_output` відрізняється від `zero-copy-output` декодера. Основний модуль увімкнює `zero-copy-output` під час додавання декодера, коли граф може передавати нативний NV12-буфер декодера. Якщо будь-яка наступна гілка використовує вхід кодувальника, який не може зчитувати нативну структуру площини, основний модуль додає декодер без виводу з нульовим копіюванням, щоб кожна гілка отримувала упакований кадр. `RunOptions::output_memory` окремо контролює, чи кінцевий вихід використовує спільний буфер `ZeroCopy`, чи копіюється в пам’ять, що належить фреймворку (`Owned`).
+
+Автоматичне додавання для H.264/H.265 вимагає, щоб ширина, висота та частота кадрів декодера були відомі. Встановіть `dec_width`, `dec_height` і `dec_fps` безпосередньо або надайте їх через типізоване джерело, таке як `RtspEncodedInput`, з `source_fps`. Основний модуль не передбачає 30 FPS, коли частота джерела невідома. Додавання встановлює явне значення `num_buffers`, коли воно нижче за порогове значення безпеки. Якщо `num_buffers` не встановлено, зберігається значення за замовчуванням для елемента декодера.
+
+Залиште `decoder_tuning` порожнім або встановіть його на `auto` для загальних потоків. Використовуйте `throughput-low-latency` лише для потоків, закодованих без B-кадрів і з одним опорним зображенням; цей режим вимикає повторне впорядкування декодованих зображень.
+
+`nodes::JpegDecode()` і `pyneat.nodes.jpeg_decode()` — це окремі вузли декодування JPEG для CPU/GStreamer. Використовуйте їх для простих конвеєрів обробки зображень на CPU. Не використовуйте їх для нативного декодування відео MJPEG перед попередньою обробкою моделі.
+
+Для RTSP віддавайте перевагу групам, що враховують кодек, коли форма джерела є стандартною. H.264 залишається значенням за замовчуванням. Явно виберіть H.265 або HEVC.
+
+### Залиште вхідний потік RTSP у кодованому вигляді.
+
+Використовуйте `RtspEncodedInput(...)`, щоб розпакувати та проаналізувати потік даних без його декодування:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspEncodedInputOptions encoded;
+encoded.url = "rtsp://camera.example/live";
+encoded.codec = simaai::neat::nodes::groups::RtspCodec::HEVC;
+encoded.source_fps = 30;
+
+auto encoded_graph =
+    simaai::neat::nodes::groups::RtspEncodedInput(encoded);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+encoded = pyneat.RtspEncodedInputOptions()
+encoded.url = "rtsp://camera.example/live"
+encoded.codec = pyneat.RtspCodec.HEVC
+encoded.source_fps = 30
+
+encoded_graph = pyneat.groups.rtsp_encoded_input(encoded)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`RtspEncodedInput(...)` зупиняється після депакетізації джерела та виконання операцій розбору/формування кадрів.
+Використовуйте його, коли вашій програмі потрібні кодовані зразки, наприклад, для розділення одного розібраного потоку на графі для декодування та графі для виведення відео. Для H.265 значення `source_fps` записується в розібрані кодовані параметри, коли потік не містить інформацію про дійсний показник кадрів.
+
+### Декодуйте вхідний потік RTSP.
+
+Використовуйте `RtspDecodedInput(...)`, щоб додати `SimaDecode(...)` і повернути необроблене декодоване відео:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspDecodedInputOptions decoded;
+decoded.url = "rtsp://camera.example/live";
+decoded.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+decoded.source_fps = 30;
+
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(decoded));
+graph.add(simaai::neat::nodes::Output("frames"));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+decoded = pyneat.RtspDecodedInputOptions()
+decoded.url = "rtsp://camera.example/live"
+decoded.codec = pyneat.RtspCodec.H265
+decoded.source_fps = 30
+
+graph = pyneat.Graph()
+graph.add(pyneat.groups.rtsp_decoded_input(decoded))
+graph.add(pyneat.nodes.output("frames"))
+```
+
+</CodeTab>
+</CodeTabs>
+
+Для H.265, `RtspDecodedInput(...)` використовує `source_fps` як для оброблених метаданих, так і для декодера `dec-fps`. Встановіть це значення, коли метадані RTSP не містять дійсного значення частоти кадрів; без будь-якого з цих значень запуск декодера не відбудеться. Neat не перевіряє URL-адресу RTSP на наявність цього значення. Він визначає частоту кадрів джерела і не запитує перетворення частоти. Щоб змінити частоту кадрів вихідного потоку, увімкніть `use_videorate` і встановіть `video_rate_fps`.
+
+Для HTTP multipart MJPEG використовуйте `HttpMjpegDecodedInput(...)`. HTTP multipart MJPEG не є RTP, тому використовується `HttpSource -> MultipartJpegDemux -> JpegParse ->
+SimaDecode(MJPEG)` замість демультиплексування RTSP.
+
+
+## Групи, що належать джерелу, і групи, що належать приймачу.
+
+Використовуйте групи, що належать джерелу, коли потрібно, щоб граф самостійно обробляв медіадані. Створюйте ці графи без вхідних даних від програми, а потім отримуйте вихідні дані або дозвольте кінцевим вузлам обробляти передавання. Використовуйте кінцеві групи, коли граф повинен передавати відео без того, щоб ваша програма обробляла кожен кадр; кінцевий граф все ще може отримувати дані від програми, якщо він також має `Input` межу.
+
+| Потрібно | Група | Основні поля, які потрібно налаштувати насамперед. | Типові поля для подальшої перевірки |
+| --- | --- | --- | --- |
+| Статичне зображення, використане як елемент оформлення. | `nodes::groups::ImageInputGroup(...)` / `pyneat.groups.image_input(...)` | `path` | `fps`, `imagefreeze_num_buffers`, `output_caps` |
+| Відеофайл | `nodes::groups::VideoInputGroup(...)` / `pyneat.groups.video_input(...)` | `path` | `out_format`, `output_caps`, `sync_mode` |
+| Камера, що працює в режимі реального часу, з використанням MIPI/libcamera. | `nodes::CameraInput(...)` / `pyneat.nodes.camera_input(...)` | `width`, `height`, `framerate_num`, `format`; необов’язково `camera_name` | `allow_cpu_fallback`, поля черги, `buffer_name` |
+| Транслюйте відеопотік у реальному часі у форматі RTSP з кодуванням H.264, H.265 або MJPEG. | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, `codec`, якщо не H.264. | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, тип корисного навантаження RTP. |
+| Відображайте в реальному часі декодований RTSP-потік у форматах H.264, H.265 або MJPEG. | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, `codec`, якщо не H.264. | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, декодована ширина/висота, `out_format`, `output_caps` |
+| HTTP-потік MJPEG, що використовує формат multipart. | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, декодована ширина/висота/кількість кадрів за секунду, `output_caps`. |
+| Нестиснений або кодований відеопотік у форматі H.264/H.265. | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`, або `Passthrough(RtspCodec::H264 / RtspCodec::H265)`. | `host`, `channel`, `video_port_base`, параметри кодувальника/RTP. |
+| Вивід RTP/H.264 через UDP. | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | цільовий хост/порт, коли значення за замовчуванням не підходять. | `h264_caps`, `payload_type`, `config_interval` |
+
+Граф, що належить джерелу, має іншу структуру в середовищі виконання, ніж граф, який передається застосунком:
+
+```text
+source group -> model -> output
+```
+
+Для камер MIPI використовуйте [`CameraInput`](/reference/nodes/camera-input) безпосередньо, замість того, щоб обгортати камеру в застосунок, який передає `Input`. Спочатку перевірте камеру за допомогою libcamera/GStreamer, а потім створіть граф у вигляді `CameraInput -> model -> Output`. Див. [Використовуйте камеру MIPI.](/develop-apps/advanced-concepts/mipi-camera-input) для отримання повної інформації.
+
+Запустіть його за допомогою `graph.build()` або `graph.run()` без аргументу вхідних даних. Не додавайте `Input("image")` перед групою джерел, якщо ваш застосунок дійсно має другий загальнодоступний вхід для передачі даних.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspDecodedInputOptions source_options;
+source_options.url = "rtsp://camera.example/live";
+
+simaai::neat::Graph graph("rtsp_detector");
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source_options));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+
+auto run = graph.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+source_options = pyneat.RtspDecodedInputOptions()
+source_options.url = "rtsp://camera.example/live"
+
+graph = pyneat.Graph("rtsp_detector")
+graph.add(pyneat.groups.rtsp_decoded_input(source_options))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+
+run = graph.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Почніть із використання групи, коли стандартна схема підключення мережевих пристроїв. Переходьте до окремих вузлів лише тоді, коли вам потрібна спеціальна топологія або формат джерела, який не передбачений групою.
+
+
+<a id="common-sima-nodes"></a>
+## Типові вузли SiMa
+
+Деякі вузли SiMa досить поширені, тому для них створено спеціалізовані сторінки з довідковою інформацією або інструкції:
+
+- [`Preproc`](/reference/nodes/preproc): об’єднана попередня обробка зображень CVU для зміни розміру, перетворення кольорів, нормалізації, квантування, теселяції та створення списків ROI для середовища виконання.
+- [`CameraInput`](/reference/nodes/camera-input): кадри MIPI/libcamera, що належать джерелу, з адаптивною передачею даних у пам’ять SiMaAI для подальших етапів обробки CVU/MLA.
+- [`SimaBoxDecode`](/reference/boxdecode_decode_types): постобробка для виявлення об’єктів, яка декодує вихідні дані моделі у вигляді обмежувальних рамок і використовує метадані попередньої обробки для відображення координат.
+
+<a id="boundary-nodes"></a>
+## Кінцеві вузли: `Input` та `Output`.
+
+`Input` і `Output` також є вузлами. Вони особливі, оскільки описують, звідки дані надходять або куди вони передаються у фрагменті графа.
+
+Важлива концептуальна модель:
+
+> `Input("name")` та `Output("name")` — це назви дверей.
+
+Зовні, у фінальній версії застосунку, ці компоненти перетворюються на загальнодоступні API для середовища виконання:
+
+- `Input("image")` перетворюється на `run.push("image", ...)`.
+- `Output("classes")` перетворюється на `run.pull("classes", ...)`.
+
+У межах більшого графа ці самі «двері» є лише точками з’єднання. Neat видаляє внутрішні граничні вузли під час створення шляху для середовища виконання та безпосередньо пов’язує реальні компоненти.
+
+```cpp
+simaai::neat::Graph route("route");
+route.add(simaai::neat::nodes::Input("image"));
+route.add(model);
+route.add(simaai::neat::nodes::Output("classes"));
+```
+
+Використовується як повноцінний застосунок:
+
+```cpp
+auto run = route.build();
+run.push("image", simaai::neat::TensorList{image_tensor});
+auto classes = run.pull("classes");
+```
+
+Використовується всередині більшої програми:
+
+```cpp
+simaai::neat::Graph app("app");
+app.connect(camera, route);
+app.connect(route, telemetry);
+```
+
+У концептуальному плані внутрішні граничні вузли розташовані нижче, щоб забезпечити пряме підключення:
+
+```text
+camera -> model -> telemetry
+```
+
+Ці імена все ще використовуються для діагностики, перевірки кінцевих точок, збору показників і візуалізації. Вони просто не створюють додаткових черг, копій або фіктивних об’єктів середовища виконання посеред роботи програми.
+
+### Мітки не є кінцевими точками.
+
+Тримайте ці імена окремо:
+
+| Ім’я | Що це таке. | Чи створює воно ефект `push(...)` / `pull(...)`? |
+| --- | --- | --- |
+| `Graph("detector")` | Мітка графа для діагностики, експорту та журналів. | Ні. |
+| `nodes::Input("image")` / `pyneat.nodes.input("image")` | Межа зони, в межах якої збираються дані від громадськості, коли вона залишається за межами остаточного графа. | Так: `run.push("image", ...)`. |
+| `nodes::Output("detections")` / `pyneat.nodes.output("detections")` | Публічна межа вихідних даних, коли вона залишається на зовнішній стороні остаточного графа. | Так: `run.pull("detections", ...)`. |
+| Назви вузлів або елементів. | Назви бекендів, що використовуються в діагностиці та оптимізації конвеєра. | Ні, якщо тільки це не станеться через `Input` або `Output`. |
+
+Якщо під час виконання програми виникає помилка, що вказує на невідому назву кінцевої точки, перевірте `run.input_names()` і `run.output_names()`, замість того щоб гадати. Назви – це не дорого; ось неправильні назви – це дорого.
+
+### Вхідні дані, отримані через сповіщення застосунку.
+
+Використовуйте `nodes::Input`, коли ваша програма вже має фрейм або тензор і хоче передати їх у Neat.
+
+Використовуйте `InputOptions`, коли для межі потрібні чітко визначені параметри, формат, розмір, часові інтервали або умови розподілу.
+
+| Потрібно | Поле |
+| --- | --- |
+| Сімейство корисних навантажень. | `payload_type` / `PayloadType` |
+| Формат | `format` / `FormatTag` |
+| Задані розміри. | `width`, `height`, `depth` |
+| Динамічні обмеження вхідних даних | `max_width`, `max_height`, `max_depth`, `max_bytes` |
+| Терміни та обмеження. | `fps_n`, `fps_d`, `caps_override` |
+| Поведінка в режимі реального часу | `is_live`, `do_timestamp`, `block`, `stream_type` |
+| Розподіл | `memory_policy`, `pool_min_buffers`, `pool_max_buffers` |
+| Розширена метаінформація | `buffer_name`, `preprocess_meta` |
+
+`use_simaai_pool` застаріла. У новому коді використовуйте `memory_policy`:
+
+- Якщо у наявному коді використовувався параметр `use_simaai_pool=false`, використовуйте параметр `memory_policy=SystemMemory`.
+- Для стандартної поведінки розподілу пам’яті SiMa використовуйте `memory_policy=Auto`.
+- Використовуйте `Ev74` або `Dms0` лише тоді, коли для вхідної межі потрібна певна цільова область.
+- Наявний код і старіші версії JSON для графа, що використовують `use_simaai_pool`, все ще підтримуються для забезпечення сумісності.
+- Новий збережений файл JSON графа записує `memory_policy`, замість `use_simaai_pool`.
+
+Не заповнюйте поля, якщо це не потрібно для визначення меж графа. Щоб викликати болото, потрібно вгадати, скільки шапок знадобиться.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Image;
+iopt.format = simaai::neat::FormatTag::RGB;
+iopt.width = 224;
+iopt.height = 224;
+graph.add(simaai::neat::nodes::Input("image", iopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Image
+iopt.format = pyneat.Format.RGB
+iopt.width = 224
+iopt.height = 224
+graph.add(pyneat.nodes.input("image", iopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+#### Рецепти для визначення меж вхідних даних.
+
+Використовуйте ці шаблони, коли умови контракту мають значення ще до першого завантаження змін.
+
+| Межа | Встановити | Залиште без змін, якщо |
+| --- | --- | --- |
+| Зображення, декодоване до фіксованого розміру. | `payload_type`, `format`, `width`, `height` | Переданий тензор або зразок уже містить повні метадані зображення. |
+| Динамічне декодоване зображення | `payload_type`, `format`, `max_width`, `max_height` і необов’язковий параметр `max_bytes`. | Граф приймає лише один фіксований розмір. |
+| Вхідний сигнал, кодований за стандартом H.264. | `payload_type = Encoded`, `format = H264`, і обмеження H.264 для переданого `Sample`. | Джерело графа володіє потоком даних через групу RTSP або файлів. |
+| Вхідний сигнал, кодований за стандартом H.265. | `payload_type = Encoded`, `format = H265`, а також обмеження H.265 для переданого `Sample`. | Джерело графа володіє потоком даних і обробляє його через RTSP або групу файлів. |
+| Відображення координат виявлення | `preprocess_meta` | Модель маршруту відповідає за попередню обробку та генерує власні метадані. |
+
+Для динамічного введення зображень обмежте потік, не припускаючи, що кожен кадр має однаковий розмір:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Image;
+iopt.format = simaai::neat::FormatTag::BGR;
+iopt.max_width = 1920;
+iopt.max_height = 1080;
+iopt.max_bytes = 1920 * 1080 * 3;
+
+graph.add(simaai::neat::nodes::Input("image", iopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Image
+iopt.format = pyneat.Format.BGR
+iopt.max_width = 1920
+iopt.max_height = 1080
+iopt.max_bytes = 1920 * 1080 * 3
+
+graph.add(pyneat.nodes.input("image", iopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+Для розібраних блоків даних H.265, які передає ваш застосунок, зробіть так, щоб межа була закодована,
+виберіть `FormatTag::H265` і виберіть відповідний тип декодера. Тип медіафайлу
+визначається за тегом, тому рядок із параметрами не потрібен. Встановіть для декодера ширину,
+висоту та частоту кадрів відповідно до значень елементарного потоку:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Encoded;
+iopt.format = simaai::neat::FormatTag::H265;
+
+graph.add(simaai::neat::nodes::Input("video", iopt));
+
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::H265;
+decode.dec_width = 1280;
+decode.dec_height = 720;
+decode.dec_fps = 30;
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+graph.add(simaai::neat::nodes::Output("frames"));
+
+auto run = graph.build();
+
+auto push_h265_access_unit = [&run](std::vector<std::uint8_t> bytes) {
+  auto sample = simaai::neat::make_encoded_sample(
+      std::move(bytes),
+      "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au");
+  sample.port_name = "video";
+  run.push("video", sample);
+};
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = pyneat.Graph()
+
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Encoded
+iopt.format = pyneat.Format.H265
+
+graph.add(pyneat.nodes.input("video", iopt))
+
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.H265
+decode.dec_width = 1280
+decode.dec_height = 720
+decode.dec_fps = 30
+graph.add(pyneat.nodes.sima_decode(decode))
+graph.add(pyneat.nodes.output("frames"))
+
+run = graph.build()
+
+def push_h265_access_unit(run: pyneat.Run, data: bytes) -> None:
+    sample = pyneat.Sample.from_encoded(
+        data,
+        caps_string=(
+            "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au"
+        ),
+        port_name="video",
+    )
+    run.push("video", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+Якщо ви вже використовуєте `RtspDecodedInput(...)` або `VideoInputGroup(...)`, не додавайте цей параметр, що надсилається застосунком, перед ними. Групи, що належать джерелу, мають власний шлях вхідних даних.
+
+### Приклад виводу
+
+Використовуйте `nodes::Output`, коли споживачу потрібен повний [`Sample`](/develop-apps/development-workflow/core_types#sample): корисне навантаження плюс метадані потоку/кадру/часової мітки.
+
+Використовуйте `OutputOptions`, коли важлива поведінка, пов’язана з отриманням даних.
+
+| Мета | Використовуйте |
+| --- | --- |
+| Зберігайте найсвіжіші результати. | `OutputOptions::Latest()` / `pyneat.OutputOptions.latest()` |
+| Відображайте кожен кадр. | `OutputOptions::EveryFrame(...)` / `pyneat.OutputOptions.every_frame(...)` |
+| Регулюйте швидкість виведення даних, щоб вона відповідала тактовій частоті графа. | `OutputOptions::Clocked(...)` / `pyneat.OutputOptions.clocked(...)` |
+| Об’єднайте декількох виробників. | `combine_policy = CombinePolicy::ByFrame` або `ByPts` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "classes",
+    simaai::neat::OutputOptions::EveryFrame()));
+
+const auto run = graph.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "classes",
+    pyneat.OutputOptions.every_frame(),
+))
+
+run = graph.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+`OutputOptions` має чотири регулятори, але попередньо встановлені параметри підходять для більшості програм:
+
+| Поле | Що воно контролює. | Віддавайте перевагу |
+| --- | --- | --- |
+| `max_buffers` | Яка максимальна кількість вихідних зразків може накопичуватися в черзі, перш ніж буде застосовано механізм обмеження швидкості або відхилено. | `Latest()`, `EveryFrame(...)` або `Clocked(...)` – попередньо встановлені параметри. |
+| `drop` | Чи призводить переповнення до видалення найстарішого зразка зі списку очікування замість блокування? | `Latest()` для виведення даних у стилі попереднього перегляду в реальному часі. |
+| `sync` | Чи синхронізуються вихідні дані з тактовою частотою графа. | `Clocked(...)`: забезпечує синхронізацію виводу з тактовою частотою. |
+| `combine_policy` | Як один загальнодоступний `Output` об’єднує декількох постачальників даних. | `CombinePolicy::ByFrame` застосовується лише з дійсним `frame_id`; `ByPts` застосовується лише з дійсним `pts_ns`. |
+
+Використовуйте `EveryFrame(...)` для даних, які не можна втрачати. Використовуйте `Latest()`, коли важливіша актуальність, ніж історія. Не налаштовуйте попередній перегляд у режимі реального часу так, щоб він нагадував стенограму судового засідання.
+
+#### Розширені налаштування: адаптуйте вивід зображення або відео до формату тензора.
+
+Для звичайних вихідних даних моделі або графа, зупиніться тут: використовуйте `nodes::Output`. Якщо корисне навантаження містить лише тензор і вам не потрібен повний об’єкт `Sample`, отримайте його за допомогою `pull_tensors(...)`.
+
+Використовуйте `Graph::add_output_tensor(...)` лише тоді, коли вихідне зображення або відео має бути перетворено, масштабовано або адаптовано за частотою кадрів у тензор `UInt8`, сумісний з ЦП, перш ніж програма отримає його. Цей допоміжний модуль вставляє шлях адаптера та створює неіменований вихід. Якщо є лише один вихід, отримайте його за допомогою `run.pull_tensors(...)`.
+
+`OutputTensorOptions` контролює `format`, `target_width`, `target_height` та `target_fps`. Залиште `dtype` як `UInt8`; поточний загальнодоступний шлях відхиляє інші типи даних. Більшості вихідних даних моделі цей допоміжний модуль не потрібен.
+
+## Короткий посібник для швидкого прийняття рішень.
+
+- Джерелом може бути файл, камера або протокол RTSP: використовуйте попередньо створену групу вхідних даних із `nodes::groups`.
+- Джерелом є тензор/кадр, згенерований застосунком: використовуйте `nodes::Input`.
+- Виводьте метадані потоку/кадру/часової мітки, що відображають потреби споживача: використовуйте `nodes::Output` та отримуйте об’єкти `Sample`.
+- Результатом є модель або набір даних у вигляді тензора: використовуйте `nodes::Output` і отримуйте тензори за допомогою `pull_tensors(...)`, коли вам не потрібен повний набір даних `Sample`.
+- Вихідні дані — це зображення або відео, які необхідно змінити розмір, переформатувати або відкоригувати за частотою кадрів перед завантаженням: використовуйте розширений адаптер `add_output_tensor(...)`.
+- Потрібен набір компонентів, який можна повторно використовувати: створіть фрагмент `Graph` з вузлів і додайте/під’єднайте його так само, як і будь-яку іншу складову.
+
+## Чому це важливо.
+
+- Одна концепція охоплює атомарні стадії, оголошення меж і попередньо створені групи.
+- Повторно використовувані фрагменти графа поводяться як функції: на вході – дані, на виході – результат, і відсутні випадкові джерела/споживачі даних у середовищі виконання.
+- Під час діагностики зберігається зручний формат, оскільки назви вузлів і меж не змінюються під час оптимізації.
+- Середовище виконання залишається ефективним, оскільки внутрішні межі не створюють приховані копії або черги.
+
+## Див. також
+
+- [Граф](/develop-apps/development-workflow/graph)
+- [Модель](/develop-apps/development-workflow/model)
+- [Тензор і зразок](/develop-apps/development-workflow/core_types)
+
+## Навчальні матеріали
+
+- [Створення першого графа](/tutorials/build-inference-pipeline)
+- [Підключення моделі до конвеєра](/tutorials/plug-model-into-pipeline)
+- [Створення власного графа даних](/tutorials/build-a-custom-data-graph)

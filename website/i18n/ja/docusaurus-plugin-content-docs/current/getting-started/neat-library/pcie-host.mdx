@@ -1,0 +1,99 @@
+---
+title: "PCIeホストをインストールします。"
+description: "接続された Modalix PCIe カード上でモデルを実行するために、PCIe ホスト ランタイムをインストールしてください。"
+sidebar_position: 3
+---
+
+このページを使用して、Linuxマシンに接続されたNeat PCIeホストパッケージをインストールします。このLinuxマシンは、Modalix PCIeカードに接続されている必要があります。
+
+Neat PCIeホストパッケージは、ホストマシンから接続されたModalix PCIeカードにデータを送信し、推論結果を受信するコプロセッシングAPIを提供します。
+
+:::warning PCIeホストマシンにインストールします。
+このインストールを、Modalix PCIeカードに接続された**PCIeホストマシン**で実行してください。Neat SDKコンテナ内、DevKit上、またはModalix PCIeカード上で実行しないでください。
+:::
+
+## 対応するホストのオペレーティングシステム
+
+Neat PCIe ホストパッケージは、以下の検証済みのホストプラットフォームをサポートします。
+
+| オペレーティングシステム | アーキテクチャ | サポート |
+| --- | --- | --- |
+| Ubuntu 22.04 | x86_64 | 対応済み |
+| Ubuntu 24.04 | x86_64 | 対応済み |
+
+Arm64ホストでのビルドは、まだ検証されていません。Windows 11はサポート対象外です。
+
+## 前提条件
+
+パッケージをインストールする前に：
+
+- PCIeホストに`sima-cli`をインストールしてください。
+  [sima-cli installation guide](/tools/sima-cli/).
+- 以下の手順に従って、PCIeホストドライバーをインストールし、検証してください。
+  [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
+- Modalix PCIeカードを接続し、設定して、その管理インターフェースが利用できるようにします。
+  ホストからアクセス可能な状態。カード0のデフォルトアドレスは`10.0.0.2`です。
+- カードに互換性のある Neat Library のバージョンをインストールします。ホストと
+  カードパッケージは、互換性のあるバージョンから提供される必要があります。
+
+PCIeホストを認証し、SiMa.aiのアーティファクトをダウンロードできるようにします。
+
+<ShellCommand prompt="pcie-host">
+sima-cli login
+</ShellCommand>
+
+## PCIeホストパッケージをインストールしてください。
+
+PCIeホスト上で作業ディレクトリを選択し、インストールされたUbuntuのバージョンに対応するコマンドを実行します。
+
+**x86_64環境におけるUbuntu 22.04:**
+
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
+</ShellCommand>
+
+**x86_64 アーキテクチャにおける Ubuntu 24.04:**
+
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
+</ShellCommand>
+
+インストーラーは、C++ APIや、`~/pyneatpcie` にあるPython環境など、Neat PCIeホストアプリケーションを開発および実行するために必要なものをすべて追加します。
+
+また、`sima-neat/core` リポジトリから、CodexおよびClaude用の`neat-pcie-application-builder` コーディングエージェントスキルもインストールします。スキルのインストールは可能な限り行われるように設計されているため、一時的なGitHubまたはコーディングエージェントの構成上の問題が発生しても、PCIeホストパッケージのインストールが妨げられることはありません。警告が表示された場合は、再度試してください。
+
+<ShellCommand prompt="pcie-host">
+sima-cli playbooks install gh:sima-neat/core/pcie_host/skills/neat-pcie-application-builder
+</ShellCommand>
+
+最初のインストール時、SSH プロビジョニングでは、カードの `sima` アカウントのパスワードを要求できます。これにより、`~/.ssh/sima_neat_pcie_ed25519` が作成または再利用され、その公開鍵がカードにインストールされます。その後、通常の PCIe 動作では、パスワードなしの SSH を使用して、カード側のモデル設定を行います。
+
+## インストールを確認してください。
+
+Python API と PCIe ホストプラグインが利用可能であることを確認してください。
+
+<ShellCommand prompt="pcie-host">
+source ~/pyneatpcie/bin/activate
+python3 -c "import pyneatpcie; print('pyneatpcie ready')"
+gst-inspect-1.0 neatpciehost
+</ShellCommand>
+
+## トラブルシューティング
+
+SSHによるプロビジョニングでカードを自動的に検出できない場合は、まず、ホストが管理アドレスにアクセスできることを確認してください。
+
+<ShellCommand prompt="pcie-host">
+ping -c 1 10.0.0.2
+</ShellCommand>
+
+次に、インストールしたセットアップユーティリティを、アドレスを明示的に指定して実行します。
+
+<ShellCommand prompt="pcie-host">
+pcie-setup.sh --hosts "10.0.0.2"
+</ShellCommand>
+
+パッケージのインストールまたはランタイムの起動に失敗した場合は、PCIeホストパッケージとカードにインストールされているNeat Libraryが、互換性のあるバージョンから提供されていることを確認してください。
+
+## 次のステップ
+
+[PCIeによる共同処理](/develop-apps/hello-neat/pcie/) を使用して、ホストからカードへの完全な開発パスを検証してください。

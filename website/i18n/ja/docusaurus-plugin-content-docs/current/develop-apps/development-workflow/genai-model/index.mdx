@@ -1,0 +1,52 @@
+---
+title: "生成AIモデル"
+description: "Neat アプリケーションから、LLM、VLM、および ASR モデルをどのように実行または提供するかを選択します。"
+sidebar_position: 1
+slug: /develop-apps/development-workflow/genai-model
+---
+
+# GenAIモデル
+
+Neatは、LLiMaで準備されたLLM、VLM、ASRモデルに対して、GenAI APIを使用します。これは、[`Model`](/develop-apps/development-workflow/model)の生成モデル版であり、デプロイされたモデルのディレクトリをロードし、リクエストを作成し、アプリケーション内で実行するか、HTTP経由で提供します。
+
+アプリケーションがモデルにテキストの生成、画像の質問への回答、ツールの呼び出し、またはオーディオの文字起こしを要求する場合に、これらのAPIを使用します。分類、検出、セグメンテーション、または埋め込みモデルなど、固定形状の識別モデルには、従来の`Model` APIを使用します。
+
+## GenAIの適用範囲
+
+GenAIのパスは、Neatの他の部分と同じ高レベルの構造を持ちます。
+
+1. Modalix用のモデルアーティファクトを準備またはダウンロードします。
+2. モデルをターゲットに配置します。通常は`/media/nvme/llima/models/`の下に配置します。
+3. C++またはPythonアプリケーションからモデルをロードします。
+4. リクエストを直接送信するか、`GenAIServer`を通じてモデルを公開します。
+5. 完全な結果を読み取るか、ストリーミングされた出力を消費します。
+
+LLiMaは、GenAIモデルの準備、コマンドラインテスト、およびベンチマークを担当します。Neatは、モデルがアプリケーション内で使用された後の、アプリケーション向けのAPIとランタイム統合を担当します。モデルの準備の詳細については、[LLiMa を搭載した生成AI](/genai-llima/)を参照してください。
+
+## アプリケーションの境界を選択
+
+<div class="overview-link-columns">
+  <section class="overview-link-panel overview-link-panel-start">
+    <h2>アプリケーションとクライアントにサービスを提供する。</h2>
+    <p>ほとんどのアプリケーションに推奨されます。一般的な API エンドポイントを公開するには、GenAI サーバーを使用してください。</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/genai-model/genai-server/"><strong>GenAIサーバー</strong><span>1つ以上のモデルを登録し、OpenAIまたはOllamaに対応したHTTPエンドポイントを呼び出します。</span></a></li>
+    </ul>
+  </section>
+
+  <section class="overview-link-panel overview-link-panel-explore">
+    <h2>プロセス内で実行</h2>
+    <p>C++またはPythonアプリケーションでモデルの呼び出しを行う場合、直接APIを使用してください。</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/genai-model/direct-api/"><strong>直接的な生成AI API</strong><span>LLM、VLM、およびASRのリクエストをプロセス内で実行またはストリーミングし、GenAIのグラフ断片を構成します。</span></a></li>
+    </ul>
+  </section>
+</div>
+
+組み込みアプリケーションのロジックや、モデルと同じプロセスで実行する必要があるテストには、直接呼び出しを使用します。クライアントが Neat ランタイムにリンクする必要がない場合、または 1 つのプロセスで複数のモデルにリクエストをルーティングする必要がある場合は、サーバーを使用します。
+
+## 次のステップ
+
+- 完全な HTTP サーバーの例については、[生成AIモデルを運用する](/tutorials/serve-genai-models) を参照してください。
+- プロセス内での実行例については、[Direct API を使用して LLM を実行します。](/tutorials/run-an-llm) を参照してください。
+- [LLiMa を搭載した生成AI](/genai-llima/) を使用して、モデルを準備し、ベンチマークテストを実施します。

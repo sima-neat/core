@@ -99,7 +99,9 @@ jobs:
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
-            tests/tools/test_neat_model_compiler_discovery.py
+            tests/tools/test_neat_model_compiler_discovery.py \
+            tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_vulcan_ci_notification.py
 
       - name: Resolve cache namespace and access
         id: resolve
@@ -141,10 +143,7 @@ jobs:
             echo "Tag build; treating changeset as code-impacting."
           elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "branch" ]]; then
             if [[ "${GITHUB_REF_NAME}" == "develop" || "${GITHUB_REF_NAME}" == "main" ]]; then
-              before_sha="${{ github.event.before }}"
-              if [[ -n "${before_sha}" && ! "${before_sha}" =~ ^0+$ ]]; then
-                compare_base="${before_sha}"
-              fi
+              echo "Protected branch push; treating changeset as code-impacting."
             else
               git fetch --no-tags origin develop
               compare_base="$(git merge-base HEAD origin/develop)"
@@ -221,7 +220,7 @@ jobs:
 
   build:
     name: Build Core on Vulcan
-    if: ${{ always() && !failure() && !cancelled() }}
+    if: ${{ always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - resolve-vulcan-config
       - resolve-compiler-cache
@@ -408,8 +407,9 @@ jobs:
 
   build-pciehost-packages:
     name: Build PCIe Host ${{ matrix.distro }} ${{ matrix.deb_arch }}
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
+      - detect-changes
       - resolve-vulcan-config
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
     runs-on: ${{ matrix.runs_on }}
