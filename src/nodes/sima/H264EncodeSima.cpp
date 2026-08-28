@@ -81,13 +81,22 @@ private:
 namespace simaai::neat {
 
 H264EncodeSima::H264EncodeSima(int w, int h, int fps, int bitrate_kbps, std::string profile,
-                               std::string level)
+                               std::string level, nodes::groups::RtspCodec codec)
     : w_(w), h_(h), fps_(fps), bitrate_kbps_(bitrate_kbps), profile_(std::move(profile)),
-      level_(std::move(level)) {}
+      level_(std::move(level)), codec_(codec) {
+  if (codec_ != nodes::groups::RtspCodec::H264 &&
+      codec_ != nodes::groups::RtspCodec::H265) {
+    throw std::invalid_argument("VideoEncodeSima supports only H264 or H265");
+  }
+  if (codec_ == nodes::groups::RtspCodec::H265 && profile_ != "main") {
+    throw std::invalid_argument("VideoEncodeSima H265 supports only the main profile");
+  }
+}
 
 std::string H264EncodeSima::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  ss << "neatencoder name=n" << node_index << "_encoder " << "enc-type=h264 "
+  ss << "neatencoder name=n" << node_index << "_encoder " << "enc-type="
+     << (codec_ == nodes::groups::RtspCodec::H265 ? "h265 " : "h264 ")
      << "enc-profile=" << profile_ << " " << "enc-level=" << level_ << " " << "enc-fmt=NV12 "
      << "enc-width=" << w_ << " " << "enc-height=" << h_ << " " << "enc-frame-rate=" << fps_ << " "
      << "enc-bitrate=" << bitrate_kbps_ << " " << "enc-ip-mode=async " << "ip-rate-ctrl=false";
@@ -110,8 +119,8 @@ std::vector<std::string> H264EncodeSima::element_names(int node_index) const {
 
 OutputSpec H264EncodeSima::output_spec(const OutputSpec& /*input*/) const {
   OutputSpec out;
-  out.media_type = "video/x-h264";
-  out.format = "H264";
+  out.media_type = codec_ == nodes::groups::RtspCodec::H265 ? "video/x-h265" : "video/x-h264";
+  out.format = codec_ == nodes::groups::RtspCodec::H265 ? "H265" : "H264";
   out.certainty = SpecCertainty::Hint;
   out.note = "H264 encoded stream";
   return out;
@@ -124,7 +133,14 @@ namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> H264EncodeSima(int w, int h, int fps, int bitrate_kbps,
                                                    std::string profile, std::string level) {
   return std::make_shared<simaai::neat::H264EncodeSima>(w, h, fps, bitrate_kbps, std::move(profile),
-                                                        std::move(level));
+                                                        std::move(level), groups::RtspCodec::H264);
+}
+
+std::shared_ptr<simaai::neat::Node>
+VideoEncodeSima(groups::RtspCodec codec, int w, int h, int fps, int bitrate_kbps,
+                std::string profile, std::string level) {
+  return std::make_shared<simaai::neat::H264EncodeSima>(
+      w, h, fps, bitrate_kbps, std::move(profile), std::move(level), codec);
 }
 
 std::shared_ptr<simaai::neat::Node> H264EncodeSW(int bitrate_kbps) {

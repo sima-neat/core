@@ -270,10 +270,10 @@ struct ProcessMlaOptions {
   /// or use the plugin/env kill switches, to force the synchronous fallback.
   bool async = true;
 
-  /// Optional processmla output pool size override. A value <= 0 leaves the
-  /// runtime default in place. The framework runtime default is 4, matching
-  /// model-managed CVU/MLA buffering and avoiding artificial backpressure while
-  /// downstream stages still hold previous tensor-set outputs.
+  /// Optional processmla output pool size override. A positive value is
+  /// authoritative. A value <= 0 derives the pool from RunOptions::queue_depth
+  /// (whose framework default is 4), keeping ingress, prepared MLA work, and
+  /// output ownership at one framework-authored depth.
   int output_pool_buffers = 0;
 
   /// For prepared MLASHM outputs, skip the immediate producer-side CPU
@@ -281,7 +281,9 @@ struct ProcessMlaOptions {
   /// The framework runtime default is enabled so MLA->CVU/postprocess routes
   /// pay the invalidate only at the actual CPU consumer boundary. Manual
   /// low-level pipelines that expose raw MLA outputs to legacy CPU readers can
-  /// still override the element property to false.
+  /// still override the element property to false. Core also selects false at
+  /// the exact terminal MLA->ObjectDecode boundary so the strict direct slot
+  /// can publish one shared CPU READ epoch across the adjacent consumer.
   bool defer_output_invalidate = true;
 };
 

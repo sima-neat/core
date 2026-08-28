@@ -83,6 +83,7 @@ RUN_TEST(
         MpkPluginIoContract unpack;
         unpack.name = "MLA_0_ofm_unpack_transform";
         unpack.sequence = static_cast<int>(mpk.plugins.size()) + 1;
+        unpack.processor = "EV74";
         unpack.kernel = "ofm_unpack";
         unpack.input_tensors.push_back(tensor(
             0, input_name, dtype, {1, static_cast<std::int64_t>(physical_size_bytes)},
@@ -103,6 +104,7 @@ RUN_TEST(
         MpkPluginIoContract slice;
         slice.name = "slice_transform";
         slice.sequence = static_cast<int>(mpk.plugins.size()) + 1;
+        slice.processor = "EV74";
         slice.kernel = "slice_transform";
         slice.slice_begin = {0, 0, 0, 0};
         slice.input_tensors.push_back(tensor(0, input_name, dtype, physical_nhwc,
@@ -115,25 +117,6 @@ RUN_TEST(
         add_edge(mpk, producer, 0, mpk.plugins.size() - 1U, 0, input_name);
       };
 
-      auto add_evtess = [&](MpkContract& mpk, const std::string& input_name,
-                            const std::string& output_name, const std::string& dtype,
-                            const std::vector<std::int64_t>& logical_nhwc,
-                            std::size_t packed_size_bytes) {
-        const std::size_t producer = mpk.plugins.size() - 1U;
-        MpkPluginIoContract evtess;
-        evtess.name = "evtess_transform";
-        evtess.sequence = static_cast<int>(mpk.plugins.size()) + 1;
-        evtess.processor = "EVXX";
-        evtess.kernel = "tessellation_transform";
-        evtess.input_tensors.push_back(tensor(0, input_name, dtype, logical_nhwc, packed_size_bytes,
-                                              MpkShapeSemantics::Geometry, logical_nhwc, {}, 0));
-        evtess.output_tensors.push_back(
-            tensor(0, output_name, dtype, {1, static_cast<std::int64_t>(packed_size_bytes)},
-                   packed_size_bytes, MpkShapeSemantics::PackedExtent, logical_nhwc, {}, 0));
-        mpk.plugins.push_back(std::move(evtess));
-        add_edge(mpk, producer, 0, mpk.plugins.size() - 1U, 0, input_name);
-      };
-
       auto add_detess =
           [&](MpkContract& mpk, const std::string& input_name, const std::string& output_name,
               const std::string& dtype, const std::vector<std::int64_t>& frame_hwc,
@@ -142,6 +125,7 @@ RUN_TEST(
             MpkPluginIoContract detess;
             detess.name = "detessellation_transform";
             detess.sequence = static_cast<int>(mpk.plugins.size()) + 1;
+            detess.processor = "EV74";
             detess.kernel = "detessellation_transform";
             detess.frame_shape = frame_hwc;
             detess.frame_type = dtype;
@@ -187,6 +171,7 @@ RUN_TEST(
       auto unpack_slice_dense = [&] {
         MpkContract mpk;
         add_mla(mpk, "unpack_slice_parent", "INT8", 80U * 80U * 96U, {1, 80, 80, 80});
+        mpk.plugins.front().quant = MpkQuantContract{{0.5}, {3}, -1};
         add_unpack(mpk, "unpack_slice_parent", "class_logit_dense", "unpack_slice_parent", "INT8",
                    {1, 80, 80, 96}, {1, 80, 80, 80}, 80U * 80U * 96U);
         add_slice(mpk, "class_logit_dense", "class_logit_0", "INT8", {1, 80, 80, 96},
@@ -202,16 +187,15 @@ RUN_TEST(
         return mpk;
       }();
 
-      auto evtess_packed = [&] {
+      auto packed_int8 = [&] {
         MpkContract mpk;
-        add_mla(mpk, "evtess_dense_parent", "INT8", 80U * 80U * 80U, {1, 80, 80, 80});
-        add_unpack(mpk, "evtess_dense_parent", "evtess_unpacked_parent", "evtess_dense_parent",
+        add_mla(mpk, "packed_int8_parent", "INT8", 80U * 80U * 80U, {1, 80, 80, 80});
+        mpk.plugins.front().quant = MpkQuantContract{{0.5}, {3}, -1};
+        add_unpack(mpk, "packed_int8_parent", "class_logit_0_packed", "packed_int8_parent",
                    "INT8", {1, static_cast<std::int64_t>(80U * 80U * 80U)}, {1, 80, 80, 80},
                    80U * 80U * 80U, MpkShapeSemantics::PackedExtent);
-        add_evtess(mpk, "evtess_unpacked_parent", "evtess_class_packed", "INT8", {1, 80, 80, 80},
-                   80U * 80U * 80U);
-        add_detess(mpk, "evtess_class_packed", "class_logit_0", "INT8", {80, 80, 80}, {16, 16, 80},
-                   80U * 80U * 80U);
+        add_detess(mpk, "class_logit_0_packed", "class_logit_0", "INT8", {80, 80, 80},
+                   {16, 16, 80}, 80U * 80U * 80U);
         return mpk;
       }();
 
@@ -226,7 +210,7 @@ RUN_TEST(
            "BF16"},
           {"yolo26_unpack_slice_dense_hwc",
            std::move(unpack_slice_dense),
-           make_flags(false, false),
+           make_flags(true, false),
            BoxDecodeType::YoloV26,
            BoxDecodeSourceStorageKind::DenseHwcPhysical,
            {80, 80, 96},
@@ -240,9 +224,9 @@ RUN_TEST(
            {80, 80, 80},
            {80, 80, 80},
            "BF16"},
-          {"yolov6_int8_evtess_packed_cblock",
-           std::move(evtess_packed),
-           make_flags(false, true),
+          {"yolov6_int8_packed_cblock",
+           std::move(packed_int8),
+           make_flags(true, true),
            BoxDecodeType::YoloV6,
            BoxDecodeSourceStorageKind::PackedCBlock,
            {80, 80, 80},

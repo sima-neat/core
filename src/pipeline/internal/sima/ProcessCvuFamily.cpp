@@ -65,6 +65,7 @@ processcvu_graph_family_for_stage_kind(::simaai::neat::internal::ExecutionStageK
   case ExecutionStageKind::Cast:
     return "cast";
   case ExecutionStageKind::Mla:
+  case ExecutionStageKind::HostTvm:
   case ExecutionStageKind::BoxDecode:
   case ExecutionStageKind::Unknown:
     break;

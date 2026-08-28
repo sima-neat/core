@@ -8,6 +8,8 @@
 #include "test_main.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 
 RUN_TEST(
     "unit_route_capability_mpk_static_contract_test", ([] {
@@ -73,5 +75,36 @@ RUN_TEST(
         require(compiled.payload.num_classes == 80,
                 "explicit BoxDecode should derive YOLOv8 class count from MPK facts when "
                 "num_classes is unset");
+      }
+
+      if (const char* apps48_yolo26 = std::getenv("SIMANEAT_APPS48_YOLO26_PACKAGE");
+          apps48_yolo26 != nullptr && *apps48_yolo26 != '\0' &&
+          sima_test::is_strict_mpk_tar_gz(apps48_yolo26)) {
+        Model::Options options;
+        options.preprocess.kind = InputKind::Image;
+        options.preprocess.enable = AutoFlag::On;
+        options.preprocess.color_convert.input_format = PreprocessColorFormat::NV12;
+        options.preprocess.preset = NormalizePreset::COCO_YOLO;
+        options.decode_type = BoxDecodeType::YoloV26;
+        options.score_threshold = 0.30;
+        options.nms_iou_threshold = 0.60;
+        options.top_k = 50;
+
+        Model model(apps48_yolo26, options);
+        require(ModelAccess::has_model_managed_stage(model, StageNodeKind::BoxDecode),
+                "Apps 48-channel YOLO26 route must select model-managed BoxDecode");
+        require(ModelAccess::resolved_post_kind(model) == PostRouteStageKind::BoxDecode,
+                "Apps 48-channel YOLO26 route must resolve BoxDecode as its post stage");
+        const auto compiled = ModelAccess::build_boxdecode_stage_contract(model, false);
+        require(compiled.payload.decode_type == BoxDecodeType::YoloV26,
+                "Apps 48-channel package must derive the exact YOLO26 decoder family");
+        require(compiled.payload.num_classes == 80,
+                "Apps 48-channel package must derive 80 class logits");
+        require(compiled.runtime_contract.logical_inputs.size() == 6U,
+                "Apps 48-channel package must preserve its three bbox and three class heads");
+        require(compiled.payload.topk == 50 &&
+                    std::fabs(compiled.payload.detection_threshold - 0.30) <= 1.0e-6 &&
+                    std::fabs(compiled.payload.nms_iou_threshold - 0.60) <= 1.0e-6,
+                "Apps 48-channel package must retain the application-authored decode controls");
       }
     }));

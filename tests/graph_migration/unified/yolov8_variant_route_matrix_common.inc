@@ -41,6 +41,7 @@
 #include <iomanip>
 #include <initializer_list>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -78,6 +79,8 @@ enum class BoxDecodeRunMode {
   NoModel,
   Model,
 };
+
+simaai::neat::stages::BoxDecodeOptions canonical_boxdecode_options();
 
 const char* boxdecode_run_mode_name(BoxDecodeRunMode mode) {
   switch (mode) {
@@ -1745,6 +1748,153 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
   }
 }
 
+void require_standalone_boxdecode_route_contract_local(const simaai::neat::Model& model) {
+  using simaai::neat::internal::ModelAccess;
+  using simaai::neat::internal::PostRouteStageKind;
+  using simaai::neat::pipeline_internal::sima::StagePayloadKind;
+
+  const auto options = ModelAccess::options(model);
+  require(options.inference_terminal.mla_only,
+          "standalone BoxDecode route must select the raw MLA terminal before Model construction");
+  require(!options.inference_terminal.last_stage_index.has_value() &&
+              !options.inference_terminal.last_stage_name.has_value() &&
+              !options.inference_terminal.last_plugin_id.has_value() &&
+              !options.inference_terminal.last_processor.has_value(),
+          "standalone BoxDecode route must have exactly one semantic terminal authority");
+  require(ModelAccess::resolved_post_kind(model) == PostRouteStageKind::BoxDecode,
+          "standalone BoxDecode route must resolve the typed BoxDecode post contract");
+
+  const auto infer_nodes = ModelAccess::build_infer_nodes(model, false);
+  const auto infer_manifest =
+      rendered_stage_query::rendered_manifest_from_nodes(infer_nodes, "yolov8_standalone_infer");
+  require(infer_manifest.has_value() && !infer_manifest->stages.empty(),
+          "standalone BoxDecode route requires a rendered inference manifest");
+  require(infer_manifest->stages.back().payload_kind == StagePayloadKind::ProcessMla,
+          "standalone BoxDecode inference must terminate at raw MLA (no post-MLA CVU stage)");
+  for (const auto& stage : infer_manifest->stages) {
+    require(stage.payload_kind != StagePayloadKind::ProcessCvu ||
+                (stage.processcvu.graph_id != 223 && stage.processcvu.graph_id != 227),
+            "standalone BoxDecode inference must not render graph223 dequant or graph227 "
+            "detess/dequant");
+  }
+
+  const auto compiled = ModelAccess::build_boxdecode_stage_contract(model, false);
+  require(compiled.payload.decode_type == simaai::neat::BoxDecodeType::YoloV8,
+          "standalone BoxDecode route must retain the requested YOLOv8 decode family");
+  require(compiled.payload.model_owned_flags,
+          "standalone BoxDecode tess/quant flags must come from the model contract");
+  require(compiled.runtime_contract.logical_inputs.size() == 6U,
+          "standalone YOLOv8 BoxDecode requires the six compiler-authored head tensors");
+  require(compiled.payload.slice_shapes.size() ==
+              compiled.runtime_contract.logical_inputs.size(),
+          "standalone BoxDecode requires one typed slice shape per head tensor");
+  require(compiled.payload.tensor_storage_kind.size() ==
+              compiled.runtime_contract.logical_inputs.size(),
+          "standalone BoxDecode requires one typed storage kind per head tensor");
+  if (compiled.payload.quant_contract_required) {
+    for (std::size_t i = 0; i < compiled.runtime_contract.logical_inputs.size(); ++i) {
+      const auto& input = compiled.runtime_contract.logical_inputs[i];
+      require(input.quant.has_value() && !input.quant->scales.empty() &&
+                  !input.quant->zero_points.empty(),
+              "standalone quantized BoxDecode head " + std::to_string(i) +
+                  " is missing compiler-authored qparams");
+    }
+  }
+
+  std::cout << "STANDALONE_BOXDECODE_ROUTE terminal=raw_mla post_mla_cvu=0"
+            << " logical_inputs=" << compiled.runtime_contract.logical_inputs.size()
+            << " tess_needed=" << (compiled.payload.tess_needed ? 1 : 0)
+            << " quant_needed=" << (compiled.payload.quant_needed ? 1 : 0)
+            << " quant_contract_required="
+            << (compiled.payload.quant_contract_required ? 1 : 0) << "\n";
+}
+
+simaai::neat::Sample run_canonical_standalone_boxdecode_sample_local(
+    const cv::Mat& img_bgr, simaai::neat::Model& model,
+    const simaai::neat::Model::RouteOptions& sess_opt, int frames = 1) {
+  require_standalone_boxdecode_route_contract_local(model);
+
+  const simaai::neat::Tensor input = build_canonical_preprocessed_input(img_bgr, model);
+  const simaai::neat::TensorList input_tensorlist{input};
+  const auto spec = model.input_specs().front();
+  const auto [model_w_pref, model_h_pref] =
+      preferred_input_hw(model, RouteKind::PreInferPost, spec);
+  const int model_width = model_w_pref > 0 ? model_w_pref : img_bgr.cols;
+  const int model_height = model_h_pref > 0 ? model_h_pref : img_bgr.rows;
+
+  auto build_graph = [&]() {
+    simaai::neat::Graph graph;
+    graph.add(simaai::neat::nodes::Input(model.input_appsrc_options(true)));
+    // The Model was constructed with the exact raw-MLA terminal.  Splicing its
+    // route preserves the RouteOptions overlay while the model-bound manual post
+    // node carries the compiler-authored head order/layout/qparams.  GraphBuild's
+    // requested-post materializer keeps this as one MLA -> BoxDecode pipeline.
+    const auto route_nodes =
+        simaai::neat::internal::ModelAccess::build_public_route_nodes(model, sess_opt);
+    const auto is_external_post = [](const std::shared_ptr<simaai::neat::Node>& node) {
+      if (!node) {
+        return false;
+      }
+      const std::string kind = node->kind();
+      return kind == "Detess" || kind == "Dequant" || kind == "DetessDequant";
+    };
+    require(std::none_of(route_nodes.begin(), route_nodes.end(), is_external_post),
+            "standalone BoxDecode model route must not contain Detess/Dequant post nodes");
+    require(std::none_of(route_nodes.begin(), route_nodes.end(), [](const auto& node) {
+              return node && node->kind() == "SimaBoxDecode";
+            }),
+            "standalone BoxDecode model fragment must not contain a duplicate decoder");
+
+    auto manual_boxdecode = simaai::neat::nodes::SimaBoxDecode(
+        model, canonical_boxdecode_options(), "matrix_standalone_boxdecode",
+        /*route_tess_needed=*/std::nullopt, /*route_quant_needed=*/std::nullopt,
+        img_bgr.cols, img_bgr.rows, model_width, model_height);
+    require(manual_boxdecode && manual_boxdecode->kind() == "SimaBoxDecode",
+            "standalone BoxDecode composed route must contain exactly one manual decoder");
+    graph.add(model.graph(sess_opt));
+    graph.add(std::move(manual_boxdecode));
+    graph.add(simaai::neat::nodes::Output());
+    return graph;
+  };
+
+  const int timeout_ms = default_model_run_timeout_ms();
+  const int retry_timeout_ms = std::max(timeout_ms, kRunRetryTimeoutMs);
+  const int loop_count = std::max(frames, 1);
+  auto run_once = [&](int pull_timeout_ms) -> simaai::neat::Sample {
+    simaai::neat::RunOptions run_opt;
+    if (const char* raw_depth = std::getenv("SIMA_E2E_RUN_QUEUE_DEPTH");
+        raw_depth && *raw_depth) {
+      const int depth = std::atoi(raw_depth);
+      if (depth > 0) {
+        run_opt.queue_depth = depth;
+      }
+    }
+    auto graph = build_graph();
+    auto runner = graph.build(input_tensorlist, run_opt);
+    require(static_cast<bool>(runner), "standalone BoxDecode: runner build failed");
+
+    simaai::neat::Sample last_sample;
+    for (int frame_idx = 0; frame_idx < loop_count; ++frame_idx) {
+      require(runner.push(input_tensorlist),
+              "standalone BoxDecode: runner push failed at frame " +
+                  std::to_string(frame_idx));
+      const auto outputs = runner.pull_samples(pull_timeout_ms);
+      require(outputs.size() == 1U,
+              "standalone BoxDecode: expected exactly 1 output sample at frame " +
+                  std::to_string(frame_idx) + ", got " + std::to_string(outputs.size()));
+      last_sample = outputs.front();
+    }
+    runner.close();
+    return last_sample;
+  };
+
+  try {
+    return run_once(timeout_ms);
+  } catch (const std::exception&) {
+    return run_once(retry_timeout_ms);
+  }
+}
+
 simaai::neat::Tensor fp32_to_bf16_cast_node(const simaai::neat::Tensor& input) {
   if (input.dtype != simaai::neat::TensorDType::Float32) {
     throw std::runtime_error("FP32->BF16 cast node expected Float32 tensor input");
@@ -2267,6 +2417,13 @@ simaai::neat::Model::Options canonical_model_options(BoxDecodeRunMode boxdecode_
   return opt;
 }
 
+simaai::neat::Model::Options canonical_model_bound_standalone_boxdecode_options() {
+  auto opt = canonical_model_options(BoxDecodeRunMode::Model);
+  opt.inference_terminal = {};
+  opt.inference_terminal.mla_only = true;
+  return opt;
+}
+
 simaai::neat::stages::BoxDecodeOptions canonical_boxdecode_options() {
   simaai::neat::stages::BoxDecodeOptions opt(simaai::neat::BoxDecodeType::YoloV8);
   opt.detection_threshold = 0.52;
@@ -2752,7 +2909,7 @@ struct ScopedEnvOverride {
 };
 
 uint64_t fnv1a64_local(const uint8_t* data, std::size_t size) {
-  constexpr uint64_t kOffset = 1469598103934665603ULL;
+  constexpr uint64_t kOffset = 14695981039346656037ULL;
   constexpr uint64_t kPrime = 1099511628211ULL;
   uint64_t hash = kOffset;
   for (std::size_t i = 0; i < size; ++i) {
@@ -2937,12 +3094,32 @@ void maybe_trace_sample_numeric_local(const char* phase, const simaai::neat::Sam
     const auto digest = summarize_numeric_tensor_local(tensors[i]);
     std::fprintf(stderr,
                  "[matrix-numeric] phase=%s tensor=%zu dtype=%s shape=%s seg=%s bytes=%zu "
+                 "byte_offset=%lld physical_byte_offset=%lld memory=%d physical=%d backend=%d slot=%d "
                  "hash=%s min=%.6f max=%.6f mean=%.6f nonfinite=%zu zero_ratio=%.6f samples=%s\n",
                  phase ? phase : "", i, digest.dtype.c_str(), digest.shape.c_str(),
                  digest.segment.empty() ? "<none>" : digest.segment.c_str(), digest.bytes,
+                 static_cast<long long>(tensors[i].byte_offset),
+                 static_cast<long long>(tensors[i].route.physical_byte_offset),
+                 tensors[i].route.memory_index, tensors[i].route.physical_index,
+                 tensors[i].route.backend_output_index, tensors[i].route.route_slot,
                  hex_u64_local(digest.hash).c_str(), digest.min_v, digest.max_v, digest.mean_v,
                  digest.nonfinite, digest.zero_ratio, digest.samples.c_str());
   }
+}
+
+std::string ordered_payload_digest_string_local(const simaai::neat::Sample& sample) {
+  const auto tensors = tensors_in_sample(sample);
+  require(!tensors.empty(), "ordered payload digest requires at least one tensor");
+  std::ostringstream out;
+  out << "v1;tensors=" << tensors.size();
+  for (std::size_t index = 0; index < tensors.size(); ++index) {
+    const auto cpu = tensors[index].cpu().contiguous();
+    const auto bytes = cpu.copy_payload_bytes();
+    out << ";t" << index << "{dtype=" << dtype_name(cpu.dtype)
+        << ",shape=" << shape_string(cpu.shape) << ",bytes=" << bytes.size()
+        << ",fnv1a64=" << hex_u64_local(fnv1a64_local(bytes.data(), bytes.size())) << "}";
+  }
+  return out.str();
 }
 
 PreMlaTensorDigest summarize_pre_mla_tensor_local(const simaai::neat::Tensor& tensor) {
@@ -4214,74 +4391,61 @@ std::vector<objdet::Box> run_hostdecode_boxes_on_sample_local(const simaai::neat
       note_out);
 }
 
-AccuracyResult run_hostdecode_accuracy_on_sample_local(const simaai::neat::Sample& sample,
-                                                       const simaai::neat::Model& model,
-                                                       const cv::Mat& img_bgr, const char* label) {
+AccuracyResult evaluate_migration_box_accuracy_local(const std::vector<objdet::Box>& boxes,
+                                                     const std::string& label,
+                                                     const std::string& decode_note) {
   AccuracyResult out;
   constexpr float kMinScore = 0.52f;
   constexpr float kMinIou = 0.30f;
-  constexpr int kTopK = 100;
-
-  std::string decode_note;
-  const auto boxes = run_hostdecode_boxes_on_sample_local(sample, model, img_bgr, &decode_note);
   out.parsed_boxes = static_cast<int>(boxes.size());
 
-  const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
-  const objdet::MatchResult strict =
-      objdet::match_expected_boxes(boxes, expected, kMinScore, kMinIou);
-  if (strict.ok) {
-    out.ok = true;
-    out.note = std::string(label) + "_ok boxes=" + std::to_string(out.parsed_boxes) +
-               " note=" + decode_note;
-    return out;
-  }
+  const std::vector<objdet::ExpectedBox> full_expected = objdet::expected_people_boxes();
+  std::vector<objdet::ExpectedBox> expected_people;
+  std::copy_if(full_expected.begin(), full_expected.end(),
+               std::back_inserter(expected_people),
+               [](const auto& expected) { return expected.class_id == 0; });
+  require(expected_people.size() == 2U,
+          "migration accuracy contract requires exactly two canonical class-0 people");
 
-  float best_person_iou = 0.0f;
-  int person_candidates = 0;
-  for (const auto& box : boxes) {
-    if (box.class_id != 0 || box.score < kMinScore) {
-      continue;
-    }
-    person_candidates += 1;
-    for (const auto& expected_box : expected) {
-      if (expected_box.class_id != 0) {
-        continue;
-      }
-      best_person_iou = std::max(
-          best_person_iou, objdet::box_iou_xyxy(expected_box.x1, expected_box.y1, expected_box.x2,
-                                                expected_box.y2, box.x1, box.y1, box.x2, box.y2));
-    }
-  }
-  if (person_candidates > 0 && best_person_iou >= 0.25f) {
+  const auto people =
+      objdet::match_expected_boxes(boxes, expected_people, kMinScore, kMinIou);
+  const auto full =
+      objdet::match_expected_boxes(boxes, full_expected, kMinScore, kMinIou);
+  const std::string full_note =
+      full.ok ? "ok" : sima_yolov8_test::sanitize_note(full.note);
+  if (people.ok) {
     out.ok = true;
-    out.note = std::string(label) + "_coarse boxes=" + std::to_string(out.parsed_boxes) +
-               " best_person_iou=" + std::to_string(best_person_iou) +
-               " strict=" + sima_yolov8_test::sanitize_note(strict.note) + " note=" + decode_note;
-    return out;
+    out.note = label + "_ok boxes=" + std::to_string(out.parsed_boxes) +
+               " people=ok full_oracle=" + full_note + " note=" + decode_note;
+  } else {
+    out.ok = false;
+    out.note = label + "_mismatch boxes=" + std::to_string(out.parsed_boxes) +
+               " people=" + sima_yolov8_test::sanitize_note(people.note) +
+               " full_oracle=" + full_note + " note=" + decode_note;
   }
-
-  out.ok = false;
-  out.note = std::string(label) + "_mismatch boxes=" + std::to_string(out.parsed_boxes) +
-             " person_candidates=" + std::to_string(person_candidates) +
-             " best_person_iou=" + std::to_string(best_person_iou) +
-             " strict=" + sima_yolov8_test::sanitize_note(strict.note) + " note=" + decode_note;
   return out;
 }
 
-simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::Sample& stage_input,
-                                                           float score_threshold,
-                                                           float nms_iou_threshold, int topk,
-                                                           int original_width, int original_height,
-                                                           int model_width, int model_height) {
+AccuracyResult run_hostdecode_accuracy_on_sample_local(const simaai::neat::Sample& sample,
+                                                       const simaai::neat::Model& model,
+                                                       const cv::Mat& img_bgr, const char* label) {
+  std::string decode_note;
+  const auto boxes = run_hostdecode_boxes_on_sample_local(sample, model, img_bgr, &decode_note);
+  return evaluate_migration_box_accuracy_local(boxes, label, decode_note);
+}
+
+simaai::neat::Sample run_standalone_boxdecode_sample_local(
+    const simaai::neat::Sample& stage_input, float score_threshold,
+    float nms_iou_threshold, int topk, int original_width, int original_height,
+    int model_width, int model_height) {
   const auto stage_tensor = first_tensor_in_sample(stage_input);
   require(stage_tensor.has_value(), "postrun_boxdecode: sample missing tensor payload");
-  const std::string boxdecode_name = "matrix_post_boxdecode";
 
   simaai::neat::Graph post;
   post.add(simaai::neat::nodes::Input());
   post.add(simaai::neat::nodes::SimaBoxDecode(
-      simaai::neat::BoxDecodeType::YoloV8, score_threshold, nms_iou_threshold, topk, boxdecode_name,
-      original_width, original_height, model_width, model_height));
+      simaai::neat::BoxDecodeType::YoloV8, score_threshold, nms_iou_threshold, topk,
+      "matrix_post_boxdecode", original_width, original_height, model_width, model_height));
   post.add(simaai::neat::nodes::Output());
 
   simaai::neat::RunOptions run_opt;
@@ -4295,23 +4459,23 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::S
     attempt_opt.startup_preflight = false;
     attempt_opt.input_timeout_ms = pull_timeout_ms;
 
-    auto runner =
-        post.build(simaai::neat::Sample{stage_input}, attempt_opt);
+    auto runner = post.build(simaai::neat::Sample{stage_input}, attempt_opt);
     require(static_cast<bool>(runner), "postrun_boxdecode: runner build failed");
     require(runner.push(simaai::neat::Sample{stage_input}),
             "postrun_boxdecode: runner push failed");
-    simaai::neat::Sample outs;
+    simaai::neat::Sample outputs;
     try {
-      outs = runner.pull_samples(pull_timeout_ms);
+      outputs = runner.pull_samples(pull_timeout_ms);
     } catch (const std::exception& ex) {
       throw std::runtime_error("postrun_boxdecode attempt=" + std::to_string(attempt) +
-                               ": pull failed: " + ex.what() + "\nlast-error:\n" + runner.last_error());
+                               ": pull failed: " + ex.what() +
+                               "\nlast-error:\n" + runner.last_error());
     }
-    require(outs.size() == 1U,
+    require(outputs.size() == 1U,
             "postrun_boxdecode attempt=" + std::to_string(attempt) +
-                ": expected exactly 1 sample, got " + std::to_string(outs.size()) +
+                ": expected exactly 1 sample, got " + std::to_string(outputs.size()) +
                 "\nlast-error:\n" + runner.last_error());
-    return outs.front();
+    return outputs.front();
   };
 
   try {
@@ -4322,9 +4486,10 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::S
     try {
       return run_once(2, retry_timeout_ms);
     } catch (const std::exception& second) {
-      throw std::runtime_error(std::string("postrun_boxdecode: retry failed after initial "
-                                           "standalone decode failure\ninitial: ") +
-                               first.what() + "\nretry: " + second.what());
+      throw std::runtime_error(
+          std::string("postrun_boxdecode: retry failed after initial standalone decode failure\n"
+                      "initial: ") +
+          first.what() + "\nretry: " + second.what());
     }
   }
 }
@@ -4334,8 +4499,6 @@ AccuracyResult run_framework_boxdecode_accuracy(const simaai::neat::Sample& infe
                                                 const cv::Mat& img_bgr,
                                                 BoxDecodeRunMode boxdecode_mode) {
   AccuracyResult out;
-  constexpr float kMinScore = 0.52f;
-  constexpr float kMinIou = 0.30f;
   constexpr int kTopK = 100;
 
   try {
@@ -4354,10 +4517,10 @@ AccuracyResult run_framework_boxdecode_accuracy(const simaai::neat::Sample& infe
       const int model_width = model_w_pref > 0 ? model_w_pref : img_bgr.cols;
       const int model_height = model_h_pref > 0 ? model_h_pref : img_bgr.rows;
       decode_note = "boxdecode=standalone_post_graph";
+      const auto options = canonical_boxdecode_options();
       decoded = run_standalone_boxdecode_sample_local(
-          infer_sample, canonical_boxdecode_options().detection_threshold,
-          canonical_boxdecode_options().nms_iou_threshold, canonical_boxdecode_options().top_k,
-          img_bgr.cols, img_bgr.rows, model_width, model_height);
+          infer_sample, options.detection_threshold, options.nms_iou_threshold,
+          options.top_k, img_bgr.cols, img_bgr.rows, model_width, model_height);
     }
 
     std::vector<uint8_t> payload;
@@ -4367,45 +4530,28 @@ AccuracyResult run_framework_boxdecode_accuracy(const simaai::neat::Sample& infe
 
     const std::vector<objdet::Box> boxes =
         objdet::parse_boxes_strict(payload, img_bgr.cols, img_bgr.rows, kTopK, false);
-    out.parsed_boxes = static_cast<int>(boxes.size());
-    const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
-    const objdet::MatchResult strict =
-        objdet::match_expected_boxes(boxes, expected, kMinScore, kMinIou);
-    if (strict.ok) {
-      out.ok = true;
-      out.note =
-          "framework_boxdecode_ok boxes=" + std::to_string(out.parsed_boxes) + " " + decode_note;
-      return out;
-    }
-
-    float best_person_iou = 0.0f;
-    int person_candidates = 0;
-    for (const auto& box : boxes) {
-      if (box.class_id != 0 || box.score < kMinScore) {
-        continue;
-      }
-      person_candidates += 1;
-      for (const auto& expected_box : expected) {
-        if (expected_box.class_id != 0) {
-          continue;
-        }
-        best_person_iou = std::max(
-            best_person_iou, objdet::box_iou_xyxy(expected_box.x1, expected_box.y1, expected_box.x2,
-                                                  expected_box.y2, box.x1, box.y1, box.x2, box.y2));
-      }
-    }
-    if (person_candidates > 0 && best_person_iou >= 0.25f) {
-      out.ok = true;
-      out.note = "framework_boxdecode_coarse boxes=" + std::to_string(out.parsed_boxes) +
-                 " best_person_iou=" + std::to_string(best_person_iou) +
-                 " strict=" + sima_yolov8_test::sanitize_note(strict.note) + " " + decode_note;
-      return out;
-    }
-
+    return evaluate_migration_box_accuracy_local(
+        boxes, "framework_boxdecode", decode_note);
+  } catch (const std::exception& ex) {
     out.ok = false;
-    out.note = "framework_boxdecode_mismatch " + sima_yolov8_test::sanitize_note(strict.note) +
-               " " + decode_note;
+    out.note = "framework_boxdecode_error=" + sima_yolov8_test::sanitize_note(ex.what());
     return out;
+  }
+}
+
+AccuracyResult run_framework_decoded_boxdecode_accuracy_local(
+    const simaai::neat::Sample& decoded, const cv::Mat& img_bgr, const char* placement_note) {
+  AccuracyResult out;
+  constexpr int kTopK = 100;
+  try {
+    std::vector<uint8_t> payload;
+    std::string err;
+    require(objdet::extract_bbox_payload(decoded, payload, err),
+            "framework boxdecode: failed to extract bbox payload: " + err);
+    const std::vector<objdet::Box> boxes =
+        objdet::parse_boxes_strict(payload, img_bgr.cols, img_bgr.rows, kTopK, false);
+    return evaluate_migration_box_accuracy_local(
+        boxes, "framework_boxdecode", placement_note ? placement_note : "boxdecode=decoded");
   } catch (const std::exception& ex) {
     out.ok = false;
     out.note = "framework_boxdecode_error=" + sima_yolov8_test::sanitize_note(ex.what());

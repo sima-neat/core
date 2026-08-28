@@ -6,19 +6,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <initializer_list>
 #include <optional>
 #include <stdexcept>
 
 namespace simaai::neat::pipeline_internal::sima::stagesemantics {
 namespace {
-
-bool boxdecode_bypass_mla_unpack_enabled() {
-  const char* raw = std::getenv("SIMA_BOXDECODE_BYPASS_MLA_UNPACK");
-  return raw && *raw && std::strcmp(raw, "0") != 0;
-}
 
 bool contract_looks_like_grouped_yolov26(const BoxDecodeStaticContract& contract) {
   if (contract.tensors.empty() || (contract.tensors.size() % 2U) != 0U) {
@@ -916,14 +909,20 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
                                      ? decode_type_option
                                      : contract.decode_type_option;
   if (model_route_flags.has_value()) {
-    const bool direct_packed_superpoint =
-        finalized.decode_type == BoxDecodeType::SuperPoint &&
+    const bool direct_packed_source =
         std::any_of(finalized.tensors.begin(), finalized.tensors.end(), [](const auto& tensor) {
           return tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
                  tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16;
         });
-    if (!boxdecode_bypass_mla_unpack_enabled() && !direct_packed_superpoint) {
+    if (!direct_packed_source) {
       finalized.tess_needed = model_route_flags->tess_needed;
+      finalized.quant_needed = model_route_flags->quant_needed;
+    } else {
+      // The compiler-authored packed source contract means BoxDecode receives
+      // the raw MLA carrier and must run its built-in detess path. A retargeted
+      // route flag may remove the separate Detess node, but must not relabel
+      // these bytes as dense.
+      finalized.tess_needed = true;
       finalized.quant_needed = model_route_flags->quant_needed;
     }
     finalized.quant_contract_required = model_route_flags->quant_contract_required;

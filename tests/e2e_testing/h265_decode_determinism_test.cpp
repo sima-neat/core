@@ -8,6 +8,8 @@
 #include "pipeline/Graph.h"
 #include "test_utils.h"
 
+#include <glib.h>
+
 #include <array>
 #include <cstdint>
 #include <exception>
@@ -16,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -28,6 +31,39 @@ constexpr int kFrameCount = 30;
 constexpr int kQueueDepth = 8;
 constexpr int kPullTimeoutMs = 5000;
 
+constexpr std::array<std::string_view, kFrameCount> kH265GoldenSha256{{
+    "ec6af9d13bfe86c3fea63cc8dc30505db679ac71639a6cb6f59880a22d68fbc5",
+    "008c76630f18a0f9f493dae905308f565ce9138a386ca640db19555f5e14e685",
+    "eb13b5d4fded2262b79320a24f6a3559d01503b3743289f047570c54d583a966",
+    "91a59ce3d09b4576d68d30168fd12b86644f44e5ce6df775d036c83d34bdcb23",
+    "e408e8487a7a29bfd9d077f5d216b8cb87656e7e61c56353c031cfdf814b5e10",
+    "e06a910884773c726341c840217c11d48a7b12bc7bf6979eaee6dde6169dca5b",
+    "67e4db98b4319a59cf3ed95e26a8ca468f95f02c6b677466217039716cf7a208",
+    "3d93f98542ac158480af359f38ed3101d211bee297feb136822a114559b9e53f",
+    "f14c01f133fcd0c385797614eb4562e1a23e54b20ab91ea22d46794b25683cca",
+    "f240de6d25579330a7bfb88b5e5c645e6cf0d45e85ff9df9c8484281c52d1820",
+    "aabdf82ff3d1f26cd335e705f2925744fcb2db87976d8b74c408f80d5b8553c7",
+    "2bf645877bace2bb5ee575dc3222c1b06951ecaa9b324817540b7724635ef0b7",
+    "792dcba71f800f3711b120c2a0728ff3d95d18a0f6464d68a49d358205ba30e8",
+    "60966e9d4231861a9f7069db6c00991e02a6f7e2aa3a04b5c3999f340e42003d",
+    "1ee26515718832477b11640bd8dd54ae638ca6453e42f9400d9996888ed66e2f",
+    "4afe394c055c27808e10fed515aacc9847652f69d15a2771076ae17c4e269285",
+    "ac32e018613f56e05f042c48bef1c8bc93faba88c1c0fbc6c907e1ffc941acbe",
+    "9f2f22f5ebdbac0c7d379e3a19361feb259a498d13c11b87bea4bca48a5f1414",
+    "ca7c027e635607d5b036b7d8cf32695d6c0e87aafaa03b2d685213ed71765ebc",
+    "8b344ea03a7d43768bfba88fc8c07100275c20f7de86707a2077d6b8bc3eb11a",
+    "16eef8217dd291142b4e1d126361ba01ab4947f85f8b15440d0f80b6f7034651",
+    "682279ee8b5d12d953cdc107df1b069fd8d5d8f9e71eab2d65f4fe37cc36593d",
+    "8480ae67c8d9601ea920abc171362602e4429b4fc6c86ec2e475f040567c8ea2",
+    "0c70fd929d99ca6f3e838026a178294fe4173f97b0a4c267126c7f4316be4283",
+    "967c79655b1a7ac2ad913e5f2845b1e6f0a51fcdfe25a6d0fb3598d7893090e5",
+    "fb254a33f94d763d5fbe98541c3e58006c237d4451a12d447be108391d657f8f",
+    "7e3591272c67cf67f4d4e857e12e549b0c100d3fa990837c6a2826cc1cc2684e",
+    "a1e43d4c9aaf4ba66f9f8c39db503d3eaef5385d3cef31f12628ac74b9af52e6",
+    "d67b3720829692572053afa11a38c7c0e1f09df101d607d65fb78f194db5b51d",
+    "cdb2ab4921a783006c1657dd069357e869e762cb3461ea2842a7c2b3aa3d1bc2",
+}};
+
 struct TuningCase {
   const char* name;
   const char* decoder_tuning;
@@ -37,6 +73,7 @@ struct TuningCase {
 struct FrameSignature {
   std::string contract;
   std::uint64_t payload_hash;
+  std::string payload_sha256;
 };
 
 const std::array<TuningCase, 4> kTuningCases{{
@@ -72,6 +109,14 @@ std::uint64_t fnv1a64(const std::vector<std::uint8_t>& bytes) {
     hash *= 1099511628211ULL;
   }
   return hash;
+}
+
+std::string sha256_bytes(const std::vector<std::uint8_t>& bytes) {
+  gchar* digest = g_compute_checksum_for_data(G_CHECKSUM_SHA256, bytes.data(), bytes.size());
+  require(digest != nullptr, "failed to compute decoded payload SHA-256");
+  std::string result(digest);
+  g_free(digest);
+  return result;
 }
 
 simaai::neat::Sample pull_or_throw(simaai::neat::Run& run, const std::string& context) {
@@ -213,7 +258,7 @@ FrameSignature make_signature(const simaai::neat::Sample& sample, const std::str
            << ";height=" << tensor.height() << ";storage=" << static_cast<int>(tensor.storage->kind)
            << ";bytes=" << bytes.size() << ";pts=" << sample.pts_ns << ";dts=" << sample.dts_ns
            << ";duration=" << sample.duration_ns << ";frame_id=" << sample.frame_id;
-  return {contract.str(), fnv1a64(bytes)};
+  return {contract.str(), fnv1a64(bytes), sha256_bytes(bytes)};
 }
 
 std::vector<FrameSignature> decode_once(const TuningCase& tuning,
@@ -253,6 +298,13 @@ std::vector<FrameSignature> decode_once(const TuningCase& tuning,
       const std::string context = std::string(tuning.name) + " run " + std::to_string(run_index) +
                                   " frame " + std::to_string(frame);
       signatures.push_back(make_signature(pull_or_throw(run, context), context));
+      if (std::getenv("SIMA_H265_SIGNATURE_DEBUG") != nullptr) {
+        std::cerr << "[H265-SIGNATURE] tuning=" << tuning.name
+                  << " run=" << run_index << " frame=" << frame
+                  << " fnv1a64=0x" << std::hex << signatures.back().payload_hash
+                  << std::dec << " sha256=" << signatures.back().payload_sha256
+                  << "\n";
+      }
     }
   } catch (...) {
     consumer_error = std::current_exception();
@@ -293,7 +345,15 @@ void require_same_signatures(const std::vector<FrameSignature>& expected,
             context + " frame " + std::to_string(frame) + ": metadata mismatch\nexpected: " +
                 expected[frame].contract + "\nactual:   " + actual[frame].contract);
     require(actual[frame].payload_hash == expected[frame].payload_hash,
-            context + " frame " + std::to_string(frame) + ": NV12 payload hash mismatch");
+            context + " frame " + std::to_string(frame) +
+                ": NV12 payload hash mismatch expected=0x" +
+                [&] { std::ostringstream out; out << std::hex << expected[frame].payload_hash; return out.str(); }() +
+                " actual=0x" +
+                [&] { std::ostringstream out; out << std::hex << actual[frame].payload_hash; return out.str(); }());
+    require(actual[frame].payload_sha256 == expected[frame].payload_sha256,
+            context + " frame " + std::to_string(frame) +
+                ": NV12 payload SHA-256 mismatch expected=" + expected[frame].payload_sha256 +
+                " actual=" + actual[frame].payload_sha256);
   }
 }
 
@@ -303,15 +363,28 @@ int main() {
   try {
     simaai::neat::gst_init_once();
     const std::vector<simaai::neat::Sample> access_units = extract_access_units();
+    const char* const tuning_filter = std::getenv("SIMA_H265_TUNING_FILTER");
 
     std::vector<FrameSignature> automatic_reference;
+    std::size_t tuning_count = 0;
     for (const TuningCase& tuning : kTuningCases) {
+      if (tuning_filter != nullptr && std::string_view(tuning_filter) != tuning.name) {
+        continue;
+      }
+      ++tuning_count;
       const std::vector<FrameSignature> first = decode_once(tuning, access_units, 1);
       const std::vector<FrameSignature> second = decode_once(tuning, access_units, 2);
       require_same_signatures(first, second, std::string(tuning.name) + " repeated run");
 
       if (automatic_reference.empty()) {
         automatic_reference = first;
+        for (std::size_t frame = 0; frame < first.size(); ++frame) {
+          require(first[frame].payload_sha256 == kH265GoldenSha256[frame],
+                  "H.265 frame " + std::to_string(frame) +
+                      " does not match the frozen .1.20 golden");
+          std::cout << "[GOLDEN] codec=h265 frame=" << frame
+                    << " sha256=" << first[frame].payload_sha256 << "\n";
+        }
       } else {
         require_same_signatures(automatic_reference, first,
                                 std::string(tuning.name) + " versus automatic");
@@ -319,6 +392,9 @@ int main() {
       std::cout << "[OK] " << tuning.name << " decoded " << first.size()
                 << " deterministic H.265 frames twice\n";
     }
+    require(tuning_count != 0,
+            std::string("unknown SIMA_H265_TUNING_FILTER: ") +
+                (tuning_filter != nullptr ? tuning_filter : ""));
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "[FAIL] " << error.what() << "\n";

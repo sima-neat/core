@@ -29,6 +29,11 @@ using pipeline_internal::lower_copy;
 
 struct BoxDecodeOptionsInternal {
   int sima_allocator_type = 2;
+  // Bounded terminal input/output lane window.  The standalone default
+  // matches the plugin's compatibility default; model-managed construction
+  // replaces it with the model-authored MLA output-ring depth.  This is an
+  // execution-resource contract, not an application queue depth.
+  int num_buffers = 2;
   bool silent = true;
   bool emit_signals = false;
   bool transmit = false;
@@ -417,6 +422,7 @@ resolve_model_route_flags(const simaai::neat::Model& model,
   }
   flags.quant_contract_required = flags.quant_needed;
   flags.boxdecode_selected = true;
+  flags.terminal_consumer_owns_tensor_tail = true;
   return flags;
 }
 
@@ -561,6 +567,7 @@ static BoxDecodeOptionsInternal options_from_model(
     opt.model_semantics = boxdecode_semantics;
   }
   opt.model_route_flags = resolved_route_flags;
+  opt.num_buffers = model.num_buffers_mla();
   opt.compiled_contract = std::make_shared<const CompiledBoxDecodeContract>(compiled_contract);
   opt.decode_type = compiled_contract.payload.decode_type;
   if (compiled_contract.payload.decode_type_option.has_value()) {
@@ -1135,6 +1142,9 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
 
   ss << " silent=" << (opt_->silent ? "true" : "false");
   ss << " emit-signals=" << (opt_->emit_signals ? "true" : "false");
+  if (opt_->num_buffers > 0) {
+    ss << " num-buffers=" << opt_->num_buffers;
+  }
   if (opt_->sima_allocator_type > 0) {
     ss << " sima-allocator-type=" << opt_->sima_allocator_type;
   }

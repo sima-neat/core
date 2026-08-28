@@ -11,6 +11,7 @@
 
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
+#include "nodes/groups/RtspCodec.h"
 
 #include <memory>
 #include <string>
@@ -36,11 +37,13 @@ public:
    * @param level        H.264 level string (e.g. `"4.0"`).
    */
   H264EncodeSima(int w, int h, int fps, int bitrate_kbps = 4000, std::string profile = "baseline",
-                 std::string level = "4.0");
+                 std::string level = "4.0",
+                 nodes::groups::RtspCodec codec = nodes::groups::RtspCodec::H264);
 
   /// Type label for this Node kind.
   std::string kind() const override {
-    return "H264EncodeSima";
+    return codec_ == nodes::groups::RtspCodec::H265 ? "H265EncodeSima"
+                                                     : "H264EncodeSima";
   }
   /// Whether the Node negotiates static or dynamic caps.
   NodeCapsBehavior caps_behavior() const override {
@@ -78,6 +81,10 @@ public:
   const std::string& level() const {
     return level_;
   }
+  /// Configured hardware codec.
+  nodes::groups::RtspCodec codec() const {
+    return codec_;
+  }
 
 private:
   int w_ = 0;
@@ -87,6 +94,7 @@ private:
   int bitrate_kbps_ = 4000;
   std::string profile_ = "baseline";
   std::string level_ = "4.0";
+  nodes::groups::RtspCodec codec_ = nodes::groups::RtspCodec::H264;
 };
 
 } // namespace simaai::neat
@@ -96,6 +104,11 @@ namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> H264EncodeSima(int w, int h, int fps, int bitrate_kbps = 4000,
                                                    std::string profile = "baseline",
                                                    std::string level = "4.0");
+
+/// Codec-selecting hardware encoder factory; reuses the same `neatencoder` path.
+std::shared_ptr<simaai::neat::Node>
+VideoEncodeSima(groups::RtspCodec codec, int w, int h, int fps, int bitrate_kbps = 4000,
+                std::string profile = "baseline", std::string level = "4.0");
 
 /// Software H.264 encoder factory — picks `x264enc`/`openh264enc`/`avenc_h264` at runtime.
 std::shared_ptr<simaai::neat::Node> H264EncodeSW(int bitrate_kbps = 4000);

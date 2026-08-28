@@ -8,6 +8,7 @@
 #include "ExecutionGraphRuntime.h"
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 #include "pipeline/internal/HolderLoanGate.h"
 

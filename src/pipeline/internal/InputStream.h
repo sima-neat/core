@@ -100,6 +100,11 @@ struct InputStreamOptions {
   // constructed in the required memory placement; set
   // SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 for legacy compatibility.
   bool require_device_visible_input = false;
+  // True only for a compiler-authored ingress operation whose semantics are
+  // the one SystemMemory -> device-visible materialization. It disables
+  // holder passthrough and uses the prepared InputStream pool/copy path; this
+  // is not an environment-controlled compatibility fallback.
+  bool materialize_device_visible_input = false;
   // Core-authored transport intent captured at graph construction. The push
   // path passes this value explicitly to envelope/materialization helpers.
   pipeline_internal::MemoryBackendPolicy memory_backend_policy =

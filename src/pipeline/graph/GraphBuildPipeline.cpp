@@ -1001,6 +1001,19 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
     simaai::neat::session_test::record_rendered_manifest(manifest);
     const auto pipeline_elements =
         pipeline_internal::sima::parse_pipeline_elements(build.pipeline_string);
+    // Validate the C++ bridge boundary before constructing any object across
+    // it.  A late check cannot protect move-assignment/destruction when the two
+    // sides were built from different prepared-runtime layouts.
+    if (std::string abi_error = validate_prepared_runtime_bridge_abi(); !abi_error.empty()) {
+      gst_object_unref(pipeline);
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build") +
+              ": failed to attach sima prepared runtime context: " + abi_error,
+          "Use a libneatpreparedruntimebridge.so built from the same source/runtime package as "
+          "libsima_neat.so.",
+          build.pipeline_string);
+    }
     dump_mla_contract_debug(manifest, where);
     if (env_bool("SIMA_MANIFEST_DEBUG", false)) {
       const std::string manifest_json = serialize_manifest_json(manifest);
@@ -1033,16 +1046,6 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
           std::string(where ? where : "Graph::build") +
               ": failed to build sima prepared runtime context: " + prepared_error,
           prepared_runtime_failure_hint(prepared_error), build.pipeline_string);
-    }
-    if (std::string abi_error = validate_prepared_runtime_bridge_abi(); !abi_error.empty()) {
-      gst_object_unref(pipeline);
-      session_build_throw_session_error_simple(
-          error_codes::kPipelineShape,
-          std::string(where ? where : "Graph::build") +
-              ": failed to attach sima prepared runtime context: " + abi_error,
-          "Use a libneatpreparedruntimebridge.so built from the same source/runtime package as "
-          "libsima_neat.so.",
-          build.pipeline_string);
     }
     std::string attach_prepared_error;
     if (!simaai::neat::attach_prepared_runtime_context(pipeline, std::move(*prepared_runtime),

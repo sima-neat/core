@@ -13,6 +13,7 @@
 #include "test_main.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <memory>
@@ -340,42 +341,6 @@ make_pre_and_post_cast_contract_for_exact_name_regression() {
 }
 
 simaai::neat::pipeline_internal::sima::MpkContract
-make_dequant_second_mla_output_contract_for_routing_regression() {
-  using simaai::neat::pipeline_internal::sima::MpkContract;
-  using simaai::neat::pipeline_internal::sima::MpkContractEdge;
-  using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
-  using simaai::neat::pipeline_internal::sima::MpkQuantContract;
-
-  MpkPluginIoContract mla;
-  mla.name = "MLA_0";
-  mla.processor = "MLA";
-  mla.kernel = "mla";
-  mla.sequence = 0;
-  mla.output_tensors = {
-      make_test_tensor("ofm0", "INT8", {1, 1, 4}, 4U),
-      make_test_tensor("ofm1", "INT8", {1, 1, 8}, 8U),
-  };
-
-  MpkPluginIoContract dequant;
-  dequant.name = "dequantize_1";
-  dequant.processor = "EV74";
-  dequant.kernel = "dequantization_transform";
-  dequant.sequence = 1;
-  dequant.canonical_input_dtype = "INT8";
-  dequant.canonical_output_dtype = "FP32";
-  dequant.input_tensors = {make_test_tensor("ofm1", "INT8", {1, 1, 8}, 8U)};
-  dequant.output_tensors = {make_test_tensor("head1", "FP32", {1, 1, 8}, 32U)};
-  dequant.quant = MpkQuantContract{{0.25}, {-3}, -1};
-
-  MpkContract contract;
-  contract.plugins = {mla, dequant};
-  contract.edges = {
-      MpkContractEdge{0U, 1, 1U, 0, "MLA_0", "dequantize_1", "ofm1"},
-  };
-  return contract;
-}
-
-simaai::neat::pipeline_internal::sima::MpkContract
 make_rank_aware_detessdequant_contract(const std::vector<std::int64_t>& frame_shape,
                                        const std::string& input_dtype,
                                        const std::string& output_dtype) {
@@ -602,6 +567,37 @@ RUN_TEST(
     "unit_contract_compiler_processcvu_test", ([] {
       using namespace simaai::neat;
       using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
+
+      {
+        struct PhysicalIdentityCase {
+          int graph_id;
+          const char* graph_family;
+        };
+        constexpr std::array<PhysicalIdentityCase, 4U> cases{{
+            {224, "casttess"},
+            {225, "detesscast"},
+            {226, "quanttess"},
+            {227, "detessdequant"},
+        }};
+        for (const auto& identity_case : cases) {
+          CompiledProcessCvuContract physical;
+          physical.payload.graph_id = identity_case.graph_id;
+          physical.payload.graph_name = identity_case.graph_family;
+          physical.payload.graph_family = identity_case.graph_family;
+          physical.runtime_contract.plugin_kind = "processcvu";
+          const std::string identity =
+              "physical_cvu_cohort_1_" + std::to_string(identity_case.graph_id);
+          CompiledNodeContract compiled;
+          std::string error;
+          require(build_processcvu_node_contract(
+                      "PhysicalProcessCvu", identity, identity, NodeContractDefinition{}, physical,
+                      &compiled, &error),
+                  "strict physical ProcessCVU identity fixture must compile: " + error);
+          require(compiled.element_name == identity && compiled.logical_stage_id == identity,
+                  "graphs 224-227 must preserve the exact caller-authored physical element and "
+                  "stage identity");
+        }
+      }
 
       {
         pipeline_internal::sima::ProcessCvuStagePayload preproc;
@@ -871,6 +867,11 @@ RUN_TEST(
       }
 
       auto node = nodes::Preproc(make_preproc_options());
+      require(dynamic_cast<const simaai::neat::Preproc*>(node.get()) != nullptr &&
+                  dynamic_cast<const simaai::neat::Preproc*>(node.get())
+                      ->options()
+                      .model_managed_contract,
+              "preproc fixture must retain model-managed ownership");
       std::vector<std::shared_ptr<Node>> nodes_to_compile = {node};
       pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
       ContractCompileInput input;
@@ -888,6 +889,18 @@ RUN_TEST(
       const auto& processcvu = *compiled.stages.front().processcvu;
       require(processcvu.runtime_contract.logical_inputs.size() == 1U,
               "preproc runtime contract should expose one logical input");
+      require(processcvu.payload.output_shapes.size() == 2U &&
+                  std::all_of(processcvu.payload.output_shapes.begin(),
+                              processcvu.payload.output_shapes.end(), [](const auto& shape) {
+                                return shape == std::vector<int>({640, 640, 3});
+                              }) &&
+                  processcvu.payload.runtime_output_logical_shapes.size() == 2U &&
+                  processcvu.payload.runtime_output_logical_shapes[0] ==
+                      std::vector<int>({1, 640, 640, 3}) &&
+                  processcvu.payload.runtime_output_logical_shapes[1] ==
+                      std::vector<int>({1, 640, 640, 3}),
+              "compiled model-managed preproc payload must separate HWC hardware geometry from "
+              "NHWC runtime semantics");
       // Runtime contract publishes both rgb and tess outputs; the exposed view
       // narrows to the selected tessellated handoff.
       const auto tess_runtime_it =
@@ -897,8 +910,8 @@ RUN_TEST(
                        });
       require(tess_runtime_it != processcvu.runtime_contract.logical_outputs.end(),
               "preproc runtime contract should preserve the tessellated handoff name");
-      require(tess_runtime_it->shape == std::vector<std::int64_t>({640, 640, 3}),
-              "preproc tessellated handoff should preserve the semantic output shape");
+      require(tess_runtime_it->shape == std::vector<std::int64_t>({1, 640, 640, 3}),
+              "model-managed preproc should publish the exact batched semantic output shape");
       require(tess_runtime_it->size_bytes == 640U * 640U * 3U,
               "preproc tessellated handoff should preserve the packed MLA ingress byte size");
       {
@@ -939,6 +952,18 @@ RUN_TEST(
 
       const auto direct_inputs =
           build_processcvu_compile_inputs_from_options(make_preproc_options());
+      require(direct_inputs.payload.output_shapes.size() == 2U &&
+                  std::all_of(direct_inputs.payload.output_shapes.begin(),
+                              direct_inputs.payload.output_shapes.end(), [](const auto& shape) {
+                                return shape == std::vector<int>({640, 640, 3});
+                              }),
+              "graph-200 physical output geometry must remain HWC");
+      require(direct_inputs.payload.runtime_output_logical_shapes.size() == 2U &&
+                  direct_inputs.payload.runtime_output_logical_shapes[0] ==
+                      std::vector<int>({1, 640, 640, 3}) &&
+                  direct_inputs.payload.runtime_output_logical_shapes[1] ==
+                      std::vector<int>({1, 640, 640, 3}),
+              "model-managed preproc must author one exact batch axis for every runtime output");
       require(direct_inputs.payload.primary_output_name == direct_inputs.facts.primary_output_name,
               "direct preproc compile inputs should preserve primary output selection");
       require(!direct_inputs.facts.published_output_names.empty() &&
@@ -965,6 +990,8 @@ RUN_TEST(
           [](const auto& output) { return output.logical_name == "output_tessellated_image"; });
       require(direct_tess_it != direct_inputs.facts.outputs.end(),
               "direct preproc compile inputs should preserve the tessellated runtime output");
+      require(direct_tess_it->shape == std::vector<std::int64_t>({1, 640, 640, 3}),
+              "direct preproc facts must retain the model batch axis");
       require(direct_tess_it->representation == ProcessCvuOutputRepresentation::PackedBlob,
               "direct preproc compile inputs should keep packed MLA handoff semantics");
       require(direct_tess_it->size_bytes == 640U * 640U * 3U,
@@ -1013,6 +1040,25 @@ RUN_TEST(
           "shared processcvu compiled-contract adapter should preserve tessellated runtime output");
       require(direct_compiled_tess_it->size_bytes == tess_runtime_it->size_bytes,
               "shared processcvu compiled-contract adapter should preserve packed handoff bytes");
+
+      {
+        auto standalone_options = make_preproc_options();
+        standalone_options.model_managed_contract = false;
+        const auto standalone_inputs =
+            build_processcvu_compile_inputs_from_options(standalone_options);
+        require(standalone_inputs.payload.output_shapes.size() == 2U &&
+                    std::all_of(standalone_inputs.payload.output_shapes.begin(),
+                                standalone_inputs.payload.output_shapes.end(),
+                                [](const auto& shape) {
+                                  return shape == std::vector<int>({640, 640, 3});
+                                }) &&
+                    standalone_inputs.payload.runtime_output_logical_shapes.size() == 2U &&
+                    standalone_inputs.payload.runtime_output_logical_shapes[0] ==
+                        std::vector<int>({640, 640, 3}) &&
+                    standalone_inputs.payload.runtime_output_logical_shapes[1] ==
+                        std::vector<int>({640, 640, 3}),
+                "standalone preproc must preserve its existing unbatched HWC contract");
+      }
 
       {
         auto unsupported = make_preproc_options();
@@ -1434,30 +1480,6 @@ RUN_TEST(
                 "post-cast contract should preserve the first post-MLA head shape");
         require(cast_compiled.runtime_contract.logical_outputs.size() == 2U,
                 "post-cast contract should expose both routed output heads");
-      }
-
-      {
-        const auto dequant_contract =
-            make_dequant_second_mla_output_contract_for_routing_regression();
-        const auto dequant_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
-            dequant_contract, simaai::neat::internal::ExecutionStageKind::Dequant);
-
-        require(dequant_compiled.runtime_contract.logical_inputs.size() == 1U,
-                "split dequant regression should compile one routed input");
-        require(dequant_compiled.runtime_contract.input_bindings.size() == 1U,
-                "split dequant regression should compile one input binding");
-        require(dequant_compiled.runtime_contract.physical_inputs.size() == 1U,
-                "split dequant regression should keep local physical inputs compact");
-        require(dequant_compiled.runtime_contract.logical_inputs.front().segment_name == "ofm1",
-                "split dequant regression should bind to the consumed non-first MLA output");
-        require(dequant_compiled.runtime_contract.logical_inputs.front().physical_index == 0,
-                "split dequant regression should use a compact local physical input index");
-        require(dequant_compiled.runtime_contract.input_bindings.front().source_segment_name ==
-                    "ofm1",
-                "split dequant regression should route from the consumed MLA segment");
-        require(
-            dequant_compiled.runtime_contract.input_bindings.front().src_physical_output_index == 1,
-            "split dequant regression should bind to the consumed physical MLA output");
       }
 
       // The rank-aware detess/detessdequant projection sub-tests previously

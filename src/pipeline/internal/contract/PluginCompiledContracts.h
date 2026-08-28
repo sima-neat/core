@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
 #include <optional>
 #include <string>
@@ -24,6 +25,13 @@ struct CompiledRuntimeContract {
   std::uint64_t frame_arena_size_bytes = 0;
   pipeline_internal::sima::FrameArenaRole frame_arena_role =
       pipeline_internal::sima::FrameArenaRole::None;
+  pipeline_internal::sima::static_contract::ArenaStorageDomain frame_arena_storage_domain =
+      pipeline_internal::sima::static_contract::ArenaStorageDomain::Unknown;
+  pipeline_internal::sima::static_contract::ArenaAllocationProvenance frame_arena_provenance =
+      pipeline_internal::sima::static_contract::ArenaAllocationProvenance::Unknown;
+  std::uint32_t frame_arena_required_device_access = 0U;
+  pipeline_internal::sima::static_contract::ArenaEscapePolicy frame_arena_escape_policy =
+      pipeline_internal::sima::static_contract::ArenaEscapePolicy::InternalOnly;
   // Mirrors MlaStaticContract::consumer_keeps_distinct_physical_inputs. True
   // when the stage's compiled binary expects N>1 distinct physical input
   // segments (native multi-IFM dispatch). Used downstream to gate
@@ -45,6 +53,8 @@ struct CompiledProcessCvuContract {
   pipeline_internal::sima::ProcessCvuStagePayload payload;
   CompiledRuntimeContract runtime_contract;
   CompiledExposedView exposed_view;
+  std::optional<pipeline_internal::sima::static_contract::PhysicalCommandRole>
+      physical_command_role;
   bool preproc_single_output_handoff = false;
 };
 

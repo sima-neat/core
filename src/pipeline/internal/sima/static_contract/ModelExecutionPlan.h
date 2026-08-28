@@ -17,6 +17,7 @@ namespace simaai::neat::pipeline_internal::sima::static_contract {
 
 using ValueId = std::uint32_t;
 using OpId = std::uint32_t;
+using CarrierId = std::uint32_t;
 using TensorShape = std::vector<std::int64_t>;
 
 enum class ValueRepresentation {
@@ -42,6 +43,38 @@ struct ReadExpression {
   std::vector<std::int64_t> stride_bytes;
 };
 
+enum class StorageBindingKind {
+  External,
+  Root,
+  View,
+};
+
+enum class StorageAccess {
+  ReadOnly,
+  WriteOnly,
+  ReadWrite,
+};
+
+// Target-physical storage identity is independent of logical ValueId. Several
+// semantic values may bind disjoint or aliased spans of one carrier; the arena
+// allocates the carrier once.
+struct StorageBinding {
+  StorageBindingKind kind = StorageBindingKind::Root;
+  CarrierId carrier_id = 0;
+  std::uint64_t byte_offset = 0;
+  std::uint64_t physical_span = 0;
+  std::vector<std::int64_t> stride_bytes;
+  StorageAccess access = StorageAccess::ReadWrite;
+  std::optional<ValueId> source_value_id;
+};
+
+struct CarrierSpec {
+  CarrierId id = 0;
+  std::uint64_t required_bytes = 0;
+  std::size_t required_alignment_bytes = 0;
+  ValueRepresentation representation = ValueRepresentation::Dense;
+};
+
 struct ValueSpec {
   ValueId id = 0;
   std::string name;
@@ -51,7 +84,10 @@ struct ValueSpec {
   std::optional<std::string> logical_layout;
   std::vector<QuantizationSpec> quantization;
   ValueRepresentation representation = ValueRepresentation::Dense;
+  // Stock-AFE normalization initially expresses exact views this way;
+  // create() lowers them into the single carrier/storage-binding model.
   std::optional<ReadExpression> read_expression;
+  std::optional<StorageBinding> storage_binding;
 };
 
 enum class OpKind {
@@ -97,13 +133,41 @@ struct PackComponentPlacement {
   std::uint64_t stored_bytes = 0;
 };
 
+struct PackSpan {
+  ValueId value_id = 0;
+  std::uint32_t batch_index = 0;
+  std::uint64_t source_byte_offset = 0;
+  std::uint64_t parent_offset = 0;
+  std::uint64_t logical_bytes = 0;
+  std::uint64_t stored_bytes = 0;
+  std::string padding_policy;
+};
+
 struct PackOpConfig {
+  // Frozen batch-one direct-placement adapter. New contracts use spans.
   std::vector<PackComponentPlacement> components;
+  std::uint32_t batch_count = 1;
+  std::uint64_t parent_required_bytes = 0;
+  std::vector<PackSpan> spans;
+  bool materializes = false;
+};
+
+struct HostTensorTypeSpec {
+  std::string scalar;
+  TensorShape shape;
+
+  bool operator==(const HostTensorTypeSpec&) const = default;
 };
 
 struct MlaOpConfig {
   std::string executable;
   std::int64_t number_of_quads = 0;
+  // Stock AFE 2.1 physical-port type facts. They describe logical values at
+  // the MLA boundary; the ELF remains authority only for IFM/OFM topology.
+  std::vector<HostTensorTypeSpec> input_types;
+  std::vector<HostTensorTypeSpec> output_types;
+  std::uint64_t executable_bytes = 0;
+  std::string executable_sha256;
 };
 
 struct UnpackOpConfig {
@@ -137,11 +201,6 @@ struct DequantizeOpConfig {
   std::vector<QuantizationSpec> channel_params;
 };
 
-struct HostTensorTypeSpec {
-  std::string scalar;
-  TensorShape shape;
-};
-
 // Exact AFE host-module contract.  The runtime loads `executable` once and
 // binds these ordered DLTensor ports directly to the frame arena.  There is no
 // dispatcher/config-manager interpretation and no staging tensor.
@@ -153,6 +212,12 @@ struct HostTvmOpConfig {
   // -1 means a materialized graph-executor output.  Otherwise the output is
   // the exact compiler-authored __nop view of this input port.
   std::vector<std::int32_t> output_alias_input;
+  // TVM GraphExecutor lists linked constants alongside external inputs as
+  // null/arg nodes. The compiler authors this disjoint set explicitly; these
+  // names are never bound from the frame arena.
+  std::vector<std::string> linked_parameter_names;
+  std::uint64_t executable_bytes = 0;
+  std::string executable_sha256;
 };
 
 struct PassThroughOpConfig {};
@@ -171,6 +236,9 @@ struct OpSpec {
   // Exact registry token. MLA uses the explicitly registered empty token
   // because its legacy MPK entry has no config_params.kernel member.
   std::string kernel;
+  std::string implementation_id;
+  std::uint32_t implementation_abi_version = 0;
+  std::vector<OpId> dependencies;
   std::vector<ValueId> inputs;
   std::vector<ValueId> outputs;
   std::vector<TensorShape> input_shapes;
@@ -193,7 +261,9 @@ struct BackendPortSpec {
   std::size_t port_index = 0;
   std::string elf_symbol;
   ValueId value_id = 0;
-  std::uint64_t required_bytes = 0;
+  // Exact compiler-authored physical address extent for this backend port.
+  // ValueSpec::required_bytes remains the logical tensor byte count.
+  std::uint64_t physical_extent_bytes = 0;
   std::size_t required_alignment_bytes = 0;
   BackendPortAlignmentAuthority alignment_authority = BackendPortAlignmentAuthority::Contract;
   BackendPortAccess access = BackendPortAccess::ReadOnly;
@@ -228,6 +298,7 @@ struct ModelOutputSpec {
 struct ModelExecutionPlanData {
   std::string contract_version;
   std::vector<ValueSpec> values;
+  std::vector<CarrierSpec> carriers;
   std::vector<ValueId> model_inputs;
   std::vector<OpSpec> ops;
   std::vector<BackendPortSpec> backend_ports;
@@ -243,6 +314,7 @@ public:
 
   const std::string& contract_version() const noexcept;
   const std::vector<ValueSpec>& values() const noexcept;
+  const std::vector<CarrierSpec>& carriers() const noexcept;
   const std::vector<ValueId>& model_inputs() const noexcept;
   const std::vector<OpSpec>& ops() const noexcept;
   const std::vector<BackendPortSpec>& backend_ports() const noexcept;
@@ -255,6 +327,7 @@ public:
                                                  BackendPortDirection direction) const noexcept;
   const std::vector<ModelOutputSpec>& model_outputs() const noexcept;
   const ValueSpec* value(ValueId id) const noexcept;
+  const CarrierSpec* carrier(CarrierId id) const noexcept;
 
 private:
   explicit ModelExecutionPlan(std::shared_ptr<const ModelExecutionPlanData> data);

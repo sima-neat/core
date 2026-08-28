@@ -1,6 +1,7 @@
 #include "DecoderAdmission.h"
 
 #include "builder/OutputSpec.h"
+#include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/internal/EnvUtil.h"
 
@@ -174,11 +175,12 @@ bool nodes_require_packed_decoder_output(std::span<const std::shared_ptr<Node>> 
       continue;
     }
     const std::string kind = nodes[i]->kind();
-    if (kind == "VideoSenderRawIngress[direct_nv12]") {
+    if (kind == nodes::groups::internal::kVideoSenderRawIngressDirectKind ||
+        kind == nodes::groups::internal::kVideoSenderRawIngressMaterializeKind) {
       layout_aware_encoder_ingress = true;
-    } else if (kind == "VideoSenderRawIngress[convert_to_nv12]") {
+    } else if (kind == nodes::groups::internal::kVideoSenderRawIngressConvertKind) {
       return true;
-    } else if (kind == "H264EncodeSima") {
+    } else if (kind == "H264EncodeSima" || kind == "H265EncodeSima") {
       if (!layout_aware_encoder_ingress) {
         return true;
       }

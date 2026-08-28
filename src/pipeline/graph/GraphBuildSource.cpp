@@ -3232,7 +3232,8 @@ BuildResult build_fused_realtime_source_pipeline(
     ss << " ! " << mux_name << ".sink_" << branch_index;
   }
 
-  br.diag->pipeline_string = ss.str();
+  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(
+      session_build_select_terminal_objectdecode_cpu_visibility(ss.str()));
   br.pipeline_string = br.diag->pipeline_string;
   return br;
 }

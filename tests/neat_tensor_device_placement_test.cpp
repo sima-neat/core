@@ -1,7 +1,6 @@
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
-#include "pipeline/internal/SimaaiMemory.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "gst/GstInit.h"
@@ -18,40 +17,6 @@
 #include <string>
 #include <vector>
 
-#if SIMA_HAS_SIMAAI_POOL
-static void free_pool(GstBufferPool* pool) {
-  if (pool) {
-    gst_simaai_free_buffer_pool(pool);
-  }
-}
-
-static std::unique_ptr<GstBufferPool, void (*)(GstBufferPool*)>
-make_pool(const std::vector<simaai::neat::Segment>& segments, GstMemoryFlags flags) {
-  gst_simaai_segment_memory_init_once();
-  std::vector<gsize> sizes;
-  std::vector<const char*> names;
-  sizes.reserve(segments.size());
-  names.reserve(segments.size());
-  for (const auto& seg : segments) {
-    sizes.push_back(static_cast<gsize>(seg.size_bytes));
-    names.push_back(seg.name.c_str());
-  }
-  GstBufferPool* pool = gst_simaai_allocate_buffer_pool2(
-      /*object=*/nullptr, gst_simaai_memory_get_segment_allocator(),
-      /*min_buffers=*/1,
-      /*max_buffers=*/1, flags, static_cast<gsize>(segments.size()), sizes.data(), names.data());
-  return std::unique_ptr<GstBufferPool, void (*)(GstBufferPool*)>(pool, free_pool);
-}
-
-static GstBuffer* acquire_buffer(GstBufferPool* pool) {
-  if (!pool)
-    return nullptr;
-  GstBuffer* buf = nullptr;
-  if (gst_buffer_pool_acquire_buffer(pool, &buf, nullptr) != GST_FLOW_OK)
-    return nullptr;
-  return buf;
-}
-
 static void add_sima_meta(GstBuffer* buffer) {
   if (!gst_meta_get_info("GstSimaMeta")) {
     static const gchar* tags[] = {nullptr};
@@ -67,13 +32,13 @@ static void add_sima_meta(GstBuffer* buffer) {
                     static_cast<guint64>(123), "pcie-buffer-id", G_TYPE_INT64,
                     static_cast<gint64>(99), nullptr);
 }
-#endif
 
 int main() {
   try {
-#if !SIMA_HAS_SIMAAI_POOL
-    require(false, "tensor_device_placement_test requires simaai buffer pool");
-#else
+    // The Modalix MLA architecture allocates DMS storage from the DMA heap and imports the
+    // resulting DMA-BUF. Select that architecture before the process-wide policy is read.
+    require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
+            "failed to select DMA-BUF memory backend");
     simaai::neat::gst_init_once();
 
     std::vector<simaai::neat::Segment> segments = {
@@ -81,37 +46,42 @@ int main() {
         {"seg1", 32},
     };
 
-    GstCaps* caps = gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING,
-                                        "UINT8", "width", G_TYPE_INT, 8, "height", G_TYPE_INT, 12,
-                                        "depth", G_TYPE_INT, 1, nullptr);
-    require(caps != nullptr, "failed to create caps");
+    auto seed_storage = simaai::neat::make_cpu_owned_storage(96);
+    simaai::neat::Tensor seed;
+    seed.storage = seed_storage;
+    seed.dtype = simaai::neat::TensorDType::UInt8;
+    seed.shape = {96};
+    seed.strides_bytes = {1};
+    seed.layout = simaai::neat::TensorLayout::Unknown;
+    seed.device = {simaai::neat::DeviceType::CPU, 0};
+    seed.read_only = false;
 
-    auto pool_ev74 =
-        make_pool(segments, static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74 |
-                                                        GST_SIMAAI_MEMORY_FLAG_CACHED));
-    GstBuffer* ev74_buf = acquire_buffer(pool_ev74.get());
-    require(ev74_buf != nullptr, "EV74 buffer allocation failed");
+    simaai::neat::Tensor t_ev74 = simaai::neat::pipeline_internal::transfer_to_device(
+        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr,
+        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+    auto* ev74_sample = static_cast<GstSample*>(t_ev74.storage->holder.get());
+    GstBuffer* ev74_buf = ev74_sample ? gst_sample_get_buffer(ev74_sample) : nullptr;
+    require(ev74_buf != nullptr, "missing EV74 DMA-BUF");
+    require(gst_buffer_n_memory(ev74_buf) == 1U &&
+                gst_is_dmabuf_memory(gst_buffer_peek_memory(ev74_buf, 0U)),
+            "EV74 placement must use standard DMA-BUF memory");
     add_sima_meta(ev74_buf);
-    GstSample* sample_ev74 = gst_sample_new(ev74_buf, gst_caps_ref(caps), nullptr, nullptr);
-    require(sample_ev74 != nullptr, "failed to create EV74 sample");
-    simaai::neat::Tensor t_ev74 = simaai::neat::from_gst_sample(sample_ev74);
-    gst_sample_unref(sample_ev74);
     require(t_ev74.device.type == simaai::neat::DeviceType::SIMA_CVU, "EV74 device mismatch");
     require(t_ev74.device.id == 0, "EV74 device id mismatch");
 
-    auto pool_dms0 =
-        make_pool(segments, static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_DMS0 |
-                                                        GST_SIMAAI_MEMORY_FLAG_CACHED));
-    GstBuffer* dms_buf = acquire_buffer(pool_dms0.get());
-    require(dms_buf != nullptr, "DMS0 buffer allocation failed");
-    GstSample* sample_dms = gst_sample_new(dms_buf, gst_caps_ref(caps), nullptr, nullptr);
-    require(sample_dms != nullptr, "failed to create DMS0 sample");
-    simaai::neat::Tensor t_dms = simaai::neat::from_gst_sample(sample_dms);
-    gst_sample_unref(sample_dms);
+    simaai::neat::Tensor t_dms = simaai::neat::pipeline_internal::transfer_to_device(
+        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments, nullptr,
+        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
     require(t_dms.device.type == simaai::neat::DeviceType::SIMA_MLA, "DMS0 device mismatch");
     require(t_dms.device.id == 0, "DMS0 device id mismatch");
 
-    gst_caps_unref(caps);
+    GstBuffer* dms_buf =
+        simaai::neat::pipeline_internal::buffer_from_tensor_holder(t_dms.storage->holder);
+    require(dms_buf != nullptr, "missing DMS DMA-BUF");
+    require(gst_buffer_n_memory(dms_buf) == 1U &&
+                gst_is_dmabuf_memory(gst_buffer_peek_memory(dms_buf, 0U)),
+            "MLA placement must use the DMS DMA heap");
+    gst_buffer_unref(dms_buf);
 
     auto cpu_storage = simaai::neat::make_cpu_owned_storage(96);
     simaai::neat::Tensor cpu;
@@ -131,11 +101,8 @@ int main() {
     require(mla_force.device.type == simaai::neat::DeviceType::SIMA_MLA && mla_force.device.id == 0,
             "mla(true) should yield DMS0");
 
-    require(static_cast<bool>(t_ev74.storage), "missing EV74 storage");
-    t_ev74.storage->sima_segments = segments;
-
+    const auto stats_before = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
     simaai::neat::Tensor dms_copy = t_ev74.mla(true);
-    auto stats_mid = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
 
     GstBuffer* out_buf =
         simaai::neat::pipeline_internal::buffer_from_tensor_holder(dms_copy.storage->holder);
@@ -150,19 +117,23 @@ int main() {
     const gchar* out_name = gst_structure_get_string(meta_s, "buffer-name");
     require(out_name && std::string(out_name) == "unit-test", "meta buffer-name mismatch");
 
-    GstMemory* mem = gst_buffer_peek_memory(out_buf, 0);
-    require(mem != nullptr, "missing output memory");
-    for (const auto& seg : segments) {
-      void* ptr = gst_simaai_memory_get_segment(mem, seg.name.c_str());
-      require(ptr != nullptr, "missing output segment");
-    }
+    require(gst_buffer_n_memory(out_buf) == 1U &&
+                gst_is_dmabuf_memory(gst_buffer_peek_memory(out_buf, 0U)),
+            "MLA transfer must preserve standard DMA-BUF storage");
+    require(dms_copy.storage->sima_segments.size() == 2U &&
+                dms_copy.storage->sima_segments[0].name == "seg0" &&
+                dms_copy.storage->sima_segments[0].size_bytes == 64U &&
+                dms_copy.storage->sima_segments[1].name == "seg1" &&
+                dms_copy.storage->sima_segments[1].size_bytes == 32U,
+            "MLA transfer lost logical segment metadata");
     gst_buffer_unref(out_buf);
 
     simaai::neat::Tensor dms_copy2 = t_ev74.mla(true);
     require(dms_copy2.device.type == simaai::neat::DeviceType::SIMA_MLA,
             "second transfer should stay on MLA");
     auto stats_after = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
-    require(stats_after.hits > stats_mid.hits, "expected pool cache hit");
+    require(stats_after.hits == stats_before.hits && stats_after.misses == stats_before.misses,
+            "strict DMA-BUF placement must bypass the legacy segmented pool cache");
 
     // The strict driver-mode placement uses the same public Tensor API but
     // must produce ordinary GstDmaBufMemory from the CMA heap. It must not
@@ -278,7 +249,6 @@ int main() {
 
     std::cout << "[OK] tensor_device_placement_test passed\n";
     return 0;
-#endif
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";
     return 1;

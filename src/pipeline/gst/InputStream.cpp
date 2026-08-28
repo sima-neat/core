@@ -16,7 +16,9 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/TensorAdapters.h"
 #include "nodes/io/Input.h"
+#include "simaai/neat/internal/dmabuf/DmaBuf.h"
 
+#include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
@@ -45,6 +47,66 @@
 namespace simaai::neat {
 using pipeline_internal::trim_copy;
 using pipeline_internal::upper_copy;
+
+SampleSpec device_visible_nv12_materialization_spec_or_throw(
+    const SampleSpec& source, const char* where) {
+  const char* tag = where ? where : "NV12 materialization";
+  if (source.kind != SampleMediaKind::RawVideo ||
+      upper_copy(source.format) != "NV12" || source.width <= 0 ||
+      source.height <= 0 || (source.width & 1) != 0 ||
+      (source.height & 1) != 0) {
+    throw std::invalid_argument(std::string(tag) +
+                                ": requires positive even NV12 geometry");
+  }
+
+  // Allegro's raster source-buffer contract rounds the 8-bit luma pitch to
+  // 64 bytes and the storage height to 8 lines. SourceBufferChecker enforces
+  // these spans before AL_Encoder_Process. Keep this policy at the one
+  // compiler-authored materialization boundary; producer-owned SimaAI buffers
+  // retain their authoritative GstVideoMeta instead.
+  constexpr std::size_t kPitchAlignment = 64U;
+  constexpr std::size_t kHeightAlignment = 8U;
+  const auto checked_align = [tag](std::size_t value, std::size_t alignment,
+                                   const char* field) {
+    if (value > std::numeric_limits<std::size_t>::max() - (alignment - 1U)) {
+      throw std::overflow_error(std::string(tag) + ": " + field +
+                                " alignment overflow");
+    }
+    return (value + alignment - 1U) / alignment * alignment;
+  };
+  const std::size_t width = static_cast<std::size_t>(source.width);
+  const std::size_t height = static_cast<std::size_t>(source.height);
+  const std::size_t pitch = checked_align(width, kPitchAlignment, "pitch");
+  const std::size_t storage_height =
+      checked_align(height, kHeightAlignment, "height");
+  if (pitch > std::numeric_limits<std::size_t>::max() / storage_height) {
+    throw std::overflow_error(std::string(tag) + ": luma span overflow");
+  }
+  const std::size_t uv_offset = pitch * storage_height;
+  const std::size_t uv_rows = storage_height / 2U;
+  if (uv_rows > (std::numeric_limits<std::size_t>::max() - uv_offset) / pitch) {
+    throw std::overflow_error(std::string(tag) + ": chroma span overflow");
+  }
+  const std::size_t allocation_size = uv_offset + pitch * uv_rows;
+
+  SampleSpec materialized = source;
+  materialized.required_bytes_actual = allocation_size;
+  materialized.planes.clear();
+  materialized.planes.resize(2U);
+  materialized.planes[0].role = PlaneRole::Y;
+  materialized.planes[0].width = source.width;
+  materialized.planes[0].height = source.height;
+  materialized.planes[0].stride_bytes = static_cast<std::int64_t>(pitch);
+  materialized.planes[0].offset_bytes = 0;
+  materialized.planes[0].size_bytes = uv_offset;
+  materialized.planes[1].role = PlaneRole::UV;
+  materialized.planes[1].width = source.width;
+  materialized.planes[1].height = source.height / 2;
+  materialized.planes[1].stride_bytes = static_cast<std::int64_t>(pitch);
+  materialized.planes[1].offset_bytes = static_cast<std::int64_t>(uv_offset);
+  materialized.planes[1].size_bytes = allocation_size - uv_offset;
+  return materialized;
+}
 
 bool buffer_name_matches_expected(const std::string& expected_list, const std::string& actual) {
   const std::string expected = trim_copy(expected_list);
@@ -695,12 +757,14 @@ BuiltBuffer build_buffer_with_fill(
         st.reusable_buffer = nullptr;
         st.reusable_bytes = 0;
       }
-      st.reusable_buffer = allocate_input_buffer(st.alloc_bytes, st.src_opt, st.pool_guard);
+      st.reusable_buffer = allocate_input_buffer(
+          st.alloc_bytes, st.src_opt, st.pool_guard, st.opt.memory_backend_policy);
       st.reusable_bytes = st.alloc_bytes;
     }
     buf = st.reusable_buffer;
   } else {
-    buf = allocate_input_buffer(st.alloc_bytes, st.src_opt, st.pool_guard);
+    buf = allocate_input_buffer(
+        st.alloc_bytes, st.src_opt, st.pool_guard, st.opt.memory_backend_policy);
   }
   std::chrono::steady_clock::time_point t_alloc_end{};
   if (record_timings)
@@ -708,41 +772,119 @@ BuiltBuffer build_buffer_with_fill(
   if (!buf) {
     throw std::runtime_error(std::string(where) + ": failed to allocate GstBuffer");
   }
-
-  if (required_bytes > 0) {
-    if (required_bytes > st.alloc_bytes) {
-      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
-        release_input_buffer(buf, (std::string(tag) + ":oversize").c_str());
-      }
-      std::ostringstream msg;
-      msg << where << ": input exceeds allocated buffer size" << " (required=" << required_bytes
-          << ", allocated=" << st.alloc_bytes << "). "
-          << "Fix: increase RunAdvancedOptions::max_input_bytes or "
-          << "Model::Options::preprocess.input_max_* limits.";
-      throw std::runtime_error(msg.str());
+  if (required_bytes > st.alloc_bytes) {
+    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+      release_input_buffer(buf, (std::string(tag) + ":oversize").c_str());
     }
+    std::ostringstream msg;
+    msg << where << ": input exceeds allocated buffer size" << " (required=" << required_bytes
+        << ", allocated=" << st.alloc_bytes << "). "
+        << "Fix: increase RunAdvancedOptions::max_input_bytes or "
+        << "Model::Options::preprocess.input_max_* limits.";
+    throw std::runtime_error(msg.str());
+  }
+
+  GstMemory* payload_memory =
+      gst_buffer_n_memory(buf) == 1U ? gst_buffer_peek_memory(buf, 0U) : nullptr;
+  const bool standard_dmabuf = payload_memory && gst_is_dmabuf_memory(payload_memory);
+
+  // A standard DMA-BUF pool already allocates the exact physical capacity.
+  // Resizing its GstBuffer shell is both unnecessary and incorrect: the shell
+  // is a pool lease, while the DMA-BUF allocation and its identity must remain
+  // stable until downstream returns it.  Non-DMA-BUF compatibility buffers
+  // retain their existing logical-size behavior.
+  if (!standard_dmabuf && required_bytes > 0) {
     gst_buffer_resize(buf, 0, required_bytes);
   }
 
   GstMapInfo mi{};
+  std::optional<internal::dmabuf::CpuMapping> dmabuf_mapping;
+  std::uint8_t* write_data = nullptr;
+  std::size_t write_size = 0U;
+  bool gst_mapped = false;
   std::chrono::steady_clock::time_point t_map_start{};
   if (record_timings)
     t_map_start = std::chrono::steady_clock::now();
-  if (!gst_buffer_map(buf, &mi, GST_MAP_WRITE)) {
-    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
-      release_input_buffer(buf, (std::string(tag) + ":map_fail").c_str());
+
+  if (standard_dmabuf) {
+    if (!gst_buffer_is_writable(buf)) {
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":nonwritable_dmabuf").c_str());
+      }
+      throw std::runtime_error(std::string(where) +
+                               ": DMA-BUF pool returned a shared buffer shell");
     }
-    throw std::runtime_error(std::string(where) + ": failed to map GstBuffer");
+    const std::size_t capacity = gst_buffer_get_size(buf);
+    const std::size_t payload_bytes = required_bytes != 0U ? required_bytes : capacity;
+    if (payload_bytes == 0U || payload_bytes > capacity) {
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":dmabuf_span_fail").c_str());
+      }
+      throw std::runtime_error(std::string(where) +
+                               ": DMA-BUF pool returned an invalid payload span");
+    }
+    internal::dmabuf::Error error;
+    auto view = internal::dmabuf::DmaBufView::fromGstMemory(payload_memory, 0U, payload_bytes,
+                                                            &error);
+    dmabuf_mapping =
+        view ? view->map(internal::dmabuf::CpuAccess::Write, &error) : std::nullopt;
+    if (!dmabuf_mapping) {
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":dmabuf_map_fail").c_str());
+      }
+      throw std::runtime_error(std::string(where) +
+                               ": failed to begin DMA-BUF CPU write: " + error.message());
+    }
+    write_data = static_cast<std::uint8_t*>(dmabuf_mapping->data());
+    write_size = dmabuf_mapping->size();
+  } else {
+    if (!gst_buffer_map(buf, &mi, GST_MAP_WRITE)) {
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":map_fail").c_str());
+      }
+      throw std::runtime_error(std::string(where) + ": failed to map GstBuffer");
+    }
+    gst_mapped = true;
+    write_data = static_cast<std::uint8_t*>(mi.data);
+    write_size = mi.size;
   }
   std::chrono::steady_clock::time_point t_map_end{};
   if (record_timings)
     t_map_end = std::chrono::steady_clock::now();
 
-  const size_t filled = fill(static_cast<uint8_t*>(mi.data), mi.size);
-  if (filled < mi.size) {
-    std::memset(static_cast<uint8_t*>(mi.data) + filled, 0, mi.size - filled);
+  try {
+    const size_t filled = fill(write_data, write_size);
+    if (filled < write_size) {
+      std::memset(write_data + filled, 0, write_size - filled);
+    }
+  } catch (...) {
+    if (gst_mapped) {
+      gst_buffer_unmap(buf, &mi);
+    } else if (dmabuf_mapping) {
+      internal::dmabuf::Error ignored;
+      (void)dmabuf_mapping->finish(&ignored);
+      dmabuf_mapping.reset();
+    }
+    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+      release_input_buffer(buf, (std::string(tag) + ":fill_fail").c_str());
+    }
+    throw;
   }
-  gst_buffer_unmap(buf, &mi);
+  if (gst_mapped) {
+    gst_buffer_unmap(buf, &mi);
+  } else {
+    internal::dmabuf::Error error;
+    if (!dmabuf_mapping->finish(&error)) {
+      // Drop the mapping (which makes one final best-effort END attempt)
+      // before returning the physical slot to its pool.
+      dmabuf_mapping.reset();
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":dmabuf_sync_fail").c_str());
+      }
+      throw std::runtime_error(std::string(where) +
+                               ": failed to end DMA-BUF CPU write: " + error.message());
+    }
+  }
   std::chrono::steady_clock::time_point t_copy_end{};
   if (record_timings)
     t_copy_end = std::chrono::steady_clock::now();

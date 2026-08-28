@@ -2,6 +2,7 @@
 #include "test_main.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -16,6 +17,18 @@ std::string read_text(const std::filesystem::path& path) {
   std::ostringstream ss;
   ss << in.rdbuf();
   return ss.str();
+}
+
+std::vector<std::string> quoted_literals(const std::string& text) {
+  std::vector<std::string> result;
+  for (std::size_t begin = text.find('"'); begin != std::string::npos;
+       begin = text.find('"', begin)) {
+    const auto end = text.find('"', begin + 1U);
+    require(end != std::string::npos, "unterminated quoted startup factory");
+    result.push_back(text.substr(begin + 1U, end - begin - 1U));
+    begin = end + 1U;
+  }
+  return result;
 }
 
 void require_no_token(const std::string& text, const std::string& token,
@@ -79,7 +92,10 @@ void require_token_absent_in_tree_except(const std::filesystem::path& root,
 
 RUN_TEST(
     "unit_contract_architecture_guard_test", ([] {
-      const std::filesystem::path root = sima_test::test_source_root();
+      const char* source_override = std::getenv("SIMA_NEAT_ARCHITECTURE_SOURCE_ROOT");
+      const std::filesystem::path root = source_override && *source_override
+                                             ? std::filesystem::path(source_override)
+                                             : sima_test::test_source_root();
 
       const std::vector<std::filesystem::path> guarded_files = {
           root / "src/model/Model.cpp",
@@ -229,4 +245,22 @@ RUN_TEST(
       for (const auto& token : modelpack_processcvu_forbidden_tokens) {
         require_no_token(modelpack_text, token, modelpack_path);
       }
+
+      // Startup validates only the generic strict-route factories. Legacy
+      // transform plugins are route-local compatibility dependencies: their
+      // absence must not prevent a fused DMA-BUF graph from initializing.
+      const std::filesystem::path gst_init_path = root / "src/gst/GstInit.cpp";
+      const std::string gst_init_text = read_text(gst_init_path);
+      const auto validator = gst_init_text.find("void validate_neat_startup_contract(");
+      require(validator != std::string::npos, "startup factory validator is missing");
+      const auto required = gst_init_text.find("const char* required[]", validator);
+      const auto required_end = gst_init_text.find("};", required);
+      require(required != std::string::npos && required_end != std::string::npos,
+              "startup factory required set is missing");
+      const auto factories =
+          quoted_literals(gst_init_text.substr(required, required_end - required));
+      require(factories == std::vector<std::string>{"neatprocesscvu", "neatprocessmla",
+                                                    "neatboxdecode"},
+              "strict startup must require only ProcessCVU, ProcessMLA, and BoxDecode; "
+              "legacy Detess/Dequant factories are route-local");
     }));

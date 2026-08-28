@@ -26,6 +26,9 @@ struct VideoSenderEncoderOptions {
 class VideoSenderOptions {
 public:
   static VideoSenderOptions H264RtpUdpFromRaw(int width, int height, int fps);
+  /// Encode raw frames as `codec` and send RTP/UDP. Supports H.264 and H.265.
+  static VideoSenderOptions RtpUdpFromRaw(RtspCodec codec, int width, int height, int fps);
+  static VideoSenderOptions H265RtpUdpFromRaw(int width, int height, int fps);
   [[deprecated("use Passthrough(RtspCodec::H264)")]] static VideoSenderOptions
   H264RtpUdpFromEncoded();
 
@@ -67,8 +70,7 @@ private:
   VideoSenderOptions() = default;
 
   InputKind input_kind_ = InputKind::Encoded;
-  /// Codec of the encoded stream; meaningless when `input_kind_` is `Raw`,
-  /// which is always H.264 because that is the only encoder path.
+  /// Codec selected for raw encoding or encoded passthrough.
   RtspCodec codec_ = RtspCodec::H264;
   int width_ = 0;
   int height_ = 0;

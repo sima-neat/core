@@ -861,6 +861,7 @@ collect_local_simaai_memory_debs() {
   SIMAAI_MEMORY_DEV_DEB=./memory-dev.deb
   SIMAAI_MEMORY_DEBS=("${SIMAAI_MEMORY_RUNTIME_DEB}" "${SIMAAI_MEMORY_DEV_DEB}")
 }
+deb_package_installed_version() { return 1; }
 validate_local_simaai_memory_payload() { :; }
 snapshot_memory_transaction_guard_state() { :; }
 verify_installed_simaai_memory_payload() { :; }
@@ -900,6 +901,7 @@ DEBS=(./memory-runtime.deb ./memory-dev.deb)
 collect_local_simaai_memory_debs() {
   SIMAAI_MEMORY_DEBS=(./memory-runtime.deb ./memory-dev.deb)
 }
+deb_package_installed_version() { return 1; }
 validate_local_simaai_memory_payload() { :; }
 snapshot_memory_transaction_guard_state() { :; }
 run_sudo() {

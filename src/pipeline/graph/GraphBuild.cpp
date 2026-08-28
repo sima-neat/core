@@ -1944,6 +1944,219 @@ static std::string set_property_for_factory_segments(std::string fragment, std::
   return fragment;
 }
 
+std::string session_build_select_terminal_objectdecode_cpu_visibility(
+    std::string fragment) {
+  struct SegmentRange {
+    std::size_t begin;
+    std::size_t end;
+  };
+  std::vector<SegmentRange> segments;
+  bool single_quoted = false;
+  bool double_quoted = false;
+  bool escaped = false;
+  std::size_t begin = 0U;
+  for (std::size_t i = 0U; i < fragment.size(); ++i) {
+    const char c = fragment[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c == '\\' && (single_quoted || double_quoted)) {
+      escaped = true;
+      continue;
+    }
+    if (c == '\'' && !double_quoted) {
+      single_quoted = !single_quoted;
+      continue;
+    }
+    if (c == '"' && !single_quoted) {
+      double_quoted = !double_quoted;
+      continue;
+    }
+    if (c == '!' && !single_quoted && !double_quoted) {
+      segments.push_back({begin, i});
+      begin = i + 1U;
+    }
+  }
+  segments.push_back({begin, fragment.size()});
+
+  std::vector<std::size_t> selected;
+  for (std::size_t i = 0U; i < segments.size(); ++i) {
+    const auto current = std::string_view(fragment).substr(
+        segments[i].begin, segments[i].end - segments[i].begin);
+    if (!fragment_segment_uses_factory(current, "neatprocessmla")) {
+      continue;
+    }
+    std::size_t next = i + 1U;
+    while (next < segments.size()) {
+      const auto between = std::string_view(fragment).substr(
+          segments[next].begin, segments[next].end - segments[next].begin);
+      if (!fragment_segment_uses_factory(between, "queue") &&
+          !fragment_segment_uses_factory(between, "queue2")) {
+        break;
+      }
+      ++next;
+    }
+    if (next >= segments.size()) {
+      continue;
+    }
+    const auto consumer = std::string_view(fragment).substr(
+        segments[next].begin, segments[next].end - segments[next].begin);
+    if (fragment_segment_uses_factory(consumer, "neatobjectdecode") ||
+        fragment_segment_uses_factory(consumer, "neatboxdecode")) {
+      selected.push_back(i);
+    }
+  }
+
+  // Edit from right to left so stored source ranges remain valid. This is an
+  // exact graph-rendering decision; plugins never infer adjacency from names,
+  // factories, qdata, or runtime pad topology.
+  for (auto it = selected.rbegin(); it != selected.rend(); ++it) {
+    const SegmentRange range = segments[*it];
+    std::string segment = fragment.substr(range.begin, range.end - range.begin);
+    set_fragment_segment_property(&segment, "defer-output-invalidate", "false");
+    fragment.replace(range.begin, range.end - range.begin, segment);
+  }
+  return fragment;
+}
+
+std::string session_build_propagate_terminal_consumer_lane_window(
+    std::string fragment) {
+  struct SegmentRange {
+    std::size_t begin;
+    std::size_t end;
+  };
+  std::vector<SegmentRange> segments;
+  bool single_quoted = false;
+  bool double_quoted = false;
+  bool escaped = false;
+  std::size_t begin = 0U;
+  for (std::size_t i = 0U; i < fragment.size(); ++i) {
+    const char c = fragment[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c == '\\' && (single_quoted || double_quoted)) {
+      escaped = true;
+      continue;
+    }
+    if (c == '\'' && !double_quoted) {
+      single_quoted = !single_quoted;
+      continue;
+    }
+    if (c == '"' && !single_quoted) {
+      double_quoted = !double_quoted;
+      continue;
+    }
+    if (c == '!' && !single_quoted && !double_quoted) {
+      segments.push_back({begin, i});
+      begin = i + 1U;
+    }
+  }
+  segments.push_back({begin, fragment.size()});
+
+  auto property_value = [](std::string_view segment,
+                           std::string_view property) -> std::optional<std::string> {
+    const std::string key = std::string(property) + "=";
+    std::size_t search = 0U;
+    while (search < segment.size()) {
+      const std::size_t pos = segment.find(key, search);
+      if (pos == std::string_view::npos) {
+        return std::nullopt;
+      }
+      if (pos != 0U &&
+          std::isspace(static_cast<unsigned char>(segment[pos - 1U])) == 0) {
+        search = pos + key.size();
+        continue;
+      }
+      std::size_t value_begin = pos + key.size();
+      std::size_t value_end = value_begin;
+      while (value_end < segment.size() &&
+             std::isspace(static_cast<unsigned char>(segment[value_end])) == 0 &&
+             segment[value_end] != '!') {
+        ++value_end;
+      }
+      if (value_end == value_begin) {
+        return std::nullopt;
+      }
+      return std::string(segment.substr(value_begin, value_end - value_begin));
+    }
+    return std::nullopt;
+  };
+  auto transparent = [](std::string_view segment) {
+    return fragment_segment_uses_factory(segment, "queue") ||
+           fragment_segment_uses_factory(segment, "queue2") ||
+           fragment_segment_uses_factory(segment, "identity") ||
+           fragment_segment_uses_factory(segment, "capsfilter");
+  };
+
+  std::vector<std::pair<std::size_t, std::string>> selected;
+  for (std::size_t i = 0U; i < segments.size(); ++i) {
+    const auto producer = std::string_view(fragment).substr(
+        segments[i].begin, segments[i].end - segments[i].begin);
+    const auto cpu_visible = property_value(producer, "defer-output-invalidate");
+    const auto producer_window = property_value(producer, "num-buffers");
+    if (!cpu_visible.has_value() || *cpu_visible != "false" ||
+        !producer_window.has_value()) {
+      continue;
+    }
+    const bool positive_window =
+        !producer_window->empty() &&
+        std::all_of(producer_window->begin(), producer_window->end(),
+                    [](unsigned char c) { return std::isdigit(c) != 0; }) &&
+        *producer_window != "0";
+    if (!positive_window) {
+      continue;
+    }
+
+    std::size_t consumer_index = i + 1U;
+    while (consumer_index < segments.size()) {
+      const auto candidate = std::string_view(fragment).substr(
+          segments[consumer_index].begin,
+          segments[consumer_index].end - segments[consumer_index].begin);
+      if (!transparent(candidate)) {
+        break;
+      }
+      ++consumer_index;
+    }
+    if (consumer_index >= segments.size()) {
+      continue;
+    }
+    const auto consumer = std::string_view(fragment).substr(
+        segments[consumer_index].begin,
+        segments[consumer_index].end - segments[consumer_index].begin);
+    if (!property_value(consumer, "num-buffers").has_value()) {
+      // The consumer did not declare a bounded lane-window contract. Do not
+      // infer capability from a factory name or attach an unknown property.
+      continue;
+    }
+    const auto duplicate = std::find_if(
+        selected.begin(), selected.end(), [&](const auto& entry) {
+          return entry.first == consumer_index;
+        });
+    if (duplicate != selected.end() && duplicate->second != *producer_window) {
+      throw_session_error_simple(
+          error_codes::kPipelineShape,
+          "terminal consumer is fed by conflicting producer lane windows");
+    }
+    if (duplicate == selected.end()) {
+      selected.emplace_back(consumer_index, *producer_window);
+    }
+  }
+
+  // Right-to-left edits retain all parsed offsets.
+  std::sort(selected.begin(), selected.end(),
+            [](const auto& lhs, const auto& rhs) { return lhs.first > rhs.first; });
+  for (const auto& [index, window] : selected) {
+    const SegmentRange range = segments[index];
+    std::string segment = fragment.substr(range.begin, range.end - range.begin);
+    set_fragment_segment_property(&segment, "num-buffers", window);
+    fragment.replace(range.begin, range.end - range.begin, segment);
+  }
+  return fragment;
+}
+
 static std::string read_gst_fragment_property(const std::string& fragment,
                                               const std::string& property) {
   const std::string key = property + "=";
@@ -2047,9 +2260,10 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
   fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "async",
                                                processmla_async ? "true" : "false");
   if (sess_opt->processmla.output_pool_buffers > 0) {
-    fragment =
-        set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "num-buffers",
-                                          std::to_string(sess_opt->processmla.output_pool_buffers));
+    const std::string route_depth =
+        std::to_string(sess_opt->processmla.output_pool_buffers);
+    fragment = set_property_for_factory_segments(
+        std::move(fragment), "neatprocessmla", "num-buffers", route_depth);
   }
   fragment = set_property_for_factory_segments(
       std::move(fragment), "neatprocessmla", "defer-output-invalidate",
@@ -2928,7 +3142,8 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     }
   }
 
-  br.diag->pipeline_string = ss.str();
+  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(
+      session_build_select_terminal_objectdecode_cpu_visibility(ss.str()));
   br.pipeline_string = br.diag->pipeline_string;
   return br;
 }
@@ -2980,6 +3195,17 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
                                "': " + (err.empty() ? std::string("unknown error") : err));
     }
     effective_lineages.emplace(lineage_key, std::move(state));
+  }
+
+  // Retargeting rebuilds preprocessing before inference. Admit the immutable
+  // physical plan once at this execution boundary so both rebuilt fragments
+  // project the same graph-wide frame arena; otherwise the first fragment can
+  // observe the still-lazy semantic pack and allocate only its local output.
+  for (const auto& [lineage_key, state] : effective_lineages) {
+    (void)lineage_key;
+    if (state.changed) {
+      internal::ModelAccess::prepare_for_execution(*state.effective_model, sync_mode);
+    }
   }
 
   std::vector<std::shared_ptr<Node>> out;
@@ -3034,8 +3260,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
     std::vector<std::shared_ptr<Node>> replacement;
     switch (binding->stage_role) {
     case internal::ModelLineageStageRole::Preprocess:
-      replacement =
-          internal::ModelAccess::build_preprocess_nodes(*it->second.effective_model, sync_mode);
+      replacement = internal::ModelAccess::rebuild_preprocess_route_nodes(
+          *it->second.effective_model, sync_mode);
       break;
     case internal::ModelLineageStageRole::Infer:
       replacement =

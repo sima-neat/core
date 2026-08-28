@@ -15,6 +15,7 @@
 #include "builder/OutputSpec.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/RTSPInput.h"
+#include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/sima/Preproc.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/FormatSpec.h"
@@ -369,6 +370,10 @@ resolve_memory_policy_from_first_downstream_node(const std::vector<std::shared_p
     if (kind == "Preproc" || kind == "Quant" || kind == "Tess" || kind == "QuantTess") {
       return InputMemoryPolicy::Ev74;
     }
+    if (kind == simaai::neat::nodes::groups::internal::kVideoSenderRawIngressDirectKind ||
+        kind == simaai::neat::nodes::groups::internal::kVideoSenderRawIngressMaterializeKind) {
+      return InputMemoryPolicy::Ev74;
+    }
     if (kind == "ModelFragment") {
       return InputMemoryPolicy::Dms0;
     }
@@ -406,6 +411,24 @@ bool apply_auto_memory_policy_from_downstream(InputOptions& src_opt,
   }
   const InputMemoryPolicy resolved = resolve_memory_policy_from_first_downstream_node(nodes);
   src_opt.memory_policy = resolved;
+  return true;
+}
+
+bool apply_explicit_nv12_materialization_policy(
+    InputOptions& src_opt, const std::vector<std::shared_ptr<Node>>& build_nodes) {
+  if (src_opt.memory_policy != InputMemoryPolicy::SystemMemory) {
+    return false;
+  }
+  if (infer_first_effective_downstream_kind(build_nodes) !=
+      simaai::neat::nodes::groups::internal::kVideoSenderRawIngressMaterializeKind) {
+    return false;
+  }
+
+  // The semantic ingress node is the compiler-authored copy boundary.  Its
+  // transport allocation is standard CMA, while the public source contract
+  // remains SystemMemory.  This is not the old implicit InputStream escape:
+  // only this exact selected node enables the one required CPU->CMA copy.
+  src_opt.memory_policy = InputMemoryPolicy::Ev74;
   return true;
 }
 
@@ -951,13 +974,27 @@ void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<
   }
 
   const std::vector<std::shared_ptr<Node>> first_nodes{first};
+  const auto first_manifest = rendered_stage_query::rendered_manifest_from_nodes(
+      first_nodes, "GraphBuildInput.ingress_guard");
+  if (!first_manifest.has_value() || first_manifest->stages.empty() ||
+      first_manifest->stages.front().payload_kind !=
+          pipeline_internal::sima::StagePayloadKind::ProcessMla) {
+    // ModelFragment is a container, not an assertion that its first command is
+    // MLA.  A strict compiler-authored schedule may begin with Quant, Cast,
+    // Tess, or A65 and legitimately consume an application-boundary tensor
+    // whose size differs from the later MLA IFM.  The child-stage manifest is
+    // the exact authority for that distinction.
+    return;
+  }
   const auto mla_input = rendered_stage_query::mla_input_tensor_info_from_nodes(first_nodes);
   if (mla_input.span_size_bytes <= 0) {
     return;
   }
 
   const std::size_t expected_bytes = static_cast<std::size_t>(mla_input.span_size_bytes);
-  const std::size_t got_bytes = seed_spec.required_bytes_actual;
+  const std::size_t got_bytes = seed_spec.tensor_view_bytes_actual > 0U
+                                    ? seed_spec.tensor_view_bytes_actual
+                                    : seed_spec.required_bytes_actual;
   const bool byte_stream = sample_spec_is_byte_stream_tensor(seed_spec);
   const bool byte_size_matches = expected_bytes == 0U || got_bytes == expected_bytes;
   // Accept either a byte-stream tensor or any application/vnd.simaai.tensor
@@ -1047,13 +1084,28 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
   }
 }
 
-pipeline_internal::MemoryBackendPolicy
-backend_policy_from_rendered_manifest(const BuildResult& build_result) {
-  if (!build_result.rendered_manifest.has_value()) {
-    return pipeline_internal::MemoryBackendPolicy::Legacy;
+pipeline_internal::MemoryBackendPolicy backend_policy_from_rendered_manifest(
+    const BuildResult& build_result,
+    const std::vector<std::shared_ptr<Node>>& nodes) {
+  if (build_result.rendered_manifest.has_value()) {
+    for (const auto& stage : build_result.rendered_manifest->stages) {
+      if (stage.processcvu.dmabuf_plan_contract || stage.processmla.dmabuf_plan_contract) {
+        return pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+      }
+    }
   }
-  for (const auto& stage : build_result.rendered_manifest->stages) {
-    if (stage.processcvu.dmabuf_plan_contract || stage.processmla.dmabuf_plan_contract) {
+  // Direct codec elements import DMA-BUF handles through the command UAPI just
+  // like strict CVU/MLA stages.  Codec-only graphs do not have an AFE stage in
+  // the rendered manifest, so their typed graph nodes are the exact transport
+  // authority.  Do not let the process-wide migration request silently turn
+  // this compiler-authored SystemMemory -> CMA boundary back into the legacy
+  // segmented allocator.
+  for (const auto& node : nodes) {
+    if (!node) {
+      continue;
+    }
+    const std::string kind = node->kind();
+    if (kind == "H264EncodeSima" || kind == "H265EncodeSima") {
       return pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
     }
   }
@@ -1903,7 +1955,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
-  stream_opt.memory_backend_policy = backend_policy_from_rendered_manifest(br);
+  stream_opt.memory_backend_policy = backend_policy_from_rendered_manifest(br, build_nodes);
   if (has_sink) {
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }
@@ -1977,10 +2029,14 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   SampleSpec spec = seed_spec;
   InputOptions src_opt = session_build_resolve_appsrc_options(normalized_input_opt, name_transform);
-  const bool memory_policy_auto_applied =
-      apply_auto_memory_policy_from_downstream(src_opt, build_nodes);
   const std::string first_effective_downstream_kind =
       infer_first_effective_downstream_kind(build_nodes);
+  const InputMemoryPolicy requested_memory_policy = src_opt.memory_policy;
+  const bool explicit_nv12_materialization =
+      apply_explicit_nv12_materialization_policy(src_opt, build_nodes);
+  const bool memory_policy_auto_applied =
+      !explicit_nv12_materialization &&
+      apply_auto_memory_policy_from_downstream(src_opt, build_nodes);
   if (src_opt.payload_type == PayloadType::Auto) {
     src_opt.payload_type = input_type_from_media_type(seed_spec.media_type);
   }
@@ -2006,8 +2062,11 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       stream_opt.dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly) {
     stream_opt.stability_frames = 1;
   }
-  stream_opt.require_device_visible_input = (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
-                                             src_opt.memory_policy == InputMemoryPolicy::Dms0);
+  stream_opt.require_device_visible_input =
+      !explicit_nv12_materialization &&
+      (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
+       src_opt.memory_policy == InputMemoryPolicy::Dms0);
+  stream_opt.materialize_device_visible_input = explicit_nv12_materialization;
 
   BuildAdaptationSummary adaptation;
   adaptation.shape_policy = shape_policy_name(stream_opt.shape_policy);
@@ -2077,12 +2136,15 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   {
     std::ostringstream detail;
-    detail << "policy=" << input_memory_policy_name(src_opt.memory_policy)
+    detail << "requested=" << input_memory_policy_name(requested_memory_policy)
+           << " transport=" << input_memory_policy_name(src_opt.memory_policy)
            << " first_downstream=" << first_effective_downstream_kind;
     add_build_adaptation_action(adaptation, "appsrc_memory_policy", true, detail.str(),
-                                memory_policy_auto_applied
-                                    ? "auto policy resolved before appsrc build"
-                                    : "policy already explicit (not auto-overridden)");
+                                explicit_nv12_materialization
+                                    ? "compiler-authored NV12 SystemMemory-to-CMA materialization"
+                                    : memory_policy_auto_applied
+                                          ? "auto policy resolved before appsrc build"
+                                          : "policy already explicit (not auto-overridden)");
   }
 
   if (br.diag) {

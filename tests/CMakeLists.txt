@@ -9,6 +9,14 @@ enable_testing()
 include(CMakeParseArguments)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+add_test(
+  NAME unit_afe_publication_ledger_generated
+  COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tools/generate_afe_publication_ledger.py
+    ${CMAKE_SOURCE_DIR}/src/pipeline/internal/sima/static_contract/data/afe_publication_ledger.json
+    ${CMAKE_SOURCE_DIR}/src/pipeline/internal/sima/static_contract/generated/AfePublicationLedger.inc
+    --check)
+
 if (NOT DEFINED SIMANEAT_MODELZOO_VERSION OR SIMANEAT_MODELZOO_VERSION STREQUAL "")
   message(FATAL_ERROR "SIMANEAT_MODELZOO_VERSION must be resolved from deps/manifest.json")
 endif()
@@ -87,6 +95,11 @@ add_custom_target(prepare_test_fixtures ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_model_archive_fixtures.py
     --root ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}
     --manifest ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST}
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}/strict-seeds
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets/model-archive/strict-seeds
+    ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}/strict-seeds
   COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_decoder_dynamic_fixture.py
     --output ${SIMA_TEST_DECODER_FIXTURE}
@@ -408,6 +421,7 @@ set(UNIT_TESTS
   unit_memory_backend_policy_test
   unit_dmabuf_eligibility_test
   unit_afe_mpk_v2_decoder_test
+  unit_physical_execution_plan_test
   unit_tvm_host_module_graph_test
   unit_modelpack_multi_mla_plan_test
   unit_frame_slot_arena_plan_test
@@ -622,6 +636,7 @@ add_pipeline_test_long(
   SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/video_sender_adaptive_ingress_e2e_test.cpp
 )
+target_link_libraries(video_sender_adaptive_ingress_e2e_test PRIVATE NeatInternals::DmaBufPool)
 
 if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
@@ -2305,6 +2320,11 @@ endif()
 install(
   DIRECTORY "${CMAKE_BINARY_DIR}/test-assets/model-archive/"
   DESTINATION lib/sima-neat/test-assets/model-archive
+  COMPONENT extras
+)
+install(
+  DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/model-archive/strict-seeds/"
+  DESTINATION lib/sima-neat/test-assets/model-archive/strict-seeds
   COMPONENT extras
 )
 install(

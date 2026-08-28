@@ -4,7 +4,6 @@
 #include "test_main.h"
 
 #include <array>
-#include <cstdlib>
 
 RUN_TEST(
     "unit_contract_compiler_boxdecode_test", ([] {
@@ -215,7 +214,6 @@ RUN_TEST(
                   128,
               "packed boxdecode input binding should preserve physical byte offset");
 
-      setenv("SIMA_BOXDECODE_BYPASS_MLA_UNPACK", "1", 1);
       ModelManagedRouteFlags route_flags;
       route_flags.quant_needed = true;
       route_flags.tess_needed = false;
@@ -225,14 +223,13 @@ RUN_TEST(
           finalize_boxdecode_static_contract(packed_contract, BoxDecodeType::YoloV8, std::nullopt,
                                              route_flags, BoxDecodeTypeOption::GroupedByRoleLogit,
                                              0.25, 0.55, 100, 0, {"orig_width", "orig_height"});
-      unsetenv("SIMA_BOXDECODE_BYPASS_MLA_UNPACK");
       require(finalized_contract.tess_needed,
-              "raw-parent bypass should preserve contract-local tess semantics over route flags");
+              "typed packed source should preserve internal detess semantics over route flags");
       require(finalized_contract.quant_needed,
-              "raw-parent bypass should preserve contract-local quant semantics");
+              "typed packed source should preserve contract-local quant semantics");
       require(finalized_contract.tensors.size() == 1U &&
                   finalized_contract.tensors.front().slice_shape == std::vector<int>{80, 80, 64},
-              "raw-parent bypass should preserve contract slice geometry");
+              "typed packed source should preserve contract slice geometry");
       require(finalized_contract.decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit,
               "finalized contract should preserve decode_type_option");
       const auto finalized_compiled = build_boxdecode_compiled_contract(finalized_contract);

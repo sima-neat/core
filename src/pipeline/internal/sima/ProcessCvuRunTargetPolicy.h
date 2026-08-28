@@ -14,7 +14,9 @@
 
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -70,11 +72,15 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload);
 ProcessCvuBackendDecision
 resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
                                     const ContractCompileInput& compile_input,
-                                    std::string_view stage_identity = {});
+                                    std::string_view stage_identity = {},
+                                    std::optional<static_contract::PhysicalCommandRole>
+                                        physical_command_role = std::nullopt);
 
 /// Resolve the run-target and stamp the result back onto the stage payload in place.
 void resolve_processcvu_run_target(ProcessCvuStagePayload* payload,
                                    const ContractCompileInput& compile_input,
-                                   std::string_view stage_identity = {});
+                                   std::string_view stage_identity = {},
+                                   std::optional<static_contract::PhysicalCommandRole>
+                                       physical_command_role = std::nullopt);
 
 } // namespace simaai::neat::pipeline_internal::sima

@@ -25,6 +25,7 @@
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <algorithm>
 #include <atomic>
@@ -206,17 +207,29 @@ struct Decoded {
 
 /// Average luma over a central patch, away from any edge artifacts.
 int center_luma(GstBuffer* buffer) {
+  if (!buffer) {
+    return -1;
+  }
+  const GstVideoMeta* video_meta = gst_buffer_get_video_meta(buffer);
+  if (video_meta && (video_meta->format != GST_VIDEO_FORMAT_NV12 || video_meta->n_planes < 1U ||
+                     video_meta->width != kWidth || video_meta->height != kHeight)) {
+    return -1;
+  }
+  const int stride = video_meta ? video_meta->stride[0] : kWidth;
+  const std::size_t y_offset = video_meta ? video_meta->offset[0] : 0U;
+  if (stride < kWidth || y_offset > gst_buffer_get_size(buffer)) {
+    return -1;
+  }
   GstMapInfo map;
-  if (!buffer || gst_buffer_map(buffer, &map, GST_MAP_READ) != TRUE) {
+  if (gst_buffer_map(buffer, &map, GST_MAP_READ) != TRUE) {
     return -1;
   }
   long total = 0;
   int count = 0;
-  // NV12: luma plane is width*height at the start. Sample a small central block.
-  const int stride = kWidth;
   for (int y = kHeight / 2 - 4; y < kHeight / 2 + 4; ++y) {
     for (int x = kWidth / 2 - 4; x < kWidth / 2 + 4; ++x) {
-      const std::size_t offset = static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x);
+      const std::size_t offset =
+          y_offset + static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x);
       if (offset < map.size) {
         total += map.data[offset];
         ++count;
@@ -225,6 +238,23 @@ int center_luma(GstBuffer* buffer) {
   }
   gst_buffer_unmap(buffer, &map);
   return count > 0 ? static_cast<int>(total / count) : -1;
+}
+
+void verify_decoder_layout(GstBuffer* buffer, bool zero_copy) {
+  const GstVideoMeta* meta = buffer ? gst_buffer_get_video_meta(buffer) : nullptr;
+  require(meta && meta->format == GST_VIDEO_FORMAT_NV12 && meta->n_planes >= 2U,
+          "decoder output has no valid NV12 GstVideoMeta");
+  const std::size_t dense_y = static_cast<std::size_t>(kWidth * kHeight);
+  const std::size_t dense_size = dense_y * 3U / 2U;
+  if (zero_copy) {
+    require(meta->stride[0] > kWidth && meta->offset[1] > dense_y &&
+                gst_buffer_get_size(buffer) > dense_size,
+            "zero-copy output did not expose its padded hardware layout");
+  } else {
+    require(meta->stride[0] == kWidth && meta->offset[1] == dense_y &&
+                gst_buffer_get_size(buffer) == dense_size,
+            "copy output is not dense NV12");
+  }
 }
 
 /// Decode one input JPEG through the software decoder. This creates the pixel oracle without
@@ -295,7 +325,7 @@ int decode_reference_luma(const std::string& jpeg) {
   return luma;
 }
 
-std::vector<Decoded> drain(GstElement* sink) {
+std::vector<Decoded> drain(GstElement* sink, bool zero_copy) {
   std::vector<Decoded> frames;
   for (;;) {
     GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 8 * GST_SECOND);
@@ -303,6 +333,7 @@ std::vector<Decoded> drain(GstElement* sink) {
       break;
     }
     GstBuffer* buffer = gst_sample_get_buffer(sample);
+    verify_decoder_layout(buffer, zero_copy);
     Decoded decoded;
     decoded.luma = center_luma(buffer);
     simaai::neat::gst_internal::read_attributes(buffer, &decoded.attributes);
@@ -368,7 +399,7 @@ void verify_branch(const std::vector<Decoded>& frames, const std::vector<int>& r
   }
 }
 
-void test_attributes_survive_decode() {
+void test_attributes_survive_decode(bool zero_copy) {
   simaai::neat::gst_init_once();
   require(simaai::neat::element_exists("neatdecoder"),
           "neatdecoder must be available for the through-decode gate");
@@ -391,13 +422,16 @@ void test_attributes_survive_decode() {
   MjpegServer server;
   require(server.start(body), "localhost MJPEG server must start");
 
+  // Zero-copy is the production default. Only the copy case needs an override.
+  const std::string decoder_mode = zero_copy ? "" : " zero-copy-output=false";
   const std::string launch =
       "souphttpsrc location=http://127.0.0.1:" + std::to_string(server.port()) +
       "/stream is-live=false ! neatmultipartjpegdemux boundary=" + std::string(kBoundary) +
       " capture-headers=\"image-index,image-time\" ! "
       "neatdecoder name=dec dec-type=mjpeg sima-allocator-type=2 dec-fmt=NV12 dec-width=" +
-      std::to_string(kWidth) + " dec-height=" + std::to_string(kHeight) +
-      " dec-fps=30 ! video/x-raw,format=NV12 ! tee name=t "
+      std::to_string(kWidth) + " dec-height=" + std::to_string(kHeight) + " dec-fps=30" +
+      decoder_mode +
+      " ! video/x-raw,format=NV12 ! tee name=t "
       "t. ! queue max-size-buffers=32 ! appsink name=fast sync=false max-buffers=32 "
       "t. ! queue max-size-buffers=32 ! identity sleep-time=20000 ! appsink name=slow "
       "sync=false max-buffers=32";
@@ -448,8 +482,8 @@ void test_attributes_survive_decode() {
                              (detail.empty() ? std::string(" no bus detail") : detail));
   }
 
-  const std::vector<Decoded> fast_frames = drain(fast);
-  const std::vector<Decoded> slow_frames = drain(slow);
+  const std::vector<Decoded> fast_frames = drain(fast, zero_copy);
+  const std::vector<Decoded> slow_frames = drain(slow, zero_copy);
 
   gst_element_set_state(pipeline, GST_STATE_NULL);
   gst_object_unref(fast);
@@ -469,10 +503,14 @@ void test_attributes_survive_decode() {
     }
   }
 
-  verify_branch(fast_frames, reference, "fast branch");
-  verify_branch(slow_frames, reference, "slow branch");
+  const std::string mode = zero_copy ? "zero-copy" : "copy";
+  verify_branch(fast_frames, reference, mode + " fast branch");
+  verify_branch(slow_frames, reference, mode + " slow branch");
 }
 
 } // namespace
 
-RUN_TEST("multipart_header_capture_decode_e2e", [] { test_attributes_survive_decode(); })
+RUN_TEST("multipart_header_capture_decode_e2e", [] {
+  test_attributes_survive_decode(true);
+  test_attributes_survive_decode(false);
+})

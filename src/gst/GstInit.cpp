@@ -1203,7 +1203,7 @@ void validate_neat_startup_contract(const std::string& plugin_dir) {
   // Contract: Graph runtime must resolve and instantiate NEAT factories.
   // Legacy SIMAAI factories may still be discoverable in the process.
   const char* required[] = {
-      "neatprocesscvu", "neatprocessmla", "neatboxdecode", "neatdequant", "neatdetess",
+      "neatprocesscvu", "neatprocessmla", "neatboxdecode",
   };
   for (const char* factory : required) {
     validate_neat_factory_loaded(factory, plugin_dir.c_str());

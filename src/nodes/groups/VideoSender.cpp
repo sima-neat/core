@@ -100,15 +100,33 @@ void require_positive(int value, const char* name) {
 } // namespace
 
 VideoSenderOptions VideoSenderOptions::H264RtpUdpFromRaw(int width, int height, int fps) {
+  return RtpUdpFromRaw(RtspCodec::H264, width, height, fps);
+}
+
+VideoSenderOptions VideoSenderOptions::H265RtpUdpFromRaw(int width, int height, int fps) {
+  return RtpUdpFromRaw(RtspCodec::H265, width, height, fps);
+}
+
+VideoSenderOptions VideoSenderOptions::RtpUdpFromRaw(RtspCodec codec, int width, int height,
+                                                     int fps) {
   require_positive(width, "width");
   require_positive(height, "height");
   require_positive(fps, "fps");
+  if (codec != RtspCodec::H264 && codec != RtspCodec::H265) {
+    throw std::invalid_argument(
+        "VideoSenderOptions: raw codec must be H264 or H265");
+  }
 
   VideoSenderOptions opt;
   opt.input_kind_ = InputKind::Raw;
+  opt.codec_ = codec;
   opt.width_ = width;
   opt.height_ = height;
   opt.fps_ = fps;
+  opt.rtp.payload_type = codec == RtspCodec::H265 ? 98 : 96;
+  if (codec == RtspCodec::H265) {
+    opt.encoder.profile = "main";
+  }
   return opt;
 }
 
@@ -137,9 +155,9 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
 
   if (opt.is_raw_input()) {
     nodes.push_back(internal::VideoSenderRawIngress(opt.width(), opt.height(), opt.fps()));
-    nodes.push_back(nodes::H264EncodeSima(opt.width(), opt.height(), opt.fps(),
-                                          opt.encoder.bitrate_kbps, opt.encoder.profile,
-                                          opt.encoder.level));
+    nodes.push_back(nodes::VideoEncodeSima(opt.codec_, opt.width(), opt.height(), opt.fps(),
+                                           opt.encoder.bitrate_kbps, opt.encoder.profile,
+                                           opt.encoder.level));
   }
 
   if (opt.codec_ == RtspCodec::H265) {

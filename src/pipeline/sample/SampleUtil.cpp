@@ -1996,6 +1996,74 @@ bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& pa
   return true;
 }
 
+bool tensor_buffer_descriptor_from_materialized_tensor_set(
+    const TensorList& tensors, const std::vector<TensorSetSegmentMaterialization>& carriers,
+    TensorBufferView* out, std::string* err) {
+  if (!out || tensors.size() != carriers.size()) {
+    if (err) {
+      *err = "tensor-set materialized descriptor carrier count mismatch";
+    }
+    return false;
+  }
+
+  out->stage_key = tensor_set_stage_key_from_tensors(tensors);
+  out->tensors.clear();
+  out->tensors.reserve(tensors.size());
+  for (std::size_t i = 0; i < tensors.size(); ++i) {
+    const Tensor& tensor = tensors[i];
+    const auto& carrier = carriers[i];
+    const std::size_t logical_bytes = tensor_bytes_tight(tensor);
+    if (logical_bytes == 0U || carrier.buffer_name.empty() ||
+        logical_bytes > carrier.size_bytes) {
+      if (err) {
+        *err = "tensor-set materialized descriptor has an invalid carrier span";
+      }
+      return false;
+    }
+
+    TensorBufferTensorDescriptor descriptor;
+    descriptor.logical_index =
+        tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
+    descriptor.physical_index = static_cast<int>(i);
+    descriptor.backend_output_index = tensor.route.backend_output_index >= 0
+                                          ? tensor.route.backend_output_index
+                                          : descriptor.logical_index;
+    descriptor.route_slot =
+        tensor.route.route_slot >= 0 ? tensor.route.route_slot : descriptor.logical_index;
+    descriptor.memory_index = static_cast<int>(i);
+    descriptor.logical_name = !tensor.route.name.empty()
+                                  ? tensor.route.name
+                                  : "output" + std::to_string(descriptor.logical_index);
+    descriptor.backend_name = tensor.route.backend_name;
+    descriptor.segment_name = carrier.buffer_name;
+    descriptor.byte_offset = 0;
+    descriptor.size_bytes = logical_bytes;
+    descriptor.dtype = tensor_set_dtype_from_tensor(tensor);
+    descriptor.layout = tensor_set_layout_from_tensor(tensor);
+    descriptor.shape = tensor.shape;
+    descriptor.stride_bytes =
+        packed_tensor_descriptor_strides(tensor, logical_bytes, logical_bytes);
+    if (tensor.semantic.quant.has_value()) {
+      TensorBufferQuantDescriptor quant;
+      const QuantSpec& source = *tensor.semantic.quant;
+      quant.axis = source.axis;
+      if (source.scales.empty()) {
+        quant.scales.push_back(source.scale);
+      } else {
+        quant.scales.assign(source.scales.begin(), source.scales.end());
+      }
+      if (source.zero_points.empty()) {
+        quant.zero_points.push_back(source.zero_point);
+      } else {
+        quant.zero_points.assign(source.zero_points.begin(), source.zero_points.end());
+      }
+      descriptor.quant = std::move(quant);
+    }
+    out->tensors.push_back(std::move(descriptor));
+  }
+  return true;
+}
+
 bool build_materialized_tensor_set_backing(const Sample& bundle, GstBuffer** out_buffer,
                                            GstCaps** out_caps, std::string* err) {
   if (!out_buffer || !out_caps) {
@@ -2130,7 +2198,35 @@ bool build_materialized_tensor_set_backing(const Sample& bundle, GstBuffer** out
     return false;
   }
 
-  attach_tensor_set_meta_from_tensors(segmented, bundle.tensors);
+  TensorBufferView descriptor;
+  std::string descriptor_err;
+  if (!tensor_buffer_descriptor_from_materialized_tensor_set(bundle.tensors, fields, &descriptor,
+                                                             &descriptor_err)) {
+    gst_buffer_unref(segmented);
+    release_tensor_set_segments(&fields);
+    if (*out_caps) {
+      gst_caps_unref(*out_caps);
+      *out_caps = nullptr;
+    }
+    if (err) {
+      *err = descriptor_err.empty() ? "tensor-set materialized descriptor failed"
+                                    : descriptor_err;
+    }
+    return false;
+  }
+  std::string attach_err;
+  if (!attach_tensor_set_meta_from_descriptor_view_impl(segmented, descriptor, &attach_err)) {
+    gst_buffer_unref(segmented);
+    release_tensor_set_segments(&fields);
+    if (*out_caps) {
+      gst_caps_unref(*out_caps);
+      *out_caps = nullptr;
+    }
+    if (err) {
+      *err = attach_err.empty() ? "tensor-set materialized meta attach failed" : attach_err;
+    }
+    return false;
+  }
   release_tensor_set_segments(&fields);
   *out_buffer = segmented;
   return true;

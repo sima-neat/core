@@ -10,6 +10,7 @@
 #include "pipeline/internal/sima/RouteGraph.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "pipeline/internal/DmabufEligibility.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
@@ -53,6 +54,7 @@ enum class ExecutionStageKind : std::uint8_t {
   QuantTess,
   CastTess,
   Mla,
+  HostTvm,
   Detess,
   DetessCast,
   DetessDequant,
@@ -71,6 +73,16 @@ struct InferenceTerminalPolicy {
 
 struct ExecutionStage {
   std::size_t order_index = 0U;
+  std::optional<pipeline_internal::sima::static_contract::OpId> execution_op_id;
+  // A compatibility stage can render several bounded physical submissions as
+  // one ProcessCVU element.  The ordered semantic origins author its complete
+  // typed member list; command ids retain the exact 32+remainder submission
+  // proof for diagnostics and later native executor adoption.
+  std::vector<pipeline_internal::sima::static_contract::OpId> execution_op_ids;
+  std::vector<pipeline_internal::sima::static_contract::PhysicalCommandId>
+      physical_command_ids;
+  std::optional<pipeline_internal::sima::static_contract::PhysicalCohortId>
+      physical_cohort_id;
   std::optional<std::size_t> mpk_plugin_index;
   std::string stage_name;
   std::string factory_name;
@@ -153,7 +165,13 @@ public:
   // Infer block derived from the typed MPK execution plan.
   std::vector<std::shared_ptr<simaai::neat::Node>>
   infer_block(const std::string& upstream_name = {},
-              std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr) const;
+              std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr,
+              bool absorb_model_managed_preproc = false) const;
+  CompiledProcessCvuContract
+  project_model_managed_preproc_contract(const PreprocOptions& options) const;
+  // Resolve and validate the physical DMA-BUF execution contract. Descriptive
+  // model APIs intentionally stay semantic-only until this boundary is crossed.
+  void prepare_for_execution() const;
   std::string apply_name_suffix(const std::string& base) const;
   bool has_terminal_policy() const;
 
@@ -169,9 +187,16 @@ public:
 
   simaai::neat::InputOptions input_appsrc_options(bool tensor_mode) const;
 
-  const simaai::neat::pipeline_internal::MemoryBackendDecision&
-  memory_backend_decision() const noexcept {
+  const simaai::neat::pipeline_internal::MemoryBackendDecision& memory_backend_decision() const {
+    prepare_for_execution();
     return memory_backend_decision_;
+  }
+
+  // True when the strict backend owns the complete compiler-authored model
+  // command graph. RoutePlanner must not rediscover pre/post adapters around
+  // MLA in this mode: those commands already live in the one execution plan.
+  bool uses_model_execution_plan() const noexcept {
+    return dmabuf_plan_execution_plan_.has_value();
   }
 
   ModelPack clone_with_buffers(int num_buffers_cvu, int num_buffers_mla) const;
@@ -211,6 +236,7 @@ private:
 
   void init(const std::string& tar_gz);
   void init_from_config(const std::string& tar_gz, Config cfg);
+  void ensure_dmabuf_execution_plan() const;
   std::vector<ModelFragment::StageFacts> build_stage_facts(
       const std::vector<ExecutionStage>& stages,
       const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract = std::nullopt,
@@ -220,11 +246,14 @@ private:
   Config options_;
   PipelineType pipeline_type_ = PipelineType::Preproc;
   std::optional<simaai::neat::pipeline_internal::sima::MpkContract> mpk_contract_;
-  std::optional<simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan>
+  mutable std::optional<simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan>
       dmabuf_plan_execution_plan_;
-  std::optional<simaai::neat::pipeline_internal::sima::static_contract::FrameSlotArenaPlan>
+  mutable std::optional<simaai::neat::pipeline_internal::sima::static_contract::FrameSlotArenaPlan>
       dmabuf_frame_arena_plan_;
-  simaai::neat::pipeline_internal::MemoryBackendDecision memory_backend_decision_;
+  mutable std::optional<
+      simaai::neat::pipeline_internal::sima::static_contract::PhysicalExecutionPlan>
+      dmabuf_physical_execution_plan_;
+  mutable simaai::neat::pipeline_internal::MemoryBackendDecision memory_backend_decision_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
   std::optional<bool> processcvu_preproc_single_output_handoff_;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;

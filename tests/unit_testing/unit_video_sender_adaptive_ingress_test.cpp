@@ -14,6 +14,7 @@
 #include "nodes/sima/H264Packetize.h"
 #include "nodes/sima/H264Parse.h"
 #include "pipeline/Graph.h"
+#include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -26,12 +27,18 @@
 #include <string_view>
 #include <vector>
 
+namespace simaai::neat {
+SampleSpec device_visible_nv12_materialization_spec_or_throw(
+    const SampleSpec& source, const char* where);
+}
+
 namespace {
 
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
 constexpr int kFps = 30;
 constexpr std::string_view kDirectKind = "VideoSenderRawIngress[direct_nv12]";
+constexpr std::string_view kMaterializeKind = "VideoSenderRawIngress[materialize_nv12]";
 constexpr std::string_view kConvertKind = "VideoSenderRawIngress[convert_to_nv12]";
 
 simaai::neat::OutputSpec raw_spec(std::string format, std::string memory,
@@ -189,10 +196,10 @@ RUN_TEST(
       const auto authoritative_system =
           raw_spec("NV12", "SystemMemory", SpecCertainty::Authoritative);
       const auto derived_simaai = raw_spec("NV12", "SimaAI", SpecCertainty::Derived);
-      require(can_encode_nv12_direct(derived_system, true),
-              "layout-aware encoder should accept proven system-memory NV12");
-      require(can_encode_nv12_direct(authoritative_system, true),
-              "layout-aware encoder should accept authoritative system-memory NV12");
+      require(!can_encode_nv12_direct(derived_system, true),
+              "system-memory NV12 requires the explicit materializing operation");
+      require(!can_encode_nv12_direct(authoritative_system, true),
+              "authoritative system-memory NV12 still requires materialization");
       require(can_encode_nv12_direct(derived_simaai, true),
               "layout-aware encoder should accept proven SiMaAI NV12");
       require(!can_encode_nv12_direct(derived_system, false),
@@ -221,7 +228,29 @@ RUN_TEST(
       require(!can_encode_nv12_direct(encoded, true),
               "encoded input must never select the raw direct ingress");
 
-      require_selected_ingress(derived_system, true, kDirectKind, 0U);
+      {
+        simaai::neat::SampleSpec source;
+        source.kind = simaai::neat::SampleMediaKind::RawVideo;
+        source.media_type = "video/x-raw";
+        source.format = "NV12";
+        source.width = 680;
+        source.height = 382;
+        source.required_bytes_actual = 680U * 382U * 3U / 2U;
+        const auto transport =
+            simaai::neat::device_visible_nv12_materialization_spec_or_throw(
+                source, "unit VideoSender NV12 materialization");
+        require(transport.planes.size() == 2U,
+                "NV12 materialization must publish exactly two planes");
+        require(transport.planes[0].stride_bytes == 704 &&
+                    transport.planes[1].stride_bytes == 704,
+                "NV12 materialization must use the Allegro minimum raster pitch");
+        require(transport.planes[1].offset_bytes == 704 * 384,
+                "NV12 materialization must align the luma storage height");
+        require(transport.required_bytes_actual == 704U * 384U * 3U / 2U,
+                "NV12 materialization must allocate both aligned surfaces");
+      }
+
+      require_selected_ingress(derived_system, true, kMaterializeKind, 0U);
       require_selected_ingress(derived_simaai, true, kDirectKind, 0U);
       require_selected_ingress(derived_system, false, kConvertKind, 1U);
       require_selected_ingress(raw_spec("NV12", "SystemMemory", SpecCertainty::Hint), true,
@@ -269,10 +298,10 @@ RUN_TEST(
         linear.add(make_explicit_push_source(FormatTag::NV12, InputMemoryPolicy::SystemMemory));
         linear.add(make_raw_sender());
         const auto plan = compile_with_context(linear, layout_aware_context);
-        require(count_plan_kinds(plan, kDirectKind) == 1U,
-                "linear explicit NV12 InputOptions should select direct ingress");
-        require(count_plan_kinds(plan, kConvertKind) == 0U,
-                "linear direct ingress must not retain the fallback variant");
+        require(count_plan_kinds(plan, kMaterializeKind) == 1U,
+                "linear system NV12 must select the explicit CMA materializer");
+        require(count_plan_kinds(plan, kDirectKind) == 0U,
+                "system memory must not bypass the explicit materializer");
       }
 
       {
@@ -311,9 +340,8 @@ RUN_TEST(
       }
 
       {
-        // Version-2 connected Graphs retain the same names. If the loaded
-        // ingress specializes to direct mode, it reuses the serialized
-        // fallback's final NV12 caps element rather than regenerating nX_*.
+        // Version-2 connected Graphs retain the same names while keeping the
+        // SystemMemory materializer explicit.
         const auto path =
             std::filesystem::temp_directory_path() / "neat_video_sender_connected_ingress.json";
         std::error_code ec;
@@ -331,12 +359,13 @@ RUN_TEST(
         std::filesystem::remove(path, ec);
 
         const auto plan = compile_with_context(loaded, layout_aware_context);
-        const std::string direct_backend = plan_backend_for_kind(plan, kDirectKind);
-        require(!direct_backend.empty(), "loaded connected NV12 sender should specialize directly");
-        require_contains(direct_backend, "name=saved_n1_nv12_caps_instance",
-                         "direct specialization must preserve the serialized NV12 caps name");
-        require(direct_backend.find("videoconvert name=") == std::string::npos,
-                "loaded direct specialization must not restore the converter");
+        const std::string materialized_backend = plan_backend_for_kind(plan, kMaterializeKind);
+        require(!materialized_backend.empty(),
+                "loaded connected SystemMemory sender should materialize explicitly");
+        require_contains(materialized_backend, "name=saved_n1_nv12_caps_instance",
+                         "materialization must preserve the serialized NV12 caps name");
+        require(materialized_backend.find("videoconvert name=") == std::string::npos,
+                "same-format NV12 materialization must not add a redundant color conversion");
       }
 
       {
@@ -358,18 +387,11 @@ RUN_TEST(
         simaai::neat::Graph connected("connected_nv12_sender");
         connected.connect(source, sender);
         const auto plan = compile_with_context(connected, layout_aware_context);
-        require(count_plan_kinds(plan, kDirectKind) == 1U,
-                "connected explicit NV12 contract should select direct ingress");
+        require(count_plan_kinds(plan, kMaterializeKind) == 1U,
+                "connected SystemMemory NV12 must select explicit materialization");
 
-        // The public diagnostic uses the real installed capability. Assert the
-        // corresponding selected variant rather than making this unit depend
-        // on which matched Internals package is installed.
-        const bool installed_layout_aware =
-            simaai::neat::internal::element_boolean_capability("neatencoder", "input-layout-aware")
-                .value_or(false);
-        require_contains(connected.describe_backend(false),
-                         std::string(installed_layout_aware ? kDirectKind : kConvertKind),
-                         "connected describe_backend should expose the selected ingress");
+        require_contains(connected.describe_backend(false), std::string(kMaterializeKind),
+                         "connected SystemMemory diagnostic must expose materialization");
       }
 
       {
@@ -381,8 +403,8 @@ RUN_TEST(
         fanout.connect(source, sender);
         fanout.connect(source, simaai::neat::nodes::Output("preview"));
         const auto plan = compile_with_context(fanout, layout_aware_context);
-        require(count_plan_kinds(plan, kDirectKind) == 1U,
-                "FanOut should preserve the NV12 contract into VideoSender");
+        require(count_plan_kinds(plan, kMaterializeKind) == 1U,
+                "FanOut should preserve the SystemMemory materialization contract");
         require(plan_has_kind(plan, "FanOut"), "test topology should materialize a FanOut");
       }
 

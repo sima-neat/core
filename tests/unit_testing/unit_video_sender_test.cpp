@@ -89,6 +89,31 @@ RUN_TEST(
       }
 
       {
+        auto opt = VideoSenderOptions::H265RtpUdpFromRaw(1280, 720, 30);
+        opt.channel = 2;
+        opt.encoder.bitrate_kbps = 3500;
+        opt.encoder.level = "4.1";
+
+        require(opt.rtp.payload_type == 98,
+                "raw H265 VideoSender payload type default mismatch");
+        require(opt.is_raw_input() && !opt.is_encoded_input(),
+                "raw H265 VideoSender input kind mismatch");
+        const auto graph = VideoSender(opt);
+        require_in_order(graph.describe(),
+                         {"VideoSenderRawIngress[convert_to_nv12]", "H265EncodeSima",
+                          "H265Parse", "H265Packetize", "UdpOutput"},
+                         "raw H265 sender must reuse the adaptive ingress and direct encoder");
+        const std::string backend = graph.describe_backend();
+        require_contains(backend, "neatencoder", "raw H265 hardware encoder missing");
+        require_contains(backend, "enc-type=h265", "raw H265 codec selection missing");
+        require_contains(backend, "enc-profile=main", "raw H265 profile mismatch");
+        require_contains(backend, "enc-level=4.1", "raw H265 level mismatch");
+        require_contains(backend, "h265parse", "raw H265 parser missing");
+        require_contains(backend, "rtph265pay", "raw H265 packetizer missing");
+        require_contains(backend, "pt=98", "raw H265 payload type mismatch");
+      }
+
+      {
         auto opt = VideoSenderOptions::Passthrough(RtspCodec::H264);
         require(opt.rtp.payload_type == 96, "VideoSender H264 payload type default mismatch");
         opt.channel = 1;
@@ -155,4 +180,7 @@ RUN_TEST(
                                "VideoSender should reject invalid raw fps");
       require_invalid_argument([] { (void)VideoSenderOptions::Passthrough(RtspCodec::MJPEG); },
                                "VideoSender should reject MJPEG passthrough");
+      require_invalid_argument(
+          [] { (void)VideoSenderOptions::RtpUdpFromRaw(RtspCodec::MJPEG, 1280, 720, 30); },
+          "VideoSender should reject MJPEG raw encode");
     }));
