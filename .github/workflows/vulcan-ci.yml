@@ -910,6 +910,10 @@ jobs:
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
+      # TEMPORARY: the external RTSP publishers are outside the Modalix runner network.
+      # Remove these exclusions once runner access is restored.
+      TEMPORARILY_DISABLED_EXTERNAL_RTSP_CTESTS: >-
+        ^(codec_runtime_stream_contract_test|codec_runtime_stream_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test|rtsp_encoded_boundary_caps_test|tutorial_018_consume_rtsp_stream|tutorial_018_consume_rtsp_stream_h265)$
 
     steps:
       - name: Checkout code
@@ -1215,7 +1219,7 @@ jobs:
           echo "SIMA_CTEST_E2E_JOBS=${SIMA_CTEST_E2E_JOBS:-<unset>}"
 
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
-          SKIP_REGEX='^(unit_dispatcher_watchdog_test)$'
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test)$|${TEMPORARILY_DISABLED_EXTERNAL_RTSP_CTESTS}"
           E2E_LABEL_EXCLUDE='perf|llima'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1349,7 +1353,9 @@ jobs:
 
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
-          ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
+          ctest --test-dir "${TUTORIALS_DIR}" \
+            -E "${TEMPORARILY_DISABLED_EXTERNAL_RTSP_CTESTS}" \
+            --output-on-failure
 
           RESNET_TAR="${TUTORIAL_MODEL_DIR}/resnet_50.tar.gz"
           YOLO_TAR="${TUTORIAL_MODEL_DIR}/yolo_v8s.tar.gz"
@@ -1401,7 +1407,18 @@ jobs:
           for test_case in "${genai_pytests[@]}"; do
             "${PYTHON_BIN}" -m pytest -q "${test_case}"
           done
-          "${PYTHON_BIN}" -m pytest -q "${TUTORIALS_PYTEST_DIR}"
+          temporarily_disabled_external_rtsp_pytests=(
+            "${TUTORIALS_PYTEST_DIR}/test_rtsp_codec_tutorial.py::test_rtsp_codec_tutorial[h264]"
+            "${TUTORIALS_PYTEST_DIR}/test_rtsp_codec_tutorial.py::test_rtsp_codec_tutorial[h265]"
+            "${TUTORIALS_PYTEST_DIR}/test_tutorials_run.py::test_tutorial_runs[018_consume_rtsp_stream-consume_rtsp_stream.py]"
+          )
+          external_rtsp_pytest_args=()
+          for test_case in "${temporarily_disabled_external_rtsp_pytests[@]}"; do
+            external_rtsp_pytest_args+=(--deselect "${test_case}")
+          done
+          "${PYTHON_BIN}" -m pytest -q \
+            "${external_rtsp_pytest_args[@]}" \
+            "${TUTORIALS_PYTEST_DIR}"
 
       - name: Run weekly long Python pytest from installed extras
         if: ${{ inputs.run_long_tests }}
