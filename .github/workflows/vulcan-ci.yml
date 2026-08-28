@@ -1330,7 +1330,7 @@ jobs:
 
       - name: Upload Modalix Performance Results
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: modalix-performance-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/perf-results/*.json
@@ -1642,7 +1642,7 @@ jobs:
 
       - name: Upload PCIe hardware test artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pciehost-hardware-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/pciehost-artifacts
