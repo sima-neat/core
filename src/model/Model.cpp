@@ -547,12 +547,8 @@ bool route_uses_model_managed_graph200(
 bool route_absorbs_model_managed_graph200(
     const internal::ModelPack& pack,
     const internal::PreprocessPlannerResult& plan) {
-  // Graph-200 command absorption is a projection of the immutable physical
-  // DMA-BUF plan.  The legacy backend has no such plan and must keep its
-  // separately rendered preprocessing stage.  Keeping this decision next to
-  // route selection prevents a Graph-200 topology alone from accidentally
-  // opting the legacy path into strict-plan rendering.
-  return route_uses_model_managed_graph200(plan) && pack.uses_model_execution_plan();
+  (void)pack;
+  return route_uses_model_managed_graph200(plan);
 }
 
 internal::PreprocessContractFlags
@@ -5594,10 +5590,8 @@ PreprocOptions make_preproc_options_from_typed_adapter(
   populate_model_managed_preproc_options(&opt, plan, input);
   const auto& selected_pack =
       sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model);
-  if (selected_pack.uses_model_execution_plan()) {
-    opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-        selected_pack.project_model_managed_preproc_contract(opt));
-  }
+  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
+      selected_pack.project_model_managed_preproc_contract(opt));
   return opt;
 }
 
@@ -7374,6 +7368,9 @@ Graph Model::fragment(Stage stage) const {
 }
 
 std::string Model::backend_fragment(Stage stage) const {
+  // A backend fragment can be inserted into Graph::custom(), so it is an
+  // executable boundary rather than descriptive metadata.
+  impl_->pack.prepare_for_execution();
   internal::ModelStage s = internal::ModelStage::Full;
   switch (stage) {
   case Stage::Preprocess:
@@ -8276,10 +8273,8 @@ PreprocOptions ModelAccess::build_preprocess_stage_options(const Model& model, b
   PreprocOptions opt = make_model_managed_preproc_options_base(model, sync);
   populate_model_managed_preproc_options(&opt, model.impl_->preprocess_plan, nullptr);
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  if (pack.uses_model_execution_plan()) {
-    opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-        pack.project_model_managed_preproc_contract(opt));
-  }
+  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
+      pack.project_model_managed_preproc_contract(opt));
   return opt;
 }
 

@@ -2594,7 +2594,10 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   }
   const auto& graph = pack.route_graph();
   const auto& contract = *pack.mpk_contract();
-  const bool model_managed_execution_plan = pack.uses_model_execution_plan();
+  // The exact MPK graph is always executed by the compiler-authored model
+  // plan. Physical admission remains lazy, but route ownership must not depend
+  // on whether that cache happened to be populated before route inspection.
+  constexpr bool model_managed_execution_plan = true;
   out->model_managed_execution_plan = model_managed_execution_plan;
   const auto mla_stages = pipeline_internal::sima::get_mla_stage_io_contracts(contract);
   if (mla_stages.empty()) {

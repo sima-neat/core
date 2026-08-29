@@ -13,7 +13,6 @@
 #include "pipeline/internal/DmabufEligibility.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TempJsonFileUtil.h"
 #include "pipeline/internal/packedio/PackedIoAdapter.h"
@@ -4966,11 +4965,8 @@ void ModelPack::init(const std::string& tar_gz) {
 
 void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   options_ = std::move(cfg);
-  const auto& process_backend = pipeline_internal::process_memory_backend_selection();
-  memory_backend_decision_ = {};
-  memory_backend_decision_.backend = process_backend.policy;
-  const bool dmabuf_plan_selected =
-      process_backend.policy == pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+  dmabuf_plan_admission_ = {};
+  dmabuf_plan_digest_.clear();
   mpk_contract_.reset();
   dmabuf_plan_execution_plan_.reset();
   dmabuf_frame_arena_plan_.reset();
@@ -5023,12 +5019,6 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   // admitted lazily when an executable route is requested. This keeps model
   // metadata/route inspection independent of target artifacts while the
   // execution boundary remains fail-closed.
-  if (!dmabuf_plan_selected &&
-      env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
-    std::fprintf(
-        stderr, "NEAT_MEMORY_BACKEND_DECISION backend=legacy eligible=not-evaluated code=%s\n",
-        pipeline_internal::dmabuf_eligibility_code_name(memory_backend_decision_.admission.code));
-  }
   if (mpk_contract_.has_value()) {
     const auto mla_stages =
         simaai::neat::pipeline_internal::sima::get_mla_stage_io_contracts(*mpk_contract_);
@@ -5117,10 +5107,6 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
 }
 
 void ModelPack::ensure_dmabuf_execution_plan() const {
-  if (memory_backend_decision_.backend !=
-      pipeline_internal::MemoryBackendPolicy::DmaBufPlan) {
-    return;
-  }
   if (dmabuf_plan_execution_plan_.has_value()) {
     if (!dmabuf_frame_arena_plan_.has_value() ||
         !dmabuf_physical_execution_plan_.has_value()) {
@@ -5139,16 +5125,9 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   }
 
   auto compiled = compile_dmabuf_plan_execution_plan(*mpk_contract_);
-  memory_backend_decision_.admission = compiled.report;
-  memory_backend_decision_.plan_digest = compiled.plan_digest;
+  dmabuf_plan_admission_ = compiled.report;
+  dmabuf_plan_digest_ = compiled.plan_digest;
   if (!compiled.eligible()) {
-    if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
-      std::fprintf(stderr,
-                   "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=0 code=%s "
-                   "location=%s artifact_digest=%s\n",
-                   pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code),
-                   compiled.report.location.c_str(), compiled.report.artifact_digest.c_str());
-    }
     throw std::runtime_error(
         std::string("ModelPack: dmabuf-plan admission failed [") +
         pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code) + "] at " +
@@ -5159,13 +5138,6 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   dmabuf_plan_execution_plan_ = std::move(compiled.plan);
   dmabuf_frame_arena_plan_ = std::move(compiled.arena_plan);
   dmabuf_physical_execution_plan_ = std::move(compiled.physical_plan);
-  if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
-    std::fprintf(stderr,
-                 "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=1 code=eligible "
-                 "plan_digest=%s artifact_digest=%s\n",
-                 memory_backend_decision_.plan_digest.c_str(),
-                 memory_backend_decision_.admission.artifact_digest.c_str());
-  }
 }
 
 void ModelPack::prepare_for_execution() const {
