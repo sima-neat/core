@@ -1,10 +1,9 @@
 /**
  * @file TensorTransfer.cpp
- * @brief CPU <-> SiMa device transfer helpers for Tensor using the SiMa GStreamer
- *        segment allocator + buffer pool (when available).
+ * @brief CPU <-> SiMa device transfer helpers for Tensor using standard DMA-BUF
+ *        storage imported by the direct accelerator drivers.
  *
  * This file implements:
- *  - A small global cache of GstBufferPools keyed by {target_flags, mem_flags, segments}.
  *  - transfer_to_device(): copies a Tensor payload into a device-backed GstBuffer,
  *    wraps it in a GstSample, and returns a Tensor that references that storage.
  *  - transfer_to_cpu(): copies payload into CPU-owned storage.
@@ -29,16 +28,11 @@
  *  - Else if src.storage already has segment layout, reuse it.
  *  - Else allocate a single default segment: {"tensor", payload_bytes}.
  *
- * TODO(repo-policy):
- *  - Decide whether destination mem_flags should ever include GST_SIMAAI_MEMORY_FLAG_RDONLY.
- *    We currently clear it because we map/write into the destination buffer.
- *  - Consider pool eviction / max cache size. The current pool cache grows unbounded with new keys.
  */
 
 #include "pipeline/internal/TensorTransfer.h"
 
 #include "pipeline/internal/GstDataAdapter.h"
-#include "pipeline/internal/SimaaiMemory.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
@@ -46,18 +40,14 @@
 #include "simaai/neat/internal/dmabuf/DmaBufPool.h"
 
 #include <gst/gst.h>
-#include <gst/gstbufferpool.h>
 
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -78,106 +68,6 @@ using simaai::neat::Tensor;
 // Small safe-math helpers
 //==============================================================================
 
-//==============================================================================
-// Pool cache (keyed by flags + segment layout)
-//==============================================================================
-
-struct PoolCache {
-  std::mutex mu;
-  std::unordered_map<std::string, std::shared_ptr<GstBufferPool>> pools;
-  std::size_t hits = 0;
-  std::size_t misses = 0;
-};
-
-PoolCache& pool_cache() {
-  static PoolCache cache;
-  return cache;
-}
-
-/** Build a deterministic pool key from target flags, memory flags, and segment layout. */
-std::string pool_key(std::uint64_t target_flags, std::uint64_t mem_flags,
-                     const std::vector<Segment>& segments) {
-  std::ostringstream oss;
-  oss << target_flags << ":" << mem_flags << ":" << segments.size();
-  for (const auto& seg : segments) {
-    oss << "|" << seg.name << ":" << seg.size_bytes;
-  }
-  return oss.str();
-}
-
-#if SIMA_HAS_SIMAAI_POOL
-std::shared_ptr<GstBufferPool> create_pool(std::uint64_t target_flags, std::uint64_t mem_flags,
-                                           const std::vector<Segment>& segments) {
-  if (segments.empty())
-    return {};
-  gst_simaai_segment_memory_init_once();
-
-  std::vector<gsize> sizes;
-  sizes.reserve(segments.size());
-  std::vector<std::string> names_str;
-  names_str.reserve(segments.size());
-
-  for (const auto& seg : segments) {
-    sizes.push_back(static_cast<gsize>(seg.size_bytes));
-    names_str.push_back(seg.name);
-  }
-
-  std::vector<const char*> names;
-  names.reserve(names_str.size());
-  for (const auto& s : names_str) {
-    names.push_back(s.c_str());
-  }
-
-  const GstMemoryFlags flags = static_cast<GstMemoryFlags>(target_flags | mem_flags);
-
-  GstBufferPool* pool = gst_simaai_allocate_buffer_pool2(
-      /*object=*/nullptr, gst_simaai_memory_get_segment_allocator(),
-      /*min_buffers=*/2,
-      /*max_buffers=*/0, flags, static_cast<gsize>(segments.size()), sizes.data(), names.data());
-  if (!pool)
-    return {};
-
-  return std::shared_ptr<GstBufferPool>(pool,
-                                        [](GstBufferPool* p) { gst_simaai_free_buffer_pool(p); });
-}
-#endif
-
-/** Get (or create) a pool for this (target_flags, mem_flags, segments) layout. */
-std::shared_ptr<GstBufferPool> get_pool(std::uint64_t target_flags, std::uint64_t mem_flags,
-                                        const std::vector<Segment>& segments) {
-  const std::string key = pool_key(target_flags, mem_flags, segments);
-
-  PoolCache& cache = pool_cache();
-  {
-    std::lock_guard<std::mutex> lock(cache.mu);
-    auto it = cache.pools.find(key);
-    if (it != cache.pools.end() && it->second) {
-      cache.hits++;
-      return it->second;
-    }
-    cache.misses++;
-  }
-
-#if !SIMA_HAS_SIMAAI_POOL
-  (void)target_flags;
-  (void)mem_flags;
-  (void)segments;
-  return {};
-#else
-  std::shared_ptr<GstBufferPool> created = create_pool(target_flags, mem_flags, segments);
-  if (!created)
-    return {};
-
-  std::lock_guard<std::mutex> lock(cache.mu);
-  auto [it, inserted] = cache.pools.emplace(key, created);
-  if (!inserted && it->second) {
-    return it->second;
-  }
-  return created;
-#endif
-}
-
-//==============================================================================
 // Tensor math helpers (shared)
 //==============================================================================
 
@@ -678,40 +568,15 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
 // Public API
 //==============================================================================
 
-TransferPoolStats tensor_transfer_pool_stats() {
-  PoolCache& cache = pool_cache();
-  std::lock_guard<std::mutex> lock(cache.mu);
-  TransferPoolStats stats;
-  stats.hits = cache.hits;
-  stats.misses = cache.misses;
-  stats.entries = cache.pools.size();
-  return stats;
-}
-
 Tensor transfer_to_device(const Tensor& src, const Device& target,
                           const std::vector<Segment>* required_segments,
-                          const std::vector<std::string>* required_segment_names,
-                          const MemoryBackendPolicy backend) {
+                          const std::vector<std::string>* required_segment_names) {
   const std::uint64_t target_flags = target_flags_from_device(target);
   if (target_flags == 0) {
     throw std::runtime_error("transfer: unsupported target device");
   }
 
-#if !SIMA_HAS_SIMAAI_POOL
-  throw std::runtime_error("transfer: simaai buffer pool unavailable");
-#else
   simaai::neat::gst_init_once();
-
-  // Choose destination memory flags.
-  std::uint64_t mem_flags = 0;
-  if (src.storage) {
-    mem_flags = src.storage->sima_mem_flags;
-  }
-  if (mem_flags == 0) {
-    mem_flags = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_CACHED);
-  }
-  // We will map/write into the destination; do not request read-only memory.
-  mem_flags &= ~static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_RDONLY);
 
   // Determine payload bytes. Prefer tight size; otherwise fall back to mapped size.
   std::size_t payload_bytes = 0;
@@ -738,68 +603,7 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
   const std::vector<Segment> segments =
       resolve_segments(src, required_segments, required_segment_names, payload_bytes);
 
-  if (backend == MemoryBackendPolicy::DmaBufPlan) {
-    return transfer_to_driver_dmabuf(src, target, target_flags, segments);
-  }
-
-  std::shared_ptr<GstBufferPool> pool = get_pool(target_flags, mem_flags, segments);
-  if (!pool) {
-    throw std::runtime_error("transfer: buffer pool allocation failed");
-  }
-
-  GstBuffer* dst = nullptr;
-  if (gst_buffer_pool_acquire_buffer(pool.get(), &dst, nullptr) != GST_FLOW_OK || !dst) {
-    throw std::runtime_error("transfer: buffer pool acquire failed");
-  }
-
-  // Try to preserve metadata if the source is itself a GstSample-backed tensor.
-  if (src.storage && src.storage->kind == StorageKind::GstSample) {
-    std::string holder_err;
-    GstBuffer* src_buf = buffer_from_holder_if_gstsample(src, &holder_err);
-    if (src_buf) {
-      copy_gst_metadata(dst, src_buf);
-      gst_buffer_unref(src_buf);
-    }
-  }
-
-  GstMapInfo map{};
-  if (!gst_buffer_map(dst, &map, GST_MAP_WRITE)) {
-    gst_buffer_unref(dst);
-    throw std::runtime_error("transfer: destination map failed");
-  }
-
-  bool ok = false;
-  try {
-    ok = copy_tensor_payload(src, static_cast<uint8_t*>(map.data), map.size);
-  } catch (...) {
-    gst_buffer_unmap(dst, &map);
-    gst_buffer_unref(dst);
-    throw;
-  }
-
-  gst_buffer_unmap(dst, &map);
-  if (!ok) {
-    gst_buffer_unref(dst);
-    throw std::runtime_error("transfer: payload copy failed");
-  }
-
-  // Wrap destination buffer in a sample solely as an ownership / mapping carrier.
-  // Caps are intentionally omitted because Tensor carries shape/dtype/semantic itself.
-  GstSample* sample = gst_sample_new(dst, nullptr, nullptr, nullptr);
-  if (!sample) {
-    gst_buffer_unref(dst);
-    throw std::runtime_error("transfer: failed to wrap GstSample");
-  }
-  gst_buffer_unref(dst);
-
-  auto storage = make_gst_sample_storage(sample);
-  gst_sample_unref(sample);
-  if (!storage) {
-    throw std::runtime_error("transfer: failed to create storage");
-  }
-
-  return finalize_transfer_tensor(src, storage, segments);
-#endif
+  return transfer_to_driver_dmabuf(src, target, target_flags, segments);
 }
 
 Tensor transfer_to_cpu(const Tensor& src) {

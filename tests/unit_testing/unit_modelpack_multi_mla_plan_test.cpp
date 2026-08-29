@@ -1,7 +1,6 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "model/Model.h"
 #include "model/internal/ModelPack.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
@@ -659,12 +658,9 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
            using simaai::neat::internal::ModelPack;
            using simaai::neat::internal::ModelStage;
            using simaai::neat::internal::PipelineType;
-           using simaai::neat::pipeline_internal::MemoryBackendPolicy;
            using simaai::neat::pipeline_internal::sima::FrameArenaRole;
            namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 
-           require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
-                   "failed to select strict DMA-BUF backend");
            const auto root = fs::temp_directory_path() / "neat-modelpack-two-mla-unit";
            std::error_code ec;
            fs::remove_all(root, ec);
@@ -677,8 +673,7 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
            write_monolithic_topology_elf(root / "share" / "decoder.elf");
 
            ModelPack model(root.string());
-           require(model.memory_backend_decision().backend == MemoryBackendPolicy::DmaBufPlan &&
-                       model.memory_backend_decision().admission.eligible(),
+           require(model.dmabuf_plan_admission().eligible(),
                    "synthetic package did not pass strict multi-stage admission");
            require(model.mpk_contract().has_value(), "synthetic package lost its MPK contract");
            const auto& mpk = *model.mpk_contract();
@@ -790,8 +785,8 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
                                  1, false, {}, {}, {}, PipelineType::Preproc, "decoder", 4, 4, 0,
                                  -1, {}, {}, policy,
                                  /*cleanup_extracted_model_data=*/false);
-             const auto full_proof = candidate.memory_backend_decision().admission.proof;
-             const auto full_digest = candidate.memory_backend_decision().plan_digest;
+             const auto full_proof = candidate.dmabuf_plan_admission().proof;
+             const auto full_digest = candidate.dmabuf_plan_digest();
              simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags route_flags;
              route_flags.boxdecode_selected = true;
              route_flags.terminal_consumer_owns_tensor_tail = true;
@@ -813,17 +808,18 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
                make_relation_tail_package("neat-modelpack-boxdecode-interleaved-tail-unit", true);
            auto [interleaved_model, interleaved_full_proof, interleaved_full_digest] =
                select_relation_tail_route(interleaved_package);
-           const auto& interleaved_decision = interleaved_model.memory_backend_decision();
-           require(interleaved_decision.plan_digest == interleaved_full_digest,
+           require(interleaved_model.dmabuf_plan_digest() == interleaved_full_digest,
                    "terminal selection changed the immutable full-plan digest");
            require_proof_unchanged(interleaved_full_proof,
-                                   interleaved_decision.admission.proof);
+                                   interleaved_model.dmabuf_plan_admission().proof);
            const auto interleaved_plan = interleaved_model.execution_plan();
-           require(std::any_of(interleaved_plan.post.begin(), interleaved_plan.post.end(),
+           require(interleaved_plan.pre.empty() && interleaved_plan.post.empty(),
+                   "physical plan was split across competing route authorities");
+           require(std::any_of(interleaved_plan.infer.begin(), interleaved_plan.infer.end(),
                                [](const auto& stage) {
                                  return stage.kind == ExecutionStageKind::Dequant;
                                }),
-                   "physical projection lost compiler-authored post-MLA operations");
+                   "terminal selection removed compiler-authored semantic tail operations");
            require(interleaved_model.infer_block().size() == 1U,
                    "terminal rendering did not stop execution at the MLA");
 
@@ -851,10 +847,10 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
                make_relation_tail_package("neat-modelpack-boxdecode-prefix-tail-unit", false);
            auto [prefix_model, prefix_full_proof, prefix_full_digest] =
                select_relation_tail_route(prefix_package);
-           require(prefix_model.memory_backend_decision().plan_digest == prefix_full_digest,
+           require(prefix_model.dmabuf_plan_digest() == prefix_full_digest,
                    "dense-prefix terminal selection changed the full-plan digest");
            require_proof_unchanged(prefix_full_proof,
-                                   prefix_model.memory_backend_decision().admission.proof);
+                                   prefix_model.dmabuf_plan_admission().proof);
 
            // Optional exact-artifact gate for the App48 YOLO26 package whose
            // compiler order interleaves Slice and Dequant operations.
@@ -867,17 +863,17 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
                                     640, 3, false, {}, {}, {}, PipelineType::QuantTess, "decoder",
                                     4, 4, 0, -1, {}, {}, policy,
                                     /*cleanup_extracted_model_data=*/false);
-             const auto full_proof = yolo26_model.memory_backend_decision().admission.proof;
-             const auto full_digest = yolo26_model.memory_backend_decision().plan_digest;
+             const auto full_proof = yolo26_model.dmabuf_plan_admission().proof;
+             const auto full_digest = yolo26_model.dmabuf_plan_digest();
              simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags route_flags;
              route_flags.boxdecode_selected = true;
              route_flags.terminal_consumer_owns_tensor_tail = true;
              yolo26_model.set_model_managed_stage_facts(std::nullopt, route_flags,
                                                         {ExecutionStageKind::BoxDecode});
-             require(yolo26_model.memory_backend_decision().plan_digest == full_digest,
+             require(yolo26_model.dmabuf_plan_digest() == full_digest,
                      "exact YOLO26 terminal selection changed the full-plan digest");
              require_proof_unchanged(full_proof,
-                                     yolo26_model.memory_backend_decision().admission.proof);
+                                     yolo26_model.dmabuf_plan_admission().proof);
              require(yolo26_model.infer_block().size() == 1U,
                      "exact YOLO26 terminal rendering did not stop at MLA");
              const auto selected_facts = yolo26_model.stage_facts_for_model_stage(ModelStage::Full);
@@ -1059,7 +1055,7 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
                  real_package, "application/vnd.simaai.tensor", "FP32", /*depth=*/1,
                  /*max_width=*/640, /*max_height=*/480, /*max_depth=*/1,
                  /*normalize=*/false, {}, {}, /*preproc_next_cpu=*/{}, PipelineType::QuantTess);
-             require(real_model.memory_backend_decision().admission.eligible(),
+             require(real_model.dmabuf_plan_admission().eligible(),
                      "exact AFE 2.1 multi-MLA/A65 package failed ModelPack admission");
              const auto real_plan = real_model.execution_plan();
              require(real_plan.pre.empty() && real_plan.post.empty() &&
@@ -1332,8 +1328,8 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
 
            // Optional exact YOLOv8 regression: selecting the terminal consumer
            // must preserve the admitted full plan while its region view exposes
-           // graph226 as preprocess, MLA as infer, and graph227 as postprocess.
-           // The MLA contract still publishes six raw views.
+           // one immutable schedule. The MLA contract still publishes six raw
+           // views, while terminal rendering stops after graph226 plus MLA.
            if (const char* yolo_package =
                    std::getenv("SIMANEAT_EXACT_YOLOV8_029DDB60_PACKAGE");
                yolo_package != nullptr && *yolo_package != '\0') {
@@ -1344,8 +1340,8 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
                  640, 640, 3, false, {}, {}, {}, PipelineType::QuantTess,
                  "decoder", 4, 4, 0, -1, {}, {}, terminal_policy,
                  /*cleanup_extracted_model_data=*/false);
-             const auto full_digest = yolo_model.memory_backend_decision().plan_digest;
-             const auto full_proof = yolo_model.memory_backend_decision().admission.proof;
+             const auto full_digest = yolo_model.dmabuf_plan_digest();
+             const auto full_proof = yolo_model.dmabuf_plan_admission().proof;
 
              simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags flags;
              flags.boxdecode_selected = true;
@@ -1355,17 +1351,19 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
                  {ExecutionStageKind::BoxDecode});
 
              const auto selected_plan = yolo_model.execution_plan();
-             require(std::any_of(selected_plan.post.begin(), selected_plan.post.end(),
+             require(selected_plan.pre.empty() && selected_plan.post.empty(),
+                     "exact YOLO physical plan was split across route stages");
+             require(std::any_of(selected_plan.infer.begin(), selected_plan.infer.end(),
                                  [](const auto& stage) {
                                    return stage.kind == ExecutionStageKind::DetessDequant;
                                  }),
-                     "physical projection lost graph227 from the post-MLA region");
-             require(yolo_model.memory_backend_decision().plan_digest == full_digest,
+                     "terminal selection removed graph227 from the immutable full plan");
+             require(yolo_model.dmabuf_plan_digest() == full_digest,
                      "terminal selection changed the exact YOLO full-plan digest");
              require_proof_unchanged(full_proof,
-                                     yolo_model.memory_backend_decision().admission.proof);
-             require(yolo_model.infer_block().size() == 1U,
-                     "exact YOLO infer region must contain only the terminal MLA");
+                                     yolo_model.dmabuf_plan_admission().proof);
+             require(yolo_model.infer_block().size() == 2U,
+                     "exact YOLO terminal renderer did not stop after graph226 and MLA");
 
              const auto selected_facts =
                  yolo_model.stage_facts_for_model_stage(ModelStage::Full);

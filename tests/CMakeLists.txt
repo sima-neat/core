@@ -418,7 +418,6 @@ set(UNIT_TESTS
   unit_mpk_contract_legacy_ingress_test
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
-  unit_memory_backend_policy_test
   unit_dmabuf_eligibility_test
   unit_afe_mpk_v2_decoder_test
   unit_physical_execution_plan_test
@@ -457,7 +456,6 @@ set(UNIT_TESTS
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test
   unit_sima_decode_test
-  unit_decoder_admission_test
   unit_kernel200_envelope_guard_test
   unit_processcvu_binding_table_uses_runtime_outputs_test
   unit_processcvu_preproc_runtime_vs_exposed_outputs_test
@@ -1958,20 +1956,6 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   append_pipeline_test_env(codec_runtime_bad_url_diagnostics)
   set_property(TEST codec_runtime_bad_url_diagnostics APPEND PROPERTY LABELS "strict;e2e;codec;failure")
   set_property(TEST codec_runtime_bad_url_diagnostics APPEND PROPERTY RESOURCE_LOCK "rtsp")
-endif()
-
-add_pipeline_test_long(
-  decoder_multirun_admission_boundary_test
-  e2e_testing/decoder_multirun_admission_boundary_test.cpp
-)
-
-if (NOT decoder_multirun_admission_boundary_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST decoder_multirun_admission_boundary_test
-    APPEND PROPERTY LABELS "e2e;codec;rtsp;regression;lifecycle")
-  set_property(TEST decoder_multirun_admission_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
-  set_property(TEST decoder_multirun_admission_boundary_test
-    APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
-  set_tests_properties(decoder_multirun_admission_boundary_test PROPERTIES TIMEOUT 120)
 endif()
 
 add_pipeline_test_long(

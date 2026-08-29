@@ -348,10 +348,12 @@ struct RouteMaterializationPlan {
 using SessionRoutePlan = RouteMaterializationPlan;
 
 ModelSemantics build_model_semantics(const ModelPack& pack);
-RouteMaterializationPlan build_route_plan(const Model::Options& options,
-                                          const ModelSemantics& semantics,
-                                          const RouteCapability* capability = nullptr,
-                                          const ModelPack* pack = nullptr);
+RouteMaterializationPlan build_semantic_route_plan(
+    const Model::Options& options, const ModelSemantics& semantics,
+    const RouteCapability* capability = nullptr, const ModelPack* pack = nullptr);
+RouteMaterializationPlan build_session_route_plan(
+    const Model::Options& options, const ModelSemantics& semantics,
+    const RouteCapability* capability = nullptr, const ModelPack* pack = nullptr);
 
 RouteCapability extract_route_capability(const ModelPack& pack,
                                          const PreprocessPlannerResult& preprocess_plan);

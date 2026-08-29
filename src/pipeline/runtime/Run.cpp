@@ -264,11 +264,9 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
     InputStream stream, const RunOptions& opt, const InputStreamOptions& stream_opt, RunMode mode,
     const std::optional<InputOptions>& tensor_input_opt_for_cv,
     pipeline_internal::InputRouteProcessorPtr input_route_processor,
-    std::shared_ptr<DecoderAdmissionReservation> decoder_admission,
     std::function<void()> after_pipeline_start_for_test) {
   auto st = std::make_shared<runtime::RunCore>();
   runtime::initialize_run_identity(*st);
-  st->decoder_admission = std::move(decoder_admission);
   RunCoreStartupGuard startup_guard(st);
   st->pipeline.stream = std::move(stream);
   st->opt = opt;
@@ -597,7 +595,6 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       // close() timed out here and skipped teardown, leaving this the last user. Close the
       // stream directly; RunCore::close() latched `closed` on its way through.
       st->pipeline.stream.close();
-      st->decoder_admission.reset();
       st->stream_close_state.store(runtime::InputStreamCloseState::Closed,
                                    std::memory_order_release);
     }

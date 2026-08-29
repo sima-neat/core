@@ -394,17 +394,14 @@ pipeline-level `GstContext`:
 - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
 
-For the internal EVO DMA-BUF migration route, Core reads
-`SIMA_NEAT_MEMORY_BACKEND` once per process. During migration the only valid
-values are exactly `legacy` and `dmabuf-plan`; an unset variable selects
-`legacy`, while empty, `auto`, `probe`, case-altered, whitespace-altered, and
-unknown values fail closed. `ModelPack` records that immutable choice and is
-the sole owner of model admission. Lower transfer and sample-materialization
-helpers receive the resolved transport intent explicitly and never reread
-mutable environment state. This temporary selector and its legacy branch are
-owned by the Phase 7B deletion ledger; the strict-only product has no selector.
+Accelerator execution has one memory architecture: Core compiles the exact
+MPK+ELF contract into an immutable DMA-BUF execution plan and fails closed at
+the execution boundary when the contract cannot be admitted. There is no
+process-wide backend selector. Pure CPU graphs may retain SystemMemory, but
+every CVU, MLA, decoder, and encoder boundary uses the matching kernel driver
+and standard DMA-BUF transport.
 
-Selecting `dmabuf-plan` invokes the same side-effect-free
+Admission invokes the same side-effect-free
 `try_compile_dmabuf_plan()` operation used by the offline
 `neat-dmabuf-plan-audit` tool. Pass `--mpk <mpk.json>` and one repeatable
 `--mla-artifact <stage-id> <manifest-executable> <resolved-file>` triple per
@@ -415,8 +412,7 @@ frame-arena plan. The audit emits a versioned JSON record
 with stable reason codes, contract locations, content digests, and basenames;
 it does not allocate accelerator memory, open a device, or expose customer
 filesystem paths. Strict setup records the same canonical plan digest and
-fails rather than constructing or retrying the legacy executor after a
-rejection.
+does not construct or retry a retired executor after rejection.
 
 Only after admission does Core set `processmla.dmabuf_plan_contract` in static
 manifest ABI version 25. Core also projects each backend port's `required_alignment_bytes`
@@ -637,20 +633,19 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
-### Decoder admission lifecycle
+### Decoder capacity lifecycle
 
-Before choosing the single-pipeline or connected-graph runtime, Core scans the
-compiled execution plan for typed H.264/H.265 `SimaDecode` nodes. All eligible
-decoders are admitted as one group, and the resulting reservation is owned by
-the top-level `Run` until its pipeline workers have stopped. This applies
-equally to linear `Graph::add(...)` pipelines, ordinary connected segments, and
-fused realtime branches.
+Core preserves the requested H.264/H.265 decoder options while lowering linear,
+connected, and fused realtime graphs. The direct decoder runtime opens the codec
+device and reserves capacity through the `AL5_RESERVE` kernel ABI as part of
+session creation. The file descriptor owns that reservation, so failure and
+teardown follow the same lifetime as the hardware session without a daemon,
+admission socket, process-wide selector, or duplicate reservation in Core.
 
-Admission requires a known decoder width, height, and frame rate. Core never
-invents a frame rate. An incomplete contract or unavailable optional admission
-endpoint produces a warning and leaves the plan unchanged; with
-`SIMA_DECODER_ADMISSION_REQUIRE=1`, either condition fails before decoder
-hardware starts. Capacity rejection and malformed lease responses always fail.
+The kernel validates geometry and capacity and rejects an unsupported session
+before decode work is accepted. Closing the session releases the reservation.
+This keeps hardware policy at the driver boundary and leaves the public graph
+API unchanged.
 
 ### Realtime fan-in lowering
 

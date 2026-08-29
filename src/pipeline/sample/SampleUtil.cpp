@@ -3289,7 +3289,7 @@ bool tensor_buffer_descriptor_from_sample(GstSample* sample, TensorBufferView* o
 
 std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::string* err,
                                                      bool allow_zero_copy,
-                                                     const MemoryBackendPolicy backend) {
+                                                     const bool use_dmabuf_transport) {
   if (!sample_has_tensor_list(bundle) && bundle.kind != SampleKind::Bundle) {
     if (err)
       *err = "Sample tensor-list or bundle payload expected";
@@ -3303,8 +3303,6 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
   if (sample_debug_enabled()) {
     log_bundle(bundle);
   }
-  const bool dmabuf_plan = backend == MemoryBackendPolicy::DmaBufPlan;
-
   GstBuffer* sample_buf = nullptr;
   GstCaps* sample_caps = nullptr;
   if (sample_has_tensor_list(bundle)) {
@@ -3390,7 +3388,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
         }
       }
       bool built = false;
-      if (dmabuf_plan) {
+      if (use_dmabuf_transport) {
         if (!allow_zero_copy) {
           materialized_err = "dmabuf-plan tensor-set ingress requires zero-copy transport";
         } else {
@@ -3452,7 +3450,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       }
       if (sample_debug_enabled() && sample_buf) {
         std::fprintf(stderr, "[SAMPLE] tensor-set %s tensor backing bytes=%zu\n",
-                     dmabuf_plan
+                     use_dmabuf_transport
                          ? "DMA-BUF"
                          : (packed_parent_segment_name.has_value() ? "packed" : "materialized"),
                      static_cast<size_t>(gst_buffer_get_size(sample_buf)));
@@ -3489,7 +3487,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       *err = "Sample buffer allocation failed";
     return {};
   }
-  if (dmabuf_plan && sample_has_tensor_list(bundle) &&
+  if (use_dmabuf_transport && sample_has_tensor_list(bundle) &&
       !buffer_uses_only_standard_dmabuf_memory(sample_buf)) {
     gst_buffer_unref(sample_buf);
     if (sample_caps) {
@@ -3789,7 +3787,7 @@ std::shared_ptr<void> tensor_to_gst_envelope_holder(const Tensor& tensor, std::s
 std::shared_ptr<void> tensor_list_to_gst_envelope_holder(const TensorList& tensors,
                                                          const Sample& envelope_meta,
                                                          std::string* err, bool allow_zero_copy,
-                                                         const MemoryBackendPolicy backend) {
+                                                         const bool use_dmabuf_transport) {
   if (tensors.empty()) {
     if (err) {
       *err = "TensorList envelope payload is empty";
@@ -3817,19 +3815,20 @@ std::shared_ptr<void> tensor_list_to_gst_envelope_holder(const TensorList& tenso
   if (sample.stream_label.empty() && !tensors.front().route.name.empty()) {
     sample.stream_label = tensors.front().route.name;
   }
-  return make_sample_holder_from_bundle(sample, err, allow_zero_copy, backend);
+  return make_sample_holder_from_bundle(sample, err, allow_zero_copy, use_dmabuf_transport);
 }
 
 std::shared_ptr<void> sample_to_gst_envelope_holder(const Sample& sample, std::string* err,
                                                     bool allow_zero_copy,
-                                                    const MemoryBackendPolicy backend) {
+                                                    const bool use_dmabuf_transport) {
   const Sample canonical = canonicalize_tensor_transport_sample(sample);
   if (sample_has_tensor_list(canonical)) {
     return tensor_list_to_gst_envelope_holder(canonical.tensors, canonical, err, allow_zero_copy,
-                                              backend);
+                                              use_dmabuf_transport);
   }
   if (canonical.kind == SampleKind::Bundle) {
-    return make_sample_holder_from_bundle(canonical, err, allow_zero_copy, backend);
+    return make_sample_holder_from_bundle(canonical, err, allow_zero_copy,
+                                          use_dmabuf_transport);
   }
   if (err) {
     *err = "Sample tensor envelope conversion requires TensorSet/Bundle";

@@ -469,6 +469,31 @@ const std::string& qmla_padded_output_manifest() {
   return manifest;
 }
 
+const std::string& qmla_padded_cast_output_manifest() {
+  static const std::string manifest = R"json({
+    "name":"qmla-padded-cast","model_sdk_version":"2.1.0",
+    "input_nodes":[{"name":"input","size":16}],
+    "plugins":[
+      {"name":"MLA_0","sequence":1,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "number_of_quads_to_user":4,
+                        "input_types":[{"scalar":"float32","shape":[1,4]}],
+                        "output_types":[{"scalar":"bfloat16","shape":[1,1225,4]}]},
+       "input_nodes":[{"name":"input","size":16}],
+       "output_nodes":[{"name":"mla_out","size":9800}],
+       "resources":{"executable":"MLA_0.elf"}},
+      {"name":"cast_0","sequence":2,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "kernel":"cast","params":{"out_dtype":"float32",
+                          "input_shapes":[[1,1225,4]],
+                          "output_shapes":[[1,1225,4]]}},
+       "input_nodes":[{"name":"mla_out","size":9800}],
+       "output_nodes":[{"name":"cast_out","size":19600}]}
+    ]
+  })json";
+  return manifest;
+}
+
 MlaElfIoTopology qmla_padded_topology(const std::uint64_t ofm_extent = 110400U) {
   MlaElfIoTopology topology;
   topology.valid = true;
@@ -1014,6 +1039,23 @@ void test_qmla_output_physical_extent_and_row_pitch() {
         "missing QMLA extent evidence fails closed");
 }
 
+void test_cast_preserves_qmla_layout_authority() {
+  const auto decoded = AfeMpkV2Decoder{}.decode_json(
+      qmla_padded_cast_output_manifest(), qmla_padded_topology(19600U),
+      "qmla-padded-cast.json");
+  if (!decoded && decoded.error) {
+    std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
+  }
+  check(static_cast<bool>(decoded),
+        "Cast after a row-padded QMLA output preserves the QMLA layout authority");
+  const auto& cast = decoded.plan->ops().at(1U);
+  const auto* input = decoded.plan->value(cast.inputs.front());
+  const auto* output = decoded.plan->value(cast.outputs.front());
+  check(input && output && input->logical_layout == "normal" &&
+            output->logical_layout == input->logical_layout,
+        "Cast propagates its proven input layout instead of inventing HWC axes");
+}
+
 void test_fail_closed_cases() {
   const auto topology = monolithic_topology();
   expect_error(replace_once(valid_manifest(), "2.0.0", "2.0.1"), topology,
@@ -1249,6 +1291,7 @@ int main(const int argc, char** argv) {
   test_tessellate_keeps_yolov8_semantic_shape_separate_from_packed_carrier();
   test_standalone_quantize_authors_exact_graph222_layout();
   test_qmla_output_physical_extent_and_row_pitch();
+  test_cast_preserves_qmla_layout_authority();
   test_exact_multi_mla_evidence();
   test_direct_publication_without_passthrough();
   test_fail_closed_cases();

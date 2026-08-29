@@ -603,6 +603,7 @@ make_single_mla_public_route_fixture(const std::string& tag,
 struct RoutePlannerFixtureResult {
   simaai::neat::internal::RouteCapability capability;
   simaai::neat::internal::SessionRoutePlan route_plan;
+  simaai::neat::internal::SessionRoutePlan session_route_plan;
 };
 
 RoutePlannerFixtureResult route_plan_for_fixture(const sima_test::ModelArchiveFixture& fixture) {
@@ -624,7 +625,8 @@ RoutePlannerFixtureResult route_plan_for_fixture(const sima_test::ModelArchiveFi
   RoutePlannerFixtureResult out;
   out.capability = extract_route_capability(pack, preprocess_plan);
   const ModelSemantics semantics = build_model_semantics(pack);
-  out.route_plan = build_route_plan(opt, semantics, &out.capability, &pack);
+  out.route_plan = build_semantic_route_plan(opt, semantics, &out.capability, &pack);
+  out.session_route_plan = build_session_route_plan(opt, semantics, &out.capability, &pack);
   return out;
 }
 
@@ -796,7 +798,7 @@ RUN_TEST(
         const PreprocessPlannerResult preprocess_plan = plan_preprocess(opt, capabilities);
         const RouteCapability capability = extract_route_capability(pack, preprocess_plan);
         const ModelSemantics semantics = build_model_semantics(pack);
-        const SessionRoutePlan route_plan = build_route_plan(opt, semantics, &capability, &pack);
+        const SessionRoutePlan route_plan = build_semantic_route_plan(opt, semantics, &capability, &pack);
 
         require(capability.ingress_contracts.size() == 2U,
                 "multi-ingress route should preserve ordered ingress contracts");
@@ -906,6 +908,9 @@ RUN_TEST(
                 "explicit post cast fixture should select cast post kind");
         require(planned.route_plan.post_cast_bf16_to_fp32,
                 "explicit post cast fixture should record BF16->FP32 post cast");
+        require(planned.session_route_plan.post_chain.empty() &&
+                    !planned.session_route_plan.include_post_stage,
+                "compiler-owned session route must not materialize the semantic post cast twice");
       }
 
       {
@@ -972,7 +977,7 @@ RUN_TEST(
             const RouteCapability capability = extract_route_capability(pack, preprocess_plan);
             const ModelSemantics semantics = build_model_semantics(pack);
             const SessionRoutePlan route_plan =
-                build_route_plan(opt, semantics, &capability, &pack);
+                build_semantic_route_plan(opt, semantics, &capability, &pack);
 
             require(route_plan.post_regions.size() == expected_regions.size(),
                     "unexpected post region count for " + model_path.filename().string());
@@ -1045,7 +1050,7 @@ RUN_TEST(
         const PreprocessPlannerResult preprocess_plan = plan_preprocess(opt, capabilities);
         const RouteCapability capability = extract_route_capability(pack, preprocess_plan);
         const ModelSemantics semantics = build_model_semantics(pack);
-        const SessionRoutePlan route_plan = build_route_plan(opt, semantics, &capability, &pack);
+        const SessionRoutePlan route_plan = build_semantic_route_plan(opt, semantics, &capability, &pack);
 
         const auto graph_chain_it =
             std::find_if(route_plan.diagnostics.begin(), route_plan.diagnostics.end(),
@@ -1094,7 +1099,7 @@ RUN_TEST(
         const PreprocessPlannerResult preprocess_plan = plan_preprocess(opt, capabilities);
         const RouteCapability capability = extract_route_capability(pack, preprocess_plan);
         const ModelSemantics semantics = build_model_semantics(pack);
-        const SessionRoutePlan route_plan = build_route_plan(opt, semantics, &capability, &pack);
+        const SessionRoutePlan route_plan = build_semantic_route_plan(opt, semantics, &capability, &pack);
 
         require(route_plan.pre_chain.size() == 1U &&
                     route_plan.pre_chain.front() == SessionPreStageOp::QuantTess,

@@ -29,7 +29,6 @@
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/InputRouteProcessor.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/SyncBuild.h"
@@ -1084,32 +1083,30 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
   }
 }
 
-pipeline_internal::MemoryBackendPolicy backend_policy_from_rendered_manifest(
+bool uses_dmabuf_transport(
     const BuildResult& build_result,
     const std::vector<std::shared_ptr<Node>>& nodes) {
   if (build_result.rendered_manifest.has_value()) {
     for (const auto& stage : build_result.rendered_manifest->stages) {
       if (stage.processcvu.dmabuf_plan_contract || stage.processmla.dmabuf_plan_contract) {
-        return pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+        return true;
       }
     }
   }
   // Direct codec elements import DMA-BUF handles through the command UAPI just
   // like strict CVU/MLA stages.  Codec-only graphs do not have an AFE stage in
   // the rendered manifest, so their typed graph nodes are the exact transport
-  // authority.  Do not let the process-wide migration request silently turn
-  // this compiler-authored SystemMemory -> CMA boundary back into the legacy
-  // segmented allocator.
+  // authority for this compiler-authored SystemMemory -> CMA boundary.
   for (const auto& node : nodes) {
     if (!node) {
       continue;
     }
     const std::string kind = node->kind();
     if (kind == "H264EncodeSima" || kind == "H265EncodeSima") {
-      return pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+      return true;
     }
   }
-  return pipeline_internal::MemoryBackendPolicy::Legacy;
+  return false;
 }
 
 InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
@@ -1955,7 +1952,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
-  stream_opt.memory_backend_policy = backend_policy_from_rendered_manifest(br, build_nodes);
+  stream_opt.use_dmabuf_transport = uses_dmabuf_transport(br, build_nodes);
   if (has_sink) {
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }

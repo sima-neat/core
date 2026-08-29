@@ -25,7 +25,6 @@
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorTransfer.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/imgproc.hpp>
@@ -257,14 +256,12 @@ Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, TensorMemory 
   if (memory == TensorMemory::EV74) {
     return pipeline_internal::transfer_to_device(
         cpu_view, Device{DeviceType::SIMA_CVU, 0}, &segments,
-        /*required_segment_names=*/nullptr,
-        pipeline_internal::process_memory_backend_selection().policy);
+        /*required_segment_names=*/nullptr);
   }
   if (memory == TensorMemory::MLA) {
     return pipeline_internal::transfer_to_device(
         cpu_view, Device{DeviceType::SIMA_MLA, 0}, &segments,
-        /*required_segment_names=*/nullptr,
-        pipeline_internal::process_memory_backend_selection().policy);
+        /*required_segment_names=*/nullptr);
   }
   throw std::invalid_argument("from_cv_mat: unsupported TensorMemory placement");
 }

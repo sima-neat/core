@@ -5,7 +5,6 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
-#include "pipeline/runtime/DecoderAdmission.h"
 #include "pipeline/runtime/RunCore.h"
 #include "runtime_test_utils.h"
 #include "test_main.h"
@@ -15,7 +14,6 @@
 #include <gst/gst.h>
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -30,31 +28,6 @@
 #include <vector>
 
 namespace {
-
-class CountingAdmissionBackend final : public simaai::neat::runtime::DecoderAdmissionBackend {
-public:
-  simaai::neat::pipeline_internal::DecoderAdmissionResult
-  admit(const std::vector<simaai::neat::pipeline_internal::DecoderAdmissionStreamRequest>&,
-        bool) override {
-    return {};
-  }
-
-  bool release(const std::array<std::uint8_t, 16>&, std::string* error) override {
-    release_count.fetch_add(1, std::memory_order_relaxed);
-    if (error) {
-      error->clear();
-    }
-    return true;
-  }
-
-  std::atomic<int> release_count{0};
-};
-
-std::shared_ptr<simaai::neat::runtime::DecoderAdmissionReservation>
-make_admission_reservation(const std::shared_ptr<CountingAdmissionBackend>& backend) {
-  return std::make_shared<simaai::neat::runtime::DecoderAdmissionReservation>(
-      backend, std::array<std::uint8_t, 16>{}, 1, 0);
-}
 
 class EnvVarGuard {
 public:
@@ -151,7 +124,7 @@ bool wait_until(Predicate&& predicate, std::chrono::milliseconds timeout) {
   return predicate();
 }
 
-void failed_start_releases_admission(bool connected) {
+void failed_start_rolls_back(bool connected) {
   using namespace simaai::neat;
 
   Graph graph;
@@ -172,13 +145,11 @@ void failed_start_releases_admission(bool connected) {
   run_options.queue_depth = 4;
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(graph, run_options, seed_sample);
 
-  auto backend = std::make_shared<CountingAdmissionBackend>();
   runtime::RunCoreStartOptions start_options;
   start_options.run_options = run_options;
   start_options.mode = RunMode::Async;
   start_options.seed = seed_sample;
   start_options.graph_options = runtime::graph_runtime_options_from_run_options(run_options);
-  start_options.decoder_admission = make_admission_reservation(backend);
   start_options.after_pipeline_start_for_test = [] {
     throw std::runtime_error("injected failure after pipeline start");
   };
@@ -193,9 +164,6 @@ void failed_start_releases_admission(bool connected) {
             "startup rollback should preserve the original failure");
   }
   require(threw, "startup failure injection did not throw");
-  require(wait_until([&] { return backend->release_count.load(std::memory_order_relaxed) == 1; },
-                     std::chrono::seconds(3)),
-          "failed startup did not release decoder admission after teardown");
 }
 
 void detached_stream_stop_retains_runtime_until_cleanup() {
@@ -209,8 +177,6 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x4B);
   Run run = sima_test::make_async_rgb_run(seed, 8, 8);
   auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
-  auto admission_backend = std::make_shared<CountingAdmissionBackend>();
-  core->decoder_admission = make_admission_reservation(admission_backend);
   GstElement* pipeline = core->pipeline.stream.pipeline_handle();
   require(pipeline != nullptr, "run lifecycle teardown: missing pipeline");
   GstElement* appsink = find_appsink(pipeline);
@@ -236,8 +202,6 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   // The run's handle is gone, yet the RunCore lives: cleanup was deferred, not inline.
   const bool runtime_retained_past_close = retained_core != nullptr;
   retained_core.reset();
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 0,
-          "detached stream stop released decoder admission before teardown completed");
 
   {
     std::lock_guard<std::mutex> lock(probe.mu);
@@ -256,8 +220,6 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   require(runtime_retained_past_close,
           "detached stream teardown must retain its RunCore until the blocked work exits");
   require(weak_core.expired(), "retained RunCore was not released after teardown completed");
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 1,
-          "detached stream stop did not release decoder admission after teardown completed");
 }
 
 void detached_stream_close_keeps_measurement_reads_safe() {
@@ -349,8 +311,6 @@ void input_thread_timeout_hands_off_stream_close() {
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x6D);
   Run run = sima_test::make_async_rgb_run(seed, 8, 8);
   auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
-  auto admission_backend = std::make_shared<CountingAdmissionBackend>();
-  core->decoder_admission = make_admission_reservation(admission_backend);
 
   require(run.try_push(TensorList{seed}), "input thread handoff: warmup push failed");
   (void)run.pull(2000);
@@ -374,8 +334,6 @@ void input_thread_timeout_hands_off_stream_close() {
           "close ownership was not transferred to the detached input thread");
   require(core->pipeline.stream.can_push(),
           "RunCore closed the InputStream after handing ownership to the input thread");
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 0,
-          "detached input thread released decoder admission before it closed the stream");
 
   timing_lock.unlock();
 
@@ -392,8 +350,6 @@ void input_thread_timeout_hands_off_stream_close() {
   // Race-free only because the acquire load above pairs with the closer's release store.
   require(core->pipeline.stream.pipeline_handle() == nullptr,
           "InputStream close state reached Closed without releasing the GStreamer pipeline");
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 1,
-          "detached input thread did not release decoder admission after closing the stream");
 }
 
 // Same handoff under an active MeasureScope: a child that detaches closes its own stream
@@ -432,11 +388,6 @@ void composite_child_handoff_preserves_measurement_node_metrics() {
     }
   }
   require(!children.empty(), "composite handoff: no built child pipelines");
-  auto admission_backend = std::make_shared<CountingAdmissionBackend>();
-  core->decoder_admission = make_admission_reservation(admission_backend);
-  for (auto& child : children) {
-    child->decoder_admission = core->decoder_admission;
-  }
   require(run.push("image", TensorList{seed}), "composite handoff: wedging push failed");
   require(wait_until(
               [&] {
@@ -457,14 +408,7 @@ void composite_child_handoff_preserves_measurement_node_metrics() {
         return child->stream_close_state.load(std::memory_order_acquire) ==
                runtime::InputStreamCloseState::InputThreadOwns;
       });
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 0,
-          "graph released decoder admission while a child pipeline was still shutting down");
   child_locks.clear();
-
-  require(wait_until(
-              [&] { return admission_backend->release_count.load(std::memory_order_relaxed) == 1; },
-              std::chrono::seconds(3)),
-          "graph child did not release decoder admission after detached teardown completed");
 
   const MeasureReport report = scope.stop();
   require(any_child_detached,
@@ -564,6 +508,6 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            detached_stream_close_keeps_measurement_reads_safe();
            input_thread_timeout_hands_off_stream_close();
            composite_child_handoff_preserves_measurement_node_metrics();
-           failed_start_releases_admission(false);
-           failed_start_releases_admission(true);
+           failed_start_rolls_back(false);
+           failed_start_rolls_back(true);
          }));

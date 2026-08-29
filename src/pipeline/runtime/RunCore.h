@@ -4,7 +4,6 @@
 #endif
 
 #include "pipeline/internal/RunDiagnostics.h"
-#include "DecoderAdmission.h"
 #include "ExecutionGraphRuntime.h"
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
@@ -135,7 +134,6 @@ struct RunCoreStartOptions {
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   FusedEncodedOutputDispatch fused_encoded_output_dispatch;
-  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
   std::function<void()> after_pipeline_start_for_test;
 };
 
@@ -171,7 +169,6 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
                         const InputStreamOptions& stream_opt, RunMode mode = RunMode::Async,
                         const std::optional<InputOptions>& tensor_input_opt_for_cv = std::nullopt,
                         pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr,
-                        std::shared_ptr<DecoderAdmissionReservation> decoder_admission = nullptr,
                         std::function<void()> after_pipeline_start_for_test = {});
 
   ~RunCore();
@@ -271,7 +268,6 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   // can still show the customer's Graph::add topology instead of falling back
   // to node-metric order.
   std::unique_ptr<ExecutionGraphPlan> graph_export_plan_;
-  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   pipeline_internal::HolderLoanGatePtr holder_loan_gate;

@@ -13,7 +13,6 @@
 #include "pipeline/internal/DmabufEligibility.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TempJsonFileUtil.h"
 #include "pipeline/internal/packedio/PackedIoAdapter.h"
@@ -2102,17 +2101,9 @@ static ExecutionPlan build_execution_plan_from_model_plan(
     }
   }
 
-  // ExecutionPlan is a view of the immutable physical schedule, not a second
-  // execution authority. Physical lowering already assigns every CVU command
-  // its semantic placement relative to MLA. Preserve that authority here;
-  // names, op ids, and model-package age are deliberately irrelevant.
-
   ExecutionPlan result;
-  result.pre.reserve(ordered.size());
   result.infer.reserve(ordered.size());
-  result.post.reserve(ordered.size());
-  for (std::size_t schedule_index = 0U; schedule_index < ordered.size(); ++schedule_index) {
-    const auto cohort_id = ordered[schedule_index];
+  for (const auto cohort_id : ordered) {
     auto& cohort = cohorts.at(cohort_id);
     std::sort(cohort.members.begin(), cohort.members.end(),
               [](const auto& left, const auto& right) {
@@ -2151,7 +2142,7 @@ static ExecutionPlan build_execution_plan_from_model_plan(
       }
     }
     ExecutionStage stage;
-    stage.order_index = schedule_index;
+    stage.order_index = result.infer.size();
     stage.execution_op_id = first_op_id;
     stage.physical_cohort_id = cohort.id;
     stage.physical_command_ids = cohort.commands;
@@ -2174,17 +2165,7 @@ static ExecutionPlan build_execution_plan_from_model_plan(
     stage.kernel = cohort.engine == PhysicalEngine::Cvu
                        ? kernel_for_stage_kind(stage.kind)
                        : (!op.kernel.empty() ? op.kernel : op.implementation_id);
-    if (cohort.engine != PhysicalEngine::Cvu ||
-        cohort.role == PhysicalCommandRole::Interstitial) {
-      result.infer.push_back(std::move(stage));
-    } else if (cohort.role == PhysicalCommandRole::Ingress) {
-      result.pre.push_back(std::move(stage));
-    } else if (cohort.role == PhysicalCommandRole::Egress) {
-      result.post.push_back(std::move(stage));
-    } else {
-      throw std::runtime_error(
-          "ModelPack: CVU render cohort has no physical placement role");
-    }
+    result.infer.push_back(std::move(stage));
   }
   return result;
 }
@@ -4966,11 +4947,8 @@ void ModelPack::init(const std::string& tar_gz) {
 
 void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   options_ = std::move(cfg);
-  const auto& process_backend = pipeline_internal::process_memory_backend_selection();
-  memory_backend_decision_ = {};
-  memory_backend_decision_.backend = process_backend.policy;
-  const bool dmabuf_plan_selected =
-      process_backend.policy == pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+  dmabuf_plan_admission_ = {};
+  dmabuf_plan_digest_.clear();
   mpk_contract_.reset();
   dmabuf_plan_execution_plan_.reset();
   dmabuf_frame_arena_plan_.reset();
@@ -5023,12 +5001,6 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   // admitted lazily when an executable route is requested. This keeps model
   // metadata/route inspection independent of target artifacts while the
   // execution boundary remains fail-closed.
-  if (!dmabuf_plan_selected &&
-      env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
-    std::fprintf(
-        stderr, "NEAT_MEMORY_BACKEND_DECISION backend=legacy eligible=not-evaluated code=%s\n",
-        pipeline_internal::dmabuf_eligibility_code_name(memory_backend_decision_.admission.code));
-  }
   if (mpk_contract_.has_value()) {
     const auto mla_stages =
         simaai::neat::pipeline_internal::sima::get_mla_stage_io_contracts(*mpk_contract_);
@@ -5117,10 +5089,6 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
 }
 
 void ModelPack::ensure_dmabuf_execution_plan() const {
-  if (memory_backend_decision_.backend !=
-      pipeline_internal::MemoryBackendPolicy::DmaBufPlan) {
-    return;
-  }
   if (dmabuf_plan_execution_plan_.has_value()) {
     if (!dmabuf_frame_arena_plan_.has_value() ||
         !dmabuf_physical_execution_plan_.has_value()) {
@@ -5139,16 +5107,9 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   }
 
   auto compiled = compile_dmabuf_plan_execution_plan(*mpk_contract_);
-  memory_backend_decision_.admission = compiled.report;
-  memory_backend_decision_.plan_digest = compiled.plan_digest;
+  dmabuf_plan_admission_ = compiled.report;
+  dmabuf_plan_digest_ = compiled.plan_digest;
   if (!compiled.eligible()) {
-    if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
-      std::fprintf(stderr,
-                   "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=0 code=%s "
-                   "location=%s artifact_digest=%s\n",
-                   pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code),
-                   compiled.report.location.c_str(), compiled.report.artifact_digest.c_str());
-    }
     throw std::runtime_error(
         std::string("ModelPack: dmabuf-plan admission failed [") +
         pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code) + "] at " +
@@ -5159,13 +5120,6 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   dmabuf_plan_execution_plan_ = std::move(compiled.plan);
   dmabuf_frame_arena_plan_ = std::move(compiled.arena_plan);
   dmabuf_physical_execution_plan_ = std::move(compiled.physical_plan);
-  if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
-    std::fprintf(stderr,
-                 "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=1 code=eligible "
-                 "plan_digest=%s artifact_digest=%s\n",
-                 memory_backend_decision_.plan_digest.c_str(),
-                 memory_backend_decision_.admission.artifact_digest.c_str());
-  }
 }
 
 void ModelPack::prepare_for_execution() const {
@@ -5211,6 +5165,15 @@ ExecutionPlan ModelPack::execution_plan() const {
     return build_execution_plan_from_model_plan(*dmabuf_plan_execution_plan_,
                                                 *dmabuf_physical_execution_plan_,
                                                 *dmabuf_frame_arena_plan_, *mpk_contract_);
+  }
+  return build_execution_plan_from_mpk_contract(
+      *mpk_contract_, pipeline_type_, model_managed_route_flags_, model_managed_post_kinds_);
+}
+
+ExecutionPlan ModelPack::semantic_execution_plan() const {
+  if (!mpk_contract_.has_value()) {
+    throw std::runtime_error(
+        "ModelPack: strict MPK contract required to derive the semantic execution view");
   }
   return build_execution_plan_from_mpk_contract(
       *mpk_contract_, pipeline_type_, model_managed_route_flags_, model_managed_post_kinds_);
@@ -5289,6 +5252,19 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
   return build_stage_facts(flatten_execution_plan(plan, stage), std::nullopt, stage);
 }
 
+std::vector<ModelFragment::StageFacts>
+ModelPack::semantic_stage_facts_for_model_stage(ModelStage stage) const {
+  const ExecutionPlan plan = semantic_execution_plan();
+  if (stage == ModelStage::Preprocess) {
+    return build_stage_facts(plan.pre, std::nullopt, ModelStage::Preprocess);
+  }
+  if (stage == ModelStage::Postprocess) {
+    return build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
+  }
+  throw std::runtime_error(
+      "ModelPack: semantic stage facts are only defined for pre/post API projections");
+}
+
 ModelFragment ModelPack::fragment(ModelStage stage) const {
   const ExecutionPlan plan = execution_plan();
   std::vector<ExecutionStage> sel = flatten_execution_plan(plan, stage);
@@ -5364,6 +5340,7 @@ ModelPack::infer_block(const std::string& upstream_name,
     throw std::runtime_error("ModelPack::infer_block: pipeline has no infer stages");
   }
   std::vector<ExecutionStage> infer_seq = plan.infer;
+  std::optional<CompiledProcessCvuContract> absorbed_ingress_handoff_contract;
 
   if (absorb_model_managed_preproc) {
     if (!dmabuf_plan_execution_plan_ || !dmabuf_physical_execution_plan_) {
@@ -5382,15 +5359,44 @@ ModelPack::infer_block(const std::string& upstream_name,
     }
     std::unordered_set<pipeline_internal::sima::static_contract::PhysicalCommandId> remaining(
         absorbed->begin(), absorbed->end());
-    for (const auto& stage : plan.pre) {
+    std::size_t prefix_stages = 0U;
+    while (prefix_stages < infer_seq.size()) {
+      const auto& stage = infer_seq[prefix_stages];
+      if (stage.physical_command_ids.empty() ||
+          !std::all_of(stage.physical_command_ids.begin(), stage.physical_command_ids.end(),
+                       [&](const auto id) { return remaining.count(id) != 0U; })) {
+        break;
+      }
       for (const auto id : stage.physical_command_ids) {
         remaining.erase(id);
       }
+      ++prefix_stages;
     }
-    if (!remaining.empty()) {
+    if (prefix_stages == 0U || !remaining.empty()) {
       throw std::runtime_error(
-          "ModelPack::infer_block: absorbed graph-200 commands are not in the exact "
-          "preprocess region");
+          "ModelPack::infer_block: absorbed graph-200 commands are not the exact rendered "
+          "ingress prefix");
+    }
+    const std::vector<ExecutionStage> absorbed_prefix(
+        infer_seq.begin(),
+        infer_seq.begin() + static_cast<std::ptrdiff_t>(prefix_stages));
+    const auto absorbed_facts =
+        build_stage_facts(absorbed_prefix, std::nullopt, ModelStage::Preprocess);
+    for (auto it = absorbed_facts.rbegin(); it != absorbed_facts.rend(); ++it) {
+      if (it->processcvu_contract.has_value()) {
+        absorbed_ingress_handoff_contract = *it->processcvu_contract;
+        break;
+      }
+    }
+    if (!absorbed_ingress_handoff_contract.has_value()) {
+      throw std::runtime_error(
+          "ModelPack::infer_block: absorbed ingress prefix has no physical CVU handoff");
+    }
+    infer_seq.erase(infer_seq.begin(),
+                    infer_seq.begin() + static_cast<std::ptrdiff_t>(prefix_stages));
+    if (infer_seq.empty()) {
+      throw std::runtime_error(
+          "ModelPack::infer_block: graph-200 absorption removed the complete infer route");
     }
   }
 
@@ -5425,12 +5431,15 @@ ModelPack::infer_block(const std::string& upstream_name,
     upstream = options_.upstream_name.empty() ? kDefaultPreviousNodeName : options_.upstream_name;
   }
 
-  std::optional<CompiledProcessCvuContract> upstream_handoff_contract;
-  const auto pre_stage_facts = build_stage_facts(plan.pre, std::nullopt, ModelStage::Preprocess);
-  for (auto it = pre_stage_facts.rbegin(); it != pre_stage_facts.rend(); ++it) {
-    if (it->processcvu_contract.has_value()) {
-      upstream_handoff_contract = *it->processcvu_contract;
-      break;
+  std::optional<CompiledProcessCvuContract> upstream_handoff_contract =
+      std::move(absorbed_ingress_handoff_contract);
+  if (!upstream_handoff_contract.has_value()) {
+    const auto pre_stage_facts = build_stage_facts(plan.pre, std::nullopt, ModelStage::Preprocess);
+    for (auto it = pre_stage_facts.rbegin(); it != pre_stage_facts.rend(); ++it) {
+      if (it->processcvu_contract.has_value()) {
+        upstream_handoff_contract = *it->processcvu_contract;
+        break;
+      }
     }
   }
   const bool terminal_consumer_owns_tensor_tail = model_managed_terminal_consumer_owns_tensor_tail(

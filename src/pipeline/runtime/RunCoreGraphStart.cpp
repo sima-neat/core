@@ -1,6 +1,5 @@
 #include "RunCore.h"
 
-#include "DecoderAdmission.h"
 #include "ExecutionGraphPlan.h"
 #include "builder/OutputSpec.h"
 #include "gst/GstInit.h"
@@ -808,8 +807,7 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   for (std::size_t i = 0; i < execution.stages.size(); ++i) {
     auto& rt = *execution.stages[i];
-    rt.worker = std::thread([core, i, admission_guard = core->decoder_admission]() {
-      (void)admission_guard;
+    rt.worker = std::thread([core, i]() {
       auto& execution = core->graph_execution();
       auto& st = *execution.stages[i];
       struct DoneGuard {
@@ -955,7 +953,6 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
-    start_opt.decoder_admission = core->decoder_admission;
     const std::weak_ptr<RunCore> weak_core = core;
     start_opt.fused_encoded_output_dispatch =
         [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
@@ -1009,8 +1006,7 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
 
 void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_t i) {
   auto& pipe = *core->graph_execution().pipelines[i];
-  pipe.transport.pull_thread = std::thread([core, i, admission_guard = core->decoder_admission]() {
-    (void)admission_guard;
+  pipe.transport.pull_thread = std::thread([core, i]() {
     auto& execution = core->graph_execution();
     auto& pipe = *execution.pipelines[i];
     struct DoneGuard {
@@ -1222,8 +1218,7 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
 
 void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_t i) {
   auto& pipe = *core->graph_execution().pipelines[i];
-  pipe.transport.push_thread = std::thread([core, i, admission_guard = core->decoder_admission]() {
-    (void)admission_guard;
+  pipe.transport.push_thread = std::thread([core, i]() {
     auto& pipe = *core->graph_execution().pipelines[i];
     struct DoneGuard {
       std::atomic<bool>& flag;
@@ -1408,8 +1403,7 @@ void rollback_failed_graph_start(const std::shared_ptr<RunCore>& core, const Nea
   }
 }
 
-std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartOptions opt,
-                                          std::uint64_t decoder_admission_us) {
+std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartOptions opt) {
   const auto total_start = pipeline_internal::build_timing_now();
   if (opt.graph_options.push_timeout_ms < 0) {
     throw_graph_start_error(plan, "RunCore::start(graph): push_timeout_ms must be >= 0");
@@ -1424,7 +1418,6 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
   core->graph_options = std::move(opt.graph_options);
   configure_graph_public_output_loan_gate(core, core->graph_options, opt.mode);
   core->graph_verbose_guard = std::move(opt.graph_verbose_guard);
-  core->decoder_admission = opt.decoder_admission;
   core->graph_execution().plan = std::move(plan);
 
   try {
@@ -1473,7 +1466,6 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
         {{"labels", labels_us},
          {"materialize_pipelines", materialize_pipelines_us},
          {"materialize_stages", materialize_stages_us},
-         {"decoder_admission", decoder_admission_us},
          {"adjacency", adjacency_us},
          {"prebuild_complete", prebuild_complete_us},
          {"prebuild_seed", prebuild_seed_us},
@@ -1505,22 +1497,6 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
 std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOptions opt) {
   gst_init_once();
 
-  const auto admission_start = pipeline_internal::build_timing_now();
-  DecoderAdmissionPreparation admission;
-  try {
-    admission = prepare_decoder_admission(plan);
-  } catch (const NeatError&) {
-    throw;
-  } catch (const std::exception& e) {
-    throw_graph_start_error(plan, e.what());
-  } catch (...) {
-    throw_graph_start_error(plan, "unknown decoder admission failure");
-  }
-  const auto decoder_admission_us = pipeline_internal::build_timing_us(admission_start);
-  if (admission.reservation) {
-    opt.decoder_admission = std::move(admission.reservation);
-  }
-
   if (is_simple_linear_plan(plan)) {
     auto export_plan = std::make_unique<ExecutionGraphPlan>(plan);
     auto core = RunCore::start_pipeline_segment(plan.pipeline_segments.front(), std::move(opt));
@@ -1528,7 +1504,7 @@ std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOpt
     return core;
   }
 
-  return start_graph_plan(std::move(plan), std::move(opt), decoder_admission_us);
+  return start_graph_plan(std::move(plan), std::move(opt));
 }
 
 } // namespace simaai::neat::runtime

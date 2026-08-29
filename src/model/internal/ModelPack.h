@@ -157,7 +157,13 @@ public:
   std::string find_config_path_by_processor(const std::string& processor) const;
 
   ExecutionPlan execution_plan() const;
+  // Stable customer/API projection of the MPK stages. Unlike execution_plan(),
+  // this view never changes after physical admission collapses commands into
+  // the single executable schedule.
+  ExecutionPlan semantic_execution_plan() const;
   std::vector<ModelFragment::StageFacts> stage_facts_for_model_stage(ModelStage stage) const;
+  std::vector<ModelFragment::StageFacts>
+  semantic_stage_facts_for_model_stage(ModelStage stage) const;
   ModelFragment fragment(ModelStage stage) const;
   std::string backend_fragment(ModelStage stage) const;
   std::vector<std::shared_ptr<simaai::neat::Node>> to_nodes(ModelStage stage) const;
@@ -187,15 +193,28 @@ public:
 
   simaai::neat::InputOptions input_appsrc_options(bool tensor_mode) const;
 
-  const simaai::neat::pipeline_internal::MemoryBackendDecision& memory_backend_decision() const {
+  const simaai::neat::pipeline_internal::DmabufEligibilityReport&
+  dmabuf_plan_admission() const {
     prepare_for_execution();
-    return memory_backend_decision_;
+    return dmabuf_plan_admission_;
   }
 
-  // True when the strict backend owns the complete compiler-authored model
-  // command graph. RoutePlanner must not rediscover pre/post adapters around
-  // MLA in this mode: those commands already live in the one execution plan.
-  bool uses_model_execution_plan() const noexcept {
+  const std::string& dmabuf_plan_digest() const {
+    prepare_for_execution();
+    return dmabuf_plan_digest_;
+  }
+
+  // Ownership is a semantic property of an exact MPK, not a side effect of
+  // whether lazy physical-plan admission has happened yet.
+  bool owns_model_execution_plan() const noexcept {
+    return mpk_contract_.has_value();
+  }
+
+  // Physical admission is deliberately separate from semantic ownership.
+  // Queries may inspect an exact MPK without opening accelerator devices;
+  // execution-only projections may consume the prepared plans only after the
+  // execution boundary has admitted them.
+  bool has_prepared_execution_plan() const noexcept {
     return dmabuf_plan_execution_plan_.has_value();
   }
 
@@ -253,7 +272,8 @@ private:
   mutable std::optional<
       simaai::neat::pipeline_internal::sima::static_contract::PhysicalExecutionPlan>
       dmabuf_physical_execution_plan_;
-  mutable simaai::neat::pipeline_internal::MemoryBackendDecision memory_backend_decision_;
+  mutable simaai::neat::pipeline_internal::DmabufEligibilityReport dmabuf_plan_admission_;
+  mutable std::string dmabuf_plan_digest_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
   std::optional<bool> processcvu_preproc_single_output_handoff_;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;

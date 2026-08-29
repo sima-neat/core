@@ -35,10 +35,8 @@ static void add_sima_meta(GstBuffer* buffer) {
 
 int main() {
   try {
-    // The Modalix MLA architecture allocates DMS storage from the DMA heap and imports the
-    // resulting DMA-BUF. Select that architecture before the process-wide policy is read.
-    require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
-            "failed to select DMA-BUF memory backend");
+    // The Modalix MLA architecture allocates DMS storage from the DMA heap and
+    // imports the resulting DMA-BUF.
     simaai::neat::gst_init_once();
 
     std::vector<simaai::neat::Segment> segments = {
@@ -57,8 +55,7 @@ int main() {
     seed.read_only = false;
 
     simaai::neat::Tensor t_ev74 = simaai::neat::pipeline_internal::transfer_to_device(
-        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr);
     auto* ev74_sample = static_cast<GstSample*>(t_ev74.storage->holder.get());
     GstBuffer* ev74_buf = ev74_sample ? gst_sample_get_buffer(ev74_sample) : nullptr;
     require(ev74_buf != nullptr, "missing EV74 DMA-BUF");
@@ -70,8 +67,7 @@ int main() {
     require(t_ev74.device.id == 0, "EV74 device id mismatch");
 
     simaai::neat::Tensor t_dms = simaai::neat::pipeline_internal::transfer_to_device(
-        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments, nullptr,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments, nullptr);
     require(t_dms.device.type == simaai::neat::DeviceType::SIMA_MLA, "DMS0 device mismatch");
     require(t_dms.device.id == 0, "DMS0 device id mismatch");
 
@@ -101,7 +97,6 @@ int main() {
     require(mla_force.device.type == simaai::neat::DeviceType::SIMA_MLA && mla_force.device.id == 0,
             "mla(true) should yield DMS0");
 
-    const auto stats_before = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
     simaai::neat::Tensor dms_copy = t_ev74.mla(true);
 
     GstBuffer* out_buf =
@@ -131,9 +126,6 @@ int main() {
     simaai::neat::Tensor dms_copy2 = t_ev74.mla(true);
     require(dms_copy2.device.type == simaai::neat::DeviceType::SIMA_MLA,
             "second transfer should stay on MLA");
-    auto stats_after = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
-    require(stats_after.hits == stats_before.hits && stats_after.misses == stats_before.misses,
-            "strict DMA-BUF placement must bypass the legacy segmented pool cache");
 
     // The strict driver-mode placement uses the same public Tensor API but
     // must produce ordinary GstDmaBufMemory from the CMA heap. It must not
@@ -148,8 +140,7 @@ int main() {
         simaai::neat::TensorMemory::CPU);
     std::vector<simaai::neat::Segment> direct_segments{{"ifm0", direct_data.size()}};
     auto direct = simaai::neat::pipeline_internal::transfer_to_device(
-        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr);
     require(direct.device.type == simaai::neat::DeviceType::SIMA_CVU,
             "direct EV74 device mismatch");
     require(direct.storage && direct.storage->sima_segments.size() == 1U,
@@ -174,8 +165,7 @@ int main() {
         simaai::neat::TensorMemory::CPU);
     std::vector<simaai::neat::Segment> direct_segments_1{{"ifm0", direct_data_1.size()}};
     auto direct_1 = simaai::neat::pipeline_internal::transfer_to_device(
-        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1, nullptr,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1, nullptr);
     direct.route.name = "image_l";
     direct.route.backend_name = "input_tensor";
     direct.route.segment_name = "input_tensor";
@@ -198,7 +188,7 @@ int main() {
     std::string ingress_error;
     auto ingress_holder = simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
         ingress, &ingress_error, /*allow_zero_copy=*/true,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        /*use_dmabuf_transport=*/true);
     require(ingress_holder != nullptr,
             ingress_error.empty() ? "direct tensor-set envelope failed" : ingress_error);
     GstBuffer* ingress_buffer =

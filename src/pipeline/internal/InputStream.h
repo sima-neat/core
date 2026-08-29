@@ -5,7 +5,6 @@
 
 #include "pipeline/internal/InputStreamStats.h"
 #include "pipeline/internal/InputStreamTeardownPolicy.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/Run.h"
@@ -105,10 +104,9 @@ struct InputStreamOptions {
   // holder passthrough and uses the prepared InputStream pool/copy path; this
   // is not an environment-controlled compatibility fallback.
   bool materialize_device_visible_input = false;
-  // Core-authored transport intent captured at graph construction. The push
-  // path passes this value explicitly to envelope/materialization helpers.
-  pipeline_internal::MemoryBackendPolicy memory_backend_policy =
-      pipeline_internal::MemoryBackendPolicy::Legacy;
+  // Accelerator graphs use standard DMA-BUF transport. Pure CPU graphs keep
+  // SystemMemory so public CPU-only pipelines do not acquire device storage.
+  bool use_dmabuf_transport = false;
   bool reuse_input_buffer = false;
   // True for user-visible Output/appsink endpoints.  False for graph-internal
   // transport appsinks, where downstream edge/view contracts must be preserved

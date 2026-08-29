@@ -286,7 +286,6 @@ run_benchmark() {
     unset GST_PLUGIN_PATH GST_PLUGIN_PATH_1_0
     unset GST_PLUGIN_SYSTEM_PATH GST_PLUGIN_SYSTEM_PATH_1_0
     unset SIMA_PROCESSCVU_A65_ASYNC
-    export SIMA_NEAT_MEMORY_BACKEND=dmabuf-plan
     export SIMA_PROCESSMLA_SAFE_ASYNC_DEPTH="$depth"
     export SIMA_GST_RESPECT_REGISTRY=1
     export GST_REGISTRY="$registry"

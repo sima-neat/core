@@ -2376,14 +2376,6 @@ int run_aggregate_scenarios(int argc, char** argv) {
 } // namespace
 
 int main(int argc, char** argv) {
-  // This matrix qualifies the direct DMA-BUF VideoSender contract.  Select it
-  // before either the aggregate parent or an isolated scenario can read the
-  // process-wide backend policy; otherwise Tensor::cvu() deliberately uses
-  // the migration-era legacy allocator, which neatencoder must reject.
-  if (::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) != 0) {
-    return fail_test("failed to select the DMA-BUF memory backend");
-  }
-
   // Runtime work happens on background threads. Preserve the original
   // exception text instead of reducing an unexpected escape to "terminate".
   std::set_terminate([] {

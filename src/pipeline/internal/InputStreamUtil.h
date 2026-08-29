@@ -16,7 +16,6 @@
 #include "pipeline/TensorTypes.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/InputStreamTeardownPolicy.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 
 #include <gst/gst.h>
 
@@ -216,7 +215,7 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                                  InputBufferPoolGuard& guard);
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                                  InputBufferPoolGuard& guard,
-                                 pipeline_internal::MemoryBackendPolicy backend);
+                                 bool use_dmabuf_transport);
 int64_t next_input_frame_id();
 bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptions& opt);
 void maybe_update_simaai_meta_name(GstBuffer* buffer, const std::string& name);

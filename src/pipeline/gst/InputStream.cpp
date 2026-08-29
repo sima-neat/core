@@ -758,13 +758,13 @@ BuiltBuffer build_buffer_with_fill(
         st.reusable_bytes = 0;
       }
       st.reusable_buffer = allocate_input_buffer(
-          st.alloc_bytes, st.src_opt, st.pool_guard, st.opt.memory_backend_policy);
+          st.alloc_bytes, st.src_opt, st.pool_guard, st.opt.use_dmabuf_transport);
       st.reusable_bytes = st.alloc_bytes;
     }
     buf = st.reusable_buffer;
   } else {
     buf = allocate_input_buffer(
-        st.alloc_bytes, st.src_opt, st.pool_guard, st.opt.memory_backend_policy);
+        st.alloc_bytes, st.src_opt, st.pool_guard, st.opt.use_dmabuf_transport);
   }
   std::chrono::steady_clock::time_point t_alloc_end{};
   if (record_timings)

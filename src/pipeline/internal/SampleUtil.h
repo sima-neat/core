@@ -4,7 +4,6 @@
 #endif
 
 #include "pipeline/GraphOptions.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "nodes/io/Input.h"
 
 #include <memory>
@@ -20,7 +19,7 @@ using HolderLoanGatePtr = std::shared_ptr<HolderLoanGate>;
 
 std::shared_ptr<void>
 make_sample_holder_from_bundle(const Sample& bundle, std::string* err, bool allow_zero_copy = true,
-                               MemoryBackendPolicy backend = MemoryBackendPolicy::Legacy);
+                               bool use_dmabuf_transport = false);
 Sample canonicalize_tensor_transport_sample(const Sample& sample);
 Sample sample_from_tensors_for_input(const TensorList& tensors, const InputOptions& opt);
 Sample collapse_single_tensor_sample(Sample sample);

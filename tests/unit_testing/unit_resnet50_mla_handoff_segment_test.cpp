@@ -17,9 +17,6 @@ RUN_TEST(
     "unit_resnet50_mla_handoff_segment_test", ([] {
       using namespace simaai::neat;
 
-      require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
-              "failed to select the strict DMA-BUF backend for the ResNet50 handoff test");
-
       const std::filesystem::path core_root = sima_test::test_source_root();
       const std::string tar_path = sima_test::resolve_resnet50_tar_local_only(core_root);
       if (tar_path.empty()) {

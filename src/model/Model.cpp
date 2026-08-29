@@ -547,12 +547,7 @@ bool route_uses_model_managed_graph200(
 bool route_absorbs_model_managed_graph200(
     const internal::ModelPack& pack,
     const internal::PreprocessPlannerResult& plan) {
-  // Graph-200 command absorption is a projection of the immutable physical
-  // DMA-BUF plan.  The legacy backend has no such plan and must keep its
-  // separately rendered preprocessing stage.  Keeping this decision next to
-  // route selection prevents a Graph-200 topology alone from accidentally
-  // opting the legacy path into strict-plan rendering.
-  return route_uses_model_managed_graph200(plan) && pack.uses_model_execution_plan();
+  return route_uses_model_managed_graph200(plan) && pack.owns_model_execution_plan();
 }
 
 internal::PreprocessContractFlags
@@ -607,9 +602,30 @@ std::string normalize_processcvu_dtype_token(std::string raw, const std::string&
 CompiledProcessCvuContract require_model_managed_preadapter_contract(
     const internal::ModelPack& pack, internal::ExecutionStageKind kind, const char* stage_label,
     const internal::OrderedRouteOp* route_op = nullptr) {
-  pack.prepare_for_execution();
-  const auto pre_plan = pack.execution_plan().pre;
-  const auto stage_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
+  // A named semantic stage can be compiled directly from the MPK. Do not
+  // admit the complete physical model merely to author a CVU stage fragment;
+  // in particular, that would make preprocess-only composition depend on an
+  // unrelated MLA executable.
+  if (route_op && pack.mpk_contract().has_value() &&
+      (!route_op->plugin_name.empty() || !route_op->plugin_id.empty())) {
+    const std::array<std::string, 2> exact_candidates = {route_op->plugin_name,
+                                                         route_op->plugin_id};
+    for (const auto& candidate : exact_candidates) {
+      if (candidate.empty()) {
+        continue;
+      }
+      try {
+        return pipeline_internal::sima::stagesemantics::
+            build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
+                *pack.mpk_contract(), kind, candidate);
+      } catch (const std::exception&) {
+      }
+    }
+  }
+
+  const auto pre_plan = pack.semantic_execution_plan().pre;
+  const auto stage_facts =
+      pack.semantic_stage_facts_for_model_stage(internal::ModelStage::Preprocess);
   if (pre_plan.size() != stage_facts.size()) {
     throw std::runtime_error(
         "Model-managed pre-process stage facts are out of sync with execution plan (plan_count=" +
@@ -686,24 +702,6 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
     return *matched;
   }
 
-  if (route_op && (!route_op->plugin_name.empty() || !route_op->plugin_id.empty())) {
-    if (pack.mpk_contract().has_value()) {
-      const std::array<std::string, 2> exact_candidates = {route_op->plugin_name,
-                                                           route_op->plugin_id};
-      for (const auto& candidate : exact_candidates) {
-        if (candidate.empty()) {
-          continue;
-        }
-        try {
-          return pipeline_internal::sima::stagesemantics::
-              build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(*pack.mpk_contract(),
-                                                                               kind, candidate);
-        } catch (const std::exception&) {
-        }
-      }
-    }
-  }
-
   const auto* mpk_stage = find_pre_mla_processcvu_stage(
       pack, kind == internal::ExecutionStageKind::Quant
                 ? std::initializer_list<const char*>{"quant", "quanttess", "preproc"}
@@ -768,8 +766,9 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
 CompiledProcessCvuContract
 require_model_managed_postprocess_contract(const internal::ModelPack& pack,
                                            internal::ExecutionStageKind kind) {
-  const auto post_plan = pack.execution_plan().post;
-  const auto post_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Postprocess);
+  const auto post_plan = pack.semantic_execution_plan().post;
+  const auto post_facts =
+      pack.semantic_stage_facts_for_model_stage(internal::ModelStage::Postprocess);
   if (post_plan.size() != post_facts.size()) {
     throw std::runtime_error(
         "Model-managed post-process stage facts are out of sync with execution plan"
@@ -4397,8 +4396,10 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   const internal::RouteCapability capability =
       internal::extract_route_capability(capability_pack, plan);
   const internal::ModelSemantics model_semantics = internal::build_model_semantics(capability_pack);
+  plan.semantic_route_plan =
+      internal::build_semantic_route_plan(options, model_semantics, &capability, &capability_pack);
   internal::SessionRoutePlan session_route_plan =
-      internal::build_route_plan(options, model_semantics, &capability, &capability_pack);
+      internal::build_session_route_plan(options, model_semantics, &capability, &capability_pack);
   const internal::RouteSelection route = internal::plan_route_selection(options, plan, capability);
   if (route.ambiguous) {
     session_route_plan.diagnostics.push_back("route-ambiguous=" + route.ambiguity_reason);
@@ -4668,7 +4669,8 @@ struct Model::Impl {
              preprocess_plan.modelpack_input_depth, preprocess_plan.modelpack_max_width,
              preprocess_plan.modelpack_max_height, preprocess_plan.modelpack_max_depth,
              preprocess_plan.normalize, preprocess_plan.mean, preprocess_plan.stddev,
-             /*preproc_next_cpu=*/{}, preprocess_plan.pipeline_type, options.upstream_name,
+             /*preproc_next_cpu=*/{}, preprocess_plan.semantic_route_plan.pipeline_type,
+             options.upstream_name,
              /*num_buffers_cvu=*/4,
              /*num_buffers_mla=*/4,
              /*queue_max_buffers=*/0,
@@ -4687,7 +4689,7 @@ struct Model::Impl {
     pipeline_internal::ux::ScopedVerboseContext verbose_ctx(options.verbose);
     auto verbose_guard = pipeline_internal::ux::acquire_runtime_verbosity(options.verbose);
     const auto processcvu_pre_stage_selected = [&]() -> std::optional<bool> {
-      const auto& pre_chain = preprocess_plan.session_route_plan.pre_chain;
+      const auto& pre_chain = preprocess_plan.semantic_route_plan.pre_chain;
       if (pre_chain.empty()) {
         return std::nullopt;
       }
@@ -4703,8 +4705,8 @@ struct Model::Impl {
     pack.set_model_managed_stage_facts(
         /*processcvu_preproc_single_output_handoff=*/processcvu_pre_stage_selected,
         convert_model_managed_route_flags(
-            preprocess_plan.session_route_plan.model_managed_route_flags),
-        convert_model_managed_post_kinds(preprocess_plan.session_route_plan.post_chain));
+            preprocess_plan.semantic_route_plan.model_managed_route_flags),
+        convert_model_managed_post_kinds(preprocess_plan.semantic_route_plan.post_chain));
     auto& rp = preprocess_plan.resolved_plan;
     const std::string pre_name = resolved_pre_stage_name(pack, preprocess_plan);
     const std::string infer_upstream = preprocess_plan.session_route_plan.include_pre_stage
@@ -5594,7 +5596,7 @@ PreprocOptions make_preproc_options_from_typed_adapter(
   populate_model_managed_preproc_options(&opt, plan, input);
   const auto& selected_pack =
       sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model);
-  if (selected_pack.uses_model_execution_plan()) {
+  if (selected_pack.has_prepared_execution_plan()) {
     opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
         selected_pack.project_model_managed_preproc_contract(opt));
   }
@@ -6981,7 +6983,7 @@ int Model::compiled_batch_size() const {
 std::vector<TensorSpec> Model::input_specs() const {
   std::vector<TensorSpec> specs;
   TensorSpec spec;
-  const auto& route_plan = impl_->preprocess_plan.session_route_plan;
+  const auto& route_plan = impl_->preprocess_plan.semantic_route_plan;
   const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
   const bool require_fp32_boundary = route_plan.pre_cast_fp32_to_bf16;
   const auto ingress_contracts = normalized_ingress_contracts(route_plan);
@@ -7064,7 +7066,7 @@ std::vector<TensorSpec> Model::input_specs() const {
 std::vector<TensorSpec> Model::output_specs() const {
   std::vector<TensorSpec> specs;
   TensorSpec spec;
-  const auto& route_plan = impl_->preprocess_plan.session_route_plan;
+  const auto& route_plan = impl_->preprocess_plan.semantic_route_plan;
   const bool include_post = route_plan.include_post_stage;
   const internal::PostRouteStageKind selected_post_kind = route_plan.selected_post_kind;
   const bool has_box =
@@ -7249,7 +7251,7 @@ ResolvedPreprocessPlan Model::resolved_preprocess_plan() const {
 
 Model::PreprocessRequirements Model::preprocess_requirements() const {
   PreprocessRequirements out;
-  const auto& route = impl_->preprocess_plan.session_route_plan;
+  const auto& route = impl_->preprocess_plan.semantic_route_plan;
   const auto flags = resolve_preprocess_contract_flags(impl_->preprocess_plan);
   out.has_preproc_stage = resolved_preprocess_graph_contains_stage(
       impl_->preprocess_plan, internal::StageNodeKind::Preproc);
@@ -7323,14 +7325,15 @@ Model::ModelInfo Model::info() const {
   out.capabilities.has_post_boxdecode = parsed.capabilities.has_post_boxdecode;
 
   out.selection.include_preprocess_stage =
-      impl_->preprocess_plan.session_route_plan.include_pre_stage;
+      impl_->preprocess_plan.semantic_route_plan.include_pre_stage;
   out.selection.include_postprocess_stage =
-      impl_->preprocess_plan.session_route_plan.include_post_stage;
-  out.selection.infer_only = impl_->preprocess_plan.infer_only_route;
+      impl_->preprocess_plan.semantic_route_plan.include_post_stage;
+  out.selection.infer_only = !out.selection.include_preprocess_stage &&
+                             !out.selection.include_postprocess_stage;
   out.selection.preprocess_graph =
       preprocess_graph_family_name(impl_->preprocess_plan.resolved_plan.graph_family);
   out.selection.selected_post_kind =
-      post_route_stage_kind_name(impl_->preprocess_plan.session_route_plan.selected_post_kind);
+      post_route_stage_kind_name(impl_->preprocess_plan.semantic_route_plan.selected_post_kind);
 
   out.output_topology.physical_outputs = parsed.outputs.physical.size();
   out.output_topology.logical_outputs = parsed.outputs.logical.size();
@@ -8226,7 +8229,7 @@ Model ModelAccess::clone_with_options(const Model& model, const Model::Options& 
 }
 
 PostRouteStageKind ModelAccess::resolved_post_kind(const Model& model) {
-  return model.impl_->preprocess_plan.session_route_plan.selected_post_kind;
+  return model.impl_->preprocess_plan.semantic_route_plan.selected_post_kind;
 }
 
 PreprocessContractFlags ModelAccess::preprocess_contract_flags(const Model& model) {
@@ -8247,13 +8250,13 @@ bool ModelAccess::has_model_managed_stage(const Model& model, StageNodeKind kind
   case StageNodeKind::QuantTess:
   case StageNodeKind::CastTess:
     return resolved_preprocess_graph_contains_stage(model.impl_->preprocess_plan, kind) ||
-           route_contains_stage(model.impl_->preprocess_plan.session_route_plan, kind);
+           route_contains_stage(model.impl_->preprocess_plan.semantic_route_plan, kind);
   case StageNodeKind::Detess:
   case StageNodeKind::DetessCast:
   case StageNodeKind::DetessDequant:
   case StageNodeKind::Dequant:
   case StageNodeKind::BoxDecode:
-    return route_contains_stage(model.impl_->preprocess_plan.session_route_plan, kind);
+    return route_contains_stage(model.impl_->preprocess_plan.semantic_route_plan, kind);
   }
   return false;
 }
@@ -8276,7 +8279,7 @@ PreprocOptions ModelAccess::build_preprocess_stage_options(const Model& model, b
   PreprocOptions opt = make_model_managed_preproc_options_base(model, sync);
   populate_model_managed_preproc_options(&opt, model.impl_->preprocess_plan, nullptr);
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  if (pack.uses_model_execution_plan()) {
+  if (pack.has_prepared_execution_plan()) {
     opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
         pack.project_model_managed_preproc_contract(opt));
   }
@@ -8520,13 +8523,15 @@ void ModelAccess::configure_session_input_route(simaai::neat::Graph& session, co
 }
 
 std::vector<std::shared_ptr<Node>> ModelAccess::build_public_preprocess_nodes(const Model& model) {
-  if (!model.impl_->preprocess_plan.session_route_plan.include_pre_stage) {
+  if (!model.impl_->preprocess_plan.semantic_route_plan.include_pre_stage) {
     return {};
   }
   const auto& pack = model.impl_->pack;
-  const std::string pre_name = resolved_pre_stage_name(pack, model.impl_->preprocess_plan);
-  return build_preprocess_nodes_impl(model, pack, model.impl_->preprocess_plan, nullptr, pre_name,
-                                     "decoder", false);
+  internal::PreprocessPlannerResult semantic_plan = model.impl_->preprocess_plan;
+  semantic_plan.session_route_plan = semantic_plan.semantic_route_plan;
+  const std::string pre_name = resolved_pre_stage_name(pack, semantic_plan);
+  return build_preprocess_nodes_impl(model, pack, semantic_plan, nullptr, pre_name, "decoder",
+                                     false);
 }
 
 std::vector<std::shared_ptr<Node>> ModelAccess::build_public_inference_nodes(const Model& model) {
@@ -8548,7 +8553,7 @@ std::vector<std::shared_ptr<Node>> ModelAccess::build_public_inference_nodes(con
 std::vector<std::shared_ptr<Node>> ModelAccess::build_public_postprocess_nodes(const Model& model) {
   const auto& pack = model.impl_->pack;
   return build_postprocess_nodes_impl(model, pack, model.impl_->options, false,
-                                      model.impl_->preprocess_plan.session_route_plan);
+                                      model.impl_->preprocess_plan.semantic_route_plan);
 }
 
 std::vector<std::shared_ptr<Node>> ModelAccess::build_public_route_nodes(const Model& model,
@@ -8630,16 +8635,13 @@ std::vector<std::shared_ptr<Node>> ModelAccess::build_postprocess_nodes(const Mo
                                                                         bool sync) {
   const ModelPack& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
   return build_postprocess_nodes_impl(model, pack, model.impl_->options, sync,
-                                      model.impl_->preprocess_plan.session_route_plan);
+                                      model.impl_->preprocess_plan.semantic_route_plan);
 }
 
 Graph ModelAccess::build_stage_graph_fragment(const Model& model, Model::Stage stage) {
-  // Stage fragments are executable public Graphs, not descriptive model
-  // queries.  Admit the immutable physical plan here so callers keep the
-  // historical Model::preprocess()/inference()/postprocess() contract without
-  // needing an internal preparation call.  Introspection paths continue to
-  // use the semantic-only builders directly and remain lazy.
-  model.impl_->pack.prepare_for_execution();
+  // Graph authoring is not an execution boundary. Keep stage composition and
+  // serialization independent of target executables; physical-plan admission
+  // happens when an executable model route is built.
   Graph graph = graph_from_nodes(ModelAccess::build_public_stage_fragment_nodes(model, stage));
   const auto range_end =
       graph.linear_nodes_snapshot("ModelAccess::build_stage_graph_fragment").size();
@@ -8660,12 +8662,31 @@ Graph ModelAccess::build_stage_graph_fragment(const Model& model, Model::Stage s
 
 Graph ModelAccess::build_graph_fragment(const Model& model, Model::RouteOptions opt,
                                         runtime::FragmentBoundaryHints* hints) {
-  // Model::graph() also returns an executable public fragment.  Keep physical
-  // admission behind that existing API boundary rather than exposing a new
-  // customer-visible preparation step.
-  model.impl_->pack.prepare_for_execution();
+  internal::PreprocessPlannerResult render_plan = model.impl_->preprocess_plan;
+  try {
+    model.impl_->pack.prepare_for_execution();
+  } catch (const std::exception& e) {
+    const std::string detail = e.what();
+    const bool execution_artifact_unavailable =
+        detail.find("[missing-mla-executable]") != std::string::npos ||
+        detail.find("[elf-topology-unreadable]") != std::string::npos;
+    if (!execution_artifact_unavailable) {
+      throw;
+    }
+    // Model::graph() is also the customer graph-authoring/introspection API.
+    // Preserve that API when target-only executable artifacts are absent, but
+    // do not select another execution backend: a later build/run still fails
+    // closed when the required accelerator artifact is unavailable.
+    render_plan.session_route_plan = render_plan.semantic_route_plan;
+  }
   Graph graph(route_options_from_model_route_options(opt, &model.impl_->options));
-  add_nodes_to_graph(graph, ModelAccess::build_public_route_nodes(model, opt));
+  internal::ModelPack pack = model.impl_->pack;
+  if (!opt.name_suffix.empty()) {
+    pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
+  }
+  add_nodes_to_graph(
+      graph, build_pipeline_nodes(model, pack, model.impl_->options, render_plan, opt, nullptr,
+                                  false, false));
 
   runtime::FragmentBoundaryHints fragment_hints;
   const bool tensor_mode = pipeline_requires_tensor_input(model.impl_->preprocess_plan);
