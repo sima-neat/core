@@ -296,6 +296,11 @@ void apply_yolov5_static_contract_overrides(BoxDecodeStaticContract* contract) {
       contract->decode_type_option != BoxDecodeTypeOption::PackedPerHead) {
     throw std::invalid_argument("BoxDecode(YOLOv5) requires packed-per-head P3/P4/P5 tensors");
   }
+  if (contract->score_activation != BoxDecodeScoreActivation::Unknown &&
+      contract->score_activation != BoxDecodeScoreActivation::Sigmoid) {
+    throw std::invalid_argument(
+        "BoxDecode(YOLOv5) requires raw logits; probability-domain heads are unsupported");
+  }
   contract->decode_type_option = BoxDecodeTypeOption::PackedPerHead;
   contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
 
