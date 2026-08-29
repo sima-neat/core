@@ -271,9 +271,9 @@ For model-pack flows this is handled by the packaged contract. For manually wire
 
 Advanced tensor-contract rules:
 
-- YOLO-family decode types (`Yolo`, `YoloV5`, `YoloV7`, `YoloV8`, `YoloV9`,
-  `YoloV10`, and segmentation/pose variants) expect either decoupled heads or
-  packed heads that match the model family.
+- YOLO-family decode types other than `YoloV5` detection (`Yolo`, `YoloV7`,
+  `YoloV8`, `YoloV9`, `YoloV10`, and segmentation/pose variants) expect either
+  decoupled heads or packed heads that match the model family.
 - Packed YOLO heads must keep class count and head depth consistent across
   feature levels.
 - `YoloV5` detection accepts exactly three undecoded packed heads ordered

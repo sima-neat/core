@@ -1270,4 +1270,35 @@ RUN_TEST(
                   yolov5_compiled.payload.score_activation == BoxDecodeScoreActivation::Sigmoid &&
                   yolov5_compiled.payload.num_classes == 80,
               "compiled model-managed YOLOv5 payload should retain normalized semantics");
+
+      MpkContract routed_yolov5_mpk = yolov5_mpk;
+      std::reverse(routed_yolov5_mpk.plugins[0].output_tensors.begin(),
+                   routed_yolov5_mpk.plugins[0].output_tensors.end());
+      routed_yolov5_mpk.edges.clear();
+      for (std::size_t i = 0; i < yolov5_grids.size(); ++i) {
+        auto& output = routed_yolov5_mpk.plugins[0].output_tensors[i];
+        output.tensor_index = static_cast<int>(i);
+        output.physical_index = static_cast<int>(i);
+        routed_yolov5_mpk.edges.push_back(MpkContractEdge{
+            .src_plugin_index = 0U,
+            .src_output_index = static_cast<int>(i),
+            .dst_plugin_index = 1U,
+            .dst_input_index = static_cast<int>(yolov5_grids.size() - 1U - i),
+            .src_plugin = "MLA_0",
+            .dst_plugin = "boxdecode_yolov5",
+            .tensor_name = output.name,
+        });
+      }
+
+      error.clear();
+      const auto routed_yolov5_subset = extract_boxdecode_contract_subset_from_mpk(
+          routed_yolov5_mpk, make_flags(false, false),
+          &routed_yolov5_mpk.plugins.back(), &error);
+      require(routed_yolov5_subset.has_value(),
+              "model-managed YOLOv5 should honor terminal input routing: " + error);
+      require(routed_yolov5_subset->logical_inputs.size() == 3U &&
+                  routed_yolov5_subset->logical_inputs[0].logical_name == "class_logits_p3" &&
+                  routed_yolov5_subset->logical_inputs[1].logical_name == "raw_head_1" &&
+                  routed_yolov5_subset->logical_inputs[2].logical_name == "raw_head_2",
+              "model-managed YOLOv5 inputs should follow BoxDecode dst_input_index order");
     }));
