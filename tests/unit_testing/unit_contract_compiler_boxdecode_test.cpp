@@ -226,6 +226,16 @@ RUN_TEST(
       require(custom_yolov5_finalized.num_classes == 249,
               "rectangular custom-class YOLOv5 heads should preserve the inferred class count");
 
+      auto padded_dense_yolov5 = packed_yolov5_contract;
+      padded_dense_yolov5.tensors[0].input_shape = {96, 96, 255};
+      padded_dense_yolov5.tensors[1].input_shape = {64, 64, 255};
+      padded_dense_yolov5.tensors[2].input_shape = {32, 32, 255};
+      const auto padded_dense_yolov5_finalized = finalize_boxdecode_static_contract(
+          padded_dense_yolov5, BoxDecodeType::YoloV5, std::nullopt, std::nullopt,
+          BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {});
+      require(padded_dense_yolov5_finalized.num_classes == 80,
+              "dense YOLOv5 heads should validate logical slice geometry, not physical padding");
+
       auto require_yolov5_rejection = [&](BoxDecodeStaticContract invalid,
                                           BoxDecodeTypeOption option, int classes,
                                           const std::string& expected) {
@@ -252,6 +262,10 @@ RUN_TEST(
       auto wrong_order_yolov5 = packed_yolov5_contract;
       std::swap(wrong_order_yolov5.tensors[0], wrong_order_yolov5.tensors[1]);
       require_yolov5_rejection(wrong_order_yolov5, BoxDecodeTypeOption::Auto, 0,
+                               "ordered P3/P4/P5");
+      auto wrong_logical_geometry_yolov5 = packed_yolov5_contract;
+      wrong_logical_geometry_yolov5.tensors[1].slice_shape[0] = 39;
+      require_yolov5_rejection(wrong_logical_geometry_yolov5, BoxDecodeTypeOption::Auto, 0,
                                "ordered P3/P4/P5");
       require_yolov5_rejection(packed_yolov5_contract, BoxDecodeTypeOption::GroupedByRoleLogit, 0,
                                "packed-per-head");

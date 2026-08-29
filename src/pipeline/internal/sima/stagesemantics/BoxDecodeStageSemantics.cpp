@@ -253,6 +253,37 @@ std::optional<TensorHwc> tensor_hwc(const BoxDecodeTensorStaticContract& tensor)
   return TensorHwc{h, w, c, semantic_c};
 }
 
+std::optional<TensorHwc> yolov5_head_hwc(const BoxDecodeTensorStaticContract& tensor) {
+  auto head = tensor_hwc(tensor);
+  if (!head.has_value()) {
+    return std::nullopt;
+  }
+
+  if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
+      tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16) {
+    // Packed slice_shape describes a storage tile. The input shape remains the
+    // logical YOLO head geometry and channel depth.
+    head->semantic_c = yolov5_packed_channel_depth(tensor);
+    return head;
+  }
+
+  if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical &&
+      tensor.slice_shape.size() >= 3U) {
+    const auto rank = tensor.slice_shape.size();
+    const int logical_h = tensor.slice_shape[rank - 3U];
+    const int logical_w = tensor.slice_shape[rank - 2U];
+    const int logical_c = tensor.slice_shape[rank - 1U];
+    if (logical_h <= 0 || logical_w <= 0 || logical_c <= 0 || logical_h > head->h ||
+        logical_w > head->w || logical_c > head->c) {
+      return std::nullopt;
+    }
+    head->h = logical_h;
+    head->w = logical_w;
+    head->semantic_c = logical_c;
+  }
+  return head;
+}
+
 bool same_hw(const TensorHwc& lhs, const TensorHwc& rhs) {
   return lhs.h == rhs.h && lhs.w == rhs.w;
 }
@@ -276,14 +307,11 @@ void apply_yolov5_static_contract_overrides(BoxDecodeStaticContract* contract) {
   std::array<TensorHwc, 3> heads{};
   std::optional<int> classes;
   for (std::size_t i = 0; i < heads.size(); ++i) {
-    auto head = tensor_hwc(contract->tensors[i]);
+    auto head = yolov5_head_hwc(contract->tensors[i]);
     if (!head.has_value()) {
       throw std::invalid_argument("BoxDecode(YOLOv5) packed tensor[" + std::to_string(i) +
                                   "] must have valid HWC geometry and depth=3*(num_classes+5)");
     }
-    // For packed MLA storage input_shape is the full logical frame while
-    // slice_shape is the tessellation tile, not a channel crop.
-    head->semantic_c = yolov5_packed_channel_depth(contract->tensors[i]);
     if ((head->semantic_c % 3) != 0) {
       throw std::invalid_argument("BoxDecode(YOLOv5) packed tensor[" + std::to_string(i) +
                                   "] must have valid HWC geometry and depth=3*(num_classes+5)");
@@ -1051,6 +1079,14 @@ void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract
   // prepared-head signature and applies the descriptor's concrete type, activation, layout, and
   // class policy. No-op for non-SSD decode types.
   apply_ssd_static_contract_overrides(contract);
+}
+
+void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contract) {
+  apply_yolov5_static_contract_overrides(contract);
+  if (contract && contract->decode_type == BoxDecodeType::YoloV5) {
+    contract->num_classes = resolve_boxdecode_num_classes(*contract, contract->num_classes,
+                                                          "BoxDecode model-managed contract");
+  }
 }
 
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
