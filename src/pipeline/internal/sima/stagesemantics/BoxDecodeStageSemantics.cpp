@@ -579,6 +579,13 @@ int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& con
     }
     return contract.num_classes;
   }
+  if (contract.decode_type == BoxDecodeType::YoloV5) {
+    // A packed raw head may legitimately have a class-like tensor name, but its
+    // channel depth is 3 * (classes + 5), not the class count itself.
+    if (const int classes = infer_packed_yolo_class_depth(contract); classes > 0) {
+      return classes;
+    }
+  }
   if (const int named = infer_named_class_depth(contract); named > 0) {
     return named;
   }

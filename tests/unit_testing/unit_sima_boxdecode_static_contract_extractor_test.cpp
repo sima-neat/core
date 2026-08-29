@@ -1218,10 +1218,11 @@ RUN_TEST(
         const auto height = yolov5_grids[i][0];
         const auto width = yolov5_grids[i][1];
         const auto size = static_cast<std::size_t>(height * width * 255 * 2);
+        const auto name = i == 0U ? "class_logits_p3" : "raw_head_" + std::to_string(i);
         yolov5_mla.output_tensors.push_back(MpkTensorContract{
             .tensor_index = static_cast<int>(i),
             .physical_index = static_cast<int>(i),
-            .name = "raw_head_" + std::to_string(i),
+            .name = name,
             .dtype = "BF16",
             .mpk_shape = {1, height, width, 255},
             .shape_semantics = MpkShapeSemantics::Geometry,
@@ -1246,7 +1247,7 @@ RUN_TEST(
             .dst_input_index = static_cast<int>(i),
             .src_plugin = "MLA_0",
             .dst_plugin = "boxdecode_yolov5",
-            .tensor_name = "raw_head_" + std::to_string(i),
+            .tensor_name = i == 0U ? "class_logits_p3" : "raw_head_" + std::to_string(i),
         });
       }
 
