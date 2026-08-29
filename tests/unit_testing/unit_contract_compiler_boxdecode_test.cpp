@@ -271,6 +271,21 @@ RUN_TEST(
                                "packed-per-head");
       require_yolov5_rejection(packed_yolov5_contract, BoxDecodeTypeOption::Auto, 42,
                                "num_classes mismatch");
+      validate_model_managed_boxdecode_option_override(BoxDecodeType::YoloV5,
+                                                       BoxDecodeTypeOption::Auto);
+      validate_model_managed_boxdecode_option_override(BoxDecodeType::YoloV5,
+                                                       BoxDecodeTypeOption::PackedPerHead);
+      bool rejected_yolov5_node_override = false;
+      try {
+        validate_model_managed_boxdecode_option_override(
+            BoxDecodeType::YoloV5, BoxDecodeTypeOption::GroupedByRoleProbability);
+      } catch (const std::invalid_argument& error) {
+        rejected_yolov5_node_override = true;
+        require(std::string(error.what()).find("Auto or PackedPerHead") != std::string::npos,
+                "YOLOv5 node override rejection should identify the supported layouts");
+      }
+      require(rejected_yolov5_node_override,
+              "model-managed YOLOv5 must reject an incompatible node layout override");
 
       BoxDecodeStaticContract packed_contract;
       packed_contract.decode_type = BoxDecodeType::YoloV8;

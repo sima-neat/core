@@ -1096,6 +1096,15 @@ void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contr
   }
 }
 
+void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
+                                                      BoxDecodeTypeOption requested) {
+  if (decode_type == BoxDecodeType::YoloV5 && requested != BoxDecodeTypeOption::Auto &&
+      requested != BoxDecodeTypeOption::PackedPerHead) {
+    throw std::invalid_argument(
+        "SimaBoxDecode(Model): YOLOv5 supports only Auto or PackedPerHead layout overrides");
+  }
+}
+
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
     const BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
     const std::optional<ModelBoxdecodeSemantics>& model_semantics,
