@@ -5,6 +5,7 @@
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -166,6 +167,14 @@ int logical_channel_depth(const BoxDecodeTensorStaticContract& tensor) {
   return 0;
 }
 
+int yolov5_packed_channel_depth(const BoxDecodeTensorStaticContract& tensor) {
+  if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
+      tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16) {
+    return tensor.input_shape.size() >= 3U ? tensor.input_shape.back() : 0;
+  }
+  return logical_channel_depth(tensor);
+}
+
 bool tensor_name_looks_objectness_logit(std::string raw) {
   for (char& ch : raw) {
     ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -246,6 +255,53 @@ std::optional<TensorHwc> tensor_hwc(const BoxDecodeTensorStaticContract& tensor)
 
 bool same_hw(const TensorHwc& lhs, const TensorHwc& rhs) {
   return lhs.h == rhs.h && lhs.w == rhs.w;
+}
+
+void apply_yolov5_static_contract_overrides(BoxDecodeStaticContract* contract) {
+  if (!contract || contract->decode_type != BoxDecodeType::YoloV5) {
+    return;
+  }
+  if (contract->decode_type_option != BoxDecodeTypeOption::Auto &&
+      contract->decode_type_option != BoxDecodeTypeOption::PackedPerHead) {
+    throw std::invalid_argument("BoxDecode(YOLOv5) requires packed-per-head P3/P4/P5 tensors");
+  }
+  contract->decode_type_option = BoxDecodeTypeOption::PackedPerHead;
+  contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
+
+  if (contract->tensors.size() != 3U) {
+    throw std::invalid_argument(
+        "BoxDecode(YOLOv5) requires exactly three packed tensors ordered P3, P4, P5");
+  }
+
+  std::array<TensorHwc, 3> heads{};
+  std::optional<int> classes;
+  for (std::size_t i = 0; i < heads.size(); ++i) {
+    auto head = tensor_hwc(contract->tensors[i]);
+    if (!head.has_value()) {
+      throw std::invalid_argument("BoxDecode(YOLOv5) packed tensor[" + std::to_string(i) +
+                                  "] must have valid HWC geometry and depth=3*(num_classes+5)");
+    }
+    // For packed MLA storage input_shape is the full logical frame while
+    // slice_shape is the tessellation tile, not a channel crop.
+    head->semantic_c = yolov5_packed_channel_depth(contract->tensors[i]);
+    if ((head->semantic_c % 3) != 0) {
+      throw std::invalid_argument("BoxDecode(YOLOv5) packed tensor[" + std::to_string(i) +
+                                  "] must have valid HWC geometry and depth=3*(num_classes+5)");
+    }
+    const int candidate_classes = (head->semantic_c / 3) - 5;
+    if (candidate_classes <= 0 || (classes.has_value() && *classes != candidate_classes)) {
+      throw std::invalid_argument(
+          "BoxDecode(YOLOv5) packed head depths must encode one consistent positive class count");
+    }
+    classes = candidate_classes;
+    heads[i] = *head;
+  }
+
+  if (heads[0].h != 2 * heads[1].h || heads[0].w != 2 * heads[1].w ||
+      heads[1].h != 2 * heads[2].h || heads[1].w != 2 * heads[2].w) {
+    throw std::invalid_argument(
+        "BoxDecode(YOLOv5) tensors must be ordered P3/P4/P5 with stride-8/16/32 grids");
+  }
 }
 
 std::optional<int> consistent_positive_depth(std::optional<int> current, int candidate) {
@@ -442,7 +498,9 @@ int infer_ssd_grouped_class_depth(const BoxDecodeStaticContract& contract) {
 int infer_packed_yolo_class_depth(const BoxDecodeStaticContract& contract) {
   std::optional<int> classes;
   for (const auto& tensor : contract.tensors) {
-    const int c = logical_channel_depth(tensor);
+    const int c = contract.decode_type == BoxDecodeType::YoloV5
+                      ? yolov5_packed_channel_depth(tensor)
+                      : logical_channel_depth(tensor);
     if (c <= 0 || (c % 3) != 0) {
       return 0;
     }
@@ -936,8 +994,8 @@ int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferr
   if (requested_num_classes <= 0) {
     return inferred_num_classes;
   }
-  if (decode_type_is_yolov26_family(decode_type) && inferred_num_classes > 0 &&
-      requested_num_classes != inferred_num_classes) {
+  if ((decode_type_is_yolov26_family(decode_type) || decode_type == BoxDecodeType::YoloV5) &&
+      inferred_num_classes > 0 && requested_num_classes != inferred_num_classes) {
     throw std::invalid_argument(
         std::string(context ? context : "BoxDecode") +
         " num_classes mismatch: configured=" + std::to_string(requested_num_classes) +
@@ -1029,6 +1087,7 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
   finalized.nms_iou_threshold = nms_iou_threshold;
   finalized.topk = topk;
   finalized.required_preprocess_meta_fields = required_preprocess_meta_fields;
+  apply_yolov5_static_contract_overrides(&finalized);
   apply_yolov26_static_contract_overrides(&finalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&finalized);
   apply_ssd_static_contract_overrides(&finalized);
@@ -1231,6 +1290,7 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
 CompiledBoxDecodeContract
 build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
   BoxDecodeStaticContract normalized = contract;
+  apply_yolov5_static_contract_overrides(&normalized);
   apply_yolov26_static_contract_overrides(&normalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&normalized);
   apply_ssd_static_contract_overrides(&normalized);

@@ -214,7 +214,8 @@ non-empty or positive value.
 | `num_classes` | `0` | Use the class-head depth inferred from the MPK. |
 | `num_classes` | positive integer matching the MPK | Use the explicit class count. This is required when the MPK cannot infer a split single-class head reliably. |
 | `num_classes` | positive integer contradicting a YOLO26 MPK | Fail before pipeline construction and report both values. YOLO26 derives its grouped raw-head layout from the class depth, so this mismatch is a model contract error. |
-| `num_classes` | positive integer for SSD or a pre-YOLO26 non-pose YOLO family | Preserve the existing explicit-override behavior. Pose decoders and SuperPoint retain their family-specific rules. |
+| `num_classes` | positive integer contradicting a YOLOv5 or YOLO26 MPK | Fail before pipeline construction and report both values. These raw-head layouts derive their class count from tensor depth. |
+| `num_classes` | positive integer for SSD or another pre-YOLO26 non-pose YOLO family | Preserve the existing explicit-override behavior. Pose decoders and SuperPoint retain their family-specific rules. |
 
 `detection_threshold` is the name used by the BoxDecode node/stage
 constructors. `ModelOptions.score_threshold` is the model-route option that
@@ -275,6 +276,13 @@ Advanced tensor-contract rules:
   packed heads that match the model family.
 - Packed YOLO heads must keep class count and head depth consistent across
   feature levels.
+- `YoloV5` detection accepts exactly three undecoded packed heads ordered
+  P3/P4/P5. Their grids must have stride-8/16/32 geometry and each logical
+  depth must be `3 * (num_classes + 5)`. BoxDecode applies sigmoid, the grid
+  and stride transform, and the standard YOLOv5 anchors
+  (`{10,13},{16,30},{33,23}`; `{30,61},{62,45},{59,119}`;
+  `{116,90},{156,198},{373,326}`). Custom AutoAnchor tables and decoded
+  six-tensor box/class exports must use another contract.
 - `YoloV26` uses grouped raw l/t/r/b bbox heads plus class-score heads.
 - `Ssd` is **not** a generic SSD decoder. It resolves exactly **four prepared profiles**
   from the complete ordered loc/conf H/W/C signature at compile time. Any other

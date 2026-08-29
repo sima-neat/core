@@ -99,6 +99,8 @@ struct BoxDecodeOptionsInternal;
  * format. Do not infer correctness from tensor rank alone: sliced, padded, packed, and
  * dense outputs can have the same logical shape while requiring different handling. The
  * model-aware path handles these details for supported model packs.
+ * `BoxDecodeType::YoloV5` specifically consumes three undecoded packed heads in P3/P4/P5
+ * order and uses the standard YOLOv5 anchor table; custom AutoAnchor tables are not supported.
  *
  * @see pipeline/BoxDecodeType.h
  * @see pipeline/DetectionTypes.h
