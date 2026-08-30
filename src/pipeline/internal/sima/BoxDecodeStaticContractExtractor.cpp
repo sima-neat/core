@@ -2603,6 +2603,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       }
     }
   }
+  std::vector<std::size_t> terminal_consumer_order;
   if (boxdecode_stage) {
     const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
     if (parsed_type.has_value() &&
@@ -2792,8 +2793,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
                       [&](std::size_t index) { return index == logical_outputs.size(); })) {
         return fail("boxdecode MPK terminal input routing must cover every logical output");
       }
-      apply_permutation_local(&logical_outputs, consumer_order);
-      apply_permutation_local(&lineage_roots, consumer_order);
+      terminal_consumer_order = std::move(consumer_order);
     }
   }
 
@@ -3013,6 +3013,14 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       return fail("boxdecode segmented tensor byte spans do not sum to MPK MLA output size: sum=" +
                   std::to_string(source_byte_offset) + " parent=" + std::to_string(parent_size));
     }
+  }
+
+  if (!terminal_consumer_order.empty()) {
+    apply_permutation_local(&out.tensors, terminal_consumer_order);
+    apply_permutation_local(&out.tensor_names, terminal_consumer_order);
+    apply_permutation_local(&out.physical_inputs, terminal_consumer_order);
+    apply_permutation_local(&lineage_facts, terminal_consumer_order);
+    out.input_dtype = out.tensors.front().data_type;
   }
 
   if (route_flags.quant_needed) {

@@ -772,6 +772,22 @@ RUN_TEST(
                   extracted_superpoint_hwc->tensors[1].source_size_bytes == 1228800U,
               "cblock=false SuperPoint heads must preserve physical source spans");
 
+      MpkContract routed_superpoint_hwc = superpoint_hwc_parent;
+      routed_superpoint_hwc.edges[routed_superpoint_hwc.edges.size() - 2U].dst_input_index = 1;
+      routed_superpoint_hwc.edges.back().dst_input_index = 0;
+      const auto extracted_routed_superpoint_hwc = build_boxdecode_static_contract_from_mpk(
+          routed_superpoint_hwc, make_flags(true, true), &error);
+      require(extracted_routed_superpoint_hwc.has_value(),
+              "routed shared-parent heads should preserve producer byte spans: " + error);
+      require(extracted_routed_superpoint_hwc->tensors[0].source_size_bytes == 1228800U &&
+                  extracted_routed_superpoint_hwc->tensors[0].source_byte_offset == 384000 &&
+                  extracted_routed_superpoint_hwc->tensors[1].source_size_bytes == 384000U &&
+                  extracted_routed_superpoint_hwc->tensors[1].source_byte_offset == 0,
+              "terminal input routing must not change shared-parent producer byte offsets");
+      require(extracted_routed_superpoint_hwc->physical_inputs[0].byte_offset == 384000 &&
+                  extracted_routed_superpoint_hwc->physical_inputs[1].byte_offset == 0,
+              "routed physical inputs must retain their producer byte offsets");
+
       // Stage-by-stage storage regression: direct route has full-frame detess slice but the source
       // is still packed/cblock. This is the YOLO26-pose INT8 direct failure mode.
       MpkContract direct_int8_mpk;
