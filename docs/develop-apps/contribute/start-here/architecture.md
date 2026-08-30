@@ -386,14 +386,21 @@ otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
 `simaaiboxdecode` elements by default.
 
-##### YOLO26 BoxDecode class-count contract
+##### YOLOv5 and YOLO26 BoxDecode class-count contracts
+
+YOLOv5 detection is a fixed standard-anchor profile. Core requires exactly three raw packed
+P3/P4/P5 tensors in stride-8/16/32 order, each with logical depth
+`3 * (num_classes + 5)`. It normalizes the score domain to sigmoid and rejects contradictory
+class counts before lowering. The runtime derives the rectangular x/y strides from model and
+head geometry and applies the standard YOLOv5 anchor table. Custom AutoAnchor tables are outside
+this contract.
 
 For model-managed YOLO26 detection, pose, and segmentation routes, the MPK class-head depth is the
 authoritative class count. `Model::Options::num_classes = 0` selects that inferred value. A positive
 value must match it; a contradiction fails during contract construction and reports the configured
 value, the MPK-derived value, and the decode type. This prevents an invalid class count from being
-used to interpret the grouped raw-head layout. SSD and pre-YOLO26 non-pose YOLO families retain
-their existing explicit-override behavior, while pose and SuperPoint decoders retain their
+used to interpret the grouped raw-head layout. SSD and other pre-YOLO26 non-pose YOLO families
+retain their existing explicit-override behavior, while pose and SuperPoint decoders retain their
 family-specific rules.
 
 ##### SuperPoint BoxDecode contract

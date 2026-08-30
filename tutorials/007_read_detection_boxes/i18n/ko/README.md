@@ -172,9 +172,10 @@ SimaBoxDecode(const Model& model,
 `BoxDecodeType`은 타입이 지정된 API(`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`)이며, 디코딩 단계에서는 항상 명시적으로 설정해야 합니다. 아래 런타임 계약은 `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp`(`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`)에서 제공됩니다.
 
 핵심 텐서 계약 규칙:
-- YOLO 계열 디코딩 타입(`yolo`, `yolov5*`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):
+- `yolov5` 감지를 제외한 YOLO 계열 디코딩 타입(`yolo`, `yolov5-seg`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):
   - 분리된 헤드: 클래스 헤드의 깊이는 반복 가능해야 하며 `> 4`여야 합니다.
   - 패킹된 헤드: 각 헤드의 깊이는 `depth = 3 * (num_classes + 5)`를 만족해야 하며 헤드 간에 일관성을 유지해야 합니다.
+- `yolov5` 감지: stride 8/16/32 형상과 `3 * (num_classes + 5)` 깊이를 가진 디코딩되지 않은 P3/P4/P5 패킹 헤드가 정확히 3개 필요합니다.
 - `yolo26`: 4채널의 원시 l/t/r/b 바운딩 박스 텐서와 반복 가능한 클래스 헤드 깊이 `> 4`를 갖는 분리된 그룹 헤드입니다.
 - `detr`: 클래스 채널은 헤드 간의 최대 깊이에서 추론되며, `> 4`여야 합니다.
 - 기타 YOLO가 아닌 디코딩 타입(`effdet`, `rcnn-stage1`, `centernet`): 폴백 클래스 추론은 최대 깊이를 사용하며 `> 4`가 필요합니다.
@@ -183,7 +184,7 @@ SimaBoxDecode(const Model& model,
 | API 열거형 | 백엔드 토큰 | 예상되는 계약 |
 |---|---|---|
 | `BoxDecodeType::Yolo` | `yolo` | YOLO 분리형 또는 패킹된 깊이 계약 |
-| `BoxDecodeType::YoloV5` | `yolov5` | YOLO 분리형 또는 패킹된 깊이 계약 |
+| `BoxDecodeType::YoloV5` | `yolov5` | 디코딩되지 않은 P3/P4/P5 패킹 헤드 3개 |
 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLO 깊이 계약 + 분할 경로 |
 | `BoxDecodeType::YoloV7` | `yolov7` | YOLO 분리형 또는 패킹된 깊이 계약 |
 | `BoxDecodeType::YoloV7Seg` | `yolov7-seg` | YOLO 깊이 계약 + 분할 경로 |
