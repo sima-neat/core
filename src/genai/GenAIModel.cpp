@@ -2,10 +2,12 @@
 #include "genai/ASRModel.h"
 #include "genai/GenAIInternal.h"
 #include "genai/VisionLanguageModel.h"
+#include "genai/TextToSpeechModel.h"
 
 #include <stdexcept>
 #include <utility>
 #include <variant>
+#include <type_traits>
 
 namespace simaai::neat::genai {
 
@@ -13,7 +15,7 @@ struct GenAIModel::Impl {
   explicit Impl(std::filesystem::path model_dir_in)
       : info(internal::inspect_model_directory(std::move(model_dir_in))), model(make_model(info)) {}
 
-  using ModelVariant = std::variant<VisionLanguageModel, ASRModel>;
+  using ModelVariant = std::variant<VisionLanguageModel, ASRModel, TextToSpeechModel>;
 
   static ModelVariant make_model(const internal::ModelDirectoryInfo& info) {
     switch (info.task) {
@@ -21,6 +23,8 @@ struct GenAIModel::Impl {
       return VisionLanguageModel(info.package_root);
     case GenAITask::ASR:
       return ASRModel(info.root);
+    case GenAITask::TextToSpeech:
+      return TextToSpeechModel(info.package_root);
     }
     throw std::runtime_error("Unsupported GenAI task");
   }
@@ -80,11 +84,42 @@ void GenAIModel::unset_lora() {
 }
 
 GenerationResult GenAIModel::run(const GenerationRequest& request) {
-  return std::visit([&](auto& model) { return model.run(request); }, impl_->model);
+  return std::visit(
+      [&](auto& model) -> GenerationResult {
+        using Model = std::decay_t<decltype(model)>;
+        if constexpr (std::is_same_v<Model, TextToSpeechModel>) {
+          throw std::invalid_argument("Use TextToSpeechRequest with a TextToSpeech GenAIModel");
+        } else {
+          return model.run(request);
+        }
+      },
+      impl_->model);
+}
+
+TextToSpeechResult GenAIModel::run(const TextToSpeechRequest& request) {
+  return std::visit(
+      [&](auto& model) -> TextToSpeechResult {
+        using Model = std::decay_t<decltype(model)>;
+        if constexpr (std::is_same_v<Model, TextToSpeechModel>) {
+          return model.run(request);
+        } else {
+          throw std::invalid_argument("TextToSpeechRequest requires a TextToSpeech GenAIModel");
+        }
+      },
+      impl_->model);
 }
 
 GenerationStream GenAIModel::stream(const GenerationRequest& request) {
-  return std::visit([&](auto& model) { return model.stream(request); }, impl_->model);
+  return std::visit(
+      [&](auto& model) -> GenerationStream {
+        using Model = std::decay_t<decltype(model)>;
+        if constexpr (std::is_same_v<Model, TextToSpeechModel>) {
+          throw std::invalid_argument("Streaming is not supported for TextToSpeech models");
+        } else {
+          return model.stream(request);
+        }
+      },
+      impl_->model);
 }
 
 } // namespace simaai::neat::genai

@@ -20,6 +20,7 @@
 #include "genai/GraphFragments.h"
 #include "genai/GenAIServer.h"
 #include "genai/VisionLanguageModel.h"
+#include "genai/TextToSpeechModel.h"
 #include "graphs/Fragments.h"
 #include "model/Model.h"
 #include "nodes/common/Output.h"
@@ -2063,11 +2064,17 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
       .value("VisionLanguage", simaai::neat::genai::GenAITask::VisionLanguage)
-      .value("ASR", simaai::neat::genai::GenAITask::ASR);
+      .value("ASR", simaai::neat::genai::GenAITask::ASR)
+      .value("TextToSpeech", simaai::neat::genai::GenAITask::TextToSpeech);
 
   nb::enum_<simaai::neat::genai::ASRTask>(m, "ASRTask")
       .value("Transcribe", simaai::neat::genai::ASRTask::Transcribe)
       .value("Translate", simaai::neat::genai::ASRTask::Translate);
+
+  nb::class_<simaai::neat::PcmAudio>(m, "PcmAudio")
+      .def(nb::init<>())
+      .def_rw("samples", &simaai::neat::PcmAudio::samples)
+      .def_rw("sample_rate", &simaai::neat::PcmAudio::sample_rate);
 
   nb::class_<simaai::neat::genai::ImageList>(m, "ImageList")
       .def(nb::init<>())
@@ -2220,6 +2227,7 @@ NB_MODULE(_pyneat_core, m) {
       .def("unset_lora", &simaai::neat::genai::VisionLanguageModel::unset_lora,
            nb::call_guard<nb::gil_scoped_release>())
       .def("cached_image_count", &simaai::neat::genai::VisionLanguageModel::cached_image_count)
+
       .def(
           "encode",
           [](simaai::neat::genai::VisionLanguageModel& model, const nb::object& images) {
@@ -2242,6 +2250,30 @@ NB_MODULE(_pyneat_core, m) {
       .def("stream", &simaai::neat::genai::ASRModel::stream, "request"_a,
            nb::call_guard<nb::gil_scoped_release>());
 
+  nb::class_<simaai::neat::genai::TextToSpeechRequest>(m, "TextToSpeechRequest")
+      .def(nb::init<>())
+      .def_rw("prompt", &simaai::neat::genai::TextToSpeechRequest::prompt)
+      .def_rw("speaker", &simaai::neat::genai::TextToSpeechRequest::speaker)
+      .def_rw("language", &simaai::neat::genai::TextToSpeechRequest::language)
+      .def_rw("seed", &simaai::neat::genai::TextToSpeechRequest::seed)
+      .def_rw("max_frames", &simaai::neat::genai::TextToSpeechRequest::max_frames)
+      .def_rw("do_sample", &simaai::neat::genai::TextToSpeechRequest::do_sample)
+      .def_rw("subtalker_do_sample",
+              &simaai::neat::genai::TextToSpeechRequest::subtalker_do_sample)
+      .def_rw("output_wav", &simaai::neat::genai::TextToSpeechRequest::output_wav);
+
+  nb::class_<simaai::neat::genai::TextToSpeechResult>(m, "TextToSpeechResult")
+      .def(nb::init<>())
+      .def_rw("audio", &simaai::neat::genai::TextToSpeechResult::audio)
+      .def_rw("output_wav", &simaai::neat::genai::TextToSpeechResult::output_wav);
+
+  nb::class_<simaai::neat::genai::TextToSpeechModel>(m, "TextToSpeechModel")
+      .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def("accepts_text", &simaai::neat::genai::TextToSpeechModel::accepts_text)
+      .def("model_id", &simaai::neat::genai::TextToSpeechModel::model_id)
+      .def("run", &simaai::neat::genai::TextToSpeechModel::run, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>());
+
   nb::class_<simaai::neat::genai::GenAIModel>(m, "GenAIModel")
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
       .def("task", &simaai::neat::genai::GenAIModel::task)
@@ -2253,7 +2285,15 @@ NB_MODULE(_pyneat_core, m) {
            nb::call_guard<nb::gil_scoped_release>())
       .def("unset_lora", &simaai::neat::genai::GenAIModel::unset_lora,
            nb::call_guard<nb::gil_scoped_release>())
-      .def("run", &simaai::neat::genai::GenAIModel::run, "request"_a,
+      .def("run", [](simaai::neat::genai::GenAIModel& model,
+                     const simaai::neat::genai::GenerationRequest& request) {
+        return model.run(request);
+      }, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("run", [](simaai::neat::genai::GenAIModel& model,
+                     const simaai::neat::genai::TextToSpeechRequest& request) {
+        return model.run(request);
+      }, "request"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,
            nb::call_guard<nb::gil_scoped_release>());
@@ -2287,15 +2327,19 @@ NB_MODULE(_pyneat_core, m) {
   nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
   genai_mod.attr("GenAITask") = m.attr("GenAITask");
   genai_mod.attr("ASRTask") = m.attr("ASRTask");
+  genai_mod.attr("PcmAudio") = m.attr("PcmAudio");
   genai_mod.attr("ImageList") = m.attr("ImageList");
   genai_mod.attr("ChatMessage") = m.attr("ChatMessage");
   genai_mod.attr("GenerationMetrics") = m.attr("GenerationMetrics");
   genai_mod.attr("GenerationRequest") = m.attr("GenerationRequest");
   genai_mod.attr("GenerationResult") = m.attr("GenerationResult");
+  genai_mod.attr("TextToSpeechRequest") = m.attr("TextToSpeechRequest");
+  genai_mod.attr("TextToSpeechResult") = m.attr("TextToSpeechResult");
   genai_mod.attr("TokenSample") = m.attr("TokenSample");
   genai_mod.attr("GenerationStream") = m.attr("GenerationStream");
   genai_mod.attr("VisionLanguageModel") = m.attr("VisionLanguageModel");
   genai_mod.attr("ASRModel") = m.attr("ASRModel");
+  genai_mod.attr("TextToSpeechModel") = m.attr("TextToSpeechModel");
   genai_mod.attr("GenAIModel") = m.attr("GenAIModel");
   genai_mod.attr("GenAIServerOptions") = m.attr("GenAIServerOptions");
   genai_mod.attr("GenAIServer") = m.attr("GenAIServer");

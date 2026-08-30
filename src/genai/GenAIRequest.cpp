@@ -104,4 +104,19 @@ void validate_asr_generation_request(const GenerationRequest& request) {
   }
 }
 
+void validate_text_to_speech_request(const TextToSpeechRequest& request) {
+  if (request.prompt.empty()) {
+    throw std::runtime_error("TextToSpeechRequest requires a non-empty prompt");
+  }
+  if (request.speaker.empty()) {
+    throw std::runtime_error("TextToSpeechRequest speaker must not be empty");
+  }
+  if (request.language.empty()) {
+    throw std::runtime_error("TextToSpeechRequest language must not be empty");
+  }
+  if (request.max_frames == 0) {
+    throw std::runtime_error("TextToSpeechRequest max_frames must be greater than zero");
+  }
+}
+
 } // namespace simaai::neat::genai::internal

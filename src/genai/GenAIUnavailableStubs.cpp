@@ -3,6 +3,7 @@
 #include "genai/GenAIServer.h"
 #include "genai/GraphFragments.h"
 #include "genai/VisionLanguageModel.h"
+#include "genai/TextToSpeechModel.h"
 #include "genai/internal/SpeechTranscriberNodeFactory.h"
 #include "genai/internal/VisionLanguageNodeFactory.h"
 
@@ -57,6 +58,9 @@ void GenAIModel::unset_lora() {
 GenerationResult GenAIModel::run(const GenerationRequest&) {
   throw_genai_unavailable();
 }
+TextToSpeechResult GenAIModel::run(const TextToSpeechRequest&) {
+  throw_genai_unavailable();
+}
 GenerationStream GenAIModel::stream(const GenerationRequest&) {
   throw_genai_unavailable();
 }
@@ -108,6 +112,22 @@ GenerationResult ASRModel::run(const GenerationRequest&) {
   throw_genai_unavailable();
 }
 GenerationStream ASRModel::stream(const GenerationRequest&) {
+  throw_genai_unavailable();
+}
+
+TextToSpeechModel::TextToSpeechModel(std::filesystem::path) {
+  throw_genai_unavailable();
+}
+TextToSpeechModel::~TextToSpeechModel() = default;
+TextToSpeechModel::TextToSpeechModel(TextToSpeechModel&&) noexcept = default;
+TextToSpeechModel& TextToSpeechModel::operator=(TextToSpeechModel&&) noexcept = default;
+bool TextToSpeechModel::accepts_text() const {
+  throw_genai_unavailable();
+}
+std::string TextToSpeechModel::model_id() const {
+  throw_genai_unavailable();
+}
+TextToSpeechResult TextToSpeechModel::run(const TextToSpeechRequest&) {
   throw_genai_unavailable();
 }
 

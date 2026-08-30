@@ -3,6 +3,7 @@
  * @brief Auto-detecting GenAI model handle.
  */
 #pragma once
+#include "genai/TextToSpeechModel.h"
 
 #include "genai/GenAITypes.h"
 
@@ -31,6 +32,7 @@ public:
   void set_lora(const std::string& adapter_name);
   void unset_lora();
   GenerationResult run(const GenerationRequest& request);
+  TextToSpeechResult run(const TextToSpeechRequest& request);
   GenerationStream stream(const GenerationRequest& request);
 
 private:

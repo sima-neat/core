@@ -8,6 +8,7 @@
 #include "genai/GenAIModel.h"
 #include "genai/GenAIOptions.h"
 #include "genai/GenAITypes.h"
+#include "genai/TextToSpeechModel.h"
 #include "genai/GraphFragments.h"
 #include "genai/GenAIServer.h"
 #include "genai/VisionLanguageModel.h"

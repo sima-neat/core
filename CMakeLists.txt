@@ -837,6 +837,7 @@ if (NOT SimaLMM_FOUND)
   # used in a non-LLiMa build.
   list(REMOVE_ITEM SIMANEAT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ASRModel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/TextToSpeechModel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GraphFragments.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIInternal.cpp"

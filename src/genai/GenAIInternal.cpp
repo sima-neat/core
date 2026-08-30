@@ -26,6 +26,14 @@ bool is_existing_regular_file(const std::filesystem::path& path) {
   return std::filesystem::is_regular_file(path, ec);
 }
 
+bool is_qwen3_tts_package(const std::filesystem::path& path) {
+  return is_existing_regular_file(path / "runtime" / "bin" / "qwen3tts") &&
+         is_existing_directory(path / "runtime" / "lib") &&
+         is_existing_directory(path / "qwen3_model" / "mpk") &&
+         is_existing_regular_file(path / "devkit" / "qwen3_tts_config.json") &&
+         is_existing_directory(path / "qwen3_components");
+}
+
 bool has_vision_model_name(const nlohmann::json& config) {
   const auto it = config.find("vision_model_name");
   if (it == config.end()) {
@@ -131,6 +139,15 @@ ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_di
 
   if (!is_existing_directory(package_root)) {
     throw std::runtime_error("GenAI model directory does not exist: " + package_root.string());
+  }
+
+  if (is_qwen3_tts_package(package_root)) {
+    ModelDirectoryInfo info;
+    info.package_root = package_root;
+    info.root = package_root;
+    info.task = GenAITask::TextToSpeech;
+    info.accepts_text = true;
+    return info;
   }
 
   auto normalized = package_root;

@@ -32,6 +32,7 @@ class ASRModel;
 class GenAIModel;
 class GenAIServer;
 class VisionLanguageModel;
+class TextToSpeechModel;
 
 /**
  * @brief High-level task family for a deployed LLiMa model directory.
@@ -42,6 +43,7 @@ class VisionLanguageModel;
 enum class GenAITask {
   VisionLanguage,
   ASR,
+  TextToSpeech,
 };
 
 /// Whisper decoding task for ASR requests.

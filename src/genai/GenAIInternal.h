@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <optional>
+#include "genai/TextToSpeechModel.h"
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@ struct ModelDirectoryInfo {
 
 ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_dir);
 std::string model_id_from_path(const std::filesystem::path& path);
+void validate_text_to_speech_request(const TextToSpeechRequest& request);
 std::vector<ChatMessage> build_text_messages(const GenerationRequest& request);
 void validate_text_generation_request(const GenerationRequest& request);
 bool tool_calls_enabled(const GenerationRequest& request);
