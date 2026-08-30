@@ -1308,8 +1308,7 @@ RUN_TEST(
 
       error.clear();
       const auto routed_yolov5_subset = extract_boxdecode_contract_subset_from_mpk(
-          routed_yolov5_mpk, make_flags(false, false),
-          &routed_yolov5_mpk.plugins.back(), &error);
+          routed_yolov5_mpk, make_flags(false, false), &routed_yolov5_mpk.plugins.back(), &error);
       require(routed_yolov5_subset.has_value(),
               "model-managed YOLOv5 should honor terminal input routing: " + error);
       require(routed_yolov5_subset->logical_inputs.size() == 3U &&

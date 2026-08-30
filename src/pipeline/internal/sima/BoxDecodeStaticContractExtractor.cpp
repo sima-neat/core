@@ -1764,8 +1764,7 @@ std::optional<int> resolve_boxdecode_terminal_input_index_local(
                     "boxdecode MPK terminal edge is missing dst_input_index routing");
           return std::nullopt;
         }
-        if (resolved_input_index.has_value() &&
-            *resolved_input_index != edge->dst_input_index) {
+        if (resolved_input_index.has_value() && *resolved_input_index != edge->dst_input_index) {
           set_error(error_message,
                     "boxdecode MPK branch routes to multiple terminal input indices");
           return std::nullopt;
@@ -1780,8 +1779,7 @@ std::optional<int> resolve_boxdecode_terminal_input_index_local(
       }
       int next_output_index = -1;
       const auto& consumer = contract.plugins[edge->dst_plugin_index];
-      if (pick_stage_output_for_input_local(consumer, edge->dst_input_index,
-                                            &next_output_index) &&
+      if (pick_stage_output_for_input_local(consumer, edge->dst_input_index, &next_output_index) &&
           next_output_index >= 0) {
         pending.emplace(edge->dst_plugin_index, next_output_index);
       }
@@ -2782,8 +2780,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
           }
           return std::nullopt;
         }
-        if (*input_index < 0 ||
-            static_cast<std::size_t>(*input_index) >= consumer_order.size() ||
+        if (*input_index < 0 || static_cast<std::size_t>(*input_index) >= consumer_order.size() ||
             consumer_order[static_cast<std::size_t>(*input_index)] != logical_outputs.size()) {
           return fail("boxdecode MPK terminal input routing must be unique and contiguous");
         }

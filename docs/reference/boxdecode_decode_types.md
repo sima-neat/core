@@ -211,11 +211,17 @@ non-empty or positive value.
 | `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
 | `top_k` | `0` | Preserve packaged top-K. |
 | `top_k` | `> 0` | Override the maximum kept detections. |
-| `num_classes` | `0` | Use the class-head depth inferred from the MPK. |
-| `num_classes` | positive integer matching the MPK | Use the explicit class count. This is required when the MPK cannot infer a split single-class head reliably. |
-| `num_classes` | positive integer contradicting a YOLO26 MPK | Fail before pipeline construction and report both values. YOLO26 derives its grouped raw-head layout from the class depth, so this mismatch is a model contract error. |
-| `num_classes` | positive integer contradicting a YOLOv5 or YOLO26 MPK | Fail before pipeline construction and report both values. These raw-head layouts derive their class count from tensor depth. |
-| `num_classes` | positive integer for SSD or another pre-YOLO26 non-pose YOLO family | Preserve the existing explicit-override behavior. Pose decoders and SuperPoint retain their family-specific rules. |
+
+`num_classes` compares the value configured by the caller with the class count
+derived from the MPK tensor contract:
+
+| Model family | Configured `num_classes` | MPK-derived `num_classes` | Behavior |
+| --- | --- | --- | --- |
+| Any supported model | `0` | positive, inferable value | Use the MPK-derived class count. |
+| Any supported model | positive integer | same value | Use the configured class count. |
+| Model with an ambiguous class split | positive integer | unavailable | Use the configured class count. This is required when a split single-class head cannot be inferred reliably. |
+| YOLOv5 or YOLO26 | positive integer | different value | Fail before pipeline construction and report both values. These raw-head layouts derive their class count from tensor depth. |
+| SSD or another pre-YOLO26 non-pose YOLO family | positive integer | different value | Apply the existing family-specific explicit-override behavior. Pose decoders and SuperPoint retain their family-specific rules. |
 
 `detection_threshold` is the name used by the BoxDecode node/stage
 constructors. `ModelOptions.score_threshold` is the model-route option that

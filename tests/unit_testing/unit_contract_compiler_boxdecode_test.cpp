@@ -273,8 +273,7 @@ RUN_TEST(
                                "num_classes mismatch");
       auto probability_yolov5 = packed_yolov5_contract;
       probability_yolov5.score_activation = BoxDecodeScoreActivation::Identity;
-      require_yolov5_rejection(probability_yolov5, BoxDecodeTypeOption::Auto, 0,
-                               "raw logits");
+      require_yolov5_rejection(probability_yolov5, BoxDecodeTypeOption::Auto, 0, "raw logits");
       validate_model_managed_boxdecode_option_override(BoxDecodeType::YoloV5,
                                                        BoxDecodeTypeOption::Auto);
       validate_model_managed_boxdecode_option_override(BoxDecodeType::YoloV5,
