@@ -391,6 +391,7 @@ configure_board_i2c_access() {
   fi
 
   if id -nG sima 2>/dev/null | grep -qw i2c; then
+    log "sima is already in the i2c group; skipping."
     return 0
   fi
 

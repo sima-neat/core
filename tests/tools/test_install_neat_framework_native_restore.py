@@ -60,6 +60,7 @@ printf 'CONTINUED\n'
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.sudo_commands(result), [])
+        self.assertIn("sima is already in the i2c group; skipping.", result.stdout)
 
     def test_missing_membership_is_appended(self) -> None:
         result = self.run_setup(group_exists=True, groups="sima sudo")
