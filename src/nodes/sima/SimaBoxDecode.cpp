@@ -902,6 +902,8 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
     }
   }
   if (decode_type_option != BoxDecodeTypeOption::Auto) {
+    pipeline_internal::sima::stagesemantics::validate_model_managed_boxdecode_option_override(
+        compiled_contract.payload.decode_type, decode_type_option);
     if (box_decode_type_is_ssd_family(compiled_contract.payload.decode_type) &&
         decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
       throw std::invalid_argument("SimaBoxDecode(Model): resolved SSD profiles support only "
@@ -935,7 +937,6 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
       model, simaai::neat::internal::ModelLineageStageRole::ManualPost,
       simaai::neat::internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
   opt->requested_post_route = simaai::neat::internal::RequestedPostRouteKind::BoxDecode;
-  opt->decode_type_option = decode_type_option;
   opt->element_name = element_name;
   const auto resolved = model.resolved_preprocess_plan();
   std::optional<ResizeMode> effective_resize_mode = resize_mode_override;

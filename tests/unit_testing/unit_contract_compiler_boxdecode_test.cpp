@@ -168,33 +168,127 @@ RUN_TEST(
       require(explicit_probability.score_activation == BoxDecodeScoreActivation::Identity,
               "explicit grouped probability option must override inferred activation");
 
-      BoxDecodeStaticContract packed_yolov5_contract;
-      packed_yolov5_contract.decode_type = BoxDecodeType::YoloV5;
-      packed_yolov5_contract.input_dtype = "INT8";
-      packed_yolov5_contract.tensors = {
-          BoxDecodeTensorStaticContract{{80, 80, 255},
-                                        {80, 80, 255},
-                                        "INT8",
-                                        "HWC",
-                                        "packed_head0",
-                                        "packed_head0",
-                                        "packed_head0",
-                                        0,
-                                        0,
-                                        0,
-                                        0,
-                                        80U * 80U * 255U},
+      auto make_packed_yolov5_contract = [&](int height, int width, int classes,
+                                             const std::string& dtype) {
+        BoxDecodeStaticContract result;
+        result.decode_type = BoxDecodeType::YoloV5;
+        result.input_dtype = dtype;
+        const int depth = 3 * (classes + 5);
+        for (int level = 0; level < 3; ++level) {
+          const int divisor = 1 << level;
+          const int head_height = height / divisor;
+          const int head_width = width / divisor;
+          const std::string name = "packed_head" + std::to_string(level);
+          const std::uint64_t size = static_cast<std::uint64_t>(head_height) *
+                                     static_cast<std::uint64_t>(head_width) *
+                                     static_cast<std::uint64_t>(depth);
+          BoxDecodeTensorStaticContract tensor;
+          tensor.input_shape = {head_height, head_width, depth};
+          tensor.slice_shape = tensor.input_shape;
+          tensor.data_type = dtype;
+          tensor.layout = "HWC";
+          tensor.logical_name = name;
+          tensor.backend_name = name;
+          tensor.source_segment_name = name;
+          tensor.source_logical_output_index = level;
+          tensor.source_output_slot = level;
+          tensor.source_physical_index = level;
+          tensor.source_size_bytes = size;
+          result.tensors.push_back(std::move(tensor));
+          result.tensor_names.push_back(name);
+          result.physical_inputs.push_back(
+              BoxDecodePhysicalInputStaticContract{name, level, 0, size});
+        }
+        mark_storage(result, BoxDecodeSourceStorageKind::DenseHwcPhysical);
+        return result;
       };
-      packed_yolov5_contract.tensor_names = {"packed_head0"};
-      packed_yolov5_contract.physical_inputs = {
-          BoxDecodePhysicalInputStaticContract{"packed_head0", 0, 0, 80U * 80U * 255U},
-      };
-      mark_storage(packed_yolov5_contract, BoxDecodeSourceStorageKind::DenseHwcPhysical);
+
+      BoxDecodeStaticContract packed_yolov5_contract =
+          make_packed_yolov5_contract(80, 80, 80, "INT8");
+      require(!box_decode_type_is_segmentation(BoxDecodeType::YoloV5),
+              "YOLOv5 detection must not be classified as segmentation");
       const auto packed_yolov5_finalized = finalize_boxdecode_static_contract(
           packed_yolov5_contract, BoxDecodeType::YoloV5, std::nullopt, std::nullopt,
-          BoxDecodeTypeOption::PackedPerHead, 0.25, 0.55, 100, 0, {});
+          BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {});
       require(packed_yolov5_finalized.num_classes == 80,
               "packed YOLO class count should be inferred from depth=3*(classes+5)");
+      require(packed_yolov5_finalized.decode_type_option == BoxDecodeTypeOption::PackedPerHead &&
+                  packed_yolov5_finalized.score_activation == BoxDecodeScoreActivation::Sigmoid,
+              "YOLOv5 should normalize to packed raw heads with sigmoid scores");
+
+      auto custom_yolov5_contract = make_packed_yolov5_contract(92, 160, 249, "BF16");
+      mark_storage(custom_yolov5_contract, BoxDecodeSourceStorageKind::PackedCBlock);
+      custom_yolov5_contract.tensors[1].slice_shape = {10, 16, 192};
+      custom_yolov5_contract.tensors[2].slice_shape = {5, 8, 192};
+      const auto custom_yolov5_finalized = finalize_boxdecode_static_contract(
+          custom_yolov5_contract, BoxDecodeType::YoloV5, std::nullopt, std::nullopt,
+          BoxDecodeTypeOption::PackedPerHead, 0.25, 0.55, 100, 249, {});
+      require(custom_yolov5_finalized.num_classes == 249,
+              "rectangular custom-class YOLOv5 heads should preserve the inferred class count");
+
+      auto padded_dense_yolov5 = packed_yolov5_contract;
+      padded_dense_yolov5.tensors[0].input_shape = {96, 96, 255};
+      padded_dense_yolov5.tensors[1].input_shape = {64, 64, 255};
+      padded_dense_yolov5.tensors[2].input_shape = {32, 32, 255};
+      const auto padded_dense_yolov5_finalized = finalize_boxdecode_static_contract(
+          padded_dense_yolov5, BoxDecodeType::YoloV5, std::nullopt, std::nullopt,
+          BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {});
+      require(padded_dense_yolov5_finalized.num_classes == 80,
+              "dense YOLOv5 heads should validate logical slice geometry, not physical padding");
+
+      auto require_yolov5_rejection = [&](BoxDecodeStaticContract invalid,
+                                          BoxDecodeTypeOption option, int classes,
+                                          const std::string& expected) {
+        bool rejected = false;
+        try {
+          (void)finalize_boxdecode_static_contract(invalid, BoxDecodeType::YoloV5, std::nullopt,
+                                                   std::nullopt, option, 0.25, 0.55, 100, classes,
+                                                   {});
+        } catch (const std::invalid_argument& error) {
+          rejected = true;
+          require(std::string(error.what()).find(expected) != std::string::npos,
+                  "YOLOv5 rejection should identify the violated contract");
+        }
+        require(rejected, "invalid YOLOv5 packed-head contract should fail fast");
+      };
+
+      auto two_head_yolov5 = packed_yolov5_contract;
+      two_head_yolov5.tensors.pop_back();
+      require_yolov5_rejection(two_head_yolov5, BoxDecodeTypeOption::Auto, 0, "exactly three");
+      auto wrong_depth_yolov5 = packed_yolov5_contract;
+      wrong_depth_yolov5.tensors[1].slice_shape[2] = 252;
+      require_yolov5_rejection(wrong_depth_yolov5, BoxDecodeTypeOption::Auto, 0,
+                               "consistent positive class count");
+      auto wrong_order_yolov5 = packed_yolov5_contract;
+      std::swap(wrong_order_yolov5.tensors[0], wrong_order_yolov5.tensors[1]);
+      require_yolov5_rejection(wrong_order_yolov5, BoxDecodeTypeOption::Auto, 0,
+                               "ordered P3/P4/P5");
+      auto wrong_logical_geometry_yolov5 = packed_yolov5_contract;
+      wrong_logical_geometry_yolov5.tensors[1].slice_shape[0] = 39;
+      require_yolov5_rejection(wrong_logical_geometry_yolov5, BoxDecodeTypeOption::Auto, 0,
+                               "ordered P3/P4/P5");
+      require_yolov5_rejection(packed_yolov5_contract, BoxDecodeTypeOption::GroupedByRoleLogit, 0,
+                               "packed-per-head");
+      require_yolov5_rejection(packed_yolov5_contract, BoxDecodeTypeOption::Auto, 42,
+                               "num_classes mismatch");
+      auto probability_yolov5 = packed_yolov5_contract;
+      probability_yolov5.score_activation = BoxDecodeScoreActivation::Identity;
+      require_yolov5_rejection(probability_yolov5, BoxDecodeTypeOption::Auto, 0, "raw logits");
+      validate_model_managed_boxdecode_option_override(BoxDecodeType::YoloV5,
+                                                       BoxDecodeTypeOption::Auto);
+      validate_model_managed_boxdecode_option_override(BoxDecodeType::YoloV5,
+                                                       BoxDecodeTypeOption::PackedPerHead);
+      bool rejected_yolov5_node_override = false;
+      try {
+        validate_model_managed_boxdecode_option_override(
+            BoxDecodeType::YoloV5, BoxDecodeTypeOption::GroupedByRoleProbability);
+      } catch (const std::invalid_argument& error) {
+        rejected_yolov5_node_override = true;
+        require(std::string(error.what()).find("Auto or PackedPerHead") != std::string::npos,
+                "YOLOv5 node override rejection should identify the supported layouts");
+      }
+      require(rejected_yolov5_node_override,
+              "model-managed YOLOv5 must reject an incompatible node layout override");
 
       BoxDecodeStaticContract packed_contract;
       packed_contract.decode_type = BoxDecodeType::YoloV8;

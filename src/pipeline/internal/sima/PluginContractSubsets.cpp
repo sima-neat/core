@@ -2145,8 +2145,9 @@ std::optional<BoxDecodeContractSubset> extract_boxdecode_contract_subset_from_mp
   if (!extracted.has_value()) {
     return std::nullopt;
   }
-  // Resolve SSD defaults before lowering, so the subset carries a valid class count
-  // and layout instead of the raw MPK defaults (Unknown/Auto/0).
+  // Resolve family defaults before lowering, so the subset carries a valid class count,
+  // score domain, and layout instead of the raw MPK defaults.
+  stagesemantics::apply_yolov5_model_managed_contract_defaults(&*extracted);
   stagesemantics::apply_ssd_model_managed_contract_defaults(&*extracted);
   return extract_boxdecode_contract_subset_from_static_contract(*extracted);
 }
