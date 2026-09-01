@@ -1,15 +1,52 @@
 #include "asset_utils.h"
+#include "gst/GstHelpers.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "model_archive_fixture_utils.h"
+#include "pipeline/internal/contract/ContractFacts.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <gst/gst.h>
+
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
+#include <optional>
+#include <string>
 
 namespace {
+
+class ScopedEnvironmentVariable {
+public:
+  ScopedEnvironmentVariable(std::string name, std::optional<std::string> value)
+      : name_(std::move(name)) {
+    if (const char* current = std::getenv(name_.c_str())) {
+      previous_ = current;
+    }
+    assign(value);
+  }
+
+  ~ScopedEnvironmentVariable() {
+    assign(previous_);
+  }
+
+  ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
+  ScopedEnvironmentVariable& operator=(const ScopedEnvironmentVariable&) = delete;
+
+private:
+  void assign(const std::optional<std::string>& value) const {
+    if (value.has_value()) {
+      setenv(name_.c_str(), value->c_str(), 1);
+    } else {
+      unsetenv(name_.c_str());
+    }
+  }
+
+  std::string name_;
+  std::optional<std::string> previous_;
+};
 
 sima_test::ModelArchiveFixture make_fixture() {
   return sima_test::make_strict_model_archive_fixture("boxdecode_node_fragment",
@@ -178,6 +215,7 @@ sima_test::ModelArchiveFixture make_quanttess_boxdecode_fixture() {
 
 RUN_TEST(
     "unit_sima_boxdecode_node_fragment_test", ([] {
+      ScopedEnvironmentVariable default_factory("SIMA_BOXDECODE_FACTORY", std::nullopt);
       const auto fixture = make_fixture();
       const std::string tar_path = fixture.tar_path;
 
@@ -435,4 +473,95 @@ RUN_TEST(
                          "legacy missing-mpk fixture should fail with strict contract error");
       }
       require(threw, "legacy missing-mpk fixture must fail under strict contract");
+
+      {
+        ScopedEnvironmentVariable explicit_object_factory("SIMA_BOXDECODE_FACTORY",
+                                                          "neatobjectdecode");
+        const auto explicit_object_node = simaai::neat::nodes::SimaBoxDecode(
+            simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45, 100, "explicit_object");
+        const auto* explicit_object =
+            dynamic_cast<const simaai::neat::SimaBoxDecode*>(explicit_object_node.get());
+        require(explicit_object != nullptr &&
+                    explicit_object->backend_fragment(0).starts_with("neatobjectdecode "),
+                "explicit neatobjectdecode selection must preserve the default factory");
+      }
+
+      {
+        ScopedEnvironmentVariable invalid_factory("SIMA_BOXDECODE_FACTORY", "invalid-decode");
+        bool invalid_factory_rejected = false;
+        try {
+          (void)simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45,
+                                                   100, "invalid_factory");
+        } catch (const std::exception& error) {
+          invalid_factory_rejected = std::string(error.what())
+                                         .find("Use 'neatobjectdecode' (default) or "
+                                               "'neatboxdecodev2'") != std::string::npos;
+        }
+        require(invalid_factory_rejected,
+                "an invalid BoxDecode factory must fail with the supported selections");
+      }
+
+      {
+        ScopedEnvironmentVariable v2_factory("SIMA_BOXDECODE_FACTORY", "neatboxdecodev2");
+        const auto v2_node = simaai::neat::nodes::SimaBoxDecode(
+            simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45, 100, "explicit_v2", 1280, 720, 640,
+            640, simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt, std::nullopt,
+            simaai::neat::ResizeMode::Letterbox);
+        const auto* v2_box = dynamic_cast<const simaai::neat::SimaBoxDecode*>(v2_node.get());
+        require(v2_box != nullptr, "explicit neatboxdecodev2 selection must create a node");
+        const std::string v2_fragment = v2_box->backend_fragment(0);
+        require(v2_fragment.starts_with("neatboxdecodev2 name=explicit_v2") &&
+                    v2_fragment.find(" silent=true") != std::string::npos &&
+                    v2_fragment.find(" transmit=false") != std::string::npos,
+                "neatboxdecodev2 must preserve deterministic naming and common properties");
+        for (const char* property : {"model-width", "model-height", "resize-mode"}) {
+          const bool advertised =
+              simaai::neat::element_property_exists("neatboxdecodev2", property);
+          require((v2_fragment.find(std::string(property) + "=") != std::string::npos) ==
+                      advertised,
+                  std::string("optional BoxDecode property emission must match plugin support: ") +
+                      property);
+        }
+
+        const auto managed_v2_node = simaai::neat::nodes::SimaBoxDecode(
+            managed_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "managed_v2");
+        const auto* managed_v2 =
+            dynamic_cast<const simaai::neat::SimaBoxDecode*>(managed_v2_node.get());
+        require(managed_v2 != nullptr, "model-managed neatboxdecodev2 node must be concrete");
+        simaai::neat::ContractCompileInput compile_input;
+        compile_input.node_index = 0;
+        simaai::neat::CompiledNodeContract compiled_v2;
+        std::string compile_error;
+        require(managed_v2->compile_node_contract(compile_input, &compiled_v2, &compile_error),
+                "model-managed neatboxdecodev2 contract must compile: " + compile_error);
+        require(compiled_v2.boxdecode.has_value(),
+                "model-managed neatboxdecodev2 must retain its typed contract");
+        for (const auto& logical : compiled_v2.boxdecode->runtime_contract.logical_inputs) {
+          require(logical.shape.size() == 4U && logical.shape.front() == 1,
+                  "batch-1 model-managed neatboxdecodev2 inputs must expose explicit N");
+        }
+      }
+
+      GstElementFactory* v2_feature = gst_element_factory_find("neatboxdecodev2");
+      require(v2_feature != nullptr,
+              "matching Internals test runtime must provide neatboxdecodev2");
+      gst_registry_remove_feature(gst_registry_get(), GST_PLUGIN_FEATURE(v2_feature));
+      {
+        ScopedEnvironmentVariable missing_v2_factory("SIMA_BOXDECODE_FACTORY", "neatboxdecodev2");
+        bool missing_factory_rejected = false;
+        try {
+          (void)simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45,
+                                                   100, "missing_v2");
+        } catch (const std::exception& error) {
+          const std::string message = error.what();
+          missing_factory_rejected =
+              message.find("selected BoxDecode GStreamer element 'neatboxdecodev2'") !=
+                  std::string::npos &&
+              message.find("not available") != std::string::npos &&
+              message.find("matching Internals package") != std::string::npos;
+        }
+        require(missing_factory_rejected,
+                "a missing selected BoxDecode plugin must fail before pipeline construction");
+      }
+      gst_object_unref(v2_feature);
     }));

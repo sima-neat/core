@@ -2510,6 +2510,13 @@ stage_package_artifacts_to_dist() {
     staged_any=ON
   fi
 
+  if [[ ! -f "${NEAT_INTERNALS_RESOLVED_MANIFEST}" ]]; then
+    echo "ERROR: Missing resolved dependency manifest: ${NEAT_INTERNALS_RESOLVED_MANIFEST}" >&2
+    exit 1
+  fi
+  cp -f "${NEAT_INTERNALS_RESOLVED_MANIFEST}" dist/resolved-deps-manifest.json
+  staged_any=ON
+
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
     chmod +x "dist/install_neat_framework.sh"

@@ -455,18 +455,20 @@ std::string sample_payload_format(const simaai::neat::Sample& sample) {
 } // namespace
 
 void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
-  if (sample.kind == simaai::neat::SampleKind::TensorSet && sample.tensors.size() == 1U) {
-    simaai::neat::Tensor& tensor = sample.tensors.front();
+  if (sample.kind == simaai::neat::SampleKind::TensorSet && !sample.tensors.empty()) {
     std::string fmt = sample_payload_format(sample);
-    if (fmt.empty()) {
-      fmt = read_detection_format(tensor); // may pick up legacy tess-tagged BBOX
-    }
-    if (detection_format_is_bbox(fmt)) {
-      tag_detection_format(tensor, kDetectionFormatBbox);
-    } else if (detection_format_is_pose(fmt)) {
-      tag_detection_format(tensor, kDetectionFormatBboxPose);
-    } else if (detection_format_is_segmentation(fmt)) {
-      tag_detection_format(tensor, kDetectionFormatBboxSegmentation);
+    for (auto& tensor : sample.tensors) {
+      std::string tensor_fmt = fmt;
+      if (tensor_fmt.empty()) {
+        tensor_fmt = read_detection_format(tensor); // may pick up legacy tess-tagged BBOX
+      }
+      if (detection_format_is_bbox(tensor_fmt)) {
+        tag_detection_format(tensor, kDetectionFormatBbox);
+      } else if (detection_format_is_pose(tensor_fmt)) {
+        tag_detection_format(tensor, kDetectionFormatBboxPose);
+      } else if (detection_format_is_segmentation(tensor_fmt)) {
+        tag_detection_format(tensor, kDetectionFormatBboxSegmentation);
+      }
     }
   } else if (sample.kind == simaai::neat::SampleKind::Bundle) {
     for (auto& field : sample.fields) {

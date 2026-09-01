@@ -90,6 +90,16 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
 CompiledBoxDecodeContract
 build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract);
 
+/**
+ * Add or validate the authoritative compiled-model batch axis on every BoxDecode input.
+ *
+ * Model-pack BoxDecode tensors are authored as per-lane CHW/HWC views even when their MLA
+ * backing storage contains multiple lanes. Backends that consume an explicit batch contract call
+ * this after normal typed-contract lowering. The logical shape/strides/size become dense batched
+ * views while bindings, physical sizes/offsets, and routing remain unchanged.
+ */
+void apply_authoritative_boxdecode_batch(CompiledBoxDecodeContract* compiled, int batch_size);
+
 bool build_boxdecode_node_contract(const std::string& node_kind, const std::string& plugin_kind,
                                    const std::string& element_name,
                                    const std::string& logical_stage_id,
