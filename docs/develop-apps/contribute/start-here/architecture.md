@@ -171,6 +171,14 @@ Preprocessing and postprocessing are explicit framework stages/options. A format
 required preprocessing metadata, unavailable MLA dispatcher, invalid model archive or MPK contract, or caps negotiation
 failure should surface as an actionable structured error rather than a hidden runtime correction.
 
+Model-managed BoxDecode keeps logical decoder geometry separate from MLA storage geometry. The MPK
+contract remains authoritative for head layout, dtype, physical offsets, physical byte spans, and
+routing. A decoder backend that requires explicit batching receives `Model::compiled_batch_size()`
+as the leading logical `N` axis; Core recomputes dense logical strides and byte sizes and rejects a
+conflicting pre-existing batch or a logical span larger than its MLA backing storage. Runtime
+TensorBuffer output descriptors remain positional public tensors, including one descriptor per
+decoded batch lane when the backend publishes lane outputs.
+
 ---
 
 ## Repository layout

@@ -122,6 +122,11 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 
 ## Preproc / Detess / wiring
 
+- `SIMA_BOXDECODE_FACTORY=neatobjectdecode|neatboxdecodev2` — select the BoxDecode GStreamer
+  implementation. Unset defaults to `neatobjectdecode` for compatibility. An explicit
+  `neatboxdecodev2` selection requires the matching Internals plugin; Core validates discovery
+  before pipeline construction and publishes the compiled model batch as an explicit logical
+  tensor axis for model-managed decode contracts. Any other value is an error.
 - `SIMA_PREPROC_DEBUG_CONFIG=1` — dump preproc config wiring.
 - `SIMA_KEEP_DETESS_CONFIG=1` — keep detess config outputs.
 - `SIMA_DETESS_ASSERT_ON_ZERO=1` — assert on zero detess output.

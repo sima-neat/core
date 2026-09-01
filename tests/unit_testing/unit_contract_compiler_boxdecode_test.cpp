@@ -97,6 +97,143 @@ RUN_TEST(
               "boxdecode input binding should preserve upstream segment name");
       require(compiled.runtime_contract.input_bindings.front().src_physical_size_bytes == 409600U,
               "boxdecode physical input size should be preserved");
+
+      auto make_batch_contract = [](const std::vector<std::int64_t>& shape,
+                                    const std::string& layout, std::uint64_t physical_size_bytes) {
+        CompiledBoxDecodeContract result;
+        LogicalInputStaticSpec logical;
+        logical.logical_index = 7;
+        logical.backend_input_index = 3;
+        logical.physical_index = 5;
+        logical.shape = shape;
+        logical.stride_bytes = {111, 22, 3};
+        logical.byte_offset = 19;
+        logical.size_bytes = 1;
+        logical.dtype = "FP32";
+        logical.layout = layout;
+        logical.logical_name = "batch_head";
+        logical.backend_name = "backend_head";
+        logical.segment_name = "physical_head";
+        result.runtime_contract.logical_inputs.push_back(std::move(logical));
+
+        InputBindingStaticSpec binding;
+        binding.local_logical_input_index = 7;
+        binding.src_logical_output_index = 11;
+        binding.src_output_slot = 13;
+        binding.src_physical_output_index = 17;
+        binding.src_physical_size_bytes = physical_size_bytes;
+        binding.src_physical_byte_offset = 23;
+        binding.cm_input_name = "backend_head";
+        binding.source_segment_name = "physical_head";
+        result.runtime_contract.input_bindings.push_back(std::move(binding));
+        return result;
+      };
+
+      auto batch1_hwc = make_batch_contract({2, 3, 4}, "HWC", 96U);
+      apply_authoritative_boxdecode_batch(&batch1_hwc, 1);
+      require(batch1_hwc.runtime_contract.logical_inputs.front().shape ==
+                  std::vector<std::int64_t>({1, 2, 3, 4}),
+              "batch-1 HWC must carry an explicit leading N axis");
+      require(batch1_hwc.runtime_contract.logical_inputs.front().stride_bytes ==
+                      std::vector<std::int64_t>({96, 48, 16, 4}) &&
+                  batch1_hwc.runtime_contract.logical_inputs.front().size_bytes == 96U,
+              "batch-1 HWC must publish dense strides and logical bytes");
+
+      auto batch1_chw = make_batch_contract({4, 2, 3}, "NCHW", 96U);
+      apply_authoritative_boxdecode_batch(&batch1_chw, 1);
+      require(batch1_chw.runtime_contract.logical_inputs.front().shape ==
+                      std::vector<std::int64_t>({1, 4, 2, 3}) &&
+                  batch1_chw.runtime_contract.logical_inputs.front().stride_bytes ==
+                      std::vector<std::int64_t>({96, 24, 12, 4}),
+              "batch-1 CHW must carry N,C,H,W semantics and dense strides");
+
+      auto batch4_hwc = make_batch_contract({2, 3, 4}, "NHWC", 384U);
+      apply_authoritative_boxdecode_batch(&batch4_hwc, 4);
+      const auto& batch4_hwc_input = batch4_hwc.runtime_contract.logical_inputs.front();
+      require(batch4_hwc_input.shape == std::vector<std::int64_t>({4, 2, 3, 4}) &&
+                  batch4_hwc_input.stride_bytes == std::vector<std::int64_t>({96, 48, 16, 4}) &&
+                  batch4_hwc_input.size_bytes == 384U,
+              "batch-4 HWC must publish the authoritative shape, stride, and size");
+      const auto& preserved_binding = batch4_hwc.runtime_contract.input_bindings.front();
+      require(batch4_hwc_input.byte_offset == 19 &&
+                  preserved_binding.src_logical_output_index == 11 &&
+                  preserved_binding.src_output_slot == 13 &&
+                  preserved_binding.src_physical_output_index == 17 &&
+                  preserved_binding.src_physical_size_bytes == 384U &&
+                  preserved_binding.src_physical_byte_offset == 23,
+              "batch projection must preserve physical offsets, sizes, and output routing");
+
+      auto batch4_chw = make_batch_contract({4, 2, 3}, "CHW", 384U);
+      apply_authoritative_boxdecode_batch(&batch4_chw, 4);
+      require(batch4_chw.runtime_contract.logical_inputs.front().shape ==
+                      std::vector<std::int64_t>({4, 4, 2, 3}) &&
+                  batch4_chw.runtime_contract.logical_inputs.front().stride_bytes ==
+                      std::vector<std::int64_t>({96, 24, 12, 4}),
+              "batch-4 CHW must publish N,C,H,W with dense strides");
+
+      auto existing_batch = make_batch_contract({4, 2, 3, 4}, "HWC", 384U);
+      apply_authoritative_boxdecode_batch(&existing_batch, 4);
+      apply_authoritative_boxdecode_batch(&existing_batch, 4);
+      require(existing_batch.runtime_contract.logical_inputs.front().shape ==
+                  std::vector<std::int64_t>({4, 2, 3, 4}),
+              "an authoritative N axis must not be duplicated");
+
+      bool mismatched_batch_rejected = false;
+      try {
+        auto mismatch = make_batch_contract({1, 2, 3, 4}, "HWC", 384U);
+        apply_authoritative_boxdecode_batch(&mismatch, 4);
+      } catch (const std::invalid_argument& error) {
+        mismatched_batch_rejected =
+            std::string(error.what()).find("declares batch=1 but the compiled model batch is 4") !=
+            std::string::npos;
+      }
+      require(mismatched_batch_rejected,
+              "a pre-existing N axis that conflicts with the compiled model must be rejected");
+
+      bool physical_size_rejected = false;
+      try {
+        auto undersized = make_batch_contract({2, 3, 4}, "HWC", 383U);
+        apply_authoritative_boxdecode_batch(&undersized, 4);
+      } catch (const std::invalid_argument& error) {
+        physical_size_rejected =
+            std::string(error.what()).find("physical MLA storage has 383 bytes") !=
+            std::string::npos;
+      }
+      require(physical_size_rejected,
+              "a batch logical view larger than physical MLA storage must be rejected");
+
+      bool invalid_batch_rejected = false;
+      try {
+        auto invalid_batch = make_batch_contract({2, 3, 4}, "HWC", 96U);
+        apply_authoritative_boxdecode_batch(&invalid_batch, 0);
+      } catch (const std::invalid_argument& error) {
+        invalid_batch_rejected =
+            std::string(error.what()).find("positive compiled model batch size") !=
+            std::string::npos;
+      }
+      require(invalid_batch_rejected, "a non-positive compiled model batch must be rejected");
+
+      bool ambiguous_layout_rejected = false;
+      try {
+        auto ambiguous = make_batch_contract({2, 3, 4}, "", 384U);
+        apply_authoritative_boxdecode_batch(&ambiguous, 4);
+      } catch (const std::invalid_argument& error) {
+        ambiguous_layout_rejected =
+            std::string(error.what()).find("requires an explicit HWC/NHWC or CHW/NCHW") !=
+            std::string::npos;
+      }
+      require(ambiguous_layout_rejected,
+              "batch projection must reject tensors without authoritative layout semantics");
+
+      for (const auto family : {BoxDecodeType::YoloV5, BoxDecodeType::YoloV26, BoxDecodeType::Ssd,
+                                BoxDecodeType::SuperPoint}) {
+        auto family_contract = make_batch_contract({2, 3, 4}, "HWC", 384U);
+        family_contract.payload.decode_type = family;
+        apply_authoritative_boxdecode_batch(&family_contract, 4);
+        require(family_contract.runtime_contract.logical_inputs.front().shape.front() == 4,
+                "authoritative batching must remain independent of BoxDecode model family");
+      }
+
       const auto subset =
           plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(contract);
       const auto subset_compiled = build_boxdecode_compiled_contract_from_subset(subset);

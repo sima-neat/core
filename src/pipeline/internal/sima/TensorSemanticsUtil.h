@@ -232,8 +232,9 @@ inline std::optional<std::size_t> find_axis(const std::vector<TensorAxisSemantic
 /**
  * @brief Stamp axis-semantic bytes from `(shape, layout_token)` into a raw byte buffer.
  *
- * Handles 4-D leading-N tensors (when shape[0] == 1) for both CHW and HWC layouts. Falls back
- * to a generic best-guess (C/W/H/D/N from fastest to slowest) for unrecognized layouts.
+ * Handles valid 4-D leading-N tensors for both CHW and HWC layouts for any positive batch.
+ * Explicit recognized layouts with an incompatible rank remain UNKNOWN; only callers without a
+ * layout token receive the generic best-guess (C/W/H/D/N from fastest to slowest).
  */
 template <typename ShapeT>
 inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& shape,
@@ -246,9 +247,10 @@ inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& sha
     semantics[i] = SIMA_EV_AXIS_UNKNOWN;
   }
   const std::uint32_t rank = static_cast<std::uint32_t>(shape.size());
+  const bool layout_was_explicit = !raw_layout.empty();
   const std::string layout = normalize_layout_token(raw_layout);
-  const bool leading_batch = rank >= 4U && !shape.empty() &&
-                             shape.front() == static_cast<ShapeT>(1) &&
+  const bool leading_batch = rank == 4U && !shape.empty() &&
+                             shape.front() > static_cast<ShapeT>(0) &&
                              (layout == "CHW" || layout == "HWC");
   if (layout == "CHW") {
     if (leading_batch) {
@@ -267,6 +269,7 @@ inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& sha
       semantics[2] = SIMA_EV_AXIS_W;
       return;
     }
+    return;
   } else if (layout == "HWC") {
     if (leading_batch) {
       semantics[0] = SIMA_EV_AXIS_N;
@@ -289,9 +292,15 @@ inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& sha
       semantics[1] = SIMA_EV_AXIS_W;
       return;
     }
+    return;
   } else if (layout == "HW" && rank == 2U) {
     semantics[0] = SIMA_EV_AXIS_H;
     semantics[1] = SIMA_EV_AXIS_W;
+    return;
+  } else if (layout == "HW") {
+    return;
+  }
+  if (layout_was_explicit) {
     return;
   }
   std::uint32_t cursor = std::min<std::uint32_t>(rank, SIMA_EV_MAX_RANK);

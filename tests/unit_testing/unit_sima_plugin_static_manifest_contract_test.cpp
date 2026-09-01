@@ -1,10 +1,12 @@
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <gst/gst.h>
 
+#include <array>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +16,32 @@ RUN_TEST(
       using namespace simaai::neat::pipeline_internal::sima;
 
       gst_init(nullptr, nullptr);
+
+      const auto axis_semantics = [](const std::vector<std::int64_t>& shape,
+                                     const std::string& layout) {
+        std::array<std::uint8_t, SIMA_EV_MAX_RANK> axes{};
+        tensorsemantics::fill_axis_semantics_from_shape_layout(shape, layout, axes.data());
+        return std::vector<std::uint8_t>(axes.begin(), axes.begin() + shape.size());
+      };
+      require(axis_semantics({1, 2, 3, 4}, "HWC") ==
+                      std::vector<std::uint8_t>(
+                          {SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W, SIMA_EV_AXIS_C}) &&
+                  axis_semantics({4, 2, 3, 4}, "NHWC") ==
+                      std::vector<std::uint8_t>(
+                          {SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W, SIMA_EV_AXIS_C}),
+              "rank-4 HWC semantics must carry N for batch 1 and batch 4");
+      require(axis_semantics({1, 4, 2, 3}, "CHW") ==
+                      std::vector<std::uint8_t>(
+                          {SIMA_EV_AXIS_N, SIMA_EV_AXIS_C, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W}) &&
+                  axis_semantics({4, 4, 2, 3}, "NCHW") ==
+                      std::vector<std::uint8_t>(
+                          {SIMA_EV_AXIS_N, SIMA_EV_AXIS_C, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W}),
+              "rank-4 CHW semantics must carry N for batch 1 and batch 4");
+      require(axis_semantics({4, 2, 3, 4, 5}, "HWC") ==
+                      std::vector<std::uint8_t>(5U, SIMA_EV_AXIS_UNKNOWN) &&
+                  axis_semantics({4, 2, 3, 4}, "ambiguous") ==
+                      std::vector<std::uint8_t>(4U, SIMA_EV_AXIS_UNKNOWN),
+              "invalid or ambiguous explicit layouts must not invent axis semantics");
 
       GstElement* pipeline = GST_ELEMENT(gst_pipeline_new("contract_pipeline"));
       require(pipeline != nullptr, "pipeline must be created");

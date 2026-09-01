@@ -1060,7 +1060,20 @@ bool stage_is_dequant_like_local(const MpkPluginIoContract& plugin) {
 }
 
 bool stage_is_boxdecode_like_local(const MpkPluginIoContract& plugin) {
-  const std::string token = lower_copy_local(stage_identity_token_local(plugin));
+  // Executable names describe the model artifact, not the operation. For example, an MLA ELF
+  // for a model named "yolo26n_boxdecode" legitimately contains "boxdecode" in its filename.
+  // Restrict stage classification to authored stage identity fields so an MLA stage cannot be
+  // mistaken for the terminal decoder.
+  std::string token = plugin.name;
+  if (!plugin.kernel.empty()) {
+    token.push_back('|');
+    token += plugin.kernel;
+  }
+  if (!plugin.plugin_id.empty()) {
+    token.push_back('|');
+    token += plugin.plugin_id;
+  }
+  token = lower_copy_local(std::move(token));
   return token.find("boxdecode") != std::string::npos ||
          token.find("objectdecode") != std::string::npos;
 }

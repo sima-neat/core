@@ -1,4 +1,5 @@
 #include "pipeline/DetectionTypes.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -186,4 +187,26 @@ RUN_TEST(
           make_wire_tensor(std::vector<uint8_t>{0, 0, 0, 0, 1}, kDetectionFormatBboxPose);
       require(throws_with([&]() { (void)decode_pose(TensorList{malformed_pose}); }, "payload size"),
               "decode_pose should reject malformed pose payload sizes");
+
+      Sample four_lane_output;
+      four_lane_output.kind = SampleKind::TensorSet;
+      four_lane_output.payload_tag = kDetectionFormatBbox;
+      for (int lane = 0; lane < 4; ++lane) {
+        four_lane_output.tensors.push_back(make_wire_tensor(std::vector<uint8_t>{0, 0, 0, 0}, ""));
+      }
+      tag_detection_format_in_sample(four_lane_output);
+      require(four_lane_output.tensors.size() == 4U,
+              "BoxDecode finalization must preserve four positional Tensor outputs");
+      for (std::size_t lane = 0; lane < four_lane_output.tensors.size(); ++lane) {
+        const auto& tensor = four_lane_output.tensors[lane];
+        require(tensor.semantic.detection.has_value() &&
+                    tensor.semantic.detection->format == kDetectionFormatBbox,
+                "every positional BoxDecode output must carry BBOX detection semantics");
+        require(tensor.storage != nullptr && tensor.copy_payload_bytes().size() == 4U,
+                "every positional BoxDecode output must retain its independent payload");
+        if (lane > 0U) {
+          require(tensor.storage != four_lane_output.tensors[lane - 1U].storage,
+                  "positional BoxDecode outputs must not alias one repeated lane tensor");
+        }
+      }
     }));

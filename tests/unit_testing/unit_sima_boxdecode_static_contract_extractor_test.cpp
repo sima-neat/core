@@ -239,6 +239,7 @@ RUN_TEST(
       mla.name = "MLA_0";
       mla.processor = "MLA";
       mla.kernel = "mla";
+      mla.executable = "yolo26n_boxdecode_stage1_mla.elf";
       mla.canonical_output_dtype = "INT8";
       mla.quant = MpkQuantContract{{0.25, 0.125}, {4, 5}, -1};
       mla.output_tensors.push_back(MpkTensorContract{

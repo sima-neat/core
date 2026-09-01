@@ -2,6 +2,8 @@
 
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
+#include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
 #include <algorithm>
@@ -11,7 +13,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -1375,6 +1379,104 @@ build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
   options.quant_contract_required = normalized.quant_contract_required;
   options.required_preprocess_meta_fields = normalized.required_preprocess_meta_fields;
   return build_boxdecode_compiled_contract_from_subset(subset, options);
+}
+
+void apply_authoritative_boxdecode_batch(CompiledBoxDecodeContract* compiled, int batch_size) {
+  if (!compiled) {
+    throw std::invalid_argument("BoxDecode batch contract requires a non-null compiled contract");
+  }
+  if (batch_size <= 0) {
+    throw std::invalid_argument(
+        "BoxDecode batch contract requires a positive compiled model batch size");
+  }
+  if (compiled->runtime_contract.logical_inputs.empty()) {
+    throw std::invalid_argument("BoxDecode batch contract requires at least one logical input");
+  }
+
+  const auto logical_name = [](const LogicalInputStaticSpec& logical, std::size_t index) {
+    return !logical.logical_name.empty() ? logical.logical_name
+                                         : "logical input " + std::to_string(index);
+  };
+  const auto physical_size_for = [&](const LogicalInputStaticSpec& logical,
+                                     std::size_t index) -> std::uint64_t {
+    const auto binding = std::find_if(
+        compiled->runtime_contract.input_bindings.begin(),
+        compiled->runtime_contract.input_bindings.end(), [&](const InputBindingStaticSpec& item) {
+          return item.local_logical_input_index == logical.logical_index;
+        });
+    if (binding != compiled->runtime_contract.input_bindings.end() &&
+        binding->src_physical_size_bytes > 0U) {
+      return binding->src_physical_size_bytes;
+    }
+    const auto physical = std::find_if(compiled->runtime_contract.physical_inputs.begin(),
+                                       compiled->runtime_contract.physical_inputs.end(),
+                                       [&](const PhysicalBufferStaticSpec& item) {
+                                         return item.physical_index == logical.physical_index;
+                                       });
+    if (physical != compiled->runtime_contract.physical_inputs.end() && physical->size_bytes > 0U) {
+      return physical->size_bytes;
+    }
+    throw std::invalid_argument("BoxDecode batch contract input '" + logical_name(logical, index) +
+                                "' is missing its authoritative physical MLA byte size");
+  };
+
+  for (std::size_t index = 0; index < compiled->runtime_contract.logical_inputs.size(); ++index) {
+    auto& logical = compiled->runtime_contract.logical_inputs[index];
+    const std::string name = logical_name(logical, index);
+    const std::string layout = tensorsemantics::normalize_layout_token(logical.layout);
+    if (layout != "HWC" && layout != "CHW") {
+      throw std::invalid_argument("BoxDecode batch contract input '" + name +
+                                  "' requires an explicit HWC/NHWC or CHW/NCHW layout");
+    }
+    if (logical.shape.size() == 3U) {
+      logical.shape.insert(logical.shape.begin(), static_cast<std::int64_t>(batch_size));
+    } else if (logical.shape.size() == 4U) {
+      if (logical.shape.front() != static_cast<std::int64_t>(batch_size)) {
+        throw std::invalid_argument("BoxDecode batch contract input '" + name +
+                                    "' declares batch=" + std::to_string(logical.shape.front()) +
+                                    " but the compiled model batch is " +
+                                    std::to_string(batch_size));
+      }
+    } else {
+      throw std::invalid_argument("BoxDecode batch contract input '" + name +
+                                  "' must be a per-lane rank-3 tensor or a batched rank-4 tensor");
+    }
+
+    const std::uint64_t element_bytes = specbuilders::dtype_size_bytes_from_token(logical.dtype);
+    std::uint64_t dense_size_bytes = element_bytes;
+    std::vector<std::int64_t> dense_strides(logical.shape.size(), 0);
+    for (std::size_t reverse = logical.shape.size(); reverse > 0U; --reverse) {
+      const std::size_t axis = reverse - 1U;
+      const std::int64_t dim = logical.shape[axis];
+      if (dim <= 0) {
+        throw std::invalid_argument("BoxDecode batch contract input '" + name +
+                                    "' contains a non-positive tensor dimension");
+      }
+      if (dense_size_bytes > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        throw std::overflow_error("BoxDecode batch contract input '" + name +
+                                  "' dense stride exceeds int64");
+      }
+      dense_strides[axis] = static_cast<std::int64_t>(dense_size_bytes);
+      const auto unsigned_dim = static_cast<std::uint64_t>(dim);
+      if (unsigned_dim > 0U &&
+          dense_size_bytes > std::numeric_limits<std::uint64_t>::max() / unsigned_dim) {
+        throw std::overflow_error("BoxDecode batch contract input '" + name +
+                                  "' dense byte size overflows uint64");
+      }
+      dense_size_bytes *= unsigned_dim;
+    }
+
+    const std::uint64_t physical_size_bytes = physical_size_for(logical, index);
+    if (dense_size_bytes > physical_size_bytes) {
+      std::ostringstream error;
+      error << "BoxDecode batch contract input '" << name << "' requires " << dense_size_bytes
+            << " logical bytes for batch=" << batch_size << " but its physical MLA storage has "
+            << physical_size_bytes << " bytes";
+      throw std::invalid_argument(error.str());
+    }
+    logical.stride_bytes = std::move(dense_strides);
+    logical.size_bytes = dense_size_bytes;
+  }
 }
 
 bool build_boxdecode_node_contract(const std::string& node_kind, const std::string& plugin_kind,
