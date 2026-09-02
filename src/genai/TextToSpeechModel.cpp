@@ -28,8 +28,7 @@ constexpr std::string_view kRuntimeExecutable = "qwen3tts";
 constexpr std::string_view kRuntimeRootEnv = "SIMA_LMM_QWEN3TTS_RUNTIME_ROOT";
 const std::filesystem::path kSystemRuntimeRoot = "/usr/lib/aarch64-linux-gnu/sima-lmm/qwen3tts";
 
-template <typename T>
-T read_le(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
+template <typename T> T read_le(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
   if (offset + sizeof(T) > bytes.size()) {
     throw std::runtime_error("Malformed Qwen3-TTS WAV: truncated chunk");
   }
@@ -44,7 +43,8 @@ PcmAudio read_pcm16_wav(const std::filesystem::path& path) {
     throw std::runtime_error("Qwen3-TTS did not produce WAV output: " + path.string());
   }
   const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input), {}};
-  if (bytes.size() < 12 || std::string_view(reinterpret_cast<const char*>(bytes.data()), 4) != "RIFF" ||
+  if (bytes.size() < 12 ||
+      std::string_view(reinterpret_cast<const char*>(bytes.data()), 4) != "RIFF" ||
       std::string_view(reinterpret_cast<const char*>(bytes.data() + 8), 4) != "WAVE") {
     throw std::runtime_error("Qwen3-TTS output is not a RIFF/WAVE file: " + path.string());
   }
@@ -103,16 +103,32 @@ void run_raw_tts(const std::filesystem::path& package_root, const TextToSpeechRe
   const auto numpy_lib = runtime_lib / "numpy.libs";
   const auto model_dir = package_root / "qwen3_model";
   const auto components_dir = package_root / "qwen3_components";
-  if (!std::filesystem::is_regular_file(executable) || !std::filesystem::is_directory(runtime_lib)) {
+  if (!std::filesystem::is_regular_file(executable) ||
+      !std::filesystem::is_directory(runtime_lib)) {
     throw std::runtime_error(
         "Qwen3-TTS runtime is not installed. Install sima-lmm-qwen3tts-runtime or set " +
         std::string(kRuntimeRootEnv));
   }
   std::vector<std::string> args = {
-      executable.string(), "--model-dir", model_dir.string(), "--components-dir", components_dir.string(),
-      "--prompt", request.prompt, "--speaker", request.speaker, "--language", request.language,
-      "--seed", std::to_string(request.seed), "--max-frames", std::to_string(request.max_frames),
-      "--prefill-mode", "prefix_kv", "--out-wav", wav_path.string(),
+      executable.string(),
+      "--model-dir",
+      model_dir.string(),
+      "--components-dir",
+      components_dir.string(),
+      "--prompt",
+      request.prompt,
+      "--speaker",
+      request.speaker,
+      "--language",
+      request.language,
+      "--seed",
+      std::to_string(request.seed),
+      "--max-frames",
+      std::to_string(request.max_frames),
+      "--prefill-mode",
+      "prefix_kv",
+      "--out-wav",
+      wav_path.string(),
       request.do_sample ? "--sample" : "--no-sample",
       request.subtalker_do_sample ? "--subtalker-sample" : "--subtalker-no-sample",
   };
@@ -177,7 +193,8 @@ struct TextToSpeechModel::Impl {
       std::copy(prefix.begin(), prefix.end(), template_path.begin());
       char* created = mkdtemp(template_path.data());
       if (created == nullptr) {
-        throw std::system_error(errno, std::generic_category(), "create Qwen3-TTS temporary directory");
+        throw std::system_error(errno, std::generic_category(),
+                                "create Qwen3-TTS temporary directory");
       }
       temp_dir = created;
       wav_path = temp_dir / "output.wav";
