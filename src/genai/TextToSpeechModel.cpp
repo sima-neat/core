@@ -25,6 +25,8 @@ namespace simaai::neat::genai {
 namespace {
 
 constexpr std::string_view kRuntimeExecutable = "qwen3tts";
+constexpr std::string_view kRuntimeRootEnv = "SIMA_LMM_QWEN3TTS_RUNTIME_ROOT";
+const std::filesystem::path kSystemRuntimeRoot = "/usr/lib/aarch64-linux-gnu/sima-lmm/qwen3tts";
 
 template <typename T>
 T read_le(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
@@ -91,17 +93,26 @@ PcmAudio read_pcm16_wav(const std::filesystem::path& path) {
 
 void run_raw_tts(const std::filesystem::path& package_root, const TextToSpeechRequest& request,
                  const std::filesystem::path& wav_path) {
-  const auto executable = package_root / "runtime" / "bin" / kRuntimeExecutable;
-  const auto runtime_lib = package_root / "runtime" / "lib";
+  const char* runtime_root_env = std::getenv(kRuntimeRootEnv.data());
+  const auto runtime_root = runtime_root_env == nullptr || *runtime_root_env == '\0'
+                                ? kSystemRuntimeRoot
+                                : std::filesystem::path(runtime_root_env);
+  const auto executable = runtime_root / "bin" / kRuntimeExecutable;
+  const auto runtime_lib = runtime_root / "lib";
+  const auto torch_lib = runtime_lib / "torch" / "lib";
+  const auto numpy_lib = runtime_lib / "numpy.libs";
   const auto model_dir = package_root / "qwen3_model";
   const auto components_dir = package_root / "qwen3_components";
+  if (!std::filesystem::is_regular_file(executable) || !std::filesystem::is_directory(runtime_lib)) {
+    throw std::runtime_error(
+        "Qwen3-TTS runtime is not installed. Install sima-lmm-qwen3tts-runtime or set " +
+        std::string(kRuntimeRootEnv));
+  }
   std::vector<std::string> args = {
       executable.string(), "--model-dir", model_dir.string(), "--components-dir", components_dir.string(),
       "--prompt", request.prompt, "--speaker", request.speaker, "--language", request.language,
       "--seed", std::to_string(request.seed), "--max-frames", std::to_string(request.max_frames),
-      // Disable the bundled raw runtime's legacy endpoint heuristic.  TTS
-      // package runs terminate only at EOS or the requested frame limit.
-      "--prefill-mode", "prefix_kv", "--endpoint-disable", "--out-wav", wav_path.string(),
+      "--prefill-mode", "prefix_kv", "--out-wav", wav_path.string(),
       request.do_sample ? "--sample" : "--no-sample",
       request.subtalker_do_sample ? "--subtalker-sample" : "--subtalker-no-sample",
   };
@@ -118,9 +129,11 @@ void run_raw_tts(const std::filesystem::path& package_root, const TextToSpeechRe
   }
   if (child == 0) {
     const char* old_library_path = std::getenv("LD_LIBRARY_PATH");
+    const std::string bundled_library_path =
+        runtime_lib.string() + ":" + torch_lib.string() + ":" + numpy_lib.string();
     const std::string library_path = old_library_path == nullptr || *old_library_path == '\0'
-                                         ? runtime_lib.string()
-                                         : runtime_lib.string() + ":" + old_library_path;
+                                         ? bundled_library_path
+                                         : bundled_library_path + ":" + old_library_path;
     setenv("LD_LIBRARY_PATH", library_path.c_str(), 1);
     execv(argv.front(), argv.data());
     _exit(127);

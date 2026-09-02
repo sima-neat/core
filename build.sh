@@ -57,6 +57,7 @@ NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
 NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
+NEAT_LLIMA_USE_LOCAL_DEBS="${NEAT_LLIMA_USE_LOCAL_DEBS:-OFF}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
 NEAT_LLIMA_SNAP_POLICY=OFF
@@ -181,12 +182,19 @@ shadow_workspace_path() {
 
 prepare_shadow_workspace() {
   local shadow_root="$1"
+  local -a source_paths=(core)
+  local optional_path
+
+  for optional_path in internals/core internals/gst_plugins internals/sima-ai-cvu-sw/graphs; do
+    if [[ -e "${ORIGINAL_WORKSPACE_ROOT}/${optional_path}" ]]; then
+      source_paths+=("${optional_path}")
+    fi
+  done
 
   rm -rf "${shadow_root}"
   mkdir -p "${shadow_root}"
 
   tar -C "${ORIGINAL_WORKSPACE_ROOT}" \
-    --exclude="core/.git" \
     --exclude="core/build" \
     --exclude="core/build-*" \
     --exclude="core/Testing" \
@@ -203,10 +211,7 @@ prepare_shadow_workspace() {
     --exclude="internals/dist" \
     --exclude="internals/tmp" \
     -cf - \
-    core \
-    internals/core \
-    internals/gst_plugins \
-    internals/sima-ai-cvu-sw/graphs \
+    "${source_paths[@]}" \
     | tar -C "${shadow_root}" -xf -
 }
 
@@ -1479,7 +1484,18 @@ ensure_neat_llima() {
 
   local artifact_dir="${tmp_dir}/package"
   local using_cached_debs=0
-  if [[ -f "${marker_file}" ]] &&
+  if [[ "${NEAT_LLIMA_USE_LOCAL_DEBS}" == "ON" ]]; then
+    if ! compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-core.deb" >/dev/null 2>&1 ||
+       ! compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-dev.deb" >/dev/null 2>&1 ||
+       ! compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-cli.deb" >/dev/null 2>&1; then
+      echo "ERROR: NEAT_LLIMA_USE_LOCAL_DEBS=ON requires local sima-lmm core/dev/cli Debian packages in ${deb_cache_dir}." >&2
+      rm -rf "${tmp_dir}"
+      exit 1
+    fi
+    echo "Using explicitly supplied local LLiMa debs from ${deb_cache_dir}."
+    artifact_dir="${deb_cache_dir}"
+    using_cached_debs=1
+  elif [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
      compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-core.deb" >/dev/null 2>&1 &&
      compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-dev.deb" >/dev/null 2>&1 &&

@@ -27,9 +27,7 @@ bool is_existing_regular_file(const std::filesystem::path& path) {
 }
 
 bool is_qwen3_tts_package(const std::filesystem::path& path) {
-  return is_existing_regular_file(path / "runtime" / "bin" / "qwen3tts") &&
-         is_existing_directory(path / "runtime" / "lib") &&
-         is_existing_directory(path / "qwen3_model" / "mpk") &&
+  return is_existing_directory(path / "qwen3_model" / "mpk") &&
          is_existing_regular_file(path / "devkit" / "qwen3_tts_config.json") &&
          is_existing_directory(path / "qwen3_components");
 }
