@@ -2676,8 +2676,14 @@ NB_MODULE(_pyneat_core, m) {
       .def("output_names", &Run::output_names)
       .def("push_tensors", static_cast<bool (Run::*)(const simaai::neat::TensorList&)>(&Run::push),
            "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
-      .def("push_samples", static_cast<bool (Run::*)(const simaai::neat::Sample&)>(&Run::push),
-           "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "push_samples",
+          [](Run& run, const simaai::neat::Sample& inputs) {
+            auto snapshot = inputs;
+            nb::gil_scoped_release release;
+            return run.push(snapshot);
+          },
+          "inputs"_a)
       .def("try_push_tensors",
            static_cast<bool (Run::*)(const simaai::neat::TensorList&)>(&Run::try_push), "inputs"_a)
       .def("try_push_samples",
@@ -4434,10 +4440,14 @@ NB_MODULE(_pyneat_core, m) {
            static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::TensorList&)>(
                &simaai::neat::Model::Runner::push),
            "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
-      .def("push_samples",
-           static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::Sample&)>(
-               &simaai::neat::Model::Runner::push),
-           "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "push_samples",
+          [](simaai::neat::Model::Runner& runner, const simaai::neat::Sample& inputs) {
+            auto snapshot = inputs;
+            nb::gil_scoped_release release;
+            return runner.push(snapshot);
+          },
+          "inputs"_a)
       .def(
           "push",
           [](simaai::neat::Model::Runner& runner, nb::object input, bool copy,
