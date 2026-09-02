@@ -5290,7 +5290,9 @@ CompiledProcessCvuRuntimeConfig build_preadapter_cast_runtime_config_local(
   runtime.runtime_input_names = {"input_tensor"};
   runtime.physical_input_names = {"input_tensor"};
   apply_processcvu_single_output_identity_local(&runtime, output_identity);
-  runtime.batch_size = 1;
+  runtime.batch_size = input_stage && input_stage->batch_sz_model > 0 ? input_stage->batch_sz_model
+                       : input_stage && input_stage->batch_size > 0   ? input_stage->batch_size
+                                                                      : 1;
   runtime.byte_align = 1;
 
   const auto preferred_input_shape = (input_stage && !input_stage->input_tensors.empty())
@@ -5319,6 +5321,14 @@ CompiledProcessCvuRuntimeConfig build_preadapter_cast_runtime_config_local(
       std::vector<int>(preferred_input_shape.begin(), preferred_input_shape.end())};
   runtime.output_shapes = {
       std::vector<int>(preferred_output_shape.begin(), preferred_output_shape.end())};
+  if (runtime.batch_size > 1) {
+    if (runtime.input_shapes.front().front() != runtime.batch_size ||
+        runtime.output_shapes.front().front() != runtime.batch_size) {
+      throw std::runtime_error("processcvu MPK cast batch dimension mismatch");
+    }
+    runtime.input_shapes.front().erase(runtime.input_shapes.front().begin());
+    runtime.output_shapes.front().erase(runtime.output_shapes.front().begin());
+  }
   runtime.input_dtype = normalize_dtype_token_local(preferred_tensor_dtype_local(
       (input_stage && !input_stage->input_tensors.empty()) ? input_stage->input_tensors.front()
                                                            : MpkTensorContract{},
@@ -5587,6 +5597,17 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   std::uint64_t packed_input_offset = 0U;
   std::uint64_t packed_output_offset = 0U;
 
+  const bool sample_major_batched_cast =
+      family == "cast" && !native_distinct_mla_boundary && runtime.batch_size > 1;
+  std::uint64_t cast_packed_frame_stride = 0U;
+  if (sample_major_batched_cast) {
+    for (std::size_t i = 0; i < count; ++i) {
+      cast_packed_frame_stride +=
+          static_cast<std::uint64_t>(boundary->input_tensors[i].size_bytes) /
+          static_cast<std::uint64_t>(runtime.batch_size);
+    }
+  }
+
   // Branch descriptors are emitted in MLA-boundary order, while the packed
   // parent input is laid out in public ingress order. Resolve each branch's
   // read offset by source ingress identity; use sequential offsets only when
@@ -5655,6 +5676,9 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
     runtime.output_tensors.push_back(branch.output_tensors.front());
     if (family == "cast") {
       runtime.output_tensors.back().storage.addr = static_cast<std::uint64_t>(packed_output_offset);
+      if (sample_major_batched_cast) {
+        runtime.output_tensors.back().storage.nbytes = cast_packed_frame_stride;
+      }
     }
     if (!branch.input_shapes.empty()) {
       runtime.input_shapes.push_back(branch.input_shapes.front());
@@ -5749,9 +5773,11 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
         output_tensor_contract.size_bytes > 0U
             ? static_cast<std::uint64_t>(output_tensor_contract.size_bytes)
             : preferred_mpk_tensor_size_bytes_local(output_tensor_contract, runtime.output_dtype);
-    if (family == "cast" && i < branch_runtimes.size() &&
-        !branch_runtimes[i].output_tensors.empty() &&
-        branch_runtimes[i].output_tensors.front().storage.nbytes > 0U) {
+    if (sample_major_batched_cast) {
+      output_size_bytes /= static_cast<std::uint64_t>(runtime.batch_size);
+    } else if (family == "cast" && i < branch_runtimes.size() &&
+               !branch_runtimes[i].output_tensors.empty() &&
+               branch_runtimes[i].output_tensors.front().storage.nbytes > 0U) {
       output_size_bytes = branch_runtimes[i].output_tensors.front().storage.nbytes;
     }
 
@@ -5834,6 +5860,12 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   apply_published_routed_input_bindings(&out, synthetic_inputs, &packed_input_sizes,
                                         runtime.graph_family);
   enforce_packed_parent_input_views(&out, "input_tensor", entries, packed_input_sizes);
+  if (sample_major_batched_cast) {
+    for (std::size_t i = 0; i < count; ++i) {
+      out.payload.input_tensors[i].storage.nbytes =
+          packed_input_sizes[i] / static_cast<std::uint64_t>(runtime.batch_size);
+    }
+  }
   force_direct_materialization_for_inputs(&out);
   return out;
 }
