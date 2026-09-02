@@ -2,6 +2,7 @@
 
 #include "builder/internal/InputSpecSpecialization.h"
 #include "graph/Compiler.h"
+#include "graph/CompilerInternal.h"
 #include "graph/Graph.h"
 #include "graph/GraphRun.h"
 #include "graph/nodes/FanOut.h"
@@ -247,6 +248,7 @@ struct PublicGraphLowering {
   std::unordered_map<graph::NodeId, std::pair<std::size_t, std::size_t>> graph_range_by_node;
   std::vector<graph::NodeId> runtime_node_for_vertex;
   std::vector<LoweredExplicitEdge> lowered_edges;
+  std::unordered_set<std::size_t> pipeline_boundary_edges;
 };
 
 bool realtime_latest_link(const GraphLinkOptions& opt) {
@@ -678,10 +680,11 @@ std::string normalized_edge_to_name(const NormalizedCompositionEdge& edge,
   return endpoint_name_for_vertex(vertices, edge.to, "input_" + std::to_string(fallback_index));
 }
 
-void connect_lowered_explicit_edges(graph::Graph* graph,
-                                    const std::vector<LoweredExplicitEdge>& edges) {
+std::unordered_set<std::size_t>
+connect_lowered_explicit_edges(graph::Graph* graph, const std::vector<LoweredExplicitEdge>& edges) {
+  std::unordered_set<std::size_t> pipeline_boundary_edges;
   if (!graph) {
-    return;
+    return pipeline_boundary_edges;
   }
 
   std::vector<bool> emitted(edges.size(), false);
@@ -704,6 +707,7 @@ void connect_lowered_explicit_edges(graph::Graph* graph,
     if (group.size() == 1U) {
       const auto& edge = edges[i];
       graph->connect(edge.from, edge.to, edge.from_port, edge.to_port);
+      pipeline_boundary_edges.insert(graph->edges().size() - 1U);
       emitted[i] = true;
       continue;
     }
@@ -723,6 +727,7 @@ void connect_lowered_explicit_edges(graph::Graph* graph,
       emitted[group[branch]] = true;
     }
   }
+  return pipeline_boundary_edges;
 }
 
 template <typename View>
@@ -1074,7 +1079,7 @@ build_runtime_graph_from_connected_public_view(const View& view,
     });
   }
 
-  connect_lowered_explicit_edges(&out.graph, lowered_edges);
+  out.pipeline_boundary_edges = connect_lowered_explicit_edges(&out.graph, lowered_edges);
   out.lowered_edges = std::move(lowered_edges);
   out.runtime_node_for_vertex = std::move(runtime_node_for_vertex);
   return out;
@@ -2997,6 +3002,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     NormalizedPublicView normalized = normalize_public_boundaries_for_execution(view);
     PublicGraphLowering lowering =
         build_runtime_graph_from_connected_public_view(normalized, seed_spec);
+    compile_opt.pipeline_boundary_edges = lowering.pipeline_boundary_edges;
     const auto graph_range_by_node =
         rebase_runtime_ranges_to_original_vertices(lowering.graph_range_by_node, normalized);
     const auto runtime_node_for_vertex = rebase_runtime_nodes_to_original_vertices(
@@ -3110,7 +3116,10 @@ ExecutionGraphPlan compile_runtime_graph(const graph::Graph& graph,
       compiler_opt.root_input_specs.emplace(id, *opt.root_input_spec);
     }
   }
-  graph::CompiledGraph compiled = compiler.compile(graph, compiler_opt);
+  graph::CompiledGraph compiled = opt.pipeline_boundary_edges.empty()
+                                      ? compiler.compile(graph, compiler_opt)
+                                      : graph::internal::compile_with_pipeline_boundaries(
+                                            graph, compiler_opt, opt.pipeline_boundary_edges);
   return build_execution_plan_from_compiled(graph, compiled, opt);
 }
 

@@ -1,5 +1,7 @@
 #include "graph/Compiler.h"
 
+#include "graph/CompilerInternal.h"
+
 #include "builder/OutputSpec.h"
 #include "graph/nodes/PipelineNode.h"
 
@@ -120,9 +122,7 @@ merge_pipeline_nodes(const std::vector<const PipelineNode*>& nodes) {
   return out;
 }
 
-} // namespace
-
-bool Compiler::spec_complete_(const OutputSpec& spec) {
+bool spec_complete(const OutputSpec& spec) {
   const std::string media =
       !spec.media_type.empty() ? spec.media_type : media_type_from_payload_type(spec.payload_type);
   if (media.empty())
@@ -137,11 +137,18 @@ bool Compiler::spec_complete_(const OutputSpec& spec) {
   return true;
 }
 
+} // namespace
+
+bool Compiler::spec_complete_(const OutputSpec& spec) {
+  return spec_complete(spec);
+}
+
 CompiledGraph Compiler::compile(const Graph& g) const {
   return compile(g, CompilerOptions{});
 }
 
-CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) const {
+CompiledGraph compile_graph(const Graph& g, const CompilerOptions& opt,
+                            const std::unordered_set<std::size_t>& pipeline_boundary_edges) {
   if (!g.is_dag()) {
     throw std::runtime_error(
         "Compiler: graph must be a DAG (node_count=" + std::to_string(g.node_count()) +
@@ -204,9 +211,12 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
     }
 
     const NodeId predecessor = g.in_degree(id) == 1 ? g.edge(g.in_edges(id)[0]).from : kInvalidNode;
-    const bool start_segment = (g.in_degree(id) != 1) || pn->is_source_like() ||
-                               (g.in_degree(id) == 1 && (!is_pipeline_node(g.node(predecessor)) ||
-                                                         g.out_degree(predecessor) != 1U));
+    const bool starts_at_pipeline_boundary =
+        g.in_degree(id) == 1 && pipeline_boundary_edges.contains(g.in_edges(id)[0]);
+    const bool start_segment =
+        (g.in_degree(id) != 1) || pn->is_source_like() || starts_at_pipeline_boundary ||
+        (g.in_degree(id) == 1 &&
+         (!is_pipeline_node(g.node(predecessor)) || g.out_degree(predecessor) != 1U));
 
     if (!start_segment) {
       continue; // Will be claimed by a previous segment walk.
@@ -221,6 +231,8 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
       if (g.out_degree(cur) != 1)
         break;
       const std::size_t eidx = g.out_edges(cur)[0];
+      if (pipeline_boundary_edges.contains(eidx))
+        break;
       const Edge& e = g.edge(eidx);
       const auto& next_node = g.node(e.to);
       if (!next_node || !is_pipeline_node(next_node))
@@ -435,7 +447,7 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
                                  (node ? node->kind() : "null") + "')");
       }
       out.edge_specs[eidx].spec = it->second;
-      out.edge_specs[eidx].complete = spec_complete_(it->second);
+      out.edge_specs[eidx].complete = spec_complete(it->second);
     }
   }
 
@@ -449,7 +461,7 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
       auto root_it = opt.root_input_specs.find(seg.node_ids.front());
       if (root_it != opt.root_input_specs.end()) {
         seg.input_spec = root_it->second;
-        seg.input_complete = spec_complete_(seg.input_spec);
+        seg.input_complete = spec_complete(seg.input_spec);
       }
     }
     if (!seg.output_edges.empty()) {
@@ -460,6 +472,16 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
   }
 
   return out;
+}
+
+CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) const {
+  return compile_graph(g, opt, {});
+}
+
+CompiledGraph internal::compile_with_pipeline_boundaries(
+    const Graph& graph, const CompilerOptions& options,
+    const std::unordered_set<std::size_t>& pipeline_boundary_edges) {
+  return compile_graph(graph, options, pipeline_boundary_edges);
 }
 
 } // namespace simaai::neat::graph

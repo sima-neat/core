@@ -1632,13 +1632,32 @@ RUN_TEST(
       simaai::neat::GraphLinkOptions single_link;
       single_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       single_link.max_inflight_per_stream = 1;
+      single_link.stream_id = "single_stream";
       single_source_app.connect(single_source, single_detector, single_link);
       const auto single_source_plan =
           simaai::neat::runtime::compile_public_graph(single_source_app, composed_run_options);
+      require(single_source_plan.pipeline_segments.size() == 2U,
+              "single-source realtime link must remain a pipeline boundary");
+      require(single_source_plan.edges.size() == 1U,
+              "single-source realtime boundary must retain one runtime edge");
+      require(single_source_plan.edges.front().link_options.policy ==
+                      simaai::neat::GraphLinkPolicy::RealtimeLatestByStream &&
+                  single_source_plan.edges.front().link_options.max_inflight_per_stream == 1 &&
+                  single_source_plan.edges.front().stream_id == "single_stream",
+              "single-source realtime boundary must preserve policy, inflight cap, and stream id");
       for (const auto& segment : single_source_plan.pipeline_segments) {
         require(!segment.fused_realtime_ingress.has_value(),
                 "automatic fusion must leave ineligible one-source topology unchanged");
       }
+
+      simaai::neat::Graph default_single_source_app("single_source_default_link", outer_options);
+      auto default_single_source = make_live_source_graph(100);
+      auto default_single_detector = make_composed_consumer_graph();
+      default_single_source_app.connect(default_single_source, default_single_detector);
+      const auto default_single_source_plan = simaai::neat::runtime::compile_public_graph(
+          default_single_source_app, composed_run_options);
+      require(default_single_source_plan.pipeline_segments.size() == 1U,
+              "ordinary single-source one-to-one connection must remain fused");
 
       simaai::neat::GraphOptions synchronous;
       synchronous.processcvu.async = false;

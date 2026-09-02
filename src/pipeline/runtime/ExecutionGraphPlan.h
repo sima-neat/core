@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -341,6 +342,7 @@ struct RuntimeCompileOptions {
   RunOptions run_options{};
   std::optional<Sample> seed;
   std::optional<OutputSpec> root_input_spec;
+  std::unordered_set<std::size_t> pipeline_boundary_edges;
   bool linear_compat = false;
 };
 
