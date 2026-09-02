@@ -92,7 +92,7 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            auto asr = static_cast<ASRModel*>(nullptr);
            auto genai = static_cast<GenAIModel*>(nullptr);
            auto genai_server = static_cast<GenAIServer*>(nullptr);
-           auto genai_run = &GenAIModel::run;
+           auto genai_run = static_cast<GenerationResult (GenAIModel::*)(const GenerationRequest&)>(&GenAIModel::run);
            auto genai_stream = &GenAIModel::stream;
            auto vlm_set_lora = &VisionLanguageModel::set_lora;
            auto vlm_unset_lora = &VisionLanguageModel::unset_lora;

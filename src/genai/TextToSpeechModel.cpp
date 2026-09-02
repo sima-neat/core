@@ -25,8 +25,7 @@ namespace simaai::neat::genai {
 namespace {
 
 constexpr std::string_view kRuntimeExecutable = "qwen3tts";
-constexpr std::string_view kRuntimeRootEnv = "SIMA_LMM_QWEN3TTS_RUNTIME_ROOT";
-const std::filesystem::path kSystemRuntimeRoot = "/usr/lib/aarch64-linux-gnu/sima-lmm/qwen3tts";
+constexpr std::string_view kRuntimeExecutableEnv = "SIMA_LMM_QWEN3TTS_EXECUTABLE";
 
 template <typename T> T read_le(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
   if (offset + sizeof(T) > bytes.size()) {
@@ -93,21 +92,16 @@ PcmAudio read_pcm16_wav(const std::filesystem::path& path) {
 
 void run_raw_tts(const std::filesystem::path& package_root, const TextToSpeechRequest& request,
                  const std::filesystem::path& wav_path) {
-  const char* runtime_root_env = std::getenv(kRuntimeRootEnv.data());
-  const auto runtime_root = runtime_root_env == nullptr || *runtime_root_env == '\0'
-                                ? kSystemRuntimeRoot
-                                : std::filesystem::path(runtime_root_env);
-  const auto executable = runtime_root / "bin" / kRuntimeExecutable;
-  const auto runtime_lib = runtime_root / "lib";
-  const auto torch_lib = runtime_lib / "torch" / "lib";
-  const auto numpy_lib = runtime_lib / "numpy.libs";
+  const char* configured_executable = std::getenv(kRuntimeExecutableEnv.data());
+  const auto executable = configured_executable == nullptr || *configured_executable == '\0'
+                              ? std::filesystem::path("/usr/bin") / std::string(kRuntimeExecutable)
+                              : std::filesystem::path(configured_executable);
+
   const auto model_dir = package_root / "qwen3_model";
   const auto components_dir = package_root / "qwen3_components";
-  if (!std::filesystem::is_regular_file(executable) ||
-      !std::filesystem::is_directory(runtime_lib)) {
-    throw std::runtime_error(
-        "Qwen3-TTS runtime is not installed. Install sima-lmm-qwen3tts-runtime or set " +
-        std::string(kRuntimeRootEnv));
+  if (!std::filesystem::is_regular_file(executable)) {
+    throw std::runtime_error("Qwen3-TTS runner is not installed. Install sima-lmm-cli or set " +
+                             std::string(kRuntimeExecutableEnv));
   }
   std::vector<std::string> args = {
       executable.string(),
@@ -144,13 +138,6 @@ void run_raw_tts(const std::filesystem::path& package_root, const TextToSpeechRe
     throw std::system_error(errno, std::generic_category(), "fork Qwen3-TTS runtime");
   }
   if (child == 0) {
-    const char* old_library_path = std::getenv("LD_LIBRARY_PATH");
-    const std::string bundled_library_path =
-        runtime_lib.string() + ":" + torch_lib.string() + ":" + numpy_lib.string();
-    const std::string library_path = old_library_path == nullptr || *old_library_path == '\0'
-                                         ? bundled_library_path
-                                         : bundled_library_path + ":" + old_library_path;
-    setenv("LD_LIBRARY_PATH", library_path.c_str(), 1);
     execv(argv.front(), argv.data());
     _exit(127);
   }

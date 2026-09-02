@@ -507,6 +507,12 @@ if (SimaLMM_FOUND)
     unit_genai_model_directory_test
     unit_genai_tool_call_parser_test
   )
+
+  add_pipeline_test_long(
+    genai_qwen3_tts_smoke_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/genai_qwen3_tts_smoke_test.cpp
+  )
+  set_property(TEST genai_qwen3_tts_smoke_test APPEND PROPERTY LABELS "e2e;genai;qwen3-tts")
 endif()
 
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)

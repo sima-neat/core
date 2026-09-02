@@ -1489,7 +1489,6 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
     "sima-lmm-core"
-    "sima-lmm-qwen3tts-runtime"
     "libcpp-httplib0.11")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
