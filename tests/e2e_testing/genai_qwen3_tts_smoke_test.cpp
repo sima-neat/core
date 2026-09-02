@@ -30,7 +30,8 @@ RUN_TEST("genai_qwen3_tts_smoke_test", ([] {
            using simaai::neat::genai::TextToSpeechRequest;
 
            GenAIModel model(qwen3_tts_model_path());
-           require(model.task() == GenAITask::TextToSpeech, "model was not detected as TextToSpeech");
+           require(model.task() == GenAITask::TextToSpeech,
+                   "model was not detected as TextToSpeech");
            require(model.accepts_text(), "TextToSpeech model should accept text input");
 
            TextToSpeechRequest request;
