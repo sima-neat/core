@@ -46,6 +46,37 @@ int main() {
 
     auto q = simaai::neat::nodes::Queue();
     require_contains(q->backend_fragment(5), "queue name=n5_queue", "Queue name mismatch");
+    require(q->backend_fragment(5) == "queue name=n5_queue",
+            "Default Queue fragment must remain unchanged");
+
+    simaai::neat::QueueOptions latest_queue_options;
+    latest_queue_options.max_buffers = 1;
+    latest_queue_options.overflow_policy = simaai::neat::OverflowPolicy::KeepLatest;
+    auto latest_queue = simaai::neat::nodes::Queue(latest_queue_options);
+    require_contains(latest_queue->backend_fragment(5), "max-size-buffers=1",
+                     "Configured Queue buffer limit missing");
+    require_contains(latest_queue->backend_fragment(5), "max-size-bytes=0 max-size-time=0",
+                     "Configured Queue must disable byte and time limits");
+    require_contains(latest_queue->backend_fragment(5), "leaky=downstream",
+                     "KeepLatest Queue leak direction mismatch");
+    require(dynamic_cast<simaai::neat::Queue*>(latest_queue.get()) != nullptr,
+            "Configured Queue must retain the concrete Queue type");
+
+    simaai::neat::QueueOptions incoming_queue_options;
+    incoming_queue_options.overflow_policy = simaai::neat::OverflowPolicy::DropIncoming;
+    auto incoming_queue = simaai::neat::nodes::Queue(incoming_queue_options);
+    require_contains(incoming_queue->backend_fragment(5), "leaky=upstream",
+                     "DropIncoming Queue leak direction mismatch");
+
+    bool invalid_queue_depth_threw = false;
+    try {
+      simaai::neat::QueueOptions invalid_queue_options;
+      invalid_queue_options.max_buffers = 0;
+      (void)simaai::neat::nodes::Queue(invalid_queue_options);
+    } catch (const std::invalid_argument&) {
+      invalid_queue_depth_threw = true;
+    }
+    require(invalid_queue_depth_threw, "Queue must reject a non-positive buffer limit");
 
     auto vc = simaai::neat::nodes::VideoConvert();
     require_contains(vc->backend_fragment(6), "videoconvert name=n6_videoconvert",
