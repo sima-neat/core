@@ -2675,9 +2675,9 @@ NB_MODULE(_pyneat_core, m) {
       .def("input_names", &Run::input_names)
       .def("output_names", &Run::output_names)
       .def("push_tensors", static_cast<bool (Run::*)(const simaai::neat::TensorList&)>(&Run::push),
-           "inputs"_a)
+           "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("push_samples", static_cast<bool (Run::*)(const simaai::neat::Sample&)>(&Run::push),
-           "inputs"_a)
+           "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("try_push_tensors",
            static_cast<bool (Run::*)(const simaai::neat::TensorList&)>(&Run::try_push), "inputs"_a)
       .def("try_push_samples",
@@ -2689,10 +2689,13 @@ NB_MODULE(_pyneat_core, m) {
              std::optional<ImageSpec::PixelFormat> image_format) {
             reject_single_tensor_or_sample(input, "Run.push(name)");
             if (python_sequence_all_samples(input)) {
-              return run.push(name, sample_batch_from_python_input(input));
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return run.push(name, samples);
             }
-            return run.push(name,
-                            tensor_batch_from_python_input(input, copy, layout, image_format));
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            nb::gil_scoped_release release;
+            return run.push(name, tensors);
           },
           "name"_a, "input"_a, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
@@ -2702,9 +2705,13 @@ NB_MODULE(_pyneat_core, m) {
              std::optional<ImageSpec::PixelFormat> image_format) {
             reject_single_tensor_or_sample(input, "Run.push");
             if (python_sequence_all_samples(input)) {
-              return run.push(sample_batch_from_python_input(input));
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return run.push(samples);
             }
-            return run.push(tensor_batch_from_python_input(input, copy, layout, image_format));
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            nb::gil_scoped_release release;
+            return run.push(tensors);
           },
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
       .def(
@@ -4426,11 +4433,11 @@ NB_MODULE(_pyneat_core, m) {
       .def("push_tensors",
            static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::TensorList&)>(
                &simaai::neat::Model::Runner::push),
-           "inputs"_a)
+           "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("push_samples",
            static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::Sample&)>(
                &simaai::neat::Model::Runner::push),
-           "inputs"_a)
+           "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "push",
           [](simaai::neat::Model::Runner& runner, nb::object input, bool copy,
@@ -4438,9 +4445,13 @@ NB_MODULE(_pyneat_core, m) {
              std::optional<ImageSpec::PixelFormat> image_format) {
             reject_single_tensor_or_sample(input, "ModelRunner.push");
             if (python_sequence_all_samples(input)) {
-              return runner.push(sample_batch_from_python_input(input));
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return runner.push(samples);
             }
-            return runner.push(tensor_batch_from_python_input(input, copy, layout, image_format));
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            nb::gil_scoped_release release;
+            return runner.push(tensors);
           },
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
       .def("pull", &simaai::neat::Model::Runner::pull, "timeout_ms"_a = -1,
