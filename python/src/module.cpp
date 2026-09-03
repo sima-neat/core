@@ -23,6 +23,7 @@
 #include "graphs/Fragments.h"
 #include "model/Model.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/groups/UdpH264OutputGroup.h"
 #include "nodes/groups/VideoSender.h"
@@ -1445,6 +1446,11 @@ NB_MODULE(_pyneat_core, m) {
       .value("Block", simaai::neat::OverflowPolicy::Block)
       .value("KeepLatest", simaai::neat::OverflowPolicy::KeepLatest)
       .value("DropIncoming", simaai::neat::OverflowPolicy::DropIncoming);
+
+  nb::class_<simaai::neat::QueueOptions>(m, "QueueOptions")
+      .def(nb::init<>())
+      .def_rw("max_buffers", &simaai::neat::QueueOptions::max_buffers)
+      .def_rw("overflow_policy", &simaai::neat::QueueOptions::overflow_policy);
 
   nb::enum_<RunPreset>(m, "RunPreset")
       .value("Realtime", RunPreset::Realtime)
@@ -3934,7 +3940,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit_kpi", &simaai::neat::PCIeSinkOptions::transmit_kpi);
 
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
-  nodes_mod.def("queue", &simaai::neat::nodes::Queue);
+  nodes_mod.def(
+      "queue", static_cast<std::shared_ptr<simaai::neat::Node> (*)()>(&simaai::neat::nodes::Queue));
+  nodes_mod.def("queue",
+                static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::QueueOptions)>(
+                    &simaai::neat::nodes::Queue),
+                "options"_a);
   nodes_mod.def("rtsp_input", &simaai::neat::nodes::RTSPInput, "url"_a, "latency_ms"_a = 200,
                 "tcp"_a = true, "drop_on_latency"_a = false, "buffer_mode"_a = "");
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
