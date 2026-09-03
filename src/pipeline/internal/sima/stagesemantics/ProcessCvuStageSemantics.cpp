@@ -5551,6 +5551,11 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
     branch_runtimes.push_back(
         build_pre_mla_branch_runtime_config_local(contract, family, siblings[i], published));
   }
+  for (const auto& branch : branch_runtimes) {
+    if (branch.input_tensors.empty() || branch.output_tensors.empty()) {
+      throw std::runtime_error("processcvu MPK pre-MLA multi-io branch missing tensor descriptors");
+    }
+  }
 
   CompiledProcessCvuRuntimeConfig runtime = branch_runtimes.front();
   // Single physical buffers; multi-IO is in the descriptor array + byte
@@ -5616,23 +5621,13 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   const bool sample_major_batched_cast =
       family == "cast" && !native_distinct_mla_boundary && runtime.batch_size > 1;
   std::uint64_t cast_packed_frame_stride = 0U;
-  std::vector<std::uint64_t> cast_output_frame_sizes;
   if (sample_major_batched_cast) {
-    cast_output_frame_sizes.reserve(count);
-    for (std::size_t i = 0; i < count; ++i) {
-      const auto& tensor = boundary->input_tensors[i];
-      const std::uint64_t full_size = preferred_mpk_tensor_size_bytes_local(
-          tensor, preferred_tensor_dtype_local(tensor, runtime.output_dtype));
-      const std::uint64_t batch_size = static_cast<std::uint64_t>(runtime.batch_size);
-      if (full_size == 0U || full_size % batch_size != 0U) {
-        throw std::runtime_error("processcvu batched cast output size is missing or indivisible");
-      }
-      const std::uint64_t frame_size = full_size / batch_size;
+    for (const auto& branch : branch_runtimes) {
+      const std::uint64_t frame_size = branch.output_tensors.front().storage.nbytes;
       if (frame_size > std::numeric_limits<std::uint64_t>::max() - cast_packed_frame_stride) {
         throw std::overflow_error("processcvu batched cast frame stride overflow");
       }
       cast_packed_frame_stride += frame_size;
-      cast_output_frame_sizes.push_back(frame_size);
     }
   }
 
@@ -5697,9 +5692,6 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
 
   for (std::size_t i = 0; i < count; ++i) {
     const auto& branch = branch_runtimes[i];
-    if (branch.input_tensors.empty() || branch.output_tensors.empty()) {
-      throw std::runtime_error("processcvu MPK pre-MLA multi-io branch missing tensor descriptors");
-    }
     runtime.input_tensors.push_back(branch.input_tensors.front());
     runtime.output_tensors.push_back(branch.output_tensors.front());
     if (family == "cast") {
@@ -5801,11 +5793,9 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
         output_tensor_contract.size_bytes > 0U
             ? static_cast<std::uint64_t>(output_tensor_contract.size_bytes)
             : preferred_mpk_tensor_size_bytes_local(output_tensor_contract, runtime.output_dtype);
-    if (sample_major_batched_cast) {
-      output_size_bytes = cast_output_frame_sizes[i];
-    } else if (family == "cast" && i < branch_runtimes.size() &&
-               !branch_runtimes[i].output_tensors.empty() &&
-               branch_runtimes[i].output_tensors.front().storage.nbytes > 0U) {
+    if (family == "cast" && i < branch_runtimes.size() &&
+        !branch_runtimes[i].output_tensors.empty() &&
+        branch_runtimes[i].output_tensors.front().storage.nbytes > 0U) {
       output_size_bytes = branch_runtimes[i].output_tensors.front().storage.nbytes;
     }
 
@@ -5864,10 +5854,8 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
                                                   runtime.published_output_names);
   if (sample_major_batched_cast) {
     const std::uint64_t batch_size = static_cast<std::uint64_t>(runtime.batch_size);
-    if (cast_packed_frame_stride > std::numeric_limits<std::uint64_t>::max() / batch_size) {
-      throw std::overflow_error("processcvu batched cast output span overflow");
-    }
-    out.facts.physical_output_size_bytes = {cast_packed_frame_stride * batch_size};
+    out.facts.physical_output_size_bytes = {multiply_u64_checked_local(
+        cast_packed_frame_stride, batch_size, "batched cast output span")};
     if (cast_packed_frame_stride >
         static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
       throw std::overflow_error("processcvu batched cast output stride exceeds int64 range");
@@ -5909,12 +5897,7 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   enforce_packed_parent_input_views(&out, "input_tensor", entries, packed_input_sizes);
   if (sample_major_batched_cast) {
     for (std::size_t i = 0; i < count; ++i) {
-      if (packed_input_sizes[i] == 0U ||
-          packed_input_sizes[i] % static_cast<std::uint64_t>(runtime.batch_size) != 0U) {
-        throw std::runtime_error("processcvu batched cast input size is missing or indivisible");
-      }
-      out.payload.input_tensors[i].storage.nbytes =
-          packed_input_sizes[i] / static_cast<std::uint64_t>(runtime.batch_size);
+      out.payload.input_tensors[i].storage.nbytes = runtime.input_tensors[i].storage.nbytes;
     }
   }
   force_direct_materialization_for_inputs(&out);
