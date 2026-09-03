@@ -165,8 +165,7 @@ std::size_t infer_extended_capacity(const std::vector<uint8_t>& bytes,
 // `capacity * mask_bytes` for a combined seg+pose payload.
 simaai::neat::Tensor keypoints_to_tensor(const std::vector<uint8_t>& bytes,
                                          const std::vector<std::size_t>& record_indices,
-                                         std::size_t capacity,
-                                         std::size_t extra_base_offset = 0) {
+                                         std::size_t capacity, std::size_t extra_base_offset = 0) {
   const int64_t n = static_cast<int64_t>(record_indices.size());
   const int64_t rows = kDecodedPoseKeypoints;
   const int64_t cols = kDecodedPoseColumns;
@@ -177,8 +176,7 @@ simaai::neat::Tensor keypoints_to_tensor(const std::vector<uint8_t>& bytes,
   if (bytes_out > 0) {
     simaai::neat::Mapping dst = storage->map(simaai::neat::MapMode::Write);
     auto* out = static_cast<float*>(dst.data);
-    const std::size_t pose_base =
-        sizeof(uint32_t) + capacity * sizeof(RawBox) + extra_base_offset;
+    const std::size_t pose_base = sizeof(uint32_t) + capacity * sizeof(RawBox) + extra_base_offset;
     for (std::size_t i = 0; i < record_indices.size(); ++i) {
       const std::size_t source_index = record_indices[i];
       RawPoseOut pose{};
