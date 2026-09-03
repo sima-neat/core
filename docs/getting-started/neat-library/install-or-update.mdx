@@ -32,13 +32,13 @@ SiMa.ai assets such as precompiled models for testing.
 Authenticate the environment so the installer can download SiMa.ai artifacts. See
 [sima-cli login](/tools/sima-cli/login/) for details.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli login
 </ShellCommand>
 
 Confirm the environment can reach the SiMa.ai artifacts host:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
 </ShellCommand>
 
@@ -76,7 +76,7 @@ is the same in every environment.
 
 Prepare a container-local install directory such as `$HOME/neat`:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 cd $HOME && mkdir -p neat && cd neat
 </ShellCommand>
 
@@ -84,7 +84,7 @@ Install the default Neat Library package selected by `sima-cli`. You can
 optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 sima-cli neat install core@v0.4.0
 </ShellCommand>
 
@@ -95,7 +95,7 @@ sima-cli neat install core@v0.4.0
 Confirm that the container identifies itself as the native ROS2 SDK and reports
 the platform compatibility base expected by the Neat package:
 
-<ShellCommand prompt="username@ros2-sdk-latest">
+<ShellCommand prompt="sdk">
 grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 </ShellCommand>
 
@@ -104,7 +104,7 @@ Debian environment, simulates the APT transaction with package removal disabled,
 and installs the runtime and development packages into the container's system
 paths. PyNeat is not installed because it remains a DevKit runtime feature:
 
-<ShellCommand prompt="username@ros2-sdk-latest">
+<ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
 sima-cli neat install core@release-0.3
 </ShellCommand>
@@ -121,7 +121,7 @@ Before installing the Neat Library on a DevKit, ensure the DevKit software versi
 Prepare an install directory under `/media/nvme` to avoid filling the root file
 system:
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 cd /media/nvme && mkdir -p neat && cd neat
 </ShellCommand>
 
@@ -129,7 +129,7 @@ Install the default Neat Library package selected by `sima-cli`. You can
 optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 sima-cli neat install core@v0.2.2
 </ShellCommand>
 
@@ -145,7 +145,7 @@ Installing the Neat Library on the DevKit also provisions a default PyNeat
 virtual environment at `~/pyneat` on the DevKit. This is the supported PyNeat
 environment — activate it directly:
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
 </ShellCommand>
 

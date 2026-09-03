@@ -22,19 +22,19 @@ SiMa.ai package services.
 
 For `amd64` hosts:
 
-<ShellCommand prompt="online-machine">
+<ShellCommand prompt="host" note="with internet access">
 sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
 </ShellCommand>
 
 For `arm64` hosts:
 
-<ShellCommand prompt="online-machine">
+<ShellCommand prompt="host" note="with internet access">
 sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 </ShellCommand>
 
 Copy the downloaded directory to the target host. From that directory, run:
 
-<ShellCommand prompt="offline-host">
+<ShellCommand prompt="host" note="offline target host">
 bash ./install_offline_sdk.sh
 </ShellCommand>
 
@@ -50,13 +50,13 @@ compatibility requirements. For compatibility details, see
 
 For Model Compiler 2.1.3 on `amd64` hosts:
 
-<ShellCommand prompt="online-machine">
+<ShellCommand prompt="host" note="with internet access">
 sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
 </ShellCommand>
 
 For Model Compiler 2.1.3 on `arm64` hosts:
 
-<ShellCommand prompt="online-machine">
+<ShellCommand prompt="host" note="with internet access">
 sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 </ShellCommand>
 
@@ -69,7 +69,7 @@ the host workspace folder that is mapped to the SDK container's `/workspace`
 folder. Then open the SDK shell and run the installer from the matching
 `/workspace` path:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 cd /workspace/model-compiler-offline-amd64
 bash ./install_modelsdk_wheels.sh
 </ShellCommand>
@@ -82,13 +82,13 @@ target host and run the same installer from that directory.
 After installation, reload your shell environment or restart the SDK shell. Then
 activate Model Compiler with:
 
-<ShellCommand prompt="offline-host">
+<ShellCommand prompt="host" note="offline target host">
 activate-model-compiler
 </ShellCommand>
 
 To leave the Model Compiler environment, run:
 
-<ShellCommand prompt="offline-host">
+<ShellCommand prompt="host" note="offline target host">
 deactivate-model-compiler
 </ShellCommand>
 

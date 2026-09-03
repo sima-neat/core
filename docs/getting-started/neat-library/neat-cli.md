@@ -11,7 +11,7 @@ playbooks, and whether newer artifacts are available.
 In the SDK, the status output also includes Insight host-port mappings from
 `$HOME/.insight-config/neat-port-map.json`.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
@@ -49,7 +49,7 @@ Exposed Ports
 
 For automation and tool integrations, use JSON output:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat --json
 </ShellCommand>
 
@@ -58,7 +58,7 @@ neat --json
 To update the Neat Library runtime, `neat-insight`, and installed `sima-cli`
 playbooks from the detected channel, run:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update
 </ShellCommand>
 

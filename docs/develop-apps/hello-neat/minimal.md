@@ -128,7 +128,7 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 
 3. Your working directory should look like this:
 
-   ```bash
+   ```text
    sima-neat-hello/
    ├── CMakeLists.txt
    └── main.cpp
@@ -136,21 +136,20 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 
 **Build the example:**
 
-```bash
+<ShellCommand prompt="sdk|devkit" cwd="the sima-neat-hello/ project directory">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **Run:**
 
-* **On the DevKit**
-  ```bash
-  ./build/sima_neat_hello
-  ```
-* **On the Neat SDK host**
-  ```bash
-  dk build/sima_neat_hello
-  ```
+<ShellCommand prompt="devkit" cwd="the sima-neat-hello/ project directory">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk" cwd="the sima-neat-hello/ project directory">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

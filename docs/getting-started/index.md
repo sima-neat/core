@@ -36,6 +36,22 @@ components independently, or troubleshoot a version mismatch.
 Library, and PyNeat are optional side-trips you can skip until you pair a DevKit.
 :::
 
+<div class="overview-section-label">Reading the commands</div>
+
+Every command block in these docs is labelled and colour-coded with the
+environment it runs in, so you never have to guess where to type it:
+
+| Prompt | Run it |
+| --- | --- |
+| `host$` | On your own machine, outside the SDK. |
+| `sdk$` | Inside the Neat SDK container shell. |
+| `devkit$` | On the Modalix DevKit. |
+| `pcie-host$` | On the host machine holding the Modalix PCIe card. |
+
+A block labelled with more than one environment, such as `sdk or devkit$`, runs
+the same way in either place. Where a command's paths are relative, the block
+also names the directory to run it from.
+
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Start Here</h2>

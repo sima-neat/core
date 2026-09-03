@@ -29,7 +29,7 @@ Tutorial commands still accept explicit flags. Prefer `--model <path>` for a
 single run; use environment variables when many commands should share the same
 artifact.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
@@ -67,7 +67,7 @@ artifacts across runs. Leave the defaults on for normal tutorial work.
 Some source-tree tests use a COCO sample image and can download it if missing.
 Override the URL when your environment needs a local mirror:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_COCO_URL=https://example.com/path/to/coco_sample.jpg
 </ShellCommand>
 

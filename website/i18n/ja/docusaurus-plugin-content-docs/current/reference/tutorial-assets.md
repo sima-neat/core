@@ -23,7 +23,7 @@ slug: /reference/tutorial-assets
 
 チュートリアルのコマンドは、引き続き明示的なフラグを受け付けます。単一の実行の場合は、`--model <path>` を使用することを推奨します。複数のコマンドで同じアーティファクトを共有する必要がある場合は、環境変数を使用してください。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
@@ -56,7 +56,7 @@ Neat は、モデルアーカイブを実行する前に、それらを展開し
 
 一部のソースツリーテストでは、COCOのサンプル画像を使用し、画像が存在しない場合はダウンロードします。環境でローカルミラーが必要な場合は、URLを上書きしてください。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_COCO_URL=https://example.com/path/to/coco_sample.jpg
 </ShellCommand>
 

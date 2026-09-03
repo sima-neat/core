@@ -16,19 +16,19 @@ sidebar_position: 6
 
 Для хостів `amd64`:
 
-<ShellCommand prompt="online-machine">
+<ShellCommand prompt="host" note="with internet access">
 sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
 </ShellCommand>
 
 Для хостів `arm64`:
 
-<ShellCommand prompt="online-machine">
+<ShellCommand prompt="host" note="with internet access">
 sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 </ShellCommand>
 
 Скопіюйте завантажену теку на цільовий хост. З цієї теки запустіть:
 
-<ShellCommand prompt="offline-host">
+<ShellCommand prompt="host" note="offline target host">
 bash ./install_offline_sdk.sh
 </ShellCommand>
 
@@ -42,13 +42,13 @@ bash ./install_offline_sdk.sh
 
 Для Model Compiler 2.1.3 на хостах `amd64`:
 
-<ShellCommand prompt="online-machine">
+<ShellCommand prompt="host" note="with internet access">
 sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
 </ShellCommand>
 
 Для Model Compiler версії 2.1.3 на хостах `arm64`:
 
-<ShellCommand prompt="online-machine">
+<ShellCommand prompt="host" note="with internet access">
 sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 </ShellCommand>
 
@@ -58,7 +58,7 @@ sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 
 Щоб встановити Model Compiler у Neat SDK, скопіюйте завантажену теку до теки робочого простору хоста, яка пов’язана з контейнером SDK, а саме до теки `/workspace`. Потім відкрийте командний рядок SDK і запустіть інсталятор із відповідного шляху `/workspace`:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 cd /workspace/model-compiler-offline-amd64
 bash ./install_modelsdk_wheels.sh
 </ShellCommand>
@@ -69,13 +69,13 @@ bash ./install_modelsdk_wheels.sh
 
 Після інсталяції перезавантажте середовище вашої оболонки або перезапустіть оболонку SDK. Потім активуйте Model Compiler за допомогою:
 
-<ShellCommand prompt="offline-host">
+<ShellCommand prompt="host" note="offline target host">
 activate-model-compiler
 </ShellCommand>
 
 Щоб вийти з середовища Model Compiler, виконайте команду:
 
-<ShellCommand prompt="offline-host">
+<ShellCommand prompt="host" note="offline target host">
 deactivate-model-compiler
 </ShellCommand>
 
