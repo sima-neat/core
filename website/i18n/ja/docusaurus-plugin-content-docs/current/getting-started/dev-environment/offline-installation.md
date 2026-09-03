@@ -16,19 +16,19 @@ sidebar_position: 6
 
 `amd64` ホストの場合：
 
-<ShellCommand prompt="host" note="with internet access">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
 </ShellCommand>
 
 `arm64` ホストの場合：
 
-<ShellCommand prompt="host" note="with internet access">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 </ShellCommand>
 
 ダウンロードしたディレクトリを目的のホストにコピーします。そのディレクトリから、次のコマンドを実行してください。
 
-<ShellCommand prompt="host" note="offline target host">
+<ShellCommand prompt="host">
 bash ./install_offline_sdk.sh
 </ShellCommand>
 
@@ -42,13 +42,13 @@ SDK 2.1.3.0 以降のバージョンでは、SDKオフラインパッケージ�
 
 `amd64` のホスト上で動作する Model Compiler 2.1.3 について：
 
-<ShellCommand prompt="host" note="with internet access">
+<ShellCommand prompt="host">
 sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
 </ShellCommand>
 
 `arm64` のホスト上で動作する Model Compiler 2.1.3 について：
 
-<ShellCommand prompt="host" note="with internet access">
+<ShellCommand prompt="host">
 sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 </ShellCommand>
 
@@ -69,13 +69,13 @@ ARM64パッケージをダウンロードした場合は、代わりに「`arm64
 
 インストール後、シェルの環境を再読み込みするか、SDKシェルを再起動してください。その後、次のコマンドでModel Compilerを起動します。
 
-<ShellCommand prompt="host" note="offline target host">
+<ShellCommand prompt="host">
 activate-model-compiler
 </ShellCommand>
 
 Model Compiler 環境を終了するには、次のコマンドを実行します。
 
-<ShellCommand prompt="host" note="offline target host">
+<ShellCommand prompt="host">
 deactivate-model-compiler
 </ShellCommand>
 
