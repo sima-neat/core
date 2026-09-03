@@ -124,6 +124,12 @@ RUN_TEST("unit_batch2_multi_input_cast_pack_test", ([] {
                    "expected one packed physical output");
            require(compiled.runtime_contract.physical_outputs.front().size_bytes == 1536U,
                    "packed physical output must span every batch row");
+           require(compiled.runtime_contract.logical_outputs.size() == 2U,
+                   "expected two packed logical outputs");
+           for (const auto& output : compiled.runtime_contract.logical_outputs) {
+             require(output.stride_bytes == std::vector<std::int64_t>({768, 384, 2, 2}),
+                     "packed logical output must use the complete packed frame as batch stride");
+           }
 
            for (std::size_t i = 0; i < 2U; ++i) {
              require(payload.input_tensors[i].shape.rank == 3U,
@@ -146,4 +152,23 @@ RUN_TEST("unit_batch2_multi_input_cast_pack_test", ([] {
                    "first cast output must start at the beginning of each packed frame");
            require(payload.output_tensors[1].storage.addr == 384U,
                    "second cast output must follow the first output inside each packed frame");
+
+           const auto single = build_processcvu_mpk_compiled_contract_for_stage_kind(
+               *contract, ExecutionStageKind::Cast, std::string("cast_0"));
+           require(single.payload.batch_size == 2,
+                   "single cast payload did not preserve compiler batch size");
+           require(single.payload.input_tensors.front().storage.nbytes == 768U &&
+                       single.payload.output_tensors.front().storage.nbytes == 384U,
+                   "single cast descriptors must retain per-frame strides, got input=" +
+                       std::to_string(single.payload.input_tensors.front().storage.nbytes) +
+                       " output=" +
+                       std::to_string(single.payload.output_tensors.front().storage.nbytes));
+           require(single.runtime_contract.physical_inputs.front().size_bytes == 1536U &&
+                       single.runtime_contract.physical_outputs.front().size_bytes == 768U,
+                   "single cast physical buffers must retain full batched spans");
+           require(single.runtime_contract.logical_inputs.front().shape ==
+                           std::vector<std::int64_t>({2, 1, 192, 1}) &&
+                       single.runtime_contract.logical_outputs.front().shape ==
+                           std::vector<std::int64_t>({2, 1, 192, 1}),
+                   "single cast logical contract must retain the full batched shape");
          }));
