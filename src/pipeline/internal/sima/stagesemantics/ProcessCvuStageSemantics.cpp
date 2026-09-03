@@ -5600,11 +5600,23 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   const bool sample_major_batched_cast =
       family == "cast" && !native_distinct_mla_boundary && runtime.batch_size > 1;
   std::uint64_t cast_packed_frame_stride = 0U;
+  std::vector<std::uint64_t> cast_output_frame_sizes;
   if (sample_major_batched_cast) {
+    cast_output_frame_sizes.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
-      cast_packed_frame_stride +=
-          static_cast<std::uint64_t>(boundary->input_tensors[i].size_bytes) /
-          static_cast<std::uint64_t>(runtime.batch_size);
+      const auto& tensor = boundary->input_tensors[i];
+      const std::uint64_t full_size = preferred_mpk_tensor_size_bytes_local(
+          tensor, preferred_tensor_dtype_local(tensor, runtime.output_dtype));
+      const std::uint64_t batch_size = static_cast<std::uint64_t>(runtime.batch_size);
+      if (full_size == 0U || full_size % batch_size != 0U) {
+        throw std::runtime_error("processcvu batched cast output size is missing or indivisible");
+      }
+      const std::uint64_t frame_size = full_size / batch_size;
+      if (frame_size > std::numeric_limits<std::uint64_t>::max() - cast_packed_frame_stride) {
+        throw std::overflow_error("processcvu batched cast frame stride overflow");
+      }
+      cast_packed_frame_stride += frame_size;
+      cast_output_frame_sizes.push_back(frame_size);
     }
   }
 
@@ -5774,7 +5786,7 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
             ? static_cast<std::uint64_t>(output_tensor_contract.size_bytes)
             : preferred_mpk_tensor_size_bytes_local(output_tensor_contract, runtime.output_dtype);
     if (sample_major_batched_cast) {
-      output_size_bytes /= static_cast<std::uint64_t>(runtime.batch_size);
+      output_size_bytes = cast_output_frame_sizes[i];
     } else if (family == "cast" && i < branch_runtimes.size() &&
                !branch_runtimes[i].output_tensors.empty() &&
                branch_runtimes[i].output_tensors.front().storage.nbytes > 0U) {
@@ -5834,6 +5846,13 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   out.facts = build_processcvu_packed_route_facts("input_tensor", "output_tensor", entries,
                                                   runtime.primary_output_name,
                                                   runtime.published_output_names);
+  if (sample_major_batched_cast) {
+    const std::uint64_t batch_size = static_cast<std::uint64_t>(runtime.batch_size);
+    if (cast_packed_frame_stride > std::numeric_limits<std::uint64_t>::max() / batch_size) {
+      throw std::overflow_error("processcvu batched cast output span overflow");
+    }
+    out.facts.physical_output_size_bytes = {cast_packed_frame_stride * batch_size};
+  }
   if (native_distinct_mla_boundary) {
     preserve_distinct_physical_output_views(&out, published_output_names);
   }
@@ -5862,6 +5881,10 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   enforce_packed_parent_input_views(&out, "input_tensor", entries, packed_input_sizes);
   if (sample_major_batched_cast) {
     for (std::size_t i = 0; i < count; ++i) {
+      if (packed_input_sizes[i] == 0U ||
+          packed_input_sizes[i] % static_cast<std::uint64_t>(runtime.batch_size) != 0U) {
+        throw std::runtime_error("processcvu batched cast input size is missing or indivisible");
+      }
       out.payload.input_tensors[i].storage.nbytes =
           packed_input_sizes[i] / static_cast<std::uint64_t>(runtime.batch_size);
     }
@@ -8282,7 +8305,8 @@ build_processcvu_compiled_contract_from_facts(const ProcessCvuStagePayload& payl
 
   compiled.runtime_contract.physical_outputs.reserve(physical_output_names.size());
   for (std::size_t i = 0; i < physical_output_names.size(); ++i) {
-    std::uint64_t size_bytes = 0U;
+    std::uint64_t size_bytes =
+        i < facts.physical_output_size_bytes.size() ? facts.physical_output_size_bytes[i] : 0U;
     for (const auto& logical : compiled.runtime_contract.logical_outputs) {
       if (logical.physical_index == static_cast<int>(i)) {
         size_bytes = std::max(size_bytes,

@@ -74,9 +74,9 @@ std::filesystem::path build_batch2_cast_pack_root() {
           "input_shapes": [[2,1,192,1],[2,1,192,1]],
           "output_shapes": [[2,1536]] } },
       "input_nodes": [
-        { "name": "cast_0", "size": 768,
+        { "name": "cast_0",
           "logical_shape": [2,1,192,1], "logical_dtype": "BF16" },
-        { "name": "cast_1", "size": 768,
+        { "name": "cast_1",
           "logical_shape": [2,1,192,1], "logical_dtype": "BF16" }
       ],
       "output_nodes": [{ "name": "MLA_0_ifm_pack_transform", "type": "buffer", "size": 3072,
@@ -120,6 +120,10 @@ RUN_TEST("unit_batch2_multi_input_cast_pack_test", ([] {
            require(payload.batch_size == 2, "cast payload did not preserve compiler batch size");
            require(payload.input_tensors.size() == 2U, "expected two cast input descriptors");
            require(payload.output_tensors.size() == 2U, "expected two cast output descriptors");
+           require(compiled.runtime_contract.physical_outputs.size() == 1U,
+                   "expected one packed physical output");
+           require(compiled.runtime_contract.physical_outputs.front().size_bytes == 1536U,
+                   "packed physical output must span every batch row");
 
            for (std::size_t i = 0; i < 2U; ++i) {
              require(payload.input_tensors[i].shape.rank == 3U,

@@ -84,6 +84,7 @@ struct ProcessCvuCanonicalRouteFact {
 struct ProcessCvuCanonicalFacts {
   std::vector<std::string> physical_input_names;
   std::vector<std::string> physical_output_names;
+  std::vector<std::uint64_t> physical_output_size_bytes;
   std::vector<ProcessCvuCanonicalInputFact> inputs;
   std::vector<ProcessCvuCanonicalBindingFact> input_bindings;
   std::vector<ProcessCvuCanonicalOutputFact> outputs;
