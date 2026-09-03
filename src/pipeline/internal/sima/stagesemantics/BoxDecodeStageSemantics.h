@@ -61,6 +61,15 @@ SsdModelFrame ssd_expected_model_frame(const BoxDecodeStaticContract& contract);
 // model-managed contract before lowering. No-op for non-SSD decode types.
 void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
 
+// Apply the raw P3/P4/P5 layout, sigmoid score domain, and inferred class count
+// before lowering a model-managed YOLOv5 contract.
+void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
+
+// Validate an explicit node-level layout override against a model-managed
+// decoder contract. Auto preserves the compiled contract.
+void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
+                                                      BoxDecodeTypeOption requested);
+
 /// Resolve an explicit class-count override against an inferred decoder contract. YOLO26 family
 /// layouts reject contradictory positive values; other families preserve their existing override
 /// behavior. A non-positive override selects the inferred value.

@@ -319,6 +319,24 @@ void apply_tiled_channel_storage_policy_local(sima_ev_tensor_desc* desc, bool c1
   }
 }
 
+void apply_tiled_channel_encoding_local(sima_ev_tensor_desc* desc, bool align_c16, bool cblock) {
+  if (!desc || desc->layout_kind != SIMA_EV_LAYOUT_TILED ||
+      tensorsemantics::find_shape_axis(desc->shape, SIMA_EV_AXIS_C) < 0) {
+    return;
+  }
+  constexpr std::uint32_t kEncodingMask = SIMA_EV_TILED_FLAG_COMPACT_CHANNELS |
+                                          SIMA_EV_TILED_FLAG_PADDED_HWC_C16 |
+                                          SIMA_EV_TILED_FLAG_CBLOCK16;
+  desc->layout.tiled.flags &= ~kEncodingMask;
+  if (cblock) {
+    desc->layout.tiled.flags |= SIMA_EV_TILED_FLAG_CBLOCK16;
+  } else if (align_c16) {
+    desc->layout.tiled.flags |= SIMA_EV_TILED_FLAG_PADDED_HWC_C16;
+  } else {
+    desc->layout.tiled.flags |= SIMA_EV_TILED_FLAG_COMPACT_CHANNELS;
+  }
+}
+
 bool build_tensor_tiled_desc_local(const std::vector<int>& shape,
                                    const std::vector<int>& tile_shape, const std::string& dtype,
                                    std::uint32_t tile_align_bytes, bool c16_packed,
@@ -1234,6 +1252,69 @@ int inferred_batch_size_from_shape_public(const std::vector<std::int64_t>& shape
   return inferred_batch_size_from_shape(shape, per_frame_rank);
 }
 
+DetessDequantTensorDescriptorContract build_detessdequant_tensor_descriptor_contract(
+    const DetessDequantHeadContractSubset& head,
+    const std::vector<std::int64_t>& canonical_output_shape) {
+  DetessDequantTensorDescriptorContract contract;
+  contract.per_frame_rank = derive_per_frame_rank(head.slice_shape, /*peer_per_frame_shape=*/{});
+  if (head.per_head_input_shape != head.frame_shape) {
+    contract.per_frame_rank = std::max(contract.per_frame_rank, 3);
+  }
+  if (contract.per_frame_rank <= 0) {
+    throw std::invalid_argument(
+        "detessdequant tensor descriptor contract requires per-frame geometry");
+  }
+
+  const auto per_frame_input =
+      semantic_shape_without_batch(head.per_head_input_shape, contract.per_frame_rank);
+  contract.input_shape.assign(per_frame_input.begin(), per_frame_input.end());
+  std::vector<int> raw_tile_shape(head.slice_shape.begin(), head.slice_shape.end());
+  contract.tile_shape =
+      tensor_desc_tile_shape_from_slice_shape(contract.input_shape, raw_tile_shape);
+
+  contract.batch_size =
+      inferred_batch_size_from_shape(head.per_head_input_shape, contract.per_frame_rank);
+  if (contract.batch_size <= 0) {
+    throw std::invalid_argument(
+        "detessdequant tensor descriptor contract requires a positive batch_size");
+  }
+  if (head.input_transport_size_bytes == 0U ||
+      head.input_transport_size_bytes % static_cast<std::uint64_t>(contract.batch_size) != 0U) {
+    throw std::invalid_argument(
+        "detessdequant tensor descriptor contract requires an evenly batched input transport");
+  }
+
+  std::string error_detail;
+  if (contract.tile_shape.empty() ||
+      !build_tensor_tiled_desc_local(contract.input_shape, contract.tile_shape,
+                                     normalize_dtype_token(head.frame_type), 0U,
+                                     /*c16_packed=*/false, &contract.input, &error_detail)) {
+    throw std::invalid_argument(
+        "detessdequant tensor descriptor contract could not synthesize its tiled input");
+  }
+  apply_tiled_channel_encoding_local(&contract.input, head.align_c16, head.cblock);
+  contract.input.storage.nbytes =
+      head.input_transport_size_bytes / static_cast<std::uint64_t>(contract.batch_size);
+
+  const auto& logical_output_shape =
+      canonical_output_shape.empty() ? head.per_head_input_shape : canonical_output_shape;
+  const auto per_frame_output =
+      semantic_shape_without_batch(logical_output_shape, contract.per_frame_rank);
+  contract.output_shape.assign(per_frame_output.begin(), per_frame_output.end());
+  if (!build_tensor_dense_desc_local(contract.output_shape,
+                                     normalize_dtype_token(head.output_dtype), &contract.output)) {
+    throw std::invalid_argument(
+        "detessdequant tensor descriptor contract could not synthesize its dense output");
+  }
+  contract.output.storage.nbytes = specbuilders::tensor_size_bytes_from_shape_dtype(
+      per_frame_output, normalize_dtype_token(head.output_dtype));
+  if (contract.output.storage.nbytes == 0U) {
+    throw std::invalid_argument(
+        "detessdequant tensor descriptor contract could not size its per-frame dense output");
+  }
+  return contract;
+}
+
 bool unit_axis_shape_alias_public(const std::vector<std::int64_t>& lhs,
                                   const std::vector<std::int64_t>& rhs) {
   auto strip_unit_axes = [](const std::vector<std::int64_t>& in) {
@@ -2064,8 +2145,9 @@ std::optional<BoxDecodeContractSubset> extract_boxdecode_contract_subset_from_mp
   if (!extracted.has_value()) {
     return std::nullopt;
   }
-  // Resolve SSD defaults before lowering, so the subset carries a valid class count
-  // and layout instead of the raw MPK defaults (Unknown/Auto/0).
+  // Resolve family defaults before lowering, so the subset carries a valid class count,
+  // score domain, and layout instead of the raw MPK defaults.
+  stagesemantics::apply_yolov5_model_managed_contract_defaults(&*extracted);
   stagesemantics::apply_ssd_model_managed_contract_defaults(&*extracted);
   return extract_boxdecode_contract_subset_from_static_contract(*extracted);
 }
@@ -2624,6 +2706,11 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
         throw std::invalid_argument(
             "detessellate runtime config could not synthesize typed input tensor");
       }
+      // Standalone Detess kernels consume padded pixel-major HWC. Historical
+      // MPKs also used cblock as an aggregate C16-capacity fact here, so keep
+      // those contracts on padded HWC without advertising CBlock16.
+      apply_tiled_channel_encoding_local(&input_desc, subset.align_c16 || subset.cblock,
+                                         /*cblock=*/false);
       input_desc.storage.nbytes = subset.input_transport_size_bytes;
       runtime.input_tensors.push_back(input_desc);
     }
@@ -2839,7 +2926,8 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
                             "detessdequant");
     require_non_empty_value(head.output_dtype, "detessdequant", PluginContractFieldKey::OutputDtype,
                             "detessdequant");
-    const int head_batch_size = inferred_batch_size_from_shape(head.per_head_input_shape);
+    const auto tensor_contract = build_detessdequant_tensor_descriptor_contract(head);
+    const int head_batch_size = tensor_contract.batch_size;
     if (head_batch_size <= 0) {
       throw std::invalid_argument("detessdequant runtime config requires a positive batch_size");
     }
@@ -2867,47 +2955,12 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
     const auto semantic_input_dims =
         dims_from_detess_shape(head.per_head_input_shape, "detessdequant input");
     const std::string semantic_input_layout;
-    {
-      // Phase 3a (Option A++): caps fields keep the MPK-batched shape; the
-      // kernel descriptor takes the per-frame shape so its rank matches the
-      // (rank-equal) tile geometry, with batch_size carried separately on
-      // runtime.batch_size. Pre-Phase-3a this code path padded slice_shape
-      // up to the batched-rank with full-axis leading dims, which produced a
-      // single super-tile spanning the whole batch — wrong for batch>1.
-      std::vector<int> input_shape_int(head.per_head_input_shape.begin(),
-                                       head.per_head_input_shape.end());
-      runtime.input_shapes.push_back(input_shape_int);
-      int per_frame_rank = derive_per_frame_rank(head.slice_shape, /*peer_per_frame_shape=*/{});
-      if (head.per_head_input_shape != head.frame_shape) {
-        per_frame_rank = std::max(per_frame_rank, 3);
-      }
-      const auto frame_shape_per_frame =
-          semantic_shape_without_batch(head.per_head_input_shape, per_frame_rank);
-      std::vector<int> input_shape_per_frame_int(frame_shape_per_frame.begin(),
-                                                 frame_shape_per_frame.end());
-      std::vector<int> tile_shape_int(head.slice_shape.begin(), head.slice_shape.end());
-      tile_shape_int =
-          tensor_desc_tile_shape_from_slice_shape(input_shape_per_frame_int, tile_shape_int);
-      sima_ev_tensor_desc input_desc{};
-      if (!build_tensor_tiled_desc_local(input_shape_per_frame_int, tile_shape_int,
-                                         normalize_dtype_token(head.frame_type), 0U,
-                                         head.align_c16 || head.cblock, &input_desc)) {
-        throw std::invalid_argument(
-            "detessdequant runtime config could not synthesize typed input tensor");
-      }
-      // Phase 3a (Option A++): the kernel scales storage.nbytes by
-      // runtime.batch_size when sizing the segment input. head.input_transport_
-      // size_bytes is the BATCHED transport bytes (the MPK never authors a
-      // per-frame transport size when batch>1), so divide it by batch to keep
-      // required == actual. For batch==1 this is a no-op.
-      const std::uint64_t per_frame_transport_size =
-          head_batch_size > 0
-              ? head.input_transport_size_bytes / static_cast<std::uint64_t>(head_batch_size)
-              : head.input_transport_size_bytes;
-      input_desc.storage.nbytes = per_frame_transport_size;
-      runtime.input_tensors.push_back(input_desc);
-      runtime.slice_shapes.push_back(tile_shape_int);
-    }
+    // Keep caps/publication geometry authored by the MPK. Kernel descriptors are the per-frame
+    // projection produced by the shared descriptor contract, with batch carried separately.
+    runtime.input_shapes.emplace_back(head.per_head_input_shape.begin(),
+                                      head.per_head_input_shape.end());
+    runtime.input_tensors.push_back(tensor_contract.input);
+    runtime.slice_shapes.push_back(tensor_contract.tile_shape);
     runtime.dq_scale_list.push_back(head.per_head_quant_params.scales.front());
     runtime.dq_zp_list.push_back(
         head.per_head_quant_params.zero_points.empty()
@@ -2919,12 +2972,7 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
     runtime.output_shapes.push_back(output_shape_int);
     runtime.runtime_output_logical_shapes.emplace_back(head.frame_shape.begin(),
                                                        head.frame_shape.end());
-    sima_ev_tensor_desc output_desc{};
-    if (!build_tensor_dense_desc_local(output_shape_int, output_dtype, &output_desc)) {
-      throw std::invalid_argument(
-          "detessdequant runtime config could not synthesize typed output tensor");
-    }
-    runtime.output_tensors.push_back(output_desc);
+    runtime.output_tensors.push_back(tensor_contract.output);
     runtime.runtime_output_logical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_output_slot_list.push_back(static_cast<int>(i));
     runtime.runtime_output_physical_index_list.push_back(static_cast<int>(i));

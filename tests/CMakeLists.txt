@@ -140,6 +140,32 @@ set_tests_properties(
   PROPERTIES LABELS "unit;installer;regression"
 )
 
+# Keep `neat status` Model Compiler discovery in the normal CTest gate: the
+# extension directory can exist as a bare venv, which used to be reported as an
+# install. Copy the test and the `neat` script below the build tests root and
+# pass the script path explicitly, as the test cannot derive it from its own
+# location once it runs from the build tree.
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_neat_model_compiler_discovery.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/test_neat_model_compiler_discovery.py"
+  COPYONLY
+)
+configure_file(
+  "${CMAKE_SOURCE_DIR}/scripts/neat"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/neat"
+  COPYONLY
+)
+add_test(
+  NAME unit_neat_model_compiler_discovery_test
+  COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_BINARY_DIR}/tools/test_neat_model_compiler_discovery.py"
+          --neat "${CMAKE_CURRENT_BINARY_DIR}/tools/neat"
+)
+set_tests_properties(
+  unit_neat_model_compiler_discovery_test
+  PROPERTIES LABELS "unit;cli;regression"
+)
+
 # ------------------------------------------------------------------------------
 # Python test source compilation
 # ------------------------------------------------------------------------------
@@ -395,6 +421,7 @@ set(UNIT_TESTS
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test
   unit_detess_rank2_contract_test
+  unit_processcvu_v2_mpk_encoding_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
   unit_modelpack_mount_selection_test
@@ -407,6 +434,7 @@ set(UNIT_TESTS
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
   unit_model_archive_loader_test
+  unit_modelpack_compact_extraction_path_test
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_jpeg_framing_nodes_test
@@ -1560,6 +1588,7 @@ foreach(test
     graph_naming_pipeline_integration_test
     gst_data_adapter_runtime_regression_test
     unit_model_archive_loader_test
+    unit_modelpack_compact_extraction_path_test
     graph_rtsp_lifecycle_regression_test
     graph_validate_report_regression_test
     security_modelpack_matrix_test)
@@ -1588,6 +1617,7 @@ foreach(test
     unit_tensor_image_mapping_test
     unit_detection_types_bbox_test
     unit_model_archive_loader_test
+    unit_modelpack_compact_extraction_path_test
     unit_modalix_contract_preflight_test
     graph_validate_report_regression_test
     graph_rtsp_lifecycle_regression_test

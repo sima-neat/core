@@ -49,6 +49,10 @@ enum sima_ev_run_target {
 enum sima_ev_tiled_flags {
   SIMA_EV_TILED_FLAG_NONE = 0,
   SIMA_EV_TILED_FLAG_COMPACT_CHANNELS = 1U << 0,
+  /* Explicit additive encodings. Legacy flags-none descriptors remain valid
+   * and are decoded by the operation-specific reader for compatibility. */
+  SIMA_EV_TILED_FLAG_PADDED_HWC_C16 = 1U << 1,
+  SIMA_EV_TILED_FLAG_CBLOCK16 = 1U << 2,
 };
 
 enum sima_ev_axis_semantic {

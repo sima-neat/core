@@ -21,13 +21,53 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
+SUPPORTED_LOCALES = ("ko", "ja", "zh-Hant", "uk")
+
+ENGLISH_UI: Dict[str, Any] = {
+    "title": "Tutorials",
+    "description": "Practical tutorials for C++ and Python with guided learning paths",
+    "heroAlt": "Neat tutorials — from your first model to a production pipeline",
+    "choosePath": "Choose a Tutorial Path",
+    "choosePathIntro": "Use the cards in each section in order. Each tutorial includes concept-first guidance with source code in the supported language surface.",
+    "guidedTutorialSingular": "guided tutorial.",
+    "guidedTutorialPlural": "guided tutorials.",
+    "tutorialsComing": "Tutorials are being added.",
+    "useInOrder": "Use these tutorials in order.",
+    "field": "Field",
+    "value": "Value",
+    "category": "Category",
+    "difficulty": "Difficulty",
+    "estimatedReadTime": "Estimated Read Time",
+    "labels": "Labels",
+    "concept": "Concept",
+    "learningProcess": "Learning Process",
+    "walkthrough": "Walkthrough",
+    "run": "Run",
+    "inPractice": "In Practice",
+    "code": "Code",
+    "fullSource": "Full source",
+    "showCompleteSource": "Show the complete source programs",
+    "source": "Source",
+    "imageSuffix": "image",
+    "animatedOverviewSuffix": "animated walkthrough overview",
+    "fallbackConcept": "Concept summary not provided.",
+    "fallbackSteps": [
+        "Prepare deterministic inputs and runtime defaults.",
+        "Execute the chapter runtime flow.",
+        "Validate behavior from checks and signatures.",
+    ],
+    "categories": {},
+    "categoryDescriptions": {},
+    "difficulties": {},
+}
 
 CATEGORY_SUBDIRS = [
     (
@@ -83,30 +123,22 @@ def _category_flow_key(category: str, number: int) -> tuple:
 def docs_static_url(path: str, *, relative_prefix: str | None = None) -> str:
     if relative_prefix is not None:
         return f"{relative_prefix.rstrip('/')}/{path.lstrip('/')}"
-    base_url = os.environ.get("DOCS_BASE_URL", "/").strip() or "/"
-    if not base_url.startswith("/"):
-        base_url = f"/{base_url}"
-    if not base_url.endswith("/"):
-        base_url = f"{base_url}/"
-    return f"{base_url}{path.lstrip('/')}"
+    # Generated MDX passes this logical static path to Docusaurus' useBaseUrl.
+    # Do not bake DOCS_BASE_URL into generated sources: the same docs must work
+    # both at site root and below the Developer Center's /software/ mount.
+    return f"/{path.lstrip('/')}"
 
 
 def detect_repo_ref(default: str = "main") -> str:
-    env_ref = (
-        os.environ.get("TUTORIAL_SOURCE_REF")
-        or os.environ.get("GITHUB_REF_NAME")
-    )
+    env_ref = os.environ.get("TUTORIAL_SOURCE_REF") or os.environ.get("GITHUB_REF_NAME")
     if env_ref:
         return env_ref.strip()
     try:
-        ref = (
-            subprocess.check_output(
-                ["git", "branch", "--show-current"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            .strip()
-        )
+        ref = subprocess.check_output(
+            ["git", "branch", "--show-current"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
         return ref or default
     except Exception:
         return default
@@ -155,6 +187,8 @@ class TutorialModule:
     py_rels: List[str] = field(default_factory=list)
     walkthrough_lead: str = ""
     walkthrough_steps: List[WalkStep] = field(default_factory=list)
+    locale: str = "en"
+    source_readme_rel: str = ""
 
     @property
     def has_walkthrough(self) -> bool:
@@ -170,7 +204,9 @@ class TutorialModule:
 
     @property
     def image_url(self) -> str:
-        return docs_static_url(f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg")
+        return docs_static_url(
+            f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg"
+        )
 
     @property
     def flow_image_url(self) -> str:
@@ -179,6 +215,38 @@ class TutorialModule:
     @property
     def display_title(self) -> str:
         return re.sub(r"^\d{3}\s+", "", self.title).strip()
+
+
+def load_locale_catalog(repo_root: pathlib.Path, locale: str) -> Dict[str, Any]:
+    """Load the translated generator chrome for one locale.
+
+    Tutorial prose belongs in ``<tutorial>/i18n/<locale>/README.md``. Repeated
+    UI text and category labels live once in ``tutorials/i18n/<locale>.json``.
+    Keeping the two concerns separate avoids translating generated boilerplate
+    independently in every tutorial.
+    """
+    if locale == "en":
+        return dict(ENGLISH_UI)
+    path = repo_root / "tutorials" / "i18n" / f"{locale}.json"
+    if not path.exists():
+        raise FileNotFoundError(f"Missing tutorial locale catalog: {path}")
+    translated = json.loads(path.read_text(encoding="utf-8"))
+    missing = sorted(set(ENGLISH_UI) - set(translated))
+    if missing:
+        raise ValueError(f"{path}: missing keys: {', '.join(missing)}")
+    return translated
+
+
+def _ui(ui: Dict[str, Any], key: str) -> str:
+    return str(ui[key])
+
+
+def _localized_category(ui: Dict[str, Any], category: str) -> str:
+    return str(ui.get("categories", {}).get(category, category))
+
+
+def _localized_difficulty(ui: Dict[str, Any], difficulty: str) -> str:
+    return str(ui.get("difficulties", {}).get(difficulty, difficulty))
 
 
 def _extract_section(text: str, heading: str) -> str:
@@ -315,7 +383,9 @@ def _render_code_with_core_logic(code: str) -> tuple[str, str]:
     return "\n".join(out_lines), _line_ranges(highlighted)
 
 
-_STEP_START_RE = re.compile(r"^\s*(?://|#)\s*STEP\s+([a-z0-9][a-z0-9_-]*)\s*$", flags=re.I)
+_STEP_START_RE = re.compile(
+    r"^\s*(?://|#)\s*STEP\s+([a-z0-9][a-z0-9_-]*)\s*$", flags=re.I
+)
 _STEP_END_RE = re.compile(r"^\s*(?://|#)\s*END STEP(?:\s+[a-z0-9_-]+)?\s*$", flags=re.I)
 _STEP_ANCHOR_RE = re.compile(r"\{#step-([a-z0-9][a-z0-9_-]*)\}")
 _LANG_PROSE_RE = re.compile(r"(?m)^\*\*(C\+\+|Python):\*\*[ \t]*")
@@ -348,7 +418,9 @@ def _extract_named_segments(code: str, source_label: str) -> Dict[str, str]:
             if not stack:
                 raise ValueError(f"{source_label}: stray 'END STEP' (line {lineno})")
             done = stack.pop()
-            segments[done["name"]] = textwrap.dedent("\n".join(done["body"])).rstrip("\n")
+            segments[done["name"]] = textwrap.dedent("\n".join(done["body"])).rstrip(
+                "\n"
+            )
             continue
 
         # Body line: record it in every currently-open step.
@@ -581,7 +653,12 @@ def _wrap_two_lines(text: str, limit: int = 128) -> List[str]:
 
 
 def stepper_animation_svg(
-    title: str, subtitle: str, filename: str, steps: List, interactive: bool = False, anchors=None
+    title: str,
+    subtitle: str,
+    filename: str,
+    steps: List,
+    interactive: bool = False,
+    anchors=None,
 ) -> str:
     """A 'Run an App'-style stepper animation. The editor on the left shows each
     step's full code while its node is highlighted on the right and prior nodes
@@ -626,32 +703,44 @@ def stepper_animation_svg(
     css = (
         '.fsans{font-family:"Avenir Next","Segoe UI",Arial,sans-serif;}'
         '.fmono{font-family:"SFMono-Regular","Menlo","Consolas",monospace;}'
-        '.fttl{fill:#010F0E;font-size:27px;font-weight:700;}'
-        '.fsub{fill:#35536F;font-size:15px;font-weight:500;}'
-        '.fcode{fill:#E2ECF6;font-size:14px;font-weight:500;}'
-        '.fln{fill:#586677;font-size:13px;font-weight:500;}'
-        '.fcap{fill:#7FD0A6;font-size:14px;font-weight:700;letter-spacing:0.04em;}'
-        '.fdim{fill:#7D8590;font-size:14px;font-weight:500;}'
-        '.ftag{fill:#F8FBFF;font-weight:650;}'
-        '.fnl{fill:#0B2E1B;font-weight:650;}'
-        '.fcounter{fill:#9AA7B4;font-size:13px;font-weight:600;}'
-        '.fhint{fill:#2A9C4F;font-size:15px;font-weight:700;}'
-        '.fanim{transition:opacity 0.55s ease;}'
+        ".fttl{fill:#010F0E;font-size:27px;font-weight:700;}"
+        ".fsub{fill:#35536F;font-size:15px;font-weight:500;}"
+        ".fcode{fill:#E2ECF6;font-size:14px;font-weight:500;}"
+        ".fln{fill:#586677;font-size:13px;font-weight:500;}"
+        ".fcap{fill:#7FD0A6;font-size:14px;font-weight:700;letter-spacing:0.04em;}"
+        ".fdim{fill:#7D8590;font-size:14px;font-weight:500;}"
+        ".ftag{fill:#F8FBFF;font-weight:650;}"
+        ".fnl{fill:#0B2E1B;font-weight:650;}"
+        ".fcounter{fill:#9AA7B4;font-size:13px;font-weight:600;}"
+        ".fhint{fill:#2A9C4F;font-size:15px;font-weight:700;}"
+        ".fanim{transition:opacity 0.55s ease;}"
     )
 
     p: List[str] = []
-    p.append('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 520" role="img" aria-labelledby="ftl ftd">')
+    p.append(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 520" role="img" aria-labelledby="ftl ftd">'
+    )
     p.append(f'<title id="ftl">{esc(title)}</title>')
     p.append(f'<desc id="ftd">{esc(subtitle)}</desc>')
-    p.append('<defs>')
-    p.append('<linearGradient id="fbg" x1="80" y1="40" x2="1240" y2="500" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F8F6"/></linearGradient>')
-    p.append('<linearGradient id="fgreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>')
-    p.append('<filter id="fsh" x="-10%" y="-18%" width="120%" height="142%" filterUnits="objectBoundingBox"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#010F0E" flood-opacity="0.12"/></filter>')
-    p.append('<marker id="farr" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L7 3.5L0 7Z" fill="#2A9C4F"/></marker>')
-    p.append('<style>' + css + '</style>')
-    p.append('</defs>')
+    p.append("<defs>")
+    p.append(
+        '<linearGradient id="fbg" x1="80" y1="40" x2="1240" y2="500" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F8F6"/></linearGradient>'
+    )
+    p.append(
+        '<linearGradient id="fgreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>'
+    )
+    p.append(
+        '<filter id="fsh" x="-10%" y="-18%" width="120%" height="142%" filterUnits="objectBoundingBox"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#010F0E" flood-opacity="0.12"/></filter>'
+    )
+    p.append(
+        '<marker id="farr" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L7 3.5L0 7Z" fill="#2A9C4F"/></marker>'
+    )
+    p.append("<style>" + css + "</style>")
+    p.append("</defs>")
 
-    p.append('<rect x="16" y="16" width="1288" height="488" rx="30" fill="url(#fbg)" stroke="#D8E7F1"/>')
+    p.append(
+        '<rect x="16" y="16" width="1288" height="488" rx="30" fill="url(#fbg)" stroke="#D8E7F1"/>'
+    )
     p.append('<circle cx="1188" cy="82" r="58" fill="#C0E8DB" opacity="0.5"/>')
     p.append('<circle cx="112" cy="432" r="50" fill="#BFE0CF" opacity="0.45"/>')
     p.append(f'<text x="54" y="68" class="fsans fttl">{esc(title)}</text>')
@@ -662,19 +751,27 @@ def stepper_animation_svg(
     p.append('<g filter="url(#fsh)">')
     p.append('<rect x="54" y="132" width="470" height="316" rx="26" fill="#1F232A"/>')
     p.append('<rect x="54" y="132" width="470" height="46" rx="26" fill="#181C22"/>')
-    p.append('<circle cx="88" cy="155" r="6" fill="#FF6B6B"/><circle cx="110" cy="155" r="6" fill="#F4C542"/><circle cx="132" cy="155" r="6" fill="#2A9C4F"/>')
+    p.append(
+        '<circle cx="88" cy="155" r="6" fill="#FF6B6B"/><circle cx="110" cy="155" r="6" fill="#F4C542"/><circle cx="132" cy="155" r="6" fill="#2A9C4F"/>'
+    )
     p.append(f'<text x="166" y="160" class="fmono fdim">{esc(filename)}</text>')
     for i, (label, lines) in enumerate(steps):
         si = intro + i * win
         ei = 0.985 if i == n - 1 else si + win
-        p.extend(group_open("code", i, "0;0;1;1;0;0", [0, si, si + 0.015, ei - 0.02, ei, 1]))
-        p.append(f'<text x="76" y="212" class="fsans fcap">STEP {i + 1} · {esc(label)}</text>')
+        p.extend(
+            group_open("code", i, "0;0;1;1;0;0", [0, si, si + 0.015, ei - 0.02, ei, 1])
+        )
+        p.append(
+            f'<text x="76" y="212" class="fsans fcap">STEP {i + 1} · {esc(label)}</text>'
+        )
         for j, cl in enumerate(lines):
             by = code_y0 + j * code_lh
             p.append(f'<text x="76" y="{by}" class="fmono fln">{j + 1}</text>')
-            p.append(f'<text x="104" y="{by}" class="fmono fcode" xml:space="preserve">{esc(cl)}</text>')
-        p.append('</g>')
-    p.append('</g>')
+            p.append(
+                f'<text x="104" y="{by}" class="fmono fcode" xml:space="preserve">{esc(cl)}</text>'
+            )
+        p.append("</g>")
+    p.append("</g>")
 
     # right: panel + nodes (assemble & persist), active node ringed
     p.append('<g filter="url(#fsh)">')
@@ -683,9 +780,13 @@ def stepper_animation_svg(
     else:
         p.append('<g opacity="0">')
         p.append(anim("0;0;1;1;0", [0, 0.04, 0.06, 0.98, 1]))
-    p.append('<rect x="560" y="132" width="704" height="316" rx="30" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2"/>')
-    p.append('<rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>')
-    p.append('</g>')
+    p.append(
+        '<rect x="560" y="132" width="704" height="316" rx="30" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2"/>'
+    )
+    p.append(
+        '<rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>'
+    )
+    p.append("</g>")
     fs = 15 if node_w >= 150 else (13 if node_w >= 120 else 11.5)
     for i, (label, _lines) in enumerate(steps):
         si = intro + i * win
@@ -701,8 +802,12 @@ def stepper_animation_svg(
                 f'<line x1="{x - gap + 4:.0f}" y1="{cy:.0f}" x2="{x - 6:.0f}" y2="{cy:.0f}" '
                 'stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>'
             )
-        p.append(f'<rect x="{x:.0f}" y="{node_y}" width="{node_w:.0f}" height="{node_h}" rx="18" fill="{fill}" stroke="{stroke}"/>')
-        p.append(f'<text x="{cxn:.0f}" y="{node_y + 22}" class="fsans fdim" font-size="12" text-anchor="middle">Step {i + 1}</text>')
+        p.append(
+            f'<rect x="{x:.0f}" y="{node_y}" width="{node_w:.0f}" height="{node_h}" rx="18" fill="{fill}" stroke="{stroke}"/>'
+        )
+        p.append(
+            f'<text x="{cxn:.0f}" y="{node_y + 22}" class="fsans fdim" font-size="12" text-anchor="middle">Step {i + 1}</text>'
+        )
         words = label.split(" ")
         if len(words) > 1 and node_w < 150:
             mid = (len(words) + 1) // 2
@@ -712,30 +817,40 @@ def stepper_animation_svg(
                 f'<tspan x="{cxn:.0f}" dy="0">{esc(l1)}</tspan><tspan x="{cxn:.0f}" dy="{fs + 2:.0f}">{esc(l2)}</tspan></text>'
             )
         else:
-            p.append(f'<text x="{cxn:.0f}" y="{cy + fs / 3.0:.0f}" class="fsans fnl" font-size="{fs}" text-anchor="middle">{esc(label)}</text>')
-        p.append('</g>')
-        p.extend(group_open("ring", i, "0;0;1;1;0;0", [0, si + 0.005, si + 0.025, ei - 0.02, ei, 1]))
+            p.append(
+                f'<text x="{cxn:.0f}" y="{cy + fs / 3.0:.0f}" class="fsans fnl" font-size="{fs}" text-anchor="middle">{esc(label)}</text>'
+            )
+        p.append("</g>")
+        p.extend(
+            group_open(
+                "ring", i, "0;0;1;1;0;0", [0, si + 0.005, si + 0.025, ei - 0.02, ei, 1]
+            )
+        )
         p.append(
             f'<rect x="{x - 4:.0f}" y="{node_y - 4}" width="{node_w + 8:.0f}" '
             f'height="{node_h + 8}" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>'
         )
-        p.append('</g>')
-    p.append('</g>')
+        p.append("</g>")
+    p.append("</g>")
 
     if interactive:
         # Popup revealed after the play-through, prompting the reader to click a step.
         p.append('<g id="popup" class="fanim" opacity="0">')
-        p.append('<rect x="690" y="356" width="444" height="46" rx="23" fill="#0B2E1B" opacity="0.93"/>')
+        p.append(
+            '<rect x="690" y="356" width="444" height="46" rx="23" fill="#0B2E1B" opacity="0.93"/>'
+        )
         p.append(
             '<text x="912" y="384" text-anchor="middle" class="fsans" fill="#EAF7EF" '
             'font-size="16" font-weight="700">Click a step to jump to that section ↓</text>'
         )
-        p.append('</g>')
+        p.append("</g>")
         p.append(
-            _STEPPER_SCRIPT.replace("__N__", str(n)).replace("__ANCHORS__", json.dumps(anchors or []))
+            _STEPPER_SCRIPT.replace("__N__", str(n)).replace(
+                "__ANCHORS__", json.dumps(anchors or [])
+            )
         )
 
-    p.append('</svg>')
+    p.append("</svg>")
     return "\n".join(p)
 
 
@@ -776,7 +891,11 @@ _STEPPER_SCRIPT = """<script type="text/ecmascript"><![CDATA[
 
 def flow_animation_svg(module: TutorialModule) -> str:
     """Per-tutorial stepper animation built from its Walkthrough steps."""
-    steps = [s for s in module.walkthrough_steps if s.name and (s.py_snippet or s.cpp_snippet)]
+    steps = [
+        s
+        for s in module.walkthrough_steps
+        if s.name and (s.py_snippet or s.cpp_snippet)
+    ]
     if len(steps) < 2:
         return ""
     chosen = steps[:5]
@@ -798,7 +917,9 @@ def flow_animation_svg(module: TutorialModule) -> str:
     )
 
 
-def generate_flow_animations(out_dir: pathlib.Path, modules: List[TutorialModule]) -> None:
+def generate_flow_animations(
+    out_dir: pathlib.Path, modules: List[TutorialModule]
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     expected = set()
     for module in modules:
@@ -817,11 +938,25 @@ def generate_landing_animation(out_dir: pathlib.Path) -> None:
     journey the chapters take you through. Written outside the per-tutorial
     `flow/` dir so that directory's stale-file cleanup doesn't sweep it."""
     steps = [
-        ("Run a model", ["model = pyneat.Model('model.tar.gz')", "sample = model.run([image])"]),
-        ("Build a pipeline", ["graph = pyneat.Graph()", "graph.add(model)", "run = graph.build([frame])"]),
+        (
+            "Run a model",
+            ["model = pyneat.Model('model.tar.gz')", "sample = model.run([image])"],
+        ),
+        (
+            "Build a pipeline",
+            [
+                "graph = pyneat.Graph()",
+                "graph.add(model)",
+                "run = graph.build([frame])",
+            ],
+        ),
         (
             "Tune & deploy",
-            ["opt.queue_depth = 8", "run = graph.build([f], opt)", "report = run.start_measurement(...).stop()"],
+            [
+                "opt.queue_depth = 8",
+                "run = graph.build([f], opt)",
+                "report = run.start_measurement(...).stop()",
+            ],
         ),
     ]
     svg = stepper_animation_svg(
@@ -848,8 +983,14 @@ def generate_minimal_example_animation(repo_root: pathlib.Path) -> None:
                 '    print("DeviceType.CPU =", DeviceType.CPU)',
             ],
         ),
-        ("Run on the DevKit", ["source ~/pyneat/bin/activate", "python3 hello_neat.py"]),
-        ("Runtime responds", ["Hello from sima-neat", "DeviceType.CPU = DeviceType.CPU"]),
+        (
+            "Run on the DevKit",
+            ["source ~/pyneat/bin/activate", "python3 hello_neat.py"],
+        ),
+        (
+            "Runtime responds",
+            ["Hello from sima-neat", "DeviceType.CPU = DeviceType.CPU"],
+        ),
     ]
     svg = stepper_animation_svg(
         "Minimal: confirm your install",
@@ -862,7 +1003,14 @@ def generate_minimal_example_animation(repo_root: pathlib.Path) -> None:
     out.write_text(svg, encoding="utf-8")
 
 
-def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialModule:
+def parse_module(
+    module_dir: pathlib.Path,
+    repo_root: pathlib.Path,
+    *,
+    readme_path: pathlib.Path | None = None,
+    canonical: TutorialModule | None = None,
+    locale: str = "en",
+) -> TutorialModule:
     name = module_dir.name
     m = re.match(r"^(\d{3})_(.+)$", name)
     if not m:
@@ -871,7 +1019,7 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     number = int(m.group(1))
     slug = m.group(2)
 
-    readme_path = module_dir / "README.md"
+    readme_path = readme_path or module_dir / "README.md"
     if not readme_path.exists():
         raise FileNotFoundError(f"Missing README: {readme_path}")
 
@@ -888,11 +1036,7 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
                 if (match := _STEP_START_RE.match(line))
             ]
 
-        marked = [
-            path
-            for path in candidates
-            if source_markers(path)
-        ]
+        marked = [path for path in candidates if source_markers(path)]
         selected = ([preferred] if preferred.exists() else []) + [
             path for path in marked if path != preferred
         ]
@@ -916,7 +1060,11 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
         raise FileNotFoundError(f"Missing C++ source in: {module_dir}")
 
     title_match = re.search(r"^#\s+(.+)$", text, flags=re.M)
-    title = title_match.group(1).strip() if title_match else f"{number:03d} {slug.replace('_', ' ').title()}"
+    title = (
+        title_match.group(1).strip()
+        if title_match
+        else f"{number:03d} {slug.replace('_', ' ').title()}"
+    )
 
     meta_section = _extract_section(text, "Metadata")
     concept_section = _extract_section(text, "Concept")
@@ -925,17 +1073,26 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     in_practice_section = _extract_section(text, "In Practice")
 
     meta = _parse_metadata_table(meta_section)
-    difficulty = meta.get("difficulty", "Intermediate")
-    category = meta.get("category", "")
+    difficulty = (
+        canonical.difficulty if canonical else meta.get("difficulty", "Intermediate")
+    )
+    category = canonical.category if canonical else meta.get("category", "")
     known_categories = {label for label, _, _, _ in CATEGORY_SUBDIRS}
     if category not in known_categories:
         raise ValueError(
             f"Invalid or missing tutorial category {category!r} in {readme_path}; "
             f"expected one of {sorted(known_categories)}"
         )
-    estimated = meta.get("estimated read time", "10-15 minutes")
+    estimated = meta.get(
+        "estimated read time",
+        canonical.estimated_read_time if canonical else "10-15 minutes",
+    )
     labels_raw = meta.get("labels", "")
-    labels = [x.strip() for x in labels_raw.split(",") if x.strip()]
+    labels = (
+        canonical.labels
+        if canonical
+        else [x.strip() for x in labels_raw.split(",") if x.strip()]
+    )
 
     process_steps = _parse_numbered(process_section)
 
@@ -950,8 +1107,7 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
         for path, rel in zip(cpp_files, cpp_rels)
     ]
     py_sources = [
-        (rel, path.read_text(encoding="utf-8"))
-        for path, rel in zip(py_files, py_rels)
+        (rel, path.read_text(encoding="utf-8")) for path, rel in zip(py_files, py_rels)
     ]
 
     walkthrough_lead, walkthrough_steps = _build_walk_steps(
@@ -980,6 +1136,10 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
         py_rels=py_rels,
         walkthrough_lead=walkthrough_lead,
         walkthrough_steps=walkthrough_steps,
+        locale=locale,
+        source_readme_rel=readme_path.resolve()
+        .relative_to(repo_root.resolve())
+        .as_posix(),
     )
 
 
@@ -1019,10 +1179,7 @@ def _full_code_codetabs(module: TutorialModule) -> List[str]:
     """Complete source for every primary program in a tutorial."""
     cpp_rels = module.cpp_rels or [module.cpp_rel]
     py_rels = module.py_rels or ([module.py_rel] if module.py_rel else [])
-    py_by_stem = {
-        pathlib.Path(path).stem: path
-        for path in py_rels
-    }
+    py_by_stem = {pathlib.Path(path).stem: path for path in py_rels}
     multiple = len(cpp_rels) > 1
     out: List[str] = []
     for cpp_rel in cpp_rels:
@@ -1077,7 +1234,14 @@ def _step_language_prose(step: WalkStep) -> List[str]:
     for lang_attr, prose in (("cpp", step.cpp_prose), ("py", step.py_prose)):
         if prose:
             out.extend(
-                ["", f'<LanguageContent lang="{lang_attr}">', "", prose, "", "</LanguageContent>"]
+                [
+                    "",
+                    f'<LanguageContent lang="{lang_attr}">',
+                    "",
+                    prose,
+                    "",
+                    "</LanguageContent>",
+                ]
             )
     return out
 
@@ -1133,48 +1297,55 @@ def _wrap_run_languages(run_text: str) -> str:
 
     out: List[str] = list(intro)
     out += ["", '<LanguageContent lang="py">', "", *py_block, "", "</LanguageContent>"]
-    out += ["", '<LanguageContent lang="cpp">', "", *cpp_block, "", "</LanguageContent>"]
+    out += [
+        "",
+        '<LanguageContent lang="cpp">',
+        "",
+        *cpp_block,
+        "",
+        "</LanguageContent>",
+    ]
     if trailing:
         out += ["", *trailing]
     return "\n".join(out)
 
 
-def render_legacy_body(module: TutorialModule) -> List[str]:
+def render_legacy_body(
+    module: TutorialModule, ui: Dict[str, Any] = ENGLISH_UI
+) -> List[str]:
     """The original page body: Concept, Learning Process, Run, In Practice, and
     one full-file Code listing. Used for tutorials without a Walkthrough."""
     lines: List[str] = [
-        "## Concept",
-        module.concept or "Concept summary not provided.",
+        f"## {_ui(ui, 'concept')}",
+        module.concept or _ui(ui, "fallbackConcept"),
         "",
-        "## Learning Process",
+        f"## {_ui(ui, 'learningProcess')}",
     ]
     if module.process_steps:
         for i, step in enumerate(module.process_steps, 1):
             lines.append(f"{i}. {step}")
     else:
-        lines.extend(
-            [
-                "1. Prepare deterministic inputs and runtime defaults.",
-                "2. Execute the chapter runtime flow.",
-                "3. Validate behavior from checks and signatures.",
-            ]
-        )
+        lines.extend([f"{i}. {step}" for i, step in enumerate(ui["fallbackSteps"], 1)])
 
     # Pass the README's `## Run` section through verbatim so the README is the
     # single source of truth for run instructions — no hardcoded env-var blocks.
     if module.run_section.strip():
-        lines.extend(["", "## Run", "", _wrap_run_languages(module.run_section)])
+        lines.extend(
+            ["", f"## {_ui(ui, 'run')}", "", _wrap_run_languages(module.run_section)]
+        )
     # Pass the README's optional `## In Practice` section through verbatim so
     # operational guidance (folded from the former How-To guides) is taught in
     # context. Markdown tables pass through like the `## Run` block above.
     if module.in_practice.strip():
-        lines.extend(["", "## In Practice", "", module.in_practice])
-    lines.extend(["", "## Code", ""])
+        lines.extend(["", f"## {_ui(ui, 'inPractice')}", "", module.in_practice])
+    lines.extend(["", f"## {_ui(ui, 'code')}", ""])
     lines.extend(_full_code_codetabs(module))
     return lines
 
 
-def render_walkthrough_body(module: TutorialModule) -> List[str]:
+def render_walkthrough_body(
+    module: TutorialModule, ui: Dict[str, Any] = ENGLISH_UI
+) -> List[str]:
     """The narrative page body: an up-front lead, then a sequence of short
     explained code steps, then Run, optional In Practice, and a collapsed
     full-source block."""
@@ -1182,7 +1353,7 @@ def render_walkthrough_body(module: TutorialModule) -> List[str]:
     if module.walkthrough_lead:
         lines.extend(["", module.walkthrough_lead])
     lines.append("")
-    lines.append("## Walkthrough")
+    lines.append(f"## {_ui(ui, 'walkthrough')}")
     for step in module.walkthrough_steps:
         anchor = f" {{#step-{step.name}}}" if step.name else ""
         lines.extend(["", f"### {step.heading}{anchor}", "", step.shared_prose])
@@ -1194,19 +1365,21 @@ def render_walkthrough_body(module: TutorialModule) -> List[str]:
     # End the narrative with running it and observing the expected output. The
     # README's `## Run` section ends with the expected stdout.
     if module.run_section.strip():
-        lines.extend(["", "## Run", "", _wrap_run_languages(module.run_section)])
+        lines.extend(
+            ["", f"## {_ui(ui, 'run')}", "", _wrap_run_languages(module.run_section)]
+        )
     if module.in_practice.strip():
-        lines.extend(["", "## In Practice", "", module.in_practice])
+        lines.extend(["", f"## {_ui(ui, 'inPractice')}", "", module.in_practice])
 
     # Keep the complete programs available without letting them dominate the
     # page — collapsed by default so the per-step snippets stay the focus.
     lines.extend(
         [
             "",
-            "## Full source",
+            f"## {_ui(ui, 'fullSource')}",
             "",
             "<details>",
-            "<summary>Show the complete source programs</summary>",
+            f"<summary>{_ui(ui, 'showCompleteSource')}</summary>",
             "",
         ]
     )
@@ -1215,7 +1388,12 @@ def render_walkthrough_body(module: TutorialModule) -> List[str]:
     return lines
 
 
-def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref: str) -> str:
+def render_tutorial_doc(
+    module: TutorialModule,
+    sidebar_position: int,
+    repo_ref: str,
+    ui: Dict[str, Any] = ENGLISH_UI,
+) -> str:
     repo_link_prefix = f"{REPO_LINK_BASE}/{repo_ref}"
     label_text = ", ".join(f"`{l}`" for l in module.labels) if module.labels else "-"
 
@@ -1237,49 +1415,55 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
     # Animated overview directly under the title. Embedded via <object> (not
     # <img>) so the SVG's script runs — it plays once, then steps on click.
     # The <img> fallback covers no-JS / object-load failures.
-    if flow_animation_svg(module):
-        alt = html.escape(f"{module.display_title} — animated walkthrough overview", quote=True)
+    if module.locale == "en" and flow_animation_svg(module):
+        alt = html.escape(
+            f"{module.display_title} — {_ui(ui, 'animatedOverviewSuffix')}", quote=True
+        )
         url = module.flow_image_url
         lines.append(
-            f'<object type="image/svg+xml" data="{url}" class="tutorial-flow" aria-label="{alt}">'
-            f'<img src="{url}" alt="{alt}" loading="lazy" /></object>'
+            f'<BaseUrlImage src="{url}" alt="{alt}" className="tutorial-flow" asobject="true"></BaseUrlImage>'
         )
         lines.append("")
 
     lines.extend(
         [
-            "| Field | Value |",
+            f"| {_ui(ui, 'field')} | {_ui(ui, 'value')} |",
             "| --- | --- |",
-            f"| Category | {module.category} |",
-            f"| Difficulty | {module.difficulty} |",
-            f"| Estimated Read Time | {module.estimated_read_time} |",
-            f"| Labels | {label_text} |",
+            f"| {_ui(ui, 'category')} | {_localized_category(ui, module.category)} |",
+            f"| {_ui(ui, 'difficulty')} | {_localized_difficulty(ui, module.difficulty)} |",
+            f"| {_ui(ui, 'estimatedReadTime')} | {module.estimated_read_time} |",
+            f"| {_ui(ui, 'labels')} | {label_text} |",
             "",
         ]
     )
 
     if module.has_walkthrough:
-        lines.extend(render_walkthrough_body(module))
+        lines.extend(render_walkthrough_body(module, ui))
     else:
-        lines.extend(render_legacy_body(module))
+        lines.extend(render_legacy_body(module, ui))
 
-    lines.extend(["", "## Source", ""])
+    lines.extend(["", f"## {_ui(ui, 'source')}", ""])
     cpp_rels = module.cpp_rels or [module.cpp_rel]
     py_rels = module.py_rels or ([module.py_rel] if module.py_rel else [])
     if len(cpp_rels) == 1:
         lines.append(f"- [C++]({repo_link_prefix}/{cpp_rels[0]})")
     else:
         for path in cpp_rels:
-            label = pathlib.Path(path).stem.removeprefix("run_").replace("_", " ").title()
+            label = (
+                pathlib.Path(path).stem.removeprefix("run_").replace("_", " ").title()
+            )
             lines.append(f"- [C++ — {label}]({repo_link_prefix}/{path})")
     if len(py_rels) == 1:
         lines.append(f"- [Python]({repo_link_prefix}/{py_rels[0]})")
     else:
         for path in py_rels:
-            label = pathlib.Path(path).stem.removeprefix("run_").replace("_", " ").title()
+            label = (
+                pathlib.Path(path).stem.removeprefix("run_").replace("_", " ").title()
+            )
             lines.append(f"- [Python — {label}]({repo_link_prefix}/{path})")
     source_dir = pathlib.Path(cpp_rels[0]).parent.as_posix()
-    lines.extend([f"- [README]({repo_link_prefix}/{source_dir}/README.md)", ""])
+    readme_rel = module.source_readme_rel or f"{source_dir}/README.md"
+    lines.extend([f"- [README]({repo_link_prefix}/{readme_rel})", ""])
 
     return "\n".join(lines)
 
@@ -1297,7 +1481,9 @@ def _group_tutorials(modules: List[TutorialModule]) -> Dict[str, List[TutorialMo
     return groups
 
 
-def _render_tutorial_card_grid(modules: List[TutorialModule]) -> List[str]:
+def _render_tutorial_card_grid(
+    modules: List[TutorialModule], ui: Dict[str, Any] = ENGLISH_UI
+) -> List[str]:
     lines: List[str] = ['<div class="tutorial-grid">']
     for module in modules:
         title = html.escape(module.display_title)
@@ -1312,8 +1498,8 @@ def _render_tutorial_card_grid(modules: List[TutorialModule]) -> List[str]:
             [
                 f'  <div class="tutorial-card tutorial-difficulty-{diff_class}">',
                 '    <div class="tutorial-card-image-wrap">',
-                f'      <img class="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy" />',
-                f'      <a class="tutorial-card-image-title" href="{module.doc_slug}">{title}</a>',
+                f'      <BaseUrlImage className="tutorial-card-image" src="{module.image_url}" alt="{title} {html.escape(_ui(ui, "imageSuffix"))}" loading="lazy"></BaseUrlImage>',
+                f'      <BaseUrlLink className="tutorial-card-image-title" href="{module.doc_slug}">{title}</BaseUrlLink>',
                 f'      <span class="tutorial-card-duration">{duration}</span>',
                 "    </div>",
                 '    <div class="tutorial-card-body">',
@@ -1334,69 +1520,91 @@ def _clean_heading_body(heading_body: str) -> str:
     ).strip()
 
 
-def _render_tutorial_path_block(groups: Dict[str, List[TutorialModule]]) -> List[str]:
+def _render_tutorial_path_block(
+    groups: Dict[str, List[TutorialModule]], ui: Dict[str, Any] = ENGLISH_UI
+) -> List[str]:
     lines: List[str] = [
         '<div class="overview-link-columns">',
         '  <section class="overview-link-panel overview-link-panel-start">',
-        "    <h2>Choose a Tutorial Path</h2>",
-        "    <p>Use the cards in each section in order. Each tutorial includes concept-first guidance with source code in the supported language surface.</p>",
+        f"    <h2>{html.escape(_ui(ui, 'choosePath'))}</h2>",
+        f"    <p>{html.escape(_ui(ui, 'choosePathIntro'))}</p>",
         '    <ul class="overview-link-list">',
     ]
     for category, slug, _, description in CATEGORY_SUBDIRS:
         count = len(groups[category])
-        count_text = f"{count} guided tutorial{'s' if count != 1 else ''}."
+        count_key = "guidedTutorialSingular" if count == 1 else "guidedTutorialPlural"
+        count_text = f"{count} {_ui(ui, count_key)}"
         if count == 0:
-            count_text = "Tutorials are being added."
+            count_text = _ui(ui, "tutorialsComing")
+        localized_category = _localized_category(ui, category)
+        localized_description = str(
+            ui.get("categoryDescriptions", {}).get(category, description)
+        )
         lines.append(
-            f'      <li><a class="overview-link-card" href="/tutorials/{slug}/"><strong>{category}</strong><span>{description} {count_text}</span></a></li>'
+            f'      <li><BaseUrlLink className="overview-link-card" href="/tutorials/{slug}/"><strong>{html.escape(localized_category)}</strong><span>{html.escape(localized_description)} {html.escape(count_text)}</span></BaseUrlLink></li>'
         )
     lines.extend(["    </ul>", "  </section>", "</div>", ""])
     return lines
 
 
-def render_index(modules: List[TutorialModule], heading_body: str) -> str:
+def render_index(
+    modules: List[TutorialModule],
+    heading_body: str,
+    ui: Dict[str, Any] = ENGLISH_UI,
+) -> str:
     groups = _group_tutorials(modules)
     lines: List[str] = [
         "---",
-        "title: Tutorials",
-        "description: Practical tutorials for C++ and Python with guided learning paths",
+        f"title: {_ui(ui, 'title')}",
+        f'description: "{_yaml_double_quote_escape(_ui(ui, "description"))}"',
         "sidebar_position: 1",
         "slug: /tutorials",
         "---",
         "",
         "<!-- AUTO-GENERATED by tools/generate_tutorial_docs.py. -->",
         "",
-        "# Tutorials",
+        f"# {_ui(ui, 'title')}",
         "",
-        f'<img src="{docs_static_url("img/tutorials/landing.svg")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
     ]
+    if all(module.locale == "en" for module in modules):
+        lines.append(
+            f'<BaseUrlImage src="{docs_static_url("img/tutorials/landing.svg")}" alt="{html.escape(_ui(ui, "heroAlt"), quote=True)}" className="tutorial-flow" loading="lazy"></BaseUrlImage>'
+        )
 
     cleaned_heading_body = _clean_heading_body(heading_body)
     if cleaned_heading_body:
         lines.extend(["", cleaned_heading_body, ""])
-    lines.extend(_render_tutorial_path_block(groups))
+    lines.extend(_render_tutorial_path_block(groups, ui))
     return "\n".join(lines)
 
 
 def render_category_index(
-    category: str, slug: str, description: str, modules: List[TutorialModule]
+    category: str,
+    slug: str,
+    description: str,
+    modules: List[TutorialModule],
+    ui: Dict[str, Any] = ENGLISH_UI,
 ) -> str:
+    localized_category = _localized_category(ui, category)
+    localized_description = str(
+        ui.get("categoryDescriptions", {}).get(category, description)
+    )
     lines: List[str] = [
         "---",
-        f"title: {category}",
-        f'description: "{_yaml_double_quote_escape(description)}"',
+        f"title: {localized_category}",
+        f'description: "{_yaml_double_quote_escape(localized_description)}"',
         "sidebar_position: 1",
         f"slug: /tutorials/{slug}",
         "---",
         "",
         "<!-- AUTO-GENERATED by tools/generate_tutorial_docs.py. -->",
         "",
-        f"# {category}",
+        f"# {localized_category}",
         "",
-        f'<p class="tutorial-grid-intro">{html.escape(description)} Use these tutorials in order.</p>',
+        f'<p class="tutorial-grid-intro">{html.escape(localized_description)} {html.escape(_ui(ui, "useInOrder"))}</p>',
         "",
     ]
-    lines.extend(_render_tutorial_card_grid(modules))
+    lines.extend(_render_tutorial_card_grid(modules, ui))
     return "\n".join(lines)
 
 
@@ -1427,9 +1635,183 @@ def _category_subdir(category: str) -> str:
     raise ValueError(f"Unknown tutorial category: {category}")
 
 
+def _source_hash(path: pathlib.Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _validate_localized_readme(source_path: pathlib.Path, localized_path: pathlib.Path) -> None:
+    """Require translated prose to preserve tutorial executable structure."""
+    source = source_path.read_text(encoding="utf-8")
+    localized = localized_path.read_text(encoding="utf-8")
+
+    checks = {
+        "fenced code blocks": lambda text: re.findall(r"```[\s\S]*?```|~~~[\s\S]*?~~~", text),
+        "inline code": lambda text: sorted(re.findall(r"(?<!`)`[^`]+`(?!`)", text)),
+        "link targets": lambda text: sorted(re.findall(r"(?<!!)\[[^\]]*\]\(([^)]+)\)", text)),
+        "walkthrough anchors": lambda text: _STEP_ANCHOR_RE.findall(text),
+        "heading levels": lambda text: [
+            len(match.group(1)) for match in re.finditer(r"^(#{1,6})\s+", text, flags=re.M)
+        ],
+        "list markers": lambda text: re.findall(
+            r"^[ \t]*(?:[-+*]|\d+[.)])[ \t]+", text, flags=re.M
+        ),
+    }
+    for label, extract in checks.items():
+        if extract(source) != extract(localized):
+            raise ValueError(f"{localized_path}: translation changed {label}")
+
+
+def _localized_tutorial_output_root(root: pathlib.Path, locale: str) -> pathlib.Path:
+    return (
+        root
+        / "website"
+        / "i18n"
+        / locale
+        / "docusaurus-plugin-content-docs"
+        / "current"
+        / "develop-apps"
+        / "tutorials"
+    )
+
+
+def _remove_generated_localized_tutorials(out_root: pathlib.Path) -> None:
+    """Remove generator-owned locale output while preserving authored pages."""
+    (out_root / "index.md").unlink(missing_ok=True)
+    if not out_root.is_dir():
+        return
+    for child in out_root.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+
+
+def generate_localized_tutorials(
+    root: pathlib.Path,
+    module_dirs: List[pathlib.Path],
+    canonical_modules: List[TutorialModule],
+    repo_ref: str,
+) -> List[str]:
+    """Generate a locale only when every tutorial has a source-owned translation.
+
+    This all-or-nothing rule prevents a localized tutorial index from quietly
+    mixing translated pages with Docusaurus' English fallback. A translation is
+    stored at ``<tutorial>/i18n/<locale>/README.md`` and retains the English
+    level-two section names as parser keys; those structural headings are not
+    emitted into the generated page.
+    """
+    manifest_path = root / "tutorials" / "i18n" / "translation-sources.json"
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.exists()
+        else {}
+    )
+    canonical_by_folder = {module.folder: module for module in canonical_modules}
+    generated_locales: List[str] = []
+
+    for locale in SUPPORTED_LOCALES:
+        out_root = _localized_tutorial_output_root(root, locale)
+        localized_paths = {
+            module_dir.name: module_dir / "i18n" / locale / "README.md"
+            for module_dir in module_dirs
+            if (module_dir / "i18n" / locale / "README.md").exists()
+        }
+        if not localized_paths:
+            _remove_generated_localized_tutorials(out_root)
+            continue
+        missing = sorted(set(canonical_by_folder) - set(localized_paths))
+        if missing:
+            raise ValueError(
+                f"Tutorial locale {locale} is incomplete; missing README.md for: "
+                + ", ".join(missing)
+            )
+
+        locale_manifest = manifest.get(locale, {})
+        localized_modules: List[TutorialModule] = []
+        for module_dir in module_dirs:
+            canonical = canonical_by_folder[module_dir.name]
+            canonical_readme = module_dir / "README.md"
+            source_rel = canonical_readme.relative_to(root).as_posix()
+            expected_hash = locale_manifest.get(source_rel)
+            actual_hash = _source_hash(canonical_readme)
+            if expected_hash != actual_hash:
+                reason = (
+                    "has no source-hash record" if not expected_hash else "is stale"
+                )
+                raise ValueError(
+                    f"{localized_paths[module_dir.name]}: {reason} for {source_rel}"
+                )
+            _validate_localized_readme(
+                canonical_readme, localized_paths[module_dir.name]
+            )
+            localized_modules.append(
+                parse_module(
+                    module_dir,
+                    root,
+                    readme_path=localized_paths[module_dir.name],
+                    canonical=canonical,
+                    locale=locale,
+                )
+            )
+
+        ui = load_locale_catalog(root, locale)
+        groups = _group_tutorials(localized_modules)
+        localized_modules = [
+            module for label, _, _, _ in CATEGORY_SUBDIRS for module in groups[label]
+        ]
+        out_root.mkdir(parents=True, exist_ok=True)
+        expected_paths = {
+            out_root / _category_subdir(module.category) / f"{module.doc_id}.mdx"
+            for module in localized_modules
+        }
+        for stale in out_root.rglob("tutorial_*.mdx"):
+            if stale not in expected_paths:
+                stale.unlink()
+
+        per_group_idx = {slug: 0 for _, slug, _, _ in CATEGORY_SUBDIRS}
+        for label, slug, position, description in CATEGORY_SUBDIRS:
+            sub = out_root / slug
+            sub.mkdir(parents=True, exist_ok=True)
+            category_meta = {
+                "label": _localized_category(ui, label),
+                "position": position,
+                "collapsed": True,
+            }
+            (sub / "_category_.json").write_text(
+                json.dumps(category_meta, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (sub / "index.md").write_text(
+                render_category_index(label, slug, description, groups[label], ui),
+                encoding="utf-8",
+            )
+        for module in localized_modules:
+            sub_slug = _category_subdir(module.category)
+            per_group_idx[sub_slug] += 1
+            (out_root / sub_slug / f"{module.doc_id}.mdx").write_text(
+                render_tutorial_doc(module, per_group_idx[sub_slug], repo_ref, ui),
+                encoding="utf-8",
+            )
+
+        heading_path = root / "tutorials" / "i18n" / locale / "heading.mm"
+        heading_body = (
+            heading_path.read_text(encoding="utf-8").strip()
+            if heading_path.exists()
+            else ""
+        )
+        (out_root / "index.md").write_text(
+            render_index(localized_modules, heading_body, ui), encoding="utf-8"
+        )
+        generated_locales.append(locale)
+
+    return generated_locales
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate tutorial docs from tutorial module folders.")
-    parser.add_argument("--repo-root", default=".", help="Repository root (default: current directory)")
+    parser = argparse.ArgumentParser(
+        description="Generate tutorial docs from tutorial module folders."
+    )
+    parser.add_argument(
+        "--repo-root", default=".", help="Repository root (default: current directory)"
+    )
     args = parser.parse_args()
 
     root = pathlib.Path(args.repo_root).resolve()
@@ -1445,19 +1827,23 @@ def main() -> int:
     modules = [parse_module(d, root) for d in module_dirs]
     groups = _group_tutorials(modules)
     modules = [
-        module
-        for label, _, _, _ in CATEGORY_SUBDIRS
-        for module in groups[label]
+        module for label, _, _, _ in CATEGORY_SUBDIRS for module in groups[label]
     ]
     repo_ref = detect_repo_ref()
 
     docs_tutorials_dir.mkdir(parents=True, exist_ok=True)
     generate_card_images(root / "website" / "static" / "img" / "tutorials" / "cards")
-    generate_flow_animations(root / "website" / "static" / "img" / "tutorials" / "flow", modules)
+    generate_flow_animations(
+        root / "website" / "static" / "img" / "tutorials" / "flow", modules
+    )
     generate_landing_animation(root / "website" / "static" / "img" / "tutorials")
     generate_minimal_example_animation(root)
     heading_path = docs_tutorials_dir / "heading.mm"
-    heading_body = heading_path.read_text(encoding="utf-8").strip() if heading_path.exists() else ""
+    heading_body = (
+        heading_path.read_text(encoding="utf-8").strip()
+        if heading_path.exists()
+        else ""
+    )
 
     # Create topic subdirectories with category metadata so the sidebar groups
     # tutorials by API and deployment surface. Difficulty remains page metadata.
@@ -1487,15 +1873,15 @@ def main() -> int:
             legacy.rmdir()
 
     # Re-number sidebar_position per topic category so each subsection starts at 1.
-    per_group_idx: Dict[str, int] = {
-        slug: 0 for _, slug, _, _ in CATEGORY_SUBDIRS
-    }
+    per_group_idx: Dict[str, int] = {slug: 0 for _, slug, _, _ in CATEGORY_SUBDIRS}
     for module in modules:
         sub_slug = _category_subdir(module.category)
         per_group_idx[sub_slug] += 1
         out_path = docs_tutorials_dir / sub_slug / f"{module.doc_id}.mdx"
         out_path.write_text(
-            render_tutorial_doc(module, sidebar_position=per_group_idx[sub_slug], repo_ref=repo_ref),
+            render_tutorial_doc(
+                module, sidebar_position=per_group_idx[sub_slug], repo_ref=repo_ref
+            ),
             encoding="utf-8",
         )
 
@@ -1509,7 +1895,19 @@ def main() -> int:
     index_path = docs_tutorials_dir / "index.md"
     index_path.write_text(render_index(modules, heading_body), encoding="utf-8")
 
-    print(f"Generated {len(modules)} tutorial docs + index (source ref: {repo_ref}).")
+    localized = generate_localized_tutorials(root, module_dirs, modules, repo_ref)
+    generated_locale_manifest = (
+        root / "website" / "src" / "generated" / "tutorial-locales.json"
+    )
+    generated_locale_manifest.parent.mkdir(parents=True, exist_ok=True)
+    generated_locale_manifest.write_text(
+        json.dumps({"locales": localized}, indent=2) + "\n", encoding="utf-8"
+    )
+    locale_suffix = f"; localized: {', '.join(localized)}" if localized else ""
+    print(
+        f"Generated {len(modules)} tutorial docs + index "
+        f"(source ref: {repo_ref}{locale_suffix})."
+    )
     return 0
 
 

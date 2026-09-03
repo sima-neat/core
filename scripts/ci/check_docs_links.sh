@@ -87,6 +87,14 @@ esac
 if [[ "${BASE_PATH}" != "/" ]]; then
   BASE_PATH="/${BASE_PATH#/}"
   BASE_PATH="${BASE_PATH%/}/"
+  root_absolute_image_matches="$(
+    find "${SITE_DIR}" -type f -name '*.html' \
+      -exec grep -nHE '(<img[^>]+src|<object[^>]+data)="/img/' {} + || true
+  )"
+  if [[ -n "${root_absolute_image_matches}" ]]; then
+    printf '%s\n' "${root_absolute_image_matches}" >&2
+    die "built pages contain root-absolute image URLs that bypass ${BASE_PATH}"
+  fi
   SERVE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sima-neat-docs-link-root.XXXXXX")"
   mkdir -p "${SERVE_DIR}${BASE_PATH%/}"
   cp -a "${SITE_DIR}/." "${SERVE_DIR}${BASE_PATH%/}/"

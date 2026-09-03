@@ -44,11 +44,11 @@ configures DevKit Sync. If you skip pairing, the SDK workspace is still created
 and you can pair later.
 
 The `release-2.1` package tracks the latest Neat SDK patch release in the 2.1
-series. The current release is Neat SDK 2.1.2.2, which is compatible with
-DevKit software 2.1.2.
+series. The current release is Neat SDK 2.1.3.0, which is compatible with
+DevKit software 2.1.3.
 
 During setup, `sima-cli` also offers to install the matching Model Compiler
-(2.1.2) inside the SDK — accept the prompt if you compile or quantize models
+inside the SDK — accept the prompt if you compile or quantize models
 yourself; there is no separate version to choose. Skip it if you only run
 precompiled model packages. To install it later, pin a specific patch, or use a
 standalone host, see
@@ -56,8 +56,8 @@ standalone host, see
 and the [Compatibility Guide](/getting-started/compatibility/).
 
 :::note Older SDK releases use the legacy two-step install flow
-For SDK 2.0.0, 2.1.2.0, or 2.1.2.1, install with the legacy image pull and setup
-commands. See [Two Step SDK Installation](/reference/two-step-sdk-installation/).
+For older SDK releases that require separate image pull and setup commands, see
+[Two Step SDK Installation](/reference/two-step-sdk-installation/).
 :::
 
 To change SDK settings after installation, see
@@ -98,16 +98,15 @@ workspace. For more information, see [Insight](/tools/insight/).
 
 ### Use VS Code
 
-Starting with SDK 2.1.2.3, you can access VS Code from a browser through the
-SDK Code UI. At the end of SDK installation, `sima-cli` prints the Code UI URL
-as `codeUI`, for example:
+You can access VS Code from a browser through the SDK Code UI. At the end of SDK
+installation, `sima-cli` prints the Code UI URL as `codeUI`, for example:
 
 <ShellCommand prompt="user-host-machine">
 codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 </ShellCommand>
 
-Open that URL in your browser to work inside the SDK workspace. SDK 2.1.2.3 and
-later preinstall the Codex and Claude Code extensions in the browser Code UI.
+Open that URL in your browser to work inside the SDK workspace. The SDK
+preinstalls the Codex and Claude Code extensions in the browser Code UI.
 
 Native VS Code is another option if you prefer it instead of the browser. Connect
 VS Code to the SDK container with

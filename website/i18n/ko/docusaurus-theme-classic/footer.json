@@ -1,0 +1,10 @@
+{
+  "link.item.label.SiMa.ai Neat Framework Documentation": {
+    "message": "SiMa.ai Neat 프레임워크 문서",
+    "description": "The label of footer link with label=SiMa.ai Neat Framework Documentation linking to /"
+  },
+  "copyright": {
+    "message": "Copyright © 2026 SiMa.ai",
+    "description": "The footer copyright"
+  }
+}

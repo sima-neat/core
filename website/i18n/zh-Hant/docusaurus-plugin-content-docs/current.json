@@ -1,0 +1,294 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.docs.category.Getting Started": {
+    "message": "開始使用",
+    "description": "The label for category 'Getting Started' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Neat SDK": {
+    "message": "Neat SDK",
+    "description": "The label for category 'Neat SDK' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Neat Library": {
+    "message": "Neat 程式庫",
+    "description": "The label for category 'Neat Library' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Compile a Model": {
+    "message": "編譯模型",
+    "description": "The label for category 'Compile a Model' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.GenAI with LLiMa": {
+    "message": "使用 LLiMa 開發 GenAI",
+    "description": "The label for category 'GenAI with LLiMa' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Develop Apps": {
+    "message": "開發應用程式",
+    "description": "The label for category 'Develop Apps' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Hello Neat!": {
+    "message": "初識 Neat",
+    "description": "The label for category 'Hello Neat!' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Development Workflow": {
+    "message": "開發工作流程",
+    "description": "The label for category 'Development Workflow' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.GenAI Model": {
+    "message": "GenAI 模型",
+    "description": "The label for category 'GenAI Model' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Tutorials": {
+    "message": "教學課程",
+    "description": "The label for category 'Tutorials' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Models & Inference": {
+    "message": "模型與推論",
+    "description": "The label for category 'Models & Inference' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Graphs & Pipelines": {
+    "message": "圖與管線",
+    "description": "The label for category 'Graphs & Pipelines' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Cameras & Streaming": {
+    "message": "攝影機與串流",
+    "description": "The label for category 'Cameras & Streaming' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.GenAI": {
+    "message": "GenAI",
+    "description": "The label for category 'GenAI' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.PCIe Co-Processing": {
+    "message": "PCIe 協同處理",
+    "description": "The label for category 'PCIe Co-Processing' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Advanced Concepts": {
+    "message": "進階概念",
+    "description": "The label for category 'Advanced Concepts' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Application Design": {
+    "message": "應用程式設計",
+    "description": "The label for category 'Application Design' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Execution Model": {
+    "message": "執行模型",
+    "description": "The label for category 'Execution Model' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Data & Model Contracts": {
+    "message": "資料與模型契約",
+    "description": "The label for category 'Data & Model Contracts' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Model Runtime": {
+    "message": "模型執行階段",
+    "description": "The label for category 'Model Runtime' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Contribute": {
+    "message": "參與貢獻",
+    "description": "The label for category 'Contribute' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Start Here": {
+    "message": "從這裡開始",
+    "description": "The label for category 'Start Here' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Build & Test": {
+    "message": "建置與測試",
+    "description": "The label for category 'Build & Test' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Contracts & Internals": {
+    "message": "契約與內部機制",
+    "description": "The label for category 'Contracts & Internals' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Release & Maintenance": {
+    "message": "發行與維護",
+    "description": "The label for category 'Release & Maintenance' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Tools": {
+    "message": "工具",
+    "description": "The label for category 'Tools' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.sima-cli": {
+    "message": "sima-cli",
+    "description": "The label for category 'sima-cli' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.appzoo": {
+    "message": "appzoo",
+    "description": "The label for category 'appzoo' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.device": {
+    "message": "device",
+    "description": "The label for category 'device' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.mla": {
+    "message": "mla",
+    "description": "The label for category 'mla' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.modelzoo": {
+    "message": "modelzoo",
+    "description": "The label for category 'modelzoo' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.neat": {
+    "message": "neat",
+    "description": "The label for category 'neat' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.packages": {
+    "message": "packages",
+    "description": "The label for category 'packages' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.playbooks": {
+    "message": "playbooks",
+    "description": "The label for category 'playbooks' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.sdk": {
+    "message": "sdk",
+    "description": "The label for category 'sdk' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Neat SDK Networking Setup": {
+    "message": "Neat SDK 網路設定",
+    "description": "The label for category 'Neat SDK Networking Setup' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Insight": {
+    "message": "Insight",
+    "description": "The label for category 'Insight' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.API": {
+    "message": "API",
+    "description": "The label for category 'API' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Observe Insight": {
+    "message": "監控 Insight",
+    "description": "The label for category 'Observe Insight' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.observe-insight-service-and-system": {
+    "message": "服務與系統",
+    "description": "The label for category 'Service and system' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.observe-insight-diagnostics": {
+    "message": "診斷",
+    "description": "The label for category 'Diagnostics' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.observe-insight-viewer": {
+    "message": "檢視器",
+    "description": "The label for category 'Viewer' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.observe-insight-dev-kit-shell": {
+    "message": "DevKit Shell",
+    "description": "The label for category 'DevKit shell' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Automate Insight": {
+    "message": "自動化 Insight",
+    "description": "The label for category 'Automate Insight' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.automate-insight-media-library": {
+    "message": "媒體庫",
+    "description": "The label for category 'Media library' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.automate-insight-media-imports": {
+    "message": "媒體匯入",
+    "description": "The label for category 'Media imports' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.automate-insight-media-sources": {
+    "message": "媒體來源",
+    "description": "The label for category 'Media sources' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.automate-insight-workspace": {
+    "message": "工作區",
+    "description": "The label for category 'Workspace' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.API resources": {
+    "message": "API 資源",
+    "description": "The label for category 'API resources' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.api-resources-api-documentation": {
+    "message": "API 文件",
+    "description": "The label for category 'API documentation' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.References": {
+    "message": "參考資料",
+    "description": "The label for category 'References' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.C++ Reference": {
+    "message": "C++ 參考資料",
+    "description": "The label for category 'C++ Reference' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.classes": {
+    "message": "類別",
+    "description": "The label for category 'classes' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.files": {
+    "message": "檔案",
+    "description": "The label for category 'files' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.folders": {
+    "message": "資料夾",
+    "description": "The label for category 'folders' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.groups": {
+    "message": "群組",
+    "description": "The label for category 'groups' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.namespaces": {
+    "message": "命名空間",
+    "description": "The label for category 'namespaces' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.structs": {
+    "message": "結構",
+    "description": "The label for category 'structs' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Nodes": {
+    "message": "節點",
+    "description": "The label for category 'Nodes' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Python Reference": {
+    "message": "Python 參考資料",
+    "description": "The label for category 'Python Reference' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Modules": {
+    "message": "模組",
+    "description": "The label for category 'Modules' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.pyneat": {
+    "message": "pyneat",
+    "description": "The label for category 'pyneat' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Model Compiler API": {
+    "message": "Model Compiler API",
+    "description": "The label for category 'Model Compiler API' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Compilation": {
+    "message": "編譯",
+    "description": "The label for category 'Compilation' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Model Lifecycle": {
+    "message": "模型生命週期",
+    "description": "The label for category 'Model Lifecycle' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Versioned Public APIs": {
+    "message": "版本化公開 API",
+    "description": "The label for category 'Versioned Public APIs' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Execution & Analysis": {
+    "message": "執行與分析",
+    "description": "The label for category 'Execution & Analysis' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Transforms": {
+    "message": "轉換",
+    "description": "The label for category 'Transforms' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Types & Error Handling": {
+    "message": "型別與錯誤處理",
+    "description": "The label for category 'Types & Error Handling' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Environment Variables": {
+    "message": "環境變數",
+    "description": "The label for category 'Environment Variables' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.SDK Host Setup": {
+    "message": "SDK 主機設定",
+    "description": "The label for category 'SDK Host Setup' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Release Notes": {
+    "message": "版本資訊",
+    "description": "The label for category 'Release Notes' in sidebar 'docs'"
+  }
+}

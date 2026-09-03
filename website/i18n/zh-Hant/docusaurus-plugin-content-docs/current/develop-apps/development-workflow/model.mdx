@@ -1,0 +1,867 @@
+---
+title: "模型"
+description: "載入已編譯的模型封存檔，檢查其合約，並選擇模型選項。"
+sidebar_position: 1
+---
+
+# 模型
+
+[`Model`](/reference/{lsa}/classes/simaai-neat-model) 會載入已編譯的模型封存檔，並公開 Neat 可以執行的路徑。
+
+當您想要進行模型感知型執行，而無需手動設定每個預處理、推論和後處理階段時，請使用 `Model`。首先檢查合約。然後執行它。沒有神秘的張量。
+
+## `Model` 提供的功能
+
+- `input_specs()` 和 `output_specs()` 會顯示模型預期和產生的張量合約。
+- `metadata()`、`info()` 和 Python `summary()` 可幫助您檢查已載入的模型。
+- `run(...)` 會執行單次直接推論。
+- `build(...)` 會建立一個可重複使用的模型執行器，用於推/拉執行。
+- `graph()` 會將模型路徑作為一個可重複使用的 `Graph` 片段傳回。
+- `preprocess()`、`inference()` 和 `postprocess()` 會公開路徑階段，以進行更進階的組合。
+
+參考資料：
+
+- [`Model` API](/reference/{lsa}/classes/simaai-neat-model)
+- [`Model::Options`](/reference/{lsa}/structs/simaai-neat-model-options)
+- [`Model::RouteOptions`](/reference/{lsa}/structs/simaai-neat-model-routeoptions)
+
+## 載入模型封存檔
+
+本頁面上的範例假設 `model_path` 指向來自 Model Compiler 的已編譯模型封存檔，通常是一個 `.tar.gz` 檔案，已複製到執行 Neat 的機器上。首先使用預設選項；只有在合約或輸入來源需要時，才新增 `ModelOptions`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const std::string model_path = "resnet_50_model.tar.gz";
+simaai::neat::Model model(model_path);
+
+const auto info = model.info();
+const auto inputs = model.input_specs();
+const auto outputs = model.output_specs();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model_path = "resnet_50_model.tar.gz"
+model = pyneat.Model(model_path)
+
+print(model.summary())
+inputs = model.input_specs()
+outputs = model.output_specs()
+```
+
+</CodeTab>
+</CodeTabs>
+
+如果這個檢查步驟讓你感到意外，請停止操作。在建立更大的應用程式之前，先修正模型路徑、成品或合約。
+
+## 選擇模型執行路徑
+
+選擇與工作相符的路徑。保持煙霧測試的規模較小；將圖層級的機制保留給圖層級的問題。
+
+| 需求 | 使用 | 傳回 |
+|---|---|---|
+| 執行一次模型輸入 | `model.run(...)` | 對於張量輸入，傳回 `TensorList`，或對於樣本輸入，傳回 `Sample` |
+| 在多個輸入中重複使用模型路徑 | `model.build(...)` 和模型執行器 | 對模型路徑進行推/拉控制 |
+| 僅測量模型執行 | `model.benchmark(...)` 或已測量的模型執行器 | `BenchmarkReport` 或 `MeasureReport` |
+| 將模型放入應用程式流程中 | `graph.add(model)` | 一個 `Graph` 階段 |
+| 暴露路徑邊界以進行組合 | `model.graph(route_options)` | 一個可重複使用的 `Graph` 片段 |
+| 偵錯一個模型階段 | `model.fragment(ModelStage::...)` | 一個特定階段的 `Graph` 片段 |
+
+對於需要保證的情況，使用直接的模型呼叫。當模型成為應用程式的一部分時，使用 `Graph`：命名輸入、來源節點、分支、連接、渲染、視訊輸出、中繼資料輸出或多個模型。
+
+## 選擇模型選項
+
+從預設的 `ModelOptions` 開始。僅在模型合約或輸入來源需要時，才新增選項。
+
+| 目標 | 使用的選項 | 備註 |
+|---|---|---|
+| 傳送已解碼的影像輸入 | `preprocess.kind`、`preprocess.preset` 以及特定的預處理欄位，例如調整大小、顏色、佈局、正規化、量化或鑲嵌 | 當您的應用程式傳送像素，且 Neat 應將其調整為模型合約時，請使用此選項。 |
+| 傳送模型形狀的張量輸入 | `preprocess.kind = Tensor`；僅在張量已滿足模型合約時，設定 `preprocess.enable = Off` | 當您的應用程式已經擁有預處理時，請使用此選項。 |
+| 解碼偵測輸出 | `decode_type`、`decode_type_option`、`score_threshold`、`nms_iou_threshold`、`top_k`、`num_classes` | 偵測模型需要明確的解碼意圖。 |
+| 保留提取的模型檔案以供檢查 | `cleanup_extracted_model_data = false` | 在偵錯時很有用。對於正常執行，請保留預設值。 |
+| 在一個程序中執行多個模型路徑 | `name_suffix` 和圖元素名稱的前綴/後綴 | 使生成的名稱和診斷資訊更易於閱讀。 |
+| 提前停止模型路徑 | `inference_terminal` | 高級路徑偵錯路徑。請勿在首次執行程式碼中使用它。 |
+| 調整執行位置或內部佇列 | `processcvu`、`processmla`、`advanced_execution` | 高級設定。在調整之前，請先測量預設路徑。 |
+
+### 具有偵測解碼的影像輸入
+
+當模型需要影像預處理並輸出 YOLO 樣式的偵測結果時，請使用此模式。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.preprocess.kind = simaai::neat::InputKind::Image;
+options.preprocess.preset = simaai::neat::NormalizePreset::COCO_YOLO;
+options.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.preprocess.kind = pyneat.InputKind.Image
+options.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
+options.decode_type = pyneat.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+保持設定的合理性：除非它們會改變您需要的合約，否則請勿設定預設或已棄用的欄位。如果張量或影像的中繼資料已經包含來源格式，除非頁面解釋了原因，否則請避免重複設定。
+
+### 物體檢測解碼欄位指南
+
+當路由應該傳回解碼後的框、姿勢結果或分割結果，而不是原始推論張量時，請設定物體檢測解碼選項。如果您想要原始模型輸出，請將欄位保持未設定。
+
+| 欄位 | 何時使用 | 預設意義 |
+|---|---|---|
+| `decode_type` | 您需要 Neat 將 BoxDecode 階段附加到物體檢測模型。 | `Unspecified`；沒有物體檢測解碼意圖。 |
+| `decode_type_option` | 物體檢測頭張量排序需要特定的變體。 | `Auto`；讓模型合約和路由規劃器決定。 |
+| `score_threshold` | 您希望在解碼期間捨棄低信度候選者。 | `0`；在後續篩選之前保留候選者。 |
+| `nms_iou_threshold` | 解碼路徑應該應用非最大值抑制。 | `0`；NMS 已停用。 |
+| `top_k` | 您希望對每個輸出設定硬性上限的檢測數量。 | `0`；沒有頂級 K 上限。 |
+| `num_classes` | 無法可靠地推斷出類別頭的深度，例如單一類別的 YOLO 分割頭。 | `0`；使用 MPK 中繼資料或舊版推論。 |
+
+對於大多數 YOLO 樣式的模型，請從 `decode_type`、`score_threshold`、`nms_iou_threshold` 和 `top_k` 開始。只有在模型合約需要協助時，才新增 `num_classes`。除非已知張量排序需要特定的選擇器，否則將 `decode_type_option` 保持在 `Auto` 上。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+options.num_classes = 1;  // Set only when the model contract needs the class count.
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+options.num_classes = 1  # Set only when the model contract needs the class count.
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+請勿在新範例中使用 `boxdecode_original_width` 或 `boxdecode_original_height`。座標反轉使用預處理中的中繼資料；請保留該中繼資料，而不是硬編碼圖像大小。
+
+### 原始張量輸入
+
+如果您的應用程式已經以編譯模型所預期的形狀、資料類型和佈局方式建立張量，請使用此模式。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.preprocess.kind = simaai::neat::InputKind::Tensor;
+options.preprocess.enable = simaai::neat::AutoFlag::Off;
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.preprocess.kind = pyneat.InputKind.Tensor
+options.preprocess.enable = pyneat.AutoFlag.Off
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+如果您的張量尚未調整為模型所需的形狀，請不要強行使用此方法。讓預處理程序執行調整，或修改張量建立程式碼。
+
+### 預處理欄位指南
+
+`ModelOptions.preprocess` 指明您將提供的輸入類型，以及 Neat 在推理之前可能執行的調整。
+
+| 需求 | 欄位 |
+|---|---|
+| 選擇圖像或張量輸入 | `preprocess.kind` |
+| 對於已調整形狀的張量，停用預處理 | `preprocess.enable = Off` |
+| 限制動態圖像輸入 | `preprocess.input_max_width`、`preprocess.input_max_height`、`preprocess.input_max_depth` |
+| 調整大小、裁剪或使用信箱格式 | `preprocess.resize` |
+| 轉換 RGB、BGR、NV12、I420 或灰度 | `preprocess.color_convert` |
+| 轉換 HWC、CHW 或其他軸順序 | `preprocess.layout_convert` |
+| 應用平均值/標準差正規化 | `preprocess.normalize` 或 `preprocess.preset` |
+| 在推理之前進行量化 | `preprocess.quantize` |
+| 在推理之前進行鑲嵌 | `preprocess.tessellate` |
+| 使用有序轉換列表進行覆寫 | `preprocess.transforms` |
+
+設定描述您實際發送的輸入的最小選項集。規格是合約；解析後的預處理計畫是收據。
+
+## 檢查規格並直接執行
+
+在組成 `Graph` 之前，請檢查模型合約。規格告訴您需要分配、發送和解碼的內容。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model(model_path, options);
+
+const auto inputs = model.input_specs();
+const auto outputs = model.output_specs();
+const auto metadata = model.metadata();
+const auto info = model.info();
+
+for (const auto& input : inputs) {
+  const auto& shape = input.shape;
+}
+
+for (const auto& output : outputs) {
+  const auto& shape = output.shape;
+}
+
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList result = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model(model_path, options)
+
+print(model.summary())
+inputs = model.input_specs()
+outputs = model.output_specs()
+metadata = model.metadata()
+
+for input_spec in inputs:
+    input_shape = list(input_spec.shape)
+
+for output_spec in outputs:
+    output_shape = list(output_spec.shape)
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+result = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+在 Python 中，傳遞一個輸入的列表或元組。`model.run([tensor])` 表示「一個模型輸入」。它不會新增批次維度。
+
+`model.run(...)` 採用一次性執行方式，而不是每次呼叫都重新建構。第一次呼叫會延遲建構並快取一個內部執行器；後續呼叫會重複使用該執行器並透過它進行推送/拉取。當您需要路由選項、執行階段選項、測量、關閉/釋放控制或生產者/消費者迴圈時，請使用明確的 `model.build(...)`。
+
+使用 OpenCV 支援建構的 C++ 程式碼也會公開 `model.run(std::vector<cv::Mat>{frame}, timeout_ms)`。當範例必須指定像素格式或記憶體所有權時，請使用明確的 `Tensor::from_cv_mat(...)` 路徑。
+
+## 與多個輸入和批次一起使用
+
+一個模型可以有多個輸入端口、已編譯的批次大小，或兩者兼具。請勿混淆這些概念：
+
+- **多個輸入**表示每個模型輸入一個張量。請檢查 `model.input_specs()` 以了解預期的順序和合約。
+- **批次**表示模型已編譯以處理每個推論中的多個邏輯樣本。請檢查 `model.compiled_batch_size()`。
+- **Python 輸入列表**選擇輸入列表，而不是批次維度。`model.run([tensor])` 是一個輸入。它不會將 `tensor` 轉換為批次大小 1。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const int batch = model.compiled_batch_size();
+const auto specs = model.input_specs();
+
+// Two-input model: pass one tensor per ingress.
+simaai::neat::TensorList inputs{left_tensor, right_tensor};
+simaai::neat::TensorList outputs = model.run(inputs, /*timeout_ms=*/2000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+batch = model.compiled_batch_size()
+specs = model.input_specs()
+
+# Two-input model: pass one tensor per ingress.
+outputs = model.run([left_tensor, right_tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+如果批次模型預期輸入的形狀為 `[N, ...]`，請根據輸入規格，將 `N` 放入張量形狀中。除非模型具有 `N` 輸入端口，否則請勿傳遞 `N` 分開的 Python 列表項目。
+
+## 檢查路由計畫
+
+當預處理、輸出拓撲或路由選擇讓您感到意外時，請檢查路由，而不是猜測。
+
+| 問題 | 檢查 |
+|---|---|
+| 模型公開了哪些張量形狀和資料類型？ | `input_specs()` 和 `output_specs()` |
+| 編譯後的成品宣告了什麼？ | `info()` 和 `metadata()` |
+| 預處理需要什麼輸入？ | `preprocess_requirements()` |
+| Neat 編譯了哪個預處理路徑？ | `resolved_preprocess_plan()` / Python `preprocess_plan()` |
+| 編譯了哪個批次大小？ | `compiled_batch_size()` |
+| 我應該解碼哪個輸出格式？ | 輸出規格加上 `info().output_topology` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto requirements = model.preprocess_requirements();
+const auto plan = model.resolved_preprocess_plan();
+
+std::cout << "preprocess: " << plan.to_debug_string() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+requirements = model.preprocess_requirements()
+plan = model.preprocess_plan()
+
+print(plan.to_debug_string())
+```
+
+</CodeTab>
+</CodeTabs>
+
+已解決的計畫就是稽核記錄：請求的選項、生效的選項、圖族群、輸入合約、MLA 合約，以及警告。
+
+### 讀取模型路徑快照
+
+當您需要一個簡潔的路徑快照，而無需手動讀取模型封存檔時，請使用 `info()`。Python 也提供 `summary()`，以進行快速的文字檢視；C++ 使用結構化的 `info()` 結果。
+
+| 問題 | 要檢查的 `info()` 欄位 |
+|---|---|
+| 我載入了哪個成品？ | `model_name`、`mpk_json_path` |
+| 需要哪些配接器階段？ | `needs` |
+| 有哪些可用的配接器階段？ | `capabilities` |
+| 路徑是否包含預處理或後處理？ | `selection.include_preprocess_stage`、`selection.include_postprocess_stage` |
+| 這是一個僅用於推論的路徑嗎？ | `selection.infer_only` |
+| 選擇了哪個預處理圖或後處理類型？ | `selection.preprocess_graph`、`selection.selected_post_kind` |
+| 實際輸出和邏輯輸出各有多少？ | `output_topology.physical_outputs`、`logical_outputs`、`packed_outputs` |
+| 路徑規劃器產生了哪些警告？ | `warnings` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto info = model.info();
+
+std::cout << "model=" << info.model_name << "\n";
+std::cout << "physical_outputs=" << info.output_topology.physical_outputs
+          << " logical_outputs=" << info.output_topology.logical_outputs << "\n";
+
+for (const auto& warning : info.warnings) {
+  std::cerr << warning << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+print(model.summary())
+
+info = model.info()
+print("model=", info.model_name)
+print("physical_outputs=", info.output_topology.physical_outputs)
+print("logical_outputs=", info.output_topology.logical_outputs)
+
+for warning in info.warnings:
+    print(warning)
+```
+
+</CodeTab>
+</CodeTabs>
+
+將路線警告視為一級證據。如果路線規劃工具告訴您一些不尋常的事情，請不要迴避它。首先修正合約或選項。
+
+## 在圖中運用模型
+
+對於常見的路徑，請直接在公共輸入和輸出之間新增模型。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+```
+
+</CodeTab>
+</CodeTabs>
+
+當您需要一個可重複使用的片段或明確的路由邊界時，請使用 `model.graph(...)`。
+
+路由選項控制該片段如何公開其介面：
+
+| 需求 | 路由選項 |
+|---|---|
+| 向傳回的圖中新增一個公開的輸入節點 | `include_input` |
+| 向傳回的圖中新增一個公開的輸出節點 | `include_output` |
+| 公開個別的實體輸出 | `expose_all_outputs` |
+| 消除產生元素的名稱歧義 | `name_suffix` |
+| 從特定的上游元素名稱連接 | `upstream_name` |
+| 對此路由覆寫進階執行 | `advanced_execution` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.include_input = true;
+route.include_output = true;
+route.name_suffix = "_detector";
+
+simaai::neat::Graph model_fragment = model.graph(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.include_input = True
+route.include_output = True
+route.name_suffix = "_detector"
+
+model_fragment = model.graph(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+路徑邊界是一種合約。當您希望讓片段公開輸入或輸出時，請新增它們。當模型只是大型圖中一個階段時，請省略它們。
+
+### 使用階段片段進行進階組合
+
+大多數應用程式應該新增整個模型路徑。只有在您有意地組合或偵錯路徑時，才使用階段片段。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph preprocess =
+    model.fragment(simaai::neat::Model::Stage::Preprocess);
+simaai::neat::Graph inference =
+    model.fragment(simaai::neat::Model::Stage::Inference);
+simaai::neat::Graph postprocess =
+    model.fragment(simaai::neat::Model::Stage::Postprocess);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+preprocess = model.fragment(pyneat.ModelStage.Preprocess)
+inference = model.fragment(pyneat.ModelStage.Inference)
+postprocess = model.fragment(pyneat.ModelStage.Postprocess)
+```
+
+</CodeTab>
+</CodeTabs>
+
+進階輔助工具用於診斷和有目的性的組合。請勿將它們用於首次執行程式碼中。
+
+| 輔助工具 | 語言 | 何時使用 |
+|---|---|---|
+| `backend_fragment(stage)` | C++ 和 Python | 在偵錯路由時，您需要檢查後端片段以了解單個模型階段。 |
+| `input_appsrc_options(tensor_mode)` | C++ 和 Python | 單一輸入模型需要為輸入邊界定義精確的 `InputOptions` Neat 衍生類別。 |
+| `input_appsrc_options_list(tensor_mode)` | C++ | 多輸入模型需要每個輸入的 `InputOptions`。 |
+| `find_config_path_by_plugin(plugin_id)` | C++ 和 Python | 在收集證據時，您需要提取特定外掛程式的設定檔。 |
+| `find_config_path_by_processor(processor)` | C++ 和 Python | 您需要處理器（例如 MLA、CVU 或 APU）的設定檔。 |
+| `infer_output_name()` | C++ 和 Python | 您需要用於診斷的標準推論階段輸出元素名稱。 |
+
+如果某個輔助工具公開後端名稱或提取的檔案，則將結果視為證據，而不是應用程式控制流程。公開的 `Model`、`Graph`、`Run`、`Input` 和 `Output` API 應使用正常的應用程式路徑。
+
+## 僅在建立基準之後才調整模型執行
+
+大多數模型應首先使用預設的執行設定來執行。建立正確的基準之後，使用進階執行欄位一次測試一個變更。更改一個設定，進行測量，並將預設路由作為您的控制組。
+
+`advanced_execution` 是新檔案和範例的首選選項，因為每個欄位都直接說明了其意圖。未設定的欄位不會產生任何影響。路由級別選項會覆寫該路由的模型級別選項。
+
+| 需求 | 欄位 | 備註 |
+|---|---|---|
+| 選擇模型管理的預處理在何處執行 | `advanced_execution.preprocess_target` | 僅在您正在驗證放置位置時，才使用目標標記，例如 `"AUTO"`、`"A65"` 或 `"EV74"`。 |
+| 選擇模型管理的後處理在何處執行 | `advanced_execution.postprocess_target` | 用於可以在多個目標上執行的後處理階段。 |
+| 允許預處理以非同步方式執行 | `advanced_execution.preprocess_async` | 在啟用之前和之後測量延遲和吞吐量。 |
+| 允許 MLA 推論以非同步方式執行 | `advanced_execution.inference_async` | 對於保持工作進度的串流工作負載很有用。 |
+| 調整推論輸出緩衝 | `advanced_execution.inference_output_buffers` | 僅在測量結果顯示輸出緩衝是瓶頸時才增加。 |
+| 延遲輸出快取同步 | `advanced_execution.defer_output_cache_sync` | 進階。僅在理解消費者和記憶體生命週期時使用。 |
+| 使用已準備好的執行器 | `advanced_execution.prepared_runner` | 進階路由執行器實驗。請勿將其用於首次執行程式碼中。 |
+| 調整內部插入的佇列深度 | `advanced_execution.internal_queue_depth` | 進階。佇列深度可以吸收抖動；它不會產生加速器容量。 |
+
+在最符合實驗需求的最小範圍內設定進階執行欄位：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.name_suffix = "_lane0";
+route.advanced_execution.inference_async = true;
+
+auto runner = model.build(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.name_suffix = "_lane0"
+route.advanced_execution.inference_async = True
+
+runner = model.build_with_route_options(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+將預設路徑作為您的基準。修改一個欄位，進行測量，匯出證據，然後決定該修改是否值得納入應用程式中。
+
+C++ 也會公開更底層的 `processcvu`、`processmla`、`prepared_runner` 和 `async_queue_depth` 欄位，這些欄位位於 `Model::Options`、`Model::RouteOptions` 和 `GraphOptions` 中。除非您要保留現有的 C++ 程式碼或偵錯特定的底層欄位，否則請優先使用 `advanced_execution`，尤其是在客戶範例中。
+
+## 重新使用模型執行器
+
+當您想要避免為每個輸入重新建構路徑時，請使用 `build(...)`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build();
+
+// Convenience path: push one input and wait for its output.
+simaai::neat::TensorList result = runner.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+
+// Async path: push now, pull later.
+runner.push(simaai::neat::TensorList{input});
+simaai::neat::Sample sample = runner.pull(/*timeout_ms=*/2000);
+
+runner.close_input();
+runner.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build()
+
+# Convenience path: push one input and wait for its output.
+result = runner.run([tensor], timeout_ms=2000)
+
+# Async path: push now, pull later.
+runner.push([tensor])
+sample = runner.pull(timeout_ms=2000)
+
+runner.close_input()
+runner.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+當每次呼叫都應該推送一個輸入並等待其輸出時，請使用 `runner.run(...)`。當您的應用程式想要讓工作持續進行時，請使用 `push(...)` / `pull(...)`。當不再有輸入時，並且您希望剩餘的工作完成時，請使用 `close_input()`。當執行器完成時，請使用 `close()`。
+
+### 建立特定路由的執行器
+
+當可重複使用的執行器應該使用與預設路由不同的路由層級執行設定或路由命名時，請使用特定路由的執行器。`Model::build(...)` 會為您新增執行器的輸入和輸出邊界。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.name_suffix = "_detector";
+
+auto runner = model.build(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.name_suffix = "_detector"
+
+runner = model.build_with_route_options(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+在實際輸入應該證明其形狀、格式或有效負載相容性之前，於建置時設定初始值，然後再進行第一次正式版本發布：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build(simaai::neat::TensorList{input}, route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build([tensor], route_options=route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+請將「seeded build」用於驗證和及早發現問題，而不是將其視為一種習慣。如果預設建置已經證明符合規範，請保持範例的規模較小。
+
+## 測量模型執行效能
+
+使用 `model.benchmark(...)` 進行快速的合成模型基準測試。它會從 `input_specs()` 產生輸入，並回傳延遲、吞吐量以及可選的功耗等指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkReport report = model.benchmark();
+
+std::cout << "latency_ms=" << report.latency_ms
+          << " fps=" << report.fps << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = model.benchmark()
+print("latency_ms=", report.latency_ms, "fps=", report.fps)
+```
+
+</CodeTab>
+</CodeTabs>
+
+對於 BoxDecode 路由，請描述合成輸入的來源影像幾何資訊，以便基準測試可以將檢測結果映射回模型座標：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.num_samples = 100;
+options.original_width = 1920;
+options.original_height = 1080;
+options.resize_mode = simaai::neat::ResizeMode::Letterbox;
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.num_samples = 100
+options.original_width = 1920
+options.original_height = 1080
+options.resize_mode = pyneat.ResizeMode.Letterbox
+
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+將 `original_width` 和 `original_height` 組合在一起。基準測試仍然會產生一個模型形狀的合成張量；這些欄位提供 BoxDecode 中繼資料所需的來源幾何形狀和調整大小的轉換。如果您省略它們，基準測試將從解析後的預處理和模型輸入合約中推斷幾何形狀。這些每次執行的值優先於 `ModelOptions` 中已棄用的 BoxDecode 幾何形狀提示。現有的 `benchmark(num_samples)` 呼叫會保持相同的行為。
+
+僅當板子的電源監測器產生樣本時，才讀取 `avg_power_watts` 和 `energy_joules`。如果無法取得板子或電壓軌設定的電源遙測資料，則這些欄位將保持為零。
+
+當您擁有輸入迴圈並希望測量該迴圈時，請使用執行器測量：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build();
+auto scope = runner.start_measurement();
+
+for (const auto& input : inputs) {
+  (void)runner.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+}
+
+simaai::neat::MeasureReport report = scope.stop();
+runner.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build()
+scope = runner.start_measurement()
+
+for tensor in tensors:
+    runner.run([tensor], timeout_ms=2000)
+
+report = scope.stop()
+runner.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+不要將一次性的煙霧測試與經過預熱的可重複使用的執行器進行比較。這兩者回答的是不同的問題。
+
+## 解碼輸出
+
+首先閱讀輸出規格。僅在模型輸出合約表明有效負載是檢測、姿勢或分割格式時才進行解碼。
+
+| 輸出合約 | 用途 |
+|---|---|
+| 原始張量 | 直接使用傳回的張量，或使用 Python 中的 `to_numpy(...)` / `to_torch(...)` 進行轉換。 |
+| 以張量形式打包的框 | C++ `simaai::neat::decode_bbox(...)` / Python `pyneat.decode_bbox(...)` |
+| 以類型化記錄形式打包的框 | C++ `simaai::neat::decode_bbox_tensor(...)` / Python `pyneat.detections.decode_bbox_tensor(...)` |
+| 以類型化記錄形式打包的姿勢 | C++ `simaai::neat::decode_pose(...)` / Python `pyneat.decode_pose(...)` |
+| 以類型化記錄形式打包的分割 | C++ `simaai::neat::decode_segmentation(...)` / Python `pyneat.decode_segmentation(...)` |
+
+當後續階段需要張量時，使用張量解碼。當應用程式程式碼需要包含 `x1`、`y1`、`x2`、`y2`、`score` 和 `class_id` 的記錄時，使用類型化解碼。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto decoded = simaai::neat::decode_bbox_tensor(
+    outputs[0],
+    image_width,
+    image_height,
+    /*expected_topk=*/100,
+    /*strict=*/true);
+
+for (const auto& box : decoded.boxes) {
+  handle_box(box.x1, box.y1, box.x2, box.y2, box.score, box.class_id);
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+decoded = pyneat.detections.decode_bbox_tensor(
+    outputs[0],
+    image_width,
+    image_height,
+    expected_topk=100,
+    strict=True,
+)
+
+for box in decoded.boxes:
+    handle_box(box.x1, box.y1, box.x2, box.y2, box.score, box.class_id)
+```
+
+</CodeTab>
+</CodeTabs>
+
+僅在預期的輸出格式上使用解碼輔助工具。
+
+## 錯誤處理
+
+以模型驅動的圖使用與原始 `Graph` 相同的診斷協定：
+
+- 對於終端錯誤，使用 `NeatError.report().error_code`。
+- 對於可採取行動的上下文和提示，使用 `NeatError.report().repro_note`。
+- 對於外掛程式或執行階段的詳細資訊，使用 `NeatError.report().bus`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+try {
+  auto result = model.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+} catch (const simaai::neat::NeatError& error) {
+  const auto& report = error.report();
+  std::cerr << report.error_code << "\n";
+  std::cerr << report.repro_note << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+try:
+    result = model.run([tensor], timeout_ms=2000)
+except pyneat.NeatError as error:
+    print(error.error_code)
+    print(error.repro_note)
+    print(error.report_json)
+```
+
+</CodeTab>
+</CodeTabs>
+
+從 `error_code` 等值開始，例如 `misconfig.*`、`build.*`、`runtime.*` 或 `io.*`。僅在結構化錯誤訊息指示後，才閱讀匯流排日誌。
+
+## 參閱
+
+- [執行／推論](/develop-apps/development-workflow/overview)
+- [圖](/develop-apps/development-workflow/graph)
+- [執行圖形](/develop-apps/development-workflow/pipeline)
+
+## 教程
+
+- [執行您的第一個模型](/tutorials/run-your-first-model)
+- [為您的模型進行基準測試](/tutorials/benchmark-your-model)
+- [設定模型選項](/tutorials/configure-model-options)
+- [從模型輸出的結果中讀取檢測框](/tutorials/read-detection-boxes)
+- [將模型整合到您的管線中](/tutorials/plug-model-into-pipeline)

@@ -1,0 +1,247 @@
+---
+title: "GenAIサーバー"
+description: "LLM、VLM、およびASRモデルを、NeatのHTTPエンドポイントを通じて提供します。"
+sidebar_position: 2
+slug: /develop-apps/development-workflow/genai-model/genai-server
+---
+
+# GenAIサーバー
+
+ブラウザ、UI、サービス、またはリモートクライアントがHTTP経由で1つまたは複数のGenAIモデルを呼び出す必要がある場合は、`GenAIServer`を使用します。サーバーは、モデルの登録、リクエストのルーティング、ストリーミング応答、およびキャンセルを管理します。モデルと同じプロセスで実行されるアプリケーションロジックには、[GenAI API を直接利用](/develop-apps/development-workflow/genai-model/direct-api)を使用します。
+
+## サーバーの作成と起動
+
+サーバーはデフォルトで`0.0.0.0:9998`にバインドされます。サーバーを起動する前に、デプロイされた各LLiMaモデルディレクトリを、安定したサービス名で登録します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat/genai.h>
+
+int main() {
+  simaai::neat::genai::GenAIServer server;
+  server.add_model(
+      "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
+      "llm");
+  server.add_model(
+      "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
+      "vlm");
+  server.serve();
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+server = neat.genai.GenAIServer()
+server.add_model(
+    "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
+    "llm",
+)
+server.add_model(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
+    "vlm",
+)
+server.start()
+try:
+    input("Press Enter to stop the server\n")
+finally:
+    server.stop()
+```
+
+</CodeTab>
+</CodeTabs>
+
+C++では、ブロッキング型のフォアグラウンドサーバーとして`serve()`を使用します。C++またはPythonアプリケーションでサーバーのライフサイクルを管理する場合は、`start()`と`stop()`を使用します。デフォルトのホストまたはポートが適切でない場合は、`GenAIServerOptions`を設定します。`stop()`を呼び出すと、登録されているすべてのモデルが削除されます。同じサーバーオブジェクトを再起動する前に、モデルを再度追加してください。
+
+`GenAIServer`は、認証やTLS終端機能を提供せず、任意のオリジンからのCORSリクエストを許可します。信頼できるインターフェースにのみバインドするか、必要なアクセス制御と暗号化を提供するネットワーク層の背後に配置してください。
+
+## 提供されているモデルを特定する
+
+生成リクエストを送信する前に、登録されているモデルの名前をリスト表示します。
+
+```bash
+curl http://<modalix-ip>:9998/v1/models
+```
+
+この応答では、OpenAIのモデル一覧の形式を使用しています。
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "llm", "object": "model", "owned_by": "simaai"},
+    {"id": "vlm", "object": "model", "owned_by": "simaai"}
+  ]
+}
+```
+
+すべての生成およびオーディオ要求は、その
+`model`フィールドで、これらの利用可能な名前のいずれかを使用する必要があります。
+
+## エンドポイント
+
+| メソッド | ルート | 目的 |
+|---|---|---|
+| `GET` | `/v1/models` | 登録済みの利用可能なモデル名のリスト。 |
+| `POST` | `/v1/chat/completions` | テキスト、画像、ツール、ストリーミングを含む、OpenAI互換のチャット。 |
+| `POST` | `/v1/completions` | OpenAI互換のプロンプト補完。 |
+| `POST` | `/v1/audio/transcriptions` | 複数のパートからなるオーディオ入力を文字起こし。 |
+| `POST` | `/v1/audio/translations` | 複数のパートからなる音声を英語に翻訳。 |
+| `POST` | `/api/chat` | Ollama互換のチャット。デフォルトではNDJSONをストリーミング。 |
+| `POST` | `/api/generate` | Ollama互換のプロンプト生成。デフォルトではNDJSONをストリーミング。 |
+| `POST` | `/stop` | 1つのモデルまたはすべてのモデルの、アクティブなストリームをキャンセル。 |
+| `POST` | `/set_lora` | 動的なLoRAアダプターをアクティブにするか、置き換える。 |
+| `POST` | `/unset_lora` | 動的に適応されたモデルを、元のベースラインの重みに戻す。 |
+
+互換性のあるエイリアス`/audio/transcriptions`と`/audio/translations`も受け入れられます。新しいクライアントでは、`/v1/audio/...`ルートを使用することを推奨します。
+
+互換性とは、`GenAIServer`によって実装されたルートとレスポンスの形式を指します。これは、アップストリームのOpenAIまたはOllama APIのすべてのフィールドをサポートすることを意味するものではありません。サポートされているリクエストフィールドは以下に説明します。
+
+## OpenAI互換のリクエスト
+
+チャットエンドポイントに`model`と`messages`を送信します。サーバー送信イベントの場合は、`stream`を`true`に設定します。デフォルトは`false`です。
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Explain an API gateway in one sentence."}
+    ],
+    "max_tokens": 64,
+    "stream": false
+  }'
+```
+
+`/v1/chat/completions` 受け入れます `max_tokens` または `max_completion_tokens`,
+`tools`および `tool_choice` それに加えて `model`, `messages`および `stream`ツール定義では、OpenAIの関数ツール形式を使用します。 `tool_choice` サポートします
+`"auto"` そして `"none"`それを省略するか、次のように設定します。 `null` デフォルトのツール動作をそのまま維持します。
+
+`/v1/completions` 受け入れます `prompt` 文字列、または文字列の配列に加えて
+`model`, `max_tokens` または `max_completion_tokens`および `stream`、デフォルトでは `false`。～のとき `prompt` は配列であり、サーバーはその文字列要素を改行文字で結合し、1つの補完リクエストを実行します。
+
+VLMリクエストの場合、OpenAIチャット `image_url` コンテンツの一部には、base64でエンコードされたデータURI（例：）が含まれている必要があります。 `data:image/jpeg;base64,...`画像デコードには、 Neat
+OpenCVに対応した状態でビルドします。
+
+## Ollama互換のリクエスト
+
+使用 `/api/chat` メッセージ履歴または `/api/generate` プロンプトに対して：
+
+```bash
+curl http://<modalix-ip>:9998/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "prompt": "Give me three API design tips.",
+    "options": {"num_predict": 96},
+    "stream": false
+  }'
+```
+
+Ollama互換のエンドポイントは、デフォルトで改行で区切られたJSONをストリーム形式で送信します。1つの完全なJSONレスポンスが必要な場合は、`stream` を `false` に設定してください。`/api/chat` は、`tools` と `tool_choice` も受け入れます。VLMリクエストの場合、各`/api/chat`メッセージの`images`配列、または最上位レベルの`images`配列に、生のBase64画像文字列を配置してください。これは、`/api/generate`で使用されます。
+
+## 推論モデル
+
+Qwen3やGemma 4 E2B/E4Bなどの推論モデルは、最終的な回答とは別に推論結果を返すことができます。OpenAI互換のリクエストの場合、最上位レベルで`enable_thinking`を設定してください。
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "enable_thinking": true,
+    "max_tokens": 256,
+    "stream": false
+  }'
+```
+
+ストリーミング形式ではない応答では、推論を`choices[0].message.reasoning_content`に、最終的な回答を`choices[0].message.content`に配置します。ストリーミング形式（`stream: true`）の場合、各チャンクは`choices[0].delta.reasoning_content`と`choices[0].delta.content`を使用します。
+
+Ollama互換のリクエストを行うには、`think`を使用してください。
+
+```bash
+curl http://<modalix-ip>:9998/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "think": true,
+    "options": {"num_predict": 256},
+    "stream": false
+  }'
+```
+
+`/api/chat` は、`message.thinking` 内に推論を、`message.content` 内に最終的な回答を返します。`/api/generate` は、同じトップレベルの `think` フィールドを受け取り、トップレベルの `thinking` 内に推論を、`response` 内に回答を返します。
+
+推論フィールドは、空の場合には省略されます。これらは出力専用であり、受信した `reasoning_content` または `thinking` フィールドは、会話履歴として再利用されません。
+
+## オーディオリクエスト
+
+オーディオエンドポイントは、提供される ASR モデル名とオーディオファイルを含む、multipart フォームデータを受け付けます。`language` はデフォルトで `auto` に、`stream` はデフォルトで `false` に設定されます。
+
+```bash
+curl http://<modalix-ip>:9998/v1/audio/transcriptions \
+  -F model=asr \
+  -F file=@speech.wav \
+  -F language=auto \
+  -F stream=false
+```
+
+同じ形式のフィールドを使用して、`/v1/audio/translations` を利用して、音声を英語に翻訳します。両方の方法で、`stream=true` がサポートされます。結果には、生成されたテキスト、検出された言語、およびモデルが提供する場合の ASR の信頼度が含まれます。
+
+## ストリーミングとキャンセル
+
+OpenAI 互換のチャット、補完、およびオーディオストリームは、`text/event-stream` を使用し、`data:` イベントを発行し、`data: [DONE]` で終了します。Ollama 互換のストリームは、`application/x-ndjson` を使用します。ストリーミング応答には、利用可能な場合に `ttft` と `tps` が含まれます。生成されたトークンの数は、OpenAI 互換のストリームでは `generated_tokens` を、Ollama 互換のストリームでは `eval_count` を使用します。
+
+現在実行中のストリームを、サービス中の特定のモデルに対してキャンセルします。
+
+```bash
+curl http://<modalix-ip>:9998/stop \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llm"}'
+```
+
+`model` を省略すると、すべての実行中のストリームがキャンセルされます。この HTTP ルートは、実行中のストリーミング生成をキャンセルしますが、同期リクエストをキャンセルしたり、サーバープロセスを停止したりすることはありません。`server.start()` で起動したサーバーを停止するには、所有アプリケーションから `server.stop()` を呼び出します。
+
+## LoRA アダプターの切り替え
+
+LLiMa の `LORA_BRANCH` モードでコンパイルされたモデルの場合、モデルの `npy_files/<adapter-name>` ディレクトリからアダプターをアクティブにします。
+
+```bash
+curl http://<modalix-ip>:9998/set_lora \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm","name":"customer-adapter"}'
+```
+
+以下のコマンドで、元の重みに戻します。
+
+```bash
+curl http://<modalix-ip>:9998/unset_lora \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm"}'
+```
+
+`model`フィールドは、テキストまたはビジョン-言語モデルが正確に1つ登録されている場合にのみ省略できます。切り替えは、そのモデルに対するアクティブなリクエストが完了するまで待機し、他の提供されているモデルには影響しません。アダプター名は、単一のディレクトリ名である必要があります。パスやディレクトリの移動は許可されません。ASR、推測デコーディングパッケージ、または永続的にマージされた`LORA_MERGED`の重みについては、動的な切り替えはサポートされていません。
+
+## エラー
+
+明示的なエンドポイントの検証に失敗した場合、HTTP 400が返されます。これには、`model`の欠落、無効なツール構成、互換性のないモデルの機能、またはmultipartオーディオ`file`の欠落が含まれます。提供されているモデルが不明な場合、HTTP 404が返されます。レスポンスストリームが確立される前に、リクエストの解析中またはモデルの実行中に発生した例外は、HTTP 500を返します。
+
+ストリーミングが開始される前に、エラーはJSONエンベロープ`{"error":{"message":"...","type":"invalid_request_error"}}`を使用します。ストリーミングレスポンスが開始された後は、HTTPステータスを変更する代わりに、エンドポイントのSSEまたはNDJSONストリームでエラーが送信されます。
+
+## 次のステップ
+
+- [生成AIモデルを運用する](/tutorials/serve-genai-models)に従って、完全なC++およびPythonのチュートリアルを参照してください。
+- [GenAI API を直接利用](/develop-apps/development-workflow/genai-model/direct-api)を使用して、プロセス内呼び出しを行います。
+- [LLiMa を搭載した生成AI](/genai-llima/)を使用して、モデルディレクトリを準備し、ベンチマークを行います。
