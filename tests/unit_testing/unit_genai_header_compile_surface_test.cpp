@@ -29,14 +29,18 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
 
            GenAITask task = GenAITask::VisionLanguage;
            ASRTask asr_task = ASRTask::Translate;
+           GenAIModelOptions model_options;
            GenerationRequest request;
            request.prompt = std::string{"hello"};
+           request.cache_id = std::string{"session-a"};
            GenerationResult result;
            result.text = "world";
            result.reasoning = "thinking";
            result.no_speech_prob = 0.1F;
            result.avg_logprob = -0.2F;
            GenerationMetrics metrics;
+           metrics.cached_prompt_tokens = 7;
+           metrics.cache_created = true;
            TokenSample token;
            token.text = "tok";
            token.reasoning = "thinking";
@@ -46,6 +50,9 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            ImageList images;
            VisionLanguageOptions vision_language_options;
            SpeechTranscriberOptions speech_transcriber_options;
+           require(model_options.max_kv_cache_slots == 1U,
+                   "GenAIModelOptions should default to one KV cache slot");
+           require(request.cache_id == "session-a", "GenerationRequest cache ID mismatch");
            require(request.language == "auto",
                    "GenerationRequest should default to automatic language detection");
            require(request.asr_task == ASRTask::Transcribe,
@@ -73,6 +80,8 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            result.tool_calls = message.tool_calls;
            token.tool_calls = message.tool_calls;
 
+           static_assert(std::is_base_of_v<std::runtime_error, KVCacheCapacityError>);
+           static_assert(std::is_default_constructible_v<GenAIModelOptions>);
            static_assert(std::is_default_constructible_v<ImageList>);
            static_assert(std::is_move_constructible_v<GenerationStream>);
            static_assert(!std::is_copy_constructible_v<GenerationStream>);
@@ -96,8 +105,17 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            auto genai_stream = &GenAIModel::stream;
            auto vlm_set_lora = &VisionLanguageModel::set_lora;
            auto vlm_unset_lora = &VisionLanguageModel::unset_lora;
+           auto vlm_cache_count = &VisionLanguageModel::kv_cache_count;
+           auto vlm_remove_cache = &VisionLanguageModel::remove_kv_cache;
+           auto vlm_clear_caches = &VisionLanguageModel::clear_kv_caches;
            auto genai_set_lora = &GenAIModel::set_lora;
            auto genai_unset_lora = &GenAIModel::unset_lora;
+           auto genai_cache_count = &GenAIModel::kv_cache_count;
+           auto genai_remove_cache = &GenAIModel::remove_kv_cache;
+           auto genai_clear_caches = &GenAIModel::clear_kv_caches;
+           auto server_cache_count = &GenAIServer::kv_cache_count;
+           auto server_remove_cache = &GenAIServer::remove_kv_cache;
+           auto server_clear_caches = &GenAIServer::clear_kv_caches;
            bool vision_language_rejected_null = false;
            try {
              (void)graphs::VisionLanguage(nullptr);
@@ -120,6 +138,7 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
 
            (void)task;
            (void)asr_task;
+           (void)model_options;
            (void)request;
            (void)result;
            (void)metrics;
@@ -137,6 +156,15 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)genai_stream;
            (void)vlm_set_lora;
            (void)vlm_unset_lora;
+           (void)vlm_cache_count;
+           (void)vlm_remove_cache;
+           (void)vlm_clear_caches;
            (void)genai_set_lora;
            (void)genai_unset_lora;
+           (void)genai_cache_count;
+           (void)genai_remove_cache;
+           (void)genai_clear_caches;
+           (void)server_cache_count;
+           (void)server_remove_cache;
+           (void)server_clear_caches;
          }));

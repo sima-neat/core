@@ -176,6 +176,10 @@ void GenerationStream::Producer::record_metric(const std::string& metric, double
     impl_.metrics.time_to_first_token_s = value;
   } else if (metric == "tps") {
     impl_.metrics.tokens_per_second = value;
+  } else if (metric == "cached_prompt_tokens") {
+    impl_.metrics.cached_prompt_tokens = static_cast<std::uint32_t>(value);
+  } else if (metric == "cache_created") {
+    impl_.metrics.cache_created = value != 0.0;
   } else if (metric == "FULL") {
     impl_.finish_reason = "cache_full";
   }

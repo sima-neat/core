@@ -2069,6 +2069,12 @@ NB_MODULE(_pyneat_core, m) {
       .value("Transcribe", simaai::neat::genai::ASRTask::Transcribe)
       .value("Translate", simaai::neat::genai::ASRTask::Translate);
 
+  nb::exception<simaai::neat::genai::KVCacheCapacityError>(m, "KVCacheCapacityError");
+
+  nb::class_<simaai::neat::genai::GenAIModelOptions>(m, "GenAIModelOptions")
+      .def(nb::init<>())
+      .def_rw("max_kv_cache_slots", &simaai::neat::genai::GenAIModelOptions::max_kv_cache_slots);
+
   nb::class_<simaai::neat::genai::ImageList>(m, "ImageList")
       .def(nb::init<>())
       .def(nb::init<std::vector<Tensor>>(), "images"_a)
@@ -2111,6 +2117,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::GenerationMetrics>(m, "GenerationMetrics")
       .def(nb::init<>())
       .def_rw("generated_tokens", &simaai::neat::genai::GenerationMetrics::generated_tokens)
+      .def_rw("cached_prompt_tokens", &simaai::neat::genai::GenerationMetrics::cached_prompt_tokens)
+      .def_rw("cache_created", &simaai::neat::genai::GenerationMetrics::cache_created)
       .def_rw("time_to_first_token_s",
               &simaai::neat::genai::GenerationMetrics::time_to_first_token_s)
       .def_rw("tokens_per_second", &simaai::neat::genai::GenerationMetrics::tokens_per_second);
@@ -2119,6 +2127,7 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("prompt", &simaai::neat::genai::GenerationRequest::prompt)
       .def_rw("system_prompt", &simaai::neat::genai::GenerationRequest::system_prompt)
+      .def_rw("cache_id", &simaai::neat::genai::GenerationRequest::cache_id)
       .def_rw("messages", &simaai::neat::genai::GenerationRequest::messages)
       .def_prop_rw(
           "images",
@@ -2213,12 +2222,21 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<simaai::neat::genai::VisionLanguageModel>(m, "VisionLanguageModel")
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def(nb::init<std::filesystem::path, simaai::neat::genai::GenAIModelOptions>(), "model_dir"_a,
+           "options"_a)
       .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
       .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
       .def("set_lora", &simaai::neat::genai::VisionLanguageModel::set_lora, "adapter_name"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("unset_lora", &simaai::neat::genai::VisionLanguageModel::unset_lora,
            nb::call_guard<nb::gil_scoped_release>())
+      .def("kv_cache_count", &simaai::neat::genai::VisionLanguageModel::kv_cache_count)
+      .def("remove_kv_cache", &simaai::neat::genai::VisionLanguageModel::remove_kv_cache,
+           "cache_id"_a, nb::call_guard<nb::gil_scoped_release>())
+      .def("clear_kv_caches", &simaai::neat::genai::VisionLanguageModel::clear_kv_caches,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("kv_cache_bytes_per_slot",
+           &simaai::neat::genai::VisionLanguageModel::kv_cache_bytes_per_slot)
       .def("cached_image_count", &simaai::neat::genai::VisionLanguageModel::cached_image_count)
       .def(
           "encode",
@@ -2244,6 +2262,8 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<simaai::neat::genai::GenAIModel>(m, "GenAIModel")
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def(nb::init<std::filesystem::path, simaai::neat::genai::GenAIModelOptions>(), "model_dir"_a,
+           "options"_a)
       .def("task", &simaai::neat::genai::GenAIModel::task)
       .def("accepts_text", &simaai::neat::genai::GenAIModel::accepts_text)
       .def("accepts_image", &simaai::neat::genai::GenAIModel::accepts_image)
@@ -2253,6 +2273,12 @@ NB_MODULE(_pyneat_core, m) {
            nb::call_guard<nb::gil_scoped_release>())
       .def("unset_lora", &simaai::neat::genai::GenAIModel::unset_lora,
            nb::call_guard<nb::gil_scoped_release>())
+      .def("kv_cache_count", &simaai::neat::genai::GenAIModel::kv_cache_count)
+      .def("remove_kv_cache", &simaai::neat::genai::GenAIModel::remove_kv_cache, "cache_id"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("clear_kv_caches", &simaai::neat::genai::GenAIModel::clear_kv_caches,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("kv_cache_bytes_per_slot", &simaai::neat::genai::GenAIModel::kv_cache_bytes_per_slot)
       .def("run", &simaai::neat::genai::GenAIModel::run, "request"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,
@@ -2275,10 +2301,29 @@ NB_MODULE(_pyneat_core, m) {
       .def(
           "add_model",
           [](simaai::neat::genai::GenAIServer& server, const std::filesystem::path& model_dir,
+             simaai::neat::genai::GenAIModelOptions model_options) {
+            return server.add_model(model_dir, model_options);
+          },
+          "model_dir"_a, "model_options"_a)
+      .def(
+          "add_model",
+          [](simaai::neat::genai::GenAIServer& server, const std::filesystem::path& model_dir,
              const std::string& served_name) { return server.add_model(model_dir, served_name); },
           "model_dir"_a, "served_name"_a)
+      .def(
+          "add_model",
+          [](simaai::neat::genai::GenAIServer& server, const std::filesystem::path& model_dir,
+             const std::string& served_name, simaai::neat::genai::GenAIModelOptions model_options) {
+            return server.add_model(model_dir, served_name, model_options);
+          },
+          "model_dir"_a, "served_name"_a, "model_options"_a)
       .def("remove_model", &simaai::neat::genai::GenAIServer::remove_model, "served_name"_a)
       .def("model_names", &simaai::neat::genai::GenAIServer::model_names)
+      .def("kv_cache_count", &simaai::neat::genai::GenAIServer::kv_cache_count, "served_name"_a)
+      .def("remove_kv_cache", &simaai::neat::genai::GenAIServer::remove_kv_cache, "served_name"_a,
+           "cache_id"_a, nb::call_guard<nb::gil_scoped_release>())
+      .def("clear_kv_caches", &simaai::neat::genai::GenAIServer::clear_kv_caches, "served_name"_a,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("start", &simaai::neat::genai::GenAIServer::start,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stop", &simaai::neat::genai::GenAIServer::stop,
@@ -2287,6 +2332,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
   genai_mod.attr("GenAITask") = m.attr("GenAITask");
   genai_mod.attr("ASRTask") = m.attr("ASRTask");
+  genai_mod.attr("KVCacheCapacityError") = m.attr("KVCacheCapacityError");
+  genai_mod.attr("GenAIModelOptions") = m.attr("GenAIModelOptions");
   genai_mod.attr("ImageList") = m.attr("ImageList");
   genai_mod.attr("ChatMessage") = m.attr("ChatMessage");
   genai_mod.attr("GenerationMetrics") = m.attr("GenerationMetrics");
