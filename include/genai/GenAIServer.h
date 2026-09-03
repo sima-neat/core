@@ -33,10 +33,16 @@ public:
   GenAIServer& operator=(const GenAIServer&) = delete;
 
   std::string add_model(std::filesystem::path model_dir);
+  std::string add_model(std::filesystem::path model_dir, GenAIModelOptions model_options);
   std::string add_model(std::filesystem::path model_dir, std::string served_name);
+  std::string add_model(std::filesystem::path model_dir, std::string served_name,
+                        GenAIModelOptions model_options);
   void add_model(std::string served_name, std::shared_ptr<GenAIModel> model);
   bool remove_model(const std::string& served_name);
   std::vector<std::string> model_names() const;
+  std::size_t kv_cache_count(const std::string& served_name) const;
+  bool remove_kv_cache(const std::string& served_name, const std::string& cache_id);
+  void clear_kv_caches(const std::string& served_name);
 
   void serve();
   void start();

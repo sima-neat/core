@@ -26,9 +26,12 @@ model directory with a stable served name before starting the server:
 
 int main() {
   simaai::neat::genai::GenAIServer server;
+  simaai::neat::genai::GenAIModelOptions llm_options;
+  llm_options.max_kv_cache_slots = 4;
   server.add_model(
       "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
-      "llm");
+      "llm",
+      llm_options);
   server.add_model(
       "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
       "vlm");
@@ -43,9 +46,12 @@ int main() {
 import pyneat as neat
 
 server = neat.genai.GenAIServer()
+llm_options = neat.genai.GenAIModelOptions()
+llm_options.max_kv_cache_slots = 4
 server.add_model(
     "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
     "llm",
+    llm_options,
 )
 server.add_model(
     "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
@@ -108,6 +114,8 @@ Every generation and audio request must use one of these served names in its
 | `POST` | `/stop` | Cancel active streams for one model or for all models. |
 | `POST` | `/set_lora` | Activate or replace a dynamic LoRA adapter. |
 | `POST` | `/unset_lora` | Return a dynamically adapted model to its baseline weights. |
+| `POST` | `/remove_cache` | Release one reusable prompt context. |
+| `POST` | `/clear_caches` | Release all reusable prompt contexts for a served model. |
 
 The compatibility aliases `/audio/transcriptions` and `/audio/translations`
 are also accepted. Prefer the `/v1/audio/...` routes in new clients.
@@ -148,6 +156,57 @@ newline characters and runs one completion request.
 For VLM requests, an OpenAI chat `image_url` content part must contain a base64
 data URI such as `data:image/jpeg;base64,...`. Image decoding requires a Neat
 build with OpenCV support.
+
+## Reuse prompt contexts
+
+Add the same non-empty `cache_id` to each OpenAI- or Ollama-compatible request
+that belongs to one prompt context:
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "cache_id": "driver-assistant",
+    "messages": [
+      {"role": "system", "content": "<large infotainment and tool prompt>"},
+      {"role": "user", "content": "Navigate home."}
+    ],
+    "stream": false
+  }'
+```
+
+The server keeps at most the number of contexts configured for that model with
+`GenAIModelOptions.max_kv_cache_slots`. The default is one, and requests that
+omit `cache_id` use a legacy default context that counts toward the same limit.
+There is no automatic eviction. A request for a new ID at capacity returns HTTP
+429 with error type `cache_capacity_error`.
+
+Non-streaming responses include `cache_created` and
+`usage.cached_prompt_tokens`. Streaming OpenAI and Ollama responses include
+`cache_created` and `cached_prompt_tokens` with their other generation metrics.
+
+Release a context when the application session ends:
+
+```bash
+curl http://<modalix-ip>:9998/remove_cache \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm","cache_id":"driver-assistant"}'
+```
+
+Release every context for one served model with:
+
+```bash
+curl http://<modalix-ip>:9998/clear_caches \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm"}'
+```
+
+The owning application can perform the same operations with
+`server.remove_kv_cache(served_name, cache_id)`,
+`server.clear_kv_caches(served_name)`, and
+`server.kv_cache_count(served_name)`. Aliases registered with the same
+`GenAIModel` share its context pool.
 
 ## Ollama-compatible requests
 
@@ -287,10 +346,11 @@ supported for ASR, speculative-decoding packages, or permanently merged
 ## Errors
 
 Explicit endpoint validation failures return HTTP 400, including a missing
-`model`, invalid tool configuration, an incompatible model capability, or a
-missing multipart audio `file`. An unknown served model returns HTTP 404.
-Before a response stream is established, exceptions raised while parsing a
-request or running a model return HTTP 500.
+`model`, invalid cache ID, invalid tool configuration, an incompatible model
+capability, or a missing multipart audio `file`. An unknown served model
+returns HTTP 404. Exhausting a model's configured cache slots returns HTTP 429.
+Before a response stream is established, other exceptions raised while parsing
+a request or running a model return HTTP 500.
 
 Before streaming starts, failures use the JSON envelope
 `{"error":{"message":"...","type":"invalid_request_error"}}`. After a

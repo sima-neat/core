@@ -339,8 +339,11 @@ struct VisionLanguageModel::Impl {
     Impl* owner = nullptr;
   };
 
-  explicit Impl(std::filesystem::path model_dir_in)
-      : info(internal::inspect_model_directory(std::move(model_dir_in))) {
+  Impl(std::filesystem::path model_dir_in, GenAIModelOptions options_in)
+      : info(internal::inspect_model_directory(std::move(model_dir_in))), options(options_in) {
+    if (options.max_kv_cache_slots == 0U) {
+      throw std::invalid_argument("GenAIModelOptions::max_kv_cache_slots must be at least 1");
+    }
     if (info.task != GenAITask::VisionLanguage) {
       throw std::runtime_error("GenAI model directory is not a vision-language model: " +
                                info.root.string());
@@ -369,7 +372,7 @@ struct VisionLanguageModel::Impl {
     text_streamer->set_preserved_token_ids(preserved_tool_call_tokens);
     language_model = std::make_unique<simaai::llima::LanguageModel>(
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
-        vlm_helper->get_pad_token_id(), *text_streamer);
+        vlm_helper->get_pad_token_id(), *text_streamer, options.max_kv_cache_slots);
     if (info.draft_root.has_value()) {
       draft_cfg = load_vlm_config(*info.draft_root);
       draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(
@@ -379,7 +382,7 @@ struct VisionLanguageModel::Impl {
       draft_language_model = std::make_unique<simaai::llima::LanguageModel>(
           *info.draft_root, draft_vlm_helper->get_stop_token_ids(),
           draft_vlm_helper->get_image_token_id(), draft_vlm_helper->get_pad_token_id(),
-          *draft_text_streamer);
+          *draft_text_streamer, options.max_kv_cache_slots);
     }
     if (info.accepts_image) {
       image_processor = make_image_processor(cfg, info.root / "devkit");
@@ -451,11 +454,17 @@ struct VisionLanguageModel::Impl {
 
     const auto max_total_tokens =
         make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
-    if (draft_language_model) {
-      return language_model->run_model_speculative_decoding(
-          *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft);
+    try {
+      if (draft_language_model) {
+        return language_model->run_model_speculative_decoding(
+            *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft, nullptr,
+            request.cache_id);
+      }
+      return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens,
+                                       std::nullopt, request.cache_id);
+    } catch (const simaai::llima::KVCacheCapacityError& e) {
+      throw KVCacheCapacityError(e.what());
     }
-    return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens);
   }
 
   bool prompt_opens_reasoning(const GenerationRequest& request) const {
@@ -654,6 +663,46 @@ struct VisionLanguageModel::Impl {
     return cached_vision_outputs.size();
   }
 
+  std::size_t kv_cache_count() {
+    auto active_run = ActiveRunGuard::acquire(*this);
+    const auto target_count = language_model->kv_cache_count();
+    if (draft_language_model && draft_language_model->kv_cache_count() != target_count) {
+      throw std::runtime_error("EAGLE3 target and draft KV cache pools diverged");
+    }
+    return target_count;
+  }
+
+  bool remove_kv_cache(const std::string& cache_id) {
+    auto active_run = ActiveRunGuard::acquire(*this);
+    const bool removed = language_model->remove_kv_cache(cache_id);
+    if (draft_language_model) {
+      const bool draft_removed = draft_language_model->remove_kv_cache(cache_id);
+      if (draft_removed != removed) {
+        language_model->clear_kv_caches();
+        draft_language_model->clear_kv_caches();
+        throw std::runtime_error("EAGLE3 target and draft KV cache pools diverged");
+      }
+    }
+    return removed;
+  }
+
+  void clear_kv_caches() {
+    auto active_run = ActiveRunGuard::acquire(*this);
+    language_model->clear_kv_caches();
+    if (draft_language_model) {
+      draft_language_model->clear_kv_caches();
+    }
+  }
+
+  std::size_t kv_cache_bytes_per_slot() {
+    auto active_run = ActiveRunGuard::acquire(*this);
+    auto bytes = language_model->kv_cache_bytes_per_slot();
+    if (draft_language_model) {
+      bytes += draft_language_model->kv_cache_bytes_per_slot();
+    }
+    return bytes;
+  }
+
   void configure_run_callbacks() {
     text_streamer->set_info_callback(
         [this](const std::string& metric, double value) { record_metric(metric, value); });
@@ -671,6 +720,10 @@ struct VisionLanguageModel::Impl {
       metrics.time_to_first_token_s = value;
     } else if (metric == "tps") {
       metrics.tokens_per_second = value;
+    } else if (metric == "cached_prompt_tokens") {
+      metrics.cached_prompt_tokens = static_cast<std::uint32_t>(value);
+    } else if (metric == "cache_created") {
+      metrics.cache_created = value != 0.0;
     }
   }
 
@@ -680,6 +733,7 @@ struct VisionLanguageModel::Impl {
   }
 
   internal::ModelDirectoryInfo info;
+  GenAIModelOptions options;
   simaai::llima::VlmConfig cfg;
   std::string bos_token;
   std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;
@@ -705,7 +759,10 @@ struct VisionLanguageModel::Impl {
 };
 
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir)
-    : impl_(std::make_shared<Impl>(std::move(model_dir))) {
+    : VisionLanguageModel(std::move(model_dir), GenAIModelOptions{}) {}
+
+VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir, GenAIModelOptions options)
+    : impl_(std::make_shared<Impl>(std::move(model_dir), options)) {
   impl_->load();
 }
 
@@ -742,6 +799,22 @@ void VisionLanguageModel::unset_lora() {
   }
   auto active_run = Impl::ActiveRunGuard::acquire(*impl_);
   impl_->language_model->unset_reloc();
+}
+
+std::size_t VisionLanguageModel::kv_cache_count() const {
+  return impl_->kv_cache_count();
+}
+
+bool VisionLanguageModel::remove_kv_cache(const std::string& cache_id) {
+  return impl_->remove_kv_cache(cache_id);
+}
+
+void VisionLanguageModel::clear_kv_caches() {
+  impl_->clear_kv_caches();
+}
+
+std::size_t VisionLanguageModel::kv_cache_bytes_per_slot() const {
+  return impl_->kv_cache_bytes_per_slot();
 }
 
 std::size_t VisionLanguageModel::cached_image_count() const {
