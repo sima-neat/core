@@ -79,7 +79,7 @@ enum class BoxDecodeType : std::int32_t {
   YoloV6 = 20,      ///< YOLOv6 raw l/t/r/b distance heads.
   YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
   Ssd = 22, ///< SSD family token, resolved internally to an exact supported prepared signature.
-  SuperPoint = 23, ///< SuperPoint detector-logit and descriptor-grid postprocessing.
+  SuperPoint = 23,   ///< SuperPoint detector-logit and descriptor-grid postprocessing.
   YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
 };
 

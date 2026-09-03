@@ -145,9 +145,9 @@ SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat
                                                               int img_w = 0, int img_h = 0,
                                                               int top_k = 0, bool strict = false);
 
-SegmentationPoseDecodeTensorList
-decode_segmentation_pose(const simaai::neat::TensorList& tensors, int img_w = 0, int img_h = 0,
-                         int top_k = 0, bool strict = false);
+SegmentationPoseDecodeTensorList decode_segmentation_pose(const simaai::neat::TensorList& tensors,
+                                                          int img_w = 0, int img_h = 0,
+                                                          int top_k = 0, bool strict = false);
 
 /**
  * @brief Parse a packed BBOX byte payload into typed `Box` records.
