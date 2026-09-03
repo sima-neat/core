@@ -95,11 +95,14 @@ int main() {
 
     std::cout << "GENAI_LLM model_dir=" << model_dir << "\n";
 
-    simaai::neat::genai::VisionLanguageModel model(model_dir);
+    simaai::neat::genai::GenAIModelOptions model_options;
+    model_options.max_kv_cache_slots = 2;
+    simaai::neat::genai::VisionLanguageModel model(model_dir, model_options);
     require(!model.accepts_image(), "Text-only LLiMa model should not accept image input");
 
     simaai::neat::genai::GenerationRequest request;
     request.system_prompt = std::string{"You are concise."};
+    request.cache_id = std::string{"session-a"};
     request.prompt = std::string{"What is the capital of Germany?"};
     request.max_new_tokens = 24;
 
@@ -122,6 +125,9 @@ int main() {
             "GenAI LLM e2e generated unexpected text: " + result.text);
     require(result.finish_reason == "stop" || result.finish_reason == "interrupted",
             "GenAI LLM e2e returned unexpected finish reason: " + result.finish_reason);
+    require(result.metrics.cache_created, "First session-a request should create a KV cache");
+    require(result.metrics.cached_prompt_tokens == 0U,
+            "First session-a request should have a cold prompt cache");
 
     auto stream = model.stream(request);
     std::string streamed_text;
@@ -150,6 +156,14 @@ int main() {
     std::cout << "GENAI_LLM_STREAM text=" << streamed_text << "\n";
     require(trim_text(streamed_text) == "The capital of Germany is Berlin.",
             "GenAI LLM stream e2e generated unexpected text: " + streamed_text);
+    require(!final_sample.metrics.cache_created,
+            "Second session-a request should reuse its KV cache");
+    require(final_sample.metrics.cached_prompt_tokens > 0U,
+            "Second session-a request should report cached prompt tokens");
+    require(model.kv_cache_count() == 1U, "Expected one assigned KV cache");
+    require(model.kv_cache_bytes_per_slot() > 0U, "Expected non-zero KV cache slot bytes");
+    require(model.remove_kv_cache("session-a"), "Expected session-a removal to succeed");
+    require(model.kv_cache_count() == 0U, "Expected no assigned KV caches after removal");
 
     simaai::neat::genai::GenAIModel generic_model(model_dir);
     require(generic_model.task() == simaai::neat::genai::GenAITask::VisionLanguage,
