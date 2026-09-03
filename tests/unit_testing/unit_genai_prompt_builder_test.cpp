@@ -31,6 +31,12 @@ RUN_TEST(
           [] { internal::validate_text_generation_request(GenerationRequest{}); },
           "requires prompt");
 
+      GenerationRequest empty_cache_id;
+      empty_cache_id.prompt = std::string{"hello"};
+      empty_cache_id.cache_id = std::string{};
+      require_throws_contains([&] { internal::validate_text_generation_request(empty_cache_id); },
+                              "cache_id");
+
       GenerationRequest multiple;
       multiple.prompt = std::string{"hello"};
       multiple.messages.push_back(ChatMessage{.role = "user", .content = "hello"});

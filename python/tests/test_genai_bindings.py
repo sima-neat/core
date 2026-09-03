@@ -310,6 +310,7 @@ def test_genai_value_types_and_text_sample_helpers():
   assert req.language == "auto"
   req.prompt = "hello"
   req.system_prompt = "be concise"
+  req.cache_id = "session-a"
   req.max_new_tokens = 8
   req.audio_file = "audio.wav"
   req.language = "en"
@@ -340,6 +341,7 @@ def test_genai_value_types_and_text_sample_helpers():
 
   assert req.prompt == "hello"
   assert req.system_prompt == "be concise"
+  assert req.cache_id == "session-a"
   assert not hasattr(req, "temperature")
   assert not hasattr(req, "top_p")
   assert req.messages[0].content == "hello"
@@ -392,10 +394,14 @@ def test_genai_value_types_and_text_sample_helpers():
   result.no_speech_prob = 0.1
   result.avg_logprob = -0.2
   result.metrics.generated_tokens = 1
+  result.metrics.cached_prompt_tokens = 4
+  result.metrics.cache_created = True
   assert result.language == "en"
   assert result.no_speech_prob == pytest.approx(0.1)
   assert result.avg_logprob == pytest.approx(-0.2)
   assert result.metrics.generated_tokens == 1
+  assert result.metrics.cached_prompt_tokens == 4
+  assert result.metrics.cache_created is True
 
   token = pyneat.TokenSample()
   token.text = "d"
@@ -411,6 +417,8 @@ def test_genai_value_types_and_text_sample_helpers():
 
 def test_genai_top_level_and_namespace_aliases_exist():
   assert pyneat.genai.ASRTask is pyneat.ASRTask
+  assert pyneat.genai.KVCacheCapacityError is pyneat.KVCacheCapacityError
+  assert pyneat.genai.GenAIModelOptions is pyneat.GenAIModelOptions
   assert pyneat.genai.VisionLanguageModel is pyneat.VisionLanguageModel
   assert pyneat.genai.ASRModel is pyneat.ASRModel
   assert pyneat.genai.GenAIModel is pyneat.GenAIModel
@@ -421,11 +429,20 @@ def test_genai_top_level_and_namespace_aliases_exist():
   for model_type in (pyneat.VisionLanguageModel, pyneat.GenAIModel):
     assert hasattr(model_type, "set_lora")
     assert hasattr(model_type, "unset_lora")
+    assert hasattr(model_type, "kv_cache_count")
+    assert hasattr(model_type, "remove_kv_cache")
+    assert hasattr(model_type, "clear_kv_caches")
+    assert hasattr(model_type, "kv_cache_bytes_per_slot")
   assert hasattr(pyneat.genai.graphs, "vision_language")
   assert hasattr(pyneat.genai.graphs, "speech_transcriber")
   assert not hasattr(pyneat.genai, "nodes")
   with pytest.raises(AttributeError, match="removed"):
     getattr(pyneat, "_graph")
+
+  model_options = pyneat.GenAIModelOptions()
+  assert model_options.max_kv_cache_slots == 1
+  model_options.max_kv_cache_slots = 3
+  assert model_options.max_kv_cache_slots == 3
 
   options = pyneat.genai.VisionLanguageOptions()
   options.system_prompt = "Answer exactly."
@@ -473,15 +490,20 @@ def test_genai_server_constructor_is_llima_backed():
 
 def test_genai_direct_text_generation_and_streaming():
   try:
-    model = pyneat.VisionLanguageModel(_text_model_dir())
+    model_options = pyneat.GenAIModelOptions()
+    model_options.max_kv_cache_slots = 2
+    model = pyneat.VisionLanguageModel(_text_model_dir(), model_options)
     assert not model.accepts_image()
 
     request = _make_request()
+    request.cache_id = "session-a"
     result = model.run(request)
     print(f"GENAI_PY_LLM text={result.text}")
     assert _trim_text(result.text) == _EXPECTED_TEXT
     _assert_finish_reason(result.finish_reason)
     assert result.metrics.generated_tokens > 0
+    assert result.metrics.cache_created is True
+    assert result.metrics.cached_prompt_tokens == 0
 
     streamed_text = []
     final_sample = None
@@ -497,6 +519,12 @@ def test_genai_direct_text_generation_and_streaming():
     assert _trim_text("".join(streamed_text)) == _EXPECTED_TEXT
     _assert_finish_reason(final_sample.finish_reason)
     assert final_sample.metrics.generated_tokens > 0
+    assert final_sample.metrics.cache_created is False
+    assert final_sample.metrics.cached_prompt_tokens > 0
+    assert model.kv_cache_count() == 1
+    assert model.kv_cache_bytes_per_slot() > 0
+    assert model.remove_kv_cache("session-a") is True
+    assert model.kv_cache_count() == 0
 
     generic = pyneat.GenAIModel(_text_model_dir())
     assert generic.task() == pyneat.GenAITask.VisionLanguage

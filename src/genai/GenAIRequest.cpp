@@ -25,6 +25,9 @@ std::vector<ChatMessage> build_text_messages(const GenerationRequest& request) {
 }
 
 void validate_text_generation_request(const GenerationRequest& request) {
+  if (request.cache_id.has_value() && request.cache_id->empty()) {
+    throw std::runtime_error("GenerationRequest::cache_id must not be empty");
+  }
   const int text_source_count =
       (request.prompt.has_value() ? 1 : 0) + (request.messages.empty() ? 0 : 1);
   if (text_source_count == 0) {
@@ -96,7 +99,8 @@ void validate_asr_generation_request(const GenerationRequest& request) {
     throw std::runtime_error("GenerationRequest accepts exactly one of audio or audio_file");
   }
   if (request.prompt.has_value() || request.system_prompt.has_value() ||
-      !request.messages.empty() || !request.tools.empty() || !request.tool_choice.is_null()) {
+      request.cache_id.has_value() || !request.messages.empty() || !request.tools.empty() ||
+      !request.tool_choice.is_null()) {
     throw std::runtime_error("GenerationRequest text fields are not valid for ASRModel");
   }
   if (!request.images.empty() || request.use_cached_images) {

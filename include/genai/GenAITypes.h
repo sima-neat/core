@@ -17,6 +17,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,22 @@ enum class GenAITask {
 enum class ASRTask {
   Transcribe,
   Translate,
+};
+
+/**
+ * @brief Model construction options shared by direct and server-managed GenAI models.
+ */
+struct GenAIModelOptions {
+  /// Maximum number of reusable KV cache contexts retained by one model instance.
+  std::size_t max_kv_cache_slots = 1;
+};
+
+/**
+ * @brief Raised when a request names a new cache but every configured slot is assigned.
+ */
+class KVCacheCapacityError : public std::runtime_error {
+public:
+  using std::runtime_error::runtime_error;
 };
 
 /**
@@ -96,6 +113,8 @@ struct ChatMessage {
 
 struct GenerationMetrics {
   std::uint32_t generated_tokens = 0;
+  std::uint32_t cached_prompt_tokens = 0;
+  bool cache_created = false;
   double time_to_first_token_s = 0.0;
   double tokens_per_second = 0.0;
 };
@@ -103,6 +122,8 @@ struct GenerationMetrics {
 struct GenerationRequest {
   std::optional<std::string> prompt;
   std::optional<std::string> system_prompt;
+  /// Selects a reusable prompt context. Omit for the legacy default context.
+  std::optional<std::string> cache_id;
   std::vector<ChatMessage> messages;
   ImageList images;
   bool use_cached_images = false;

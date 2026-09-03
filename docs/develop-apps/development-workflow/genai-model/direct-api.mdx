@@ -125,6 +125,73 @@ print()
 Call `cancel()` on the stream if the user closes the request, changes prompts,
 or your application times out the generation.
 
+## Reuse multiple prompt contexts
+
+An application such as an in-vehicle assistant may switch between several large
+system prompts and tool sets while using one model instance. Configure a bounded
+number of reusable KV cache slots when the model is constructed, then attach a
+stable `cache_id` to every request in the same conversation or prompt context.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenAIModelOptions options;
+options.max_kv_cache_slots = 4;
+simaai::neat::genai::GenAIModel model(model_dir, options);
+
+simaai::neat::genai::GenerationRequest request;
+request.system_prompt = infotainment_system_prompt;
+request.prompt = "Find a charging station near the destination.";
+request.tools = infotainment_tools;
+request.cache_id = "driver-assistant";
+
+const auto result = model.run(request);
+std::cout << "cached prompt tokens="
+          << result.metrics.cached_prompt_tokens << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = neat.genai.GenAIModelOptions()
+options.max_kv_cache_slots = 4
+model = neat.genai.GenAIModel(model_dir, options)
+
+request = neat.genai.GenerationRequest()
+request.system_prompt = infotainment_system_prompt
+request.prompt = "Find a charging station near the destination."
+request.tools = infotainment_tools
+request.cache_id = "driver-assistant"
+
+result = model.run(request)
+print(f"cached prompt tokens={result.metrics.cached_prompt_tokens}")
+```
+
+</CodeTab>
+</CodeTabs>
+
+The default is one slot, preserving the existing single-context behavior. The
+legacy context used by requests without `cache_id` also consumes one slot. A
+new ID creates an association lazily; subsequent requests with that ID reuse
+its matching prompt prefix. `GenerationMetrics.cache_created` reports whether
+the current request created the association, and
+`GenerationMetrics.cached_prompt_tokens` reports how much of its prompt was
+reused.
+
+Each slot retains a full model-specific cache allocation in device DRAM. Use
+`kv_cache_bytes_per_slot()` when planning capacity, `kv_cache_count()` to
+inspect assigned contexts, `remove_kv_cache(cache_id)` when a session ends, and
+`clear_kv_caches()` to release every association. Released physical slots are
+retained for efficient reuse until the model is destroyed. There is no implicit
+LRU eviction: requesting a new ID when all slots are assigned raises
+`KVCacheCapacityError`.
+
+Cache IDs are supported by text-only and vision-language requests, including
+speculative decoding. ASR requests do not accept cache IDs. Changing or
+removing a LoRA adapter invalidates every retained language context.
+
 ## Add images for VLMs
 
 VLMs accept text plus one or more images. Images are passed through

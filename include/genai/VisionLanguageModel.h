@@ -20,6 +20,7 @@ namespace simaai::neat::genai {
 class VisionLanguageModel {
 public:
   explicit VisionLanguageModel(std::filesystem::path model_dir);
+  VisionLanguageModel(std::filesystem::path model_dir, GenAIModelOptions options);
   ~VisionLanguageModel();
 
   VisionLanguageModel(VisionLanguageModel&&) noexcept;
@@ -32,6 +33,10 @@ public:
   std::string model_id() const;
   void set_lora(const std::string& adapter_name);
   void unset_lora();
+  std::size_t kv_cache_count() const;
+  bool remove_kv_cache(const std::string& cache_id);
+  void clear_kv_caches();
+  std::size_t kv_cache_bytes_per_slot() const;
   std::size_t cached_image_count() const;
   bool encode(const Tensor& image);
   bool encode(const std::vector<Tensor>& images);

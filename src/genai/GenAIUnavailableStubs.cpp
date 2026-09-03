@@ -27,6 +27,9 @@ struct GenAIServer::Impl {};
 GenAIModel::GenAIModel(std::filesystem::path) {
   throw_genai_unavailable();
 }
+GenAIModel::GenAIModel(std::filesystem::path, GenAIModelOptions) {
+  throw_genai_unavailable();
+}
 GenAIModel::~GenAIModel() = default;
 GenAIModel::GenAIModel(GenAIModel&&) noexcept = default;
 GenAIModel& GenAIModel::operator=(GenAIModel&&) noexcept = default;
@@ -54,6 +57,18 @@ void GenAIModel::set_lora(const std::string&) {
 void GenAIModel::unset_lora() {
   throw_genai_unavailable();
 }
+std::size_t GenAIModel::kv_cache_count() const {
+  throw_genai_unavailable();
+}
+bool GenAIModel::remove_kv_cache(const std::string&) {
+  throw_genai_unavailable();
+}
+void GenAIModel::clear_kv_caches() {
+  throw_genai_unavailable();
+}
+std::size_t GenAIModel::kv_cache_bytes_per_slot() const {
+  throw_genai_unavailable();
+}
 GenerationResult GenAIModel::run(const GenerationRequest&) {
   throw_genai_unavailable();
 }
@@ -70,7 +85,13 @@ GenAIServer& GenAIServer::operator=(GenAIServer&&) noexcept = default;
 std::string GenAIServer::add_model(std::filesystem::path) {
   throw_genai_unavailable();
 }
+std::string GenAIServer::add_model(std::filesystem::path, GenAIModelOptions) {
+  throw_genai_unavailable();
+}
 std::string GenAIServer::add_model(std::filesystem::path, std::string) {
+  throw_genai_unavailable();
+}
+std::string GenAIServer::add_model(std::filesystem::path, std::string, GenAIModelOptions) {
   throw_genai_unavailable();
 }
 void GenAIServer::add_model(std::string, std::shared_ptr<GenAIModel>) {
@@ -80,6 +101,15 @@ bool GenAIServer::remove_model(const std::string&) {
   throw_genai_unavailable();
 }
 std::vector<std::string> GenAIServer::model_names() const {
+  throw_genai_unavailable();
+}
+std::size_t GenAIServer::kv_cache_count(const std::string&) const {
+  throw_genai_unavailable();
+}
+bool GenAIServer::remove_kv_cache(const std::string&, const std::string&) {
+  throw_genai_unavailable();
+}
+void GenAIServer::clear_kv_caches(const std::string&) {
   throw_genai_unavailable();
 }
 void GenAIServer::serve() {
@@ -114,6 +144,9 @@ GenerationStream ASRModel::stream(const GenerationRequest&) {
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path) {
   throw_genai_unavailable();
 }
+VisionLanguageModel::VisionLanguageModel(std::filesystem::path, GenAIModelOptions) {
+  throw_genai_unavailable();
+}
 VisionLanguageModel::~VisionLanguageModel() = default;
 VisionLanguageModel::VisionLanguageModel(VisionLanguageModel&&) noexcept = default;
 VisionLanguageModel& VisionLanguageModel::operator=(VisionLanguageModel&&) noexcept = default;
@@ -130,6 +163,18 @@ void VisionLanguageModel::set_lora(const std::string&) {
   throw_genai_unavailable();
 }
 void VisionLanguageModel::unset_lora() {
+  throw_genai_unavailable();
+}
+std::size_t VisionLanguageModel::kv_cache_count() const {
+  throw_genai_unavailable();
+}
+bool VisionLanguageModel::remove_kv_cache(const std::string&) {
+  throw_genai_unavailable();
+}
+void VisionLanguageModel::clear_kv_caches() {
+  throw_genai_unavailable();
+}
+std::size_t VisionLanguageModel::kv_cache_bytes_per_slot() const {
   throw_genai_unavailable();
 }
 std::size_t VisionLanguageModel::cached_image_count() const {
