@@ -89,6 +89,26 @@ When the input queue is full:
 
 Choose the policy that matches the source. File and batch jobs usually want `Block`. Live streams usually want a freshness policy.
 
+## Inline queues
+
+`RunOptions::overflow_policy` controls the queue at a `Run` input. To control a queue between graph nodes, add a configured `Queue`:
+
+```cpp
+simaai::neat::QueueOptions queue;
+queue.max_buffers = 1;
+queue.overflow_policy = simaai::neat::OverflowPolicy::KeepLatest;
+graph.add(simaai::neat::nodes::Queue(queue));
+```
+
+```python
+queue = pyneat.QueueOptions()
+queue.max_buffers = 1
+queue.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+graph.add(pyneat.nodes.queue(queue))
+```
+
+Leave `max_buffers` unset to use the default queue limits. Setting it to a positive value makes the buffer count the only capacity limit. `Block` waits for space, `KeepLatest` drops the oldest waiting buffer, and `DropIncoming` drops the new buffer.
+
 ## Pull timing
 
 `Run::pull(...)` returns the next available `Sample` from an output boundary.
