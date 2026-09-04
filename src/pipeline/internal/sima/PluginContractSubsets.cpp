@@ -2149,6 +2149,7 @@ std::optional<BoxDecodeContractSubset> extract_boxdecode_contract_subset_from_mp
   // score domain, and layout instead of the raw MPK defaults.
   stagesemantics::apply_yolov5_model_managed_contract_defaults(&*extracted);
   stagesemantics::apply_ssd_model_managed_contract_defaults(&*extracted);
+  stagesemantics::apply_yolox_seg_pose_model_managed_contract_defaults(&*extracted);
   return extract_boxdecode_contract_subset_from_static_contract(*extracted);
 }
 

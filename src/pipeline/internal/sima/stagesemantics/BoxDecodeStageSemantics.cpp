@@ -1161,6 +1161,18 @@ void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contr
   }
 }
 
+void apply_yolox_seg_pose_model_managed_contract_defaults(BoxDecodeStaticContract* contract) {
+  apply_yolox_seg_pose_static_contract_overrides(contract);
+  if (contract && contract->decode_type == BoxDecodeType::YoloXSegPose) {
+    // Without this the MPK route lowers a subset whose num_classes is still 0, and the
+    // subset compiler then rejects the model at construction. resolve_ derives the count
+    // from the class head (depth - 1 for packed objectness), so an MPK does not have to
+    // declare one.
+    contract->num_classes = resolve_boxdecode_num_classes(*contract, contract->num_classes,
+                                                          "BoxDecode model-managed contract");
+  }
+}
+
 void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
                                                       BoxDecodeTypeOption requested) {
   if (decode_type == BoxDecodeType::YoloV5 && requested != BoxDecodeTypeOption::Auto &&
