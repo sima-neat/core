@@ -46,22 +46,21 @@ mdx:
 
 2. 工作目錄應如下所示：
 
-   ```bash
+   ```text
    sima-neat-hello/
    └── hello_neat.py
    ```
 
 **執行：**
 
-* **在 DevKit 上**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **在 Neat SDK 主機上**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Python 執行階段位置
 即使您從 Neat SDK 容器內執行 Neat 安裝程式，`pyneat` 仍會安裝在 DevKit 執行階段一側。
@@ -128,7 +127,7 @@ mdx:
 
 3. 工作目錄應如下所示：
 
-   ```bash
+   ```text
    sima-neat-hello/
    ├── CMakeLists.txt
    └── main.cpp
@@ -136,21 +135,20 @@ mdx:
 
 **建置範例：**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **執行：**
 
-* **在 DevKit 上**
-  ```bash
-  ./build/sima_neat_hello
-  ```
-* **在 Neat SDK 主機上**
-  ```bash
-  dk build/sima_neat_hello
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

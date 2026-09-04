@@ -17,7 +17,7 @@ sidebar_position: 20
 
 Для SDK 2.0.0:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli install ghcr:sima-neat/sdk:v2.0.0
 </ShellCommand>
 
@@ -29,13 +29,13 @@ sima-cli install ghcr:sima-neat/sdk:v2.0.0
 
 Якщо ваш DevKit доступний з хоста, під’єднайте його під час налаштування:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 Якщо ваш DevKit ще недоступний, налаштуйте робоче середовище SDK без встановлення з’єднання:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
@@ -45,7 +45,7 @@ sima-cli sdk setup
 
 Після успішного завершення налаштування відкрийте командний рядок SDK:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk neat
 </ShellCommand>
 

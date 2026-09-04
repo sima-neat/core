@@ -60,7 +60,7 @@ You can open a shell through SSH when the DevKit is reachable on the network, or
 through the serial console. For serial access instructions, see
 [Set Up Serial Access](https://developer.sima.ai/hardware/getting-started/setup-serial).
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 cat /etc/buildinfo
 </ShellCommand>
 
@@ -86,7 +86,7 @@ DevKit software version.
 
 Install the current released Neat SDK from the host:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
@@ -121,13 +121,13 @@ on the DevKit.
 
 For Neat Library 0.4.0:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.4.0
 </ShellCommand>
 
 For Neat Library 0.1.0:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.1.0
 </ShellCommand>
 
@@ -143,7 +143,7 @@ automatically installs the compatible Neat Library version.
 
 Install Apps 0.5.0 from a compatible Neat SDK or DevKit:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install apps@v0.5.0
 </ShellCommand>
 
@@ -185,7 +185,7 @@ For installation steps, see
 
 From inside the Neat SDK or on the DevKit, run:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 

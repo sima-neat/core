@@ -25,7 +25,7 @@ sidebar_position: 2
 
 현재 Neat SDK 2.1 릴리스 채널을 설치합니다.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
@@ -51,7 +51,7 @@ DevKit 페어링을 선택한 경우 메시지가 표시되면 DevKit IP 주소�
 
 다음 명령으로 Neat SDK 셸을 엽니다.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk neat
 </ShellCommand>
 
@@ -59,7 +59,7 @@ sima-cli sdk neat
 
 Neat Insight는 SDK 내부에서 제공되며 브라우저에서 열 수 있습니다. SDK 셸 안에서 다음을 실행합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 neat
 </ShellCommand>
 
@@ -69,7 +69,7 @@ neat
 
 SDK Code UI를 통해 브라우저에서 VS Code를 사용할 수 있습니다. SDK 설치가 끝나면 `sima-cli`가 다음과 같은 `codeUI` URL을 출력합니다.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 </ShellCommand>
 
@@ -83,13 +83,13 @@ SDK가 사전 빌드 모델과 같은 자산을 가져올 수 있도록 SDK 컨�
 
 현재 SDK 패키지를 다시 설치하거나 업그레이드하려면 호스트에서 위의 설치 명령을 다시 실행합니다.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
 기존 Neat SDK 컨테이너 내부의 Neat 라이브러리를 업데이트하려면 컨테이너 셸에서 Neat CLI를 실행합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 neat update
 </ShellCommand>
 
@@ -101,7 +101,7 @@ neat update
 
 설치된 SDK 컨테이너를 제거하려면 다음을 실행합니다.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk remove
 </ShellCommand>
 

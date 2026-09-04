@@ -46,22 +46,21 @@ mdx:
 
 2. Ваша робоча директорія має виглядати так:
 
-   ```bash
+   ```text
    sima-neat-hello/
    └── hello_neat.py
    ```
 
 **Запустити:**
 
-* **Щодо DevKit**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **На хості Neat SDK**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Розташування середовища виконання Python.
 `pyneat` встановлюється в середовищі виконання DevKit, навіть якщо ви запускаєте інсталятор Neat з контейнера Neat SDK.
@@ -128,7 +127,7 @@ mdx:
 
 3. Ваша робоча директорія має виглядати так:
 
-   ```bash
+   ```text
    sima-neat-hello/
    ├── CMakeLists.txt
    └── main.cpp
@@ -136,21 +135,20 @@ mdx:
 
 **Зберіть приклад:**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **Запустити:**
 
-* **Щодо DevKit**
-  ```bash
-  ./build/sima_neat_hello
-  ```
-* **На хості Neat SDK**
-  ```bash
-  dk build/sima_neat_hello
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

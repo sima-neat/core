@@ -25,7 +25,7 @@ sidebar_position: 2
 
 安裝目前的 Neat SDK 2.1 發行通道：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
@@ -51,7 +51,7 @@ sima-cli neat install sdk@release-2.1
 
 使用下列命令開啟 Neat SDK shell：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk neat
 </ShellCommand>
 
@@ -59,7 +59,7 @@ sima-cli sdk neat
 
 Neat Insight 由 SDK 內部提供，可從瀏覽器開啟。請在 SDK shell 中執行：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 neat
 </ShellCommand>
 
@@ -69,7 +69,7 @@ neat
 
 可以透過 SDK Code UI 從瀏覽器使用 VS Code。SDK 安裝結束時，`sima-cli` 會輸出類似下列的 `codeUI` URL：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 </ShellCommand>
 
@@ -83,13 +83,13 @@ codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 
 若要重新安裝或升級至目前的 SDK 套件，請從主機重新執行上述安裝命令：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
 若要更新現有 Neat SDK 容器內的 Neat 程式庫，請從容器 shell 執行 Neat CLI：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 neat update
 </ShellCommand>
 
@@ -101,7 +101,7 @@ neat update
 
 若要移除已安裝的 SDK 容器，請執行：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk remove
 </ShellCommand>
 

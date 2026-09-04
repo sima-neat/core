@@ -29,7 +29,7 @@ To use DevKit Sync later, you also need:
 
 Install the current Neat SDK 2.1 release channel:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
@@ -74,7 +74,7 @@ or VS Code.
 
 Open the Neat SDK shell with:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk neat
 </ShellCommand>
 
@@ -83,7 +83,7 @@ sima-cli sdk neat
 Neat Insight is served from inside the SDK and can be opened from a browser.
 From inside the SDK shell, run:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 neat
 </ShellCommand>
 
@@ -101,7 +101,7 @@ workspace. For more information, see [Insight](/tools/insight/).
 You can access VS Code from a browser through the SDK Code UI. At the end of SDK
 installation, `sima-cli` prints the Code UI URL as `codeUI`, for example:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 </ShellCommand>
 
@@ -120,14 +120,14 @@ such as prebuilt models.
 To reinstall or upgrade to the current SDK package, rerun the install command
 above from the host:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
 To update the Neat Library inside an existing Neat SDK container, run the Neat
 CLI from the container shell:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 neat update
 </ShellCommand>
 
@@ -142,7 +142,7 @@ inside the new container.
 
 To remove an installed SDK container, run:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk remove
 </ShellCommand>
 

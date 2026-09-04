@@ -37,6 +37,19 @@ SDK の経路を選択する場合は、ホストが[ホスト要件](/getting-s
 Neat Library、PyNeat は、DevKit を接続するまで省略できる任意の手順です。
 :::
 
+<div class="overview-section-label">コマンドの読み方</div>
+
+このドキュメントのコマンドブロックには、実行する環境がラベルと色分けで示されています。どこで入力すればよいか迷う必要はありません。
+
+| プロンプト | 実行する場所 |
+| --- | --- |
+| `host$` | SDK の外側、自分のマシン上。 |
+| `sdk$` | Neat SDK コンテナのシェル内。 |
+| `devkit$` | Modalix DevKit 上。 |
+| `pcie-host$` | Modalix PCIe カードを搭載したホストマシン上。 |
+
+`sdk or devkit$` のように複数の環境がラベル付けされたブロックは、どちらの環境でも同じように実行できます。コマンドのパスが相対パスの場合は、実行するディレクトリもブロックに示されます。
+
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>はじめに</h2>

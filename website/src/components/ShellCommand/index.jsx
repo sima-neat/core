@@ -3,6 +3,50 @@ import IconCopy from '@theme/Icon/Copy';
 import IconSuccess from '@theme/Icon/Success';
 import styles from './styles.module.css';
 
+// Canonical execution environments. This list is closed on purpose: an unknown
+// value throws during the docs build so the vocabulary cannot drift again.
+// Combine tokens with "|" when a command runs in either place, for example
+// prompt="sdk|devkit".
+const ENVIRONMENT_CLASSES = {
+  host: styles.envHost,
+  sdk: styles.envSdk,
+  devkit: styles.envDevkit,
+  'pcie-host': styles.envPcieHost,
+};
+
+const ENVIRONMENTS = Object.keys(ENVIRONMENT_CLASSES);
+
+function parseEnvironments(prompt) {
+  const tokens = String(prompt)
+    .split('|')
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (!tokens.length) {
+    throw new Error(
+      `<ShellCommand prompt="${prompt}"> has no environment. ` +
+        `Use one of: ${ENVIRONMENTS.join(', ')}.`,
+    );
+  }
+
+  const unknown = tokens.filter((token) => !ENVIRONMENTS.includes(token));
+  if (unknown.length) {
+    throw new Error(
+      `<ShellCommand prompt="${prompt}"> uses unknown environment(s): ` +
+        `${unknown.join(', ')}. Valid environments are: ${ENVIRONMENTS.join(', ')}. ` +
+        'Combine them with "|" (for example prompt="sdk|devkit") when a command ' +
+        'runs in either place.',
+    );
+  }
+
+  return tokens;
+}
+
+function promptLabel(tokens) {
+  if (tokens.length === 1) return tokens[0];
+  return `${tokens.slice(0, -1).join(', ')} or ${tokens[tokens.length - 1]}`;
+}
+
 function textFromNode(node) {
   if (node == null || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -21,14 +65,15 @@ function normalizeCommand(children) {
   return lines.map((line) => line.slice(minIndent)).join('\n');
 }
 
-export default function ShellCommand({
-  children,
-  prompt = 'user-host-machine',
-}) {
+export default function ShellCommand({children, prompt = 'host'}) {
   const [copied, setCopied] = useState(false);
   const copyTimeout = useRef(undefined);
   const command = normalizeCommand(children);
   const lines = command.split('\n');
+  const environments = parseEnvironments(prompt);
+  const label = promptLabel(environments);
+  const environmentClass =
+    environments.length === 1 ? ENVIRONMENT_CLASSES[environments[0]] : styles.envMulti;
 
   useEffect(() => () => window.clearTimeout(copyTimeout.current), []);
 
@@ -44,30 +89,34 @@ export default function ShellCommand({
   }
 
   return (
-    <div className={styles.shellCommand}>
-      <button
-        type="button"
-        className={`${styles.copyButton} ${copied ? styles.copyButtonCopied : ''}`}
-        onClick={handleCopy}
-        aria-label={copied ? 'Copied' : 'Copy command'}
-        title="Copy">
-        <span className={styles.copyButtonIcons} aria-hidden="true">
-          <IconCopy className={styles.copyButtonIcon} />
-          <IconSuccess className={styles.copyButtonSuccessIcon} />
-        </span>
-      </button>
-      <pre className={styles.pre}>
-        <code className={styles.code}>
-          {lines.map((line, index) => (
-            <span className={styles.line} key={`${index}-${line}`}>
-              <span className={styles.prompt} aria-hidden="true">
-                {prompt}$
+    <div className={`${styles.shellCommand} ${environmentClass}`}>
+      <div className={styles.terminal}>
+        <button
+          type="button"
+          className={`${styles.copyButton} ${copied ? styles.copyButtonCopied : ''}`}
+          onClick={handleCopy}
+          aria-label={copied ? 'Copied' : 'Copy command'}
+          title="Copy">
+          <span className={styles.copyButtonIcons} aria-hidden="true">
+            <IconCopy className={styles.copyButtonIcon} />
+            <IconSuccess className={styles.copyButtonSuccessIcon} />
+          </span>
+        </button>
+        <pre className={styles.pre}>
+          <code className={styles.code}>
+            {lines.map((line, index) => (
+              <span className={styles.line} key={`${index}-${line}`}>
+                <span
+                  className={styles.prompt}
+                  aria-hidden={index > 0 ? 'true' : undefined}>
+                  {label}$
+                </span>
+                <span className={styles.command}>{line || ' '}</span>
               </span>
-              <span className={styles.command}>{line || ' '}</span>
-            </span>
-          ))}
-        </code>
-      </pre>
+            ))}
+          </code>
+        </pre>
+      </div>
     </div>
   );
 }

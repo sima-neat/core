@@ -8,7 +8,7 @@ sidebar_position: 5
 
 У SDK вивід статусу також містить відображення хост-портів Insight з файлу `$HOME/.insight-config/neat-port-map.json`.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
@@ -46,7 +46,7 @@ Exposed Ports
 
 Для автоматизації та інтеграції інструментів використовуйте вивід у форматі JSON:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat --json
 </ShellCommand>
 
@@ -54,7 +54,7 @@ neat --json
 
 Щоб оновити середовище виконання Neat Library, `neat-insight` та встановлені сценарії `sima-cli` з виявленого каналу, виконайте команду:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update
 </ShellCommand>
 

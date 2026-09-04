@@ -467,10 +467,10 @@ int main() {
 
 **Збірка:**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **Запустити:**
 
