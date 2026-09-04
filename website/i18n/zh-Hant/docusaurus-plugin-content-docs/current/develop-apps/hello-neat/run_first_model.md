@@ -306,25 +306,36 @@ if __name__ == "__main__":
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
-使用與「Hello Neat!」相同的指令重新建置，然後執行二進位檔：
+使用與「Hello Neat!」相同的指令重新建置：
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/sima_neat_hello      # on the DevKit
-dk build/sima_neat_hello     # from the Palette SDK host
-```
+</ShellCommand>
+
+然後執行二進位檔：
+
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 執行腳本：
 
-```bash
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
-python3 hello_neat.py        # on the DevKit
-dk hello_neat.py             # from the Palette SDK host
-```
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

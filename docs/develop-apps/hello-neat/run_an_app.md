@@ -468,7 +468,7 @@ int main() {
 
 **Build:**
 
-<ShellCommand prompt="sdk|devkit" cwd="your project directory">
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 </ShellCommand>

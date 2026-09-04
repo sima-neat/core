@@ -46,7 +46,7 @@ mdx:
 
 2. Ваша робоча директорія має виглядати так:
 
-   ```bash
+   ```text
    sima-neat-hello/
    └── hello_neat.py
    ```
@@ -128,7 +128,7 @@ mdx:
 
 3. Ваша робоча директорія має виглядати так:
 
-   ```bash
+   ```text
    sima-neat-hello/
    ├── CMakeLists.txt
    └── main.cpp
@@ -136,21 +136,20 @@ mdx:
 
 **Зберіть приклад:**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **Запустити:**
 
-* **Щодо DevKit**
-  ```bash
-  ./build/sima_neat_hello
-  ```
-* **На хості Neat SDK**
-  ```bash
-  dk build/sima_neat_hello
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

@@ -33,6 +33,19 @@ Palette Neat 是 SiMa.ai 為在 Modalix 上建置 AI 應用程式所提供的軟
 選擇性步驟，在配對 DevKit 前可以先略過。
 :::
 
+<div class="overview-section-label">如何閱讀指令</div>
+
+每個指令區塊都會標示並以顏色區分其執行環境，讓您不必猜測應該在哪裡輸入：
+
+| 提示字元 | 執行位置 |
+| --- | --- |
+| `host$` | 在您自己的機器上，SDK 之外。 |
+| `sdk$` | 在 Neat SDK 容器的 shell 內。 |
+| `devkit$` | 在 Modalix DevKit 上。 |
+| `pcie-host$` | 在裝有 Modalix PCIe 卡的主機上。 |
+
+標示多個環境的區塊（例如 `sdk or devkit$`）在任一環境中的執行方式相同。若指令中的路徑為相對路徑，區塊也會指出應從哪個目錄執行。
+
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>從這裡開始</h2>

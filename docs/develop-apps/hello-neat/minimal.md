@@ -46,7 +46,7 @@ Create a working directory for the example, then use the **Python / C++** tabs t
 
 2. Your working directory should look like this:
 
-   ```bash
+   ```text
    sima-neat-hello/
    └── hello_neat.py
    ```
@@ -136,18 +136,18 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 
 **Build the example:**
 
-<ShellCommand prompt="sdk|devkit" cwd="the sima-neat-hello/ project directory">
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 </ShellCommand>
 
 **Run:**
 
-<ShellCommand prompt="devkit" cwd="the sima-neat-hello/ project directory">
+<ShellCommand prompt="devkit">
 ./build/sima_neat_hello
 </ShellCommand>
 
-<ShellCommand prompt="sdk" cwd="the sima-neat-hello/ project directory">
+<ShellCommand prompt="sdk">
 dk build/sima_neat_hello
 </ShellCommand>
 

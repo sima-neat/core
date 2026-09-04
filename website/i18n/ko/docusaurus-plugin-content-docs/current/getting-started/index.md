@@ -35,6 +35,19 @@ SDK 경로를 선택한 경우 호스트가 [호스트 요구 사항](/getting-s
 PyNeat 설정은 DevKit을 연결할 때까지 건너뛸 수 있는 선택 단계입니다.
 :::
 
+<div class="overview-section-label">명령어 읽는 방법</div>
+
+이 문서의 명령어 블록에는 실행 환경이 레이블과 색상으로 표시되어 있으므로, 어디에 입력해야 할지 추측할 필요가 없습니다.
+
+| 프롬프트 | 실행 위치 |
+| --- | --- |
+| `host$` | SDK 외부의 사용자 머신에서. |
+| `sdk$` | Neat SDK 컨테이너 셸 안에서. |
+| `devkit$` | Modalix DevKit에서. |
+| `pcie-host$` | Modalix PCIe 카드가 장착된 호스트 머신에서. |
+
+`sdk or devkit$`처럼 두 개 이상의 환경이 표시된 블록은 어느 쪽에서든 동일하게 실행됩니다. 명령어의 경로가 상대 경로인 경우, 블록에 실행할 디렉터리도 함께 표시됩니다.
+
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>시작하기</h2>
