@@ -2000,6 +2000,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("boxes", &simaai::neat::SegmentationDecodeTensors::boxes)
       .def_rw("masks", &simaai::neat::SegmentationDecodeTensors::masks);
 
+  nb::class_<simaai::neat::SegmentationPoseDecodeTensors>(m, "SegmentationPoseDecodeTensors")
+      .def(nb::init<>())
+      .def_rw("boxes", &simaai::neat::SegmentationPoseDecodeTensors::boxes)
+      .def_rw("masks", &simaai::neat::SegmentationPoseDecodeTensors::masks)
+      .def_rw("keypoints", &simaai::neat::SegmentationPoseDecodeTensors::keypoints);
+
   m.def(
       "decode_pose",
       [](const TensorList& pose_tensors, std::optional<std::pair<int, int>> clamp_to,
@@ -2065,6 +2071,42 @@ NB_MODULE(_pyneat_core, m) {
       "  TypeError: an input tensor is not segmentation/BBOX-compatible.\n"
       "  RuntimeError: strict=True and a payload is malformed.",
       "segmentation_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
+      "strict"_a = false);
+
+  m.def(
+      "decode_segmentation_pose",
+      [](const TensorList& tensors, std::optional<std::pair<int, int>> clamp_to,
+         std::optional<int> top_k, bool strict) {
+        const int w = clamp_to ? clamp_to->first : 0;
+        const int h = clamp_to ? clamp_to->second : 0;
+        const int k = top_k.value_or(0);
+        try {
+          return simaai::neat::decode_segmentation_pose(tensors, w, h, k, strict);
+        } catch (const std::runtime_error& e) {
+          const std::string msg = e.what();
+          if (detection_decode_type_error_message(msg)) {
+            throw nb::type_error(e.what());
+          }
+          throw;
+        }
+      },
+      "Decode combined BoxDecode segmentation+pose tensors, positional 1:1.\n\n"
+      "Each result has `boxes` [N, 6] float32, `masks` [N, 160, 160] uint8, and\n"
+      "`keypoints` [N, 17, 3] float32 with columns (x, y, visibility). All three are\n"
+      "parallel: row i of each describes the same detection.\n\n"
+      "Detections whose class carries no keypoints have an all-zero keypoint row,\n"
+      "visibility included, so gate on visibility rather than needing the class list.\n\n"
+      "Args:\n"
+      "  tensors:  list[Tensor] of BoxDecode segmentation+pose format tensors.\n"
+      "  clamp_to: Optional (width, height) - clamp box coordinates to that rectangle.\n"
+      "  top_k:    Optional cap on detections per tensor.\n"
+      "  strict:   When True, raise on malformed buffers instead of best-effort.\n\n"
+      "Returns:\n"
+      "  list[SegmentationPoseDecodeTensors] - one result per input tensor.\n\n"
+      "Raises:\n"
+      "  TypeError: an input tensor is not segmentation-pose/BBOX-compatible.\n"
+      "  RuntimeError: strict=True and a payload is malformed.",
+      "tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
       "strict"_a = false);
 
   nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
@@ -4126,6 +4168,8 @@ NB_MODULE(_pyneat_core, m) {
   detections_mod.def("read_detection_format", &simaai::neat::read_detection_format, "tensor"_a);
   detections_mod.def("format_is_bbox", &simaai::neat::detection_format_is_bbox, "format"_a);
   detections_mod.def("format_is_pose", &simaai::neat::detection_format_is_pose, "format"_a);
+  detections_mod.def("format_is_segmentation_pose",
+                     &simaai::neat::detection_format_is_segmentation_pose, "format"_a);
   detections_mod.def("format_is_segmentation", &simaai::neat::detection_format_is_segmentation,
                      "format"_a);
   detections_mod.def("format_is_bbox_family", &simaai::neat::detection_format_is_bbox_family,
@@ -4251,7 +4295,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
-      .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint);
+      .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint)
+      .value("YoloXSegPose", simaai::neat::BoxDecodeType::YoloXSegPose);
 
   nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
       .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)

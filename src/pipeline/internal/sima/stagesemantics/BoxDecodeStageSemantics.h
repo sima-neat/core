@@ -64,6 +64,7 @@ void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract
 // Apply the raw P3/P4/P5 layout, sigmoid score domain, and inferred class count
 // before lowering a model-managed YOLOv5 contract.
 void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
+void apply_yolox_seg_pose_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
 
 // Validate an explicit node-level layout override against a model-managed
 // decoder contract. Auto preserves the compiled contract.
