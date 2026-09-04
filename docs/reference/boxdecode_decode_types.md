@@ -199,9 +199,21 @@ included, so gate on visibility rather than needing the decoder's class list. A 
 may also use fewer than the 17 reserved keypoint slots; the unused trailing slots are
 zeroed the same way.
 
-`num_classes` must be set explicitly for this family. Its class tensor packs objectness
-into channel 0, so the channel count is one greater than the class-block width and
-cannot be used to infer it.
+`num_classes` is derived from the class head for this family and does not have to be
+supplied. Its class tensor packs objectness into channel 0, so the class-block width is
+the class head depth minus one — a 30-channel head means 29 classes. Supplying a value
+anyway is allowed and is cross-checked against that derivation: a mismatch is rejected
+at contract compilation rather than reaching the backend, where a wrong count silently
+mis-strides the scorer and yields plausible-looking wrong classes.
+
+Keypoint gating by class (`pose_classes`) is available only when the backend is
+configured from JSON. The typed `neatobjectdecode` GStreamer path cannot carry it —
+`SimaPluginBoxDecodeStagePayload` has no pose-class field, so the static manifest cannot
+express one — and with the gate absent the backend treats **every** class as
+pose-bearing. A model where only some classes carry keypoints must therefore either be
+configured through JSON or have its consumers gate on keypoint visibility, which is
+zeroed for classes without keypoints as described above. Changing this means bumping
+`SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION` across core and internals together.
 
 ## When `model.run` returns raw heads
 
