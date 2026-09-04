@@ -32,14 +32,6 @@
   --shell-accent: #9aa4b8;
 }
 
-.caption {
-  font-size: 0.8125rem;
-  line-height: 1.4;
-  color: var(--ifm-color-emphasis-700);
-  margin-bottom: 0.35rem;
-  padding-left: 0.35rem;
-  border-left: 3px solid var(--shell-accent);
-}
 
 .terminal {
   position: relative;

@@ -53,15 +53,14 @@ SDK内からDevKit上のコマンド（`dk build/sima_neat_hello`や`dk hello_ne
 
 **実行：**
 
-* **DevKit上**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **Neat SDKホスト上**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Pythonランタイムの場所
 Neat SDKコンテナ内からNeatインストーラーを実行した場合でも、`pyneat`はDevKitのランタイム側にインストールされます。

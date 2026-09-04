@@ -53,15 +53,14 @@ mdx:
 
 **Запустити:**
 
-* **Щодо DevKit**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **На хості Neat SDK**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Розташування середовища виконання Python.
 `pyneat` встановлюється в середовищі виконання DevKit, навіть якщо ви запускаєте інсталятор Neat з контейнера Neat SDK.

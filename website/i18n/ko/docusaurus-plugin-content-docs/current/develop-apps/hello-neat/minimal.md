@@ -53,15 +53,14 @@ SDK 내부에서 DevKit 명령(예: `dk build/sima_neat_hello` 또는 `dk hello_
 
 **실행:**
 
-* **DevKit에서**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **Neat SDK 호스트에서**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Python 런타임 위치
 Neat SDK 컨테이너 안에서 Neat 설치 프로그램을 실행하더라도 `pyneat`는 DevKit 런타임 쪽에 설치됩니다.

@@ -65,12 +65,7 @@ function normalizeCommand(children) {
   return lines.map((line) => line.slice(minIndent)).join('\n');
 }
 
-export default function ShellCommand({
-  children,
-  prompt = 'host',
-  note,
-  cwd,
-}) {
+export default function ShellCommand({children, prompt = 'host'}) {
   const [copied, setCopied] = useState(false);
   const copyTimeout = useRef(undefined);
   const command = normalizeCommand(children);
@@ -79,7 +74,6 @@ export default function ShellCommand({
   const label = promptLabel(environments);
   const environmentClass =
     environments.length === 1 ? ENVIRONMENT_CLASSES[environments[0]] : styles.envMulti;
-  const caption = [note, cwd ? `run from ${cwd}` : ''].filter(Boolean).join(' · ');
 
   useEffect(() => () => window.clearTimeout(copyTimeout.current), []);
 
@@ -96,7 +90,6 @@ export default function ShellCommand({
 
   return (
     <div className={`${styles.shellCommand} ${environmentClass}`}>
-      {caption ? <div className={styles.caption}>{caption}</div> : null}
       <div className={styles.terminal}>
         <button
           type="button"
@@ -113,7 +106,9 @@ export default function ShellCommand({
           <code className={styles.code}>
             {lines.map((line, index) => (
               <span className={styles.line} key={`${index}-${line}`}>
-                <span className={styles.prompt} aria-hidden="true">
+                <span
+                  className={styles.prompt}
+                  aria-hidden={index > 0 ? 'true' : undefined}>
                   {label}$
                 </span>
                 <span className={styles.command}>{line || ' '}</span>

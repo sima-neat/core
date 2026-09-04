@@ -53,15 +53,14 @@ mdx:
 
 **執行：**
 
-* **在 DevKit 上**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **在 Neat SDK 主機上**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Python 執行階段位置
 即使您從 Neat SDK 容器內執行 Neat 安裝程式，`pyneat` 仍會安裝在 DevKit 執行階段一側。

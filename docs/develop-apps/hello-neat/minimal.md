@@ -53,15 +53,14 @@ Create a working directory for the example, then use the **Python / C++** tabs t
 
 **Run:**
 
-* **On the DevKit**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **On the Neat SDK host**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Python Runtime Location
 `pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Neat SDK container.
