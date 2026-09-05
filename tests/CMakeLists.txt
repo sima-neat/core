@@ -597,6 +597,7 @@ set(E2E_TESTS
   decoder_drop_on_resolution_change_test
   decoder_dynamic_caps_test
   decoder_visible_caps_test
+  detessdequant_output_pool_test
   hybrid_graph_basic_test
   hybrid_graph_bundle_test
   graph_deterministic_routing_regression_test
@@ -625,6 +626,13 @@ foreach(test ${E2E_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "e2e")
   endif()
 endforeach()
+
+set_tests_properties(detessdequant_output_pool_test PROPERTIES
+  TIMEOUT 20
+  RESOURCE_LOCK "dispatcher"
+)
+set_property(TEST detessdequant_output_pool_test APPEND PROPERTY ENVIRONMENT
+  "SIMA_PROCESSCVU_ALLOW_OVERFLOW_ALLOC=0;SIMA_PROCESSCVU_PREPARED_POOL_BUFFERS=0")
 
 add_pipeline_test(
   ev74_four_process_rpmsg_concurrency_test
