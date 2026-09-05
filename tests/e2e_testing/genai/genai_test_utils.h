@@ -13,7 +13,7 @@ inline constexpr const char* kLlimaModelsPathEnv = "LLIMA_MODELS_PATH";
 inline constexpr const char* kDefaultLlimaModelsPath = "/media/nvme/llima/models";
 inline constexpr const char* kDefaultTextModelName = "Qwen2.5-0.5B-Instruct-Autoround-a16w4";
 inline constexpr const char* kDefaultVlmModelName = "LFM2.5-VL-450M-Autoround-a16w4";
-inline constexpr const char* kDefaultAsrModelName = "whisper-small-a16w8";
+inline constexpr const char* kDefaultAsrModelName = "whisper-small-a16w8-layered-encoder";
 
 inline std::string trim_env_value(const char* value) {
   if (value == nullptr) {
