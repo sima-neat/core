@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly AUTH_CHECK_TIMEOUT_SECONDS="${SIMA_CLI_AUTH_CHECK_TIMEOUT_SECONDS:-20}"
+readonly AUTH_CHECK_TIMEOUT_SECONDS="${SIMA_CLI_AUTH_CHECK_TIMEOUT_SECONDS:-60}"
 
 sima_cli_bin="$(command -v sima-cli || true)"
 if [[ -z "${sima_cli_bin}" ]]; then
