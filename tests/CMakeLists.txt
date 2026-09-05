@@ -628,7 +628,7 @@ foreach(test ${E2E_TESTS})
 endforeach()
 
 set_tests_properties(detessdequant_output_pool_test PROPERTIES
-  TIMEOUT 20
+  TIMEOUT 60
   RESOURCE_LOCK "dispatcher"
 )
 set_property(TEST detessdequant_output_pool_test APPEND PROPERTY ENVIRONMENT

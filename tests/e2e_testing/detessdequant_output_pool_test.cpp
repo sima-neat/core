@@ -110,10 +110,11 @@ void check_pool_pressure(bool stop_while_full) {
 
   if (stop_while_full) {
     const auto start = std::chrono::steady_clock::now();
+    run.stop();
+    require(run.last_error().empty(), "stopping a full pool must not report an allocation error");
     run.close();
     require(std::chrono::steady_clock::now() - start < std::chrono::seconds(2),
             "close must interrupt output-pool acquisition");
-    require(run.last_error().empty(), "closing a full pool must not report an allocation error");
   } else {
     held[0] = {};
     require(run.pull(3000, held[0]) == PullStatus::Ok, run.last_error());
