@@ -4447,6 +4447,14 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::Model::Runner>(m, "ModelRunner")
       .def(nb::init<>())
       .def("__bool__", [](const simaai::neat::Model::Runner& r) { return static_cast<bool>(r); })
+      .def("try_push_tensors",
+           static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::TensorList&)>(
+               &simaai::neat::Model::Runner::try_push),
+           "inputs"_a)
+      .def("try_push_samples",
+           static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::Sample&)>(
+               &simaai::neat::Model::Runner::try_push),
+           "inputs"_a)
       .def("push_tensors",
            static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::TensorList&)>(
                &simaai::neat::Model::Runner::push),
