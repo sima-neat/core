@@ -1,10 +1,12 @@
 #ifndef SIMA_NEAT_INTERNAL
 #define SIMA_NEAT_INTERNAL 1
 #endif
+#include "model/Model.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Run.h"
 #include "pipeline/runtime/RunInternal.h"
+#include "pipeline/runtime/RunCore.h"
 #include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -12,6 +14,8 @@
 #include <opencv2/core.hpp>
 
 #include <cstdint>
+#include <future>
+#include <mutex>
 
 namespace {
 
@@ -153,6 +157,96 @@ void require_policy_parity(simaai::neat::OverflowPolicy policy, bool expect_back
   }
 }
 
+void runner_try_push_preserves_policy_and_ownership(simaai::neat::OverflowPolicy policy,
+                                                    bool tensor_list) {
+  using namespace simaai::neat;
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x4A);
+  Run run = make_async_rgb_run_with_policy(seed, policy);
+  auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
+  Model::Runner runner(std::move(run));
+  require(runner.try_push(TensorList{seed}), "Runner warmup must accept input");
+  require(!runner.pull(2000).empty(), "Runner must forward input to output");
+
+  // Park the worker after dequeue so queue occupancy cannot race the assertions.
+  std::unique_lock timing_lock(core->latency_mu);
+  require(runner.try_push(TensorList{seed}), "Runner gate input must be accepted");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  bool parked = false;
+  while (std::chrono::steady_clock::now() < deadline) {
+    {
+      std::lock_guard queue_lock(core->pipeline.in_mu);
+      parked = core->pipeline.in_queue.empty();
+    }
+    if (parked)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(parked, "Runner input worker must reach the gate");
+
+  auto make_pair = [](int id) {
+    Sample sample;
+    sample.kind = SampleKind::TensorSet;
+    sample.frame_id = id;
+    sample.stream_id = "stream0";
+    sample.pts_ns = id * 1000;
+    for (int i = 0; i < 2; ++i) {
+      Tensor tensor =
+          Tensor::from_vector(std::vector<float>{float(id), float(i)}, {2}, TensorMemory::CPU);
+      tensor.route.physical_index = 0;
+      tensor.route.memory_index = i;
+      sample.tensors.push_back(std::move(tensor));
+    }
+    return sample;
+  };
+  auto submit = [&](const Sample& sample) {
+    return tensor_list ? runner.try_push(sample.tensors) : runner.try_push(sample);
+  };
+  Sample old = make_pair(1);
+  std::weak_ptr<TensorBuffer> old_storage = old.tensors[0].storage;
+  require(submit(old), "Runner must accept the first pending pair");
+  old = {};
+  require(!old_storage.expired(), "Queued input must retain its storage");
+
+  Sample latest = make_pair(2);
+  auto pending = std::async(std::launch::async, [&] { return submit(latest); });
+  const bool returned = pending.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+  if (!returned)
+    runner.close_input();
+  const bool accepted = pending.get();
+  require(returned, "Runner try_push must not wait for queue space");
+  const bool replaces = policy == OverflowPolicy::KeepLatest;
+  require(accepted == replaces, "Runner must preserve the configured admission policy");
+  require(old_storage.expired() == replaces, "Only replacement may release queued storage");
+  require(core->inputs_dropped.load() == (policy == OverflowPolicy::Block ? 0U : 1U),
+          "Runner must preserve drop accounting");
+  {
+    std::lock_guard queue_lock(core->pipeline.in_mu);
+    require(core->pipeline.in_queue.size() == 1, "Runner must retain one pending sample");
+    const auto& queued = core->pipeline.in_queue.front().msg;
+    require(queued.tensors.size() == 2, "Paired inputs must remain together");
+    require(queued.tensors[0].route.memory_index == 0 && queued.tensors[1].route.memory_index == 1,
+            "Input tensor routes must remain distinct");
+    if (replaces) {
+      for (int i = 0; i < 2; ++i) {
+        require(queued.tensors[i].storage == latest.tensors[i].storage,
+                "Runner must not copy tensor payloads");
+      }
+    }
+    if (!tensor_list) {
+      require(queued.frame_id == (replaces ? 2 : 1) && queued.stream_id == "stream0" &&
+                  queued.pts_ns == (replaces ? 2000 : 1000),
+              "Sample identity must stay attached to its pair");
+    }
+    // These pairs test admission, not the RGB fixture's downstream media contract.
+    core->pipeline.in_queue.clear();
+  }
+  runner.close_input();
+  require(!submit(latest), "Runner must reject input after close_input");
+  require(old_storage.expired(), "Removing the queued input must release its storage");
+  timing_lock.unlock();
+  runner.close();
+}
+
 } // namespace
 
 RUN_TEST("unit_run_overflow_policy_parity_test", ([] {
@@ -161,4 +255,10 @@ RUN_TEST("unit_run_overflow_policy_parity_test", ([] {
            require_policy_parity(OverflowPolicy::Block, true, false);
            require_policy_parity(OverflowPolicy::DropIncoming, true, true);
            require_policy_parity(OverflowPolicy::KeepLatest, false, true);
+           for (auto policy :
+                {OverflowPolicy::Block, OverflowPolicy::DropIncoming, OverflowPolicy::KeepLatest}) {
+             for (bool tensor_list : {false, true}) {
+               runner_try_push_preserves_policy_and_ownership(policy, tensor_list);
+             }
+           }
          }));

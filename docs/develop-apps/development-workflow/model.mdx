@@ -619,6 +619,8 @@ runner.close()
 
 Use `runner.run(...)` when each call should push one input and wait for its output. Use `push(...)` / `pull(...)` when your app wants to keep work in flight. Use `close_input()` when no more inputs are coming and you want remaining work to drain. Use `close()` when the runner is done.
 
+`push` waits for input-queue space. To submit without that wait, use C++ `runner.try_push` with a `Sample` or `TensorList`, or Python `runner.try_push_samples` / `runner.try_push_tensors`. Set `RunOptions.queue_depth` and `overflow_policy` before building the runner. When a bounded queue is full, `KeepLatest` replaces the oldest pending sample and returns `true`; `Block` and `DropIncoming` return `false`. Closed input also returns `false`. Keep a frame's paired tensors together in one TensorSet sample. Replacement does not cancel active inference, and the forwarding methods add no payload copy.
+
 
 ### Build a route-specific runner
 
