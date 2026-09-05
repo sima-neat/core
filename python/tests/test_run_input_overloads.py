@@ -50,6 +50,25 @@ def test_model_runner_accepts_numpy_without_explicit_tensor_wrap():
   _assert_not_type_error(lambda: runner.run([arr], timeout_ms=1))
 
 
+@pytest.mark.parametrize("method", ["try_push_samples", "try_push_tensors"])
+def test_model_runner_try_push_matches_run(method):
+  tensor = pn.Tensor.from_numpy(
+      np.zeros((2, 2), dtype=np.float32), copy=True, memory=pn.TensorMemory.CPU
+  )
+  sample = pn.Sample()
+  sample.kind = pn.SampleKind.TensorSet
+  sample.tensors = [tensor, tensor]
+  inputs = sample if method == "try_push_samples" else [tensor, tensor]
+  for value in (inputs, pn.Sample() if method == "try_push_samples" else []):
+    with pytest.raises(RuntimeError) as expected:
+      getattr(pn.Run(), method)(value)
+    with pytest.raises(RuntimeError) as actual:
+      getattr(pn.ModelRunner(), method)(value)
+    assert str(actual.value) == str(expected.value)
+  with pytest.raises(TypeError):
+    getattr(pn.ModelRunner(), method)(object())
+
+
 def test_run_chw_image_autoconverts_to_hwc_with_warning():
   run = pn.Run()
   arr = np.zeros((3, 8, 8), dtype=np.uint8)

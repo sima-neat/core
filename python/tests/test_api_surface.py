@@ -1501,6 +1501,8 @@ def test_runtime_overload_methods_present():
   assert hasattr(pyneat.Graph, "build")
   assert hasattr(pyneat.Graph, "run")
   assert hasattr(pyneat.ModelRunner, "push")
+  assert hasattr(pyneat.ModelRunner, "try_push_samples")
+  assert hasattr(pyneat.ModelRunner, "try_push_tensors")
   assert hasattr(pyneat.ModelRunner, "run")
   assert hasattr(pyneat.Model, "build")
   assert hasattr(pyneat.Model, "run")
