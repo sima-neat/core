@@ -779,6 +779,17 @@ if (SimaLMM_FOUND)
   endif()
 
   add_pipeline_test_long(
+    genai_gemma4_mtp_run_test
+    e2e_testing/genai/genai_gemma4_mtp_run_test.cpp
+  )
+
+  if (NOT genai_gemma4_mtp_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_gemma4_mtp_run_test APPEND PROPERTY
+      LABELS "e2e;genai;llima;speculative;gemma4;long")
+    set_property(TEST genai_gemma4_mtp_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
+
+  add_pipeline_test_long(
     genai_vlm_run_test
     SOURCES e2e_testing/genai/genai_vlm_run_test.cpp
     ARGS ${CMAKE_SOURCE_DIR}

@@ -288,6 +288,28 @@ preprocess_images(simaai::llima::ImageProcessor& image_processor,
   return out;
 }
 
+void validate_speculative_pair_configs(const simaai::llima::VlmConfig& target_cfg,
+                                       const simaai::llima::VlmConfig& draft_cfg) {
+  if (!target_cfg.lm_cfg.speculative_decoding_cfg.has_value() ||
+      !draft_cfg.lm_cfg.speculative_decoding_cfg.has_value()) {
+    throw std::runtime_error(
+        "Speculative-decoding package requires target and draft configurations");
+  }
+
+  const auto& target_spec = target_cfg.lm_cfg.speculative_decoding_cfg.value();
+  const auto& draft_spec = draft_cfg.lm_cfg.speculative_decoding_cfg.value();
+  if (target_spec.is_draft || !draft_spec.is_draft) {
+    throw std::runtime_error("Speculative-decoding package has invalid target/draft roles");
+  }
+  if (target_spec.method != draft_spec.method) {
+    throw std::runtime_error("Speculative-decoding target method '" + target_spec.method +
+                             "' does not match draft method '" + draft_spec.method + "'");
+  }
+  if (!target_spec.is_eagle3() && !target_spec.is_gemma4_mtp()) {
+    throw std::runtime_error("Unsupported speculative decoding method: " + target_spec.method);
+  }
+}
+
 } // namespace
 
 struct VisionLanguageModel::Impl {
@@ -375,6 +397,7 @@ struct VisionLanguageModel::Impl {
         vlm_helper->get_pad_token_id(), *text_streamer, options.max_kv_cache_slots);
     if (info.draft_root.has_value()) {
       draft_cfg = load_vlm_config(*info.draft_root);
+      validate_speculative_pair_configs(cfg, draft_cfg);
       draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(
           draft_cfg, *info.draft_root / "devkit", std::nullopt, std::nullopt);
       draft_text_streamer = std::make_unique<simaai::llima::TextStreamer>(
@@ -456,6 +479,12 @@ struct VisionLanguageModel::Impl {
         make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
     try {
       if (draft_language_model) {
+        const auto& spec_cfg = cfg.lm_cfg.speculative_decoding_cfg.value();
+        if (spec_cfg.is_gemma4_mtp()) {
+          return language_model->run_model_gemma4_mtp(*draft_language_model,
+                                                      prepared.input_token_ids, max_total_tokens,
+                                                      timer_ttft, nullptr, request.cache_id);
+        }
         return language_model->run_model_speculative_decoding(
             *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft, nullptr,
             request.cache_id);
@@ -667,7 +696,7 @@ struct VisionLanguageModel::Impl {
     auto active_run = ActiveRunGuard::acquire(*this);
     const auto target_count = language_model->kv_cache_count();
     if (draft_language_model && draft_language_model->kv_cache_count() != target_count) {
-      throw std::runtime_error("EAGLE3 target and draft KV cache pools diverged");
+      throw std::runtime_error("Speculative target and draft KV cache pools diverged");
     }
     return target_count;
   }
@@ -680,7 +709,7 @@ struct VisionLanguageModel::Impl {
       if (draft_removed != removed) {
         language_model->clear_kv_caches();
         draft_language_model->clear_kv_caches();
-        throw std::runtime_error("EAGLE3 target and draft KV cache pools diverged");
+        throw std::runtime_error("Speculative target and draft KV cache pools diverged");
       }
     }
     return removed;

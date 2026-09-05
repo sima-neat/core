@@ -192,6 +192,14 @@ Cache IDs are supported by text-only and vision-language requests, including
 speculative decoding. ASR requests do not accept cache IDs. Changing or
 removing a LoRA adapter invalidates every retained language context.
 
+## Run speculative-decoding packages
+
+Pass the parent directory that contains the compiled target and draft runtime
+directories. Core reads `lm_cfg.speculative_decoding_cfg.method` from the
+package and dispatches EAGLE3 and Gemma4 MTP models to their matching LLiMa
+runtime implementation. The target and draft must declare the same supported
+method and complementary `is_draft` roles.
+
 ## Add images for VLMs
 
 VLMs accept text plus one or more images. Images are passed through
