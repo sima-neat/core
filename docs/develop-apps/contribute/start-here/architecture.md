@@ -540,6 +540,12 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+In the default appsink pull mode, graph-internal encoded output queues remain
+bounded and lossless, including under `Realtime`. Public `Output` policies and
+decoded-image/model-result dropping remain unchanged. Stop interrupts a full
+queue's wait. The optional appsink-callback mode still has a separate queue that
+can drop internal encoded samples.
+
 For RTP JPEG, a compatibility probe after `rtpjpegdepay` appends a missing JPEG
 end marker before parsing. Correctly terminated images pass unchanged; this
 does not repair packet loss or other malformed JPEG data.

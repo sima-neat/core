@@ -411,6 +411,11 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
             pipeline_internal::env_bool("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY", true)) {
           output_drop = OverflowPolicy::KeepLatest;
         }
+        // Internal compressed transport must preserve decoder reference frames.
+        if (!st->pipeline.stream_opt.public_output_contract && out.kind == SampleKind::TensorSet &&
+            out.tensors.size() == 1 && out.tensors.front().semantic.encoded.has_value()) {
+          output_drop = OverflowPolicy::Block;
+        }
         if (output_drop == OverflowPolicy::Block) {
           st->pipeline.out_cv.wait(lock, [&]() {
             return st->stop_requested.load() ||
