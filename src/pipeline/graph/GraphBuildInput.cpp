@@ -5,6 +5,7 @@
 
 #include "GraphDetail.h"
 #include "internal/GraphBuildInternal.h"
+#include "pipeline/internal/RtpJpegEndMarker.h"
 #include "pipeline/internal/UxLogging.h"
 
 #include "gst/GstHelpers.h"
@@ -1918,6 +1919,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     enforce_names_contract(pipeline, br);
   }
 
+  pipeline_internal::attach_rtp_jpeg_end_marker_probes(pipeline);
   attach_boundary_probes(pipeline, br.diag);
   attach_stage_timing_probes(pipeline, br.diag, stream_opt.enable_timings);
   attach_element_timing_probes(pipeline, br.diag, stream_opt.enable_timings);

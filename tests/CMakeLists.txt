@@ -438,6 +438,7 @@ set(UNIT_TESTS
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_jpeg_framing_nodes_test
+  unit_rtp_jpeg_end_marker_test
   unit_multipart_header_capture_test
   unit_multipart_capture_element_test
   pull_timeout_regression_test
