@@ -540,6 +540,10 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+For RTP JPEG, a compatibility probe after `rtpjpegdepay` appends a missing JPEG
+end marker before parsing. Correctly terminated images pass unchanged; this
+does not repair packet loss or other malformed JPEG data.
+
 ### Decoder admission lifecycle
 
 Before choosing the single-pipeline or connected-graph runtime, Core scans the
