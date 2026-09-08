@@ -422,6 +422,36 @@ families, with these additional invariants:
   `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
   consumers must not infer either format from buffer size.
 
+##### YOLOX segmentation + pose BoxDecode contract
+
+`yolox-seg-pose` is the packed YOLOX export that carries box, mask, and keypoint heads in one
+model. It uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
+families, with these additional invariants:
+
+- The inference contract is thirteen grouped-by-role inputs: three feature levels of
+  `[bbox, class, mask_coeff, kpt]` in stride-8/16/32 order, followed by one shared mask
+  prototype. Roles are positional, not inferred from tensor values. `Auto` resolves to
+  `GroupedByRoleLogit`, any layout other than `GroupedByRole`/`GroupedByRoleLogit` is rejected
+  before lowering, and score activation is always normalized to sigmoid.
+- The class head is `Concat(objectness[1], classes[N])`, so its depth is one greater than the
+  class-block width. Core derives `N` as that depth minus one: `Model::Options::num_classes = 0`
+  selects the derived value, and a positive value must match it. This differs from the YOLO26
+  rule only by the objectness offset — the class-head depth remains authoritative, and a
+  contradiction fails during contract construction rather than reaching the backend, where a
+  wrong count mis-strides the scorer and yields plausible but incorrect classes.
+- The MPK-authored and standalone routes normalize through the same family overrides, so a
+  model-managed subset and a hand-built static contract compile to the same layout, activation,
+  and class count.
+- Output is a single box-leading buffer carrying three regions — boxes, masks, then keypoints —
+  each strided by `top_k`. Because boxes lead, `decode_bbox(...)` and `BoxDecodeResults(...)`
+  stay valid on the same payload, while `decode_segmentation_pose(...)` returns all three.
+  Region offsets depend on `top_k` and the mask prototype extent, so consumers must not infer
+  them from buffer size.
+- Keypoint gating by class (`pose_classes`) is a JSON-only backend control. The typed static
+  manifest has no pose-class field, so on that path every class is treated as pose-bearing.
+  Detections whose class carries no keypoints are published with an all-zero pose record, and
+  consumers gate on keypoint visibility rather than on a decoder-side class list.
+
 ---
 
 ### `contracts/` -- validation rules
