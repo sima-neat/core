@@ -177,6 +177,21 @@ def test_superpoint_named_options_surface():
   assert callable(pyneat.decode_superpoint)
 
 
+def test_rfdetr_mask_options_surface():
+  for options in (pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.RfDetrSeg), pyneat.ModelOptions()):
+    assert options.masks.threshold == 0.5
+    assert options.masks.size == pyneat.MaskSize.Native
+    assert options.masks.output == pyneat.MaskOutput.Binary
+    options.masks.output = pyneat.MaskOutput.Probabilities
+    assert options.masks.output == pyneat.MaskOutput.Probabilities
+    options.masks.output = pyneat.MaskOutput.Binary
+    options.masks.size = pyneat.MaskSize.Fixed
+    options.masks.width = 13
+    options.masks.height = 9
+    options.masks.threshold = 0.08
+    assert (options.masks.width, options.masks.height, options.masks.threshold) == (13, 9, 0.08)
+
+
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
   assert not hasattr(pyneat.Graph, "build_fused_realtime_source")

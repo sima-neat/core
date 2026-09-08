@@ -3861,6 +3861,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
   out.model_managed_route_flags.pre_cast_needed = out.preproc_context.pre_cast_needed;
   out.model_managed_route_flags.include_pre_stage = out.include_pre_stage;
   out.model_managed_route_flags.boxdecode_selected = out.boxdecode_selected;
+  out.model_managed_route_flags.requested_decode_type = options.decode_type;
   out.cast_symmetry_ok = semantics.cast_symmetry_ok;
 
   if (!out.ingress_contracts.empty()) {

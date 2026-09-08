@@ -575,6 +575,8 @@ bool decode_type_is_packed_yolo(BoxDecodeType type) {
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract);
 
 int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
+  if (box_decode_type_is_rfdetr(contract.decode_type))
+    return contract.num_classes;
   if (box_decode_type_is_ssd_family(contract.decode_type)) {
     // SSD class count is derived from the loc/conf head geometry, not head names:
     // confidence heads pack num_classes * priors-per-cell channels, so a name-based
@@ -1034,7 +1036,8 @@ int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferr
   if (requested_num_classes <= 0) {
     return inferred_num_classes;
   }
-  if ((decode_type_is_yolov26_family(decode_type) || decode_type == BoxDecodeType::YoloV5) &&
+  if ((decode_type_is_yolov26_family(decode_type) || decode_type == BoxDecodeType::YoloV5 ||
+       box_decode_type_is_rfdetr(decode_type)) &&
       inferred_num_classes > 0 && requested_num_classes != inferred_num_classes) {
     throw std::invalid_argument(
         std::string(context ? context : "BoxDecode") +
@@ -1103,6 +1106,10 @@ void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contr
 
 void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
                                                       BoxDecodeTypeOption requested) {
+  if (box_decode_type_is_rfdetr(decode_type) && requested != BoxDecodeTypeOption::Auto) {
+    throw std::invalid_argument(
+        "RF-DETR uses its model export contract; layout overrides must be Auto");
+  }
   if (decode_type == BoxDecodeType::YoloV5 && requested != BoxDecodeTypeOption::Auto &&
       requested != BoxDecodeTypeOption::PackedPerHead) {
     throw std::invalid_argument(
@@ -1116,6 +1123,8 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
     const std::optional<ModelManagedRouteFlags>& model_route_flags,
     BoxDecodeTypeOption decode_type_option, double detection_threshold, double nms_iou_threshold,
     int topk, int num_classes, const std::vector<std::string>& required_preprocess_meta_fields) {
+  if (box_decode_type_is_rfdetr(decode_type))
+    validate_model_managed_boxdecode_option_override(decode_type, decode_type_option);
   BoxDecodeStaticContract finalized = contract;
   finalized.decode_type = decode_type;
   finalized.decode_type_option = decode_type_option != BoxDecodeTypeOption::Auto
@@ -1123,7 +1132,8 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
                                      : contract.decode_type_option;
   if (model_route_flags.has_value()) {
     const bool direct_packed_superpoint =
-        finalized.decode_type == BoxDecodeType::SuperPoint &&
+        (finalized.decode_type == BoxDecodeType::SuperPoint ||
+         box_decode_type_is_rfdetr(finalized.decode_type)) &&
         std::any_of(finalized.tensors.begin(), finalized.tensors.end(), [](const auto& tensor) {
           return tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
                  tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16;
@@ -1140,6 +1150,8 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
     finalized.quant_contract_required = model_semantics->quant_contract_required;
     finalized.model_owned_flags = true;
   }
+  if (box_decode_type_is_rfdetr(finalized.decode_type))
+    validate_rfdetr_controls(detection_threshold, nms_iou_threshold, topk, finalized.rfdetr.masks);
   finalized.detection_threshold = detection_threshold;
   finalized.nms_iou_threshold = nms_iou_threshold;
   finalized.topk = topk;
@@ -1243,6 +1255,7 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   }
   compiled.payload.slice_shapes = subset.slice_shapes;
   compiled.payload.tensor_storage_kind = subset.tensor_storage_kind;
+  compiled.payload.rfdetr = subset.rfdetr;
   compiled.payload.superpoint = subset.superpoint;
   if (compiled.payload.decode_type == BoxDecodeType::SuperPoint) {
     auto& resolved = compiled.payload.superpoint;

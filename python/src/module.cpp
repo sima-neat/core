@@ -4247,6 +4247,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
       .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
+      .value("RfDetr", simaai::neat::BoxDecodeType::RfDetr)
+      .value("RfDetrSeg", simaai::neat::BoxDecodeType::RfDetrSeg)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
@@ -4287,12 +4289,28 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("descriptor_output_dtype", &simaai::neat::SuperPointOptions::descriptor_output_dtype)
       .def_rw("output_format", &simaai::neat::SuperPointOptions::output_format);
 
+  nb::enum_<simaai::neat::MaskSize>(m, "MaskSize")
+      .value("Native", simaai::neat::MaskSize::Native)
+      .value("Source", simaai::neat::MaskSize::Source)
+      .value("Fixed", simaai::neat::MaskSize::Fixed);
+  nb::enum_<simaai::neat::MaskOutput>(m, "MaskOutput")
+      .value("Binary", simaai::neat::MaskOutput::Binary)
+      .value("Probabilities", simaai::neat::MaskOutput::Probabilities);
+  nb::class_<simaai::neat::MaskOptions>(m, "MaskOptions")
+      .def(nb::init<>())
+      .def_rw("threshold", &simaai::neat::MaskOptions::threshold)
+      .def_rw("size", &simaai::neat::MaskOptions::size)
+      .def_rw("width", &simaai::neat::MaskOptions::width)
+      .def_rw("height", &simaai::neat::MaskOptions::height)
+      .def_rw("output", &simaai::neat::MaskOptions::output);
+
   nb::class_<simaai::neat::BoxDecodeOptions>(m, "BoxDecodeOptions")
       .def(nb::init<simaai::neat::BoxDecodeType>(), "decode_type"_a)
       .def_rw("decode_type", &simaai::neat::BoxDecodeOptions::decode_type)
       .def_rw("detection_threshold", &simaai::neat::BoxDecodeOptions::detection_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::BoxDecodeOptions::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::BoxDecodeOptions::top_k)
+      .def_rw("masks", &simaai::neat::BoxDecodeOptions::masks)
       .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
@@ -4413,6 +4431,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("score_threshold", &simaai::neat::Model::Options::score_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::Model::Options::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
+      .def_rw("masks", &simaai::neat::Model::Options::masks)
       .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)

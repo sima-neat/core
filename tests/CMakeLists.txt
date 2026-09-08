@@ -913,6 +913,7 @@ set(PERF_TARGETS
   perf_runtime_codec_h265_decode_test
   perf_runtime_model_archive_load_test
   perf_ssd_mobilenet_boxdecode_test
+  perf_rfdetr_contract_compile_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -940,6 +941,10 @@ foreach(target ${PERF_TARGETS})
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
+
+add_test(NAME rfdetr_contract_compile_perf_smoke COMMAND perf_rfdetr_contract_compile_test)
+simaneat_append_ctest_env(rfdetr_contract_compile_perf_smoke)
+set_tests_properties(rfdetr_contract_compile_perf_smoke PROPERTIES LABELS "perf;boxdecode;metrics")
 
 if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_test(

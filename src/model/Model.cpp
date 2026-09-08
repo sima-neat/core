@@ -213,6 +213,7 @@ convert_model_managed_route_flags(const internal::SessionRoutePlan::ModelManaged
   flags.quant_contract_required = src.quant_contract_required;
   flags.include_pre_stage = src.include_pre_stage;
   flags.boxdecode_selected = src.boxdecode_selected;
+  flags.requested_decode_type = src.requested_decode_type;
   return flags;
 }
 
@@ -5041,6 +5042,7 @@ model_route_flags_for_boxdecode_stage(const internal::SessionRoutePlan& route) {
   flags.quant_contract_required = flags.quant_needed;
   flags.include_pre_stage = route.model_managed_route_flags.include_pre_stage;
   flags.boxdecode_selected = true;
+  flags.requested_decode_type = route.model_managed_route_flags.requested_decode_type;
   return flags;
 }
 
@@ -6120,6 +6122,12 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
       model_width = resolved.mla_contract.width;
       model_height = resolved.mla_contract.height;
     }
+    if (box_decode_type_is_rfdetr(decode_type) && opt.preprocess.kind == InputKind::Tensor &&
+        !resolved.enabled) {
+      // Transformer inputs are feature maps. The preceding image model's
+      // preprocessing metadata supplies the image geometry at runtime.
+      model_width = model_height = 0;
+    }
     std::optional<ResizeMode> resize_mode_override = opt.boxdecode_resize_mode;
     if (opt.boxdecode_original_width > 0 && opt.boxdecode_original_height > 0 && model_width > 0 &&
         model_height > 0 && !resize_mode_override.has_value()) {
@@ -6916,6 +6924,11 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["score_threshold"] = opt.score_threshold;
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
+  out["masks"] = {{"threshold", opt.masks.threshold},
+                  {"size", static_cast<int>(opt.masks.size)},
+                  {"width", opt.masks.width},
+                  {"height", opt.masks.height},
+                  {"output", static_cast<int>(opt.masks.output)}};
   out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
@@ -8413,6 +8426,14 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
       }
     }
     apply_model_superpoint_options(&compiled->payload, opt, "Model-managed boxdecode stage");
+    if (box_decode_type_is_rfdetr(compiled->payload.decode_type)) {
+      pipeline_internal::sima::validate_rfdetr_controls(opt.score_threshold, opt.nms_iou_threshold,
+                                                        opt.top_k, opt.masks);
+      compiled->payload.rfdetr.masks = opt.masks;
+      compiled->payload.detection_threshold = opt.score_threshold;
+      compiled->payload.nms_iou_threshold = opt.nms_iou_threshold;
+      compiled->payload.topk = opt.top_k;
+    }
     return *compiled;
   }
 
@@ -8450,6 +8471,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
                                              "Model-managed boxdecode fallback");
 
   contract->decode_type = opt.decode_type;
+  contract->rfdetr.masks = opt.masks;
   contract->topk = opt.top_k;
   contract->detection_threshold = opt.score_threshold;
   contract->nms_iou_threshold = opt.nms_iou_threshold;

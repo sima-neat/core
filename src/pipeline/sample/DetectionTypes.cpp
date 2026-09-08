@@ -3,6 +3,8 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/TensorMath.h"
 
+#include <simaai/rfdetr_postprocess.h>
+#include <span>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -15,6 +17,93 @@
 namespace simaai::neat {
 using pipeline_internal::upper_copy;
 namespace {
+
+using RfHeader = simaai::rfdetr::ResultHeaderV1;
+using RfRow = simaai::rfdetr::DetectionV1;
+
+bool is_rfdetr_payload(std::span<const uint8_t> bytes) {
+  uint32_t magic = 0;
+  if (bytes.size() >= sizeof(magic))
+    std::memcpy(&magic, bytes.data(), sizeof(magic));
+  return magic == simaai::rfdetr::kResultMagic;
+}
+
+RfHeader rfdetr_header(std::span<const uint8_t> bytes) {
+  RfHeader h{};
+  if (bytes.size() < sizeof(h))
+    throw std::runtime_error("RF-DETR result header is truncated");
+  std::memcpy(&h, bytes.data(), sizeof(h));
+  const uint64_t rows_end = uint64_t(h.rows_offset) + uint64_t(h.count) * sizeof(RfRow);
+  const uint64_t mask_pixels = uint64_t(h.mask_width) * h.mask_height;
+  const uint64_t element_bytes = h.mask_output == 2 ? sizeof(float) : 1;
+  if (h.magic != simaai::rfdetr::kResultMagic || h.version != 1 || h.total_bytes > bytes.size() ||
+      h.rows_offset != sizeof(h) || rows_end != h.masks_offset || rows_end > h.total_bytes ||
+      h.mask_output > 2 || h.mask_count > h.count ||
+      (h.mask_output == 0 && (h.mask_count || h.mask_width || h.mask_height)) ||
+      (h.mask_output != 0 && (!h.mask_width || !h.mask_height)) ||
+      (h.mask_count > 0 &&
+       mask_pixels > (h.total_bytes - rows_end) / (uint64_t(h.mask_count) * element_bytes)) ||
+      uint64_t(h.mask_count) * mask_pixels * element_bytes != h.total_bytes - rows_end)
+    throw std::runtime_error("RF-DETR result has an invalid version, size or section bounds");
+  for (uint32_t i = 0; i < h.count; ++i) {
+    RfRow row{};
+    std::memcpy(&row, bytes.data() + h.rows_offset + i * sizeof(row), sizeof(row));
+    if (row.class_id > uint32_t(std::numeric_limits<int>::max()) ||
+        (h.mask_output != 0 && row.mask_index >= h.mask_count))
+      throw std::runtime_error("RF-DETR detection class or mask association is invalid");
+  }
+  return h;
+}
+
+std::vector<Box> rfdetr_boxes(std::span<const uint8_t> bytes, const RfHeader& h, int img_w,
+                              int img_h, int top_k, bool strict) {
+  if (top_k < 0 || (strict && top_k > 0 && h.count > static_cast<uint32_t>(top_k)))
+    throw std::runtime_error("RF-DETR result exceeds requested top_k");
+  const auto count = top_k > 0 ? std::min(h.count, static_cast<uint32_t>(top_k)) : h.count;
+  std::vector<Box> boxes;
+  boxes.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    RfRow row{};
+    std::memcpy(&row, bytes.data() + h.rows_offset + i * sizeof(row), sizeof(row));
+    const auto x = [img_w](float v) {
+      return img_w > 0 ? std::clamp(v, 0.0F, static_cast<float>(img_w)) : v;
+    };
+    const auto y = [img_h](float v) {
+      return img_h > 0 ? std::clamp(v, 0.0F, static_cast<float>(img_h)) : v;
+    };
+    boxes.push_back(
+        {x(row.x1), y(row.y1), x(row.x2), y(row.y2), row.score, static_cast<int>(row.class_id)});
+  }
+  return boxes;
+}
+
+SegmentationDecodeTensors rfdetr_segmentation(std::span<const uint8_t> bytes, int img_w, int img_h,
+                                              int top_k, bool strict) {
+  const auto h = rfdetr_header(bytes);
+  if (h.mask_output == 0)
+    throw std::runtime_error("RF-DETR result contains no masks");
+  const auto boxes = rfdetr_boxes(bytes, h, img_w, img_h, top_k, strict);
+  const int64_t element_bytes = h.mask_output == 2 ? sizeof(float) : 1;
+  const auto mask_bytes = static_cast<std::size_t>(h.mask_width) * h.mask_height * element_bytes;
+  Tensor masks;
+  masks.storage = make_cpu_owned_storage(boxes.size() * mask_bytes);
+  masks.dtype = h.mask_output == 2 ? TensorDType::Float32 : TensorDType::UInt8;
+  masks.device = {DeviceType::CPU, 0};
+  masks.layout = TensorLayout::Unknown;
+  masks.shape = {static_cast<int64_t>(boxes.size()), h.mask_height, h.mask_width};
+  masks.strides_bytes = {static_cast<int64_t>(mask_bytes), h.mask_width * element_bytes,
+                         element_bytes};
+  if (!boxes.empty()) {
+    auto output = masks.storage->map(MapMode::Write);
+    for (std::size_t i = 0; i < boxes.size(); ++i) {
+      RfRow row{};
+      std::memcpy(&row, bytes.data() + h.rows_offset + i * sizeof(row), sizeof(row));
+      std::memcpy(static_cast<uint8_t*>(output.data) + i * mask_bytes,
+                  bytes.data() + h.masks_offset + row.mask_index * mask_bytes, mask_bytes);
+    }
+  }
+  return {boxes_to_tensor(boxes), std::move(masks)};
+}
 
 struct RawBox {
   int32_t x = 0;
@@ -55,6 +144,10 @@ std::string normalize_detection_format(std::string value) {
 ParsedBoxRecords parse_bbox_records(const std::vector<uint8_t>& bytes, int img_w, int img_h,
                                     int expected_topk, bool strict) {
   ParsedBoxRecords out;
+  if (is_rfdetr_payload(bytes)) {
+    out.boxes = rfdetr_boxes(bytes, rfdetr_header(bytes), img_w, img_h, expected_topk, strict);
+    return out;
+  }
   if (bytes.size() < sizeof(uint32_t)) {
     if (strict)
       throw std::runtime_error("bbox buffer too small");
@@ -239,7 +332,8 @@ simaai::neat::Tensor masks_to_tensor(const std::vector<uint8_t>& bytes,
 } // namespace
 
 bool detection_format_is_bbox(const std::string& format) {
-  return normalize_detection_format(format) == kDetectionFormatBbox;
+  return normalize_detection_format(format) == kDetectionFormatBbox ||
+         normalize_detection_format(format) == "RFDETR_V1";
 }
 
 bool detection_format_is_pose(const std::string& format) {
@@ -389,6 +483,12 @@ PoseDecodeTensorList decode_pose(const simaai::neat::TensorList& pose_tensors, i
 SegmentationDecodeTensors decode_segmentation_tensor(const simaai::neat::Tensor& tensor, int img_w,
                                                      int img_h, int top_k, bool strict) {
   validate_extended_detection_format(tensor, "segmentation", detection_format_is_segmentation);
+  if (tensor.storage && tensor.is_dense()) {
+    const auto mapping = tensor.view_read();
+    if (is_rfdetr_payload({static_cast<const uint8_t*>(mapping.data), mapping.size_bytes}))
+      return rfdetr_segmentation({static_cast<const uint8_t*>(mapping.data), mapping.size_bytes},
+                                 img_w, img_h, top_k, strict);
+  }
   std::vector<uint8_t> bytes = copy_detection_payload(tensor, "segmentation");
   const std::size_t mask_bytes =
       static_cast<std::size_t>(kDecodedMaskWidth) * static_cast<std::size_t>(kDecodedMaskHeight);
@@ -461,7 +561,9 @@ void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
     if (fmt.empty()) {
       fmt = read_detection_format(tensor); // may pick up legacy tess-tagged BBOX
     }
-    if (detection_format_is_bbox(fmt)) {
+    if (normalize_detection_format(fmt) == "RFDETR_V1") {
+      tag_detection_format(tensor, "RFDETR_V1");
+    } else if (detection_format_is_bbox(fmt)) {
       tag_detection_format(tensor, kDetectionFormatBbox);
     } else if (detection_format_is_pose(fmt)) {
       tag_detection_format(tensor, kDetectionFormatBboxPose);

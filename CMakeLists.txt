@@ -894,7 +894,7 @@ set_target_properties(sima_neat_static PROPERTIES
 
 target_link_libraries(sima_neat PUBLIC sima_neat_common)
 target_link_libraries(sima_neat_static PUBLIC sima_neat_common)
-target_link_libraries(sima_neat_objects PRIVATE sima_neat_common)
+target_link_libraries(sima_neat_objects PRIVATE sima_neat_common NeatInternals::RfDetrPostprocess)
 add_custom_target(sima_neat_libraries DEPENDS sima_neat sima_neat_static)
 target_compile_definitions(sima_neat_objects PRIVATE
   SIMA_NEAT_VERSION_STRING="${SIMANEAT_VERSION}"

@@ -51,9 +51,9 @@ struct BoxDecodeOptionsInternal;
  *
  * `SimaBoxDecode` is the postprocessing node used by object-detection graphs after MLA
  * inference. It reads the model output tensors, decodes them according to the selected
- * `BoxDecodeType`, applies confidence filtering and NMS, and emits a detection tensor. Detection
- * models parse it as boxes; pose and segmentation models can also parse the appended keypoints or
- * masks.
+ * `BoxDecodeType`, applies confidence filtering and family-specific selection, and emits a
+ * detection tensor. Detection models parse it as boxes; pose and segmentation models can also parse
+ * the appended keypoints or masks.
  *
  * @details
  * **When to use it.**
@@ -73,10 +73,12 @@ struct BoxDecodeOptionsInternal;
  *
  * **Outputs.**
  *
- * Detection-family output starts with a `BBOX` payload. Use `decode_bbox_tensor()`,
+ * Legacy detection output uses `BBOX`; RF-DETR uses the dynamic `RFDETR_V1` payload.
+ * Use `decode_bbox_tensor()`,
  * `decode_bbox()`, or `stages::BoxDecodeResults()` when you only need boxes. For task-specific
  * payloads, use `decode_pose()` to get boxes plus `[N, 17, 3]` keypoints, or
- * `decode_segmentation()` to get boxes plus `[N, 160, 160]` masks.
+ * `decode_segmentation()` to get boxes plus `[N, H, W]` masks. RF-DETR mask geometry and
+ * binary/probability output follow `MaskOptions`; legacy masks remain 160 by 160.
  * `BoxDecodeType::SuperPoint` instead emits a type-honest `FEATURE_POINTS_V1` payload; consume it
  * with `decode_superpoint()` or `stages::SuperPointResults()`. Use `SimaRender` downstream when
  * you want an annotated video/image stream.
@@ -87,7 +89,8 @@ struct BoxDecodeOptionsInternal;
  * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, and four prepared SSD
  * profiles (SSD300-v1 softmax @300, SSD-Mobile-300-v1 sigmoid @300, SSD-Mobile-320-v1 sigmoid
  * @320, and SSDlite-Mobile-320-v1 softmax @320, all stretch-resize), plus DETR, EfficientDet,
- * RCNN stage 1, CenterNet, and SuperPoint. `BoxDecodeType::Unspecified` is only a sentinel and
+ * RCNN stage 1, CenterNet, RF-DETR detection/segmentation, and SuperPoint. RF-DETR uses
+ * no NMS and rejects a nonzero NMS threshold. `BoxDecodeType::Unspecified` is only a sentinel and
  * fails before runtime. SuperPoint requires an explicit numerical profile unless an authoritative
  * MPK record supplies one; Neat never infers that profile from tensor geometry.
  *

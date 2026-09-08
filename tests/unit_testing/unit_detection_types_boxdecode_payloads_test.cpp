@@ -157,6 +157,55 @@ RUN_TEST(
       require(pose_as_bbox.size() == 1 && pose_as_bbox[0].shape[1] == kDecodedBoxColumns,
               "decode_bbox should keep working on pose payloads");
 
+      // A two-row RF wire fixture shares one dynamic 2x3 probability mask.
+      // Independent field encoding exercises the parser's public wire boundary.
+      std::vector<uint8_t> rf_bytes(40 + 2 * 32 + 6 * sizeof(float));
+      const uint32_t rf_header[] = {
+          0x31564452, 1, static_cast<uint32_t>(rf_bytes.size()), 2, 40, 104, 1, 3, 2, 2};
+      std::memcpy(rf_bytes.data(), rf_header, sizeof(rf_header));
+      const float rf_box[] = {1.25F, 2.5F, 7.75F, 9.125F, 0.5F};
+      const uint32_t rf_identity[] = {0, 8, 0};
+      for (int row = 0; row < 2; ++row) {
+        std::memcpy(rf_bytes.data() + 40 + row * 32, rf_box, sizeof(rf_box));
+        std::memcpy(rf_bytes.data() + 60 + row * 32, rf_identity, sizeof(rf_identity));
+      }
+      const float rf_mask[] = {0.0F, 0.25F, 0.5F, 0.75F, 1.0F, 0.125F};
+      std::memcpy(rf_bytes.data() + 104, rf_mask, sizeof(rf_mask));
+      const auto rf_tensor = make_wire_tensor(rf_bytes, "RFDETR_V1");
+      const auto rf = decode_segmentation({rf_tensor}).front();
+      require(rf.boxes.shape == std::vector<int64_t>({2, 6}), "RF valid box count");
+      require(rf.masks.shape == std::vector<int64_t>({2, 2, 3}) &&
+                  rf.masks.dtype == TensorDType::Float32,
+              "RF dynamic native probability masks");
+      const auto rf_boxes = decode_bbox_tensor(rf_tensor, 0, 0, 0, true).boxes;
+      require(rf_boxes[0].x1 == 1.25F && rf_boxes[0].y2 == 9.125F && rf_boxes[0].class_id == 0,
+              "RF preserves fractional coordinates and class zero");
+      const auto rf_masks = rf.masks.copy_payload_bytes();
+      require(std::memcmp(rf_masks.data(), rf_mask, sizeof(rf_mask)) == 0 &&
+                  std::memcmp(rf_masks.data() + sizeof(rf_mask), rf_mask, sizeof(rf_mask)) == 0,
+              "RF repeated queries keep their matching mask");
+      auto invalid_rf = rf_bytes;
+      invalid_rf.resize(invalid_rf.size() - 1);
+      require(throws_with(
+                  [&] { (void)decode_segmentation({make_wire_tensor(invalid_rf, "RFDETR_V1")}); },
+                  "bounds"),
+              "RF rejects truncated masks");
+      invalid_rf = rf_bytes;
+      const uint32_t invalid_index = 1;
+      std::memcpy(invalid_rf.data() + 68, &invalid_index, sizeof(invalid_index));
+      require(throws_with(
+                  [&] { (void)decode_segmentation({make_wire_tensor(invalid_rf, "RFDETR_V1")}); },
+                  "association"),
+              "RF rejects invalid mask references");
+      std::vector<uint8_t> empty_rf(40);
+      const uint32_t empty_header[] = {0x31564452, 1, 40, 0, 40, 40, 0, 3, 2, 2};
+      std::memcpy(empty_rf.data(), empty_header, sizeof(empty_header));
+      const auto empty_result =
+          decode_segmentation({make_wire_tensor(empty_rf, "RFDETR_V1")}).front();
+      require(empty_result.boxes.shape == std::vector<int64_t>({0, 6}) &&
+                  empty_result.masks.shape == std::vector<int64_t>({0, 2, 3}),
+              "RF empty result keeps native geometry");
+
       const Tensor pose_tensor_with_bbox_tag =
           make_wire_tensor(make_pose_payload(1, 1), kDetectionFormatBbox);
       require(decode_pose(TensorList{pose_tensor_with_bbox_tag}).front().keypoints.shape[0] == 1,

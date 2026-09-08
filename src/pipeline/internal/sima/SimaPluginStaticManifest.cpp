@@ -931,6 +931,9 @@ public:
       // accessor can publish it.
       auto& stored = stage_storage_.back();
       if (stage.payload_kind == StagePayloadKind::BoxDecode &&
+          box_decode_type_is_rfdetr(stage.boxdecode.decode_type))
+        stored.spec.payload.boxdecode.rfdetr = &stored.boxdecode_rfdetr;
+      if (stage.payload_kind == StagePayloadKind::BoxDecode &&
           stage.boxdecode.decode_type == BoxDecodeType::SuperPoint) {
         stored.boxdecode_superpoint.tensor_roles =
             stored.boxdecode_tensor_roles.empty() ? nullptr : stored.boxdecode_tensor_roles.data();
@@ -1007,6 +1010,7 @@ private:
     std::vector<sima_ev_shape_desc> boxdecode_slice_shapes;
     std::vector<gint> boxdecode_tensor_storage_kind;
     std::vector<gint> boxdecode_tensor_roles;
+    SimaPluginRfDetrStagePayloadV1 boxdecode_rfdetr{};
     SimaPluginSuperPointStagePayloadV1 boxdecode_superpoint{};
     SimaPluginStageSpec spec{};
   };
@@ -1775,6 +1779,27 @@ private:
                                                     : out.boxdecode_tensor_storage_kind.data();
       out.spec.payload.boxdecode.tensor_storage_kind_len =
           static_cast<guint>(out.boxdecode_tensor_storage_kind.size());
+      out.spec.payload.boxdecode.rfdetr = nullptr;
+      if (box_decode_type_is_rfdetr(stage.boxdecode.decode_type)) {
+        const auto& rf = stage.boxdecode.rfdetr;
+        auto& wire = out.boxdecode_rfdetr;
+        wire.struct_version = 1;
+        wire.boxes_input_index = rf.boxes_input_index;
+        wire.scores_input_index = rf.scores_input_index;
+        wire.masks_input_index = rf.masks_input_index;
+        wire.boxes_query_axis = wire.scores_query_axis = 1;
+        wire.boxes_value_axis = wire.scores_value_axis = 2;
+        wire.masks_query_axis = 2;
+        wire.candidate_limit = rf.candidate_limit;
+        wire.mask_output = stage.boxdecode.decode_type == BoxDecodeType::RfDetrSeg
+                               ? static_cast<gint>(rf.masks.output)
+                               : 0;
+        wire.mask_size = static_cast<gint>(rf.masks.size);
+        wire.mask_threshold = rf.masks.threshold;
+        wire.mask_width = rf.masks.width;
+        wire.mask_height = rf.masks.height;
+        out.spec.payload.boxdecode.rfdetr = &wire;
+      }
       out.spec.payload.boxdecode.superpoint = nullptr;
       if (stage.boxdecode.decode_type == BoxDecodeType::SuperPoint) {
         const auto& sp = stage.boxdecode.superpoint;
