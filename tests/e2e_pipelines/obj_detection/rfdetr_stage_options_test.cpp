@@ -71,7 +71,8 @@ make_rfdetr_feature_geometry_fixture(simaai::neat::BoxDecodeType type) {
 
 using namespace simaai::neat;
 
-Tensor head(std::vector<int64_t> shape, std::vector<float> values, int index) {
+Tensor head(std::vector<int64_t> shape, std::vector<float> values, int index,
+            bool attach_meta = true) {
   Tensor tensor;
   tensor.shape = std::move(shape);
   tensor.dtype = TensorDType::Float32;
@@ -98,7 +99,9 @@ Tensor head(std::vector<int64_t> shape, std::vector<float> values, int index) {
   // not cropped to the detection box; only unobserved image-crop coverage is zeroed.
   meta.resize_mode = "stretch";
   meta.color_in = meta.color_out = "RGB";
-  tensor.semantic.preprocess = meta;
+  if (attach_meta) {
+    tensor.semantic.preprocess = meta;
+  }
 
   // Public stages validate the GstBuffer metadata on the retained sample holder,
   // not just the Tensor's semantic copy. Use the same storage adapter as real outputs.
@@ -109,8 +112,10 @@ Tensor head(std::vector<int64_t> shape, std::vector<float> values, int index) {
   require(buffer != nullptr, "allocate synthetic RF head GstBuffer");
   require(gst_buffer_fill(buffer.get(), 0, values.data(), bytes) == bytes,
           "fill synthetic RF head GstBuffer");
-  require(write_simaai_preprocess_meta(buffer.get(), meta),
-          "attach synthetic RF head preprocess metadata");
+  if (attach_meta) {
+    require(write_simaai_preprocess_meta(buffer.get(), meta),
+            "attach synthetic RF head preprocess metadata");
+  }
   const std::unique_ptr<GstSample, decltype(&gst_sample_unref)> sample(
       gst_sample_new(buffer.get(), nullptr, nullptr, nullptr), &gst_sample_unref);
   require(sample != nullptr, "wrap synthetic RF head GstSample");
@@ -122,7 +127,7 @@ Tensor head(std::vector<int64_t> shape, std::vector<float> values, int index) {
   return owned;
 }
 
-Sample inputs() {
+Sample inputs(bool attach_meta = true) {
   std::vector<float> boxes(7 * 4);
   for (int q = 0; q < 7; ++q) {
     boxes[q * 4] = boxes[q * 4 + 1] = 0.5F;
@@ -130,8 +135,9 @@ Sample inputs() {
   }
   // Every query/class score and every mask pixel has sigmoid(0) = .5.
   return Sample{sample_from_tensors(
-      TensorList{head({1, 1, 7, 4}, boxes, 0), head({1, 1, 7, 5}, std::vector<float>(35, 0.0F), 1),
-                 head({1, 3, 6, 7}, std::vector<float>(126, 0.0F), 2)})};
+      TensorList{head({1, 1, 7, 4}, boxes, 0, attach_meta),
+                 head({1, 1, 7, 5}, std::vector<float>(35, 0.0F), 1, attach_meta),
+                 head({1, 3, 6, 7}, std::vector<float>(126, 0.0F), 2, attach_meta)})};
 }
 
 void check_masks(const SegmentationDecodeTensors& decoded, const MaskOptions& masks, int count) {
@@ -213,4 +219,24 @@ RUN_TEST("rfdetr_stage_options_test", ([] {
            const auto zero_results = stages::BoxDecodeResults(inputs(), model, zero);
            require(zero_results.front().boxes.size() == 35,
                    "RF zero score/top_k controls must survive cloning");
+           // Metadata-free Stretch uses explicit source geometry. The same pack
+           // must not reuse a runner prepared for another source size.
+           base.score_threshold = 0.25F;
+           base.top_k = 3;
+           base.masks = MaskOptions{.threshold = 0.0, .size = MaskSize::Source};
+           for (const int scale : {1, 2}) {
+             base.boxdecode_original_width = 64 * scale;
+             base.boxdecode_original_height = 48 * scale;
+             const Model sized_model(fixture.tar_path, base);
+             const auto output = stages::Postprocess(inputs(false), sized_model);
+             const auto decoded = decode_segmentation(stages::Tensors(output)).front();
+             require(decoded.masks.shape == std::vector<int64_t>({3, 48 * scale, 64 * scale}),
+                     "postprocess cache must distinguish source geometry");
+             const auto bytes = decoded.boxes.copy_payload_bytes();
+             float box[4];
+             std::memcpy(box, bytes.data(), sizeof(box));
+             require(box[0] == 24 * scale && box[1] == 18 * scale && box[2] == 40 * scale &&
+                         box[3] == 30 * scale,
+                     "postprocess boxes must use the requested source geometry");
+           }
          }));

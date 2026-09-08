@@ -143,6 +143,9 @@ struct StageKey {
   std::string model_id;
   StageInputKey input;
   BoxDecodeOptions box_opt{BoxDecodeType::Unspecified};
+  int box_original_width = 0;
+  int box_original_height = 0;
+  std::optional<ResizeMode> box_resize_mode;
   int preproc_roi_capacity = 0;
   int preproc_roi_source_batch_size = 0;
 };
@@ -1439,7 +1442,9 @@ bool operator==(const BoxDecodeOptions& a, const BoxDecodeOptions& b) {
 
 bool operator==(const StageKey& a, const StageKey& b) {
   return a.kind == b.kind && a.model_id == b.model_id && a.input == b.input &&
-         a.box_opt == b.box_opt && a.preproc_roi_capacity == b.preproc_roi_capacity &&
+         a.box_opt == b.box_opt && a.box_original_width == b.box_original_width &&
+         a.box_original_height == b.box_original_height && a.box_resize_mode == b.box_resize_mode &&
+         a.preproc_roi_capacity == b.preproc_roi_capacity &&
          a.preproc_roi_source_batch_size == b.preproc_roi_source_batch_size;
 }
 
@@ -1473,6 +1478,12 @@ struct StageKeyHash {
     h = hash_combine(h, std::hash<int>()(k.box_opt.masks.width));
     h = hash_combine(h, std::hash<int>()(k.box_opt.masks.height));
     h = hash_combine(h, std::hash<int>()(static_cast<int>(k.box_opt.masks.output)));
+    h = hash_combine(h, std::hash<int>()(k.box_original_width));
+    h = hash_combine(h, std::hash<int>()(k.box_original_height));
+    h = hash_combine(h, std::hash<bool>()(k.box_resize_mode.has_value()));
+    if (k.box_resize_mode) {
+      h = hash_combine(h, std::hash<int>()(static_cast<int>(*k.box_resize_mode)));
+    }
     h = hash_combine(h, std::hash<int>()(k.preproc_roi_capacity));
     h = hash_combine(h, std::hash<int>()(k.preproc_roi_source_batch_size));
     return h;
@@ -3164,6 +3175,9 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   key.box_opt.top_k = model_opt.top_k;
   key.box_opt.superpoint = model_opt.superpoint;
   key.box_opt.masks = model_opt.masks;
+  key.box_original_width = model_opt.boxdecode_original_width;
+  key.box_original_height = model_opt.boxdecode_original_height;
+  key.box_resize_mode = model_opt.boxdecode_resize_mode;
 
   auto runner = get_or_build(key, [&]() {
     RunOptions run_opt = stage_run_defaults();
