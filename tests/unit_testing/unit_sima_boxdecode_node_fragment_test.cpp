@@ -3,6 +3,8 @@
 #include "model/internal/ModelInternal.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "model_archive_fixture_utils.h"
+#include "pipeline/internal/contract/CompiledNodeContract.h"
+#include "pipeline/internal/contract/ContractFacts.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -261,6 +263,69 @@ RUN_TEST(
                   fragment.find("model-height=") == std::string::npos,
               "explicit and MPK-selected RF routes must leave image geometry to runtime metadata");
         }
+      }
+
+      {
+        using namespace simaai::neat;
+        const auto rf_fixture = make_rfdetr_feature_geometry_fixture(BoxDecodeType::RfDetrSeg);
+        Model::Options model_options;
+        model_options.preprocess.kind = InputKind::Tensor;
+        model_options.preprocess.enable = AutoFlag::Off;
+        model_options.score_threshold = 0.7f;
+        model_options.top_k = 1;
+        const Model rf_model(rf_fixture.tar_path, model_options);
+
+        const auto require_options = [](const Node& node, const BoxDecodeOptions& expected) {
+          ContractCompileInput input;
+          CompiledNodeContract compiled;
+          std::string error;
+          require(dynamic_cast<const SimaBoxDecode&>(node).compile_node_contract(input, &compiled,
+                                                                                 &error),
+                  "named RF node must compile its model-backed contract: " + error);
+          require(compiled.boxdecode.has_value(), "named RF node must emit a BoxDecode payload");
+          const auto& payload = compiled.boxdecode->payload;
+          require(payload.decode_type == BoxDecodeType::RfDetrSeg,
+                  "named Unspecified decoder must retain MPK-selected RF segmentation");
+          require(payload.detection_threshold == expected.detection_threshold &&
+                      payload.nms_iou_threshold == expected.nms_iou_threshold &&
+                      payload.topk == expected.top_k,
+                  "named RF controls must replace model defaults, including explicit zeros");
+          const auto& masks = payload.rfdetr.masks;
+          require(masks.output == expected.masks.output && masks.size == expected.masks.size &&
+                      masks.threshold == expected.masks.threshold &&
+                      masks.width == expected.masks.width && masks.height == expected.masks.height,
+                  "named RF mask controls must reach the compiled payload");
+        };
+
+        BoxDecodeOptions probabilities(BoxDecodeType::Unspecified);
+        probabilities.masks.output = MaskOutput::Probabilities;
+        probabilities.masks.threshold = 0.25;
+        BoxDecodeOptions fixed(BoxDecodeType::Unspecified);
+        fixed.masks.size = MaskSize::Fixed;
+        fixed.masks.width = 31;
+        fixed.masks.height = 17;
+        fixed.masks.threshold = 0.75;
+        for (const auto& requested : {probabilities, fixed}) {
+          const auto node = nodes::SimaBoxDecode(rf_model, requested);
+          require_options(*node, requested);
+          const auto retargeted =
+              dynamic_cast<const SimaBoxDecode&>(*node).retargeted_for_model_internal(rf_model);
+          const auto* box = dynamic_cast<const SimaBoxDecode*>(retargeted.get());
+          require(box != nullptr, "retargeted RF node must remain a BoxDecode node");
+          require_options(*box, requested);
+        }
+
+        BoxDecodeOptions invalid(BoxDecodeType::Unspecified);
+        invalid.masks.threshold = -0.1;
+        bool rejected = false;
+        try {
+          (void)nodes::SimaBoxDecode(rf_model, invalid);
+        } catch (const std::invalid_argument& error) {
+          require_contains(error.what(), "RF-DETR",
+                           "auto-selected RF mask validation must identify the decoder");
+          rejected = true;
+        }
+        require(rejected, "MPK auto-selection must validate named RF mask controls");
       }
 
       const auto fixture = make_fixture();

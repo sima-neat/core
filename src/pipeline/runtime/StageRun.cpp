@@ -1431,7 +1431,10 @@ bool operator==(const BoxDecodeOptions& a, const BoxDecodeOptions& b) {
          a.superpoint.nms_radius == b.superpoint.nms_radius &&
          a.superpoint.border_margin == b.superpoint.border_margin &&
          a.superpoint.descriptor_output_dtype == b.superpoint.descriptor_output_dtype &&
-         a.superpoint.output_format == b.superpoint.output_format;
+         a.superpoint.output_format == b.superpoint.output_format &&
+         a.masks.threshold == b.masks.threshold && a.masks.size == b.masks.size &&
+         a.masks.width == b.masks.width && a.masks.height == b.masks.height &&
+         a.masks.output == b.masks.output;
 }
 
 bool operator==(const StageKey& a, const StageKey& b) {
@@ -1465,6 +1468,11 @@ struct StageKeyHash {
     h = hash_combine(h, std::hash<double>()(k.box_opt.detection_threshold));
     h = hash_combine(h, std::hash<double>()(k.box_opt.nms_iou_threshold));
     h = hash_combine(h, std::hash<int>()(k.box_opt.top_k));
+    h = hash_combine(h, std::hash<double>()(k.box_opt.masks.threshold));
+    h = hash_combine(h, std::hash<int>()(static_cast<int>(k.box_opt.masks.size)));
+    h = hash_combine(h, std::hash<int>()(k.box_opt.masks.width));
+    h = hash_combine(h, std::hash<int>()(k.box_opt.masks.height));
+    h = hash_combine(h, std::hash<int>()(static_cast<int>(k.box_opt.masks.output)));
     h = hash_combine(h, std::hash<int>()(k.preproc_roi_capacity));
     h = hash_combine(h, std::hash<int>()(k.preproc_roi_source_batch_size));
     return h;
@@ -3148,6 +3156,14 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   key.kind = StageKind::Postprocess;
   key.model_id = simaai::neat::internal::ModelAccess::model_id(model);
   key.input = make_input_key(src_opt, &wire_input.tensor);
+  const auto model_opt = simaai::neat::internal::ModelAccess::options(model);
+  // Clones of the same pack share model_id; postprocess options select the runner.
+  key.box_opt.decode_type = model_opt.decode_type;
+  key.box_opt.detection_threshold = model_opt.score_threshold;
+  key.box_opt.nms_iou_threshold = model_opt.nms_iou_threshold;
+  key.box_opt.top_k = model_opt.top_k;
+  key.box_opt.superpoint = model_opt.superpoint;
+  key.box_opt.masks = model_opt.masks;
 
   auto runner = get_or_build(key, [&]() {
     RunOptions run_opt = stage_run_defaults();
@@ -3265,13 +3281,15 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   auto box_model_opt = simaai::neat::internal::ModelAccess::options(model);
   box_model_opt.decode_type = opt.decode_type;
   box_model_opt.superpoint = opt.superpoint;
-  if (opt.detection_threshold > 0.0) {
+  box_model_opt.masks = opt.masks;
+  const bool rfdetr = box_decode_type_is_rfdetr(opt.decode_type);
+  if (rfdetr || opt.detection_threshold > 0.0) {
     box_model_opt.score_threshold = static_cast<float>(opt.detection_threshold);
   }
-  if (opt.nms_iou_threshold > 0.0) {
+  if (rfdetr || opt.nms_iou_threshold > 0.0) {
     box_model_opt.nms_iou_threshold = static_cast<float>(opt.nms_iou_threshold);
   }
-  if (opt.top_k > 0) {
+  if (rfdetr || opt.top_k > 0) {
     box_model_opt.top_k = opt.top_k;
   }
   simaai::neat::Model box_model =

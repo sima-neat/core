@@ -1667,6 +1667,19 @@ endforeach()
 # ------------------------------------------------------------------------------
 # E2E pipelines – object detection
 # ------------------------------------------------------------------------------
+
+add_pipeline_test(
+  rfdetr_stage_options_test
+  e2e_pipelines/obj_detection/rfdetr_stage_options_test.cpp
+  LOCK_DISPATCHER
+)
+
+if (NOT rfdetr_stage_options_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST rfdetr_stage_options_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;rfdetr;smoke")
+  set_tests_properties(rfdetr_stage_options_test PROPERTIES TIMEOUT 120)
+endif()
+
 add_pipeline_test(
   async_yolov8_tput_test
   e2e_pipelines/obj_detection/async_yolov8_tput_test.cpp

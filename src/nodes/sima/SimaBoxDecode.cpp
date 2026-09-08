@@ -675,7 +675,7 @@ void apply_named_decoder_options(BoxDecodeOptionsInternal* opt, const BoxDecodeO
   if (!opt) {
     throw std::invalid_argument("SimaBoxDecode: missing options");
   }
-  if (box_decode_type_is_rfdetr(options.decode_type)) {
+  if (box_decode_type_is_rfdetr(opt->decode_type)) {
     pipeline_internal::sima::validate_rfdetr_controls(
         options.detection_threshold, options.nms_iou_threshold, options.top_k, options.masks);
     opt->masks = options.masks;
