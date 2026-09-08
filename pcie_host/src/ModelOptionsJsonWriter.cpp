@@ -243,6 +243,23 @@ ModelOptionsJson write_model_options_json(const ModelOptions& options) {
   validate_supported_options(options);
 
   const bool wants_boxdecode = has_boxdecode_request(options);
+  if (options.mla_only) {
+    if (options.preprocess.kind != InputKind::Tensor) {
+      reject("mla_only requires preprocess.kind=InputKind::Tensor");
+    }
+    if (has_preprocess_request(options.preprocess)) {
+      reject("mla_only cannot be combined with preprocess options");
+    }
+    if (wants_boxdecode) {
+      reject("mla_only cannot be combined with boxdecode");
+    }
+    ordered_json root = ordered_json::object();
+    root["schema"] = 1;
+    root["execution"] = ordered_json::object({{"mla_only", true}});
+    ModelOptionsJson out;
+    out.json = root.dump(2) + "\n";
+    return out;
+  }
   if (options.preprocess.kind == InputKind::Tensor) {
     if (has_preprocess_request(options.preprocess)) {
       reject("preprocess options require preprocess.kind=InputKind::Image");
