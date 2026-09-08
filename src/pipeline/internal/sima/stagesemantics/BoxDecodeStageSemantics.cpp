@@ -1094,7 +1094,8 @@ int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferr
   if (requested_num_classes <= 0) {
     return inferred_num_classes;
   }
-  if ((decode_type_is_yolov26_family(decode_type) || decode_type == BoxDecodeType::YoloV5) &&
+  if ((decode_type_is_yolov26_family(decode_type) || decode_type == BoxDecodeType::YoloV5 ||
+       decode_type == BoxDecodeType::YoloXSegPose) &&
       inferred_num_classes > 0 && requested_num_classes != inferred_num_classes) {
     throw std::invalid_argument(
         std::string(context ? context : "BoxDecode") +
@@ -1179,6 +1180,17 @@ void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
       requested != BoxDecodeTypeOption::PackedPerHead) {
     throw std::invalid_argument(
         "SimaBoxDecode(Model): YOLOv5 supports only Auto or PackedPerHead layout overrides");
+  }
+  // The model-aware constructor overwrites the already-normalized compiled payload with
+  // this override, so the grouped-by-role restriction that
+  // apply_yolox_seg_pose_static_contract_overrides() enforces on the static-contract path
+  // is bypassed. Without this an unsupported layout reaches the backend, which cannot
+  // decode the packed export as anything else.
+  if (decode_type == BoxDecodeType::YoloXSegPose && requested != BoxDecodeTypeOption::Auto &&
+      requested != BoxDecodeTypeOption::GroupedByRole &&
+      requested != BoxDecodeTypeOption::GroupedByRoleLogit) {
+    throw std::invalid_argument("SimaBoxDecode(Model): yolox-seg-pose supports only Auto, "
+                                "GroupedByRole or GroupedByRoleLogit layout overrides");
   }
 }
 
