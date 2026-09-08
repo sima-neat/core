@@ -10,7 +10,7 @@ This is the full environment-variable inventory detected from source, tests, tut
 
 ## Runtime / Library (`src/`)
 
-Count: 156
+Count: 155
 
 - `GST_PLUGIN_PATH`
 - `GST_PLUGIN_PATH_1_0`
@@ -26,7 +26,6 @@ Count: 156
 - `SIMA_APPSRC_DEFAULT_MAX_BUFFERS`
 - `SIMA_ASYNC_TPUT_DIAG`
 - `SIMA_ASYNC_WARMUP`
-- `SIMA_BOXDECODE_FACTORY`
 - `SIMA_BUILD_MODE_DEBUG`
 - `SIMA_CLAMP_DETESS_NUM_BUFFERS`
 - `SIMA_DEBUG_INPUT_POOL`

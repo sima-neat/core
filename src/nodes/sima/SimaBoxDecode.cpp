@@ -77,8 +77,6 @@ struct BoxDecodeOptionsInternal {
   // means "no override; expect the value from upstream meta as before".
   std::optional<ResizeMode> resize_mode_override;
   std::string element_name;
-  std::string factory = "neatobjectdecode";
-  bool requires_authoritative_model_batch = false;
 };
 
 namespace {
@@ -390,30 +388,18 @@ void maybe_dump_boxdecode_core_dossier(
   boxdecode_write_json_file(std::filesystem::path(dir) / "core_boxdecode_contract.json", root);
 }
 
-struct BoxDecodeFactoryContract {
-  std::string name = "neatobjectdecode";
-  bool requires_authoritative_model_batch = false;
-};
+const std::string& boxdecode_factory() {
+  static const std::string kFactory = "neatobjectdecode";
+  return kFactory;
+}
 
-BoxDecodeFactoryContract resolve_boxdecode_factory() {
-  BoxDecodeFactoryContract selected;
-  if (const char* forced = std::getenv("SIMA_BOXDECODE_FACTORY"); forced && *forced) {
-    const std::string forced_name(forced);
-    if (forced_name != "neatobjectdecode" && forced_name != "neatboxdecodev2") {
-      throw std::runtime_error("SimaBoxDecode: invalid SIMA_BOXDECODE_FACTORY='" + forced_name +
-                               "'. Use 'neatobjectdecode' (default) or 'neatboxdecodev2'.");
-    }
-    selected.name = forced_name;
+void require_boxdecode_factory() {
+  if (!element_exists(boxdecode_factory().c_str())) {
+    throw std::runtime_error(
+        "SimaBoxDecode: required GStreamer element 'neatobjectdecode' is not available. "
+        "Install the matching NEAT Internals package and ensure its plugin directory is "
+        "discoverable through the active GStreamer plugin path.");
   }
-  selected.requires_authoritative_model_batch = selected.name == "neatboxdecodev2";
-  if (!element_exists(selected.name.c_str())) {
-    throw std::runtime_error("SimaBoxDecode: selected BoxDecode GStreamer element '" +
-                             selected.name +
-                             "' is not available. Install the matching Internals package and "
-                             "ensure its plugin directory is discoverable through the active "
-                             "GStreamer plugin path.");
-  }
-  return selected;
 }
 
 pipeline_internal::sima::ModelManagedRouteFlags
@@ -619,9 +605,7 @@ static BoxDecodeOptionsInternal options_from_model(
     const std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics>& forced_model_semantics =
         std::nullopt) {
   BoxDecodeOptionsInternal opt;
-  const auto factory = resolve_boxdecode_factory();
-  opt.factory = factory.name;
-  opt.requires_authoritative_model_batch = factory.requires_authoritative_model_batch;
+  require_boxdecode_factory();
   if (forced_model_semantics.has_value()) {
     opt.model_semantics = *forced_model_semantics;
   } else {
@@ -644,7 +628,7 @@ static BoxDecodeOptionsInternal options_from_model(
     const std::string decode_type_token = pipeline_internal::sima::box_decode_type_token_string(
         compiled_contract.payload.decode_type);
     std::fprintf(stderr, "[boxdecode-debug] etc_dir=%s factory=%s decode_type=%s\n",
-                 model.etc_dir().c_str(), opt.factory.c_str(), decode_type_token.c_str());
+                 model.etc_dir().c_str(), boxdecode_factory().c_str(), decode_type_token.c_str());
   }
   return opt;
 }
@@ -655,9 +639,7 @@ options_from_customer(BoxDecodeType decode_type, double detection_threshold,
                       int original_width, int original_height, int model_width, int model_height,
                       BoxDecodeTypeOption decode_type_option) {
   BoxDecodeOptionsInternal opt;
-  const auto factory = resolve_boxdecode_factory();
-  opt.factory = factory.name;
-  opt.requires_authoritative_model_batch = factory.requires_authoritative_model_batch;
+  require_boxdecode_factory();
   opt.element_name = element_name;
   opt.original_width = original_width;
   opt.original_height = original_height;
@@ -782,9 +764,7 @@ static BoxDecodeOptionsInternal options_from_contract(
     int original_width, int original_height, int model_width, int model_height,
     BoxDecodeTypeOption decode_type_option) {
   BoxDecodeOptionsInternal opt;
-  const auto factory = resolve_boxdecode_factory();
-  opt.factory = factory.name;
-  opt.requires_authoritative_model_batch = factory.requires_authoritative_model_batch;
+  require_boxdecode_factory();
   opt.element_name = element_name;
   opt.model_static_contract = static_contract;
   opt.model_route_flags = route_flags;
@@ -947,14 +927,10 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   if (top_k > 0) {
     compiled_contract.payload.topk = top_k;
   }
+  pipeline_internal::sima::stagesemantics::apply_authoritative_boxdecode_batch(
+      &compiled_contract, model.compiled_batch_size());
   auto opt = std::make_unique<BoxDecodeOptionsInternal>(
       options_from_model(pack, effective_route_flags, compiled_contract));
-  if (opt->requires_authoritative_model_batch) {
-    auto batched = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
-    pipeline_internal::sima::stagesemantics::apply_authoritative_boxdecode_batch(
-        batched.get(), model.compiled_batch_size());
-    opt->compiled_contract = std::move(batched);
-  }
   opt->model_lineage = simaai::neat::internal::make_model_lineage_binding(
       model, simaai::neat::internal::ModelLineageStageRole::ManualPost,
       simaai::neat::internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
@@ -1245,8 +1221,7 @@ void SimaBoxDecode::apply_input_contract(const InputContract& contract, std::str
 
 #ifdef SIMA_NEAT_INTERNAL
 const std::string& SimaBoxDecode::factory_internal() const {
-  static const std::string kDefaultFactory = "neatobjectdecode";
-  return opt_ ? opt_->factory : kDefaultFactory;
+  return boxdecode_factory();
 }
 
 BoxDecodeType SimaBoxDecode::decode_type_internal() const {
@@ -1330,11 +1305,10 @@ internal::RequestedPostRouteKind SimaBoxDecode::requested_post_route_internal() 
 
 std::string SimaBoxDecode::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  require_element(opt_->factory.c_str(), "SimaBoxDecode::backend_fragment");
-  const char* factory = opt_->factory.c_str();
+  require_element(boxdecode_factory().c_str(), "SimaBoxDecode::backend_fragment");
   const std::string name =
       opt_->element_name.empty() ? std::string("boxdecode") : opt_->element_name;
-  ss << factory << " name=" << name << " stage-id=" << name;
+  ss << boxdecode_factory() << " name=" << name << " stage-id=" << name;
 
   ss << " silent=" << (opt_->silent ? "true" : "false");
   ss << " emit-signals=" << (opt_->emit_signals ? "true" : "false");
@@ -1352,7 +1326,7 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
     std::fprintf(stderr,
                  "[boxdecode-debug] backend_fragment stage=%s factory=%s decode_type=%s topk=%d "
                  "det=%.6f nms=%.6f resize_mode=%s metadata_only=1 contract_only=1\n",
-                 name.c_str(), opt_->factory.c_str(), decode_type_token.c_str(), opt_->top_k,
+                 name.c_str(), boxdecode_factory().c_str(), decode_type_token.c_str(), opt_->top_k,
                  opt_->detection_threshold, opt_->nms_iou_threshold,
                  opt_->resize_mode_override ? resize_mode_token_local(*opt_->resize_mode_override)
                                             : "<unset>");
@@ -1363,13 +1337,13 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
   if (opt_->original_height > 0) {
     ss << " original-height=" << opt_->original_height;
   }
-  if (opt_->model_width > 0 && element_property_exists(factory, "model-width")) {
+  if (opt_->model_width > 0) {
     ss << " model-width=" << opt_->model_width;
   }
-  if (opt_->model_height > 0 && element_property_exists(factory, "model-height")) {
+  if (opt_->model_height > 0) {
     ss << " model-height=" << opt_->model_height;
   }
-  if (opt_->resize_mode_override.has_value() && element_property_exists(factory, "resize-mode")) {
+  if (opt_->resize_mode_override.has_value()) {
     const char* mode = "letterbox";
     if (*opt_->resize_mode_override == ResizeMode::Stretch)
       mode = "stretch";
@@ -1404,7 +1378,7 @@ OutputSpec SimaBoxDecode::output_spec(const OutputSpec& input) const {
   }
   out.memory = input.memory;
   out.certainty = SpecCertainty::Hint;
-  out.note = opt_ ? opt_->factory : "neatobjectdecode";
+  out.note = boxdecode_factory();
   return out;
 }
 
@@ -1414,7 +1388,7 @@ std::optional<PreprocessMetaRequirement> SimaBoxDecode::preprocess_meta_requirem
   }
   PreprocessMetaRequirement req;
   req.stage_name = "boxdecode";
-  req.plugin_name = opt_->factory;
+  req.plugin_name = boxdecode_factory();
   req.required_fields = opt_->required_preprocess_meta_fields;
   req.expect_resize = opt_->expect_resize;
   req.expect_normalize = opt_->expect_normalize;
