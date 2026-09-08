@@ -107,9 +107,15 @@ struct SegmentationDecodeTensors {
  * detection.
  *
  * The wire layout is boxes, then masks, then poses, every region strided by the
- * same slot count. Keypoint rows for a detection whose class carries no keypoints
- * are all-zero, including visibility, so a consumer can gate on visibility rather
- * than needing the decoder's class list.
+ * same slot count.
+ *
+ * Keypoint rows are copied through verbatim: this decoder does not zero, mask, or
+ * otherwise interpret them. Whether a detection whose class carries no keypoints
+ * arrives all-zero depends on the backend having been given a `pose_classes` gate,
+ * which only the JSON configuration path can carry. On the typed-manifest path every
+ * class is treated as pose-bearing, so such a detection can carry real predicted
+ * visibility and visibility alone will not identify it. A consumer that must
+ * distinguish them needs the model's pose-class list.
  */
 struct SegmentationPoseDecodeTensors {
   simaai::neat::Tensor boxes;

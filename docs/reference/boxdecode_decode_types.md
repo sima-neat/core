@@ -194,10 +194,15 @@ Use `decode_segmentation_pose(...)` for all three tensors. `decode_bbox(...)` an
 `BoxDecodeResults(...)` still work when you only need boxes, because the payload is
 box-leading.
 
-A detection whose class carries no keypoints has an all-zero pose record, visibility
-included, so gate on visibility rather than needing the decoder's class list. A model
-may also use fewer than the 17 reserved keypoint slots; the unused trailing slots are
-zeroed the same way.
+`decode_segmentation_pose(...)` copies keypoint rows through verbatim; it does not zero,
+mask, or interpret them. Whether a detection whose class carries no keypoints arrives
+all-zero is therefore a property of the backend, and only holds when the backend was given
+a `pose_classes` gate — see below. Without that gate every class is decoded as
+pose-bearing, so such a detection can carry real predicted visibility and **visibility
+alone will not identify it**.
+
+A model may also use fewer than the 17 reserved keypoint slots. Unused trailing slots are
+zeroed by the wire format itself and are not affected by the gate.
 
 `num_classes` is derived from the class head for this family and does not have to be
 supplied. Its class tensor packs objectness into channel 0, so the class-block width is
@@ -210,9 +215,10 @@ Keypoint gating by class (`pose_classes`) is available only when the backend is
 configured from JSON. The typed `neatobjectdecode` GStreamer path cannot carry it —
 `SimaPluginBoxDecodeStagePayload` has no pose-class field, so the static manifest cannot
 express one — and with the gate absent the backend treats **every** class as
-pose-bearing. A model where only some classes carry keypoints must therefore either be
-configured through JSON or have its consumers gate on keypoint visibility, which is
-zeroed for classes without keypoints as described above. Changing this means bumping
+pose-bearing. A model where only some classes carry keypoints must therefore be configured
+through JSON if its non-pose detections are to be gated at all; on the typed path a
+consumer needs the model's own pose-class list, because neither the payload nor Core
+distinguishes those detections for it. Changing this means bumping
 `SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION` across core and internals together.
 
 ## When `model.run` returns raw heads

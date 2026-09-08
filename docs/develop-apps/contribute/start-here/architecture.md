@@ -449,8 +449,10 @@ families, with these additional invariants:
   them from buffer size.
 - Keypoint gating by class (`pose_classes`) is a JSON-only backend control. The typed static
   manifest has no pose-class field, so on that path every class is treated as pose-bearing.
-  Detections whose class carries no keypoints are published with an all-zero pose record, and
-  consumers gate on keypoint visibility rather than on a decoder-side class list.
+  Core copies keypoint rows through without interpreting them, so whether a non-pose
+  detection arrives all-zero is a backend property that holds only when the gate was
+  supplied. On the typed path such a detection can carry real predicted visibility, and
+  identifying it requires the model's pose-class list rather than the payload alone.
 
 ---
 
