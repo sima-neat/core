@@ -142,9 +142,9 @@ std::string normalize_detection_format(std::string value) {
 }
 
 ParsedBoxRecords parse_bbox_records(const std::vector<uint8_t>& bytes, int img_w, int img_h,
-                                    int expected_topk, bool strict) {
+                                    int expected_topk, bool strict, bool require_rfdetr = false) {
   ParsedBoxRecords out;
-  if (is_rfdetr_payload(bytes)) {
+  if (require_rfdetr || is_rfdetr_payload(bytes)) {
     out.boxes = rfdetr_boxes(bytes, rfdetr_header(bytes), img_w, img_h, expected_topk, strict);
     return out;
   }
@@ -377,7 +377,11 @@ BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w
 
   BoxDecodeResult out;
   out.raw = copy_detection_payload(tensor, "bbox");
-  out.boxes = parse_bbox_bytes(out.raw, img_w, img_h, expected_topk, strict);
+  const std::string normalized_format = normalize_detection_format(fmt);
+  const bool require_rfdetr =
+      normalized_format == "RFDETR_V1" || normalized_format == "RFDETR_SEG_V1";
+  out.boxes =
+      parse_bbox_records(out.raw, img_w, img_h, expected_topk, strict, require_rfdetr).boxes;
   return out;
 }
 
@@ -485,7 +489,9 @@ SegmentationDecodeTensors decode_segmentation_tensor(const simaai::neat::Tensor&
   validate_extended_detection_format(tensor, "segmentation", detection_format_is_segmentation);
   if (tensor.storage && tensor.is_dense()) {
     const auto mapping = tensor.view_read();
-    if (is_rfdetr_payload({static_cast<const uint8_t*>(mapping.data), mapping.size_bytes}))
+    const std::string format = normalize_detection_format(read_detection_format(tensor));
+    if (format == "RFDETR_V1" || format == "RFDETR_SEG_V1" ||
+        is_rfdetr_payload({static_cast<const uint8_t*>(mapping.data), mapping.size_bytes}))
       return rfdetr_segmentation({static_cast<const uint8_t*>(mapping.data), mapping.size_bytes},
                                  img_w, img_h, top_k, strict);
   }

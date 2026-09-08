@@ -190,6 +190,21 @@ RUN_TEST(
                   std::memcmp(rf_masks.data() + sizeof(rf_mask), rf_mask, sizeof(rf_mask)) == 0,
               "RF repeated queries keep their matching mask");
       auto invalid_rf = rf_bytes;
+      const uint32_t missing_magic = 1;
+      std::memcpy(invalid_rf.data(), &missing_magic, sizeof(missing_magic));
+      for (const char* format : {"RFDETR_V1", "RFDETR_SEG_V1"}) {
+        require(throws_with([&] { (void)decode_bbox({make_wire_tensor(invalid_rf, format)}); },
+                            "RF-DETR result"),
+                "RF-tagged boxes must reject a missing RF header in default non-strict mode");
+        require(throws_with(
+                    [&] {
+                      (void)decode_segmentation(
+                          {make_wire_tensor(make_segmentation_payload(1, 1), format)});
+                    },
+                    "RF-DETR result"),
+                "RF-tagged segmentation must reject a legacy payload in default non-strict mode");
+      }
+      invalid_rf = rf_bytes;
       invalid_rf.resize(invalid_rf.size() - 1);
       require(
           throws_with(
