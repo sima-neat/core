@@ -397,6 +397,10 @@ options.masks.size = pyneat.MaskSize.Native
 model = pyneat.Model("rfdetr-seg-transformer.tar.gz", options)
 ```
 
+An MPK-authored `rfdetr` or `rfdetr_seg` decoder is selected when runtime options
+leave the decoder unspecified. Tensor shapes alone never select RF-DETR. Standalone
+RF-DETR construction without a bound Model is unsupported and rejects immediately.
+
 These options also apply to model-aware `BoxDecodeOptions`; its existing score
 control is named `detection_threshold`. Thresholds are inclusive probabilities
 in [0,1]. `top_k=0` adds no cap beyond the prepared model's candidate limit.

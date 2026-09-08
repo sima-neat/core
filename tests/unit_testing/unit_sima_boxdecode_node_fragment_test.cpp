@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <stdexcept>
 
 namespace {
 
@@ -192,14 +193,27 @@ RUN_TEST(
               "default Model route must not auto-select BoxDecode from inferred MPK "
               "topology");
 
+      const auto requires_model = [](auto construct) {
+        try {
+          (void)construct();
+        } catch (const std::invalid_argument& error) {
+          require_contains(error.what(), "RF-DETR requires a Model-backed MPK contract",
+                           "standalone RF decoder must explain the supported construction");
+          return;
+        }
+        throw std::runtime_error("standalone RF decoder must reject before compilation");
+      };
       for (const auto type :
            {simaai::neat::BoxDecodeType::RfDetr, simaai::neat::BoxDecodeType::RfDetrSeg}) {
-        auto decoder = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeOptions{type});
-        const auto expected =
-            type == simaai::neat::BoxDecodeType::RfDetrSeg ? "RFDETR_SEG_V1" : "RFDETR_V1";
-        const auto* concrete = dynamic_cast<const simaai::neat::SimaBoxDecode*>(decoder.get());
-        require(concrete && concrete->output_spec({}).format == expected,
-                "RF output specification must distinguish segmentation");
+        requires_model([&] {
+          return simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeOptions{type});
+        });
+        requires_model([&] { return simaai::neat::nodes::SimaBoxDecode(type); });
+        requires_model([&] {
+          return simaai::neat::nodes::SimaBoxDecode(
+              type, 0.3, 0.0, 100, "", 1280, 720, 640, 640, simaai::neat::BoxDecodeTypeOption::Auto,
+              std::nullopt, std::nullopt, std::nullopt, simaai::neat::ResizeMode::Stretch);
+        });
       }
 
       // YOLO defines the established preprocessing-metadata contract. SSD and

@@ -851,6 +851,11 @@ SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_thresho
                              std::optional<BoxDecodeSourceStorage> source_storage,
                              std::optional<bool> detess, std::optional<bool> dequant,
                              std::optional<ResizeMode> resize_mode_override) {
+  if (box_decode_type_is_rfdetr(decode_type)) {
+    throw std::invalid_argument(
+        "RF-DETR requires a Model-backed MPK contract; use SimaBoxDecode(model, options) "
+        "or Model::Options.");
+  }
   validate_dimension_override_pair(original_width, original_height, "original dimensions",
                                    "SimaBoxDecode");
   validate_dimension_override_pair(model_width, model_height, "model dimensions", "SimaBoxDecode");

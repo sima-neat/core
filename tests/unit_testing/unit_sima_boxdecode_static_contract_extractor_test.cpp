@@ -1302,6 +1302,56 @@ RUN_TEST(
                 "truncated dense storage rejects");
       }
 
+      for (const auto type :
+           {simaai::neat::BoxDecodeType::RfDetr, simaai::neat::BoxDecodeType::RfDetrSeg}) {
+        auto authored = make_rf_dense("BF16");
+        if (type == simaai::neat::BoxDecodeType::RfDetr)
+          authored.plugins.front().output_tensors.pop_back();
+        MpkPluginIoContract terminal;
+        terminal.name = "boxdecode_rf";
+        terminal.sequence = 2;
+        terminal.kernel = "boxdecode";
+        terminal.decode_type =
+            type == simaai::neat::BoxDecodeType::RfDetr ? "rfdetr" : "rfdetr_seg";
+        terminal.input_tensors = authored.plugins.front().output_tensors;
+        authored.plugins.push_back(std::move(terminal));
+        for (std::size_t i = 0; i < authored.plugins.front().output_tensors.size(); ++i) {
+          authored.edges.push_back(MpkContractEdge{.src_plugin_index = 0U,
+                                                   .src_output_index = static_cast<int>(i),
+                                                   .dst_plugin_index = 1U,
+                                                   .dst_input_index = static_cast<int>(i),
+                                                   .src_plugin = "MLA_0",
+                                                   .dst_plugin = "boxdecode_rf",
+                                                   .tensor_name = "output_" + std::to_string(i)});
+        }
+        const auto subset = extract_boxdecode_contract_subset_from_mpk(
+            authored, make_flags(false, false), &authored.plugins.back(), &error);
+        require(subset.has_value(), "declared RF decoder with default options: " + error);
+        const auto compiled =
+            stagesemantics::build_boxdecode_compiled_contract_from_subset(*subset);
+        require(compiled.payload.decode_type == type && compiled.payload.num_classes == 5 &&
+                    compiled.payload.rfdetr.boxes_input_index == 0 &&
+                    compiled.payload.rfdetr.scores_input_index == 1 &&
+                    compiled.payload.rfdetr.masks_input_index ==
+                        (type == simaai::neat::BoxDecodeType::RfDetrSeg ? 2 : -1),
+                "MPK-authored RF type and roles must survive default-option compilation");
+        auto conflicting_flags = make_flags(false, false);
+        conflicting_flags.requested_decode_type = type == simaai::neat::BoxDecodeType::RfDetr
+                                                      ? simaai::neat::BoxDecodeType::RfDetrSeg
+                                                      : simaai::neat::BoxDecodeType::RfDetr;
+        require(!build_boxdecode_static_contract_from_mpk(authored, conflicting_flags, &error),
+                "explicit RF override must reject a conflicting MPK declaration");
+        if (type == simaai::neat::BoxDecodeType::RfDetrSeg) {
+          authored.plugins.front().output_tensors.pop_back();
+          authored.plugins.back().input_tensors.pop_back();
+          authored.edges.pop_back();
+          require(
+              !build_boxdecode_static_contract_from_mpk(authored, make_flags(false, false), &error),
+              "MPK-authored RF segmentation requires the mask role");
+          require_contains(error, "mask role is missing", "missing authored mask diagnostic");
+        }
+      }
+
       // A terminal MPK BoxDecode declaration must survive extraction and be normalized before
       // subset lowering. Otherwise YoloV5 reaches the runtime as Unspecified/Auto with zero
       // classes and cannot configure its three raw heads.

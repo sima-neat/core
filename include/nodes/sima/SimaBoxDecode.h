@@ -63,6 +63,7 @@ struct BoxDecodeOptionsInternal;
  *   needed by the decoder.
  * - Use the raw-geometry constructor only when you are wiring detection-head tensors
  *   yourself and can provide the original image size, model input size, and decode family.
+ *   RF-DETR requires a model-backed MPK contract and rejects standalone construction.
  *
  * **Inputs.**
  *
@@ -73,7 +74,8 @@ struct BoxDecodeOptionsInternal;
  *
  * **Outputs.**
  *
- * Legacy detection output uses `BBOX`; RF-DETR uses the dynamic `RFDETR_V1` payload.
+ * Legacy detection output uses `BBOX`; RF-DETR detection uses `RFDETR_V1` and segmentation
+ * uses `RFDETR_SEG_V1`.
  * Use `decode_bbox_tensor()`,
  * `decode_bbox()`, or `stages::BoxDecodeResults()` when you only need boxes. For task-specific
  * payloads, use `decode_pose()` to get boxes plus `[N, 17, 3]` keypoints, or

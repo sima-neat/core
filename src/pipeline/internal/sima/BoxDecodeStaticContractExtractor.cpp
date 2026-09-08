@@ -2615,7 +2615,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       return fail("RF-DETR requested decoder conflicts with the MPK decoder");
     if (parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
-         *parsed_type == BoxDecodeType::YoloV5)) {
+         *parsed_type == BoxDecodeType::YoloV5 || box_decode_type_is_rfdetr(*parsed_type))) {
       out.decode_type = *parsed_type;
     }
   }
