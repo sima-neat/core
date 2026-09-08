@@ -1821,3 +1821,11 @@ def test_measurement_bool_overload_surface():
   _assert_not_type_error(lambda: pyneat.Run().start_measurement(True))
   _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(False))
   _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(True))
+
+
+def test_rfdetr_formats_distinguish_segmentation():
+  assert pyneat.detections.format_is_bbox("RFDETR_V1")
+  assert not pyneat.detections.format_is_segmentation("RFDETR_V1")
+  assert pyneat.detections.format_is_segmentation("RFDETR_SEG_V1")
+  assert not pyneat.detections.format_is_bbox("RFDETR_SEG_V1")
+  assert pyneat.detections.format_is_bbox_family("RFDETR_SEG_V1")

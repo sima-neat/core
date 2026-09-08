@@ -171,7 +171,12 @@ RUN_TEST(
       }
       const float rf_mask[] = {0.0F, 0.25F, 0.5F, 0.75F, 1.0F, 0.125F};
       std::memcpy(rf_bytes.data() + 104, rf_mask, sizeof(rf_mask));
-      const auto rf_tensor = make_wire_tensor(rf_bytes, "RFDETR_V1");
+      const auto rf_tensor = make_wire_tensor(rf_bytes, "RFDETR_SEG_V1");
+      require(detection_format_is_segmentation("RFDETR_SEG_V1") &&
+                  !detection_format_is_bbox("RFDETR_SEG_V1") &&
+                  detection_format_is_bbox("RFDETR_V1") &&
+                  !detection_format_is_segmentation("RFDETR_V1"),
+              "RF formats must distinguish detection from segmentation");
       const auto rf = decode_segmentation({rf_tensor}).front();
       require(rf.boxes.shape == std::vector<int64_t>({2, 6}), "RF valid box count");
       require(rf.masks.shape == std::vector<int64_t>({2, 2, 3}) &&
@@ -186,22 +191,24 @@ RUN_TEST(
               "RF repeated queries keep their matching mask");
       auto invalid_rf = rf_bytes;
       invalid_rf.resize(invalid_rf.size() - 1);
-      require(throws_with(
-                  [&] { (void)decode_segmentation({make_wire_tensor(invalid_rf, "RFDETR_V1")}); },
-                  "bounds"),
-              "RF rejects truncated masks");
+      require(
+          throws_with(
+              [&] { (void)decode_segmentation({make_wire_tensor(invalid_rf, "RFDETR_SEG_V1")}); },
+              "bounds"),
+          "RF rejects truncated masks");
       invalid_rf = rf_bytes;
       const uint32_t invalid_index = 1;
       std::memcpy(invalid_rf.data() + 68, &invalid_index, sizeof(invalid_index));
-      require(throws_with(
-                  [&] { (void)decode_segmentation({make_wire_tensor(invalid_rf, "RFDETR_V1")}); },
-                  "association"),
-              "RF rejects invalid mask references");
+      require(
+          throws_with(
+              [&] { (void)decode_segmentation({make_wire_tensor(invalid_rf, "RFDETR_SEG_V1")}); },
+              "association"),
+          "RF rejects invalid mask references");
       std::vector<uint8_t> empty_rf(40);
       const uint32_t empty_header[] = {0x31564452, 1, 40, 0, 40, 40, 0, 3, 2, 2};
       std::memcpy(empty_rf.data(), empty_header, sizeof(empty_header));
       const auto empty_result =
-          decode_segmentation({make_wire_tensor(empty_rf, "RFDETR_V1")}).front();
+          decode_segmentation({make_wire_tensor(empty_rf, "RFDETR_SEG_V1")}).front();
       require(empty_result.boxes.shape == std::vector<int64_t>({0, 6}) &&
                   empty_result.masks.shape == std::vector<int64_t>({0, 2, 3}),
               "RF empty result keeps native geometry");

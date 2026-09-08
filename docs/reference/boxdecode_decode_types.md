@@ -407,6 +407,8 @@ proposal TopK/Gather and from an application's limit on usable results.
 `decode_bbox` returns floating-point `[N,6]` rows in source pixels, ordered as
 `x1,y1,x2,y2,score,class_id`. `decode_segmentation` returns those boxes with
 matching `[N,H,W]` masks. Empty results retain their column and mask dimensions.
+Detection outputs are tagged `RFDETR_V1`; segmentation outputs use `RFDETR_SEG_V1`
+so format-based consumers can identify results that contain masks.
 
 | Mask option | Result |
 | --- | --- |
@@ -433,7 +435,9 @@ counts and mask dimensions are derived from those contracts, not customer knobs.
 ### Build compatibility
 
 The RF-DETR extension appends mask options to the public C++ option structs.
-Existing source initializers remain valid, but the struct sizes change. Rebuild
-C++ applications and the Python extension against the matching Core headers and
-library. The plugin manifest ABI also advances from 21 to 22, so deploy the
-matching Internals build before Core and Apps.
+Existing source initializers remain valid, but the struct sizes change. Core
+advances its C++ ABI from 4 to 5, so binaries built against ABI 4 cannot load the
+new library as an ABI 4 replacement. Rebuild C++ applications and the Python
+extension against the matching Core headers and library. The plugin manifest ABI
+also advances from 21 to 22, so deploy the matching Internals build before Core
+and Apps.

@@ -192,6 +192,16 @@ RUN_TEST(
               "default Model route must not auto-select BoxDecode from inferred MPK "
               "topology");
 
+      for (const auto type :
+           {simaai::neat::BoxDecodeType::RfDetr, simaai::neat::BoxDecodeType::RfDetrSeg}) {
+        auto decoder = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeOptions{type});
+        const auto expected =
+            type == simaai::neat::BoxDecodeType::RfDetrSeg ? "RFDETR_SEG_V1" : "RFDETR_V1";
+        const auto* concrete = dynamic_cast<const simaai::neat::SimaBoxDecode*>(decoder.get());
+        require(concrete && concrete->output_spec({}).format == expected,
+                "RF output specification must distinguish segmentation");
+      }
+
       // YOLO defines the established preprocessing-metadata contract. SSD and
       // SuperPoint must consume geometry through the same neatobjectdecode path rather
       // than inventing family-specific width/height sources.

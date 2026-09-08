@@ -411,8 +411,8 @@ and optional query masks; full-frame geometry remains separate from packed tile
 geometry. The route preserves native BF16/FP32 heads for the prepared Internals
 decoder. Query/class selection uses independent sigmoid scores without NMS.
 
-The shared manifest ABI adds an RF v1 extension. `RFDETR_V1` results carry their
-actual byte length, valid floating-point rows and unique masks with per-row
+The shared manifest ABI adds an RF v1 extension. `RFDETR_V1` detection and
+`RFDETR_SEG_V1` segmentation results carry their actual byte length, valid floating-point rows and unique masks with per-row
 associations. The plugin projects boxes into source pixels; Core bounds-checks
 the payload and exposes matching dynamic mask tensors. Retained results own
 their data while the plugin recycles its output capacity. Native probabilities

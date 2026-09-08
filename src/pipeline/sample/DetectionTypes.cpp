@@ -344,7 +344,7 @@ bool detection_format_is_pose(const std::string& format) {
 bool detection_format_is_segmentation(const std::string& format) {
   const std::string fmt = normalize_detection_format(format);
   return fmt == kDetectionFormatBboxSegmentation || fmt == "BBOX_SEG" || fmt == "SEGMENTATION" ||
-         fmt == "SEG";
+         fmt == "SEG" || fmt == "RFDETR_SEG_V1";
 }
 
 bool detection_format_is_bbox_family(const std::string& format) {
@@ -561,8 +561,9 @@ void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
     if (fmt.empty()) {
       fmt = read_detection_format(tensor); // may pick up legacy tess-tagged BBOX
     }
-    if (normalize_detection_format(fmt) == "RFDETR_V1") {
-      tag_detection_format(tensor, "RFDETR_V1");
+    if (normalize_detection_format(fmt) == "RFDETR_V1" ||
+        normalize_detection_format(fmt) == "RFDETR_SEG_V1") {
+      tag_detection_format(tensor, normalize_detection_format(fmt));
     } else if (detection_format_is_bbox(fmt)) {
       tag_detection_format(tensor, kDetectionFormatBbox);
     } else if (detection_format_is_pose(fmt)) {

@@ -1435,6 +1435,8 @@ OutputSpec SimaBoxDecode::output_spec(const OutputSpec& input) const {
     out.format = format == SuperPointOutputFormat::LegacyA65InterleavedV0
                      ? kFeatureFormatLegacyA65V0
                      : kFeatureFormatPointsV1;
+  } else if (opt_ && opt_->decode_type == BoxDecodeType::RfDetrSeg) {
+    out.format = "RFDETR_SEG_V1";
   } else {
     out.format = opt_ && box_decode_type_is_rfdetr(opt_->decode_type) ? "RFDETR_V1" : "BBOX";
   }

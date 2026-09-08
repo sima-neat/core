@@ -879,9 +879,9 @@ add_library(sima_neat SHARED
 )
 set_target_properties(sima_neat PROPERTIES
   OUTPUT_NAME sima_neat
-  # VERSION identifies the implementation/platform build. SOVERSION is the
-  # independently versioned public C++ ABI that consumers record in DT_NEEDED.
-  VERSION "${SIMANEAT_PLATFORM_VERSION}"
+  # Keep real filenames distinct across ABIs so old SONAME links cannot resolve
+  # to an incompatible library after installing into an existing prefix.
+  VERSION "${SIMANEAT_ABI_VERSION}.${SIMANEAT_PLATFORM_VERSION}"
   SOVERSION "${SIMANEAT_ABI_VERSION}"
 )
 
@@ -894,7 +894,7 @@ set_target_properties(sima_neat_static PROPERTIES
 
 target_link_libraries(sima_neat PUBLIC sima_neat_common)
 target_link_libraries(sima_neat_static PUBLIC sima_neat_common)
-target_link_libraries(sima_neat_objects PRIVATE sima_neat_common NeatInternals::RfDetrPostprocess)
+target_link_libraries(sima_neat_objects PRIVATE sima_neat_common)
 add_custom_target(sima_neat_libraries DEPENDS sima_neat sima_neat_static)
 target_compile_definitions(sima_neat_objects PRIVATE
   SIMA_NEAT_VERSION_STRING="${SIMANEAT_VERSION}"
@@ -946,6 +946,7 @@ endforeach()
 
 if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   foreach(_simaneat_neat_include_dir IN ITEMS
+      "${SIMANEAT_LOCAL_DEP_HEADER_ROOT}"
       "${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}"
       "${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}"
       "${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}"
