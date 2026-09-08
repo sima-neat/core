@@ -6108,6 +6108,12 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
         boxdecode_route_flags.has_value() ? std::optional<bool>(boxdecode_route_flags->quant_needed)
                                           : std::nullopt;
     BoxDecodeType decode_type = opt.decode_type;
+    BoxDecodeType effective_decode_type = decode_type;
+    if (effective_decode_type == BoxDecodeType::Unspecified) {
+      if (auto mpk = try_model_managed_boxdecode_contract(pack); mpk.has_value()) {
+        effective_decode_type = mpk->payload.decode_type;
+      }
+    }
     float detection_threshold = opt.score_threshold;
     float nms_iou_threshold = opt.nms_iou_threshold;
     int top_k = opt.top_k;
@@ -6122,8 +6128,8 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
       model_width = resolved.mla_contract.width;
       model_height = resolved.mla_contract.height;
     }
-    if (box_decode_type_is_rfdetr(decode_type) && opt.preprocess.kind == InputKind::Tensor &&
-        !resolved.enabled) {
+    if (box_decode_type_is_rfdetr(effective_decode_type) &&
+        opt.preprocess.kind == InputKind::Tensor && !resolved.enabled) {
       // Transformer inputs are feature maps. The preceding image model's
       // preprocessing metadata supplies the image geometry at runtime.
       model_width = model_height = 0;
@@ -6134,13 +6140,6 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
       // Hint for manual-geometry routes; it also strips the preproc meta bucket. Never invent an
       // SSD resize when the plan has no resize stage: the model-bound constructor requires a
       // truthful explicit boxdecode_resize_mode for externally preprocessed non-identity input.
-      // The MPK supplies the decode type when the caller left it Unspecified.
-      BoxDecodeType effective_decode_type = decode_type;
-      if (effective_decode_type == BoxDecodeType::Unspecified) {
-        if (auto mpk = try_model_managed_boxdecode_contract(pack); mpk.has_value()) {
-          effective_decode_type = mpk->payload.decode_type;
-        }
-      }
       const bool resize_runs =
           resolved.enabled && resolved.effective.resize.enable != AutoFlag::Off;
       if (resize_runs || !box_decode_type_is_ssd_family(effective_decode_type)) {

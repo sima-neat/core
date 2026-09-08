@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 
 namespace {
@@ -175,10 +176,93 @@ sima_test::ModelArchiveFixture make_quanttess_boxdecode_fixture() {
                                                       true);
 }
 
+sima_test::ModelArchiveFixture
+make_rfdetr_feature_geometry_fixture(simaai::neat::BoxDecodeType type) {
+  // RF transformer ingress is a feature map; image geometry comes from upstream metadata.
+
+  auto mpk = nlohmann::json::parse(R"json({
+    "name": "rfdetr_feature_geometry",
+    "model_sdk_version": "2.1.0",
+    "input_nodes": [{"name":"features","type":"buffer","size":1327104,
+                     "dtype":"float32","shape":[1,36,36,256]}],
+    "plugins": [{
+      "name": "MLA_0", "sequence": 1, "processor": "MLA",
+      "config_params": {
+        "desired_batch_size": 1, "actual_batch_size": 1,
+        "number_of_quads_to_user": 1,
+        "input_types": [{"scalar":"float32","shape":[1,36,36,256]}],
+        "output_types": [
+          {"scalar":"float32","shape":[1,1,7,4]},
+          {"scalar":"float32","shape":[1,1,7,5]},
+          {"scalar":"float32","shape":[1,3,6,7]}
+        ]
+      },
+      "input_nodes": [{"name":"features","type":"buffer","size":1327104,
+                       "dtype":"float32","shape":[1,36,36,256]}],
+      "output_nodes": [
+        {"name":"output_0","type":"buffer","size":112,
+         "dtype":"float32","shape":[1,1,7,4],"layout":"normal"},
+        {"name":"output_1","type":"buffer","size":140,
+         "dtype":"float32","shape":[1,1,7,5],"layout":"normal"},
+        {"name":"output_2","type":"buffer","size":504,
+         "dtype":"float32","shape":[1,3,6,7],"layout":"normal"}
+      ],
+      "type": "sgpProcess", "resources": {"executable":"placeholder.elf"}
+    }, {
+      "name": "boxdecode_rf", "sequence": 2, "processor": "A65",
+      "config_params": {"kernel":"boxdecode","params":{"decode_type":"rfdetr_seg"}},
+      "input_nodes": [],
+      "output_nodes": [{"name":"detections","type":"buffer","size":4096}]
+    }]
+  })json");
+  auto& mla = mpk["plugins"][0];
+  auto& terminal = mpk["plugins"][1];
+  if (type == simaai::neat::BoxDecodeType::RfDetr) {
+    mla["output_nodes"].erase(2);
+    mla["config_params"]["output_types"].erase(2);
+    terminal["config_params"]["params"]["decode_type"] = "rfdetr";
+  }
+  terminal["input_nodes"] = mla["output_nodes"];
+  return sima_test::make_model_archive_fixture(
+      "rfdetr_feature_geometry", {{"etc/rfdetr_feature_geometry_mpk.json", mpk.dump()}});
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_sima_boxdecode_node_fragment_test", ([] {
+      for (const auto type :
+           {simaai::neat::BoxDecodeType::RfDetr, simaai::neat::BoxDecodeType::RfDetrSeg}) {
+        const auto rf_fixture = make_rfdetr_feature_geometry_fixture(type);
+        for (const auto requested_type : {type, simaai::neat::BoxDecodeType::Unspecified}) {
+          simaai::neat::Model::Options rf_options;
+          rf_options.decode_type = requested_type;
+          rf_options.preprocess.kind = simaai::neat::InputKind::Tensor;
+          rf_options.preprocess.enable = simaai::neat::AutoFlag::Off;
+          const simaai::neat::Model rf_model(rf_fixture.tar_path, rf_options);
+          const auto resolved = rf_model.resolved_preprocess_plan();
+          require(!resolved.enabled && resolved.mla_contract.width == 36 &&
+                      resolved.mla_contract.height == 36,
+                  "RF geometry fixture must retain a nonzero feature-map ingress with preproc off");
+          const auto post =
+              simaai::neat::internal::ModelAccess::build_public_postprocess_nodes(rf_model);
+          const simaai::neat::SimaBoxDecode* box = nullptr;
+          for (const auto& node : post) {
+            if (const auto* candidate =
+                    dynamic_cast<const simaai::neat::SimaBoxDecode*>(node.get())) {
+              require(box == nullptr, "RF model route must materialize exactly one BoxDecode");
+              box = candidate;
+            }
+          }
+          require(box != nullptr, "explicit and MPK-selected RF routes must materialize BoxDecode");
+          const auto fragment = box->backend_fragment(0);
+          require(
+              fragment.find("model-width=") == std::string::npos &&
+                  fragment.find("model-height=") == std::string::npos,
+              "explicit and MPK-selected RF routes must leave image geometry to runtime metadata");
+        }
+      }
+
       const auto fixture = make_fixture();
       const std::string tar_path = fixture.tar_path;
 

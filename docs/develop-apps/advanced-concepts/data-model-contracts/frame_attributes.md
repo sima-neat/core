@@ -136,8 +136,8 @@ encoded sources later without redesign.
 field name or aggregate initialization keeps compiling.
 
 The binary layout of those public structs changed, so **already-built consumers must be
-rebuilt**. The Neat ABI/SOVERSION stays at **4**: 0.4.0 is unreleased, so all ABI-4
-components are rebuilt and released together rather than bumping the ABI.
+rebuilt**. The current Neat ABI/SOVERSION is **5**. Rebuild consumers against the
+matching Core runtime and development packages.
 
 ## Adding another source later
 
