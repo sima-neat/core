@@ -4,8 +4,9 @@ set -euo pipefail
 DEFAULT_LLIMA_MODELS_PATH="/media/nvme/llima/models"
 DEFAULT_TEXT_MODEL="Qwen2.5-0.5B-Instruct-Autoround-a16w4"
 DEFAULT_VLM_MODEL="LFM2.5-VL-450M-Autoround-a16w4"
-DEFAULT_ASR_MODEL="whisper-small-a16w8"
-DEFAULT_ASR_REPO="simaai/whisper-small-a16w8"
+DEFAULT_ASR_MODEL="whisper-small-a16w8-layered-encoder"
+DEFAULT_ASR_REPO="florianvoss/whisper-small-a16w8-layered-encoder"
+DEFAULT_ASR_REVISION="c0a34f15eaeee13fc7d80cd545c3fb828dc5010f"
 DEFAULT_REASONING_QWEN_MODEL="Qwen3-0.6B-Autoround-a16w4"
 DEFAULT_REASONING_QWEN_REPO="simaai/Qwen3-0.6B-Autoround-a16w4"
 DEFAULT_REASONING_QWEN_REVISION="bfe4a547a56d94fb4474cbc7e8fcbc1e4ee276ac"
@@ -111,7 +112,7 @@ download_model \
   "devkit/vlm_config.json"
 download_model \
   "asr" "${SIMA_TEST_LLIMA_ASR_REPO}" "${SIMA_TEST_LLIMA_ASR_MODEL}" \
-  "devkit/whisper_config.json"
+  "devkit/whisper_config.json" "${DEFAULT_ASR_REVISION}"
 download_model \
   "Qwen reasoning" "${DEFAULT_REASONING_QWEN_REPO}" \
   "${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL}" "devkit/vlm_config.json" \

@@ -524,6 +524,11 @@ public:
     bool push(const simaai::neat::TensorList& inputs);
     /// Push a list of `Sample` inputs (full Samples carry per-buffer metadata).
     bool push(const simaai::neat::Sample& inputs);
+    /// Submit without waiting for input-queue space; full queues follow
+    /// RunOptions::overflow_policy.
+    bool try_push(const simaai::neat::TensorList& inputs);
+    /// Sample-preserving nonblocking submission; returns false when input admission rejects it.
+    bool try_push(const simaai::neat::Sample& inputs);
     /**
      * @brief Pull the next produced output Sample list.
      * @param timeout_ms Maximum time to wait, in milliseconds; `-1` means wait forever; `0` is

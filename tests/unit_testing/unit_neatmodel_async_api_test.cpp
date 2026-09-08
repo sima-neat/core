@@ -41,6 +41,13 @@ int main() {
   using simaai::neat::Tensor;
   using simaai::neat::TensorList;
 
+  static_assert(std::is_same_v<decltype(std::declval<Model::Runner&>().try_push(
+                                   std::declval<const TensorList&>())),
+                               bool>);
+  static_assert(
+      std::is_same_v<
+          decltype(std::declval<Model::Runner&>().try_push(std::declval<const Sample&>())), bool>);
+
   static_assert(std::is_same_v<decltype(std::declval<Model&>().build()), Model::Runner>);
   static_assert(
       std::is_same_v<decltype(std::declval<Model&>().build(std::declval<const TensorList&>())),

@@ -7535,6 +7535,14 @@ bool Model::Runner::push(const simaai::neat::Sample& inputs) {
   return run_.push(inputs);
 }
 
+bool Model::Runner::try_push(const simaai::neat::TensorList& inputs) {
+  return run_.try_push(inputs);
+}
+
+bool Model::Runner::try_push(const simaai::neat::Sample& inputs) {
+  return run_.try_push(inputs);
+}
+
 simaai::neat::Sample Model::Runner::pull(int timeout_ms) {
   auto output = run_.pull(timeout_ms);
   return output.has_value() ? std::move(*output) : simaai::neat::Sample{};
