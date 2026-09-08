@@ -35,10 +35,10 @@ RfHeader rfdetr_header(std::span<const uint8_t> bytes) {
   std::memcpy(&h, bytes.data(), sizeof(h));
   const uint64_t rows_end = uint64_t(h.rows_offset) + uint64_t(h.count) * sizeof(RfRow);
   const uint64_t mask_pixels = uint64_t(h.mask_width) * h.mask_height;
-  const uint64_t element_bytes = h.mask_output == 2 ? sizeof(float) : 1;
+  const uint64_t element_bytes = sizeof(float);
   if (h.magic != simaai::rfdetr::kResultMagic || h.version != 1 || h.total_bytes > bytes.size() ||
       h.rows_offset != sizeof(h) || rows_end != h.masks_offset || rows_end > h.total_bytes ||
-      h.mask_output > 2 || h.mask_count > h.count ||
+      (h.mask_output != 0 && h.mask_output != 2) || h.mask_count > h.count ||
       (h.mask_output == 0 && (h.mask_count || h.mask_width || h.mask_height)) ||
       (h.mask_output != 0 && (!h.mask_width || !h.mask_height)) ||
       (h.mask_count > 0 &&
@@ -83,11 +83,11 @@ SegmentationDecodeTensors rfdetr_segmentation(std::span<const uint8_t> bytes, in
   if (h.mask_output == 0)
     throw std::runtime_error("RF-DETR result contains no masks");
   const auto boxes = rfdetr_boxes(bytes, h, img_w, img_h, top_k, strict);
-  const int64_t element_bytes = h.mask_output == 2 ? sizeof(float) : 1;
+  const int64_t element_bytes = sizeof(float);
   const auto mask_bytes = static_cast<std::size_t>(h.mask_width) * h.mask_height * element_bytes;
   Tensor masks;
   masks.storage = make_cpu_owned_storage(boxes.size() * mask_bytes);
-  masks.dtype = h.mask_output == 2 ? TensorDType::Float32 : TensorDType::UInt8;
+  masks.dtype = TensorDType::Float32;
   masks.device = {DeviceType::CPU, 0};
   masks.layout = TensorLayout::Unknown;
   masks.shape = {static_cast<int64_t>(boxes.size()), h.mask_height, h.mask_width};

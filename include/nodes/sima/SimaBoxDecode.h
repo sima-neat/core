@@ -79,8 +79,8 @@ struct BoxDecodeOptionsInternal;
  * Use `decode_bbox_tensor()`,
  * `decode_bbox()`, or `stages::BoxDecodeResults()` when you only need boxes. For task-specific
  * payloads, use `decode_pose()` to get boxes plus `[N, 17, 3]` keypoints, or
- * `decode_segmentation()` to get boxes plus `[N, H, W]` masks. RF-DETR mask geometry and
- * binary/probability output follow `MaskOptions`; legacy masks remain 160 by 160.
+ * `decode_segmentation()` to get boxes plus `[N, H, W]` masks. RF-DETR returns native float32
+ * probability masks; legacy masks remain uint8, 160 by 160.
  * `BoxDecodeType::SuperPoint` instead emits a type-honest `FEATURE_POINTS_V1` payload; consume it
  * with `decode_superpoint()` or `stages::SuperPointResults()`. Use `SimaRender` downstream when
  * you want an annotated video/image stream.

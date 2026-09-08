@@ -6,9 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(SimaNeat REQUIRED)
-if (NOT SimaNeat_ABI_VERSION MATCHES "^[1-9][0-9]*$")
+if (NOT SimaNeat_ABI_VERSION STREQUAL "4")
   message(FATAL_ERROR
-    "Invalid SimaNeat public ABI '${SimaNeat_ABI_VERSION}'")
+    "Expected SimaNeat public ABI 4, got '${SimaNeat_ABI_VERSION}'")
 endif()
 
 add_executable(install_smoke_app main.cpp)
@@ -19,8 +19,3 @@ target_link_libraries(install_smoke_app PRIVATE SimaNeat::sima_neat)
 # exported config. Linking only the shared target leaves both failures untested.
 add_executable(install_smoke_static_app main.cpp)
 target_link_libraries(install_smoke_static_app PRIVATE SimaNeat::sima_neat_static)
-
-foreach (target install_smoke_app install_smoke_static_app)
-  target_compile_definitions(${target} PRIVATE
-    SIMANEAT_EXPECTED_ABI="${SimaNeat_ABI_VERSION}")
-endforeach()

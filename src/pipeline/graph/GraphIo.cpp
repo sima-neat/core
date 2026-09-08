@@ -1050,9 +1050,6 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
       << "\"border_margin\":" << opt.superpoint.border_margin << ","
       << "\"descriptor_output_dtype\":" << enum_int(opt.superpoint.descriptor_output_dtype)
       << ",\"output_format\":" << enum_int(opt.superpoint.output_format) << "},"
-      << "\"masks\":{\"threshold\":" << opt.masks.threshold
-      << ",\"size\":" << enum_int(opt.masks.size) << ",\"width\":" << opt.masks.width
-      << ",\"height\":" << opt.masks.height << ",\"output\":" << enum_int(opt.masks.output) << "},"
       << "\"boxdecode_original_width\":" << opt.boxdecode_original_width << ","
       << "\"boxdecode_original_height\":" << opt.boxdecode_original_height << ","
       << "\"boxdecode_resize_mode\":";
@@ -1119,15 +1116,6 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
         *v->obj, "descriptor_output_dtype", enum_int(opt.superpoint.descriptor_output_dtype)));
     opt.superpoint.output_format = static_cast<SuperPointOutputFormat>(
         int_field(*v->obj, "output_format", enum_int(opt.superpoint.output_format)));
-  }
-  if (const JsonValue* v = object_field(obj, "masks");
-      v && v->type == JsonValue::Type::Object && v->obj) {
-    opt.masks.threshold = double_field(*v->obj, "threshold", opt.masks.threshold);
-    opt.masks.size = static_cast<MaskSize>(int_field(*v->obj, "size", enum_int(opt.masks.size)));
-    opt.masks.width = int_field(*v->obj, "width", opt.masks.width);
-    opt.masks.height = int_field(*v->obj, "height", opt.masks.height);
-    opt.masks.output =
-        static_cast<MaskOutput>(int_field(*v->obj, "output", enum_int(opt.masks.output)));
   }
   opt.boxdecode_original_width =
       int_field(obj, "boxdecode_original_width", opt.boxdecode_original_width);

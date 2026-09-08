@@ -290,22 +290,13 @@ RUN_TEST(
                       payload.nms_iou_threshold == expected.nms_iou_threshold &&
                       payload.topk == expected.top_k,
                   "named RF controls must replace model defaults, including explicit zeros");
-          const auto& masks = payload.rfdetr.masks;
-          require(masks.output == expected.masks.output && masks.size == expected.masks.size &&
-                      masks.threshold == expected.masks.threshold &&
-                      masks.width == expected.masks.width && masks.height == expected.masks.height,
-                  "named RF mask controls must reach the compiled payload");
         };
 
-        BoxDecodeOptions probabilities(BoxDecodeType::Unspecified);
-        probabilities.masks.output = MaskOutput::Probabilities;
-        probabilities.masks.threshold = 0.25;
-        BoxDecodeOptions fixed(BoxDecodeType::Unspecified);
-        fixed.masks.size = MaskSize::Fixed;
-        fixed.masks.width = 31;
-        fixed.masks.height = 17;
-        fixed.masks.threshold = 0.75;
-        for (const auto& requested : {probabilities, fixed}) {
+        BoxDecodeOptions defaults(BoxDecodeType::Unspecified);
+        BoxDecodeOptions filtered(BoxDecodeType::Unspecified);
+        filtered.detection_threshold = 0.25;
+        filtered.top_k = 3;
+        for (const auto& requested : {defaults, filtered}) {
           const auto node = nodes::SimaBoxDecode(rf_model, requested);
           require_options(*node, requested);
           const auto retargeted =
@@ -316,16 +307,16 @@ RUN_TEST(
         }
 
         BoxDecodeOptions invalid(BoxDecodeType::Unspecified);
-        invalid.masks.threshold = -0.1;
+        invalid.detection_threshold = -0.1;
         bool rejected = false;
         try {
           (void)nodes::SimaBoxDecode(rf_model, invalid);
         } catch (const std::invalid_argument& error) {
           require_contains(error.what(), "RF-DETR",
-                           "auto-selected RF mask validation must identify the decoder");
+                           "auto-selected RF score validation must identify the decoder");
           rejected = true;
         }
-        require(rejected, "MPK auto-selection must validate named RF mask controls");
+        require(rejected, "MPK auto-selection must validate named RF score controls");
       }
 
       const auto fixture = make_fixture();

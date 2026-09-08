@@ -879,9 +879,9 @@ add_library(sima_neat SHARED
 )
 set_target_properties(sima_neat PROPERTIES
   OUTPUT_NAME sima_neat
-  # Keep real filenames distinct across ABIs so old SONAME links cannot resolve
-  # to an incompatible library after installing into an existing prefix.
-  VERSION "${SIMANEAT_ABI_VERSION}.${SIMANEAT_PLATFORM_VERSION}"
+  # VERSION identifies the implementation/platform build. SOVERSION is the
+  # independently versioned public C++ ABI that consumers record in DT_NEEDED.
+  VERSION "${SIMANEAT_PLATFORM_VERSION}"
   SOVERSION "${SIMANEAT_ABI_VERSION}"
 )
 

@@ -95,8 +95,7 @@ Tensor head(std::vector<int64_t> shape, std::vector<float> values, int index,
   meta.original_height = 48;
   meta.resized_width = meta.scaled_width = 64;
   meta.resized_height = meta.scaled_height = 48;
-  // Identity image preprocessing covers the whole source frame. RF masks are
-  // not cropped to the detection box; only unobserved image-crop coverage is zeroed.
+  // Identity image preprocessing covers the whole source frame.
   meta.resize_mode = "stretch";
   meta.color_in = meta.color_out = "RGB";
   if (attach_meta) {
@@ -140,34 +139,16 @@ Sample inputs(bool attach_meta = true) {
                  head({1, 3, 6, 7}, std::vector<float>(126, 0.0F), 2, attach_meta)})};
 }
 
-void check_masks(const SegmentationDecodeTensors& decoded, const MaskOptions& masks, int count) {
-  const int height = masks.size == MaskSize::Fixed    ? masks.height
-                     : masks.size == MaskSize::Source ? 48
-                                                      : 3;
-  const int width = masks.size == MaskSize::Fixed    ? masks.width
-                    : masks.size == MaskSize::Source ? 64
-                                                     : 6;
+void check_masks(const SegmentationDecodeTensors& decoded, int count) {
   require(decoded.boxes.shape == std::vector<int64_t>({count, 6}), "stage box count");
-  require(decoded.masks.shape == std::vector<int64_t>({count, height, width}),
-          "stage mask size: " + nlohmann::json(decoded.masks.shape).dump() + " expected " +
-              nlohmann::json(std::vector<int64_t>{count, height, width}).dump());
+  require(decoded.masks.shape == std::vector<int64_t>({count, 3, 6}),
+          "stage native mask dimensions");
+  require(decoded.masks.dtype == TensorDType::Float32, "stage native FP32 masks");
   const auto bytes = decoded.masks.copy_payload_bytes();
-  if (masks.output == MaskOutput::Probabilities) {
-    require(decoded.masks.dtype == TensorDType::Float32, "stage native FP32 masks");
-    for (std::size_t i = 0; i < bytes.size(); i += sizeof(float)) {
-      float value = 0;
-      std::memcpy(&value, bytes.data() + i, sizeof(value));
-      require(value == 0.5F, "stage mask probability must retain sigmoid(.0), pixel " +
-                                 std::to_string(i / sizeof(float)) + ": " + std::to_string(value));
-    }
-  } else {
-    require(decoded.masks.dtype == TensorDType::UInt8, "stage binary masks");
-    // Every pixel is covered under identity Stretch, including pixels outside
-    // the selected box. Constant zero logits remain .5 after bilinear resizing.
-    const uint8_t expected = masks.threshold <= 0.5 ? 1 : 0;
-    require(
-        std::all_of(bytes.begin(), bytes.end(), [expected](uint8_t x) { return x == expected; }),
-        "stage mask threshold");
+  for (std::size_t i = 0; i < bytes.size(); i += sizeof(float)) {
+    float value = 0;
+    std::memcpy(&value, bytes.data() + i, sizeof(value));
+    require(value == 0.5F, "stage mask probability must retain sigmoid(0)");
   }
 }
 } // namespace
@@ -182,19 +163,16 @@ RUN_TEST("rfdetr_stage_options_test", ([] {
            base.score_threshold = 0.75F;
            base.top_k = 1;
            const Model model(fixture.tar_path, base);
-           for (const auto masks :
-                {MaskOptions{.size = MaskSize::Native, .output = MaskOutput::Probabilities},
-                 MaskOptions{.threshold = 0.75, .size = MaskSize::Fixed, .width = 13, .height = 9},
-                 MaskOptions{.threshold = 0.0, .size = MaskSize::Source}}) {
+           // Repeated calls exercise both public result paths and runner reuse.
+           for (const double threshold : {0.25, 0.4, 0.5}) {
              stages::BoxDecodeOptions opt(BoxDecodeType::RfDetrSeg);
-             opt.detection_threshold = 0.25;
+             opt.detection_threshold = threshold;
              opt.top_k = 2;
-             opt.masks = masks;
              const auto outputs = stages::BoxDecode(inputs(), model, opt);
              require(outputs.size() == 1, "one public stage output");
              const auto tensors = stages::Tensors(outputs.front());
              require(tensors.size() == 1, "one RF wire tensor");
-             check_masks(decode_segmentation(tensors).front(), masks, 2);
+             check_masks(decode_segmentation(tensors).front(), 2);
              const auto results = stages::BoxDecodeResults(inputs(), model, opt);
              require(results.size() == 1 && results.front().boxes.size() == 2,
                      "structured stage count");
@@ -208,14 +186,12 @@ RUN_TEST("rfdetr_stage_options_test", ([] {
                std::memcpy(mapping.data, results.front().raw.data(), results.front().raw.size());
              }
              tag_detection_format(wire, "RFDETR_SEG_V1");
-             check_masks(decode_segmentation({wire}).front(), masks, 2);
+             check_masks(decode_segmentation({wire}).front(), 2);
            }
            stages::BoxDecodeOptions zero(BoxDecodeType::RfDetrSeg);
-           zero.masks.output = MaskOutput::Probabilities;
            // Explicit zeros must override the original Model's .75 threshold and top_k=1.
            const auto zero_out = stages::BoxDecode(inputs(), model, zero);
-           check_masks(decode_segmentation(stages::Tensors(zero_out.front())).front(), zero.masks,
-                       35);
+           check_masks(decode_segmentation(stages::Tensors(zero_out.front())).front(), 35);
            const auto zero_results = stages::BoxDecodeResults(inputs(), model, zero);
            require(zero_results.front().boxes.size() == 35,
                    "RF zero score/top_k controls must survive cloning");
@@ -223,15 +199,13 @@ RUN_TEST("rfdetr_stage_options_test", ([] {
            // must not reuse a runner prepared for another source size.
            base.score_threshold = 0.25F;
            base.top_k = 3;
-           base.masks = MaskOptions{.threshold = 0.0, .size = MaskSize::Source};
            for (const int scale : {1, 2}) {
              base.boxdecode_original_width = 64 * scale;
              base.boxdecode_original_height = 48 * scale;
              const Model sized_model(fixture.tar_path, base);
              const auto output = stages::Postprocess(inputs(false), sized_model);
              const auto decoded = decode_segmentation(stages::Tensors(output)).front();
-             require(decoded.masks.shape == std::vector<int64_t>({3, 48 * scale, 64 * scale}),
-                     "postprocess cache must distinguish source geometry");
+             check_masks(decoded, 3); // Source geometry must not resize native masks.
              const auto bytes = decoded.boxes.copy_payload_bytes();
              float box[4];
              std::memcpy(box, bytes.data(), sizeof(box));

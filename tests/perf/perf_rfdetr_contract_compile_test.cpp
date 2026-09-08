@@ -51,7 +51,8 @@ int main() {
         throw std::runtime_error(error);
       const auto compiled = stagesemantics::build_boxdecode_compiled_contract(*contract);
       const auto end = sima_perf::Clock::now();
-      if (compiled.payload.rfdetr.masks_input_index != 2 ||
+      if (compiled.runtime_contract.input_bindings.size() != 3 ||
+          compiled.runtime_contract.input_bindings[2].src_logical_output_index != 2 ||
           compiled.runtime_contract.logical_inputs.size() != 3)
         throw std::runtime_error("RF contract lost native head bindings");
       if (i >= 0)

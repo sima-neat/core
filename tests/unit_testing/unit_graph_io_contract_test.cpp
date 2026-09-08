@@ -236,32 +236,6 @@ RUN_TEST(
                        io_case("superpoint_output_format_roundtrip",
                                "SuperPoint output format should survive save/load"));
 
-      require_contains(
-          superpoint_options_roundtrip_json,
-          "\"masks\":{\"threshold\":0.5,\"size\":0,\"width\":0,\"height\":0,\"output\":1}",
-          io_case("mask_defaults_roundtrip",
-                  "older saved graphs must retain default mask options"));
-      for (const std::string masks :
-           {"{\"threshold\":0.25,\"size\":0,\"width\":0,\"height\":0,\"output\":2}",
-            "{\"threshold\":0.75,\"size\":2,\"width\":31,\"height\":17,\"output\":1}",
-            "{\"threshold\":0,\"size\":1,\"width\":0,\"height\":0,\"output\":1}"}) {
-        std::string mask_graph_json = superpoint_options_json;
-        const std::string options_key = "\"model_options\":{";
-        const auto options_start = mask_graph_json.find(options_key);
-        require(options_start != std::string::npos,
-                io_case("mask_options_fixture", "model options must be present"));
-        mask_graph_json.insert(options_start + options_key.size(), "\"masks\":" + masks + ",");
-        const auto mask_path = tmp_json_path("graph_io_mask_options.json");
-        write_text(mask_path, mask_graph_json);
-        const auto loaded_mask_graph = Graph::load(mask_path);
-        const auto mask_roundtrip_path = tmp_json_path("graph_io_mask_options_roundtrip.json");
-        loaded_mask_graph.save(mask_roundtrip_path);
-        require_contains(
-            read_text(mask_roundtrip_path), "\"masks\":" + masks,
-            io_case("mask_options_roundtrip",
-                    "mask representation, geometry, and threshold must survive save/load"));
-      }
-
       Graph realtime_app("graph_io_realtime_link_options");
       GraphLinkOptions realtime_link;
       realtime_link.policy = GraphLinkPolicy::RealtimeLatestByStream;

@@ -91,8 +91,8 @@ struct PoseDecodeTensors {
  *
  * `boxes` is a dense CPU float32 tensor of shape `[N, 6]` with the same columns
  * as `decode_bbox`. `masks` is a dense CPU tensor of shape `[N,H,W]`. Legacy YOLO masks use
- * uint8 `[N,160,160]`; RF-DETR uses dynamic uint8 binary or native float32
- * probability masks according to `MaskOptions`.
+ * uint8 `[N,160,160]`; RF-DETR uses native float32 probability masks with
+ * height and width read from the model.
  */
 struct SegmentationDecodeTensors {
   simaai::neat::Tensor boxes;

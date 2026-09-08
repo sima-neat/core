@@ -1248,37 +1248,24 @@ RUN_TEST(
         auto rf_mpk = make_rf_dense(dtype);
         const auto rf = build_boxdecode_static_contract_from_mpk(rf_mpk, rf_flags, &error);
         require(rf.has_value(), "RF-DETR direct dense contract: " + error);
-        require(rf->num_classes == 5 && rf->rfdetr.boxes_input_index == 0 &&
-                    rf->rfdetr.scores_input_index == 1 && rf->rfdetr.masks_input_index == 2,
+        require(rf->num_classes == 5 && rf->tensors[0].source_logical_output_index == 0 &&
+                    rf->tensors[1].source_logical_output_index == 1 &&
+                    rf->tensors[2].source_logical_output_index == 2,
                 "RF-DETR preserves declared roles and full class count");
         require(rf->tensors[2].input_shape == std::vector<int>({3, 6, 7}),
                 "RF-DETR native mask grid is dynamic");
-        for (const auto size : {simaai::neat::MaskSize::Native, simaai::neat::MaskSize::Source,
-                                simaai::neat::MaskSize::Fixed}) {
-          auto configured = *rf;
-          auto& masks = configured.rfdetr.masks;
-          masks.size = size;
-          masks.output = size == simaai::neat::MaskSize::Native
-                             ? simaai::neat::MaskOutput::Probabilities
-                             : simaai::neat::MaskOutput::Binary;
-          masks.threshold = 0.08;
-          if (size == simaai::neat::MaskSize::Fixed) {
-            masks.width = 13;
-            masks.height = 9;
-          }
-          configured.detection_threshold = 0.7;
-          configured.topk = 4;
-          const auto finalized = stagesemantics::finalize_boxdecode_static_contract(
-              configured, simaai::neat::BoxDecodeType::RfDetrSeg, std::nullopt, rf_flags,
-              simaai::neat::BoxDecodeTypeOption::Auto, 0, 0, 0, 0, {});
-          const auto compiled = stagesemantics::build_boxdecode_compiled_contract(finalized);
-          require(compiled.payload.detection_threshold == 0 && compiled.payload.topk == 0,
-                  "RF-DETR explicit zero controls survive finalization and compilation");
-          const auto& result = compiled.payload.rfdetr.masks;
-          require(result.size == masks.size && result.output == masks.output &&
-                      result.width == masks.width && result.height == masks.height &&
-                      result.threshold == masks.threshold,
-                  "RF-DETR native/source/non-square fixed mask options survive lowering");
+        auto configured = *rf;
+        configured.detection_threshold = 0.7;
+        configured.topk = 4;
+        const auto finalized = stagesemantics::finalize_boxdecode_static_contract(
+            configured, simaai::neat::BoxDecodeType::RfDetrSeg, std::nullopt, rf_flags,
+            simaai::neat::BoxDecodeTypeOption::Auto, 0, 0, 0, 0, {});
+        const auto compiled = stagesemantics::build_boxdecode_compiled_contract(finalized);
+        require(compiled.payload.detection_threshold == 0 && compiled.payload.topk == 0,
+                "RF-DETR explicit zero controls survive finalization and compilation");
+        for (int i = 0; i < 3; ++i) {
+          require(compiled.runtime_contract.input_bindings[i].src_logical_output_index == i,
+                  "RF input bindings preserve the export's box/score/mask slots");
         }
         auto missing = rf_mpk;
         missing.plugins[0].output_tensors.pop_back();
@@ -1330,11 +1317,31 @@ RUN_TEST(
         const auto compiled =
             stagesemantics::build_boxdecode_compiled_contract_from_subset(*subset);
         require(compiled.payload.decode_type == type && compiled.payload.num_classes == 5 &&
-                    compiled.payload.rfdetr.boxes_input_index == 0 &&
-                    compiled.payload.rfdetr.scores_input_index == 1 &&
-                    compiled.payload.rfdetr.masks_input_index ==
-                        (type == simaai::neat::BoxDecodeType::RfDetrSeg ? 2 : -1),
+                    compiled.runtime_contract.logical_inputs.size() ==
+                        (type == simaai::neat::BoxDecodeType::RfDetrSeg ? 3U : 2U),
                 "MPK-authored RF type and roles must survive default-option compilation");
+        // Terminal consumer order must not change the RF export's tensor roles.
+        auto reordered = authored;
+        auto& inputs = reordered.plugins.back().input_tensors;
+        std::reverse(inputs.begin(), inputs.end());
+        for (auto& edge : reordered.edges)
+          edge.dst_input_index = static_cast<int>(inputs.size()) - 1 - edge.dst_input_index;
+        const auto reordered_subset = extract_boxdecode_contract_subset_from_mpk(
+            reordered, make_flags(false, false), &reordered.plugins.back(), &error);
+        require(reordered_subset.has_value(), "RF reordered terminal contract: " + error);
+        const auto reordered_compiled =
+            stagesemantics::build_boxdecode_compiled_contract_from_subset(*reordered_subset);
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+          const auto& actual = reordered_compiled.runtime_contract.input_bindings[i];
+          const auto& expected = compiled.runtime_contract.input_bindings[i];
+          require(actual.src_logical_output_index == static_cast<int>(i) &&
+                      actual.src_physical_output_index == expected.src_physical_output_index &&
+                      actual.src_physical_byte_offset == expected.src_physical_byte_offset &&
+                      actual.src_physical_size_bytes == expected.src_physical_size_bytes &&
+                      actual.source_segment_name == expected.source_segment_name &&
+                      actual.cm_input_name == expected.cm_input_name,
+                  "RF canonical input order must preserve logical and physical bindings");
+        }
         auto conflicting_flags = make_flags(false, false);
         conflicting_flags.requested_decode_type = type == simaai::neat::BoxDecodeType::RfDetr
                                                       ? simaai::neat::BoxDecodeType::RfDetrSeg

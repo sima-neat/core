@@ -177,19 +177,20 @@ def test_superpoint_named_options_surface():
   assert callable(pyneat.decode_superpoint)
 
 
-def test_rfdetr_mask_options_surface():
-  for options in (pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.RfDetrSeg), pyneat.ModelOptions()):
-    assert options.masks.threshold == 0.5
-    assert options.masks.size == pyneat.MaskSize.Native
-    assert options.masks.output == pyneat.MaskOutput.Binary
-    options.masks.output = pyneat.MaskOutput.Probabilities
-    assert options.masks.output == pyneat.MaskOutput.Probabilities
-    options.masks.output = pyneat.MaskOutput.Binary
-    options.masks.size = pyneat.MaskSize.Fixed
-    options.masks.width = 13
-    options.masks.height = 9
-    options.masks.threshold = 0.08
-    assert (options.masks.width, options.masks.height, options.masks.threshold) == (13, 9, 0.08)
+def test_rfdetr_uses_existing_filter_options():
+  for decode_type in (pyneat.BoxDecodeType.RfDetr, pyneat.BoxDecodeType.RfDetrSeg):
+    options = pyneat.BoxDecodeOptions(decode_type)
+    options.detection_threshold = 0.3
+    options.top_k = 100
+    assert options.decode_type == decode_type
+    assert options.detection_threshold == 0.3
+    assert options.top_k == 100
+    model_options = pyneat.ModelOptions()
+    model_options.decode_type = decode_type
+    model_options.score_threshold = 0.3
+    model_options.top_k = 100
+    assert model_options.decode_type == decode_type
+    assert model_options.top_k == 100
 
 
 def test_graph_only_public_surface():

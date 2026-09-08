@@ -405,23 +405,17 @@ family-specific rules.
 
 ##### RF-DETR BoxDecode contract
 
-Model-managed `RfDetr` and `RfDetrSeg` resolve the explicit RF export profile
-before route materialization. MPK output slots and lineage bind boxes, scores
-and optional query masks; full-frame geometry remains separate from packed tile
-geometry. The route preserves native BF16/FP32 heads for the prepared Internals
-decoder. Query/class selection uses independent sigmoid scores without NMS.
+`RfDetr` and `RfDetrSeg` consume normalized center/size boxes, class logits and
+optional query-mask logits. Core validates the MPK output slots and supplies them
+in box, score, mask order through the existing plugin input bindings. Tensor
+shapes and BF16/FP32 storage come from the MPK. The plugin reads selected values
+from native storage, applies sigmoid to scores and masks, and runs no NMS.
 
-The shared manifest ABI adds an RF v1 extension. `RFDETR_V1` detection and
-`RFDETR_SEG_V1` segmentation results carry their actual byte length, valid floating-point rows and unique masks with per-row
-associations. The plugin projects boxes into source pixels; Core bounds-checks
-the payload and exposes matching dynamic mask tensors. Retained results own
-their data while the plugin recycles its output capacity. Native probabilities
-allow Apps to preserve existing probability interpolation and polygon behavior.
-
-RF tensor-input transformers keep source-image geometry separate from their MLA
-feature-map dimensions. The Apps example supplies explicit source dimensions and
-Stretch mode; non-Stretch projection requires preprocessing metadata. Source/fixed
-binary mask output uses inverse preprocessing geometry.
+RF results contain floating-point boxes, a valid detection count and optional
+native probability masks. Core exposes them through the existing `decode_bbox`
+and `decode_segmentation` functions. Repeated query selections share mask decoding;
+Core returns one matching mask per detection. Apps owns mask resizing and polygons.
+The plugin contract and public C++ option layouts are unchanged.
 
 ##### SuperPoint BoxDecode contract
 

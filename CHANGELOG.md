@@ -12,8 +12,7 @@ The format is based on Keep a Changelog and follows semantic versioning.
 ### Changed
 - Canonical naming contract docs and migration guidance.
 - Build/config naming consistency updates.
-- BREAKING: The public C++ ABI is now 5 (`libsima_neat.so.5`) because RF-DETR adds mask
-  options to public model and decoder structures, tensors carry
+- BREAKING: The public C++ ABI is now 4 (`libsima_neat.so.4`) because tensors now carry
   feature-extractor semantic metadata and the existing GenAI and graph-link public structures
   changed. Rebuild downstream C++ consumers.
 - BREAKING: Model archives must now use the exact lowercase `.tar.gz` suffix; `.mpk`, `.tgz`,

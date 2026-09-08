@@ -22,7 +22,6 @@
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/SuperPointTypes.h"
-#include "pipeline/MaskOptions.h"
 #include "pipeline/Run.h"
 #include "pipeline/TensorSpec.h"
 
@@ -322,8 +321,6 @@ public:
     /// Preferred jargon-free execution surface (folded into the legacy fields above at Graph
     /// build time). All-unset by default, so it is a no-op unless a field is set.
     AdvancedExecutionOptions advanced_execution;
-
-    MaskOptions masks; ///< Instance-mask threshold, geometry and representation.
   };
 
   /**

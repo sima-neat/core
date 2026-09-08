@@ -27,7 +27,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)22)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)21)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -351,27 +351,6 @@ typedef struct SimaPluginSuperPointStagePayloadV1 {
   guint tensor_roles_len;
 } SimaPluginSuperPointStagePayloadV1;
 
-// RF profile v1: normalized cxcywh boxes, independent class logits and
-// optional query-mask logits. Tensor indices select logical inputs; axes index
-// their canonical three-dimensional H,W,C view, excluding the batch dimension.
-typedef struct SimaPluginRfDetrStagePayloadV1 {
-  guint struct_version;
-  gint boxes_input_index;
-  gint scores_input_index;
-  gint masks_input_index;
-  gint boxes_query_axis;
-  gint boxes_value_axis;
-  gint scores_query_axis;
-  gint scores_value_axis;
-  gint masks_query_axis;
-  gint candidate_limit;
-  gint mask_size;   // 0 native, 1 source, 2 fixed in source coordinates.
-  gint mask_output; // 0 none, 1 binary, 2 native FP32 probabilities.
-  gdouble mask_threshold;
-  gint mask_width;
-  gint mask_height;
-} SimaPluginRfDetrStagePayloadV1;
-
 typedef struct SimaPluginBoxDecodeStagePayload {
   const gchar* decode_type;
   const gchar* decode_type_option;
@@ -390,7 +369,6 @@ typedef struct SimaPluginBoxDecodeStagePayload {
   const gint* tensor_storage_kind;
   guint tensor_storage_kind_len;
   const SimaPluginSuperPointStagePayloadV1* superpoint;
-  const SimaPluginRfDetrStagePayloadV1* rfdetr;
 } SimaPluginBoxDecodeStagePayload;
 
 typedef struct SimaPluginDetessDequantStagePayload {

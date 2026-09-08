@@ -6923,11 +6923,6 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["score_threshold"] = opt.score_threshold;
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
-  out["masks"] = {{"threshold", opt.masks.threshold},
-                  {"size", static_cast<int>(opt.masks.size)},
-                  {"width", opt.masks.width},
-                  {"height", opt.masks.height},
-                  {"output", static_cast<int>(opt.masks.output)}};
   out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
@@ -8427,8 +8422,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
     apply_model_superpoint_options(&compiled->payload, opt, "Model-managed boxdecode stage");
     if (box_decode_type_is_rfdetr(compiled->payload.decode_type)) {
       pipeline_internal::sima::validate_rfdetr_controls(opt.score_threshold, opt.nms_iou_threshold,
-                                                        opt.top_k, opt.masks);
-      compiled->payload.rfdetr.masks = opt.masks;
+                                                        opt.top_k);
       compiled->payload.detection_threshold = opt.score_threshold;
       compiled->payload.nms_iou_threshold = opt.nms_iou_threshold;
       compiled->payload.topk = opt.top_k;
@@ -8470,7 +8464,6 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
                                              "Model-managed boxdecode fallback");
 
   contract->decode_type = opt.decode_type;
-  contract->rfdetr.masks = opt.masks;
   contract->topk = opt.top_k;
   contract->detection_threshold = opt.score_threshold;
   contract->nms_iou_threshold = opt.nms_iou_threshold;

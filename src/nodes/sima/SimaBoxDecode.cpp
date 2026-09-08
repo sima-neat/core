@@ -51,7 +51,6 @@ struct BoxDecodeOptionsInternal {
   double detection_threshold = 0.0;
   double nms_iou_threshold = 0.0;
   SuperPointOptions superpoint;
-  MaskOptions masks;
   std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_route_flags;
   std::optional<pipeline_internal::sima::BoxDecodeStaticContract> model_static_contract;
@@ -623,7 +622,6 @@ static BoxDecodeOptionsInternal options_from_model(
   opt.model_route_flags = resolved_route_flags;
   opt.compiled_contract = std::make_shared<const CompiledBoxDecodeContract>(compiled_contract);
   opt.decode_type = compiled_contract.payload.decode_type;
-  opt.masks = compiled_contract.payload.rfdetr.masks;
   if (compiled_contract.payload.decode_type_option.has_value()) {
     opt.decode_type_option = *compiled_contract.payload.decode_type_option;
   }
@@ -676,21 +674,18 @@ void apply_named_decoder_options(BoxDecodeOptionsInternal* opt, const BoxDecodeO
     throw std::invalid_argument("SimaBoxDecode: missing options");
   }
   if (box_decode_type_is_rfdetr(opt->decode_type)) {
-    pipeline_internal::sima::validate_rfdetr_controls(
-        options.detection_threshold, options.nms_iou_threshold, options.top_k, options.masks);
-    opt->masks = options.masks;
+    pipeline_internal::sima::validate_rfdetr_controls(options.detection_threshold,
+                                                      options.nms_iou_threshold, options.top_k);
     opt->detection_threshold = options.detection_threshold;
     opt->nms_iou_threshold = options.nms_iou_threshold;
     opt->top_k = options.top_k;
     if (opt->model_static_contract) {
-      opt->model_static_contract->rfdetr.masks = options.masks;
       opt->model_static_contract->detection_threshold = options.detection_threshold;
       opt->model_static_contract->nms_iou_threshold = options.nms_iou_threshold;
       opt->model_static_contract->topk = options.top_k;
     }
     if (opt->compiled_contract) {
       auto compiled = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
-      compiled->payload.rfdetr.masks = options.masks;
       compiled->payload.detection_threshold = options.detection_threshold;
       compiled->payload.nms_iou_threshold = options.nms_iou_threshold;
       compiled->payload.topk = options.top_k;
@@ -774,7 +769,6 @@ simaai::neat::Model model_with_named_decoder_options(const simaai::neat::Model& 
   if (box_decode_type_is_rfdetr(options.decode_type)) {
     auto model_options = simaai::neat::internal::ModelAccess::options(model);
     model_options.decode_type = options.decode_type;
-    model_options.masks = options.masks;
     model_options.score_threshold = options.detection_threshold;
     model_options.nms_iou_threshold = options.nms_iou_threshold;
     model_options.top_k = options.top_k;
@@ -805,7 +799,6 @@ static BoxDecodeOptionsInternal options_from_contract(
   opt.factory = resolve_boxdecode_factory();
   opt.element_name = element_name;
   opt.model_static_contract = static_contract;
-  opt.masks = static_contract.rfdetr.masks;
   opt.model_route_flags = route_flags;
   opt.model_semantics = model_semantics;
   opt.required_preprocess_meta_fields = filter_required_preprocess_meta_fields(
@@ -963,8 +956,8 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   apply_yolov26_compiled_payload_overrides(&compiled_contract);
   apply_raw_yolov6_yolox_compiled_payload_overrides(&compiled_contract);
   if (box_decode_type_is_rfdetr(compiled_contract.payload.decode_type)) {
-    pipeline_internal::sima::validate_rfdetr_controls(detection_threshold, nms_iou_threshold, top_k,
-                                                      compiled_contract.payload.rfdetr.masks);
+    pipeline_internal::sima::validate_rfdetr_controls(detection_threshold, nms_iou_threshold,
+                                                      top_k);
   }
   if (detection_threshold > 0.0) {
     compiled_contract.payload.detection_threshold = detection_threshold;
@@ -1230,9 +1223,6 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
       contract->superpoint.descriptor_output_dtype = opt_->superpoint.descriptor_output_dtype;
       contract->superpoint.output_format = opt_->superpoint.output_format;
     }
-    if (box_decode_type_is_rfdetr(opt_->decode_type)) {
-      contract->rfdetr.masks = opt_->masks;
-    }
     const auto finalized_contract =
         pipeline_internal::sima::stagesemantics::finalize_boxdecode_static_contract(
             *contract, opt_->decode_type, opt_->model_semantics, opt_->model_route_flags,
@@ -1325,7 +1315,6 @@ std::shared_ptr<Node> SimaBoxDecode::retargeted_for_model_internal(const Model& 
     options.detection_threshold = opt_->detection_threshold;
     options.nms_iou_threshold = opt_->nms_iou_threshold;
     options.top_k = opt_->top_k;
-    options.masks = opt_->masks;
     apply_named_decoder_options(retargeted->opt_.get(), options, true);
   }
   return retargeted;

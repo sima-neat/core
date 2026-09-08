@@ -234,7 +234,6 @@ struct BoxDecodeContractSubset {
   std::optional<BoxDecodeTypeOption> decode_type_option;
   BoxDecodeScoreActivation score_activation = BoxDecodeScoreActivation::Unknown;
   int num_classes = 0;
-  RfDetrStaticContract rfdetr;
   SuperPointStaticContract superpoint;
   std::vector<BoxDecodeTensorRole> tensor_roles;
 };

@@ -7,7 +7,6 @@
 
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/SuperPointTypes.h"
-#include "pipeline/MaskOptions.h"
 
 namespace simaai::neat {
 
@@ -20,7 +19,6 @@ struct BoxDecodeOptions {
   double nms_iou_threshold = 0.0;
   int top_k = 0;
   SuperPointOptions superpoint;
-  MaskOptions masks;
 };
 
 } // namespace simaai::neat

@@ -28,7 +28,6 @@
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
 #include "pipeline/internal/sima/SuperPointContract.h"
-#include "pipeline/internal/sima/RfDetrContract.h"
 
 #include <cstdint>
 #include <optional>
@@ -36,6 +35,8 @@
 #include <vector>
 
 namespace simaai::neat::pipeline_internal::sima {
+
+void validate_rfdetr_controls(double score_threshold, double nms, int top_k);
 
 /// Physical storage layout the BoxDecode kernel must use to read one source tensor.
 ///
@@ -104,7 +105,6 @@ struct BoxDecodeStaticContract {
   double detection_threshold = 0.0;     ///< Score cutoff before NMS.
   double nms_iou_threshold = 0.0;       ///< IoU threshold used by NMS.
   int num_classes = 0; ///< Legacy runtime value; SSD uses ssd_class_selection.selected_count.
-  RfDetrStaticContract rfdetr;
   SuperPointStaticContract superpoint; ///< SuperPoint-only semantic/output contract.
 
   std::vector<BoxDecodeTensorStaticContract> tensors; ///< Per-input tensor specs.

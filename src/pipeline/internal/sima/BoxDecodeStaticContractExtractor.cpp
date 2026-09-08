@@ -9,6 +9,7 @@
 #include <array>
 #include <cctype>
 #include <limits>
+#include <stdexcept>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -2492,6 +2493,13 @@ void set_error(std::string* error_message, const std::string& message) {
 
 } // namespace
 
+void validate_rfdetr_controls(double score_threshold, double nms, int top_k) {
+  if (!std::isfinite(score_threshold) || score_threshold < 0 || score_threshold > 1 || nms != 0 ||
+      top_k < 0)
+    throw std::invalid_argument(
+        "RF-DETR requires a finite score probability, nonnegative top_k and no NMS");
+}
+
 ModelManagedRouteFlags
 model_route_flags_from_boxdecode_contract(const BoxDecodeStaticContract& contract) {
   ModelManagedRouteFlags flags;
@@ -3114,10 +3122,18 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     if (boxes[0] != 1 || boxes[2] != 4 || scores[0] != 1 || scores[1] != boxes[1] ||
         (roles[2] >= 0 && shape(out.tensors[roles[2]])[2] != boxes[1]))
       return fail("RF-DETR box, score and mask query dimensions disagree");
-    out.rfdetr.boxes_input_index = roles[0];
-    out.rfdetr.scores_input_index = roles[1];
-    out.rfdetr.masks_input_index = roles[2];
     out.num_classes = scores[2];
+    // The existing input bindings preserve source identity while presenting the
+    // RF export slots in boxes, scores, masks order to the decoder.
+    std::vector<std::size_t> order;
+    for (std::size_t i = 0; i < out.tensors.size(); ++i)
+      order.push_back(static_cast<std::size_t>(roles[i]));
+    apply_permutation_local(&out.tensors, order);
+    apply_permutation_local(&out.physical_inputs, order);
+    apply_permutation_local(&out.tensor_names, order);
+    apply_permutation_local(&out.dq_scale, order);
+    apply_permutation_local(&out.dq_zp, order);
+    out.input_dtype = out.tensors.front().data_type;
     out.score_activation = BoxDecodeScoreActivation::Sigmoid;
     out.quant_needed = false;
     out.quant_contract_required = false;

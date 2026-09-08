@@ -1151,7 +1151,7 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
     finalized.model_owned_flags = true;
   }
   if (box_decode_type_is_rfdetr(finalized.decode_type))
-    validate_rfdetr_controls(detection_threshold, nms_iou_threshold, topk, finalized.rfdetr.masks);
+    validate_rfdetr_controls(detection_threshold, nms_iou_threshold, topk);
   finalized.detection_threshold = detection_threshold;
   finalized.nms_iou_threshold = nms_iou_threshold;
   finalized.topk = topk;
@@ -1255,7 +1255,6 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   }
   compiled.payload.slice_shapes = subset.slice_shapes;
   compiled.payload.tensor_storage_kind = subset.tensor_storage_kind;
-  compiled.payload.rfdetr = subset.rfdetr;
   compiled.payload.superpoint = subset.superpoint;
   if (compiled.payload.decode_type == BoxDecodeType::SuperPoint) {
     auto& resolved = compiled.payload.superpoint;

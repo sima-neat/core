@@ -1434,10 +1434,7 @@ bool operator==(const BoxDecodeOptions& a, const BoxDecodeOptions& b) {
          a.superpoint.nms_radius == b.superpoint.nms_radius &&
          a.superpoint.border_margin == b.superpoint.border_margin &&
          a.superpoint.descriptor_output_dtype == b.superpoint.descriptor_output_dtype &&
-         a.superpoint.output_format == b.superpoint.output_format &&
-         a.masks.threshold == b.masks.threshold && a.masks.size == b.masks.size &&
-         a.masks.width == b.masks.width && a.masks.height == b.masks.height &&
-         a.masks.output == b.masks.output;
+         a.superpoint.output_format == b.superpoint.output_format;
 }
 
 bool operator==(const StageKey& a, const StageKey& b) {
@@ -1473,11 +1470,6 @@ struct StageKeyHash {
     h = hash_combine(h, std::hash<double>()(k.box_opt.detection_threshold));
     h = hash_combine(h, std::hash<double>()(k.box_opt.nms_iou_threshold));
     h = hash_combine(h, std::hash<int>()(k.box_opt.top_k));
-    h = hash_combine(h, std::hash<double>()(k.box_opt.masks.threshold));
-    h = hash_combine(h, std::hash<int>()(static_cast<int>(k.box_opt.masks.size)));
-    h = hash_combine(h, std::hash<int>()(k.box_opt.masks.width));
-    h = hash_combine(h, std::hash<int>()(k.box_opt.masks.height));
-    h = hash_combine(h, std::hash<int>()(static_cast<int>(k.box_opt.masks.output)));
     h = hash_combine(h, std::hash<int>()(k.box_original_width));
     h = hash_combine(h, std::hash<int>()(k.box_original_height));
     h = hash_combine(h, std::hash<bool>()(k.box_resize_mode.has_value()));
@@ -3149,7 +3141,8 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
       select_tensor_sample(stage_input, "Postprocess input");
   const TensorList& selected_input_tensors =
       sample_tensor_list(const_cast<Sample&>(*selected_input.sample), "Postprocess input");
-  const simaai::neat::Tensor& selected_tensor = selected_input_tensors.front();
+  // Keep the tensor alive when stage_input is replaced below.
+  const simaai::neat::Tensor selected_tensor = selected_input_tensors.front();
   const WireCaps wire = build_wire_caps_from_tensor(group, selected_tensor, nullptr,
                                                     "application/vnd.simaai.tensor", nullptr);
   WireCaps stage_wire = wire;
@@ -3174,7 +3167,6 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   key.box_opt.nms_iou_threshold = model_opt.nms_iou_threshold;
   key.box_opt.top_k = model_opt.top_k;
   key.box_opt.superpoint = model_opt.superpoint;
-  key.box_opt.masks = model_opt.masks;
   key.box_original_width = model_opt.boxdecode_original_width;
   key.box_original_height = model_opt.boxdecode_original_height;
   key.box_resize_mode = model_opt.boxdecode_resize_mode;
@@ -3295,7 +3287,6 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   auto box_model_opt = simaai::neat::internal::ModelAccess::options(model);
   box_model_opt.decode_type = opt.decode_type;
   box_model_opt.superpoint = opt.superpoint;
-  box_model_opt.masks = opt.masks;
   const bool rfdetr = box_decode_type_is_rfdetr(opt.decode_type);
   if (rfdetr || opt.detection_threshold > 0.0) {
     box_model_opt.score_threshold = static_cast<float>(opt.detection_threshold);

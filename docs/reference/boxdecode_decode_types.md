@@ -373,17 +373,14 @@ masks = seg.masks.to_numpy()
 
 ## RF-DETR detection and segmentation
 
-Use `RfDetr` for boxes or `RfDetrSeg` for boxes with query masks. Both use
-independent class scores, preserve repeated query/class selections, and run
-without NMS. An explicitly nonzero `nms_iou_threshold` is rejected.
+Select `RfDetr` for detection or `RfDetrSeg` for instance segmentation. Both
+filter by confidence and return the highest-scoring detections without NMS.
 
 ```cpp
 Model::Options options;
 options.decode_type = BoxDecodeType::RfDetrSeg;
 options.score_threshold = 0.3f;
 options.top_k = 100;
-options.masks.threshold = 0.5;
-options.masks.size = MaskSize::Native;
 Model model("rfdetr-seg-transformer.tar.gz", options);
 ```
 
@@ -392,56 +389,37 @@ options = pyneat.ModelOptions()
 options.decode_type = pyneat.BoxDecodeType.RfDetrSeg
 options.score_threshold = 0.3
 options.top_k = 100
-options.masks.threshold = 0.5
-options.masks.size = pyneat.MaskSize.Native
 model = pyneat.Model("rfdetr-seg-transformer.tar.gz", options)
 ```
 
-An MPK-authored `rfdetr` or `rfdetr_seg` decoder is selected when runtime options
-leave the decoder unspecified. Tensor shapes alone never select RF-DETR. Standalone
-RF-DETR construction without a bound Model is unsupported and rejects immediately.
-
-These options also apply to model-aware `BoxDecodeOptions`; its existing score
-control is named `detection_threshold`. Thresholds are inclusive probabilities
-in [0,1]. `top_k=0` adds no cap beyond the prepared model's candidate limit.
-The RF export profile selects at most 300 query/class pairs before application
-class exclusions. This final candidate selection is separate from the backbone's
-proposal TopK/Gather and from an application's limit on usable results.
-
-`decode_bbox` returns floating-point `[N,6]` rows in source pixels, ordered as
-`x1,y1,x2,y2,score,class_id`. `decode_segmentation` returns those boxes with
-matching `[N,H,W]` masks. Empty results retain their column and mask dimensions.
-Detection outputs are tagged `RFDETR_V1`; segmentation outputs use `RFDETR_SEG_V1`
-so format-based consumers can identify results that contain masks.
-
-| Mask option | Result |
+| Option | Meaning |
 | --- | --- |
-| `size=Native` | Full native model mask grid, with dimensions read from the model. |
-| `size=Source` | Binary mask at source-frame resolution, using preprocessing geometry. |
-| `size=Fixed`, positive `width` and `height` | Binary mask at that resolution in source coordinates. |
-| `output=Probabilities`, `size=Native` | FP32 native probabilities for application-side crop, resize or polygon extraction. |
+| `decode_type` | `RfDetr` returns boxes; `RfDetrSeg` also returns masks. |
+| `score_threshold` | Minimum class probability, inclusive, between 0 and 1. |
+| `top_k` | Maximum returned detections. Zero uses the RF export's limit of 300 query/class pairs. |
 
-Binary masks use uint8 values 0 and 1. Resizing samples logits bilinearly with
-half-pixel centers before applying the probability threshold. Probability masks
-retain their native geometry; `threshold` does not binarize that output.
+The existing model-aware `BoxDecodeOptions` uses `detection_threshold` for the
+same confidence setting. Leave `nms_iou_threshold` at zero; RF-DETR rejects a
+nonzero NMS threshold. Use a Model-backed decoder so Neat can read tensor
+shapes, data types and storage from the model pack.
 
-For split backbone/transformer applications, preserve sample identity and supply
-source-image geometry separately from transformer feature-map dimensions. The
-RF-DETR Apps example sets `boxdecode_original_width`, `boxdecode_original_height`
-and `boxdecode_resize_mode=Stretch` explicitly for its tensor-input transformer.
-It keeps probability-mask resizing and polygon extraction in the application.
+Read detection results with `decode_bbox(outputs)`, or segmentation results with
+`decode_segmentation(outputs)`:
 
-The supported RF export profile declares normalized `cxcywh` boxes, independent
-class logits and optional mask logits at model output slots 0, 1 and 2. Core
-validates their MPK lineage, shapes, data types and storage. Query counts, class
-counts and mask dimensions are derived from those contracts, not customer knobs.
+```python
+result = pyneat.decode_segmentation(outputs)[0]
+boxes = result.boxes.to_numpy()  # float32 [N, 6]: x1, y1, x2, y2, score, class_id
+masks = result.masks.to_numpy()  # float32 [N, H, W]: probabilities from 0 to 1
+```
 
-### Build compatibility
+Boxes use source-image pixel coordinates, including fractional pixels. Each mask
+matches the box at the same index. Mask height and width come from the model;
+Neat returns the selected masks at their native resolution. Resize, threshold
+and extract polygons in the application. Empty results have `N=0` and retain
+their other dimensions.
 
-The RF-DETR extension appends mask options to the public C++ option structs.
-Existing source initializers remain valid, but the struct sizes change. Core
-advances its C++ ABI from 4 to 5, so binaries built against ABI 4 cannot load the
-new library as an ABI 4 replacement. Rebuild C++ applications and the Python
-extension against the matching Core headers and library. The plugin manifest ABI
-also advances from 21 to 22, so deploy the matching Internals build before Core
-and Apps.
+For split backbone/transformer applications, the transformer receives feature
+maps rather than an image. Preserve the upstream sample identity and image
+preprocessing metadata, or supply the existing `boxdecode_original_width`,
+`boxdecode_original_height` and `boxdecode_resize_mode` settings. The RF-DETR
+Apps example uses explicit source dimensions and `Stretch`.
