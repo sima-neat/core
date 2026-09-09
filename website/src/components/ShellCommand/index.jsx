@@ -2,50 +2,16 @@ import React, {useEffect, useRef, useState} from 'react';
 import IconCopy from '@theme/Icon/Copy';
 import IconSuccess from '@theme/Icon/Success';
 import styles from './styles.module.css';
+import {parseEnvironments, promptLabel} from './environments';
 
-// Canonical execution environments. This list is closed on purpose: an unknown
-// value throws during the docs build so the vocabulary cannot drift again.
-// Combine tokens with "|" when a command runs in either place, for example
-// prompt="sdk|devkit".
+// Environment tokens and their validation live in environments.js so they can
+// be unit tested without React or CSS. Only the colour mapping needs `styles`.
 const ENVIRONMENT_CLASSES = {
   host: styles.envHost,
   sdk: styles.envSdk,
   devkit: styles.envDevkit,
   'pcie-host': styles.envPcieHost,
 };
-
-const ENVIRONMENTS = Object.keys(ENVIRONMENT_CLASSES);
-
-function parseEnvironments(prompt) {
-  const tokens = String(prompt)
-    .split('|')
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  if (!tokens.length) {
-    throw new Error(
-      `<ShellCommand prompt="${prompt}"> has no environment. ` +
-        `Use one of: ${ENVIRONMENTS.join(', ')}.`,
-    );
-  }
-
-  const unknown = tokens.filter((token) => !ENVIRONMENTS.includes(token));
-  if (unknown.length) {
-    throw new Error(
-      `<ShellCommand prompt="${prompt}"> uses unknown environment(s): ` +
-        `${unknown.join(', ')}. Valid environments are: ${ENVIRONMENTS.join(', ')}. ` +
-        'Combine them with "|" (for example prompt="sdk|devkit") when a command ' +
-        'runs in either place.',
-    );
-  }
-
-  return tokens;
-}
-
-function promptLabel(tokens) {
-  if (tokens.length === 1) return tokens[0];
-  return `${tokens.slice(0, -1).join(', ')} or ${tokens[tokens.length - 1]}`;
-}
 
 function textFromNode(node) {
   if (node == null || typeof node === 'boolean') return '';
