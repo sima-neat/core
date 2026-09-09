@@ -118,6 +118,21 @@ int main() {
     }
 
     {
+      const std::vector<std::uint8_t> interleaved{'A', 0xEE, 'B', 0xEE, 'C', 0xEE,
+                                                  'D', 0xEE, 'E', 0xEE, 'F', 0xEE};
+      std::vector<std::uint8_t> out(6);
+      std::uint8_t* dst = out.data();
+      require(simaai::neat::pcie::internal::copy_dense_rows(interleaved.data(), interleaved.size(),
+                                                            {2, 3}, {6, 2}, 1U, 0U, &dst) &&
+                  out == std::vector<std::uint8_t>({'A', 'B', 'C', 'D', 'E', 'F'}),
+              "element-strided rows must compact through the per-element path");
+      dst = out.data();
+      require(!simaai::neat::pcie::internal::copy_dense_rows(interleaved.data(), 5, {2, 3}, {4, 1},
+                                                             1U, 0U, &dst),
+              "row copy must reject a source shorter than its rows");
+    }
+
+    {
       pcie::TensorList tensors;
       tensors.push_back(pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input_0"));
       tensors.push_back(pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input_1"));

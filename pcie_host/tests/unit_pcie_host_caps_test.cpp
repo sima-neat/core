@@ -1,9 +1,12 @@
 #include "HostPcieChannel.h"
+#include "HostPcieTensorSetMeta.h"
 
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace pcie_internal = simaai::neat::pcie::internal;
 
@@ -151,6 +154,26 @@ int main() {
     }
     require(rejected_truncated_output, "truncated PCIe output must be rejected");
 
+    pcie_internal::HostPcieChannel::validate_output_payload_size(994032, 994032, true);
+    bool rejected_oversized_mla_output = false;
+    try {
+      pcie_internal::HostPcieChannel::validate_output_payload_size(2270372, 994032, true);
+    } catch (const std::runtime_error&) {
+      rejected_oversized_mla_output = true;
+    }
+    require(rejected_oversized_mla_output,
+            "a compacted route must reject a payload that is not exactly the packed size");
+
+    simaai::neat::pcie::Tensor int8_tensor;
+    int8_tensor.dtype = simaai::neat::pcie::TensorDType::Int8;
+    int8_tensor.shape = {1, 2, 3};
+    require(pcie_internal::HostPcieChannel::caps_for_tensors({int8_tensor}) ==
+                "application/vnd.simaai.tensor, format=(string)EVXX_INT8, "
+                "dtype=(string)EVXX_INT8, rank=(int)3, dim0=(int)1, dim1=(int)2, "
+                "dim2=(int)3, shape=(string)\"1,2,3\", "
+                "representation=(string)tensor-set, storage=(string)tensorbuffer",
+            "mla_only INT8 input must negotiate EVXX_INT8 tensor-set caps");
+
     require(pcie_internal::HostPcieChannel::required_transport_buffer_size(1024, 2048, 4096) ==
                 512U * 1024U,
             "transport buffer must retain the 512 KiB minimum");
@@ -193,6 +216,77 @@ int main() {
       stopped_push_rejected = std::string(error.what()).find("stopped") != std::string::npos;
     }
     require(stopped_push_rejected, "push must reject a stopped channel");
+
+    {
+      std::vector<std::uint8_t> blob(160, 0xEE);
+      for (std::size_t r = 0; r < 2; ++r) {
+        for (std::size_t c = 0; c < 3; ++c) {
+          for (std::size_t k = 0; k < 2; ++k) {
+            blob[r * 48 + c * 16 + k] = static_cast<std::uint8_t>(1 + (r * 3 + c) * 2 + k);
+          }
+        }
+      }
+      for (std::size_t i = 0; i < 64; ++i) {
+        blob[96 + i] = static_cast<std::uint8_t>(100 + i);
+      }
+      std::vector<std::uint8_t> expected(76);
+      for (std::size_t i = 0; i < 12; ++i) {
+        expected[i] = static_cast<std::uint8_t>(1 + i);
+      }
+      for (std::size_t i = 0; i < 64; ++i) {
+        expected[12 + i] = static_cast<std::uint8_t>(100 + i);
+      }
+
+      pcie_internal::PcieModelFacts facts;
+      facts.outputs.resize(2);
+      facts.outputs[0].name = "head_0";
+      facts.outputs[0].dtype = "INT8";
+      facts.outputs[0].shape = {2, 3, 2};
+      facts.outputs[0].size_bytes = 12;
+      facts.outputs[0].transport_strides_bytes = {48, 16, 1};
+      facts.outputs[1].name = "head_1";
+      facts.outputs[1].dtype = "INT8";
+      facts.outputs[1].shape = {1, 4, 16};
+      facts.outputs[1].size_bytes = 64;
+      facts.outputs[1].payload_offset = 96;
+      facts.outputs[1].transport_strides_bytes = {64, 16, 1};
+      facts.outputs[1].dense_offset = 12;
+      facts.packed_output_bytes = 160;
+      facts.dense_output_bytes = 76;
+
+      auto owner = std::make_shared<pcie_internal::MappedSample>();
+      owner->buffer = gst_buffer_new_wrapped_full(GST_MEMORY_FLAG_READONLY, blob.data(),
+                                                  blob.size(), 0, blob.size(), nullptr, nullptr);
+      owner->sample = gst_sample_new(owner->buffer, nullptr, nullptr, nullptr);
+      gst_buffer_unref(owner->buffer);
+      require(gst_buffer_map(owner->buffer, &owner->map, GST_MAP_READ),
+              "failed to map the synthetic output buffer");
+      owner->mapped = true;
+
+      const auto heads = pcie_internal::HostPcieChannel::tensors_from_output_payload(owner, facts);
+      require(heads.size() == 2U, "packed MLA output must yield one tensor per head");
+      require(heads[0].owner && heads[0].owner == heads[1].owner && heads[0].owner != owner,
+              "compacted heads must share one dense owner instead of the mapped sample");
+      require(owner.use_count() == 1, "compacted heads must not retain the mapped sample");
+      require(heads[0].dtype == simaai::neat::pcie::TensorDType::Int8 &&
+                  heads[0].shape == std::vector<std::int64_t>({2, 3, 2}) &&
+                  heads[0].size_bytes == 12U &&
+                  heads[0].strides_bytes == std::vector<std::int64_t>({6, 2, 1}),
+              "compacted head must publish contiguous logical geometry");
+      const auto* dense = static_cast<const std::uint8_t*>(heads[0].data);
+      require(static_cast<const std::uint8_t*>(heads[1].data) == dense + 12,
+              "second head must follow the first in the dense block");
+      require(std::vector<std::uint8_t>(dense, dense + 76) == expected,
+              "transport padding must be compacted out of every head");
+      require(heads[0].route.name == "head_0" && heads[1].route.name == "head_1",
+              "compacted heads must keep their public names");
+
+      facts.dense_output_bytes = 0;
+      const auto views = pcie_internal::HostPcieChannel::tensors_from_output_payload(owner, facts);
+      require(views.size() == 2U && views[1].owner == owner &&
+                  views[1].data == static_cast<std::uint8_t*>(owner->map.data) + 96,
+              "outputs without a dense block must stay zero-copy views of the mapped sample");
+    }
 
     std::cout << "[PASS] host channel caps\n";
     return 0;
