@@ -1431,7 +1431,8 @@ bool operator==(const BoxDecodeOptions& a, const BoxDecodeOptions& b) {
          a.superpoint.nms_radius == b.superpoint.nms_radius &&
          a.superpoint.border_margin == b.superpoint.border_margin &&
          a.superpoint.descriptor_output_dtype == b.superpoint.descriptor_output_dtype &&
-         a.superpoint.output_format == b.superpoint.output_format;
+         a.superpoint.output_format == b.superpoint.output_format &&
+         a.pose_classes == b.pose_classes;
 }
 
 bool operator==(const StageKey& a, const StageKey& b) {

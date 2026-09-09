@@ -2094,12 +2094,11 @@ NB_MODULE(_pyneat_core, m) {
       "Each result has `boxes` [N, 6] float32, `masks` [N, 160, 160] uint8, and\n"
       "`keypoints` [N, 17, 3] float32 with columns (x, y, visibility). All three are\n"
       "parallel: row i of each describes the same detection.\n\n"
-      "Keypoint rows are copied through verbatim. Whether a detection whose class\n"
-      "carries no keypoints arrives all-zero depends on the backend having been given\n"
-      "a `pose_classes` gate, which only the JSON configuration path can carry. On the\n"
-      "typed-manifest path every class is decoded as pose-bearing, so such a detection\n"
-      "can carry real predicted visibility and visibility alone will not identify it;\n"
-      "distinguishing them needs the model's pose-class list.\n\n"
+      "Keypoint rows are copied through verbatim; zeroing is the backend's, driven by\n"
+      "the `pose_classes` gate. Set `Model.Options.pose_classes` on a model whose\n"
+      "classes are mixed and a detection whose class carries no keypoints arrives\n"
+      "all-zero, visibility included, so you can gate on visibility rather than\n"
+      "needing the class list. Leaving it empty treats every class as pose-bearing.\n\n"
       "Args:\n"
       "  tensors:  list[Tensor] of BoxDecode segmentation+pose format tensors.\n"
       "  clamp_to: Optional (width, height) - clamp box coordinates to that rectangle.\n"
@@ -4464,6 +4463,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
       .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
+      .def_rw("pose_classes", &simaai::neat::Model::Options::pose_classes)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
