@@ -658,6 +658,13 @@ if (NOT ev74_dispatcher_lifetime_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST ev74_dispatcher_lifetime_test APPEND PROPERTY
     LABELS "e2e;ev74;concurrency;rpmsg")
   set_tests_properties(ev74_dispatcher_lifetime_test PROPERTIES TIMEOUT 120)
+  add_test(NAME ev74_dispatcher_default_timeout_test
+    COMMAND ev74_dispatcher_lifetime_test --default-timeout)
+  simaneat_append_ctest_env(ev74_dispatcher_default_timeout_test)
+  set_tests_properties(ev74_dispatcher_default_timeout_test PROPERTIES
+    LABELS "strict;e2e;ev74;concurrency;rpmsg"
+    RESOURCE_LOCK "dispatcher;accelerator-device"
+    TIMEOUT 60)
 endif()
 
 add_pipeline_test_long(
