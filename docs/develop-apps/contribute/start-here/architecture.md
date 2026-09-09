@@ -13,6 +13,17 @@ without breaking its module and runtime contracts.
 
 ---
 
+## EV74 dispatcher ownership
+
+Graph and Model builds reserve EV74 RPMsg channels during dispatcher initialization,
+before startup returns, even with payload preflight disabled. Each worker owns a
+distinct endpoint. Graphs in the same process share the dispatcher; closing the last
+client releases its channels. Idle periods do not release them.
+
+Capacity exhaustion fails the build with `infra.dispatcher_unavailable`. A faulted
+dispatcher cannot accept new graphs; close all its clients before rebuilding.
+The implementation and channel locks belong to Neat Internals, not Core.
+
 ## Framework vs environment
 
 The word "Neat" is used for two related but separate concerns:
