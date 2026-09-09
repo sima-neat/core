@@ -665,6 +665,23 @@ if (NOT ev74_dispatcher_lifetime_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     LABELS "strict;e2e;ev74;concurrency;rpmsg"
     RESOURCE_LOCK "dispatcher;accelerator-device"
     TIMEOUT 60)
+  foreach(old_clients IN ITEMS 1 2)
+    set(close_test ev74_dispatcher_concurrent_close_${old_clients}_test)
+    add_test(NAME ${close_test}
+      COMMAND ev74_dispatcher_lifetime_test --concurrent-close ${old_clients})
+    simaneat_append_ctest_env(${close_test})
+    set_tests_properties(${close_test} PROPERTIES
+      LABELS "strict;e2e;ev74;concurrency;rpmsg;lifecycle"
+      RESOURCE_LOCK "dispatcher;accelerator-device"
+      TIMEOUT 120)
+  endforeach()
+  add_test(NAME ev74_dispatcher_destructor_reliability_test
+    COMMAND ev74_dispatcher_lifetime_test --destructor-reliability)
+  simaneat_append_ctest_env(ev74_dispatcher_destructor_reliability_test)
+  set_tests_properties(ev74_dispatcher_destructor_reliability_test PROPERTIES
+    LABELS "strict;e2e;ev74;concurrency;rpmsg;lifecycle"
+    RESOURCE_LOCK "dispatcher;accelerator-device"
+    TIMEOUT 180)
 endif()
 
 add_pipeline_test_long(

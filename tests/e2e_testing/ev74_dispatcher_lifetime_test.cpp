@@ -247,6 +247,31 @@ void execute(simaai::neat::Run& run) {
           "Wrong EV74 output dimensions");
 }
 
+void test_concurrent_close(int old_clients) {
+  ::setenv("SIMA_EVXX_DISPATCHER_WORKERS", "2", 1);
+  ::setenv("SIMA_DISPATCHER_EAGER_RELEASE", "0", 1);
+  ::setenv("SIMA_RPMSG_ACQUIRE_TIMEOUT_MS", "0", 1);
+  ::setenv("SIMA_RPCEVXX_AUTO_REMOTEPROC_RESET", "0", 1);
+  ::setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "0", 1);
+  ::setenv("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0", 1);
+  ::setenv("SIMA_GST_TEARDOWN_ASYNC", "0", 1);
+  for (int cycle = 0; cycle < 50; ++cycle) {
+    std::vector<simaai::neat::Run> old_runs;
+    for (int client = 0; client < old_clients; ++client)
+      old_runs.push_back(build_run());
+    std::vector<std::future<void>> closing;
+    for (auto& old : old_runs)
+      closing.push_back(
+          std::async(std::launch::async, [run = std::move(old)]() mutable { run.close(); }));
+    // Submit before joining the old clients: their teardown must not stop this client.
+    auto replacement = build_run();
+    execute(replacement);
+    for (auto& closed : closing)
+      closed.get();
+    std::cout << "Concurrent close: old_clients=" << old_clients << " cycle=" << cycle << '\n';
+  }
+}
+
 void test_lifetime() {
   ::setenv("SIMA_EVXX_DISPATCHER_WORKERS", "1", 1);
   ::setenv("SIMA_DISPATCHER_EAGER_RELEASE", "0", 1);
@@ -482,7 +507,11 @@ int main(int argc, char** argv) {
       test_default_timeout();
     else if (argc == 2 && std::string(argv[1]) == "--destructor-reliability")
       test_destructor_reliability(100);
-    else {
+    else if (argc == 3 && std::string(argv[1]) == "--concurrent-close") {
+      require(std::string(argv[2]) == "1" || std::string(argv[2]) == "2",
+              "Concurrent close requires one or two old clients");
+      test_concurrent_close(std::stoi(argv[2]));
+    } else {
       test_lifetime();
       test_destructor_reliability(20);
     }
