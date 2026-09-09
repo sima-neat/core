@@ -18,6 +18,47 @@ if [[ $# -gt 0 ]]; then
 else
   pass="${DEVKIT_PASSWORD:-edgeai}"
 fi
+# Read-only, fail-closed admission. Presence of a runtime receipt (even broken
+# JSON or a dangling link) rules out legacy recovery. Do not source metadata.
+legacy_runtime_recovery_allowed_at() {
+  local root="$1"
+  local receipt machine version metadata
+  for receipt in "${root}/usr/share/sima-neat-internals/runtime-profile.json" \
+                 "${root}/usr/share/sima-neat/runtime-profile.json"; do
+    [[ ! -e "${receipt}" && ! -L "${receipt}" ]] || return 1
+  done
+  [[ -r "${root}/etc/buildinfo" ]] || return 1
+  metadata="$(awk -F= '
+    length($0) > 4096 { exit 1 }
+    {
+      key=$1; gsub(/^[ \t\r]+|[ \t\r]+$/, "", key)
+      value=substr($0, index($0, "=")+1)
+      gsub(/^[ \t\r]+|[ \t\r]+$/, "", value)
+      if (key == "MACHINE") { machine=value; machines++ }
+      if (key == "DISTRO_VERSION") { version=value; versions++ }
+    }
+    END {
+      if (machines != 1 || versions != 1) exit 1
+      print machine; print version
+    }
+  ' "${root}/etc/buildinfo")" || return 1
+  machine="${metadata%%$'\n'*}"
+  version="${metadata#*$'\n'}"
+  [[ "${machine}" == modalix &&
+     "${version}" =~ ^2[.]1[.][0-9]+([.~+_-][A-Za-z0-9_.+~-]+)?$ ]]
+}
+
+legacy_runtime_recovery_allowed() {
+  legacy_runtime_recovery_allowed_at /
+}
+
+require_legacy_runtime_recovery() {
+  if ! legacy_runtime_recovery_allowed; then
+    printf '%s\n' '[recovery] Refusing legacy recovery: direct-driver or unidentified runtime profile. No services, MLA initialization, firmware activation, or remote processors were changed. Preserve unknown-completion DMA buffer loans and use the platform-approved recovery procedure.' >&2
+    return 1
+  fi
+}
+
 run_step() {
   local label="$1"
   shift
@@ -230,6 +271,7 @@ ensure_appcomplex_before_remoteproc() {
 }
 
 recover_devkit_runtime() {
+  require_legacy_runtime_recovery || return 1
   stop_runtime_services
   empty_coprocessing
   cleanup_tmp_sima_if_root_low_space
@@ -251,15 +293,16 @@ recover_devkit_runtime() {
   run_optional_service_step "restart rctd.service" restart rctd.service
 }
 
+recover_devkit_runtime_main() {
+  require_legacy_runtime_recovery || return 1
+  quarantine_stale_global_dispatcher_libs || return 1
+  activate_staged_ev74_firmware_if_needed || return 1
+  recover_devkit_runtime
+}
+
 if [[ "${NEAT_RECOVERY_FUNCTIONS_ONLY:-OFF}" == "ON" ]]; then
   return 0 2>/dev/null || exit 0
 fi
 
-if ! quarantine_stale_global_dispatcher_libs; then
-  exit 1
-fi
-if ! activate_staged_ev74_firmware_if_needed; then
-  exit 1
-fi
-recover_devkit_runtime
+recover_devkit_runtime_main
 exit $?

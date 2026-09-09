@@ -179,3 +179,41 @@ power-number validation.
 
 For structured plugin errors and actionable hints, see
 [Troubleshooting](/reference/troubleshooting).
+
+## B1157 direct-driver recovery
+
+On the Modalix 3.0.0 B1157 runtime, an unavailable dispatcher is an error to
+investigate, not a request to start legacy services. Automatic recovery and
+`fix_devkit_runtime.sh` refuse to restart AppComplex, run legacy MLA memory
+initialization, activate EV74 firmware, or cycle remote processors. The refusal
+is recorded in `GraphReport.repro_note`. Hard-reset and unsafe-reset environment
+options do not override this boundary.
+
+If a driver reports unknown completion, keep its DMA buffers and original pool
+loans retained. Closing a file descriptor, stopping the application, or restarting
+a service does not prove that hardware stopped accessing memory. Collect the
+failure report and use the platform-approved recovery procedure before retrying.
+
+Legacy recovery remains available only on a positively identified Modalix 2.1.x
+image with no installed direct-runtime receipt. Missing, conflicting, or
+unreadable identity fails closed. Do not remove receipts to bypass this check.
+
+### Keep Core and Internals paired
+
+Build and install Core with the matching B1157 Internals packages. Core checks
+the runtime profile, kernel source revision, and SDK sysroot receipt separately
+from the public C++ ABI version. An older package with the same public ABI is
+not a compatible substitute.
+
+The installer checks the bundled `neat-runtime` profile and matching
+`neat-gst-plugins` version before changing packages. The platform-check override
+does not bypass runtime pairing. If a check fails, obtain a matching bundle;
+do not replace its receipt or force an older runtime into the installation.
+
+For a board installation, first establish an exclusive maintenance window and
+DMA quiescence using the platform procedure. Only then set
+`NEAT_INSTALLER_B1157_MAINTENANCE=confirmed` in the **DevKit's installer process**.
+The installer still checks for active accelerator owners and active or enabled
+legacy services; it never stops those owners for you. The attestation is not a
+reset command or a claim that an empty owner scan proves hardware retirement.
+It is not automatically forwarded by SDK-to-DevKit deployment.

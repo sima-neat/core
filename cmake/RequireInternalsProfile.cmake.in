@@ -1,0 +1,14 @@
+# Private wire-profile gate shared by Core configure and installed consumers.
+if (NOT "@SIMANEAT_RUNTIME_PROFILE@" STREQUAL "")
+  if (NOT DEFINED NeatInternals_RUNTIME_PROFILE OR
+      NOT NeatInternals_RUNTIME_PROFILE STREQUAL "@SIMANEAT_RUNTIME_PROFILE@" OR
+      NOT DEFINED NeatInternals_KERNEL_COMMIT OR
+      NOT NeatInternals_KERNEL_COMMIT STREQUAL "@SIMANEAT_KERNEL_COMMIT@" OR
+      NOT DEFINED NeatInternals_SYSROOT_VERSION OR
+      NOT NeatInternals_SYSROOT_VERSION STREQUAL "@SIMANEAT_INTERNALS_SYSROOT@")
+    message(FATAL_ERROR
+      "Incompatible NeatInternals: Core requires @SIMANEAT_RUNTIME_PROFILE@, "
+      "kernel @SIMANEAT_KERNEL_COMMIT@, sysroot @SIMANEAT_INTERNALS_SYSROOT@. "
+      "Install the matching candidate Internals package; a legacy snap is not compatible.")
+  endif()
+endif()

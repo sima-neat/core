@@ -99,6 +99,8 @@ jobs:
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
+            tests/tools/test_b1157_integration_safety.py \
+            tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
             tests/tools/test_vulcan_ci_notification.py

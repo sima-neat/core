@@ -848,6 +848,9 @@ calls="${tmp}/calls"
 export NEAT_RECOVERY_FUNCTIONS_ONLY=ON
 source "$1"
 
+# Legacy ordering is valid only after the profile guard positively admits 2.1.x.
+legacy_runtime_recovery_allowed() { return 0; }
+
 # Record the step labels instead of running them; their order is the contract.
 run_step() { printf '%s\n' "$1" >> "${calls}"; }
 run_optional_service_step() { printf '%s\n' "$1" >> "${calls}"; }
