@@ -37,8 +37,9 @@ public:
   std::string kind() const override {
     // Connected describe_backend() reports Node kinds, so include the selected
     // materialization while retaining one semantic Node in either variant.
-    return variant_ == IngressVariant::DirectNv12 ? "VideoSenderRawIngress[direct_nv12]"
-                                                  : "VideoSenderRawIngress[convert_to_nv12]";
+    return std::string(variant_ == IngressVariant::DirectNv12
+                           ? kVideoSenderRawIngressDirectKind
+                           : kVideoSenderRawIngressMaterializeKind);
   }
 
   NodeCapsBehavior caps_behavior() const override {
