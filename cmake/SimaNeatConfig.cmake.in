@@ -8,6 +8,7 @@ if (SIMANEAT_WITH_LLIMA)
   find_dependency(SimaLMM CONFIG REQUIRED)
 endif()
 find_dependency(NeatInternals CONFIG REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/RequireInternalsProfile.cmake")
 # sima_neat_static exports ZLIB::ZLIB: a static archive carries its dependencies in its link
 # interface rather than absorbing them, so the consumer has to be able to resolve the target.
 find_dependency(ZLIB)

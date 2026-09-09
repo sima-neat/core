@@ -902,6 +902,7 @@ current_core_tag() {
 }
 
 resolve_neat_internals_ref() {
+  NEAT_INTERNALS_SNAP_POLICY=OFF
   NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
   if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
     echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
@@ -915,6 +916,10 @@ resolve_neat_internals_ref() {
 
   local branch spec tag
   if [[ "${manifest_spec}" == "__SNAP__" ]]; then
+    if ! python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if str(d.get("platform-version", "")).startswith("2.1.") else 1)' "${NEAT_DEPS_MANIFEST}"; then
+      echo "ERROR: Direct-driver Core requires an explicit Internals ref; snap/develop fallback is disabled." >&2
+      return 1
+    fi
     NEAT_INTERNALS_SNAP_POLICY=ON
     tag="$(current_core_tag)"
     if [[ -n "${tag}" ]]; then
@@ -1376,10 +1381,10 @@ consumer = json.load(open(sys.argv[2], encoding="utf-8"))
 receipt = artifact["sysroot-version"]
 consumer_base = consumer["platform-version"]
 if not isinstance(receipt, str) or (
-    receipt and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}~pre[0-9]+", receipt)
+    receipt and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}~(?:pre[0-9]+|git[0-9]{12}[.][a-f0-9]+-[0-9]+)", receipt)
 ):
     raise ValueError("invalid sysroot-version")
-if receipt and consumer_base != receipt.split("~pre", 1)[0]:
+if receipt and consumer_base != receipt.split("~", 1)[0]:
     raise ValueError("platform-version does not match the Internals receipt")
 print(receipt)
 ' "${artifact_manifest}" "${NEAT_DEPS_MANIFEST}")"; then
@@ -1397,6 +1402,11 @@ print(receipt)
     exit 1
   fi
   sysroot status
+}
+
+validate_internals_runtime_profile() {
+  python3 "${REPO_ROOT}/scripts/build/validate_internals_profile.py" \
+    "${NEAT_DEPS_MANIFEST}" "$1/internals-manifest.json"
 }
 
 ensure_neat_internals() {
@@ -1419,6 +1429,7 @@ ensure_neat_internals() {
 
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  validate_internals_runtime_profile "${artifact_dir}" || exit 1
   sync_sysroot_from_internals_manifest "${artifact_dir}"
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
@@ -1589,7 +1600,8 @@ ensure_neat_internals_headers() {
   if [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${internals_ref}" ]] &&
      [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ]] &&
-     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
+     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]] &&
+     validate_internals_runtime_profile "${NEAT_DEP_HEADERS_DIR}"; then
     echo "Using cached neat-internals headers (${internals_ref})."
     rm -rf "${tmp_dir}"
     return 0
@@ -1597,6 +1609,7 @@ ensure_neat_internals_headers() {
 
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  validate_internals_runtime_profile "${artifact_dir}" || exit 1
 
   local dev_deb
   dev_deb="$(find "${artifact_dir}" -type f -name 'neat-internals-dev_*.deb' | sort | head -n 1)"
@@ -1618,6 +1631,7 @@ ensure_neat_internals_headers() {
   fi
 
   mkdir -p "${NEAT_DEP_HEADERS_DIR}"
+  cp "${artifact_dir}/internals-manifest.json" "${NEAT_DEP_HEADERS_DIR}/internals-manifest.json"
   printf '%s\n' "${internals_ref}" > "${marker_file}"
   rm -rf "${tmp_dir}"
 }
@@ -2477,6 +2491,9 @@ if not isinstance(target, dict):
 target["platform-version"] = platform_version
 target["modelzoo-version"] = modelzoo_version
 target["abi-version"] = abi_version
+for key in ("runtime-profile", "kernel-commit", "expected-internals-sysroot"):
+    if key in source:
+        target[key] = source[key]
 target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 PY
 

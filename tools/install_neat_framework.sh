@@ -61,7 +61,10 @@ set -euo pipefail
 #   board installer refreshes APT metadata before installing local DEBs. AUTO
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
-#   staged EV74 firmware and reset runtime state after board package replacement.
+#   staged EV74 firmware and reset runtime state after legacy 2.1.x package replacement.
+# - NEAT_INSTALLER_B1157_MAINTENANCE: set to confirmed only after an exclusive,
+#   platform-approved maintenance procedure has established DMA quiescence.
+#   Direct-driver installation otherwise fails without changing the board.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -655,6 +658,69 @@ ensure_platform_compatible() {
   log "Platform compatibility verified: ${actual}"
 }
 
+# This wire-profile gate is separate from the SDK/board platform override.
+# Inspect package data without installing it or running maintainer scripts.
+validate_bundled_internals_profile() {
+  local manifest_path
+  manifest_path="$(resolve_package_manifest_path)"
+  python3 - "${manifest_path}" "${DEBS[@]}" <<'PYPROFILE'
+import json
+import subprocess
+import sys
+import tarfile
+from pathlib import Path
+
+try:
+    manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if str(manifest.get("platform-version", "")).startswith("2.1."):
+        raise SystemExit(0)
+    expected = {
+        "runtime_profile": manifest.get("runtime-profile"),
+        "kernel_commit": manifest.get("kernel-commit"),
+        "sysroot_version": manifest.get("expected-internals-sysroot"),
+    }
+    if expected["runtime_profile"] != "modalix-3.0.0-b1157" or not all(
+        isinstance(value, str) and value for value in expected.values()
+    ):
+        raise ValueError("missing explicit B1157 runtime identity in Core manifest")
+    selected = {}
+    for deb in sys.argv[2:]:
+        name = subprocess.check_output(["dpkg-deb", "-f", deb, "Package"], text=True).strip()
+        if name not in ("neat-runtime", "neat-gst-plugins"):
+            continue
+        if name in selected:
+            raise ValueError(f"multiple bundled {name} packages")
+        version = subprocess.check_output(["dpkg-deb", "-f", deb, "Version"], text=True).strip()
+        selected[name] = (deb, version)
+    if set(selected) != {"neat-runtime", "neat-gst-plugins"}:
+        raise ValueError("B1157 requires bundled neat-runtime and neat-gst-plugins")
+    if selected["neat-runtime"][1] != selected["neat-gst-plugins"][1]:
+        raise ValueError("bundled Internals runtime/plugin versions differ")
+    receipt = None
+    with subprocess.Popen(
+        ["dpkg-deb", "--fsys-tarfile", selected["neat-runtime"][0]], stdout=subprocess.PIPE
+    ) as process:
+        try:
+            with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                for member in archive:
+                    if member.name.removeprefix("./") != "usr/share/sima-neat-internals/runtime-profile.json":
+                        continue
+                    if receipt is not None or not member.isfile() or member.size > 16384:
+                        raise ValueError("invalid bundled runtime profile receipt")
+                    receipt = json.load(archive.extractfile(member))
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
+        if process.wait() != 0:
+            raise ValueError("cannot inspect bundled runtime data")
+    if not isinstance(receipt, dict) or any(receipt.get(key) != value for key, value in expected.items()):
+        raise ValueError("bundled Internals runtime profile does not match Core")
+except (OSError, ValueError, TypeError, AttributeError, subprocess.CalledProcessError, tarfile.TarError) as error:
+    raise SystemExit(f"Refusing incompatible Internals bundle before installation: {error}")
+PYPROFILE
+}
+
 install_skill_for_agent() {
   local source_dir="$1"
   local agent_name="$2"
@@ -1087,7 +1153,89 @@ remove_installed_local_deb_packages() {
   run_sudo dpkg --remove --force-depends "${packages[@]}"
 }
 
+board_runtime_is_legacy() {
+  python3 - "$(resolve_package_manifest_path)" "${NEAT_BUILDINFO_FILE}" <<'PYPROFILE'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if not re.fullmatch(r"2[.]1[.][0-9]+", str(manifest.get("platform-version", ""))):
+        raise SystemExit(1)
+    for owner in ("sima-neat", "sima-neat-internals"):
+        path = Path("/usr/share") / owner / "runtime-profile.json"
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise SystemExit(1)
+    fields = {}
+    for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
+        if len(line) > 4096:
+            raise SystemExit(1)
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if separator and key in ("MACHINE", "DISTRO_VERSION"):
+            if key in fields:
+                raise SystemExit(1)
+            fields[key] = value.strip()
+    raise SystemExit(0 if fields.get("MACHINE") == "modalix" and re.fullmatch(
+        r"2[.]1[.][0-9]+([.~+_-][A-Za-z0-9_.+~-]+)?", fields.get("DISTRO_VERSION", "")
+    ) else 1)
+except (OSError, ValueError, AttributeError, TypeError):
+    raise SystemExit(1)
+PYPROFILE
+}
+
+check_b1157_install_maintenance() {
+  board_runtime_is_legacy && return 0
+  if [[ "${NEAT_INSTALLER_B1157_MAINTENANCE:-}" != confirmed ]]; then
+    echo "B1157 installation requires an exclusive, platform-approved maintenance window with DMA quiescence established externally." >&2
+    echo "Only after that procedure, set NEAT_INSTALLER_B1157_MAINTENANCE=confirmed. This does not reset hardware or release retained buffers." >&2
+    return 1
+  fi
+  if [[ -x /usr/bin/neat-b1157-migration-check ]]; then
+    run_sudo /usr/bin/neat-b1157-migration-check || return 1
+  fi
+  # A clear userspace owner scan is necessary, not proof of hardware retirement.
+  # The explicit attestation above also covers work orphaned by prior processes.
+  run_sudo bash -c '
+    set -eu
+    for command in systemctl pgrep fuser; do
+      command -v "$command" >/dev/null || { echo "Missing maintenance check: $command" >&2; exit 1; }
+    done
+    for unit in simaai-appcomplex.service simaai-pipeline-manager.service rctd.service encoder.service decoder.service; do
+      state=$(systemctl is-active "$unit" 2>/dev/null || true)
+      case "$state" in inactive|failed|unknown) ;; *) echo "Legacy service is active or unidentified: $unit ($state)" >&2; exit 1;; esac
+      state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+      case "$state" in disabled|masked|static|indirect|not-found) ;; *) echo "Legacy service is enabled or unidentified: $unit ($state)" >&2; exit 1;; esac
+    done
+    for process in mlashmcomplex rctd simaai_pipeline_handler_new mla_rt_service.py dispatcher_watchdog sima_allegro_encode sima_allegro_decode; do
+      if pgrep -f "(^|/)$process( |$)" >/dev/null; then
+        echo "Legacy runtime process is active: $process" >&2; exit 1
+      else
+        rc=$?; [ "$rc" -eq 1 ] || exit "$rc"
+      fi
+    done
+    for device in /dev/mla /dev/cvu /dev/allegroIP /dev/allegroDecodeIP; do
+      [ -e "$device" ] || { echo "Missing B1157 accelerator node: $device" >&2; exit 1; }
+      if fuser -s "$device"; then
+        echo "Accelerator has active users: $device" >&2; exit 1
+      else
+        rc=$?; [ "$rc" -eq 1 ] || exit "$rc"
+      fi
+    done
+  '
+}
+
 stop_board_runtime_before_install() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1119,6 +1267,10 @@ stop_board_runtime_before_install() {
 }
 
 activate_board_runtime_after_install() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1145,6 +1297,10 @@ activate_board_runtime_after_install() {
 }
 
 verify_board_runtime_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   local service="simaai-appcomplex.service"
 
   if ! command -v systemctl >/dev/null 2>&1; then
@@ -1180,6 +1336,10 @@ verify_board_runtime_services() {
 
 
 restart_board_codec_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1208,6 +1368,10 @@ restart_board_codec_services() {
 }
 
 verify_board_codec_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1535,8 +1699,10 @@ verify_global_sima_neat_lib_links() {
 }
 
 complete_board_install_after_packages() {
-  migrate_stale_global_dispatcher_libs
-  verify_private_dispatcher_runtime
+  if board_runtime_is_legacy; then
+    migrate_stale_global_dispatcher_libs
+    verify_private_dispatcher_runtime
+  fi
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
   verify_canonical_palette_and_ota_installation
@@ -1712,6 +1878,7 @@ install_debs_in_ros2_sdk() {
 }
 
 install_debs_on_board() {
+  check_b1157_install_maintenance || return 1
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
@@ -2074,6 +2241,7 @@ install_for_environment() {
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     modalix-board)
+      check_b1157_install_maintenance || return 1
       # Preserve the established board ordering: provision PyNeat before the
       # board-specific package recovery and runtime restart transaction.
       install_python_environment
@@ -2101,5 +2269,6 @@ fi
 
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
+validate_bundled_internals_profile
 ensure_platform_compatible
 install_for_environment

@@ -32,6 +32,37 @@ if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
     "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")
 endif()
 
+# Runtime wire compatibility is independent of the public Core/package version.
+execute_process(
+  COMMAND python3 -c "import json; d=json.load(open('deps/manifest.json')); print(d.get('runtime-profile', '')); print(d.get('kernel-commit', '')); print(d.get('expected-internals-sysroot', ''))"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+  OUTPUT_VARIABLE SIMANEAT_RUNTIME_IDENTITY
+  RESULT_VARIABLE SIMANEAT_RUNTIME_IDENTITY_RESULT
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+if (NOT SIMANEAT_RUNTIME_IDENTITY_RESULT EQUAL 0)
+  message(FATAL_ERROR "Cannot read Internals runtime identity from deps/manifest.json")
+endif()
+set(SIMANEAT_RUNTIME_PROFILE "")
+set(SIMANEAT_KERNEL_COMMIT "")
+set(SIMANEAT_INTERNALS_SYSROOT "")
+if (NOT SIMANEAT_PLATFORM_VERSION MATCHES "^2[.]1[.]")
+  string(REPLACE "\n" ";" SIMANEAT_RUNTIME_IDENTITY_LIST "${SIMANEAT_RUNTIME_IDENTITY}")
+  list(LENGTH SIMANEAT_RUNTIME_IDENTITY_LIST SIMANEAT_RUNTIME_IDENTITY_COUNT)
+  if (NOT SIMANEAT_RUNTIME_IDENTITY_COUNT EQUAL 3)
+    message(FATAL_ERROR "Direct-driver Core requires an explicit Internals runtime profile, kernel, and sysroot identity")
+  endif()
+  list(GET SIMANEAT_RUNTIME_IDENTITY_LIST 0 SIMANEAT_RUNTIME_PROFILE)
+  list(GET SIMANEAT_RUNTIME_IDENTITY_LIST 1 SIMANEAT_KERNEL_COMMIT)
+  list(GET SIMANEAT_RUNTIME_IDENTITY_LIST 2 SIMANEAT_INTERNALS_SYSROOT)
+  if (NOT SIMANEAT_RUNTIME_PROFILE STREQUAL "modalix-3.0.0-b1157" OR
+      NOT SIMANEAT_KERNEL_COMMIT MATCHES "^[a-f0-9]+$" OR
+      NOT SIMANEAT_INTERNALS_SYSROOT MATCHES "^3[.]0[.]0~git[0-9]+[.][a-f0-9]+-1157$")
+    message(FATAL_ERROR "Invalid B1157 Internals runtime identity")
+  endif()
+endif()
+configure_file(cmake/RequireInternalsProfile.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/RequireInternalsProfile.cmake" @ONLY)
+
 project(SimaNeat VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}" LANGUAGES CXX)
 
 enable_testing()
@@ -371,9 +402,15 @@ if (SIMANEAT_USE_EXPORTED_NEAT_INTERNALS)
     find_package(NeatInternals CONFIG QUIET)
   endif()
   if (NeatInternals_FOUND)
+    include("${CMAKE_CURRENT_BINARY_DIR}/RequireInternalsProfile.cmake")
     set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE ON)
     message(STATUS "Using exported NeatInternals package from ${NeatInternals_DIR}")
   endif()
+endif()
+
+if (SIMANEAT_RUNTIME_PROFILE AND SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS AND
+    NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+  message(FATAL_ERROR "B1157 requires the profile-verified exported NeatInternals package; ad hoc discovery is disabled")
 endif()
 
 function(simaneat_imported_target_location out_var target_name)
@@ -928,6 +965,10 @@ set_target_properties(sima_neat_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
 target_compile_definitions(sima_neat_objects PRIVATE SIMA_NEAT_INTERNAL=1)
+if (SIMANEAT_RUNTIME_PROFILE)
+  target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_DIRECT_DRIVER_PROFILE=1)
+endif()
+
 
 if (NOT GIT_HASH)
   set(GIT_HASH "unknown")
@@ -1460,6 +1501,13 @@ if (SIMANEAT_BUILDINFO_JSON)
   )
 endif()
 
+if (SIMANEAT_RUNTIME_PROFILE)
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/runtime-profile.json"
+    "{\n  \"runtime_profile\": \"${SIMANEAT_RUNTIME_PROFILE}\",\n  \"kernel_commit\": \"${SIMANEAT_KERNEL_COMMIT}\",\n  \"sysroot_version\": \"${SIMANEAT_INTERNALS_SYSROOT}\"\n}\n")
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/runtime-profile.json"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/sima-neat" COMPONENT core)
+endif()
+
 install(
   FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/fix_devkit_runtime.sh
@@ -1525,6 +1573,7 @@ install(
   FILES
     ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatConfigVersion.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/RequireInternalsProfile.cmake
   DESTINATION ${SimaNeat_INSTALL_CMAKEDIR}
   COMPONENT dev
 )
@@ -1574,6 +1623,9 @@ if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
     "sima-lmm-core"
     "libcpp-httplib0.11")
+endif()
+if (SIMANEAT_RUNTIME_PROFILE)
+  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "neat-runtime-profile-b1157 (= 1)")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(SIMANEAT_DEV_DEBIAN_DEPENDS

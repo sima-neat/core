@@ -324,6 +324,7 @@ set(UNIT_TESTS
   unit_route_capability_mpk_static_contract_test
   unit_route_plan_detess_adapter_test
   unit_dispatcher_recovery_test
+  unit_runtime_recovery_policy_test
   unit_dispatcher_watchdog_test
   unit_error_code_taxonomy_test
   unit_gst_error_normalizer_test
