@@ -1,0 +1,42 @@
+ M CMakeLists.txt
+ M docs/develop-apps/contribute/start-here/architecture.md
+ M include/gst/SimaPluginStaticManifestAbi.h
+ M src/model/ModelPack.cpp
+ M src/model/internal/ModelPack.h
+ M src/pipeline/graph/GraphBuildInput.cpp
+ M src/pipeline/graph/GraphBuildSource.cpp
+ M src/pipeline/gst/GstDiagnosticsUtil.cpp
+ M src/pipeline/gst/InputStreamLifecycle.cpp
+ M src/pipeline/gst/InputStreamUtil.cpp
+ M src/pipeline/internal/GstDiagnosticsUtil.h
+ M src/pipeline/internal/InputStream.h
+ M src/pipeline/internal/InputStreamUtil.h
+ M src/pipeline/internal/contract/PluginCompiledContracts.h
+ M src/pipeline/internal/sima/ContractRender.cpp
+ M src/pipeline/internal/sima/MlaElfIoTopology.cpp
+ M src/pipeline/internal/sima/MlaElfIoTopology.h
+ M src/pipeline/internal/sima/MlaStaticContractExtractor.h
+ M src/pipeline/internal/sima/SimaPluginStaticManifest.cpp
+ M src/pipeline/internal/sima/SimaPluginStaticManifest.h
+ M src/pipeline/internal/sima/StaticSpecBuilders.cpp
+ M src/pipeline/internal/sima/StaticSpecBuilders.h
+ M src/pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.cpp
+ M src/pipeline/sample/SampleUtil.cpp
+ M src/pipeline/tensor/TensorTransfer.cpp
+ M tests/CMakeLists.txt
+ M tests/graph_migration/legacy/evo_tput_bench.cpp
+ M tests/neat_tensor_device_placement_test.cpp
+ M tests/unit_testing/unit_inputstream_stop_flush_test.cpp
+ M tests/unit_testing/unit_mla_elf_io_topology_test.cpp
+ M tests/unit_testing/unit_model_stage_fragments_test.cpp
+ M tests/unit_testing/unit_modelpack_mla_handoff_segment_test.cpp
+ M tests/unit_testing/unit_sima_plugin_static_manifest_contract_test.cpp
+ M tests/unit_testing/unit_sima_plugin_static_manifest_parse_test.cpp
+?? src/pipeline/internal/InputStreamTeardownPolicy.h
+?? src/pipeline/internal/MemoryBackendPolicy.cpp
+?? src/pipeline/internal/MemoryBackendPolicy.h
+?? src/pipeline/internal/sima/static_contract/
+?? tests/tools/run_legacy_afe_evo_corpus_test.py
+?? tests/unit_testing/unit_dmabuf_plan_contract_projection_test.cpp
+?? tests/unit_testing/unit_frame_slot_arena_plan_test.cpp
+?? tests/unit_testing/unit_legacy_afe_mpk_decoder_test.cpp

@@ -1,0 +1,94 @@
+diff --git a/tests/unit_testing/unit_dmabuf_eligibility_test.cpp b/tests/unit_testing/unit_dmabuf_eligibility_test.cpp
+index f3f7b7570acc34d31755548ddc9adc5df02d367d..c975a62e0631457e00cd059e357c51c6a94ae120 100644
+--- a/tests/unit_testing/unit_dmabuf_eligibility_test.cpp
++++ b/tests/unit_testing/unit_dmabuf_eligibility_test.cpp
+@@ -365,7 +365,6 @@ int main(int argc, char** argv) {
+   // execution plan.  The normal no-argument unit-test behavior is unchanged.
+   if (argc == 3 && std::string(argv[1]) == "--admit-modelpack") {
+     try {
+-      CHECK(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0);
+       simaai::neat::internal::ModelPack model(argv[2]);
+       const auto& admission = model.dmabuf_plan_admission();
+       const auto execution = model.execution_plan();
+diff --git a/tests/unit_testing/unit_model_metadata_test.cpp b/tests/unit_testing/unit_model_metadata_test.cpp
+index fc5be5828df9a592856c8594cc39e81a016036cd..9d78871b71aa6b798a3473303cd8f71e65f06390 100644
+--- a/tests/unit_testing/unit_model_metadata_test.cpp
++++ b/tests/unit_testing/unit_model_metadata_test.cpp
+@@ -94,19 +94,16 @@ RUN_TEST(
+                 "Model::metadata should dump array values");
+         require(meta.at("nested") == "{\"a\":1}", "Model::metadata should dump object values");
+ 
+-        const char* backend = std::getenv("SIMA_NEAT_MEMORY_BACKEND");
+-        if (backend != nullptr && std::string(backend) == "dmabuf-plan") {
+-          bool admission_rejected = false;
+-          try {
+-            (void)internal::ModelAccess::pack(model).memory_backend_decision();
+-          } catch (const std::exception& error) {
+-            admission_rejected = true;
+-            require_contains(std::string(error.what()), "missing-mla-executable",
+-                             "execution admission must still fail closed without the MLA ELF");
+-          }
+-          require(admission_rejected,
+-                  "metadata-only construction must not make a missing MLA ELF executable");
++        bool admission_rejected = false;
++        try {
++          (void)internal::ModelAccess::pack(model).dmabuf_plan_admission();
++        } catch (const std::exception& error) {
++          admission_rejected = true;
++          require_contains(std::string(error.what()), "missing-mla-executable",
++                           "execution admission must still fail closed without the MLA ELF");
+         }
++        require(admission_rejected,
++                "metadata-only construction must not make a missing MLA ELF executable");
+       }
+ 
+       {
+diff --git a/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp b/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
+index a6aa4da477e1138850ee0fcc852f225d49bc0b71..8bcfb4a9b4c140f1d906473051246786ccf29293 100644
+--- a/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
++++ b/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
+@@ -1,7 +1,6 @@
+ #define SIMA_NEAT_INTERNAL 1
+ #include "model/Model.h"
+ #include "model/internal/ModelPack.h"
+-#include "pipeline/internal/MemoryBackendPolicy.h"
+ #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+ #include "pipeline/internal/sima/MpkContract.h"
+ #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+@@ -659,12 +658,9 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+            using simaai::neat::internal::ModelPack;
+            using simaai::neat::internal::ModelStage;
+            using simaai::neat::internal::PipelineType;
+-           using simaai::neat::pipeline_internal::MemoryBackendPolicy;
+            using simaai::neat::pipeline_internal::sima::FrameArenaRole;
+            namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
+ 
+-           require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
+-                   "failed to select strict DMA-BUF backend");
+            const auto root = fs::temp_directory_path() / "neat-modelpack-two-mla-unit";
+            std::error_code ec;
+            fs::remove_all(root, ec);
+@@ -677,8 +673,7 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+            write_monolithic_topology_elf(root / "share" / "decoder.elf");
+ 
+            ModelPack model(root.string());
+-           require(model.memory_backend_decision().backend == MemoryBackendPolicy::DmaBufPlan &&
+-                       model.dmabuf_plan_admission().eligible(),
++           require(model.dmabuf_plan_admission().eligible(),
+                    "synthetic package did not pass strict multi-stage admission");
+            require(model.mpk_contract().has_value(), "synthetic package lost its MPK contract");
+            const auto& mpk = *model.mpk_contract();
+@@ -813,11 +808,10 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+                make_relation_tail_package("neat-modelpack-boxdecode-interleaved-tail-unit", true);
+            auto [interleaved_model, interleaved_full_proof, interleaved_full_digest] =
+                select_relation_tail_route(interleaved_package);
+-           const auto& interleaved_decision = interleaved_model.memory_backend_decision();
+-           require(interleaved_decision.plan_digest == interleaved_full_digest,
++           require(interleaved_model.dmabuf_plan_digest() == interleaved_full_digest,
+                    "terminal selection changed the immutable full-plan digest");
+            require_proof_unchanged(interleaved_full_proof,
+-                                   interleaved_decision.admission.proof);
++                                   interleaved_model.dmabuf_plan_admission().proof);
+            const auto interleaved_plan = interleaved_model.execution_plan();
+            require(std::any_of(interleaved_plan.post.begin(), interleaved_plan.post.end(),
+                                [](const auto& stage) {

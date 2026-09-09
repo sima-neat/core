@@ -1,0 +1,332 @@
+diff --git a/src/model/Model.cpp b/src/model/Model.cpp
+index 32a786b5076398d1a6b7afb2a89718691524d329..bfb5f9f41d6ce4ce0cf85d9defcf801b165ece01 100644
+--- a/src/model/Model.cpp
++++ b/src/model/Model.cpp
+@@ -547,12 +547,8 @@ bool route_uses_model_managed_graph200(
+ bool route_absorbs_model_managed_graph200(
+     const internal::ModelPack& pack,
+     const internal::PreprocessPlannerResult& plan) {
+-  // Graph-200 command absorption is a projection of the immutable physical
+-  // DMA-BUF plan.  The legacy backend has no such plan and must keep its
+-  // separately rendered preprocessing stage.  Keeping this decision next to
+-  // route selection prevents a Graph-200 topology alone from accidentally
+-  // opting the legacy path into strict-plan rendering.
+-  return route_uses_model_managed_graph200(plan) && pack.uses_model_execution_plan();
++  (void)pack;
++  return route_uses_model_managed_graph200(plan);
+ }
+ 
+ internal::PreprocessContractFlags
+@@ -5594,10 +5590,8 @@ PreprocOptions make_preproc_options_from_typed_adapter(
+   populate_model_managed_preproc_options(&opt, plan, input);
+   const auto& selected_pack =
+       sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model);
+-  if (selected_pack.uses_model_execution_plan()) {
+-    opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
+-        selected_pack.project_model_managed_preproc_contract(opt));
+-  }
++  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
++      selected_pack.project_model_managed_preproc_contract(opt));
+   return opt;
+ }
+ 
+@@ -7374,6 +7368,9 @@ Graph Model::fragment(Stage stage) const {
+ }
+ 
+ std::string Model::backend_fragment(Stage stage) const {
++  // A backend fragment can be inserted into Graph::custom(), so it is an
++  // executable boundary rather than descriptive metadata.
++  impl_->pack.prepare_for_execution();
+   internal::ModelStage s = internal::ModelStage::Full;
+   switch (stage) {
+   case Stage::Preprocess:
+@@ -8276,10 +8273,8 @@ PreprocOptions ModelAccess::build_preprocess_stage_options(const Model& model, b
+   PreprocOptions opt = make_model_managed_preproc_options_base(model, sync);
+   populate_model_managed_preproc_options(&opt, model.impl_->preprocess_plan, nullptr);
+   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
+-  if (pack.uses_model_execution_plan()) {
+-    opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
+-        pack.project_model_managed_preproc_contract(opt));
+-  }
++  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
++      pack.project_model_managed_preproc_contract(opt));
+   return opt;
+ }
+ 
+diff --git a/src/model/ModelPack.cpp b/src/model/ModelPack.cpp
+index ee71f6f10e0076ad030d1d0a7dcd45a3368fbc50..c9e93af6ca443f024dfd36ac670451ff4291ad1a 100644
+--- a/src/model/ModelPack.cpp
++++ b/src/model/ModelPack.cpp
+@@ -13,7 +13,6 @@
+ #include "pipeline/internal/DmabufEligibility.h"
+ #include "pipeline/internal/EnvUtil.h"
+ #include "pipeline/internal/InputPolicy.h"
+-#include "pipeline/internal/MemoryBackendPolicy.h"
+ #include "pipeline/internal/TensorMath.h"
+ #include "pipeline/internal/TempJsonFileUtil.h"
+ #include "pipeline/internal/packedio/PackedIoAdapter.h"
+@@ -4966,11 +4965,8 @@ void ModelPack::init(const std::string& tar_gz) {
+ 
+ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
+   options_ = std::move(cfg);
+-  const auto& process_backend = pipeline_internal::process_memory_backend_selection();
+-  memory_backend_decision_ = {};
+-  memory_backend_decision_.backend = process_backend.policy;
+-  const bool dmabuf_plan_selected =
+-      process_backend.policy == pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
++  dmabuf_plan_admission_ = {};
++  dmabuf_plan_digest_.clear();
+   mpk_contract_.reset();
+   dmabuf_plan_execution_plan_.reset();
+   dmabuf_frame_arena_plan_.reset();
+@@ -5023,12 +5019,6 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
+   // admitted lazily when an executable route is requested. This keeps model
+   // metadata/route inspection independent of target artifacts while the
+   // execution boundary remains fail-closed.
+-  if (!dmabuf_plan_selected &&
+-      env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
+-    std::fprintf(
+-        stderr, "NEAT_MEMORY_BACKEND_DECISION backend=legacy eligible=not-evaluated code=%s\n",
+-        pipeline_internal::dmabuf_eligibility_code_name(memory_backend_decision_.admission.code));
+-  }
+   if (mpk_contract_.has_value()) {
+     const auto mla_stages =
+         simaai::neat::pipeline_internal::sima::get_mla_stage_io_contracts(*mpk_contract_);
+@@ -5117,10 +5107,6 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
+ }
+ 
+ void ModelPack::ensure_dmabuf_execution_plan() const {
+-  if (memory_backend_decision_.backend !=
+-      pipeline_internal::MemoryBackendPolicy::DmaBufPlan) {
+-    return;
+-  }
+   if (dmabuf_plan_execution_plan_.has_value()) {
+     if (!dmabuf_frame_arena_plan_.has_value() ||
+         !dmabuf_physical_execution_plan_.has_value()) {
+@@ -5139,16 +5125,9 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
+   }
+ 
+   auto compiled = compile_dmabuf_plan_execution_plan(*mpk_contract_);
+-  memory_backend_decision_.admission = compiled.report;
+-  memory_backend_decision_.plan_digest = compiled.plan_digest;
++  dmabuf_plan_admission_ = compiled.report;
++  dmabuf_plan_digest_ = compiled.plan_digest;
+   if (!compiled.eligible()) {
+-    if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
+-      std::fprintf(stderr,
+-                   "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=0 code=%s "
+-                   "location=%s artifact_digest=%s\n",
+-                   pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code),
+-                   compiled.report.location.c_str(), compiled.report.artifact_digest.c_str());
+-    }
+     throw std::runtime_error(
+         std::string("ModelPack: dmabuf-plan admission failed [") +
+         pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code) + "] at " +
+@@ -5159,13 +5138,6 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
+   dmabuf_plan_execution_plan_ = std::move(compiled.plan);
+   dmabuf_frame_arena_plan_ = std::move(compiled.arena_plan);
+   dmabuf_physical_execution_plan_ = std::move(compiled.physical_plan);
+-  if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
+-    std::fprintf(stderr,
+-                 "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=1 code=eligible "
+-                 "plan_digest=%s artifact_digest=%s\n",
+-                 memory_backend_decision_.plan_digest.c_str(),
+-                 memory_backend_decision_.admission.artifact_digest.c_str());
+-  }
+ }
+ 
+ void ModelPack::prepare_for_execution() const {
+diff --git a/src/model/RoutePlanner.cpp b/src/model/RoutePlanner.cpp
+index 804221a6d8f52912e098b7f3059c7c9bb72f3089..ca4d1068b24bdd29dc1028f5bbabcc1096fd7818 100644
+--- a/src/model/RoutePlanner.cpp
++++ b/src/model/RoutePlanner.cpp
+@@ -2594,7 +2594,10 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
+   }
+   const auto& graph = pack.route_graph();
+   const auto& contract = *pack.mpk_contract();
+-  const bool model_managed_execution_plan = pack.uses_model_execution_plan();
++  // The exact MPK graph is always executed by the compiler-authored model
++  // plan. Physical admission remains lazy, but route ownership must not depend
++  // on whether that cache happened to be populated before route inspection.
++  constexpr bool model_managed_execution_plan = true;
+   out->model_managed_execution_plan = model_managed_execution_plan;
+   const auto mla_stages = pipeline_internal::sima::get_mla_stage_io_contracts(contract);
+   if (mla_stages.empty()) {
+diff --git a/src/model/internal/ModelPack.h b/src/model/internal/ModelPack.h
+index cc2834940a8ada971fad7f049575665ec91249cb..27467d3fa80f5b84e46ccca41810ff3095656f28 100644
+--- a/src/model/internal/ModelPack.h
++++ b/src/model/internal/ModelPack.h
+@@ -187,16 +187,15 @@ public:
+ 
+   simaai::neat::InputOptions input_appsrc_options(bool tensor_mode) const;
+ 
+-  const simaai::neat::pipeline_internal::MemoryBackendDecision& memory_backend_decision() const {
++  const simaai::neat::pipeline_internal::DmabufEligibilityReport&
++  dmabuf_plan_admission() const {
+     prepare_for_execution();
+-    return memory_backend_decision_;
++    return dmabuf_plan_admission_;
+   }
+ 
+-  // True when the strict backend owns the complete compiler-authored model
+-  // command graph. RoutePlanner must not rediscover pre/post adapters around
+-  // MLA in this mode: those commands already live in the one execution plan.
+-  bool uses_model_execution_plan() const noexcept {
+-    return dmabuf_plan_execution_plan_.has_value();
++  const std::string& dmabuf_plan_digest() const {
++    prepare_for_execution();
++    return dmabuf_plan_digest_;
+   }
+ 
+   ModelPack clone_with_buffers(int num_buffers_cvu, int num_buffers_mla) const;
+@@ -253,7 +252,8 @@ private:
+   mutable std::optional<
+       simaai::neat::pipeline_internal::sima::static_contract::PhysicalExecutionPlan>
+       dmabuf_physical_execution_plan_;
+-  mutable simaai::neat::pipeline_internal::MemoryBackendDecision memory_backend_decision_;
++  mutable simaai::neat::pipeline_internal::DmabufEligibilityReport dmabuf_plan_admission_;
++  mutable std::string dmabuf_plan_digest_;
+   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
+   std::optional<bool> processcvu_preproc_single_output_handoff_;
+   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;
+diff --git a/src/pipeline/internal/DmabufEligibility.h b/src/pipeline/internal/DmabufEligibility.h
+index 80667b16b4b17dfe3c227783bcd5bd7f0b8dbcee..4013bfa60d42c2cbf6c6052c502908f29fc8c7f5 100644
+--- a/src/pipeline/internal/DmabufEligibility.h
++++ b/src/pipeline/internal/DmabufEligibility.h
+@@ -3,7 +3,6 @@
+ #error "Internal header. Not part of the public API."
+ #endif
+ 
+-#include "pipeline/internal/MemoryBackendPolicy.h"
+ #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
+ #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+ #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
+@@ -145,14 +144,4 @@ std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
+                                    const std::vector<MlaExecutableArtifact>& mla_executables,
+                                    bool pretty = false);
+ 
+-struct MemoryBackendDecision {
+-  MemoryBackendPolicy backend = MemoryBackendPolicy::Legacy;
+-  DmabufEligibilityReport admission;
+-  std::string plan_digest;
+-
+-  [[nodiscard]] bool uses_dmabuf_plan() const noexcept {
+-    return backend == MemoryBackendPolicy::DmaBufPlan;
+-  }
+-};
+-
+ } // namespace simaai::neat::pipeline_internal
+diff --git a/tests/unit_testing/unit_dmabuf_eligibility_test.cpp b/tests/unit_testing/unit_dmabuf_eligibility_test.cpp
+index c267fde13b12b4c6adb2834dd516df2f9a9a357a..f3f7b7570acc34d31755548ddc9adc5df02d367d 100644
+--- a/tests/unit_testing/unit_dmabuf_eligibility_test.cpp
++++ b/tests/unit_testing/unit_dmabuf_eligibility_test.cpp
+@@ -367,7 +367,7 @@ int main(int argc, char** argv) {
+     try {
+       CHECK(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0);
+       simaai::neat::internal::ModelPack model(argv[2]);
+-      const auto& admission = model.memory_backend_decision().admission;
++      const auto& admission = model.dmabuf_plan_admission();
+       const auto execution = model.execution_plan();
+       const auto stage_count =
+           execution.pre.size() + execution.infer.size() + execution.post.size();
+@@ -427,7 +427,7 @@ int main(int argc, char** argv) {
+                 << simaai::neat::pipeline_internal::dmabuf_eligibility_code_name(
+                        admission.code)
+                 << " contract=" << admission.contract_version
+-                << " plan=" << model.memory_backend_decision().plan_digest
++                << " plan=" << model.dmabuf_plan_digest()
+                 << " stages=" << stage_count
+                 << " grouped-stages=" << grouped_stage_count
+                 << " grouped-members=" << grouped_semantic_members
+diff --git a/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp b/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
+index 43deece7914faca29ecd6658f52ecea9c8fa69e5..a6aa4da477e1138850ee0fcc852f225d49bc0b71 100644
+--- a/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
++++ b/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
+@@ -678,7 +678,7 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+ 
+            ModelPack model(root.string());
+            require(model.memory_backend_decision().backend == MemoryBackendPolicy::DmaBufPlan &&
+-                       model.memory_backend_decision().admission.eligible(),
++                       model.dmabuf_plan_admission().eligible(),
+                    "synthetic package did not pass strict multi-stage admission");
+            require(model.mpk_contract().has_value(), "synthetic package lost its MPK contract");
+            const auto& mpk = *model.mpk_contract();
+@@ -790,8 +790,8 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+                                  1, false, {}, {}, {}, PipelineType::Preproc, "decoder", 4, 4, 0,
+                                  -1, {}, {}, policy,
+                                  /*cleanup_extracted_model_data=*/false);
+-             const auto full_proof = candidate.memory_backend_decision().admission.proof;
+-             const auto full_digest = candidate.memory_backend_decision().plan_digest;
++             const auto full_proof = candidate.dmabuf_plan_admission().proof;
++             const auto full_digest = candidate.dmabuf_plan_digest();
+              simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags route_flags;
+              route_flags.boxdecode_selected = true;
+              route_flags.terminal_consumer_owns_tensor_tail = true;
+@@ -851,10 +851,10 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+                make_relation_tail_package("neat-modelpack-boxdecode-prefix-tail-unit", false);
+            auto [prefix_model, prefix_full_proof, prefix_full_digest] =
+                select_relation_tail_route(prefix_package);
+-           require(prefix_model.memory_backend_decision().plan_digest == prefix_full_digest,
++           require(prefix_model.dmabuf_plan_digest() == prefix_full_digest,
+                    "dense-prefix terminal selection changed the full-plan digest");
+            require_proof_unchanged(prefix_full_proof,
+-                                   prefix_model.memory_backend_decision().admission.proof);
++                                   prefix_model.dmabuf_plan_admission().proof);
+ 
+            // Optional exact-artifact gate for the App48 YOLO26 package whose
+            // compiler order interleaves Slice and Dequant operations.
+@@ -867,17 +867,17 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+                                     640, 3, false, {}, {}, {}, PipelineType::QuantTess, "decoder",
+                                     4, 4, 0, -1, {}, {}, policy,
+                                     /*cleanup_extracted_model_data=*/false);
+-             const auto full_proof = yolo26_model.memory_backend_decision().admission.proof;
+-             const auto full_digest = yolo26_model.memory_backend_decision().plan_digest;
++             const auto full_proof = yolo26_model.dmabuf_plan_admission().proof;
++             const auto full_digest = yolo26_model.dmabuf_plan_digest();
+              simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags route_flags;
+              route_flags.boxdecode_selected = true;
+              route_flags.terminal_consumer_owns_tensor_tail = true;
+              yolo26_model.set_model_managed_stage_facts(std::nullopt, route_flags,
+                                                         {ExecutionStageKind::BoxDecode});
+-             require(yolo26_model.memory_backend_decision().plan_digest == full_digest,
++             require(yolo26_model.dmabuf_plan_digest() == full_digest,
+                      "exact YOLO26 terminal selection changed the full-plan digest");
+              require_proof_unchanged(full_proof,
+-                                     yolo26_model.memory_backend_decision().admission.proof);
++                                     yolo26_model.dmabuf_plan_admission().proof);
+              require(yolo26_model.infer_block().size() == 1U,
+                      "exact YOLO26 terminal rendering did not stop at MLA");
+              const auto selected_facts = yolo26_model.stage_facts_for_model_stage(ModelStage::Full);
+@@ -1059,7 +1059,7 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+                  real_package, "application/vnd.simaai.tensor", "FP32", /*depth=*/1,
+                  /*max_width=*/640, /*max_height=*/480, /*max_depth=*/1,
+                  /*normalize=*/false, {}, {}, /*preproc_next_cpu=*/{}, PipelineType::QuantTess);
+-             require(real_model.memory_backend_decision().admission.eligible(),
++             require(real_model.dmabuf_plan_admission().eligible(),
+                      "exact AFE 2.1 multi-MLA/A65 package failed ModelPack admission");
+              const auto real_plan = real_model.execution_plan();
+              require(real_plan.pre.empty() && real_plan.post.empty() &&
+@@ -1344,8 +1344,8 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+                  640, 640, 3, false, {}, {}, {}, PipelineType::QuantTess,
+                  "decoder", 4, 4, 0, -1, {}, {}, terminal_policy,
+                  /*cleanup_extracted_model_data=*/false);
+-             const auto full_digest = yolo_model.memory_backend_decision().plan_digest;
+-             const auto full_proof = yolo_model.memory_backend_decision().admission.proof;
++             const auto full_digest = yolo_model.dmabuf_plan_digest();
++             const auto full_proof = yolo_model.dmabuf_plan_admission().proof;
+ 
+              simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags flags;
+              flags.boxdecode_selected = true;
+@@ -1360,10 +1360,10 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+                                    return stage.kind == ExecutionStageKind::DetessDequant;
+                                  }),
+                      "physical projection lost graph227 from the post-MLA region");
+-             require(yolo_model.memory_backend_decision().plan_digest == full_digest,
++             require(yolo_model.dmabuf_plan_digest() == full_digest,
+                      "terminal selection changed the exact YOLO full-plan digest");
+              require_proof_unchanged(full_proof,
+-                                     yolo_model.memory_backend_decision().admission.proof);
++                                     yolo_model.dmabuf_plan_admission().proof);
+              require(yolo_model.infer_block().size() == 1U,
+                      "exact YOLO infer region must contain only the terminal MLA");
+ 

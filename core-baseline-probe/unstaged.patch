@@ -1,0 +1,3562 @@
+diff --git a/src/model/ModelPack.cpp b/src/model/ModelPack.cpp
+index 651bc46d1100b9e73670d49cbaa6fd51f5b70f71..37ce8a2ec56b0297b141228a780fefb7caeb5e84 100644
+--- a/src/model/ModelPack.cpp
++++ b/src/model/ModelPack.cpp
+@@ -50,10 +50,14 @@
+ #include <fstream>
+ #include <iomanip>
+ #include <iostream>
++#include <map>
+ #include <mutex>
++#include <queue>
++#include <set>
+ #include <sstream>
+ #include <stdexcept>
+ #include <string>
++#include <string_view>
+ #include <tuple>
+ #include <limits>
+ #include <unordered_map>
+@@ -187,6 +191,9 @@ static ExecutionStageKind canonical_execution_stage_kind(std::string raw) {
+   if (raw.find("mla") != std::string::npos || raw == "infer") {
+     return ExecutionStageKind::Mla;
+   }
++  if (raw.find("tvm") != std::string::npos || raw.find("a65") != std::string::npos) {
++    return ExecutionStageKind::HostTvm;
++  }
+   return ExecutionStageKind::Unknown;
+ }
+ 
+@@ -204,6 +211,8 @@ static const char* default_stage_name(ExecutionStageKind kind) {
+     return "casttess";
+   case ExecutionStageKind::Mla:
+     return "mla";
++  case ExecutionStageKind::HostTvm:
++    return "a65";
+   case ExecutionStageKind::Detess:
+     return "post_detess";
+   case ExecutionStageKind::DetessCast:
+@@ -222,9 +231,12 @@ static const char* default_stage_name(ExecutionStageKind kind) {
+   return "stage";
+ }
+ 
+-static std::string require_stage_factory(ExecutionStageKind kind) {
++static std::string require_stage_factory(ExecutionStageKind kind,
++                                         const bool physical_cvu_command = false) {
+   const char* factory = nullptr;
+-  switch (kind) {
++  if (physical_cvu_command) {
++    factory = "neatprocesscvu";
++  } else switch (kind) {
+   case ExecutionStageKind::Preproc:
+   case ExecutionStageKind::Quant:
+   case ExecutionStageKind::Tess:
+@@ -238,6 +250,9 @@ static std::string require_stage_factory(ExecutionStageKind kind) {
+   case ExecutionStageKind::Mla:
+     factory = "neatprocessmla";
+     break;
++  case ExecutionStageKind::HostTvm:
++    factory = "neatprocesstvm";
++    break;
+   case ExecutionStageKind::Detess:
+     factory = "neatdetess";
+     break;
+@@ -302,15 +317,17 @@ static std::array<float, 3> materialize3(const std::vector<float>& v, float defv
+   throw std::invalid_argument("mean/stddev must have 0, 1, or 3 values.");
+ }
+ 
+-static std::string append_model_paths_if_exists(json& json_data, const std::string& append_path) {
++static bool append_model_paths_if_exists(json& json_data, const std::string& append_path) {
+   if (json_data.contains("simaai__params") && json_data["simaai__params"].contains("model_path")) {
+     std::string model_path = json_data["simaai__params"]["model_path"];
+     json_data["simaai__params"]["model_path"] = append_path + "/share/" + model_path;
++    return true;
+   } else if (json_data.contains("model_info") && json_data["model_info"].contains("path")) {
+     std::string model_info_path = json_data["model_info"]["path"];
+     json_data["model_info"]["path"] = append_path + "/lib/" + model_info_path;
++    return true;
+   }
+-  return "";
++  return false;
+ }
+ 
+ struct MlaRuntimeProperties {
+@@ -1145,8 +1162,9 @@ static std::string extract_and_organize(const std::string& tar_path,
+         } catch (const std::exception&) {
+           continue;
+         }
+-        append_model_paths_if_exists(cfg, target_dir.string());
+-        write_json_file_atomic(entry.path(), cfg, "ModelPack");
++        if (append_model_paths_if_exists(cfg, target_dir.string())) {
++          write_json_file_atomic(entry.path(), cfg, "ModelPack");
++        }
+       }
+     } catch (...) {
+       std::error_code cleanup_ec;
+@@ -1561,6 +1579,8 @@ static std::string plugin_id_for_stage_kind(ExecutionStageKind kind) {
+   switch (kind) {
+   case ExecutionStageKind::Mla:
+     return "processmla";
++  case ExecutionStageKind::HostTvm:
++    return "processtvm";
+   case ExecutionStageKind::BoxDecode:
+     return "boxdecode";
+   case ExecutionStageKind::Dequant:
+@@ -1585,6 +1605,9 @@ static std::string processor_for_stage_kind(ExecutionStageKind kind) {
+   if (kind == ExecutionStageKind::Mla) {
+     return "MLA";
+   }
++  if (kind == ExecutionStageKind::HostTvm) {
++    return "A65";
++  }
+   return "CVU";
+ }
+ 
+@@ -1602,6 +1625,8 @@ static std::string kernel_for_stage_kind(ExecutionStageKind kind) {
+     return "casttess";
+   case ExecutionStageKind::Mla:
+     return "infer";
++  case ExecutionStageKind::HostTvm:
++    return "tvm";
+   case ExecutionStageKind::Detess:
+     return "detessellate";
+   case ExecutionStageKind::DetessCast:
+@@ -1789,6 +1814,7 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
+       case ExecutionStageKind::QuantTess:
+       case ExecutionStageKind::CastTess:
+       case ExecutionStageKind::Mla:
++      case ExecutionStageKind::HostTvm:
+         break;
+       }
+     }
+@@ -1861,6 +1887,289 @@ static ExecutionPlan build_execution_plan_from_mpk_contract(
+   return plan;
+ }
+ 
++static ExecutionStageKind model_plan_stage_kind(
++    const pipeline_internal::sima::static_contract::OpSpec& op) {
++  using pipeline_internal::sima::static_contract::OpKind;
++  switch (op.kind) {
++  case OpKind::Cast:
++    return ExecutionStageKind::Cast;
++  case OpKind::Quantize:
++    return ExecutionStageKind::Quant;
++  case OpKind::Tessellate:
++    return ExecutionStageKind::Tess;
++  case OpKind::Mla:
++    return ExecutionStageKind::Mla;
++  case OpKind::Detessellate:
++    return ExecutionStageKind::Detess;
++  case OpKind::Dequantize:
++    return ExecutionStageKind::Dequant;
++  case OpKind::HostTvm:
++    return ExecutionStageKind::HostTvm;
++  case OpKind::Pack:
++    throw std::runtime_error("ModelPack: model operation '" + op.name +
++                             "' requires a registered material Pack implementation");
++  case OpKind::Unpack:
++  case OpKind::Slice:
++  case OpKind::Reshape:
++  case OpKind::PassThrough:
++    throw std::runtime_error("ModelPack: model plan contains non-executable operation '" +
++                             op.name + "'; views/publication must be storage facts");
++  }
++  throw std::runtime_error("ModelPack: model operation has no exact stage implementation");
++}
++
++static ExecutionPlan build_execution_plan_from_model_plan(
++    const pipeline_internal::sima::static_contract::ModelExecutionPlan& command_plan,
++    const pipeline_internal::sima::static_contract::PhysicalExecutionPlan& physical_plan,
++    const pipeline_internal::sima::static_contract::FrameSlotArenaPlan& arena_plan,
++    const pipeline_internal::sima::MpkContract& packaging_contract) {
++  using namespace pipeline_internal::sima::static_contract;
++  struct RenderCohort {
++    PhysicalCohortId id = 0U;
++    PhysicalEngine engine = PhysicalEngine::Cvu;
++    PhysicalCommandRole role = PhysicalCommandRole::NonCvu;
++    std::string implementation_id;
++    std::uint32_t graph_id = 0U;
++    std::uint32_t batch_size = 0U;
++    std::uint32_t maximum_members = 0U;
++    std::uint64_t first_rank = 0U;
++    std::vector<PhysicalCommandId> commands;
++    std::vector<PhysicalCommandMember> members;
++    std::set<PhysicalCohortId> predecessors;
++    std::set<PhysicalCohortId> successors;
++  };
++
++  std::map<PhysicalCohortId, RenderCohort> cohorts;
++  for (const auto& command : physical_plan.commands) {
++    if (command.members.empty()) {
++      throw std::runtime_error("ModelPack: physical command has invalid semantic membership");
++    }
++    auto [it, inserted] = cohorts.try_emplace(command.cohort_id);
++    auto& cohort = it->second;
++    if (inserted) {
++      cohort.id = command.cohort_id;
++      cohort.engine = command.engine;
++      cohort.role = command.role;
++      cohort.implementation_id = command.implementation_id;
++      cohort.graph_id = command.graph_id;
++      cohort.batch_size = command.batch_size;
++      cohort.maximum_members = command.maximum_members;
++      cohort.first_rank = command.topological_rank;
++    } else if (cohort.engine != command.engine || cohort.role != command.role ||
++               cohort.implementation_id != command.implementation_id ||
++               cohort.graph_id != command.graph_id ||
++               cohort.batch_size != command.batch_size ||
++               cohort.maximum_members != command.maximum_members) {
++      throw std::runtime_error(
++          "ModelPack: one render cohort contains incompatible physical commands");
++    }
++    cohort.first_rank = std::min(cohort.first_rank, command.topological_rank);
++    cohort.commands.push_back(command.id);
++    for (const auto& member : command.members) {
++      if (member.semantic_chain.empty() ||
++          std::any_of(member.semantic_chain.begin(), member.semantic_chain.end(),
++                      [&](const auto op_id) {
++                        return op_id >= command_plan.ops().size() ||
++                               command_plan.ops()[op_id].id != op_id;
++                      })) {
++        throw std::runtime_error(
++            "ModelPack: physical member references a missing semantic op");
++      }
++      cohort.members.push_back(member);
++    }
++  }
++  for (const auto& command : physical_plan.commands) {
++    auto& cohort = cohorts.at(command.cohort_id);
++    for (const auto predecessor : command.predecessors) {
++      if (predecessor >= physical_plan.commands.size()) {
++        throw std::runtime_error("ModelPack: physical predecessor is out of range");
++      }
++      const auto predecessor_cohort = physical_plan.commands[predecessor].cohort_id;
++      if (predecessor_cohort == cohort.id) {
++        throw std::runtime_error(
++            "ModelPack: capacity chunks in one render cohort depend on each other");
++      }
++      cohort.predecessors.emplace(predecessor_cohort);
++      cohorts.at(predecessor_cohort).successors.emplace(cohort.id);
++    }
++  }
++
++  using Ready = std::tuple<std::uint64_t, PhysicalCohortId>;
++  std::priority_queue<Ready, std::vector<Ready>, std::greater<>> ready;
++  std::map<PhysicalCohortId, std::size_t> indegree;
++  for (const auto& [id, cohort] : cohorts) {
++    indegree.emplace(id, cohort.predecessors.size());
++    if (cohort.predecessors.empty()) {
++      ready.emplace(cohort.first_rank, id);
++    }
++  }
++  std::vector<PhysicalCohortId> ordered;
++  ordered.reserve(cohorts.size());
++  while (!ready.empty()) {
++    const auto id = std::get<1>(ready.top());
++    ready.pop();
++    ordered.push_back(id);
++    for (const auto successor : cohorts.at(id).successors) {
++      auto& count = indegree.at(successor);
++      if (--count == 0U) {
++        ready.emplace(cohorts.at(successor).first_rank, successor);
++      }
++    }
++  }
++  if (ordered.size() != cohorts.size()) {
++    throw std::runtime_error("ModelPack: physical render cohorts contain a dependency cycle");
++  }
++
++  // A frame-arena buffer is the live-value catalogue.  Prove once, at setup,
++  // that the deterministic cohort order respects every dependency and that
++  // every non-public value read by a later command remains addressable in the
++  // retained arena.  This admits real branch/join DAGs without pretending they
++  // are graph-theoretic chains and without a bounce/copy fallback.
++  std::vector<bool> command_complete(physical_plan.commands.size(), false);
++  std::vector<bool> value_ready(command_plan.values().size(), false);
++  for (const auto value_id : command_plan.model_inputs()) {
++    if (value_id >= value_ready.size()) {
++      throw std::runtime_error("ModelPack: model input is out of range");
++    }
++    value_ready[value_id] = true;
++  }
++  const auto root_value = [&](pipeline_internal::sima::static_contract::ValueId value_id) {
++    std::size_t remaining = command_plan.values().size() + 1U;
++    while (remaining-- > 0U) {
++      const auto* value = command_plan.value(value_id);
++      if (!value) {
++        throw std::runtime_error("ModelPack: physical command input is out of range");
++      }
++      if (!value->read_expression.has_value()) {
++        return value_id;
++      }
++      value_id = value->read_expression->source_value_id;
++    }
++    throw std::runtime_error("ModelPack: model value view chain contains a cycle");
++  };
++  for (const auto cohort_id : ordered) {
++    const auto& cohort = cohorts.at(cohort_id);
++    for (const auto command_id : cohort.commands) {
++      if (command_id >= physical_plan.commands.size()) {
++        throw std::runtime_error("ModelPack: physical cohort command is out of range");
++      }
++      const auto& command = physical_plan.commands[command_id];
++      for (const auto predecessor : command.predecessors) {
++        if (predecessor >= command_complete.size() || !command_complete[predecessor]) {
++          throw std::runtime_error(
++              "ModelPack: deterministic physical schedule violates a command dependency");
++        }
++      }
++      for (const auto input : command.inputs) {
++        const auto root = root_value(input);
++        if (root >= value_ready.size() || !value_ready[root]) {
++          throw std::runtime_error(
++              "ModelPack: physical command reads a value before its producer completes");
++        }
++        const bool public_input =
++            std::find(command_plan.model_inputs().begin(), command_plan.model_inputs().end(),
++                      root) != command_plan.model_inputs().end();
++        if (!public_input && arena_plan.region(root) == nullptr) {
++          throw std::runtime_error(
++              "ModelPack: live internal command input is not retained in the frame arena");
++        }
++      }
++    }
++    for (const auto command_id : cohort.commands) {
++      const auto& command = physical_plan.commands[command_id];
++      for (const auto output : command.outputs) {
++        const auto root = root_value(output);
++        const bool detached_terminal_mla_output =
++            command.engine ==
++                pipeline_internal::sima::static_contract::PhysicalEngine::Mla &&
++            arena_plan.is_detached_root(root);
++        if (root >= value_ready.size() ||
++            (arena_plan.region(root) == nullptr &&
++             !detached_terminal_mla_output)) {
++          throw std::runtime_error(
++              "ModelPack: physical command output has no retained frame-arena value");
++        }
++        value_ready[root] = true;
++      }
++      command_complete[command_id] = true;
++    }
++  }
++  for (const auto& output : command_plan.model_outputs()) {
++    const auto root = root_value(output.value_id);
++    if (root >= value_ready.size() || !value_ready[root]) {
++      throw std::runtime_error("ModelPack: public output is not produced by the physical schedule");
++    }
++  }
++
++  ExecutionPlan result;
++  result.infer.reserve(ordered.size());
++  for (const auto cohort_id : ordered) {
++    auto& cohort = cohorts.at(cohort_id);
++    std::sort(cohort.members.begin(), cohort.members.end(),
++              [](const auto& left, const auto& right) {
++                return left.ordinal < right.ordinal;
++              });
++    if (std::adjacent_find(
++            cohort.members.begin(), cohort.members.end(),
++            [](const auto& left, const auto& right) {
++              return left.ordinal == right.ordinal;
++            }) !=
++        cohort.members.end()) {
++      throw std::runtime_error("ModelPack: render cohort contains a duplicate member ordinal");
++    }
++    const auto& first_member = cohort.members.front();
++    const auto first_op_id = first_member.semantic_chain.front();
++    const auto& op = command_plan.ops()[first_op_id];
++    SimaCvuCapabilityAbiRecord cvu_capability{};
++    const bool has_cvu_capability =
++        cohort.engine == PhysicalEngine::Cvu && cohort.graph_id != 0U &&
++        sima_cvu_capability_abi_lookup(cohort.graph_id, &cvu_capability);
++    const auto kind = has_cvu_capability
++                          ? canonical_execution_stage_kind(cvu_capability.canonical_token)
++                          : model_plan_stage_kind(op);
++    if ((cohort.engine == PhysicalEngine::Cvu &&
++         (!has_cvu_capability || kind == ExecutionStageKind::Unknown)) ||
++        (cohort.engine != PhysicalEngine::Cvu &&
++         (cohort.graph_id != 0U || first_member.semantic_chain.size() != 1U))) {
++      throw std::runtime_error("ModelPack: physical command has no exact renderer identity");
++    }
++    for (const auto& member : cohort.members) {
++      if ((has_cvu_capability &&
++           member.semantic_chain.size() != cvu_capability.semantic_pattern_length) ||
++          (!has_cvu_capability && member.semantic_chain.size() != 1U)) {
++        throw std::runtime_error(
++            "ModelPack: render cohort contains incompatible semantic operations");
++      }
++    }
++    ExecutionStage stage;
++    stage.order_index = result.infer.size();
++    stage.execution_op_id = first_op_id;
++    stage.physical_cohort_id = cohort.id;
++    stage.physical_command_ids = cohort.commands;
++    for (const auto& member : cohort.members) {
++      stage.execution_op_ids.insert(stage.execution_op_ids.end(),
++                                    member.semantic_chain.begin(),
++                                    member.semantic_chain.end());
++    }
++    if (cohort.members.size() == 1U && first_member.semantic_chain.size() == 1U) {
++      stage.mpk_plugin_index = pipeline_internal::sima::find_plugin_index_by_name_or_id(
++          packaging_contract, op.name);
++      stage.stage_name = op.name;
++    } else {
++      stage.stage_name = "physical_cvu_cohort_" + std::to_string(cohort.id);
++    }
++    stage.kind = kind;
++    stage.factory_name = require_stage_factory(stage.kind, cohort.engine == PhysicalEngine::Cvu);
++    stage.plugin_id = plugin_id_for_stage_kind(stage.kind);
++    stage.processor = processor_for_stage_kind(stage.kind);
++    stage.kernel = cohort.engine == PhysicalEngine::Cvu
++                       ? kernel_for_stage_kind(stage.kind)
++                       : (!op.kernel.empty() ? op.kernel : op.implementation_id);
++    result.infer.push_back(std::move(stage));
++  }
++  return result;
++}
++
+ static std::string preferred_tensor_dtype(const pipeline_internal::sima::MpkTensorContract& tensor,
+                                           const std::string& fallback = {}) {
+   if (!tensor.logical_dtype.empty()) {
+@@ -2636,35 +2945,34 @@ build_model_managed_dequant_compiled_contract_from_mpk(
+   return compiled;
+ }
+ 
+-static bool
+-remap_model_managed_dequant_inputs_from_upstream(const CompiledRuntimeContract& upstream_runtime,
+-                                                 CompiledDequantContract* compiled,
+-                                                 std::string* err = nullptr) {
+-  if (!compiled) {
++static bool remap_runtime_inputs_from_upstream(
++    const CompiledRuntimeContract& upstream_runtime,
++    CompiledRuntimeContract* runtime, std::string* err = nullptr) {
++  if (!runtime) {
+     if (err) {
+-      *err = "null_compiled_dequant_contract";
++      *err = "null_compiled_runtime_contract";
+     }
+     return false;
+   }
+-  auto& runtime = compiled->runtime_contract;
+-  if (runtime.logical_inputs.size() != upstream_runtime.logical_outputs.size()) {
++  if (runtime->logical_inputs.size() != upstream_runtime.logical_outputs.size() ||
++      runtime->input_bindings.size() != runtime->logical_inputs.size()) {
+     if (err) {
+-      *err = "dequant_upstream_logical_count_mismatch";
++      *err = "upstream_logical_count_mismatch";
+     }
+     return false;
+   }
+   if (upstream_runtime.physical_outputs.empty()) {
+     if (err) {
+-      *err = "dequant_upstream_missing_physical_outputs";
++      *err = "upstream_missing_physical_outputs";
+     }
+     return false;
+   }
+ 
+-  runtime.physical_inputs = upstream_runtime.physical_outputs;
+-  for (std::size_t i = 0; i < runtime.logical_inputs.size(); ++i) {
++  runtime->physical_inputs = upstream_runtime.physical_outputs;
++  for (std::size_t i = 0; i < runtime->logical_inputs.size(); ++i) {
+     const auto& upstream_output = upstream_runtime.logical_outputs[i];
+-    auto& logical_input = runtime.logical_inputs[i];
+-    auto& binding = runtime.input_bindings[i];
++    auto& logical_input = runtime->logical_inputs[i];
++    auto& binding = runtime->input_bindings[i];
+ 
+     logical_input.logical_index =
+         upstream_output.logical_index >= 0 ? upstream_output.logical_index : static_cast<int>(i);
+@@ -2696,13 +3004,20 @@ remap_model_managed_dequant_inputs_from_upstream(const CompiledRuntimeContract&
+     }
+ 
+     const auto physical_it = std::find_if(
+-        runtime.physical_inputs.begin(), runtime.physical_inputs.end(), [&](const auto& physical) {
++        runtime->physical_inputs.begin(), runtime->physical_inputs.end(), [&](const auto& physical) {
+           return physical.physical_index == upstream_output.physical_index;
+         });
+-    const std::uint64_t physical_size_bytes = physical_it != runtime.physical_inputs.end()
++    const std::uint64_t physical_size_bytes = physical_it != runtime->physical_inputs.end()
+                                                   ? physical_it->size_bytes
+                                                   : upstream_output.size_bytes;
+ 
++    // A compatibility-fragment link transports one TensorBuffer.  A grouped
++    // producer publishes all of its logical members in that one catalogue;
++    // the consumer therefore reads every member from sink pad zero and uses
++    // src_logical_output_index to select the exact span.  Keeping the original
++    // per-member sink indices would incorrectly require N GStreamer links for
++    // one grouped upstream element.
++    binding.sink_pad_index = 0;
+     binding.local_logical_input_index = logical_input.logical_index;
+     binding.src_logical_output_index = upstream_output.logical_index;
+     binding.src_output_slot = upstream_output.output_slot;
+@@ -2718,9 +3033,9 @@ remap_model_managed_dequant_inputs_from_upstream(const CompiledRuntimeContract&
+   }
+ 
+   std::string packed_err;
+-  if (!pipeline_internal::packedio::validate_packed_contract(runtime, &packed_err)) {
++  if (!pipeline_internal::packedio::validate_packed_contract(*runtime, &packed_err)) {
+     if (err) {
+-      *err = "invalid_upstream_remapped_dequant_contract: " + packed_err;
++      *err = "invalid_upstream_remapped_contract: " + packed_err;
+     }
+     return false;
+   }
+@@ -2730,6 +3045,20 @@ remap_model_managed_dequant_inputs_from_upstream(const CompiledRuntimeContract&
+   return true;
+ }
+ 
++static bool
++remap_model_managed_dequant_inputs_from_upstream(const CompiledRuntimeContract& upstream_runtime,
++                                                 CompiledDequantContract* compiled,
++                                                 std::string* err = nullptr) {
++  if (!compiled) {
++    if (err) {
++      *err = "null_compiled_dequant_contract";
++    }
++    return false;
++  }
++  return remap_runtime_inputs_from_upstream(upstream_runtime,
++                                            &compiled->runtime_contract, err);
++}
++
+ static const pipeline_internal::sima::MpkPluginIoContract* find_terminal_stage_after_outputs(
+     const pipeline_internal::sima::MpkContract& contract,
+     const std::vector<const pipeline_internal::sima::MpkPluginIoContract*>& producers);
+@@ -2826,6 +3155,341 @@ publish_mla_outputs_as_packed_parent(pipeline_internal::sima::MlaStaticContract*
+   return true;
+ }
+ 
++// A direct TVM CPU epoch is a property of the rendered, linear pipeline, not
++// of the semantic DAG's in/out degree. A branch join can legitimately add an
++// already-complete device predecessor to the later A65 command while the
++// immediately preceding A65 element still owns the active mapping of the same
++// Core arena. Keep that mapping only across adjacent HostTVM elements which
++// provably use this one Core-owned CMA arena; the right-hand element must reuse
++// an arena input, otherwise it introduces a new allocation boundary.
++static bool can_continue_direct_tvm_cpu_epoch(
++    const ExecutionStage& left, const ExecutionStage& right,
++    const pipeline_internal::sima::static_contract::ModelExecutionPlan& plan,
++    const pipeline_internal::sima::static_contract::FrameSlotArenaPlan& arena) {
++  namespace sc = pipeline_internal::sima::static_contract;
++  const auto& placement = arena.placement();
++  if (left.kind != ExecutionStageKind::HostTvm ||
++      right.kind != ExecutionStageKind::HostTvm ||
++      placement.domain != sc::ArenaStorageDomain::Cma ||
++      placement.provenance != sc::ArenaAllocationProvenance::CoreAllocated ||
++      !placement.requires_access(sc::ArenaDeviceAccess::CpuA65) ||
++      !left.execution_op_id.has_value() || !right.execution_op_id.has_value() ||
++      *left.execution_op_id >= plan.ops().size() ||
++      *right.execution_op_id >= plan.ops().size()) {
++    return false;
++  }
++
++  const auto& left_op = plan.ops()[*left.execution_op_id];
++  const auto& right_op = plan.ops()[*right.execution_op_id];
++  if (left_op.kind != sc::OpKind::HostTvm || right_op.kind != sc::OpKind::HostTvm ||
++      left_op.outputs.empty() || right_op.inputs.empty() || right_op.outputs.empty() ||
++      std::any_of(left_op.outputs.begin(), left_op.outputs.end(),
++                  [&](const auto value_id) { return arena.region(value_id) == nullptr; }) ||
++      std::any_of(right_op.outputs.begin(), right_op.outputs.end(),
++                  [&](const auto value_id) { return arena.region(value_id) == nullptr; })) {
++    return false;
++  }
++
++  return std::any_of(right_op.inputs.begin(), right_op.inputs.end(),
++                     [&](const auto value_id) { return arena.region(value_id) != nullptr; });
++}
++
++static std::string encode_direct_tvm_contract(
++    const pipeline_internal::sima::static_contract::ModelExecutionPlan& plan,
++    const pipeline_internal::sima::static_contract::FrameSlotArenaPlan& arena,
++    const pipeline_internal::sima::static_contract::PhysicalExecutionPlan& physical,
++    const pipeline_internal::sima::static_contract::OpSpec& op,
++    const pipeline_internal::sima::MpkContract& packaging_contract,
++    const bool cpu_epoch_start, const bool cpu_epoch_end) {
++  using pipeline_internal::sima::static_contract::HostTvmOpConfig;
++  const auto* host = std::get_if<HostTvmOpConfig>(&op.config);
++  if (!host || host->input_names.size() != op.inputs.size() ||
++      host->output_types.size() != op.outputs.size() ||
++      std::any_of(host->output_alias_input.begin(), host->output_alias_input.end(),
++                  [](const std::int32_t alias) { return alias >= 0; })) {
++    throw std::runtime_error("ModelFragment: A65 target command '" + op.name +
++                             "' is not an exact materializing boundary");
++  }
++
++  fs::path package_root = fs::path(packaging_contract.mpk_json_path).parent_path();
++  if (package_root.filename() == "etc") {
++    package_root = package_root.parent_path();
++  }
++  const fs::path raw(host->executable);
++  const std::array<fs::path, 4> candidates = {
++      raw.is_absolute() ? raw : package_root / "lib" / raw,
++      raw.is_absolute() ? raw : package_root / raw,
++      raw.is_absolute() ? raw : package_root / "share" / raw, raw};
++  fs::path resolved;
++  for (const auto& candidate : candidates) {
++    std::error_code ec;
++    if (!candidate.empty() && fs::is_regular_file(candidate, ec) && !ec) {
++      resolved = candidate;
++      break;
++    }
++  }
++  if (resolved.empty()) {
++    throw std::runtime_error("ModelFragment: A65 target artifact for '" + op.name +
++                             "' is not present in the extracted package");
++  }
++
++  if (op.id >= physical.command_for_semantic_op.size() ||
++      !physical.command_for_semantic_op[op.id].has_value()) {
++    throw std::runtime_error("ModelFragment: A65 stage has no physical command authority");
++  }
++  const auto command_id = *physical.command_for_semantic_op[op.id];
++  if (command_id >= physical.commands.size() ||
++      physical.commands[command_id].engine !=
++          pipeline_internal::sima::static_contract::PhysicalEngine::A65) {
++    throw std::runtime_error("ModelFragment: A65 stage has a contradictory physical command");
++  }
++  const auto storage_domain = [&]() -> const char* {
++    using Domain = pipeline_internal::sima::static_contract::ArenaStorageDomain;
++    switch (arena.placement().domain) {
++    case Domain::Cma: return "cma";
++    case Domain::Dms: return "dms";
++    case Domain::Unknown: break;
++    }
++    throw std::runtime_error("ModelFragment: A65 arena has no selected storage domain");
++  }();
++  const auto provenance = [&]() -> const char* {
++    using Provenance =
++        pipeline_internal::sima::static_contract::ArenaAllocationProvenance;
++    switch (arena.placement().provenance) {
++    case Provenance::CoreAllocated: return "core_allocated";
++    case Provenance::ExternalAdopted: return "external_adopted";
++    case Provenance::Unknown: break;
++    }
++    throw std::runtime_error("ModelFragment: A65 arena has no allocation provenance");
++  }();
++  const auto escape_policy =
++      arena.placement().escape ==
++              pipeline_internal::sima::static_contract::ArenaEscapePolicy::CpuMappablePublic
++          ? "cpu_mappable_public"
++          : "internal_only";
++
++  nlohmann::json encoded{{"schema", "sima.neat.direct-tvm-lane"},
++                         {"version", 2},
++                         {"command_id", op.id},
++                         {"command_name", op.name},
++                         {"executable", resolved.string()},
++                         {"executable_bytes", host->executable_bytes},
++                         {"executable_sha256", host->executable_sha256},
++                         {"arena_bytes", arena.allocation_bytes()},
++                         {"storage_domain", storage_domain},
++                         {"allocation_provenance", provenance},
++                         {"required_device_access",
++                          arena.placement().required_device_access},
++                         {"escape_policy", escape_policy},
++                         {"cpu_epoch_start", cpu_epoch_start},
++                         {"cpu_epoch_end", cpu_epoch_end},
++                         {"inputs", nlohmann::json::array()},
++                         {"outputs", nlohmann::json::array()}};
++  bool reuses_arena = false;
++  for (std::size_t index = 0; index < op.inputs.size(); ++index) {
++    const auto* value = plan.value(op.inputs[index]);
++    const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
++    const auto* region = value ? arena.region(value->id) : nullptr;
++    if (!value || !binding || !value->logical_dtype || !value->logical_shape) {
++      throw std::runtime_error("ModelFragment: A65 input has no exact target binding");
++    }
++    std::uint64_t offset = binding->byte_offset;
++    if (region) {
++      if (offset > std::numeric_limits<std::uint64_t>::max() - region->byte_offset) {
++        throw std::runtime_error("ModelFragment: A65 input arena offset overflows");
++      }
++      offset += region->byte_offset;
++      reuses_arena = true;
++    }
++    encoded["inputs"].push_back({{"parameter_name", host->input_names[index]},
++                                  {"value_name", value->name},
++                                  {"scalar", *value->logical_dtype},
++                                  {"shape", *value->logical_shape},
++                                  {"required_bytes", value->required_bytes},
++                                  {"arena_bound", region != nullptr},
++                                  {"arena_offset", offset}});
++  }
++  for (std::size_t index = 0; index < op.outputs.size(); ++index) {
++    const auto* value = plan.value(op.outputs[index]);
++    const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
++    const auto* region = value ? arena.region(value->id) : nullptr;
++    if (!value || !binding || !region || !value->logical_dtype || !value->logical_shape ||
++        binding->byte_offset > std::numeric_limits<std::uint64_t>::max() - region->byte_offset) {
++      throw std::runtime_error("ModelFragment: A65 stage '" + op.name + "' output '" +
++                               (value ? value->name : std::string("<missing>")) +
++                               "' has no exact frame-arena binding");
++    }
++    encoded["outputs"].push_back({{"value_name", value->name},
++                                   {"scalar", *value->logical_dtype},
++                                   {"shape", *value->logical_shape},
++                                   {"required_bytes", value->required_bytes},
++                                   {"arena_offset", region->byte_offset + binding->byte_offset}});
++  }
++  encoded["reuse_input_arena"] = reuses_arena;
++  const auto text = encoded.dump();
++  gchar* base64 = g_base64_encode(reinterpret_cast<const guchar*>(text.data()), text.size());
++  if (!base64) {
++    throw std::runtime_error("ModelFragment: failed to encode prepared A65 lane contract");
++  }
++  std::string result(base64);
++  g_free(base64);
++  return result;
++}
++
++static bool direct_tvm_storage_is_dense_address_equivalent(
++    const pipeline_internal::sima::static_contract::ValueSpec& value) noexcept {
++  if (!value.storage_binding || !value.logical_shape || !value.logical_dtype ||
++      value.logical_shape->empty()) {
++    return false;
++  }
++  const std::uint64_t element_bytes =
++      pipeline_internal::sima::specbuilders::dtype_size_bytes_from_token(*value.logical_dtype);
++  if (element_bytes == 0U) {
++    return false;
++  }
++  const auto& shape = *value.logical_shape;
++  const auto& strides = value.storage_binding->stride_bytes;
++  if (!strides.empty() && strides.size() != shape.size()) {
++    return false;
++  }
++
++  std::uint64_t dense_stride = element_bytes;
++  for (std::size_t reverse = shape.size(); reverse > 0U; --reverse) {
++    const std::size_t axis = reverse - 1U;
++    if (shape[axis] <= 0 ||
++        (!strides.empty() &&
++         (strides[axis] <= 0 ||
++          (shape[axis] > 1 &&
++           static_cast<std::uint64_t>(strides[axis]) != dense_stride))) ||
++        static_cast<std::uint64_t>(shape[axis]) >
++            std::numeric_limits<std::uint64_t>::max() / dense_stride) {
++      return false;
++    }
++    dense_stride *= static_cast<std::uint64_t>(shape[axis]);
++  }
++  return dense_stride == value.required_bytes;
++}
++
++static CompiledRuntimeContract build_target_tvm_runtime_contract(
++    const pipeline_internal::sima::static_contract::ModelExecutionPlan& plan,
++    const pipeline_internal::sima::static_contract::FrameSlotArenaPlan& arena,
++    const pipeline_internal::sima::static_contract::OpSpec& op) {
++  using pipeline_internal::sima::DeviceKind;
++  using pipeline_internal::sima::FrameArenaRole;
++  using pipeline_internal::sima::TensorMaterializationKind;
++  using pipeline_internal::sima::specbuilders::build_input_binding_static_spec;
++  using pipeline_internal::sima::specbuilders::build_logical_input_static_spec;
++  using pipeline_internal::sima::specbuilders::build_logical_output_static_spec;
++  using pipeline_internal::sima::specbuilders::build_output_route_static_spec;
++  using pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec;
++
++  CompiledRuntimeContract runtime;
++  runtime.plugin_kind = "neatprocesstvm";
++  runtime.frame_arena_size_bytes = arena.allocation_bytes();
++  runtime.frame_arena_storage_domain = arena.placement().domain;
++  runtime.frame_arena_provenance = arena.placement().provenance;
++  runtime.frame_arena_required_device_access =
++      arena.placement().required_device_access;
++  runtime.frame_arena_escape_policy = arena.placement().escape;
++  bool consumes_internal_carrier = false;
++
++  for (std::size_t index = 0; index < op.inputs.size(); ++index) {
++    const auto* value = plan.value(op.inputs[index]);
++    const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
++    const auto* carrier = binding ? plan.carrier(binding->carrier_id) : nullptr;
++    const auto* region = value ? arena.region(value->id) : nullptr;
++    if (!value || !binding || !carrier || !value->logical_dtype || !value->logical_shape ||
++        index > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
++        !direct_tvm_storage_is_dense_address_equivalent(*value)) {
++      throw std::runtime_error("ModelFragment: A65 input has no exact typed storage binding");
++    }
++    std::uint64_t parent_offset = binding->byte_offset;
++    if (region) {
++      if (parent_offset > std::numeric_limits<std::uint64_t>::max() - region->byte_offset) {
++        throw std::runtime_error("ModelFragment: A65 input carrier offset overflows");
++      }
++      parent_offset += region->byte_offset;
++      consumes_internal_carrier = true;
++    }
++    if (parent_offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
++      throw std::runtime_error("ModelFragment: A65 input carrier offset is not representable");
++    }
++    const int local = static_cast<int>(index);
++    runtime.physical_inputs.push_back(build_physical_buffer_static_spec(
++        local, local, value->required_bytes, DeviceKind::Cpu, value->name, local,
++        static_cast<std::int64_t>(parent_offset), carrier->required_alignment_bytes));
++    runtime.logical_inputs.push_back(build_logical_input_static_spec(
++        local, local, local, *value->logical_shape, *value->logical_dtype,
++        value->logical_layout.value_or(""), value->name, value->name, value->name,
++        /*byte_offset=*/0, value->required_bytes, TensorMaterializationKind::OffsetView));
++    runtime.input_bindings.push_back(build_input_binding_static_spec(
++        local, local, value->name, value->name, local, local, local, value->required_bytes,
++        static_cast<std::int64_t>(parent_offset), true));
++  }
++
++  for (std::size_t index = 0; index < op.outputs.size(); ++index) {
++    const auto* value = plan.value(op.outputs[index]);
++    const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
++    const auto* carrier = binding ? plan.carrier(binding->carrier_id) : nullptr;
++    const auto* region = value ? arena.region(value->id) : nullptr;
++    const bool dense_equivalent =
++        value && direct_tvm_storage_is_dense_address_equivalent(*value);
++    if (!value || !binding || !carrier || !region || !value->logical_dtype ||
++        !value->logical_shape ||
++        !dense_equivalent ||
++        binding->byte_offset > std::numeric_limits<std::uint64_t>::max() - region->byte_offset ||
++        index > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
++      std::string strides;
++      if (binding) {
++        for (const auto stride : binding->stride_bytes) {
++          if (!strides.empty()) {
++            strides += ',';
++          }
++          strides += std::to_string(stride);
++        }
++      }
++      throw std::runtime_error("ModelFragment: A65 stage '" + op.name + "' output '" +
++                               (value ? value->name : std::string("<missing>")) +
++                               "' has no exact dense frame-arena binding (binding=" +
++                               (binding ? "yes" : "no") + ", carrier=" +
++                               (carrier ? "yes" : "no") + ", region=" +
++                               (region ? "yes" : "no") + ", dtype=" +
++                               (value && value->logical_dtype ? *value->logical_dtype
++                                                              : "<missing>") +
++                               ", rank=" +
++                               std::to_string(value && value->logical_shape
++                                                  ? value->logical_shape->size()
++                                                  : 0U) +
++                               ", required_bytes=" +
++                               std::to_string(value ? value->required_bytes : 0U) +
++                               ", physical_span=" +
++                               std::to_string(binding ? binding->physical_span : 0U) +
++                               ", strides=[" + strides + "]" +
++                               ", dense_equivalent=" +
++                               (dense_equivalent ? "yes" : "no") +
++                               ")");
++    }
++    const std::uint64_t parent_offset = region->byte_offset + binding->byte_offset;
++    if (parent_offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
++      throw std::runtime_error("ModelFragment: A65 output carrier offset is not representable");
++    }
++    const int local = static_cast<int>(index);
++    runtime.physical_outputs.push_back(build_physical_buffer_static_spec(
++        local, local, value->required_bytes, DeviceKind::Cpu, value->name, local,
++        static_cast<std::int64_t>(parent_offset), carrier->required_alignment_bytes));
++    runtime.logical_outputs.push_back(build_logical_output_static_spec(
++        local, local, local, local, local, *value->logical_shape, *value->logical_dtype,
++        value->logical_layout.value_or(""), value->name, value->name, value->name,
++        /*byte_offset=*/0, value->required_bytes));
++    runtime.output_order.push_back(
++        build_output_route_static_spec(local, local, local, value->name, value->name));
++  }
++  runtime.frame_arena_role = consumes_internal_carrier ? FrameArenaRole::ReuseInput
++                                                        : FrameArenaRole::Allocate;
++  runtime.consumer_keeps_distinct_physical_inputs = op.inputs.size() > 1U;
++  return runtime;
++}
++
+ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_plan(
+     const std::vector<ExecutionStage>& stages,
+     const std::optional<pipeline_internal::sima::MpkContract>& mpk_contract,
+@@ -2839,6 +3503,8 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+         dmabuf_plan_execution_plan,
+     const std::optional<pipeline_internal::sima::static_contract::FrameSlotArenaPlan>&
+         dmabuf_frame_arena_plan,
++    const std::optional<pipeline_internal::sima::static_contract::PhysicalExecutionPlan>&
++        dmabuf_physical_execution_plan,
+     bool direct_mla_to_boxdecode = false) {
+   if (!mpk_contract.has_value()) {
+     throw std::runtime_error(
+@@ -2864,8 +3530,72 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+     entry.stage_order = stage.order_index;
+     const auto* mpk_stage = find_mpk_stage_for_execution_stage(mpk_contract, stage);
+ 
++    // Cast is valid on both sides of MLA.  The legacy pre-adapter builder is
++    // intentionally ingress-specific, while the general stage builder owns
++    // the multi-output egress form.  Use immutable compiler op identity and
++    // topological sequence to select the side; never infer it from a generated
++    // compatibility-stage name such as "physical_cvu_cohort_N".
++    const bool cast_is_after_last_mla = [&]() {
++      if (stage.kind != ExecutionStageKind::Cast || !dmabuf_plan_execution_plan.has_value() ||
++          stage.execution_op_ids.empty()) {
++        return false;
++      }
++      std::optional<std::uint64_t> last_mla_sequence;
++      for (const auto& op : dmabuf_plan_execution_plan->ops()) {
++        if (op.kind == pipeline_internal::sima::static_contract::OpKind::Mla) {
++          last_mla_sequence = last_mla_sequence.has_value()
++                                  ? std::max(*last_mla_sequence, op.sequence)
++                                  : op.sequence;
++        }
++      }
++      if (!last_mla_sequence.has_value()) {
++        return false;
++      }
++      return std::all_of(stage.execution_op_ids.begin(), stage.execution_op_ids.end(),
++                         [&](const auto op_id) {
++                           return op_id < dmabuf_plan_execution_plan->ops().size() &&
++                                  dmabuf_plan_execution_plan->ops()[op_id].kind ==
++                                      pipeline_internal::sima::static_contract::OpKind::Cast &&
++                                  dmabuf_plan_execution_plan->ops()[op_id].sequence >
++                                      *last_mla_sequence;
++                         });
++    }();
++
+     if (execution_stage_uses_processcvu_contract(stage.kind)) {
+-      if (stage.kind == ExecutionStageKind::Preproc) {
++      const bool physical_command_stage =
++          dmabuf_plan_execution_plan.has_value() && dmabuf_frame_arena_plan.has_value() &&
++          dmabuf_physical_execution_plan.has_value() && !stage.physical_command_ids.empty();
++      if (physical_command_stage) {
++        std::string contract_error;
++        entry.processcvu_contract = pipeline_internal::sima::static_contract::
++            build_dmabuf_plan_processcvu_command_contract(
++                *dmabuf_plan_execution_plan, *dmabuf_physical_execution_plan,
++                std::span<const pipeline_internal::sima::static_contract::PhysicalCommandId>(
++                    stage.physical_command_ids),
++                *dmabuf_frame_arena_plan, &contract_error);
++        if (!entry.processcvu_contract.has_value()) {
++          throw std::runtime_error(
++              "ModelFragment: dmabuf-plan strict ProcessCVU command contract failed: " +
++              contract_error);
++        }
++        const auto command_id = stage.physical_command_ids.front();
++        if (command_id >= dmabuf_physical_execution_plan->commands.size()) {
++          throw std::runtime_error(
++              "ModelFragment: strict ProcessCVU command role is out of range");
++        }
++        const auto command_role =
++            dmabuf_physical_execution_plan->commands[command_id].role;
++        if (command_role == pipeline_internal::sima::static_contract::PhysicalCommandRole::NonCvu ||
++            std::any_of(stage.physical_command_ids.begin(), stage.physical_command_ids.end(),
++                        [&](const auto id) {
++                          return id >= dmabuf_physical_execution_plan->commands.size() ||
++                                 dmabuf_physical_execution_plan->commands[id].role != command_role;
++                        })) {
++          throw std::runtime_error(
++              "ModelFragment: strict ProcessCVU cohort has no exact uniform placement role");
++        }
++        entry.processcvu_contract->physical_command_role = command_role;
++      } else if (stage.kind == ExecutionStageKind::Preproc) {
+         if (!processcvu_preproc_single_output_handoff.has_value()) {
+           throw std::runtime_error("ModelFragment: model-managed preproc stage '" +
+                                    stage.stage_name +
+@@ -2877,7 +3607,10 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+                 *mpk_contract, ExecutionStageKind::Preproc, std::nullopt, std::nullopt,
+                 processcvu_preproc_single_output_handoff, input_format, input_depth,
+                 max_input_width, max_input_height, normalize, mean, stddev);
+-      } else if (stage_context == ModelStage::Postprocess) {
++      } else if (stage.kind == ExecutionStageKind::Detess ||
++                 stage.kind == ExecutionStageKind::DetessCast ||
++                 stage.kind == ExecutionStageKind::DetessDequant ||
++                 stage.kind == ExecutionStageKind::Dequant || cast_is_after_last_mla) {
+         std::optional<std::string> exact_processcvu_stage_name_or_id;
+         if (!stage.stage_name.empty()) {
+           exact_processcvu_stage_name_or_id = stage.stage_name;
+@@ -2935,7 +3668,9 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+             stage.kind == ExecutionStageKind::Quant || stage.kind == ExecutionStageKind::Tess ||
+             stage.kind == ExecutionStageKind::QuantTess || stage.kind == ExecutionStageKind::Cast ||
+             stage.kind == ExecutionStageKind::CastTess;
+-        const bool fan_in_path = is_pre_mla_family && pre_mla_branch_count > 1U;
++        const bool physical_cohort_path = stage.execution_op_ids.size() > 1U;
++        const bool fan_in_path = is_pre_mla_family &&
++                                 (pre_mla_branch_count > 1U || physical_cohort_path);
+         std::optional<std::string> exact_processcvu_stage_name_or_id;
+         if (!fan_in_path) {
+           if (mpk_stage != nullptr) {
+@@ -2961,25 +3696,42 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+       if (entry.processcvu_contract.has_value()) {
+         if (dmabuf_plan_execution_plan.has_value()) {
+           std::string projection_error;
+-          const auto adjacent_mla_stage_index =
+-              stage_context == ModelStage::Postprocess
+-                  ? dmabuf_plan_execution_plan->mla_stage_count() - 1U
+-                  : 0U;
+-          if (!dmabuf_frame_arena_plan.has_value() ||
+-              !pipeline_internal::sima::static_contract::
+-                  apply_dmabuf_plan_processcvu_contract_projection(
+-                      *dmabuf_plan_execution_plan, adjacent_mla_stage_index,
+-                      *dmabuf_frame_arena_plan,
+-                      stage_context == ModelStage::Postprocess
+-                          ? pipeline_internal::sima::static_contract::ProcessCvuMlaBoundary::Outputs
+-                          : pipeline_internal::sima::static_contract::ProcessCvuMlaBoundary::Inputs,
+-                      &entry.processcvu_contract->payload,
+-                      &entry.processcvu_contract->runtime_contract,
+-                      &entry.processcvu_contract->exposed_view, &projection_error)) {
++          bool projected = physical_command_stage;
++          if (!physical_command_stage && dmabuf_frame_arena_plan.has_value() &&
++                     dmabuf_plan_execution_plan->mla_stage_count() > 0U) {
++            const auto adjacent_mla_stage_index =
++                stage_context == ModelStage::Postprocess
++                    ? dmabuf_plan_execution_plan->mla_stage_count() - 1U
++                    : 0U;
++            projected = pipeline_internal::sima::static_contract::
++                apply_dmabuf_plan_processcvu_contract_projection(
++                    *dmabuf_plan_execution_plan, adjacent_mla_stage_index,
++                    *dmabuf_frame_arena_plan,
++                    stage_context == ModelStage::Postprocess
++                        ? pipeline_internal::sima::static_contract::ProcessCvuMlaBoundary::Outputs
++                        : pipeline_internal::sima::static_contract::ProcessCvuMlaBoundary::Inputs,
++                    &entry.processcvu_contract->payload,
++                    &entry.processcvu_contract->runtime_contract,
++                    &entry.processcvu_contract->exposed_view, &projection_error);
++          }
++          if (!projected) {
+             throw std::runtime_error(
+                 "ModelFragment: dmabuf-plan strict ProcessCVU projection failed: " +
+                 projection_error);
+           }
++          // The strict physical command already binds its declared arena
++          // roots. Only the quarantined non-command path may still require a
++          // linear compatibility remap from its immediate predecessor.
++          if (!physical_command_stage && previous_runtime.has_value() &&
++              !remap_runtime_inputs_from_upstream(
++                  *previous_runtime,
++                  &entry.processcvu_contract->runtime_contract,
++                  &projection_error)) {
++            throw std::runtime_error(
++                "ModelFragment: dmabuf-plan ProcessCVU command could not bind its exact "
++                "upstream catalogue: " +
++                projection_error);
++          }
+         }
+       }
+     }
+@@ -3045,38 +3797,98 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+         if (previous_runtime.has_value()) {
+           upstream_outputs = previous_runtime->logical_outputs;
+         }
++        if (!dmabuf_frame_arena_plan.has_value()) {
++          throw std::runtime_error(
++              "ModelFragment: dmabuf-plan MLA stage has no frame-arena plan");
++        }
++        if (!dmabuf_physical_execution_plan.has_value()) {
++          throw std::runtime_error(
++              "ModelFragment: dmabuf-plan MLA stage has no physical command plan");
++        }
+         auto input_sources =
+             pipeline_internal::sima::static_contract::resolve_mla_input_physical_sources(
+-                *dmabuf_plan_execution_plan, mla_stage_index, upstream_outputs, &projection_error);
++                *dmabuf_plan_execution_plan, mla_stage_index,
++                *dmabuf_frame_arena_plan, upstream_outputs,
++                &projection_error);
+         if (!input_sources.has_value()) {
+           throw std::runtime_error(
+               "ModelFragment: dmabuf-plan strict MLA physical-input projection failed: " +
+               projection_error);
+         }
+-        if (!dmabuf_frame_arena_plan.has_value() ||
+-            !pipeline_internal::sima::static_contract::apply_dmabuf_plan_contract_projection(
++        if (!pipeline_internal::sima::static_contract::apply_dmabuf_plan_contract_projection(
+                 *dmabuf_plan_execution_plan, mla_stage_index, *dmabuf_frame_arena_plan,
+                 &mla_contract, *input_sources, &projection_error)) {
+           throw std::runtime_error("ModelFragment: dmabuf-plan strict MLA projection failed: " +
+                                    projection_error);
+         }
+       }
+-      if (should_publish_mla_outputs_as_packed_parent_for_boxdecode(
++      // The strict DMA-BUF projection above is the hardware-port authority:
++      // it keeps one physical entry per real ELF/MLArt OFM while assigning
++      // every entry an exact offset in one Core-owned arena.  Do not replace
++      // that port table with the old single-parent publication shape.  The
++      // latter is only a compatibility representation for the legacy,
++      // non-planned dispatcher path; strict ProcessMLA binds the real ports
++      // one-for-one and publishes logical views over their shared carrier.
++      if (!dmabuf_plan_execution_plan.has_value() &&
++          should_publish_mla_outputs_as_packed_parent_for_boxdecode(
+               stages, stage_index, mla_contract, direct_mla_to_boxdecode)) {
+         (void)publish_mla_outputs_as_packed_parent(&mla_contract);
+       }
+       entry.mla_compiled =
+           pipeline_internal::sima::stagesemantics::build_mla_compiled_contract(mla_contract);
+       entry.mla_compiled->payload.dmabuf_plan_contract = dmabuf_plan_execution_plan.has_value();
++      if (dmabuf_plan_execution_plan.has_value() && stage.execution_op_id.has_value() &&
++          *stage.execution_op_id < dmabuf_plan_execution_plan->ops().size()) {
++        using pipeline_internal::sima::static_contract::MlaOpConfig;
++        const auto* exact = std::get_if<MlaOpConfig>(
++            &dmabuf_plan_execution_plan->ops()[*stage.execution_op_id].config);
++        if (!exact || exact->executable_bytes == 0U || exact->executable_sha256.size() != 64U) {
++          throw std::runtime_error("ModelFragment: MLA artifact identity was not retained");
++        }
++        entry.mla_compiled->payload.executable_bytes = exact->executable_bytes;
++        entry.mla_compiled->payload.executable_sha256 = exact->executable_sha256;
++      }
++    }
++
++    if (stage.kind == ExecutionStageKind::HostTvm) {
++      if (!stage.execution_op_id.has_value() || !dmabuf_plan_execution_plan.has_value() ||
++          !dmabuf_frame_arena_plan.has_value() ||
++          !dmabuf_physical_execution_plan.has_value() ||
++          *stage.execution_op_id >= dmabuf_plan_execution_plan->ops().size()) {
++        throw std::runtime_error(
++            "ModelFragment: target A65 stage is missing its immutable command/arena plan");
++      }
++      const auto& op = dmabuf_plan_execution_plan->ops()[*stage.execution_op_id];
++      if (op.id != *stage.execution_op_id ||
++          op.kind != pipeline_internal::sima::static_contract::OpKind::HostTvm) {
++        throw std::runtime_error(
++            "ModelFragment: target A65 stage does not select an exact HostTVM command");
++      }
++      auto runtime = build_target_tvm_runtime_contract(
++          *dmabuf_plan_execution_plan, *dmabuf_frame_arena_plan, op);
++      entry.transport_compiled = build_model_managed_transport_contract(
++          "neatprocesstvm", "direct-tvm", std::nullopt, std::move(runtime));
++      const bool cpu_epoch_start =
++          stage_index == 0U ||
++          !can_continue_direct_tvm_cpu_epoch(
++              stages[stage_index - 1U], stage, *dmabuf_plan_execution_plan,
++              *dmabuf_frame_arena_plan);
++      const bool cpu_epoch_end =
++          stage_index + 1U == stages.size() ||
++          !can_continue_direct_tvm_cpu_epoch(
++              stage, stages[stage_index + 1U], *dmabuf_plan_execution_plan,
++              *dmabuf_frame_arena_plan);
++      entry.fragment_properties.emplace_back(
++          "direct-contract-b64",
++          encode_direct_tvm_contract(*dmabuf_plan_execution_plan, *dmabuf_frame_arena_plan,
++                                     *dmabuf_physical_execution_plan, op, *mpk_contract,
++                                     cpu_epoch_start, cpu_epoch_end));
+     }
+ 
+     if (stage.kind == ExecutionStageKind::BoxDecode) {
+-      std::optional<pipeline_internal::sima::ModelManagedRouteFlags> resolved_route_flags;
+-      if (model_managed_route_flags.has_value()) {
+-        resolved_route_flags = *model_managed_route_flags;
+-      } else {
++      if (mpk_stage) {
+         std::string route_flags_error;
+-        resolved_route_flags =
++        auto resolved_route_flags =
+             pipeline_internal::sima::resolve_model_managed_boxdecode_route_flags_from_mpk(
+                 *mpk_contract, mpk_stage, &route_flags_error);
+         if (!resolved_route_flags.has_value()) {
+@@ -3086,37 +3898,42 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+               (route_flags_error.empty() ? std::string("missing MPK/upstream route facts")
+                                          : route_flags_error));
+         }
+-      }
+-      resolved_route_flags->quant_contract_required = resolved_route_flags->quant_needed;
+-      resolved_route_flags->boxdecode_selected = true;
+-      std::string subset_error;
+-      auto boxdecode_subset =
+-          pipeline_internal::sima::plugin_contracts::extract_boxdecode_contract_subset_from_mpk(
+-              *mpk_contract, *resolved_route_flags, mpk_stage, &subset_error);
+-      if (!boxdecode_subset.has_value()) {
+-        throw std::runtime_error(
+-            "ModelFragment: strict model-managed boxdecode contract missing for stage '" +
+-            stage.stage_name + "': " +
+-            (subset_error.empty() ? std::string("missing MPK/upstream facts") : subset_error));
+-      }
+-      // No model-managed boxdecode unless the MPK declares an explicit
+-      // decode_type. Skipping the compiled-contract install here means the
+-      // resulting Model has no model-managed boxdecode stage; callers that
+-      // want boxdecode must either author decode_type into the MPK or use
+-      // the standalone SimaBoxDecode constructor.
+-      if (simaai::neat::pipeline_internal::sima::is_box_decode_type_specified(
+-              boxdecode_subset->decode_type)) {
+-        pipeline_internal::sima::stagesemantics::BoxDecodeCompiledContractOptions compile_options;
+-        compile_options.decode_type = boxdecode_subset->decode_type;
+-        if (boxdecode_subset->decode_type_option.has_value()) {
+-          compile_options.decode_type_option = boxdecode_subset->decode_type_option;
++        if (model_managed_route_flags.has_value()) {
++          *resolved_route_flags =
++              pipeline_internal::sima::reconcile_exact_boxdecode_route_flags(
++                  *model_managed_route_flags, *resolved_route_flags);
++        }
++        std::string subset_error;
++        auto boxdecode_subset =
++            pipeline_internal::sima::plugin_contracts::extract_boxdecode_contract_subset_from_mpk(
++                *mpk_contract, *resolved_route_flags, mpk_stage, &subset_error);
++        if (!boxdecode_subset.has_value()) {
++          throw std::runtime_error(
++              "ModelFragment: strict model-managed boxdecode contract missing for stage '" +
++              stage.stage_name + "': " +
++              (subset_error.empty() ? std::string("missing MPK/upstream facts") : subset_error));
++        }
++        // An authored terminal owns the package-time compiled contract.  A
++        // synthetic/customer-selected BoxDecode stage has no MPK terminal
++        // pointer; leave its optional compiled contract empty so ModelAccess
++        // can derive the external true-leaf contract after the route family is
++        // known.  Never pass nullptr here: that would conflate the two
++        // authorities and weaken terminal edge/binding validation.
++        if (simaai::neat::pipeline_internal::sima::is_box_decode_type_specified(
++                boxdecode_subset->decode_type)) {
++          pipeline_internal::sima::stagesemantics::BoxDecodeCompiledContractOptions
++              compile_options;
++          compile_options.decode_type = boxdecode_subset->decode_type;
++          if (boxdecode_subset->decode_type_option.has_value()) {
++            compile_options.decode_type_option = boxdecode_subset->decode_type_option;
++          }
++          compile_options.score_activation = boxdecode_subset->score_activation;
++          compile_options.model_owned_flags = true;
++          compile_options.required_preprocess_meta_fields =
++              default_preprocess_meta_required_fields();
++          entry.boxdecode_compiled = pipeline_internal::sima::stagesemantics::
++              build_boxdecode_compiled_contract_from_subset(*boxdecode_subset, compile_options);
+         }
+-        compile_options.score_activation = boxdecode_subset->score_activation;
+-        compile_options.model_owned_flags = true;
+-        compile_options.required_preprocess_meta_fields = default_preprocess_meta_required_fields();
+-        entry.boxdecode_compiled =
+-            pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract_from_subset(
+-                *boxdecode_subset, compile_options);
+       }
+     }
+ 
+@@ -3451,6 +4268,25 @@ private:
+         stages.push_back(std::move(compiled_stage));
+         continue;
+       }
++
++
++      if (plugin.find("processtvm") != std::string::npos) {
++        const ModelFragment::StageFacts* entry = resolve_stage_facts(element);
++        if (!entry || !entry->transport_compiled.has_value()) {
++          if (err) {
++            *err = "ModelFragment contract compile: missing direct TVM transport contract for '" +
++                   element_name + "'";
++          }
++          return {};
++        }
++        if (!pipeline_internal::sima::stagesemantics::build_transport_node_contract(
++                kind_, element_name, stage_id, fragment_stage_definition("neatprocesstvm"),
++                *entry->transport_compiled, &compiled_stage, err)) {
++          return {};
++        }
++        stages.push_back(std::move(compiled_stage));
++        continue;
++      }
+     }
+     return stages;
+   }
+@@ -3861,11 +4697,18 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
+     const std::string base_name =
+         stage.stage_name.empty() ? std::string(default_stage_name(stage.kind)) : stage.stage_name;
+     const std::string name = name_suffix.empty() ? base_name : (base_name + name_suffix);
++    const auto* exact_stage_facts = find_stage_facts(stage.stage_name);
+ 
+     if (i)
+       pipelineStr << "! ";
+     pipelineStr << plugin << " name=" << name << " ";
+-    pipelineStr << "stage-id=" << name << " ";
++    // ProcessTVM's strict direct-contract is self-contained and digest-bound;
++    // unlike ProcessMLA/ProcessCVU it does not look up a manifest stage by a
++    // GObject property. Do not leak the generic manifest-context property onto
++    // this element merely because the compatibility renderer is linear.
++    if (plugin != "neatprocesstvm") {
++      pipelineStr << "stage-id=" << name << " ";
++    }
+     if (plugin == "neatprocesscvu") {
+       if (num_buffers_cvu > 0) {
+         pipelineStr << " num-buffers=" << num_buffers_cvu << " ";
+@@ -3887,14 +4730,19 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
+         throw std::runtime_error("ModelPack: model-managed MLA stage '" + name +
+                                  "' is missing MPK runtime properties");
+       }
+-      if (!props->model_path.empty()) {
+-        pipelineStr << "model-path=\"" << props->model_path << "\" ";
+-      }
+-      if (props->batch_size > 0) {
+-        pipelineStr << "batch-size=" << props->batch_size << " ";
+-      }
+-      if (props->batch_sz_model > 0) {
+-        pipelineStr << "batch-sz-model=" << props->batch_sz_model << " ";
++      const bool manifest_owns_mla_runtime =
++          exact_stage_facts != nullptr && exact_stage_facts->mla_compiled.has_value() &&
++          exact_stage_facts->mla_compiled->payload.dmabuf_plan_contract;
++      if (!manifest_owns_mla_runtime) {
++        if (!props->model_path.empty()) {
++          pipelineStr << "model-path=\"" << props->model_path << "\" ";
++        }
++        if (props->batch_size > 0) {
++          pipelineStr << "batch-size=" << props->batch_size << " ";
++        }
++        if (props->batch_sz_model > 0) {
++          pipelineStr << "batch-sz-model=" << props->batch_sz_model << " ";
++        }
+       }
+       const bool force_single_pipe = env_truthy_local("SIMA_FORCE_MLA_SINGLE_PIPE");
+       const bool use_multi_pipeline = !force_single_pipe && num_buffers_mla > 1;
+@@ -3902,9 +4750,13 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
+       if (num_buffers_mla > 0) {
+         pipelineStr << " num-buffers=" << num_buffers_mla << " ";
+       }
++    } else if (plugin == "neatprocesstvm") {
++      if (num_buffers_cvu > 0) {
++        pipelineStr << " num-buffers=" << num_buffers_cvu << " ";
++      }
+     }
+-    if (const auto* facts = find_stage_facts(stage.stage_name); facts != nullptr) {
+-      for (const auto& [key, value] : facts->fragment_properties) {
++    if (exact_stage_facts != nullptr) {
++      for (const auto& [key, value] : exact_stage_facts->fragment_properties) {
+         if (!key.empty() && !value.empty()) {
+           pipelineStr << key << "=" << value << " ";
+         }
+@@ -3920,6 +4772,521 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
+   return frag;
+ }
+ 
++struct TerminalMlaRouteSnapshot {
++  pipeline_internal::sima::static_contract::ModelExecutionPlan semantic;
++  pipeline_internal::sima::static_contract::PhysicalExecutionPlan physical;
++  pipeline_internal::sima::static_contract::FrameSlotArenaPlan arena;
++};
++
++static bool exact_boxdecode_mla_terminal_route(
++    const InferenceTerminalPolicy& terminal_policy,
++    const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags,
++    const std::vector<ExecutionStageKind>& post_kinds) {
++  return terminal_policy.mla_only &&
++         !terminal_policy.last_stage_index.has_value() &&
++         !terminal_policy.last_stage_name.has_value() &&
++         !terminal_policy.last_plugin_id.has_value() &&
++         !terminal_policy.last_processor.has_value() && route_flags.has_value() &&
++         route_flags->boxdecode_selected && post_kinds.size() == 1U &&
++         post_kinds.front() == ExecutionStageKind::BoxDecode;
++}
++
++static pipeline_internal::sima::static_contract::ValueId route_root_value(
++    const pipeline_internal::sima::static_contract::ModelExecutionPlan& plan,
++    pipeline_internal::sima::static_contract::ValueId value_id) {
++  for (std::size_t remaining = plan.values().size() + 1U; remaining > 0U;
++       --remaining) {
++    const auto* value = plan.value(value_id);
++    if (!value || !value->read_expression.has_value()) {
++      return value_id;
++    }
++    value_id = value->read_expression->source_value_id;
++  }
++  return value_id;
++}
++
++static std::string exact_route_dtype(std::string_view dtype) {
++  if (dtype == "BF16" || dtype == "BFLOAT16" || dtype == "bfloat16") {
++    return "BF16";
++  }
++  if (dtype == "FP32" || dtype == "FLOAT32" || dtype == "float32") {
++    return "FP32";
++  }
++  return {};
++}
++
++static bool exact_boxdecode_absorbable_bf16_cast(
++    const pipeline_internal::sima::static_contract::ModelExecutionPlan& plan,
++    const pipeline_internal::sima::static_contract::PhysicalCommandMember& member,
++    const std::size_t chain_index, std::string* detail) {
++  namespace sc = pipeline_internal::sima::static_contract;
++  const auto reject = [&](std::string message) {
++    if (detail) *detail = std::move(message);
++    return false;
++  };
++  if (chain_index >= member.semantic_chain.size()) {
++    return reject("Cast lineage index is invalid");
++  }
++  const auto op_id = member.semantic_chain[chain_index];
++  if (op_id >= plan.ops().size()) {
++    return reject("Cast lineage operation is missing");
++  }
++  const auto& op = plan.ops()[op_id];
++  const auto* cast = std::get_if<sc::CastOpConfig>(&op.config);
++  if (op.kind != sc::OpKind::Cast || !cast || op.processor != "EV74" ||
++      (op.kernel != "cast_transform" && op.kernel != "cast") ||
++      op.inputs.size() != 1U || op.outputs.size() != 1U ||
++      op.input_shapes.size() != 1U || op.output_shapes.size() != 1U) {
++    return reject("Cast is not one exact registered EV74 1:1 operation");
++  }
++  if (chain_index + 1U != member.semantic_chain.size() ||
++      member.outer_outputs != op.outputs) {
++    return reject("Cast is not the terminal operation on its exact physical member");
++  }
++  if (chain_index == 0U) {
++    if (member.outer_inputs != op.inputs) {
++      return reject("Cast input is detached from its physical member input");
++    }
++  } else {
++    const auto previous_id = member.semantic_chain[chain_index - 1U];
++    if (previous_id >= plan.ops().size() ||
++        plan.ops()[previous_id].outputs != op.inputs) {
++      return reject("Cast input is detached from the preceding typed transform");
++    }
++  }
++
++  const auto* input = plan.value(op.inputs.front());
++  const auto* output = plan.value(op.outputs.front());
++  if (!input || !output || !input->logical_dtype || !output->logical_dtype ||
++      !input->logical_shape || !output->logical_shape) {
++    return reject("Cast endpoints lack exact dtype/shape facts");
++  }
++  if (exact_route_dtype(*input->logical_dtype) != "BF16" ||
++      exact_route_dtype(*output->logical_dtype) != "FP32" ||
++      exact_route_dtype(cast->output_dtype) != "FP32") {
++    return reject("Cast is not the exact BF16-to-FP32 transition owned by BoxDecode");
++  }
++  if (op.input_shapes.front() != op.output_shapes.front() ||
++      *input->logical_shape != op.input_shapes.front() ||
++      *output->logical_shape != op.output_shapes.front() ||
++      input->logical_layout != output->logical_layout) {
++    return reject("Cast changes semantic shape or layout");
++  }
++  if (input->required_bytes == 0U ||
++      input->required_bytes > std::numeric_limits<std::uint64_t>::max() / 2U ||
++      output->required_bytes != input->required_bytes * 2U) {
++    return reject("Cast endpoints do not have the exact BF16-to-FP32 byte ratio");
++  }
++  if (!input->quantization.empty() || !output->quantization.empty()) {
++    return reject("Cast endpoints unexpectedly carry quantization semantics");
++  }
++  return true;
++}
++
++static std::optional<TerminalMlaRouteSnapshot>
++select_terminal_mla_route_snapshot(
++    const pipeline_internal::sima::static_contract::ModelExecutionPlan& full_semantic,
++    const pipeline_internal::sima::static_contract::PhysicalExecutionPlan& full_physical,
++    std::string* error) {
++  namespace sc = pipeline_internal::sima::static_contract;
++  const auto fail = [&](std::string message)
++      -> std::optional<TerminalMlaRouteSnapshot> {
++    if (error) {
++      *error = std::move(message);
++    }
++    return std::nullopt;
++  };
++  if (full_semantic.mla_stage_count() == 0U) {
++    return fail("terminal MLA route has no MLA stage");
++  }
++  const std::size_t terminal_stage_index = full_semantic.mla_stage_count() - 1U;
++  const auto* terminal_stage = full_semantic.mla_stage(terminal_stage_index);
++  if (!terminal_stage ||
++      terminal_stage->key.op_id >= full_physical.command_for_semantic_op.size()) {
++    return fail("terminal MLA route has no semantic/physical identity");
++  }
++  const auto terminal_command_id =
++      full_physical.command_for_semantic_op[terminal_stage->key.op_id];
++  if (!terminal_command_id.has_value() ||
++      *terminal_command_id >= full_physical.commands.size()) {
++    return fail("terminal MLA route has no physical command");
++  }
++  const auto& terminal_command = full_physical.commands[*terminal_command_id];
++  if (terminal_command.engine != sc::PhysicalEngine::Mla ||
++      terminal_command.outputs.empty() || terminal_command.successors.empty()) {
++    return fail("terminal MLA route has no exact removable physical successor");
++  }
++
++  std::unordered_set<sc::ValueId> terminal_roots;
++  for (const auto output : terminal_command.outputs) {
++    terminal_roots.emplace(route_root_value(full_semantic, output));
++  }
++  std::vector<sc::ValueId> boundary_values;
++  std::unordered_set<sc::ValueId> seen_boundary_values;
++  std::vector<sc::PhysicalCommandId> ordered_successors =
++      terminal_command.successors;
++  std::sort(ordered_successors.begin(), ordered_successors.end());
++  for (const auto successor_id : ordered_successors) {
++    if (successor_id >= full_physical.commands.size()) {
++      return fail("terminal MLA route references a missing successor");
++    }
++    const auto& successor = full_physical.commands[successor_id];
++    if (successor.inputs.empty()) {
++      return fail("terminal MLA successor has no exact input boundary");
++    }
++    for (const auto input : successor.inputs) {
++      if (!terminal_roots.contains(route_root_value(full_semantic, input))) {
++        return fail("terminal MLA successor reads a foreign physical root");
++      }
++      if (seen_boundary_values.emplace(input).second) {
++        boundary_values.push_back(input);
++      }
++    }
++  }
++  std::unordered_set<sc::ValueId> boundary_roots;
++  for (const auto value : boundary_values) {
++    boundary_roots.emplace(route_root_value(full_semantic, value));
++  }
++  if (boundary_values.empty() || boundary_roots != terminal_roots) {
++    return fail("terminal MLA successor boundary does not cover every physical output root");
++  }
++  if (terminal_command.outputs.size() > 1U) {
++    if (boundary_values.size() != terminal_command.outputs.size()) {
++      return fail("terminal MLA successor boundary is not bijective to its physical ports");
++    }
++    for (std::size_t index = 0U; index < boundary_values.size(); ++index) {
++      if (route_root_value(full_semantic, boundary_values[index]) !=
++          route_root_value(full_semantic, terminal_command.outputs[index])) {
++        return fail("terminal MLA successor boundary changed physical port order");
++      }
++    }
++  }
++
++  std::size_t semantic_cutoff = terminal_stage->key.op_id;
++  for (const auto boundary : boundary_values) {
++    const auto producer = std::find_if(
++        full_semantic.ops().begin(), full_semantic.ops().end(),
++        [&](const auto& op) {
++          return std::find(op.outputs.begin(), op.outputs.end(), boundary) !=
++                 op.outputs.end();
++        });
++    if (producer != full_semantic.ops().end()) {
++      semantic_cutoff = std::max(semantic_cutoff,
++                                 static_cast<std::size_t>(producer->id));
++    }
++  }
++  if (semantic_cutoff >= full_semantic.ops().size()) {
++    return fail("terminal MLA route semantic cutoff is invalid");
++  }
++  for (std::size_t op_index = terminal_stage->key.op_id + 1U;
++       op_index <= semantic_cutoff; ++op_index) {
++    const auto& relation = full_semantic.ops()[op_index];
++    if (op_index >= full_physical.command_for_semantic_op.size() ||
++        full_physical.command_for_semantic_op[op_index].has_value() ||
++        !sc::is_address_relation_op(relation) || !relation.dependencies.empty() ||
++        relation.outputs.empty() ||
++        std::any_of(relation.inputs.begin(), relation.inputs.end(),
++                    [&](const auto value) {
++                      return !terminal_roots.contains(
++                          route_root_value(full_semantic, value));
++                    }) ||
++        std::any_of(relation.outputs.begin(), relation.outputs.end(),
++                    [&](const auto value) {
++                      return !terminal_roots.contains(
++                          route_root_value(full_semantic, value));
++                    })) {
++      return fail("terminal MLA public boundary crosses a materializing tail command");
++    }
++  }
++
++  sc::ModelExecutionPlanData selected_data;
++  selected_data.contract_version = full_semantic.contract_version();
++  selected_data.model_inputs = full_semantic.model_inputs();
++  selected_data.ops.assign(full_semantic.ops().begin(),
++                           full_semantic.ops().begin() +
++                               static_cast<std::ptrdiff_t>(semantic_cutoff + 1U));
++  std::size_t maximum_value_id = 0U;
++  const auto include_value = [&](const sc::ValueId value_id) {
++    maximum_value_id = std::max(maximum_value_id,
++                                static_cast<std::size_t>(value_id));
++  };
++  for (const auto value_id : selected_data.model_inputs) {
++    include_value(value_id);
++  }
++  for (const auto& op : selected_data.ops) {
++    for (const auto value_id : op.inputs) include_value(value_id);
++    for (const auto value_id : op.outputs) include_value(value_id);
++  }
++  for (std::size_t public_index = 0U; public_index < boundary_values.size();
++       ++public_index) {
++    const auto value_id = boundary_values[public_index];
++    const auto* value = full_semantic.value(value_id);
++    if (!value) {
++      return fail("terminal MLA public boundary references a missing value");
++    }
++    include_value(value_id);
++    selected_data.model_outputs.push_back(
++        {public_index, value->name, value_id});
++  }
++  if (maximum_value_id >= full_semantic.values().size()) {
++    return fail("terminal MLA route value prefix is invalid");
++  }
++  selected_data.values.assign(
++      full_semantic.values().begin(),
++      full_semantic.values().begin() +
++          static_cast<std::ptrdiff_t>(maximum_value_id + 1U));
++
++  std::unordered_set<sc::CarrierId> retained_carriers;
++  for (const auto& value : selected_data.values) {
++    if (!value.storage_binding.has_value()) {
++      return fail("terminal MLA route value has no storage binding");
++    }
++    retained_carriers.emplace(value.storage_binding->carrier_id);
++  }
++  for (const auto& carrier : full_semantic.carriers()) {
++    if (retained_carriers.contains(carrier.id)) {
++      selected_data.carriers.push_back(carrier);
++    }
++  }
++  for (const auto& port : full_semantic.backend_ports()) {
++    if (port.stage_index <= terminal_stage_index &&
++        port.value_id < selected_data.values.size()) {
++      selected_data.backend_ports.push_back(port);
++    }
++  }
++
++  std::string selected_error;
++  auto selected_semantic =
++      sc::ModelExecutionPlan::create(std::move(selected_data), &selected_error);
++  if (!selected_semantic) {
++    return fail("terminal MLA semantic route is invalid: " + selected_error);
++  }
++
++  std::vector<bool> keep_command(full_physical.commands.size(), false);
++  std::vector<sc::PhysicalCommandId> pending{*terminal_command_id};
++  while (!pending.empty()) {
++    const auto command_id = pending.back();
++    pending.pop_back();
++    if (command_id >= full_physical.commands.size()) {
++      return fail("terminal MLA ancestor closure references a missing command");
++    }
++    if (keep_command[command_id]) {
++      continue;
++    }
++    keep_command[command_id] = true;
++    const auto& command = full_physical.commands[command_id];
++    pending.insert(pending.end(), command.predecessors.begin(),
++                   command.predecessors.end());
++  }
++
++  std::vector<bool> removed_descendant(full_physical.commands.size(), false);
++  pending.assign(terminal_command.successors.begin(),
++                 terminal_command.successors.end());
++  while (!pending.empty()) {
++    const auto command_id = pending.back();
++    pending.pop_back();
++    if (command_id >= full_physical.commands.size()) {
++      return fail("terminal MLA descendant closure references a missing command");
++    }
++    if (removed_descendant[command_id]) {
++      continue;
++    }
++    removed_descendant[command_id] = true;
++    const auto& command = full_physical.commands[command_id];
++    pending.insert(pending.end(), command.successors.begin(),
++                   command.successors.end());
++  }
++  for (std::size_t command_id = 0U; command_id < full_physical.commands.size();
++       ++command_id) {
++    if (!keep_command[command_id] && !removed_descendant[command_id]) {
++      return fail("terminal MLA route leaves an unrelated physical branch");
++    }
++    if (!keep_command[command_id] || command_id == *terminal_command_id) {
++      continue;
++    }
++    const auto& command = full_physical.commands[command_id];
++    if (std::any_of(command.successors.begin(), command.successors.end(),
++                    [&](const auto successor) {
++                      return successor >= keep_command.size() ||
++                             !keep_command[successor];
++                    })) {
++      return fail("terminal MLA route would remove a nonterminal physical branch");
++    }
++  }
++
++  // ModelExecutionPlan requires dense ids, therefore a route snapshot can use
++  // a prefix only after proving that every op/value in that prefix belongs to
++  // the exact physical-ancestor/publication closure. This rejects unrelated or
++  // interleaved address-only branches which re-lowering alone would not see.
++  std::unordered_set<sc::ValueId> needed_values(boundary_values.begin(),
++                                                 boundary_values.end());
++  for (std::size_t command_id = 0U; command_id < full_physical.commands.size();
++       ++command_id) {
++    if (!keep_command[command_id]) continue;
++    const auto& command = full_physical.commands[command_id];
++    needed_values.insert(command.inputs.begin(), command.inputs.end());
++    needed_values.insert(command.outputs.begin(), command.outputs.end());
++  }
++  std::vector<bool> needed_ops(selected_semantic->ops().size(), false);
++  for (std::size_t reverse = selected_semantic->ops().size(); reverse > 0U;
++       --reverse) {
++    const auto& op = selected_semantic->ops()[reverse - 1U];
++    const bool contributes =
++        std::any_of(op.outputs.begin(), op.outputs.end(), [&](const auto value) {
++          return needed_values.contains(value);
++        });
++    if (!contributes) continue;
++    needed_ops[op.id] = true;
++    needed_values.insert(op.inputs.begin(), op.inputs.end());
++  }
++  needed_values.insert(selected_semantic->model_inputs().begin(),
++                       selected_semantic->model_inputs().end());
++  if (std::any_of(needed_ops.begin(), needed_ops.end(),
++                  [](const bool needed) { return !needed; }) ||
++      std::any_of(selected_semantic->values().begin(),
++                  selected_semantic->values().end(), [&](const auto& value) {
++                    return !needed_values.contains(value.id);
++                  })) {
++    return fail("terminal MLA route prefix contains an unrelated/interleaved semantic branch");
++  }
++
++  bool saw_typed_boxdecode_tail = false;
++  for (std::size_t command_id = 0U; command_id < full_physical.commands.size();
++       ++command_id) {
++    if (!removed_descendant[command_id]) {
++      continue;
++    }
++    const auto& command = full_physical.commands[command_id];
++    if (command.engine != sc::PhysicalEngine::Cvu || command.members.empty()) {
++      return fail("terminal MLA route would absorb a non-CVU materializing successor");
++    }
++    for (const auto& member : command.members) {
++      if (member.semantic_chain.empty()) {
++        return fail("terminal MLA route successor has no semantic lineage");
++      }
++      for (std::size_t chain_index = 0U;
++           chain_index < member.semantic_chain.size(); ++chain_index) {
++        const auto op_id = member.semantic_chain[chain_index];
++        if (op_id >= full_semantic.ops().size()) {
++          return fail("terminal MLA route successor has invalid semantic lineage");
++        }
++        const auto kind = full_semantic.ops()[op_id].kind;
++        if (kind == sc::OpKind::Detessellate ||
++            kind == sc::OpKind::Dequantize) {
++          saw_typed_boxdecode_tail = true;
++          continue;
++        }
++        std::string cast_detail;
++        if (kind != sc::OpKind::Cast ||
++            !exact_boxdecode_absorbable_bf16_cast(
++                full_semantic, member, chain_index, &cast_detail)) {
++          return fail(
++              "terminal MLA route would absorb a non-BoxDecode tensor transform" +
++              (cast_detail.empty() ? std::string{} : ": " + cast_detail));
++        }
++        saw_typed_boxdecode_tail = true;
++      }
++    }
++  }
++  if (!saw_typed_boxdecode_tail) {
++    return fail("terminal MLA route has no typed BoxDecode-absorbable tensor tail");
++  }
++
++  std::string selected_physical_error;
++  auto selected_physical =
++      sc::PhysicalExecutionLowerer::lower(*selected_semantic,
++                                          &selected_physical_error);
++  if (!selected_physical) {
++    return fail("terminal MLA physical route is invalid: " +
++                selected_physical_error);
++  }
++  std::vector<const sc::PhysicalCommand*> expected_commands;
++  for (std::size_t command_id = 0U; command_id < full_physical.commands.size();
++       ++command_id) {
++    if (keep_command[command_id]) {
++      expected_commands.push_back(&full_physical.commands[command_id]);
++    }
++  }
++  const auto same_members = [](const auto& left, const auto& right) {
++    if (left.size() != right.size()) return false;
++    for (std::size_t index = 0U; index < left.size(); ++index) {
++      if (left[index].ordinal != right[index].ordinal ||
++          left[index].semantic_chain != right[index].semantic_chain ||
++          left[index].outer_inputs != right[index].outer_inputs ||
++          left[index].outer_outputs != right[index].outer_outputs) {
++        return false;
++      }
++    }
++    return true;
++  };
++  if (selected_physical->commands.size() != expected_commands.size()) {
++    return fail("terminal MLA re-lowering differs from the physical ancestor closure");
++  }
++  std::vector<std::optional<sc::PhysicalCommandId>> selected_id_for_full(
++      full_physical.commands.size());
++  for (std::size_t index = 0U; index < expected_commands.size(); ++index) {
++    selected_id_for_full[expected_commands[index]->id] =
++        static_cast<sc::PhysicalCommandId>(index);
++  }
++  const auto retained_edges = [&](const auto& edges) {
++    std::vector<sc::PhysicalCommandId> result;
++    for (const auto edge : edges) {
++      if (edge < selected_id_for_full.size() &&
++          selected_id_for_full[edge].has_value()) {
++        result.push_back(*selected_id_for_full[edge]);
++      }
++    }
++    return result;
++  };
++  for (std::size_t index = 0U; index < expected_commands.size(); ++index) {
++    const auto& expected = *expected_commands[index];
++    const auto& selected = selected_physical->commands[index];
++    if (selected.id != index ||
++        selected.topological_rank != expected.topological_rank ||
++        selected.engine != expected.engine || selected.role != expected.role ||
++        selected.implementation_id != expected.implementation_id ||
++        selected.graph_id != expected.graph_id ||
++        selected.batch_size != expected.batch_size ||
++        selected.maximum_members != expected.maximum_members ||
++        selected.inputs != expected.inputs || selected.outputs != expected.outputs ||
++        selected.predecessors != retained_edges(expected.predecessors) ||
++        selected.successors != retained_edges(expected.successors) ||
++        !same_members(selected.members, expected.members)) {
++      return fail("terminal MLA re-lowering changed an ancestor command");
++    }
++  }
++
++  const auto selected_terminal_id =
++      selected_physical->command_for_semantic_op[terminal_stage->key.op_id];
++  if (!selected_terminal_id.has_value() ||
++      *selected_terminal_id >= selected_physical->commands.size() ||
++      !selected_physical->commands[*selected_terminal_id].successors.empty()) {
++    return fail("terminal MLA physical route did not remove the materializing tail");
++  }
++  const auto detached_roots = sc::detached_mla_output_roots(
++      *selected_semantic, *selected_physical);
++  std::string arena_error;
++  auto selected_arena = sc::FrameSlotArenaPlan::compile(
++      *selected_semantic, *selected_physical,
++      sc::FrameSlotArenaReuse::DisjointLifetimes,
++      sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error,
++      sc::kModalixProductionArenaDmsPolicy, detached_roots);
++  if (!selected_arena) {
++    return fail("terminal MLA route arena is invalid: " + arena_error);
++  }
++  if (sc::mla_output_carrier_policy_from_arena(
++          *selected_semantic, *selected_arena, terminal_stage_index) !=
++      sc::MlaOutputCarrierPolicy::SeparateCpuVisible) {
++    return fail("terminal MLA route did not select a separate public output carrier");
++  }
++  if (error) {
++    error->clear();
++  }
++  return TerminalMlaRouteSnapshot{std::move(*selected_semantic),
++                                  std::move(*selected_physical),
++                                  std::move(*selected_arena)};
++}
++
+ } // namespace
+ 
+ // Automatic selection accepts only a local NVMe data volume. Matching the block device keeps NFS
+@@ -4064,6 +5431,189 @@ void ModelPack::set_model_managed_stage_facts(
+   processcvu_preproc_single_output_handoff_ = processcvu_preproc_single_output_handoff;
+   model_managed_route_flags_ = std::move(model_managed_route_flags);
+   model_managed_post_kinds_ = std::move(model_managed_post_kinds);
++
++  // Route planning is the first point at which Core knows that the package's
++  // materializing post tail is absorbed by the exact typed BoxDecode route.
++  // Specialize the immutable DMA-BUF execution snapshot here, before any
++  // stage facts or arena manifests are rendered.  The full MPK remains the
++  // BoxDecode configuration/qparam authority; it is not the executed device
++  // command graph for this selected route.
++  if (!exact_boxdecode_mla_terminal_route(options_.terminal_policy,
++                                          model_managed_route_flags_,
++                                          model_managed_post_kinds_)) {
++    return;
++  }
++  // Legacy does not own an immutable semantic/physical DMA-BUF plan and keeps
++  // the existing infer_block mla_only truncation. This route snapshot is the
++  // strict DMA-BUF renderer's authority, not a legacy-dispatcher fallback.
++  if (!dmabuf_plan_execution_plan_) {
++    if (memory_backend_decision_.backend ==
++        pipeline_internal::MemoryBackendPolicy::Legacy) {
++      return;
++    }
++    throw std::runtime_error(
++        "ModelPack: strict terminal MLA/BoxDecode route lacks its semantic DMA-BUF plan");
++  }
++  if (!dmabuf_physical_execution_plan_ || !dmabuf_frame_arena_plan_) {
++    throw std::runtime_error(
++        "ModelPack: terminal MLA/BoxDecode route lacks the admitted DMA-BUF plan");
++  }
++  if (dmabuf_plan_execution_plan_->mla_stage_count() == 0U) {
++    throw std::runtime_error(
++        "ModelPack: terminal MLA/BoxDecode route has no admitted MLA stage");
++  }
++  const auto terminal_stage_index =
++      dmabuf_plan_execution_plan_->mla_stage_count() - 1U;
++  const auto* terminal_stage =
++      dmabuf_plan_execution_plan_->mla_stage(terminal_stage_index);
++  if (terminal_stage &&
++      terminal_stage->key.op_id <
++          dmabuf_physical_execution_plan_->command_for_semantic_op.size()) {
++    const auto command_id = dmabuf_physical_execution_plan_
++                                ->command_for_semantic_op[terminal_stage->key.op_id];
++    if (command_id.has_value() &&
++        *command_id < dmabuf_physical_execution_plan_->commands.size() &&
++        dmabuf_physical_execution_plan_->commands[*command_id].successors.empty()) {
++      const auto policy = pipeline_internal::sima::static_contract::
++          mla_output_carrier_policy_from_arena(
++              *dmabuf_plan_execution_plan_, *dmabuf_frame_arena_plan_,
++              terminal_stage_index);
++      if (policy == pipeline_internal::sima::static_contract::
++                        MlaOutputCarrierPolicy::SeparateCpuVisible ||
++          (policy == pipeline_internal::sima::static_contract::
++                         MlaOutputCarrierPolicy::SharedFrameArena &&
++           dmabuf_frame_arena_plan_->detached_roots().empty() &&
++           dmabuf_frame_arena_plan_->placement().domain ==
++               pipeline_internal::sima::static_contract::ArenaStorageDomain::Dms)) {
++        // Already-terminal routes are idempotent. A direct public-input MLA's
++        // sole DMS arena is already its compact CPU-readable output carrier;
++        // a graph route has already been specialized when the policy is
++        // SeparateCpuVisible.
++        return;
++      }
++    }
++  }
++  std::string route_error;
++  auto route = select_terminal_mla_route_snapshot(
++      *dmabuf_plan_execution_plan_, *dmabuf_physical_execution_plan_,
++      &route_error);
++  if (!route) {
++    throw std::runtime_error(
++        "ModelPack: terminal MLA/BoxDecode route projection failed: " +
++        route_error);
++  }
++  const auto route_digest = pipeline_internal::dmabuf_execution_digest(
++      route->semantic, route->physical, route->arena);
++  if (route_digest.empty()) {
++    throw std::runtime_error(
++        "ModelPack: terminal MLA/BoxDecode route digest is empty");
++  }
++
++  dmabuf_plan_execution_plan_ = std::move(route->semantic);
++  dmabuf_physical_execution_plan_ = std::move(route->physical);
++  dmabuf_frame_arena_plan_ = std::move(route->arena);
++  memory_backend_decision_.plan_digest = route_digest;
++  memory_backend_decision_.admission.detail =
++      "strict MPK/artifacts and terminal MLA-to-BoxDecode route snapshot accepted";
++
++  // Admission was initially decoded from the complete compiler artifact. Keep
++  // artifact/ELF facts, but execution proof must describe only the selected
++  // semantic snapshot. Removed materializing-tail ops/reads and the old public
++  // outputs are not part of the route digest or its audit trail.
++  const auto indexed_subject = [](const std::string& subject,
++                                  const std::string_view prefix)
++      -> std::optional<std::size_t> {
++    if (!subject.starts_with(prefix)) return std::nullopt;
++    const auto end = subject.find(']', prefix.size());
++    if (end == std::string::npos || end == prefix.size()) return std::nullopt;
++    std::size_t value = 0U;
++    for (std::size_t index = prefix.size(); index < end; ++index) {
++      const auto ch = subject[index];
++      if (ch < '0' || ch > '9') return std::nullopt;
++      value = value * 10U + static_cast<std::size_t>(ch - '0');
++    }
++    return value;
++  };
++  auto& route_proof = memory_backend_decision_.admission.proof;
++  route_proof.erase(
++      std::remove_if(route_proof.begin(), route_proof.end(), [&](const auto& fact) {
++        if (fact.subject.starts_with("model.output[")) return true;
++        if (const auto op = indexed_subject(fact.subject, "op[");
++            op.has_value() && *op >= dmabuf_plan_execution_plan_->ops().size()) {
++          return true;
++        }
++        if (const auto read = indexed_subject(fact.subject, "read[");
++            read.has_value() && *read >= dmabuf_plan_execution_plan_->values().size()) {
++          return true;
++        }
++        return false;
++      }),
++      route_proof.end());
++
++  const auto detached_root_list = [&] {
++    std::string result = "[";
++    const auto roots = dmabuf_frame_arena_plan_->detached_roots();
++    for (std::size_t index = 0U; index < roots.size(); ++index) {
++      if (index != 0U) result.push_back(',');
++      result += std::to_string(roots[index]);
++    }
++    result.push_back(']');
++    return result;
++  }();
++  const auto replace_proof = [&](const std::string_view subject,
++                                 std::string evidence) {
++    auto& proof = memory_backend_decision_.admission.proof;
++    const auto found = std::find_if(proof.begin(), proof.end(),
++                                    [&](const auto& fact) {
++                                      return fact.subject == subject;
++                                    });
++    if (found == proof.end()) {
++      proof.push_back({std::string(subject), std::move(evidence)});
++    } else {
++      found->evidence = std::move(evidence);
++    }
++  };
++  replace_proof(
++      "frame-slot-arena",
++      "regions=" +
++          std::to_string(dmabuf_frame_arena_plan_->regions().size()) +
++          ";used_bytes=" +
++          std::to_string(dmabuf_frame_arena_plan_->used_bytes()) +
++          ";allocation_bytes=" +
++          std::to_string(dmabuf_frame_arena_plan_->allocation_bytes()) +
++          ";detached_count=" +
++          std::to_string(dmabuf_frame_arena_plan_->detached_roots().size()) +
++          ";detached_roots=" + detached_root_list);
++  replace_proof(
++      "physical-execution-plan",
++      "commands=" +
++          std::to_string(dmabuf_physical_execution_plan_->commands.size()) +
++          ";route=terminal-mla-to-boxdecode");
++  replace_proof(
++      "route-publication-boundary",
++      "logical_views=" +
++          std::to_string(dmabuf_plan_execution_plan_->model_outputs().size()) +
++          ";plan_digest=" + route_digest);
++  for (std::size_t index = 0U;
++       index < dmabuf_plan_execution_plan_->model_outputs().size(); ++index) {
++    const auto& output = dmabuf_plan_execution_plan_->model_outputs()[index];
++    const auto* value = dmabuf_plan_execution_plan_->value(output.value_id);
++    if (!value) {
++      throw std::runtime_error(
++          "ModelPack: selected route publication references a missing value");
++    }
++    const auto root = route_root_value(*dmabuf_plan_execution_plan_, value->id);
++    const auto offset = value->read_expression.has_value()
++                            ? value->read_expression->byte_offset
++                            : 0U;
++    replace_proof("model.output[" + std::to_string(index) + "]",
++                  "selected value=" + std::to_string(value->id) +
++                      ";name=" + output.name + ";root=" +
++                      std::to_string(root) + ";byte_offset=" +
++                      std::to_string(offset) + ";size_bytes=" +
++                      std::to_string(value->required_bytes) +
++                      ";plan_digest=" + route_digest);
++  }
+ }
+ 
+ void ModelPack::init(const std::string& tar_gz) {
+@@ -4081,6 +5631,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
+   mpk_contract_.reset();
+   dmabuf_plan_execution_plan_.reset();
+   dmabuf_frame_arena_plan_.reset();
++  dmabuf_physical_execution_plan_.reset();
+   route_graph_.reset();
+   processcvu_preproc_single_output_handoff_.reset();
+   model_managed_route_flags_.reset();
+@@ -4147,6 +5698,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
+     }
+     dmabuf_plan_execution_plan_ = std::move(compiled.plan);
+     dmabuf_frame_arena_plan_ = std::move(compiled.arena_plan);
++    dmabuf_physical_execution_plan_ = std::move(compiled.physical_plan);
+     if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
+       std::fprintf(stderr,
+                    "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=1 code=eligible "
+@@ -4273,6 +5825,19 @@ ExecutionPlan ModelPack::execution_plan() const {
+     throw std::runtime_error(
+         "ModelPack: strict MPK contract required to derive the typed execution plan");
+   }
++  if (dmabuf_plan_execution_plan_.has_value()) {
++    if (!dmabuf_physical_execution_plan_.has_value()) {
++      throw std::runtime_error(
++          "ModelPack: dmabuf-plan selected without an immutable physical command plan");
++    }
++    if (!dmabuf_frame_arena_plan_.has_value()) {
++      throw std::runtime_error(
++          "ModelPack: dmabuf-plan selected without an immutable frame-arena plan");
++    }
++    return build_execution_plan_from_model_plan(*dmabuf_plan_execution_plan_,
++                                                *dmabuf_physical_execution_plan_,
++                                                *dmabuf_frame_arena_plan_, *mpk_contract_);
++  }
+   return build_execution_plan_from_mpk_contract(
+       *mpk_contract_, pipeline_type_, model_managed_route_flags_, model_managed_post_kinds_);
+ }
+@@ -4286,7 +5851,7 @@ std::vector<ModelFragment::StageFacts> ModelPack::build_stage_facts(
+       options_.input_format, options_.input_depth, options_.max_input_width,
+       options_.max_input_height, options_.normalize, options_.mean, options_.stddev,
+       upstream_handoff_contract, stage_context, dmabuf_plan_execution_plan_,
+-      dmabuf_frame_arena_plan_);
++      dmabuf_frame_arena_plan_, dmabuf_physical_execution_plan_);
+ }
+ 
+ std::vector<ModelFragment::StageFacts>
+@@ -4304,15 +5869,16 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
+         break;
+       }
+     }
+-    const bool direct_mla_to_boxdecode =
+-        plan.infer.size() == 1U && plan.infer.front().kind == ExecutionStageKind::Mla &&
+-        plan.post.size() == 1U && plan.post.front().kind == ExecutionStageKind::BoxDecode;
++    const bool direct_mla_to_boxdecode = exact_boxdecode_mla_terminal_route(
++        options_.terminal_policy, model_managed_route_flags_,
++        model_managed_post_kinds_);
+     return build_stage_facts_from_execution_plan(
+         plan.infer, mpk_contract_, processcvu_preproc_single_output_handoff_,
+         model_managed_route_flags_, options_.input_format, options_.input_depth,
+         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
+         options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
+-        dmabuf_plan_execution_plan_, dmabuf_frame_arena_plan_, direct_mla_to_boxdecode);
++        dmabuf_plan_execution_plan_, dmabuf_frame_arena_plan_,
++        dmabuf_physical_execution_plan_, direct_mla_to_boxdecode);
+   }
+   if (stage == ModelStage::Postprocess) {
+     return build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
+@@ -4329,15 +5895,16 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
+       }
+     }
+ 
+-    const bool direct_mla_to_boxdecode =
+-        plan.infer.size() == 1U && plan.infer.front().kind == ExecutionStageKind::Mla &&
+-        plan.post.size() == 1U && plan.post.front().kind == ExecutionStageKind::BoxDecode;
++    const bool direct_mla_to_boxdecode = exact_boxdecode_mla_terminal_route(
++        options_.terminal_policy, model_managed_route_flags_,
++        model_managed_post_kinds_);
+     auto infer_facts = build_stage_facts_from_execution_plan(
+         plan.infer, mpk_contract_, processcvu_preproc_single_output_handoff_,
+         model_managed_route_flags_, options_.input_format, options_.input_depth,
+         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
+         options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
+-        dmabuf_plan_execution_plan_, dmabuf_frame_arena_plan_, direct_mla_to_boxdecode);
++        dmabuf_plan_execution_plan_, dmabuf_frame_arena_plan_,
++        dmabuf_physical_execution_plan_, direct_mla_to_boxdecode);
+     auto post_facts = build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
+ 
+     out.reserve(pre_facts.size() + infer_facts.size() + post_facts.size());
+@@ -4385,15 +5952,84 @@ std::vector<std::shared_ptr<Node>> ModelPack::to_nodes(ModelStage stage) const {
+   return make_fragment_nodes(frag, label);
+ }
+ 
++CompiledProcessCvuContract
++ModelPack::project_model_managed_preproc_contract(const PreprocOptions& options) const {
++  if (!options.model_managed_contract || !dmabuf_plan_execution_plan_ ||
++      !dmabuf_frame_arena_plan_ || !dmabuf_physical_execution_plan_) {
++    throw std::runtime_error(
++        "ModelPack: strict model-managed preproc projection requires the immutable "
++        "execution/physical/arena plans");
++  }
++  auto compiled = pipeline_internal::sima::stagesemantics::
++      build_processcvu_compiled_contract_from_options(options);
++  std::vector<pipeline_internal::sima::static_contract::PhysicalCommandId> absorbed;
++  std::string projection_error;
++  if (!pipeline_internal::sima::static_contract::project_model_managed_preproc_contract(
++          *dmabuf_plan_execution_plan_, *dmabuf_physical_execution_plan_,
++          *dmabuf_frame_arena_plan_, &compiled, &absorbed, &projection_error)) {
++    throw std::runtime_error(
++        "ModelPack: model-managed graph-200 ingress projection failed: " + projection_error);
++  }
++  if (absorbed.empty()) {
++    throw std::runtime_error(
++        "ModelPack: model-managed graph-200 ingress projection absorbed no physical command");
++  }
++  return compiled;
++}
++
+ std::vector<std::shared_ptr<Node>>
+ ModelPack::infer_block(const std::string& upstream_name,
+-                       std::shared_ptr<const ModelLineageBinding> model_lineage) const {
++                       std::shared_ptr<const ModelLineageBinding> model_lineage,
++                       const bool absorb_model_managed_preproc) const {
+   const ExecutionPlan plan = execution_plan();
+   if (plan.infer.empty()) {
+     throw std::runtime_error("ModelPack::infer_block: pipeline has no infer stages");
+   }
+   std::vector<ExecutionStage> infer_seq = plan.infer;
+ 
++  if (absorb_model_managed_preproc) {
++    if (!dmabuf_plan_execution_plan_ || !dmabuf_physical_execution_plan_) {
++      throw std::runtime_error(
++          "ModelPack::infer_block: graph-200 absorption requires the strict physical plan");
++    }
++    std::string absorption_error;
++    auto absorbed = pipeline_internal::sima::static_contract::
++        resolve_model_managed_preproc_ingress_commands(
++            *dmabuf_plan_execution_plan_, *dmabuf_physical_execution_plan_,
++            &absorption_error);
++    if (!absorbed || absorbed->empty()) {
++      throw std::runtime_error(
++          "ModelPack::infer_block: graph-200 ingress absorption failed: " +
++          absorption_error);
++    }
++    std::unordered_set<pipeline_internal::sima::static_contract::PhysicalCommandId> remaining(
++        absorbed->begin(), absorbed->end());
++    std::size_t prefix_stages = 0U;
++    while (prefix_stages < infer_seq.size()) {
++      const auto& stage = infer_seq[prefix_stages];
++      if (stage.physical_command_ids.empty() ||
++          !std::all_of(stage.physical_command_ids.begin(), stage.physical_command_ids.end(),
++                       [&](const auto id) { return remaining.count(id) != 0U; })) {
++        break;
++      }
++      for (const auto id : stage.physical_command_ids) {
++        remaining.erase(id);
++      }
++      ++prefix_stages;
++    }
++    if (prefix_stages == 0U || !remaining.empty()) {
++      throw std::runtime_error(
++          "ModelPack::infer_block: absorbed graph-200 commands are not the exact rendered "
++          "ingress prefix");
++    }
++    infer_seq.erase(infer_seq.begin(), infer_seq.begin() +
++                                           static_cast<std::ptrdiff_t>(prefix_stages));
++    if (infer_seq.empty()) {
++      throw std::runtime_error(
++          "ModelPack::infer_block: graph-200 absorption removed the complete infer route");
++    }
++  }
++
+   if (internal::has_terminal_policy(options_.terminal_policy)) {
+     const std::size_t terminal_idx =
+         resolve_terminal_index_or_throw(infer_seq, options_.terminal_policy);
+@@ -4433,15 +6069,15 @@ ModelPack::infer_block(const std::string& upstream_name,
+       break;
+     }
+   }
+-  const bool direct_mla_to_boxdecode =
+-      infer_seq.size() == 1U && infer_seq.front().kind == ExecutionStageKind::Mla &&
+-      plan.post.size() == 1U && plan.post.front().kind == ExecutionStageKind::BoxDecode;
++  const bool direct_mla_to_boxdecode = exact_boxdecode_mla_terminal_route(
++      options_.terminal_policy, model_managed_route_flags_,
++      model_managed_post_kinds_);
+   auto stage_facts = build_stage_facts_from_execution_plan(
+       infer_seq, mpk_contract_, processcvu_preproc_single_output_handoff_,
+       model_managed_route_flags_, options_.input_format, options_.input_depth,
+       options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
+       options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, dmabuf_plan_execution_plan_,
+-      dmabuf_frame_arena_plan_, direct_mla_to_boxdecode);
++      dmabuf_frame_arena_plan_, dmabuf_physical_execution_plan_, direct_mla_to_boxdecode);
+   ModelFragment frag =
+       build_fragment_linear(infer_seq, upstream, options_.num_buffers_cvu, options_.num_buffers_mla,
+                             options_.name_suffix, mpk_contract_, std::move(stage_facts));
+diff --git a/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp b/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
+index 3a2c6e770d71cedf803be054be5cea6e78b2cb5c..168bd2f72558a78397af56045e4f776d58572025 100644
+--- a/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
++++ b/tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp
+@@ -1,20 +1,32 @@
+ #define SIMA_NEAT_INTERNAL 1
++#include "model/Model.h"
+ #include "model/internal/ModelPack.h"
+ #include "pipeline/internal/MemoryBackendPolicy.h"
++#include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+ #include "pipeline/internal/sima/MpkContract.h"
++#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+ #include "test_main.h"
+ 
++#include <glib.h>
++
++#include <algorithm>
++#include <array>
+ #include <cstdlib>
+ #include <cstdint>
+ #include <filesystem>
+ #include <fstream>
++#include <initializer_list>
++#include <nlohmann/json.hpp>
++#include <string_view>
+ #include <stdexcept>
+ #include <string>
+ #include <vector>
+ 
+ namespace {
+ 
+-void write_monolithic_topology_elf(const std::filesystem::path& path) {
++void write_topology_elf(const std::filesystem::path& path, const std::string& ifm_name,
++                        const std::uint64_t ifm_extent, const std::string& ofm_name,
++                        const std::uint64_t ofm_extent) {
+   struct Elf64Header {
+     std::uint8_t ident[16]{};
+     std::uint16_t type = 0;
+@@ -46,9 +58,19 @@ void write_monolithic_topology_elf(const std::filesystem::path& path) {
+   static_assert(sizeof(Elf64Header) == 64U);
+   static_assert(sizeof(Elf64SectionHeader) == 64U);
+ 
+-  constexpr char names[] = "\0.shstrtab\0data.ifm.b0\0data.ofm.b0\0";
++  std::string names(1U, '\0');
++  const auto append_name = [&](const std::string& name) {
++    const auto offset = static_cast<std::uint32_t>(names.size());
++    names += name;
++    names.push_back('\0');
++    return offset;
++  };
++  const auto shstrtab_name = append_name(".shstrtab");
++  const auto ifm_name_offset = append_name(ifm_name);
++  const auto ofm_name_offset = append_name(ofm_name);
+   const std::uint64_t names_offset = sizeof(Elf64Header);
+-  const std::uint64_t sections_offset = (names_offset + sizeof(names) + 7U) & ~std::uint64_t{7U};
++  const std::uint64_t sections_offset =
++      (names_offset + names.size() + 7U) & ~std::uint64_t{7U};
+ 
+   Elf64Header header;
+   header.ident[0] = 0x7fU;
+@@ -68,57 +90,366 @@ void write_monolithic_topology_elf(const std::filesystem::path& path) {
+   header.section_name_table_index = 1U;
+ 
+   std::vector<Elf64SectionHeader> sections(4U);
+-  sections[1].name = 1U;
++  sections[1].name = shstrtab_name;
+   sections[1].type = 3U;
+   sections[1].offset = names_offset;
+-  sections[1].size = sizeof(names);
++  sections[1].size = names.size();
+   sections[1].alignment = 1U;
+-  sections[2].name = 11U;
+-  sections[2].type = 1U;
+-  sections[3].name = 23U;
+-  sections[3].type = 1U;
++  sections[2].name = ifm_name_offset;
++  sections[2].type = 0x71ba0002U;
++  sections[2].offset = sections_offset + sections.size() * sizeof(sections.front());
++  sections[2].size = 16U;
++  sections[3].name = ofm_name_offset;
++  sections[3].type = 0x71ba0002U;
++  sections[3].offset = sections[2].offset + 16U;
++  sections[3].size = 16U;
+ 
+   std::ofstream output(path, std::ios::binary | std::ios::trunc);
+   require(output.is_open(), "failed to create synthetic MLA ELF");
+   output.write(reinterpret_cast<const char*>(&header), sizeof(header));
+-  output.write(names, sizeof(names));
+-  const auto written = names_offset + sizeof(names);
++  output.write(names.data(), static_cast<std::streamsize>(names.size()));
++  const auto written = names_offset + names.size();
+   std::vector<char> padding(static_cast<std::size_t>(sections_offset - written), 0);
+   output.write(padding.data(), static_cast<std::streamsize>(padding.size()));
+   output.write(reinterpret_cast<const char*>(sections.data()),
+                static_cast<std::streamsize>(sections.size() * sizeof(sections.front())));
++  const std::array<std::uint64_t, 2U> ifm_header{ifm_extent, 1U};
++  const std::array<std::uint64_t, 2U> ofm_header{ofm_extent, 1U};
++  output.write(reinterpret_cast<const char*>(ifm_header.data()), 16);
++  output.write(reinterpret_cast<const char*>(ofm_header.data()), 16);
+   require(output.good(), "failed to write synthetic MLA ELF");
+ }
+ 
++void write_monolithic_topology_elf(const std::filesystem::path& path) {
++  write_topology_elf(path, "data.ifm.b0", 64U, "data.ofm.b0", 64U);
++}
++
++void write_host_module(const std::filesystem::path& path, const std::uint64_t rows,
++                       const std::vector<std::string>& input_names) {
++  require(!input_names.empty(), "synthetic A65 module needs one or more inputs");
++  nlohmann::json nodes = nlohmann::json::array();
++  nlohmann::json arguments = nlohmann::json::array();
++  nlohmann::json call_inputs = nlohmann::json::array();
++  nlohmann::json shapes = nlohmann::json::array();
++  nlohmann::json dtypes = nlohmann::json::array();
++  nlohmann::json storage = nlohmann::json::array();
++  nlohmann::json row_ptr = nlohmann::json::array({0});
++  for (std::size_t index = 0U; index < input_names.size(); ++index) {
++    nodes.push_back({{"op", "null"}, {"name", input_names[index]},
++                     {"inputs", nlohmann::json::array()}});
++    arguments.push_back(index);
++    call_inputs.push_back(nlohmann::json::array({index, 0, 0}));
++    shapes.push_back(nlohmann::json::array({rows, 1225U}));
++    dtypes.push_back("float32");
++    storage.push_back(index);
++    row_ptr.push_back(index + 1U);
++  }
++  const auto call_index = input_names.size();
++  nodes.push_back({{"op", "tvm_op"},
++                   {"name", "identity"},
++                   {"attrs", {{"func_name", "fused_identity"},
++                              {"num_inputs", std::to_string(input_names.size())},
++                              {"num_outputs", "1"}}},
++                   {"inputs", call_inputs}});
++  shapes.push_back(nlohmann::json::array({rows, 1225U}));
++  dtypes.push_back("float32");
++  storage.push_back(call_index);
++  row_ptr.push_back(call_index + 1U);
++  const nlohmann::ordered_json graph_json{
++      {"nodes", std::move(nodes)},
++      {"arg_nodes", std::move(arguments)},
++      {"heads", nlohmann::json::array({nlohmann::json::array({call_index, 0, 0})})},
++      {"attrs", {{"shape", nlohmann::json::array({"list_shape", shapes})},
++                 {"dltype", nlohmann::json::array({"list_str", dtypes})},
++                 {"storage_id", nlohmann::json::array({"list_int", storage})}}},
++      {"node_row_ptr", std::move(row_ptr)}};
++  const std::string graph = graph_json.dump(2);
++  require(graph.starts_with("{\n  \"nodes\": ["),
++          "synthetic A65 graph lost the frozen TVM GraphExecutor marker");
++  std::string prefix(64U, '\0');
++  prefix[0] = static_cast<char>(0x7fU);
++  prefix[1] = 'E';
++  prefix[2] = 'L';
++  prefix[3] = 'F';
++  prefix[4] = 2;
++  prefix[5] = 1;
++  prefix[16] = 3;                        // ET_DYN
++  prefix[18] = static_cast<char>(183U); // EM_AARCH64
++  std::ofstream output(path, std::ios::binary | std::ios::trunc);
++  require(output.is_open(), "failed to create synthetic A65 module");
++  output.write(prefix.data(), static_cast<std::streamsize>(prefix.size()));
++  output.write(graph.data(), static_cast<std::streamsize>(graph.size()));
++  output.put('\0');
++  require(output.good(), "failed to write synthetic A65 module");
++}
++
++void write_host_module(const std::filesystem::path& path, const std::uint64_t rows) {
++  write_host_module(path, rows, {"host_input"});
++}
++
++void write_mla_a65_manifest(const std::filesystem::path& path, const std::uint64_t rows) {
++  const std::uint64_t logical_bytes = rows * 1225U * 4U;
++  std::ofstream output(path);
++  require(output.is_open(), "failed to create synthetic MLA-to-A65 MPK");
++  output << R"json({
++    "name":"modelpack-mla-a65-pitch","model_sdk_version":"2.1.0",
++    "input_nodes":[{"name":"input","size":16}],
++    "plugins":[
++      {"name":"MLA_0","sequence":1,"processor":"MLA","type":"sgpProcess",
++       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
++                        "number_of_quads_to_user":4,
++                        "input_types":[{"scalar":"float32","shape":[1,4]}],
++                        "output_types":[{"scalar":"float32","shape":[)json"
++         << rows << R"json(,1225]}]},
++       "input_nodes":[{"name":"input","size":16}],
++       "output_nodes":[{"name":"pitched","size":)json"
++         << logical_bytes << R"json(}],
++       "resources":{"executable":"model.elf"}},
++      {"name":"APU_1","sequence":2,"processor":"A65","type":"sgpProcess",
++       "config_params":{"input_names":["host_input"],
++                        "input_types":[{"scalar":"float32","shape":[)json"
++         << rows << R"json(,1225]}],
++                        "output_types":[{"scalar":"float32","shape":[)json"
++         << rows << R"json(,1225]}]},
++       "input_nodes":[{"name":"pitched","size":)json"
++         << logical_bytes << R"json(}],
++       "output_nodes":[{"name":"output","size":)json"
++         << logical_bytes << R"json(}],
++       "resources":{"executable":"host.so"}}
++    ]
++  })json";
++  require(output.good(), "failed to write synthetic MLA-to-A65 MPK");
++}
++
++void write_a65_join_device_boundary_manifest(const std::filesystem::path& path) {
++  std::ofstream output(path);
++  require(output.is_open(), "failed to create synthetic A65 join MPK");
++  output << R"json({
++    "name":"modelpack-a65-join-device-boundary","model_sdk_version":"2.1.0",
++    "input_nodes":[{"name":"input","size":16,"dtype":"float32","shape":[1,4]}],
++    "plugins":[
++      {"name":"MLA_0","sequence":1,"processor":"MLA","type":"sgpProcess",
++       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
++                        "number_of_quads_to_user":4,
++                        "input_types":[{"scalar":"float32","shape":[1,4]}],
++                        "output_types":[{"scalar":"float32","shape":[1,1225]}]},
++       "input_nodes":[{"name":"input","size":16,"dtype":"float32","shape":[1,4]}],
++       "output_nodes":[{"name":"mla_root","size":4900,"dtype":"float32","shape":[1,1225]}],
++       "resources":{"executable":"first.elf"}},
++      {"name":"APU_1","sequence":2,"processor":"A65","type":"sgpProcess",
++       "config_params":{"input_names":["root_input"],
++                        "input_types":[{"scalar":"float32","shape":[1,1225]}],
++                        "output_types":[{"scalar":"float32","shape":[1,1225]}]},
++       "input_nodes":[{"name":"mla_root","size":4900,"dtype":"float32","shape":[1,1225]}],
++       "output_nodes":[{"name":"host_mid","size":4900,"dtype":"float32","shape":[1,1225]}],
++       "resources":{"executable":"host_one.so"}},
++      {"name":"APU_2","sequence":3,"processor":"A65","type":"sgpProcess",
++       "config_params":{"input_names":["root_input","chain_input"],
++                        "input_types":[{"scalar":"float32","shape":[1,1225]},
++                                       {"scalar":"float32","shape":[1,1225]}],
++                        "output_types":[{"scalar":"float32","shape":[1,1225]}]},
++       "input_nodes":[{"name":"mla_root","size":4900,"dtype":"float32","shape":[1,1225]},
++                      {"name":"host_mid","size":4900,"dtype":"float32","shape":[1,1225]}],
++       "output_nodes":[{"name":"host_join","size":4900,"dtype":"float32","shape":[1,1225]}],
++       "resources":{"executable":"host_join.so"}},
++      {"name":"cast_after_cpu","sequence":4,"processor":"EV74","type":"sgpProcess",
++       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
++                        "kernel":"cast_transform",
++                        "params":{"out_dtype":"bfloat16",
++                                  "input_shapes":[[1,1225]],
++                                  "output_shapes":[[1,1225]]}},
++       "input_nodes":[{"name":"host_join","size":4900,"dtype":"float32","shape":[1,1225]}],
++       "output_nodes":[{"name":"cast_out","size":2450,"dtype":"bfloat16","shape":[1,1225]}]},
++      {"name":"MLA_4","sequence":5,"processor":"MLA","type":"sgpProcess",
++       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
++                        "number_of_quads_to_user":4,
++                        "input_types":[{"scalar":"bfloat16","shape":[1,1225]}],
++                        "output_types":[{"scalar":"bfloat16","shape":[1,1225]}]},
++       "input_nodes":[{"name":"cast_out","size":2450,"dtype":"bfloat16","shape":[1,1225]}],
++       "output_nodes":[{"name":"output","size":2450,"dtype":"bfloat16","shape":[1,1225]}],
++       "resources":{"executable":"last.elf"}}
++    ]
++  })json";
++  require(output.good(), "failed to write synthetic A65 join MPK");
++}
++
+ void write_manifest(const std::filesystem::path& path) {
+   std::ofstream output(path);
+   require(output.is_open(), "failed to create synthetic multi-MLA MPK");
+   output << R"json({
+     "name":"modelpack-two-mla","model_sdk_version":"2.0.0",
+-    "input_nodes":[{"name":"input","size":64}],
++    "input_nodes":[{"name":"input","size":64,"dtype":"int8","shape":[1,64]}],
+     "plugins":[
+       {"name":"MLA_encoder","sequence":1,"processor":"MLA","type":"sgpProcess",
+        "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+-                        "number_of_quads_to_user":4},
+-       "input_nodes":[{"name":"input","size":64}],
+-       "output_nodes":[{"name":"encoded","size":64}],
++                        "number_of_quads_to_user":4,
++                        "input_types":[{"scalar":"int8","shape":[1,64]}],
++                        "output_types":[{"scalar":"int8","shape":[1,64]}]},
++       "input_nodes":[{"name":"input","size":64,"dtype":"int8","shape":[1,64]}],
++       "output_nodes":[{"name":"encoded","size":64,"dtype":"int8","shape":[1,64]}],
+        "resources":{"executable":"encoder.so"}},
+       {"name":"MLA_decoder","sequence":2,"processor":"MLA","type":"sgpProcess",
+        "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+-                        "number_of_quads_to_user":4},
+-       "input_nodes":[{"name":"encoded","size":64}],
+-       "output_nodes":[{"name":"decoded","size":64}],
++                        "number_of_quads_to_user":4,
++                        "input_types":[{"scalar":"int8","shape":[1,64]}],
++                        "output_types":[{"scalar":"int8","shape":[1,64]}]},
++       "input_nodes":[{"name":"encoded","size":64,"dtype":"int8","shape":[1,64]}],
++       "output_nodes":[{"name":"decoded","size":64,"dtype":"int8","shape":[1,64]}],
+        "resources":{"executable":"decoder.elf"}},
+       {"name":"publish","sequence":3,"processor":"EV74","type":"sgpProcess",
+        "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                         "kernel":"pass_through","params":{}},
+-       "input_nodes":[{"name":"decoded","size":64}],
+-       "output_nodes":[{"name":"output","size":64}]}
++       "input_nodes":[{"name":"decoded","size":64,"dtype":"int8","shape":[1,64]}],
++       "output_nodes":[{"name":"output","size":64,"dtype":"int8","shape":[1,64]}]}
+     ]
+   })json";
+   require(output.good(), "failed to write synthetic multi-MLA MPK");
+ }
+ 
++void write_boxdecode_cast_tail_manifest(const std::filesystem::path& path,
++                                        const std::string& mla_scalar,
++                                        const std::string& cast_output_scalar,
++                                        const std::uint64_t input_elements,
++                                        const std::uint64_t output_elements) {
++  const auto scalar_bytes = [](const std::string& scalar) -> std::uint64_t {
++    if (scalar == "bfloat16" || scalar == "float16") return 2U;
++    if (scalar == "float32") return 4U;
++    return 1U;
++  };
++  const std::string model_input_scalar =
++      mla_scalar == "bfloat16" ? "float32" : "bfloat16";
++  const auto model_input_bytes =
++      input_elements * scalar_bytes(model_input_scalar);
++  const auto input_bytes = input_elements * scalar_bytes(mla_scalar);
++  const auto output_bytes = output_elements * scalar_bytes(cast_output_scalar);
++  std::ofstream output(path);
++  require(output.is_open(), "failed to create synthetic MLA-to-Cast MPK");
++  output << R"json({
++    "name":"modelpack-boxdecode-cast-tail","model_sdk_version":"2.1.0",
++    "input_nodes":[{"name":"input","size":)json"
++         << model_input_bytes << R"json(,"dtype":")json" << model_input_scalar
++         << R"json(","shape":[1,)json" << input_elements << R"json(]}],
++    "plugins":[
++      {"name":"pre_cast","sequence":1,"processor":"EV74","type":"sgpProcess",
++       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
++                        "kernel":"cast_transform",
++                        "params":{"out_dtype":")json" << mla_scalar
++         << R"json(","input_shapes":[[1,)json" << input_elements
++         << R"json(]],"output_shapes":[[1,)json" << input_elements << R"json(]]}},
++       "input_nodes":[{"name":"input","size":)json" << model_input_bytes
++         << R"json(,"dtype":")json" << model_input_scalar
++         << R"json(","shape":[1,)json" << input_elements << R"json(]}],
++       "output_nodes":[{"name":"mla_input","size":)json" << input_bytes
++         << R"json(,"dtype":")json" << mla_scalar << R"json(","shape":[1,)json"
++         << input_elements << R"json(]}]},
++      {"name":"MLA_0","sequence":2,"processor":"MLA","type":"sgpProcess",
++       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
++                        "number_of_quads_to_user":4,
++                        "input_types":[{"scalar":")json" << mla_scalar
++         << R"json(","shape":[1,)json" << input_elements << R"json(]}],
++                        "output_types":[{"scalar":")json" << mla_scalar
++         << R"json(","shape":[1,)json" << input_elements << R"json(]}]},
++       "input_nodes":[{"name":"mla_input","size":)json" << input_bytes
++         << R"json(,"dtype":")json" << mla_scalar << R"json(","shape":[1,)json"
++         << input_elements << R"json(]}],
++       "output_nodes":[{"name":"mla_head","size":)json" << input_bytes
++         << R"json(,"dtype":")json" << mla_scalar << R"json(","shape":[1,)json"
++         << input_elements << R"json(]}],
++       "resources":{"executable":"model.elf"}},
++      {"name":"cast_head","sequence":3,"processor":"EV74","type":"sgpProcess",
++       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
++                        "kernel":"cast_transform",
++                        "params":{"out_dtype":")json" << cast_output_scalar
++         << R"json(","input_shapes":[[1,)json" << input_elements
++         << R"json(]],"output_shapes":[[1,)json" << output_elements << R"json(]]}},
++       "input_nodes":[{"name":"mla_head","size":)json" << input_bytes
++         << R"json(,"dtype":")json" << mla_scalar << R"json(","shape":[1,)json"
++         << input_elements << R"json(]}],
++       "output_nodes":[{"name":"class_prob_0","size":)json" << output_bytes
++         << R"json(,"dtype":")json" << cast_output_scalar
++         << R"json(","shape":[1,)json" << output_elements << R"json(]}]}
++    ]
++  })json";
++  require(output.good(), "failed to write synthetic MLA-to-Cast MPK");
++}
++
++void write_archive_manifest(const std::filesystem::path& path) {
++  std::ofstream output(path);
++  require(output.is_open(), "failed to create synthetic archive MPK");
++  output << R"json({
++    "name":"modelpack-json-preservation","model_sdk_version":"2.0.0",
++    "input_nodes":[{"name":"input","size":64,"dtype":"int8","shape":[1,64]}],
++    "plugins":[
++      {"name":"MLA_0","sequence":1,"processor":"MLA","type":"sgpProcess",
++       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
++                        "number_of_quads_to_user":4,
++                        "input_types":[{"scalar":"int8","shape":[1,64]}],
++                        "output_types":[{"scalar":"int8","shape":[1,64]}]},
++       "input_nodes":[{"name":"input","size":64,"dtype":"int8","shape":[1,64]}],
++       "output_nodes":[{"name":"output","size":64,"dtype":"int8","shape":[1,64]}],
++       "resources":{"executable":"model.elf"}}
++    ]
++  })json";
++  require(output.good(), "failed to write synthetic archive MPK");
++}
++
++void write_text(const std::filesystem::path& path, const std::string_view text) {
++  std::ofstream output(path, std::ios::binary | std::ios::trunc);
++  require(output.is_open(), "failed to create synthetic archive JSON");
++  output.write(text.data(), static_cast<std::streamsize>(text.size()));
++  require(output.good(), "failed to write synthetic archive JSON");
++}
++
++std::string read_text(const std::filesystem::path& path) {
++  std::ifstream input(path, std::ios::binary);
++  require(input.is_open(), "failed to read extracted archive JSON");
++  return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
++}
++
++std::string sha256(const std::string_view bytes) {
++  gchar* digest = g_compute_checksum_for_data(
++      G_CHECKSUM_SHA256, reinterpret_cast<const guchar*>(bytes.data()), bytes.size());
++  require(digest != nullptr, "failed to compute archive JSON SHA-256");
++  std::string result(digest);
++  g_free(digest);
++  return result;
++}
++
++std::string shell_quote(const std::string& text) {
++  std::string result("'");
++  for (const char ch : text) {
++    result += ch == '\'' ? "'\\''" : std::string(1U, ch);
++  }
++  result += '\'';
++  return result;
++}
++
++std::vector<nlohmann::json> direct_tvm_contracts(const std::string& fragment) {
++  constexpr std::string_view prefix = "direct-contract-b64=";
++  std::vector<nlohmann::json> result;
++  for (std::size_t cursor = 0U;;) {
++    const auto begin = fragment.find(prefix, cursor);
++    if (begin == std::string::npos) {
++      break;
++    }
++    const auto value_begin = begin + prefix.size();
++    const auto value_end = fragment.find_first_of(" \t\r\n", value_begin);
++    const auto encoded = fragment.substr(
++        value_begin, value_end == std::string::npos ? std::string::npos
++                                                    : value_end - value_begin);
++    gsize decoded_size = 0U;
++    guchar* decoded = g_base64_decode(encoded.c_str(), &decoded_size);
++    require(decoded != nullptr && decoded_size != 0U,
++            "failed to decode direct TVM lane contract");
++    result.push_back(nlohmann::json::parse(
++        reinterpret_cast<const char*>(decoded),
++        reinterpret_cast<const char*>(decoded) + decoded_size));
++    g_free(decoded);
++    cursor = value_end == std::string::npos ? fragment.size() : value_end;
++  }
++  return result;
++}
++
+ } // namespace
+ 
+ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+@@ -129,6 +460,7 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+            using simaai::neat::internal::PipelineType;
+            using simaai::neat::pipeline_internal::MemoryBackendPolicy;
+            using simaai::neat::pipeline_internal::sima::FrameArenaRole;
++           namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
+ 
+            require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
+                    "failed to select strict DMA-BUF backend");
+@@ -178,26 +510,417 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+            const auto& first = facts[0].mla_compiled->runtime_contract;
+            const auto& second = facts[1].mla_compiled->runtime_contract;
+            require(first.frame_arena_role == FrameArenaRole::Allocate &&
+-                       second.frame_arena_role == FrameArenaRole::ReuseInput,
+-                   "the first MLA must allocate and the later MLA must reuse the graph arena");
++                       second.frame_arena_role == FrameArenaRole::Allocate &&
++                       second.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms &&
++                       second.frame_arena_escape_policy ==
++                           sc::ArenaEscapePolicy::CpuMappablePublic,
++                   "only the terminal public MLA must own a separate CPU-visible output pool");
+            require(first.frame_arena_size_bytes != 0U &&
+-                       first.frame_arena_size_bytes == second.frame_arena_size_bytes,
+-                   "both MLA stages must project the same graph-wide arena extent");
++                       second.frame_arena_size_bytes != 0U,
++                   "both MLA stages must retain a non-empty output allocation contract");
+            require(first.physical_outputs.size() == 1U && second.physical_inputs.size() == 1U &&
+-                       first.physical_outputs[0].source_byte_offset ==
+-                           second.physical_inputs[0].source_byte_offset,
+-                   "the later MLA IFM must reuse the exact preceding MLA OFM arena region");
++                       second.physical_inputs[0].source_physical_index == 0 &&
++                       second.physical_inputs[0].source_byte_offset == 0 &&
++                       second.physical_outputs[0].source_byte_offset == 0,
++                   "the later MLA must import its exact preceding TensorBuffer carrier without "
++                   "copying it into the terminal output pool");
+            require(facts[0].mla_compiled->payload.model_path.ends_with("/share/encoder.so") &&
+                        facts[1].mla_compiled->payload.model_path.ends_with("/share/decoder.elf"),
+                    "an MLA .so/ELF must stay bound to its exact MPK stage identity");
++
++           const auto make_mla_a65_package = [&](const std::string& label,
++                                                  const std::uint64_t rows) {
++             const fs::path package = root.parent_path() / label;
++             fs::remove_all(package, ec);
++             fs::create_directories(package / "etc", ec);
++             fs::create_directories(package / "lib", ec);
++             fs::create_directories(package / "share", ec);
++             require(!ec, "failed to create synthetic MLA-to-A65 package layout");
++             write_mla_a65_manifest(package / "etc" / "model_mpk.json", rows);
++             write_topology_elf(package / "share" / "model.elf",
++                                "data.ifm.persistent.afe_direct_input_0.b0", 16U,
++                                "data.ofm.persistent.afe_mla_output_0.b0", rows * 4912U);
++             write_host_module(package / "lib" / "host.so", rows);
++             return package;
++           };
++
++           const fs::path singleton_package =
++               make_mla_a65_package("neat-modelpack-mla-a65-singleton-pitch-unit", 1U);
++           ModelPack singleton_model(singleton_package.string());
++           const auto singleton_facts =
++               singleton_model.stage_facts_for_model_stage(ModelStage::MlaOnly);
++           require(singleton_facts.size() == 2U &&
++                       singleton_facts[0].mla_compiled.has_value() &&
++                       singleton_facts[1].transport_compiled.has_value() &&
++                       !singleton_facts[0].mla_compiled->runtime_contract.physical_outputs.empty() &&
++                       !singleton_facts[1].transport_compiled->runtime_contract.logical_inputs
++                            .empty() &&
++                       singleton_facts[0].mla_compiled->runtime_contract.physical_outputs[0]
++                               .size_bytes == 4912U &&
++                       singleton_facts[1].transport_compiled->runtime_contract.logical_inputs[0]
++                               .shape == std::vector<std::int64_t>({1, 1225}),
++                   "[1,1225] QMLA pitch is dense-address-equivalent and must remain valid for A65");
++
++           simaai::neat::internal::InferenceTerminalPolicy false_boxdecode_policy;
++           false_boxdecode_policy.mla_only = true;
++           ModelPack false_boxdecode_model(
++               singleton_package.string(), "application/vnd.simaai.tensor", "FP32", 1,
++               1, 1, 1, false, {}, {}, {}, PipelineType::Preproc, "decoder", 4,
++               4, 0, -1, {}, {}, false_boxdecode_policy,
++               /*cleanup_extracted_model_data=*/false);
++           simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags false_flags;
++           false_flags.boxdecode_selected = true;
++           bool false_boxdecode_rejected = false;
++           try {
++             false_boxdecode_model.set_model_managed_stage_facts(
++                 std::nullopt, false_flags, {ExecutionStageKind::BoxDecode});
++           } catch (const std::runtime_error& failure) {
++             false_boxdecode_rejected =
++                 std::string(failure.what()).find(
++                     "non-CVU materializing successor") != std::string::npos;
++           }
++           require(false_boxdecode_rejected,
++                   "BoxDecode route selection must not absorb an MLA-to-A65 materializer");
++
++           const auto make_cast_tail_package =
++               [&](const std::string& label, const std::string& mla_scalar,
++                   const std::string& cast_output_scalar,
++                   const std::uint64_t input_elements,
++                   const std::uint64_t output_elements) {
++                 const auto scalar_bytes = [](const std::string& scalar) {
++                   if (scalar == "float32") return std::uint64_t{4U};
++                   if (scalar == "bfloat16" || scalar == "float16") {
++                     return std::uint64_t{2U};
++                   }
++                   return std::uint64_t{1U};
++                 };
++                 const fs::path package = root.parent_path() / label;
++                 fs::remove_all(package, ec);
++                 fs::create_directories(package / "etc", ec);
++                 fs::create_directories(package / "lib", ec);
++                 fs::create_directories(package / "share", ec);
++                 require(!ec,
++                         "failed to create synthetic MLA-to-Cast package layout");
++                 write_boxdecode_cast_tail_manifest(
++                     package / "etc" / "model_mpk.json", mla_scalar,
++                     cast_output_scalar, input_elements, output_elements);
++                 write_topology_elf(
++                     package / "share" / "model.elf",
++                     "data.ifm.persistent.afe_direct_input_0.b0",
++                     input_elements * scalar_bytes(mla_scalar),
++                     "data.ofm.persistent.afe_mla_output_0.b0",
++                     input_elements * scalar_bytes(mla_scalar));
++                 return package;
++               };
++           const auto select_boxdecode_route =
++               [&](const fs::path& package) {
++                 simaai::neat::internal::InferenceTerminalPolicy policy;
++                 policy.mla_only = true;
++                 ModelPack candidate(
++                     package.string(), "application/vnd.simaai.tensor", "BF16",
++                     1, 32, 1, 1, false, {}, {}, {}, PipelineType::Preproc,
++                     "decoder", 4, 4, 0, -1, {}, {}, policy,
++                     /*cleanup_extracted_model_data=*/false);
++                 simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags
++                     route_flags;
++                 route_flags.boxdecode_selected = true;
++                 candidate.set_model_managed_stage_facts(
++                     std::nullopt, route_flags,
++                     {ExecutionStageKind::BoxDecode});
++                 return candidate;
++               };
++
++           const auto bf16_cast_package = make_cast_tail_package(
++               "neat-modelpack-boxdecode-bf16-cast-tail-unit", "bfloat16",
++               "float32", 32U, 32U);
++           auto bf16_cast_model = select_boxdecode_route(bf16_cast_package);
++           require(bf16_cast_model.mpk_contract().has_value(),
++                   "BF16 Cast-tail fixture lost its semantic MPK contract");
++           const auto& bf16_cast_mpk = *bf16_cast_model.mpk_contract();
++           const auto pre_mla_edges = std::count_if(
++               bf16_cast_mpk.edges.begin(), bf16_cast_mpk.edges.end(),
++               [](const auto& edge) {
++                 return edge.src_plugin == "pre_cast" &&
++                        edge.src_output_index == 0 &&
++                        edge.dst_plugin == "MLA_0" &&
++                        edge.dst_input_index == 0 &&
++                        edge.tensor_name == "mla_input";
++               });
++           require(pre_mla_edges == 1,
++                   "BF16 Cast-tail fixture lost its exact pre-Cast output-to-MLA "
++                   "input edge");
++           const auto bf16_cast_plan = bf16_cast_model.execution_plan();
++           require(bf16_cast_plan.infer.size() == 2U &&
++                       bf16_cast_plan.infer[0].kind ==
++                           ExecutionStageKind::Cast &&
++                       bf16_cast_plan.infer[1].kind ==
++                           ExecutionStageKind::Mla,
++                   "BoxDecode must absorb an exact BF16-to-FP32 Cast tail");
++           const auto bf16_cast_facts =
++               bf16_cast_model.stage_facts_for_model_stage(ModelStage::Full);
++           require(bf16_cast_facts.size() == 2U &&
++                       bf16_cast_facts[0].processcvu_contract.has_value() &&
++                       bf16_cast_facts[1].mla_compiled.has_value(),
++                   "absorbed Cast route did not retain pre-Cast followed by MLA");
++           const auto& pre_runtime =
++               bf16_cast_facts[0].processcvu_contract->runtime_contract;
++           const auto& mla_runtime =
++               bf16_cast_facts[1].mla_compiled->runtime_contract;
++           require(pre_runtime.frame_arena_storage_domain ==
++                       sc::ArenaStorageDomain::Cma,
++                   "pre-Cast retained carrier is not CMA (actual_domain=" +
++                       std::to_string(static_cast<int>(
++                           pre_runtime.frame_arena_storage_domain)) +
++                       ")");
++           require(pre_runtime.physical_outputs.size() == 1U &&
++                       mla_runtime.physical_inputs.size() == 1U &&
++                       mla_runtime.input_bindings.size() == 1U,
++                   "pre-Cast-to-MLA runtime edge cardinality changed (pre_outputs=" +
++                       std::to_string(pre_runtime.physical_outputs.size()) +
++                       ",mla_inputs=" +
++                       std::to_string(mla_runtime.physical_inputs.size()) +
++                       ",mla_bindings=" +
++                       std::to_string(mla_runtime.input_bindings.size()) + ")");
++           const auto& pre_physical = pre_runtime.physical_outputs[0];
++           const auto& mla_physical = mla_runtime.physical_inputs[0];
++           const auto& mla_binding = mla_runtime.input_bindings[0];
++           require(mla_physical.source_physical_index ==
++                           pre_physical.physical_index &&
++                       mla_binding.src_physical_output_index ==
++                           pre_physical.physical_index,
++                   "pre-Cast-to-MLA physical source index changed (pre=" +
++                       std::to_string(pre_physical.physical_index) +
++                       ",input_source=" +
++                       std::to_string(mla_physical.source_physical_index) +
++                       ",binding_source=" +
++                       std::to_string(mla_binding.src_physical_output_index) + ")");
++           require(mla_physical.source_byte_offset ==
++                           pre_physical.source_byte_offset &&
++                       mla_binding.src_physical_byte_offset ==
++                           pre_physical.source_byte_offset,
++                   "pre-Cast-to-MLA absolute carrier offset changed (pre=" +
++                       std::to_string(pre_physical.source_byte_offset) +
++                       ",input=" +
++                       std::to_string(mla_physical.source_byte_offset) +
++                       ",binding=" +
++                       std::to_string(mla_binding.src_physical_byte_offset) + ")");
++           require(mla_physical.size_bytes == pre_physical.size_bytes &&
++                       mla_binding.src_physical_size_bytes ==
++                           pre_physical.size_bytes,
++                   "pre-Cast-to-MLA carrier span changed (pre=" +
++                       std::to_string(pre_physical.size_bytes) +
++                       ",input=" + std::to_string(mla_physical.size_bytes) +
++                       ",binding=" +
++                       std::to_string(mla_binding.src_physical_size_bytes) + ")");
++           require(mla_runtime.logical_outputs.size() == 1U,
++                   "absorbed Cast route changed raw MLA publication cardinality");
++           require(mla_runtime.logical_outputs[0].dtype == "bfloat16",
++                   "absorbed Cast route changed raw MLA dtype (actual=" +
++                       mla_runtime.logical_outputs[0].dtype + ")");
++           require(mla_runtime.logical_outputs[0].size_bytes == 64U,
++                   "absorbed Cast route changed raw MLA bytes (actual=" +
++                       std::to_string(
++                           mla_runtime.logical_outputs[0].size_bytes) +
++                       ")");
++
++           const auto expect_cast_tail_rejected =
++               [&](const fs::path& package,
++                   const std::initializer_list<std::string_view> expected) {
++                 bool rejected = false;
++                 try {
++                   (void)select_boxdecode_route(package);
++                 } catch (const std::runtime_error& failure) {
++                   const std::string detail = failure.what();
++                   rejected = std::any_of(
++                       expected.begin(), expected.end(),
++                       [&](const auto token) {
++                         return detail.find(token) != std::string::npos;
++                       });
++                 }
++                 require(rejected,
++                         "malformed BoxDecode Cast tail was not rejected by its exact "
++                         "typed predicate");
++               };
++           expect_cast_tail_rejected(
++               make_cast_tail_package(
++                   "neat-modelpack-boxdecode-cast-wrong-direction-unit",
++                   "float32", "bfloat16", 32U, 32U),
++               {"BF16-to-FP32"});
++           expect_cast_tail_rejected(
++               make_cast_tail_package(
++                   "neat-modelpack-boxdecode-cast-shape-mismatch-unit",
++                   "bfloat16", "float32", 32U, 16U),
++               {"changes semantic shape",
++                "shape-preserving transform 'cast_head' has contradictory exact "
++                "endpoint shapes"});
++
++           bool wrong_dtype_rejected = false;
++           std::string wrong_dtype_detail;
++           try {
++             (void)select_boxdecode_route(make_cast_tail_package(
++                 "neat-modelpack-boxdecode-cast-wrong-dtype-unit", "int8",
++                 "float32", 32U, 32U));
++           } catch (const std::runtime_error& failure) {
++             const std::string detail = failure.what();
++             wrong_dtype_detail = detail;
++             wrong_dtype_rejected =
++                 detail.find("legacy cast has no exact registered transition for this "
++                             "dtype") != std::string::npos;
++           }
++           require(wrong_dtype_rejected,
++                   "non-BF16 Cast input must fail closed before BoxDecode route "
++                   "selection (actual=" + wrong_dtype_detail + ")");
++
++           const fs::path multirow_package =
++               make_mla_a65_package("neat-modelpack-mla-a65-multirow-pitch-unit", 2U);
++           bool multirow_rejected = false;
++           try {
++             ModelPack multirow_model(multirow_package.string());
++             (void)multirow_model.stage_facts_for_model_stage(ModelStage::MlaOnly);
++           } catch (const std::runtime_error& failure) {
++             multirow_rejected =
++                 std::string(failure.what()).find(
++                     "A65 input has no exact typed storage binding") != std::string::npos;
++           }
++           require(multirow_rejected,
++                   "[2,1225] QMLA row pitch must fail closed before A65 drops its strides");
++
++           // A CPU epoch follows the deterministic rendered schedule, not the
++           // physical DAG's degree. APU_2 joins the retained MLA root with the
++           // immediately preceding APU_1 output, so it has two physical
++           // predecessors but remains in the same Core-owned CMA CPU interval.
++           // The following EV74 Cast is a real device interruption and must
++           // force the second A65 command to end that interval.
++           const fs::path join_package =
++               root.parent_path() / "neat-modelpack-a65-join-device-boundary-unit";
++           fs::remove_all(join_package, ec);
++           fs::create_directories(join_package / "etc", ec);
++           fs::create_directories(join_package / "lib", ec);
++           fs::create_directories(join_package / "share", ec);
++           require(!ec, "failed to create synthetic A65 join package layout");
++           write_a65_join_device_boundary_manifest(join_package / "etc" / "model_mpk.json");
++           write_topology_elf(
++               join_package / "share" / "first.elf",
++               "data.ifm.persistent.afe_direct_input_0.b0", 16U,
++               "data.ofm.persistent.afe_mla_output_0.b0", 4912U);
++           write_topology_elf(
++               join_package / "share" / "last.elf",
++               "data.ifm.persistent.afe_direct_input_0.b0", 2450U,
++               "data.ofm.persistent.afe_mla_output_0.b0", 2464U);
++           write_host_module(join_package / "lib" / "host_one.so", 1U,
++                             {"root_input"});
++           write_host_module(join_package / "lib" / "host_join.so", 1U,
++                             {"root_input", "chain_input"});
++           ModelPack join_model(join_package.string());
++           const auto join_plan = join_model.execution_plan();
++           require(join_plan.infer.size() == 5U &&
++                       join_plan.infer[0].kind == ExecutionStageKind::Mla &&
++                       join_plan.infer[1].kind == ExecutionStageKind::HostTvm &&
++                       join_plan.infer[2].kind == ExecutionStageKind::HostTvm &&
++                       join_plan.infer[3].kind == ExecutionStageKind::Cast &&
++                       join_plan.infer[4].kind == ExecutionStageKind::Mla,
++                   "synthetic A65 join lost its rendered CPU/device order");
++           const auto join_contracts =
++               direct_tvm_contracts(join_model.backend_fragment(ModelStage::MlaOnly));
++           require(join_contracts.size() == 2U &&
++                       join_contracts[0].at("storage_domain") == "cma" &&
++                       join_contracts[1].at("storage_domain") == "cma" &&
++                       join_contracts[0].at("allocation_provenance") ==
++                           "core_allocated" &&
++                       join_contracts[1].at("allocation_provenance") ==
++                           "core_allocated" &&
++                       join_contracts[0].at("cpu_epoch_start").get<bool>() &&
++                       !join_contracts[0].at("cpu_epoch_end").get<bool>() &&
++                       !join_contracts[1].at("cpu_epoch_start").get<bool>() &&
++                       join_contracts[1].at("cpu_epoch_end").get<bool>() &&
++                       join_contracts[1].at("inputs").size() == 2U,
++                   "A65 DAG join split one rendered CMA CPU epoch or crossed an EV74 "
++                   "device interruption");
++           fs::remove_all(join_package, ec);
++           fs::remove_all(singleton_package, ec);
++           fs::remove_all(multirow_package, ec);
++
++           // ModelPack extraction must not canonicalize opaque compiler JSON. The strict
++           // publication ledger binds the compiler-authored MPK byte stream, so a no-op path
++           // scan must retain both its bytes and therefore its SHA-256. A JSON which actually
++           // carries a model-relative path still follows the established absolute-path rewrite.
++           constexpr std::string_view no_op_json =
++               "{\n"
++               "    \"zeta\": [ 3, 2, 1 ],\n"
++               "    \"alpha\": { \"opaque\": true }\n"
++               "}\n";
++           constexpr std::string_view relative_path_json =
++               "{ \"model_info\" : { \"path\" : \"host_module.so\" }, "
++               "\"keep\" : [ 2, 1 ] }\n";
++           const fs::path archive_source =
++               root.parent_path() / "neat-modelpack-json-preservation-unit";
++           fs::remove_all(archive_source, ec);
++           fs::create_directories(archive_source / "etc", ec);
++           fs::create_directories(archive_source / "lib", ec);
++           fs::create_directories(archive_source / "share", ec);
++           require(!ec, "failed to create synthetic archive package layout");
++           write_archive_manifest(archive_source / "etc" /
++                                  "modelpack_json_preservation_mpk.json");
++           write_monolithic_topology_elf(archive_source / "share" / "model.elf");
++           write_text(archive_source / "etc" / "opaque_publication.json", no_op_json);
++           write_text(archive_source / "etc" / "relative_model_path.json", relative_path_json);
++           const std::string source_mpk = read_text(
++               archive_source / "etc" / "modelpack_json_preservation_mpk.json");
++           const std::string source_mpk_sha256 = sha256(source_mpk);
++           require(sha256(no_op_json) ==
++                       "f295c1cf18c3bfbb1f16dd581badec2393f6a85a5598b178cd4535c9f7e1e60e",
++                   "no-op JSON fixture SHA-256 changed unexpectedly");
++
++           const fs::path archive = root.parent_path() / "neat-modelpack-json-preservation.tar.gz";
++           const std::string archive_command =
++               "tar -czf " + shell_quote(archive.string()) + " -C " +
++               shell_quote(archive_source.string()) + " .";
++           require(std::system(archive_command.c_str()) == 0,
++                   "failed to create synthetic ModelPack archive");
++           {
++             ModelPack archived_model(archive.string());
++             const fs::path extracted_etc(archived_model.etc_dir());
++             const std::string extracted_mpk = read_text(
++                 extracted_etc / "modelpack_json_preservation_mpk.json");
++             require(extracted_mpk == source_mpk && sha256(extracted_mpk) == source_mpk_sha256,
++                     "a no-op ModelPack MPK scan changed its exact bytes or publication digest");
++             const std::string preserved = read_text(extracted_etc / "opaque_publication.json");
++             require(preserved == no_op_json,
++                     "a no-op ModelPack JSON scan changed compiler-authored bytes");
++             require(sha256(preserved) ==
++                         "f295c1cf18c3bfbb1f16dd581badec2393f6a85a5598b178cd4535c9f7e1e60e",
++                     "a no-op ModelPack JSON scan changed the publication digest");
++
++             const fs::path rewritten_path = extracted_etc / "relative_model_path.json";
++             const std::string rewritten = read_text(rewritten_path);
++             require(rewritten != relative_path_json,
++                     "a model-relative path was not materialized during archive extraction");
++             const auto rewritten_json = nlohmann::json::parse(rewritten);
++             require(rewritten_json.at("model_info").at("path").get<std::string>() ==
++                         (extracted_etc.parent_path() / "lib" / "host_module.so").string(),
++                     "archive path rewrite did not anchor the model under extracted lib/");
++             require(rewritten_json.at("keep") == nlohmann::json::array({2, 1}),
++                     "archive path rewrite changed unrelated JSON content");
++           }
++           fs::remove(archive, ec);
++           fs::remove_all(archive_source, ec);
+            fs::remove_all(root, ec);
+ 
+            // Optional exact AFE 2.1 package gate for qualification jobs. The
+            // fixture remains external because it is a compiler artifact, not
+-           // test source. This proves ModelPack resolves both MLA ELFs and the
+-           // A65 shared object before it accepts the strict backend.
++           // test source. It covers RF-DETR's real branch/join route:
++           // MLA -> A65 -> A65 -> A65 -> EV74 Cast -> 161-IFM MLA.
+            if (const char* real_package = std::getenv("SIMANEAT_AFE21_MULTI_MLA_PACKAGE");
+                real_package != nullptr && *real_package != '\0') {
++             simaai::neat::Model::Options public_options;
++             public_options.preprocess.kind = simaai::neat::InputKind::Tensor;
++             public_options.preprocess.enable = simaai::neat::AutoFlag::Off;
++             public_options.cleanup_extracted_model_data = false;
++             simaai::neat::Model public_model(real_package, public_options);
++             require(public_model.resolved_preprocess_plan().warnings.empty(),
++                     "RF-DETR route diagnostics were misclassified as user-facing planner "
++                     "warnings");
++
+              ModelPack real_model(
+                  real_package, "application/vnd.simaai.tensor", "FP32", /*depth=*/1,
+                  /*max_width=*/640, /*max_height=*/480, /*max_depth=*/1,
+@@ -205,28 +928,454 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
+              require(real_model.memory_backend_decision().admission.eligible(),
+                      "exact AFE 2.1 multi-MLA/A65 package failed ModelPack admission");
+              const auto real_plan = real_model.execution_plan();
+-             require(real_plan.infer.size() == 2U &&
+-                         real_plan.infer[0].kind == ExecutionStageKind::Mla &&
+-                         real_plan.infer[1].kind == ExecutionStageKind::Mla,
+-                     "exact AFE 2.1 package lost its two compiler-authored MLA stages");
+-
+-             // Until Phase 5 renders the compiler-authored interstitial EV74
+-             // DAG, the second packed MLA input must not be projected as if
+-             // the two MLA stages were adjacent. Keep this as an explicit
+-             // fail-closed gate rather than admitting a semantically wrong
+-             // runtime pipeline.
++             require(real_plan.pre.empty() && real_plan.post.empty() &&
++                         !real_plan.infer.empty(),
++                     "exact AFE 2.1 package was not rendered as one model-owned schedule");
++             std::vector<std::size_t> mla_indices;
++             std::vector<std::size_t> host_indices;
++             std::vector<std::size_t> cast_indices;
++             for (std::size_t index = 0; index < real_plan.infer.size(); ++index) {
++               const auto& stage = real_plan.infer[index];
++               require(!stage.physical_command_ids.empty(),
++                       "exact AFE 2.1 package lost physical command identity");
++               switch (stage.kind) {
++               case ExecutionStageKind::Mla:
++                 mla_indices.push_back(index);
++                 break;
++               case ExecutionStageKind::HostTvm:
++                 host_indices.push_back(index);
++                 break;
++               case ExecutionStageKind::Cast:
++                 cast_indices.push_back(index);
++                 break;
++               default:
++                 require(false,
++                         "exact RF-DETR schedule contains work outside MLA, direct A65, or "
++                         "registered CVU Cast commands");
++               }
++             }
++             require(mla_indices.size() == 2U && host_indices.size() == 3U &&
++                         !cast_indices.empty() &&
++                         real_plan.infer[mla_indices[0]].stage_name == "MLA_0" &&
++                         real_plan.infer[mla_indices[1]].stage_name == "MLA_171" &&
++                         real_plan.infer[host_indices[0]].stage_name == "APU_3" &&
++                         real_plan.infer[host_indices[1]].stage_name == "APU_5" &&
++                         real_plan.infer[host_indices[2]].stage_name == "APU_10" &&
++                         mla_indices[0] < host_indices[0] &&
++                         host_indices[0] < host_indices[1] &&
++                         host_indices[1] < host_indices[2] &&
++                         host_indices[2] < mla_indices[1],
++                     "exact RF-DETR schedule lost its two MLA boundaries or three ordered "
++                     "direct A65 commands");
++
+              real_model.set_model_managed_stage_facts(
+                  /*processcvu_preproc_single_output_handoff=*/true, std::nullopt, {});
+-             bool rejected_unscheduled_middle = false;
+-             try {
+-               (void)real_model.stage_facts_for_model_stage(ModelStage::MlaOnly);
+-             } catch (const std::runtime_error& error) {
+-               rejected_unscheduled_middle =
+-                   std::string(error.what()).find("packed IFM child") != std::string::npos &&
+-                   std::string(error.what()).find("no exact upstream TensorBuffer view") !=
+-                       std::string::npos;
++             const auto real_facts =
++                 real_model.stage_facts_for_model_stage(ModelStage::MlaOnly);
++             require(real_facts.size() == real_plan.infer.size(),
++                     "exact RF-DETR route lost a typed stage fact");
++             for (std::size_t index = 0; index < real_facts.size(); ++index) {
++               const auto& facts = real_facts[index];
++               switch (real_plan.infer[index].kind) {
++               case ExecutionStageKind::Mla:
++                 require(facts.mla_compiled.has_value(),
++                         "exact RF-DETR MLA command lost its typed contract");
++                 break;
++               case ExecutionStageKind::HostTvm:
++                 require(facts.transport_compiled.has_value(),
++                         "exact RF-DETR A65 command lost its direct TVM contract");
++                 break;
++               case ExecutionStageKind::Cast:
++                 require(facts.processcvu_contract.has_value(),
++                         "exact RF-DETR CVU Cast command lost its typed contract");
++                 break;
++               default:
++                 require(false, "unreachable RF-DETR execution-stage kind");
++               }
++             }
++             require(real_facts[mla_indices[0]].mla_compiled.has_value() &&
++                         real_facts[mla_indices[1]].mla_compiled.has_value(),
++                     "exact AFE 2.1 route did not retain MLA/A65/CVU typed stage contracts");
++
++             const auto& initial_mla =
++                 real_facts[mla_indices[0]].mla_compiled->runtime_contract;
++             const auto align16 = [](const std::uint64_t value) {
++               return (value + 15U) & ~std::uint64_t{15U};
++             };
++             require(initial_mla.physical_outputs.size() > 1U &&
++                         initial_mla.logical_outputs.size() > 1U,
++                     "RF-DETR initial MLA lost its second physical/logical OFM");
++             const auto& initial_feature = initial_mla.logical_outputs[1];
++             require(initial_feature.size_bytes % 1225U == 0U,
++                     "RF-DETR initial feature has a non-integral scalar byte extent");
++             const auto initial_scalar_bytes = initial_feature.size_bytes / 1225U;
++             require(initial_feature.shape == std::vector<std::int64_t>({1, 1225}) &&
++                         (initial_scalar_bytes == 2U || initial_scalar_bytes == 4U) &&
++                         initial_mla.physical_outputs[1].size_bytes ==
++                             align16(initial_feature.size_bytes),
++                     "RF-DETR initial MLA lost exact OFM1 physical/logical extents");
++
++             const auto& terminal_mla =
++                 real_facts[mla_indices[1]].mla_compiled->runtime_contract;
++             require(terminal_mla.frame_arena_role == FrameArenaRole::Allocate &&
++                         terminal_mla.frame_arena_storage_domain ==
++                             sc::ArenaStorageDomain::Dms &&
++                         terminal_mla.frame_arena_escape_policy ==
++                             sc::ArenaEscapePolicy::CpuMappablePublic &&
++                         (terminal_mla.frame_arena_required_device_access &
++                          static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Mla)) != 0U &&
++                         (terminal_mla.frame_arena_required_device_access &
++                          static_cast<std::uint32_t>(sc::ArenaDeviceAccess::CpuA65)) != 0U &&
++                         (terminal_mla.frame_arena_required_device_access &
++                          static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74)) == 0U &&
++                         terminal_mla.physical_inputs.size() == 161U,
++                     "RF-DETR terminal MLA must import its exact 161 IFMs while owning a "
++                     "distinct CPU-visible DMS output carrier");
++             require(terminal_mla.physical_outputs.size() > 1U &&
++                         terminal_mla.logical_outputs.size() > 1U,
++                     "RF-DETR terminal MLA lost one of its two physical/logical OFMs");
++             // Exact package 9d2032... is the all-BF16 artifact. Its QMLA
++             // SHT_DATA extents are 4,800 and 57,600 bytes; the second port is
++             // the BF16 [300,91] tensor with a 192-byte physical row pitch.
++             // 118,784 bytes / 110,400-byte OFM1 belongs to the stale FP32
++             // synthetic expectation and must not override package authority.
++             require(terminal_mla.frame_arena_size_bytes == 69632U &&
++                         terminal_mla.physical_outputs[0].size_bytes == 4800U &&
++                         terminal_mla.physical_outputs[0].source_byte_offset == 0 &&
++                         terminal_mla.physical_outputs[1].size_bytes == 57600U &&
++                         terminal_mla.physical_outputs[1].source_byte_offset == 8192,
++                     "RF-DETR all-BF16 terminal DMS arena changed its exact QMLA layout");
++             const auto& terminal_boxes = terminal_mla.logical_outputs[0];
++             const auto& terminal_logits = terminal_mla.logical_outputs[1];
++             require(terminal_logits.size_bytes % (300U * 91U) == 0U,
++                     "RF-DETR terminal logits have a non-integral scalar byte extent");
++             const auto terminal_scalar_bytes = terminal_logits.size_bytes / (300U * 91U);
++             const auto terminal_row_pitch = align16(91U * terminal_scalar_bytes);
++             require((terminal_scalar_bytes == 2U || terminal_scalar_bytes == 4U) &&
++                         terminal_boxes.shape == std::vector<std::int64_t>({1, 300, 4}) &&
++                         terminal_boxes.size_bytes == 300U * 4U * terminal_scalar_bytes &&
++                         terminal_logits.shape == std::vector<std::int64_t>({1, 300, 91}) &&
++                         terminal_mla.physical_outputs[1].size_bytes ==
++                             300U * terminal_row_pitch &&
++                         terminal_logits.stride_bytes ==
++                             std::vector<std::int64_t>(
++                                 {static_cast<std::int64_t>(300U * terminal_row_pitch),
++                                  static_cast<std::int64_t>(terminal_row_pitch),
++                                  static_cast<std::int64_t>(terminal_scalar_bytes)}),
++                     "RF-DETR terminal logits lost exact physical carrier/logical row pitch");
++             // MLA_171 is a DAG join, not a linear handoff. Its first IFM is
++             // produced by cast_3 while the other 160 are still-live MLA_0
++             // outputs retained in the same frame arena. The immediately
++             // preceding rendered stage therefore cannot own the complete
++             // input catalogue. Reconcile every terminal port against the
++             // unique typed publication with the same decoded value identity,
++             // parent-relative arena range and physical extent across all
++             // prior stages instead.
++             struct PriorPhysicalPublication {
++               std::size_t stage_index = 0U;
++               std::size_t logical_index = 0U;
++               const simaai::neat::pipeline_internal::sima::LogicalTensorStaticSpec* logical =
++                   nullptr;
++               const simaai::neat::pipeline_internal::sima::PhysicalBufferStaticSpec* physical =
++                   nullptr;
++             };
++             std::vector<PriorPhysicalPublication> prior_publications;
++             for (std::size_t prior_index = 0U; prior_index < mla_indices[1]; ++prior_index) {
++               const auto& prior = real_facts[prior_index];
++               const simaai::neat::CompiledRuntimeContract* runtime = nullptr;
++               if (prior.processcvu_contract.has_value()) {
++                 runtime = &prior.processcvu_contract->runtime_contract;
++               } else if (prior.transport_compiled.has_value()) {
++                 runtime = &prior.transport_compiled->runtime_contract;
++               } else if (prior.mla_compiled.has_value()) {
++                 runtime = &prior.mla_compiled->runtime_contract;
++               }
++               if (runtime == nullptr) {
++                 continue;
++               }
++               for (std::size_t logical_index = 0U;
++                    logical_index < runtime->logical_outputs.size(); ++logical_index) {
++                 const auto& logical = runtime->logical_outputs[logical_index];
++                 const auto physical = std::find_if(
++                     runtime->physical_outputs.begin(), runtime->physical_outputs.end(),
++                     [&](const auto& candidate) {
++                       return candidate.physical_index == logical.physical_index;
++                     });
++                 if (physical != runtime->physical_outputs.end() &&
++                     !logical.backend_name.empty()) {
++                   prior_publications.push_back(PriorPhysicalPublication{
++                       prior_index, logical_index, &logical, &*physical});
++                 }
++               }
++             }
++             require(terminal_mla.input_bindings.size() ==
++                         terminal_mla.physical_inputs.size(),
++                     "RF-DETR terminal MLA lost one of its exact 161 input bindings");
++             std::vector<bool> publication_used(prior_publications.size(), false);
++             std::vector<bool> producer_stage_used(mla_indices[1], false);
++             bool saw_nonzero_upstream_parent_offset = false;
++             for (std::size_t index = 0; index < terminal_mla.physical_inputs.size(); ++index) {
++               const auto& input = terminal_mla.physical_inputs[index];
++               const auto& binding = terminal_mla.input_bindings[index];
++               const auto publication = std::find_if(
++                   prior_publications.begin(), prior_publications.end(),
++                   [&](const auto& candidate) {
++                     const auto publication_index = static_cast<std::size_t>(
++                         &candidate - prior_publications.data());
++                     return !publication_used[publication_index] && candidate.logical != nullptr &&
++                            candidate.physical != nullptr &&
++                            candidate.logical->backend_name == input.segment_name &&
++                            candidate.physical->size_bytes == input.size_bytes &&
++                            candidate.physical->source_byte_offset == input.source_byte_offset &&
++                            candidate.physical->required_alignment_bytes ==
++                                input.required_alignment_bytes;
++                   });
++               require(publication != prior_publications.end(),
++                       "RF-DETR terminal MLA IFM has no unique typed producer publication");
++               const auto publication_index = static_cast<std::size_t>(
++                   &*publication - prior_publications.data());
++               publication_used[publication_index] = true;
++               producer_stage_used[publication->stage_index] = true;
++               require(input.physical_index == static_cast<int>(index) &&
++                           input.source_physical_index == 0 &&
++                           input.source_byte_offset >= 0 &&
++                           binding.local_logical_input_index == static_cast<int>(index) &&
++                           binding.src_physical_output_index == 0 &&
++                           binding.src_physical_size_bytes == input.size_bytes &&
++                           binding.src_physical_byte_offset == input.source_byte_offset &&
++                           binding.cm_input_name == input.segment_name &&
++                           binding.source_segment_name == input.segment_name,
++                       "RF-DETR terminal MLA IFM lost its exact upstream shared-parent "
++                       "region");
++               saw_nonzero_upstream_parent_offset |= input.source_byte_offset != 0;
++             }
++             require(std::count(producer_stage_used.begin(), producer_stage_used.end(), true) >
++                         1,
++                     "RF-DETR terminal MLA DAG join collapsed to one producer stage");
++             require(saw_nonzero_upstream_parent_offset,
++                     "RF-DETR split-carrier proof must include nonzero offsets in the shared "
++                     "upstream parent");
++
++             const std::string fragment = real_model.backend_fragment(ModelStage::MlaOnly);
++             const auto occurrences = [&](const std::string& token) {
++               std::size_t count = 0U;
++               for (std::size_t pos = 0U; (pos = fragment.find(token, pos)) != std::string::npos;
++                    pos += token.size()) {
++                 ++count;
++               }
++               return count;
++             };
++             require(occurrences("neatprocessmla ") == mla_indices.size() &&
++                         occurrences("neatprocesscvu ") == cast_indices.size() &&
++                         occurrences("neatprocesstvm ") == host_indices.size() &&
++                         occurrences("direct-contract-b64=") == host_indices.size() &&
++                         occurrences("stage-id=") == mla_indices.size() + cast_indices.size(),
++                     "RF-DETR fragment did not render its exact MLA/CVU stages and three "
++                     "self-contained direct A65 commands");
++             require(occurrences("model-path=") == 0U &&
++                         occurrences("batch-size=") == 0U &&
++                         occurrences("batch-sz-model=") == 0U,
++                     "strict DMA-BUF MLA fragment leaked deprecated property-owned runtime "
++                     "configuration instead of using its typed manifest");
++             const auto a65_contracts = direct_tvm_contracts(fragment);
++             require(a65_contracts.size() == 3U,
++                     "RF-DETR fragment lost one prepared direct A65 contract");
++             for (std::size_t index = 0; index < a65_contracts.size(); ++index) {
++               const auto& contract = a65_contracts[index];
++               require(contract.at("schema") == "sima.neat.direct-tvm-lane" &&
++                           contract.at("version") == 2 &&
++                           contract.at("storage_domain") == "cma" &&
++                           contract.at("allocation_provenance") == "core_allocated" &&
++                           (contract.at("required_device_access").get<std::uint32_t>() & 1U) !=
++                               0U &&
++                           contract.at("cpu_epoch_start").get<bool>() == (index == 0U) &&
++                           contract.at("cpu_epoch_end").get<bool>() ==
++                               (index + 1U == a65_contracts.size()),
++                       "RF-DETR direct A65 commands lost one maximal shared CPU epoch or its "
++                       "Core-authored arena placement");
++             }
++           }
++
++           // Optional exact-artifact production-path gate. Qualification jobs
++           // point this at the YOLOv8 package identified by 029ddb60.... It
++           // exercises ModelPack's post-planner setter rather than the pure
++           // projection helper: the admitted full graph226->MLA->graph227
++           // snapshot must be replaced by graph226->MLA with the six affine
++           // BoxDecode views as its immutable public boundary.
++           if (const char* yolo_package =
++                   std::getenv("SIMANEAT_EXACT_YOLOV8_029DDB60_PACKAGE");
++               yolo_package != nullptr && *yolo_package != '\0') {
++             simaai::neat::internal::InferenceTerminalPolicy terminal_policy;
++             terminal_policy.mla_only = true;
++             ModelPack yolo_model(
++                 yolo_package, "application/vnd.simaai.tensor", "FP32", 3,
++                 640, 640, 3, false, {}, {}, {}, PipelineType::QuantTess,
++                 "decoder", 4, 4, 0, -1, {}, {}, terminal_policy,
++                 /*cleanup_extracted_model_data=*/false);
++             const auto full_digest = yolo_model.memory_backend_decision().plan_digest;
++             const auto full_plan = yolo_model.execution_plan();
++             require(std::any_of(full_plan.infer.begin(), full_plan.infer.end(),
++                                 [](const auto& stage) {
++                                   return stage.kind ==
++                                          ExecutionStageKind::DetessDequant;
++                                 }),
++                     "exact YOLO full admission must retain graph227 before route selection");
++
++             simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags flags;
++             flags.boxdecode_selected = true;
++             yolo_model.set_model_managed_stage_facts(
++                 /*processcvu_preproc_single_output_handoff=*/true, flags,
++                 {ExecutionStageKind::BoxDecode});
++
++             const auto selected_plan = yolo_model.execution_plan();
++             require(std::none_of(selected_plan.infer.begin(), selected_plan.infer.end(),
++                                  [](const auto& stage) {
++                                    return stage.kind ==
++                                           ExecutionStageKind::DetessDequant;
++                                  }),
++                     "selected YOLO execution snapshot must not render graph227");
++             const auto& selected_decision = yolo_model.memory_backend_decision();
++             require(selected_decision.plan_digest != full_digest &&
++                         selected_decision.admission.detail.find(
++                             "terminal MLA-to-BoxDecode route snapshot") !=
++                             std::string::npos,
++                     "selected YOLO route must replace the full execution digest/provenance");
++
++             const auto selected_facts =
++                 yolo_model.stage_facts_for_model_stage(ModelStage::Full);
++             const simaai::neat::CompiledRuntimeContract* graph226 = nullptr;
++             const simaai::neat::CompiledRuntimeContract* terminal_mla = nullptr;
++             bool saw_graph227 = false;
++             for (const auto& fact : selected_facts) {
++               if (fact.processcvu_contract.has_value()) {
++                 const auto graph = fact.processcvu_contract->payload.graph_id;
++                 if (graph == 226) graph226 = &fact.processcvu_contract->runtime_contract;
++                 saw_graph227 |= graph == 227;
++               }
++               if (fact.mla_compiled.has_value()) {
++                 terminal_mla = &fact.mla_compiled->runtime_contract;
++               }
++             }
++             require(graph226 != nullptr && terminal_mla != nullptr && !saw_graph227,
++                     "exact selected route must render graph226 and terminal MLA only");
++             require(graph226->frame_arena_size_bytes == 1228800U &&
++                         graph226->frame_arena_storage_domain ==
++                             sc::ArenaStorageDomain::Cma &&
++                         terminal_mla->frame_arena_size_bytes == 1212416U &&
++                         terminal_mla->frame_arena_storage_domain ==
++                             sc::ArenaStorageDomain::Dms &&
++                         terminal_mla->frame_arena_role == FrameArenaRole::Allocate,
++                     "exact selected route must retain 1,228,800-byte CMA ingress and own a "
++                     "1,212,416-byte terminal DMS carrier");
++             const std::array<std::int64_t, 6U> expected_offsets{
++                 0, 409600, 512000, 537600, 1049600, 1177600};
++             const std::array<std::uint64_t, 6U> expected_spans{
++                 409600U, 102400U, 25600U, 512000U, 128000U, 32000U};
++             require(terminal_mla->logical_outputs.size() == expected_offsets.size(),
++                     "exact selected route must publish six ordered BoxDecode views");
++             require(terminal_mla->physical_outputs.size() == 1U &&
++                         terminal_mla->physical_outputs.front().size_bytes == 1209600U &&
++                         terminal_mla->physical_outputs.front().source_byte_offset == 0 &&
++                         terminal_mla->physical_outputs.front().segment_name == "MLA_0",
++                     "exact selected route must retain one 1,209,600-byte MLA root output");
++             for (std::size_t index = 0U; index < expected_offsets.size(); ++index) {
++               const auto& logical = terminal_mla->logical_outputs[index];
++               require(logical.byte_offset ==
++                               expected_offsets[index] &&
++                           logical.size_bytes == expected_spans[index] &&
++                           logical.physical_index == 0 &&
++                           logical.segment_name == "MLA_0" &&
++                           logical.logical_name ==
++                               "MLA_0_ofm_unpack_transform_" +
++                                   std::to_string(index) &&
++                           logical.logical_name.find("pass_through_out") ==
++                               std::string::npos,
++                       "exact selected route changed an ordered affine BoxDecode view");
++             }
++             const auto route_fact = std::find_if(
++                 selected_decision.admission.proof.begin(),
++                 selected_decision.admission.proof.end(), [](const auto& fact) {
++                   return fact.subject == "route-publication-boundary";
++                 });
++             require(route_fact != selected_decision.admission.proof.end() &&
++                         route_fact->evidence.find("logical_views=6") !=
++                             std::string::npos &&
++                         route_fact->evidence.find(selected_decision.plan_digest) !=
++                             std::string::npos,
++                     "exact selected route proof must bind six views to the selected digest");
++           }
++
++           // Optional six-real-OFM production-path gate.  Unlike the packed
++           // YOLOv8s ELF above, this MLATess ELF exposes six independent MLArt
++           // output ports.  A strict terminal BoxDecode route still owns one
++           // DMS arena, but its manifest must retain all six physical port
++           // bindings and their exact arena offsets.  Collapsing them into a
++           // legacy packed-parent physical output makes ProcessMLA reject the
++           // Core/backend OFM arity before the graph can start.
++           if (const char* six_ofm_package =
++                   std::getenv("SIMANEAT_EXACT_YOLOV8N_SIX_REAL_OFM_PACKAGE");
++               six_ofm_package != nullptr && *six_ofm_package != '\0') {
++             simaai::neat::internal::InferenceTerminalPolicy terminal_policy;
++             terminal_policy.mla_only = true;
++             ModelPack six_ofm_model(
++                 six_ofm_package, "application/vnd.simaai.tensor", "FP32", 3,
++                 640, 640, 3, false, {}, {}, {}, PipelineType::Quant,
++                 "decoder", 4, 4, 0, -1, {}, {}, terminal_policy,
++                 /*cleanup_extracted_model_data=*/false);
++
++             simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags flags;
++             flags.boxdecode_selected = true;
++             six_ofm_model.set_model_managed_stage_facts(
++                 /*processcvu_preproc_single_output_handoff=*/true, flags,
++                 {ExecutionStageKind::BoxDecode});
++
++             const auto selected_facts =
++                 six_ofm_model.stage_facts_for_model_stage(ModelStage::Full);
++             const simaai::neat::CompiledMlaContract* terminal_mla = nullptr;
++             for (const auto& fact : selected_facts) {
++               if (fact.mla_compiled.has_value()) {
++                 terminal_mla = &*fact.mla_compiled;
++               }
++             }
++             require(terminal_mla != nullptr,
++                     "six-real-OFM selected route must retain terminal MLA");
++
++             const auto& runtime = terminal_mla->runtime_contract;
++             const std::array<std::int64_t, 6U> expected_offsets{
++                 0, 409600, 512000, 540672, 1052672, 1183744};
++             const std::array<std::uint64_t, 6U> expected_extents{
++                 409600U, 102400U, 25600U, 512000U, 128000U, 32000U};
++             require(runtime.frame_arena_storage_domain ==
++                         sc::ArenaStorageDomain::Dms &&
++                         runtime.frame_arena_role == FrameArenaRole::Allocate &&
++                         runtime.frame_arena_size_bytes == 1216512U,
++                     "six-real-OFM terminal MLA must own one aligned 1,216,512-byte DMS arena "
++                     "(actual_bytes=" + std::to_string(runtime.frame_arena_size_bytes) + ")");
++             require(runtime.physical_outputs.size() == expected_offsets.size() &&
++                         terminal_mla->dispatcher_physical_outputs.size() ==
++                             expected_offsets.size() &&
++                         terminal_mla->payload.dispatcher_output_sizes.size() ==
++                             expected_offsets.size() &&
++                         runtime.elf_ofm_symbol_names.size() == expected_offsets.size() &&
++                         runtime.logical_outputs.size() == expected_offsets.size(),
++                     "six-real-OFM Core manifest must remain arity-compatible with ProcessMLA");
++             for (std::size_t index = 0U; index < expected_offsets.size(); ++index) {
++               const auto& physical = runtime.physical_outputs[index];
++               const auto& dispatcher = terminal_mla->dispatcher_physical_outputs[index];
++               const auto& logical = runtime.logical_outputs[index];
++               require(physical.physical_index == static_cast<int>(index) &&
++                           physical.source_physical_index == static_cast<int>(index) &&
++                           physical.source_byte_offset == expected_offsets[index] &&
++                           physical.size_bytes == expected_extents[index] &&
++                           dispatcher.size_bytes == expected_extents[index] &&
++                           terminal_mla->payload.dispatcher_output_sizes[index] ==
++                               expected_extents[index] &&
++                           logical.backend_output_index == static_cast<int>(index) &&
++                           logical.physical_index == static_cast<int>(index) &&
++                           logical.byte_offset == 0 &&
++                           logical.size_bytes == expected_extents[index],
++                       "six-real-OFM port/view geometry changed at index " +
++                           std::to_string(index));
+              }
+-             require(rejected_unscheduled_middle,
+-                     "unscheduled interstitial EV74 materializations did not fail closed");
+            }
+          }));

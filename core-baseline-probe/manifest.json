@@ -1,0 +1,11 @@
+{
+  "repo": "core",
+  "source": "/workspace/final_kernel_work/tmp/neat-core-e115-baseline-readonly",
+  "branch": "detached",
+  "head": "611dced9a60991b2f53487cfd511558b7bec3522",
+  "snapshot": "21289aa40385ebe48dbe1368c6a6c9ffbcc0eacb",
+  "backup_ref": "refs/heads/backup/driver-consolidation-20260909-core-baseline-probe",
+  "worktree_content_verified": true,
+  "original_index_archived": true,
+  "remote_verified": true
+}

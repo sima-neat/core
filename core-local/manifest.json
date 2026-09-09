@@ -1,0 +1,10 @@
+{
+  "repo": "core",
+  "source": "/workspace/final_kernel_work/neat-core",
+  "branch": "codex/final-kernel-work",
+  "head": "4b362d20279e0c5c04342654672ed0587e54df69",
+  "snapshot": "2688cc2a426a5a8b24c3b33a98b8f6830f1f005f",
+  "tree": "9ddaa461e1dbfa2b681c09a583daccd6f774e306",
+  "backup_ref": "refs/heads/backup/driver-consolidation-20260909-core-local",
+  "excluded_from_git_but_archived": []
+}

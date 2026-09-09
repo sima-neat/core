@@ -1,0 +1,51 @@
+[
+  {
+    "repo": "core",
+    "worktree": "/workspace/final_kernel_work/neat-core",
+    "HEAD": "4b362d20279e0c5c04342654672ed0587e54df69",
+    "branch": "refs/heads/codex/final-kernel-work",
+    "status": " M CMakeLists.txt\n M docs/develop-apps/contribute/start-here/architecture.md\n M include/gst/SimaPluginStaticManifestAbi.h\n M src/model/ModelPack.cpp\n M src/model/internal/ModelPack.h\n M src/pipeline/graph/GraphBuildInput.cpp\n M src/pipeline/graph/GraphBuildSource.cpp\n M src/pipeline/gst/GstDiagnosticsUtil.cpp\n M src/pipeline/gst/InputStreamLifecycle.cpp\n M src/pipeline/gst/InputStreamUtil.cpp\n M src/pipeline/internal/GstDiagnosticsUtil.h\n M src/pipeline/internal/InputStream.h\n M src/pipeline/internal/InputStreamUtil.h\n M src/pipeline/internal/contract/PluginCompiledContracts.h\n M src/pipeline/internal/sima/ContractRender.cpp\n M src/pipeline/internal/sima/MlaElfIoTopology.cpp\n M src/pipeline/internal/sima/MlaElfIoTopology.h\n M src/pipeline/internal/sima/MlaStaticContractExtractor.h\n M src/pipeline/internal/sima/SimaPluginStaticManifest.cpp\n M src/pipeline/internal/sima/SimaPluginStaticManifest.h\n M src/pipeline/internal/sima/StaticSpecBuilders.cpp\n M src/pipeline/internal/sima/StaticSpecBuilders.h\n M src/pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.cpp\n M src/pipeline/sample/SampleUtil.cpp\n M src/pipeline/tensor/TensorTransfer.cpp\n M tests/CMakeLists.txt\n M tests/graph_migration/legacy/evo_tput_bench.cpp\n M tests/neat_tensor_device_placement_test.cpp\n M tests/unit_testing/unit_inputstream_stop_flush_test.cpp\n M tests/unit_testing/unit_mla_elf_io_topology_test.cpp\n M tests/unit_testing/unit_model_stage_fragments_test.cpp\n M tests/unit_testing/unit_modelpack_mla_handoff_segment_test.cpp\n M tests/unit_testing/unit_sima_plugin_static_manifest_contract_test.cpp\n M tests/unit_testing/unit_sima_plugin_static_manifest_parse_test.cpp\n?? src/pipeline/internal/InputStreamTeardownPolicy.h\n?? src/pipeline/internal/MemoryBackendPolicy.cpp\n?? src/pipeline/internal/MemoryBackendPolicy.h\n?? src/pipeline/internal/sima/static_contract/\n?? tests/tools/run_legacy_afe_evo_corpus_test.py\n?? tests/unit_testing/unit_dmabuf_plan_contract_projection_test.cpp\n?? tests/unit_testing/unit_frame_slot_arena_plan_test.cpp\n?? tests/unit_testing/unit_legacy_afe_mpk_decoder_test.cpp\n"
+  },
+  {
+    "repo": "core",
+    "worktree": "/workspace/final_kernel_work/app48-exact-39eec8a/src/core",
+    "HEAD": "02ae0ddee3fef799ab9011d66d1db4a5aab9ec31",
+    "detached": true,
+    "status": ""
+  },
+  {
+    "repo": "core",
+    "worktree": "/workspace/final_kernel_work/consolidated-core-20260828",
+    "HEAD": "cd2b33d5e28aede0cad8c8456132070c67024402",
+    "branch": "refs/heads/codex/dmabuf-driver-consolidated",
+    "status": "M  src/model/Model.cpp\nM  src/model/ModelPack.cpp\nM  src/model/RoutePlanner.cpp\nM  src/model/internal/ModelPack.h\nM  src/pipeline/internal/DmabufEligibility.h\nMM tests/unit_testing/unit_dmabuf_eligibility_test.cpp\n M tests/unit_testing/unit_model_metadata_test.cpp\nMM tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp\n"
+  },
+  {
+    "repo": "core",
+    "worktree": "/workspace/final_kernel_work/core-dmabuf-direct-no-selector-20260828",
+    "HEAD": "02ae0ddee3fef799ab9011d66d1db4a5aab9ec31",
+    "branch": "refs/heads/codex/dmabuf-direct-no-selector",
+    "status": ""
+  },
+  {
+    "repo": "core",
+    "worktree": "/workspace/final_kernel_work/pr-decoder-phase4-core",
+    "HEAD": "0c3fb40db1924becce2ec370978d9c400d71a167",
+    "branch": "refs/heads/codex/decoder-phase4-kernel-admission",
+    "status": ""
+  },
+  {
+    "repo": "core",
+    "worktree": "/workspace/final_kernel_work/productionization-clean/neat-core",
+    "HEAD": "b0e904dae0a6d4e751fb7d0ef6e1968be4873c30",
+    "branch": "refs/heads/codex/dmabuf-driver-consolidation",
+    "status": ""
+  },
+  {
+    "repo": "core",
+    "worktree": "/workspace/final_kernel_work/tmp/neat-core-e115-baseline-readonly",
+    "HEAD": "611dced9a60991b2f53487cfd511558b7bec3522",
+    "detached": true,
+    "status": " M src/model/ModelPack.cpp\n M tests/unit_testing/unit_modelpack_multi_mla_plan_test.cpp\n"
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "repo": "core",
+  "source": "/workspace/final_kernel_work/consolidated-core-20260828",
+  "branch": "codex/dmabuf-driver-consolidated",
+  "head": "cd2b33d5e28aede0cad8c8456132070c67024402",
+  "snapshot": "5c9fb41ea4fa07c1bc4470141f874f34177dec83",
+  "tree": "9ebbeaf78f59081be2a2799eb3ee9ed59f3587d8",
+  "backup_ref": "refs/heads/backup/driver-consolidation-20260909-core-consolidation",
+  "excluded_from_git_but_archived": []
+}

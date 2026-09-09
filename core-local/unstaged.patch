@@ -1,0 +1,3056 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 380afd14e6dbcd24f9a686e55e15be38d622a5a4..9606872bc8d4966633ad59ad5841498b86222043 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -367,6 +367,7 @@ endif()
+ if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
+   pkg_check_modules(GST QUIET
+     gstreamer-1.0
++    gstreamer-allocators-1.0
+     gstreamer-app-1.0
+     gstreamer-video-1.0
+     gstreamer-sdp-1.0
+@@ -379,6 +380,7 @@ if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
+ else()
+   pkg_check_modules(GST REQUIRED
+     gstreamer-1.0
++    gstreamer-allocators-1.0
+     gstreamer-app-1.0
+     gstreamer-video-1.0
+     gstreamer-sdp-1.0
+@@ -486,6 +488,7 @@ endfunction()
+ set(SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES "")
+ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+   foreach(_simaneat_internals_target IN ITEMS
++      NeatInternals::DmaBufPool
+       NeatInternals::neatprocessmlaruntime
+       NeatInternals::PreparedRuntimeBridge
+       NeatInternals::neattensorbufferfast
+@@ -531,6 +534,8 @@ set(SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES
+   $ENV{HOME}/.local/include/simaai
+ )
+ set(SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES
++  ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/build-required-gst/artifacts/gst-plugins
++  ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/build/artifacts/gst-plugins
+   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/prepared-runtime-bridge
+   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/processmla-runtime
+   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/metadata
+@@ -551,6 +556,14 @@ list(APPEND SIMANEAT_NEAT_ALLOCATOR_HINTS
+ )
+ 
+ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
++  simaneat_imported_target_location(_simaneat_dmabufpool_imported_location
++    NeatInternals::DmaBufPool)
++  if (_simaneat_dmabufpool_imported_location)
++    set(SIMANEAT_NEAT_DMABUFPOOL_LIB
++      "${_simaneat_dmabufpool_imported_location}"
++      CACHE FILEPATH "NEAT DMA-BUF runtime from exported NeatInternals package" FORCE)
++  endif()
++
+   simaneat_imported_target_location(_simaneat_allocator_imported_location
+     NeatInternals::Allocator)
+   if (_simaneat_allocator_imported_location)
+@@ -594,6 +607,15 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+       CACHE PATH "NEAT allocator include directory from exported NeatInternals package" FORCE)
+   endif()
+ 
++  simaneat_find_exported_include_dir(_simaneat_dmabuf_include_root
++    NeatInternals::DmaBufPool
++    simaai/neat/internal/dmabuf/DmaBufPool.h)
++  if (_simaneat_dmabuf_include_root)
++    set(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
++      "${_simaneat_dmabuf_include_root}"
++      CACHE PATH "NEAT DMA-BUF include root from exported NeatInternals package" FORCE)
++  endif()
++
+   simaneat_find_exported_include_dir(_simaneat_tensorbuffer_include_dir
+     NeatInternals::TensorBuffer
+     gstsimaaitensorbuffer.h)
+@@ -617,6 +639,20 @@ find_library(SIMANEAT_NEAT_ALLOCATOR_LIB
+   NAMES gstneatallocator
+   HINTS ${SIMANEAT_NEAT_ALLOCATOR_HINTS}
+ )
++find_library(SIMANEAT_NEAT_DMABUFPOOL_LIB
++  NAMES neatdmabufpool
++  HINTS
++    ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
++    ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
++)
++find_path(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
++  NAMES simaai/neat/internal/dmabuf/DmaBufPool.h
++  HINTS
++    ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/core/dmabuf/include
++    ${SIMANEAT_ELXR_SYSROOT}/usr/include
++    /usr/include
++    /usr/local/include
++)
+ find_path(SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR
+   NAMES gstsimaaiallocator.h
+   HINTS
+@@ -760,6 +796,10 @@ simaneat_require_dependency(SIMANEAT_SIMAAIMEM_INCLUDE_ROOT
+   "Required simaai memory headers not found: simaai/simaai_memory.h.")
+ simaneat_require_dependency(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
+   "Required NEAT tensor buffer headers not found: gstsimaaitensorbuffer.h.")
++simaneat_require_dependency(SIMANEAT_NEAT_DMABUFPOOL_LIB
++  "Required NEAT DMA-BUF runtime not found: libneatdmabufpool.so.")
++simaneat_require_dependency(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
++  "Required NEAT DMA-BUF headers not found: simaai/neat/internal/dmabuf/DmaBufPool.h.")
+ if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
+   simaneat_require_dependency(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
+     "Prepared-runtime bridge headers not found. Expected an include root containing gst/SimaPreparedRuntimeAbi.h, ev/ev_tensor_abi.h, and neat/PreparedRuntimeBridge.h.")
+@@ -981,6 +1021,7 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+       "${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}"
+       "${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}"
+       "${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}"
++      "${SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT}"
+       "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}"
+       "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
+     if (_simaneat_neat_include_dir AND
+@@ -1065,7 +1106,8 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+   target_link_libraries(sima_neat_common INTERFACE
+     NeatInternals::Allocator
+     NeatInternals::BufferPool
+-    NeatInternals::TensorBuffer)
++    NeatInternals::TensorBuffer
++    NeatInternals::DmaBufPool)
+ else()
+   if (SIMANEAT_NEAT_ALLOCATOR_LIB)
+     target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_ALLOCATOR_LIB})
+@@ -1076,6 +1118,9 @@ else()
+   if (SIMANEAT_NEAT_TENSORBUFFER_LIB)
+     target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
+   endif()
++  if (SIMANEAT_NEAT_DMABUFPOOL_LIB)
++    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_DMABUFPOOL_LIB})
++  endif()
+ endif()
+ if (SIMANEAT_SIMAAIMEM_LIB)
+   target_link_libraries(sima_neat_common INTERFACE
+diff --git a/docs/develop-apps/contribute/start-here/architecture.md b/docs/develop-apps/contribute/start-here/architecture.md
+index 348ecaa1ef21b17d580490e0f36d472a7c1316d4..02dc6a8a47f75f566144e1547024751e357fbe58 100644
+--- a/docs/develop-apps/contribute/start-here/architecture.md
++++ b/docs/develop-apps/contribute/start-here/architecture.md
+@@ -141,9 +141,43 @@ MLA may require INT8/BF16 and tessellated layouts, while user code generally wor
+ and normal tensor layouts. The framework bridges that gap with manifest-driven adapter stages.
+ 
+ Preprocessing and postprocessing are explicit framework stages/options. A format mismatch, missing
+-required preprocessing metadata, unavailable MLA dispatcher, invalid model archive or MPK contract, or caps negotiation
++required preprocessing metadata, unavailable selected hardware transport, invalid model archive or MPK contract, or caps negotiation
+ failure should surface as an actionable structured error rather than a hidden runtime correction.
+ 
++### Compiled model execution contract
++
++The DMA-BUF driver migration keeps model semantics separate from per-frame
++storage. Core compiles model-load facts into one immutable internal
++`ModelExecutionPlan`:
++
++- values contain exact names, required bytes, optional logical type facts, and
++  an optional root-relative read expression `{source ValueId, byte offset,
++  byte strides}`;
++- operations contain exact ordered edges and operation-specific configuration;
++- MLA backend ports contain ELF/model order, exact required bytes, alignment
++  authority, and access direction; and
++- public outputs contain only publication order and the value they expose.
++
++Frozen untyped AFE MPKs use the quarantined `LegacyAfeMpkDecoder`. It accepts
++only the exact registered `(model SDK version, processor, kernel)` vocabulary,
++resolves full tensor names, validates operation byte equations, and reconciles
++the MPK MLA arity with strict ELF IFM/OFM topology. Ambiguity, missing slots,
++or conflicting evidence is a model-load error; filenames, sidecar JSON,
++substring matching, environment state, and runtime buffers are not evidence.
++The legacy EVO alignment is an explicit 4096-byte migration policy with
++`LegacyPolicy` provenance, not a fact inferred from its MPK or ELF. New typed
++contracts must declare their own alignment.
++
++Runtime frames do not copy the static plan. The direct path carries standard
++DMA-BUF ownership plus checked absolute `{fd, offset, length}` views and a
++bounded frame-slot lifetime. Unpack and Slice are consumer read expressions,
++not runtime operations: the decoder composes them to one materialized root
++carrier only after proving their exact offsets, byte strides, and physical
++spans. Pack, tessellation, and precision conversion remain producer/compute
++semantics unless a lowering pass proves exact backend production or equivalent
++fusion. This prevents storage placement from silently changing MLA port arity
++or model behavior.
++
+ ---
+ 
+ ## Repository layout
+@@ -335,6 +369,67 @@ pipeline-level `GstContext`:
+ - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
+   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
+ 
++For the internal EVO DMA-BUF migration route, `ModelPack` is the sole owner of
++`SIMA_NEAT_MEMORY_BACKEND` selection. Selecting `dmabuf-plan` requires an exact MPK manifest and
++MLA ELF, a successful strict reverse-AFE decode, and exact reconciliation with the existing MLA
++stage contract. Only then does Core set `processmla.dmabuf_plan_contract` in static manifest ABI
++version 25. Core also projects each backend port's `required_alignment_bytes`
++and the immutable frame-arena placement plan into its physical buffer record;
++ProcessMLA consumes that value rather than duplicating the legacy
++page-alignment policy. It consumes these Core-owned facts; it must not re-read
++the environment, infer missing ports, or fall back to the legacy transport
++after selection. Core and every plugin that consumes the static-manifest
++header must therefore be built and released together at ABI version 25.
++
++The same Core-owned memory policy controls public Tensor placement. With
++`dmabuf-plan`, `transfer_to_device()` allocates standard CMA or DMS DMA-BUF
++memory, performs the required cache-synchronized host copy, and records device
++placement in Tensor storage metadata without replacing `GstDmaBufMemory` with
++the legacy SiMa allocator. Tensor-list ingress adopts one standard DMA-BUF view
++per source tensor. It rejects an implicit materialization or segmented-memory
++fallback, so the static model proof and per-frame transport cannot silently
++select different architectures.
++
++At strict stage boundaries, logical payload size and physical address span are
++different facts. The MPK-derived typed operation owns shape/layout and the
++required address span; TensorBuffer metadata owns the checked DMA-BUF memory,
++offset and available physical span. For example, a C16-strided 12-byte logical
++value may touch offsets through byte 176 in a 192-byte MLA OFM. ProcessMLA's
++direct binding therefore remains the ordered IFM/OFM mirror
++`{tensor_slot, parent_carrier}`. The one boolean identifies a zero-offset
++logical anchor for a larger physical port; it does not duplicate layout.
++ProcessMLA must not add redundant `padded`, `strided`, or `contiguous` flags.
++
++For a packed one-IFM/one-OFM model, Core proves the upstream logical outputs
++are the ordered children of one complete IFM carrier. Downstream Unpack/Slice
++values are published as logical reads of the one OFM carrier. ProcessMLA still
++submits exactly one physical port in each direction; the consuming CVU kernel
++uses the compiled offset/stride expressions directly, without an unpack job or
++intermediate copy.
++
++Multiple direct MLA OFMs can be logical views of one physical arena. In that
++case every descriptor with the same memory index publishes the same parent
++physical segment name, while logical/backend names preserve OFM identity and
++exact arena offsets preserve each view. Direct ProcessCVU output publication
++likewise uses its exact strict arena layout rather than the legacy packed
++output reconstruction heuristic.
++
++For the strict graphs currently admitted by `dmabuf-plan`, ProcessCVU submits
++the same Core-projected tensor routes and frame arena through one of two
++executors. EV74 placement submits descriptors through `/dev/cvu`. A65
++placement maps each unique standard DMA-BUF parent once with the matching
++read/write `DMA_BUF_IOCTL_SYNC` boundary, patches a frame-owned typed EV ABI
++configuration with host virtual addresses, and executes the in-process A65
++kernel. A `ReuseInput` post stage maps its shared MLA arena once as read/write;
++it does not copy or reconstruct individual outputs. Both executors keep
++ConfigManager and dispatcher execution disabled.
++
++ProcessMLA submits through kernel-driver MLArt on `/dev/mla` without the MLA
++dispatcher, MLASHM, segmented allocation, or M4. Legacy libraries may still
++be linked into a multi-route plugin for unmigrated graphs; link presence is not
++a fallback permission. Once a strict route is selected, any executor, mapping,
++or synchronization error is terminal.
++
+ Resolver precedence for migrated fields is deterministic:
+ 
+ 1. infer from contract/runtime signal (shape/meta/caps)
+@@ -595,6 +690,10 @@ The common pattern is:
+ * unref objects
+ * apply a timeout safeguard (leak instead of hanging if necessary)
+ 
++Push/appsrc pipelines normally use deferred teardown. Pipelines containing
++driver-backed CVU or MLA stages use the bounded synchronous `NULL` transition
++so accepted asynchronous submissions are reaped before `Run::close()` returns.
++
+ ---
+ 
+ ## SimaAI concurrency
+diff --git a/include/gst/SimaPluginStaticManifestAbi.h b/include/gst/SimaPluginStaticManifestAbi.h
+index 44ee904b2a7f8e556a000dbb37cde677ffc60906..7e14f75fa894f095e3aa7c0d0d2d564bd1d9d0ca 100644
+--- a/include/gst/SimaPluginStaticManifestAbi.h
++++ b/include/gst/SimaPluginStaticManifestAbi.h
+@@ -27,7 +27,7 @@ extern "C" {
+  */
+ 
+ #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
+-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)21)
++#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)25)
+ 
+ #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
+ #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
+@@ -123,6 +123,12 @@ typedef enum SimaPluginTensorMaterializationKind {
+   SIMA_PLUGIN_TENSOR_MATERIALIZATION_BF16_LANE_SPLIT_REPACK = 3
+ } SimaPluginTensorMaterializationKind;
+ 
++typedef enum SimaPluginFrameArenaRole {
++  SIMA_PLUGIN_FRAME_ARENA_NONE = 0,
++  SIMA_PLUGIN_FRAME_ARENA_ALLOCATE = 1,
++  SIMA_PLUGIN_FRAME_ARENA_REUSE_INPUT = 2
++} SimaPluginFrameArenaRole;
++
+ typedef struct SimaPluginPhysicalBuffer {
+   gint physical_index;
+   gint allocator_index;
+@@ -133,6 +139,7 @@ typedef struct SimaPluginPhysicalBuffer {
+   const gchar* segment_name;
+   gint source_physical_index;
+   gint64 source_byte_offset;
++  guint64 required_alignment_bytes;
+ } SimaPluginPhysicalBuffer;
+ 
+ typedef struct SimaPluginLogicalTensor {
+@@ -279,6 +286,10 @@ typedef struct SimaPluginProcessCvuStagePayload {
+   gint debug;
+   guint32 opt_flags;
+   gboolean canonical_contract;
++  /* Core parsed SIMA_NEAT_MEMORY_BACKEND once and proved this stage through
++   * the strict MPK+ELF execution plan. The plugin must not re-read the
++   * environment or fall back to the dispatcher when this bit is true. */
++  gboolean dmabuf_plan_contract;
+   gboolean preproc_single_output_handoff;
+ 
+   /* tri-state values: -1 unset, 0 false, 1 true */
+@@ -330,6 +341,9 @@ typedef struct SimaPluginProcessMlaStagePayload {
+   guint dispatcher_output_names_len;
+   const guint64* dispatcher_output_sizes;
+   guint dispatcher_output_sizes_len;
++  /* Core parsed SIMA_NEAT_MEMORY_BACKEND once and proved this stage through
++   * the strict MPK+ELF decoder. The plugin must not re-read the environment. */
++  gboolean dmabuf_plan_contract;
+ } SimaPluginProcessMlaStagePayload;
+ 
+ typedef struct SimaPluginSuperPointStagePayloadV1 {
+@@ -406,6 +420,9 @@ typedef struct SimaPluginStageSpec {
+   const gchar* const* required_preprocess_meta_fields;
+   guint required_preprocess_meta_fields_len;
+ 
++  guint64 frame_arena_size_bytes;
++  SimaPluginFrameArenaRole frame_arena_role;
++
+   SimaPluginStagePayloadKind payload_kind;
+   union {
+     SimaPluginProcessCvuStagePayload processcvu;
+diff --git a/src/model/ModelPack.cpp b/src/model/ModelPack.cpp
+index 416356152556f578b16298caaa97c0c59424b576..7b92d911005b0c8bae18e64ec95ed496dca972b0 100644
+--- a/src/model/ModelPack.cpp
++++ b/src/model/ModelPack.cpp
+@@ -11,6 +11,7 @@
+ #include "nodes/sima/Preproc.h"
+ #include "pipeline/internal/EnvUtil.h"
+ #include "pipeline/internal/InputPolicy.h"
++#include "pipeline/internal/MemoryBackendPolicy.h"
+ #include "pipeline/internal/TensorMath.h"
+ #include "pipeline/internal/TempJsonFileUtil.h"
+ #include "pipeline/internal/packedio/PackedIoAdapter.h"
+@@ -19,6 +20,10 @@
+ #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
+ #include "pipeline/internal/sima/PluginContractSubsets.h"
+ #include "pipeline/internal/sima/StaticSpecBuilders.h"
++#include "pipeline/internal/sima/MlaElfIoTopology.h"
++#include "pipeline/internal/sima/MlaStaticContractExtractor.h"
++#include "pipeline/internal/sima/static_contract/LegacyAfeMpkDecoder.h"
++#include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
+ #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
+ #include "pipeline/internal/sima/stagesemantics/DequantStageSemantics.h"
+ #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
+@@ -541,6 +546,34 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
+   contract->batch_sz_model = props.batch_sz_model;
+ }
+ 
++static std::optional<pipeline_internal::sima::static_contract::ModelExecutionPlan>
++compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract) {
++  if (mpk_contract.mpk_json_path.empty()) {
++    throw std::runtime_error("ModelPack: dmabuf-plan requires the exact MPK manifest path");
++  }
++  const auto runtime = read_mla_runtime_properties_from_mpk_contract(mpk_contract);
++  if (!runtime.has_value() || runtime->model_path.empty()) {
++    throw std::runtime_error("ModelPack: dmabuf-plan requires the exact MLA executable path");
++  }
++
++  pipeline_internal::sima::MlaElfIoTopology topology;
++  if (!pipeline_internal::sima::read_mla_elf_io_topology(runtime->model_path, &topology)) {
++    throw std::runtime_error("ModelPack: dmabuf-plan cannot read MLA ELF topology from '" +
++                             runtime->model_path + "': " + topology.error);
++  }
++
++  pipeline_internal::sima::static_contract::LegacyAfeMpkDecoder decoder;
++  auto decoded = decoder.decode_file(mpk_contract.mpk_json_path, topology);
++  if (!decoded) {
++    const auto detail = decoded.error.has_value()
++                            ? decoded.error->json_path + ": " + decoded.error->detail
++                            : std::string("unknown strict decoder failure");
++    throw std::runtime_error("ModelPack: dmabuf-plan strict MPK+ELF decode failed for '" +
++                             mpk_contract.mpk_json_path + "': " + detail);
++  }
++  return std::move(decoded.plan);
++}
++
+ static CompiledTransportContract build_model_managed_transport_contract(
+     const std::string& plugin_kind, const std::string& kernel_kind,
+     std::optional<pipeline_internal::sima::ProcessCvuStagePayload> processcvu_payload =
+@@ -2757,8 +2790,10 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+     const std::string& input_format, int input_depth, int max_input_width, int max_input_height,
+     bool normalize, const std::vector<float>& mean, const std::vector<float>& stddev,
+     const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract,
+-    ModelStage stage_context, bool direct_mla_to_boxdecode = false) {
+-  (void)upstream_handoff_contract;
++    ModelStage stage_context,
++    const std::optional<pipeline_internal::sima::static_contract::ModelExecutionPlan>&
++        dmabuf_plan_execution_plan,
++    bool direct_mla_to_boxdecode = false) {
+   if (!mpk_contract.has_value()) {
+     throw std::runtime_error(
+         "ModelFragment: strict MPK contract required for typed execution plan");
+@@ -2871,6 +2906,27 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+             build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
+                 *mpk_contract, stage.kind, exact_processcvu_stage_name_or_id, std::nullopt);
+       }
++      if (entry.processcvu_contract.has_value()) {
++        if (dmabuf_plan_execution_plan.has_value()) {
++          std::string projection_error;
++          if (!pipeline_internal::sima::static_contract::
++                  apply_dmabuf_plan_processcvu_contract_projection(
++                      *dmabuf_plan_execution_plan,
++                      stage_context == ModelStage::Postprocess
++                          ? pipeline_internal::sima::static_contract::
++                                ProcessCvuMlaBoundary::Outputs
++                          : pipeline_internal::sima::static_contract::
++                                ProcessCvuMlaBoundary::Inputs,
++                      &entry.processcvu_contract->payload,
++                      &entry.processcvu_contract->runtime_contract,
++                      &entry.processcvu_contract->exposed_view,
++                      &projection_error)) {
++            throw std::runtime_error(
++                "ModelFragment: dmabuf-plan strict ProcessCVU projection failed: " +
++                projection_error);
++          }
++        }
++      }
+     }
+ 
+     if (stage.kind == ExecutionStageKind::Mla) {
+@@ -2906,12 +2962,40 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
+             " config or simaai__params section).");
+       }
+       apply_mla_runtime_properties_to_contract(*mla_props, &mla_contract);
++      if (dmabuf_plan_execution_plan.has_value()) {
++        std::string projection_error;
++        std::span<const pipeline_internal::sima::LogicalTensorStaticSpec> upstream_outputs;
++        if (upstream_handoff_contract.has_value()) {
++          const auto& exposed = upstream_handoff_contract->exposed_view.exposed_logical_outputs;
++          const auto& runtime = upstream_handoff_contract->runtime_contract.logical_outputs;
++          upstream_outputs =
++              exposed.empty()
++                  ? std::span<const pipeline_internal::sima::LogicalTensorStaticSpec>(runtime)
++                  : std::span<const pipeline_internal::sima::LogicalTensorStaticSpec>(exposed);
++        }
++        auto input_sources = pipeline_internal::sima::static_contract::
++            resolve_mla_input_physical_sources(
++                *dmabuf_plan_execution_plan, upstream_outputs,
++                &projection_error);
++        if (!input_sources.has_value()) {
++          throw std::runtime_error(
++              "ModelFragment: dmabuf-plan strict MLA physical-input projection failed: " +
++              projection_error);
++        }
++        if (!pipeline_internal::sima::static_contract::apply_dmabuf_plan_contract_projection(
++                *dmabuf_plan_execution_plan, &mla_contract, *input_sources,
++                &projection_error)) {
++          throw std::runtime_error("ModelFragment: dmabuf-plan strict MLA projection failed: " +
++                                   projection_error);
++        }
++      }
+       if (should_publish_mla_outputs_as_packed_parent_for_boxdecode(
+               stages, stage_index, mla_contract, direct_mla_to_boxdecode)) {
+         (void)publish_mla_outputs_as_packed_parent(&mla_contract);
+       }
+       entry.mla_compiled =
+           pipeline_internal::sima::stagesemantics::build_mla_compiled_contract(mla_contract);
++      entry.mla_compiled->payload.dmabuf_plan_contract = dmabuf_plan_execution_plan.has_value();
+     }
+ 
+     if (stage.kind == ExecutionStageKind::BoxDecode) {
+@@ -3684,6 +3768,7 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
+ 
+   for (std::size_t i = 0; i < stages.size(); ++i) {
+     const auto& stage = stages[i];
++    const auto* facts = find_stage_facts(stage.stage_name);
+     const std::string plugin =
+         stage.factory_name.empty() ? require_stage_factory(stage.kind) : stage.factory_name;
+     const std::string base_name =
+@@ -3704,14 +3789,19 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
+         throw std::runtime_error("ModelPack: model-managed MLA stage '" + name +
+                                  "' is missing MPK runtime properties");
+       }
+-      if (!props->model_path.empty()) {
+-        pipelineStr << "model-path=\"" << props->model_path << "\" ";
+-      }
+-      if (props->batch_size > 0) {
+-        pipelineStr << "batch-size=" << props->batch_size << " ";
+-      }
+-      if (props->batch_sz_model > 0) {
+-        pipelineStr << "batch-sz-model=" << props->batch_sz_model << " ";
++      const bool manifest_owns_runtime_properties =
++          facts != nullptr && facts->mla_compiled.has_value() &&
++          facts->mla_compiled->payload.dmabuf_plan_contract;
++      if (!manifest_owns_runtime_properties) {
++        if (!props->model_path.empty()) {
++          pipelineStr << "model-path=\"" << props->model_path << "\" ";
++        }
++        if (props->batch_size > 0) {
++          pipelineStr << "batch-size=" << props->batch_size << " ";
++        }
++        if (props->batch_sz_model > 0) {
++          pipelineStr << "batch-sz-model=" << props->batch_sz_model << " ";
++        }
+       }
+       const bool force_single_pipe = env_truthy_local("SIMA_FORCE_MLA_SINGLE_PIPE");
+       const bool use_multi_pipeline = !force_single_pipe && num_buffers_mla > 1;
+@@ -3720,7 +3810,7 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
+         pipelineStr << " num-buffers=" << num_buffers_mla << " ";
+       }
+     }
+-    if (const auto* facts = find_stage_facts(stage.stage_name); facts != nullptr) {
++    if (facts != nullptr) {
+       for (const auto& [key, value] : facts->fragment_properties) {
+         if (!key.empty() && !value.empty()) {
+           pipelineStr << key << "=" << value << " ";
+@@ -3890,7 +3980,10 @@ void ModelPack::init(const std::string& tar_gz) {
+ 
+ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
+   options_ = std::move(cfg);
++  const bool dmabuf_plan_selected = pipeline_internal::selected_memory_backend_policy() ==
++                                    pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+   mpk_contract_.reset();
++  dmabuf_plan_execution_plan_.reset();
+   route_graph_.reset();
+   processcvu_preproc_single_output_handoff_.reset();
+   model_managed_route_flags_.reset();
+@@ -3934,6 +4027,12 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
+                 << " parse_status=missing error=" << contract_error << "\n";
+     }
+   }
++  if (dmabuf_plan_selected) {
++    if (!mpk_contract_.has_value()) {
++      throw std::runtime_error("ModelPack: dmabuf-plan requires an exact mpk.json manifest");
++    }
++    dmabuf_plan_execution_plan_ = compile_dmabuf_plan_execution_plan(*mpk_contract_);
++  }
+   if (mpk_contract_.has_value()) {
+     if (const auto* mla =
+             simaai::neat::pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract_);
+@@ -4059,7 +4158,7 @@ std::vector<ModelFragment::StageFacts> ModelPack::build_stage_facts(
+       stages, mpk_contract_, processcvu_preproc_single_output_handoff_, model_managed_route_flags_,
+       options_.input_format, options_.input_depth, options_.max_input_width,
+       options_.max_input_height, options_.normalize, options_.mean, options_.stddev,
+-      upstream_handoff_contract, stage_context);
++      upstream_handoff_contract, stage_context, dmabuf_plan_execution_plan_);
+ }
+ 
+ std::vector<ModelFragment::StageFacts>
+@@ -4084,7 +4183,8 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
+         plan.infer, mpk_contract_, processcvu_preproc_single_output_handoff_,
+         model_managed_route_flags_, options_.input_format, options_.input_depth,
+         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
+-        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
++        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
++        dmabuf_plan_execution_plan_, direct_mla_to_boxdecode);
+   }
+   if (stage == ModelStage::Postprocess) {
+     return build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
+@@ -4108,7 +4208,8 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
+         plan.infer, mpk_contract_, processcvu_preproc_single_output_handoff_,
+         model_managed_route_flags_, options_.input_format, options_.input_depth,
+         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
+-        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
++        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
++        dmabuf_plan_execution_plan_, direct_mla_to_boxdecode);
+     auto post_facts = build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
+ 
+     out.reserve(pre_facts.size() + infer_facts.size() + post_facts.size());
+@@ -4211,7 +4312,8 @@ ModelPack::infer_block(const std::string& upstream_name,
+       infer_seq, mpk_contract_, processcvu_preproc_single_output_handoff_,
+       model_managed_route_flags_, options_.input_format, options_.input_depth,
+       options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
+-      options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
++      options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, dmabuf_plan_execution_plan_,
++      direct_mla_to_boxdecode);
+   ModelFragment frag =
+       build_fragment_linear(infer_seq, upstream, options_.num_buffers_cvu, options_.num_buffers_mla,
+                             options_.name_suffix, mpk_contract_, std::move(stage_facts));
+diff --git a/src/model/internal/ModelPack.h b/src/model/internal/ModelPack.h
+index ee6d258251c590566bd6e04dd716e6da12096b75..0b8432eddfb8cb8153c5ace51cdbd98430e298ae 100644
+--- a/src/model/internal/ModelPack.h
++++ b/src/model/internal/ModelPack.h
+@@ -8,6 +8,7 @@
+ #include "nodes/io/Input.h"
+ #include "pipeline/internal/sima/MpkContract.h"
+ #include "pipeline/internal/sima/RouteGraph.h"
++#include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
+ #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
+ #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+ #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
+@@ -212,6 +213,8 @@ private:
+   Config options_;
+   PipelineType pipeline_type_ = PipelineType::Preproc;
+   std::optional<simaai::neat::pipeline_internal::sima::MpkContract> mpk_contract_;
++  std::optional<simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan>
++      dmabuf_plan_execution_plan_;
+   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
+   std::optional<bool> processcvu_preproc_single_output_handoff_;
+   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;
+diff --git a/src/pipeline/graph/GraphBuildInput.cpp b/src/pipeline/graph/GraphBuildInput.cpp
+index 4cf166aeac907c01e34e45892a6dfe001b3a576a..afebd8f08a28d9f1a5968f994511293d2161ca9d 100644
+--- a/src/pipeline/graph/GraphBuildInput.cpp
++++ b/src/pipeline/graph/GraphBuildInput.cpp
+@@ -1903,6 +1903,10 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
+   last_pipeline = br.pipeline_string;
+   br.pipeline_string = last_pipeline;
+   br.diag->pipeline_string = last_pipeline;
++  const auto teardown_policy = inputstream_pipeline_teardown_policy(last_pipeline);
++  if (teardown_policy == pipeline_internal::InputStreamTeardownPolicy::MustReachNull) {
++    stream_opt.teardown_policy = teardown_policy;
++  }
+   session_build_enforce_mla_num_buffers(last_pipeline, "Graph::build(input)", sync_mode);
+   if (Traits::dump_pipeline_string()) {
+     session_build_maybe_dump_pipeline_string(last_pipeline, "build_input");
+diff --git a/src/pipeline/graph/GraphBuildSource.cpp b/src/pipeline/graph/GraphBuildSource.cpp
+index 7f4758b0e89d4ffb9a2fbd0880f3bafcdf79f879..dd8d33d8b363c70b939c9294dc175792c5363b30 100644
+--- a/src/pipeline/graph/GraphBuildSource.cpp
++++ b/src/pipeline/graph/GraphBuildSource.cpp
+@@ -816,10 +816,10 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
+   stream_opt.public_output_contract = public_output_contract;
+   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_nodes);
+   // Source-mode pipelines own live/producers such as MIPI/libcamera, RTSP, and
+-  // other self-driven sources.  They must reach NULL before Run::close() returns;
+-  // otherwise deferred no-flush teardown can race process/plugin destruction
+-  // after the application has already observed successful outputs.
+-  stream_opt.prefer_synchronous_teardown = true;
++  // other self-driven sources. Prefer a bounded transition to NULL rather than
++  // immediately handing them to the reaper; the legacy fallback remains
++  // available if a live source cannot complete that transition in its budget.
++  stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
+   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_nodes);
+   const bool insert_queue2 = session_build_should_insert_async_queue2(mode, merged_opt);
+ 
+@@ -3425,7 +3425,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
+   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
+   stream_opt.public_output_contract = public_output_contract;
+   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_consumer_nodes);
+-  stream_opt.prefer_synchronous_teardown = true;
++  stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
+   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes,
+                                                build_branch_nodes);
+ 
+diff --git a/src/pipeline/gst/GstDiagnosticsUtil.cpp b/src/pipeline/gst/GstDiagnosticsUtil.cpp
+index cad2f513dbb307cfedeaf786a3f136583ff8564f..8ab82327b61f6dad639bb36a0e403d45cc4b1a74 100644
+--- a/src/pipeline/gst/GstDiagnosticsUtil.cpp
++++ b/src/pipeline/gst/GstDiagnosticsUtil.cpp
+@@ -224,7 +224,10 @@ TeardownResult finish_teardown(GstElement* pipeline, GstStateChangeReturn begin_
+   result.wait_result = wait_result;
+   result.current = cur;
+   result.pending = pend;
+-  if (cur != GST_STATE_NULL) {
++  const bool stable_null =
++      cur == GST_STATE_NULL &&
++      (pend == GST_STATE_VOID_PENDING || pend == GST_STATE_NULL);
++  if (!stable_null) {
+     result.status =
+         begin_result == GST_STATE_CHANGE_FAILURE || wait_result == GST_STATE_CHANGE_FAILURE
+             ? TeardownStatus::StateChangeFailure
+@@ -303,7 +306,8 @@ void log_incomplete_element_states(GstElement* pipeline) {
+   }
+ }
+ 
+-void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result, int timeout_ms) {
++void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result, int timeout_ms,
++                              bool defer_to_reaper = true) {
+   const char* reason = result.status == TeardownStatus::StateChangeFailure
+                            ? "teardown state change failed"
+                            : "teardown timed out";
+@@ -311,7 +315,9 @@ void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result
+             << "ms; begin_return=" << static_cast<int>(result.begin_result)
+             << " wait_return=" << static_cast<int>(result.wait_result)
+             << " current=" << state_name(result.current)
+-            << " pending=" << state_name(result.pending) << "; deferring to reaper.\n";
++            << " pending=" << state_name(result.pending)
++            << (defer_to_reaper ? "; deferring to reaper.\n"
++                                : "; retaining ownership until NULL.\n");
+   log_incomplete_element_states(pipeline);
+ }
+ 
+@@ -866,7 +872,7 @@ void stop_and_unref(GstElement*& e) {
+   enqueue_teardown(local, /*flush=*/true);
+ }
+ 
+-void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
++void stop_and_unref_no_flush(GstElement*& e, InputStreamTeardownPolicy policy) {
+   if (!e)
+     return;
+ 
+@@ -878,16 +884,21 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
+   // its configured RTSP TEARDOWN timeout during PAUSED -> READY. Account for
+   // those waits before initiating NULL; after the transition starts, dynamic
+   // rtspsrc children may already be disappearing.
+-  const int timeout_ms =
+-      prefer_synchronous ? effective_synchronous_teardown_timeout_ms(local, teardown_timeout_ms())
+-                         : teardown_timeout_ms();
++  const bool prefer_synchronous = policy != InputStreamTeardownPolicy::Deferred;
++  const bool must_reach_null = policy == InputStreamTeardownPolicy::MustReachNull;
++  const int timeout_ms = prefer_synchronous
++                             ? effective_synchronous_teardown_timeout_ms(
++                                   local, teardown_timeout_ms())
++                             : teardown_timeout_ms();
+ 
+   // Defer teardown to the reaper to avoid blocking in gst_element_set_state for
+   // legacy push/appsrc paths.  Live/source pipelines (CameraInput/RTSP/etc.)
+-  // prefer bounded synchronous NULL teardown so Run::close() does not return
+-  // while source streaming threads can still touch downstream plugin/runtime
+-  // state.  The env var remains an explicit escape hatch in both directions.
+-  const bool defer_no_flush = env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
++  // prefer a bounded synchronous NULL attempt before using the reaper. The env
++  // var remains an escape hatch for deferred and bounded-live teardown, but
++  // cannot bypass a driver's exact-once stop callback.
++  const bool defer_no_flush =
++      !must_reach_null &&
++      env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
+   if (defer_no_flush) {
+     enqueue_teardown(local, /*flush=*/false);
+     return;
+@@ -909,10 +920,27 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
+                                   .count();
+       wait_timeout_ms = elapsed_ms >= timeout_ms ? 0 : timeout_ms - static_cast<int>(elapsed_ms);
+     }
+-    const TeardownResult result = finish_teardown(local, begin_result, wait_timeout_ms);
++    TeardownResult result = finish_teardown(local, begin_result, wait_timeout_ms);
+     if (result.status == TeardownStatus::Complete)
+       return;
+-    warn_incomplete_teardown(local, result, timeout_ms);
++    warn_incomplete_teardown(local, result, timeout_ms, !must_reach_null);
++    if (must_reach_null) {
++      // Do not transfer driver-backed pipelines to the process-global reaper:
++      // their element stop callbacks own the submitted DMA jobs and runtime
++      // references. RunCore may bound its caller-visible wait by detaching the
++      // stop task, but that task retains RunCore/InputStream ownership until
++      // this transition completes, so waiting here cannot create a UAF.
++      GstStateChangeReturn retry_begin_result = begin_result;
++      const int retry_wait_ms = std::max(1, timeout_ms);
++      while (result.status != TeardownStatus::Complete) {
++        if (result.status == TeardownStatus::StateChangeFailure) {
++          std::this_thread::sleep_for(std::chrono::milliseconds(10));
++          retry_begin_result = begin_teardown(local, /*flush=*/false);
++        }
++        result = finish_teardown(local, retry_begin_result, retry_wait_ms);
++      }
++      return;
++    }
+   }
+ 
+   enqueue_teardown(local, /*flush=*/false);
+diff --git a/src/pipeline/gst/InputStreamLifecycle.cpp b/src/pipeline/gst/InputStreamLifecycle.cpp
+index b4e35192e056145d830369b553f958f3086b5978..b28442efc8fc0fbe3fc31768aaef8258a5226f99 100644
+--- a/src/pipeline/gst/InputStreamLifecycle.cpp
++++ b/src/pipeline/gst/InputStreamLifecycle.cpp
+@@ -42,7 +42,7 @@ void release_input_stream_resources_once(InputStream::State& state) {
+     if (!state.teardown_started.exchange(true)) {
+       GstElement* pipeline = state.pipeline;
+       state.pipeline = nullptr;
+-      pipeline_internal::stop_and_unref_no_flush(pipeline, state.opt.prefer_synchronous_teardown);
++      pipeline_internal::stop_and_unref_no_flush(pipeline, state.opt.teardown_policy);
+     } else {
+       state.pipeline = nullptr;
+     }
+@@ -519,7 +519,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
+       if (st->pipeline && !st->teardown_started.exchange(true)) {
+         GstElement* pipeline = st->pipeline;
+         st->pipeline = nullptr;
+-        pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.prefer_synchronous_teardown);
++        pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.teardown_policy);
+       }
+     }
+     st->worker_done.store(true, std::memory_order_release);
+@@ -627,7 +627,8 @@ void InputStream::stop() {
+   // that event as a runtime restart request and race the state change.  Keep
+   // the legacy pre-flush for deferred/appsrc teardown paths.
+   const bool stop_flush =
+-      inputstream_stop_flush_enabled() && !state_->opt.prefer_synchronous_teardown;
++      inputstream_stop_flush_enabled() &&
++      state_->opt.teardown_policy == pipeline_internal::InputStreamTeardownPolicy::Deferred;
+   if (stop_flush && pipeline_ref) {
+     if (stop_trace_enabled()) {
+       std::fprintf(stderr, "[STOP] InputStream::stop flush state=%p pipeline=%p\n",
+@@ -704,7 +705,7 @@ void InputStream::stop() {
+     if (state_->pipeline && !state_->teardown_started.exchange(true)) {
+       GstElement* pipeline = state_->pipeline;
+       state_->pipeline = nullptr;
+-      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
++      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.teardown_policy);
+     }
+   }
+   if (state_->worker.joinable()) {
+diff --git a/src/pipeline/gst/InputStreamUtil.cpp b/src/pipeline/gst/InputStreamUtil.cpp
+index d7448bb924088afd79c40367d6960eb6dac2e769..57fc3dc1259289183fe9822c129012d33dc452d4 100644
+--- a/src/pipeline/gst/InputStreamUtil.cpp
++++ b/src/pipeline/gst/InputStreamUtil.cpp
+@@ -1261,8 +1261,35 @@ std::size_t hash_string(const std::string& s) {
+   return std::hash<std::string>{}(s);
+ }
+ 
++bool contains_launch_factory_token(std::string_view pipeline, std::string_view factory) {
++  std::size_t position = 0;
++  while ((position = pipeline.find(factory, position)) != std::string_view::npos) {
++    const auto is_boundary = [](char value) {
++      return std::isspace(static_cast<unsigned char>(value)) != 0 || value == '!' || value == '(' ||
++             value == ')';
++    };
++    const std::size_t after = position + factory.size();
++    const bool starts_token = position == 0 || is_boundary(pipeline[position - 1]);
++    const bool ends_token = after == pipeline.size() || is_boundary(pipeline[after]);
++    if (starts_token && ends_token) {
++      return true;
++    }
++    position = after;
++  }
++  return false;
++}
++
+ } // namespace
+ 
++pipeline_internal::InputStreamTeardownPolicy
++inputstream_pipeline_teardown_policy(std::string_view pipeline) {
++  if (contains_launch_factory_token(pipeline, "neatprocessmla") ||
++      contains_launch_factory_token(pipeline, "neatprocesscvu")) {
++    return pipeline_internal::InputStreamTeardownPolicy::MustReachNull;
++  }
++  return pipeline_internal::InputStreamTeardownPolicy::Deferred;
++}
++
+ CapKey capkey_from_spec(const SampleSpec& spec) {
+   CapKey key;
+   key.kind = spec.kind;
+diff --git a/src/pipeline/internal/GstDiagnosticsUtil.h b/src/pipeline/internal/GstDiagnosticsUtil.h
+index 3532f28361273807b014581ba18bc47355f03007..ed5569ccb09b669856cd1b26a6d477b5eddffcb9 100644
+--- a/src/pipeline/internal/GstDiagnosticsUtil.h
++++ b/src/pipeline/internal/GstDiagnosticsUtil.h
+@@ -6,6 +6,7 @@
+ 
+ #include "pipeline/internal/EnvUtil.h"
+ #include "pipeline/internal/Diagnostics.h" // provides simaai::neat::pipeline_internal::DiagCtx
++#include "pipeline/internal/InputStreamTeardownPolicy.h"
+ #include "pipeline/GraphReport.h"
+ 
+ #include <gst/gst.h>
+@@ -80,11 +81,14 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
+ // pipelines add their effective per-source TEARDOWN waits, capped at 30s
+ // SIMA_GST_TEARDOWN_ASYNC: skip wait, defer to reaper
+ // SIMA_GST_TEARDOWN_REAPER_MS: retry interval (ms)
+-// SIMA_GST_TEARDOWN_DEFER_NO_FLUSH: defer no-flush teardowns to reaper
++// SIMA_GST_TEARDOWN_DEFER_NO_FLUSH: defer eligible no-flush teardowns to reaper;
++// ignored for InputStreamTeardownPolicy::MustReachNull
+ // -----------------------------
+ void stop_and_unref(GstElement*& e);
+ // Skip flush events during teardown (avoid gst_element_send_event deadlocks).
+-void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous = false);
++void stop_and_unref_no_flush(
++    GstElement*& e,
++    InputStreamTeardownPolicy policy = InputStreamTeardownPolicy::Deferred);
+ 
+ // Internal observability/test hook for the bounded synchronous live-source
+ // teardown policy. Adds each rtspsrc's effective TEARDOWN wait to the supplied
+diff --git a/src/pipeline/internal/InputStream.h b/src/pipeline/internal/InputStream.h
+index d679ca827859380208435f9cc6c3c162574d8fe1..2af644364f1e720cd04420dbfbd2828d77518f17 100644
+--- a/src/pipeline/internal/InputStream.h
++++ b/src/pipeline/internal/InputStream.h
+@@ -4,6 +4,7 @@
+ #endif
+ 
+ #include "pipeline/internal/InputStreamStats.h"
++#include "pipeline/internal/InputStreamTeardownPolicy.h"
+ #include "pipeline/Tensor.h"
+ #include "pipeline/TensorCore.h"
+ #include "pipeline/Run.h"
+@@ -111,13 +112,11 @@ struct InputStreamOptions {
+   // runtime, so they do not need a public cross-Run loan attached by Run::pull.
+   // Public/cross-Run ingress keeps this false and must carry a transferable loan.
+   bool allow_graph_internal_zero_copy_input = false;
+-  // Source/live pipelines can continue producing buffers while a deferred
+-  // no-flush teardown is waiting on the background reaper.  Prefer a bounded
+-  // synchronous state transition to NULL for those pipelines so Run::close()
+-  // does not return while camera/RTSP/source streaming threads still touch
+-  // downstream plugin/runtime state.  Push/appsrc pipelines keep the legacy
+-  // deferred no-flush default unless this flag is set explicitly.
+-  bool prefer_synchronous_teardown = false;
++  // Source/live pipelines prefer a bounded NULL transition. Driver-backed
++  // appsrc pipelines require NULL because their stop callback owns exact-once
++  // async-job reclamation. Ordinary push/appsrc pipelines remain deferred.
++  pipeline_internal::InputStreamTeardownPolicy teardown_policy =
++      pipeline_internal::InputStreamTeardownPolicy::Deferred;
+   DynamicCapability dynamic_capability = DynamicCapability::StaticOnly;
+   ShapePolicy shape_policy = ShapePolicy::BoundedDynamic;
+   ResolvedShapeLimits shape_limits{};
+diff --git a/src/pipeline/internal/InputStreamUtil.h b/src/pipeline/internal/InputStreamUtil.h
+index b779b22f60cab75b0f6dac8129924b8f6b25f27a..ece1dcffd737f9dd0ba38edc3119dff871e23d7d 100644
+--- a/src/pipeline/internal/InputStreamUtil.h
++++ b/src/pipeline/internal/InputStreamUtil.h
+@@ -9,11 +9,13 @@
+ #include <memory>
+ #include <optional>
+ #include <string>
++#include <string_view>
+ #include <utility>
+ #include <vector>
+ 
+ #include "pipeline/TensorTypes.h"
+ #include "pipeline/TensorCore.h"
++#include "pipeline/internal/InputStreamTeardownPolicy.h"
+ 
+ #include <gst/gst.h>
+ 
+@@ -171,6 +173,12 @@ struct ResolvedInputMemoryPolicy {
+ 
+ ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt);
+ 
++// Driver-backed async stages own submitted work until their GStreamer stop
++// callback reaps it. Their appsrc pipelines must therefore reach NULL instead
++// of being handed to the detached reaper.
++pipeline_internal::InputStreamTeardownPolicy
++inputstream_pipeline_teardown_policy(std::string_view pipeline);
++
+ struct StreamIdOverride {
+   std::optional<std::string> value;
+   StreamIdOverride() = default;
+diff --git a/src/pipeline/internal/contract/PluginCompiledContracts.h b/src/pipeline/internal/contract/PluginCompiledContracts.h
+index c9397496ac14c5cd0eec45551776f15931683f6c..61271b8520525b927b36ca4ad590b325490ca5b5 100644
+--- a/src/pipeline/internal/contract/PluginCompiledContracts.h
++++ b/src/pipeline/internal/contract/PluginCompiledContracts.h
+@@ -21,6 +21,9 @@ struct CompiledRuntimeContract {
+   std::vector<pipeline_internal::sima::StageOutputRoute> output_order;
+   std::vector<pipeline_internal::sima::QuantStaticSpec> output_quant;
+   std::vector<std::string> required_preprocess_meta_fields;
++  std::uint64_t frame_arena_size_bytes = 0;
++  pipeline_internal::sima::FrameArenaRole frame_arena_role =
++      pipeline_internal::sima::FrameArenaRole::None;
+   // Mirrors MlaStaticContract::consumer_keeps_distinct_physical_inputs. True
+   // when the stage's compiled binary expects N>1 distinct physical input
+   // segments (native multi-IFM dispatch). Used downstream to gate
+diff --git a/src/pipeline/internal/sima/ContractRender.cpp b/src/pipeline/internal/sima/ContractRender.cpp
+index 4f877bfdbf9353cfc93e977591743c1c8f418e6e..97f93d5cdee0ba0937d4106ede4bcc3ce60da4cd 100644
+--- a/src/pipeline/internal/sima/ContractRender.cpp
++++ b/src/pipeline/internal/sima/ContractRender.cpp
+@@ -611,6 +611,8 @@ StageStaticSpec render_processcvu_stage(const CompiledNodeContract& compiled_sta
+   stage.output_order = compiled.exposed_view.exposed_output_order;
+   stage.output_quant = compiled.runtime_contract.output_quant;
+   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
++  stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
++  stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
+   stage.consumer_keeps_distinct_physical_inputs =
+       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
+   return stage;
+@@ -636,6 +638,8 @@ StageStaticSpec render_processmla_stage(const CompiledNodeContract& compiled_sta
+   stage.output_order = compiled.runtime_contract.output_order;
+   stage.output_quant = compiled.runtime_contract.output_quant;
+   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
++  stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
++  stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
+   stage.consumer_keeps_distinct_physical_inputs =
+       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
+   stage.elf_ifm_symbol_names = compiled.runtime_contract.elf_ifm_symbol_names;
+diff --git a/src/pipeline/internal/sima/MlaElfIoTopology.cpp b/src/pipeline/internal/sima/MlaElfIoTopology.cpp
+index 13da920c8208947b6c3c0319e18f07e9c4472be5..07ce365777a28f8b7e64769e40c81506622de2c3 100644
+--- a/src/pipeline/internal/sima/MlaElfIoTopology.cpp
++++ b/src/pipeline/internal/sima/MlaElfIoTopology.cpp
+@@ -1,6 +1,8 @@
+ #define SIMA_NEAT_INTERNAL 1
+ #include "pipeline/internal/sima/MlaElfIoTopology.h"
+ 
++#include <algorithm>
++#include <array>
+ #include <cstdint>
+ #include <cctype>
+ #include <cstring>
+@@ -10,6 +12,7 @@
+ #include <optional>
+ #include <sstream>
+ #include <string>
++#include <utility>
+ #include <vector>
+ 
+ namespace simaai::neat::pipeline_internal::sima {
+@@ -53,9 +56,16 @@ static_assert(sizeof(Elf64SectionHeader) == 64, "Elf64 section header must be 64
+ constexpr std::uint8_t kElfMagic[4] = {0x7f, 'E', 'L', 'F'};
+ constexpr std::uint8_t kElfClass64 = 2;
+ constexpr std::uint8_t kElfData2Lsb = 1;
++constexpr std::uint32_t kQmlaShtData = 0x71ba0002U;
++constexpr std::size_t kQmlaDataHeaderBytes = 16U;
+ 
+ // Read N bytes at a given absolute offset. Returns true on success.
+ bool read_at(std::ifstream& in, std::uint64_t offset, void* dst, std::size_t n) {
++  if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max()) ||
++      static_cast<std::uint64_t>(n) >
++          static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max()) - offset) {
++    return false;
++  }
+   in.clear();
+   in.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+   if (!in.good()) {
+@@ -78,6 +88,38 @@ std::string section_name_at(const std::vector<char>& shstrtab, std::uint32_t nam
+   return std::string(base, len);
+ }
+ 
++std::uint64_t read_u64_le(const std::uint8_t* bytes) {
++  std::uint64_t result = 0U;
++  for (unsigned index = 0; index < 8U; ++index) {
++    result |= static_cast<std::uint64_t>(bytes[index]) << (index * 8U);
++  }
++  return result;
++}
++
++bool read_qmla_data_extent(std::ifstream& in, const Elf64SectionHeader& section,
++                           std::uint64_t* extent) {
++  if (!extent || section.sh_type != kQmlaShtData ||
++      section.sh_size < kQmlaDataHeaderBytes) {
++    return false;
++  }
++  std::array<std::uint8_t, kQmlaDataHeaderBytes> header{};
++  if (!read_at(in, section.sh_offset, header.data(), header.size())) {
++    return false;
++  }
++  *extent = read_u64_le(header.data());
++  return *extent != 0U;
++}
++
++void append_warning(std::string* error, const std::string& warning) {
++  if (!error) {
++    return;
++  }
++  if (!error->empty()) {
++    *error += "; ";
++  }
++  *error += warning;
++}
++
+ // Match patterns for I/O section symbols. Anchored regexes; ordered scan keeps
+ // the implementation stable against future suffix additions.
+ //
+@@ -128,15 +170,17 @@ bool parse_section_index_after_prefix(const std::string& name, const std::string
+     return false;
+   }
+   if (require_slash_after_index) {
+-    return end < name.size() && name[end] == '/';
++    return end < name.size() && name[end] == '/' && name.ends_with(".b0");
+   }
+-  return end + 2U <= name.size() && name[end] == '.' && name[end + 1U] == 'b';
++  return name.substr(end) == ".b0";
+ }
+ 
+ std::optional<std::size_t> parse_ifm_section_index(const std::string& name) {
+   std::size_t index = 0U;
+   if (parse_section_index_after_prefix(name, "data.ifm.persistent.input_", true, &index) ||
+-      parse_section_index_after_prefix(name, "data.ifm.persistent.qmla_ifm_", false, &index)) {
++      parse_section_index_after_prefix(name, "data.ifm.persistent.qmla_ifm_", false, &index) ||
++      parse_section_index_after_prefix(name, "data.ifm.persistent.afe_direct_input_", false,
++                                       &index)) {
+     return index;
+   }
+   return std::nullopt;
+@@ -156,13 +200,33 @@ std::optional<std::size_t> parse_ofm_section_index(const std::string& name) {
+ // `dst` already has a value at that index, prefer the existing one (keeps the
+ // first-seen entry on duplicate scan; multi-section ELFs sometimes mention the
+ // same logical placeholder in multiple sections).
+-void place_at_index(std::vector<std::string>* dst, std::size_t index, const std::string& name) {
+-  if (dst->size() <= index) {
+-    dst->resize(index + 1U);
++bool place_at_index(std::vector<std::string>* names, std::vector<std::uint64_t>* extents,
++                    std::size_t index, const std::string& name,
++                    const std::uint64_t extent) {
++  if (!names || !extents) {
++    return false;
++  }
++  if (names->size() <= index) {
++    names->resize(index + 1U);
++    extents->resize(index + 1U, 0U);
+   }
+-  if ((*dst)[index].empty()) {
+-    (*dst)[index] = name;
++  if ((*names)[index].empty()) {
++    (*names)[index] = name;
++    (*extents)[index] = extent;
++    return true;
+   }
++  return false;
++}
++
++MlaElfIoTopologyValidation topology_error(const MlaElfIoTopologyError code, std::string detail,
++                                          const std::size_t expected = 0U,
++                                          const std::size_t actual = 0U) {
++  MlaElfIoTopologyValidation result;
++  result.code = code;
++  result.expected = expected;
++  result.actual = actual;
++  result.detail = std::move(detail);
++  return result;
+ }
+ 
+ } // namespace
+@@ -234,23 +298,47 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
+     if (name.empty()) {
+       continue;
+     }
++    std::uint64_t extent = 0U;
++    const bool has_extent = read_qmla_data_extent(in, s, &extent);
+     if (name == kMonolithicIfmName) {
+       out->monolithic_ifm = true;
++      out->monolithic_ifm_extent_bytes = has_extent ? extent : 0U;
++      if (!has_extent) {
++        append_warning(&out->error, "IFM section lacks a non-zero QMLA SHT_DATA extent");
++      }
+       ++recognized;
+       continue;
+     }
+     if (name == kMonolithicOfmName) {
+       out->monolithic_ofm = true;
++      out->monolithic_ofm_extent_bytes = has_extent ? extent : 0U;
++      if (!has_extent) {
++        append_warning(&out->error, "OFM section lacks a non-zero QMLA SHT_DATA extent");
++      }
+       ++recognized;
+       continue;
+     }
+     if (const auto index = parse_ifm_section_index(name); index.has_value()) {
+-      place_at_index(&out->ifm_symbol_names, *index, name);
++      if (!place_at_index(&out->ifm_symbol_names, &out->ifm_extent_bytes,
++                          *index, name, has_extent ? extent : 0U)) {
++        out->duplicate_ifm_indices.push_back(*index);
++      }
++      if (!has_extent) {
++        append_warning(&out->error, "IFM section '" + name +
++                                              "' lacks a non-zero QMLA SHT_DATA extent");
++      }
+       ++recognized;
+       continue;
+     }
+     if (const auto index = parse_ofm_section_index(name); index.has_value()) {
+-      place_at_index(&out->ofm_symbol_names, *index, name);
++      if (!place_at_index(&out->ofm_symbol_names, &out->ofm_extent_bytes,
++                          *index, name, has_extent ? extent : 0U)) {
++        out->duplicate_ofm_indices.push_back(*index);
++      }
++      if (!has_extent) {
++        append_warning(&out->error, "OFM section '" + name +
++                                              "' lacks a non-zero QMLA SHT_DATA extent");
++      }
+       ++recognized;
+       continue;
+     }
+@@ -265,11 +353,13 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
+   // for the same direction. Prefer the placeholder list (it's strictly more
+   // expressive) but flag the inconsistency for diagnostics.
+   if (out->monolithic_ifm && !out->ifm_symbol_names.empty()) {
+-    out->error += "; warning: both monolithic and placeholder IFM sections present";
++    out->ifm_layout_conflict = true;
++    append_warning(&out->error, "warning: both monolithic and placeholder IFM sections present");
+     out->monolithic_ifm = false;
+   }
+   if (out->monolithic_ofm && !out->ofm_symbol_names.empty()) {
+-    out->error += "; warning: both monolithic and placeholder OFM sections present";
++    out->ofm_layout_conflict = true;
++    append_warning(&out->error, "warning: both monolithic and placeholder OFM sections present");
+     out->monolithic_ofm = false;
+   }
+ 
+@@ -277,6 +367,128 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
+   return true;
+ }
+ 
++std::size_t mla_elf_ifm_port_count(const MlaElfIoTopology& topology) {
++  return topology.monolithic_ifm ? 1U : topology.ifm_symbol_names.size();
++}
++
++std::size_t mla_elf_ofm_port_count(const MlaElfIoTopology& topology) {
++  return topology.monolithic_ofm ? 1U : topology.ofm_symbol_names.size();
++}
++
++std::uint64_t mla_elf_ifm_extent_bytes(const MlaElfIoTopology& topology,
++                                       const std::size_t port_index) {
++  if (topology.monolithic_ifm) {
++    return port_index == 0U ? topology.monolithic_ifm_extent_bytes : 0U;
++  }
++  return port_index < topology.ifm_extent_bytes.size()
++             ? topology.ifm_extent_bytes[port_index]
++             : 0U;
++}
++
++std::uint64_t mla_elf_ofm_extent_bytes(const MlaElfIoTopology& topology,
++                                       const std::size_t port_index) {
++  if (topology.monolithic_ofm) {
++    return port_index == 0U ? topology.monolithic_ofm_extent_bytes : 0U;
++  }
++  return port_index < topology.ofm_extent_bytes.size()
++             ? topology.ofm_extent_bytes[port_index]
++             : 0U;
++}
++
++MlaElfIoTopologyValidation validate_mla_elf_io_topology_strict(const MlaElfIoTopology& topology) {
++  if (!topology.valid) {
++    return topology_error(MlaElfIoTopologyError::InvalidTopology,
++                          topology.error.empty() ? "ELF I/O topology is invalid" : topology.error);
++  }
++  if (topology.ifm_layout_conflict ||
++      (topology.monolithic_ifm && !topology.ifm_symbol_names.empty())) {
++    return topology_error(MlaElfIoTopologyError::ConflictingIfmLayouts,
++                          "ELF declares both monolithic and indexed IFM layouts");
++  }
++  if (topology.ofm_layout_conflict ||
++      (topology.monolithic_ofm && !topology.ofm_symbol_names.empty())) {
++    return topology_error(MlaElfIoTopologyError::ConflictingOfmLayouts,
++                          "ELF declares both monolithic and indexed OFM layouts");
++  }
++  if (!topology.duplicate_ifm_indices.empty()) {
++    return topology_error(MlaElfIoTopologyError::DuplicateIfmIndex,
++                          "ELF repeats IFM index " +
++                              std::to_string(topology.duplicate_ifm_indices.front()));
++  }
++  if (!topology.duplicate_ofm_indices.empty()) {
++    return topology_error(MlaElfIoTopologyError::DuplicateOfmIndex,
++                          "ELF repeats OFM index " +
++                              std::to_string(topology.duplicate_ofm_indices.front()));
++  }
++  if (!topology.monolithic_ifm && topology.ifm_symbol_names.empty()) {
++    return topology_error(MlaElfIoTopologyError::MissingIfm, "ELF does not declare an IFM layout");
++  }
++  if (!topology.monolithic_ofm && topology.ofm_symbol_names.empty()) {
++    return topology_error(MlaElfIoTopologyError::MissingOfm, "ELF does not declare an OFM layout");
++  }
++  for (std::size_t index = 0; index < topology.ifm_symbol_names.size(); ++index) {
++    if (topology.ifm_symbol_names[index].empty()) {
++      return topology_error(MlaElfIoTopologyError::NonContiguousIfmIndices,
++                            "ELF is missing IFM index " + std::to_string(index));
++    }
++  }
++  for (std::size_t index = 0; index < topology.ofm_symbol_names.size(); ++index) {
++    if (topology.ofm_symbol_names[index].empty()) {
++      return topology_error(MlaElfIoTopologyError::NonContiguousOfmIndices,
++                            "ELF is missing OFM index " + std::to_string(index));
++    }
++  }
++  if (topology.monolithic_ifm) {
++    if (topology.monolithic_ifm_extent_bytes == 0U) {
++      return topology_error(MlaElfIoTopologyError::MissingIfmExtent,
++                            "ELF monolithic IFM has no non-zero SHT_DATA extent");
++    }
++  } else if (topology.ifm_extent_bytes.size() != topology.ifm_symbol_names.size() ||
++             std::any_of(topology.ifm_extent_bytes.begin(), topology.ifm_extent_bytes.end(),
++                         [](const auto extent) { return extent == 0U; })) {
++    return topology_error(MlaElfIoTopologyError::MissingIfmExtent,
++                          "ELF indexed IFM extent evidence is missing, zero, or sparse");
++  }
++  if (topology.monolithic_ofm) {
++    if (topology.monolithic_ofm_extent_bytes == 0U) {
++      return topology_error(MlaElfIoTopologyError::MissingOfmExtent,
++                            "ELF monolithic OFM has no non-zero SHT_DATA extent");
++    }
++  } else if (topology.ofm_extent_bytes.size() != topology.ofm_symbol_names.size() ||
++             std::any_of(topology.ofm_extent_bytes.begin(), topology.ofm_extent_bytes.end(),
++                         [](const auto extent) { return extent == 0U; })) {
++    return topology_error(MlaElfIoTopologyError::MissingOfmExtent,
++                          "ELF indexed OFM extent evidence is missing, zero, or sparse");
++  }
++
++  MlaElfIoTopologyValidation result;
++  result.ok = true;
++  result.code = MlaElfIoTopologyError::None;
++  return result;
++}
++
++MlaElfIoTopologyValidation
++reconcile_mla_elf_io_topology_strict(const MlaElfIoTopology& topology,
++                                     const std::size_t expected_ifm_count,
++                                     const std::size_t expected_ofm_count) {
++  auto result = validate_mla_elf_io_topology_strict(topology);
++  if (!result.ok) {
++    return result;
++  }
++
++  const std::size_t actual_ifm_count = mla_elf_ifm_port_count(topology);
++  if (actual_ifm_count != expected_ifm_count) {
++    return topology_error(MlaElfIoTopologyError::IfmPortCountMismatch,
++                          "MPK/ELF IFM port-count mismatch", expected_ifm_count, actual_ifm_count);
++  }
++  const std::size_t actual_ofm_count = mla_elf_ofm_port_count(topology);
++  if (actual_ofm_count != expected_ofm_count) {
++    return topology_error(MlaElfIoTopologyError::OfmPortCountMismatch,
++                          "MPK/ELF OFM port-count mismatch", expected_ofm_count, actual_ofm_count);
++  }
++  return result;
++}
++
+ bool elf_topology_requires_distinct_ifm_segments(const MlaElfIoTopology& topology) {
+   if (!topology.valid || topology.monolithic_ifm) {
+     return false;
+diff --git a/src/pipeline/internal/sima/MlaElfIoTopology.h b/src/pipeline/internal/sima/MlaElfIoTopology.h
+index 475b827718e10cf9c629c7b60859dba7efab6745..78c7879ce3534d4ce64c14e67042c1e8af83dea4 100644
+--- a/src/pipeline/internal/sima/MlaElfIoTopology.h
++++ b/src/pipeline/internal/sima/MlaElfIoTopology.h
+@@ -4,6 +4,7 @@
+ #endif
+ 
+ #include <cstddef>
++#include <cstdint>
+ #include <filesystem>
+ #include <string>
+ #include <vector>
+@@ -15,6 +16,7 @@ namespace simaai::neat::pipeline_internal::sima {
+ //   data.ifm.persistent.input_NN/<stage>/placeholder_N_0.b0
+ //   data.ofm.persistent.output_NN/<stage>/<op>.b0
+ //   data.ifm.persistent.qmla_ifm_N.b0
++//   data.ifm.persistent.afe_direct_input_N.b0
+ //   data.ofm.persistent.afe_mla_output_N.b0
+ //   data.ifm.b0           (legacy monolithic IFM)
+ //   data.ofm.b0           (legacy monolithic OFM)
+@@ -40,9 +42,23 @@ struct MlaElfIoTopology {
+   // or:
+   //   "data.ifm.persistent.qmla_ifm_0.b0"
+   std::vector<std::string> ifm_symbol_names;
++  // QMLA SHT_DATA logical_size for each numeric IFM slot.  This is the
++  // compiler-authored physical address extent of the backend port, not the
++  // logical tensor byte count carried by the MPK.
++  std::vector<std::uint64_t> ifm_extent_bytes;
+   // Full section names for OFM placeholders, ordered by output index. Empty if
+   // monolithic.
+   std::vector<std::string> ofm_symbol_names;
++  std::vector<std::uint64_t> ofm_extent_bytes;
++  std::uint64_t monolithic_ifm_extent_bytes = 0;
++  std::uint64_t monolithic_ofm_extent_bytes = 0;
++  // Evidence retained for strict consumers.  The legacy parser continues to
++  // prefer indexed symbols when an ELF declares both layouts, but strict
++  // validation rejects that ambiguity instead of silently choosing one.
++  bool ifm_layout_conflict = false;
++  bool ofm_layout_conflict = false;
++  std::vector<std::size_t> duplicate_ifm_indices;
++  std::vector<std::size_t> duplicate_ofm_indices;
+   // True when the file was successfully parsed as an ELF and at least one of
+   // the four section types above was found. False on parse failure or when
+   // the .elf has neither monolithic nor placeholder sections; the topology is
+@@ -53,17 +69,70 @@ struct MlaElfIoTopology {
+   std::string error;
+ };
+ 
++// Stable, machine-readable failure reasons for the strict topology contract.
++// This API intentionally coexists with the permissive read API above so
++// legacy callers keep their behavior while new static-plan code can fail
++// closed on incomplete or ambiguous ELF evidence.
++enum class MlaElfIoTopologyError {
++  None,
++  InvalidTopology,
++  MissingIfm,
++  MissingOfm,
++  ConflictingIfmLayouts,
++  ConflictingOfmLayouts,
++  DuplicateIfmIndex,
++  DuplicateOfmIndex,
++  NonContiguousIfmIndices,
++  NonContiguousOfmIndices,
++  MissingIfmExtent,
++  MissingOfmExtent,
++  IfmPortCountMismatch,
++  OfmPortCountMismatch,
++};
++
++struct MlaElfIoTopologyValidation {
++  bool ok = false;
++  MlaElfIoTopologyError code = MlaElfIoTopologyError::InvalidTopology;
++  std::size_t expected = 0;
++  std::size_t actual = 0;
++  std::string detail;
++};
++
+ // Parse the ELF section name table at `elf_path` and return the I/O topology.
+ // Sets out->valid=true on success and on partial success when at least one
+ // recognized section is found. On hard failure (file unreadable, ELF header
+ // invalid), sets out->valid=false and populates out->error. Never throws;
+ // callers must check out->valid before using the topology.
+ //
+-// Implementation reads only the ELF header, the section header table, and
+-// the .shstrtab — it never loads the bulk code/data sections. For a typical
+-// ~23 MB SiMa MLA .elf the on-disk read footprint is ~10 KB.
++// Implementation reads only the ELF header, the section header table, the
++// .shstrtab, and the 16-byte QMLA header of each recognized I/O section. It
++// never loads bulk code/data payloads. For a typical ~23 MB SiMa MLA .elf the
++// on-disk read footprint remains small.
+ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTopology* out);
+ 
++// Validate that both directions are present, exactly one layout is declared
++// per direction, indexed layouts contain no duplicate or missing slots, and
++// the topology is therefore safe to bind without a fallback heuristic.
++MlaElfIoTopologyValidation validate_mla_elf_io_topology_strict(const MlaElfIoTopology& topology);
++
++// Apply strict validation and then prove that the ELF physical port arity is
++// exactly the arity declared by the MPK MLA operation.
++MlaElfIoTopologyValidation reconcile_mla_elf_io_topology_strict(const MlaElfIoTopology& topology,
++                                                                std::size_t expected_ifm_count,
++                                                                std::size_t expected_ofm_count);
++
++// Physical port counts. Call validate_mla_elf_io_topology_strict first when a
++// result is used for binding; these helpers deliberately perform no fallback.
++std::size_t mla_elf_ifm_port_count(const MlaElfIoTopology& topology);
++std::size_t mla_elf_ofm_port_count(const MlaElfIoTopology& topology);
++
++// Exact SHT_DATA extent for one numeric port. Returns zero when the supplied
++// topology lacks valid evidence; strict consumers must validate first.
++std::uint64_t mla_elf_ifm_extent_bytes(const MlaElfIoTopology& topology,
++                                       std::size_t port_index);
++std::uint64_t mla_elf_ofm_extent_bytes(const MlaElfIoTopology& topology,
++                                       std::size_t port_index);
++
+ // True iff the .elf's IFM layout demands per-physical-input dispatch (i.e.
+ // there are >=2 placeholder slots and no monolithic data.ifm.b0 carrier).
+ // Returns false on parse failure (caller should fall back to MPK heuristic).
+diff --git a/src/pipeline/internal/sima/MlaStaticContractExtractor.h b/src/pipeline/internal/sima/MlaStaticContractExtractor.h
+index 6c6667f718dbca22206854b1702cc05ada72426c..43404f9d318bbda81d7ac0224b14348aac4aa7c2 100644
+--- a/src/pipeline/internal/sima/MlaStaticContractExtractor.h
++++ b/src/pipeline/internal/sima/MlaStaticContractExtractor.h
+@@ -49,6 +49,8 @@ struct MlaStaticContract {
+   std::vector<PhysicalBufferStaticSpec> physical_outputs; ///< Published physical outputs.
+   std::vector<LogicalTensorStaticSpec> logical_outputs;   ///< Logical output specs.
+   std::vector<QuantStaticSpec> output_quant;              ///< Per-output quant params, if any.
++  std::uint64_t frame_arena_size_bytes = 0;
++  FrameArenaRole frame_arena_role = FrameArenaRole::None;
+   // True when this MLA stage's compiled .elf expects N>1 distinct physical
+   // input segments (native multi-IFM dispatch, e.g. data.ifm.persistent.input_00
+   // / input_01 placeholders). Derived from the absence of an upstream
+diff --git a/src/pipeline/internal/sima/SimaPluginStaticManifest.cpp b/src/pipeline/internal/sima/SimaPluginStaticManifest.cpp
+index e3404909a8a1d72561312542ea9293a1e82a34c8..42399fdc6db7c93ff9db14a690f82bf3e256d654 100644
+--- a/src/pipeline/internal/sima/SimaPluginStaticManifest.cpp
++++ b/src/pipeline/internal/sima/SimaPluginStaticManifest.cpp
+@@ -395,6 +395,7 @@ nlohmann::json to_json(const PhysicalBufferStaticSpec& spec) {
+   j["memory_flags"] = spec.memory_flags;
+   j["segment_name_id"] = spec.segment_name_id;
+   j["segment_name"] = spec.segment_name;
++  j["required_alignment_bytes"] = spec.required_alignment_bytes;
+   return j;
+ }
+ 
+@@ -473,6 +474,10 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
+   j["plugin_kind"] = spec.plugin_kind;
+   j["kernel_kind"] = spec.kernel_kind;
+   j["name_table"] = spec.name_table;
++  if (spec.frame_arena_size_bytes != 0U) {
++    j["frame_arena_size_bytes"] = spec.frame_arena_size_bytes;
++    j["frame_arena_role"] = static_cast<int>(spec.frame_arena_role);
++  }
+   if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
+       !spec.processcvu.exact_stage_name_or_id.empty()) {
+     j["processcvu_exact_stage_name_or_id"] = spec.processcvu.exact_stage_name_or_id;
+@@ -527,6 +532,14 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
+   if (!spec.elf_ofm_symbol_names.empty()) {
+     j["elf_ofm_symbol_names"] = spec.elf_ofm_symbol_names;
+   }
++  if (spec.payload_kind == StagePayloadKind::ProcessMla &&
++      spec.processmla.dmabuf_plan_contract) {
++    j["processmla_dmabuf_plan_contract"] = true;
++  }
++  if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
++      spec.processcvu.dmabuf_plan_contract) {
++    j["processcvu_dmabuf_plan_contract"] = true;
++  }
+ 
+   if (spec.payload_kind == StagePayloadKind::ProcessCvu && !spec.processcvu.run_target.empty()) {
+     j["processcvu_run_target"] = spec.processcvu.run_target;
+@@ -604,6 +617,22 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
+     read_string_key(stage_j, "logical_stage_id", stage.logical_stage_id);
+     read_string_key(stage_j, "plugin_kind", stage.plugin_kind);
+     read_string_key(stage_j, "kernel_kind", stage.kernel_kind);
++    if (stage_j.contains("frame_arena_size_bytes") &&
++        stage_j["frame_arena_size_bytes"].is_number_unsigned()) {
++      stage.frame_arena_size_bytes =
++          stage_j["frame_arena_size_bytes"].get<std::uint64_t>();
++    } else if (stage_j.contains("frame_arena_size_bytes") &&
++               stage_j["frame_arena_size_bytes"].is_number_integer()) {
++      const auto raw = stage_j["frame_arena_size_bytes"].get<std::int64_t>();
++      stage.frame_arena_size_bytes =
++          raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
++    }
++    int frame_arena_role = static_cast<int>(FrameArenaRole::None);
++    read_int_key(stage_j, "frame_arena_role", frame_arena_role);
++    if (frame_arena_role >= static_cast<int>(FrameArenaRole::None) &&
++        frame_arena_role <= static_cast<int>(FrameArenaRole::ReuseInput)) {
++      stage.frame_arena_role = static_cast<FrameArenaRole>(frame_arena_role);
++    }
+     if (stage_j.contains("name_table") && stage_j["name_table"].is_array()) {
+       for (const auto& name_j : stage_j["name_table"]) {
+         if (name_j.is_string()) {
+@@ -720,6 +749,17 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
+         }
+         read_int_key(in_j, "segment_name_id", physical.segment_name_id);
+         read_string_key(in_j, "segment_name", physical.segment_name);
++        if (in_j.contains("required_alignment_bytes") &&
++            in_j["required_alignment_bytes"].is_number_unsigned()) {
++          physical.required_alignment_bytes =
++              in_j["required_alignment_bytes"].get<std::uint64_t>();
++        } else if (in_j.contains("required_alignment_bytes") &&
++                   in_j["required_alignment_bytes"].is_number_integer()) {
++          const auto raw =
++              in_j["required_alignment_bytes"].get<std::int64_t>();
++          physical.required_alignment_bytes =
++              raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
++        }
+         stage.physical_inputs.push_back(std::move(physical));
+       }
+     }
+@@ -756,6 +796,17 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
+         }
+         read_int_key(out_j, "segment_name_id", physical.segment_name_id);
+         read_string_key(out_j, "segment_name", physical.segment_name);
++        if (out_j.contains("required_alignment_bytes") &&
++            out_j["required_alignment_bytes"].is_number_unsigned()) {
++          physical.required_alignment_bytes =
++              out_j["required_alignment_bytes"].get<std::uint64_t>();
++        } else if (out_j.contains("required_alignment_bytes") &&
++                   out_j["required_alignment_bytes"].is_number_integer()) {
++          const auto raw =
++              out_j["required_alignment_bytes"].get<std::int64_t>();
++          physical.required_alignment_bytes =
++              raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
++        }
+         stage.physical_outputs.push_back(std::move(physical));
+       }
+     }
+@@ -859,6 +910,10 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
+ 
+     read_bool_key(stage_j, "consumer_keeps_distinct_physical_inputs",
+                   stage.consumer_keeps_distinct_physical_inputs);
++    read_bool_key(stage_j, "processmla_dmabuf_plan_contract",
++                  stage.processmla.dmabuf_plan_contract);
++    read_bool_key(stage_j, "processcvu_dmabuf_plan_contract",
++                  stage.processcvu.dmabuf_plan_contract);
+     if (stage_j.contains("elf_ifm_symbol_names") && stage_j["elf_ifm_symbol_names"].is_array()) {
+       stage.elf_ifm_symbol_names.clear();
+       for (const auto& s : stage_j["elf_ifm_symbol_names"]) {
+@@ -1273,6 +1328,8 @@ private:
+       abi.segment_name = physical.segment_name.empty() ? nullptr : physical.segment_name.c_str();
+       abi.source_physical_index = physical.source_physical_index;
+       abi.source_byte_offset = static_cast<gint64>(physical.source_byte_offset);
++      abi.required_alignment_bytes =
++          static_cast<guint64>(physical.required_alignment_bytes);
+       out.physical_inputs.push_back(abi);
+     }
+ 
+@@ -1288,6 +1345,8 @@ private:
+       abi.segment_name = physical.segment_name.empty() ? nullptr : physical.segment_name.c_str();
+       abi.source_physical_index = physical.source_physical_index;
+       abi.source_byte_offset = static_cast<gint64>(physical.source_byte_offset);
++      abi.required_alignment_bytes =
++          static_cast<guint64>(physical.required_alignment_bytes);
+       out.physical_outputs.push_back(abi);
+     }
+ 
+@@ -1448,6 +1507,10 @@ private:
+         out.required_meta_fields.empty() ? nullptr : out.required_meta_fields.data();
+     out.spec.required_preprocess_meta_fields_len =
+         static_cast<guint>(out.required_meta_fields.size());
++    out.spec.frame_arena_size_bytes =
++        static_cast<guint64>(stage.frame_arena_size_bytes);
++    out.spec.frame_arena_role =
++        static_cast<SimaPluginFrameArenaRole>(stage.frame_arena_role);
+     out.spec.payload_kind = payload_kind_to_abi(stage.payload_kind);
+ 
+     switch (stage.payload_kind) {
+@@ -1543,6 +1606,8 @@ private:
+       out.spec.payload.processcvu.opt_flags = stage.processcvu.opt_flags;
+       out.spec.payload.processcvu.canonical_contract =
+           stage.processcvu.canonical_contract ? TRUE : FALSE;
++      out.spec.payload.processcvu.dmabuf_plan_contract =
++          stage.processcvu.dmabuf_plan_contract ? TRUE : FALSE;
+       out.spec.payload.processcvu.preproc_single_output_handoff =
+           stage.processcvu.preproc_single_output_handoff ? TRUE : FALSE;
+       out.spec.payload.processcvu.aspect_ratio = stage.processcvu.aspect_ratio;
+@@ -1735,6 +1800,8 @@ private:
+               : out.processmla_dispatcher_output_sizes.data();
+       out.spec.payload.processmla.dispatcher_output_sizes_len =
+           static_cast<guint>(out.processmla_dispatcher_output_sizes.size());
++      out.spec.payload.processmla.dmabuf_plan_contract =
++          stage.processmla.dmabuf_plan_contract ? TRUE : FALSE;
+       break;
+     case StagePayloadKind::BoxDecode:
+       set_boxdecode_decode_type_token_abi_safe(
+diff --git a/src/pipeline/internal/sima/SimaPluginStaticManifest.h b/src/pipeline/internal/sima/SimaPluginStaticManifest.h
+index a80061bf299a45a038c79d16faa242cf6320ecf7..eec63712adf0e0ecf0ee4f1cf9290e074f2ad837 100644
+--- a/src/pipeline/internal/sima/SimaPluginStaticManifest.h
++++ b/src/pipeline/internal/sima/SimaPluginStaticManifest.h
+@@ -71,6 +71,7 @@ struct TensorStaticSpec {
+   int max_h = 0;                   ///< Envelope max height.
+   int max_stride = 0;              ///< Envelope max row stride.
+   std::string semantic_tag;        ///< Semantic tag (e.g., `"image"`, `"tensor"`).
++  bool parent_carrier = false;      ///< Slot anchors a larger packed physical carrier.
+ };
+ 
+ /// Provenance trace capturing how one resolved field was chosen.
+@@ -106,6 +107,12 @@ enum class TensorMaterializationKind : std::uint8_t {
+   Bf16LaneSplitRepack = 3, ///< Requires BF16 lane-split repack at runtime.
+ };
+ 
++enum class FrameArenaRole : std::uint8_t {
++  None = 0,
++  Allocate = 1,
++  ReuseInput = 2,
++};
++
+ /// Static spec for one physical buffer (input or output) on a stage.
+ struct PhysicalBufferStaticSpec {
+   int physical_index = -1;                      ///< Stage-local physical index.
+@@ -117,6 +124,7 @@ struct PhysicalBufferStaticSpec {
+   std::uint64_t memory_flags = 0;               ///< Allocator-specific memory flags.
+   int segment_name_id = -1; ///< Index into the stage's name table for `segment_name`.
+   std::string segment_name; ///< Segment name.
++  std::uint64_t required_alignment_bytes = 0; ///< Required DMA base/offset alignment.
+ };
+ 
+ /// Static spec for one logical (publishable) output tensor on a stage.
+@@ -238,6 +246,7 @@ enum class ProcessCvuOutputSemanticKind : std::uint8_t {
+  */
+ struct ProcessCvuStagePayload {
+   bool canonical_contract = false;
++  bool dmabuf_plan_contract = false;
+   std::vector<std::int64_t> slice_shape_raw;
+   std::vector<std::int64_t> out_shape_raw;
+   bool has_align_c16 = false;
+@@ -373,6 +382,7 @@ struct ProcessMlaStagePayload {
+   int batch_sz_model = 0;                             ///< Batch size baked into the model.
+   std::vector<std::string> dispatcher_output_names;   ///< Per-dispatcher-output names.
+   std::vector<std::uint64_t> dispatcher_output_sizes; ///< Per-dispatcher-output byte sizes.
++  bool dmabuf_plan_contract = false; ///< Strict MPK+ELF plan was proved by Core.
+ };
+ 
+ /// BoxDecode stage payload — decode flavor, NMS / topK params, slice geometry.
+@@ -423,6 +433,11 @@ struct StageStaticSpec {
+   std::vector<StageOutputRoute> output_order;
+   std::vector<QuantStaticSpec> output_quant;
+   std::vector<std::string> required_preprocess_meta_fields;
++  // Non-zero only for the strict driver route. Every participating stage uses
++  // the same parent size; Allocate creates the first per-frame slot and each
++  // ReuseInput stage retains that standard GstBuffer/GstMemory ownership.
++  std::uint64_t frame_arena_size_bytes = 0;
++  FrameArenaRole frame_arena_role = FrameArenaRole::None;
+   // Mirrors CompiledRuntimeContract::consumer_keeps_distinct_physical_inputs.
+   // Plumbed from the upstream MLA contract through ContractRender so that
+   // publish-contract construction can stamp TensorBufferPublishContract::
+diff --git a/src/pipeline/internal/sima/StaticSpecBuilders.cpp b/src/pipeline/internal/sima/StaticSpecBuilders.cpp
+index 05a7ba4b8508b33d3ab07fa47dd8ab90a57033f6..1c8669dc30956e7b43d18c8eb8f41623c358ee56 100644
+--- a/src/pipeline/internal/sima/StaticSpecBuilders.cpp
++++ b/src/pipeline/internal/sima/StaticSpecBuilders.cpp
+@@ -150,7 +150,8 @@ LogicalTensorStaticSpec build_logical_output_static_spec(
+ PhysicalBufferStaticSpec
+ build_physical_buffer_static_spec(int physical_index, int allocator_index, std::uint64_t size_bytes,
+                                   DeviceKind device_kind, const std::string& segment_name,
+-                                  int source_physical_index, std::int64_t source_byte_offset) {
++                                  int source_physical_index, std::int64_t source_byte_offset,
++                                  std::uint64_t required_alignment_bytes) {
+   PhysicalBufferStaticSpec physical;
+   physical.physical_index = physical_index;
+   physical.allocator_index = allocator_index;
+@@ -159,6 +160,7 @@ build_physical_buffer_static_spec(int physical_index, int allocator_index, std::
+   physical.segment_name = segment_name;
+   physical.source_physical_index = source_physical_index;
+   physical.source_byte_offset = source_byte_offset;
++  physical.required_alignment_bytes = required_alignment_bytes;
+   return physical;
+ }
+ 
+diff --git a/src/pipeline/internal/sima/StaticSpecBuilders.h b/src/pipeline/internal/sima/StaticSpecBuilders.h
+index e57dff069abe324702b9179a932df1769b12d403..cfa0049bc782eef58bcafee43400aad2a01bc84e 100644
+--- a/src/pipeline/internal/sima/StaticSpecBuilders.h
++++ b/src/pipeline/internal/sima/StaticSpecBuilders.h
+@@ -70,7 +70,8 @@ PhysicalBufferStaticSpec build_physical_buffer_static_spec(int physical_index, i
+                                                            DeviceKind device_kind,
+                                                            const std::string& segment_name,
+                                                            int source_physical_index = -1,
+-                                                           std::int64_t source_byte_offset = 0);
++                                                           std::int64_t source_byte_offset = 0,
++                                                           std::uint64_t required_alignment_bytes = 0);
+ 
+ /// Build an `InputBindingStaticSpec` connecting one of this stage's inputs to an upstream output.
+ InputBindingStaticSpec build_input_binding_static_spec(
+diff --git a/src/pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.cpp b/src/pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.cpp
+index 0fafbea67471251f5ff93a8bd5dc22b0440a5f39..9f6c1f1b01f18a1bb082028783f08bdb3b9b85d3 100644
+--- a/src/pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.cpp
++++ b/src/pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.cpp
+@@ -59,7 +59,9 @@ LogicalInputStaticSpec mla_logical_input_from_facts(const TensorStaticSpec& tens
+       index, tensor.tensor_index >= 0 ? tensor.tensor_index : index,
+       physical.physical_index >= 0 ? physical.physical_index : index, tensor.shape, tensor.dtype,
+       tensor.layout, logical_name, logical_name, physical.segment_name,
+-      std::max<std::int64_t>(0, physical.source_byte_offset));
++      std::max<std::int64_t>(0, physical.source_byte_offset), 0U,
++      tensor.parent_carrier ? TensorMaterializationKind::OffsetView
++                            : TensorMaterializationKind::Direct);
+ }
+ 
+ // Returns the firmware-side IFM slot name for input `index`. If the ELF
+@@ -177,6 +179,9 @@ build_mla_compiled_contract_from_subset(const plugin_contracts::ProcessMlaContra
+     compiled.payload.batch_sz_model = compiled.payload.batch_size;
+   }
+   compiled.runtime_contract.plugin_kind = "processmla";
++  compiled.runtime_contract.frame_arena_size_bytes =
++      contract.frame_arena_size_bytes;
++  compiled.runtime_contract.frame_arena_role = contract.frame_arena_role;
+   compiled.runtime_contract.consumer_keeps_distinct_physical_inputs =
+       contract.consumer_keeps_distinct_physical_inputs;
+   compiled.runtime_contract.elf_ifm_symbol_names = contract.elf_ifm_symbol_names;
+diff --git a/src/pipeline/sample/SampleUtil.cpp b/src/pipeline/sample/SampleUtil.cpp
+index 95d97ffcb52ba44b90f034552bab8e259adc781a..ad6ce905bd5cb217669738db057f8f4029fe8301 100644
+--- a/src/pipeline/sample/SampleUtil.cpp
++++ b/src/pipeline/sample/SampleUtil.cpp
+@@ -5,6 +5,7 @@
+ #include "pipeline/internal/GstDataAdapter.h"
+ #include "pipeline/internal/GstDiagnosticsUtil.h"
+ #include "pipeline/internal/HolderLoanGate.h"
++#include "pipeline/internal/MemoryBackendPolicy.h"
+ #include "pipeline/internal/RealtimeFrameCredit.h"
+ #include "pipeline/internal/SimaaiGstCompat.h"
+ #include "pipeline/internal/TensorBufferEnvelope.h"
+@@ -12,6 +13,7 @@
+ #include "pipeline/internal/TensorUtil.h"
+ 
+ #include <gst/gst.h>
++#include <gst/allocators/gstdmabuf.h>
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -882,6 +884,11 @@ bool tensor_buffer_view_from_handle(simaai::gst::SimaTensorBufferHandle* handle,
+       local.shape.push_back(descriptor.shape[dim]);
+       local.stride_bytes.push_back(descriptor.stride_bytes[dim]);
+     }
++    if (!local.stride_bytes.empty() &&
++        std::all_of(local.stride_bytes.begin(), local.stride_bytes.end(),
++                    [](std::int64_t stride) { return stride == 0; })) {
++      local.stride_bytes.clear();
++    }
+     if (descriptor.has_quant != 0U) {
+       TensorBufferQuantDescriptor quant;
+       quant.granularity = descriptor.quant_granularity;
+@@ -1479,6 +1486,8 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
+   GstBuffer* first_source_buffer = nullptr;
+   bool appended_memory = false;
+   TensorList descriptor_tensors = bundle.tensors;
++  std::vector<std::string> carrier_names;
++  carrier_names.reserve(bundle.tensors.size());
+   for (std::size_t tensor_index = 0; tensor_index < bundle.tensors.size(); ++tensor_index) {
+     const auto& tensor = bundle.tensors[tensor_index];
+     if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
+@@ -1551,7 +1560,21 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
+     }
+ 
+     gst_buffer_append_memory(assembled, gst_memory_ref(memory));
+-    descriptor_tensors[tensor_index].route.memory_index = static_cast<int>(tensor_index);
++    auto& descriptor_route = descriptor_tensors[tensor_index].route;
++    descriptor_route.memory_index = static_cast<int>(tensor_index);
++    descriptor_route.physical_index = static_cast<int>(tensor_index);
++    const std::string carrier_base =
++        descriptor_route.segment_name.empty() ? "input_tensor"
++                                              : descriptor_route.segment_name;
++    std::string carrier_name = carrier_base;
++    for (std::size_t suffix = 1U;
++         std::find(carrier_names.begin(), carrier_names.end(), carrier_name) !=
++         carrier_names.end();
++         ++suffix) {
++      carrier_name = carrier_base + "#" + std::to_string(suffix);
++    }
++    carrier_names.push_back(carrier_name);
++    descriptor_route.segment_name = std::move(carrier_name);
+     appended_memory = true;
+     gst_buffer_unref(source_buffer);
+   }
+@@ -1626,6 +1649,18 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
+   return true;
+ }
+ 
++bool buffer_uses_only_standard_dmabuf_memory(GstBuffer* buffer) {
++  if (!buffer || gst_buffer_n_memory(buffer) == 0U) {
++    return false;
++  }
++  for (guint i = 0U; i < gst_buffer_n_memory(buffer); ++i) {
++    if (!gst_is_dmabuf_memory(gst_buffer_peek_memory(buffer, i))) {
++      return false;
++    }
++  }
++  return true;
++}
++
+ struct TensorSetSegmentMaterialization {
+   std::string buffer_name;
+   GstBuffer* buffer = nullptr;
+@@ -2178,8 +2213,7 @@ bool tensor_buffer_descriptor_from_materialized_fields(
+     TensorBufferTensorDescriptor descriptor_tensor;
+     descriptor_tensor.logical_index =
+         tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
+-    descriptor_tensor.physical_index =
+-        tensor.route.physical_index >= 0 ? tensor.route.physical_index : static_cast<int>(i);
++    descriptor_tensor.physical_index = static_cast<int>(i);
+     descriptor_tensor.backend_output_index = tensor.route.backend_output_index >= 0
+                                                  ? tensor.route.backend_output_index
+                                                  : descriptor_tensor.logical_index;
+@@ -3172,6 +3206,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
+   if (sample_debug_enabled()) {
+     log_bundle(bundle);
+   }
++  const bool dmabuf_plan = selected_memory_backend_policy() == MemoryBackendPolicy::DmaBufPlan;
+ 
+   GstBuffer* sample_buf = nullptr;
+   GstCaps* sample_caps = nullptr;
+@@ -3257,48 +3292,60 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
+               t.route.memory_index, t.route.logical_index);
+         }
+       }
+-      const bool built =
+-          packed_parent_segment_name.has_value()
+-              ? build_packed_tensor_set_backing(bundle, *packed_parent_segment_name, &sample_buf,
+-                                                &sample_caps, &materialized_err)
+-              : ([&]() {
+-                  // Native multi-IFM / multi-physical TensorSet ingress should not take the
+-                  // generic materialized path first: that path allocates temporary GstBuffers and
+-                  // then copies again into a segmented buffer.  Prefer the direct segmented
+-                  // allocation for dense CPU tensors (one unavoidable host->SiMa copy) and the
+-                  // adopted multi-source path for already device-backed GstSamples.  Fall back to
+-                  // the legacy materializer for non-dense tensors or unsupported backing.
+-                  std::string direct_err;
+-                  if (build_bundled_input_gst_buffer(bundle.tensors, &sample_buf, &direct_err)) {
+-                    if (!build_tensor_set_envelope_caps(bundle, &sample_caps, &direct_err)) {
+-                      if (sample_buf) {
+-                        gst_buffer_unref(sample_buf);
+-                        sample_buf = nullptr;
+-                      }
+-                      materialized_err = direct_err;
+-                      return false;
+-                    }
+-                    std::string preprocess_err;
+-                    if (!copy_bundle_tensor_preprocess_meta(sample_buf, bundle.tensors,
+-                                                            &preprocess_err)) {
+-                      gst_buffer_unref(sample_buf);
+-                      sample_buf = nullptr;
+-                      if (sample_caps) {
+-                        gst_caps_unref(sample_caps);
+-                        sample_caps = nullptr;
+-                      }
+-                      materialized_err = preprocess_err;
+-                      return false;
+-                    }
+-                    return true;
+-                  }
+-                  if (allow_zero_copy && try_build_multi_source_tensor_set_backing(
+-                                             bundle, &sample_buf, &sample_caps, &direct_err)) {
+-                    return true;
+-                  }
+-                  return build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+-                                                               &materialized_err);
+-                })();
++      bool built = false;
++      if (dmabuf_plan) {
++        if (!allow_zero_copy) {
++          materialized_err = "dmabuf-plan tensor-set ingress requires zero-copy transport";
++        } else {
++          built = try_build_multi_source_tensor_set_backing(bundle, &sample_buf, &sample_caps,
++                                                            &materialized_err);
++          if (!built && materialized_err.empty()) {
++            materialized_err = "dmabuf-plan tensor-set ingress requires one standard DMA-BUF "
++                               "source view per tensor";
++          }
++        }
++      } else if (packed_parent_segment_name.has_value()) {
++        built = build_packed_tensor_set_backing(bundle, *packed_parent_segment_name, &sample_buf,
++                                                &sample_caps, &materialized_err);
++      } else {
++        built = ([&]() {
++          // Native multi-IFM / multi-physical TensorSet ingress should not take the
++          // generic materialized path first: that path allocates temporary GstBuffers and
++          // then copies again into a segmented buffer.  Prefer the direct segmented
++          // allocation for dense CPU tensors (one unavoidable host->SiMa copy) and the
++          // adopted multi-source path for already device-backed GstSamples.  Fall back to
++          // the legacy materializer for non-dense tensors or unsupported backing.
++          std::string direct_err;
++          if (build_bundled_input_gst_buffer(bundle.tensors, &sample_buf, &direct_err)) {
++            if (!build_tensor_set_envelope_caps(bundle, &sample_caps, &direct_err)) {
++              if (sample_buf) {
++                gst_buffer_unref(sample_buf);
++                sample_buf = nullptr;
++              }
++              materialized_err = direct_err;
++              return false;
++            }
++            std::string preprocess_err;
++            if (!copy_bundle_tensor_preprocess_meta(sample_buf, bundle.tensors, &preprocess_err)) {
++              gst_buffer_unref(sample_buf);
++              sample_buf = nullptr;
++              if (sample_caps) {
++                gst_caps_unref(sample_caps);
++                sample_caps = nullptr;
++              }
++              materialized_err = preprocess_err;
++              return false;
++            }
++            return true;
++          }
++          if (allow_zero_copy && try_build_multi_source_tensor_set_backing(
++                                     bundle, &sample_buf, &sample_caps, &direct_err)) {
++            return true;
++          }
++          return build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
++                                                       &materialized_err);
++        })();
++      }
+       if (!built) {
+         if (err) {
+           *err = materialized_err.empty() ? "Sample tensor-set materialized backing failed"
+@@ -3308,7 +3355,9 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
+       }
+       if (sample_debug_enabled() && sample_buf) {
+         std::fprintf(stderr, "[SAMPLE] tensor-set %s tensor backing bytes=%zu\n",
+-                     packed_parent_segment_name.has_value() ? "packed" : "materialized",
++                     dmabuf_plan
++                         ? "DMA-BUF"
++                         : (packed_parent_segment_name.has_value() ? "packed" : "materialized"),
+                      static_cast<size_t>(gst_buffer_get_size(sample_buf)));
+       }
+     }
+@@ -3343,6 +3392,17 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
+       *err = "Sample buffer allocation failed";
+     return {};
+   }
++  if (dmabuf_plan && sample_has_tensor_list(bundle) &&
++      !buffer_uses_only_standard_dmabuf_memory(sample_buf)) {
++    gst_buffer_unref(sample_buf);
++    if (sample_caps) {
++      gst_caps_unref(sample_caps);
++    }
++    if (err) {
++      *err = "dmabuf-plan tensor-set ingress is not backed only by standard DMA-BUF memory";
++    }
++    return {};
++  }
+   if (!gst_buffer_is_writable(sample_buf)) {
+     GstBuffer* sample_buf_before_writable = gst_buffer_ref(sample_buf);
+     sample_buf = gst_buffer_make_writable(sample_buf);
+@@ -3837,16 +3897,11 @@ Sample sample_from_tensors(const TensorList& tensors) {
+   out.kind = SampleKind::TensorSet;
+   out.owned = true;
+   out.tensors = tensors;
+-  // Stamp positional identity for multi-tensor sets so the SIMA_TENSOR_SET_META
+-  // descriptor (built downstream by tensor_buffer_descriptor_from_tensors) gives
+-  // each region a distinct logical slot. Each binding shares the same
+-  // physical input slot (the packed parent buffer), with memory_index the
+-  // disambiguator across regions — same convention the multi-IO renderer
+-  // emits (physical_index=0 / memory_index per tensor). Sharing
+-  // physical_index lets `packed_tensor_set_parent_segment_name` route the
+-  // bundle into the existing packed-buffer materialization path so the
+-  // dispatcher consumes one carrier with byte-offset disambiguation.
+-  // Only stamps when the caller hasn't already assigned an explicit identity.
++  // Preserve the legacy packed-materialization convention for callers that
++  // provide no route identity. The strict DMA-BUF path does not consume this
++  // provisional physical index: when it adopts the source memories it assigns
++  // each descriptor the actual dense carrier index. Explicit caller identity
++  // is never rewritten here.
+   if (out.tensors.size() > 1U) {
+     bool any_route_unstamped = false;
+     for (const auto& t : out.tensors) {
+diff --git a/src/pipeline/tensor/TensorTransfer.cpp b/src/pipeline/tensor/TensorTransfer.cpp
+index a059514cbc90e4ebfb832a9cf51a0b6dce9d8555..31644bade592d17ee96a23e3f11b2ba087fc9aeb 100644
+--- a/src/pipeline/tensor/TensorTransfer.cpp
++++ b/src/pipeline/tensor/TensorTransfer.cpp
+@@ -38,11 +38,13 @@
+ #include "pipeline/internal/TensorTransfer.h"
+ 
+ #include "pipeline/internal/GstDataAdapter.h"
++#include "pipeline/internal/MemoryBackendPolicy.h"
+ #include "pipeline/internal/SimaaiMemory.h"
+ #include "pipeline/internal/SimaaiGstCompat.h"
+ #include "pipeline/internal/TensorUtil.h"
+ #include "pipeline/internal/TensorMath.h"
+ #include "gst/GstInit.h"
++#include "simaai/neat/internal/dmabuf/DmaBufPool.h"
+ 
+ #include <gst/gst.h>
+ #include <gst/gstbufferpool.h>
+@@ -577,6 +579,157 @@ Tensor finalize_transfer_tensor(const Tensor& src, const std::shared_ptr<Storage
+   return out;
+ }
+ 
++internal::dmabuf::CpuAccess dmabuf_cpu_access(MapMode mode) {
++  switch (mode) {
++  case MapMode::Read:
++    return internal::dmabuf::CpuAccess::Read;
++  case MapMode::Write:
++    return internal::dmabuf::CpuAccess::Write;
++  case MapMode::ReadWrite:
++    return internal::dmabuf::CpuAccess::ReadWrite;
++  }
++  return internal::dmabuf::CpuAccess::ReadWrite;
++}
++
++std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample,
++                                                    const Device& target,
++                                                    std::uint64_t target_flags) {
++  auto storage = make_gst_sample_storage(sample);
++  if (!storage || !storage->holder) {
++    return {};
++  }
++
++  // A standard GstDmaBufAllocator memory deliberately has no legacy SiMa
++  // allocator flags. Keep device placement in Tensor storage metadata while
++  // preserving the ordinary GstMemory that direct kernel importers require.
++  storage->device = target;
++  storage->sima_mem_target_flags = target_flags;
++  storage->sima_mem_flags = 0U;
++
++  struct MapState {
++    std::mutex mutex;
++    std::optional<internal::dmabuf::CpuMapping> mapping;
++  };
++  auto state = std::make_shared<MapState>();
++  auto holder = storage->holder;
++  storage->map_fn = [holder, state](MapMode mode) {
++    std::lock_guard<std::mutex> lock(state->mutex);
++    if (state->mapping.has_value()) {
++      return Mapping{};
++    }
++    auto* sample = static_cast<GstSample*>(holder.get());
++    GstBuffer* buffer = sample && GST_IS_SAMPLE(sample)
++                            ? gst_sample_get_buffer(sample)
++                            : nullptr;
++    if (!buffer || gst_buffer_n_memory(buffer) != 1U) {
++      return Mapping{};
++    }
++
++    internal::dmabuf::Error error;
++    auto view = internal::dmabuf::DmaBufView::fromGstMemory(
++        gst_buffer_peek_memory(buffer, 0U), &error);
++    if (!view) {
++      return Mapping{};
++    }
++    auto mapping = view->map(dmabuf_cpu_access(mode), &error);
++    if (!mapping) {
++      return Mapping{};
++    }
++    state->mapping.emplace(std::move(*mapping));
++
++    Mapping result;
++    result.data = state->mapping->data();
++    result.size_bytes = state->mapping->size();
++    result.keepalive = holder;
++    result.unmap = [state]() {
++      std::lock_guard<std::mutex> lock(state->mutex);
++      if (state->mapping.has_value()) {
++        (void)state->mapping->finish();
++        state->mapping.reset();
++      }
++    };
++    return result;
++  };
++  return storage;
++}
++
++Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
++                                 std::uint64_t target_flags,
++                                 const std::vector<Segment>& segments) {
++  using internal::dmabuf::CpuAccess;
++  using internal::dmabuf::DmaBufView;
++  using internal::dmabuf::Error;
++  using internal::dmabuf::HeapKind;
++
++  const std::size_t allocation_bytes = segment_total_bytes(segments);
++  const HeapKind heap = target.type == DeviceType::SIMA_MLA
++                            ? HeapKind::MlaDms
++                            : HeapKind::Cma;
++  Error error;
++  GstBuffer* dst = internal::dmabuf::allocateDmaBufBuffer(
++      heap, allocation_bytes, {}, &error);
++  if (!dst) {
++    throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " +
++                             error.message());
++  }
++
++  auto view = DmaBufView::fromGstMemory(gst_buffer_peek_memory(dst, 0U),
++                                        0U, allocation_bytes, &error);
++  if (!view) {
++    gst_buffer_unref(dst);
++    throw std::runtime_error("transfer: standard DMA-BUF view failed: " +
++                             error.message());
++  }
++  auto mapping = view->map(CpuAccess::Write, &error);
++  if (!mapping) {
++    gst_buffer_unref(dst);
++    throw std::runtime_error("transfer: standard DMA-BUF map failed: " +
++                             error.message());
++  }
++
++  bool copied = false;
++  try {
++    copied = copy_tensor_payload(
++        src, static_cast<std::uint8_t*>(mapping->data()), mapping->size());
++  } catch (...) {
++    (void)mapping->finish();
++    gst_buffer_unref(dst);
++    throw;
++  }
++  if (!copied) {
++    (void)mapping->finish();
++    gst_buffer_unref(dst);
++    throw std::runtime_error("transfer: standard DMA-BUF payload copy failed");
++  }
++  if (!mapping->finish(&error)) {
++    gst_buffer_unref(dst);
++    throw std::runtime_error("transfer: standard DMA-BUF CPU sync failed: " +
++                             error.message());
++  }
++
++  if (src.storage && src.storage->kind == StorageKind::GstSample) {
++    std::string holder_error;
++    GstBuffer* src_buffer = buffer_from_holder_if_gstsample(src, &holder_error);
++    if (src_buffer) {
++      copy_gst_metadata(dst, src_buffer);
++      gst_buffer_unref(src_buffer);
++    }
++  }
++
++  GstSample* sample = gst_sample_new(dst, nullptr, nullptr, nullptr);
++  if (!sample) {
++    gst_buffer_unref(dst);
++    throw std::runtime_error("transfer: failed to wrap standard DMA-BUF sample");
++  }
++  gst_buffer_unref(dst);
++  auto storage = make_driver_dmabuf_storage(sample, target, target_flags);
++  gst_sample_unref(sample);
++  if (!storage) {
++    throw std::runtime_error("transfer: failed to create standard DMA-BUF storage");
++  }
++  return finalize_transfer_tensor(src, storage, segments);
++}
++
+ } // namespace
+ 
+ //==============================================================================
+@@ -642,6 +795,11 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
+   const std::vector<Segment> segments =
+       resolve_segments(src, required_segments, required_segment_names, payload_bytes);
+ 
++  if (selected_memory_backend_policy() ==
++      MemoryBackendPolicy::DmaBufPlan) {
++    return transfer_to_driver_dmabuf(src, target, target_flags, segments);
++  }
++
+   std::shared_ptr<GstBufferPool> pool = get_pool(target_flags, mem_flags, segments);
+   if (!pool) {
+     throw std::runtime_error("transfer: buffer pool allocation failed");
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 38f70b79e685a6298d6ddbd7fe823e480d926bf5..3575c6e01ff87d8fc7135f815afb87931fad8d6b 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -404,6 +404,9 @@ set(UNIT_TESTS
+   unit_mpk_contract_legacy_ingress_test
+   unit_mpk_typed_tensor_object_contract_test
+   unit_mla_elf_io_topology_test
++  unit_legacy_afe_mpk_decoder_test
++  unit_frame_slot_arena_plan_test
++  unit_dmabuf_plan_contract_projection_test
+   unit_model_archive_loader_test
+   unit_outputspec_test
+   unit_pcie_nodes_test
+@@ -493,6 +496,24 @@ foreach(test ${UNIT_TESTS})
+   endif()
+ endforeach()
+ 
++# Optional frozen-corpus gate. The normal unit target uses synthetic JSON/ELF
++# fixtures and is always available; this integration test is registered only
++# when a developer/CI job explicitly supplies the external official corpus.
++set(SIMANEAT_EVO_MPK_CORPUS_DIR "$ENV{SIMANEAT_EVO_MPK_CORPUS_DIR}" CACHE PATH
++    "Directory containing the 12 frozen official EVO MPK archives")
++if (SIMANEAT_EVO_MPK_CORPUS_DIR)
++  add_test(
++    NAME integration_legacy_afe_evo_corpus_test
++    COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_legacy_afe_evo_corpus_test.py
++      --validator $<TARGET_FILE:unit_legacy_afe_mpk_decoder_test>
++      --corpus "${SIMANEAT_EVO_MPK_CORPUS_DIR}"
++  )
++  simaneat_append_ctest_env(integration_legacy_afe_evo_corpus_test)
++  set_tests_properties(integration_legacy_afe_evo_corpus_test PROPERTIES
++    LABELS "integration;model-contract;evo-corpus")
++endif()
++
+ if (TARGET unit_power_telemetry_test)
+   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+ endif()
+diff --git a/tests/graph_migration/legacy/evo_tput_bench.cpp b/tests/graph_migration/legacy/evo_tput_bench.cpp
+index bda292a07b62509e9bf7663340d03698d846ba1e..0fa0cda7936acef2d796b9916fa0877fb5f4fbf1 100644
+--- a/tests/graph_migration/legacy/evo_tput_bench.cpp
++++ b/tests/graph_migration/legacy/evo_tput_bench.cpp
+@@ -16,6 +16,7 @@
+ #include <numeric>
+ #include <sstream>
+ #include <string>
++#include <thread>
+ #include <tuple>
+ #include <vector>
+ 
+@@ -80,6 +81,16 @@ std::string base_name(const std::string& path) {
+   const auto pos = path.find_last_of('/');
+   return pos == std::string::npos ? path : path.substr(pos + 1);
+ }
++std::uint64_t fnv1a64_append(std::uint64_t hash, const void* data,
++                             std::size_t size) {
++  constexpr std::uint64_t kPrime = 1099511628211ULL;
++  const auto* bytes = static_cast<const std::uint8_t*>(data);
++  for (std::size_t i = 0; i < size; ++i) {
++    hash ^= static_cast<std::uint64_t>(bytes[i]);
++    hash *= kPrime;
++  }
++  return hash;
++}
+ } // namespace
+ 
+ int main(int argc, char** argv) {
+@@ -92,13 +103,22 @@ int main(int argc, char** argv) {
+   const bool cleanup = bool_arg(argc, argv, "--cleanup", true);
+   const bool plugin_latency = bool_arg(argc, argv, "--plugin-latency", true);
+   const bool startup_preflight = bool_arg(argc, argv, "--startup-preflight", true);
++  const bool mla_only = bool_arg(argc, argv, "--mla-only", false);
++  const bool verbose = bool_arg(argc, argv, "--verbose", false);
++  const bool correctness_hash =
++      bool_arg(argc, argv, "--correctness-hash", false);
++  const int early_stop_after =
++      std::max(0, int_arg(argc, argv, "--early-stop-after", 0));
++  const int early_stop_delay_ms =
++      std::max(0, int_arg(argc, argv, "--early-stop-delay-ms", 0));
+   const std::string mode =
+       arg_value(argc, argv, "--mode").empty() ? "sync" : arg_value(argc, argv, "--mode");
+   const int inflight = std::max(1, int_arg(argc, argv, "--inflight", 4));
+   if (model_path.empty() || pre.empty() || post.empty() || measured <= 0 || warmup < 0) {
+     std::cerr << "Usage: evo_tput_bench --model <path> --pre <A65|EV74> --post <A65|EV74> "
+                  "[--warmup N] [--measured N] [--timeout-ms MS] [--cleanup 0|1] "
+-                 "[--mode sync|async] [--inflight N]\n";
++                 "[--mode sync|async] [--inflight N] [--mla-only 0|1] [--verbose 0|1] "
++                 "[--correctness-hash 0|1]\n";
+     return 2;
+   }
+   if (mode != "sync" && mode != "async") {
+@@ -111,6 +131,12 @@ int main(int argc, char** argv) {
+     opt.preprocess.enable = neat::AutoFlag::On;
+     opt.processcvu.pre_run_target = pre;
+     opt.processcvu.post_run_target = post;
++    opt.inference_terminal.mla_only = mla_only;
++    if (verbose) {
++      opt.verbose.level = neat::VerbosityLevel::Verbose;
++      opt.verbose.gstreamer = true;
++      opt.verbose.plugins = true;
++    }
+     opt.cleanup_extracted_model_data = cleanup;
+ 
+     std::cout << "EVO_TPUT_CONFIG model=" << model_path << " model_name=" << base_name(model_path)
+@@ -118,7 +144,11 @@ int main(int argc, char** argv) {
+               << " measured=" << measured << " timeout_ms=" << timeout_ms
+               << " plugin_latency=" << (plugin_latency ? 1 : 0)
+               << " startup_preflight=" << (startup_preflight ? 1 : 0) << " mode=" << mode
+-              << " inflight=" << inflight << "\n"
++              << " inflight=" << inflight << " mla_only=" << (mla_only ? 1 : 0)
++              << " verbose=" << (verbose ? 1 : 0)
++              << " correctness_hash=" << (correctness_hash ? 1 : 0)
++              << " early_stop_after=" << early_stop_after
++              << " early_stop_delay_ms=" << early_stop_delay_ms << "\n"
+               << std::flush;
+ 
+     const auto ctor0 = std::chrono::steady_clock::now();
+@@ -165,6 +195,68 @@ int main(int argc, char** argv) {
+               << " seconds=" << std::chrono::duration<double>(warm1 - warm0).count() << "\n"
+               << std::flush;
+ 
++    if (correctness_hash) {
++      auto outputs = runner.run(inputs, timeout_ms);
++      if (outputs.empty()) {
++        std::cerr << "EVO_TPUT_FAIL stage=correctness_hash reason=no_outputs\n";
++        return 10;
++      }
++      constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;
++      std::uint64_t combined = kOffsetBasis;
++      std::size_t total_bytes = 0U;
++      std::ostringstream tensor_hashes;
++      tensor_hashes << std::hex << std::setfill('0');
++      for (std::size_t i = 0; i < outputs.size(); ++i) {
++        const std::vector<std::uint8_t> bytes =
++            outputs[i].copy_dense_bytes_tight();
++        if (bytes.empty() && outputs[i].dense_bytes_tight() != 0U) {
++          std::cerr << "EVO_TPUT_FAIL stage=correctness_hash tensor=" << i
++                    << " reason=copy_failed\n";
++          return 11;
++        }
++        std::uint64_t tensor_hash = kOffsetBasis;
++        tensor_hash = fnv1a64_append(tensor_hash, bytes.data(), bytes.size());
++        const std::uint64_t size = static_cast<std::uint64_t>(bytes.size());
++        combined = fnv1a64_append(combined, &size, sizeof(size));
++        combined = fnv1a64_append(combined, bytes.data(), bytes.size());
++        total_bytes += bytes.size();
++        if (i != 0U) {
++          tensor_hashes << ',';
++        }
++        tensor_hashes << std::setw(16) << tensor_hash;
++      }
++      runner.close();
++      std::cout << "EVO_CORRECTNESS_HASH status=PASS pre=" << pre
++                << " post=" << post << " outputs=" << outputs.size()
++                << " bytes=" << total_bytes << " combined=" << std::hex
++                << std::setw(16) << std::setfill('0') << combined << std::dec
++                << " tensors=" << tensor_hashes.str() << "\n";
++      return 0;
++    }
++
++    if (early_stop_after > 0) {
++      for (int i = 0; i < early_stop_after; ++i) {
++        if (!runner.push(inputs)) {
++          std::cerr << "EVO_TPUT_FAIL stage=early_stop_push iter=" << i
++                    << " reason=push_failed\n";
++          return 9;
++        }
++      }
++      if (early_stop_delay_ms > 0) {
++        std::this_thread::sleep_for(
++            std::chrono::milliseconds(early_stop_delay_ms));
++      }
++      const auto close_start = std::chrono::steady_clock::now();
++      runner.close();
++      const auto close_end = std::chrono::steady_clock::now();
++      std::cout << "EVO_EARLY_STOP_RESULT status=PASS pushed="
++                << early_stop_after << " delay_ms=" << early_stop_delay_ms
++                << " close_ms="
++                << std::chrono::duration<double, std::milli>(close_end - close_start).count()
++                << "\n";
++      return 0;
++    }
++
+     neat::MeasureOptions measure_opt;
+     measure_opt.duration_ms = std::max(1, measured * timeout_ms);
+     measure_opt.warmup_ms = 0;
+@@ -298,6 +390,13 @@ int main(int argc, char** argv) {
+     }
+     runner.close();
+     return 0;
++  } catch (const neat::NeatError& ex) {
++    for (const auto& message : ex.report().bus) {
++      std::cerr << "EVO_TPUT_BUS type=" << message.type << " src=" << message.src
++                << " detail=" << message.detail << "\n";
++    }
++    std::cerr << "EVO_TPUT_FAIL exception=" << ex.what() << "\n";
++    return 1;
+   } catch (const std::exception& ex) {
+     std::cerr << "EVO_TPUT_FAIL exception=" << ex.what() << "\n";
+     return 1;
+diff --git a/tests/neat_tensor_device_placement_test.cpp b/tests/neat_tensor_device_placement_test.cpp
+index 10466d47e41e58c37b1c700a7f8cd2621de5d31b..88c9a49438fd099bbaf1c81a6d41117ec07b3643 100644
+--- a/tests/neat_tensor_device_placement_test.cpp
++++ b/tests/neat_tensor_device_placement_test.cpp
+@@ -1,5 +1,6 @@
+ #include "pipeline/TensorAdapters.h"
+ #include "pipeline/internal/TensorTransfer.h"
++#include "pipeline/internal/TensorBufferEnvelope.h"
+ #include "pipeline/internal/SimaaiMemory.h"
+ #include "pipeline/internal/TensorUtil.h"
+ #include "pipeline/internal/SimaaiGstCompat.h"
+@@ -8,7 +9,10 @@
+ #include "test_utils.h"
+ 
+ #include <gst/gst.h>
++#include <gst/allocators/gstdmabuf.h>
+ 
++#include <cstdlib>
++#include <cstring>
+ #include <iostream>
+ #include <memory>
+ #include <string>
+@@ -160,6 +164,111 @@ int main() {
+     auto stats_after = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
+     require(stats_after.hits > stats_mid.hits, "expected pool cache hit");
+ 
++    // The strict driver-mode placement uses the same public Tensor API but
++    // must produce ordinary GstDmaBufMemory from the CMA heap. It must not
++    // enter the legacy segmented allocator or disguise that allocator as a
++    // DMA-BUF.
++    require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
++            "failed to select dmabuf-plan for placement test");
++    std::vector<std::uint8_t> direct_data(4096U);
++    for (std::size_t i = 0; i < direct_data.size(); ++i) {
++      direct_data[i] = static_cast<std::uint8_t>(i & 0xffU);
++    }
++    auto direct = simaai::neat::Tensor::from_vector(direct_data,
++                                                    {static_cast<std::int64_t>(direct_data.size())},
++                                                    simaai::neat::TensorMemory::EV74);
++    require(direct.device.type == simaai::neat::DeviceType::SIMA_CVU,
++            "direct EV74 device mismatch");
++    require(direct.storage && direct.storage->sima_segments.size() == 1U,
++            "direct EV74 storage contract mismatch");
++    GstBuffer* direct_buffer =
++        simaai::neat::pipeline_internal::buffer_from_tensor_holder(direct.storage->holder);
++    require(direct_buffer != nullptr, "missing direct EV74 GstBuffer");
++    require(gst_buffer_n_memory(direct_buffer) == 1U, "direct EV74 buffer must contain one memory");
++    require(gst_is_dmabuf_memory(gst_buffer_peek_memory(direct_buffer, 0U)),
++            "direct EV74 memory is not standard GstDmaBufMemory");
++    gst_buffer_unref(direct_buffer);
++
++    auto direct_map = direct.map_read();
++    require(direct_map.data != nullptr && direct_map.size_bytes >= direct_data.size(),
++            "direct EV74 CPU map failed");
++    require(std::memcmp(direct_map.data, direct_data.data(), direct_data.size()) == 0,
++            "direct EV74 payload mismatch");
++
++    std::vector<std::uint8_t> direct_data_1(2048U, 0x5aU);
++    auto direct_1 = simaai::neat::Tensor::from_vector(
++        direct_data_1, {static_cast<std::int64_t>(direct_data_1.size())},
++        simaai::neat::TensorMemory::EV74);
++    direct.route.name = "image_l";
++    direct.route.backend_name = "input_tensor";
++    direct.route.segment_name = "input_tensor";
++    direct.route.logical_index = 0;
++    direct.route.physical_index = 0;
++    direct.route.route_slot = 0;
++    direct.route.memory_index = 0;
++    direct_1.route.name = "image_uv";
++    direct_1.route.backend_name = "input_tensor";
++    direct_1.route.segment_name = "input_tensor";
++    direct_1.route.logical_index = 1;
++    direct_1.route.physical_index = 0;
++    direct_1.route.route_slot = 1;
++    direct_1.route.memory_index = 1;
++
++    auto ingress = simaai::neat::sample_from_tensors({direct, direct_1});
++    ingress.payload_type = simaai::neat::PayloadType::Tensor;
++    ingress.media_type = "application/vnd.simaai.tensor";
++    ingress.segment_name = "input_tensor";
++    std::string ingress_error;
++    auto ingress_holder = simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
++        ingress, &ingress_error, /*allow_zero_copy=*/true);
++    require(ingress_holder != nullptr,
++            ingress_error.empty() ? "direct tensor-set envelope failed" : ingress_error);
++    GstBuffer* ingress_buffer =
++        simaai::neat::pipeline_internal::buffer_from_tensor_holder(ingress_holder);
++    require(ingress_buffer != nullptr, "missing direct tensor-set GstBuffer");
++    require(gst_buffer_n_memory(ingress_buffer) == 2U,
++            "direct tensor-set must preserve one memory per public input");
++    for (guint i = 0U; i < gst_buffer_n_memory(ingress_buffer); ++i) {
++      require(gst_is_dmabuf_memory(gst_buffer_peek_memory(ingress_buffer, i)),
++              "direct tensor-set contains non-DMA-BUF memory");
++    }
++    GstCustomMeta* tensor_set_meta =
++        gst_buffer_get_custom_meta(ingress_buffer, SIMA_TENSOR_SET_META_NAME);
++    require(tensor_set_meta != nullptr,
++            "direct tensor-set is missing canonical route metadata");
++    GstStructure* tensor_set_structure =
++        gst_custom_meta_get_structure(tensor_set_meta);
++    require(tensor_set_structure != nullptr,
++            "direct tensor-set route metadata has no structure");
++    guint physical_binding_count = 0U;
++    require(gst_structure_get_uint(
++                tensor_set_structure,
++                "physical-binding-count",
++                &physical_binding_count) &&
++                physical_binding_count == 2U,
++            "direct tensor-set must publish two dense physical carriers");
++    const GValue* descriptor_value = gst_structure_get_value(
++        tensor_set_structure, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS);
++    auto* descriptor_blob =
++        descriptor_value && G_VALUE_HOLDS(descriptor_value, G_TYPE_BYTES)
++            ? static_cast<GBytes*>(g_value_get_boxed(descriptor_value))
++            : nullptr;
++    gsize descriptor_bytes = 0U;
++    const auto* ingress_descriptors = descriptor_blob
++                                          ? static_cast<const SimaTensorDescriptorV2*>(
++                                                g_bytes_get_data(descriptor_blob,
++                                                                 &descriptor_bytes))
++                                          : nullptr;
++    require(ingress_descriptors != nullptr &&
++                descriptor_bytes == 2U * sizeof(SimaTensorDescriptorV2),
++            "direct tensor-set descriptor table is malformed");
++    require(ingress_descriptors[0].physical_index == 0 &&
++                ingress_descriptors[0].memory_index == 0 &&
++                ingress_descriptors[1].physical_index == 1 &&
++                ingress_descriptors[1].memory_index == 1,
++            "direct tensor-set descriptor identities must mirror its carriers");
++    gst_buffer_unref(ingress_buffer);
++
+     std::cout << "[OK] tensor_device_placement_test passed\n";
+     return 0;
+ #endif
+diff --git a/tests/unit_testing/unit_inputstream_stop_flush_test.cpp b/tests/unit_testing/unit_inputstream_stop_flush_test.cpp
+index f86189733051d504c51063e8c3f5659b338fa6fb..a3aa0573ea23a88377b4901469e64e1d7023ad28 100644
+--- a/tests/unit_testing/unit_inputstream_stop_flush_test.cpp
++++ b/tests/unit_testing/unit_inputstream_stop_flush_test.cpp
+@@ -10,14 +10,49 @@
+ #include <gst/gst.h>
+ 
+ #include <atomic>
++#include <chrono>
+ #include <cstdlib>
+ #include <limits>
+ #include <stdexcept>
+ #include <string>
++#include <tuple>
++#include <thread>
+ #include <utility>
+ 
+ namespace {
+ 
++using TestClock = std::chrono::steady_clock;
++using namespace std::chrono_literals;
++
++typedef struct _GstTestDelayedNull {
++  GstElement parent;
++  gint delay_ready_to_null;
++} GstTestDelayedNull;
++
++typedef struct _GstTestDelayedNullClass {
++  GstElementClass parent_class;
++} GstTestDelayedNullClass;
++
++G_DEFINE_TYPE(GstTestDelayedNull, gst_test_delayed_null, GST_TYPE_ELEMENT)
++
++GstStateChangeReturn gst_test_delayed_null_change_state(GstElement* element,
++                                                        GstStateChange transition) {
++  auto* self = reinterpret_cast<GstTestDelayedNull*>(element);
++  if (transition == GST_STATE_CHANGE_READY_TO_NULL &&
++      g_atomic_int_get(&self->delay_ready_to_null) != 0) {
++    return GST_STATE_CHANGE_FAILURE;
++  }
++  return GST_ELEMENT_CLASS(gst_test_delayed_null_parent_class)->change_state(element, transition);
++}
++
++void gst_test_delayed_null_class_init(GstTestDelayedNullClass* klass) {
++  GST_ELEMENT_CLASS(klass)->change_state = gst_test_delayed_null_change_state;
++}
++
++void gst_test_delayed_null_init(GstTestDelayedNull* self) {
++  g_atomic_int_set(&self->delay_ready_to_null, 1);
++}
++
+ class EnvVarGuard {
+ public:
+   EnvVarGuard(const char* key, const char* value) : key_(key) {
+@@ -74,9 +109,11 @@ simaai::neat::SampleSpec make_encoded_spec() {
+ RUN_TEST(
+     "unit_inputstream_stop_flush_test", ([] {
+       using namespace simaai::neat;
++      using pipeline_internal::InputStreamTeardownPolicy;
+ 
+       gst_init_once();
+       EnvVarGuard flush_timeout("SIMA_INPUTSTREAM_STOP_FLUSH_TIMEOUT_MS", "0");
++      EnvVarGuard synchronous_no_defer("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+ 
+       using simaai::neat::pipeline_internal::synchronous_live_teardown_budget_ms;
+       constexpr std::uint64_t kDefaultRtspTeardownNs = 100'000'000ULL;
+@@ -119,7 +156,28 @@ RUN_TEST(
+       require(pipeline_budget(48) == streams48_budget,
+               "48-source graph must include every rtspsrc TEARDOWN timeout");
+ 
+-      const auto run_stop = [](bool prefer_synchronous_teardown) {
++      require(inputstream_pipeline_teardown_policy(
++                  "appsrc name=mysrc ! identity name=cpu ! appsink name=mysink") ==
++                  InputStreamTeardownPolicy::Deferred,
++              "plain CPU appsrc pipelines must keep deferred teardown");
++      require(inputstream_pipeline_teardown_policy(
++                  "appsrc name=mysrc ! neatprocessmla name=mla async=true ! appsink name=mysink") ==
++                  InputStreamTeardownPolicy::MustReachNull,
++              "ProcessMLA appsrc pipelines must use synchronous teardown");
++      require(inputstream_pipeline_teardown_policy(
++                  "( appsrc name=mysrc ! neatprocesscvu name=cvu async=true ) ! fakesink") ==
++                  InputStreamTeardownPolicy::MustReachNull,
++              "ProcessCVU appsrc pipelines must use synchronous teardown");
++      require(inputstream_pipeline_teardown_policy(
++                  "appsrc name=mysrc ! identity name=neatprocessmla_probe ! fakesink") ==
++                  InputStreamTeardownPolicy::Deferred,
++              "an element name containing a driver factory must not change teardown policy");
++      require(inputstream_pipeline_teardown_policy(
++                  "appsrc name=mysrc ! neatprocessmla_legacy name=mla ! fakesink") ==
++                  InputStreamTeardownPolicy::Deferred,
++              "a factory prefix match must not change teardown policy");
++
++      const auto run_stop = [](InputStreamTeardownPolicy teardown_policy) {
+         GError* error = nullptr;
+         GstElement* pipeline = gst_parse_launch(
+             "appsrc name=mysrc is-live=true format=time "
+@@ -148,28 +206,91 @@ RUN_TEST(
+ 
+         require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+                 "failed to start stop-flush test pipeline");
++        GstElement* observed_pipeline = GST_ELEMENT(gst_object_ref(pipeline));
+ 
+         InputOptions input_options;
+         InputStreamOptions stream_options;
+-        stream_options.prefer_synchronous_teardown = prefer_synchronous_teardown;
++        stream_options.teardown_policy = teardown_policy;
+         InputStream stream = InputStream::create(pipeline, appsrc, nullptr, make_encoded_spec(),
+                                                  input_options, stream_options, {}, nullptr);
+         stream.stop();
+ 
+         const int starts = counts.starts.load(std::memory_order_relaxed);
+         const int stops = counts.stops.load(std::memory_order_relaxed);
++        GstState current = GST_STATE_VOID_PENDING;
++        GstState pending = GST_STATE_VOID_PENDING;
++        (void)gst_element_get_state(observed_pipeline, &current, &pending, 0);
++        gst_object_unref(observed_pipeline);
+         stream.close();
+-        return std::pair{starts, stops};
++        return std::tuple{starts, stops, current, pending};
+       };
+ 
+-      const auto legacy = run_stop(false);
+-      require(legacy.first >= 1, "legacy InputStream::stop must send FLUSH_START");
+-      require(legacy.second == 0,
++      const auto legacy = run_stop(InputStreamTeardownPolicy::Deferred);
++      require(std::get<0>(legacy) >= 1, "legacy InputStream::stop must send FLUSH_START");
++      require(std::get<1>(legacy) == 0,
+               "legacy InputStream::stop must keep the pipeline flushing until NULL");
+ 
+-      const auto synchronous = run_stop(true);
+-      require(synchronous.first == 0,
++      const auto synchronous = run_stop(InputStreamTeardownPolicy::BoundedPreferred);
++      require(std::get<0>(synchronous) == 0,
+               "synchronous live InputStream::stop must not send pre-NULL FLUSH_START");
+-      require(synchronous.second == 0,
++      require(std::get<1>(synchronous) == 0,
+               "synchronous live InputStream::stop must not send FLUSH_STOP");
++      require(std::get<2>(synchronous) == GST_STATE_NULL,
++              "synchronous InputStream::stop must reach NULL before returning");
++      require(std::get<3>(synchronous) == GST_STATE_VOID_PENDING ||
++                  std::get<3>(synchronous) == GST_STATE_NULL,
++              "synchronous InputStream::stop must not leave a non-NULL state transition pending");
++
++      {
++        EnvVarGuard force_deferred("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "1");
++        const auto mandatory = run_stop(InputStreamTeardownPolicy::MustReachNull);
++        require(std::get<2>(mandatory) == GST_STATE_NULL,
++                "mandatory driver teardown must ignore the deferred-teardown override");
++        require(std::get<3>(mandatory) == GST_STATE_VOID_PENDING ||
++                    std::get<3>(mandatory) == GST_STATE_NULL,
++                "mandatory driver teardown must not leave a pending non-NULL transition");
++      }
++
++      {
++        EnvVarGuard short_teardown_timeout("SIMA_GST_TEARDOWN_TIMEOUT_MS", "20");
++        EnvVarGuard force_deferred("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "1");
++        auto* delayed = GST_ELEMENT(g_object_new(gst_test_delayed_null_get_type(), nullptr));
++        require(delayed != nullptr, "failed to allocate delayed-NULL test element");
++        require(gst_element_set_state(delayed, GST_STATE_READY) != GST_STATE_CHANGE_FAILURE,
++                "failed to put delayed-NULL test element in READY");
++        GstElement* observed = GST_ELEMENT(gst_object_ref(delayed));
++        GstElement* teardown_owned = delayed;
++        std::atomic<bool> teardown_returned{false};
++        std::thread teardown_thread([&]() {
++          pipeline_internal::stop_and_unref_no_flush(
++              teardown_owned, InputStreamTeardownPolicy::MustReachNull);
++          teardown_returned.store(true, std::memory_order_release);
++        });
++
++        const auto deadline = TestClock::now() + 100ms;
++        while (!teardown_returned.load(std::memory_order_acquire) &&
++               TestClock::now() < deadline) {
++          std::this_thread::sleep_for(1ms);
++        }
++        const bool returned_while_non_null =
++            teardown_returned.load(std::memory_order_acquire);
++
++        auto* delayed_state = reinterpret_cast<GstTestDelayedNull*>(observed);
++        g_atomic_int_set(&delayed_state->delay_ready_to_null, 0);
++        (void)gst_element_continue_state(observed, GST_STATE_CHANGE_SUCCESS);
++        teardown_thread.join();
++
++        GstState current = GST_STATE_VOID_PENDING;
++        GstState pending = GST_STATE_VOID_PENDING;
++        (void)gst_element_get_state(observed, &current, &pending, 0);
++        gst_object_unref(observed);
++        require(!returned_while_non_null,
++                "mandatory driver teardown must retain ownership while NULL transition fails");
++        require(teardown_owned == nullptr,
++                "mandatory driver teardown must consume the caller's pipeline reference");
++        require(current == GST_STATE_NULL,
++                "mandatory driver teardown must return only after reaching NULL");
++        require(pending == GST_STATE_VOID_PENDING || pending == GST_STATE_NULL,
++                "mandatory driver teardown must not return with a non-NULL state pending");
++      }
+     }));
+diff --git a/tests/unit_testing/unit_mla_elf_io_topology_test.cpp b/tests/unit_testing/unit_mla_elf_io_topology_test.cpp
+index a5d120146f3b5668ff0cff4c9385693b093a6f04..ef5cfd9c33c18a64ee440f4aaf683bd11ddbf58f 100644
+--- a/tests/unit_testing/unit_mla_elf_io_topology_test.cpp
++++ b/tests/unit_testing/unit_mla_elf_io_topology_test.cpp
+@@ -17,6 +17,7 @@
+ #include <fstream>
+ #include <iostream>
+ #include <string>
++#include <unordered_map>
+ #include <vector>
+ 
+ namespace {
+@@ -53,11 +54,26 @@ struct Elf64SectionHeader {
+ };
+ #pragma pack(pop)
+ 
+-// Build a minimal ELF64 file containing the listed section names plus a
+-// shstrtab. Returns the path to the temp file. Sections are zero-sized; only
+-// their names matter for the parser.
++constexpr std::uint32_t kQmlaShtData = 0x71ba0002U;
++
++bool is_mla_io_section(const std::string& name) {
++  return name == "data.ifm.b0" || name == "data.ofm.b0" ||
++         name.starts_with("data.ifm.persistent.") ||
++         name.starts_with("data.ofm.persistent.");
++}
++
++void append_u64_le(std::vector<std::uint8_t>& bytes, const std::uint64_t value) {
++  for (unsigned shift = 0; shift < 64U; shift += 8U) {
++    bytes.push_back(static_cast<std::uint8_t>((value >> shift) & 0xffU));
++  }
++}
++
++// Build a minimal ELF64 file containing compiler-authored 16-byte QMLA
++// SHT_DATA headers for every recognized I/O section plus a shstrtab.
+ std::filesystem::path write_minimal_elf(const std::string& tag,
+-                                        const std::vector<std::string>& section_names) {
++                                        const std::vector<std::string>& section_names,
++                                        const std::unordered_map<std::string, std::uint64_t>&
++                                            extent_overrides = {}) {
+   // First section is always the NULL section (name index 0). We append the
+   // requested names, then append ".shstrtab" as the final section so its name
+   // is also represented in the table.
+@@ -78,7 +94,21 @@ std::filesystem::path write_minimal_elf(const std::string& tag,
+ 
+   const std::uint16_t shnum = static_cast<std::uint16_t>(names.size());
+   const std::uint64_t header_bytes = sizeof(Elf64Header);
+-  const std::uint64_t shstrtab_offset = header_bytes;
++  std::vector<std::uint8_t> qmla_headers;
++  std::vector<std::uint64_t> payload_offsets(names.size(), 0U);
++  for (std::size_t i = 1U; i + 1U < names.size(); ++i) {
++    if (!is_mla_io_section(names[i])) {
++      continue;
++    }
++    payload_offsets[i] = header_bytes + qmla_headers.size();
++    const auto override = extent_overrides.find(names[i]);
++    const auto extent = override == extent_overrides.end()
++                            ? static_cast<std::uint64_t>(i) * 16U
++                            : override->second;
++    append_u64_le(qmla_headers, extent);
++    append_u64_le(qmla_headers, 1U); // one address segment
++  }
++  const std::uint64_t shstrtab_offset = header_bytes + qmla_headers.size();
+   const std::uint64_t shoff = shstrtab_offset + shstrtab.size();
+ 
+   Elf64Header hdr;
+@@ -87,15 +117,20 @@ std::filesystem::path write_minimal_elf(const std::string& tag,
+   hdr.e_shstrndx = static_cast<std::uint16_t>(shnum - 1U); // last section is shstrtab
+ 
+   std::vector<Elf64SectionHeader> sections(shnum);
++  sections[0].sh_type = 0; // SHT_NULL
+   // Section 0: NULL.
+   // Sections 1..shnum-2: requested user sections (names[1..shnum-2]).
+   // Section shnum-1: .shstrtab itself, offset/size into the file.
+-  for (std::size_t i = 0; i < sections.size(); ++i) {
++  for (std::size_t i = 1U; i < sections.size(); ++i) {
+     sections[i].sh_name = name_offsets[i];
+     if (i + 1U == sections.size()) {
+       sections[i].sh_type = 3; // SHT_STRTAB
+       sections[i].sh_offset = shstrtab_offset;
+       sections[i].sh_size = static_cast<std::uint64_t>(shstrtab.size());
++    } else if (payload_offsets[i] != 0U) {
++      sections[i].sh_type = kQmlaShtData;
++      sections[i].sh_offset = payload_offsets[i];
++      sections[i].sh_size = 16U;
+     }
+   }
+ 
+@@ -103,6 +138,8 @@ std::filesystem::path write_minimal_elf(const std::string& tag,
+       std::filesystem::temp_directory_path() / ("mla_elf_io_topology_test_" + tag + ".elf");
+   std::ofstream out(path, std::ios::binary | std::ios::trunc);
+   out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
++  out.write(reinterpret_cast<const char*>(qmla_headers.data()),
++            static_cast<std::streamsize>(qmla_headers.size()));
+   out.write(shstrtab.data(), static_cast<std::streamsize>(shstrtab.size()));
+   out.write(reinterpret_cast<const char*>(sections.data()),
+             static_cast<std::streamsize>(sections.size() * sizeof(Elf64SectionHeader)));
+@@ -145,26 +182,41 @@ void test_multi_ifm_topology() {
+ }
+ 
+ void test_qmla_flat_topology() {
+-  const auto path = write_minimal_elf("qmla_flat", {
+-                                                       "code.r0.c0",
+-                                                       "data.ifm.persistent.qmla_ifm_0.b0",
+-                                                       "data.ifm.persistent.qmla_ifm_1.b0",
+-                                                       "data.ifm.persistent.qmla_ifm_2.b0",
+-                                                       "data.ofm.persistent.afe_mla_output_0.b0",
+-                                                       "data.ofm.persistent.afe_mla_output_1.b0",
+-                                                   });
++  std::vector<std::string> names{"code.r0.c0"};
++  std::unordered_map<std::string, std::uint64_t> extents;
++  // Deliberately put slot 10 before slots 0..9. Numeric port authority must
++  // never depend on lexical order or ELF section order.
++  names.push_back("data.ifm.persistent.afe_direct_input_10.b0");
++  extents.emplace(names.back(), 1010U);
++  for (std::size_t index = 0U; index < 10U; ++index) {
++    names.push_back("data.ifm.persistent.afe_direct_input_" + std::to_string(index) + ".b0");
++    extents.emplace(names.back(), 1000U + index);
++  }
++  names.push_back("data.ofm.persistent.afe_mla_output_1.b0");
++  extents.emplace(names.back(), 2001U);
++  names.push_back("data.ofm.persistent.afe_mla_output_0.b0");
++  extents.emplace(names.back(), 2000U);
++  const auto path = write_minimal_elf("qmla_flat", names, extents);
+   simaai::neat::pipeline_internal::sima::MlaElfIoTopology topology;
+   const bool ok = simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
+   check(ok, "qmla_flat: parser returned ok");
+   check(topology.valid, "qmla_flat: topology.valid");
+   check(!topology.monolithic_ifm, "qmla_flat: !monolithic_ifm");
+   check(!topology.monolithic_ofm, "qmla_flat: !monolithic_ofm");
+-  check(topology.ifm_symbol_names.size() == 3U, "qmla_flat: 3 IFM slots");
++  check(topology.ifm_symbol_names.size() == 11U, "qmla_flat: 11 IFM slots");
+   check(topology.ofm_symbol_names.size() == 2U, "qmla_flat: 2 OFM slots");
+-  check(topology.ifm_symbol_names[0] == "data.ifm.persistent.qmla_ifm_0.b0", "qmla_flat: ifm[0]");
+-  check(topology.ifm_symbol_names[2] == "data.ifm.persistent.qmla_ifm_2.b0", "qmla_flat: ifm[2]");
++  check(topology.ifm_symbol_names[0] == "data.ifm.persistent.afe_direct_input_0.b0",
++        "qmla_flat: ifm[0]");
++  check(topology.ifm_symbol_names[10] == "data.ifm.persistent.afe_direct_input_10.b0",
++        "qmla_flat: ifm[10]");
+   check(topology.ofm_symbol_names[1] == "data.ofm.persistent.afe_mla_output_1.b0",
+         "qmla_flat: ofm[1]");
++  check(topology.ifm_extent_bytes.size() == 11U && topology.ifm_extent_bytes[0] == 1000U &&
++            topology.ifm_extent_bytes[10] == 1010U,
++        "qmla_flat: IFM extents preserve numeric slot order");
++  check(topology.ofm_extent_bytes.size() == 2U && topology.ofm_extent_bytes[0] == 2000U &&
++            topology.ofm_extent_bytes[1] == 2001U,
++        "qmla_flat: OFM extents preserve numeric slot order");
+   check(
+       simaai::neat::pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(topology),
+       "qmla_flat: requires_distinct_ifm_segments == true");
+@@ -213,6 +265,73 @@ void test_missing_file_fails_cleanly() {
+   check(!topology.valid, "missing_file: topology.valid is false");
+ }
+ 
++void test_strict_validation_and_reconciliation() {
++  using namespace simaai::neat::pipeline_internal::sima;
++
++  const auto valid_path =
++      write_minimal_elf("strict_valid", {"data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0",
++                                         "data.ifm.persistent.input_01/MLA_0/placeholder_1_0.b0",
++                                         "data.ofm.persistent.output_00/MLA_0/out0.b0"});
++  MlaElfIoTopology valid;
++  check(read_mla_elf_io_topology(valid_path, &valid), "strict valid: parser returned ok");
++  check(validate_mla_elf_io_topology_strict(valid).ok, "strict valid: validation succeeds");
++  check(reconcile_mla_elf_io_topology_strict(valid, 2U, 1U).ok,
++        "strict valid: exact arity reconciles");
++  const auto mismatch = reconcile_mla_elf_io_topology_strict(valid, 1U, 1U);
++  check(!mismatch.ok && mismatch.code == MlaElfIoTopologyError::IfmPortCountMismatch &&
++            mismatch.expected == 1U && mismatch.actual == 2U,
++        "strict valid: mismatch reports exact IFM counts");
++  std::filesystem::remove(valid_path);
++
++  const std::string missing_extent_ifm =
++      "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0";
++  const auto missing_extent_path = write_minimal_elf(
++      "strict_missing_extent", {missing_extent_ifm, "data.ofm.b0"},
++      {{missing_extent_ifm, 0U}});
++  MlaElfIoTopology missing_extent;
++  check(read_mla_elf_io_topology(missing_extent_path, &missing_extent),
++        "strict missing extent: parser retains topology evidence");
++  const auto missing_extent_result = validate_mla_elf_io_topology_strict(missing_extent);
++  check(!missing_extent_result.ok &&
++            missing_extent_result.code == MlaElfIoTopologyError::MissingIfmExtent,
++        "strict missing extent: zero QMLA extent rejected");
++  std::filesystem::remove(missing_extent_path);
++
++  const auto conflict_path = write_minimal_elf(
++      "strict_conflict",
++      {"data.ifm.b0", "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0", "data.ofm.b0"});
++  MlaElfIoTopology conflict;
++  check(read_mla_elf_io_topology(conflict_path, &conflict),
++        "strict conflict: permissive parser remains compatible");
++  const auto conflict_result = validate_mla_elf_io_topology_strict(conflict);
++  check(!conflict_result.ok && conflict_result.code == MlaElfIoTopologyError::ConflictingIfmLayouts,
++        "strict conflict: ambiguity rejected");
++  std::filesystem::remove(conflict_path);
++
++  const auto gap_path =
++      write_minimal_elf("strict_gap", {"data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0",
++                                       "data.ifm.persistent.input_02/MLA_0/placeholder_2_0.b0",
++                                       "data.ofm.persistent.output_00/MLA_0/out0.b0"});
++  MlaElfIoTopology gap;
++  check(read_mla_elf_io_topology(gap_path, &gap), "strict gap: parser returned ok");
++  const auto gap_result = validate_mla_elf_io_topology_strict(gap);
++  check(!gap_result.ok && gap_result.code == MlaElfIoTopologyError::NonContiguousIfmIndices,
++        "strict gap: missing indexed slot rejected");
++  std::filesystem::remove(gap_path);
++
++  const auto duplicate_path = write_minimal_elf(
++      "strict_duplicate",
++      {"data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0", "data.ifm.persistent.qmla_ifm_0.b0",
++       "data.ofm.persistent.output_00/MLA_0/out0.b0"});
++  MlaElfIoTopology duplicate;
++  check(read_mla_elf_io_topology(duplicate_path, &duplicate),
++        "strict duplicate: parser returned ok");
++  const auto duplicate_result = validate_mla_elf_io_topology_strict(duplicate);
++  check(!duplicate_result.ok && duplicate_result.code == MlaElfIoTopologyError::DuplicateIfmIndex,
++        "strict duplicate: repeated indexed slot rejected");
++  std::filesystem::remove(duplicate_path);
++}
++
+ } // namespace
+ 
+ int main() {
+@@ -221,6 +340,7 @@ int main() {
+   test_monolithic_topology();
+   test_unknown_topology_fails_cleanly();
+   test_missing_file_fails_cleanly();
++  test_strict_validation_and_reconciliation();
+   std::cout << "unit_mla_elf_io_topology_test: PASS\n";
+   return 0;
+ }
+diff --git a/tests/unit_testing/unit_model_stage_fragments_test.cpp b/tests/unit_testing/unit_model_stage_fragments_test.cpp
+index 74b421be83171b81b011722bc3c95a9c0f69c20d..13a1c4c2c61047804b4ebaf214d1d30bf7684e50 100644
+--- a/tests/unit_testing/unit_model_stage_fragments_test.cpp
++++ b/tests/unit_testing/unit_model_stage_fragments_test.cpp
+@@ -1,5 +1,6 @@
+ #include "model/Model.h"
+ #include "model_archive_fixture_utils.h"
++#include "model_archive_test_utils.h"
+ #include "pipeline/Graph.h"
+ #include "test_main.h"
+ #include "test_utils.h"
+@@ -80,6 +81,7 @@ sima_test::ModelArchiveFixture make_stage_fixture(const std::string& tag) {
+ RUN_TEST("unit_model_stage_fragments_test", ([] {
+            using namespace simaai::neat;
+ 
++           const sima_test::ScopedEnvVar memory_backend("SIMA_NEAT_MEMORY_BACKEND", "legacy");
+            const auto fixture = make_stage_fixture("model_stage_fragments");
+            Model model(fixture.tar_path);
+ 
+@@ -125,6 +127,12 @@ RUN_TEST("unit_model_stage_fragments_test", ([] {
+                             "Model::backend_fragment(inference) should include MLA plugin");
+            require_contains(infer_fragment, "stage-id=",
+                             "Model::backend_fragment(inference) should include stage metadata");
++           require_contains(infer_fragment, "model-path=\"",
++                            "legacy MLA fragment should retain its model path property");
++           require_contains(infer_fragment, "batch-size=",
++                            "legacy MLA fragment should retain its runtime batch property");
++           require_contains(infer_fragment, "batch-sz-model=",
++                            "legacy MLA fragment should retain its model batch property");
+ 
+            const std::string full_fragment = model.backend_fragment(Model::Stage::Full);
+            require_contains(full_fragment, "neatprocesscvu",
+diff --git a/tests/unit_testing/unit_modelpack_mla_handoff_segment_test.cpp b/tests/unit_testing/unit_modelpack_mla_handoff_segment_test.cpp
+index bfdb53c33483861611a3da5e54ce435903b9d714..ecb7b3049bf6a0dafd567dafdbdad0a5353a2d30 100644
+--- a/tests/unit_testing/unit_modelpack_mla_handoff_segment_test.cpp
++++ b/tests/unit_testing/unit_modelpack_mla_handoff_segment_test.cpp
+@@ -1,4 +1,5 @@
+ #include "asset_utils.h"
++#include "model_archive_test_utils.h"
+ #include "model/Model.h"
+ #include "model/internal/ModelInternal.h"
+ #include "model/internal/ModelPack.h"
+@@ -15,6 +16,7 @@ RUN_TEST(
+     "unit_modelpack_mla_handoff_segment_test", ([] {
+       using namespace simaai::neat;
+ 
++      const sima_test::ScopedEnvVar memory_backend("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan");
+       const std::filesystem::path core_root = sima_test::test_source_root();
+       const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
+       require(!tar_path.empty(), "expected modelzoo-backed yolo_v8s .tar.gz MPK with *_mpk.json");
+@@ -25,6 +27,19 @@ RUN_TEST(
+       model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+       model_opt.upstream_name = "decoder";
+       Model model(tar_path, model_opt);
++      const std::string infer_fragment = model.backend_fragment(Model::Stage::Inference);
++      require(infer_fragment.find("neatprocessmla") != std::string::npos,
++              "strict inference fragment should include the MLA plugin");
++      require(infer_fragment.find("model-path=") == std::string::npos,
++              "dmabuf-plan MLA fragment must not emit the manifest-owned model path");
++      require(infer_fragment.find("batch-size=") == std::string::npos,
++              "dmabuf-plan MLA fragment must not emit the manifest-owned runtime batch size");
++      require(infer_fragment.find("batch-sz-model=") == std::string::npos,
++              "dmabuf-plan MLA fragment must not emit the manifest-owned model batch size");
++      require(infer_fragment.find("multi-pipeline=") != std::string::npos,
++              "dmabuf-plan MLA fragment should retain executor pipeline selection");
++      require(infer_fragment.find("num-buffers=") != std::string::npos,
++              "dmabuf-plan MLA fragment should retain executor buffer depth");
+       const auto infer_nodes = internal::ModelAccess::build_public_inference_nodes(model);
+       require(!infer_nodes.empty(), "inference fragment should compile from the YOLOv8 asset");
+ 
+@@ -96,6 +111,8 @@ RUN_TEST(
+         }
+       }
+       require(mla_stage_fact != nullptr, "YOLOv8 should expose a canonical MLA stage fact");
++      require(mla_stage_fact->mla_compiled->payload.dmabuf_plan_contract,
++              "YOLOv8 dmabuf-plan MLA stage should carry the exact manifest-ownership marker");
+       require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.size() == 1U,
+               "YOLOv8 MLA stage fact should expose one input binding");
+ 
+diff --git a/tests/unit_testing/unit_sima_plugin_static_manifest_contract_test.cpp b/tests/unit_testing/unit_sima_plugin_static_manifest_contract_test.cpp
+index 3afe6d0ba6993f4d32f3d2c39a47180da37feaa1..e4bdedc3b2ff2645b3d23cbb1fe6dca88fd43fdf 100644
+--- a/tests/unit_testing/unit_sima_plugin_static_manifest_contract_test.cpp
++++ b/tests/unit_testing/unit_sima_plugin_static_manifest_contract_test.cpp
+@@ -39,6 +39,8 @@ RUN_TEST(
+       pre.processcvu.normalize = 1;
+       pre.processcvu.channel_mean = {0.485, 0.456, 0.406};
+       pre.processcvu.channel_stddev = {0.229, 0.224, 0.225};
++      pre.frame_arena_size_bytes = 2U * 1024U * 1024U;
++      pre.frame_arena_role = FrameArenaRole::Allocate;
+       pre.logical_inputs.push_back(LogicalInputStaticSpec{
+           .logical_index = 0,
+           .backend_input_index = 0,
+@@ -65,6 +67,7 @@ RUN_TEST(
+           .size_bytes = 640ULL * 640ULL * 3ULL,
+           .device_kind = DeviceKind::Cpu,
+           .segment_name = "output_rgb_image",
++          .required_alignment_bytes = 128U,
+       });
+       pre.logical_outputs.push_back(LogicalTensorStaticSpec{
+           .logical_index = 0,
+@@ -257,6 +260,12 @@ RUN_TEST(
+       require(pre_stage->physical_outputs[0].segment_name != nullptr &&
+                   std::string(pre_stage->physical_outputs[0].segment_name) == "output_rgb_image",
+               "pre stage physical output segment mismatch");
++      require(pre_stage->physical_outputs[0].required_alignment_bytes == 128U,
++              "pre stage physical output alignment mismatch");
++      require(pre_stage->frame_arena_size_bytes == 2U * 1024U * 1024U &&
++                  pre_stage->frame_arena_role ==
++                      SIMA_PLUGIN_FRAME_ARENA_ALLOCATE,
++              "pre stage frame-arena ownership contract mismatch");
+       require(pre_stage->logical_outputs[0].backend_name != nullptr &&
+                   std::string(pre_stage->logical_outputs[0].backend_name) == "output_rgb_image",
+               "pre stage logical output backend name mismatch");
+diff --git a/tests/unit_testing/unit_sima_plugin_static_manifest_parse_test.cpp b/tests/unit_testing/unit_sima_plugin_static_manifest_parse_test.cpp
+index b8ef1503ed3dc4e08bb087868abc0df6419a31df..f56ec4ad23be2997e84a6a908d6f641089bfda6f 100644
+--- a/tests/unit_testing/unit_sima_plugin_static_manifest_parse_test.cpp
++++ b/tests/unit_testing/unit_sima_plugin_static_manifest_parse_test.cpp
+@@ -3,6 +3,7 @@
+ #include "test_utils.h"
+ 
+ #include <string>
++#include <utility>
+ #include <vector>
+ 
+ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
+@@ -43,4 +44,38 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
+                    "nms-iou-threshold parse mismatch");
+            require(elements[3].topk_property.has_value(), "topk property should be parsed");
+            require(elements[3].topk_property.value() == 120, "topk parse mismatch");
++
++           SimaPluginStaticManifest alignment_manifest;
++           StageStaticSpec stage;
++           PhysicalBufferStaticSpec input;
++           input.physical_index = 0;
++           input.required_alignment_bytes = 64U;
++           stage.physical_inputs.push_back(input);
++           PhysicalBufferStaticSpec output;
++           output.physical_index = 0;
++           output.required_alignment_bytes = 8192U;
++           stage.physical_outputs.push_back(output);
++           stage.frame_arena_size_bytes = 4U * 1024U * 1024U;
++           stage.frame_arena_role = FrameArenaRole::ReuseInput;
++           alignment_manifest.stages.push_back(std::move(stage));
++
++           std::string parse_error;
++           const auto parsed = parse_manifest_json(
++               serialize_manifest_json(alignment_manifest), &parse_error);
++           require(parsed.has_value(),
++                   "physical alignment manifest must round-trip: " + parse_error);
++           require(parsed->stages.size() == 1U &&
++                       parsed->stages[0].physical_inputs.size() == 1U &&
++                       parsed->stages[0].physical_inputs[0]
++                               .required_alignment_bytes == 64U,
++                   "physical IFM alignment must survive JSON round-trip");
++           require(parsed->stages[0].physical_outputs.size() == 1U &&
++                       parsed->stages[0].physical_outputs[0]
++                               .required_alignment_bytes == 8192U,
++                   "physical OFM alignment must survive JSON round-trip");
++           require(parsed->stages[0].frame_arena_size_bytes ==
++                           4U * 1024U * 1024U &&
++                       parsed->stages[0].frame_arena_role ==
++                           FrameArenaRole::ReuseInput,
++                   "frame-arena size/role must survive JSON round-trip");
+          }));
