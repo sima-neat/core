@@ -3,7 +3,6 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
@@ -144,15 +143,5 @@ std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
                                    const std::filesystem::path& mpk_manifest,
                                    const std::vector<MlaExecutableArtifact>& mla_executables,
                                    bool pretty = false);
-
-struct MemoryBackendDecision {
-  MemoryBackendPolicy backend = MemoryBackendPolicy::Legacy;
-  DmabufEligibilityReport admission;
-  std::string plan_digest;
-
-  [[nodiscard]] bool uses_dmabuf_plan() const noexcept {
-    return backend == MemoryBackendPolicy::DmaBufPlan;
-  }
-};
 
 } // namespace simaai::neat::pipeline_internal

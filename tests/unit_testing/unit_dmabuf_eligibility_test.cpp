@@ -365,9 +365,8 @@ int main(int argc, char** argv) {
   // execution plan.  The normal no-argument unit-test behavior is unchanged.
   if (argc == 3 && std::string(argv[1]) == "--admit-modelpack") {
     try {
-      CHECK(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0);
       simaai::neat::internal::ModelPack model(argv[2]);
-      const auto& admission = model.memory_backend_decision().admission;
+      const auto& admission = model.dmabuf_plan_admission();
       const auto execution = model.execution_plan();
       const auto stage_count =
           execution.pre.size() + execution.infer.size() + execution.post.size();
@@ -427,7 +426,7 @@ int main(int argc, char** argv) {
                 << simaai::neat::pipeline_internal::dmabuf_eligibility_code_name(
                        admission.code)
                 << " contract=" << admission.contract_version
-                << " plan=" << model.memory_backend_decision().plan_digest
+                << " plan=" << model.dmabuf_plan_digest()
                 << " stages=" << stage_count
                 << " grouped-stages=" << grouped_stage_count
                 << " grouped-members=" << grouped_semantic_members

@@ -187,16 +187,15 @@ public:
 
   simaai::neat::InputOptions input_appsrc_options(bool tensor_mode) const;
 
-  const simaai::neat::pipeline_internal::MemoryBackendDecision& memory_backend_decision() const {
+  const simaai::neat::pipeline_internal::DmabufEligibilityReport&
+  dmabuf_plan_admission() const {
     prepare_for_execution();
-    return memory_backend_decision_;
+    return dmabuf_plan_admission_;
   }
 
-  // True when the strict backend owns the complete compiler-authored model
-  // command graph. RoutePlanner must not rediscover pre/post adapters around
-  // MLA in this mode: those commands already live in the one execution plan.
-  bool uses_model_execution_plan() const noexcept {
-    return dmabuf_plan_execution_plan_.has_value();
+  const std::string& dmabuf_plan_digest() const {
+    prepare_for_execution();
+    return dmabuf_plan_digest_;
   }
 
   ModelPack clone_with_buffers(int num_buffers_cvu, int num_buffers_mla) const;
@@ -253,7 +252,8 @@ private:
   mutable std::optional<
       simaai::neat::pipeline_internal::sima::static_contract::PhysicalExecutionPlan>
       dmabuf_physical_execution_plan_;
-  mutable simaai::neat::pipeline_internal::MemoryBackendDecision memory_backend_decision_;
+  mutable simaai::neat::pipeline_internal::DmabufEligibilityReport dmabuf_plan_admission_;
+  mutable std::string dmabuf_plan_digest_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
   std::optional<bool> processcvu_preproc_single_output_handoff_;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;
