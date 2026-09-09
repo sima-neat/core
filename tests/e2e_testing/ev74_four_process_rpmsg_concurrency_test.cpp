@@ -408,6 +408,7 @@ void run_test() {
   }
 
   await_state(children, 'R');
+  verify_one_unique_channel_per_child(children);
   for (const ChildProcess& child : children) {
     send_command(child.socket, 'G');
   }

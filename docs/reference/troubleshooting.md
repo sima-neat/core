@@ -439,7 +439,15 @@ read the message for specifics.
 | `build.pipeline_syntax` | A custom GStreamer fragment has invalid syntax. |
 | `build.parse_launch` | A `gst_parse_launch` failure could not be classified more specifically. |
 | `runtime.pull` | A pull failed without a more specific upstream/root-cause code. |
-| `infra.dispatcher_unavailable` | An MLA/EV74/A65 dispatcher couldn't be acquired — firmware not loaded, missing license, or hardware fault. No CPU fallback. |
+| `infra.dispatcher_unavailable` | An accelerator dispatcher could not be acquired, including EV74 RPMsg channel exhaustion during build. No CPU fallback. |
 
 This is a short troubleshooting map. Use the [complete error code catalog](/reference/error-codes)
 for every code and the C++/Python constant names.
+
+For an `EVXX/EV74 RPMsg capacity exhausted` startup error, close unused graph runs
+or stop competing workloads, then rebuild. Graphs sharing a dispatcher keep its
+channels until the last client closes. Acquisition waits up to 15 seconds by
+default, configurable with `SIMA_RPMSG_ACQUIRE_TIMEOUT_MS`. The retired
+`SIMA_RPCEVXX_IDLE_RELEASE_MS` setting warns and has no effect; idle graphs retain
+their reservations. Other reservation failures include their discovery,
+permission, or transport diagnostics.
