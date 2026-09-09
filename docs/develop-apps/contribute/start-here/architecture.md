@@ -402,17 +402,13 @@ pipeline-level `GstContext`:
 - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
 
-For the internal EVO DMA-BUF migration route, Core reads
-`SIMA_NEAT_MEMORY_BACKEND` once per process. During migration the only valid
-values are exactly `legacy` and `dmabuf-plan`; an unset variable selects
-`legacy`, while empty, `auto`, `probe`, case-altered, whitespace-altered, and
-unknown values fail closed. `ModelPack` records that immutable choice and is
-the sole owner of model admission. Lower transfer and sample-materialization
-helpers receive the resolved transport intent explicitly and never reread
-mutable environment state. This temporary selector and its legacy branch are
-owned by the Phase 7B deletion ledger; the strict-only product has no selector.
+Core uses one validated DMA-BUF transport for accelerator execution; no
+backend-selection environment variable is required. `ModelPack` owns structural
+model admission. Transfer and sample-materialization helpers receive the
+resolved transport intent from graph preparation rather than selecting a
+backend independently. CPU-only graphs retain SystemMemory support.
 
-Selecting `dmabuf-plan` invokes the same side-effect-free
+Model admission invokes the same side-effect-free
 `try_compile_dmabuf_plan()` operation used by the offline
 `neat-dmabuf-plan-audit` tool. Pass `--mpk <mpk.json>` and one repeatable
 `--mla-artifact <stage-id> <manifest-executable> <resolved-file>` triple per
@@ -427,16 +423,16 @@ fails rather than constructing or retrying the legacy executor after a
 rejection.
 
 Only after admission does Core set `processmla.dmabuf_plan_contract` in static
-manifest ABI version 25. Core also projects each backend port's `required_alignment_bytes`
+manifest ABI version 29. Core also projects each backend port's `required_alignment_bytes`
 and the immutable frame-arena placement plan into its physical buffer record;
 ProcessMLA consumes that value rather than duplicating the legacy
 page-alignment policy. It consumes these Core-owned facts; it must not re-read
 the environment, infer missing ports, or fall back to the legacy transport
 after selection. Core and every plugin that consumes the static-manifest
-header must therefore be built and released together at ABI version 25.
+header must therefore be built and released together at ABI version 29.
 
-The same Core-owned memory policy controls public Tensor placement. With
-`dmabuf-plan`, `transfer_to_device()` allocates standard CMA or DMS DMA-BUF
+The same Core-owned memory policy controls public Tensor placement.
+`transfer_to_device()` allocates standard CMA or DMS DMA-BUF
 memory, performs the required cache-synchronized host copy, and records device
 placement in Tensor storage metadata without replacing `GstDmaBufMemory` with
 the legacy SiMa allocator. Tensor-list ingress adopts one standard DMA-BUF view
