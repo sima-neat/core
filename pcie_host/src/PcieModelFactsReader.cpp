@@ -204,17 +204,6 @@ public_quant(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuant
   return out;
 }
 
-const simaai::neat::pipeline_internal::sima::MpkPluginIoContract*
-producer_stage(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
-               const std::size_t plugin_index) {
-  for (const auto& edge : contract.edges) {
-    if (edge.dst_plugin_index == plugin_index && edge.src_plugin_index < contract.plugins.size()) {
-      return &contract.plugins[edge.src_plugin_index];
-    }
-  }
-  return nullptr;
-}
-
 const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
 dequantize_consumer(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
                     const std::string& head_name) {
@@ -248,10 +237,10 @@ std::size_t dense_element_count(const std::vector<std::int64_t>& shape) {
   return elements;
 }
 
-const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
+simaai::neat::pipeline_internal::sima::RouteGraph
 validate_mla_only_stages(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
   using simaai::neat::pipeline_internal::sima::RouteGraphKernelKind;
-  const auto graph = simaai::neat::pipeline_internal::sima::build_route_graph(contract);
+  auto graph = simaai::neat::pipeline_internal::sima::build_route_graph(contract);
   if (graph.mla_plugin_index < 0) {
     throw std::runtime_error("mla_only requires exactly one MLA stage in the MPK contract");
   }
@@ -270,7 +259,7 @@ validate_mla_only_stages(const simaai::neat::pipeline_internal::sima::MpkContrac
           simaai::neat::pipeline_internal::sima::route_graph_kernel_name(node.kind) + ")");
     }
   }
-  return contract.plugins[static_cast<std::size_t>(graph.mla_plugin_index)];
+  return graph;
 }
 
 simaai::neat::pipeline_internal::sima::MpkTensorContract
@@ -320,10 +309,6 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
   for (std::size_t i = 0; i < logical.size(); ++i) {
     const auto& head = logical[i];
     auto fact = convert_tensor(head);
-    if (published[i].name != head.name) {
-      throw std::runtime_error("mla_only output '" + fact.name +
-                               "' is published under a different name");
-    }
     if (published[i].materialization_kind ==
         simaai::neat::pipeline_internal::sima::MpkTensorMaterializationKind::Bf16LaneSplitRepack) {
       throw std::runtime_error("mla_only output '" + fact.name +
@@ -337,12 +322,6 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
         head.stride_bytes.size() != fact.shape.size() || head.stride_bytes.back() != 1 ||
         head.source_byte_offset < 0) {
       throw std::runtime_error("mla_only output '" + fact.name + "' has no usable geometry");
-    }
-    for (std::size_t d = 1; d < head.stride_bytes.size(); ++d) {
-      if (head.stride_bytes[d] > head.stride_bytes[d - 1]) {
-        throw std::runtime_error("mla_only output '" + fact.name +
-                                 "' has strides that are not outermost-first");
-      }
     }
     fact.transport_strides_bytes = head.stride_bytes;
     fact.payload_offset = static_cast<std::size_t>(head.source_byte_offset);
@@ -445,14 +424,19 @@ void validate_supported_input_dtype(
 
 PcieModelFacts
 read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
-  const auto& mla = validate_mla_only_stages(contract);
+  const auto graph = validate_mla_only_stages(contract);
+  const auto mla_index = static_cast<std::size_t>(graph.mla_plugin_index);
 
   PcieModelFacts facts;
-  facts.inputs.push_back(convert_tensor(mla_only_input_contract(contract, mla)));
+  facts.inputs.push_back(
+      convert_tensor(mla_only_input_contract(contract, contract.plugins[mla_index])));
   facts.packed_input_bytes = facts.inputs.front().size_bytes;
-  if (const auto* quantize =
-          producer_stage(contract, static_cast<std::size_t>(&mla - contract.plugins.data()))) {
-    facts.inputs.front().quant = public_quant(quantize->quant, true, facts.inputs.front().name);
+  const auto incoming =
+      simaai::neat::pipeline_internal::sima::route_graph_incoming_edges(graph, mla_index);
+  if (!incoming.empty()) {
+    facts.inputs.front().quant =
+        public_quant(contract.plugins[incoming.front()->src_plugin_index].quant, true,
+                     facts.inputs.front().name);
   }
   add_mla_only_outputs(contract, &facts);
   return facts;
