@@ -64,6 +64,9 @@ finally:
 In C++, use `serve()` for a blocking foreground server. Use `start()` and
 `stop()` when your C++ or Python application manages the server lifetime.
 Configure `GenAIServerOptions` when the default host or port is not appropriate.
+Before listening, the server performs a silent warm-up inference for each
+registered model so the first client request does not pay the full initialization
+cost. Warm-up does not print generated text or performance statistics.
 Calling `stop()` also removes every registered model; add the models again
 before restarting the same server object.
 
