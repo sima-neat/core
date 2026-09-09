@@ -447,12 +447,13 @@ families, with these additional invariants:
   stay valid on the same payload, while `decode_segmentation_pose(...)` returns all three.
   Region offsets depend on `top_k` and the mask prototype extent, so consumers must not infer
   them from buffer size.
-- Keypoint gating by class (`pose_classes`) is a JSON-only backend control. The typed static
-  manifest has no pose-class field, so on that path every class is treated as pose-bearing.
-  Core copies keypoint rows through without interpreting them, so whether a non-pose
-  detection arrives all-zero is a backend property that holds only when the gate was
-  supplied. On the typed path such a detection can carry real predicted visibility, and
-  identifying it requires the model's pose-class list rather than the payload alone.
+- Keypoint gating by class travels through `Model::Options::pose_classes`, the typed static
+  manifest's `pose_classes` field, and the backend's JSON control of the same name. Core
+  copies keypoint rows through without interpreting them; the zeroing is the backend's. With
+  a gate set, a detection whose class carries no keypoints arrives all-zero including
+  visibility, so consumers gate on visibility rather than on a decoder-side class list.
+  Leaving it empty treats every class as pose-bearing. Core validates the list against the
+  resolved `num_classes` and rejects it for decode types that cannot gate keypoints.
 
 ---
 

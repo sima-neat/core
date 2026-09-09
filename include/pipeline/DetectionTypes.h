@@ -110,12 +110,12 @@ struct SegmentationDecodeTensors {
  * same slot count.
  *
  * Keypoint rows are copied through verbatim: this decoder does not zero, mask, or
- * otherwise interpret them. Whether a detection whose class carries no keypoints
- * arrives all-zero depends on the backend having been given a `pose_classes` gate,
- * which only the JSON configuration path can carry. On the typed-manifest path every
- * class is treated as pose-bearing, so such a detection can carry real predicted
- * visibility and visibility alone will not identify it. A consumer that must
- * distinguish them needs the model's pose-class list.
+ * otherwise interpret them. Zeroing is the backend's, driven by the `pose_classes`
+ * gate. Set `Model::Options::pose_classes` (or `BoxDecodeOptions::pose_classes`) on a
+ * model whose classes are mixed, and a detection whose class carries no keypoints
+ * arrives all-zero, visibility included, so a consumer can gate on visibility rather
+ * than needing the decoder's class list. Leaving it empty treats every class as
+ * pose-bearing, which is what a model with a single pose class wants.
  */
 struct SegmentationPoseDecodeTensors {
   simaai::neat::Tensor boxes;

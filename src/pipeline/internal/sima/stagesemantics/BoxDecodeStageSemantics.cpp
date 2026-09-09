@@ -1169,6 +1169,36 @@ int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferr
   return requested_num_classes;
 }
 
+std::vector<int> normalize_boxdecode_pose_classes(BoxDecodeType decode_type,
+                                                  const std::vector<int>& requested,
+                                                  int num_classes, const char* context) {
+  // Empty is "every class is pose-bearing", which is what the backend assumes with no gate.
+  if (requested.empty()) {
+    return {};
+  }
+  const std::string prefix = std::string(context ? context : "BoxDecode") + " pose_classes";
+  if (decode_type != BoxDecodeType::YoloXSegPose) {
+    throw std::invalid_argument(prefix + " is only supported for yolox-seg-pose, but decode_type=" +
+                                box_decode_type_token(decode_type) +
+                                ". Every other decode type either emits no keypoints or resolves "
+                                "a single pose-bearing class.");
+  }
+  if (num_classes <= 0) {
+    throw std::invalid_argument(prefix + " requires a resolved num_classes");
+  }
+  std::vector<int> normalized = requested;
+  std::sort(normalized.begin(), normalized.end());
+  if (std::adjacent_find(normalized.begin(), normalized.end()) != normalized.end()) {
+    throw std::invalid_argument(prefix + " must not repeat a class index");
+  }
+  if (normalized.front() < 0 || normalized.back() >= num_classes) {
+    throw std::invalid_argument(prefix + " entries must lie in [0, " + std::to_string(num_classes) +
+                                "), but got [" + std::to_string(normalized.front()) + ", " +
+                                std::to_string(normalized.back()) + "]");
+  }
+  return normalized;
+}
+
 void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract) {
   if (!contract) {
     throw std::invalid_argument("YOLO BoxDecode score-domain resolution requires a contract");
@@ -1306,6 +1336,8 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
       finalized.ssd_class_selection.selected_count = finalized.num_classes;
     }
   }
+  finalized.pose_classes = normalize_boxdecode_pose_classes(
+      finalized.decode_type, finalized.pose_classes, finalized.num_classes, "BoxDecode");
   return finalized;
 }
 
@@ -1417,6 +1449,10 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   if (box_decode_type_is_ssd_family(compiled.payload.decode_type)) {
     compiled.payload.ssd_class_selection.selected_count = compiled.payload.num_classes;
   }
+  compiled.payload.pose_classes = normalize_boxdecode_pose_classes(
+      compiled.payload.decode_type,
+      options.pose_classes.empty() ? subset.pose_classes : options.pose_classes,
+      compiled.payload.num_classes, "BoxDecode");
   compiled.payload.slice_shapes = subset.slice_shapes;
   compiled.payload.tensor_storage_kind = subset.tensor_storage_kind;
   compiled.payload.superpoint = subset.superpoint;

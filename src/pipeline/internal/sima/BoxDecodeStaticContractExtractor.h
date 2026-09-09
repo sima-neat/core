@@ -103,6 +103,7 @@ struct BoxDecodeStaticContract {
   double detection_threshold = 0.0;     ///< Score cutoff before NMS.
   double nms_iou_threshold = 0.0;       ///< IoU threshold used by NMS.
   int num_classes = 0; ///< Legacy runtime value; SSD uses ssd_class_selection.selected_count.
+  std::vector<int> pose_classes; ///< Class indices carrying keypoints; empty means all classes.
   SuperPointStaticContract superpoint; ///< SuperPoint-only semantic/output contract.
 
   std::vector<BoxDecodeTensorStaticContract> tensors; ///< Per-input tensor specs.

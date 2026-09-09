@@ -195,11 +195,10 @@ Use `decode_segmentation_pose(...)` for all three tensors. `decode_bbox(...)` an
 box-leading.
 
 `decode_segmentation_pose(...)` copies keypoint rows through verbatim; it does not zero,
-mask, or interpret them. Whether a detection whose class carries no keypoints arrives
-all-zero is therefore a property of the backend, and only holds when the backend was given
-a `pose_classes` gate — see below. Without that gate every class is decoded as
-pose-bearing, so such a detection can carry real predicted visibility and **visibility
-alone will not identify it**.
+mask, or interpret them. The zeroing is the backend's, driven by the `pose_classes` gate
+described below. With a gate set, a detection whose class carries no keypoints arrives
+all-zero including visibility, so gate on visibility rather than needing the decoder's
+class list.
 
 A model may also use fewer than the 17 reserved keypoint slots. Unused trailing slots are
 zeroed by the wire format itself and are not affected by the gate.
@@ -211,15 +210,19 @@ anyway is allowed and is cross-checked against that derivation: a mismatch is re
 at contract compilation rather than reaching the backend, where a wrong count silently
 mis-strides the scorer and yields plausible-looking wrong classes.
 
-Keypoint gating by class (`pose_classes`) is available only when the backend is
-configured from JSON. The typed `neatobjectdecode` GStreamer path cannot carry it —
-`SimaPluginBoxDecodeStagePayload` has no pose-class field, so the static manifest cannot
-express one — and with the gate absent the backend treats **every** class as
-pose-bearing. A model where only some classes carry keypoints must therefore be configured
-through JSON if its non-pose detections are to be gated at all; on the typed path a
-consumer needs the model's own pose-class list, because neither the payload nor Core
-distinguishes those detections for it. Changing this means bumping
-`SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION` across core and internals together.
+Keypoint gating by class is set with `Model::Options::pose_classes` (or
+`BoxDecodeOptions::pose_classes`), listing the class indices that carry keypoints. It
+reaches the backend on both configuration paths: the typed `neatobjectdecode` path carries
+it in `SimaPluginBoxDecodeStagePayload::pose_classes`, and the JSON path accepts the
+`pose_classes` key directly.
+
+An empty list is not "no classes" — it disables the gate, and the backend then treats
+**every** class as pose-bearing. That is the right default for a model whose classes all
+carry keypoints; set the list only when they are mixed.
+
+Core validates the list at contract construction: entries must be unique and within
+`[0, num_classes)`, and the option is rejected for decode types that cannot gate keypoints
+by class. The resolved list is emitted ascending.
 
 ## When `model.run` returns raw heads
 

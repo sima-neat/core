@@ -2098,6 +2098,7 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   }
   subset.score_activation = contract.score_activation;
   subset.num_classes = contract.num_classes;
+  subset.pose_classes = contract.pose_classes;
   subset.superpoint = contract.superpoint;
 
   auto fill_shape_desc = [](const std::vector<int>& shape, sima_ev_shape_desc* out) -> bool {
