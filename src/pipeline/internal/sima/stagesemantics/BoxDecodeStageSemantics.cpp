@@ -1018,6 +1018,13 @@ void apply_yolox_seg_pose_static_contract_overrides(BoxDecodeStaticContract* con
         box_decode_type_option_token(contract->decode_type_option) +
         "'. Use BoxDecodeTypeOption::Auto, GroupedByRole or GroupedByRoleLogit.");
   }
+  // Same rule as YOLOv5 above: the assignment below would silently reinterpret a declared
+  // probability domain as logits.
+  if (contract->score_activation != BoxDecodeScoreActivation::Unknown &&
+      contract->score_activation != BoxDecodeScoreActivation::Sigmoid) {
+    throw std::invalid_argument("yolox-seg-pose BoxDecode requires raw logits; probability-domain "
+                                "heads are unsupported");
+  }
   contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
   // num_classes is NOT checked here. This override runs before the caller's value is
   // folded into the contract (see finalize_boxdecode_static_contract), so it would
