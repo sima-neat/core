@@ -699,16 +699,9 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
     return 1;
   }
   if (contract.decode_type == BoxDecodeType::YoloXSegPose) {
-    // Not inferred, and not merely defaulted: the class tensor packs objectness into
-    // channel 0, so its channel count is one greater than the class-block width and
-    // inference would resolve 30 where the answer is 29 - mis-striding the scorer with
-    // no diagnostic. Returning the caller's value directly also skips the mismatch
-    // warning below, which would otherwise fire on every run comparing 29 against the
-    // MPK's 30.
-    // The class tensor is Concat(objectness[1], classes[N]), so the head depth is one
-    // greater than the class-block width. Derive N from the head rather than demanding
-    // it: the standalone SimaBoxDecode route has no way to supply a count (it always
-    // finalizes with 0), so requiring one made the decode type unusable outside an MPK.
+    // The class tensor is Concat(objectness[1], classes[N]), so N is the head depth minus
+    // one. Derive it rather than demanding it: the standalone SimaBoxDecode route always
+    // finalizes with 0, so requiring a count made the decode type unusable outside an MPK.
     int class_head_depth = infer_named_class_depth(contract);
     if (class_head_depth <= 1) {
       // Names are a hint, not the contract: fall back to the documented head positions.
@@ -1401,11 +1394,10 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
     }
   }
   if (compiled.payload.decode_type == BoxDecodeType::YoloXSegPose) {
-    // Mirrors apply_yolox_seg_pose_static_contract_overrides, repeated here because this
-    // is the one function every route shares. The model-managed MPK route lowers its
-    // extracted subset straight through here (ModelPack.cpp) and never touches the
-    // static-contract overrides, so normalising only there left MPK-declared pipelines
-    // compiling as Auto with an Unknown activation.
+    // Both routes arrive normalized - MPK through
+    // apply_yolox_seg_pose_model_managed_contract_defaults, static contract through
+    // finalize_boxdecode_static_contract - but options.decode_type_option replaces that
+    // value above, so the layout has to be resolved and re-checked here.
     if (!compiled.payload.decode_type_option.has_value() ||
         *compiled.payload.decode_type_option == BoxDecodeTypeOption::Auto) {
       compiled.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
@@ -1437,10 +1429,9 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   compiled.payload.num_classes = options.num_classes > 0 ? options.num_classes : subset.num_classes;
   if (compiled.payload.decode_type == BoxDecodeType::YoloXSegPose &&
       compiled.payload.num_classes <= 0) {
-    // Same requirement resolve_boxdecode_num_classes enforces on the static-contract
-    // route. Enforced again here because the MPK route never calls that resolver: with
-    // Model::Options::num_classes defaulting to 0 an unvalidated zero used to reach the
-    // backend and mis-stride the scorer silently.
+    // Both routes resolve a count before lowering, so reaching zero here means a subset
+    // was built without the family defaults. Fail rather than let it mis-stride the
+    // scorer silently.
     throw std::invalid_argument(
         "BoxDecode yolox-seg-pose requires an explicit num_classes: its class tensor packs "
         "objectness into channel 0, so the class-block width cannot be inferred from the "
