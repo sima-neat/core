@@ -13,4 +13,6 @@ application_input_contracts(const pipeline_internal::sima::MpkContract& contract
 
 void validate_supported_input_dtype(const pipeline_internal::sima::MpkTensorContract& input);
 
+PcieModelFacts read_mla_only_facts(const pipeline_internal::sima::MpkContract& contract);
+
 } // namespace simaai::neat::pcie::internal::detail

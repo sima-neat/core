@@ -77,12 +77,40 @@ void test_unsupported_input_dtypes_fail_early() {
   pcie_internal::detail::validate_supported_input_dtype(tensor("input", "FP32", {1}, 4));
 }
 
+void test_public_model_info_carries_quant() {
+  pcie_internal::PcieModelFacts facts;
+  pcie_internal::PcieTensorFact output;
+  output.name = "head";
+  output.quant = simaai::neat::pcie::QuantParams{.axis = -1, .scales = {0.5f}, .zero_points = {3}};
+  facts.inputs.push_back(pcie_internal::PcieTensorFact{});
+  facts.outputs.push_back(output);
+
+  const auto info = pcie_internal::to_public_model_info(facts);
+  require(!info.inputs.front().quant.has_value(), "input without quant must publish none");
+  require(info.outputs.front().quant.has_value(), "output quant must reach ModelInfo");
+  require(info.outputs.front().quant->scales == std::vector<float>{0.5f}, "quant scales mismatch");
+  require(info.outputs.front().quant->zero_points == std::vector<std::int32_t>{3},
+          "quant zero points mismatch");
+}
+
+void test_mla_only_facts_reject_until_implemented() {
+  bool rejected = false;
+  try {
+    (void)pcie_internal::detail::read_mla_only_facts(mpk::MpkContract{});
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  require(rejected, "mla_only facts must fail loudly rather than fall back to the default route");
+}
+
 } // namespace
 
 int main() {
   try {
     test_ingress_uses_root_consumer();
     test_unsupported_input_dtypes_fail_early();
+    test_public_model_info_carries_quant();
+    test_mla_only_facts_reject_until_implemented();
     std::cout << "[PASS] model facts\n";
     return 0;
   } catch (const std::exception& error) {

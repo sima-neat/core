@@ -232,6 +232,10 @@ void validate_supported_input_dtype(
   }
 }
 
+PcieModelFacts read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract&) {
+  throw std::runtime_error("mla_only model facts are not implemented");
+}
+
 } // namespace detail
 
 namespace {
@@ -358,7 +362,7 @@ bool graph_has_boxdecode(const simaai::neat::pipeline_internal::sima::MpkContrac
 
 } // namespace
 
-PcieModelFacts read_model_facts(const std::string& model_path) {
+PcieModelFacts read_model_facts(const std::string& model_path, const ModelOptions& options) {
   TempDir temp;
 
   simaai::neat::internal::ModelArchiveLoaderOptions loader_options;
@@ -375,6 +379,9 @@ PcieModelFacts read_model_facts(const std::string& model_path) {
       extracted.package_root, &error);
   if (!contract.has_value()) {
     throw std::runtime_error("failed to read MPK contract: " + error);
+  }
+  if (options.mla_only) {
+    return detail::read_mla_only_facts(*contract);
   }
 
   const auto public_inputs = detail::application_input_contracts(*contract);
@@ -413,13 +420,15 @@ ModelInfo to_public_model_info(const PcieModelFacts& facts) {
     out.inputs.push_back(TensorInfo{.name = input.name,
                                     .dtype = input.dtype,
                                     .shape = input.shape,
-                                    .size_bytes = input.size_bytes});
+                                    .size_bytes = input.size_bytes,
+                                    .quant = input.quant});
   }
   for (const auto& output : facts.outputs) {
     out.outputs.push_back(TensorInfo{.name = output.name,
                                      .dtype = output.dtype,
                                      .shape = output.shape,
-                                     .size_bytes = output.size_bytes});
+                                     .size_bytes = output.size_bytes,
+                                     .quant = output.quant});
   }
   return out;
 }
