@@ -2,6 +2,8 @@
 #include "PcieModelFactsReaderInternal.h"
 
 #include "model/internal/ModelArchiveLoader.h"
+#include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/sima/RouteGraph.h"
 
 #include <algorithm>
 #include <cctype>
@@ -178,6 +180,62 @@ bool input_has_internal_producer(
   return false;
 }
 
+const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
+validate_mla_only_stages(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
+  using simaai::neat::pipeline_internal::sima::RouteGraphKernelKind;
+  const auto graph = simaai::neat::pipeline_internal::sima::build_route_graph(contract);
+  if (graph.mla_plugin_index < 0) {
+    throw std::runtime_error("mla_only requires exactly one MLA stage in the MPK contract");
+  }
+  for (const auto& node : graph.nodes) {
+    switch (node.kind) {
+    case RouteGraphKernelKind::Mla:
+    case RouteGraphKernelKind::Quant:
+    case RouteGraphKernelKind::Unpack:
+    case RouteGraphKernelKind::Slice:
+    case RouteGraphKernelKind::Dequantize:
+    case RouteGraphKernelKind::PassThrough:
+      continue;
+    default:
+      throw std::runtime_error(
+          "mla_only does not support stage '" + node.plugin_name + "' (" +
+          simaai::neat::pipeline_internal::sima::route_graph_kernel_name(node.kind) + ")");
+    }
+  }
+  return contract.plugins[static_cast<std::size_t>(graph.mla_plugin_index)];
+}
+
+simaai::neat::pipeline_internal::sima::MpkTensorContract
+mla_only_input_contract(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                        const simaai::neat::pipeline_internal::sima::MpkPluginIoContract& mla) {
+  const auto public_inputs = detail::application_input_contracts(contract);
+  if (mla.input_tensors.size() != 1U || public_inputs.size() != 1U) {
+    throw std::runtime_error("mla_only supports exactly one model input");
+  }
+  auto input = mla.input_tensors.front();
+  const std::string dtype = best_dtype(input);
+  if (canonical_token(dtype) != "int8") {
+    throw std::runtime_error("mla_only input '" + input.name + "' must be INT8, got '" + dtype +
+                             "'");
+  }
+  const auto shape = best_shape(input);
+  std::size_t elements = shape.empty() ? 0U : 1U;
+  for (const auto dim : shape) {
+    if (dim <= 0 || !simaai::neat::pipeline_internal::safe_mul(
+                        elements, static_cast<std::size_t>(dim), &elements)) {
+      elements = 0U;
+      break;
+    }
+  }
+  if (elements == 0U || elements != input.size_bytes) {
+    throw std::runtime_error("mla_only input '" + input.name +
+                             "' is not a dense INT8 tensor: shape does not cover " +
+                             std::to_string(input.size_bytes) + " bytes");
+  }
+  input.name = public_inputs.front().name;
+  return input;
+}
+
 } // namespace
 
 namespace detail {
@@ -232,8 +290,14 @@ void validate_supported_input_dtype(
   }
 }
 
-PcieModelFacts read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract&) {
-  throw std::runtime_error("mla_only model facts are not implemented");
+PcieModelFacts
+read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
+  const auto& mla = validate_mla_only_stages(contract);
+
+  PcieModelFacts facts;
+  facts.inputs.push_back(convert_tensor(mla_only_input_contract(contract, mla)));
+  facts.packed_input_bytes = facts.inputs.front().size_bytes;
+  throw std::runtime_error("mla_only model output facts are not implemented");
 }
 
 } // namespace detail
