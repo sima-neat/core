@@ -356,15 +356,14 @@ if __name__ == "__main__":
 
 **Run:**
 
-* **On the DevKit**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 app.py
-  ```
-* **On the Neat SDK host**
-  ```bash
-  dk app.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 app.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk app.py
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
@@ -475,14 +474,13 @@ cmake --build build -j
 
 **Run:**
 
-* **On the DevKit**
-  ```bash
-  ./build/sima_neat_app
-  ```
-* **On the Neat SDK host**
-  ```bash
-  dk build/sima_neat_app
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_app
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_app
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

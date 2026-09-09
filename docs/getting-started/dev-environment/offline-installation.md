@@ -82,13 +82,13 @@ target host and run the same installer from that directory.
 After installation, reload your shell environment or restart the SDK shell. Then
 activate Model Compiler with:
 
-<ShellCommand prompt="host">
+<ShellCommand prompt="sdk|host">
 activate-model-compiler
 </ShellCommand>
 
 To leave the Model Compiler environment, run:
 
-<ShellCommand prompt="host">
+<ShellCommand prompt="sdk|host">
 deactivate-model-compiler
 </ShellCommand>
 

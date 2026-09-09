@@ -69,13 +69,13 @@ bash ./install_modelsdk_wheels.sh
 
 安裝完成後，重新載入您的 Shell 環境或重新啟動 SDK Shell。然後，使用以下指令啟用 Model Compiler：
 
-<ShellCommand prompt="host">
+<ShellCommand prompt="sdk|host">
 activate-model-compiler
 </ShellCommand>
 
 若要離開 Model Compiler 環境，請執行：
 
-<ShellCommand prompt="host">
+<ShellCommand prompt="sdk|host">
 deactivate-model-compiler
 </ShellCommand>
 

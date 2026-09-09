@@ -69,13 +69,13 @@ bash ./install_modelsdk_wheels.sh
 
 Після інсталяції перезавантажте середовище вашої оболонки або перезапустіть оболонку SDK. Потім активуйте Model Compiler за допомогою:
 
-<ShellCommand prompt="host">
+<ShellCommand prompt="sdk|host">
 activate-model-compiler
 </ShellCommand>
 
 Щоб вийти з середовища Model Compiler, виконайте команду:
 
-<ShellCommand prompt="host">
+<ShellCommand prompt="sdk|host">
 deactivate-model-compiler
 </ShellCommand>
 

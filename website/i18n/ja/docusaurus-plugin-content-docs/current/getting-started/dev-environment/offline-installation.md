@@ -69,13 +69,13 @@ ARM64パッケージをダウンロードした場合は、代わりに「`arm64
 
 インストール後、シェルの環境を再読み込みするか、SDKシェルを再起動してください。その後、次のコマンドでModel Compilerを起動します。
 
-<ShellCommand prompt="host">
+<ShellCommand prompt="sdk|host">
 activate-model-compiler
 </ShellCommand>
 
 Model Compiler 環境を終了するには、次のコマンドを実行します。
 
-<ShellCommand prompt="host">
+<ShellCommand prompt="sdk|host">
 deactivate-model-compiler
 </ShellCommand>
 
