@@ -8,6 +8,7 @@
 #include "nodes/io/Input.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/RouteGraph.h"
+#include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
@@ -212,6 +213,8 @@ private:
   Config options_;
   PipelineType pipeline_type_ = PipelineType::Preproc;
   std::optional<simaai::neat::pipeline_internal::sima::MpkContract> mpk_contract_;
+  std::optional<simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan>
+      dmabuf_plan_execution_plan_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
   std::optional<bool> processcvu_preproc_single_output_handoff_;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;

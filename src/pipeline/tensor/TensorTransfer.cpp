@@ -38,11 +38,13 @@
 #include "pipeline/internal/TensorTransfer.h"
 
 #include "pipeline/internal/GstDataAdapter.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/SimaaiMemory.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
 #include "gst/GstInit.h"
+#include "simaai/neat/internal/dmabuf/DmaBufPool.h"
 
 #include <gst/gst.h>
 #include <gst/gstbufferpool.h>
@@ -577,6 +579,157 @@ Tensor finalize_transfer_tensor(const Tensor& src, const std::shared_ptr<Storage
   return out;
 }
 
+internal::dmabuf::CpuAccess dmabuf_cpu_access(MapMode mode) {
+  switch (mode) {
+  case MapMode::Read:
+    return internal::dmabuf::CpuAccess::Read;
+  case MapMode::Write:
+    return internal::dmabuf::CpuAccess::Write;
+  case MapMode::ReadWrite:
+    return internal::dmabuf::CpuAccess::ReadWrite;
+  }
+  return internal::dmabuf::CpuAccess::ReadWrite;
+}
+
+std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample,
+                                                    const Device& target,
+                                                    std::uint64_t target_flags) {
+  auto storage = make_gst_sample_storage(sample);
+  if (!storage || !storage->holder) {
+    return {};
+  }
+
+  // A standard GstDmaBufAllocator memory deliberately has no legacy SiMa
+  // allocator flags. Keep device placement in Tensor storage metadata while
+  // preserving the ordinary GstMemory that direct kernel importers require.
+  storage->device = target;
+  storage->sima_mem_target_flags = target_flags;
+  storage->sima_mem_flags = 0U;
+
+  struct MapState {
+    std::mutex mutex;
+    std::optional<internal::dmabuf::CpuMapping> mapping;
+  };
+  auto state = std::make_shared<MapState>();
+  auto holder = storage->holder;
+  storage->map_fn = [holder, state](MapMode mode) {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->mapping.has_value()) {
+      return Mapping{};
+    }
+    auto* sample = static_cast<GstSample*>(holder.get());
+    GstBuffer* buffer = sample && GST_IS_SAMPLE(sample)
+                            ? gst_sample_get_buffer(sample)
+                            : nullptr;
+    if (!buffer || gst_buffer_n_memory(buffer) != 1U) {
+      return Mapping{};
+    }
+
+    internal::dmabuf::Error error;
+    auto view = internal::dmabuf::DmaBufView::fromGstMemory(
+        gst_buffer_peek_memory(buffer, 0U), &error);
+    if (!view) {
+      return Mapping{};
+    }
+    auto mapping = view->map(dmabuf_cpu_access(mode), &error);
+    if (!mapping) {
+      return Mapping{};
+    }
+    state->mapping.emplace(std::move(*mapping));
+
+    Mapping result;
+    result.data = state->mapping->data();
+    result.size_bytes = state->mapping->size();
+    result.keepalive = holder;
+    result.unmap = [state]() {
+      std::lock_guard<std::mutex> lock(state->mutex);
+      if (state->mapping.has_value()) {
+        (void)state->mapping->finish();
+        state->mapping.reset();
+      }
+    };
+    return result;
+  };
+  return storage;
+}
+
+Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
+                                 std::uint64_t target_flags,
+                                 const std::vector<Segment>& segments) {
+  using internal::dmabuf::CpuAccess;
+  using internal::dmabuf::DmaBufView;
+  using internal::dmabuf::Error;
+  using internal::dmabuf::HeapKind;
+
+  const std::size_t allocation_bytes = segment_total_bytes(segments);
+  const HeapKind heap = target.type == DeviceType::SIMA_MLA
+                            ? HeapKind::MlaDms
+                            : HeapKind::Cma;
+  Error error;
+  GstBuffer* dst = internal::dmabuf::allocateDmaBufBuffer(
+      heap, allocation_bytes, {}, &error);
+  if (!dst) {
+    throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " +
+                             error.message());
+  }
+
+  auto view = DmaBufView::fromGstMemory(gst_buffer_peek_memory(dst, 0U),
+                                        0U, allocation_bytes, &error);
+  if (!view) {
+    gst_buffer_unref(dst);
+    throw std::runtime_error("transfer: standard DMA-BUF view failed: " +
+                             error.message());
+  }
+  auto mapping = view->map(CpuAccess::Write, &error);
+  if (!mapping) {
+    gst_buffer_unref(dst);
+    throw std::runtime_error("transfer: standard DMA-BUF map failed: " +
+                             error.message());
+  }
+
+  bool copied = false;
+  try {
+    copied = copy_tensor_payload(
+        src, static_cast<std::uint8_t*>(mapping->data()), mapping->size());
+  } catch (...) {
+    (void)mapping->finish();
+    gst_buffer_unref(dst);
+    throw;
+  }
+  if (!copied) {
+    (void)mapping->finish();
+    gst_buffer_unref(dst);
+    throw std::runtime_error("transfer: standard DMA-BUF payload copy failed");
+  }
+  if (!mapping->finish(&error)) {
+    gst_buffer_unref(dst);
+    throw std::runtime_error("transfer: standard DMA-BUF CPU sync failed: " +
+                             error.message());
+  }
+
+  if (src.storage && src.storage->kind == StorageKind::GstSample) {
+    std::string holder_error;
+    GstBuffer* src_buffer = buffer_from_holder_if_gstsample(src, &holder_error);
+    if (src_buffer) {
+      copy_gst_metadata(dst, src_buffer);
+      gst_buffer_unref(src_buffer);
+    }
+  }
+
+  GstSample* sample = gst_sample_new(dst, nullptr, nullptr, nullptr);
+  if (!sample) {
+    gst_buffer_unref(dst);
+    throw std::runtime_error("transfer: failed to wrap standard DMA-BUF sample");
+  }
+  gst_buffer_unref(dst);
+  auto storage = make_driver_dmabuf_storage(sample, target, target_flags);
+  gst_sample_unref(sample);
+  if (!storage) {
+    throw std::runtime_error("transfer: failed to create standard DMA-BUF storage");
+  }
+  return finalize_transfer_tensor(src, storage, segments);
+}
+
 } // namespace
 
 //==============================================================================
@@ -641,6 +794,11 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
 
   const std::vector<Segment> segments =
       resolve_segments(src, required_segments, required_segment_names, payload_bytes);
+
+  if (selected_memory_backend_policy() ==
+      MemoryBackendPolicy::DmaBufPlan) {
+    return transfer_to_driver_dmabuf(src, target, target_flags, segments);
+  }
 
   std::shared_ptr<GstBufferPool> pool = get_pool(target_flags, mem_flags, segments);
   if (!pool) {

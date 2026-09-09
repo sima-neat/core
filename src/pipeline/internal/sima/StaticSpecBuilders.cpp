@@ -150,7 +150,8 @@ LogicalTensorStaticSpec build_logical_output_static_spec(
 PhysicalBufferStaticSpec
 build_physical_buffer_static_spec(int physical_index, int allocator_index, std::uint64_t size_bytes,
                                   DeviceKind device_kind, const std::string& segment_name,
-                                  int source_physical_index, std::int64_t source_byte_offset) {
+                                  int source_physical_index, std::int64_t source_byte_offset,
+                                  std::uint64_t required_alignment_bytes) {
   PhysicalBufferStaticSpec physical;
   physical.physical_index = physical_index;
   physical.allocator_index = allocator_index;
@@ -159,6 +160,7 @@ build_physical_buffer_static_spec(int physical_index, int allocator_index, std::
   physical.segment_name = segment_name;
   physical.source_physical_index = source_physical_index;
   physical.source_byte_offset = source_byte_offset;
+  physical.required_alignment_bytes = required_alignment_bytes;
   return physical;
 }
 

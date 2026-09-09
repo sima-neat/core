@@ -1,5 +1,6 @@
 #include "model/Model.h"
 #include "model_archive_fixture_utils.h"
+#include "model_archive_test_utils.h"
 #include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -80,6 +81,7 @@ sima_test::ModelArchiveFixture make_stage_fixture(const std::string& tag) {
 RUN_TEST("unit_model_stage_fragments_test", ([] {
            using namespace simaai::neat;
 
+           const sima_test::ScopedEnvVar memory_backend("SIMA_NEAT_MEMORY_BACKEND", "legacy");
            const auto fixture = make_stage_fixture("model_stage_fragments");
            Model model(fixture.tar_path);
 
@@ -125,6 +127,12 @@ RUN_TEST("unit_model_stage_fragments_test", ([] {
                             "Model::backend_fragment(inference) should include MLA plugin");
            require_contains(infer_fragment, "stage-id=",
                             "Model::backend_fragment(inference) should include stage metadata");
+           require_contains(infer_fragment, "model-path=\"",
+                            "legacy MLA fragment should retain its model path property");
+           require_contains(infer_fragment, "batch-size=",
+                            "legacy MLA fragment should retain its runtime batch property");
+           require_contains(infer_fragment, "batch-sz-model=",
+                            "legacy MLA fragment should retain its model batch property");
 
            const std::string full_fragment = model.backend_fragment(Model::Stage::Full);
            require_contains(full_fragment, "neatprocesscvu",

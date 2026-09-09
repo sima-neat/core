@@ -9,11 +9,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "pipeline/TensorTypes.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/InputStreamTeardownPolicy.h"
 
 #include <gst/gst.h>
 
@@ -170,6 +172,12 @@ struct ResolvedInputMemoryPolicy {
 };
 
 ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt);
+
+// Driver-backed async stages own submitted work until their GStreamer stop
+// callback reaps it. Their appsrc pipelines must therefore reach NULL instead
+// of being handed to the detached reaper.
+pipeline_internal::InputStreamTeardownPolicy
+inputstream_pipeline_teardown_policy(std::string_view pipeline);
 
 struct StreamIdOverride {
   std::optional<std::string> value;

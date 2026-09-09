@@ -1261,7 +1261,34 @@ std::size_t hash_string(const std::string& s) {
   return std::hash<std::string>{}(s);
 }
 
+bool contains_launch_factory_token(std::string_view pipeline, std::string_view factory) {
+  std::size_t position = 0;
+  while ((position = pipeline.find(factory, position)) != std::string_view::npos) {
+    const auto is_boundary = [](char value) {
+      return std::isspace(static_cast<unsigned char>(value)) != 0 || value == '!' || value == '(' ||
+             value == ')';
+    };
+    const std::size_t after = position + factory.size();
+    const bool starts_token = position == 0 || is_boundary(pipeline[position - 1]);
+    const bool ends_token = after == pipeline.size() || is_boundary(pipeline[after]);
+    if (starts_token && ends_token) {
+      return true;
+    }
+    position = after;
+  }
+  return false;
+}
+
 } // namespace
+
+pipeline_internal::InputStreamTeardownPolicy
+inputstream_pipeline_teardown_policy(std::string_view pipeline) {
+  if (contains_launch_factory_token(pipeline, "neatprocessmla") ||
+      contains_launch_factory_token(pipeline, "neatprocesscvu")) {
+    return pipeline_internal::InputStreamTeardownPolicy::MustReachNull;
+  }
+  return pipeline_internal::InputStreamTeardownPolicy::Deferred;
+}
 
 CapKey capkey_from_spec(const SampleSpec& spec) {
   CapKey key;

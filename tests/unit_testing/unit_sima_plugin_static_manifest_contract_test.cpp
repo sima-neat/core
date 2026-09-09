@@ -39,6 +39,8 @@ RUN_TEST(
       pre.processcvu.normalize = 1;
       pre.processcvu.channel_mean = {0.485, 0.456, 0.406};
       pre.processcvu.channel_stddev = {0.229, 0.224, 0.225};
+      pre.frame_arena_size_bytes = 2U * 1024U * 1024U;
+      pre.frame_arena_role = FrameArenaRole::Allocate;
       pre.logical_inputs.push_back(LogicalInputStaticSpec{
           .logical_index = 0,
           .backend_input_index = 0,
@@ -65,6 +67,7 @@ RUN_TEST(
           .size_bytes = 640ULL * 640ULL * 3ULL,
           .device_kind = DeviceKind::Cpu,
           .segment_name = "output_rgb_image",
+          .required_alignment_bytes = 128U,
       });
       pre.logical_outputs.push_back(LogicalTensorStaticSpec{
           .logical_index = 0,
@@ -257,6 +260,12 @@ RUN_TEST(
       require(pre_stage->physical_outputs[0].segment_name != nullptr &&
                   std::string(pre_stage->physical_outputs[0].segment_name) == "output_rgb_image",
               "pre stage physical output segment mismatch");
+      require(pre_stage->physical_outputs[0].required_alignment_bytes == 128U,
+              "pre stage physical output alignment mismatch");
+      require(pre_stage->frame_arena_size_bytes == 2U * 1024U * 1024U &&
+                  pre_stage->frame_arena_role ==
+                      SIMA_PLUGIN_FRAME_ARENA_ALLOCATE,
+              "pre stage frame-arena ownership contract mismatch");
       require(pre_stage->logical_outputs[0].backend_name != nullptr &&
                   std::string(pre_stage->logical_outputs[0].backend_name) == "output_rgb_image",
               "pre stage logical output backend name mismatch");

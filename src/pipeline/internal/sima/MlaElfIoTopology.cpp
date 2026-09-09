@@ -1,6 +1,8 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cctype>
 #include <cstring>
@@ -10,6 +12,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -53,9 +56,16 @@ static_assert(sizeof(Elf64SectionHeader) == 64, "Elf64 section header must be 64
 constexpr std::uint8_t kElfMagic[4] = {0x7f, 'E', 'L', 'F'};
 constexpr std::uint8_t kElfClass64 = 2;
 constexpr std::uint8_t kElfData2Lsb = 1;
+constexpr std::uint32_t kQmlaShtData = 0x71ba0002U;
+constexpr std::size_t kQmlaDataHeaderBytes = 16U;
 
 // Read N bytes at a given absolute offset. Returns true on success.
 bool read_at(std::ifstream& in, std::uint64_t offset, void* dst, std::size_t n) {
+  if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max()) ||
+      static_cast<std::uint64_t>(n) >
+          static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max()) - offset) {
+    return false;
+  }
   in.clear();
   in.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
   if (!in.good()) {
@@ -76,6 +86,38 @@ std::string section_name_at(const std::vector<char>& shstrtab, std::uint32_t nam
   const std::size_t max_len = shstrtab.size() - name_offset;
   const std::size_t len = ::strnlen(base, max_len);
   return std::string(base, len);
+}
+
+std::uint64_t read_u64_le(const std::uint8_t* bytes) {
+  std::uint64_t result = 0U;
+  for (unsigned index = 0; index < 8U; ++index) {
+    result |= static_cast<std::uint64_t>(bytes[index]) << (index * 8U);
+  }
+  return result;
+}
+
+bool read_qmla_data_extent(std::ifstream& in, const Elf64SectionHeader& section,
+                           std::uint64_t* extent) {
+  if (!extent || section.sh_type != kQmlaShtData ||
+      section.sh_size < kQmlaDataHeaderBytes) {
+    return false;
+  }
+  std::array<std::uint8_t, kQmlaDataHeaderBytes> header{};
+  if (!read_at(in, section.sh_offset, header.data(), header.size())) {
+    return false;
+  }
+  *extent = read_u64_le(header.data());
+  return *extent != 0U;
+}
+
+void append_warning(std::string* error, const std::string& warning) {
+  if (!error) {
+    return;
+  }
+  if (!error->empty()) {
+    *error += "; ";
+  }
+  *error += warning;
 }
 
 // Match patterns for I/O section symbols. Anchored regexes; ordered scan keeps
@@ -128,15 +170,17 @@ bool parse_section_index_after_prefix(const std::string& name, const std::string
     return false;
   }
   if (require_slash_after_index) {
-    return end < name.size() && name[end] == '/';
+    return end < name.size() && name[end] == '/' && name.ends_with(".b0");
   }
-  return end + 2U <= name.size() && name[end] == '.' && name[end + 1U] == 'b';
+  return name.substr(end) == ".b0";
 }
 
 std::optional<std::size_t> parse_ifm_section_index(const std::string& name) {
   std::size_t index = 0U;
   if (parse_section_index_after_prefix(name, "data.ifm.persistent.input_", true, &index) ||
-      parse_section_index_after_prefix(name, "data.ifm.persistent.qmla_ifm_", false, &index)) {
+      parse_section_index_after_prefix(name, "data.ifm.persistent.qmla_ifm_", false, &index) ||
+      parse_section_index_after_prefix(name, "data.ifm.persistent.afe_direct_input_", false,
+                                       &index)) {
     return index;
   }
   return std::nullopt;
@@ -156,13 +200,33 @@ std::optional<std::size_t> parse_ofm_section_index(const std::string& name) {
 // `dst` already has a value at that index, prefer the existing one (keeps the
 // first-seen entry on duplicate scan; multi-section ELFs sometimes mention the
 // same logical placeholder in multiple sections).
-void place_at_index(std::vector<std::string>* dst, std::size_t index, const std::string& name) {
-  if (dst->size() <= index) {
-    dst->resize(index + 1U);
+bool place_at_index(std::vector<std::string>* names, std::vector<std::uint64_t>* extents,
+                    std::size_t index, const std::string& name,
+                    const std::uint64_t extent) {
+  if (!names || !extents) {
+    return false;
   }
-  if ((*dst)[index].empty()) {
-    (*dst)[index] = name;
+  if (names->size() <= index) {
+    names->resize(index + 1U);
+    extents->resize(index + 1U, 0U);
   }
+  if ((*names)[index].empty()) {
+    (*names)[index] = name;
+    (*extents)[index] = extent;
+    return true;
+  }
+  return false;
+}
+
+MlaElfIoTopologyValidation topology_error(const MlaElfIoTopologyError code, std::string detail,
+                                          const std::size_t expected = 0U,
+                                          const std::size_t actual = 0U) {
+  MlaElfIoTopologyValidation result;
+  result.code = code;
+  result.expected = expected;
+  result.actual = actual;
+  result.detail = std::move(detail);
+  return result;
 }
 
 } // namespace
@@ -234,23 +298,47 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     if (name.empty()) {
       continue;
     }
+    std::uint64_t extent = 0U;
+    const bool has_extent = read_qmla_data_extent(in, s, &extent);
     if (name == kMonolithicIfmName) {
       out->monolithic_ifm = true;
+      out->monolithic_ifm_extent_bytes = has_extent ? extent : 0U;
+      if (!has_extent) {
+        append_warning(&out->error, "IFM section lacks a non-zero QMLA SHT_DATA extent");
+      }
       ++recognized;
       continue;
     }
     if (name == kMonolithicOfmName) {
       out->monolithic_ofm = true;
+      out->monolithic_ofm_extent_bytes = has_extent ? extent : 0U;
+      if (!has_extent) {
+        append_warning(&out->error, "OFM section lacks a non-zero QMLA SHT_DATA extent");
+      }
       ++recognized;
       continue;
     }
     if (const auto index = parse_ifm_section_index(name); index.has_value()) {
-      place_at_index(&out->ifm_symbol_names, *index, name);
+      if (!place_at_index(&out->ifm_symbol_names, &out->ifm_extent_bytes,
+                          *index, name, has_extent ? extent : 0U)) {
+        out->duplicate_ifm_indices.push_back(*index);
+      }
+      if (!has_extent) {
+        append_warning(&out->error, "IFM section '" + name +
+                                              "' lacks a non-zero QMLA SHT_DATA extent");
+      }
       ++recognized;
       continue;
     }
     if (const auto index = parse_ofm_section_index(name); index.has_value()) {
-      place_at_index(&out->ofm_symbol_names, *index, name);
+      if (!place_at_index(&out->ofm_symbol_names, &out->ofm_extent_bytes,
+                          *index, name, has_extent ? extent : 0U)) {
+        out->duplicate_ofm_indices.push_back(*index);
+      }
+      if (!has_extent) {
+        append_warning(&out->error, "OFM section '" + name +
+                                              "' lacks a non-zero QMLA SHT_DATA extent");
+      }
       ++recognized;
       continue;
     }
@@ -265,16 +353,140 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
   // for the same direction. Prefer the placeholder list (it's strictly more
   // expressive) but flag the inconsistency for diagnostics.
   if (out->monolithic_ifm && !out->ifm_symbol_names.empty()) {
-    out->error += "; warning: both monolithic and placeholder IFM sections present";
+    out->ifm_layout_conflict = true;
+    append_warning(&out->error, "warning: both monolithic and placeholder IFM sections present");
     out->monolithic_ifm = false;
   }
   if (out->monolithic_ofm && !out->ofm_symbol_names.empty()) {
-    out->error += "; warning: both monolithic and placeholder OFM sections present";
+    out->ofm_layout_conflict = true;
+    append_warning(&out->error, "warning: both monolithic and placeholder OFM sections present");
     out->monolithic_ofm = false;
   }
 
   out->valid = true;
   return true;
+}
+
+std::size_t mla_elf_ifm_port_count(const MlaElfIoTopology& topology) {
+  return topology.monolithic_ifm ? 1U : topology.ifm_symbol_names.size();
+}
+
+std::size_t mla_elf_ofm_port_count(const MlaElfIoTopology& topology) {
+  return topology.monolithic_ofm ? 1U : topology.ofm_symbol_names.size();
+}
+
+std::uint64_t mla_elf_ifm_extent_bytes(const MlaElfIoTopology& topology,
+                                       const std::size_t port_index) {
+  if (topology.monolithic_ifm) {
+    return port_index == 0U ? topology.monolithic_ifm_extent_bytes : 0U;
+  }
+  return port_index < topology.ifm_extent_bytes.size()
+             ? topology.ifm_extent_bytes[port_index]
+             : 0U;
+}
+
+std::uint64_t mla_elf_ofm_extent_bytes(const MlaElfIoTopology& topology,
+                                       const std::size_t port_index) {
+  if (topology.monolithic_ofm) {
+    return port_index == 0U ? topology.monolithic_ofm_extent_bytes : 0U;
+  }
+  return port_index < topology.ofm_extent_bytes.size()
+             ? topology.ofm_extent_bytes[port_index]
+             : 0U;
+}
+
+MlaElfIoTopologyValidation validate_mla_elf_io_topology_strict(const MlaElfIoTopology& topology) {
+  if (!topology.valid) {
+    return topology_error(MlaElfIoTopologyError::InvalidTopology,
+                          topology.error.empty() ? "ELF I/O topology is invalid" : topology.error);
+  }
+  if (topology.ifm_layout_conflict ||
+      (topology.monolithic_ifm && !topology.ifm_symbol_names.empty())) {
+    return topology_error(MlaElfIoTopologyError::ConflictingIfmLayouts,
+                          "ELF declares both monolithic and indexed IFM layouts");
+  }
+  if (topology.ofm_layout_conflict ||
+      (topology.monolithic_ofm && !topology.ofm_symbol_names.empty())) {
+    return topology_error(MlaElfIoTopologyError::ConflictingOfmLayouts,
+                          "ELF declares both monolithic and indexed OFM layouts");
+  }
+  if (!topology.duplicate_ifm_indices.empty()) {
+    return topology_error(MlaElfIoTopologyError::DuplicateIfmIndex,
+                          "ELF repeats IFM index " +
+                              std::to_string(topology.duplicate_ifm_indices.front()));
+  }
+  if (!topology.duplicate_ofm_indices.empty()) {
+    return topology_error(MlaElfIoTopologyError::DuplicateOfmIndex,
+                          "ELF repeats OFM index " +
+                              std::to_string(topology.duplicate_ofm_indices.front()));
+  }
+  if (!topology.monolithic_ifm && topology.ifm_symbol_names.empty()) {
+    return topology_error(MlaElfIoTopologyError::MissingIfm, "ELF does not declare an IFM layout");
+  }
+  if (!topology.monolithic_ofm && topology.ofm_symbol_names.empty()) {
+    return topology_error(MlaElfIoTopologyError::MissingOfm, "ELF does not declare an OFM layout");
+  }
+  for (std::size_t index = 0; index < topology.ifm_symbol_names.size(); ++index) {
+    if (topology.ifm_symbol_names[index].empty()) {
+      return topology_error(MlaElfIoTopologyError::NonContiguousIfmIndices,
+                            "ELF is missing IFM index " + std::to_string(index));
+    }
+  }
+  for (std::size_t index = 0; index < topology.ofm_symbol_names.size(); ++index) {
+    if (topology.ofm_symbol_names[index].empty()) {
+      return topology_error(MlaElfIoTopologyError::NonContiguousOfmIndices,
+                            "ELF is missing OFM index " + std::to_string(index));
+    }
+  }
+  if (topology.monolithic_ifm) {
+    if (topology.monolithic_ifm_extent_bytes == 0U) {
+      return topology_error(MlaElfIoTopologyError::MissingIfmExtent,
+                            "ELF monolithic IFM has no non-zero SHT_DATA extent");
+    }
+  } else if (topology.ifm_extent_bytes.size() != topology.ifm_symbol_names.size() ||
+             std::any_of(topology.ifm_extent_bytes.begin(), topology.ifm_extent_bytes.end(),
+                         [](const auto extent) { return extent == 0U; })) {
+    return topology_error(MlaElfIoTopologyError::MissingIfmExtent,
+                          "ELF indexed IFM extent evidence is missing, zero, or sparse");
+  }
+  if (topology.monolithic_ofm) {
+    if (topology.monolithic_ofm_extent_bytes == 0U) {
+      return topology_error(MlaElfIoTopologyError::MissingOfmExtent,
+                            "ELF monolithic OFM has no non-zero SHT_DATA extent");
+    }
+  } else if (topology.ofm_extent_bytes.size() != topology.ofm_symbol_names.size() ||
+             std::any_of(topology.ofm_extent_bytes.begin(), topology.ofm_extent_bytes.end(),
+                         [](const auto extent) { return extent == 0U; })) {
+    return topology_error(MlaElfIoTopologyError::MissingOfmExtent,
+                          "ELF indexed OFM extent evidence is missing, zero, or sparse");
+  }
+
+  MlaElfIoTopologyValidation result;
+  result.ok = true;
+  result.code = MlaElfIoTopologyError::None;
+  return result;
+}
+
+MlaElfIoTopologyValidation
+reconcile_mla_elf_io_topology_strict(const MlaElfIoTopology& topology,
+                                     const std::size_t expected_ifm_count,
+                                     const std::size_t expected_ofm_count) {
+  auto result = validate_mla_elf_io_topology_strict(topology);
+  if (!result.ok) {
+    return result;
+  }
+
+  const std::size_t actual_ifm_count = mla_elf_ifm_port_count(topology);
+  if (actual_ifm_count != expected_ifm_count) {
+    return topology_error(MlaElfIoTopologyError::IfmPortCountMismatch,
+                          "MPK/ELF IFM port-count mismatch", expected_ifm_count, actual_ifm_count);
+  }
+  const std::size_t actual_ofm_count = mla_elf_ofm_port_count(topology);
+  if (actual_ofm_count != expected_ofm_count) {
+    return topology_error(MlaElfIoTopologyError::OfmPortCountMismatch,
+                          "MPK/ELF OFM port-count mismatch", expected_ofm_count, actual_ofm_count);
+  }
+  return result;
 }
 
 bool elf_topology_requires_distinct_ifm_segments(const MlaElfIoTopology& topology) {

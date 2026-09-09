@@ -16,6 +16,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -80,6 +81,16 @@ std::string base_name(const std::string& path) {
   const auto pos = path.find_last_of('/');
   return pos == std::string::npos ? path : path.substr(pos + 1);
 }
+std::uint64_t fnv1a64_append(std::uint64_t hash, const void* data,
+                             std::size_t size) {
+  constexpr std::uint64_t kPrime = 1099511628211ULL;
+  const auto* bytes = static_cast<const std::uint8_t*>(data);
+  for (std::size_t i = 0; i < size; ++i) {
+    hash ^= static_cast<std::uint64_t>(bytes[i]);
+    hash *= kPrime;
+  }
+  return hash;
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -92,13 +103,22 @@ int main(int argc, char** argv) {
   const bool cleanup = bool_arg(argc, argv, "--cleanup", true);
   const bool plugin_latency = bool_arg(argc, argv, "--plugin-latency", true);
   const bool startup_preflight = bool_arg(argc, argv, "--startup-preflight", true);
+  const bool mla_only = bool_arg(argc, argv, "--mla-only", false);
+  const bool verbose = bool_arg(argc, argv, "--verbose", false);
+  const bool correctness_hash =
+      bool_arg(argc, argv, "--correctness-hash", false);
+  const int early_stop_after =
+      std::max(0, int_arg(argc, argv, "--early-stop-after", 0));
+  const int early_stop_delay_ms =
+      std::max(0, int_arg(argc, argv, "--early-stop-delay-ms", 0));
   const std::string mode =
       arg_value(argc, argv, "--mode").empty() ? "sync" : arg_value(argc, argv, "--mode");
   const int inflight = std::max(1, int_arg(argc, argv, "--inflight", 4));
   if (model_path.empty() || pre.empty() || post.empty() || measured <= 0 || warmup < 0) {
     std::cerr << "Usage: evo_tput_bench --model <path> --pre <A65|EV74> --post <A65|EV74> "
                  "[--warmup N] [--measured N] [--timeout-ms MS] [--cleanup 0|1] "
-                 "[--mode sync|async] [--inflight N]\n";
+                 "[--mode sync|async] [--inflight N] [--mla-only 0|1] [--verbose 0|1] "
+                 "[--correctness-hash 0|1]\n";
     return 2;
   }
   if (mode != "sync" && mode != "async") {
@@ -111,6 +131,12 @@ int main(int argc, char** argv) {
     opt.preprocess.enable = neat::AutoFlag::On;
     opt.processcvu.pre_run_target = pre;
     opt.processcvu.post_run_target = post;
+    opt.inference_terminal.mla_only = mla_only;
+    if (verbose) {
+      opt.verbose.level = neat::VerbosityLevel::Verbose;
+      opt.verbose.gstreamer = true;
+      opt.verbose.plugins = true;
+    }
     opt.cleanup_extracted_model_data = cleanup;
 
     std::cout << "EVO_TPUT_CONFIG model=" << model_path << " model_name=" << base_name(model_path)
@@ -118,7 +144,11 @@ int main(int argc, char** argv) {
               << " measured=" << measured << " timeout_ms=" << timeout_ms
               << " plugin_latency=" << (plugin_latency ? 1 : 0)
               << " startup_preflight=" << (startup_preflight ? 1 : 0) << " mode=" << mode
-              << " inflight=" << inflight << "\n"
+              << " inflight=" << inflight << " mla_only=" << (mla_only ? 1 : 0)
+              << " verbose=" << (verbose ? 1 : 0)
+              << " correctness_hash=" << (correctness_hash ? 1 : 0)
+              << " early_stop_after=" << early_stop_after
+              << " early_stop_delay_ms=" << early_stop_delay_ms << "\n"
               << std::flush;
 
     const auto ctor0 = std::chrono::steady_clock::now();
@@ -164,6 +194,68 @@ int main(int argc, char** argv) {
     std::cout << "EVO_TPUT_WARMUP_DONE frames=" << warmup << " outputs=" << warm_outputs
               << " seconds=" << std::chrono::duration<double>(warm1 - warm0).count() << "\n"
               << std::flush;
+
+    if (correctness_hash) {
+      auto outputs = runner.run(inputs, timeout_ms);
+      if (outputs.empty()) {
+        std::cerr << "EVO_TPUT_FAIL stage=correctness_hash reason=no_outputs\n";
+        return 10;
+      }
+      constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;
+      std::uint64_t combined = kOffsetBasis;
+      std::size_t total_bytes = 0U;
+      std::ostringstream tensor_hashes;
+      tensor_hashes << std::hex << std::setfill('0');
+      for (std::size_t i = 0; i < outputs.size(); ++i) {
+        const std::vector<std::uint8_t> bytes =
+            outputs[i].copy_dense_bytes_tight();
+        if (bytes.empty() && outputs[i].dense_bytes_tight() != 0U) {
+          std::cerr << "EVO_TPUT_FAIL stage=correctness_hash tensor=" << i
+                    << " reason=copy_failed\n";
+          return 11;
+        }
+        std::uint64_t tensor_hash = kOffsetBasis;
+        tensor_hash = fnv1a64_append(tensor_hash, bytes.data(), bytes.size());
+        const std::uint64_t size = static_cast<std::uint64_t>(bytes.size());
+        combined = fnv1a64_append(combined, &size, sizeof(size));
+        combined = fnv1a64_append(combined, bytes.data(), bytes.size());
+        total_bytes += bytes.size();
+        if (i != 0U) {
+          tensor_hashes << ',';
+        }
+        tensor_hashes << std::setw(16) << tensor_hash;
+      }
+      runner.close();
+      std::cout << "EVO_CORRECTNESS_HASH status=PASS pre=" << pre
+                << " post=" << post << " outputs=" << outputs.size()
+                << " bytes=" << total_bytes << " combined=" << std::hex
+                << std::setw(16) << std::setfill('0') << combined << std::dec
+                << " tensors=" << tensor_hashes.str() << "\n";
+      return 0;
+    }
+
+    if (early_stop_after > 0) {
+      for (int i = 0; i < early_stop_after; ++i) {
+        if (!runner.push(inputs)) {
+          std::cerr << "EVO_TPUT_FAIL stage=early_stop_push iter=" << i
+                    << " reason=push_failed\n";
+          return 9;
+        }
+      }
+      if (early_stop_delay_ms > 0) {
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(early_stop_delay_ms));
+      }
+      const auto close_start = std::chrono::steady_clock::now();
+      runner.close();
+      const auto close_end = std::chrono::steady_clock::now();
+      std::cout << "EVO_EARLY_STOP_RESULT status=PASS pushed="
+                << early_stop_after << " delay_ms=" << early_stop_delay_ms
+                << " close_ms="
+                << std::chrono::duration<double, std::milli>(close_end - close_start).count()
+                << "\n";
+      return 0;
+    }
 
     neat::MeasureOptions measure_opt;
     measure_opt.duration_ms = std::max(1, measured * timeout_ms);
@@ -298,6 +390,13 @@ int main(int argc, char** argv) {
     }
     runner.close();
     return 0;
+  } catch (const neat::NeatError& ex) {
+    for (const auto& message : ex.report().bus) {
+      std::cerr << "EVO_TPUT_BUS type=" << message.type << " src=" << message.src
+                << " detail=" << message.detail << "\n";
+    }
+    std::cerr << "EVO_TPUT_FAIL exception=" << ex.what() << "\n";
+    return 1;
   } catch (const std::exception& ex) {
     std::cerr << "EVO_TPUT_FAIL exception=" << ex.what() << "\n";
     return 1;

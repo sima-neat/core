@@ -611,6 +611,8 @@ StageStaticSpec render_processcvu_stage(const CompiledNodeContract& compiled_sta
   stage.output_order = compiled.exposed_view.exposed_output_order;
   stage.output_quant = compiled.runtime_contract.output_quant;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
+  stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
+  stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   return stage;
@@ -636,6 +638,8 @@ StageStaticSpec render_processmla_stage(const CompiledNodeContract& compiled_sta
   stage.output_order = compiled.runtime_contract.output_order;
   stage.output_quant = compiled.runtime_contract.output_quant;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
+  stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
+  stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   stage.elf_ifm_symbol_names = compiled.runtime_contract.elf_ifm_symbol_names;

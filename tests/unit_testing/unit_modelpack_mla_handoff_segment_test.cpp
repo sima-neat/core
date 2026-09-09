@@ -1,4 +1,5 @@
 #include "asset_utils.h"
+#include "model_archive_test_utils.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
@@ -15,6 +16,7 @@ RUN_TEST(
     "unit_modelpack_mla_handoff_segment_test", ([] {
       using namespace simaai::neat;
 
+      const sima_test::ScopedEnvVar memory_backend("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan");
       const std::filesystem::path core_root = sima_test::test_source_root();
       const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
       require(!tar_path.empty(), "expected modelzoo-backed yolo_v8s .tar.gz MPK with *_mpk.json");
@@ -25,6 +27,19 @@ RUN_TEST(
       model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
       model_opt.upstream_name = "decoder";
       Model model(tar_path, model_opt);
+      const std::string infer_fragment = model.backend_fragment(Model::Stage::Inference);
+      require(infer_fragment.find("neatprocessmla") != std::string::npos,
+              "strict inference fragment should include the MLA plugin");
+      require(infer_fragment.find("model-path=") == std::string::npos,
+              "dmabuf-plan MLA fragment must not emit the manifest-owned model path");
+      require(infer_fragment.find("batch-size=") == std::string::npos,
+              "dmabuf-plan MLA fragment must not emit the manifest-owned runtime batch size");
+      require(infer_fragment.find("batch-sz-model=") == std::string::npos,
+              "dmabuf-plan MLA fragment must not emit the manifest-owned model batch size");
+      require(infer_fragment.find("multi-pipeline=") != std::string::npos,
+              "dmabuf-plan MLA fragment should retain executor pipeline selection");
+      require(infer_fragment.find("num-buffers=") != std::string::npos,
+              "dmabuf-plan MLA fragment should retain executor buffer depth");
       const auto infer_nodes = internal::ModelAccess::build_public_inference_nodes(model);
       require(!infer_nodes.empty(), "inference fragment should compile from the YOLOv8 asset");
 
@@ -96,6 +111,8 @@ RUN_TEST(
         }
       }
       require(mla_stage_fact != nullptr, "YOLOv8 should expose a canonical MLA stage fact");
+      require(mla_stage_fact->mla_compiled->payload.dmabuf_plan_contract,
+              "YOLOv8 dmabuf-plan MLA stage should carry the exact manifest-ownership marker");
       require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.size() == 1U,
               "YOLOv8 MLA stage fact should expose one input binding");
 
