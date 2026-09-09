@@ -15,6 +15,12 @@
 
 namespace simaai::neat::nodes::groups::internal {
 
+// The input allocation policy and the semantic node must use one identity.
+inline constexpr std::string_view kVideoSenderRawIngressDirectKind =
+    "VideoSenderRawIngress[direct_nv12]";
+inline constexpr std::string_view kVideoSenderRawIngressMaterializeKind =
+    "VideoSenderRawIngress[convert_to_nv12]";
+
 inline constexpr std::string_view kNeatEncoderInputLayoutAwareCapability =
     "neatencoder.input-layout-aware";
 

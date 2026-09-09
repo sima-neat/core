@@ -292,3 +292,17 @@ def test_installer_uses_only_the_public_read_only_migration_entrypoint():
     assert "run_sudo /usr/bin/neat-b1157-migration-check || return 1" in installer
     assert "run_sudo /usr/bin/neat-b1157-migration-check check" not in installer
     assert "/usr/libexec/sima-neat/runtime-migration" not in installer
+
+
+def test_native_video_sender_kind_contract(tmp_path):
+    binary = tmp_path / "video-sender-kind"
+    subprocess.run([
+        "/usr/bin/g++", "-std=c++20", "-Wall", "-Wextra", "-Werror",
+        "-DSIMA_NEAT_INTERNAL=1", "-I", str(ROOT / "src"), "-I", str(ROOT / "include"),
+        str(ROOT / "tests/unit_testing/unit_video_sender_kind_contract_test.cpp"),
+        str(ROOT / "src/nodes/groups/VideoSenderRawIngress.cpp"),
+        str(ROOT / "src/builder/OutputSpec.cpp"), "-o", str(binary),
+    ], check=True, timeout=90)
+    kind = subprocess.check_output(["file", str(binary)], text=True)
+    assert "x86-64" in kind and "aarch64" not in kind, kind
+    subprocess.run([str(binary)], check=True, timeout=10)
