@@ -180,6 +180,17 @@ bool input_has_internal_producer(
   return false;
 }
 
+std::size_t dense_element_count(const std::vector<std::int64_t>& shape) {
+  std::size_t elements = shape.empty() ? 0U : 1U;
+  for (const auto dim : shape) {
+    if (dim <= 0 || !simaai::neat::pipeline_internal::safe_mul(
+                        elements, static_cast<std::size_t>(dim), &elements)) {
+      return 0U;
+    }
+  }
+  return elements;
+}
+
 const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
 validate_mla_only_stages(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
   using simaai::neat::pipeline_internal::sima::RouteGraphKernelKind;
@@ -218,15 +229,7 @@ mla_only_input_contract(const simaai::neat::pipeline_internal::sima::MpkContract
     throw std::runtime_error("mla_only input '" + input.name + "' must be INT8, got '" + dtype +
                              "'");
   }
-  const auto shape = best_shape(input);
-  std::size_t elements = shape.empty() ? 0U : 1U;
-  for (const auto dim : shape) {
-    if (dim <= 0 || !simaai::neat::pipeline_internal::safe_mul(
-                        elements, static_cast<std::size_t>(dim), &elements)) {
-      elements = 0U;
-      break;
-    }
-  }
+  const std::size_t elements = dense_element_count(best_shape(input));
   if (elements == 0U || elements != input.size_bytes) {
     throw std::runtime_error("mla_only input '" + input.name +
                              "' is not a dense INT8 tensor: shape does not cover " +
@@ -234,6 +237,86 @@ mla_only_input_contract(const simaai::neat::pipeline_internal::sima::MpkContract
   }
   input.name = public_inputs.front().name;
   return input;
+}
+
+void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                          PcieModelFacts* facts) {
+  const auto carrier =
+      simaai::neat::pipeline_internal::sima::get_mla_boundary_physical_outputs_contract(contract);
+  if (carrier.size() != 1U || carrier.front().size_bytes == 0U) {
+    throw std::runtime_error("mla_only supports exactly one MLA output carrier");
+  }
+  const std::size_t raw = carrier.front().size_bytes;
+  const auto logical =
+      simaai::neat::pipeline_internal::sima::get_mla_logical_outputs_contract(contract);
+  const auto published =
+      simaai::neat::pipeline_internal::sima::get_mla_published_outputs_contract(contract);
+  if (logical.empty() || logical.size() != published.size()) {
+    throw std::runtime_error("MPK contract does not expose consistent MLA output heads");
+  }
+
+  std::vector<std::pair<std::size_t, std::size_t>> spans;
+  spans.reserve(logical.size());
+  for (std::size_t i = 0; i < logical.size(); ++i) {
+    const auto& head = logical[i];
+    auto fact = convert_tensor(head);
+    if (published[i].name != head.name) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' is published under a different name");
+    }
+    if (published[i].materialization_kind ==
+        simaai::neat::pipeline_internal::sima::MpkTensorMaterializationKind::Bf16LaneSplitRepack) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' needs a lane-split repack the host does not perform");
+    }
+    if (canonical_token(fact.dtype) != "int8") {
+      throw std::runtime_error("mla_only output '" + fact.name + "' must be INT8, got '" +
+                               fact.dtype + "'");
+    }
+    if (dense_element_count(fact.shape) != fact.size_bytes ||
+        head.stride_bytes.size() != fact.shape.size() || head.stride_bytes.back() != 1 ||
+        head.source_byte_offset < 0) {
+      throw std::runtime_error("mla_only output '" + fact.name + "' has no usable geometry");
+    }
+    for (std::size_t d = 1; d < head.stride_bytes.size(); ++d) {
+      if (head.stride_bytes[d] > head.stride_bytes[d - 1]) {
+        throw std::runtime_error("mla_only output '" + fact.name +
+                                 "' has strides that are not outermost-first");
+      }
+    }
+    fact.transport_strides_bytes = head.stride_bytes;
+    fact.payload_offset = static_cast<std::size_t>(head.source_byte_offset);
+    std::size_t end = 0U;
+    if (!simaai::neat::pipeline_internal::safe_mul(
+            static_cast<std::size_t>(fact.shape.front()),
+            static_cast<std::size_t>(head.stride_bytes.front()), &fact.transport_size_bytes) ||
+        !simaai::neat::pipeline_internal::safe_add(fact.payload_offset, fact.transport_size_bytes,
+                                                   &end) ||
+        end > raw) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' lies outside the MLA output carrier");
+    }
+    fact.dense_offset = facts->dense_output_bytes;
+    if (!simaai::neat::pipeline_internal::safe_add(facts->dense_output_bytes, fact.size_bytes,
+                                                   &facts->dense_output_bytes)) {
+      throw std::runtime_error("mla_only dense output size overflows");
+    }
+    spans.emplace_back(fact.payload_offset, fact.transport_size_bytes);
+    facts->outputs.push_back(std::move(fact));
+  }
+
+  std::sort(spans.begin(), spans.end());
+  std::size_t next = 0U;
+  for (const auto& [offset, size] : spans) {
+    if (offset != next) {
+      throw std::runtime_error("mla_only output heads do not tile the MLA output carrier");
+    }
+    next += size;
+  }
+  if (next != raw) {
+    throw std::runtime_error("mla_only output heads do not tile the MLA output carrier");
+  }
+  facts->packed_output_bytes = raw;
 }
 
 } // namespace
@@ -297,7 +380,8 @@ read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& co
   PcieModelFacts facts;
   facts.inputs.push_back(convert_tensor(mla_only_input_contract(contract, mla)));
   facts.packed_input_bytes = facts.inputs.front().size_bytes;
-  throw std::runtime_error("mla_only model output facts are not implemented");
+  add_mla_only_outputs(contract, &facts);
+  return facts;
 }
 
 } // namespace detail

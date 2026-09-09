@@ -106,22 +106,62 @@ mpk::MpkPluginIoContract stage(std::string name, std::string kernel,
   return out;
 }
 
+mpk::MpkTensorContract head(std::string name, std::vector<std::int64_t> mpk_shape,
+                            std::vector<std::int64_t> logical_shape, const std::size_t size_bytes) {
+  auto out = tensor(std::move(name), "INT8", std::move(mpk_shape), size_bytes);
+  out.logical_shape = std::move(logical_shape);
+  out.logical_dtype = "INT8";
+  return out;
+}
+
+void link(mpk::MpkContract& contract, const std::size_t src, const int src_output,
+          const std::size_t dst, const int dst_input) {
+  contract.edges.push_back(mpk::MpkContractEdge{
+      .src_plugin_index = src,
+      .src_output_index = src_output,
+      .dst_plugin_index = dst,
+      .dst_input_index = dst_input,
+      .src_plugin = contract.plugins[src].name,
+      .dst_plugin = contract.plugins[dst].name,
+      .tensor_name =
+          contract.plugins[src].output_tensors[static_cast<std::size_t>(src_output)].name,
+  });
+}
+
 mpk::MpkContract mla_only_contract() {
   mpk::MpkContract contract;
   contract.ingress_tensors.push_back(tensor("input_luv", "FP32", {2, 3, 4}, 96));
 
-  auto mla_input = tensor("quantize_0", "INT8", {1, 2, 3, 4}, 24);
-  mla_input.logical_shape = {2, 3, 4};
-  mla_input.logical_dtype = "INT8";
+  const auto mla_input = head("quantize_0", {1, 2, 3, 4}, {2, 3, 4}, 24);
+  const auto carrier = tensor("MLA_0", "", {1, 160}, 160);
+  const auto unpack_0 = head("MLA_0_ofm_unpack_transform_0", {1, 2, 3, 16}, {2, 3, 16}, 96);
+  const auto unpack_1 = head("MLA_0_ofm_unpack_transform_1", {1, 1, 4, 16}, {1, 4, 16}, 64);
+  const auto slice_0 =
+      head("slice_MLA_0/tuple_get_item_0_slice_transform", {1, 2, 3, 2}, {2, 3, 2}, 12);
+  const auto out_0 = tensor("dequantize_2/head_0", "FP32", {2, 3, 2}, 48);
+  const auto out_1 = tensor("dequantize_3/head_1", "FP32", {1, 4, 16}, 256);
 
   contract.plugins = {
       stage("quantize_0", "quantization_transform", {tensor("input_luv", "FP32", {2, 3, 4}, 96)},
             {mla_input}),
-      stage("MLA_0", "mla", {mla_input}, {tensor("MLA_0", "", {1, 160}, 160)}),
+      stage("MLA_0", "mla", {mla_input}, {carrier}),
+      stage("MLA_0_ofm_unpack_transform", "unpack_transform", {carrier}, {unpack_0, unpack_1}),
+      stage(slice_0.name, "slice_transform", {unpack_0}, {slice_0}),
+      stage("dequantize_2", "dequantization_transform", {slice_0}, {out_0}),
+      stage("dequantize_3", "dequantization_transform", {unpack_1}, {out_1}),
+      stage("PassThrough", "pass_through", {out_0, out_1}, {out_0, out_1}),
   };
+  contract.plugins[3].slice_begin = {0, 0, 0, 0};
   for (std::size_t i = 0; i < contract.plugins.size(); ++i) {
     contract.plugins[i].sequence = static_cast<int>(i);
   }
+  link(contract, 0, 0, 1, 0);
+  link(contract, 1, 0, 2, 0);
+  link(contract, 2, 0, 3, 0);
+  link(contract, 3, 0, 4, 0);
+  link(contract, 2, 1, 5, 0);
+  link(contract, 4, 0, 6, 0);
+  link(contract, 5, 0, 6, 1);
   return contract;
 }
 
@@ -163,10 +203,54 @@ void test_mla_only_rejects_non_dense_int8_inputs() {
                    "not a dense INT8 tensor", "a padded MLA input must be rejected");
 }
 
-void test_mla_only_facts_reject_until_outputs_exist() {
-  require_rejected([] { (void)pcie_internal::detail::read_mla_only_facts(mla_only_contract()); },
-                   "output facts are not implemented",
-                   "mla_only facts must fail loudly rather than publish an empty output list");
+void test_mla_only_facts_describe_ingress_and_heads() {
+  const auto facts = pcie_internal::detail::read_mla_only_facts(mla_only_contract());
+
+  require(facts.inputs.size() == 1U, "expected one mla_only input");
+  require(facts.inputs.front().name == "input_luv", "input must carry the public name");
+  require(facts.inputs.front().dtype == "INT8", "input must be INT8");
+  require(facts.inputs.front().shape == std::vector<std::int64_t>({2, 3, 4}),
+          "input must use the MLA logical shape");
+  require(facts.inputs.front().size_bytes == 24U && facts.packed_input_bytes == 24U,
+          "input must use the MLA byte size");
+
+  require(facts.outputs.size() == 2U, "expected two mla_only heads");
+  const auto& sliced = facts.outputs[0];
+  require(sliced.dtype == "INT8" && sliced.shape == std::vector<std::int64_t>({2, 3, 2}) &&
+              sliced.size_bytes == 12U,
+          "sliced head must publish its logical INT8 geometry");
+  require(sliced.transport_strides_bytes == std::vector<std::int64_t>({48, 16, 1}),
+          "sliced head must carry the padded unpack strides");
+  require(sliced.payload_offset == 0U && sliced.transport_size_bytes == 96U,
+          "sliced head must span its unpack region");
+  require(sliced.dense_offset == 0U, "first head starts the dense block");
+
+  const auto& direct = facts.outputs[1];
+  require(direct.shape == std::vector<std::int64_t>({1, 4, 16}) && direct.size_bytes == 64U,
+          "direct head must publish its logical INT8 geometry");
+  require(direct.transport_strides_bytes == std::vector<std::int64_t>({64, 16, 1}),
+          "direct head must carry contiguous strides");
+  require(direct.payload_offset == 96U && direct.transport_size_bytes == 64U,
+          "direct head must follow the sliced head in the carrier");
+  require(direct.dense_offset == 12U, "second head follows the first in the dense block");
+
+  require(facts.packed_output_bytes == 160U, "packed output must be the raw carrier");
+  require(facts.dense_output_bytes == 76U, "dense output must be the logical sum");
+  require(!facts.has_preprocess && !facts.has_boxdecode, "mla_only publishes no CVU stages");
+}
+
+void test_mla_only_rejects_unusable_output_geometry() {
+  auto gap = mla_only_contract();
+  gap.plugins[1].output_tensors.front().size_bytes = 200;
+  gap.plugins[2].input_tensors.front().size_bytes = 200;
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(gap); }, "do not tile",
+                   "heads that leave carrier bytes unclaimed must be rejected");
+
+  auto lane_split = mla_only_contract();
+  lane_split.plugins[1].has_align_c16 = true;
+  lane_split.plugins[1].align_c16 = true;
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(lane_split); },
+                   "lane-split", "a lane-split MLA boundary must be rejected");
 }
 
 } // namespace
@@ -178,7 +262,8 @@ int main() {
     test_public_model_info_carries_quant();
     test_mla_only_rejects_unsupported_stages();
     test_mla_only_rejects_non_dense_int8_inputs();
-    test_mla_only_facts_reject_until_outputs_exist();
+    test_mla_only_facts_describe_ingress_and_heads();
+    test_mla_only_rejects_unusable_output_geometry();
     std::cout << "[PASS] model facts\n";
     return 0;
   } catch (const std::exception& error) {
