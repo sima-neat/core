@@ -154,15 +154,28 @@ int main() {
     }
     require(rejected_truncated_output, "truncated PCIe output must be rejected");
 
-    pcie_internal::HostPcieChannel::validate_output_payload_size(994032, 994032, true);
-    bool rejected_oversized_mla_output = false;
+    constexpr std::size_t kLogicalInt8Bytes = 2400;
+    constexpr std::size_t kPackedCarrierBytes = 4096;
+    constexpr std::size_t kDefaultRouteFp32Bytes = kLogicalInt8Bytes * 4;
+    pcie_internal::HostPcieChannel::validate_output_payload_size(kPackedCarrierBytes,
+                                                                 kPackedCarrierBytes, true);
+    bool rejected_default_route_payload = false;
     try {
-      pcie_internal::HostPcieChannel::validate_output_payload_size(2270372, 994032, true);
+      pcie_internal::HostPcieChannel::validate_output_payload_size(kDefaultRouteFp32Bytes,
+                                                                   kPackedCarrierBytes, true);
     } catch (const std::runtime_error&) {
-      rejected_oversized_mla_output = true;
+      rejected_default_route_payload = true;
     }
-    require(rejected_oversized_mla_output,
-            "a compacted route must reject a payload that is not exactly the packed size");
+    require(rejected_default_route_payload,
+            "a compacted route must reject the larger payload the default route would return");
+    bool rejected_short_carrier = false;
+    try {
+      pcie_internal::HostPcieChannel::validate_output_payload_size(kLogicalInt8Bytes,
+                                                                   kPackedCarrierBytes, true);
+    } catch (const std::runtime_error&) {
+      rejected_short_carrier = true;
+    }
+    require(rejected_short_carrier, "a compacted route must reject a short carrier");
 
     simaai::neat::pcie::Tensor int8_tensor;
     int8_tensor.dtype = simaai::neat::pcie::TensorDType::Int8;

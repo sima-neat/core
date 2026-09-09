@@ -190,7 +190,7 @@ public_quant(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuant
   out.axis = quant->axis;
   for (const auto scale : quant->scales) {
     if (invert_scale && scale == 0.0) {
-      throw std::runtime_error("mla_only input '" + name + "' has a zero quantization scale");
+      throw std::runtime_error("mla_only tensor '" + name + "' has a zero quantization scale");
     }
     out.scales.push_back(static_cast<float>(invert_scale ? 1.0 / scale : scale));
   }
@@ -341,7 +341,7 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
                                "' does not match the shape of its dequantized output");
     }
     fact.name = strip_public_route_wrapper_prefix(dequantize.output_tensors.front().name);
-    fact.quant = public_quant(dequantize.quant, false, fact.name);
+    fact.quant = public_quant(dequantize.quant, true, fact.name);
     fact.dense_offset = facts->dense_output_bytes;
     if (!simaai::neat::pipeline_internal::safe_add(facts->dense_output_bytes, fact.size_bytes,
                                                    &facts->dense_output_bytes)) {

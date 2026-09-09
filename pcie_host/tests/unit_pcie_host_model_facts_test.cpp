@@ -130,7 +130,7 @@ void link(mpk::MpkContract& contract, const std::size_t src, const int src_outpu
 
 mpk::MpkContract mla_only_contract() {
   mpk::MpkContract contract;
-  contract.ingress_tensors.push_back(tensor("input_luv", "FP32", {2, 3, 4}, 96));
+  contract.ingress_tensors.push_back(tensor("input_0", "FP32", {2, 3, 4}, 96));
 
   const auto mla_input = head("quantize_0", {1, 2, 3, 4}, {2, 3, 4}, 24);
   const auto carrier = tensor("MLA_0", "", {1, 160}, 160);
@@ -142,7 +142,7 @@ mpk::MpkContract mla_only_contract() {
   const auto out_1 = tensor("dequantize_3/head_1", "FP32", {1, 4, 16}, 256);
 
   contract.plugins = {
-      stage("quantize_0", "quantization_transform", {tensor("input_luv", "FP32", {2, 3, 4}, 96)},
+      stage("quantize_0", "quantization_transform", {tensor("input_0", "FP32", {2, 3, 4}, 96)},
             {mla_input}),
       stage("MLA_0", "mla", {mla_input}, {carrier}),
       stage("MLA_0_ofm_unpack_transform", "unpack_transform", {carrier}, {unpack_0, unpack_1}),
@@ -210,7 +210,7 @@ void test_mla_only_facts_describe_ingress_and_heads() {
   const auto facts = pcie_internal::detail::read_mla_only_facts(mla_only_contract());
 
   require(facts.inputs.size() == 1U, "expected one mla_only input");
-  require(facts.inputs.front().name == "input_luv", "input must carry the public name");
+  require(facts.inputs.front().name == "input_0", "input must carry the public name");
   require(facts.inputs.front().dtype == "INT8", "input must be INT8");
   require(facts.inputs.front().shape == std::vector<std::int64_t>({2, 3, 4}),
           "input must use the MLA logical shape");
@@ -224,9 +224,9 @@ void test_mla_only_facts_describe_ingress_and_heads() {
   require(facts.outputs.size() == 2U, "expected two mla_only heads");
   const auto& sliced = facts.outputs[0];
   require(sliced.name == "head_0", "sliced head must carry the dequantized output name");
-  require(sliced.quant.has_value() && sliced.quant->scales == std::vector<float>{0.5f} &&
+  require(sliced.quant.has_value() && sliced.quant->scales == std::vector<float>{2.0f} &&
               sliced.quant->zero_points == std::vector<std::int32_t>{3},
-          "sliced head must carry its dequantize parameters");
+          "sliced head must publish the inverted dequantize scale");
   require(sliced.dtype == "INT8" && sliced.shape == std::vector<std::int64_t>({2, 3, 2}) &&
               sliced.size_bytes == 12U,
           "sliced head must publish its logical INT8 geometry");
@@ -238,7 +238,7 @@ void test_mla_only_facts_describe_ingress_and_heads() {
 
   const auto& direct = facts.outputs[1];
   require(direct.name == "head_1" && direct.quant.has_value() &&
-              direct.quant->scales == std::vector<float>{2.0f} &&
+              direct.quant->scales == std::vector<float>{0.5f} &&
               direct.quant->zero_points == std::vector<std::int32_t>{-7},
           "direct head must carry its dequantized name and parameters");
   require(direct.shape == std::vector<std::int64_t>({1, 4, 16}) && direct.size_bytes == 64U,
