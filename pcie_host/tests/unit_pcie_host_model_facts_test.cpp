@@ -151,7 +151,10 @@ mpk::MpkContract mla_only_contract() {
       stage("dequantize_3", "dequantization_transform", {unpack_1}, {out_1}),
       stage("PassThrough", "pass_through", {out_0, out_1}, {out_0, out_1}),
   };
+  contract.plugins[0].quant = mpk::MpkQuantContract{.scales = {4.0}, .zero_points = {-128}};
   contract.plugins[3].slice_begin = {0, 0, 0, 0};
+  contract.plugins[4].quant = mpk::MpkQuantContract{.scales = {0.5}, .zero_points = {3}};
+  contract.plugins[5].quant = mpk::MpkQuantContract{.scales = {2.0}, .zero_points = {-7}};
   for (std::size_t i = 0; i < contract.plugins.size(); ++i) {
     contract.plugins[i].sequence = static_cast<int>(i);
   }
@@ -213,9 +216,17 @@ void test_mla_only_facts_describe_ingress_and_heads() {
           "input must use the MLA logical shape");
   require(facts.inputs.front().size_bytes == 24U && facts.packed_input_bytes == 24U,
           "input must use the MLA byte size");
+  require(facts.inputs.front().quant.has_value() &&
+              facts.inputs.front().quant->scales == std::vector<float>{0.25f} &&
+              facts.inputs.front().quant->zero_points == std::vector<std::int32_t>{-128},
+          "input quant must publish the inverted quantize scale");
 
   require(facts.outputs.size() == 2U, "expected two mla_only heads");
   const auto& sliced = facts.outputs[0];
+  require(sliced.name == "head_0", "sliced head must carry the dequantized output name");
+  require(sliced.quant.has_value() && sliced.quant->scales == std::vector<float>{0.5f} &&
+              sliced.quant->zero_points == std::vector<std::int32_t>{3},
+          "sliced head must carry its dequantize parameters");
   require(sliced.dtype == "INT8" && sliced.shape == std::vector<std::int64_t>({2, 3, 2}) &&
               sliced.size_bytes == 12U,
           "sliced head must publish its logical INT8 geometry");
@@ -226,6 +237,10 @@ void test_mla_only_facts_describe_ingress_and_heads() {
   require(sliced.dense_offset == 0U, "first head starts the dense block");
 
   const auto& direct = facts.outputs[1];
+  require(direct.name == "head_1" && direct.quant.has_value() &&
+              direct.quant->scales == std::vector<float>{2.0f} &&
+              direct.quant->zero_points == std::vector<std::int32_t>{-7},
+          "direct head must carry its dequantized name and parameters");
   require(direct.shape == std::vector<std::int64_t>({1, 4, 16}) && direct.size_bytes == 64U,
           "direct head must publish its logical INT8 geometry");
   require(direct.transport_strides_bytes == std::vector<std::int64_t>({64, 16, 1}),
@@ -251,6 +266,17 @@ void test_mla_only_rejects_unusable_output_geometry() {
   lane_split.plugins[1].align_c16 = true;
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(lane_split); },
                    "lane-split", "a lane-split MLA boundary must be rejected");
+
+  auto orphan = mla_only_contract();
+  orphan.edges.erase(orphan.edges.begin() + 4);
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(orphan); },
+                   "no dequantize consumer", "a head without a dequantize stage must be rejected");
+
+  auto reshaped = mla_only_contract();
+  reshaped.plugins[5].output_tensors.front().mpk_shape = {1, 4, 15};
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(reshaped); },
+                   "shape of its dequantized output",
+                   "a head whose dequantized output has another shape must be rejected");
 }
 
 } // namespace
