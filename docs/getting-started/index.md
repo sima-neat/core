@@ -38,8 +38,9 @@ Library, and PyNeat are optional side-trips you can skip until you pair a DevKit
 
 <div class="overview-section-label">Reading the commands</div>
 
-Every command block in these docs is labelled and colour-coded with the
-environment it runs in, so you never have to guess where to type it:
+Command blocks in the setup and application guides are labelled and
+colour-coded with the environment they run in, so you never have to guess where
+to type them:
 
 | Prompt | Run it |
 | --- | --- |
@@ -49,8 +50,7 @@ environment it runs in, so you never have to guess where to type it:
 | `pcie-host$` | On the host machine holding the Modalix PCIe card. |
 
 A block labelled with more than one environment, such as `sdk or devkit$`, runs
-the same way in either place. Where a command's paths are relative, the block
-also names the directory to run it from.
+the same way in either place.
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
