@@ -918,6 +918,8 @@ set(PERF_TARGETS
   perf_runtime_codec_h265_decode_test
   perf_runtime_model_archive_load_test
   perf_ssd_mobilenet_boxdecode_test
+  perf_yolox_seg_pose_payload_representative_test
+  perf_yolox_seg_pose_payload_heavy_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -960,6 +962,23 @@ if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
   set_property(TEST ssd_mobilenet_boxdecode_perf_smoke
     APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
 endif()
+
+# Model-free and device-free, so these run in the regular perf lane rather than the
+# device-gated one and must fail rather than skip.
+foreach(seg_pose_perf representative heavy)
+  set(seg_pose_perf_target "perf_yolox_seg_pose_payload_${seg_pose_perf}_test")
+  if (NOT seg_pose_perf_target IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    add_test(
+      NAME yolox_seg_pose_payload_${seg_pose_perf}_perf
+      COMMAND ${seg_pose_perf_target}
+    )
+    simaneat_append_ctest_env(yolox_seg_pose_payload_${seg_pose_perf}_perf)
+    set_tests_properties(yolox_seg_pose_payload_${seg_pose_perf}_perf PROPERTIES
+      LABELS "perf;boxdecode;metrics"
+      TIMEOUT 300
+    )
+  endif()
+endforeach()
 
 set(PERF_PYTHON_TESTS
   test_perf_schema
