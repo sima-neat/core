@@ -373,6 +373,56 @@ int infer_named_class_depth(const BoxDecodeStaticContract& contract) {
   return saw_class_tensor && inferred.has_value() ? *inferred : 0;
 }
 
+// Roles in this family are positional, so an unrecognized head name must not make an
+// otherwise valid export unusable. Returns the class head depth, or 0 if the geometry does
+// not match the documented contract.
+int infer_yolox_seg_pose_positional_class_depth(const BoxDecodeStaticContract& contract) {
+  constexpr int kHeads = 3;
+  constexpr int kRoles = 4; // bbox, class, mask_coeff, kpt
+  constexpr int kBbox = 0;
+  constexpr int kClass = 1;
+  constexpr int kMaskCoeff = 2;
+  constexpr int kKpt = 3;
+  constexpr int kBboxDepth = 4;
+  constexpr int kProtoDepth = 32;
+  constexpr std::size_t kTensors = kHeads * kRoles + 1U;
+
+  if (contract.tensors.size() != kTensors) {
+    return 0;
+  }
+  std::array<int, kTensors> depth{};
+  for (std::size_t i = 0; i < kTensors; ++i) {
+    depth[i] = logical_channel_depth(contract.tensors[i]);
+    if (depth[i] <= 0) {
+      return 0;
+    }
+  }
+  // Same rule the backend uses: role-major always leads with the three bbox heads, and
+  // head-major cannot, because bbox and mask_coeff depths are both pinned and differ.
+  const bool role_major = depth[0] == depth[1] && depth[1] == depth[2];
+  const auto slot = [role_major](int role, int head) {
+    return static_cast<std::size_t>(role_major ? role * kHeads + head : head * kRoles + role);
+  };
+
+  if (depth[kTensors - 1U] != kProtoDepth) {
+    return 0;
+  }
+  int class_depth = 0;
+  for (int head = 0; head < kHeads; ++head) {
+    // Confirm the non-class slots before trusting the class slot's position.
+    if (depth[slot(kBbox, head)] != kBboxDepth || depth[slot(kMaskCoeff, head)] != kProtoDepth ||
+        (depth[slot(kKpt, head)] % 3) != 0) {
+      return 0;
+    }
+    const int candidate = depth[slot(kClass, head)];
+    if (candidate <= 1 || (class_depth != 0 && class_depth != candidate)) {
+      return 0;
+    }
+    class_depth = candidate;
+  }
+  return class_depth;
+}
+
 int infer_grouped_dfl_class_depth(const BoxDecodeStaticContract& contract) {
   if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return 0;
@@ -659,7 +709,11 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
     // greater than the class-block width. Derive N from the head rather than demanding
     // it: the standalone SimaBoxDecode route has no way to supply a count (it always
     // finalizes with 0), so requiring one made the decode type unusable outside an MPK.
-    const int class_head_depth = infer_named_class_depth(contract);
+    int class_head_depth = infer_named_class_depth(contract);
+    if (class_head_depth <= 1) {
+      // Names are a hint, not the contract: fall back to the documented head positions.
+      class_head_depth = infer_yolox_seg_pose_positional_class_depth(contract);
+    }
     if (class_head_depth > 1) {
       const int encoded = class_head_depth - 1;
       if (user_num_classes > 0 && user_num_classes != encoded) {
