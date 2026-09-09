@@ -338,4 +338,73 @@ RUN_TEST(
           decode_segmentation_pose(TensorList{seg_pose_with_bbox_tag}).front().keypoints.shape[0] ==
               1,
           "decode_segmentation_pose should accept current BBOX-caps combined payloads");
+
+      // Empty output: a full-capacity buffer with a zero count yields zero rows in all
+      // three regions, not one row of slot-0 garbage.
+      const Tensor empty_seg_pose = make_wire_tensor(make_segmentation_pose_payload(0, 8),
+                                                     kDetectionFormatBboxSegmentationPose);
+      const auto empty_decoded = decode_segmentation_pose(TensorList{empty_seg_pose}).front();
+      require(empty_decoded.boxes.shape == std::vector<int64_t>({0, kDecodedBoxColumns}),
+              "an empty segmentation-pose payload must decode to zero boxes");
+      require(empty_decoded.masks.shape ==
+                  std::vector<int64_t>({0, kDecodedMaskHeight, kDecodedMaskWidth}),
+              "an empty segmentation-pose payload must decode to zero masks");
+      require(empty_decoded.keypoints.shape ==
+                  std::vector<int64_t>({0, kDecodedPoseKeypoints, kDecodedPoseColumns}),
+              "an empty segmentation-pose payload must decode to zero keypoints");
+      // Pre-existing and cross-cutting, not specific to this family: Tensor::copy_payload_bytes
+      // has no zero-byte path, so reading an empty result throws "mapping failed" rather than
+      // returning an empty vector. Pinned here so a future fix is a deliberate change; a
+      // consumer must currently check shape[0] before copying.
+      require(
+          throws_with([&]() { (void)empty_decoded.masks.copy_payload_bytes(); }, "mapping failed"),
+          "empty-result copy_payload_bytes behaviour changed");
+
+      // Partially filled: capacity sets the region strides, the count sets the row count.
+      // Reading slot 3's mask proves the stride still came from capacity, not the count.
+      const Tensor partial_seg_pose = make_wire_tensor(make_segmentation_pose_payload(4, 8),
+                                                       kDetectionFormatBboxSegmentationPose);
+      const auto partial = decode_segmentation_pose(TensorList{partial_seg_pose}).front();
+      require(partial.boxes.shape[0] == 4 && partial.masks.shape[0] == 4 &&
+                  partial.keypoints.shape[0] == 4,
+              "a partially filled payload must decode exactly count rows");
+      const std::vector<uint8_t> partial_masks = partial.masks.copy_payload_bytes();
+      require(partial_masks[3U * sp_mask_bytes] == 4,
+              "slot 3's mask must be reached with a capacity-derived stride");
+      const std::vector<float> partial_kpts = tensor_float_values(partial.keypoints);
+      require(partial_kpts[3U * static_cast<std::size_t>(kDecodedPoseKeypoints) *
+                           static_cast<std::size_t>(kDecodedPoseColumns)] == 4000.0f,
+              "slot 3's keypoints must be reached past the full mask region");
+
+      // Capacity limit. The generic bbox bound (body / sizeof(RawBox)) is far too loose for
+      // this format - it would admit 2152 rows in a 2-slot payload - so the guard that
+      // matters is the capacity derived from the combined stride. Non-strict clamps to it,
+      // strict rejects; either way the decoder never reads past the pose region.
+      std::vector<uint8_t> overrun = make_segmentation_pose_payload(2, 2);
+      const uint32_t impossible = 9;
+      std::memcpy(overrun.data(), &impossible, sizeof(impossible));
+      const Tensor overrun_tensor = make_wire_tensor(overrun, kDetectionFormatBboxSegmentationPose);
+      const auto clamped = decode_segmentation_pose(TensorList{overrun_tensor}).front();
+      require(clamped.boxes.shape[0] == 2 && clamped.masks.shape[0] == 2 &&
+                  clamped.keypoints.shape[0] == 2,
+              "a count header beyond capacity must clamp to capacity, not read past it");
+      require(throws_with(
+                  [&]() {
+                    (void)decode_segmentation_pose(TensorList{overrun_tensor}, 0, 0, 0,
+                                                   /*strict=*/true);
+                  },
+                  "exceeds"),
+              "strict mode must reject a count header beyond capacity");
+
+      // top_k caps the rows returned without changing the region strides.
+      const Tensor capped_tensor = make_wire_tensor(make_segmentation_pose_payload(4, 8),
+                                                    kDetectionFormatBboxSegmentationPose);
+      const auto capped =
+          decode_segmentation_pose(TensorList{capped_tensor}, 0, 0, /*top_k=*/2, /*strict=*/false)
+              .front();
+      require(capped.boxes.shape[0] == 2 && capped.masks.shape[0] == 2 &&
+                  capped.keypoints.shape[0] == 2,
+              "top_k must cap the decoded row count");
+      require(capped.masks.copy_payload_bytes()[sp_mask_bytes] == 2,
+              "a top_k-capped decode must keep the capacity-derived mask stride");
     }));
