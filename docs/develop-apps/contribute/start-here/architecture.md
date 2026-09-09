@@ -1184,3 +1184,18 @@ Keep docs and code aligned:
 5. **Keep the public API stable**
 
    * internal refactors should not break user code unless intentionally versioned
+
+
+### Direct accelerator transport
+
+Accelerator execution uses validated DMA-BUF plans without a backend-selection
+environment variable. CPU-only graphs can continue to use SystemMemory.
+When an encoder needs device-visible NV12 input, graph preparation inserts the
+explicit SystemMemory-to-CMA materialization boundary; existing device-visible
+input stays direct.
+
+Decoder graph analysis retains zero-copy and admission policy. The direct codec
+library owns hardware reservations through the kernel command FD, so production
+decode does not require a separate admission socket. Build Core against the
+matching installed Internals package and deploy its private runtime and plugin
+components together.

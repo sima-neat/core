@@ -336,7 +336,7 @@ typedef struct SimaPluginProcessCvuStagePayload {
   gint debug;
   guint32 opt_flags;
   gboolean canonical_contract;
-  /* Core parsed SIMA_NEAT_MEMORY_BACKEND once and proved this stage through
+  /* Core proved this stage through
    * the strict MPK+ELF execution plan. The plugin must not re-read the
    * environment or fall back to the dispatcher when this bit is true. */
   gboolean dmabuf_plan_contract;
@@ -404,7 +404,7 @@ typedef struct SimaPluginProcessMlaStagePayload {
   guint elf_ifm_symbol_names_len;
   const gchar* const* elf_ofm_symbol_names;
   guint elf_ofm_symbol_names_len;
-  /* Core parsed SIMA_NEAT_MEMORY_BACKEND once and proved this stage through
+  /* Core proved this stage through
    * the strict MPK+ELF decoder. The plugin must not re-read the environment. */
   gboolean dmabuf_plan_contract;
 } SimaPluginProcessMlaStagePayload;

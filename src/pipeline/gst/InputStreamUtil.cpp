@@ -6,7 +6,6 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/InputPolicy.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/TessellatedTensor.h"
 #include "nodes/io/Input.h"
@@ -1913,10 +1912,8 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
         throw std::runtime_error(tag + ": unable to determine dense byte size for device tensor");
       }
       std::vector<Segment> segments{{"ifm0", device_bytes}};
-      return pipeline_internal::transfer_to_device(
-          out, target, &segments,
-          /*required_segment_names=*/nullptr,
-          pipeline_internal::process_memory_backend_selection().policy);
+      return pipeline_internal::transfer_to_device(out, target, &segments,
+                                                   /*required_segment_names=*/nullptr);
     }
     return out;
   }
@@ -2217,9 +2214,8 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
   return caps;
 }
 
-GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
-                                 InputBufferPoolGuard& guard,
-                                 const pipeline_internal::MemoryBackendPolicy backend) {
+GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt, InputBufferPoolGuard& guard,
+                                 const bool use_dmabuf_transport) {
 #if SIMA_HAS_SIMAAI_POOL
   const std::string media_type_up = upper_copy(resolve_input_media_type(opt));
   const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
@@ -2234,8 +2230,7 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
     if (!pool) {
       const auto t_create_start = std::chrono::steady_clock::now();
       GstBufferPool* new_pool = nullptr;
-      const bool standard_dmabuf =
-          backend == pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+      const bool standard_dmabuf = use_dmabuf_transport;
       if (standard_dmabuf) {
         simaai::neat::internal::dmabuf::Error error;
         const auto heap = opt.memory_policy == InputMemoryPolicy::Dms0
@@ -2319,9 +2314,7 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
 
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                                  InputBufferPoolGuard& guard) {
-  return allocate_input_buffer(
-      bytes, opt, guard,
-      pipeline_internal::process_memory_backend_selection().policy);
+  return allocate_input_buffer(bytes, opt, guard, /*use_dmabuf_transport=*/false);
 }
 
 int64_t next_input_frame_id() {

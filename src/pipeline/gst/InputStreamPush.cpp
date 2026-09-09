@@ -2283,7 +2283,7 @@ bool InputStream::try_push_message(const Sample& msg) {
                                                  : std::chrono::steady_clock::time_point{};
     std::string err;
     auto holder = pipeline_internal::sample_to_gst_envelope_holder(
-        envelope, &err, allow_zero_copy_transport, st->opt.memory_backend_policy);
+        envelope, &err, allow_zero_copy_transport, st->opt.use_dmabuf_transport);
     const auto inputstream_after_envelope = inputstream_top_timing
                                                 ? std::chrono::steady_clock::now()
                                                 : std::chrono::steady_clock::time_point{};

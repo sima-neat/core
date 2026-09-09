@@ -17,6 +17,12 @@ namespace simaai::neat::nodes::groups::internal {
 
 inline constexpr std::string_view kNeatEncoderInputLayoutAwareCapability =
     "neatencoder.input-layout-aware";
+inline constexpr std::string_view kVideoSenderRawIngressDirectKind =
+    "VideoSenderRawIngress[direct_nv12]";
+inline constexpr std::string_view kVideoSenderRawIngressMaterializeKind =
+    "VideoSenderRawIngress[materialize_nv12]";
+inline constexpr std::string_view kVideoSenderRawIngressConvertKind =
+    "VideoSenderRawIngress[convert_to_nv12]";
 
 /**
  * Decide whether an upstream NV12 contract is strong and layout-safe enough to

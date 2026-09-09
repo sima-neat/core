@@ -1465,8 +1465,7 @@ simaai::neat::Tensor move_e2e_input_tensor_to_ev74_if_enabled(simaai::neat::Tens
   }
   std::vector<simaai::neat::Segment> segments{{"ifm0", bytes}};
   return simaai::neat::pipeline_internal::transfer_to_device(
-      input, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr,
-      simaai::neat::pipeline_internal::process_memory_backend_selection().policy);
+      input, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr);
 }
 
 simaai::neat::Tensor build_canonical_preprocessed_input(const cv::Mat& img_bgr,

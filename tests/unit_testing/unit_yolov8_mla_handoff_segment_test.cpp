@@ -15,9 +15,6 @@ RUN_TEST(
     "unit_yolov8_mla_handoff_segment_test", ([] {
       using namespace simaai::neat;
 
-      require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
-              "failed to select the strict DMA-BUF backend for the YOLOv8 handoff test");
-
       const std::filesystem::path core_root = sima_test::test_source_root();
       const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
       require(!tar_path.empty(), "expected modelzoo-backed yolo_v8s .tar.gz MPK with *_mpk.json");

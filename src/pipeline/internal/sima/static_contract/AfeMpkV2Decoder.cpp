@@ -753,7 +753,6 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
       reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
              "legacy cast_transform has an unsupported exact dtype transition");
     }
-    merge_layout(data.values[op.inputs.front()], "HWC", path);
     break;
   }
   case OpKind::Mla: {

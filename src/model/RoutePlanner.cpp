@@ -2594,7 +2594,7 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   }
   const auto& graph = pack.route_graph();
   const auto& contract = *pack.mpk_contract();
-  const bool model_managed_execution_plan = pack.uses_model_execution_plan();
+  const bool model_managed_execution_plan = pack.owns_model_execution_plan();
   out->model_managed_execution_plan = model_managed_execution_plan;
   const auto mla_stages = pipeline_internal::sima::get_mla_stage_io_contracts(contract);
   if (mla_stages.empty()) {
@@ -2726,15 +2726,16 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     }
     const bool before_mla = rank_it->second < mla_rank;
     const bool after_mla = rank_it->second > last_mla_rank;
-    // The strict execution plan is the only scheduling authority.  Its
-    // physical lowerer already contains every A65/CVU command before, between,
-    // and after MLA stages.  RoutePlanner only supplies application-boundary
-    // facts in this mode; treating those commands as external adapters would
-    // duplicate them and used to reject every interstitial A65 DAG.
-    if (model_managed_execution_plan) {
-      continue;
-    }
+    // Always retain the semantic pre/post decomposition. A compiler-owned
+    // physical schedule suppresses separate materialization later in
+    // session planning; it must not erase customer-visible stage semantics.
     if (!before_mla && !after_mla) {
+      if (model_managed_execution_plan) {
+        // Commands between MLA cohorts are part of inference itself. They are
+        // neither public preprocess nor public postprocess stages, and the
+        // compiler-owned physical schedule already preserves their order.
+        continue;
+      }
       if (route_debug_enabled()) {
         std::fprintf(stderr,
                      "[route-debug] unsupported materializing stage between MLA stages: "
@@ -3426,8 +3427,10 @@ ModelSemantics build_model_semantics(const ModelPack& pack) {
   return out;
 }
 
-SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSemantics& semantics,
-                                  const RouteCapability* capability, const ModelPack* pack) {
+static SessionRoutePlan build_route_plan_impl(const Model::Options& options,
+                                              const ModelSemantics& semantics,
+                                              const RouteCapability* capability,
+                                              const ModelPack* pack) {
   SessionRoutePlan out;
   out.output_physical_count = semantics.output_physical_count;
   out.output_logical_count = semantics.output_logical_count;
@@ -4000,6 +4003,57 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
   }
   return out;
 }
+
+SessionRoutePlan build_semantic_route_plan(const Model::Options& options,
+                                           const ModelSemantics& semantics,
+                                           const RouteCapability* capability,
+                                           const ModelPack* pack) {
+  if (!capability) {
+    return build_route_plan_impl(options, semantics, nullptr, pack);
+  }
+  RouteCapability semantic_capability = *capability;
+  semantic_capability.model_managed_execution_plan = false;
+  return build_route_plan_impl(options, semantics, &semantic_capability, pack);
+}
+
+SessionRoutePlan build_session_route_plan(const Model::Options& options,
+                                          const ModelSemantics& semantics,
+                                          const RouteCapability* capability,
+                                          const ModelPack* pack) {
+  if (!capability || !capability->model_managed_execution_plan) {
+    return build_route_plan_impl(options, semantics, capability, pack);
+  }
+
+  // A compiler-owned schedule contains every internal adapter. Keep only its
+  // application boundary and intrinsic MLA facts in the executable session
+  // plan; the semantic projection above remains the authority for public
+  // stage APIs. Feeding the semantic adapter facts back into the session plan
+  // changes runtime metadata and recreates work already represented by the
+  // physical handoff contracts.
+  RouteCapability boundary = *capability;
+  boundary.pre_kind = PreRouteStageKind::None;
+  boundary.post_kind = PostRouteStageKind::None;
+  boundary.has_external_pre = false;
+  boundary.has_external_post = false;
+  boundary.has_external_tess = false;
+  boundary.has_external_pre_cast = false;
+  boundary.has_external_detess = false;
+  boundary.has_external_dequant = false;
+  boundary.has_external_post_cast = false;
+  boundary.has_external_boxdecode = false;
+  boundary.has_strict_boxdecode_route = false;
+  boundary.tessellation_location = TessellationLocation::Unknown;
+  boundary.tess_needed = false;
+  boundary.quant_needed = boundary.mla_output_quantized;
+  boundary.needs = {};
+  boundary.adapter_capabilities = {};
+  boundary.ordered_pre_ops.clear();
+  boundary.ordered_post_ops.clear();
+  boundary.egress_contract = {};
+  boundary.egress_contracts.clear();
+  return build_route_plan_impl(options, semantics, &boundary, pack);
+}
+
 RouteCapability extract_route_capability(const ModelPack& pack,
                                          const PreprocessPlannerResult& preprocess_plan) {
   (void)preprocess_plan;

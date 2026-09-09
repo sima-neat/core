@@ -63,7 +63,7 @@ RUN_TEST(
             const RouteCapability capability = extract_route_capability(pack, preprocess_plan);
             const ModelSemantics semantics = build_model_semantics(pack);
             const SessionRoutePlan route_plan =
-                build_route_plan(opt, semantics, &capability, &pack);
+                build_semantic_route_plan(opt, semantics, &capability, &pack);
 
             require(route_plan.post_regions.size() == expected_regions.size(),
                     "unexpected fused post region count for " + model_path.filename().string());

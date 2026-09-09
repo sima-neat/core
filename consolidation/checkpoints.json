@@ -1,0 +1,26 @@
+[
+  {
+    "branch": "codex/dmabuf-driver-consolidated",
+    "head": "cd2b33d5e28aede0cad8c8456132070c67024402",
+    "snapshot": "5c9fb41ea4fa07c1bc4470141f874f34177dec83",
+    "backup_ref": "refs/heads/backup/driver-consolidation-20260909-core-consolidation",
+    "restore_verified": true,
+    "remote_verified": true
+  },
+  {
+    "branch": "codex/final-kernel-work",
+    "head": "4b362d20279e0c5c04342654672ed0587e54df69",
+    "snapshot": "2688cc2a426a5a8b24c3b33a98b8f6830f1f005f",
+    "backup_ref": "refs/heads/backup/driver-consolidation-20260909-core-local",
+    "restore_verified": true,
+    "remote_verified": true
+  },
+  {
+    "branch": "detached",
+    "head": "611dced9a60991b2f53487cfd511558b7bec3522",
+    "snapshot": "21289aa40385ebe48dbe1368c6a6c9ffbcc0eacb",
+    "backup_ref": "refs/heads/backup/driver-consolidation-20260909-core-baseline-probe",
+    "restore_verified": true,
+    "remote_verified": true
+  }
+]

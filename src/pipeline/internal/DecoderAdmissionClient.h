@@ -46,13 +46,7 @@ struct DecoderAdmissionResult {
   std::vector<DecoderAdmissionLease> leases;
 };
 
-bool decoder_admission_endpoint_available();
-DecoderAdmissionResult
-admit_decoder_graph(const std::vector<DecoderAdmissionStreamRequest>& streams,
-                    bool dry_run = false);
-bool release_decoder_graph(const std::array<std::uint8_t, 16>& group_uuid, std::string* error);
 std::string decoder_admission_uuid_to_string(const std::array<std::uint8_t, 16>& uuid);
 const char* decoder_admission_tuning_name(std::uint32_t tuning);
-const char* decoder_admission_status_name(std::uint32_t status);
 
 } // namespace simaai::neat::pipeline_internal

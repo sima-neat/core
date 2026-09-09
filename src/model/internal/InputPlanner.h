@@ -83,6 +83,10 @@ struct PreprocessPlannerResult {
   std::string route_selected_post_kind = "none";
   bool route_cast_symmetry_ok = true;
   std::vector<std::string> route_diagnostics;
+  // Customer-visible stage decomposition. The session route may collapse the
+  // same commands into one compiler-owned physical schedule, but that must not
+  // erase Model::preprocess()/postprocess() semantics or metadata.
+  SessionRoutePlan semantic_route_plan;
   SessionRoutePlan session_route_plan;
 
   std::string modelpack_media_type;

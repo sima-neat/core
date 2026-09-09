@@ -1,0 +1,77 @@
+{
+  "kernel_sha": "bae3db458eb0cbfd02e935efc62ffa65df7f4d41",
+  "uapi_sha256": {
+    "mla.h": "d9fa300f1455d3242782e7e141794253823f9e788a0d7c94d21cbb85e38256e8",
+    "simaai_cvu.h": "26ce9786036f39eeb9d100c35c9bcc2228ccfa3c81d6dcf123d47a80b85940d4",
+    "al5_cmd.h": "3b25baab0af4bd681c05ac128d5e8a6e44c5903b91636bc1860969386f79e377"
+  },
+  "abi": [
+    {
+      "name": "SimaPreparedRuntimeAbi.h",
+      "sha256": "806bb15fd2bc8a3c178ef46006be469549992ec1d47ec29bd252e8874e61c5a8",
+      "matching_source_copies": true
+    },
+    {
+      "name": "SimaPluginStaticManifestAbi.h",
+      "sha256": "6eb4a18f5498443ed9b4f31d1b08d3380a80453637ba46941603b68e4c2da42d",
+      "matching_source_copies": true
+    },
+    {
+      "name": "SimaCvuCapabilityAbi.h",
+      "sha256": "1e72442b0603b74f5f28265bdcc4f7ce825e5639232af853f95486f1aedebd2c",
+      "matching_source_copies": true
+    },
+    {
+      "name": "SimaTensorSetMetaAbi.h",
+      "sha256": "112943fdd1dc862317af86e2dc7a438509c549669e9f184d85d9ec1dbc53b949",
+      "core_uses_installed_shim": true
+    }
+  ],
+  "core_base": "cd2b33d5e28aede0cad8c8456132070c67024402",
+  "internals_base": "a4085ed51663c7af77e4e253325abc0ccf5161ae",
+  "firmware_manifest": {
+    "cvu_commit": "clean_internals-4bae9c2d19c5",
+    "cvu_source_commit": "4bae9c2d19c510967caf242640e916d7ace754a3",
+    "clean_internals_commit": "377907f977953a17d4d4acda1236dfec7dd1e2e9",
+    "packaging_commit": "020cbb8a875d2d9a27db9d2c3256b512532aca4e",
+    "source_dirty": false,
+    "platform": "MICHELANGELO",
+    "raw_filename": "cvu_bridge.out",
+    "source_type": "private-artifact",
+    "source_uri": "https://artifacts.sima-neat.com/evfw/neat-ev74-firmware-377907f-michelangelo.zip",
+    "sha256": "88f732028dffbfab33f37cf06e9697226680b465e16fd40ca20abcd87b252ea6",
+    "verified_raw_sha256": "88f732028dffbfab33f37cf06e9697226680b465e16fd40ca20abcd87b252ea6",
+    "install_name": "modalix-cvu-fw",
+    "preproc_config_abi": {
+      "layout": "packed-scalar-hwc-v1",
+      "header_sha256": "e39e0b90f886b7f902777c276fd3004535a19777c797607d448d1c02046498b2",
+      "prefix_size_bytes": 151,
+      "offsets": {
+        "input_image": 119,
+        "output_tessellated_image": 135,
+        "metadata": 143,
+        "output_mode": 151
+      }
+    },
+    "runtime_archive_sha256": {
+      "libevthreads.a": "f4863db89e4fbe11549ce0e301cb4a7bcce4b83de7e588866f62af4548760fa1",
+      "libopen_amp.a": "6b4f4c52bf989199c06b1fbd2d979329165cbb2b64e522791fb63d28227ae22d",
+      "libmetal.a": "d41517736635ba11f516edaa6a97398df7e7a8f22a9616b25bfcb4f10020aaa2",
+      "libocl_server.a": "7759ac536f212f48ee9b5f7ecb2768a42ca844d11c5e5596e0a0864a607bbd95",
+      "libevdev.a": "8ed6f32682d9fe34708bd25712ca27ab96a8da827812f34d3cbaca7925b69837"
+    },
+    "notes": "Validated full clean Michelangelo EV74 firmware build from CVU source 4bae9c2; packaged by Internals 377907f. The packaged ABI matches the flat graph-200 preproc_config used by this source tree."
+  },
+  "reference_demo": {
+    "VERSION.json": "636eafea083ca21401f9138463f8d247e7c07f8d86cf27ffe93fa349b09c8f5e",
+    "docker-compose.yaml": "abda02c20a8353e84eebae504bf8a272d7aecfca07659dadaa52c2ccd65d1e6d",
+    "context/app48/entrypoint.sh": "11138c2f2f751f08359420e24df7d2d137705e3432a739caae42af63c407834d",
+    "context/app48/config-working.yaml": "7fe1f02ffd4066b54d2300e9b10216aac8d3691dbd5f917e44874dcdf3d27bd8",
+    "context/app48/assets/yolo26n-int8-tess-mpk.tar.gz": "7a1e1086ed8e43c9514b18aff6fb9fd7ce77acf2789c0e011e0c9abcd6686331"
+  },
+  "reference_models": {
+    "/workspace/final_kernel_work/artifacts/perf-models-20260815/resnet_50_mpk.tar.gz": "202fe6e5f7637fb7e323b512200c040bf98c2413328eb08bd48f6d9344ab5b69",
+    "/workspace/final_kernel_work/artifacts/perf-models-20260815/yolo_v8s_mpk.tar.gz": "029ddb603ceb96ac94d8e8f3647f333334e6c70566cc8e5e55efafb6f38c42d2"
+  },
+  "deployment": "NOT PERFORMED; preserved demo is not the newly built candidate"
+}

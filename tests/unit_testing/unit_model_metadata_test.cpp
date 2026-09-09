@@ -94,19 +94,18 @@ RUN_TEST(
                 "Model::metadata should dump array values");
         require(meta.at("nested") == "{\"a\":1}", "Model::metadata should dump object values");
 
-        const char* backend = std::getenv("SIMA_NEAT_MEMORY_BACKEND");
-        if (backend != nullptr && std::string(backend) == "dmabuf-plan") {
-          bool admission_rejected = false;
-          try {
-            (void)internal::ModelAccess::pack(model).memory_backend_decision();
-          } catch (const std::exception& error) {
-            admission_rejected = true;
-            require_contains(std::string(error.what()), "missing-mla-executable",
-                             "execution admission must still fail closed without the MLA ELF");
-          }
-          require(admission_rejected,
-                  "metadata-only construction must not make a missing MLA ELF executable");
+        bool admission_rejected = false;
+        require(internal::ModelAccess::pack(model).owns_model_execution_plan(),
+                "exact MPK route ownership must not depend on lazy admission order");
+        try {
+          (void)internal::ModelAccess::pack(model).dmabuf_plan_admission();
+        } catch (const std::exception& error) {
+          admission_rejected = true;
+          require_contains(std::string(error.what()), "missing-mla-executable",
+                           "execution admission must still fail closed without the MLA ELF");
         }
+        require(admission_rejected,
+                "metadata-only construction must not make a missing MLA ELF executable");
       }
 
       {

@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -193,25 +194,38 @@ void require_admitted_boundaries(const simaai::neat::Run& run, std::size_t expec
                                  const std::string& where) {
   const auto core = simaai::neat::run_internal::core(run);
   require(core != nullptr, where + ": missing RunCore");
-  require(core->decoder_admission && core->decoder_admission->active(),
-          where + ": decoder graph started without an admission lease");
+  require(!core->decoder_admission,
+          where + ": direct decoder must not depend on an external admission lease");
 
   std::size_t admitted_decoders = 0;
   if (core->graph_execution_) {
     for (const auto& pipeline : core->graph_execution_->pipelines) {
       require(pipeline != nullptr, where + ": missing pipeline segment");
-      admitted_decoders +=
-          count_occurrences(pipeline->last_pipeline, "decoder-admission-required=true");
+      admitted_decoders += count_occurrences(pipeline->last_pipeline, "neatdecoder name=");
     }
   } else {
     const auto diag = core->pipeline.stream.diag_ctx();
     require(diag != nullptr, where + ": simple pipeline has no diagnostics");
-    admitted_decoders = count_occurrences(diag->pipeline_string, "decoder-admission-required=true");
+    admitted_decoders = count_occurrences(diag->pipeline_string, "neatdecoder name=");
   }
 
   require(admitted_decoders == expected_decoders,
           where + ": expected " + std::to_string(expected_decoders) + " admitted decoder(s), got " +
               std::to_string(admitted_decoders));
+
+  // Reservations now live on command FDs, not Core socket leases. Multiple
+  // Run instances can coexist, so this process-wide count is a lower bound.
+  // Frame, rate, zero-copy and independent teardown checks below are unchanged.
+  std::size_t command_fds = 0;
+  for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+    std::error_code error;
+    const auto target = std::filesystem::read_symlink(entry.path(), error);
+    if (!error && target == "/dev/allegroDecodeIP") {
+      ++command_fds;
+    }
+  }
+  require(command_fds >= expected_decoders,
+          where + ": missing decoder command FDs for kernel-owned reservations");
 }
 
 double measure_throughput(const std::vector<simaai::neat::Run*>& runs,
