@@ -445,8 +445,22 @@ families, with these additional invariants:
 - Output is a single box-leading buffer carrying three regions — boxes, masks, then keypoints —
   each strided by `top_k`. Because boxes lead, `decode_bbox(...)` and `BoxDecodeResults(...)`
   stay valid on the same payload, while `decode_segmentation_pose(...)` returns all three.
-  Region offsets depend on `top_k` and the mask prototype extent, so consumers must not infer
-  them from buffer size.
+- The payload does not encode `top_k`, so region offsets are not directly readable from it.
+  `decode_segmentation_pose(...)` recovers the slot count by division —
+  `(size - 4) / (24 + 160*160 + 204)` — and derives the offsets from that. The division is
+  well posed only under all four conditions below, and a consumer reimplementing it must hold
+  the same ones:
+  - The detection-format tag selects the layout before any size arithmetic runs. A tag naming
+    a different layout is rejected, and an untagged buffer is accepted only as rank-1 `UInt8`.
+  - Every record size is a compile-time constant: a 4-byte count header, a 24-byte box record
+    and a 204-byte pose record (both `static_assert`ed), and one `160x160` mask plane.
+  - All three regions share one slot count, which the backend guarantees by sizing every
+    region from `out_box_slots()`. Upstream instead strided its box array by a fixed capacity
+    and its masks by `top_k`, which the same division cannot resolve; a65 `boxrender` still
+    reads masks at a hardcoded 20-box stride and so misreads any payload with `top_k != 20`.
+  - A body that is not a whole multiple of the combined stride is rejected rather than
+    rounded, and the count header is clamped to the derived capacity, so a corrupt header
+    cannot drive reads past the end of the buffer.
 - Keypoint gating by class travels through `Model::Options::pose_classes`, the typed static
   manifest's `pose_classes` field, and the backend's JSON control of the same name. Core
   copies keypoint rows through without interpreting them; the zeroing is the backend's. With
