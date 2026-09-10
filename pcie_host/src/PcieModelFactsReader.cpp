@@ -113,6 +113,9 @@ convert_tensor(const simaai::neat::pipeline_internal::sima::MpkTensorContract& t
   out.tensor_index = tensor.tensor_index;
   out.physical_index = tensor.physical_index;
   out.byte_offset = tensor.byte_offset;
+if (tensor.input_range.size() == 2U) {
+    out.input_range = std::make_pair(tensor.input_range[0], tensor.input_range[1]);
+  }
   return out;
 }
 
@@ -627,7 +630,8 @@ ModelInfo to_public_model_info(const PcieModelFacts& facts) {
                                     .dtype = input.dtype,
                                     .shape = input.shape,
                                     .size_bytes = input.size_bytes,
-                                    .quant = input.quant});
+                                    .quant = input.quant,
+                                    .input_range = input.input_range});
   }
   for (const auto& output : facts.outputs) {
     out.outputs.push_back(TensorInfo{.name = output.name,

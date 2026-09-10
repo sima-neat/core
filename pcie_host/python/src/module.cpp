@@ -1,6 +1,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -541,7 +542,8 @@ NB_MODULE(_pyneatpcie_core, m) {
       .def_rw("dtype", &pcie::TensorInfo::dtype)
       .def_rw("shape", &pcie::TensorInfo::shape)
       .def_rw("size_bytes", &pcie::TensorInfo::size_bytes)
-      .def_rw("quant", &pcie::TensorInfo::quant);
+      .def_rw("quant", &pcie::TensorInfo::quant)
+      .def_rw("input_range", &pcie::TensorInfo::input_range);
 
   nb::class_<pcie::ModelInfo>(m, "ModelInfo")
       .def(nb::init<>())

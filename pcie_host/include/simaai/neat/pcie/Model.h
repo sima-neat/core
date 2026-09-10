@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #if __has_include(<opencv2/core/mat.hpp>)
@@ -459,6 +460,7 @@ struct TensorInfo {
   std::vector<std::int64_t> shape;
   std::size_t size_bytes = 0;
   std::optional<QuantParams> quant;
+  std::optional<std::pair<double, double>> input_range;
 };
 
 struct ModelInfo {
