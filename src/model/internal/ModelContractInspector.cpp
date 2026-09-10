@@ -755,7 +755,7 @@ void append_route_summary(std::ostringstream& oss, const ModelPack& pack,
                   ? "<empty>"
                   : context.preprocess_plan->mla_contract.format);
   }
-  const ExecutionPlan plan = pack.execution_plan();
+  const ExecutionPlan plan = pack.semantic_execution_plan();
   append_kv(oss, 0, "planned_pre_chain", execution_plan_chain_string(plan.pre));
   append_kv(oss, 0, "planned_infer_chain", execution_plan_chain_string(plan.infer));
   append_kv(oss, 0, "planned_post_chain", execution_plan_chain_string(plan.post));
@@ -1090,7 +1090,7 @@ void append_typed_contract_group(std::ostringstream& oss, const std::string& gro
 void append_planned_model_stages(std::ostringstream& oss, const ModelPack& pack,
                                  const ModelContractReportOptions& options, ReportStats* stats) {
   append_section_header(oss, "Planned Model Stages");
-  const ExecutionPlan plan = pack.execution_plan();
+  const ExecutionPlan plan = pack.semantic_execution_plan();
   if (stage_group_selected(options.stage_filter, ModelStage::Preprocess)) {
     append_stage_plan_group(oss, "pre", plan.pre, options, stats);
   }

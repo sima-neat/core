@@ -536,23 +536,11 @@ bool pipeline_requires_tensor_input(const internal::PreprocessPlannerResult& pla
   return media == "APPLICATION/VND.SIMAAI.TENSOR";
 }
 
-bool route_uses_model_managed_graph200(
-    const internal::PreprocessPlannerResult& plan) {
+bool route_uses_model_managed_graph200(const internal::PreprocessPlannerResult& plan) {
   return plan.session_route_plan.include_pre_stage &&
          !plan.session_route_plan.pre_regions.empty() &&
          plan.session_route_plan.pre_regions.front().op_kind ==
              pipeline_internal::sima::RouteGraphKernelKind::Preproc;
-}
-
-bool route_absorbs_model_managed_graph200(
-    const internal::ModelPack& pack,
-    const internal::PreprocessPlannerResult& plan) {
-  // Graph-200 command absorption is a projection of the immutable physical
-  // DMA-BUF plan.  The legacy backend has no such plan and must keep its
-  // separately rendered preprocessing stage.  Keeping this decision next to
-  // route selection prevents a Graph-200 topology alone from accidentally
-  // opting the legacy path into strict-plan rendering.
-  return route_uses_model_managed_graph200(plan) && pack.uses_model_execution_plan();
 }
 
 internal::PreprocessContractFlags
@@ -686,42 +674,9 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
     return *matched;
   }
 
-  if (route_op && (!route_op->plugin_name.empty() || !route_op->plugin_id.empty())) {
-    if (pack.mpk_contract().has_value()) {
-      const std::array<std::string, 2> exact_candidates = {route_op->plugin_name,
-                                                           route_op->plugin_id};
-      for (const auto& candidate : exact_candidates) {
-        if (candidate.empty()) {
-          continue;
-        }
-        try {
-          return pipeline_internal::sima::stagesemantics::
-              build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(*pack.mpk_contract(),
-                                                                               kind, candidate);
-        } catch (const std::exception&) {
-        }
-      }
-    }
-  }
-
-  const auto* mpk_stage = find_pre_mla_processcvu_stage(
-      pack, kind == internal::ExecutionStageKind::Quant
-                ? std::initializer_list<const char*>{"quant", "quanttess", "preproc"}
-            : kind == internal::ExecutionStageKind::Tess
-                ? std::initializer_list<const char*>{"tess", "quanttess", "preproc"}
-            : kind == internal::ExecutionStageKind::CastTess
-                ? std::initializer_list<const char*>{"casttess", "tess", "preproc"}
-            : kind == internal::ExecutionStageKind::Cast
-                ? std::initializer_list<const char*>{"cast"}
-                : std::initializer_list<const char*>{"quanttess", "preproc"});
-
-  // Locate the (single) plan entry of the requested kind. For fan-in routes
-  // the MPK exposes separate per-ingress plugins (e.g. cast_0+tess_0 / cast_1+
-  // tess_1) but the route planner fuses them into ONE plan stage of kind
-  // CastTess (or QuantTess). In that case `mpk_stage->name` will be a raw
-  // per-ingress plugin name that does NOT match the fused fact's stage_name —
-  // matching by plan kind instead is unambiguous because the plan has exactly
-  // one stage per kind on the pre side.
+  // A fused physical cohort need not retain a single MPK plugin name.
+  // Resolve an unambiguous admitted stage of the requested kind; never lower
+  // a second executable contract from semantic MPK facts.
   std::optional<CompiledProcessCvuContract> matched;
   for (std::size_t i = 0; i < pre_plan.size(); ++i) {
     if (pre_plan[i].kind != kind) {
@@ -730,20 +685,6 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
     const auto& fact = stage_facts[i];
     if (!fact.processcvu_contract.has_value()) {
       continue;
-    }
-    if (mpk_stage && fact.stage_name != mpk_stage->name) {
-      // Per the function comment above, the plan has exactly one stage per
-      // kind on the pre side, so the kind filter already guarantees
-      // uniqueness.  The historic check below was originally added to gate
-      // multi-IO fan-in facts through (their stage_name is a fused virtual
-      // name that doesn't match any MPK plugin), but the same naming
-      // mismatch also happens for single-IO routes where the execution
-      // stage_name (e.g. "casttess") differs from the MPK plugin name
-      // (e.g. "tessellate_cast_0_MLA_0/...").  Skipping the fact in that
-      // case caused BF16 mpk pre-MLA contract resolution to fail.  Now
-      // accept the fact regardless of name as long as kind matched and a
-      // contract was built.
-      (void)fact;
     }
     if (matched.has_value()) {
       throw std::runtime_error(std::string("Model-managed ") +
@@ -4685,22 +4626,7 @@ struct Model::Impl {
                              ", runtime package path: " + package_root + ")");
     pipeline_internal::ux::ScopedVerboseContext verbose_ctx(options.verbose);
     auto verbose_guard = pipeline_internal::ux::acquire_runtime_verbosity(options.verbose);
-    const auto processcvu_pre_stage_selected = [&]() -> std::optional<bool> {
-      const auto& pre_chain = preprocess_plan.session_route_plan.pre_chain;
-      if (pre_chain.empty()) {
-        return std::nullopt;
-      }
-      const auto first = pre_chain.front();
-      if (first == internal::SessionPreStageOp::Preproc ||
-          first == internal::SessionPreStageOp::Quant ||
-          first == internal::SessionPreStageOp::Tess ||
-          first == internal::SessionPreStageOp::QuantTess) {
-        return true;
-      }
-      return std::nullopt;
-    }();
     pack.set_model_managed_stage_facts(
-        /*processcvu_preproc_single_output_handoff=*/processcvu_pre_stage_selected,
         convert_model_managed_route_flags(
             preprocess_plan.session_route_plan.model_managed_route_flags),
         convert_model_managed_post_kinds(preprocess_plan.session_route_plan.post_chain));
@@ -4712,66 +4638,29 @@ struct Model::Impl {
     std::string mla_input_dtype;
     TensorLayout mla_input_layout = TensorLayout::Unknown;
     stages::TensorDims mla_dims;
-    const auto infer_stage_facts = pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
-    for (const auto& fact : infer_stage_facts) {
-      if (!fact.mla_compiled.has_value() ||
-          fact.mla_compiled->runtime_contract.logical_inputs.empty()) {
-        continue;
-      }
-      const auto& logical_input = fact.mla_compiled->runtime_contract.logical_inputs.front();
-      if (!logical_input.dtype.empty()) {
-        mla_input_dtype = logical_input.dtype;
-      }
-      mla_input_layout =
-          rendered_stage_query::layout_projection_from_contract_format(logical_input.layout);
-      mla_dims = dims_from_mla_logical_contract_shape(logical_input.shape, mla_input_layout);
-      break;
-    }
-    if (mla_dims.width <= 0 || mla_dims.height <= 0 || mla_dims.depth <= 0 ||
-        mla_input_dtype.empty()) {
-      const auto& mpk_opt = pack.mpk_contract();
-      if (!mpk_opt.has_value()) {
-        // fall through to rendered infer-block fallback below
-      } else if (const auto* mla_stage =
-                     pipeline_internal::sima::get_first_mla_stage_io_contract(*mpk_opt)) {
-        const auto boundary_inputs =
-            pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(*mpk_opt);
-        const auto published_outputs =
-            pipeline_internal::sima::get_mla_published_outputs_contract(*mpk_opt);
-        const auto logical_outputs =
-            pipeline_internal::sima::get_mla_logical_outputs_contract(*mpk_opt);
-        const auto physical_outputs =
-            pipeline_internal::sima::get_mla_boundary_physical_outputs_contract(*mpk_opt);
-        auto mla_contract = pipeline_internal::sima::build_mla_static_contract_from_mpk_stage(
-            *mla_stage,
-            !published_outputs.empty()
-                ? published_outputs
-                : (logical_outputs.empty() ? mla_stage->output_tensors : logical_outputs),
-            physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs,
-            !mla_stage->name.empty() ? mla_stage->name : std::string("mla"),
-            boundary_inputs.empty() ? nullptr : &boundary_inputs);
-        if (!mla_contract.logical_inputs.empty()) {
-          const auto& logical_input = mla_contract.logical_inputs.front();
-          mla_input_dtype = logical_input.dtype;
-          mla_input_layout =
-              rendered_stage_query::layout_projection_from_contract_format(logical_input.layout);
-          mla_dims = dims_from_mla_logical_contract_shape(logical_input.shape, mla_input_layout);
-        }
-      }
-    }
-    if (mla_dims.width <= 0 || mla_dims.height <= 0 || mla_dims.depth <= 0 ||
-        mla_input_dtype.empty()) {
-      const auto mla_input_tensor_info =
-          rendered_stage_query::mla_input_tensor_info_from_nodes(pack.infer_block(infer_upstream));
-      if (mla_input_dtype.empty()) {
-        mla_input_dtype = mla_input_tensor_info.logical_dtype;
-      }
-      if (mla_input_layout == TensorLayout::Unknown) {
-        mla_input_layout = mla_input_tensor_info.logical_layout;
-      }
-      if (mla_dims.width <= 0 || mla_dims.height <= 0 || mla_dims.depth <= 0) {
-        mla_dims = dims_from_mla_logical_contract_shape(mla_input_tensor_info.logical_shape,
-                                                        mla_input_tensor_info.logical_layout);
+    const auto& mpk = *pack.mpk_contract();
+    if (const auto* mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(mpk)) {
+      const auto boundary_inputs =
+          pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(mpk);
+      const auto published_outputs =
+          pipeline_internal::sima::get_mla_published_outputs_contract(mpk);
+      const auto logical_outputs = pipeline_internal::sima::get_mla_logical_outputs_contract(mpk);
+      const auto physical_outputs =
+          pipeline_internal::sima::get_mla_boundary_physical_outputs_contract(mpk);
+      const auto mla_contract = pipeline_internal::sima::build_mla_static_contract_from_mpk_stage(
+          *mla_stage,
+          !published_outputs.empty()
+              ? published_outputs
+              : (logical_outputs.empty() ? mla_stage->output_tensors : logical_outputs),
+          physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs,
+          !mla_stage->name.empty() ? mla_stage->name : std::string("mla"),
+          boundary_inputs.empty() ? nullptr : &boundary_inputs);
+      if (!mla_contract.logical_inputs.empty()) {
+        const auto& input = mla_contract.logical_inputs.front();
+        mla_input_dtype = input.dtype;
+        mla_input_layout =
+            rendered_stage_query::layout_projection_from_contract_format(input.layout);
+        mla_dims = dims_from_mla_logical_contract_shape(input.shape, mla_input_layout);
       }
     }
     rp.mla_contract.media_type = "application/vnd.simaai.tensor";
@@ -4884,8 +4773,7 @@ struct Model::Impl {
           "Provide already-matched input dimensions at runtime, or set preprocess.resize=Auto/On.");
     }
 
-    emit_model_planner_messages(options.verbose, rp.warnings,
-                                preprocess_plan.route_diagnostics);
+    emit_model_planner_messages(options.verbose, rp.warnings, preprocess_plan.route_diagnostics);
     maybe_log_model_info_shadow(preprocess_plan, pack);
 
     model_id = pack.etc_dir();
@@ -5593,10 +5481,8 @@ PreprocOptions make_preproc_options_from_typed_adapter(
   populate_model_managed_preproc_options(&opt, plan, input);
   const auto& selected_pack =
       sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model);
-  if (selected_pack.uses_model_execution_plan()) {
-    opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-        selected_pack.project_model_managed_preproc_contract(opt));
-  }
+  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
+      selected_pack.project_model_managed_preproc_contract(opt));
   return opt;
 }
 
@@ -6733,7 +6619,7 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
 
   auto infer_nodes = pack.infer_block(
       upstream, make_stage_lineage_binding(model, internal::ModelLineageStageRole::Infer),
-      route_absorbs_model_managed_graph200(pack, plan));
+      route_uses_model_managed_graph200(plan));
   nodes.insert(nodes.end(), infer_nodes.begin(), infer_nodes.end());
 
   if (include_postprocess_stage) {
@@ -7026,11 +6912,12 @@ std::vector<TensorSpec> Model::input_specs() const {
 
     const InputOptions opt = impl_->pack.input_appsrc_options(true);
     if (spec.shape.empty()) {
-      const auto infer = internal::ModelAccess::build_public_inference_nodes(*this);
-      const auto mla_input_tensor_info =
-          rendered_stage_query::mla_input_tensor_info_from_nodes(infer);
-      const stages::TensorDims mla_dims = dims_from_mla_logical_contract_shape(
-          mla_input_tensor_info.logical_shape, mla_input_tensor_info.logical_layout);
+      const auto& mla_contract = impl_->preprocess_plan.resolved_plan.mla_contract;
+      const stages::TensorDims mla_dims{mla_contract.width, mla_contract.height,
+                                        mla_contract.depth};
+      if (!mla_contract.format.empty()) {
+        spec.dtypes = {dtype_from_format(mla_contract.format)};
+      }
       int d = (mla_dims.depth > 0) ? mla_dims.depth : 0;
       if (d <= 0)
         d = (opt.depth > 0) ? opt.depth : opt.max_depth;
@@ -7076,182 +6963,121 @@ std::vector<TensorSpec> Model::input_specs() const {
 
 std::vector<TensorSpec> Model::output_specs() const {
   std::vector<TensorSpec> specs;
-  TensorSpec spec;
   const auto& route_plan = impl_->preprocess_plan.session_route_plan;
-  const bool include_post = route_plan.include_post_stage;
-  const internal::PostRouteStageKind selected_post_kind = route_plan.selected_post_kind;
-  const bool has_box =
-      include_post && selected_post_kind == internal::PostRouteStageKind::BoxDecode;
-  const bool has_detess =
-      include_post && (selected_post_kind == internal::PostRouteStageKind::Detess ||
-                       selected_post_kind == internal::PostRouteStageKind::DetessDequant);
-  const bool has_dequant =
-      include_post && selected_post_kind == internal::PostRouteStageKind::Dequantize;
-  const bool has_cast = include_post && selected_post_kind == internal::PostRouteStageKind::Cast;
-  const bool implicit_detess_cast = has_detess && route_plan.post_cast_bf16_to_fp32;
-  const bool require_fp32_boundary = route_plan.post_cast_bf16_to_fp32;
-  const auto push_spec = [&specs](TensorSpec s) {
-    if (!s.shape.empty() && s.rank < 0) {
-      s.rank = static_cast<int>(s.shape.size());
-    }
-    specs.push_back(std::move(s));
-  };
-  const auto append_from_egress_contracts = [&](bool force_float_if_missing_dtype) -> bool {
-    if (!include_post) {
-      return false;
-    }
-    std::vector<TensorSpec> candidates;
-    if (!route_plan.egress_contracts.empty()) {
-      for (const auto& egress : route_plan.egress_contracts) {
-        TensorSpec out_spec;
-        if (!populate_spec_from_route_contract(egress, &out_spec) || out_spec.shape.empty()) {
-          continue;
-        }
-        if (out_spec.dtypes.empty() && force_float_if_missing_dtype) {
-          out_spec.dtypes = {TensorDType::Float32};
-        }
-        candidates.push_back(std::move(out_spec));
-      }
-    } else {
-      TensorSpec out_spec;
-      if (!populate_spec_from_route_contract(route_plan.egress_contract, &out_spec) ||
-          out_spec.shape.empty()) {
-        return false;
-      }
-      if (out_spec.dtypes.empty() && force_float_if_missing_dtype) {
-        out_spec.dtypes = {TensorDType::Float32};
-      }
-      candidates.push_back(std::move(out_spec));
-    }
-    if (candidates.empty()) {
-      return false;
-    }
-
-    if (require_fp32_boundary) {
-      std::vector<TensorSpec> fp32_only;
-      fp32_only.reserve(candidates.size());
-      for (auto& out_spec : candidates) {
-        if (out_spec.dtypes.empty()) {
-          out_spec.dtypes = {TensorDType::Float32};
-          fp32_only.push_back(std::move(out_spec));
-          continue;
-        }
-        if (out_spec.dtypes.front() == TensorDType::Float32) {
-          fp32_only.push_back(std::move(out_spec));
-        }
-      }
-      if (!fp32_only.empty()) {
-        candidates = std::move(fp32_only);
-      } else {
-        for (auto& out_spec : candidates) {
-          out_spec.dtypes = {TensorDType::Float32};
-        }
-      }
-    }
-
-    for (auto& out_spec : candidates) {
-      push_spec(std::move(out_spec));
-    }
-    return true;
-  };
-  const auto append_from_rendered_terminal_stage =
-      [&](const std::vector<std::shared_ptr<Node>>& group) -> bool {
-    const auto info = rendered_stage_query::terminal_output_info(group, false);
-    if (info.outputs.empty()) {
-      return false;
-    }
-    for (const auto& out : info.outputs) {
-      TensorSpec out_spec;
-      out_spec.dtypes = {info.dtype};
-      out_spec.shape = out.shape;
-      out_spec.rank = static_cast<int>(out_spec.shape.size());
-      push_spec(std::move(out_spec));
-    }
-    return true;
-  };
-
-  if (has_box) {
+  if (route_plan.include_post_stage &&
+      route_plan.selected_post_kind == internal::PostRouteStageKind::BoxDecode) {
+    TensorSpec spec;
     spec.dtypes = {TensorDType::UInt8};
     spec.rank = -1;
-    push_spec(std::move(spec));
+    specs.push_back(std::move(spec));
     return specs;
   }
-  if (has_detess) {
-    auto post = build_postprocess_nodes_impl(*this, impl_->pack, impl_->options, false, route_plan);
-    if (append_from_rendered_terminal_stage(post)) {
-      return specs;
-    }
-    const auto info = rendered_stage_query::detessdequant_output_info(post, false);
-    if (!info.outputs.empty()) {
-      const TensorDType out_dtype = implicit_detess_cast ? TensorDType::Float32 : info.dtype;
-      for (const auto& out : info.outputs) {
-        TensorSpec out_spec;
-        out_spec.dtypes = {out_dtype};
-        out_spec.shape = out.shape;
-        out_spec.rank = static_cast<int>(out_spec.shape.size());
-        push_spec(std::move(out_spec));
+
+  if (route_plan.include_post_stage) {
+    // Route egress is already the selected postprocess contract. Describing it
+    // must not render executable nodes or require an MLA artifact.
+    const auto append_egress = [&](const internal::EgressTensorContract& egress) {
+      TensorSpec spec;
+      if (populate_spec_from_route_contract(egress, &spec) && !spec.shape.empty()) {
+        if (spec.dtypes.empty()) {
+          spec.dtypes = {TensorDType::Float32};
+        }
+        specs.push_back(std::move(spec));
       }
-      return specs;
-    }
-    if (append_from_egress_contracts(true)) {
-      return specs;
-    }
-    throw std::runtime_error(
-        "Model::output_specs: detess post route requires explicit egress contracts or "
-        "rendered detess output contracts.");
-  }
-  if (has_dequant) {
-    auto post = build_postprocess_nodes_impl(*this, impl_->pack, impl_->options, false, route_plan);
-    if (append_from_rendered_terminal_stage(post)) {
-      return specs;
-    }
-    const auto info = rendered_stage_query::dequant_output_info(post, false);
-    if (!info.outputs.empty()) {
-      for (const auto& out : info.outputs) {
-        TensorSpec out_spec;
-        out_spec.dtypes = {info.dtype};
-        out_spec.shape = out.shape;
-        out_spec.rank = static_cast<int>(out_spec.shape.size());
-        push_spec(std::move(out_spec));
+    };
+    if (!route_plan.egress_contracts.empty()) {
+      for (const auto& egress : route_plan.egress_contracts) {
+        append_egress(egress);
       }
-      return specs;
+    } else {
+      append_egress(route_plan.egress_contract);
     }
-    if (append_from_egress_contracts(true)) {
-      return specs;
+    if (specs.empty()) {
+      throw std::runtime_error("Model::output_specs: selected postprocess route requires explicit "
+                               "MPK egress contracts.");
     }
-    throw std::runtime_error(
-        "Model::output_specs: dequant post route requires explicit egress contracts or "
-        "rendered dequant output contracts.");
-  }
-  if (has_cast) {
-    auto post = build_postprocess_nodes_impl(*this, impl_->pack, impl_->options, false, route_plan);
-    if (append_from_rendered_terminal_stage(post)) {
-      return specs;
+    if (route_plan.post_cast_bf16_to_fp32) {
+      std::vector<TensorSpec> fp32_specs;
+      for (const auto& spec : specs) {
+        if (spec.dtypes.front() == TensorDType::Float32) {
+          fp32_specs.push_back(spec);
+        }
+      }
+      if (!fp32_specs.empty()) {
+        return fp32_specs;
+      }
+      for (auto& spec : specs) {
+        spec.dtypes = {TensorDType::Float32};
+      }
     }
-    if (append_from_egress_contracts(true)) {
-      return specs;
-    }
-    throw std::runtime_error(
-        "Model::output_specs: cast post route requires explicit egress contracts.");
-  }
-  if (append_from_egress_contracts(has_detess || has_dequant || has_cast)) {
     return specs;
   }
-  if (append_from_egress_contracts(true)) {
-    return specs;
+
+  const auto& pack = impl_->pack;
+  const auto terminal_name = pack.infer_output_name();
+  if (pack.has_terminal_policy()) {
+    // Explicit selectors can name physical CVU cohorts. They intentionally
+    // require admission, but the typed facts suffice: no GStreamer rendering.
+    const auto facts = pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
+    for (const auto& fact : facts) {
+      if (pack.apply_name_suffix(fact.stage_name) != terminal_name) {
+        continue;
+      }
+      const CompiledRuntimeContract* runtime = nullptr;
+      if (fact.mla_compiled.has_value()) {
+        runtime = &fact.mla_compiled->runtime_contract;
+      } else if (fact.processcvu_contract.has_value()) {
+        runtime = &fact.processcvu_contract->runtime_contract;
+      } else if (fact.transport_compiled.has_value()) {
+        runtime = &fact.transport_compiled->runtime_contract;
+      }
+      if (runtime != nullptr) {
+        for (const auto& output : runtime->logical_outputs) {
+          TensorSpec spec;
+          spec.dtypes = {dtype_from_format(output.dtype)};
+          spec.shape = output.shape;
+          spec.rank = static_cast<int>(spec.shape.size());
+          specs.push_back(std::move(spec));
+        }
+      }
+      break;
+    }
+  } else {
+    const auto& mpk = *pack.mpk_contract();
+    const auto terminal =
+        std::find_if(mpk.plugins.begin(), mpk.plugins.end(), [&](const auto& stage) {
+          return pack.apply_name_suffix(stage.name) == terminal_name;
+        });
+    if (terminal != mpk.plugins.end()) {
+      auto outputs = terminal->output_tensors;
+      if (upper_copy(terminal->processor) == "MLA") {
+        auto published = pipeline_internal::sima::get_mla_published_outputs_contract(mpk);
+        if (published.empty()) {
+          published = pipeline_internal::sima::get_mla_logical_outputs_contract(mpk);
+        }
+        if (!published.empty()) {
+          outputs = std::move(published);
+        }
+      }
+      for (const auto& output : outputs) {
+        TensorSpec spec;
+        spec.dtypes = {
+            dtype_from_format(output.logical_dtype.empty() ? output.dtype : output.logical_dtype)};
+        // Packed boundary publications can intentionally omit logical geometry.
+        // Their authored MPK shape still describes the raw transport output.
+        const bool use_authored_shape =
+            !output.mpk_shape.empty() &&
+            (output.shape_semantics == pipeline_internal::sima::MpkShapeSemantics::Geometry ||
+             output.logical_shape.empty());
+        spec.shape = use_authored_shape ? output.mpk_shape : output.logical_shape;
+        spec.rank = static_cast<int>(spec.shape.size());
+        specs.push_back(std::move(spec));
+      }
+    }
   }
-  const auto infer = internal::ModelAccess::build_public_inference_nodes(*this);
-  const auto mla_outputs = rendered_stage_query::mla_output_tensors_from_nodes(infer);
-  if (mla_outputs.empty()) {
+  if (specs.empty()) {
     throw std::runtime_error(
-        "Model::output_specs: inference group is missing rendered MLA output contracts.");
-  }
-  for (const auto& output : mla_outputs) {
-    TensorSpec out_spec;
-    out_spec.dtypes = {dtype_from_format(output.data_type)};
-    out_spec.shape = output.shape;
-    out_spec.rank = static_cast<int>(out_spec.shape.size());
-    push_spec(std::move(out_spec));
+        "Model::output_specs: inference terminal is missing MPK output tensor contracts.");
   }
   return specs;
 }
@@ -7460,10 +7286,7 @@ std::string Model::find_config_path_by_processor(const std::string& processor) c
 }
 
 std::string Model::infer_output_name() const {
-  const auto frag = impl_->pack.fragment(internal::ModelStage::MlaOnly);
-  if (frag.elements.empty())
-    return {};
-  return frag.elements.back();
+  return impl_->pack.infer_output_name();
 }
 
 const Model::RouteOptions& Model::default_route_options() {
@@ -8297,10 +8120,8 @@ PreprocOptions ModelAccess::build_preprocess_stage_options(const Model& model, b
   PreprocOptions opt = make_model_managed_preproc_options_base(model, sync);
   populate_model_managed_preproc_options(&opt, model.impl_->preprocess_plan, nullptr);
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  if (pack.uses_model_execution_plan()) {
-    opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-        pack.project_model_managed_preproc_contract(opt));
-  }
+  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
+      pack.project_model_managed_preproc_contract(opt));
   return opt;
 }
 
@@ -8482,8 +8303,8 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
         (exact_route_error.empty() ? std::string("missing MPK/upstream route facts")
                                    : exact_route_error));
   }
-  *route_flags = pipeline_internal::sima::reconcile_exact_boxdecode_route_flags(
-      *route_flags, *exact_route_flags);
+  *route_flags = pipeline_internal::sima::reconcile_exact_boxdecode_route_flags(*route_flags,
+                                                                                *exact_route_flags);
 
   std::string contract_error;
   auto contract = pipeline_internal::sima::build_boxdecode_static_contract_from_mpk(
@@ -8573,14 +8394,13 @@ std::vector<std::shared_ptr<Node>> ModelAccess::build_public_inference_nodes(con
   const std::string upstream = model.impl_->preprocess_plan.session_route_plan.include_pre_stage
                                    ? (pre_name.empty() ? std::string("decoder") : pre_name)
                                    : std::string("decoder");
-  const bool absorb_preproc =
-      route_absorbs_model_managed_graph200(pack, model.impl_->preprocess_plan);
+  const bool absorb_preproc = route_uses_model_managed_graph200(model.impl_->preprocess_plan);
   if (absorb_preproc) {
     (void)ModelAccess::build_preprocess_stage_options(model, false);
   }
-  return pack.infer_block(
-      upstream, make_stage_lineage_binding(model, internal::ModelLineageStageRole::Infer),
-      absorb_preproc);
+  return pack.infer_block(upstream,
+                          make_stage_lineage_binding(model, internal::ModelLineageStageRole::Infer),
+                          absorb_preproc);
 }
 
 std::vector<std::shared_ptr<Node>> ModelAccess::build_public_postprocess_nodes(const Model& model) {
@@ -8621,8 +8441,8 @@ std::vector<std::shared_ptr<Node>> ModelAccess::build_preprocess_nodes(const Mod
   return ModelAccess::rebuild_preprocess_route_nodes(model, sync);
 }
 
-std::vector<std::shared_ptr<Node>>
-ModelAccess::rebuild_preprocess_route_nodes(const Model& model, bool sync) {
+std::vector<std::shared_ptr<Node>> ModelAccess::rebuild_preprocess_route_nodes(const Model& model,
+                                                                               bool sync) {
   const ModelPack& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
   return build_preprocess_nodes_impl(model, pack, model.impl_->preprocess_plan, nullptr,
                                      std::string{}, std::string{}, sync);
@@ -8654,14 +8474,13 @@ std::vector<std::shared_ptr<Node>> ModelAccess::build_infer_nodes(const Model& m
     upstream = pre.empty() ? std::string("decoder") : pre;
   }
   pack.prepare_for_execution();
-  const bool absorb_preproc =
-      route_absorbs_model_managed_graph200(pack, model.impl_->preprocess_plan);
+  const bool absorb_preproc = route_uses_model_managed_graph200(model.impl_->preprocess_plan);
   if (absorb_preproc) {
     (void)ModelAccess::build_preprocess_stage_options(model, sync);
   }
-  return pack.infer_block(
-      upstream, make_stage_lineage_binding(model, internal::ModelLineageStageRole::Infer),
-      absorb_preproc);
+  return pack.infer_block(upstream,
+                          make_stage_lineage_binding(model, internal::ModelLineageStageRole::Infer),
+                          absorb_preproc);
 }
 
 std::vector<std::shared_ptr<Node>> ModelAccess::build_postprocess_nodes(const Model& model,

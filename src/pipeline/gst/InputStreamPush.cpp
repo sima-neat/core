@@ -272,15 +272,10 @@ bool tensor_requires_cpu_to_device_copy_for_push(const simaai::neat::Tensor& ten
       tensor.storage->kind == simaai::neat::StorageKind::CpuExternal) {
     return true;
   }
-  // Device-created tensors are GstSample-backed too.  Treat a GstSample as
-  // CPU-backed only when it has no SiMa allocator target; otherwise appsrc can
-  // forward the original device-visible GstMemory without a hidden memcpy.
+  // Device visibility belongs to the selected memory, not the tensor's CPU/device
+  // label or logical segment names. Standard DMA-BUF views can be forwarded as-is.
   if (tensor.storage->kind == simaai::neat::StorageKind::GstSample) {
-    if (!tensor.storage->sima_segments.empty()) {
-      return false;
-    }
-    return tensor.storage->sima_mem_target_flags == 0 &&
-           tensor.device.type == simaai::neat::DeviceType::CPU;
+    return !pipeline_internal::tensor_has_dmabuf_memory(tensor);
   }
   return tensor.device.type == simaai::neat::DeviceType::CPU;
 }
@@ -684,22 +679,18 @@ make_tensor_copy_fill(const simaai::neat::Tensor& input, size_t input_bytes, con
   };
 }
 
-std::function<size_t(uint8_t*, size_t)> make_nv12_materialization_fill(
-    const simaai::neat::Tensor& input, const SampleSpec& source,
-    const SampleSpec& destination, const char* where) {
-  return [&input, source, destination, where](uint8_t* dst,
-                                               size_t dst_bytes) -> size_t {
+std::function<size_t(uint8_t*, size_t)>
+make_nv12_materialization_fill(const simaai::neat::Tensor& input, const SampleSpec& source,
+                               const SampleSpec& destination, const char* where) {
+  return [&input, source, destination, where](uint8_t* dst, size_t dst_bytes) -> size_t {
     const char* tag = where ? where : "InputStream::materialize_nv12";
-    if (!dst || dst_bytes < destination.required_bytes_actual ||
-        destination.planes.size() != 2U) {
-      throw std::runtime_error(std::string(tag) +
-                               ": destination NV12 allocation is invalid");
+    if (!dst || dst_bytes < destination.required_bytes_actual || destination.planes.size() != 2U) {
+      throw std::runtime_error(std::string(tag) + ": destination NV12 allocation is invalid");
     }
 
     simaai::neat::Mapping mapping = input.map(simaai::neat::MapMode::Read);
     if (!mapping.data || mapping.size_bytes < source.required_bytes_actual) {
-      throw std::runtime_error(std::string(tag) +
-                               ": source NV12 mapping is unavailable or short");
+      throw std::runtime_error(std::string(tag) + ": source NV12 mapping is unavailable or short");
     }
 
     struct SourcePlane {
@@ -712,66 +703,50 @@ std::function<size_t(uint8_t*, size_t)> make_nv12_materialization_fill(
     const std::size_t width = static_cast<std::size_t>(source.width);
     const std::size_t height = static_cast<std::size_t>(source.height);
     if (width == 0U || height == 0U || mapping.size_bytes < width) {
-      throw std::runtime_error(std::string(tag) +
-                               ": source NV12 geometry is invalid");
+      throw std::runtime_error(std::string(tag) + ": source NV12 geometry is invalid");
     }
     if (source.planes.empty()) {
       y = SourcePlane{0U, width, height};
       uv = SourcePlane{width * height, width, height / 2U};
-    } else if (source.planes.size() == 2U &&
-               source.planes[0].offset_bytes >= 0 &&
-               source.planes[1].offset_bytes >= 0 &&
-               source.planes[0].stride_bytes > 0 &&
+    } else if (source.planes.size() == 2U && source.planes[0].offset_bytes >= 0 &&
+               source.planes[1].offset_bytes >= 0 && source.planes[0].stride_bytes > 0 &&
                source.planes[1].stride_bytes > 0) {
       y = SourcePlane{static_cast<std::size_t>(source.planes[0].offset_bytes),
-                      static_cast<std::size_t>(source.planes[0].stride_bytes),
-                      height};
+                      static_cast<std::size_t>(source.planes[0].stride_bytes), height};
       uv = SourcePlane{static_cast<std::size_t>(source.planes[1].offset_bytes),
-                       static_cast<std::size_t>(source.planes[1].stride_bytes),
-                       height / 2U};
+                       static_cast<std::size_t>(source.planes[1].stride_bytes), height / 2U};
     } else {
-      throw std::runtime_error(std::string(tag) +
-                               ": source NV12 plane layout is invalid");
+      throw std::runtime_error(std::string(tag) + ": source NV12 plane layout is invalid");
     }
 
     const auto plane_fits = [width, &mapping](const SourcePlane& plane) {
-      return plane.stride >= width && plane.rows > 0U &&
-             plane.offset <= mapping.size_bytes &&
-             (plane.rows - 1U) <=
-                 (mapping.size_bytes - plane.offset) / plane.stride &&
-             plane.offset + (plane.rows - 1U) * plane.stride <=
-                 mapping.size_bytes - width;
+      return plane.stride >= width && plane.rows > 0U && plane.offset <= mapping.size_bytes &&
+             (plane.rows - 1U) <= (mapping.size_bytes - plane.offset) / plane.stride &&
+             plane.offset + (plane.rows - 1U) * plane.stride <= mapping.size_bytes - width;
     };
     if (!plane_fits(y) || !plane_fits(uv)) {
-      throw std::runtime_error(std::string(tag) +
-                               ": source NV12 planes exceed their mapping");
+      throw std::runtime_error(std::string(tag) + ": source NV12 planes exceed their mapping");
     }
 
     const auto& dst_y = destination.planes[0];
     const auto& dst_uv = destination.planes[1];
-    const std::size_t dst_y_offset =
-        static_cast<std::size_t>(dst_y.offset_bytes);
-    const std::size_t dst_uv_offset =
-        static_cast<std::size_t>(dst_uv.offset_bytes);
-    const std::size_t dst_y_stride =
-        static_cast<std::size_t>(dst_y.stride_bytes);
-    const std::size_t dst_uv_stride =
-        static_cast<std::size_t>(dst_uv.stride_bytes);
+    const std::size_t dst_y_offset = static_cast<std::size_t>(dst_y.offset_bytes);
+    const std::size_t dst_uv_offset = static_cast<std::size_t>(dst_uv.offset_bytes);
+    const std::size_t dst_y_stride = static_cast<std::size_t>(dst_y.stride_bytes);
+    const std::size_t dst_uv_stride = static_cast<std::size_t>(dst_uv.stride_bytes);
 
     // Black-fill the storage padding once, then overwrite only visible rows.
     // This is the sole CPU->CMA copy: the source is mapped read-only and the
     // destination is already inside its checked DMA-BUF WRITE epoch.
     std::memset(dst + dst_y_offset, 0, dst_uv_offset - dst_y_offset);
-    std::memset(dst + dst_uv_offset, 128,
-                destination.required_bytes_actual - dst_uv_offset);
+    std::memset(dst + dst_uv_offset, 128, destination.required_bytes_actual - dst_uv_offset);
     const auto* src = static_cast<const std::uint8_t*>(mapping.data);
     for (std::size_t row = 0; row < height; ++row) {
-      std::memcpy(dst + dst_y_offset + row * dst_y_stride,
-                  src + y.offset + row * y.stride, width);
+      std::memcpy(dst + dst_y_offset + row * dst_y_stride, src + y.offset + row * y.stride, width);
     }
     for (std::size_t row = 0; row < height / 2U; ++row) {
-      std::memcpy(dst + dst_uv_offset + row * dst_uv_stride,
-                  src + uv.offset + row * uv.stride, width);
+      std::memcpy(dst + dst_uv_offset + row * dst_uv_stride, src + uv.offset + row * uv.stride,
+                  width);
     }
     return destination.required_bytes_actual;
   };
@@ -1138,6 +1113,8 @@ GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
   return (sample && GST_IS_SAMPLE(sample)) ? sample : nullptr;
 }
 
+} // namespace
+
 bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Sample* sample,
                                                   const std::shared_ptr<void>& holder,
                                                   const char* where) {
@@ -1263,6 +1240,8 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
   }
   return true;
 }
+
+namespace {
 
 bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, GstBuffer* buffer,
                                     const char* where, bool record_timings, const Sample* fail_msg,
@@ -2231,10 +2210,12 @@ bool InputStream::try_push_message(const Sample& msg) {
   cache_preprocess_meta(*st, transport_msg, seq.input_seq, seq.orig_input_seq);
   SampleSpec spec = derive_sample_spec_or_throw(transport_msg);
   const bool use_tensor_envelope_transport = spec.tensor_envelope_transport;
-  // Fail-fast (set-complete) guard: covers every transport kind below,
-  // including the tensor-envelope branch which previously had no guard.
-  enforce_device_visible_push_or_throw(st->opt.require_device_visible_input, transport_msg,
-                                       "InputStream::try_push_message");
+  // Compressed ingress is CPU-supported; only decoded/raw tensors need device visibility.
+  // The set-complete guard still covers every field of a tensor envelope.
+  if (spec.kind != SampleMediaKind::Encoded) {
+    enforce_device_visible_push_or_throw(st->opt.require_device_visible_input, transport_msg,
+                                         "InputStream::try_push_message");
+  }
   enforce_live_gstsample_producer_or_throw(transport_msg, "InputStream::try_push_message",
                                            st->opt.allow_graph_internal_zero_copy_input);
   if (spec.kind == SampleMediaKind::RawVideo) {
@@ -2282,8 +2263,8 @@ bool InputStream::try_push_message(const Sample& msg) {
                                                  ? std::chrono::steady_clock::now()
                                                  : std::chrono::steady_clock::time_point{};
     std::string err;
-    auto holder = pipeline_internal::sample_to_gst_envelope_holder(
-        envelope, &err, allow_zero_copy_transport, st->opt.memory_backend_policy);
+    auto holder =
+        pipeline_internal::sample_to_gst_envelope_holder(envelope, &err, allow_zero_copy_transport);
     const auto inputstream_after_envelope = inputstream_top_timing
                                                 ? std::chrono::steady_clock::now()
                                                 : std::chrono::steady_clock::time_point{};
@@ -2382,13 +2363,11 @@ bool InputStream::try_push_message(const Sample& msg) {
       sample_has_tensor_list(transport_msg) ? &transport_msg.tensors : nullptr;
   const SampleSpec transport_spec =
       state_->opt.materialize_device_visible_input
-          ? device_visible_nv12_materialization_spec_or_throw(
-                spec, "InputStream::try_push_message")
+          ? device_visible_nv12_materialization_spec_or_throw(spec, "InputStream::try_push_message")
           : spec;
   const std::function<void(GstBuffer**)> prepare = make_prepare_for_spec(
-      transport_spec, "InputStream::try_push_message",
-      source_preproc_meta_buffer, tensor_set_meta_tensors,
-      tensor_preprocess_meta);
+      transport_spec, "InputStream::try_push_message", source_preproc_meta_buffer,
+      tensor_set_meta_tensors, tensor_preprocess_meta);
 
   if (allow_zero_copy_transport && cpu_owned_zero_copy_input_enabled()) {
     CpuZeroCopyFastPathResult cpu_zc_result = try_push_message_cpu_owned_zero_copy_fastpath(
@@ -2407,20 +2386,18 @@ bool InputStream::try_push_message(const Sample& msg) {
   // Device-visibility guard already enforced set-completely at the top of
   // try_push_message (covers this copy path too).
 
-  const auto fill = state_->opt.materialize_device_visible_input
-                        ? make_nv12_materialization_fill(
-                              input, spec, transport_spec,
-                              "InputStream::try_push_message")
-                        : make_tensor_copy_fill(
-                              input, input_bytes,
-                              "InputStream::try_push_message");
+  const auto fill =
+      state_->opt.materialize_device_visible_input
+          ? make_nv12_materialization_fill(input, spec, transport_spec,
+                                           "InputStream::try_push_message")
+          : make_tensor_copy_fill(input, input_bytes, "InputStream::try_push_message");
   const std::function<void(GstBuffer**)> copy_prepare = make_copy_prepare_with_attributes(
       prepare, meta.attributes, "InputStream::try_push_message(copy)");
 
-  if (auto admitted = admit_copy_payload_nonpush(
-          *st, decision, "InputStream::try_push_message", transport_spec, fill, meta.frame_id,
-          seq.input_seq,
-          seq.orig_input_seq, meta.stream_id, meta.stream_label, timing_override, copy_prepare);
+  if (auto admitted = admit_copy_payload_nonpush(*st, decision, "InputStream::try_push_message",
+                                                 transport_spec, fill, meta.frame_id, seq.input_seq,
+                                                 seq.orig_input_seq, meta.stream_id,
+                                                 meta.stream_label, timing_override, copy_prepare);
       admitted.has_value()) {
     return *admitted;
   }
@@ -2435,10 +2412,10 @@ bool InputStream::try_push_message(const Sample& msg) {
         push_fail_context(where, msg, spec, st->src_opt, seq.input_seq, seq.orig_input_seq);
     where = where_detail.c_str();
   }
-  const bool pushed = push_with_fill(
-      where, fill, transport_spec.required_bytes_actual, meta.frame_id,
-      seq.input_seq, seq.orig_input_seq, meta.stream_id, meta.stream_label,
-      timing_override, copy_prepare, spec.width, spec.height);
+  const bool pushed =
+      push_with_fill(where, fill, transport_spec.required_bytes_actual, meta.frame_id,
+                     seq.input_seq, seq.orig_input_seq, meta.stream_id, meta.stream_label,
+                     timing_override, copy_prepare, spec.width, spec.height);
   if (pushed) {
     maybe_drop_holder_after_push(input, "InputStream::try_push_message(copy)");
   }

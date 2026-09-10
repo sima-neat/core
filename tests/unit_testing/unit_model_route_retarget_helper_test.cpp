@@ -79,7 +79,8 @@ sima_test::ModelArchiveFixture make_quanttess_detessdequant_fixture(const std::s
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_topology_artifacts=*/true);
 }
 
 class ManualPostProbeNode final : public simaai::neat::Node,
@@ -192,8 +193,7 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
                    "already-selected boxdecode route should materialize cleanly");
            require(changed,
                    "already-selected boxdecode route should still acquire the MLA terminal");
-           require(internal::ModelAccess::options(*already_effective)
-                       .inference_terminal.mla_only,
+           require(internal::ModelAccess::options(*already_effective).inference_terminal.mla_only,
                    "already-selected boxdecode route should stop before the MPK post tail");
 
            std::vector<std::shared_ptr<Node>> nodes;

@@ -228,23 +228,44 @@ void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Samp
     if (!source_buffer) {
       return;
     }
-    GstBuffer* cloned_buffer = gst_buffer_copy_deep(source_buffer);
+    const bool dmabuf = pipeline_internal::buffer_has_dmabuf_memory(source_buffer);
+    GstBuffer* cloned_buffer =
+        dmabuf ? gst_buffer_copy(source_buffer) : gst_buffer_copy_deep(source_buffer);
     if (!cloned_buffer) {
-      return;
+      throw std::runtime_error("InputStream::pull: failed to create preprocess metadata envelope");
+    }
+    if (dmabuf) {
+      try {
+        prepare_holder_buffer_for_zero_copy_transfer(&cloned_buffer, nullptr, holder,
+                                                     "InputStream::restore_preprocess_meta");
+      } catch (...) {
+        gst_buffer_unref(cloned_buffer);
+        throw;
+      }
     }
     if (!write_simaai_preprocess_meta(cloned_buffer, *cached)) {
       gst_buffer_unref(cloned_buffer);
-      return;
+      throw std::runtime_error("InputStream::pull: failed to restore preprocess metadata");
     }
     GstCaps* caps = gst_sample_get_caps(sample);
     GstSample* cloned_sample =
-        gst_sample_new(cloned_buffer, caps ? gst_caps_ref(caps) : nullptr, nullptr, nullptr);
+        gst_sample_new(cloned_buffer, caps, gst_sample_get_segment(sample), nullptr);
     gst_buffer_unref(cloned_buffer);
     if (!cloned_sample) {
-      return;
+      throw std::runtime_error("InputStream::pull: failed to retain preprocess metadata envelope");
     }
 
-    Tensor replaced = simaai::neat::from_gst_sample(cloned_sample);
+    Tensor replaced;
+    try {
+      replaced = simaai::neat::from_gst_sample(cloned_sample);
+      if (gst_buffer_n_memory(source_buffer) > 1U && tensor.route.memory_index >= 0) {
+        replaced = pipeline_internal::tensor_view_from_sample_segment(
+            replaced, tensor.route.segment_name, tensor.route.memory_index, /*keep_holder=*/true);
+      }
+    } catch (...) {
+      gst_sample_unref(cloned_sample);
+      throw;
+    }
     gst_sample_unref(cloned_sample);
     replaced.route = tensor.route;
     replaced.semantic = tensor.semantic;
@@ -502,11 +523,12 @@ void log_sample_tensor_state(const char* where, const char* label,
 }
 
 static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const char* where,
-                                                     bool copy_output);
+                                                     bool copy_output, bool preserve_dmabuf_output);
 static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char* where,
                                                   bool copy_output, InputStream::State* st);
 static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const char* where,
-                                                       bool copy_output);
+                                                       bool copy_output,
+                                                       bool preserve_dmabuf_output = false);
 
 TensorDType tensor_dtype_from_tensor_set_descriptor(gint dtype) {
   switch (dtype) {
@@ -617,10 +639,32 @@ void normalize_tensor_set_descriptor_shape(
   }
 }
 
-Tensor
-apply_tensor_set_descriptor(const Tensor& base,
-                            const pipeline_internal::TensorBufferTensorDescriptor& descriptor,
-                            const std::string& stage_key, bool materialize_output) {
+Tensor apply_tensor_set_descriptor(
+    const Tensor& base, const pipeline_internal::TensorBufferTensorDescriptor& descriptor,
+    const std::string& stage_key, bool materialize_output, bool preserve_dmabuf_output = false) {
+  if (base.storage && base.storage->kind == StorageKind::GstSample && base.storage->holder) {
+    auto* sample = static_cast<GstSample*>(base.storage->holder.get());
+    GstBuffer* buffer = sample && GST_IS_SAMPLE(sample) ? gst_sample_get_buffer(sample) : nullptr;
+    const guint memory_count = buffer ? gst_buffer_n_memory(buffer) : 0U;
+    if (memory_count > 1U && pipeline_internal::buffer_has_dmabuf_memory(buffer) &&
+        (descriptor.memory_index < 0 ||
+         static_cast<guint>(descriptor.memory_index) >= memory_count)) {
+      // A late segment-name resolution can validate metadata without authoring
+      // its physical memory index. Never guess memory 0 or map/merge the carrier.
+      throw std::runtime_error(
+          "tensor-set DMA output logical=" + std::to_string(descriptor.logical_index) +
+          " segment='" + descriptor.segment_name + "': unresolved physical memory index " +
+          std::to_string(descriptor.memory_index) + " for " + std::to_string(memory_count) +
+          "-memory carrier");
+    }
+  }
+  Tensor selected = base;
+  if (descriptor.memory_index >= 0) {
+    selected.route.memory_index = descriptor.memory_index;
+  }
+  materialize_output =
+      materialize_output &&
+      !(preserve_dmabuf_output && pipeline_internal::tensor_has_dmabuf_memory(selected));
   Tensor out = base;
   const bool gst_sample_backed =
       base.storage && base.storage->kind == simaai::neat::StorageKind::GstSample;
@@ -862,21 +906,11 @@ static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out)
 }
 
 static Sample output_from_sample_stream_inner(GstSample* sample, const char* where,
-                                              bool copy_output, bool keep_holder_for_tensor_copy) {
-  const auto copy_video_to_cpu = [](GstSample* s) -> simaai::neat::Tensor {
-    if (!s) {
-      throw std::runtime_error("copy_video_to_cpu: null sample");
-    }
-    /*
-     * Keep one raw-video interpretation and one CPU mapping authority.  The
-     * GstSample adapter authors the exact video planes/strides and, for a
-     * standard DMA-BUF, maps through DmaBufView so the actual read is enclosed
-     * by DMA_BUF_IOCTL_SYNC START/END.  Tensor::clone then packs those authored
-     * planes into CPU-owned storage.  Device-only output never enters this
-     * copy path.
-     */
-    return simaai::neat::from_gst_sample(s).clone();
-  };
+                                              bool copy_output, bool keep_holder_for_tensor_copy,
+                                              bool preserve_dmabuf_output = false) {
+  copy_output =
+      copy_output && !(preserve_dmabuf_output &&
+                       pipeline_internal::buffer_has_dmabuf_memory(gst_sample_get_buffer(sample)));
   const auto normalize_format = [](const std::string& fmt) {
     std::string out;
     out.reserve(fmt.size());
@@ -954,6 +988,8 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
         }
       }
       if (!copied) {
+        // Explicit Owned uses the adapter's authored planes/strides and the
+        // same DMA CPU START/END mapping authority as a retained app view.
         out.tensors = TensorList{neat.clone()};
         out.owned = true;
         if (!out.tensors.empty()) {
@@ -1034,27 +1070,29 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
 Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy_output,
                                  const std::optional<OutputTensorOverride>* override_opt,
                                  InputStream::State* st) {
+  const bool preserve_dmabuf_output = st && st->opt.preserve_dmabuf_output;
   const bool has_override =
       override_opt && override_opt->has_value() && !override_opt->value().outputs.empty();
   if (auto tensor_set =
           tensor_set_from_meta(sample, where, has_override ? false : copy_output, st)) {
     Sample out = std::move(*tensor_set);
     if (has_override) {
-      out = apply_output_tensor_override(out, **override_opt, copy_output);
+      out = apply_output_tensor_override(out, **override_opt, copy_output, preserve_dmabuf_output);
     }
     return out;
   }
-  if (auto bundle = bundle_from_sample_meta(sample, where, copy_output)) {
+  if (auto bundle = bundle_from_sample_meta(sample, where, copy_output, preserve_dmabuf_output)) {
     Sample out = std::move(*bundle);
     if (has_override) {
-      out = apply_output_tensor_override(out, **override_opt, copy_output);
+      out = apply_output_tensor_override(out, **override_opt, copy_output, preserve_dmabuf_output);
     }
     return out;
   }
   Sample out = output_from_sample_stream_inner(sample, where, has_override ? false : copy_output,
-                                               /*keep_holder_for_tensor_copy=*/has_override);
+                                               /*keep_holder_for_tensor_copy=*/has_override,
+                                               preserve_dmabuf_output);
   if (has_override) {
-    out = apply_output_tensor_override(out, **override_opt, copy_output);
+    out = apply_output_tensor_override(out, **override_opt, copy_output, preserve_dmabuf_output);
   }
   if (pipeline_internal::env_bool("SIMA_SAMPLE_FORCE_BUNDLE", false)) {
     if (!sample_is_multi_output(out)) {
@@ -1093,7 +1131,8 @@ Sample sample_from_gst_envelope(GstSample* sample, const char* where, bool copy_
 }
 
 static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const char* where,
-                                                     bool copy_output) {
+                                                     bool copy_output,
+                                                     bool preserve_dmabuf_output) {
   if (!sample)
     return std::nullopt;
   GstBuffer* buffer = gst_sample_get_buffer(sample);
@@ -1187,7 +1226,8 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
     if (!field_sample)
       continue;
 
-    Sample field_out = output_from_sample_stream_inner(field_sample, where, copy_output, false);
+    Sample field_out = output_from_sample_stream_inner(field_sample, where, copy_output, false,
+                                                       preserve_dmabuf_output);
     gst_sample_unref(field_sample);
 
     if (field_name && *field_name) {
@@ -1257,6 +1297,7 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
       }
     }
 
+    out.owned = out.owned && field_out.owned;
     out.fields.emplace_back(std::move(field_out));
   }
 
@@ -1275,7 +1316,8 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
 }
 
 static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const char* where,
-                                                       bool copy_output) {
+                                                       bool copy_output,
+                                                       bool preserve_dmabuf_output) {
   if (!sample) {
     return std::nullopt;
   }
@@ -1346,7 +1388,11 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
       }
     }
     GstMapInfo debug_map{};
-    if (debug_buffer && gst_buffer_map(debug_buffer, &debug_map, GST_MAP_READ)) {
+    // Mapping a mixed DMA carrier through GstBuffer can merge its memories and
+    // copy pixels just for diagnostics. Keep descriptor logging; tensor reads
+    // below use the selected memory's synchronized mapping instead.
+    if (debug_buffer && !pipeline_internal::buffer_has_dmabuf_memory(debug_buffer) &&
+        gst_buffer_map(debug_buffer, &debug_map, GST_MAP_READ)) {
       const std::size_t sample_count = std::min<std::size_t>(8U, debug_map.size);
       std::fprintf(stderr, "[tensor-set][debug]   buffer_head=");
       for (std::size_t bi = 0; bi < sample_count; ++bi) {
@@ -1404,8 +1450,11 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
           descriptor.logical_name.c_str(), descriptor.backend_name.c_str(),
           descriptor.segment_name.c_str(), has_quant ? 1 : 0, first_scale, first_zp);
     }
-    Tensor tensor = apply_tensor_set_descriptor(base_tensor, descriptor,
-                                                tensor_buffer_view.stage_key, copy_output);
+    Tensor tensor = apply_tensor_set_descriptor(
+        base_tensor, descriptor, tensor_buffer_view.stage_key, copy_output, preserve_dmabuf_output);
+    if (preserve_dmabuf_output && pipeline_internal::tensor_has_dmabuf_memory(tensor)) {
+      out.owned = false;
+    }
     if (tensor_set_debug_enabled()) {
       std::fprintf(stderr,
                    "[tensor-set][debug]     tensor route logical=%d memory=%d slot=%d name=%s "
@@ -1792,7 +1841,7 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
     // N logical tensor views.  Reuse the one current-sample storage and the
     // cached per-tensor byte_offset/shape/stride metadata instead of creating
     // six per-memory Storage objects and re-querying segment tables every frame.
-    if (!single_memory_buffer && tensor.route.memory_index > 0) {
+    if (!single_memory_buffer && tensor.route.memory_index >= 0) {
       try {
         const auto tensor_view_start = InputStreamDecodeProfileClock::now();
         Tensor memory_view = pipeline_internal::tensor_view_from_sample_memory(
@@ -1851,7 +1900,8 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
                                                   bool copy_output, InputStream::State* st) {
   if (copy_output || !st || tensor_set_debug_enabled() || sample_debug_enabled() ||
       sample_bytes_enabled()) {
-    return tensor_set_from_meta_slow(sample, where, copy_output);
+    return tensor_set_from_meta_slow(sample, where, copy_output,
+                                     st && st->opt.preserve_dmabuf_output);
   }
 
   {
@@ -1890,7 +1940,8 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
           inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - sig_start);
     }
     const auto slow_start = InputStreamDecodeProfileClock::now();
-    auto slow = tensor_set_from_meta_slow(sample, where, copy_output);
+    auto slow =
+        tensor_set_from_meta_slow(sample, where, copy_output, st && st->opt.preserve_dmabuf_output);
     if (g_inputstream_decode_profile) {
       g_inputstream_decode_profile->tensor_slow_ms +=
           inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - slow_start);
@@ -1930,7 +1981,8 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
   }
 
   const auto slow_start = InputStreamDecodeProfileClock::now();
-  auto slow = tensor_set_from_meta_slow(sample, where, copy_output);
+  auto slow =
+      tensor_set_from_meta_slow(sample, where, copy_output, st && st->opt.preserve_dmabuf_output);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->tensor_slow_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - slow_start);
@@ -1982,7 +2034,6 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
   const auto envelope_start = InputStreamDecodeProfileClock::now();
   Sample out =
       sample_from_gst_envelope(sample, where, st.opt.copy_output, &st.opt.output_override, &st);
-  pipeline_internal::mark_sample_producer_stream_lifetime(out, st.lifetime_token);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->envelope_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - envelope_start);
@@ -1990,6 +2041,7 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
 
   const auto restore_sample_meta_start = InputStreamDecodeProfileClock::now();
   maybe_restore_cached_preprocess_meta_on_sample(st, &out);
+  pipeline_internal::mark_sample_producer_stream_lifetime(out, st.lifetime_token);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->restore_sample_meta_ms += inputstream_decode_profile_ms(
         InputStreamDecodeProfileClock::now() - restore_sample_meta_start);
@@ -2060,6 +2112,7 @@ Sample InputStream::pull(int timeout_ms) {
   }
   const auto restore_sample_meta_start = InputStreamDecodeProfileClock::now();
   maybe_restore_cached_preprocess_meta_on_sample(*state_, &out);
+  pipeline_internal::mark_sample_producer_stream_lifetime(out, state_->lifetime_token);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->restore_sample_meta_ms += inputstream_decode_profile_ms(
         InputStreamDecodeProfileClock::now() - restore_sample_meta_start);

@@ -90,7 +90,8 @@ sima_test::ModelArchiveFixture make_fixture() {
   "dq_zp": [1]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_topology_artifacts=*/true);
 }
 
 const simaai::neat::CompiledNodeContract*
@@ -277,8 +278,7 @@ RUN_TEST(
                         compiled_binding.src_physical_byte_offset &&
                     rendered_binding.src_physical_size_bytes ==
                         compiled_binding.src_physical_size_bytes &&
-                    rendered_binding.source_segment_name ==
-                        compiled_binding.source_segment_name,
+                    rendered_binding.source_segment_name == compiled_binding.source_segment_name,
                 "compiled and rendered segmentation bindings must preserve exact 0..9 order "
                 "and source identity");
       }

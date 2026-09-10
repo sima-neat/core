@@ -10,7 +10,6 @@
 #include <span>
 #include <sstream>
 #include <stdexcept>
-#include <unordered_set>
 #include <utility>
 
 namespace simaai::neat::runtime {
@@ -41,7 +40,6 @@ struct DecoderAdmissionCandidate {
   std::uint32_t height = 0;
   std::uint32_t fps_num = 0;
   std::uint32_t fps_den = 1;
-  bool zero_copy_output = false;
   bool fused_branch = false;
   std::size_t fused_branch_index = static_cast<std::size_t>(-1);
 };
@@ -54,7 +52,6 @@ struct DecoderAdmissionProperties {
   int input_buffers = -1;
   std::string tuning;
   bool memory_opt = false;
-  bool zero_copy_output = false;
 };
 
 bool decoder_plan_debug_enabled() {
@@ -154,95 +151,6 @@ static_assert(decoder_admission_codec(SimaDecodeType::H264) ==
               pipeline_internal::kDecoderAdmissionCodecH264);
 static_assert(decoder_admission_codec(SimaDecodeType::H265) ==
               pipeline_internal::kDecoderAdmissionCodecH265);
-
-bool decoder_options_allow_zero_copy_output(const SimaDecodeOptions& opt) {
-  if (!opt.raw_output) {
-    return false;
-  }
-  if (!opt.out_format.empty() && opt.out_format.tag != FormatTag::NV12) {
-    return false;
-  }
-  const std::string next = upper_copy_ascii(opt.next_element);
-  return next.empty() || next == "CVU";
-}
-
-bool nodes_require_packed_decoder_output(std::span<const std::shared_ptr<Node>> nodes,
-                                         std::size_t begin = 0) {
-  bool layout_aware_encoder_ingress = false;
-  for (std::size_t i = begin; i < nodes.size(); ++i) {
-    if (!nodes[i]) {
-      continue;
-    }
-    const std::string kind = nodes[i]->kind();
-    if (kind == "VideoSenderRawIngress[direct_nv12]") {
-      layout_aware_encoder_ingress = true;
-    } else if (kind == "VideoSenderRawIngress[convert_to_nv12]") {
-      return true;
-    } else if (kind == "H264EncodeSima") {
-      if (!layout_aware_encoder_ingress) {
-        return true;
-      }
-      layout_aware_encoder_ingress = false;
-    }
-  }
-  return false;
-}
-
-bool downstream_edge_requires_packed_decoder_output(const ExecutionGraphPlan& plan,
-                                                    std::size_t edge_index,
-                                                    std::unordered_set<std::size_t>& visited) {
-  if (edge_index >= plan.edges.size() || !visited.insert(edge_index).second ||
-      plan.edges[edge_index].consumed_by_fused_realtime_ingress) {
-    return false;
-  }
-
-  for (const auto& segment : plan.pipeline_segments) {
-    if (segment.consumed_by_fused_realtime_ingress ||
-        std::find(segment.input_edges.begin(), segment.input_edges.end(), edge_index) ==
-            segment.input_edges.end()) {
-      continue;
-    }
-    if (nodes_require_packed_decoder_output(segment.nodes)) {
-      return true;
-    }
-    for (const std::size_t output_edge : segment.output_edges) {
-      if (downstream_edge_requires_packed_decoder_output(plan, output_edge, visited)) {
-        return true;
-      }
-    }
-  }
-
-  const graph::NodeId target = plan.edges[edge_index].to;
-  for (std::size_t next = 0; next < plan.edges.size(); ++next) {
-    if (plan.edges[next].from == target &&
-        downstream_edge_requires_packed_decoder_output(plan, next, visited)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool downstream_requires_packed_decoder_output(const ExecutionGraphPlan& plan,
-                                               const DecoderAdmissionCandidate& candidate) {
-  const auto& source = plan.pipeline_segments[candidate.segment_index];
-  if (candidate.fused_branch) {
-    const auto& branch = source.fused_realtime_ingress->branches[candidate.fused_branch_index];
-    if (nodes_require_packed_decoder_output(branch.nodes, candidate.node_index + 1U) ||
-        nodes_require_packed_decoder_output(source.nodes)) {
-      return true;
-    }
-  } else if (nodes_require_packed_decoder_output(source.nodes, candidate.node_index + 1U)) {
-    return true;
-  }
-
-  std::unordered_set<std::size_t> visited_edges;
-  for (const std::size_t edge_index : source.output_edges) {
-    if (downstream_edge_requires_packed_decoder_output(plan, edge_index, visited_edges)) {
-      return true;
-    }
-  }
-  return false;
-}
 
 OutputSpec decoder_local_output_spec(std::span<const std::shared_ptr<Node>> nodes,
                                      std::size_t decoder_index,
@@ -366,10 +274,6 @@ std::vector<DecoderAdmissionCandidate> collect_candidates(const ExecutionGraphPl
       }
     }
   }
-  for (auto& candidate : candidates) {
-    candidate.zero_copy_output = decoder_options_allow_zero_copy_output(candidate.options) &&
-                                 !downstream_requires_packed_decoder_output(plan, candidate);
-  }
   return candidates;
 }
 
@@ -433,8 +337,10 @@ public:
   }
 
   MemoryContract memory_contract() const override {
-    return admission_.zero_copy_output ? MemoryContract::PreferDeviceZeroCopy
-                                       : MemoryContract::AllowEitherButReport;
+    // This describes the exposed node, not the hardware display-picture pool.
+    // An explicitly requested adapter tail may produce different storage.
+    return opt_.raw_output ? MemoryContract::PreferDeviceZeroCopy
+                           : MemoryContract::AllowEitherButReport;
   }
 
   std::string buffer_name_hint(int node_index) const override {
@@ -465,9 +371,6 @@ public:
 private:
   std::string admission_properties_fragment() const {
     std::ostringstream ss;
-    if (admission_.zero_copy_output) {
-      ss << " zero-copy-output=true";
-    }
     ss << " decoder-admission-required=true";
     if (!admission_.group_id.empty()) {
       ss << " admission-group-id=" << gst_double_quote(admission_.group_id);
@@ -519,7 +422,6 @@ std::shared_ptr<Node> make_admitted_decoder(const DecoderAdmissionCandidate& can
                      : pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning);
   props.memory_opt = opt.memory_opt || decoder_tuning_uses_memory_opt(props.tuning) ||
                      lease.resolved_tuning == 1U || lease.resolved_tuning == 2U;
-  props.zero_copy_output = candidate.zero_copy_output;
 
   opt.input_buffers = -1;
   opt.decoder_tuning.clear();
@@ -649,10 +551,10 @@ prepare_decoder_admission(ExecutionGraphPlan& plan,
     stream.height = candidate.height;
     stream.fps_num = candidate.fps_num;
     stream.fps_den = candidate.fps_den;
-    if (candidate.zero_copy_output) {
-      stream.requested_policy = pipeline_internal::kDecoderAdmissionPolicyZeroCopyOutput |
-                                pipeline_internal::kDecoderAdmissionPolicyNoOutputCopy;
-    }
+    // Hardware output is always a caller-owned DMA-BUF loan. Consumer layout
+    // requirements and explicit adapter tails do not change that allocation.
+    stream.requested_policy = pipeline_internal::kDecoderAdmissionPolicyZeroCopyOutput |
+                              pipeline_internal::kDecoderAdmissionPolicyNoOutputCopy;
     if (decoder_plan_debug_enabled()) {
       std::fprintf(stderr, "[DECPLAN] admission_request %s stream=%u policy=0x%x\n",
                    candidate_description(plan, candidate).c_str(), stream.stream_index,

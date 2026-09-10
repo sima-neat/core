@@ -1,11 +1,18 @@
 #include "gst/SimaTensorSetMetaAbi.h"
+#include "gst/GstInit.h"
+#include "pipeline/TensorAdapters.h"
+#include "pipeline/gst/InputStreamInternal.h"
+#include "dmabuf_test_utils.h"
 #include "pipeline/internal/OutputTensorOverride.h"
+#include "pipeline/internal/HolderLoanGate.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include "test_utils.h"
 
 #include <gstsimaaitensorbuffer.h>
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <algorithm>
 #include <cstring>
@@ -58,16 +65,6 @@ struct GstBufferUnref {
 };
 
 using GstBufferPtr = std::unique_ptr<GstBuffer, GstBufferUnref>;
-
-void ensure_tensor_set_meta_registered() {
-  int argc = 0;
-  char** argv = nullptr;
-  gst_init(&argc, &argv);
-  if (gst_meta_get_info(SIMA_TENSOR_SET_META_NAME) == nullptr) {
-    const gchar* tags[] = {nullptr};
-    (void)gst_meta_register_custom(SIMA_TENSOR_SET_META_NAME, tags, nullptr, nullptr, nullptr);
-  }
-}
 
 GstSample* make_tensor_sample_with_contract_meta(std::size_t descriptor_count = 2U) {
   GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 64U, nullptr);
@@ -497,14 +494,12 @@ void override_preserves_matching_logical_parent_offsets() {
   override.outputs.push_back(
       make_override_entry({8}, {1}, 0, 1, 1, 1, TensorDType::UInt8, "public_second"));
 
-  const Sample view =
-      apply_output_tensor_override(base, override, /*materialize_output=*/false);
+  const Sample view = apply_output_tensor_override(base, override, /*materialize_output=*/false);
   require(view.tensors.size() == 2U, "parent-offset view should expose two tensors");
   require(view.tensors[0].byte_offset == 32 && view.tensors[1].byte_offset == 64,
           "matching logical overrides must preserve live parent offsets");
 
-  const Sample owned =
-      apply_output_tensor_override(base, override, /*materialize_output=*/true);
+  const Sample owned = apply_output_tensor_override(base, override, /*materialize_output=*/true);
   require(owned.tensors.size() == 2U, "parent-offset owned output should expose two tensors");
   for (std::size_t i = 0; i < owned.tensors.size(); ++i) {
     const Mapping map = owned.tensors[i].view_read();
@@ -636,11 +631,358 @@ void override_segment_name_precedes_memory_index_for_segmented_sample() {
   require_status_values_0101(owned.tensors.front(), "segmented override materialized");
 }
 
+void dmabuf_auto_projection_and_override_policy() {
+  using namespace simaai::neat;
+  for (const bool mixed : {false, true}) {
+    GstSamplePtr carrier(make_tensor_sample_with_contract_meta());
+    GstBuffer* buffer = gst_sample_get_buffer(carrier.get());
+    GstBufferPtr dma(sima_test::allocate_cma_dmabuf(64U));
+    {
+      GstSamplePtr init(
+          gst_sample_new(dma.get(), gst_sample_get_caps(carrier.get()), nullptr, nullptr));
+      auto storage = pipeline_internal::make_gst_sample_storage(init.get());
+      const Mapping map = storage->map(MapMode::Write);
+      require(map.data && map.size_bytes >= 64U, "failed to initialize DMA projection fixture");
+      std::memset(map.data, 0x5A, map.size_bytes);
+    }
+    const auto identity = sima_test::dmabuf_span(dma.get());
+    gst_buffer_remove_all_memory(buffer);
+    gst_buffer_append_memory(buffer, gst_memory_ref(gst_buffer_peek_memory(dma.get(), 0U)));
+    if (mixed) {
+      GstMemory* cpu = gst_allocator_alloc(nullptr, 64U, nullptr);
+      require(cpu != nullptr, "failed to allocate CPU projection fixture");
+      GstMapInfo map{};
+      require(gst_memory_map(cpu, &map, GST_MAP_WRITE),
+              "failed to initialize CPU projection fixture");
+      std::memset(map.data, 0x3C, map.size);
+      gst_memory_unmap(cpu, &map);
+      gst_buffer_append_memory(buffer, cpu);
+    }
+    {
+      GstStructure* meta = gst_custom_meta_get_structure(
+          gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME));
+      const GValue* value = gst_structure_get_value(meta, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS);
+      auto* bytes = static_cast<GBytes*>(g_value_get_boxed(value));
+      gsize size = 0U;
+      const auto* descriptors =
+          static_cast<const SimaTensorDescriptorV2*>(g_bytes_get_data(bytes, &size));
+      require(size == 2U * sizeof(SimaTensorDescriptorV2),
+              "unexpected mixed descriptor fixture size");
+      std::vector<SimaTensorDescriptorV2> updated(descriptors, descriptors + 2U);
+      if (mixed) {
+        updated[1].memory_index = 1;
+        updated[1].byte_offset = 8;
+      } else {
+        // Distinct logical tensors sharing one physical memory must publish
+        // one canonical segment name, not conflicting per-output names.
+        updated[1].segment_name_id = updated[0].segment_name_id;
+      }
+      GBytes* replacement = g_bytes_new(updated.data(), size);
+      gst_structure_set(meta, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS, G_TYPE_BYTES, replacement,
+                        nullptr);
+      g_bytes_unref(replacement);
+    }
+
+    for (const bool with_override : {false, true}) {
+      OutputTensorOverride override;
+      override.outputs.push_back(
+          make_override_entry({4, 4}, {4, 1}, 0, 0, 2, 5, TensorDType::Int8, "boxes"));
+      override.outputs.push_back(make_override_entry({4, 4}, {4, 1}, mixed ? 8 : 16, mixed ? 1 : 0,
+                                                     7, 9, TensorDType::Int8, "scores"));
+      std::optional<OutputTensorOverride> override_opt =
+          with_override ? std::optional<OutputTensorOverride>(override) : std::nullopt;
+      for (const bool copy : {false, true}) {
+        for (const bool preserve : {false, true}) {
+          InputStream::State state;
+          state.opt.copy_output = copy;
+          state.opt.preserve_dmabuf_output = preserve;
+          pipeline_internal::reset_tensor_io_stats();
+          Sample output;
+          for (int frame = 0; frame < 2; ++frame) {
+            // Exercise both initial descriptor decoding and its cached fast path.
+            output = output_from_sample_stream(carrier.get(), "DMA output policy", copy,
+                                               &override_opt, &state);
+          }
+          require(output.tensors.size() == 2U, "DMA tensor metadata lost projected outputs");
+          for (std::size_t i = 0U; i < output.tensors.size(); ++i) {
+            const Tensor& tensor = output.tensors[i];
+            const bool is_dma = !mixed || i == 0U;
+            const bool retained = !copy || (preserve && is_dma);
+            require(tensor.storage && tensor.storage->kind == (retained ? StorageKind::GstSample
+                                                                        : StorageKind::CpuOwned),
+                    "per-payload Auto/ZeroCopy/Owned storage policy mismatch");
+            require(pipeline_internal::tensor_has_dmabuf_memory(tensor) == (is_dma && retained),
+                    "mixed CPU output inherited another payload's DMA classification");
+            if (is_dma && retained) {
+              auto* holder = static_cast<GstSample*>(tensor.storage->holder.get());
+              GstBuffer* live = gst_sample_get_buffer(holder);
+              require(sima_test::dmabuf_span(gst_buffer_peek_memory(live, 0U)) == identity,
+                      "projection/override replaced DMA backing or memory span");
+              require(tensor.byte_offset == static_cast<int64_t>(i == 0U ? 0U : 16U),
+                      "projection/override composed DMA logical offset incorrectly");
+            }
+            const Mapping map = tensor.map_read();
+            require(map.data && map.size_bytes >= 16U, "projected output map failed");
+            require(static_cast<const uint8_t*>(map.data)[0] == (is_dma ? 0x5A : 0x3C),
+                    "projected output selected wrong physical allocation");
+          }
+          if (!mixed && (!copy || preserve)) {
+            require(pipeline_internal::snapshot_tensor_io_stats().tensor_copy_count == 0U,
+                    "native DMA projection used a hidden copy path");
+            require(!output.owned, "retained DMA output must not be advertised as owned");
+          }
+        }
+      }
+    }
+  }
+}
+
+void mixed_dmabuf_envelope_preserves_pool_loan_and_cpu_packing() {
+  using namespace simaai::neat;
+  namespace dma = internal::dmabuf;
+  dma::Error error;
+  const auto pool_unref = [](GstBufferPool* pool) {
+    (void)gst_buffer_pool_set_active(pool, FALSE);
+    gst_object_unref(pool);
+  };
+  std::unique_ptr<GstBufferPool, decltype(pool_unref)> pool(
+      dma::createDmaBufPool(dma::HeapKind::Cma, 64U, 1U, 1U, {}, &error), pool_unref);
+  require(pool != nullptr, "DMA envelope pool creation failed: " + error.message());
+  auto gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
+  std::shared_ptr<void> envelope;
+  std::shared_ptr<void> owned_envelope;
+  sima_test::DmaBufSpan expected_span;
+  {
+    GstBuffer* acquired = nullptr;
+    require(gst_buffer_pool_acquire_buffer(pool.get(), &acquired, nullptr) == GST_FLOW_OK &&
+                acquired,
+            "failed to acquire DMA envelope source");
+    GstBufferPtr allocation(acquired);
+    expected_span = sima_test::dmabuf_span(allocation.get());
+    GstSamplePtr source(gst_sample_new(allocation.get(), nullptr, nullptr, nullptr));
+    Tensor device;
+    device.storage = pipeline_internal::make_gst_sample_storage(source.get());
+    require(device.storage != nullptr, "failed to wrap DMA envelope source");
+    {
+      const Mapping mapping = device.storage->map(MapMode::Write);
+      require(mapping.data && mapping.size_bytes >= 64U, "failed to map DMA envelope fixture");
+      for (std::size_t i = 0U; i < 64U; ++i) {
+        static_cast<std::uint8_t*>(mapping.data)[i] = static_cast<std::uint8_t>(i);
+      }
+    }
+    device.dtype = TensorDType::UInt8;
+    device.layout = TensorLayout::HW;
+    device.shape = {2, 2};
+    device.strides_bytes = {8, 1};
+    device.byte_offset = 4;
+    device.route.name = "device";
+    device.route.segment_name = "device";
+    device.route.memory_index = 0;
+
+    Tensor cpu = Tensor::from_vector(std::vector<std::uint8_t>{99, 10, 11, 99, 12, 13, 99}, {7},
+                                     TensorMemory::CPU);
+    cpu.shape = {2, 2};
+    cpu.layout = TensorLayout::HW;
+    cpu.strides_bytes = {3, 1};
+    cpu.byte_offset = 1;
+    cpu.route.name = "cpu";
+    cpu.route.segment_name = "cpu";
+    Sample input = sample_from_tensors(TensorList{device, cpu});
+    require(pipeline_internal::attach_zero_copy_loan_to_sample(input, gate),
+            "failed to attach DMA envelope source loan");
+    std::string detail;
+    envelope = pipeline_internal::sample_to_gst_envelope_holder(input, &detail);
+    require(envelope != nullptr, "mixed DMA envelope failed: " + detail);
+    require(pipeline_internal::holder_has_zero_copy_loans(envelope),
+            "returned envelope holder lost its transferable source loan");
+    owned_envelope =
+        pipeline_internal::sample_to_gst_envelope_holder(input, &detail, /*allow_zero_copy=*/false);
+    require(owned_envelope != nullptr, "explicit Owned envelope failed: " + detail);
+    require(!pipeline_internal::holder_has_zero_copy_loans(owned_envelope),
+            "explicit Owned envelope retained a producer loan");
+  }
+
+  GstBufferPoolAcquireParams no_wait{};
+  no_wait.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+  GstBuffer* unavailable = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool.get(), &unavailable, &no_wait) == GST_FLOW_EOS &&
+              unavailable == nullptr,
+          "DMA envelope released the producer pool lease while its consumer retained it");
+  require(gate->inflight() == 1 && gate->released() == 0U,
+          "DMA envelope released its source loan before the consumer");
+
+  GstBufferPtr retained(pipeline_internal::buffer_from_tensor_holder(envelope));
+  require(retained && gst_buffer_n_memory(retained.get()) == 2U,
+          "mixed envelope should have one memory per tensor");
+  require(sima_test::dmabuf_span(gst_buffer_peek_memory(retained.get(), 0U)) == expected_span,
+          "packing a CPU field replaced its DMA sibling allocation or span");
+  {
+    pipeline_internal::TensorBufferView view;
+    std::string detail;
+    require(pipeline_internal::tensor_buffer_descriptor_from_sample(
+                static_cast<GstSample*>(envelope.get()), &view, &detail),
+            "mixed envelope descriptor failed: " + detail);
+    require(view.tensors.size() == 2U && view.tensors[0].memory_index == 0 &&
+                view.tensors[0].byte_offset == 4U &&
+                view.tensors[0].stride_bytes == std::vector<std::int64_t>({8, 1}),
+            "mixed envelope changed the retained DMA view offset/strides");
+    require(view.tensors[1].memory_index == 1 && view.tensors[1].byte_offset == 0U &&
+                view.tensors[1].stride_bytes == std::vector<std::int64_t>({2, 1}),
+            "mixed envelope reused stale CPU offsets/strides after packing");
+  }
+  GstMemory* cpu_memory = gst_buffer_peek_memory(retained.get(), 1U);
+  require(!gst_is_dmabuf_memory(cpu_memory), "CPU envelope field requires ordinary CPU backing");
+  GstMapInfo cpu_map{};
+  require(gst_memory_map(cpu_memory, &cpu_map, GST_MAP_READ), "failed to map packed CPU field");
+  const std::uint8_t packed_cpu[] = {10, 11, 12, 13};
+  const bool cpu_matches = cpu_map.size == sizeof(packed_cpu) &&
+                           std::memcmp(cpu_map.data, packed_cpu, sizeof(packed_cpu)) == 0;
+  gst_memory_unmap(cpu_memory, &cpu_map);
+  require(cpu_matches, "CPU envelope packing copied padding or applied its byte offset twice");
+  GstBufferPtr owned(pipeline_internal::buffer_from_tensor_holder(owned_envelope));
+  require(owned && gst_buffer_n_memory(owned.get()) == 2U &&
+              !pipeline_internal::buffer_has_dmabuf_memory(owned.get()),
+          "explicit Owned envelope should materialize ordinary CPU memory");
+  GstMemory* owned_memory = gst_buffer_peek_memory(owned.get(), 0U);
+  GstMapInfo owned_map{};
+  require(gst_memory_map(owned_memory, &owned_map, GST_MAP_READ),
+          "failed to map explicitly materialized DMA field");
+  const std::uint8_t packed_device[] = {4, 5, 12, 13};
+  const bool owned_matches = owned_map.size == sizeof(packed_device) &&
+                             std::memcmp(owned_map.data, packed_device, sizeof(packed_device)) == 0;
+  gst_memory_unmap(owned_memory, &owned_map);
+  require(owned_matches, "explicit Owned envelope did not pack the original DMA tensor view");
+
+  envelope.reset();
+  require(gate->inflight() == 1,
+          "destroying the envelope sample released a buffer-only consumer's loan");
+  retained.reset();
+  require(gate->inflight() == 0 && gate->released() == 1U && gate->overrelease() == 0U,
+          "final envelope release did not return its source loan exactly once");
+  GstBuffer* reacquired = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool.get(), &reacquired, &no_wait) == GST_FLOW_OK &&
+              reacquired,
+          "final envelope release did not return the original producer pool lease");
+  GstBufferPtr returned(reacquired);
+  require(sima_test::dmabuf_span(returned.get()) == expected_span,
+          "producer pool did not reuse the original DMA allocation");
+}
+
+void dma_video_envelope_preserves_native_span_and_planes() {
+  using namespace simaai::neat;
+  for (const bool planar : {false, true}) {
+    // Metadata-only fixtures: no mapping or accelerator submission is needed.
+    GstBufferPtr source(sima_test::make_bookkeeping_dmabuf(planar ? 32U : 64U));
+    if (planar) {
+      GstBufferPtr chroma(sima_test::make_bookkeeping_dmabuf(16U));
+      gst_buffer_append_memory(source.get(),
+                               gst_memory_ref(gst_buffer_peek_memory(chroma.get(), 0U)));
+    }
+    std::vector<sima_test::DmaBufSpan> spans;
+    for (guint i = 0U; i < gst_buffer_n_memory(source.get()); ++i) {
+      spans.push_back(sima_test::dmabuf_span(gst_buffer_peek_memory(source.get(), i)));
+    }
+    gsize offsets[GST_VIDEO_MAX_PLANES] = {};
+    gint strides[GST_VIDEO_MAX_PLANES] = {8, 8};
+    require(gst_buffer_add_video_meta_full(source.get(), GST_VIDEO_FRAME_FLAG_NONE,
+                                           planar ? GST_VIDEO_FORMAT_NV12 : GST_VIDEO_FORMAT_GRAY8,
+                                           4U, 4U, planar ? 2U : 1U, offsets, strides) != nullptr,
+            "failed to attach native DMA video metadata");
+    GstCaps* caps =
+        gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, planar ? "NV12" : "GRAY8",
+                            "width", G_TYPE_INT, 4, "height", G_TYPE_INT, 4, nullptr);
+    GstSamplePtr sample(gst_sample_new(source.get(), caps, nullptr, nullptr));
+    gst_caps_unref(caps);
+    Tensor tensor = from_gst_sample(sample.get());
+    if (planar) {
+      // Tensor plane offsets can be global while producer GstVideoMeta offsets
+      // are relative to separate memories; forwarding must not rewrite either.
+      tensor.planes[1].byte_offset = 32;
+    }
+    std::string detail;
+    const auto holder = pipeline_internal::sample_to_gst_envelope_holder(
+        sample_from_tensors(TensorList{tensor}), &detail);
+    require(holder != nullptr, "native DMA video envelope failed: " + detail);
+    GstBufferPtr buffer(pipeline_internal::buffer_from_tensor_holder(holder));
+    require(buffer && gst_buffer_n_memory(buffer.get()) == spans.size(),
+            "native DMA video envelope lost a plane memory");
+    for (guint i = 0U; i < gst_buffer_n_memory(buffer.get()); ++i) {
+      require(sima_test::dmabuf_span(gst_buffer_peek_memory(buffer.get(), i)) == spans[i],
+              "native DMA video envelope resized or replaced producer memory");
+    }
+    GstVideoMeta* meta = gst_buffer_get_video_meta(buffer.get());
+    require(meta && meta->width == 4U && meta->height == 4U &&
+                meta->n_planes == (planar ? 2U : 1U) && meta->offset[0] == 0U &&
+                meta->stride[0] == 8 &&
+                (!planar || (meta->offset[1] == 0U && meta->stride[1] == 8)),
+            "native DMA video envelope replaced producer-relative video layout");
+  }
+}
+
+void unresolved_mixed_dmabuf_descriptor_fails_without_copy() {
+  using namespace simaai::neat;
+  for (const int unresolved_index : {-1, 7}) {
+    GstSamplePtr carrier(make_tensor_sample_with_contract_meta());
+    GstBuffer* buffer = gst_sample_get_buffer(carrier.get());
+    GstBufferPtr dma(sima_test::make_bookkeeping_dmabuf(64U));
+    GstMemory* cpu = gst_memory_ref(gst_buffer_peek_memory(buffer, 0U));
+    gst_buffer_remove_all_memory(buffer);
+    gst_buffer_append_memory(buffer, gst_memory_ref(gst_buffer_peek_memory(dma.get(), 0U)));
+    gst_buffer_append_memory(buffer, cpu);
+    GstStructure* meta = gst_custom_meta_get_structure(
+        gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME));
+    const GValue* value = gst_structure_get_value(meta, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS);
+    gsize size = 0U;
+    const auto* descriptors = static_cast<const SimaTensorDescriptorV2*>(
+        g_bytes_get_data(static_cast<GBytes*>(g_value_get_boxed(value)), &size));
+    require(size == 2U * sizeof(SimaTensorDescriptorV2),
+            "negative descriptor fixture size mismatch");
+    std::vector<SimaTensorDescriptorV2> updated(descriptors, descriptors + 2U);
+    // The later descriptor names CPU memory 1. Internals can then validate the
+    // earlier descriptor by name while leaving its physical index unresolved.
+    updated[0].memory_index = unresolved_index;
+    updated[0].segment_name_id = updated[1].segment_name_id;
+    updated[1].memory_index = 1;
+    GBytes* replacement = g_bytes_new(updated.data(), size);
+    gst_structure_set(meta, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS, G_TYPE_BYTES, replacement,
+                      nullptr);
+    g_bytes_unref(replacement);
+
+    InputStream::State state;
+    state.opt.copy_output = true;
+    state.opt.preserve_dmabuf_output = true;
+    pipeline_internal::reset_tensor_io_stats();
+    bool rejected = false;
+    try {
+      (void)output_from_sample_stream(carrier.get(), "unresolved DMA descriptor", true, nullptr,
+                                      &state);
+    } catch (const std::runtime_error& error) {
+      const std::string message = error.what();
+      rejected = message.find("logical=2") != std::string::npos &&
+                 message.find("seg_scores") != std::string::npos &&
+                 message.find("unresolved physical memory index " +
+                              std::to_string(unresolved_index)) != std::string::npos;
+    }
+    require(rejected, "unresolved mixed DMA descriptor did not fail with physical binding context");
+    const auto stats = pipeline_internal::snapshot_tensor_io_stats();
+    require(stats.tensor_copy_count == 0U && stats.gst_memory_map_calls == 0U,
+            "unresolved descriptor entered a materialization or CPU mapping fallback");
+    require(gst_buffer_n_memory(buffer) == 2U &&
+                sima_test::dmabuf_span(gst_buffer_peek_memory(buffer, 0U)) ==
+                    sima_test::dmabuf_span(dma.get()),
+            "rejecting unresolved descriptor changed carrier backing storage");
+  }
+}
+
 } // namespace
 
 int main() {
   try {
-    ensure_tensor_set_meta_registered();
+    simaai::neat::gst_init_once();
+    dmabuf_auto_projection_and_override_policy();
+    mixed_dmabuf_envelope_preserves_pool_loan_and_cpu_packing();
+    dma_video_envelope_preserves_native_span_and_planes();
+    unresolved_mixed_dmabuf_descriptor_fails_without_copy();
     GstSample* sample = make_tensor_sample_with_contract_meta();
     require(sample != nullptr, "sample creation failed");
 

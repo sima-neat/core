@@ -50,7 +50,8 @@ namespace {
 void tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
                                            const GraphRuntimeOptions& graph_opt,
                                            bool graph_internal_output) {
-  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto || stream_opt.copy_output) {
+  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output)) {
     return;
   }
   const std::size_t edge_queue = graph_opt.edge_queue == 0 ? 256 : graph_opt.edge_queue;

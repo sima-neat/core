@@ -10,6 +10,8 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -50,10 +52,10 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
 }
 
 sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
-  return sima_test::make_model_archive_fixture(tag,
-                                               {
-                                                   {"etc/test_model_mpk.json",
-                                                    R"json({
+  const auto fixture = sima_test::make_model_archive_fixture(tag,
+                                                             {
+                                                                 {"etc/test_model_mpk.json",
+                                                                  R"json({
   "name": "preproc_contract_model",
   "model_path": "preproc_contract_model.onnx",
   "model_sdk_version": "2.0.0",
@@ -62,31 +64,30 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
     {
       "name": "images",
       "type": "buffer",
-      "size": 2764800,
+      "size": 4915200,
       "input_range": [0.0, 1.0],
-      "logical_shape": [1, 720, 1280, 3],
-      "logical_dtype": "UINT8"
+      "logical_shape": [1, 640, 640, 3],
+      "logical_dtype": "FP32"
     }
   ],
   "plugins": [
     {
-      "name": "preproc_0",
+      "name": "cast_0",
       "sequence": 1,
       "processor": "EV74",
       "config_params": {
         "desired_batch_size": 1,
         "actual_batch_size": 1,
-        "kernel": "preproc",
+        "kernel": "cast_transform",
         "params": {
-          "input_shapes": [[1, 720, 1280, 3]],
-          "output_shapes": [[1, 640, 640, 3]],
-          "input_dtype": ["UINT8"],
-          "output_dtype": "BF16"
+          "out_dtype": "bfloat16",
+          "input_shapes": [[1, 640, 640, 3]],
+          "output_shapes": [[1, 640, 640, 3]]
         }
       },
-      "input_nodes": [{"name": "images", "size": 2764800}],
+      "input_nodes": [{"name": "images", "size": 4915200}],
       "output_nodes": [{
-        "name": "preproc_0",
+        "name": "cast_0",
         "type": "buffer",
         "size": 2457600,
         "logical_shape": [1, 640, 640, 3],
@@ -103,13 +104,11 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
         "desired_batch_size": 1,
         "actual_batch_size": 1,
         "number_of_quads_to_user": 4,
-        "input_shapes": [[1, 640, 640, 3]],
-        "input_data_type": ["BF16"],
-        "output_shapes": [[1, 80, 80, 6]],
-        "data_type": ["BF16"]
+        "input_types": [{"scalar": "bfloat16", "shape": [1, 640, 640, 3]}],
+        "output_types": [{"scalar": "bfloat16", "shape": [1, 80, 80, 6]}]
       },
       "input_nodes": [{
-        "name": "preproc_0",
+        "name": "cast_0",
         "size": 2457600,
         "logical_shape": [1, 640, 640, 3],
         "logical_dtype": "BF16"
@@ -126,8 +125,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
     }
   ]
 })json"},
-                                                   {"etc/pipeline_sequence.json",
-                                                    R"json({
+                                                                 {"etc/pipeline_sequence.json",
+                                                                  R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -151,8 +150,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                                   {"etc/0_preproc.json",
-                                                    R"json({
+                                                                 {"etc/0_preproc.json",
+                                                                  R"json({
   "node_name": "preproc_0",
   "graph_name": "preproc",
   "input_width": 1280,
@@ -167,8 +166,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
   "output_dtype": "BF16",
   "tessellate": false
 })json"},
-                                                   {"etc/0_process_mla.json",
-                                                    R"json({
+                                                                 {"etc/0_process_mla.json",
+                                                                  R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["EV81_BFLOAT16"],
@@ -176,8 +175,19 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                               },
-                                               true);
+                                                             },
+                                                             false);
+  // Image preprocessing comes from Model::Options; the MPK describes its tensor target.
+  // Planning needs the declared MLA topology, not an executable MLA program.
+  const auto share = std::filesystem::path(fixture.root_dir) / "share";
+  std::filesystem::create_directories(share);
+  sima_test::write_topology_elf(share / "stage0.elf", "data.ifm.b0", 2457600U, "data.ofm.b0",
+                                76800U);
+  const std::string archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
+                              " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) +
+                              " .";
+  require(std::system(archive.c_str()) == 0, "failed to archive Preproc topology fixture");
+  return fixture;
 }
 
 sima_test::ModelArchiveFixture make_infer_only_fixture(const std::string& tag) {
@@ -438,32 +448,46 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
                 rendered_stage.processcvu.input_shapes.size() == 1U &&
                 rendered_stage.processcvu.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
             "rendered Preproc static contract must expose the full dynamic input capacity");
-    require(rendered_stage.processcvu.dmabuf_plan_contract &&
-                rendered_stage.processcvu.graph_id == 200 &&
-                rendered_stage.processcvu.descriptor_abi_id != 0U &&
-                rendered_stage.frame_arena_role ==
-                    pipeline_internal::sima::FrameArenaRole::Allocate &&
-                rendered_stage.frame_arena_storage_domain ==
-                    pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
-                rendered_stage.frame_arena_provenance ==
-                    pipeline_internal::sima::static_contract::ArenaAllocationProvenance::
-                        CoreAllocated &&
-                (rendered_stage.frame_arena_required_device_access &
-                 static_cast<std::uint32_t>(
-                     pipeline_internal::sima::static_contract::ArenaDeviceAccess::Ev74)) != 0U &&
-                rendered_stage.frame_arena_size_bytes > 0U &&
-                rendered_stage.input_bindings.size() == 1U &&
-                rendered_stage.input_bindings.front().src_stage_id.empty() &&
-                rendered_stage.input_bindings.front().src_stage_index < 0 &&
-                rendered_stage.input_bindings.front().src_logical_output_index < 0 &&
-                rendered_stage.physical_inputs.size() == 1U &&
-                rendered_stage.physical_inputs.front().size_bytes > 0U &&
-                rendered_stage.logical_outputs.size() == 1U &&
-                rendered_stage.physical_outputs.size() == 1U &&
-                rendered_stage.logical_outputs.front().backend_output_index >= 0 &&
-                rendered_stage.logical_outputs.front().physical_index ==
-                    rendered_stage.physical_outputs.front().physical_index,
-            "standalone Preproc must carry one compiler-proved direct CVU arena contract");
+    require(
+        rendered_stage.processcvu.dmabuf_plan_contract &&
+            rendered_stage.processcvu.graph_id == 200 &&
+            rendered_stage.processcvu.descriptor_abi_id != 0U &&
+            rendered_stage.frame_arena_role == pipeline_internal::sima::FrameArenaRole::Allocate &&
+            rendered_stage.frame_arena_storage_domain ==
+                pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
+            rendered_stage.frame_arena_provenance == pipeline_internal::sima::static_contract::
+                                                         ArenaAllocationProvenance::CoreAllocated &&
+            (rendered_stage.frame_arena_required_device_access &
+             static_cast<std::uint32_t>(
+                 pipeline_internal::sima::static_contract::ArenaDeviceAccess::Ev74)) != 0U &&
+            rendered_stage.frame_arena_size_bytes > 0U &&
+            rendered_stage.input_bindings.size() == 1U &&
+            rendered_stage.physical_inputs.size() == 1U &&
+            rendered_stage.physical_inputs.front().size_bytes > 0U &&
+            rendered_stage.logical_outputs.size() == 1U &&
+            rendered_stage.physical_outputs.size() == 1U &&
+            rendered_stage.logical_outputs.front().backend_output_index >= 0 &&
+            rendered_stage.logical_outputs.front().physical_index ==
+                rendered_stage.physical_outputs.front().physical_index,
+        "model-managed Preproc must carry one compiler-proved direct CVU arena contract");
+    const auto& input_binding = rendered_stage.input_bindings.front();
+    const auto& physical_input = rendered_stage.physical_inputs.front();
+    const auto& logical_input = rendered_stage.logical_inputs.front();
+    // This node consumes an external image, not a model-stage output. Its sole
+    // DMA-BUF still has explicit selectors; only the producer-stage identity is absent.
+    require(input_binding.src_stage_id.empty() && input_binding.src_stage_index < 0 &&
+                input_binding.sink_pad_index == 0 && input_binding.local_logical_input_index == 0 &&
+                input_binding.src_logical_output_index == 0 && input_binding.src_output_slot == 0 &&
+                input_binding.src_physical_output_index == 0 &&
+                input_binding.src_physical_byte_offset == 0 &&
+                input_binding.src_physical_size_bytes == physical_input.size_bytes &&
+                input_binding.source_segment_name == physical_input.segment_name &&
+                physical_input.physical_index == 0 && physical_input.allocator_index == 0 &&
+                physical_input.source_physical_index == 0 &&
+                physical_input.source_byte_offset == 0 && logical_input.logical_index == 0 &&
+                logical_input.backend_input_index == 0 && logical_input.physical_index == 0 &&
+                logical_input.byte_offset == 0,
+            "model-managed Preproc must bind the sole external DMA-BUF without a producer stage");
     for (const auto& output : rendered_stage.physical_outputs) {
       require(output.size_bytes > 0U && output.required_alignment_bytes > 0U &&
                   output.source_byte_offset >= 0 &&

@@ -448,7 +448,6 @@ set(UNIT_TESTS
   unit_mpk_contract_legacy_ingress_test
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
-  unit_memory_backend_policy_test
   unit_dmabuf_eligibility_test
   unit_afe_mpk_v2_decoder_test
   unit_physical_execution_plan_test

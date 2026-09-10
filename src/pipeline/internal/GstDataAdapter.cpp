@@ -741,7 +741,7 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
   }
 
   try {
-    SampleSpec spec = derive_tensor_spec_or_throw(t, opt, "GstDataAdapter::derive_field_spec");
+    SampleSpec spec = describe_tensor_spec_or_throw(t, opt, "GstDataAdapter::derive_field_spec");
     if (spec.caps_string.empty()) {
       if (err)
         *err = "field spec: empty caps_string";

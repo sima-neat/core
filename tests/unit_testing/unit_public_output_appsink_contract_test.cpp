@@ -6,8 +6,12 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/RTSPInput.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/TensorUtil.h"
+#include "dmabuf_test_utils.h"
 #include "pipeline/runtime/EdgeRouter.h"
 #include "pipeline/runtime/ExecutionGraphRuntime.h"
 #include "pipeline/runtime/RunCore.h"
@@ -20,6 +24,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -95,11 +101,60 @@ void require_appsink_properties(const simaai::neat::InputStreamOptions& options,
   require(actual.sync == expected_sync, std::string(context) + ": sync changed");
 }
 
+// Replace only the fixture producer's output allocation. No payload is read:
+// this proves Core allocation identity/ownership, not decoding or DMA import.
+struct DmaOutputFixture {
+  std::mutex mutex;
+  std::unordered_map<std::uint64_t, sima_test::DmaBufSpan> allocations;
+  std::string error;
+};
+
+GstPadProbeReturn publish_fixture_dmabuf(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
+  auto& fixture = *static_cast<DmaOutputFixture*>(user_data);
+  GstBuffer* original = GST_PAD_PROBE_INFO_BUFFER(info);
+  if (!original) {
+    return GST_PAD_PROBE_OK;
+  }
+  GstBuffer* buffer = nullptr;
+  try {
+    buffer = sima_test::make_bookkeeping_dmabuf(gst_buffer_get_size(original));
+    gst_buffer_copy_into(
+        buffer, original,
+        static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_TIMESTAMPS | GST_BUFFER_COPY_FLAGS), 0, -1);
+    {
+      std::lock_guard<std::mutex> lock(fixture.mutex);
+      fixture.allocations.emplace(GST_BUFFER_PTS(buffer), sima_test::dmabuf_span(buffer));
+    }
+    GST_PAD_PROBE_INFO_DATA(info) = buffer;
+    gst_buffer_unref(original);
+    return GST_PAD_PROBE_OK;
+  } catch (const std::exception& error) {
+    if (buffer) {
+      gst_buffer_unref(buffer);
+    }
+    std::lock_guard<std::mutex> lock(fixture.mutex);
+    fixture.error = error.what();
+    return GST_PAD_PROBE_DROP;
+  }
+}
+
+struct RemoveProbe {
+  GstPad* pad = nullptr;
+  gulong id = 0;
+  ~RemoveProbe() {
+    if (pad) {
+      gst_pad_remove_probe(pad, id);
+      gst_object_unref(pad);
+    }
+  }
+};
+
 } // namespace
 
 RUN_TEST(
     "unit_public_output_appsink_contract_test", ([] {
       unsetenv("SIMA_RTSP_ALLOW_BACKPRESSURE");
+      unsetenv("SIMA_OUTPUT_MEMORY_DEFAULT");
       setenv("SIMA_INPUTSTREAM_USE_APPSINK_CALLBACKS", "1", 1);
       setenv("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY", "1", 1);
       simaai::neat::gst_init_once();
@@ -391,11 +446,22 @@ RUN_TEST(
                 "Latest reservation fixture could not restore its sample");
       }
 
-      // Saturate the real appsink -> InputStream callback queue -> RunCore
-      // output path.  Conflicting Realtime/KeepLatest RunOptions must not
-      // drop an explicit EveryFrame result, including the optional
-      // appsink-callback mode and zero-copy drop fallback.
-      {
+      // Saturate the real appsink -> InputStream -> RunCore path with standard
+      // DMA memory. EveryFrame overrides conflicting Realtime options; Auto
+      // preserves producer storage both with and without a CPU-copy default.
+      struct SaturationCase {
+        const char* name;
+        bool explicit_output;
+        simaai::neat::RunPreset preset;
+        bool stop_while_full;
+      };
+      for (const auto test_case : {
+               SaturationCase{"EveryFrame/Realtime", true, simaai::neat::RunPreset::Realtime,
+                              false},
+               SaturationCase{"Block/Balanced", false, simaai::neat::RunPreset::Balanced, false},
+               SaturationCase{"Block/Reliable", false, simaai::neat::RunPreset::Reliable, false},
+               SaturationCase{"Block/stop", false, simaai::neat::RunPreset::Balanced, true},
+           }) {
         GError* error = nullptr;
         GstElement* pipeline =
             gst_parse_launch("videotestsrc num-buffers=8 pattern=ball ! "
@@ -408,17 +474,31 @@ RUN_TEST(
           g_error_free(error);
           throw std::runtime_error(message);
         }
-        require(pipeline != nullptr, "EveryFrame saturation pipeline did not parse");
+        require(pipeline != nullptr, "DMA saturation pipeline did not parse");
         GstElement* sink = gst_bin_get_by_name(GST_BIN(pipeline), "mysink");
-        require(sink != nullptr, "EveryFrame saturation appsink was not found");
+        require(sink != nullptr, "DMA saturation appsink was not found");
 
-        simaai::neat::InputStreamOptions stream_options;
-        stream_options.public_output_contract = true;
-        stream_options.explicit_public_output_options = true;
-        stream_options.appsink_max_buffers = 2;
+        DmaOutputFixture fixture;
+        GstPad* sink_pad = gst_element_get_static_pad(sink, "sink");
+        require(sink_pad != nullptr, "DMA saturation appsink has no sink pad");
+        const auto probe = gst_pad_add_probe(sink_pad, GST_PAD_PROBE_TYPE_BUFFER,
+                                             publish_fixture_dmabuf, &fixture, nullptr);
+        RemoveProbe remove_probe{sink_pad, probe};
+
+        simaai::neat::RunOptions run_options;
+        run_options.preset = test_case.preset;
+        run_options.queue_depth = 1;
+        run_options.overflow_policy = test_case.explicit_output
+                                          ? simaai::neat::OverflowPolicy::KeepLatest
+                                          : simaai::neat::OverflowPolicy::Block;
+        run_options.output_memory = test_case.explicit_output ? simaai::neat::OutputMemory::ZeroCopy
+                                                              : simaai::neat::OutputMemory::Auto;
+        auto stream_options = simaai::neat::session_build_make_stream_options(
+            run_options, simaai::neat::RunMode::Async);
+        stream_options.explicit_public_output_options = test_case.explicit_output;
+        stream_options.appsink_max_buffers = test_case.explicit_output ? 2 : 1;
         stream_options.appsink_drop = false;
         stream_options.appsink_sync = false;
-        stream_options.copy_output = false;
         stream_options.timeout_ms = 5000;
         stream_options.worker_poll_ms = 1;
 
@@ -426,24 +506,16 @@ RUN_TEST(
             pipeline, nullptr, sink, raw_rgb_spec(16, 16, 100), simaai::neat::InputOptions{},
             stream_options, {}, nullptr);
 
-        // A stopped appsink reports EOS, while a PLAYING finite source can
-        // fill and block the sink before the worker installs its callbacks.
-        // PAUSED is the deterministic hand-off state: the worker stays alive
-        // and the source cannot outrun callback installation.
+        // PAUSED prevents a finite source outrunning callback installation.
         require(gst_element_set_state(pipeline, GST_STATE_PAUSED) != GST_STATE_CHANGE_FAILURE,
-                "EveryFrame saturation pipeline did not pause");
+                "DMA saturation pipeline did not pause");
         GstState current_state = GST_STATE_NULL;
         GstState pending_state = GST_STATE_VOID_PENDING;
         require(gst_element_get_state(pipeline, &current_state, &pending_state, 5 * GST_SECOND) !=
                         GST_STATE_CHANGE_FAILURE &&
                     current_state == GST_STATE_PAUSED,
-                "EveryFrame saturation pipeline did not reach PAUSED");
+                "DMA saturation pipeline did not reach PAUSED");
 
-        simaai::neat::RunOptions run_options;
-        run_options.preset = simaai::neat::RunPreset::Realtime;
-        run_options.queue_depth = 1;
-        run_options.overflow_policy = simaai::neat::OverflowPolicy::KeepLatest;
-        run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
         auto core = simaai::neat::runtime::RunCore::start_single_pipeline(
             std::move(stream), run_options, stream_options, simaai::neat::RunMode::Async);
         struct StopCore {
@@ -458,28 +530,79 @@ RUN_TEST(
           }
         } stop{core};
 
-        // InputStream installs the optional callbacks on its worker.  PAUSED
-        // keeps that worker valid while it enters the normal callback loop.
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const auto before = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
         require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
-                "EveryFrame saturation pipeline did not start");
-
-        require(core->opt.queue_depth == 1 &&
-                    core->opt.overflow_policy == simaai::neat::OverflowPolicy::KeepLatest,
-                "explicit Output policy overwrote input RunOptions");
+                "DMA saturation pipeline did not start");
+        const auto output_capacity = static_cast<std::uint64_t>(stream_options.appsink_max_buffers);
+        require(wait_until([&] { return core->stats().outputs_ready >= output_capacity; }, 2000),
+                "DMA saturation run did not fill its output queue");
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const auto saturated = core->stats();
+        require(saturated.outputs_ready == output_capacity && saturated.outputs_dropped == 0,
+                "DMA Block policy was silently replaced by dropping under queue pressure");
+        require(core->pipeline.copy_output_latched.load() == stream_options.copy_output,
+                "DMA queue pressure activated the Balanced copy latch");
+        {
+          std::lock_guard<std::mutex> lock(fixture.mutex);
+          require(fixture.error.empty(), "DMA producer fixture failed: " + fixture.error);
+          require(fixture.allocations.size() < 8U,
+                  std::string(test_case.name) +
+                      ": the finite producer ran through a saturated no-drop output");
+        }
+
+        if (test_case.stop_while_full) {
+          const auto stop_started = std::chrono::steady_clock::now();
+          core->stop();
+          require(std::chrono::steady_clock::now() - stop_started < std::chrono::seconds(2),
+                  "stop failed to wake the blocked DMA output worker");
+          continue;
+        }
 
         std::int64_t previous_pts = -1;
         for (int index = 0; index < 8; ++index) {
           simaai::neat::Sample output;
           simaai::neat::PullError pull_error;
-          require(core->pull(2000, output, &pull_error) == simaai::neat::PullStatus::Ok,
-                  "EveryFrame saturation run lost an output");
-          require(output.pts_ns > previous_pts, "EveryFrame saturation outputs were not ordered");
+          const auto status = core->pull(2000, output, &pull_error);
+          if (status != simaai::neat::PullStatus::Ok) {
+            const auto stats = core->stats();
+            std::lock_guard<std::mutex> lock(fixture.mutex);
+            throw std::runtime_error(std::string("DMA saturation ") + test_case.name +
+                                     " received=" + std::to_string(index) +
+                                     "/8 produced=" + std::to_string(fixture.allocations.size()) +
+                                     " ready=" + std::to_string(stats.outputs_ready) +
+                                     " dropped=" + std::to_string(stats.outputs_dropped) + ": " +
+                                     pull_error.message +
+                                     (fixture.error.empty() ? "" : "; producer: " + fixture.error));
+          }
+          require(output.pts_ns > previous_pts, "DMA saturation outputs were not ordered");
           previous_pts = output.pts_ns;
+          require(!output.tensors.empty() &&
+                      simaai::neat::pipeline_internal::sample_has_dmabuf_memory(output),
+                  "DMA output was materialized instead of retaining producer memory");
+          GstBuffer* retained = simaai::neat::pipeline_internal::buffer_from_tensor_holder(
+              output.tensors.front().storage->holder);
+          require(retained != nullptr, "DMA output lost its retained GstSample");
+          const auto actual = sima_test::dmabuf_span(retained);
+          gst_buffer_unref(retained);
+          std::lock_guard<std::mutex> lock(fixture.mutex);
+          require(fixture.error.empty(), "DMA producer fixture failed: " + fixture.error);
+          const auto expected = fixture.allocations.find(static_cast<std::uint64_t>(output.pts_ns));
+          require(expected != fixture.allocations.end() && actual == expected->second,
+                  "DMA output changed backing allocation, offset or span");
         }
+        const auto after = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
+        require(after.tensor_copy_count == before.tensor_copy_count &&
+                    after.gst_memory_map_calls == before.gst_memory_map_calls,
+                "DMA output policy introduced a hidden copy or generic CPU map");
         const simaai::neat::RunStats stats = core->stats();
         require(stats.outputs_ready == 8 && stats.outputs_pulled == 8 && stats.outputs_dropped == 0,
-                "EveryFrame saturation run dropped a terminal result");
+                "DMA saturation run dropped a terminal result");
+        simaai::neat::Sample output;
+        simaai::neat::PullError pull_error;
+        const auto status = core->pull(2000, output, &pull_error);
+        require(status == simaai::neat::PullStatus::Closed &&
+                    pull_error.code == simaai::neat::error_codes::kSourceEnded,
+                std::string(test_case.name) + ": expected EOS after all eight outputs");
       }
     }));

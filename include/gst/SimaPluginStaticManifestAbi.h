@@ -266,8 +266,7 @@ typedef enum SimaPluginCvuDescriptorAbiId {
   SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_TENSOR_TRANSFORM_PAIR_V1 =
       SIMA_CVU_DESCRIPTOR_ABI_TENSOR_TRANSFORM_PAIR_V1,
   SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1 = SIMA_CVU_DESCRIPTOR_ABI_PREPROC_V1,
-  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_VISUAL_FRONTEND_V1 =
-      SIMA_CVU_DESCRIPTOR_ABI_VISUAL_FRONTEND_V1
+  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_VISUAL_FRONTEND_V1 = SIMA_CVU_DESCRIPTOR_ABI_VISUAL_FRONTEND_V1
 } SimaPluginCvuDescriptorAbiId;
 
 typedef enum SimaPluginCvuPlacementMask {
@@ -277,13 +276,10 @@ typedef enum SimaPluginCvuPlacementMask {
 
 typedef enum SimaPluginCvuFramePatchMask {
   SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA = SIMA_CVU_FRAME_PATCH_METADATA,
-  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY =
-      SIMA_CVU_FRAME_PATCH_PREPROC_GEOMETRY,
-  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI =
-      SIMA_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY = SIMA_CVU_FRAME_PATCH_PREPROC_GEOMETRY,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI = SIMA_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI,
   SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST = SIMA_CVU_FRAME_PATCH_PREPROC_ROI_LIST,
-  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT =
-      SIMA_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT = SIMA_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT
 } SimaPluginCvuFramePatchMask;
 
 typedef struct SimaPluginProcessCvuStagePayload {
@@ -336,9 +332,8 @@ typedef struct SimaPluginProcessCvuStagePayload {
   gint debug;
   guint32 opt_flags;
   gboolean canonical_contract;
-  /* Core parsed SIMA_NEAT_MEMORY_BACKEND once and proved this stage through
-   * the strict MPK+ELF execution plan. The plugin must not re-read the
-   * environment or fall back to the dispatcher when this bit is true. */
+  /* Core admitted this stage through the strict MPK+ELF execution plan.
+   * The plugin consumes the proved contract without dispatcher fallback. */
   gboolean dmabuf_plan_contract;
   guint32 descriptor_abi_id;
   guint32 descriptor_contract_version;
@@ -404,8 +399,8 @@ typedef struct SimaPluginProcessMlaStagePayload {
   guint elf_ifm_symbol_names_len;
   const gchar* const* elf_ofm_symbol_names;
   guint elf_ofm_symbol_names_len;
-  /* Core parsed SIMA_NEAT_MEMORY_BACKEND once and proved this stage through
-   * the strict MPK+ELF decoder. The plugin must not re-read the environment. */
+  /* Core admitted this stage through the strict MPK+ELF decoder.
+   * The plugin consumes the proved contract without a transport fallback. */
   gboolean dmabuf_plan_contract;
 } SimaPluginProcessMlaStagePayload;
 

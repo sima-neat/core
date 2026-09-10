@@ -245,15 +245,24 @@ OutputSpec RtspDecodedInputOutputSpec(const RtspDecodedInputOptions& opt) {
 }
 
 OutputSpec VideoInputGroupOutputSpec(const VideoInputGroupOptions& opt) {
+  SimaDecodeOptions dec;
+  dec.out_format = opt.out_format;
+  dec.raw_output = opt.out_format.empty() || opt.out_format.tag == FormatTag::NV12 ||
+                   opt.out_format.tag == FormatTag::I420;
+  simaai::neat::SimaDecode decoder(dec);
+  OutputSpec out = decoder.output_spec({});
+  out.note = "VideoInputGroup (hint)";
+  if (opt.use_videoconvert || opt.use_videoscale) {
+    // Explicit software operations may negotiate different output storage.
+    out.memory = "Any";
+  }
   const auto& c = opt.output_caps;
   const bool has_caps = c.enable || c.width > 0 || c.height > 0 || c.fps > 0;
   if (has_caps) {
-    return from_caps(c.format.empty() ? "NV12" : c.format, c.width, c.height, c.fps, c.memory,
-                     "VideoInputGroup output_caps", SpecCertainty::Derived);
+    return apply_raw_caps(out, c.format, c.width, c.height, c.fps, c.memory,
+                          "VideoInputGroup output_caps");
   }
-
-  return from_caps(opt.out_format.empty() ? "NV12" : opt.out_format, -1, -1, -1, c.memory,
-                   "VideoInputGroup (hint)", SpecCertainty::Hint);
+  return out;
 }
 
 } // namespace simaai::neat::nodes::groups

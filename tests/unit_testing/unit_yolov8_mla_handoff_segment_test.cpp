@@ -15,9 +15,6 @@ RUN_TEST(
     "unit_yolov8_mla_handoff_segment_test", ([] {
       using namespace simaai::neat;
 
-      require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
-              "failed to select the strict DMA-BUF backend for the YOLOv8 handoff test");
-
       const std::filesystem::path core_root = sima_test::test_source_root();
       const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
       require(!tar_path.empty(), "expected modelzoo-backed yolo_v8s .tar.gz MPK with *_mpk.json");
@@ -59,11 +56,10 @@ RUN_TEST(
       const auto infer_stage_facts =
           pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
 
+      const auto pre_stage_facts =
+          pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
       const internal::ModelFragment::StageFacts* preproc_stage_fact = nullptr;
-      for (const auto& fact : infer_stage_facts) {
-        if (fact.mla_compiled.has_value()) {
-          break;
-        }
+      for (const auto& fact : pre_stage_facts) {
         if (fact.processcvu_contract.has_value()) {
           preproc_stage_fact = &fact;
         }
@@ -91,7 +87,7 @@ RUN_TEST(
       require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.size() == 1U,
               "YOLOv8 MLA stage fact should expose one input binding");
       require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
-                      .src_logical_output_index == handoff->logical_output_index &&
+                          .src_logical_output_index == handoff->logical_output_index &&
                   mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
                           .src_output_slot == handoff->output_slot,
               "YOLOv8 MLA stage fact should preserve the exact compiler-authored handoff");

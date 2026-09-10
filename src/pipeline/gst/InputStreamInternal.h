@@ -3,8 +3,8 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "InputStream.h"
-#include "InputStreamUtil.h"
+#include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/InputStreamUtil.h"
 
 #include "nodes/io/Input.h"
 #include "pipeline/internal/GstDataAdapter.h"
@@ -50,6 +50,10 @@ namespace simaai::neat {
 using pipeline_internal::DiagCtx;
 using pipeline_internal::trim_copy;
 using pipeline_internal::upper_copy;
+
+bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Sample* sample,
+                                                  const std::shared_ptr<void>& holder,
+                                                  const char* where);
 
 struct TensorSetOutputDecodeSignature {
   guint caps_hash = 0;
@@ -316,8 +320,8 @@ BuiltBuffer build_buffer_with_fill(
 
 void apply_video_meta_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);
 void apply_tensor_size_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);
-SampleSpec device_visible_nv12_materialization_spec_or_throw(
-    const SampleSpec& source, const char* where);
+SampleSpec device_visible_nv12_materialization_spec_or_throw(const SampleSpec& source,
+                                                             const char* where);
 bool tensor_spec_matches(const SampleSpec& a, const SampleSpec& b);
 void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* where);
 

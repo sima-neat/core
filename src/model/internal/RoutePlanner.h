@@ -211,10 +211,6 @@ struct RouteEffectiveRoute {
 };
 
 struct RouteCapability {
-  // The complete AFE command graph is already owned by ModelExecutionPlan.
-  // Pre/post route materialization is therefore an application override only,
-  // never an inferred duplicate of commands inside the model.
-  bool model_managed_execution_plan = false;
   PreRouteStageKind pre_kind = PreRouteStageKind::None;
   PostRouteStageKind post_kind = PostRouteStageKind::None;
 
