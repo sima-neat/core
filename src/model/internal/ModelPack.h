@@ -79,10 +79,8 @@ struct ExecutionStage {
   // typed member list; command ids retain the exact 32+remainder submission
   // proof for diagnostics and later native executor adoption.
   std::vector<pipeline_internal::sima::static_contract::OpId> execution_op_ids;
-  std::vector<pipeline_internal::sima::static_contract::PhysicalCommandId>
-      physical_command_ids;
-  std::optional<pipeline_internal::sima::static_contract::PhysicalCohortId>
-      physical_cohort_id;
+  std::vector<pipeline_internal::sima::static_contract::PhysicalCommandId> physical_command_ids;
+  std::optional<pipeline_internal::sima::static_contract::PhysicalCohortId> physical_cohort_id;
   std::optional<std::size_t> mpk_plugin_index;
   std::string stage_name;
   std::string factory_name;
@@ -156,7 +154,12 @@ public:
   std::string find_config_path_by_plugin(const std::string& plugin_id) const;
   std::string find_config_path_by_processor(const std::string& processor) const;
 
+  // Descriptive MPK projection; independent of physical execution admission.
+  ExecutionPlan semantic_execution_plan() const;
+  // Executable projection; always backed by the admitted physical and arena plans.
   ExecutionPlan execution_plan() const;
+  // Default naming is descriptive; explicit terminal selectors admit the executable plan.
+  std::string infer_output_name() const;
   std::vector<ModelFragment::StageFacts> stage_facts_for_model_stage(ModelStage stage) const;
   ModelFragment fragment(ModelStage stage) const;
   std::string backend_fragment(ModelStage stage) const;
@@ -187,23 +190,20 @@ public:
 
   simaai::neat::InputOptions input_appsrc_options(bool tensor_mode) const;
 
-  const simaai::neat::pipeline_internal::MemoryBackendDecision& memory_backend_decision() const {
+  const pipeline_internal::DmabufEligibilityReport& execution_admission() const {
     prepare_for_execution();
-    return memory_backend_decision_;
+    return execution_admission_;
   }
 
-  // True when the strict backend owns the complete compiler-authored model
-  // command graph. RoutePlanner must not rediscover pre/post adapters around
-  // MLA in this mode: those commands already live in the one execution plan.
-  bool uses_model_execution_plan() const noexcept {
-    return dmabuf_plan_execution_plan_.has_value();
+  const std::string& execution_plan_digest() const {
+    prepare_for_execution();
+    return execution_plan_digest_;
   }
 
   ModelPack clone_with_buffers(int num_buffers_cvu, int num_buffers_mla) const;
   ModelPack clone_with_overrides(const std::string& upstream_name,
                                  const std::string& name_suffix) const;
   void set_model_managed_stage_facts(
-      std::optional<bool> processcvu_preproc_single_output_handoff,
       std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags,
       std::vector<ExecutionStageKind> model_managed_post_kinds = {});
 
@@ -253,9 +253,9 @@ private:
   mutable std::optional<
       simaai::neat::pipeline_internal::sima::static_contract::PhysicalExecutionPlan>
       dmabuf_physical_execution_plan_;
-  mutable simaai::neat::pipeline_internal::MemoryBackendDecision memory_backend_decision_;
+  mutable pipeline_internal::DmabufEligibilityReport execution_admission_;
+  mutable std::string execution_plan_digest_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
-  std::optional<bool> processcvu_preproc_single_output_handoff_;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;
   std::vector<ExecutionStageKind> model_managed_post_kinds_;
 };

@@ -85,6 +85,24 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             exported_config,
         )
 
+    def test_internals_abi_headers_have_one_package_owner(self) -> None:
+        text = cmake()
+        start = text.index("  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/")
+        install_headers = text[start : text.index("\n)", start)]
+        for header in (
+            "ProcessMlaRuntimeConfig.h",
+            "SimaPluginStaticManifestAbi.h",
+            "SimaCvuCapabilityAbi.h",
+            "SimaPreparedRuntimeAbi.h",
+            "SimaTensorSetMetaAbi.h",
+        ):
+            with self.subTest(header=header):
+                self.assertTrue((ROOT / "include/gst" / header).is_file())
+                self.assertIn(f'PATTERN "{header}" EXCLUDE', install_headers)
+        # Consumers obtain these shared ABI headers from their owning package,
+        # not duplicate copies in sima-neat-dev that collide during APT install.
+        self.assertIn('"neat-internals-dev"', text)
+
     def test_no_manually_constructed_internals_version_ranges(self) -> None:
         text = cmake()
         for removed in (

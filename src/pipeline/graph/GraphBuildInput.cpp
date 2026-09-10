@@ -29,7 +29,6 @@
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/InputRouteProcessor.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/SyncBuild.h"
@@ -506,7 +505,7 @@ RunOptions sync_run_defaults() {
   opt.preset = RunPreset::Reliable;
   opt.queue_depth = 1;
   opt.overflow_policy = OverflowPolicy::Block;
-  opt.output_memory = OutputMemory::Owned;
+  opt.output_memory = OutputMemory::Auto;
   opt.advanced.copy_input = false;
   opt.advanced.max_input_bytes = 0;
   opt.advanced.sync_num_buffers_override = -1;
@@ -536,17 +535,17 @@ bool resolve_prepare_output_cpu_visible(const RunOptions& opt, bool zero_copy) {
 // public-boundary stream-option builder so every entry point (Model::build,
 // Graph::build/source) agrees on output storage kind.
 struct OutputMemoryResolution {
-  bool zero_copy;           ///< output tensors share backing GstSample (device-visible)
+  bool zero_copy;           ///< non-DMA outputs share backing GstSample
+  bool preserve_dmabuf;     ///< Auto retains actual standard DMA-BUF storage
   bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.
 //
 // - Explicit ZeroCopy/Owned are always honored verbatim.
-// - Auto preserves the existing preset mapping (preset_default_zero_copy) so
-//   the async (preset x mode) matrix is unchanged, and additionally enforces
-//   the framework principle "owned for sync, zero-copy for async": a Sync run
-//   never silently returns a lifetime-coupled zero-copy output.
+// - Auto retains standard DMA-BUF payloads in every mode. Other storage keeps
+//   the existing preset/mode policy: sync defaults to owned output. The actual
+//   payload is inspected at the public boundary, not guessed from graph nodes.
 // - SIMA_OUTPUT_MEMORY_DEFAULT={owned|zerocopy} is a reversible, Auto-only
 //   global override for staged rollout / incident response. It never overrides
 //   an explicit per-run ZeroCopy/Owned choice.
@@ -556,6 +555,7 @@ struct OutputMemoryResolution {
 // stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
 OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode) {
   bool zero_copy;
+  bool preserve_dmabuf = false;
   switch (opt.output_memory) {
   case OutputMemory::ZeroCopy:
     zero_copy = true;
@@ -564,18 +564,21 @@ OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode
     zero_copy = false;
     break;
   case OutputMemory::Auto:
+    preserve_dmabuf = true;
     zero_copy = preset_default_zero_copy(opt.preset) && (mode != RunMode::Sync);
     if (const char* raw = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT"); raw && *raw) {
       const std::string value(raw);
       if (value == "owned") {
         zero_copy = false;
+        preserve_dmabuf = false;
       } else if (value == "zerocopy") {
         zero_copy = true;
       }
     }
     break;
   }
-  return {zero_copy, resolve_prepare_output_cpu_visible(opt, zero_copy)};
+  return {zero_copy, preserve_dmabuf,
+          resolve_prepare_output_cpu_visible(opt, zero_copy || preserve_dmabuf)};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -1084,34 +1087,6 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
   }
 }
 
-pipeline_internal::MemoryBackendPolicy backend_policy_from_rendered_manifest(
-    const BuildResult& build_result,
-    const std::vector<std::shared_ptr<Node>>& nodes) {
-  if (build_result.rendered_manifest.has_value()) {
-    for (const auto& stage : build_result.rendered_manifest->stages) {
-      if (stage.processcvu.dmabuf_plan_contract || stage.processmla.dmabuf_plan_contract) {
-        return pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
-      }
-    }
-  }
-  // Direct codec elements import DMA-BUF handles through the command UAPI just
-  // like strict CVU/MLA stages.  Codec-only graphs do not have an AFE stage in
-  // the rendered manifest, so their typed graph nodes are the exact transport
-  // authority.  Do not let the process-wide migration request silently turn
-  // this compiler-authored SystemMemory -> CMA boundary back into the legacy
-  // segmented allocator.
-  for (const auto& node : nodes) {
-    if (!node) {
-      continue;
-    }
-    const std::string kind = node->kind();
-    if (kind == "H264EncodeSima" || kind == "H265EncodeSima") {
-      return pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
-    }
-  }
-  return pipeline_internal::MemoryBackendPolicy::Legacy;
-}
-
 InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   InputStreamOptions stream_opt;
   const int queue_depth = (opt.queue_depth > 0) ? opt.queue_depth : 0;
@@ -1124,8 +1099,9 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.stability_frames = preset_default_stability_frames(opt.preset);
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
+  stream_opt.preserve_dmabuf_output = output_mem.preserve_dmabuf;
   stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
-  if (output_mem.zero_copy) {
+  if (output_mem.zero_copy || output_mem.preserve_dmabuf) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
     stream_opt.holder_loan_credits_auto = true;
@@ -1156,7 +1132,8 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
 }
 
 void finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
-  if (!stream_opt.holder_loan_credits_auto || stream_opt.copy_output ||
+  if (!stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output) ||
       !stream_opt.public_output_contract) {
     return;
   }
@@ -1769,7 +1746,7 @@ std::string single_sample_preflight_unsupported_reason(const std::string& pipeli
   // appsink sample is pulled and unref'd, there is no generic GStreamer
   // barrier proving the plugin-side buffer pool slot has been returned before
   // the public first frame is pushed.
-  if (!opt.copy_output && has_async_hardware_stage &&
+  if ((!opt.copy_output || opt.preserve_dmabuf_output) && has_async_hardware_stage &&
       max_num_buffers_in_pipeline_local(lower) == 1) {
     return "hardware zero-copy pipeline uses an async stage with a single output buffer";
   }
@@ -1955,7 +1932,6 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
-  stream_opt.memory_backend_policy = backend_policy_from_rendered_manifest(br, build_nodes);
   if (has_sink) {
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }
@@ -2063,9 +2039,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     stream_opt.stability_frames = 1;
   }
   stream_opt.require_device_visible_input =
-      !explicit_nv12_materialization &&
-      (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
-       src_opt.memory_policy == InputMemoryPolicy::Dms0);
+      !explicit_nv12_materialization && (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
+                                         src_opt.memory_policy == InputMemoryPolicy::Dms0);
   stream_opt.materialize_device_visible_input = explicit_nv12_materialization;
 
   BuildAdaptationSummary adaptation;
@@ -2139,12 +2114,11 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     detail << "requested=" << input_memory_policy_name(requested_memory_policy)
            << " transport=" << input_memory_policy_name(src_opt.memory_policy)
            << " first_downstream=" << first_effective_downstream_kind;
-    add_build_adaptation_action(adaptation, "appsrc_memory_policy", true, detail.str(),
-                                explicit_nv12_materialization
-                                    ? "compiler-authored NV12 SystemMemory-to-CMA materialization"
-                                    : memory_policy_auto_applied
-                                          ? "auto policy resolved before appsrc build"
-                                          : "policy already explicit (not auto-overridden)");
+    add_build_adaptation_action(
+        adaptation, "appsrc_memory_policy", true, detail.str(),
+        explicit_nv12_materialization ? "compiler-authored NV12 SystemMemory-to-CMA materialization"
+        : memory_policy_auto_applied  ? "auto policy resolved before appsrc build"
+                                      : "policy already explicit (not auto-overridden)");
   }
 
   if (br.diag) {

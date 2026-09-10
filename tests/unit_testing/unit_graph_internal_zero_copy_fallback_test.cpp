@@ -3,6 +3,10 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "pipeline/runtime/RunInternal.h"
+#include "graph/internal/GraphRunState.h"
+#include "dmabuf_test_utils.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -25,6 +29,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -45,19 +50,207 @@ make_balanced_zero_copy_core(bool public_output_contract) {
       simaai::neat::InputStream{}, opt, stream_opt, simaai::neat::RunMode::Async);
 }
 
-simaai::neat::Sample make_fake_device_gst_sample(int id) {
+simaai::neat::Sample sample_from_buffer(GstBuffer* buffer) {
+  require(buffer != nullptr, "test GstBuffer allocation should succeed");
+  GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
+  require(sample != nullptr, "test GstSample allocation should succeed");
   simaai::neat::Tensor tensor;
-  tensor.device.type = simaai::neat::DeviceType::SIMA_CVU;
-  tensor.storage = std::make_shared<simaai::neat::TensorBuffer>();
-  tensor.storage->kind = simaai::neat::StorageKind::GstSample;
-  tensor.storage->device.type = simaai::neat::DeviceType::SIMA_CVU;
-  tensor.storage->size_bytes = 1;
-  tensor.storage->holder = std::make_shared<int>(id);
+  tensor.storage = simaai::neat::pipeline_internal::make_gst_sample_storage(sample);
+  gst_sample_unref(sample);
+  tensor.dtype = simaai::neat::TensorDType::UInt8;
+  tensor.shape = {static_cast<std::int64_t>(gst_buffer_get_size(buffer))};
+  tensor.read_only = true;
 
-  simaai::neat::Sample sample;
-  sample.kind = simaai::neat::SampleKind::TensorSet;
-  sample.tensors.push_back(std::move(tensor));
+  simaai::neat::Sample out;
+  out.kind = simaai::neat::SampleKind::TensorSet;
+  out.tensors.push_back(std::move(tensor));
+  return out;
+}
+
+simaai::neat::Sample make_legacy_device_gst_sample(int id) {
+  gst_init(nullptr, nullptr);
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 1, nullptr);
+  auto sample = sample_from_buffer(buffer);
+  gst_buffer_unref(buffer);
+  sample.frame_id = id;
+  sample.tensors.front().device.type = simaai::neat::DeviceType::SIMA_CVU;
+  sample.tensors.front().storage->device.type = simaai::neat::DeviceType::SIMA_CVU;
   return sample;
+}
+
+class ScopedEnv {
+public:
+  ScopedEnv(const char* name, const char* value) : name_(name) {
+    if (const char* prior = std::getenv(name)) {
+      prior_ = std::string(prior);
+    }
+    if (value) {
+      setenv(name, value, 1);
+    } else {
+      unsetenv(name);
+    }
+  }
+  ~ScopedEnv() {
+    if (prior_) {
+      setenv(name_.c_str(), prior_->c_str(), 1);
+    } else {
+      unsetenv(name_.c_str());
+    }
+  }
+
+private:
+  std::string name_;
+  std::optional<std::string> prior_;
+};
+
+void require_output_policy_matrix() {
+  using namespace simaai::neat;
+  ScopedEnv detess("SIMA_DETESS_ZERO_COPY", nullptr);
+  for (const char* override : {static_cast<const char*>(nullptr), "owned", "zerocopy"}) {
+    ScopedEnv output_default("SIMA_OUTPUT_MEMORY_DEFAULT", override);
+    for (const auto mode : {RunMode::Sync, RunMode::Async}) {
+      for (const auto preset : {RunPreset::Reliable, RunPreset::Balanced, RunPreset::Realtime}) {
+        for (const auto memory :
+             {OutputMemory::Auto, OutputMemory::ZeroCopy, OutputMemory::Owned}) {
+          RunOptions options;
+          options.preset = preset;
+          options.output_memory = memory;
+          const auto resolved = session_build_resolve_build_opt(mode, options);
+          require(resolved.output_memory == memory,
+                  "build resolution must preserve caller output-memory intent");
+          auto stream = session_build_make_stream_options(resolved, mode);
+          const bool auto_owned = override && std::string(override) == "owned";
+          const bool auto_zero_copy = override && std::string(override) == "zerocopy";
+          const bool preserve_dma = memory == OutputMemory::Auto && !auto_owned;
+          const bool zero_copy = memory == OutputMemory::ZeroCopy ||
+                                 (memory == OutputMemory::Auto && !auto_owned &&
+                                  (auto_zero_copy || (mode != RunMode::Sync &&
+                                                      resolved.preset != RunPreset::Reliable)));
+          require(stream.preserve_dmabuf_output == preserve_dma,
+                  "Auto must retain DMA unless the caller deliberately selects owned output");
+          require(stream.copy_output == !zero_copy,
+                  "ordinary CPU and legacy output must keep their preset/mode copy policy");
+          session_build_finalize_public_zero_copy_holder_loan_credits(stream);
+          require((stream.holder_loan_credits > 0) == (zero_copy || preserve_dma),
+                  "DMA-preserving Auto must reserve public loan credits in every mode");
+        }
+      }
+    }
+  }
+  for (const auto mode : {RunMode::Sync, RunMode::Async}) {
+    ScopedEnv output_default("SIMA_OUTPUT_MEMORY_DEFAULT", nullptr);
+    RunOptions options;
+    options.preset = RunPreset::Reliable;
+    options.output_memory = OutputMemory::Auto;
+    runtime::RunCoreStartOptions start;
+    start.run_options = options;
+    start.mode = mode;
+    start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+    auto core = runtime::RunCore::start(runtime::ExecutionGraphPlan{}, std::move(start));
+    require(core->pipeline.stream_opt.copy_output &&
+                core->pipeline.stream_opt.preserve_dmabuf_output && core->holder_loan_gate &&
+                core->holder_loan_gate->enabled(),
+            "graph Auto must retain a loan gate even when ordinary output defaults to owned");
+    core->stop();
+  }
+  ScopedEnv detess_override("SIMA_DETESS_ZERO_COPY", "1");
+  const auto detess_options = session_build_resolve_build_opt(RunMode::Sync, RunOptions{});
+  require(detess_options.output_memory == OutputMemory::ZeroCopy,
+          "existing synchronous detess zero-copy override must remain explicit");
+}
+
+void require_dmabuf_loans_and_pressure_preserve_storage() {
+  using namespace simaai::neat;
+  gst_init(nullptr, nullptr);
+  // memfd wrapped as standard DMA-BUF proves metadata/ownership only. These
+  // cases must not map or submit it to a device; either would be a test error.
+  GstBuffer* buffer = sima_test::make_bookkeeping_dmabuf(128);
+  const auto identity = sima_test::dmabuf_span(buffer);
+  auto sample = sample_from_buffer(buffer);
+  gst_buffer_unref(buffer);
+  require(sample.tensors.front().device.type == DeviceType::CPU &&
+              sample.tensors.front().storage->device.type == DeviceType::CPU &&
+              sample.tensors.front().storage->sima_mem_target_flags == 0,
+          "standard DMA fixture must not depend on legacy placement flags");
+  require(pipeline_internal::sample_has_dmabuf_memory(sample) &&
+              pipeline_internal::sample_has_device_gstsample_holder(sample),
+          "standard DMA-BUF must be recognized from retained memory");
+  // Multiple views of the same retained storage consume one credit, not one
+  // credit per plane or output field.
+  sample.tensors.push_back(sample.tensors.front());
+  require(pipeline_internal::count_distinct_device_gstsample_holders(sample) == 1,
+          "shared DMA views must count as one retained holder");
+  auto gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
+  std::string error;
+  require(pipeline_internal::attach_zero_copy_loan_to_sample(sample, gate, &error),
+          "DMA sample must acquire one public loan");
+  require(gate->inflight() == 1, "shared DMA views consumed more than one loan");
+
+  for (const char* cap_name :
+       {"SIMA_GRAPH_ZERO_COPY_BACKPRESSURE_CAP", "SIMA_GRAPH_ZERO_COPY_MAX_INFLIGHT"}) {
+    ScopedEnv cap("SIMA_GRAPH_ZERO_COPY_BACKPRESSURE_CAP", nullptr);
+    ScopedEnv legacy_cap("SIMA_GRAPH_ZERO_COPY_MAX_INFLIGHT", nullptr);
+    ScopedEnv enabled(cap_name, "1");
+    const auto before = pipeline_internal::snapshot_tensor_io_stats();
+    run_internal::maybe_force_copy_for_backpressure(sample, 2, "dma-test", false);
+    run_internal::maybe_force_copy_for_backpressure(sample.tensors.front(), 2, "dma-test", false);
+    graph::maybe_force_copy_for_backpressure(sample, 2, "dma-test", 0U);
+    const auto after = pipeline_internal::snapshot_tensor_io_stats();
+    require(after.tensor_copy_count == before.tensor_copy_count &&
+                after.gst_memory_map_calls == before.gst_memory_map_calls,
+            "optional pressure helpers must not copy or map standard DMA storage");
+    GstBuffer* retained =
+        pipeline_internal::buffer_from_tensor_holder(sample.tensors.front().storage->holder);
+    require(retained != nullptr, "pressure helpers lost the original DMA holder");
+    const auto retained_identity = sima_test::dmabuf_span(retained);
+    gst_buffer_unref(retained);
+    require(retained_identity == identity, "pressure helpers replaced the DMA allocation/view");
+  }
+  sample = Sample{};
+  require(gate->inflight() == 0, "final DMA view release must return its one credit");
+
+  auto core = std::make_shared<runtime::RunCore>();
+  core->pipeline.supports_pull = true;
+  core->holder_loan_gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
+  std::vector<sima_test::DmaBufSpan> queued_identities;
+  for (int i = 0; i < 2; ++i) {
+    GstBuffer* queued_buffer = sima_test::make_bookkeeping_dmabuf(128);
+    queued_identities.push_back(sima_test::dmabuf_span(queued_buffer));
+    core->pipeline.out_queue.push_back(sample_from_buffer(queued_buffer));
+    gst_buffer_unref(queued_buffer);
+  }
+  Sample first;
+  PullError pull_error;
+  require(core->pull(0, first, &pull_error) == PullStatus::Ok &&
+              core->holder_loan_gate->inflight() == 1,
+          "standard DMA public pull must acquire the available loan");
+  Sample next;
+  require(core->pull(0, next, &pull_error) == PullStatus::Timeout &&
+              core->pipeline.out_queue.size() == 1U && next.tensors.empty(),
+          "DMA loan exhaustion must preserve the pending allocation for retry");
+  first = Sample{};
+  require(core->pull(1000, next, &pull_error) == PullStatus::Ok,
+          "releasing an older DMA view must allow retry without copying");
+  GstBuffer* retried =
+      pipeline_internal::buffer_from_tensor_holder(next.tensors.front().storage->holder);
+  require(retried != nullptr, "retried DMA sample lost its original holder");
+  const auto retried_identity = sima_test::dmabuf_span(retried);
+  gst_buffer_unref(retried);
+  require(retried_identity == queued_identities.back(),
+          "loan retry changed the queued DMA allocation or view");
+  next = Sample{};
+  require(core->holder_loan_gate->inflight() == 0, "DMA retry left an outstanding loan");
+
+  GstBuffer* cpu_buffer = gst_buffer_new_allocate(nullptr, 128, nullptr);
+  auto cpu_sample = sample_from_buffer(cpu_buffer);
+  gst_buffer_unref(cpu_buffer);
+  require(!pipeline_internal::sample_has_dmabuf_memory(cpu_sample) &&
+              !pipeline_internal::sample_has_device_gstsample_holder(cpu_sample),
+          "ordinary CPU storage must not consume a DMA holder credit");
+  auto legacy_sample = make_legacy_device_gst_sample(1);
+  require(!pipeline_internal::sample_has_dmabuf_memory(legacy_sample) &&
+              pipeline_internal::sample_has_device_gstsample_holder(legacy_sample),
+          "legacy device classification must remain distinct from standard DMA");
 }
 
 simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** external_ref) {
@@ -89,6 +282,8 @@ simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** extern
 
 RUN_TEST(
     "unit_graph_internal_zero_copy_fallback_test", ([] {
+      require_output_policy_matrix();
+      require_dmabuf_loans_and_pressure_preserve_storage();
       {
         simaai::neat::runtime::ExecutionGraphPlan plan;
 
@@ -132,8 +327,8 @@ RUN_TEST(
       }
 
       auto public_core = make_balanced_zero_copy_core(true);
-      require(public_core->pipeline.zero_copy_fallback_enabled,
-              "public balanced zero-copy output should keep the copy fallback enabled");
+      require(!public_core->pipeline.zero_copy_fallback_enabled,
+              "explicit public ZeroCopy must not allow a Balanced pressure-copy fallback");
       require(!public_core->pipeline.copy_output_latched.load(std::memory_order_relaxed),
               "public zero-copy output should start unlatched");
 
@@ -150,8 +345,8 @@ RUN_TEST(
           std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
       {
         std::lock_guard<std::mutex> lock(loan_core->pipeline.out_mu);
-        loan_core->pipeline.out_queue.push_back(make_fake_device_gst_sample(1));
-        loan_core->pipeline.out_queue.push_back(make_fake_device_gst_sample(2));
+        loan_core->pipeline.out_queue.push_back(make_legacy_device_gst_sample(1));
+        loan_core->pipeline.out_queue.push_back(make_legacy_device_gst_sample(2));
       }
 
       simaai::neat::Sample first;
@@ -236,9 +431,9 @@ RUN_TEST(
       graph_core->holder_loan_gate =
           std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
       graph_core->graph_execution_->sinks[kSinkNode]->push(
-          simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(3)});
+          simaai::neat::runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(3)});
       graph_core->graph_execution_->sinks[kSinkNode]->push(
-          simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(4)});
+          simaai::neat::runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(4)});
 
       simaai::neat::Sample graph_first;
       require(graph_core->pull(0, graph_first, &err) == simaai::neat::PullStatus::Ok,
@@ -303,7 +498,7 @@ RUN_TEST(
       require(bounded_graph_core->holder_loan_gate->try_acquire(),
               "test should exhaust the bounded graph output loan gate");
       require(bounded_graph_core->graph_execution_->sinks[kBoundedSinkNode]->push(
-                  simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(5)}, 0),
+                  simaai::neat::runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(5)}, 0),
               "bounded graph sink should accept one queued output");
       simaai::neat::Sample bounded_blocked;
       const auto bounded_status = bounded_graph_core->pull(0, bounded_blocked, &err);
@@ -312,7 +507,7 @@ RUN_TEST(
       require(bounded_graph_core->graph_execution_->sinks[kBoundedSinkNode]->size() == 1U,
               "bounded graph loan exhaustion must restore without dropping the popped output");
       require(!bounded_graph_core->graph_execution_->sinks[kBoundedSinkNode]->try_push(
-                  simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(6)}),
+                  simaai::neat::runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(6)}),
               "bounded graph sink should still respect capacity after restoring the output");
       bounded_graph_core->holder_loan_gate->release();
 
@@ -604,7 +799,7 @@ RUN_TEST(
             realtime_cv.notify_all();
           });
 
-      simaai::neat::Sample credit_first = make_fake_device_gst_sample(7);
+      simaai::neat::Sample credit_first = make_legacy_device_gst_sample(7);
       credit_first.stream_id = "credit_stream";
       credit_first.frame_id = 1;
       require(realtime_link.offer(std::move(credit_first), 0U),
@@ -617,7 +812,7 @@ RUN_TEST(
         require(dispatched_frames.front() == 1, "first dispatched realtime frame should match");
       }
 
-      simaai::neat::Sample credit_second = make_fake_device_gst_sample(8);
+      simaai::neat::Sample credit_second = make_legacy_device_gst_sample(8);
       credit_second.stream_id = "credit_stream";
       credit_second.frame_id = 2;
       require(realtime_link.offer(std::move(credit_second), 0U),

@@ -6,7 +6,6 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/InputPolicy.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/TessellatedTensor.h"
 #include "nodes/io/Input.h"
@@ -757,7 +756,7 @@ SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const
     first_tensor_opt.format = FormatTag::ByteStream;
   }
 
-  SampleSpec spec = derive_tensor_spec_or_throw(tensors.front(), first_tensor_opt, tag.c_str());
+  SampleSpec spec = describe_tensor_spec_or_throw(tensors.front(), first_tensor_opt, tag.c_str());
   spec.tensor_envelope_transport = true;
 
   pipeline_internal::TensorBufferView view;
@@ -1078,7 +1077,6 @@ ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt) {
     warn_deprecated_use_simaai_pool_once();
   }
   const InputMemoryPolicy memory_policy = effective_input_memory_policy(opt);
-#if SIMA_HAS_SIMAAI_POOL
   const std::string media_type_up = upper_copy(resolve_input_media_type(opt));
   const std::string format_up = upper_copy(opt.format.str());
   const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
@@ -1119,33 +1117,8 @@ ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt) {
     }
   } break;
   }
-#else
-  switch (memory_policy) {
-  case InputMemoryPolicy::Ev74:
-  case InputMemoryPolicy::Dms0:
-    resolved.use_simaai_memory = true;
-    resolved.target_source = "policy";
-    break;
-  case InputMemoryPolicy::SystemMemory:
-  case InputMemoryPolicy::Auto:
-    resolved.use_simaai_memory = false;
-    resolved.target_source = "unavailable";
-    break;
-  }
-#endif
   return resolved;
 }
-
-static bool explicit_device_policy(InputMemoryPolicy policy) {
-  return policy == InputMemoryPolicy::Ev74 || policy == InputMemoryPolicy::Dms0;
-}
-
-#if !SIMA_HAS_SIMAAI_POOL
-static bool inputstream_alloc_debug_enabled() {
-  return pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) ||
-         pipeline_internal::env_bool("SIMA_INPUTSTREAM_ALLOC_DEBUG", false);
-}
-#endif
 
 std::vector<int64_t> tensor_shape_from_compat_dims(int width, int height, int depth,
                                                    TensorLayout layout) {
@@ -1240,16 +1213,6 @@ void debug_pool_timing(const char* stage, const InputOptions& opt, size_t bytes,
   std::fprintf(stderr, "[DBG] input_buffer %s bytes=%zu pool=%s ok=%d min=%d max=%d ms=%.3f\n",
                stage, bytes, used_pool ? "true" : "false", ok ? 1 : 0, opt.pool_min_buffers,
                opt.pool_max_buffers, ms);
-}
-
-void free_simaai_pool(GstBufferPool* pool) {
-#if SIMA_HAS_SIMAAI_POOL
-  if (!pool)
-    return;
-  gst_simaai_free_buffer_pool(pool);
-#else
-  (void)pool;
-#endif
 }
 
 void free_standard_dmabuf_pool(GstBufferPool* pool) {
@@ -1430,8 +1393,8 @@ std::size_t CapKeyHash::operator()(const CapKey& key) const {
   return seed;
 }
 
-SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const InputOptions& opt,
-                                       const char* where) {
+SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, const InputOptions& opt,
+                                         const char* where) {
   const std::string tag = where ? where : "derive_tensor_spec";
   if (!input.storage) {
     throw std::invalid_argument(tag + ": simaai::neat::Tensor missing storage");
@@ -1690,10 +1653,6 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
     if (!input.is_dense()) {
       throw std::invalid_argument(tag + ": tensor input must be dense");
     }
-    if (!input.is_contiguous()) {
-      throw std::invalid_argument(tag + ": tensor input must be contiguous");
-    }
-
     std::vector<int64_t> normalized_shape = input.shape;
     const bool layout_is_explicit = input.layout != TensorLayout::Unknown;
     const size_t expected_rank = (input.layout == TensorLayout::HW) ? 2u : 3u;
@@ -1807,6 +1766,16 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
   return spec;
 }
 
+SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const InputOptions& opt,
+                                       const char* where) {
+  SampleSpec spec = describe_tensor_spec_or_throw(input, opt, where);
+  if (spec.kind == SampleMediaKind::Tensor && !input.is_contiguous()) {
+    const std::string tag = where ? where : "derive_tensor_spec";
+    throw std::invalid_argument(tag + ": tensor input must be contiguous");
+  }
+  return spec;
+}
+
 simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& opt,
                                         const char* where) {
   const std::string tag = where ? where : "tensor_from_cv_mat";
@@ -1913,10 +1882,8 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
         throw std::runtime_error(tag + ": unable to determine dense byte size for device tensor");
       }
       std::vector<Segment> segments{{"ifm0", device_bytes}};
-      return pipeline_internal::transfer_to_device(
-          out, target, &segments,
-          /*required_segment_names=*/nullptr,
-          pipeline_internal::process_memory_backend_selection().policy);
+      return pipeline_internal::transfer_to_device(out, target, &segments,
+                                                   /*required_segment_names=*/nullptr);
     }
     return out;
   }
@@ -2218,9 +2185,7 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
 }
 
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
-                                 InputBufferPoolGuard& guard,
-                                 const pipeline_internal::MemoryBackendPolicy backend) {
-#if SIMA_HAS_SIMAAI_POOL
+                                 InputBufferPoolGuard& guard) {
   const std::string media_type_up = upper_copy(resolve_input_media_type(opt));
   const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
   const ResolvedInputMemoryPolicy resolved = resolve_input_memory_policy(opt);
@@ -2233,95 +2198,53 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
     GstBufferPool* pool = guard.pool.get();
     if (!pool) {
       const auto t_create_start = std::chrono::steady_clock::now();
-      GstBufferPool* new_pool = nullptr;
-      const bool standard_dmabuf =
-          backend == pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
-      if (standard_dmabuf) {
-        simaai::neat::internal::dmabuf::Error error;
-        const auto heap = opt.memory_policy == InputMemoryPolicy::Dms0
-                              ? simaai::neat::internal::dmabuf::HeapKind::MlaDms
-                              : simaai::neat::internal::dmabuf::HeapKind::Cma;
-        new_pool = simaai::neat::internal::dmabuf::createDmaBufPool(
-            heap, bytes, static_cast<unsigned int>(opt.pool_min_buffers),
-            static_cast<unsigned int>(opt.pool_max_buffers), {}, &error);
-        if (!new_pool) {
-          debug_pool_log((std::string("Input: standard DMA-BUF pool creation failed: ") +
-                          error.message())
-                             .c_str());
-        }
-      } else {
-        gst_simaai_segment_memory_init_once();
-        GstMemoryFlags flags =
-            static_cast<GstMemoryFlags>(target_flag | GST_SIMAAI_MEMORY_FLAG_CACHED);
-        const bool tensor_input = tensor_media;
-        const std::string segment_name =
-            !opt.buffer_name.empty()
-                ? opt.buffer_name
-                : (tensor_input ? std::string("ifm0") : std::string("input"));
-        const gsize segment_size = static_cast<gsize>(bytes);
-        const char* segment_name_cstr = segment_name.c_str();
-        new_pool = gst_simaai_allocate_buffer_pool2(
-            /*allocator_user_data=*/nullptr, gst_simaai_memory_get_segment_allocator(),
-            opt.pool_min_buffers, opt.pool_max_buffers, flags,
-            /*num_segments=*/1, &segment_size, &segment_name_cstr);
-      }
+      internal::dmabuf::Error error;
+      const auto heap = target_flag == GST_SIMAAI_MEMORY_TARGET_DMS0
+                            ? internal::dmabuf::HeapKind::MlaDms
+                            : internal::dmabuf::HeapKind::Cma;
+      GstBufferPool* new_pool = internal::dmabuf::createDmaBufPool(
+          heap, bytes, static_cast<unsigned int>(opt.pool_min_buffers),
+          static_cast<unsigned int>(opt.pool_max_buffers), {}, &error);
       if (new_pool) {
         guard.pool = std::unique_ptr<GstBufferPool, void (*)(GstBufferPool*)>(
-            new_pool, standard_dmabuf ? free_standard_dmabuf_pool : free_simaai_pool);
+            new_pool, free_standard_dmabuf_pool);
         pool = new_pool;
+      } else {
+        debug_pool_log(
+            (std::string("Input: DMA-BUF pool creation failed: ") + error.message()).c_str());
       }
       debug_pool_state("pool_create", pool, opt, bytes);
       debug_pool_timing("pool_create", opt, bytes, t_create_start, pool != nullptr, true);
     }
 
-    if (pool) {
-      debug_pool_state("pool_before_acquire", pool, opt, bytes);
-      const auto t_acquire_start = std::chrono::steady_clock::now();
-      GstBuffer* buf = nullptr;
-      const GstFlowReturn ret = gst_buffer_pool_acquire_buffer(pool, &buf, nullptr);
-      const auto t_acquire_end = std::chrono::steady_clock::now();
-      const double wait_ms =
-          std::chrono::duration<double, std::milli>(t_acquire_end - t_acquire_start).count();
-      const bool ok = (ret == GST_FLOW_OK && buf);
-      track_input_pool_acquire(pool, buf, bytes, "pool_acquire", wait_ms, ok);
-      if (ok) {
-        debug_pool_timing("pool_acquire", opt, bytes, t_acquire_start, true, true);
-        debug_pool_state("pool_after_acquire_ok", pool, opt, bytes);
-        return buf;
-      }
-      debug_pool_timing("pool_acquire", opt, bytes, t_acquire_start, false, true);
-      debug_pool_state("pool_after_acquire_fail", pool, opt, bytes);
-      debug_pool_log("Input: simaai pool acquired but buffer allocation failed; "
-                     "falling back to system allocator.");
-      pool = nullptr;
-    }
-    if (explicit_device_policy(opt.memory_policy)) {
-      debug_pool_log("Input: explicit device memory policy requires simaai pool allocation.");
+    if (!pool) {
       return nullptr;
     }
-    debug_pool_log("Input: simaai pool allocation failed; falling back to system allocator.");
-  }
-#else
-  (void)guard;
-  if (explicit_device_policy(opt.memory_policy)) {
-    if (inputstream_alloc_debug_enabled()) {
-      std::fprintf(stderr, "Input: explicit device memory policy requires simaai pool support.\n");
+    debug_pool_state("pool_before_acquire", pool, opt, bytes);
+    const auto t_acquire_start = std::chrono::steady_clock::now();
+    GstBuffer* buf = nullptr;
+    const GstFlowReturn ret = gst_buffer_pool_acquire_buffer(pool, &buf, nullptr);
+    const auto t_acquire_end = std::chrono::steady_clock::now();
+    const double wait_ms =
+        std::chrono::duration<double, std::milli>(t_acquire_end - t_acquire_start).count();
+    const bool ok = (ret == GST_FLOW_OK && buf);
+    track_input_pool_acquire(pool, buf, bytes, "pool_acquire", wait_ms, ok);
+    debug_pool_timing("pool_acquire", opt, bytes, t_acquire_start, ok, true);
+    debug_pool_state(ok ? "pool_after_acquire_ok" : "pool_after_acquire_fail", pool, opt, bytes);
+    if (!ok) {
+      if (buf) {
+        gst_buffer_unref(buf);
+      }
+      debug_pool_log("Input: required DMA-BUF pool acquisition failed.");
+      return nullptr;
     }
-    return nullptr;
+    return buf;
   }
-#endif
 
   const auto t_alloc_start = std::chrono::steady_clock::now();
   GstBuffer* buf = gst_buffer_new_allocate(nullptr, bytes, nullptr);
   debug_pool_timing("system_alloc", opt, bytes, t_alloc_start, buf != nullptr, false);
   return buf;
-}
-
-GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
-                                 InputBufferPoolGuard& guard) {
-  return allocate_input_buffer(
-      bytes, opt, guard,
-      pipeline_internal::process_memory_backend_selection().policy);
 }
 
 int64_t next_input_frame_id() {

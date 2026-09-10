@@ -1477,6 +1477,7 @@ install(
   PATTERN "pipeline/internal/*" EXCLUDE
   PATTERN "ProcessMlaRuntimeConfig.h" EXCLUDE
   PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
+  PATTERN "SimaCvuCapabilityAbi.h" EXCLUDE
   PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
   PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
   PATTERN "ev_tensor_abi.h" EXCLUDE

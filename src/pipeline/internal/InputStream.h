@@ -5,7 +5,6 @@
 
 #include "pipeline/internal/InputStreamStats.h"
 #include "pipeline/internal/InputStreamTeardownPolicy.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/Run.h"
@@ -89,6 +88,9 @@ struct InputStreamOptions {
   int stability_frames = 2;
   std::size_t max_input_bytes = 0;
   bool copy_output = true;
+  // Auto retains standard DMA-BUF payloads; copy_output remains the fallback
+  // for other storage. Explicit Owned disables this intent.
+  bool preserve_dmabuf_output = false;
   bool copy_input = false;
   bool prepare_output_cpu_visible = false;
   int holder_loan_credits = 0;
@@ -105,10 +107,6 @@ struct InputStreamOptions {
   // holder passthrough and uses the prepared InputStream pool/copy path; this
   // is not an environment-controlled compatibility fallback.
   bool materialize_device_visible_input = false;
-  // Core-authored transport intent captured at graph construction. The push
-  // path passes this value explicitly to envelope/materialization helpers.
-  pipeline_internal::MemoryBackendPolicy memory_backend_policy =
-      pipeline_internal::MemoryBackendPolicy::Legacy;
   bool reuse_input_buffer = false;
   // True for user-visible Output/appsink endpoints.  False for graph-internal
   // transport appsinks, where downstream edge/view contracts must be preserved

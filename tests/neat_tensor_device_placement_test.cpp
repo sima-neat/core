@@ -1,5 +1,8 @@
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/TensorTransfer.h"
+#include "pipeline/internal/InputStreamUtil.h"
+#include "nodes/io/Input.h"
+#include "simaai/neat/internal/dmabuf/DmaBuf.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
@@ -10,7 +13,6 @@
 #include <gst/gst.h>
 #include <gst/allocators/gstdmabuf.h>
 
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -35,10 +37,6 @@ static void add_sima_meta(GstBuffer* buffer) {
 
 int main() {
   try {
-    // The Modalix MLA architecture allocates DMS storage from the DMA heap and imports the
-    // resulting DMA-BUF. Select that architecture before the process-wide policy is read.
-    require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
-            "failed to select DMA-BUF memory backend");
     simaai::neat::gst_init_once();
 
     std::vector<simaai::neat::Segment> segments = {
@@ -57,8 +55,7 @@ int main() {
     seed.read_only = false;
 
     simaai::neat::Tensor t_ev74 = simaai::neat::pipeline_internal::transfer_to_device(
-        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr);
     auto* ev74_sample = static_cast<GstSample*>(t_ev74.storage->holder.get());
     GstBuffer* ev74_buf = ev74_sample ? gst_sample_get_buffer(ev74_sample) : nullptr;
     require(ev74_buf != nullptr, "missing EV74 DMA-BUF");
@@ -70,8 +67,7 @@ int main() {
     require(t_ev74.device.id == 0, "EV74 device id mismatch");
 
     simaai::neat::Tensor t_dms = simaai::neat::pipeline_internal::transfer_to_device(
-        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments, nullptr,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments, nullptr);
     require(t_dms.device.type == simaai::neat::DeviceType::SIMA_MLA, "DMS0 device mismatch");
     require(t_dms.device.id == 0, "DMS0 device id mismatch");
 
@@ -82,6 +78,28 @@ int main() {
                 gst_is_dmabuf_memory(gst_buffer_peek_memory(dms_buf, 0U)),
             "MLA placement must use the DMS DMA heap");
     gst_buffer_unref(dms_buf);
+
+    {
+      // Auto selects DMS for MLA tensor ingress. Allocation must follow the
+      // resolved placement rather than interpreting Auto as a CMA request.
+      simaai::neat::InputOptions input_options;
+      input_options.payload_type = simaai::neat::PayloadType::Tensor;
+      input_options.format = "FLOAT32";
+      input_options.buffer_name = "ifm0";
+      input_options.memory_policy = simaai::neat::InputMemoryPolicy::Auto;
+      input_options.pool_min_buffers = 1;
+      input_options.pool_max_buffers = 1;
+      simaai::neat::InputBufferPoolGuard pool;
+      std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> buffer(
+          simaai::neat::allocate_input_buffer(4096U, input_options, pool), gst_buffer_unref);
+      require(buffer != nullptr && gst_buffer_n_memory(buffer.get()) == 1U,
+              "Auto tensor ingress did not allocate one DMA-BUF memory");
+      auto memory = simaai::neat::internal::dmabuf::DmaBufMemory::retain(
+          gst_buffer_peek_memory(buffer.get(), 0U));
+      require(memory.has_value() &&
+                  memory->knownHeapKind() == simaai::neat::internal::dmabuf::HeapKind::MlaDms,
+              "Auto tensor ingress must allocate from the resolved DMS heap");
+    }
 
     auto cpu_storage = simaai::neat::make_cpu_owned_storage(96);
     simaai::neat::Tensor cpu;
@@ -101,7 +119,6 @@ int main() {
     require(mla_force.device.type == simaai::neat::DeviceType::SIMA_MLA && mla_force.device.id == 0,
             "mla(true) should yield DMS0");
 
-    const auto stats_before = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
     simaai::neat::Tensor dms_copy = t_ev74.mla(true);
 
     GstBuffer* out_buf =
@@ -131,14 +148,8 @@ int main() {
     simaai::neat::Tensor dms_copy2 = t_ev74.mla(true);
     require(dms_copy2.device.type == simaai::neat::DeviceType::SIMA_MLA,
             "second transfer should stay on MLA");
-    auto stats_after = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
-    require(stats_after.hits == stats_before.hits && stats_after.misses == stats_before.misses,
-            "strict DMA-BUF placement must bypass the legacy segmented pool cache");
 
-    // The strict driver-mode placement uses the same public Tensor API but
-    // must produce ordinary GstDmaBufMemory from the CMA heap. It must not
-    // enter the legacy segmented allocator or disguise that allocator as a
-    // DMA-BUF.
+    // Explicit CVU placement produces standard DMA-BUF memory from the CMA heap.
     std::vector<std::uint8_t> direct_data(4096U);
     for (std::size_t i = 0; i < direct_data.size(); ++i) {
       direct_data[i] = static_cast<std::uint8_t>(i & 0xffU);
@@ -148,8 +159,7 @@ int main() {
         simaai::neat::TensorMemory::CPU);
     std::vector<simaai::neat::Segment> direct_segments{{"ifm0", direct_data.size()}};
     auto direct = simaai::neat::pipeline_internal::transfer_to_device(
-        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr);
     require(direct.device.type == simaai::neat::DeviceType::SIMA_CVU,
             "direct EV74 device mismatch");
     require(direct.storage && direct.storage->sima_segments.size() == 1U,
@@ -174,8 +184,7 @@ int main() {
         simaai::neat::TensorMemory::CPU);
     std::vector<simaai::neat::Segment> direct_segments_1{{"ifm0", direct_data_1.size()}};
     auto direct_1 = simaai::neat::pipeline_internal::transfer_to_device(
-        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1, nullptr,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1, nullptr);
     direct.route.name = "image_l";
     direct.route.backend_name = "input_tensor";
     direct.route.segment_name = "input_tensor";
@@ -197,8 +206,7 @@ int main() {
     ingress.segment_name = "input_tensor";
     std::string ingress_error;
     auto ingress_holder = simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
-        ingress, &ingress_error, /*allow_zero_copy=*/true,
-        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
+        ingress, &ingress_error, /*allow_zero_copy=*/true);
     require(ingress_holder != nullptr,
             ingress_error.empty() ? "direct tensor-set envelope failed" : ingress_error);
     GstBuffer* ingress_buffer =
@@ -212,39 +220,31 @@ int main() {
     }
     GstCustomMeta* tensor_set_meta =
         gst_buffer_get_custom_meta(ingress_buffer, SIMA_TENSOR_SET_META_NAME);
-    require(tensor_set_meta != nullptr,
-            "direct tensor-set is missing canonical route metadata");
-    GstStructure* tensor_set_structure =
-        gst_custom_meta_get_structure(tensor_set_meta);
-    require(tensor_set_structure != nullptr,
-            "direct tensor-set route metadata has no structure");
+    require(tensor_set_meta != nullptr, "direct tensor-set is missing canonical route metadata");
+    GstStructure* tensor_set_structure = gst_custom_meta_get_structure(tensor_set_meta);
+    require(tensor_set_structure != nullptr, "direct tensor-set route metadata has no structure");
     guint physical_binding_count = 0U;
-    require(gst_structure_get_uint(
-                tensor_set_structure,
-                "physical-binding-count",
-                &physical_binding_count) &&
+    require(gst_structure_get_uint(tensor_set_structure, "physical-binding-count",
+                                   &physical_binding_count) &&
                 physical_binding_count == 2U,
             "direct tensor-set must publish two dense physical carriers");
-    const GValue* descriptor_value = gst_structure_get_value(
-        tensor_set_structure, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS);
-    auto* descriptor_blob =
-        descriptor_value && G_VALUE_HOLDS(descriptor_value, G_TYPE_BYTES)
-            ? static_cast<GBytes*>(g_value_get_boxed(descriptor_value))
-            : nullptr;
+    const GValue* descriptor_value =
+        gst_structure_get_value(tensor_set_structure, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS);
+    auto* descriptor_blob = descriptor_value && G_VALUE_HOLDS(descriptor_value, G_TYPE_BYTES)
+                                ? static_cast<GBytes*>(g_value_get_boxed(descriptor_value))
+                                : nullptr;
     gsize descriptor_bytes = 0U;
-    const auto* ingress_descriptors = descriptor_blob
-                                          ? static_cast<const SimaTensorDescriptorV2*>(
-                                                g_bytes_get_data(descriptor_blob,
-                                                                 &descriptor_bytes))
-                                          : nullptr;
+    const auto* ingress_descriptors =
+        descriptor_blob ? static_cast<const SimaTensorDescriptorV2*>(
+                              g_bytes_get_data(descriptor_blob, &descriptor_bytes))
+                        : nullptr;
     require(ingress_descriptors != nullptr &&
                 descriptor_bytes == 2U * sizeof(SimaTensorDescriptorV2),
             "direct tensor-set descriptor table is malformed");
-    require(ingress_descriptors[0].physical_index == 0 &&
-                ingress_descriptors[0].memory_index == 0 &&
-                ingress_descriptors[1].physical_index == 1 &&
-                ingress_descriptors[1].memory_index == 1,
-            "direct tensor-set descriptor identities must mirror its carriers");
+    require(
+        ingress_descriptors[0].physical_index == 0 && ingress_descriptors[0].memory_index == 0 &&
+            ingress_descriptors[1].physical_index == 1 && ingress_descriptors[1].memory_index == 1,
+        "direct tensor-set descriptor identities must mirror its carriers");
     gst_buffer_unref(ingress_buffer);
 
     std::cout << "[OK] tensor_device_placement_test passed\n";

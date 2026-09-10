@@ -421,17 +421,22 @@ pipeline-level `GstContext`:
 - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
 
-For the internal EVO DMA-BUF migration route, Core reads
-`SIMA_NEAT_MEMORY_BACKEND` once per process. During migration the only valid
-values are exactly `legacy` and `dmabuf-plan`; an unset variable selects
-`legacy`, while empty, `auto`, `probe`, case-altered, whitespace-altered, and
-unknown values fail closed. `ModelPack` records that immutable choice and is
-the sole owner of model admission. Lower transfer and sample-materialization
-helpers receive the resolved transport intent explicitly and never reread
-mutable environment state. This temporary selector and its legacy branch are
-owned by the Phase 7B deletion ledger; the strict-only product has no selector.
+Model execution uses the admitted DMA-BUF path. `ModelPack` keeps MPK metadata
+inspection separate from executable-plan preparation: inspection describes the
+model without opening devices or requiring its executable artifacts; execution
+requires an admitted semantic-command, physical-command and frame-arena plan.
+The prepared plan is cached and reused by graph and synchronous-runner clones.
+Routing preserves the compiler's pre/inference/post partition and does not
+change when the executable cache becomes ready.
 
-Selecting `dmabuf-plan` invokes the same side-effect-free
+Device transfers and InputStream allocation use standard DMA-BUF memory and
+resolved CMA/DMS placement. Shared TensorSet envelopes retain each source
+memory, its parent buffer and existing loan credit, including when a CPU sibling
+requires packing. Explicit CPU memory and Owned outputs remain supported;
+required device allocations fail rather than silently falling back to CPU
+memory. Applications do not select a memory backend or initialize GStreamer.
+
+Execution preparation invokes the same side-effect-free
 `try_compile_dmabuf_plan()` operation used by the offline
 `neat-dmabuf-plan-audit` tool. Pass `--mpk <mpk.json>` and one repeatable
 `--mla-artifact <stage-id> <manifest-executable> <resolved-file>` triple per
@@ -441,27 +446,25 @@ MLA ELF, a successful strict reverse-AFE decode, and an accepted immutable
 frame-arena plan. The audit emits a versioned JSON record
 with stable reason codes, contract locations, content digests, and basenames;
 it does not allocate accelerator memory, open a device, or expose customer
-filesystem paths. Strict setup records the same canonical plan digest and
-fails rather than constructing or retrying the legacy executor after a
-rejection.
+filesystem paths. Execution preparation records the same canonical plan digest and
+fails rather than constructing or retrying a legacy executor after rejection.
 
 Only after admission does Core set `processmla.dmabuf_plan_contract` in static
 manifest ABI version 25. Core also projects each backend port's `required_alignment_bytes`
 and the immutable frame-arena placement plan into its physical buffer record;
 ProcessMLA consumes that value rather than duplicating the legacy
-page-alignment policy. It consumes these Core-owned facts; it must not re-read
-the environment, infer missing ports, or fall back to the legacy transport
-after selection. Core and every plugin that consumes the static-manifest
+page-alignment policy. It consumes these Core-owned facts; it must not infer missing ports
+or fall back to a legacy transport. Core and every plugin that consumes the static-manifest
 header must therefore be built and released together at ABI version 25.
 
-The same Core-owned memory policy controls public Tensor placement. With
-`dmabuf-plan`, `transfer_to_device()` allocates standard CMA or DMS DMA-BUF
-memory, performs the required cache-synchronized host copy, and records device
-placement in Tensor storage metadata without replacing `GstDmaBufMemory` with
-the legacy SiMa allocator. Tensor-list ingress adopts one standard DMA-BUF view
-per source tensor. It rejects an implicit materialization or segmented-memory
-fallback, so the static model proof and per-frame transport cannot silently
-select different architectures.
+Public Tensor device transfers allocate standard CMA or DMS DMA-BUF memory,
+perform the required cache-synchronized host copy, and record device placement
+in Tensor storage metadata. Shared tensor-list ingress retains each DMA-backed
+field's existing memory and producer lifetime. CPU fields can share storage or
+pack independently; packing a CPU field never copies its DMA-backed siblings.
+Invalid DMA views fail rather than falling back to segmented allocation or
+whole-envelope materialization. Explicit Owned output and CPU/device transfers
+remain intentional copy operations.
 
 At strict stage boundaries, logical payload size and physical address span are
 different facts. The MPK-derived typed operation owns shape/layout and the
@@ -664,6 +667,35 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+### DMA-BUF output ownership
+
+Hardware decode allocates decoded frames directly in a fixed standard DMA-BUF
+pool. Native `VideoInputGroup` file output preserves producer memory and defaults
+its optional tail-caps memory constraint to `Any`. Explicit format conversion or
+SystemMemory requests remain compatibility operations, not native zero-copy paths.
+
+At public outputs, `OutputMemory::Auto` retains actual standard DMA-BUF payloads
+in sync and async modes. Non-DMA payloads keep the preset/mode policy; explicit
+`Owned` and the Auto-only owned environment override keep their copy semantics.
+Mixed output envelopes resolve this policy per selected payload, not from another
+field's memory type. Recognition uses `GstDmaBufMemory`, without inventing legacy
+device flags or changing tensor placement metadata.
+
+Transport boundaries preserve backing allocation identity, checked offsets and
+lengths, and original pool-buffer ownership. Metadata-only envelopes share memory
+and retain the pool parent. A Tensor mapping retains both its map guard and the
+current storage/loan; CPU cache synchronization ends before those owners release.
+EV/CVU and MLA imports retain the producer until completion. Unknown completion
+must not recycle potentially active storage.
+
+DMA-BUF-preserving outputs consume deduplicated holder credits. Queue/credit
+pressure cannot activate a payload-copy fallback or silently change `Block` into
+a drop policy. Explicit `ZeroCopy` also disables pressure-copy fallbacks. Explicit
+drop policies remain observable; stop wakes blocked operations. Intentional
+`Owned`, `clone()`, input copying and software transforms are separate boundaries.
+Compute stages may allocate their results in different DMA-BUFs without copying
+their inputs merely for transport.
+
 ### Decoder admission lifecycle
 
 Before choosing the single-pipeline or connected-graph runtime, Core scans the
@@ -678,6 +710,10 @@ invents a frame rate. An incomplete contract or unavailable optional admission
 endpoint produces a warning and leaves the plan unchanged; with
 `SIMA_DECODER_ADMISSION_REQUIRE=1`, either condition fails before decoder
 hardware starts. Capacity rejection and malformed lease responses always fail.
+
+Decoder allocation policy does not depend on whether the next reader is the app,
+CVU or MLA. Typed hardware decode requests direct output consistently; an explicit
+software-adapter tail advertises its own exposed memory contract instead.
 
 ### Realtime fan-in lowering
 

@@ -365,9 +365,8 @@ int main(int argc, char** argv) {
   // execution plan.  The normal no-argument unit-test behavior is unchanged.
   if (argc == 3 && std::string(argv[1]) == "--admit-modelpack") {
     try {
-      CHECK(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0);
       simaai::neat::internal::ModelPack model(argv[2]);
-      const auto& admission = model.memory_backend_decision().admission;
+      const auto& admission = model.execution_admission();
       const auto execution = model.execution_plan();
       const auto stage_count =
           execution.pre.size() + execution.infer.size() + execution.post.size();
@@ -382,8 +381,7 @@ int main(int argc, char** argv) {
           ++grouped_stage_count;
           grouped_semantic_members += stage.execution_op_ids.size();
           grouped_physical_commands += stage.physical_command_ids.size();
-          const std::size_t expected_commands =
-              (stage.execution_op_ids.size() + 31U) / 32U;
+          const std::size_t expected_commands = (stage.execution_op_ids.size() + 31U) / 32U;
           if (stage.physical_command_ids.size() != expected_commands) {
             throw std::runtime_error(
                 "grouped strict stage lost its deterministic 32-member capacity split");
@@ -393,13 +391,12 @@ int main(int argc, char** argv) {
       inspect_stages(execution.pre);
       inspect_stages(execution.infer);
       inspect_stages(execution.post);
-      const auto facts = model.stage_facts_for_model_stage(
-          simaai::neat::internal::ModelStage::Full);
+      const auto facts =
+          model.stage_facts_for_model_stage(simaai::neat::internal::ModelStage::Full);
       for (std::size_t index = 1U; index < facts.size(); ++index) {
         const auto& upstream = facts[index - 1U].processcvu_contract;
         const auto& consumer = facts[index].processcvu_contract;
-        if (!upstream || !consumer ||
-            upstream->runtime_contract.logical_outputs.size() <= 1U ||
+        if (!upstream || !consumer || upstream->runtime_contract.logical_outputs.size() <= 1U ||
             consumer->runtime_contract.logical_inputs.size() !=
                 upstream->runtime_contract.logical_outputs.size()) {
           continue;
@@ -413,8 +410,7 @@ int main(int argc, char** argv) {
           }
           source_logicals.emplace(binding.src_logical_output_index);
         }
-        if (source_logicals.size() !=
-            consumer->runtime_contract.logical_inputs.size()) {
+        if (source_logicals.size() != consumer->runtime_contract.logical_inputs.size()) {
           throw std::runtime_error(
               "grouped compatibility consumer lost an upstream logical member");
         }
@@ -424,17 +420,14 @@ int main(int argc, char** argv) {
         throw std::runtime_error("strict execution plan produced an empty full-model fragment");
       }
       std::cout << "route-modelpack-admission: "
-                << simaai::neat::pipeline_internal::dmabuf_eligibility_code_name(
-                       admission.code)
+                << simaai::neat::pipeline_internal::dmabuf_eligibility_code_name(admission.code)
                 << " contract=" << admission.contract_version
-                << " plan=" << model.memory_backend_decision().plan_digest
-                << " stages=" << stage_count
+                << " plan=" << model.execution_plan_digest() << " stages=" << stage_count
                 << " grouped-stages=" << grouped_stage_count
                 << " grouped-members=" << grouped_semantic_members
                 << " physical-cvu-commands=" << grouped_physical_commands
                 << " fragment-elements=" << fragment.elements.size()
-                << " fragment-bytes=" << fragment.gst.size()
-                << '\n';
+                << " fragment-bytes=" << fragment.gst.size() << '\n';
       return admission.eligible() ? 0 : 1;
     } catch (const std::exception& error) {
       std::cerr << "route-modelpack-admission: rejected: " << error.what() << '\n';

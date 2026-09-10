@@ -19,6 +19,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -327,7 +328,15 @@ bool populate_tensor_contract_from_stage_tensor(
   if (!out) {
     return false;
   }
-  const auto shape = preferred_tensor_shape(tensor);
+  auto shape = preferred_tensor_shape(tensor);
+  if constexpr (std::is_same_v<ContractT, EgressTensorContract>) {
+    // Image routing uses normalized dimensions, but public output metadata
+    // must retain the authored tensor rank, including a singleton batch.
+    if (tensor.shape_semantics == pipeline_internal::sima::MpkShapeSemantics::Geometry &&
+        !tensor.mpk_shape.empty()) {
+      shape = tensor.mpk_shape;
+    }
+  }
   const auto parsed_shape = parse_tensor_shape_contract(shape);
   if (!parsed_shape.valid) {
     return false;
@@ -1442,6 +1451,9 @@ std::string graph_node_source_stage_name_local(const pipeline_internal::sima::Mp
 
 pipeline_internal::sima::RouteGraphKernelKind
 route_graph_kind_from_mpk_node_local(const pipeline_internal::sima::MpkGraphNode& node) {
+  if (lower_copy(node.processor) == "a65") {
+    return pipeline_internal::sima::RouteGraphKernelKind::Unknown;
+  }
   std::string kernel_source = !node.canonical_op.empty() ? node.canonical_op : node.kernel;
   if (kernel_source.empty()) {
     kernel_source = node.name;
@@ -1520,7 +1532,8 @@ struct MpkPostGraphView {
   std::size_t mla_node_index = std::numeric_limits<std::size_t>::max();
 };
 
-MpkPostGraphView build_mpk_post_graph_view_local(const pipeline_internal::sima::MpkGraph& graph) {
+MpkPostGraphView build_mpk_post_graph_view_local(const pipeline_internal::sima::MpkGraph& graph,
+                                                 const std::size_t last_mla_plugin_index) {
   MpkPostGraphView view;
   view.node_index_by_id.reserve(graph.nodes.size());
   view.incoming_edges.resize(graph.nodes.size());
@@ -1529,7 +1542,7 @@ MpkPostGraphView build_mpk_post_graph_view_local(const pipeline_internal::sima::
 
   for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
     view.node_index_by_id.emplace(graph.nodes[i].node_id, i);
-    if (view.mla_node_index == std::numeric_limits<std::size_t>::max() &&
+    if (graph.nodes[i].plugin_index == last_mla_plugin_index &&
         route_graph_kind_from_mpk_node_local(graph.nodes[i]) ==
             pipeline_internal::sima::RouteGraphKernelKind::Mla) {
       view.mla_node_index = i;
@@ -2505,7 +2518,8 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
   if (graph.nodes.empty()) {
     return {};
   }
-  const auto view = build_mpk_post_graph_view_local(graph);
+  const auto view = build_mpk_post_graph_view_local(
+      graph, static_cast<std::size_t>(pack.route_graph().last_mla_plugin_index));
   if (view.mla_node_index == std::numeric_limits<std::size_t>::max()) {
     return {};
   }
@@ -2594,8 +2608,6 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   }
   const auto& graph = pack.route_graph();
   const auto& contract = *pack.mpk_contract();
-  const bool model_managed_execution_plan = pack.uses_model_execution_plan();
-  out->model_managed_execution_plan = model_managed_execution_plan;
   const auto mla_stages = pipeline_internal::sima::get_mla_stage_io_contracts(contract);
   if (mla_stages.empty()) {
     return false;
@@ -2726,26 +2738,23 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     }
     const bool before_mla = rank_it->second < mla_rank;
     const bool after_mla = rank_it->second > last_mla_rank;
-    // The strict execution plan is the only scheduling authority.  Its
-    // physical lowerer already contains every A65/CVU command before, between,
-    // and after MLA stages.  RoutePlanner only supplies application-boundary
-    // facts in this mode; treating those commands as external adapters would
-    // duplicate them and used to reject every interstitial A65 DAG.
-    if (model_managed_execution_plan) {
+    // Intermediate commands belong to the physical inference region, not to
+    // the model's application-boundary preprocessing or postprocessing.
+    if (!before_mla && !after_mla) {
       continue;
     }
-    if (!before_mla && !after_mla) {
-      if (route_debug_enabled()) {
-        std::fprintf(stderr,
-                     "[route-debug] unsupported materializing stage between MLA stages: "
-                     "idx=%zu rank=%zu name=%s processor=%s kernel=%s\n",
-                     plugin_idx, rank_it->second, contract.plugins[plugin_idx].name.c_str(),
-                     contract.plugins[plugin_idx].processor.c_str(),
-                     contract.plugins[plugin_idx].kernel.c_str());
+    const auto& plugin = contract.plugins[plugin_idx];
+    if (lower_copy(plugin.processor) == "a65") {
+      // Host stages are part of infer, never synthesized as CVU adapters.
+      // Keep their terminal tensor contracts for application output planning.
+      if (after_mla &&
+          pipeline_internal::sima::route_graph_outgoing_edges(graph, plugin_idx).empty()) {
+        auto outputs = stage_output_contracts_from_plugin(plugin);
+        out->egress_contracts.insert(out->egress_contracts.end(), outputs.begin(), outputs.end());
       }
-      return false;
+      continue;
     }
-    std::string kernel_source = contract.plugins[plugin_idx].kernel;
+    std::string kernel_source = plugin.kernel;
     if (kernel_source.empty()) {
       kernel_source = contract.plugins[plugin_idx].name;
     }
@@ -3030,8 +3039,7 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   } else {
     out->pre_kind = PreRouteStageKind::None;
   }
-  out->has_strict_boxdecode_route =
-      !model_managed_execution_plan && strict_model_managed_boxdecode_available(pack);
+  out->has_strict_boxdecode_route = strict_model_managed_boxdecode_available(pack);
   if (route_debug_enabled()) {
     std::fprintf(stderr,
                  "[route-debug] mpk_summary pre=%s post=%s has_pre=%d has_post=%d tess=%d "
@@ -3937,8 +3945,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
                               route_region_csv(out.ingress_regions));
   }
   std::vector<RouteRegion> raw_graph_post_regions;
-  if (!out.boxdecode_selected && pack != nullptr &&
-      !(have_capability && capability->model_managed_execution_plan)) {
+  if (!out.boxdecode_selected && pack != nullptr) {
     raw_graph_post_regions = derive_post_regions_from_graph(*pack);
     if (!raw_graph_post_regions.empty()) {
       out.diagnostics.push_back("session-route: graph_post_chain_raw=" +
@@ -3953,35 +3960,6 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
     out.post_regions = post_regions_from_post_chain(out.post_chain, out.egress_contracts);
   }
 
-  if (have_capability && capability->model_managed_execution_plan) {
-    // Apply the ownership fence after every legacy-derived chain/region pass.
-    // Earlier enforcement was accidentally undone when the generic post
-    // synthesis rebuilt Dequant/Detess from MLA dtype flags, duplicating an
-    // operation already present in the strict execution plan.  The compiler
-    // plan owns every model command; only explicit application preproc and
-    // framework BoxDecode may remain outside it.
-    if (!user_requested_preproc) {
-      out.pre_chain.clear();
-      out.pre_regions.clear();
-      out.pre_adapter = SessionPreAdapterKind::None;
-      out.pre_cast_fp32_to_bf16 = false;
-      out.use_preproc = false;
-      out.include_pre_stage = false;
-      out.preproc_context.pre_quant_needed = false;
-      out.preproc_context.pre_tess_needed = false;
-      out.preproc_context.pre_cast_needed = false;
-    }
-    if (!out.boxdecode_selected) {
-      out.post_chain.clear();
-      out.post_regions.clear();
-      out.include_post_stage = false;
-      out.selected_post_kind = PostRouteStageKind::None;
-    }
-    out.model_managed_route_flags.pre_cast_needed = out.preproc_context.pre_cast_needed;
-    out.model_managed_route_flags.include_pre_stage = out.include_pre_stage;
-    out.diagnostics.push_back(
-        "session-route: compiler_model_execution_plan_is_single_schedule_authority");
-  }
   finalize_post_summary_from_regions(&out);
   out.infer_only = !out.include_pre_stage && !out.include_post_stage;
 
@@ -4011,9 +3989,7 @@ RouteCapability extract_route_capability(const ModelPack& pack,
         " The MPK manifest must define a valid plugin graph with edges and stages."
         " Verify the model pack was built with a supported MPK version.");
   }
-  out.evidence.push_back(out.model_managed_execution_plan
-                             ? "route_capability_source=model_execution_plan_boundary"
-                             : "route_capability_source=mpk_graph");
+  out.evidence.push_back("route_capability_source=mpk_graph");
   if (pack.mpk_contract().has_value()) {
     out.evidence.push_back("mpk_plugins=" + std::to_string(pack.mpk_contract()->plugins.size()));
     out.evidence.push_back("mpk_edges=" + std::to_string(pack.mpk_contract()->edges.size()));
@@ -4148,18 +4124,6 @@ RouteSelection plan_route_selection(const Model::Options& options,
   const bool post_auto = intent.post_auto;
   const bool requested_boxdecode = intent.requested_boxdecode;
   const bool mla_video_ingress = media_type_is_video_raw(capability.mla_input_media_type);
-
-  if (capability.model_managed_execution_plan && pre_auto && post_auto) {
-    // The physical plan is already the full model route. Selection describes
-    // only the application boundary and must not wrap it in a second inferred
-    // adapter route.
-    effective.include_preprocess_stage = false;
-    effective.include_postprocess_stage = false;
-    effective.selected_post_kind = PostRouteStageKind::None;
-    effective.pipeline_type = PipelineType::Preproc;
-    out.diagnostics.push_back(
-        "route selected: compiler model execution plan owns all model commands");
-  }
 
   if (pre_auto) {
     if (capability.has_external_pre) {
@@ -4306,11 +4270,10 @@ RouteSelection plan_route_selection(const Model::Options& options,
         "auto pre-route: no external pre stage with MLA tess -> direct MLA video ingress");
   }
 
-  effective.infer_only = capability.model_managed_execution_plan ||
-                         (effective.mla_tessellation && capability.mla_input_bf16 &&
-                          !effective.include_preprocess_stage &&
-                          !effective.include_postprocess_stage &&
-                          out.modelpack_media_type == "application/vnd.simaai.tensor");
+  effective.infer_only = effective.mla_tessellation && capability.mla_input_bf16 &&
+                         !effective.include_preprocess_stage &&
+                         !effective.include_postprocess_stage &&
+                         out.modelpack_media_type == "application/vnd.simaai.tensor";
   if (effective.infer_only) {
     out.diagnostics.push_back("route selected: infer-only (BF16 + MLA tess + no external post)");
   }

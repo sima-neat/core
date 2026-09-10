@@ -2,6 +2,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 
+#include "gst/GstInit.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
@@ -9,6 +10,8 @@
 #include "pipeline/runtime/DecoderAdmission.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_utils.h"
+
+#include <gst/gst.h>
 
 #include <cstdlib>
 #include <functional>
@@ -306,39 +309,63 @@ void check_fused_branch_is_admitted() {
                    "fused decoder should bind the lease into its node");
 }
 
-void check_zero_copy_policy_follows_downstream() {
+void require_direct_output_property(const simaai::neat::Node& decoder) {
+  const std::string fragment = decoder.backend_fragment(0);
+  const std::string property = "zero-copy-output=true";
+  const auto pos = fragment.find(property);
+  require(pos != std::string::npos &&
+              fragment.find(property, pos + property.size()) == std::string::npos,
+          "decoder must emit its direct-output property exactly once");
+
+  // Parse only the decoder element: property readback must not depend on an
+  // adapter tail's caps negotiation or start a hardware session.
+  const std::string element_fragment = fragment.substr(0, fragment.find(" ! "));
+  GError* error = nullptr;
+  GstElement* element = gst_parse_launch(element_fragment.c_str(), &error);
+  const std::string detail = error ? error->message : "";
+  if (error) {
+    g_error_free(error);
+  }
+  if (!element || !detail.empty()) {
+    if (element) {
+      gst_object_unref(element);
+    }
+    throw std::runtime_error("decoder property readback parse failed: " + detail);
+  }
+  gboolean direct = FALSE;
+  g_object_get(element, "zero-copy-output", &direct, nullptr);
+  gst_object_unref(element);
+  require(direct == TRUE, "generated decoder element must use direct DMA-BUF output");
+}
+
+void check_zero_copy_policy_is_producer_owned() {
   constexpr std::uint32_t zero_copy_policy =
       simaai::neat::pipeline_internal::kDecoderAdmissionPolicyZeroCopyOutput |
       simaai::neat::pipeline_internal::kDecoderAdmissionPolicyNoOutputCopy;
 
-  {
-    auto backend = std::make_shared<FakeBackend>();
-    ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
-    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
-    require(prepared.reservation && backend->requests.front().requested_policy == zero_copy_policy,
-            "terminal raw decoder output should retain zero-copy admission");
-    require_contains(plan.pipeline_segments.front().nodes.front()->backend_fragment(0),
-                     "zero-copy-output=true",
-                     "terminal raw decoder should receive the zero-copy property");
+  for (const auto codec : {SimaDecodeType::H264, SimaDecodeType::H265}) {
+    for (const std::string next : {"", "CVU", "APU"}) {
+      auto backend = std::make_shared<FakeBackend>();
+      auto options = decoder_options(codec);
+      options.next_element = next;
+      ExecutionGraphPlan plan = ordinary_plan({options});
+      auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+      require(prepared.reservation &&
+                  backend->requests.front().requested_policy == zero_copy_policy,
+              "decoder allocation admission must not depend on the next reader");
+      const auto& node = plan.pipeline_segments.front().nodes.front();
+      require_direct_output_property(*node);
+      require(node->memory_contract() == simaai::neat::MemoryContract::PreferDeviceZeroCopy,
+              "native decoder output must advertise its device-backed contract");
+    }
   }
 
-  {
+  for (auto plan : {encoder_plan(false), encoder_plan(true), branched_encoder_plan()}) {
     auto backend = std::make_shared<FakeBackend>();
-    ExecutionGraphPlan plan = encoder_plan(false);
-    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
-    require(prepared.reservation && backend->requests.front().requested_policy == 0U,
-            "legacy encoder path should request packed decoder output");
-    require(plan.pipeline_segments.front().nodes.front()->backend_fragment(0).find(
-                "zero-copy-output=true") == std::string::npos,
-            "legacy encoder path must not enable decoder zero-copy output");
-  }
-
-  {
-    auto backend = std::make_shared<FakeBackend>();
-    ExecutionGraphPlan plan = encoder_plan(true);
     auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
     require(prepared.reservation && backend->requests.front().requested_policy == zero_copy_policy,
-            "layout-aware encoder path should retain zero-copy admission");
+            "downstream layout requirements must not downgrade hardware output admission");
+    require_direct_output_property(*plan.pipeline_segments.front().nodes.front());
   }
 
   {
@@ -348,15 +375,64 @@ void check_zero_copy_policy_follows_downstream() {
     plan.pipeline_segments.front().nodes.push_back(marker("MLA"));
     auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
     require(prepared.reservation && backend->requests.front().requested_policy == zero_copy_policy,
-            "Preproc and MLA path should retain zero-copy admission");
+            "Preproc and MLA path should retain direct DMA-BUF admission");
+    require_direct_output_property(*plan.pipeline_segments.front().nodes.front());
   }
 
   {
     auto backend = std::make_shared<FakeBackend>();
-    ExecutionGraphPlan plan = branched_encoder_plan();
+    auto options = decoder_options();
+    options.raw_output = false;
+    options.out_format = simaai::neat::FormatTag::RGB;
+    ExecutionGraphPlan plan = ordinary_plan({options});
     auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
-    require(prepared.reservation && backend->requests.front().requested_policy == 0U,
-            "a reachable legacy encoder branch should request packed decoder output");
+    require(prepared.reservation && backend->requests.front().requested_policy == zero_copy_policy,
+            "explicit adapter must not change the hardware display-picture pool");
+    const auto& node = plan.pipeline_segments.front().nodes.front();
+    require_direct_output_property(*node);
+    require(node->memory_contract() == simaai::neat::MemoryContract::AllowEitherButReport,
+            "explicit adapter output must not be advertised as native DMA-BUF");
+    require_contains(node->backend_fragment(0), "videoconvert",
+                     "explicit software adapter must be preserved");
+    const auto* provider = dynamic_cast<const simaai::neat::OutputSpecProvider*>(node.get());
+    require(provider && provider->output_spec({}).memory == "SystemMemory",
+            "explicit adapter output spec must retain its host-memory contract");
+  }
+
+  {
+    auto backend = std::make_shared<FakeBackend>();
+    ExecutionGraphPlan plan = fused_plan(decoder_options());
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(prepared.reservation && backend->requests.front().requested_policy == zero_copy_policy,
+            "fused decoder must preserve producer-owned admission");
+    require_direct_output_property(
+        *plan.pipeline_segments.back().fused_realtime_ingress->branches.front().nodes.front());
+  }
+
+  {
+    auto options = decoder_options();
+    options.out_format = simaai::neat::FormatTag::RGB;
+    require_throws_with([&]() { (void)simaai::neat::SimaDecode(options).backend_fragment(0); },
+                        "raw_output supports only NV12 or I420",
+                        "direct-output admission must not relax format validation");
+  }
+
+  for (const auto codec : {SimaDecodeType::JPEG, SimaDecodeType::MJPEG}) {
+    auto backend = std::make_shared<FakeBackend>();
+    ExecutionGraphPlan plan = ordinary_plan({decoder_options(codec)});
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(!prepared.reservation && backend->requests.empty(),
+            "JPEG codecs do not use video admission");
+    require_direct_output_property(*plan.pipeline_segments.front().nodes.front());
+  }
+
+  {
+    ScopedEnvVar disable("SIMA_DECODER_ADMISSION_DISABLE", "1");
+    auto backend = std::make_shared<FakeBackend>();
+    ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(!prepared.reservation && backend->requests.empty(), "admission should be disabled");
+    require_direct_output_property(*plan.pipeline_segments.front().nodes.front());
   }
 }
 
@@ -523,13 +599,15 @@ void check_sync_cache_rebuild_order() {
 
 int main() {
   try {
+    unsetenv("SIMA_ALLOW_GST_INIT");
+    simaai::neat::gst_init_once();
     unsetenv("SIMA_DECODER_ADMISSION_DISABLE");
     unsetenv("SIMA_DECODER_ADMISSION_REQUIRE");
     check_h264_h265_and_release();
     check_shared_reservation_releases_after_last_owner();
     check_non_video_codecs_are_ignored();
     check_fused_branch_is_admitted();
-    check_zero_copy_policy_follows_downstream();
+    check_zero_copy_policy_is_producer_owned();
     check_output_buffer_floor_preserves_default();
     check_missing_contracts();
     check_endpoint_policy();

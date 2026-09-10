@@ -48,15 +48,13 @@ namespace simaai::neat {
 using pipeline_internal::trim_copy;
 using pipeline_internal::upper_copy;
 
-SampleSpec device_visible_nv12_materialization_spec_or_throw(
-    const SampleSpec& source, const char* where) {
+SampleSpec device_visible_nv12_materialization_spec_or_throw(const SampleSpec& source,
+                                                             const char* where) {
   const char* tag = where ? where : "NV12 materialization";
-  if (source.kind != SampleMediaKind::RawVideo ||
-      upper_copy(source.format) != "NV12" || source.width <= 0 ||
-      source.height <= 0 || (source.width & 1) != 0 ||
+  if (source.kind != SampleMediaKind::RawVideo || upper_copy(source.format) != "NV12" ||
+      source.width <= 0 || source.height <= 0 || (source.width & 1) != 0 ||
       (source.height & 1) != 0) {
-    throw std::invalid_argument(std::string(tag) +
-                                ": requires positive even NV12 geometry");
+    throw std::invalid_argument(std::string(tag) + ": requires positive even NV12 geometry");
   }
 
   // Allegro's raster source-buffer contract rounds the 8-bit luma pitch to
@@ -66,19 +64,16 @@ SampleSpec device_visible_nv12_materialization_spec_or_throw(
   // retain their authoritative GstVideoMeta instead.
   constexpr std::size_t kPitchAlignment = 64U;
   constexpr std::size_t kHeightAlignment = 8U;
-  const auto checked_align = [tag](std::size_t value, std::size_t alignment,
-                                   const char* field) {
+  const auto checked_align = [tag](std::size_t value, std::size_t alignment, const char* field) {
     if (value > std::numeric_limits<std::size_t>::max() - (alignment - 1U)) {
-      throw std::overflow_error(std::string(tag) + ": " + field +
-                                " alignment overflow");
+      throw std::overflow_error(std::string(tag) + ": " + field + " alignment overflow");
     }
     return (value + alignment - 1U) / alignment * alignment;
   };
   const std::size_t width = static_cast<std::size_t>(source.width);
   const std::size_t height = static_cast<std::size_t>(source.height);
   const std::size_t pitch = checked_align(width, kPitchAlignment, "pitch");
-  const std::size_t storage_height =
-      checked_align(height, kHeightAlignment, "height");
+  const std::size_t storage_height = checked_align(height, kHeightAlignment, "height");
   if (pitch > std::numeric_limits<std::size_t>::max() / storage_height) {
     throw std::overflow_error(std::string(tag) + ": luma span overflow");
   }
@@ -506,7 +501,9 @@ GstFlowReturn appsink_new_sample(GstAppSink* sink, gpointer user_data) {
   {
     std::unique_lock<std::mutex> lock(st->cb_mu);
     if (st->cb_queue_max > 0 && st->cb_queue.size() >= st->cb_queue_max) {
-      if (st->opt.explicit_public_output_options && !st->opt.appsink_drop) {
+      // appsink_drop already resolves both explicit Output and RunOptions.
+      // This intermediate queue must preserve a no-drop policy in either case.
+      if (!st->opt.appsink_drop) {
         st->cb_cv.wait(lock, [&] {
           return st->stop_requested.load() || st->cb_queue.size() < st->cb_queue_max;
         });
@@ -757,14 +754,12 @@ BuiltBuffer build_buffer_with_fill(
         st.reusable_buffer = nullptr;
         st.reusable_bytes = 0;
       }
-      st.reusable_buffer = allocate_input_buffer(
-          st.alloc_bytes, st.src_opt, st.pool_guard, st.opt.memory_backend_policy);
+      st.reusable_buffer = allocate_input_buffer(st.alloc_bytes, st.src_opt, st.pool_guard);
       st.reusable_bytes = st.alloc_bytes;
     }
     buf = st.reusable_buffer;
   } else {
-    buf = allocate_input_buffer(
-        st.alloc_bytes, st.src_opt, st.pool_guard, st.opt.memory_backend_policy);
+    buf = allocate_input_buffer(st.alloc_bytes, st.src_opt, st.pool_guard);
   }
   std::chrono::steady_clock::time_point t_alloc_end{};
   if (record_timings)
@@ -824,10 +819,9 @@ BuiltBuffer build_buffer_with_fill(
                                ": DMA-BUF pool returned an invalid payload span");
     }
     internal::dmabuf::Error error;
-    auto view = internal::dmabuf::DmaBufView::fromGstMemory(payload_memory, 0U, payload_bytes,
-                                                            &error);
-    dmabuf_mapping =
-        view ? view->map(internal::dmabuf::CpuAccess::Write, &error) : std::nullopt;
+    auto view =
+        internal::dmabuf::DmaBufView::fromGstMemory(payload_memory, 0U, payload_bytes, &error);
+    dmabuf_mapping = view ? view->map(internal::dmabuf::CpuAccess::Write, &error) : std::nullopt;
     if (!dmabuf_mapping) {
       if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
         release_input_buffer(buf, (std::string(tag) + ":dmabuf_map_fail").c_str());

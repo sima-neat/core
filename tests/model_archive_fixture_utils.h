@@ -9,6 +9,7 @@
 #include <array>
 #include <cctype>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -76,6 +77,106 @@ inline void write_binary_file(const fs::path& path, const std::vector<unsigned c
   }
   out.write(reinterpret_cast<const char*>(bytes.data()),
             static_cast<std::streamsize>(bytes.size()));
+}
+
+// Synthetic topology evidence for plan/render tests, not a hardware-executable program.
+inline void write_topology_elf(const std::filesystem::path& path, const std::string& ifm_name,
+                               const std::uint64_t ifm_extent, const std::string& ofm_name,
+                               const std::uint64_t ofm_extent) {
+  struct Elf64Header {
+    std::uint8_t ident[16]{};
+    std::uint16_t type = 0;
+    std::uint16_t machine = 0;
+    std::uint32_t version = 0;
+    std::uint64_t entry = 0;
+    std::uint64_t program_header_offset = 0;
+    std::uint64_t section_header_offset = 0;
+    std::uint32_t flags = 0;
+    std::uint16_t header_size = 0;
+    std::uint16_t program_header_size = 0;
+    std::uint16_t program_header_count = 0;
+    std::uint16_t section_header_size = 0;
+    std::uint16_t section_header_count = 0;
+    std::uint16_t section_name_table_index = 0;
+  };
+  struct Elf64SectionHeader {
+    std::uint32_t name = 0;
+    std::uint32_t type = 0;
+    std::uint64_t flags = 0;
+    std::uint64_t address = 0;
+    std::uint64_t offset = 0;
+    std::uint64_t size = 0;
+    std::uint32_t link = 0;
+    std::uint32_t info = 0;
+    std::uint64_t alignment = 0;
+    std::uint64_t entry_size = 0;
+  };
+  static_assert(sizeof(Elf64Header) == 64U);
+  static_assert(sizeof(Elf64SectionHeader) == 64U);
+
+  std::string names(1U, '\0');
+  const auto append_name = [&](const std::string& name) {
+    const auto offset = static_cast<std::uint32_t>(names.size());
+    names += name;
+    names.push_back('\0');
+    return offset;
+  };
+  const auto shstrtab_name = append_name(".shstrtab");
+  const auto ifm_name_offset = append_name(ifm_name);
+  const auto ofm_name_offset = append_name(ofm_name);
+  const std::uint64_t names_offset = sizeof(Elf64Header);
+  const std::uint64_t sections_offset = (names_offset + names.size() + 7U) & ~std::uint64_t{7U};
+
+  Elf64Header header;
+  header.ident[0] = 0x7fU;
+  header.ident[1] = 'E';
+  header.ident[2] = 'L';
+  header.ident[3] = 'F';
+  header.ident[4] = 2U;
+  header.ident[5] = 1U;
+  header.ident[6] = 1U;
+  header.type = 1U;
+  header.machine = 183U;
+  header.version = 1U;
+  header.section_header_offset = sections_offset;
+  header.header_size = sizeof(Elf64Header);
+  header.section_header_size = sizeof(Elf64SectionHeader);
+  header.section_header_count = 4U;
+  header.section_name_table_index = 1U;
+
+  std::vector<Elf64SectionHeader> sections(4U);
+  sections[1].name = shstrtab_name;
+  sections[1].type = 3U;
+  sections[1].offset = names_offset;
+  sections[1].size = names.size();
+  sections[1].alignment = 1U;
+  sections[2].name = ifm_name_offset;
+  sections[2].type = 0x71ba0002U;
+  sections[2].offset = sections_offset + sections.size() * sizeof(sections.front());
+  sections[2].size = 16U;
+  sections[3].name = ofm_name_offset;
+  sections[3].type = 0x71ba0002U;
+  sections[3].offset = sections[2].offset + 16U;
+  sections[3].size = 16U;
+
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  if (!output.is_open()) {
+    throw std::runtime_error("failed to create synthetic MLA ELF");
+  }
+  output.write(reinterpret_cast<const char*>(&header), sizeof(header));
+  output.write(names.data(), static_cast<std::streamsize>(names.size()));
+  const auto written = names_offset + names.size();
+  std::vector<char> padding(static_cast<std::size_t>(sections_offset - written), 0);
+  output.write(padding.data(), static_cast<std::streamsize>(padding.size()));
+  output.write(reinterpret_cast<const char*>(sections.data()),
+               static_cast<std::streamsize>(sections.size() * sizeof(sections.front())));
+  const std::array<std::uint64_t, 2U> ifm_header{ifm_extent, 1U};
+  const std::array<std::uint64_t, 2U> ofm_header{ofm_extent, 1U};
+  output.write(reinterpret_cast<const char*>(ifm_header.data()), 16);
+  output.write(reinterpret_cast<const char*>(ofm_header.data()), 16);
+  if (!output.good()) {
+    throw std::runtime_error("failed to write synthetic MLA ELF");
+  }
 }
 
 inline ModelArchiveFixture
@@ -189,28 +290,26 @@ inline std::string fixture_file_sha256(const fs::path& path) {
     }
   }
   if (rc != 0 || digest.size() != 64U) {
-    throw std::runtime_error("model_archive_fixture_utils: sha256sum failed for " +
-                             path.string());
+    throw std::runtime_error("model_archive_fixture_utils: sha256sum failed for " + path.string());
   }
   return digest;
 }
 
 inline const std::array<const char*, 10>& exact_yolo_v9c_seg_leaf_names() {
   static const std::array<const char*, 10> names = {
-      "dequantize_2/bbox_0",       "dequantize_3/bbox_1",
-      "dequantize_4/bbox_2",       "dequantize_5/class_prob_0",
-      "dequantize_6/class_prob_1", "dequantize_7/class_prob_2",
-      "dequantize_8/mask_coeff_0", "dequantize_9/mask_coeff_1",
-      "dequantize_10/mask_coeff_2", "dequantize_11/mask",
+      "dequantize_2/bbox_0",       "dequantize_3/bbox_1",       "dequantize_4/bbox_2",
+      "dequantize_5/class_prob_0", "dequantize_6/class_prob_1", "dequantize_7/class_prob_2",
+      "dequantize_8/mask_coeff_0", "dequantize_9/mask_coeff_1", "dequantize_10/mask_coeff_2",
+      "dequantize_11/mask",
   };
   return names;
 }
 
 inline void validate_exact_yolo_v9c_seg_seed_json(const std::string& text,
-                                                   const fs::path& source_path) {
+                                                  const fs::path& source_path) {
   const auto doc = nlohmann::json::parse(text);
-  if (doc.value("name", std::string{}) != "yolo_v9c_seg" ||
-      !doc.contains("plugins") || !doc["plugins"].is_array()) {
+  if (doc.value("name", std::string{}) != "yolo_v9c_seg" || !doc.contains("plugins") ||
+      !doc["plugins"].is_array()) {
     throw std::runtime_error(
         "model_archive_fixture_utils: strict yolo_v9c_seg seed has wrong model identity: " +
         source_path.string());
@@ -239,8 +338,8 @@ inline void validate_exact_yolo_v9c_seg_seed_json(const std::string& text,
       }
     }
   }
-  if (!unpack || !unpack->contains("output_nodes") ||
-      !(*unpack)["output_nodes"].is_array() || (*unpack)["output_nodes"].size() != 10U) {
+  if (!unpack || !unpack->contains("output_nodes") || !(*unpack)["output_nodes"].is_array() ||
+      (*unpack)["output_nodes"].size() != 10U) {
     throw std::runtime_error(
         "model_archive_fixture_utils: strict yolo_v9c_seg seed must have one exact 10-way "
         "MLA unpack");
@@ -268,8 +367,7 @@ inline void validate_exact_yolo_v9c_seg_seed_json(const std::string& text,
   if (!pass_through || !pass_through->contains("input_nodes") ||
       !(*pass_through)["input_nodes"].is_array() ||
       (*pass_through)["input_nodes"].size() != expected_leaves.size() ||
-      !pass_through->contains("output_nodes") ||
-      !(*pass_through)["output_nodes"].is_array() ||
+      !pass_through->contains("output_nodes") || !(*pass_through)["output_nodes"].is_array() ||
       (*pass_through)["output_nodes"].size() != expected_leaves.size()) {
     throw std::runtime_error(
         "model_archive_fixture_utils: strict yolo_v9c_seg seed must end in one exact 10-way "
@@ -297,8 +395,8 @@ strict_contract_json_entry_from_modelzoo(const std::string& model_name = "yolo_v
                              model_name + "'");
   }
 
-  const fs::path seed_path = test_model_archive_fixture_root_path() / "strict-seeds" /
-                             "yolo_v9c_seg_mpk.json";
+  const fs::path seed_path =
+      test_model_archive_fixture_root_path() / "strict-seeds" / "yolo_v9c_seg_mpk.json";
   constexpr std::uintmax_t expected_size = 47224U;
   constexpr const char* expected_sha256 =
       "bf3c96dd5863446349be7f675c078cfebd8032b658a4ee3355393c5590575f74";
@@ -323,8 +421,8 @@ strict_contract_json_entry_from_modelzoo(const std::string& model_name = "yolo_v
   return inserted.first->second;
 }
 
-inline void require_exact_yolo_v9c_seg_parsed_contract(
-    const simaai::neat::internal::ModelPack& pack) {
+inline void
+require_exact_yolo_v9c_seg_parsed_contract(const simaai::neat::internal::ModelPack& pack) {
   const auto& parsed = pack.mpk_contract();
   if (!parsed.has_value() || parsed->model_name != "yolo_v9c_seg") {
     throw std::runtime_error(
@@ -348,11 +446,40 @@ inline void require_exact_yolo_v9c_seg_parsed_contract(
 
 inline ModelArchiveFixture make_strict_model_archive_fixture(
     const std::string& tag, const std::vector<std::pair<std::string, std::string>>& text_files,
-    bool include_placeholder_elf = true, const std::string& model_name = "yolo_v9c_seg") {
+    bool include_placeholder_elf = true, const std::string& model_name = "yolo_v9c_seg",
+    bool include_topology_artifacts = false) {
   std::vector<std::pair<std::string, std::string>> files = text_files;
   const auto strict_contract = strict_contract_json_entry_from_modelzoo(model_name);
   files.push_back(strict_contract);
-  return make_model_archive_fixture(tag, files, include_placeholder_elf);
+  auto fixture = make_model_archive_fixture(tag, files,
+                                            include_placeholder_elf && !include_topology_artifacts);
+  if (!include_topology_artifacts) {
+    return fixture;
+  }
+
+  const auto contract = nlohmann::json::parse(strict_contract.second);
+  const fs::path share = fs::path(fixture.root_dir) / "share";
+  fs::create_directories(share);
+  for (const auto& plugin : contract.at("plugins")) {
+    if (plugin.value("processor", std::string{}) != "MLA") {
+      continue;
+    }
+    const auto& inputs = plugin.at("input_nodes");
+    const auto& outputs = plugin.at("output_nodes");
+    if (inputs.size() != 1U || outputs.size() != 1U) {
+      throw std::runtime_error("synthetic fixture requires one physical MLA input and output");
+    }
+    const auto executable = plugin.at("resources").at("executable").get<std::string>();
+    write_topology_elf(share / executable, "data.ifm.b0",
+                       inputs.front().at("size").get<std::uint64_t>(), "data.ofm.b0",
+                       outputs.front().at("size").get<std::uint64_t>());
+  }
+  const std::string cmd = "tar -czf " + model_archive_shell_quote(fixture.tar_path) + " -C " +
+                          model_archive_shell_quote(fixture.root_dir) + " .";
+  if (std::system(cmd.c_str()) != 0) {
+    throw std::runtime_error("model_archive_fixture_utils: failed to archive MLA topology");
+  }
+  return fixture;
 }
 
 inline ModelArchiveFixture make_malformed_model_archive_fixture(const std::string& tag) {

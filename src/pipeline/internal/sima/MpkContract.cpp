@@ -239,6 +239,11 @@ bool is_geometry_shape_semantics_local(const MpkShapeSemantics semantics) {
 
 MpkShapeSemantics classify_mpk_tensor_shape_semantics_local(const MpkPluginIoContract& stage,
                                                             const bool is_input) {
+  // A65 typed input/output shapes describe host tensors, not packed device
+  // extents. A host stage need not carry an EV kernel name.
+  if (lower_copy_local(stage.processor) == "a65") {
+    return MpkShapeSemantics::Geometry;
+  }
   const std::string kernel = canonical_token_local(stage.kernel);
   if (kernel.empty()) {
     return MpkShapeSemantics::Unknown;

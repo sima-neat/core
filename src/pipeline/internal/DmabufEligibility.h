@@ -3,7 +3,6 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
@@ -118,14 +117,13 @@ std::string dmabuf_plan_digest(const sima::static_contract::ModelExecutionPlan& 
 // above, this binds physical lowering and the selected frame-arena placement
 // (including storage domain/provenance/access) into the digest consumed by a
 // strict ModelPack.
-std::string canonical_dmabuf_execution_json(
-    const sima::static_contract::ModelExecutionPlan& plan,
-    const sima::static_contract::PhysicalExecutionPlan& physical,
-    const sima::static_contract::FrameSlotArenaPlan& arena);
-std::string dmabuf_execution_digest(
-    const sima::static_contract::ModelExecutionPlan& plan,
-    const sima::static_contract::PhysicalExecutionPlan& physical,
-    const sima::static_contract::FrameSlotArenaPlan& arena);
+std::string
+canonical_dmabuf_execution_json(const sima::static_contract::ModelExecutionPlan& plan,
+                                const sima::static_contract::PhysicalExecutionPlan& physical,
+                                const sima::static_contract::FrameSlotArenaPlan& arena);
+std::string dmabuf_execution_digest(const sima::static_contract::ModelExecutionPlan& plan,
+                                    const sima::static_contract::PhysicalExecutionPlan& physical,
+                                    const sima::static_contract::FrameSlotArenaPlan& arena);
 
 // Versioned, machine-readable audit record. Paths are represented by basenames
 // and content digests; customer filesystem paths are not emitted.
@@ -144,15 +142,5 @@ std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
                                    const std::filesystem::path& mpk_manifest,
                                    const std::vector<MlaExecutableArtifact>& mla_executables,
                                    bool pretty = false);
-
-struct MemoryBackendDecision {
-  MemoryBackendPolicy backend = MemoryBackendPolicy::Legacy;
-  DmabufEligibilityReport admission;
-  std::string plan_digest;
-
-  [[nodiscard]] bool uses_dmabuf_plan() const noexcept {
-    return backend == MemoryBackendPolicy::DmaBufPlan;
-  }
-};
 
 } // namespace simaai::neat::pipeline_internal

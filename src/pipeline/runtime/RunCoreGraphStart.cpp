@@ -269,9 +269,11 @@ EdgeRouterCallbacks make_edge_router_callbacks(const std::shared_ptr<RunCore>& c
   callbacks.sanitize_pipeline_input = [core](std::size_t index, Sample& sample) {
     core->graph_sanitize_pipeline_input(index, sample);
   };
-  callbacks.prepare_sink_sample = [](NodeId, Sample& sample, std::size_t qsize,
-                                     std::size_t diag_id) {
-    simaai::neat::graph::maybe_force_copy_for_backpressure(sample, qsize, "sink_queue", diag_id);
+  callbacks.prepare_sink_sample = [core](NodeId, Sample& sample, std::size_t qsize,
+                                         std::size_t diag_id) {
+    if (core->opt.output_memory != OutputMemory::ZeroCopy) {
+      simaai::neat::graph::maybe_force_copy_for_backpressure(sample, qsize, "sink_queue", diag_id);
+    }
   };
   callbacks.request_stop = [core](const std::string& err) { core->graph_request_stop(err); };
   callbacks.stop_requested = [core] { return core->graph_stop_requested(); };

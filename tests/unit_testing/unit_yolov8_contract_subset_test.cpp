@@ -9,9 +9,13 @@
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
 #include "test_main.h"
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -545,10 +549,13 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
     require(plan.pre.size() == 1U, label + " should expose one preprocess execution stage");
     require(pre_facts.size() == 1U, label + " should expose one preprocess stage fact");
     require(plan.pre.front().kind == kind, label + " preprocess stage kind should match");
-    require(plan.pre.front().stage_name == expected_stage_name,
-            label + " preprocess stage should preserve the canonical family stage name");
-    require(pre_facts.front().stage_name == expected_stage_name,
-            label + " preprocess stage fact should preserve the canonical family stage name");
+    const auto semantic_plan = pack.semantic_execution_plan();
+    require(semantic_plan.pre.size() == 1U &&
+                semantic_plan.pre.front().stage_name == expected_stage_name,
+            label + " semantic preprocess stage should preserve the canonical family name");
+    require(!plan.pre.front().stage_name.empty() &&
+                pre_facts.front().stage_name == plan.pre.front().stage_name,
+            label + " preprocess stage fact should preserve its admitted physical stage identity");
     require(pre_facts.front().processcvu_contract.has_value(),
             label + " preprocess stage fact should include a processcvu contract");
 
@@ -560,10 +567,33 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
             label + " preprocess stage fact should match the canonical graph id");
     require(from_fact.payload.graph_family == generic.payload.graph_family,
             label + " preprocess stage fact should match the canonical graph family");
-    require(from_fact.payload.input_shapes == generic.payload.input_shapes,
-            label + " preprocess stage fact should match canonical input geometry");
-    require(from_fact.payload.output_shapes == generic.payload.output_shapes,
-            label + " preprocess stage fact should match canonical output geometry");
+    const auto* quant = pipeline_internal::sima::get_stage_io_contract(mpk, "quantize_0");
+    require(quant != nullptr && quant->input_tensors.size() == 1U,
+            label + " requires the authored quantization input tensor");
+    const auto& authored_shape = quant->input_tensors.front().mpk_shape;
+    require(authored_shape == std::vector<std::int64_t>({1, 640, 640, 3}),
+            label + " MPK must preserve its explicit singleton-batch geometry");
+    const std::vector<std::vector<int>> expected_shapes{
+        std::vector<int>(authored_shape.begin(), authored_shape.end())};
+    require(from_fact.payload.input_shapes == expected_shapes,
+            label + " physical preprocess input must preserve the exact authored MPK geometry");
+    require(from_fact.payload.output_shapes == expected_shapes,
+            label + " shape-preserving QuantTess must retain the exact authored geometry");
+    // Batch is authored beside params, independently of the normalized semantic subset.
+    std::ifstream mpk_stream(mpk.mpk_json_path);
+    require(mpk_stream.is_open(), label + " requires the authoritative MPK manifest");
+    const auto authored_mpk = nlohmann::json::parse(mpk_stream);
+    const auto& plugins = authored_mpk.at("plugins");
+    const auto authored_quant =
+        std::find_if(plugins.begin(), plugins.end(),
+                     [&](const auto& plugin) { return plugin.at("name") == quant->name; });
+    require(authored_quant != plugins.end(), label + " requires the authored quantization stage");
+    const auto& config = authored_quant->at("config_params");
+    const int desired_batch_size = config.at("desired_batch_size").get<int>();
+    require(desired_batch_size == 1 && config.at("actual_batch_size").get<int>() == 1,
+            label + " MPK must explicitly author singleton desired and actual batches");
+    require(from_fact.payload.batch_size == desired_batch_size,
+            label + " physical preprocess must retain the explicit MPK batch count");
     require(from_fact.payload.input_dtype == generic.payload.input_dtype &&
                 from_fact.payload.output_dtype == generic.payload.output_dtype,
             label + " preprocess stage fact should match canonical dtypes");
