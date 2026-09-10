@@ -232,6 +232,14 @@ float dequantize(const std::int8_t code, const float scale, const std::int32_t z
   return static_cast<float>(static_cast<std::int32_t>(code) - zero_point) * scale;
 }
 
+std::size_t distinct_codes(const std::vector<std::int8_t>& codes) {
+  std::array<bool, 256> seen{};
+  for (const std::int8_t code : codes) {
+    seen[static_cast<std::uint8_t>(code)] = true;
+  }
+  return static_cast<std::size_t>(std::count(seen.begin(), seen.end(), true));
+}
+
 std::vector<std::int8_t> make_int8_pattern(const std::size_t count) {
   std::vector<std::int8_t> codes(count);
   for (std::size_t i = 0; i < count; ++i) {
@@ -240,10 +248,13 @@ std::vector<std::int8_t> make_int8_pattern(const std::size_t count) {
   return codes;
 }
 
+// One ingress plane from the image: luma for a single channel, chroma for two, RGB for three.
+// A multi-input model splits one picture across several planes at different resolutions, so each
+// ingress is resized on its own.
 std::vector<std::int8_t> quantized_image(const std::string& path, const pcie::TensorInfo& ingress,
                                          const pcie::QuantParams& quant) {
-  if (ingress.shape.size() != 3U || ingress.shape[2] != 3) {
-    throw std::runtime_error("--image needs an HWC three-channel ingress, got " +
+  if (ingress.shape.size() != 3U || ingress.shape[2] < 1 || ingress.shape[2] > 3) {
+    throw std::runtime_error("--image needs an HWC ingress with 1..3 channels, got " +
                              shape_string(ingress.shape));
   }
   cv::Mat image = cv::imread(path, cv::IMREAD_COLOR);
@@ -252,11 +263,31 @@ std::vector<std::int8_t> quantized_image(const std::string& path, const pcie::Te
   }
   cv::resize(image, image,
              cv::Size(static_cast<int>(ingress.shape[1]), static_cast<int>(ingress.shape[0])));
-  cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+  if (ingress.shape[2] == 3) {
+    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+  } else {
+    cv::Mat yuv;
+    cv::cvtColor(image, yuv, cv::COLOR_BGR2YUV);
+    std::vector<cv::Mat> planes;
+    cv::split(yuv, planes);
+    if (ingress.shape[2] == 1) {
+      image = planes[0];
+    } else {
+      cv::merge(std::vector<cv::Mat>{planes[1], planes[2]}, image);
+    }
+  }
+  // Map the image byte into the value range the model declares, so the full INT8 code range is
+  // exercised whatever convention the model was compiled with: [0,1] normalized, raw [0,255], or
+  // a mean/std range that does not start at zero.
+  if (!ingress.input_range.has_value()) {
+    throw std::runtime_error("model input '" + ingress.name + "' declares no input_range");
+  }
+  const auto [lo, hi] = *ingress.input_range;
   std::vector<std::int8_t> codes(image.total() * image.channels());
   for (std::size_t i = 0; i < codes.size(); ++i) {
-    codes[i] =
-        quantize(static_cast<float>(image.data[i]) / 255.0f, quant.scales[0], quant.zero_points[0]);
+    const float value =
+        static_cast<float>(lo + (static_cast<double>(image.data[i]) / 255.0) * (hi - lo));
+    codes[i] = quantize(value, quant.scales[0], quant.zero_points[0]);
   }
   return codes;
 }
@@ -323,19 +354,27 @@ struct Head {
 };
 
 std::map<std::string, Head> run_default_route(const Args& args, const pcie::ConnectionOptions& conn,
-                                              const pcie::TensorInfo& ingress,
-                                              const std::vector<float>& input) {
+                                              const std::vector<pcie::TensorInfo>& ingresses,
+                                              const std::vector<std::vector<float>>& inputs) {
   std::cout << "phase A: default route (card quantizes and dequantizes)\n";
   pcie::Model model(args.model, {}, conn);
   pcie::test::SignalCloseGuard guard(model);
   model.build(args.readiness_timeout_ms);
   const pcie::ModelInfo info = model.info();
-  if (info.inputs.size() != 1U || info.inputs[0].dtype != "FP32" ||
-      info.inputs[0].shape != ingress.shape) {
-    throw std::runtime_error("default route input is not FP32 " + shape_string(ingress.shape));
+  if (info.inputs.size() != ingresses.size()) {
+    throw std::runtime_error("default route exposes " + std::to_string(info.inputs.size()) +
+                             " input(s), mla_only exposes " + std::to_string(ingresses.size()));
   }
-  const pcie::TensorList outputs = model.run(
-      pcie::Tensor::from_vector(input, ingress.shape, info.inputs[0].name), args.pull_timeout_ms);
+  pcie::TensorList submitted;
+  for (std::size_t i = 0; i < info.inputs.size(); ++i) {
+    if (info.inputs[i].dtype != "FP32" || info.inputs[i].shape != ingresses[i].shape) {
+      throw std::runtime_error("default route input " + std::to_string(i) + " is not FP32 " +
+                               shape_string(ingresses[i].shape));
+    }
+    submitted.push_back(
+        pcie::Tensor::from_vector(inputs[i], ingresses[i].shape, info.inputs[i].name));
+  }
+  const pcie::TensorList outputs = model.run(submitted, args.pull_timeout_ms);
   std::map<std::string, Head> heads;
   for (const auto& output : outputs) {
     const std::size_t count = element_count(output.shape);
@@ -479,8 +518,13 @@ int main(int argc, char** argv) {
     for (std::size_t i = 0; i < info.outputs.size(); ++i) {
       print_tensor_info("output", i, info.outputs[i]);
     }
-    if (info.inputs.size() != 1U || info.inputs[0].dtype != "INT8") {
-      throw std::runtime_error("mla_only model must expose exactly one INT8 input");
+    if (info.inputs.empty()) {
+      throw std::runtime_error("mla_only model must expose at least one INT8 input");
+    }
+    for (const auto& input : info.inputs) {
+      if (input.dtype != "INT8") {
+        throw std::runtime_error("mla_only input '" + input.name + "' is not INT8");
+      }
     }
     for (const auto& output : info.outputs) {
       if (output.dtype != "INT8") {
@@ -489,29 +533,39 @@ int main(int argc, char** argv) {
       (void)require_quant(output);
     }
 
-    const pcie::TensorInfo& ingress = info.inputs[0];
-    const pcie::QuantParams& input_quant = require_quant(ingress);
-    if (input_quant.scales.size() != 1U) {
-      throw std::runtime_error("per-channel input quantization is not covered by this test");
-    }
-    const std::size_t count = element_count(ingress.shape);
-    if (ingress.size_bytes != count) {
-      throw std::runtime_error("mla_only input size_bytes is not the dense INT8 size");
-    }
-    const std::vector<std::int8_t> codes = args.image.empty()
-                                               ? make_int8_pattern(count)
-                                               : quantized_image(args.image, ingress, input_quant);
     std::cout << "input: " << (args.image.empty() ? "synthetic INT8 ramp" : args.image) << "\n";
-    std::vector<float> fp32(count);
-    for (std::size_t i = 0; i < count; ++i) {
-      fp32[i] = dequantize(codes[i], input_quant.scales[0], input_quant.zero_points[0]);
-      if (quantize(fp32[i], input_quant.scales[0], input_quant.zero_points[0]) != codes[i]) {
-        throw std::runtime_error("host quantizer does not round-trip INT8 code " +
-                                 std::to_string(static_cast<int>(codes[i])));
+    std::vector<std::vector<std::int8_t>> codes(info.inputs.size());
+    std::vector<std::vector<float>> fp32(info.inputs.size());
+    std::vector<std::int8_t> packed;
+    for (std::size_t index = 0; index < info.inputs.size(); ++index) {
+      const pcie::TensorInfo& ingress = info.inputs[index];
+      const pcie::QuantParams& input_quant = require_quant(ingress);
+      if (input_quant.scales.size() != 1U) {
+        throw std::runtime_error("per-channel input quantization is not covered by this test");
       }
+      const std::size_t count = element_count(ingress.shape);
+      if (ingress.size_bytes != count) {
+        throw std::runtime_error("mla_only input '" + ingress.name +
+                                 "' size_bytes is not the dense INT8 size");
+      }
+      codes[index] = args.image.empty() ? make_int8_pattern(count)
+                                        : quantized_image(args.image, ingress, input_quant);
+      fp32[index].resize(count);
+      for (std::size_t i = 0; i < count; ++i) {
+        fp32[index][i] =
+            dequantize(codes[index][i], input_quant.scales[0], input_quant.zero_points[0]);
+        if (quantize(fp32[index][i], input_quant.scales[0], input_quant.zero_points[0]) !=
+            codes[index][i]) {
+          throw std::runtime_error("host quantizer does not round-trip INT8 code " +
+                                   std::to_string(static_cast<int>(codes[index][i])));
+        }
+      }
+      packed.insert(packed.end(), codes[index].begin(), codes[index].end());
+      std::cout << "  submitting '" << ingress.name << "' " << shape_string(ingress.shape) << " "
+                << count << " code(s), " << distinct_codes(codes[index]) << " distinct\n";
     }
 
-    const std::map<std::string, Head> reference = run_default_route(args, conn, ingress, fp32);
+    const std::map<std::string, Head> reference = run_default_route(args, conn, info.inputs, fp32);
 
     std::cout << "phase B: mla_only route (host quantizes and dequantizes)\n";
     const auto started = std::chrono::steady_clock::now();
@@ -522,13 +576,17 @@ int main(int argc, char** argv) {
                      .count()
               << " ms\n";
 
-    const pcie::Tensor input = pcie::Tensor::from_vector(codes, ingress.shape, ingress.name);
-    const pcie::TensorList first = model.run(pcie::TensorList{input}, args.pull_timeout_ms);
+    pcie::TensorList input;
+    for (std::size_t index = 0; index < info.inputs.size(); ++index) {
+      input.push_back(pcie::Tensor::from_vector(codes[index], info.inputs[index].shape,
+                                                info.inputs[index].name));
+    }
+    const pcie::TensorList first = model.run(input, args.pull_timeout_ms);
     validate_outputs(first, info.outputs);
     if (!args.dump_raw.empty()) {
-      dump_raw(args.dump_raw, codes, first);
+      dump_raw(args.dump_raw, packed, first);
     }
-    const pcie::TensorList second = model.run(pcie::TensorList{input}, args.pull_timeout_ms);
+    const pcie::TensorList second = model.run(input, args.pull_timeout_ms);
     validate_outputs(second, info.outputs);
     require_identical(first, second);
     std::cout << "two runs are byte-identical across " << first.size() << " head(s)\n";
@@ -577,7 +635,8 @@ int main(int argc, char** argv) {
       bool accepted = true;
       std::string message;
       try {
-        (void)model.push(pcie::Tensor::from_vector(fp32, ingress.shape, ingress.name));
+        (void)model.push(
+            pcie::Tensor::from_vector(fp32[0], info.inputs[0].shape, info.inputs[0].name));
       } catch (const std::exception& e) {
         accepted = false;
         message = e.what();
