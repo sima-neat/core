@@ -8,7 +8,8 @@ The numbered chapters progress through:
 
 1. synchronous YOLOv8s tensor, image, and image-plus-boxdecode modes;
 2. asynchronous YOLOv8s image detection and throughput measurement;
-3. ResNet-50 and YOLOv8s running concurrently on two PCIe queues.
+3. ResNet-50 and YOLOv8s running concurrently on two PCIe queues;
+4. host-side quantization with the MLA-only INT8 route.
 
 YOLOv8s chapters use a detection-oriented scene. The Labrador image is reserved
 for ResNet-50 classification in the multi-queue chapter.

@@ -275,6 +275,81 @@ detector.close()
 `input_max_width`, `input_max_height` 또는 `input_max_depth`를 설정하지 마세요.
 입력값이 없는 모델의 경우, 애플리케이션에서 명시적인 입력 제한이 필요한 경우가 아니라면 설정할 필요가 없습니다. Neat은 모델 아카이브에서 모델 측의 크기 조정 대상을 추론할 수 있습니다.
 
+## INT8 텐서로 MLA만 실행하기
+
+기본적으로 카드는 EV74에서 FP32 입력을 양자화하고, MLA를 실행한 뒤, 결과를 역양자화하여 반환합니다. 호스트가 양자화를 소유할 때는 `mla_only`를 설정하세요. 그러면 카드는 MLA만 실행하고, MLA 진입 계약의 INT8 텐서를 받아들이며, 원시 INT8 헤드를 반환합니다.
+
+`info()`는 모든 텐서의 양자화 매개변수와 함께 INT8 계약을 보고합니다. 각 `TensorInfo`는 텐서마다 하나의 `scales`와 하나의 `zero_points` 항목을 가진 `quant`를 가지며, 각 입력은 모델이 보정된 부동소수점 범위인 `input_range`도 가집니다.
+
+```text
+x = (q - zero_point) * scale
+q = clamp(round(x / scale) + zero_point, -128, 127)
+```
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+pcie::Model model("model_mlatess_int8.tar.gz", options, connection);
+
+const auto& input_spec = model.info().inputs.front();
+const pcie::QuantParams& quant = *input_spec.quant;   // INT8 ingress
+const auto [low, high] = *input_spec.input_range;     // e.g. [0, 1]
+
+std::vector<std::int8_t> codes(input_spec.size_bytes);
+for (std::size_t i = 0; i < codes.size(); ++i) {
+  const float x = /* value in [low, high] */;
+  const float q = std::nearbyint(x / quant.scales[0]) + quant.zero_points[0];
+  codes[i] = static_cast<std::int8_t>(std::clamp(q, -128.0f, 127.0f));
+}
+
+model.build();
+pcie::TensorList outputs = model.run(
+    pcie::Tensor::from_vector(std::move(codes), input_spec.shape, input_spec.name),
+    /*timeout_ms=*/30000);
+
+const auto& head = model.info().outputs.front();
+const std::int8_t* q = reinterpret_cast<const std::int8_t*>(
+    static_cast<const std::uint8_t*>(outputs[0].data) + outputs[0].byte_offset);
+const float x0 = (q[0] - head.quant->zero_points[0]) * head.quant->scales[0];
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pcie.ModelOptions()
+options.mla_only = True
+model = pcie.Model("model_mlatess_int8.tar.gz", options, connection)
+
+input_spec = model.info().inputs[0]
+scale, zero_point = input_spec.quant.scales[0], input_spec.quant.zero_points[0]
+low, high = input_spec.input_range  # e.g. (0.0, 1.0)
+
+values = np.zeros(input_spec.shape, dtype=np.float32)  # in [low, high]
+codes = np.clip(np.rint(values / scale) + zero_point, -128, 127).astype(np.int8)
+
+model.build()
+outputs = model.run(
+    [pcie.Tensor.from_numpy(codes, copy=True, route_name=input_spec.name)],
+    timeout_ms=30000,
+)
+
+head = model.info().outputs[0]
+x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_points[0]) * head.quant.scales[0]
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+이 경로는 전부 아니면 전무입니다. 다중 입력 모델은 `info().inputs`의 순서로 입력마다 하나의 INT8 텐서를 기대합니다. FP32 페이로드는 카드에서 양자화되는 대신 거부됩니다. `mla_only`는 이미지 전처리나 박스 디코드와 결합할 수 없습니다. 생성자는 MLA 단계가 직접 INT8 입출력용으로 컴파일되지 않은 아카이브, 예를 들어 EV74에서 테셀레이션을 수행하는 Model Zoo 아카이브를 거부합니다(`mla_only does not support stage '...' (tess)`).
+
+튜토리얼 [INT8 텐서로 MLA만 실행하기](/tutorials/run-mla-only-int8)는 호스트에서 이미지를 양자화하고 역양자화된 헤드를 기본 경로와 비교 검증합니다.
+
 ## 안정적으로 닫기
 
 모델이 더 이상 필요하지 않을 때와 큐를 재사용하기 전에 `close()`를 호출하세요. 여러 번 호출해도 안전합니다.
@@ -331,6 +406,7 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 - 카드에 설치된 호스트 패키지와 Neat Library는 호환되는 버전이어야 합니다.
 - 첫 번째 페이로드가 제출된 후 입력 미디어 유형과 형식을 안정적으로 유지하십시오. 활성 전송 용량보다 큰 후속 페이로드는 거부됩니다.
 - PCIe 호스트 API는 Neat 모델의 전처리 및 객체 디코딩 옵션의 제한된 하위 집합을 지원합니다.
+- `mla_only`에는 직접 INT8 MLA 입출력용으로 컴파일된 아카이브가 필요하며, 모든 입력을 INT8로 제출하고 연속된 INT8 헤드를 반환합니다.
 - 이 코프로세싱 API는 호스트 측 `Graph`, `Node` 또는 `Run` 구성을 노출하지 않습니다. 네이티브 애플리케이션 그래프를 위해 DevKit에서 일반 Neat Library를 사용하십시오.
 
 설치 및 연결 확인을 위해 [PCIe 호스트를 설치합니다.](/getting-started/neat-library/pcie-host/)로 돌아가십시오.

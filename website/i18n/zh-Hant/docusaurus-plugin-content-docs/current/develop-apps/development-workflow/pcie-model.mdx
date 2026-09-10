@@ -275,6 +275,81 @@ detector.close()
 
 請勿為無種子的模型設定 `input_max_width`、`input_max_height` 或 `input_max_depth`，除非應用程式需要明確的輸入限制。Neat 可以從模型封存檔推斷出模型端調整大小的目標。
 
+## 以 INT8 張量僅執行 MLA
+
+預設情況下，卡會在 EV74 上量化 FP32 輸入、執行 MLA，並在傳回結果前將其反量化。當主機自行掌握量化時，請設定 `mla_only`：此時卡只執行 MLA，接受符合 MLA 進入合約的 INT8 張量，並傳回原始的 INT8 輸出頭。
+
+`info()` 會連同每個張量的量化參數一起回報 INT8 合約。每個 `TensorInfo` 都帶有 `quant`，其中每個張量各有一個 `scales` 與一個 `zero_points` 項目；每個輸入還帶有 `input_range`，也就是模型校正時使用的浮點數範圍：
+
+```text
+x = (q - zero_point) * scale
+q = clamp(round(x / scale) + zero_point, -128, 127)
+```
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+pcie::Model model("model_mlatess_int8.tar.gz", options, connection);
+
+const auto& input_spec = model.info().inputs.front();
+const pcie::QuantParams& quant = *input_spec.quant;   // INT8 ingress
+const auto [low, high] = *input_spec.input_range;     // e.g. [0, 1]
+
+std::vector<std::int8_t> codes(input_spec.size_bytes);
+for (std::size_t i = 0; i < codes.size(); ++i) {
+  const float x = /* value in [low, high] */;
+  const float q = std::nearbyint(x / quant.scales[0]) + quant.zero_points[0];
+  codes[i] = static_cast<std::int8_t>(std::clamp(q, -128.0f, 127.0f));
+}
+
+model.build();
+pcie::TensorList outputs = model.run(
+    pcie::Tensor::from_vector(std::move(codes), input_spec.shape, input_spec.name),
+    /*timeout_ms=*/30000);
+
+const auto& head = model.info().outputs.front();
+const std::int8_t* q = reinterpret_cast<const std::int8_t*>(
+    static_cast<const std::uint8_t*>(outputs[0].data) + outputs[0].byte_offset);
+const float x0 = (q[0] - head.quant->zero_points[0]) * head.quant->scales[0];
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pcie.ModelOptions()
+options.mla_only = True
+model = pcie.Model("model_mlatess_int8.tar.gz", options, connection)
+
+input_spec = model.info().inputs[0]
+scale, zero_point = input_spec.quant.scales[0], input_spec.quant.zero_points[0]
+low, high = input_spec.input_range  # e.g. (0.0, 1.0)
+
+values = np.zeros(input_spec.shape, dtype=np.float32)  # in [low, high]
+codes = np.clip(np.rint(values / scale) + zero_point, -128, 127).astype(np.int8)
+
+model.build()
+outputs = model.run(
+    [pcie.Tensor.from_numpy(codes, copy=True, route_name=input_spec.name)],
+    timeout_ms=30000,
+)
+
+head = model.info().outputs[0]
+x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_points[0]) * head.quant.scales[0]
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+此路徑是全有或全無。多輸入模型期望依 `info().inputs` 的順序為每個輸入提供一個 INT8 張量；FP32 有效負載會被拒絕，而不會在卡上被量化。`mla_only` 無法與影像前處理或方框解碼併用。建構函式會拒絕 MLA 階段未針對直接 INT8 輸入輸出編譯的封存檔，例如在 EV74 上進行鑲嵌的 Model Zoo 封存檔（`mla_only does not support stage '...' (tess)`）。
+
+教學[以 INT8 張量僅執行 MLA](/tutorials/run-mla-only-int8)會在主機上量化影像，並將反量化後的輸出頭與預設路徑進行比對。
+
 ## 可靠地關閉
 
 當模型不再需要，且在重新使用其佇列之前，請呼叫 `close()`。多次呼叫是安全的：
@@ -331,6 +406,7 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 - 主機封裝和安裝在卡上的 Neat Library 必須來自相容的版本。
 - 在提交第一個有效負載之後，請保持輸入媒體類型和幾何形狀的穩定。後續的有效負載如果大於作用中的傳輸容量，則會被拒絕。
 - PCIe 主機 API 支援 Neat 模型預處理和物件解碼選項的精簡子集。
+- `mla_only` 需要為直接 INT8 MLA 輸入輸出而編譯的封存檔，會以 INT8 提交每個輸入，並傳回連續的 INT8 輸出頭。
 - 此協同處理 API 不會公開主機端的 `Graph`、`Node` 或 `Run` 組成。對於原生應用程式圖，請在 DevKit 上使用標準的 Neat Library。
 
 如需安裝和連線檢查，請傳回
