@@ -963,6 +963,9 @@ The runtime supports environment-driven debugging knobs:
 * `SIMA_GST_TEARDOWN_TIMEOUT_MS` -- wait for NULL state (ms)
 * `SIMA_GST_TEARDOWN_REAPER_MS` -- reaper retry interval (ms)
 * `SIMA_GST_TEARDOWN_ASYNC` -- skip wait, defer to reaper
+* `SIMA_PCIE_HOST_RX_MODE` -- `copy` or `mapped`; overrides the receive mode the PCIe host
+  channel selects for `neatpciehost` on the `mla_only` route (default `mapped` when the plugin
+  supports it), for A/B measurements
 
 These knobs are intentionally outside the public API so you can turn them on in CI or in the field without recompiling.
 There are additional low-level debug flags in `src/pipeline/internal/*` (input stream

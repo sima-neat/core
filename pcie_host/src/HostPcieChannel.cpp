@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -469,8 +470,20 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string,
   g_object_set(G_OBJECT(pciehost_), "buffersize", static_cast<guint64>(transport_buffer_size_),
                "card-number", card_id_, "queue", pcie_queue_, "queuedepth", queue_depth, nullptr);
 
+  // With compaction facts the padded MLA output is copied into the dense block inside
+  // on_new_sample and the sample is released before the result is published, so the plugin can
+  // hand over its driver mapping instead of copying first. Plugins without rx-mode keep copying.
+  if (facts_.dense_output_bytes > 0U &&
+      g_object_class_find_property(G_OBJECT_GET_CLASS(pciehost_), "rx-mode") != nullptr) {
+    const char* rx_mode = std::getenv("SIMA_PCIE_HOST_RX_MODE");
+    gst_util_set_object_arg(G_OBJECT(pciehost_), "rx-mode",
+                            rx_mode != nullptr && *rx_mode != '\0' ? rx_mode : "mapped");
+  }
+
+  // No last-sample: with rx-mode=mapped it would pin one driver buffer for the session's
+  // lifetime and hold the plugin's teardown drain to its timeout.
   g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
-               FALSE, nullptr);
+               FALSE, "enable-last-sample", FALSE, nullptr);
   g_object_set(G_OBJECT(queue_element_), "max-size-buffers", queue_depth, "max-size-bytes", 0,
                "max-size-time", static_cast<guint64>(0), "leaky", 0, nullptr);
 
@@ -551,6 +564,19 @@ void HostPcieChannel::stop_locked() {
         }
         gst_object_unref(bus);
       }
+    }
+  }
+  if (pipeline_ && appsink_) {
+    // appsink reuses one GstSample for pull_sample and keeps the last pulled buffer parented to
+    // it until the element is disposed. With rx-mode=mapped that buffer is a driver mapping the
+    // plugin waits for in its teardown drain, so dispose the sink first: EOS has been seen and
+    // nothing flows any more. Unread bus messages still reference the sink, hence the flush.
+    gst_element_set_state(appsink_, GST_STATE_NULL);
+    gst_bin_remove(GST_BIN(pipeline_), appsink_);
+    appsink_ = nullptr;
+    if (GstBus* bus = gst_element_get_bus(pipeline_)) {
+      gst_bus_set_flushing(bus, TRUE);
+      gst_object_unref(bus);
     }
   }
   if (pipeline_) {
