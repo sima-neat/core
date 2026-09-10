@@ -802,7 +802,8 @@ bool HostPcieChannel::push_prepared_payload(const std::int32_t request_id,
   }
   if (caps_.find("representation=(string)tensor-set") != std::string::npos) {
     try {
-      attach_tensor_set_meta(buffer, payload.spans, facts_.inputs);
+      attach_tensor_set_meta(buffer, payload.spans, facts_.inputs,
+                             facts_.packed_input ? &*facts_.packed_input : nullptr);
     } catch (...) {
       gst_buffer_unref(buffer);
       throw;

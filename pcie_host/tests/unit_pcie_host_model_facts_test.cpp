@@ -168,6 +168,59 @@ mpk::MpkContract mla_only_contract() {
   return contract;
 }
 
+// A multi-input model quantizes each input separately and concatenates the results through an
+// ifm pack transform; the MLA itself always takes one buffer. The pack here consumes quantize_1
+// first so that publishing in pack order - the layout of the staged payload - is load-bearing.
+mpk::MpkContract mla_only_multi_input_contract() {
+  mpk::MpkContract contract;
+  contract.ingress_tensors.push_back(tensor("input_0", "FP32", {2, 3, 4}, 96));
+  contract.ingress_tensors.push_back(tensor("input_1", "FP32", {1, 4, 4}, 64));
+
+  const auto quantized_0 = head("quantize_0", {1, 2, 3, 4}, {2, 3, 4}, 24);
+  const auto quantized_1 = head("quantize_1", {1, 1, 4, 4}, {1, 4, 4}, 16);
+  const auto packed = tensor("MLA_0_ifm_pack_transform", "", {1, 40}, 40);
+  const auto carrier = tensor("MLA_0", "", {1, 160}, 160);
+  const auto unpack_0 = head("MLA_0_ofm_unpack_transform_0", {1, 2, 3, 16}, {2, 3, 16}, 96);
+  const auto unpack_1 = head("MLA_0_ofm_unpack_transform_1", {1, 1, 4, 16}, {1, 4, 16}, 64);
+  const auto slice_0 =
+      head("slice_MLA_0/tuple_get_item_0_slice_transform", {1, 2, 3, 2}, {2, 3, 2}, 12);
+  const auto out_0 = tensor("dequantize_2/head_0", "FP32", {2, 3, 2}, 48);
+  const auto out_1 = tensor("dequantize_3/head_1", "FP32", {1, 4, 16}, 256);
+
+  contract.plugins = {
+      stage("quantize_0", "quantization_transform", {tensor("input_0", "FP32", {2, 3, 4}, 96)},
+            {quantized_0}),
+      stage("quantize_1", "quantization_transform", {tensor("input_1", "FP32", {1, 4, 4}, 64)},
+            {quantized_1}),
+      stage("MLA_0_ifm_pack_transform", "pack_transform", {quantized_1, quantized_0}, {packed}),
+      stage("MLA_0", "mla", {packed}, {carrier}),
+      stage("MLA_0_ofm_unpack_transform", "unpack_transform", {carrier}, {unpack_0, unpack_1}),
+      stage(slice_0.name, "slice_transform", {unpack_0}, {slice_0}),
+      stage("dequantize_2", "dequantization_transform", {slice_0}, {out_0}),
+      stage("dequantize_3", "dequantization_transform", {unpack_1}, {out_1}),
+      stage("PassThrough", "pass_through", {out_0, out_1}, {out_0, out_1}),
+  };
+  contract.plugins[0].quant = mpk::MpkQuantContract{.scales = {4.0}, .zero_points = {-128}};
+  contract.plugins[1].quant = mpk::MpkQuantContract{.scales = {8.0}, .zero_points = {5}};
+  contract.plugins[5].slice_begin = {0, 0, 0, 0};
+  contract.plugins[6].quant = mpk::MpkQuantContract{.scales = {0.5}, .zero_points = {3}};
+  contract.plugins[7].quant = mpk::MpkQuantContract{.scales = {2.0}, .zero_points = {-7}};
+  for (std::size_t i = 0; i < contract.plugins.size(); ++i) {
+    contract.plugins[i].sequence = static_cast<int>(i);
+  }
+  // Declared in the reverse of pack-slot order: only sorting by slot recovers the real layout.
+  link(contract, 0, 0, 2, 1);
+  link(contract, 1, 0, 2, 0);
+  link(contract, 2, 0, 3, 0);
+  link(contract, 3, 0, 4, 0);
+  link(contract, 4, 0, 5, 0);
+  link(contract, 5, 0, 6, 0);
+  link(contract, 4, 1, 7, 0);
+  link(contract, 6, 0, 8, 0);
+  link(contract, 7, 0, 8, 1);
+  return contract;
+}
+
 template <typename Fn>
 void require_rejected(Fn&& fn, const std::string& needle, const std::string& message) {
   bool rejected = false;
@@ -196,12 +249,12 @@ void test_mla_only_rejects_unsupported_stages() {
 
 void test_mla_only_rejects_non_dense_int8_inputs() {
   auto bf16 = mla_only_contract();
-  bf16.plugins[1].input_tensors.front().logical_dtype = "BF16";
+  bf16.plugins[0].output_tensors.front().logical_dtype = "BF16";
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(bf16); }, "must be INT8",
                    "a BF16 MLA input must be rejected");
 
   auto padded = mla_only_contract();
-  padded.plugins[1].input_tensors.front().size_bytes = 32;
+  padded.plugins[0].output_tensors.front().size_bytes = 32;
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(padded); },
                    "not a dense INT8 tensor", "a padded MLA input must be rejected");
 }
@@ -254,6 +307,48 @@ void test_mla_only_facts_describe_ingress_and_heads() {
   require(!facts.has_preprocess && !facts.has_boxdecode, "mla_only publishes no CVU stages");
 }
 
+void test_mla_only_supports_multiple_inputs() {
+  const auto facts = pcie_internal::detail::read_mla_only_facts(mla_only_multi_input_contract());
+
+  require(facts.inputs.size() == 2U, "expected two mla_only inputs");
+  require(facts.inputs[0].name == "input_1" && facts.inputs[1].name == "input_0",
+          "inputs must be published in pack order, which is the staged payload layout");
+  require(facts.inputs[0].shape == std::vector<std::int64_t>({1, 4, 4}) &&
+              facts.inputs[1].shape == std::vector<std::int64_t>({2, 3, 4}),
+          "each input must carry the geometry of its own quantize stage");
+  require(facts.inputs[0].size_bytes == 16U && facts.inputs[1].size_bytes == 24U,
+          "each input must carry the byte size of its own quantize stage");
+  require(facts.packed_input_bytes == 40U, "packed input bytes must sum every input");
+  require(facts.inputs[0].quant.has_value() &&
+              facts.inputs[0].quant->scales == std::vector<float>{0.125f} &&
+              facts.inputs[0].quant->zero_points == std::vector<std::int32_t>{5},
+          "input_1 must publish its own quantize parameters");
+  require(facts.inputs[1].quant.has_value() &&
+              facts.inputs[1].quant->scales == std::vector<float>{0.25f} &&
+              facts.inputs[1].quant->zero_points == std::vector<std::int32_t>{-128},
+          "input_0 must publish its own quantize parameters");
+}
+
+void test_mla_only_rejects_hybrid_quantization() {
+  auto not_quantized = mla_only_multi_input_contract();
+  not_quantized.plugins[1].kernel = "pass_through";
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(not_quantized); },
+                   "not a quantize stage",
+                   "a packed input not produced by a quantize stage must be rejected");
+
+  auto stranded = mla_only_multi_input_contract();
+  stranded.ingress_tensors.push_back(tensor("input_2", "FP32", {1, 2}, 8));
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(stranded); },
+                   "hybrid host/card quantization",
+                   "a model input without its own quantize stage must be rejected");
+
+  auto shared = mla_only_multi_input_contract();
+  shared.plugins[1].input_tensors.front() = tensor("input_0", "FP32", {2, 3, 4}, 96);
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(shared); },
+                   "feeds more than one quantize stage",
+                   "one model input feeding two quantize stages must be rejected");
+}
+
 void test_mla_only_rejects_unusable_output_geometry() {
   auto gap = mla_only_contract();
   gap.plugins[1].output_tensors.front().size_bytes = 200;
@@ -289,6 +384,8 @@ int main() {
     test_mla_only_rejects_unsupported_stages();
     test_mla_only_rejects_non_dense_int8_inputs();
     test_mla_only_facts_describe_ingress_and_heads();
+    test_mla_only_supports_multiple_inputs();
+    test_mla_only_rejects_hybrid_quantization();
     test_mla_only_rejects_unusable_output_geometry();
     std::cout << "[PASS] model facts\n";
     return 0;
