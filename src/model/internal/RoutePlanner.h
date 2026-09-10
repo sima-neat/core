@@ -296,6 +296,7 @@ struct ModelSemantics {
 
 struct RouteMaterializationPlan {
   struct ModelManagedRouteFlags {
+    BoxDecodeType requested_decode_type = BoxDecodeType::Unspecified;
     bool quant_needed = false;
     bool tess_needed = false;
     bool pre_cast_needed = false;

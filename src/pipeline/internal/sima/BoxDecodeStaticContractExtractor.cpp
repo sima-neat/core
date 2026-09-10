@@ -9,6 +9,7 @@
 #include <array>
 #include <cctype>
 #include <limits>
+#include <stdexcept>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -1792,7 +1793,7 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     const MpkContract& contract,
     const std::unordered_map<std::size_t, std::size_t>& execution_positions,
     const std::unordered_map<std::uint64_t, std::vector<const MpkContractEdge*>>& outgoing_edges,
-    std::size_t source_plugin_index, int source_output_index, std::size_t terminal_pos,
+    std::size_t source_plugin_index, int source_output_index, std::size_t terminal_pos, bool rfdetr,
     std::string* error_message) {
   BoxDecodeTensorLineageFactsLocal facts;
   auto inspect_stage_io = [&](const MpkPluginIoContract& stage,
@@ -1865,7 +1866,10 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
       int slice_h = 0;
       int slice_w = 0;
       int slice_c = 0;
-      if (!dims_from_mpk_tess_slice_shape_local(stage.slice_shape, &slice_h, &slice_w, &slice_c)) {
+      auto slice_shape = stage.slice_shape;
+      if (rfdetr && frame_h == 1 && slice_shape.size() == 2)
+        slice_shape.insert(slice_shape.begin(), 1);
+      if (!dims_from_mpk_tess_slice_shape_local(slice_shape, &slice_h, &slice_w, &slice_c)) {
         set_error(error_message,
                   "boxdecode tessellated route requires explicit detess slice facts for every "
                   "upstream tensor");
@@ -2301,8 +2305,8 @@ std::optional<bool> resolve_external_boxdecode_tess_needed_local(
   };
   const auto* unpack_stage = get_mla_unpack_stage_io_contract(contract);
   const bool superpoint_direct_packed =
-      decode_type == BoxDecodeType::SuperPoint && unpack_stage &&
-      mla_stage.output_tensors.size() == 1U && logical_outputs.size() > 1U &&
+      (decode_type == BoxDecodeType::SuperPoint || box_decode_type_is_rfdetr(decode_type)) &&
+      unpack_stage && mla_stage.output_tensors.size() == 1U && logical_outputs.size() > 1U &&
       !unpack_stage->output_tensors.empty() &&
       std::all_of(unpack_stage->output_tensors.begin(), unpack_stage->output_tensors.end(),
                   [](const MpkTensorContract& tensor) {
@@ -2489,6 +2493,13 @@ void set_error(std::string* error_message, const std::string& message) {
 
 } // namespace
 
+void validate_rfdetr_controls(double score_threshold, double nms, int top_k) {
+  if (!std::isfinite(score_threshold) || score_threshold < 0 || score_threshold > 1 || nms != 0 ||
+      top_k < 0)
+    throw std::invalid_argument(
+        "RF-DETR requires a finite score probability, nonnegative top_k and no NMS");
+}
+
 ModelManagedRouteFlags
 model_route_flags_from_boxdecode_contract(const BoxDecodeStaticContract& contract) {
   ModelManagedRouteFlags flags;
@@ -2496,6 +2507,7 @@ model_route_flags_from_boxdecode_contract(const BoxDecodeStaticContract& contrac
   flags.tess_needed = contract.tess_needed;
   flags.quant_contract_required = contract.quant_needed;
   flags.boxdecode_selected = true;
+  flags.requested_decode_type = contract.decode_type;
   return flags;
 }
 
@@ -2589,6 +2601,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   }
 
   BoxDecodeStaticContract out;
+  if (box_decode_type_is_rfdetr(route_flags.requested_decode_type))
+    out.decode_type = route_flags.requested_decode_type;
   out.score_activation = BoxDecodeScoreActivation::Unknown;
   // Source an explicitly authored decode type from the MPK BoxDecode stage. Prefer the explicit
   // terminal stage; otherwise fall back to the BoxDecode plugin in the chain.
@@ -2604,9 +2618,12 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   std::vector<std::size_t> terminal_consumer_order;
   if (boxdecode_stage) {
     const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
+    if (box_decode_type_is_rfdetr(out.decode_type) && parsed_type.has_value() &&
+        *parsed_type != BoxDecodeType::Unspecified && *parsed_type != out.decode_type)
+      return fail("RF-DETR requested decoder conflicts with the MPK decoder");
     if (parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
-         *parsed_type == BoxDecodeType::YoloV5)) {
+         *parsed_type == BoxDecodeType::YoloV5 || box_decode_type_is_rfdetr(*parsed_type))) {
       out.decode_type = *parsed_type;
     }
   }
@@ -2701,9 +2718,11 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
                   [](const auto& tensor) {
                     return tensor.shape_semantics == MpkShapeSemantics::PackedExtent;
                   });
-  const bool superpoint_direct_packed =
-      out.decode_type == BoxDecodeType::SuperPoint && unpack_stage && unpack_outputs_are_packed &&
-      mla_stage->output_tensors.size() == 1U && logical_outputs.size() > 1U;
+  const bool superpoint_direct_packed = (out.decode_type == BoxDecodeType::SuperPoint ||
+                                         box_decode_type_is_rfdetr(out.decode_type)) &&
+                                        unpack_stage && unpack_outputs_are_packed &&
+                                        mla_stage->output_tensors.size() == 1U &&
+                                        logical_outputs.size() > 1U;
   const bool bypass_unpack_boundary =
       terminal_stage == nullptr && (bypass_mla_unpack_enabled() || superpoint_direct_packed);
   const bool explicit_unpack_boundary =
@@ -2923,7 +2942,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   for (std::size_t i = 0; i < lineage_roots.size(); ++i) {
     const auto facts = collect_boxdecode_tensor_lineage_facts_local(
         contract, execution_positions, outgoing_edges, lineage_roots[i].first,
-        lineage_roots[i].second, terminal_pos, error_message);
+        lineage_roots[i].second, terminal_pos, box_decode_type_is_rfdetr(out.decode_type),
+        error_message);
     if (!facts.has_value()) {
       return std::nullopt;
     }
@@ -3069,6 +3089,55 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   } else {
     out.dq_scale.assign(out.tensors.size(), 1.0);
     out.dq_zp.assign(out.tensors.size(), 0);
+  }
+
+  if (box_decode_type_is_rfdetr(out.decode_type)) {
+    const bool all_dense =
+        std::all_of(out.tensors.begin(), out.tensors.end(), [](const auto& tensor) {
+          return tensor.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical;
+        });
+    if (out.tensors.size() < 2U || out.tensors.size() > 3U ||
+        (unpack_stage ? unpack_stage->output_tensors.size() != out.tensors.size()
+                      : !all_dense || mla_stage->output_tensors.size() != out.tensors.size()))
+      return fail("RF-DETR export profile requires two or three declared MLA output slots");
+    const auto shape = [](const BoxDecodeTensorStaticContract& t) -> const std::vector<int>& {
+      return t.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical ? t.slice_shape
+                                                                                   : t.input_shape;
+    };
+    int roles[3] = {-1, -1, -1};
+    for (std::size_t i = 0; i < out.tensors.size(); ++i) {
+      const auto& t = out.tensors[i];
+      const int slot = t.source_logical_output_index;
+      if (slot < 0 || static_cast<std::size_t>(slot) >= out.tensors.size() || roles[slot] >= 0)
+        return fail("RF-DETR requires unique declared output slot identities");
+      roles[slot] = static_cast<int>(i);
+      if (shape(t).size() != 3U || *std::min_element(shape(t).begin(), shape(t).end()) <= 0 ||
+          (t.data_type != "BF16" && t.data_type != "FP32"))
+        return fail("RF-DETR requires positive HWC BF16/FP32 tensor contracts");
+    }
+    if (roles[0] < 0 || roles[1] < 0 ||
+        (out.decode_type == BoxDecodeType::RfDetrSeg && roles[2] < 0))
+      return fail("RF-DETR required box, score or mask role is missing");
+    const auto &boxes = shape(out.tensors[roles[0]]), &scores = shape(out.tensors[roles[1]]);
+    if (boxes[0] != 1 || boxes[2] != 4 || scores[0] != 1 || scores[1] != boxes[1] ||
+        (roles[2] >= 0 && shape(out.tensors[roles[2]])[2] != boxes[1]))
+      return fail("RF-DETR box, score and mask query dimensions disagree");
+    out.num_classes = scores[2];
+    // The existing input bindings preserve source identity while presenting the
+    // RF export slots in boxes, scores, masks order to the decoder.
+    std::vector<std::size_t> order;
+    for (std::size_t i = 0; i < out.tensors.size(); ++i)
+      order.push_back(static_cast<std::size_t>(roles[i]));
+    apply_permutation_local(&out.tensors, order);
+    apply_permutation_local(&out.physical_inputs, order);
+    apply_permutation_local(&out.tensor_names, order);
+    apply_permutation_local(&out.dq_scale, order);
+    apply_permutation_local(&out.dq_zp, order);
+    out.input_dtype = out.tensors.front().data_type;
+    out.score_activation = BoxDecodeScoreActivation::Sigmoid;
+    out.quant_needed = false;
+    out.quant_contract_required = false;
+    return out;
   }
 
   if (out.decode_type == BoxDecodeType::SuperPoint) {

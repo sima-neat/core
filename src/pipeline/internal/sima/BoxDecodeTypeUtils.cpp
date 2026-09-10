@@ -110,6 +110,10 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "ssd") {
     return BoxDecodeType::Ssd;
   }
+  if (lower == "rfdetr")
+    return BoxDecodeType::RfDetr;
+  if (lower == "rfdetr_seg" || lower == "rfdetr-seg")
+    return BoxDecodeType::RfDetrSeg;
   if (lower == "superpoint" || lower == "super-point") {
     return BoxDecodeType::SuperPoint;
   }

@@ -414,6 +414,20 @@ used to interpret the grouped raw-head layout. SSD and other pre-YOLO26 non-pose
 retain their existing explicit-override behavior, while pose and SuperPoint decoders retain their
 family-specific rules.
 
+##### RF-DETR BoxDecode contract
+
+`RfDetr` and `RfDetrSeg` consume normalized center/size boxes, class logits and
+optional query-mask logits. Core validates the MPK output slots and supplies them
+in box, score, mask order through the existing plugin input bindings. Tensor
+shapes and BF16/FP32 storage come from the MPK. The plugin reads selected values
+from native storage, applies sigmoid to scores and masks, and runs no NMS.
+
+RF results contain floating-point boxes, a valid detection count and optional
+native probability masks. Core exposes them through the existing `decode_bbox`
+and `decode_segmentation` functions. Repeated query selections share mask decoding;
+Core returns one matching mask per detection. Apps owns mask resizing and polygons.
+The plugin contract and public C++ option layouts are unchanged.
+
 ##### SuperPoint BoxDecode contract
 
 SuperPoint uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode

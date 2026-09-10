@@ -949,6 +949,7 @@ set(PERF_TARGETS
   perf_runtime_codec_h265_decode_test
   perf_runtime_model_archive_load_test
   perf_ssd_mobilenet_boxdecode_test
+  perf_rfdetr_contract_compile_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -976,6 +977,10 @@ foreach(target ${PERF_TARGETS})
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
+
+add_test(NAME rfdetr_contract_compile_perf_smoke COMMAND perf_rfdetr_contract_compile_test)
+simaneat_append_ctest_env(rfdetr_contract_compile_perf_smoke)
+set_tests_properties(rfdetr_contract_compile_perf_smoke PROPERTIES LABELS "perf;boxdecode;metrics")
 
 if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_test(
@@ -1698,6 +1703,19 @@ endforeach()
 # ------------------------------------------------------------------------------
 # E2E pipelines – object detection
 # ------------------------------------------------------------------------------
+
+add_pipeline_test(
+  rfdetr_stage_options_test
+  e2e_pipelines/obj_detection/rfdetr_stage_options_test.cpp
+  LOCK_DISPATCHER
+)
+
+if (NOT rfdetr_stage_options_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST rfdetr_stage_options_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;rfdetr;smoke")
+  set_tests_properties(rfdetr_stage_options_test PROPERTIES TIMEOUT 120)
+endif()
+
 add_pipeline_test(
   async_yolov8_tput_test
   e2e_pipelines/obj_detection/async_yolov8_tput_test.cpp

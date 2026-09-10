@@ -4247,6 +4247,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
       .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
+      .value("RfDetr", simaai::neat::BoxDecodeType::RfDetr)
+      .value("RfDetrSeg", simaai::neat::BoxDecodeType::RfDetrSeg)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)

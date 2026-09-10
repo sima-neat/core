@@ -1215,6 +1215,150 @@ RUN_TEST(
                   extracted_direct_dense->tensors[1].input_shape == std::vector<int>({60, 80, 256}),
               "direct dense MLA outputs should preserve SuperPoint head geometry");
 
+      // RF-DETR roles come from declared output slots, independent of Q and grid sizes.
+      auto rf_flags = make_flags(false, false);
+      rf_flags.requested_decode_type = simaai::neat::BoxDecodeType::RfDetrSeg;
+      auto make_rf_dense = [](const std::string& dtype) {
+        MpkContract mpk;
+        MpkPluginIoContract mla;
+        mla.name = "MLA_0";
+        mla.sequence = 1;
+        mla.processor = "MLA";
+        mla.kernel = "mla";
+        mla.canonical_output_dtype = dtype;
+        const std::array<std::vector<std::int64_t>, 3> shapes{
+            {{1, 1, 7, 4}, {1, 1, 7, 5}, {1, 3, 6, 7}}};
+        for (int i = 0; i < 3; ++i) {
+          const auto& shape = shapes[i];
+          mla.output_tensors.push_back(
+              MpkTensorContract{.tensor_index = i,
+                                .physical_index = i,
+                                .name = "output_" + std::to_string(i),
+                                .dtype = dtype,
+                                .mpk_shape = shape,
+                                .shape_semantics = MpkShapeSemantics::Geometry,
+                                .size_bytes = static_cast<std::size_t>(
+                                    shape[1] * shape[2] * shape[3] * (dtype == "BF16" ? 2 : 4)),
+                                .logical_shape = shape});
+        }
+        mpk.plugins.push_back(std::move(mla));
+        return mpk;
+      };
+      for (const auto& dtype : {std::string("BF16"), std::string("FP32")}) {
+        auto rf_mpk = make_rf_dense(dtype);
+        const auto rf = build_boxdecode_static_contract_from_mpk(rf_mpk, rf_flags, &error);
+        require(rf.has_value(), "RF-DETR direct dense contract: " + error);
+        require(rf->num_classes == 5 && rf->tensors[0].source_logical_output_index == 0 &&
+                    rf->tensors[1].source_logical_output_index == 1 &&
+                    rf->tensors[2].source_logical_output_index == 2,
+                "RF-DETR preserves declared roles and full class count");
+        require(rf->tensors[2].input_shape == std::vector<int>({3, 6, 7}),
+                "RF-DETR native mask grid is dynamic");
+        auto configured = *rf;
+        configured.detection_threshold = 0.7;
+        configured.topk = 4;
+        const auto finalized = stagesemantics::finalize_boxdecode_static_contract(
+            configured, simaai::neat::BoxDecodeType::RfDetrSeg, std::nullopt, rf_flags,
+            simaai::neat::BoxDecodeTypeOption::Auto, 0, 0, 0, 0, {});
+        const auto compiled = stagesemantics::build_boxdecode_compiled_contract(finalized);
+        require(compiled.payload.detection_threshold == 0 && compiled.payload.topk == 0,
+                "RF-DETR explicit zero controls survive finalization and compilation");
+        for (int i = 0; i < 3; ++i) {
+          require(compiled.runtime_contract.input_bindings[i].src_logical_output_index == i,
+                  "RF input bindings preserve the export's box/score/mask slots");
+        }
+        auto missing = rf_mpk;
+        missing.plugins[0].output_tensors.pop_back();
+        require(!build_boxdecode_static_contract_from_mpk(missing, rf_flags, &error),
+                "segmentation requires mask role");
+        auto detection_flags = rf_flags;
+        detection_flags.requested_decode_type = simaai::neat::BoxDecodeType::RfDetr;
+        require(
+            build_boxdecode_static_contract_from_mpk(missing, detection_flags, &error).has_value(),
+            "detection accepts two heads: " + error);
+        auto mismatch = rf_mpk;
+        auto& scores = mismatch.plugins[0].output_tensors[1];
+        scores.mpk_shape = {1, 1, 8, 5};
+        scores.logical_shape = scores.mpk_shape;
+        scores.size_bytes = 8U * 5U * (dtype == "BF16" ? 2U : 4U);
+        require(!build_boxdecode_static_contract_from_mpk(mismatch, rf_flags, &error),
+                "mismatched query counts reject");
+        auto short_storage = rf_mpk;
+        --short_storage.plugins[0].output_tensors[2].size_bytes;
+        require(!build_boxdecode_static_contract_from_mpk(short_storage, rf_flags, &error),
+                "truncated dense storage rejects");
+      }
+
+      for (const auto type :
+           {simaai::neat::BoxDecodeType::RfDetr, simaai::neat::BoxDecodeType::RfDetrSeg}) {
+        auto authored = make_rf_dense("BF16");
+        if (type == simaai::neat::BoxDecodeType::RfDetr)
+          authored.plugins.front().output_tensors.pop_back();
+        MpkPluginIoContract terminal;
+        terminal.name = "boxdecode_rf";
+        terminal.sequence = 2;
+        terminal.kernel = "boxdecode";
+        terminal.decode_type =
+            type == simaai::neat::BoxDecodeType::RfDetr ? "rfdetr" : "rfdetr_seg";
+        terminal.input_tensors = authored.plugins.front().output_tensors;
+        authored.plugins.push_back(std::move(terminal));
+        for (std::size_t i = 0; i < authored.plugins.front().output_tensors.size(); ++i) {
+          authored.edges.push_back(MpkContractEdge{.src_plugin_index = 0U,
+                                                   .src_output_index = static_cast<int>(i),
+                                                   .dst_plugin_index = 1U,
+                                                   .dst_input_index = static_cast<int>(i),
+                                                   .src_plugin = "MLA_0",
+                                                   .dst_plugin = "boxdecode_rf",
+                                                   .tensor_name = "output_" + std::to_string(i)});
+        }
+        const auto subset = extract_boxdecode_contract_subset_from_mpk(
+            authored, make_flags(false, false), &authored.plugins.back(), &error);
+        require(subset.has_value(), "declared RF decoder with default options: " + error);
+        const auto compiled =
+            stagesemantics::build_boxdecode_compiled_contract_from_subset(*subset);
+        require(compiled.payload.decode_type == type && compiled.payload.num_classes == 5 &&
+                    compiled.runtime_contract.logical_inputs.size() ==
+                        (type == simaai::neat::BoxDecodeType::RfDetrSeg ? 3U : 2U),
+                "MPK-authored RF type and roles must survive default-option compilation");
+        // Terminal consumer order must not change the RF export's tensor roles.
+        auto reordered = authored;
+        auto& inputs = reordered.plugins.back().input_tensors;
+        std::reverse(inputs.begin(), inputs.end());
+        for (auto& edge : reordered.edges)
+          edge.dst_input_index = static_cast<int>(inputs.size()) - 1 - edge.dst_input_index;
+        const auto reordered_subset = extract_boxdecode_contract_subset_from_mpk(
+            reordered, make_flags(false, false), &reordered.plugins.back(), &error);
+        require(reordered_subset.has_value(), "RF reordered terminal contract: " + error);
+        const auto reordered_compiled =
+            stagesemantics::build_boxdecode_compiled_contract_from_subset(*reordered_subset);
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+          const auto& actual = reordered_compiled.runtime_contract.input_bindings[i];
+          const auto& expected = compiled.runtime_contract.input_bindings[i];
+          require(actual.src_logical_output_index == static_cast<int>(i) &&
+                      actual.src_physical_output_index == expected.src_physical_output_index &&
+                      actual.src_physical_byte_offset == expected.src_physical_byte_offset &&
+                      actual.src_physical_size_bytes == expected.src_physical_size_bytes &&
+                      actual.source_segment_name == expected.source_segment_name &&
+                      actual.cm_input_name == expected.cm_input_name,
+                  "RF canonical input order must preserve logical and physical bindings");
+        }
+        auto conflicting_flags = make_flags(false, false);
+        conflicting_flags.requested_decode_type = type == simaai::neat::BoxDecodeType::RfDetr
+                                                      ? simaai::neat::BoxDecodeType::RfDetrSeg
+                                                      : simaai::neat::BoxDecodeType::RfDetr;
+        require(!build_boxdecode_static_contract_from_mpk(authored, conflicting_flags, &error),
+                "explicit RF override must reject a conflicting MPK declaration");
+        if (type == simaai::neat::BoxDecodeType::RfDetrSeg) {
+          authored.plugins.front().output_tensors.pop_back();
+          authored.plugins.back().input_tensors.pop_back();
+          authored.edges.pop_back();
+          require(
+              !build_boxdecode_static_contract_from_mpk(authored, make_flags(false, false), &error),
+              "MPK-authored RF segmentation requires the mask role");
+          require_contains(error, "mask role is missing", "missing authored mask diagnostic");
+        }
+      }
+
       // A terminal MPK BoxDecode declaration must survive extraction and be normalized before
       // subset lowering. Otherwise YoloV5 reaches the runtime as Unspecified/Auto with zero
       // classes and cannot configure its three raw heads.

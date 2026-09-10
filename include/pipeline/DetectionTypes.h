@@ -26,8 +26,8 @@ namespace simaai::neat {
 /**
  * @brief One axis-aligned detection produced by BoxDecode.
  *
- * Coordinates are in the decoded image's pixel space (integer pixel units stored
- * as `float`). `class_id == -1` is the unset sentinel; valid detections always
+ * Coordinates are in the decoded image's pixel space. RF-DETR retains fractional
+ * pixel coordinates. `class_id == -1` is the unset sentinel; valid detections always
  * carry a non-negative class id.
  *
  * @ingroup pipeline
@@ -90,7 +90,9 @@ struct PoseDecodeTensors {
  * @brief Decoded instance-segmentation tensors for one BoxDecode output tensor.
  *
  * `boxes` is a dense CPU float32 tensor of shape `[N, 6]` with the same columns
- * as `decode_bbox`. `masks` is a dense CPU uint8 tensor of shape `[N, 160, 160]`.
+ * as `decode_bbox`. `masks` is a dense CPU tensor of shape `[N,H,W]`. Legacy YOLO masks use
+ * uint8 `[N,160,160]`; RF-DETR uses native float32 probability masks with
+ * height and width read from the model.
  */
 struct SegmentationDecodeTensors {
   simaai::neat::Tensor boxes;

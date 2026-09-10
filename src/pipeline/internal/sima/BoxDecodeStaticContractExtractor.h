@@ -36,6 +36,8 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 
+void validate_rfdetr_controls(double score_threshold, double nms, int top_k);
+
 /// Physical storage layout the BoxDecode kernel must use to read one source tensor.
 ///
 /// This is deliberately separate from slice/detess/cast/dequant operations.  Slice geometry
@@ -132,6 +134,7 @@ struct ModelBoxdecodeSemantics {
  * before a box-decode terminal (or before the MLA when applicable).
  */
 struct ModelManagedRouteFlags {
+  BoxDecodeType requested_decode_type = BoxDecodeType::Unspecified;
   bool quant_needed = false;            ///< Must include a quantize stage.
   bool tess_needed = false;             ///< Must include a tessellate stage.
   bool pre_cast_needed = false;         ///< Must include a pre-cast stage.
