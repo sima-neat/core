@@ -105,16 +105,16 @@ RUN_TEST("unit_boxdecode_yolox_seg_pose_standalone_contract_test", ([] {
            require(finalized.num_classes == kExpectedClasses,
                    "unnamed heads must resolve num_classes=36");
 
-           // A declared probability domain contradicts the family contract and must be rejected
-           // rather than silently reinterpreted as logits.
+           // A declared probability domain must be overridden, not rejected. The shipped
+           // yolox_s_seg_pose_dock_v9 MPK names its raw-logit class heads class_prob_0..2,
+           // so rejecting on the name refuses a model that decodes correctly. Extraction
+           // still reports what the names said; the family override is what settles it.
            const auto declared_prob = extract(make_heads("class_prob"), "class_prob");
            require(declared_prob.score_activation == BoxDecodeScoreActivation::Identity,
                    "class_prob names must still declare the probability domain");
-           bool rejected = false;
-           try {
-             finalize(declared_prob);
-           } catch (const std::invalid_argument&) {
-             rejected = true;
-           }
-           require(rejected, "a declared probability domain must be rejected, not overwritten");
+           const auto forced = finalize(declared_prob);
+           require(forced.score_activation == BoxDecodeScoreActivation::Sigmoid,
+                   "the family override must force sigmoid over a declared probability domain");
+           require(forced.num_classes == kExpectedClasses,
+                   "a class_prob-named export must still resolve its class count");
          }));
