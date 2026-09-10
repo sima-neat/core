@@ -362,6 +362,7 @@ struct VisionLanguageModel::Impl {
         vlm_helper->get_tokenizer(),
         [this](const std::string& metric, double value) { record_metric(metric, value); },
         [](const std::string&, bool, bool) {});
+    text_streamer->set_performance_summary_enabled(false);
     tool_call_format = simaai::llima::tool_call_format_for_model(cfg.model_type);
     reasoning_format = simaai::llima::reasoning_format_for_model(cfg.model_type);
     preserved_tool_call_tokens = simaai::llima::resolve_tool_call_special_tokens(
@@ -376,6 +377,7 @@ struct VisionLanguageModel::Impl {
           draft_cfg, *info.draft_root / "devkit", std::nullopt, std::nullopt);
       draft_text_streamer = std::make_unique<simaai::llima::TextStreamer>(
           draft_vlm_helper->get_tokenizer(), std::nullopt, std::nullopt);
+      draft_text_streamer->set_performance_summary_enabled(false);
       draft_language_model = std::make_unique<simaai::llima::LanguageModel>(
           *info.draft_root, draft_vlm_helper->get_stop_token_ids(),
           draft_vlm_helper->get_image_token_id(), draft_vlm_helper->get_pad_token_id(),
