@@ -541,7 +541,7 @@ def test_tensor_run_mla_only():
   try:
     pcie.Model(str(model), options).info()
   except (RuntimeError, ValueError) as error:
-    wrong_build = ("does not support stage", "supports exactly one model input", "must be INT8")
+    wrong_build = ("does not support stage", "hybrid host/card quantization", "must be INT8")
     if not any(reason in str(error) for reason in wrong_build):
       raise
     pytest.skip(f"{model.name} is not an MLA-only capable build: {error}")
