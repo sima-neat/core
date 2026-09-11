@@ -1,0 +1,17 @@
+{
+  "scenario_id": "yolox_seg_pose_payload_decode_representative",
+  "model_id": "none_synthetic_payload",
+  "pipeline_id": "core_decode_segmentation_pose",
+  "run_mode": "sync",
+  "iterations": 500,
+  "metrics_thresholds": {
+    "throughput_min": 5000.0,
+    "p50_max": 0.2,
+    "p95_max": 0.3,
+    "rss_peak_kb_max": 80000.0,
+    "startup_max": 100.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  }
+}

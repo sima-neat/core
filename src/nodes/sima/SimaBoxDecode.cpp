@@ -51,6 +51,7 @@ struct BoxDecodeOptionsInternal {
   double detection_threshold = 0.0;
   double nms_iou_threshold = 0.0;
   SuperPointOptions superpoint;
+  std::vector<int> pose_classes;
   std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_route_flags;
   std::optional<pipeline_internal::sima::BoxDecodeStaticContract> model_static_contract;
@@ -628,6 +629,7 @@ static BoxDecodeOptionsInternal options_from_model(
   opt.top_k = compiled_contract.payload.topk;
   opt.detection_threshold = compiled_contract.payload.detection_threshold;
   opt.nms_iou_threshold = compiled_contract.payload.nms_iou_threshold;
+  opt.pose_classes = compiled_contract.payload.pose_classes;
   if (boxdecode_debug_enabled()) {
     const std::string decode_type_token = pipeline_internal::sima::box_decode_type_token_string(
         compiled_contract.payload.decode_type);
@@ -668,11 +670,32 @@ options_from_customer(BoxDecodeType decode_type, double detection_threshold,
   return opt;
 }
 
-void apply_named_superpoint_options(BoxDecodeOptionsInternal* opt, const BoxDecodeOptions& options,
-                                    bool /*model_or_mpk_may_resolve_auto*/) {
+void apply_named_pose_class_options(BoxDecodeOptionsInternal* opt,
+                                    const BoxDecodeOptions& options) {
+  if (options.pose_classes.empty()) {
+    return;
+  }
+  if (!opt->compiled_contract) {
+    // Standalone route: num_classes resolves during contract finalization, which validates
+    // the gate there.
+    opt->pose_classes = options.pose_classes;
+    return;
+  }
+  auto compiled = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
+  compiled->payload.pose_classes =
+      pipeline_internal::sima::stagesemantics::normalize_boxdecode_pose_classes(
+          compiled->payload.decode_type, options.pose_classes, compiled->payload.num_classes,
+          "SimaBoxDecode");
+  opt->pose_classes = compiled->payload.pose_classes;
+  opt->compiled_contract = std::move(compiled);
+}
+
+void apply_named_boxdecode_options(BoxDecodeOptionsInternal* opt, const BoxDecodeOptions& options,
+                                   bool /*model_or_mpk_may_resolve_auto*/) {
   if (!opt) {
     throw std::invalid_argument("SimaBoxDecode: missing options");
   }
+  apply_named_pose_class_options(opt, options);
   if (options.decode_type != BoxDecodeType::SuperPoint) {
     if (options.superpoint.profile != SuperPointProfile::Auto ||
         options.superpoint.nms_radius >= 0 || options.superpoint.border_margin >= 0 ||
@@ -852,7 +875,7 @@ SimaBoxDecode::SimaBoxDecode(const BoxDecodeOptions& options, const std::string&
     : SimaBoxDecode(options.decode_type, options.detection_threshold, options.nms_iou_threshold,
                     options.top_k, element_name, original_width, original_height, model_width,
                     model_height, decode_type_option, source_storage, detess, dequant) {
-  apply_named_superpoint_options(opt_.get(), options, /*model_or_mpk_may_resolve_auto=*/false);
+  apply_named_boxdecode_options(opt_.get(), options, /*model_or_mpk_may_resolve_auto=*/false);
 }
 
 SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
@@ -1051,7 +1074,7 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, const BoxDecodeOp
                     element_name, route_tess_needed, route_quant_needed, original_width,
                     original_height, model_width, model_height, resize_mode_override,
                     decode_type_option) {
-  apply_named_superpoint_options(opt_.get(), options, /*model_or_mpk_may_resolve_auto=*/true);
+  apply_named_boxdecode_options(opt_.get(), options, /*model_or_mpk_may_resolve_auto=*/true);
 }
 
 #ifdef SIMA_NEAT_INTERNAL
@@ -1179,6 +1202,7 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
       contract->superpoint.descriptor_output_dtype = opt_->superpoint.descriptor_output_dtype;
       contract->superpoint.output_format = opt_->superpoint.output_format;
     }
+    contract->pose_classes = opt_->pose_classes;
     const auto finalized_contract =
         pipeline_internal::sima::stagesemantics::finalize_boxdecode_static_contract(
             *contract, opt_->decode_type, opt_->model_semantics, opt_->model_route_flags,

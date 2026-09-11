@@ -8453,6 +8453,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   contract->topk = opt.top_k;
   contract->detection_threshold = opt.score_threshold;
   contract->nms_iou_threshold = opt.nms_iou_threshold;
+  contract->pose_classes = opt.pose_classes;
   contract->model_owned_flags = true;
   contract->quant_contract_required = route_flags->quant_contract_required;
   contract->required_preprocess_meta_fields =

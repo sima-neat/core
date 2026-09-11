@@ -160,9 +160,12 @@ std::size_t infer_extended_capacity(const std::vector<uint8_t>& bytes,
   return body / stride;
 }
 
+// `extra_base_offset` skips any extension region that precedes the poses. It is 0
+// for a pose-only payload, where the poses sit immediately after the box array, and
+// `capacity * mask_bytes` for a combined seg+pose payload.
 simaai::neat::Tensor keypoints_to_tensor(const std::vector<uint8_t>& bytes,
                                          const std::vector<std::size_t>& record_indices,
-                                         std::size_t capacity) {
+                                         std::size_t capacity, std::size_t extra_base_offset = 0) {
   const int64_t n = static_cast<int64_t>(record_indices.size());
   const int64_t rows = kDecodedPoseKeypoints;
   const int64_t cols = kDecodedPoseColumns;
@@ -173,7 +176,7 @@ simaai::neat::Tensor keypoints_to_tensor(const std::vector<uint8_t>& bytes,
   if (bytes_out > 0) {
     simaai::neat::Mapping dst = storage->map(simaai::neat::MapMode::Write);
     auto* out = static_cast<float*>(dst.data);
-    const std::size_t pose_base = sizeof(uint32_t) + capacity * sizeof(RawBox);
+    const std::size_t pose_base = sizeof(uint32_t) + capacity * sizeof(RawBox) + extra_base_offset;
     for (std::size_t i = 0; i < record_indices.size(); ++i) {
       const std::size_t source_index = record_indices[i];
       RawPoseOut pose{};
@@ -253,9 +256,15 @@ bool detection_format_is_segmentation(const std::string& format) {
          fmt == "SEG";
 }
 
+bool detection_format_is_segmentation_pose(const std::string& format) {
+  const std::string fmt = normalize_detection_format(format);
+  return fmt == kDetectionFormatBboxSegmentationPose || fmt == "BBOX_SEG_POSE" ||
+         fmt == "SEGMENTATION_POSE" || fmt == "SEG_POSE";
+}
+
 bool detection_format_is_bbox_family(const std::string& format) {
   return detection_format_is_bbox(format) || detection_format_is_pose(format) ||
-         detection_format_is_segmentation(format);
+         detection_format_is_segmentation(format) || detection_format_is_segmentation_pose(format);
 }
 
 std::vector<Box> parse_bbox_bytes(const std::vector<uint8_t>& bytes, int img_w, int img_h,
@@ -454,6 +463,49 @@ std::string sample_payload_format(const simaai::neat::Sample& sample) {
 
 } // namespace
 
+SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat::Tensor& tensor,
+                                                              int img_w, int img_h, int top_k,
+                                                              bool strict) {
+  validate_extended_detection_format(tensor, "segmentation-pose",
+                                     detection_format_is_segmentation_pose);
+  std::vector<uint8_t> bytes = copy_detection_payload(tensor, "segmentation-pose");
+  const std::size_t mask_bytes =
+      static_cast<std::size_t>(kDecodedMaskWidth) * static_cast<std::size_t>(kDecodedMaskHeight);
+  // Every region — boxes, masks, poses — is strided by the same slot count, so one
+  // division still recovers it: body == capacity * (sizeof(RawBox) + mask + pose).
+  // A decoder that strided the box array differently from its extension regions
+  // could not be parsed this way.
+  const std::size_t capacity =
+      infer_extended_capacity(bytes, mask_bytes + sizeof(RawPoseOut), "segmentation-pose", strict);
+  const int parse_topk =
+      top_k > 0 ? static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(top_k), capacity))
+                : static_cast<int>(std::min<std::size_t>(
+                      capacity, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+  ParsedBoxRecords parsed = parse_bbox_records(bytes, img_w, img_h, parse_topk, strict);
+  SegmentationPoseDecodeTensors out;
+  out.boxes = boxes_to_tensor(parsed.boxes);
+  out.masks = masks_to_tensor(bytes, parsed.record_indices, capacity);
+  out.keypoints =
+      keypoints_to_tensor(bytes, parsed.record_indices, capacity, capacity * mask_bytes);
+  return out;
+}
+
+SegmentationPoseDecodeTensorList decode_segmentation_pose(const simaai::neat::TensorList& tensors,
+                                                          int img_w, int img_h, int top_k,
+                                                          bool strict) {
+  SegmentationPoseDecodeTensorList out;
+  out.reserve(tensors.size());
+  for (std::size_t i = 0; i < tensors.size(); ++i) {
+    try {
+      out.push_back(decode_segmentation_pose_tensor(tensors[i], img_w, img_h, top_k, strict));
+    } catch (const std::runtime_error& e) {
+      throw std::runtime_error("decode_segmentation_pose: input tensor " + std::to_string(i) +
+                               ": " + e.what());
+    }
+  }
+  return out;
+}
+
 void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
   if (sample.kind == simaai::neat::SampleKind::TensorSet && sample.tensors.size() == 1U) {
     simaai::neat::Tensor& tensor = sample.tensors.front();
@@ -461,7 +513,11 @@ void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
     if (fmt.empty()) {
       fmt = read_detection_format(tensor); // may pick up legacy tess-tagged BBOX
     }
-    if (detection_format_is_bbox(fmt)) {
+    // Checked first: the combined token must not be swallowed by a future
+    // substring-matching pose or segmentation predicate.
+    if (detection_format_is_segmentation_pose(fmt)) {
+      tag_detection_format(tensor, kDetectionFormatBboxSegmentationPose);
+    } else if (detection_format_is_bbox(fmt)) {
       tag_detection_format(tensor, kDetectionFormatBbox);
     } else if (detection_format_is_pose(fmt)) {
       tag_detection_format(tensor, kDetectionFormatBboxPose);

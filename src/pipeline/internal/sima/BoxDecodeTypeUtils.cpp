@@ -113,6 +113,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "superpoint" || lower == "super-point") {
     return BoxDecodeType::SuperPoint;
   }
+  if (lower == "yolox-seg-pose" || lower == "yolox_seg_pose") {
+    return BoxDecodeType::YoloXSegPose;
+  }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
   }

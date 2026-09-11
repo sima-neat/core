@@ -58,6 +58,7 @@ opt.top_k = 100;
 | Detection | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
 | Pose | `decode_pose(...)` | `pyneat.decode_pose(...)` | boxes `[N, 6]` and keypoints `[N, 17, 3]` float32: `x, y, visibility` |
 | Segmentation | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | boxes `[N, 6]` float32 and masks `[N, 160, 160]` uint8 |
+| Segmentation + pose | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | boxes `[N, 6]` float32, masks `[N, 160, 160]` uint8, keypoints `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | keypoints `[N,2]`, scores `[N]`, descriptors `[N,D]` |
 
 Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
@@ -177,6 +178,52 @@ Coordinates are in original-image pixels when upstream preprocessing metadata is
 present. They are not normalized to `[0, 1]` and are not expressed in the
 model's internal letterboxed input space.
 
+### Combined segmentation + pose payload
+
+`yolox-seg-pose` emits a single buffer carrying three regions. Every region is
+strided by the same slot count, `top_k`:
+
+| Region | Offset | Stride | Contents |
+| --- | --- | --- | --- |
+| header | `0` | 4 | `int32` detection count |
+| boxes | `4` | 24 | `BoundingBoxOut` records, as above |
+| masks | `4 + 24*top_k` | `mask_w * mask_h` | `uint8`, one plane per slot |
+| poses | `4 + (24 + mask_w*mask_h)*top_k` | 204 | 17 x `{uint32 x, uint32 y, float32 visibility}` |
+
+Use `decode_segmentation_pose(...)` for all three tensors. `decode_bbox(...)` and
+`BoxDecodeResults(...)` still work when you only need boxes, because the payload is
+box-leading.
+
+`decode_segmentation_pose(...)` copies keypoint rows through verbatim; it does not zero,
+mask, or interpret them. The zeroing is the backend's, driven by the `pose_classes` gate
+described below. With a gate set, a detection whose class carries no keypoints arrives
+all-zero including visibility, so gate on visibility rather than needing the decoder's
+class list.
+
+A model may also use fewer than the 17 reserved keypoint slots. Unused trailing slots are
+zeroed by the wire format itself and are not affected by the gate.
+
+`num_classes` is derived from the class head for this family and does not have to be
+supplied. Its class tensor packs objectness into channel 0, so the class-block width is
+the class head depth minus one — a 30-channel head means 29 classes. Supplying a value
+anyway is allowed and is cross-checked against that derivation: a mismatch is rejected
+at contract compilation rather than reaching the backend, where a wrong count silently
+mis-strides the scorer and yields plausible-looking wrong classes.
+
+Keypoint gating by class is set with `Model::Options::pose_classes` (or
+`BoxDecodeOptions::pose_classes`), listing the class indices that carry keypoints. It
+reaches the backend on both configuration paths: the typed `neatobjectdecode` path carries
+it in `SimaPluginBoxDecodeStagePayload::pose_classes`, and the JSON path accepts the
+`pose_classes` key directly.
+
+An empty list is not "no classes" — it disables the gate, and the backend then treats
+**every** class as pose-bearing. That is the right default for a model whose classes all
+carry keypoints; set the list only when they are mixed.
+
+Core validates the list at contract construction: entries must be unique and within
+`[0, num_classes)`, and the option is rejected for decode types that cannot gate keypoints
+by class. The resolved list is emitted ascending.
+
 ## When `model.run` returns raw heads
 
 Some model routes return raw feature-map heads from `model.run(...)` instead of
@@ -248,6 +295,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
+| `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | YOLOX packed export carrying box, mask and keypoint heads together |
 | `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300, SSD-Mobile-300, SSD-Mobile-320, or SSDlite-Mobile-320 contract, selected from ordered head geometry |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
