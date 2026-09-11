@@ -89,6 +89,12 @@ int main() {
     auto vr = simaai::neat::nodes::VideoRate();
     require_contains(vr->backend_fragment(8), "videorate name=n8_videorate",
                      "VideoRate name mismatch");
+    require_contains(vr->backend_fragment(8), "drop-only=true",
+                     "VideoRate must drop only by default");
+    require(simaai::neat::nodes::VideoRate(true)->backend_fragment(8) == vr->backend_fragment(8),
+            "Explicit drop-only must match the default");
+    require_contains(simaai::neat::nodes::VideoRate(false)->backend_fragment(8), "drop-only=false",
+                     "VideoRate must allow explicit frame duplication");
 
     auto demux = simaai::neat::nodes::VideoTrackSelect(0);
     require_contains(demux->backend_fragment(4), "qtdemux name=n4_demux", "QtDemux name mismatch");

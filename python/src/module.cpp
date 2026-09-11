@@ -4021,7 +4021,9 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("jpeg_parse", &simaai::neat::nodes::JpegParse,
                 "options"_a = simaai::neat::JpegParseOptions{});
   nodes_mod.def("video_scale", &simaai::neat::nodes::VideoScale);
-  nodes_mod.def("video_rate", &simaai::neat::nodes::VideoRate);
+  nodes_mod.def(
+      "video_rate", [](bool drop_only) { return simaai::neat::nodes::VideoRate(drop_only); },
+      "drop_only"_a = true);
   nodes_mod.def("image_freeze", &simaai::neat::nodes::ImageFreeze, "num_buffers"_a = -1);
   nodes_mod.def("video_track_select", &simaai::neat::nodes::VideoTrackSelect,
                 "video_pad_index"_a = 0);
