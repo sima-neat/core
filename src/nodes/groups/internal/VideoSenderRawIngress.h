@@ -25,8 +25,9 @@ inline constexpr std::string_view kNeatEncoderInputLayoutAwareCapability =
     "neatencoder.input-layout-aware";
 
 /**
- * Decide whether an upstream NV12 contract is strong and layout-safe enough to
- * connect directly to neatencoder.
+ * Select the native NV12 semantic route from a stable producer-memory contract.
+ * The ingress element still validates actual DMA storage/layout at runtime and
+ * forwards compatible allocations by reference.
  *
  * `simaai_layout_aware` is supplied by the plugin capability adapter so this
  * pure policy remains deterministic and independently testable.

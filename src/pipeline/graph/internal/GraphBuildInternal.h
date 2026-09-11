@@ -80,14 +80,12 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
 // Final assembled-pipeline pass. This is the only place allowed to select the
 // producer-owned CPU visibility boundary because adjacent stages may be
 // rendered by distinct Nodes.
-std::string session_build_select_terminal_objectdecode_cpu_visibility(
-    std::string pipeline);
+std::string session_build_select_terminal_objectdecode_cpu_visibility(std::string pipeline);
 // Propagate an authored producer lane window to its immediate terminal
 // consumer. Both endpoints opt in by rendering `num-buffers`; the producer is
 // selected by its CPU-visible handoff, so no consumer factory/plugin name is
 // encoded here.
-std::string session_build_propagate_terminal_consumer_lane_window(
-    std::string pipeline);
+std::string session_build_propagate_terminal_consumer_lane_window(std::string pipeline);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
@@ -104,6 +102,10 @@ std::optional<OutputTensorOverride> build_public_terminal_output_override_with_f
 void session_build_maybe_dump_pipeline_string(const std::string& pipeline, const char* label);
 std::string session_build_clamp_sync_pipeline(std::string pipeline, int num_buffers_override);
 std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num_buffers_override);
+// Serial single-appsink retention is storage at the typed Allocate owner, not
+// execution depth at a downstream ReuseInput stage. Untyped routes keep legacy clamps.
+std::string session_build_clamp_sync_build_result(const BuildResult& build,
+                                                  int num_buffers_override);
 std::uint64_t session_build_estimate_frame_bytes_limit(const InputOptions& opt,
                                                        const SampleSpec& spec);
 std::vector<std::shared_ptr<Node>>

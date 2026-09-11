@@ -59,4 +59,12 @@ resolve_consumer_edge_contracts(const SimaPluginStaticManifest& manifest,
                                 std::size_t consumer_stage_index,
                                 std::string* error_message = nullptr);
 
+// Ownership-sensitive query. Resolve an explicit unique stage selector, or a
+// unique compiler-authored value identity (cm/source name), never a neighboring
+// stage or a coincidentally equal local output ordinal. Does not mutate the manifest.
+std::vector<ResolvedEdgeContract>
+resolve_consumer_edge_contracts_exact(const SimaPluginStaticManifest& manifest,
+                                      std::size_t consumer_stage_index,
+                                      std::string* error_message = nullptr);
+
 } // namespace simaai::neat::pipeline_internal::sima::edgecontract

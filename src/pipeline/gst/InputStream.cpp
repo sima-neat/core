@@ -48,61 +48,6 @@ namespace simaai::neat {
 using pipeline_internal::trim_copy;
 using pipeline_internal::upper_copy;
 
-SampleSpec device_visible_nv12_materialization_spec_or_throw(const SampleSpec& source,
-                                                             const char* where) {
-  const char* tag = where ? where : "NV12 materialization";
-  if (source.kind != SampleMediaKind::RawVideo || upper_copy(source.format) != "NV12" ||
-      source.width <= 0 || source.height <= 0 || (source.width & 1) != 0 ||
-      (source.height & 1) != 0) {
-    throw std::invalid_argument(std::string(tag) + ": requires positive even NV12 geometry");
-  }
-
-  // Allegro's raster source-buffer contract rounds the 8-bit luma pitch to
-  // 64 bytes and the storage height to 8 lines. SourceBufferChecker enforces
-  // these spans before AL_Encoder_Process. Keep this policy at the one
-  // compiler-authored materialization boundary; producer-owned SimaAI buffers
-  // retain their authoritative GstVideoMeta instead.
-  constexpr std::size_t kPitchAlignment = 64U;
-  constexpr std::size_t kHeightAlignment = 8U;
-  const auto checked_align = [tag](std::size_t value, std::size_t alignment, const char* field) {
-    if (value > std::numeric_limits<std::size_t>::max() - (alignment - 1U)) {
-      throw std::overflow_error(std::string(tag) + ": " + field + " alignment overflow");
-    }
-    return (value + alignment - 1U) / alignment * alignment;
-  };
-  const std::size_t width = static_cast<std::size_t>(source.width);
-  const std::size_t height = static_cast<std::size_t>(source.height);
-  const std::size_t pitch = checked_align(width, kPitchAlignment, "pitch");
-  const std::size_t storage_height = checked_align(height, kHeightAlignment, "height");
-  if (pitch > std::numeric_limits<std::size_t>::max() / storage_height) {
-    throw std::overflow_error(std::string(tag) + ": luma span overflow");
-  }
-  const std::size_t uv_offset = pitch * storage_height;
-  const std::size_t uv_rows = storage_height / 2U;
-  if (uv_rows > (std::numeric_limits<std::size_t>::max() - uv_offset) / pitch) {
-    throw std::overflow_error(std::string(tag) + ": chroma span overflow");
-  }
-  const std::size_t allocation_size = uv_offset + pitch * uv_rows;
-
-  SampleSpec materialized = source;
-  materialized.required_bytes_actual = allocation_size;
-  materialized.planes.clear();
-  materialized.planes.resize(2U);
-  materialized.planes[0].role = PlaneRole::Y;
-  materialized.planes[0].width = source.width;
-  materialized.planes[0].height = source.height;
-  materialized.planes[0].stride_bytes = static_cast<std::int64_t>(pitch);
-  materialized.planes[0].offset_bytes = 0;
-  materialized.planes[0].size_bytes = uv_offset;
-  materialized.planes[1].role = PlaneRole::UV;
-  materialized.planes[1].width = source.width;
-  materialized.planes[1].height = source.height / 2;
-  materialized.planes[1].stride_bytes = static_cast<std::int64_t>(pitch);
-  materialized.planes[1].offset_bytes = static_cast<std::int64_t>(uv_offset);
-  materialized.planes[1].size_bytes = allocation_size - uv_offset;
-  return materialized;
-}
-
 bool buffer_name_matches_expected(const std::string& expected_list, const std::string& actual) {
   const std::string expected = trim_copy(expected_list);
   if (expected.empty())

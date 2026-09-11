@@ -6,16 +6,22 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/Quant.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "gst/GstInit.h"
+#include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <gst/gst.h>
 
 namespace {
 
@@ -293,189 +299,311 @@ std::vector<int> shape3(int h, int w, int c) {
 
 } // namespace
 
-RUN_TEST("unit_preproc_contract_rules_test", [] {
-  using namespace simaai::neat;
+RUN_TEST(
+    "unit_preproc_contract_rules_test", ([] {
+      using namespace simaai::neat;
 
-  {
-    const auto fixture = make_infer_only_fixture("preproc_contract_missing");
-    Model::Options model_opt;
-    model_opt.preprocess.enable = AutoFlag::Off;
-    model_opt.preprocess.kind = InputKind::Tensor;
-    Model model(fixture.tar_path, model_opt);
+      {
+        const auto fixture = make_infer_only_fixture("preproc_contract_missing");
+        Model::Options model_opt;
+        model_opt.preprocess.enable = AutoFlag::Off;
+        model_opt.preprocess.kind = InputKind::Tensor;
+        Model model(fixture.tar_path, model_opt);
 
-    bool threw = false;
-    try {
-      (void)PreprocOptions(model);
-    } catch (const std::exception& e) {
-      threw = true;
-      require_contains(std::string(e.what()), "does not contain Preproc",
-                       "Preproc(Model) should fail when route omits Preproc");
-      require_contains(std::string(e.what()), "Pass preprocess options to Model",
-                       "Preproc(Model) failure should explain how to enable model-managed Preproc");
-    }
-    require(threw, "Preproc(Model) must hard fail when route has no Preproc stage");
+        bool threw = false;
+        try {
+          (void)PreprocOptions(model);
+        } catch (const std::exception& e) {
+          threw = true;
+          require_contains(std::string(e.what()), "does not contain Preproc",
+                           "Preproc(Model) should fail when route omits Preproc");
+          require_contains(
+              std::string(e.what()), "Pass preprocess options to Model",
+              "Preproc(Model) failure should explain how to enable model-managed Preproc");
+        }
+        require(threw, "Preproc(Model) must hard fail when route has no Preproc stage");
 
-    threw = false;
-    try {
-      (void)QuantOptions(model);
-    } catch (const std::exception& e) {
-      threw = true;
-      require_contains(std::string(e.what()), "does not contain Quant",
-                       "Quant(Model) should fail when route omits Quant stage");
-    }
-    require(threw, "Quant(Model) must hard fail when route has no Quant stage");
-  }
+        threw = false;
+        try {
+          (void)QuantOptions(model);
+        } catch (const std::exception& e) {
+          threw = true;
+          require_contains(std::string(e.what()), "does not contain Quant",
+                           "Quant(Model) should fail when route omits Quant stage");
+        }
+        require(threw, "Quant(Model) must hard fail when route has no Quant stage");
+      }
 
-  {
-    const auto fixture = make_preproc_fixture("preproc_contract_present");
-    Model::Options model_opt;
-    model_opt.preprocess.kind = InputKind::Image;
-    model_opt.preprocess.enable = AutoFlag::On;
-    model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
-    Model model(fixture.tar_path, model_opt);
+      {
+        const auto fixture = make_preproc_fixture("preproc_contract_present");
+        Model::Options model_opt;
+        model_opt.preprocess.kind = InputKind::Image;
+        model_opt.preprocess.enable = AutoFlag::On;
+        model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+        Model model(fixture.tar_path, model_opt);
 
-    const auto requirements = model.preprocess_requirements();
-    require(requirements.has_preproc_stage,
-            "Model::preprocess_requirements should report model-managed Preproc");
-    require(!requirements.output_format.empty(),
-            "Model::preprocess_requirements should expose preproc output format");
+        const auto requirements = model.preprocess_requirements();
+        require(requirements.has_preproc_stage,
+                "Model::preprocess_requirements should report model-managed Preproc");
+        require(!requirements.output_format.empty(),
+                "Model::preprocess_requirements should expose preproc output format");
 
-    PreprocOptions opt(model);
-    require(opt.model_managed_contract,
-            "PreprocOptions(Model) should mark the contract as model-managed");
-    require(opt.input_width() > 0 && opt.input_height() > 0,
-            "PreprocOptions(Model) should expose model-managed input shape");
-    require(!opt.input_img_type.empty(),
-            "PreprocOptions(Model) should expose model-managed input format");
-    require(opt.output_width() > 0 && opt.output_height() > 0,
-            "PreprocOptions(Model) should expose model-managed output shape");
-    require(!opt.output_dtype.empty(),
-            "PreprocOptions(Model) should expose model-managed output dtype");
-    require(!opt.normalize,
-            "PreprocOptions(Model) should derive normalize from the resolved preprocess plan, "
-            "not from legacy graph defaults");
+        PreprocOptions opt(model);
+        require(opt.model_managed_contract,
+                "PreprocOptions(Model) should mark the contract as model-managed");
+        require(opt.input_width() > 0 && opt.input_height() > 0,
+                "PreprocOptions(Model) should expose model-managed input shape");
+        require(!opt.input_img_type.empty(),
+                "PreprocOptions(Model) should expose model-managed input format");
+        require(opt.output_width() > 0 && opt.output_height() > 0,
+                "PreprocOptions(Model) should expose model-managed output shape");
+        require(!opt.output_dtype.empty(),
+                "PreprocOptions(Model) should expose model-managed output dtype");
+        require(!opt.normalize,
+                "PreprocOptions(Model) should derive normalize from the resolved preprocess plan, "
+                "not from legacy graph defaults");
 #ifdef SIMA_NEAT_INTERNAL
-    const auto model_max_shape = model_managed_preproc_max_input_shape(opt);
-    require(PreprocOptions::shape_dim(model_max_shape, 1) >= opt.input_width() &&
-                PreprocOptions::shape_dim(model_max_shape, 0) >= opt.input_height(),
-            "PreprocOptions(Model) should preserve internal modelpack max input capacity");
+        require(opt.compiled_contract != nullptr,
+                "model must retain its admitted preproc contract");
+        const auto admitted = opt.compiled_contract;
+        const auto original_source = admitted->runtime_contract.physical_inputs.front().size_bytes;
+        const auto original_arena = admitted->runtime_contract.frame_arena_size_bytes;
+        const auto original_output = admitted->payload.output_tensors.front();
+        const auto original_logical = admitted->runtime_contract.logical_outputs.front();
+        const auto slot_bytes = admitted->runtime_contract.physical_outputs.front().size_bytes;
+        bool source_count_threw = false;
+        try {
+          (void)pipeline_internal::sima::specialize_preproc_roi_contract(*admitted, 51, 48, 64, 3,
+                                                                         1);
+        } catch (const std::invalid_argument&) {
+          source_count_threw = true;
+        }
+        require(source_count_threw, "ROI source batch must respect the firmware's 50-image limit");
+        gst_init_once();
+        for (const int capacity : {1, 2, 3}) {
+          auto invocation = pipeline_internal::sima::specialize_preproc_roi_contract(
+              *admitted, 2, 48, 64, 3, capacity);
+          require(invocation.payload.batch_size == capacity &&
+                      invocation.payload.input_shapes.front() == std::vector<int>({48, 64, 3}) &&
+                      invocation.payload.input_tensors.front().shape.sizes[0] == 2 &&
+                      invocation.payload.input_tensors.front().shape.axis_semantics[0] ==
+                          SIMA_EV_AXIS_N,
+                  "ROI source N must be independent of output R and public HWC options");
+          require(invocation.runtime_contract.physical_inputs.front().size_bytes == 18432U &&
+                      invocation.runtime_contract.logical_inputs.front().size_bytes == 18432U &&
+                      invocation.runtime_contract.input_bindings.front().src_physical_size_bytes ==
+                          18432U,
+                  "ROI source descriptor and binding must cover both source frames");
+          require(std::memcmp(&invocation.payload.output_tensors.front(), &original_output,
+                              sizeof(original_output)) == 0,
+                  "ROI specialization must preserve every one-member output descriptor byte");
+          require(invocation.runtime_contract.physical_outputs.front().size_bytes ==
+                          slot_bytes * capacity &&
+                      invocation.runtime_contract.logical_outputs.front().size_bytes ==
+                          original_logical.size_bytes * capacity &&
+                      invocation.runtime_contract.logical_outputs.front().logical_name ==
+                          original_logical.logical_name &&
+                      invocation.runtime_contract.logical_outputs.front().backend_name ==
+                          original_logical.backend_name &&
+                      invocation.payload.q_scale == admitted->payload.q_scale &&
+                      invocation.payload.q_zp == admitted->payload.q_zp,
+                  "ROI carrier batching must preserve exact slot span, identities and qparams");
+          require(!invocation.physical_command_role && !invocation.payload.dmabuf_plan_contract &&
+                      invocation.runtime_contract.frame_arena_size_bytes == 0U,
+                  "ROI invocation must discard only stale model arena placement facts");
+          auto roi_opt = opt;
+          roi_opt.batch_size = capacity;
+          roi_opt.compiled_contract =
+              std::make_shared<const CompiledProcessCvuContract>(std::move(invocation));
+          pipeline_internal::sima::ManifestBuildDiagnostics roi_diagnostics;
+          const auto roi_compiled =
+              compile_node_contracts(std::vector<std::shared_ptr<Node>>{nodes::Preproc(roi_opt)},
+                                     ContractCompileInput{}, &roi_diagnostics);
+          const auto roi_manifest = render_manifest_from_compiled_contracts(
+              roi_compiled, ContractCompileInput{}, &roi_diagnostics);
+          require(
+              roi_diagnostics.errors.empty() && roi_manifest && roi_manifest->stages.size() == 1U,
+              "specialized immutable preproc must compile/render without options reconstruction");
+          const auto& rendered = roi_manifest->stages.front();
+          require(
+              rendered.frame_arena_role == pipeline_internal::sima::FrameArenaRole::Allocate &&
+                  rendered.frame_arena_size_bytes == ((slot_bytes * capacity + 4095U) & ~4095ULL) &&
+                  rendered.physical_outputs.front().source_byte_offset == 0 &&
+                  rendered.frame_arena_storage_domain ==
+                      pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
+                  rendered.frame_arena_escape_policy == pipeline_internal::sima::static_contract::
+                                                            ArenaEscapePolicy::CpuMappablePublic,
+              "ROI standalone arena must reuse aligned Allocate/CMA/public authoring policy");
+          std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
+              gst_pipeline_new("roi_contract"), &gst_object_unref);
+          std::string attach_error;
+          require(pipeline && pipeline_internal::sima::attach_manifest_context(
+                                  pipeline.get(), *roi_manifest, &attach_error),
+                  "ROI ABI projection failed: " + attach_error);
+          std::unique_ptr<GstContext, decltype(&gst_context_unref)> context(
+              gst_element_get_context(pipeline.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
+              &gst_context_unref);
+          require(context != nullptr, "ROI manifest context must be retained");
+          const auto* accessor = sima_plugin_manifest_context_accessor(context.get());
+          const auto* abi = accessor ? sima_plugin_manifest_stage_by_element_name(
+                                           accessor, rendered.element_name.c_str())
+                                     : nullptr;
+          require(abi && abi->logical_inputs_len == 1U && abi->logical_outputs_len == 1U &&
+                      abi->logical_inputs[0].axis_semantics[0] == SIMA_EV_AXIS_N &&
+                      abi->logical_outputs[0].axis_semantics[0] == SIMA_EV_AXIS_N &&
+                      abi->payload.processcvu.input_tensors[0].shape.sizes[0] == 2 &&
+                      abi->payload.processcvu.output_tensors[0].storage.nbytes ==
+                          original_output.storage.nbytes,
+                  "ROI ABI projection must preserve source/batch axes and one-member output span");
+        }
+        require(admitted == opt.compiled_contract &&
+                    admitted->runtime_contract.physical_inputs.front().size_bytes ==
+                        original_source &&
+                    admitted->runtime_contract.frame_arena_size_bytes == original_arena &&
+                    admitted->runtime_contract.logical_outputs.front().shape ==
+                        original_logical.shape &&
+                    std::memcmp(&admitted->payload.output_tensors.front(), &original_output,
+                                sizeof(original_output)) == 0,
+                "ROI invocation must not mutate the shared model contract");
 
-    Preproc capacity_node(opt);
-    InputContract oversized_contract;
-    oversized_contract.media_type = "video/x-raw";
-    oversized_contract.format = opt.input_img_type;
-    oversized_contract.width = PreprocOptions::shape_dim(model_max_shape, 1) + 1;
-    oversized_contract.height = opt.input_height();
-    oversized_contract.depth = opt.input_channels();
-    bool capacity_threw = false;
-    try {
-      capacity_node.apply_input_contract(oversized_contract, nullptr);
-    } catch (const std::exception& e) {
-      capacity_threw = true;
-      require_contains(std::string(e.what()), "exceeds max_input_width",
-                       "PreprocOptions(Model) capacity violation should mention max_input_width");
-    }
-    require(capacity_threw, "PreprocOptions(Model) must reject inputs above modelpack capacity");
+        // Explicit batch layouts do not reinterpret unqualified volume descriptors.
+        std::uint8_t axes[SIMA_EV_MAX_RANK]{};
+        pipeline_internal::sima::tensorsemantics::fill_axis_semantics_from_shape_layout(
+            std::vector<int>{2, 48, 64, 3}, "NHWC", axes);
+        require(axes[0] == SIMA_EV_AXIS_N, "explicit NHWC must preserve source N=2");
+        pipeline_internal::sima::tensorsemantics::fill_axis_semantics_from_shape_layout(
+            std::vector<int>{2, 48, 64, 3}, "HWC", axes);
+        require(axes[0] == SIMA_EV_AXIS_D, "unqualified HWC volume inference must not change");
+
+        const auto model_max_shape = model_managed_preproc_max_input_shape(opt);
+        require(PreprocOptions::shape_dim(model_max_shape, 1) >= opt.input_width() &&
+                    PreprocOptions::shape_dim(model_max_shape, 0) >= opt.input_height(),
+                "PreprocOptions(Model) should preserve internal modelpack max input capacity");
+
+        Preproc capacity_node(opt);
+        InputContract oversized_contract;
+        oversized_contract.media_type = "video/x-raw";
+        oversized_contract.format = opt.input_img_type;
+        oversized_contract.width = PreprocOptions::shape_dim(model_max_shape, 1) + 1;
+        oversized_contract.height = opt.input_height();
+        oversized_contract.depth = opt.input_channels();
+        bool capacity_threw = false;
+        try {
+          capacity_node.apply_input_contract(oversized_contract, nullptr);
+        } catch (const std::exception& e) {
+          capacity_threw = true;
+          require_contains(
+              std::string(e.what()), "exceeds max_input_width",
+              "PreprocOptions(Model) capacity violation should mention max_input_width");
+        }
+        require(capacity_threw,
+                "PreprocOptions(Model) must reject inputs above modelpack capacity");
 #endif
 
-    Preproc node(opt);
-    const std::string frag = node.backend_fragment(0);
-    require_not_contains(
-        frag, "config=", "model-managed Preproc fragment must not emit a legacy config path");
-  }
+        Preproc node(opt);
+        const std::string frag = node.backend_fragment(0);
+        require_not_contains(
+            frag, "config=", "model-managed Preproc fragment must not emit a legacy config path");
+      }
 
-  {
-    const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");
-    Model::Options model_opt;
-    model_opt.preprocess.kind = InputKind::Image;
-    model_opt.preprocess.enable = AutoFlag::On;
-    model_opt.preprocess.input_max_width = 1920;
-    model_opt.preprocess.input_max_height = 1080;
-    model_opt.preprocess.input_max_depth = 3;
-    model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
-    model_opt.preprocess.resize.enable = AutoFlag::On;
-    model_opt.preprocess.resize.width = 640;
-    model_opt.preprocess.resize.height = 640;
-    model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
-    Model model(fixture.tar_path, model_opt);
+      {
+        const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");
+        Model::Options model_opt;
+        model_opt.preprocess.kind = InputKind::Image;
+        model_opt.preprocess.enable = AutoFlag::On;
+        model_opt.preprocess.input_max_width = 1920;
+        model_opt.preprocess.input_max_height = 1080;
+        model_opt.preprocess.input_max_depth = 3;
+        model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+        model_opt.preprocess.resize.enable = AutoFlag::On;
+        model_opt.preprocess.resize.width = 640;
+        model_opt.preprocess.resize.height = 640;
+        model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+        Model model(fixture.tar_path, model_opt);
 
-    PreprocOptions opt(model);
-    require(opt.input_width() == 1920 && opt.input_height() == 1080 && opt.input_channels() == 3,
-            "model-managed Preproc must project the configured capacity into its static input "
-            "shape before a smaller seed is bound");
+        PreprocOptions opt(model);
+        require(opt.input_width() == 1920 && opt.input_height() == 1080 &&
+                    opt.input_channels() == 3,
+                "model-managed Preproc must project the configured capacity into its static input "
+                "shape before a smaller seed is bound");
 #ifdef SIMA_NEAT_INTERNAL
-    const auto initial_max_shape = model_managed_preproc_max_input_shape(opt);
-    require(PreprocOptions::shape_dim(initial_max_shape, 1) == 1920 &&
-                PreprocOptions::shape_dim(initial_max_shape, 0) == 1080 &&
-                PreprocOptions::shape_channels(initial_max_shape) == 3,
-            "model-managed Preproc must retain the configured capacity in model lineage");
+        const auto initial_max_shape = model_managed_preproc_max_input_shape(opt);
+        require(PreprocOptions::shape_dim(initial_max_shape, 1) == 1920 &&
+                    PreprocOptions::shape_dim(initial_max_shape, 0) == 1080 &&
+                    PreprocOptions::shape_channels(initial_max_shape) == 3,
+                "model-managed Preproc must retain the configured capacity in model lineage");
 #endif
 
-    auto node = std::make_shared<Preproc>(opt);
-    InputContract seed_contract;
-    seed_contract.media_type = "video/x-raw";
-    seed_contract.format = "RGB";
-    seed_contract.width = 1280;
-    seed_contract.height = 720;
-    seed_contract.depth = 3;
-    node->apply_input_contract(seed_contract, nullptr);
-    require(node->options().input_width() == 1280 && node->options().input_height() == 720,
-            "model-managed Preproc must bind the smaller seed as actual geometry");
+        auto node = std::make_shared<Preproc>(opt);
+        InputContract seed_contract;
+        seed_contract.media_type = "video/x-raw";
+        seed_contract.format = "RGB";
+        seed_contract.width = 1280;
+        seed_contract.height = 720;
+        seed_contract.depth = 3;
+        node->apply_input_contract(seed_contract, nullptr);
+        require(node->options().input_width() == 1280 && node->options().input_height() == 720,
+                "model-managed Preproc must bind the smaller seed as actual geometry");
 
-    pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-    const std::vector<std::shared_ptr<Node>> nodes{node};
-    const auto compiled = compile_node_contracts(nodes, ContractCompileInput{}, &diagnostics);
-    require(diagnostics.errors.empty() && compiled.fully_renderable &&
-                compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value(),
-            "model-managed Preproc capacity contract must compile without diagnostics");
-    const auto& processcvu = *compiled.stages.front().processcvu;
-    require(processcvu.payload.input_shapes.size() == 1U &&
-                processcvu.payload.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
-            "compiled Preproc payload must retain capacity after a smaller seed is bound");
-    require(processcvu.runtime_contract.logical_inputs.size() == 1U &&
+        pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+        const std::vector<std::shared_ptr<Node>> nodes{node};
+        const auto compiled = compile_node_contracts(nodes, ContractCompileInput{}, &diagnostics);
+        require(diagnostics.errors.empty() && compiled.fully_renderable &&
+                    compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value(),
+                "model-managed Preproc capacity contract must compile without diagnostics");
+        const auto& processcvu = *compiled.stages.front().processcvu;
+        require(processcvu.payload.input_shapes.size() == 1U &&
+                    processcvu.payload.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
+                "compiled Preproc payload must retain capacity after a smaller seed is bound");
+        require(
+            processcvu.runtime_contract.logical_inputs.size() == 1U &&
                 processcvu.runtime_contract.logical_inputs.front().shape ==
                     std::vector<std::int64_t>({1080, 1920, 3}),
             "compiled Preproc logical input must retain capacity after a smaller seed is bound");
 
-    const auto manifest =
-        render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
-    require(diagnostics.errors.empty() && manifest.has_value() && manifest->stages.size() == 1U,
-            "model-managed Preproc capacity contract must render without diagnostics");
-    const auto& rendered_stage = manifest->stages.front();
-    require(rendered_stage.logical_inputs.size() == 1U &&
-                rendered_stage.logical_inputs.front().shape ==
-                    std::vector<std::int64_t>({1080, 1920, 3}) &&
-                rendered_stage.processcvu.input_shapes.size() == 1U &&
-                rendered_stage.processcvu.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
-            "rendered Preproc static contract must expose the full dynamic input capacity");
-    require(
-        rendered_stage.processcvu.dmabuf_plan_contract &&
-            rendered_stage.processcvu.graph_id == 200 &&
-            rendered_stage.processcvu.descriptor_abi_id != 0U &&
-            rendered_stage.frame_arena_role == pipeline_internal::sima::FrameArenaRole::Allocate &&
-            rendered_stage.frame_arena_storage_domain ==
-                pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
-            rendered_stage.frame_arena_provenance == pipeline_internal::sima::static_contract::
-                                                         ArenaAllocationProvenance::CoreAllocated &&
-            (rendered_stage.frame_arena_required_device_access &
-             static_cast<std::uint32_t>(
-                 pipeline_internal::sima::static_contract::ArenaDeviceAccess::Ev74)) != 0U &&
-            rendered_stage.frame_arena_size_bytes > 0U &&
-            rendered_stage.input_bindings.size() == 1U &&
-            rendered_stage.physical_inputs.size() == 1U &&
-            rendered_stage.physical_inputs.front().size_bytes > 0U &&
-            rendered_stage.logical_outputs.size() == 1U &&
-            rendered_stage.physical_outputs.size() == 1U &&
-            rendered_stage.logical_outputs.front().backend_output_index >= 0 &&
-            rendered_stage.logical_outputs.front().physical_index ==
-                rendered_stage.physical_outputs.front().physical_index,
-        "model-managed Preproc must carry one compiler-proved direct CVU arena contract");
-    const auto& input_binding = rendered_stage.input_bindings.front();
-    const auto& physical_input = rendered_stage.physical_inputs.front();
-    const auto& logical_input = rendered_stage.logical_inputs.front();
-    // This node consumes an external image, not a model-stage output. Its sole
-    // DMA-BUF still has explicit selectors; only the producer-stage identity is absent.
-    require(input_binding.src_stage_id.empty() && input_binding.src_stage_index < 0 &&
+        const auto manifest =
+            render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
+        require(diagnostics.errors.empty() && manifest.has_value() && manifest->stages.size() == 1U,
+                "model-managed Preproc capacity contract must render without diagnostics");
+        const auto& rendered_stage = manifest->stages.front();
+        require(rendered_stage.logical_inputs.size() == 1U &&
+                    rendered_stage.logical_inputs.front().shape ==
+                        std::vector<std::int64_t>({1080, 1920, 3}) &&
+                    rendered_stage.processcvu.input_shapes.size() == 1U &&
+                    rendered_stage.processcvu.input_shapes.front() ==
+                        std::vector<int>({1080, 1920, 3}),
+                "rendered Preproc static contract must expose the full dynamic input capacity");
+        require(rendered_stage.processcvu.dmabuf_plan_contract &&
+                    rendered_stage.processcvu.graph_id == 200 &&
+                    rendered_stage.processcvu.descriptor_abi_id != 0U &&
+                    rendered_stage.frame_arena_role ==
+                        pipeline_internal::sima::FrameArenaRole::Allocate &&
+                    rendered_stage.frame_arena_storage_domain ==
+                        pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
+                    rendered_stage.frame_arena_provenance ==
+                        pipeline_internal::sima::static_contract::ArenaAllocationProvenance::
+                            CoreAllocated &&
+                    (rendered_stage.frame_arena_required_device_access &
+                     static_cast<std::uint32_t>(
+                         pipeline_internal::sima::static_contract::ArenaDeviceAccess::Ev74)) !=
+                        0U &&
+                    rendered_stage.frame_arena_size_bytes > 0U &&
+                    rendered_stage.input_bindings.size() == 1U &&
+                    rendered_stage.physical_inputs.size() == 1U &&
+                    rendered_stage.physical_inputs.front().size_bytes > 0U &&
+                    rendered_stage.logical_outputs.size() == 1U &&
+                    rendered_stage.physical_outputs.size() == 1U &&
+                    rendered_stage.logical_outputs.front().backend_output_index >= 0 &&
+                    rendered_stage.logical_outputs.front().physical_index ==
+                        rendered_stage.physical_outputs.front().physical_index,
+                "model-managed Preproc must carry one compiler-proved direct CVU arena contract");
+        const auto& input_binding = rendered_stage.input_bindings.front();
+        const auto& physical_input = rendered_stage.physical_inputs.front();
+        const auto& logical_input = rendered_stage.logical_inputs.front();
+        // This node consumes an external image, not a model-stage output. Its sole
+        // DMA-BUF still has explicit selectors; only the producer-stage identity is absent.
+        require(
+            input_binding.src_stage_id.empty() && input_binding.src_stage_index < 0 &&
                 input_binding.sink_pad_index == 0 && input_binding.local_logical_input_index == 0 &&
                 input_binding.src_logical_output_index == 0 && input_binding.src_output_slot == 0 &&
                 input_binding.src_physical_output_index == 0 &&
@@ -488,306 +616,312 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
                 logical_input.backend_input_index == 0 && logical_input.physical_index == 0 &&
                 logical_input.byte_offset == 0,
             "model-managed Preproc must bind the sole external DMA-BUF without a producer stage");
-    for (const auto& output : rendered_stage.physical_outputs) {
-      require(output.size_bytes > 0U && output.required_alignment_bytes > 0U &&
-                  output.source_byte_offset >= 0 &&
-                  static_cast<std::uint64_t>(output.source_byte_offset) %
-                          output.required_alignment_bytes ==
-                      0U &&
-                  static_cast<std::uint64_t>(output.source_byte_offset) + output.size_bytes <=
-                      rendered_stage.frame_arena_size_bytes,
-              "standalone Preproc output must be bounded and aligned inside its arena");
-    }
+        for (const auto& output : rendered_stage.physical_outputs) {
+          require(output.size_bytes > 0U && output.required_alignment_bytes > 0U &&
+                      output.source_byte_offset >= 0 &&
+                      static_cast<std::uint64_t>(output.source_byte_offset) %
+                              output.required_alignment_bytes ==
+                          0U &&
+                      static_cast<std::uint64_t>(output.source_byte_offset) + output.size_bytes <=
+                          rendered_stage.frame_arena_size_bytes,
+                  "standalone Preproc output must be bounded and aligned inside its arena");
+        }
 
-    InputContract capacity_contract = seed_contract;
-    capacity_contract.width = 1920;
-    capacity_contract.height = 1080;
-    node->apply_input_contract(capacity_contract, nullptr);
-    require(node->options().input_width() == 1920 && node->options().input_height() == 1080,
-            "model-managed Preproc must accept a later contract up to its configured capacity");
+        InputContract capacity_contract = seed_contract;
+        capacity_contract.width = 1920;
+        capacity_contract.height = 1080;
+        node->apply_input_contract(capacity_contract, nullptr);
+        require(node->options().input_width() == 1920 && node->options().input_height() == 1080,
+                "model-managed Preproc must accept a later contract up to its configured capacity");
 #ifdef SIMA_NEAT_INTERNAL
-    const auto rebound_max_shape = model_managed_preproc_max_input_shape(node->options());
-    require(PreprocOptions::shape_dim(rebound_max_shape, 1) == 1920 &&
-                PreprocOptions::shape_dim(rebound_max_shape, 0) == 1080,
-            "runtime contract rebinding must not shrink the model-managed capacity");
+        const auto rebound_max_shape = model_managed_preproc_max_input_shape(node->options());
+        require(PreprocOptions::shape_dim(rebound_max_shape, 1) == 1920 &&
+                    PreprocOptions::shape_dim(rebound_max_shape, 0) == 1080,
+                "runtime contract rebinding must not shrink the model-managed capacity");
 #endif
-  }
-
-#ifdef SIMA_NEAT_INTERNAL
-  {
-    const auto fixture = make_preproc_fixture("preproc_default_capacity_seed_rebind");
-    Model::Options model_opt;
-    model_opt.preprocess.kind = InputKind::Image;
-    model_opt.preprocess.enable = AutoFlag::On;
-    model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
-    model_opt.preprocess.resize.enable = AutoFlag::On;
-    model_opt.preprocess.resize.width = 640;
-    model_opt.preprocess.resize.height = 640;
-    model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
-    Model model(fixture.tar_path, model_opt);
-
-    InputOptions seed;
-    seed.payload_type = PayloadType::Image;
-    seed.format = FormatTag::RGB;
-    seed.width = 1280;
-    seed.height = 720;
-    seed.depth = 3;
-    const auto seeded_nodes =
-        internal::ModelAccess::build_preprocess_nodes_for_input(model, seed, false);
-    std::shared_ptr<Preproc> seeded_preproc;
-    for (const auto& candidate : seeded_nodes) {
-      seeded_preproc = std::dynamic_pointer_cast<Preproc>(candidate);
-      if (seeded_preproc) {
-        break;
       }
-    }
-    require(seeded_preproc != nullptr, "seeded model route must contain Preproc");
-    require(seeded_preproc->options().input_width() == 1920 &&
-                seeded_preproc->options().input_height() == 1080,
-            "seeded model Preproc must size its static shape from the default input capacity");
 
-    InputContract seed_contract;
-    seed_contract.media_type = "video/x-raw";
-    seed_contract.format = "RGB";
-    seed_contract.width = 1280;
-    seed_contract.height = 720;
-    seed_contract.depth = 3;
-    seeded_preproc->apply_input_contract(seed_contract, nullptr);
-    require(seeded_preproc->options().input_width() == 1280 &&
-                seeded_preproc->options().input_height() == 720,
-            "seeded model Preproc must bind the seed as actual frame geometry");
+#ifdef SIMA_NEAT_INTERNAL
+      {
+        const auto fixture = make_preproc_fixture("preproc_default_capacity_seed_rebind");
+        Model::Options model_opt;
+        model_opt.preprocess.kind = InputKind::Image;
+        model_opt.preprocess.enable = AutoFlag::On;
+        model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+        model_opt.preprocess.resize.enable = AutoFlag::On;
+        model_opt.preprocess.resize.width = 640;
+        model_opt.preprocess.resize.height = 640;
+        model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+        Model model(fixture.tar_path, model_opt);
 
-    const auto seeded_max_shape = model_managed_preproc_max_input_shape(seeded_preproc->options());
-    require(PreprocOptions::shape_dim(seeded_max_shape, 1) == 1920 &&
-                PreprocOptions::shape_dim(seeded_max_shape, 0) == 1080,
-            "a 720p seed must retain the documented default 1920x1080 input capacity");
+        InputOptions seed;
+        seed.payload_type = PayloadType::Image;
+        seed.format = FormatTag::RGB;
+        seed.width = 1280;
+        seed.height = 720;
+        seed.depth = 3;
+        const auto seeded_nodes =
+            internal::ModelAccess::build_preprocess_nodes_for_input(model, seed, false);
+        std::shared_ptr<Preproc> seeded_preproc;
+        for (const auto& candidate : seeded_nodes) {
+          seeded_preproc = std::dynamic_pointer_cast<Preproc>(candidate);
+          if (seeded_preproc) {
+            break;
+          }
+        }
+        require(seeded_preproc != nullptr, "seeded model route must contain Preproc");
+        require(seeded_preproc->options().input_width() == 1920 &&
+                    seeded_preproc->options().input_height() == 1080,
+                "seeded model Preproc must size its static shape from the default input capacity");
 
-    pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-    const auto compiled = compile_node_contracts(std::vector<std::shared_ptr<Node>>{seeded_preproc},
-                                                 ContractCompileInput{}, &diagnostics);
-    require(diagnostics.errors.empty() && compiled.fully_renderable &&
-                compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value() &&
-                compiled.stages.front().processcvu->payload.input_shapes.size() == 1U &&
-                compiled.stages.front().processcvu->payload.input_shapes.front() ==
-                    std::vector<int>({1080, 1920, 3}),
-            "seeded Preproc must compile its static envelope at the default input capacity");
+        InputContract seed_contract;
+        seed_contract.media_type = "video/x-raw";
+        seed_contract.format = "RGB";
+        seed_contract.width = 1280;
+        seed_contract.height = 720;
+        seed_contract.depth = 3;
+        seeded_preproc->apply_input_contract(seed_contract, nullptr);
+        require(seeded_preproc->options().input_width() == 1280 &&
+                    seeded_preproc->options().input_height() == 720,
+                "seeded model Preproc must bind the seed as actual frame geometry");
 
-    InputContract later_contract;
-    later_contract.media_type = "video/x-raw";
-    later_contract.format = "RGB";
-    later_contract.width = 1920;
-    later_contract.height = 1080;
-    later_contract.depth = 3;
-    seeded_preproc->apply_input_contract(later_contract, nullptr);
-    require(seeded_preproc->options().input_width() == 1920 &&
-                seeded_preproc->options().input_height() == 1080,
-            "a default-capacity model seeded at 720p must admit a later 1080p frame");
-  }
+        const auto seeded_max_shape =
+            model_managed_preproc_max_input_shape(seeded_preproc->options());
+        require(PreprocOptions::shape_dim(seeded_max_shape, 1) == 1920 &&
+                    PreprocOptions::shape_dim(seeded_max_shape, 0) == 1080,
+                "a 720p seed must retain the documented default 1920x1080 input capacity");
+
+        pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+        const auto compiled =
+            compile_node_contracts(std::vector<std::shared_ptr<Node>>{seeded_preproc},
+                                   ContractCompileInput{}, &diagnostics);
+        require(diagnostics.errors.empty() && compiled.fully_renderable &&
+                    compiled.stages.size() == 1U &&
+                    compiled.stages.front().processcvu.has_value() &&
+                    compiled.stages.front().processcvu->payload.input_shapes.size() == 1U &&
+                    compiled.stages.front().processcvu->payload.input_shapes.front() ==
+                        std::vector<int>({1080, 1920, 3}),
+                "seeded Preproc must compile its static envelope at the default input capacity");
+
+        InputContract later_contract;
+        later_contract.media_type = "video/x-raw";
+        later_contract.format = "RGB";
+        later_contract.width = 1920;
+        later_contract.height = 1080;
+        later_contract.depth = 3;
+        seeded_preproc->apply_input_contract(later_contract, nullptr);
+        require(seeded_preproc->options().input_width() == 1920 &&
+                    seeded_preproc->options().input_height() == 1080,
+                "a default-capacity model seeded at 720p must admit a later 1080p frame");
+      }
 #endif
 
-  {
-    PreprocOptions opt;
-    opt.model_managed_contract = true;
-    opt.set_input_shape({720, 1280, 3});
-    opt.input_img_type = "RGB";
-    opt.set_output_shape({640, 640, 3});
-    opt.scaled_width = 640;
-    opt.scaled_height = 640;
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "EVXX_BFLOAT16";
-    opt.normalize = true;
-    opt.tessellate = false;
+      {
+        PreprocOptions opt;
+        opt.model_managed_contract = true;
+        opt.set_input_shape({720, 1280, 3});
+        opt.input_img_type = "RGB";
+        opt.set_output_shape({640, 640, 3});
+        opt.scaled_width = 640;
+        opt.scaled_height = 640;
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "EVXX_BFLOAT16";
+        opt.normalize = true;
+        opt.tessellate = false;
 
-    Preproc node(opt);
-    InputContract contract;
-    contract.media_type = "video/x-raw";
-    contract.format = "BGR";
-    contract.width = 1280;
-    contract.height = 720;
-    contract.depth = 3;
-    node.apply_input_contract(contract, nullptr);
+        Preproc node(opt);
+        InputContract contract;
+        contract.media_type = "video/x-raw";
+        contract.format = "BGR";
+        contract.width = 1280;
+        contract.height = 720;
+        contract.depth = 3;
+        node.apply_input_contract(contract, nullptr);
 
-    require(node.options().input_img_type == "RGB",
+        require(
+            node.options().input_img_type == "RGB",
             "model-managed Preproc must preserve resolved input format over upstream heuristics");
-    require(node.options().input_width() == 1280 && node.options().input_height() == 720,
-            "model-managed Preproc must bind actual input dimensions from upstream contract");
-    const auto* cfg = node.config_json();
-    require(cfg != nullptr && cfg->contains("input_img_type") &&
-                (*cfg)["input_img_type"].get<std::string>() == "RGB",
-            "model-managed Preproc config must preserve resolved input_img_type");
-  }
+        require(node.options().input_width() == 1280 && node.options().input_height() == 720,
+                "model-managed Preproc must bind actual input dimensions from upstream contract");
+        const auto* cfg = node.config_json();
+        require(cfg != nullptr && cfg->contains("input_img_type") &&
+                    (*cfg)["input_img_type"].get<std::string>() == "RGB",
+                "model-managed Preproc config must preserve resolved input_img_type");
+      }
 
-  {
-    PreprocOptions opt;
-    opt.model_managed_contract = true;
-    opt.set_input_shape({1080, 1920, 3});
-    set_model_managed_preproc_max_input_shape(&opt, shape3(1080, 1920, 3));
-    opt.input_img_type = "RGB";
-    opt.set_output_shape({640, 640, 3});
-    opt.scaled_width = 640;
-    opt.scaled_height = 640;
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "EVXX_BFLOAT16";
-    opt.normalize = true;
-    opt.tessellate = false;
+      {
+        PreprocOptions opt;
+        opt.model_managed_contract = true;
+        opt.set_input_shape({1080, 1920, 3});
+        set_model_managed_preproc_max_input_shape(&opt, shape3(1080, 1920, 3));
+        opt.input_img_type = "RGB";
+        opt.set_output_shape({640, 640, 3});
+        opt.scaled_width = 640;
+        opt.scaled_height = 640;
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "EVXX_BFLOAT16";
+        opt.normalize = true;
+        opt.tessellate = false;
 
-    Preproc node(opt);
-    InputContract contract;
-    contract.media_type = "video/x-raw";
-    contract.format = "RGB";
-    contract.width = 256;
-    contract.height = 256;
-    contract.depth = 3;
-    node.apply_input_contract(contract, nullptr);
+        Preproc node(opt);
+        InputContract contract;
+        contract.media_type = "video/x-raw";
+        contract.format = "RGB";
+        contract.width = 256;
+        contract.height = 256;
+        contract.depth = 3;
+        node.apply_input_contract(contract, nullptr);
 
-    require(node.options().input_width() == 256 && node.options().input_height() == 256,
-            "model-managed Preproc must treat upstream contract as actual geometry");
-    const auto max_shape = model_managed_preproc_max_input_shape(node.options());
-    require(PreprocOptions::shape_dim(max_shape, 1) == 1920 &&
-                PreprocOptions::shape_dim(max_shape, 0) == 1080,
-            "model-managed Preproc must preserve internal max input shape as capacity");
-  }
+        require(node.options().input_width() == 256 && node.options().input_height() == 256,
+                "model-managed Preproc must treat upstream contract as actual geometry");
+        const auto max_shape = model_managed_preproc_max_input_shape(node.options());
+        require(PreprocOptions::shape_dim(max_shape, 1) == 1920 &&
+                    PreprocOptions::shape_dim(max_shape, 0) == 1080,
+                "model-managed Preproc must preserve internal max input shape as capacity");
+      }
 
-  {
-    PreprocOptions opt;
-    opt.model_managed_contract = true;
-    opt.set_input_shape({1080, 1920, 3});
-    set_model_managed_preproc_max_input_shape(&opt, shape3(1080, 1920, 3));
-    opt.input_img_type = "RGB";
-    opt.set_output_shape({640, 640, 3});
-    opt.scaled_width = 640;
-    opt.scaled_height = 640;
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "EVXX_BFLOAT16";
-    opt.normalize = true;
-    opt.tessellate = false;
+      {
+        PreprocOptions opt;
+        opt.model_managed_contract = true;
+        opt.set_input_shape({1080, 1920, 3});
+        set_model_managed_preproc_max_input_shape(&opt, shape3(1080, 1920, 3));
+        opt.input_img_type = "RGB";
+        opt.set_output_shape({640, 640, 3});
+        opt.scaled_width = 640;
+        opt.scaled_height = 640;
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "EVXX_BFLOAT16";
+        opt.normalize = true;
+        opt.tessellate = false;
 
-    Preproc node(opt);
-    InputContract contract;
-    contract.media_type = "video/x-raw";
-    contract.format = "RGB";
-    contract.width = 2048;
-    contract.height = 1080;
-    contract.depth = 3;
-    bool threw = false;
-    try {
-      node.apply_input_contract(contract, nullptr);
-    } catch (const std::exception& e) {
-      threw = true;
-      require_contains(std::string(e.what()), "exceeds max_input_width",
-                       "capacity violation should mention max_input_width");
-    }
-    require(threw, "model-managed Preproc must reject actual geometry beyond capacity");
-  }
+        Preproc node(opt);
+        InputContract contract;
+        contract.media_type = "video/x-raw";
+        contract.format = "RGB";
+        contract.width = 2048;
+        contract.height = 1080;
+        contract.depth = 3;
+        bool threw = false;
+        try {
+          node.apply_input_contract(contract, nullptr);
+        } catch (const std::exception& e) {
+          threw = true;
+          require_contains(std::string(e.what()), "exceeds max_input_width",
+                           "capacity violation should mention max_input_width");
+        }
+        require(threw, "model-managed Preproc must reject actual geometry beyond capacity");
+      }
 
-  {
-    PreprocOptions opt;
-    opt.set_input_shape({17, 13});
-    opt.input_img_type = "RGB";
-    opt.set_output_shape({640, 640});
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "INT16";
-    opt.tessellate = false;
+      {
+        PreprocOptions opt;
+        opt.set_input_shape({17, 13});
+        opt.input_img_type = "RGB";
+        opt.set_output_shape({640, 640});
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "INT16";
+        opt.tessellate = false;
 
-    Preproc node(opt);
-    const OutputSpec out = node.output_spec(make_rgb_input_spec(1920, 1080));
-    const std::string frag = node.backend_fragment(0);
-    require(out.width == 640 && out.height == 640,
-            "standalone Preproc should preserve explicit output size");
-    require(node.options().input_width() == 1920 && node.options().input_height() == 1080,
-            "standalone Preproc must derive input width/height from actual upstream input");
-    require(node.options().input_img_type == "BGR",
-            "standalone Preproc must derive input format from actual upstream input");
-    require_not_contains(
-        frag, "stage-id=", "standalone Preproc fragment must not opt into manifest routing");
-    require_not_contains(
-        frag, "config=", "standalone Preproc fragment must not emit a legacy config path");
-  }
+        Preproc node(opt);
+        const OutputSpec out = node.output_spec(make_rgb_input_spec(1920, 1080));
+        const std::string frag = node.backend_fragment(0);
+        require(out.width == 640 && out.height == 640,
+                "standalone Preproc should preserve explicit output size");
+        require(node.options().input_width() == 1920 && node.options().input_height() == 1080,
+                "standalone Preproc must derive input width/height from actual upstream input");
+        require(node.options().input_img_type == "BGR",
+                "standalone Preproc must derive input format from actual upstream input");
+        require_not_contains(
+            frag, "stage-id=", "standalone Preproc fragment must not opt into manifest routing");
+        require_not_contains(
+            frag, "config=", "standalone Preproc fragment must not emit a legacy config path");
+      }
 
-  {
-    PreprocOptions opt;
-    opt.set_output_shape({640, 640});
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "INT16";
-    opt.tessellate = true;
+      {
+        PreprocOptions opt;
+        opt.set_output_shape({640, 640});
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "INT16";
+        opt.tessellate = true;
 
-    Preproc node(opt);
-    bool threw = false;
-    try {
-      (void)node.output_spec(make_rgb_input_spec(1280, 720));
-    } catch (const std::exception& e) {
-      threw = true;
-      require_contains(std::string(e.what()), "slice_shape",
-                       "standalone tess Preproc must hard fail without explicit tile geometry");
-    }
-    require(threw, "standalone tessellated Preproc must hard fail when tile geometry is missing");
-  }
+        Preproc node(opt);
+        bool threw = false;
+        try {
+          (void)node.output_spec(make_rgb_input_spec(1280, 720));
+        } catch (const std::exception& e) {
+          threw = true;
+          require_contains(std::string(e.what()), "slice_shape",
+                           "standalone tess Preproc must hard fail without explicit tile geometry");
+        }
+        require(threw,
+                "standalone tessellated Preproc must hard fail when tile geometry is missing");
+      }
 
-  {
-    PreprocOptions opt;
-    opt.set_output_shape({640, 640});
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "INT16";
-    opt.tessellate = false;
-    opt.set_slice_shape({32, 128, 3});
+      {
+        PreprocOptions opt;
+        opt.set_output_shape({640, 640});
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "INT16";
+        opt.tessellate = false;
+        opt.set_slice_shape({32, 128, 3});
 
-    Preproc node(opt);
-    const OutputSpec out = node.output_spec(make_rgb_input_spec(1280, 720));
-    require(out.width == 640 && out.height == 640,
+        Preproc node(opt);
+        const OutputSpec out = node.output_spec(make_rgb_input_spec(1280, 720));
+        require(
+            out.width == 640 && out.height == 640,
             "standalone Preproc should still produce a valid output contract when tessellate=false "
             "and tile geometry is provided");
-  }
+      }
 
-  {
-    PreprocOptions opt;
-    opt.set_output_shape({640, 640});
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "INT8";
-    opt.tessellate = false;
+      {
+        PreprocOptions opt;
+        opt.set_output_shape({640, 640});
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "INT8";
+        opt.tessellate = false;
 
-    Preproc node(opt);
-    const OutputSpec out = node.output_spec(make_rgb_input_spec(1280, 720));
-    require(out.width == 640 && out.height == 640,
-            "standalone quantized Preproc should still produce a valid output contract without "
-            "explicit quant params");
-  }
+        Preproc node(opt);
+        const OutputSpec out = node.output_spec(make_rgb_input_spec(1280, 720));
+        require(out.width == 640 && out.height == 640,
+                "standalone quantized Preproc should still produce a valid output contract without "
+                "explicit quant params");
+      }
 
-  {
-    PreprocOptions opt;
-    opt.set_output_shape({640, 640});
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "INT16";
-    opt.tessellate = false;
-    opt.q_scale = 0.25;
-    opt.q_zp = -7;
+      {
+        PreprocOptions opt;
+        opt.set_output_shape({640, 640});
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "INT16";
+        opt.tessellate = false;
+        opt.q_scale = 0.25;
+        opt.q_zp = -7;
 
-    Preproc node(opt);
-    (void)node.output_spec(make_rgb_input_spec(1280, 720));
-  }
+        Preproc node(opt);
+        (void)node.output_spec(make_rgb_input_spec(1280, 720));
+      }
 
-  {
-    PreprocOptions opt;
-    opt.set_output_shape({640, 640});
-    opt.output_img_type = "RGB";
-    opt.output_dtype = "INT8";
-    opt.tessellate = false;
-    opt.q_scale = 0.5;
-    opt.q_zp = -9;
+      {
+        PreprocOptions opt;
+        opt.set_output_shape({640, 640});
+        opt.output_img_type = "RGB";
+        opt.output_dtype = "INT8";
+        opt.tessellate = false;
+        opt.q_scale = 0.5;
+        opt.q_zp = -9;
 
-    Preproc node(opt);
-    InputContract contract;
-    contract.media_type = "video/x-raw";
-    contract.format = "BGR";
-    contract.width = 1280;
-    contract.height = 720;
-    contract.depth = 3;
-    node.apply_input_contract(contract, nullptr);
+        Preproc node(opt);
+        InputContract contract;
+        contract.media_type = "video/x-raw";
+        contract.format = "BGR";
+        contract.width = 1280;
+        contract.height = 720;
+        contract.depth = 3;
+        node.apply_input_contract(contract, nullptr);
 
-    const auto* cfg = node.config_json();
-    require(cfg != nullptr,
-            "standalone quantized Preproc should materialize config from input contract");
-    require((*cfg).value("q_scale", 0.0) == 0.5,
-            "standalone Preproc should serialize explicit q_scale");
-    require((*cfg).value("q_zp", 0) == -9, "standalone Preproc should serialize explicit q_zp");
-  }
-});
+        const auto* cfg = node.config_json();
+        require(cfg != nullptr,
+                "standalone quantized Preproc should materialize config from input contract");
+        require((*cfg).value("q_scale", 0.0) == 0.5,
+                "standalone Preproc should serialize explicit q_scale");
+        require((*cfg).value("q_zp", 0) == -9, "standalone Preproc should serialize explicit q_zp");
+      }
+    }));

@@ -441,4 +441,113 @@ resolve_consumer_edge_contracts(const SimaPluginStaticManifest& manifest,
   return out;
 }
 
+std::vector<ResolvedEdgeContract>
+resolve_consumer_edge_contracts_exact(const SimaPluginStaticManifest& manifest,
+                                      std::size_t consumer_stage_index,
+                                      std::string* error_message) {
+  if (consumer_stage_index >= manifest.stages.size()) {
+    set_error(error_message, "consumer stage index is out of range");
+    return {};
+  }
+  const auto& consumer = manifest.stages[consumer_stage_index];
+  std::vector<ResolvedEdgeContract> out;
+  out.reserve(consumer.input_bindings.size());
+  for (std::size_t binding_index = 0; binding_index < consumer.input_bindings.size();
+       ++binding_index) {
+    const auto& binding = consumer.input_bindings[binding_index];
+    const auto fail = [&](std::string detail) {
+      set_error(error_message, binding_label(consumer_stage_index, binding_index) + ": " + detail);
+      return std::vector<ResolvedEdgeContract>{};
+    };
+    std::optional<std::size_t> producer_index;
+    if (binding.src_stage_index >= 0) {
+      const auto index = static_cast<std::size_t>(binding.src_stage_index);
+      if (index >= manifest.stages.size()) {
+        return fail("input producer index is out of range");
+      }
+      producer_index = index;
+    }
+    if (!binding.src_stage_id.empty()) {
+      std::optional<std::size_t> named;
+      for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
+        const auto& candidate = manifest.stages[i];
+        if (candidate.element_name == binding.src_stage_id ||
+            candidate.logical_stage_id == binding.src_stage_id) {
+          if (named) {
+            return fail("ambiguous producer identity '" + binding.src_stage_id + "'");
+          }
+          named = i;
+        }
+      }
+      if (!named || (producer_index && *producer_index != *named)) {
+        return fail("missing or conflicting producer identity '" + binding.src_stage_id + "'");
+      }
+      producer_index = named;
+    }
+    if (!producer_index) {
+      // Native MLA/CVU authoring carries value identities, not necessarily
+      // stage selectors. A consumer's physical region alias can differ from
+      // the producer's packed carrier (value_N versus MLA_0); cm_input_name
+      // retains the exact logical head identity across that projection.
+      const auto value_matches = [&](std::string_view value) {
+        return same_nonempty(value, binding.cm_input_name) ||
+               same_nonempty(value, binding.source_segment_name);
+      };
+      if (binding.cm_input_name.empty() && binding.source_segment_name.empty()) {
+        return fail("binding omits an explicit producer and an authored value identity");
+      }
+      for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
+        if (i == consumer_stage_index) {
+          continue;
+        }
+        const auto& candidate = manifest.stages[i];
+        const bool matches =
+            std::any_of(candidate.logical_outputs.begin(), candidate.logical_outputs.end(),
+                        [&](const auto& logical) {
+                          return value_matches(logical.logical_name) ||
+                                 value_matches(logical.backend_name) ||
+                                 value_matches(logical.segment_name);
+                        }) ||
+            std::any_of(
+                candidate.physical_outputs.begin(), candidate.physical_outputs.end(),
+                [&](const auto& physical) { return value_matches(physical.segment_name); }) ||
+            std::any_of(candidate.output_order.begin(), candidate.output_order.end(),
+                        [&](const auto& route) {
+                          return value_matches(route.cm_output_name) ||
+                                 value_matches(route.segment_name);
+                        });
+        if (!matches) {
+          continue;
+        }
+        if (producer_index) {
+          return fail("ambiguous authored producer value '" + binding.cm_input_name + "'/'" +
+                      binding.source_segment_name + "'");
+        }
+        producer_index = i;
+      }
+      if (!producer_index) {
+        return fail("no producer for authored value '" + binding.cm_input_name + "'/'" +
+                    binding.source_segment_name + "'");
+      }
+    }
+    // Pin the proven producer for descriptor resolution, bypassing the general
+    // resolver's legacy neighbor fallback. Preserve original binding pointers
+    // in the result; this local selector is not new persisted contract metadata.
+    auto selected_binding = binding;
+    selected_binding.src_stage_index = static_cast<int>(*producer_index);
+    selected_binding.src_stage_id.clear();
+    std::string detail;
+    auto edge = resolve_edge_contract_for_binding(manifest, consumer_stage_index, selected_binding,
+                                                  &detail);
+    if (!edge || edge->producer_stage_index != *producer_index) {
+      return fail("exact producer edge cannot resolve its descriptors: " + detail);
+    }
+    edge->binding = &binding;
+    edge->binding_index = binding_index;
+    out.push_back(*edge);
+  }
+  set_error(error_message, {});
+  return out;
+}
+
 } // namespace simaai::neat::pipeline_internal::sima::edgecontract
