@@ -303,6 +303,24 @@ void require_native_retention_pool_policy() {
   build.rendered_manifest->stages[0].frame_arena_provenance =
       sima::static_contract::ArenaAllocationProvenance::ExternalAdopted;
   check(session_build_clamp_sync_build_result(build, 1), "");
+  build.rendered_manifest->stages[0].input_bindings.push_back(
+      sima::InputBindingStaticSpec{.cm_input_name = "external_value"});
+  check(session_build_clamp_sync_build_result(build, 1), "");
+
+  build = make_retention_build();
+  build.pipeline_string =
+      "appsrc name=input ! neatprocessmla name=actual_mla num-buffers=1 ! "
+      "neatprocesscvu name=actual_detess num-buffers=1 ! queue max-size-buffers=1 ! "
+      "appsink name=mysink";
+  build.rendered_manifest->stages.erase(build.rendered_manifest->stages.begin());
+  build.rendered_manifest->stages[0].frame_arena_role = sima::FrameArenaRole::ReuseInput;
+  build.rendered_manifest->stages[0].input_bindings[0].src_stage_index = -1;
+  build.rendered_manifest->stages[0].input_bindings[0].src_stage_id.clear();
+  for (auto& binding : build.rendered_manifest->stages[1].input_bindings) {
+    binding.src_stage_index = 0;
+    binding.src_stage_id = "logical_1";
+  }
+  check(session_build_clamp_sync_build_result(build, 1), "");
 
   build = make_retention_build();
   build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = -1;

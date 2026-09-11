@@ -3185,9 +3185,24 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
       origins[index] = index;
       return index;
     }
-    if (stage.input_bindings.empty() &&
-        stage.frame_arena_provenance == ArenaAllocationProvenance::ExternalAdopted) {
+    if (stage.frame_arena_provenance == ArenaAllocationProvenance::ExternalAdopted) {
       origins[index] = index; // No local pool may be invented for externally loaned storage.
+      return index;
+    }
+    const auto rendered = std::find_if(elements.begin(), elements.end(), [&](const auto& element) {
+      return element.element_name == rendered_name;
+    });
+    const bool has_rendered_native_predecessor =
+        rendered != elements.end() &&
+        std::any_of(elements.begin(), rendered, [&](const auto& element) {
+          return native_names.contains(element.element_name);
+        });
+    if (stage.frame_arena_role == FrameArenaRole::ReuseInput &&
+        !has_rendered_native_predecessor) {
+      // A public stage fragment can begin at MLA/CVU while retaining the full
+      // MPK's authored producer binding. The incoming GstBuffer owns that
+      // carrier; there is no allocator in this rendered fragment to enlarge.
+      origins[index] = index;
       return index;
     }
     visiting[index] = true;
