@@ -54,10 +54,10 @@ if (NOT SIMANEAT_PLATFORM_VERSION MATCHES "^2[.]1[.]")
   list(GET SIMANEAT_RUNTIME_IDENTITY_LIST 0 SIMANEAT_RUNTIME_PROFILE)
   list(GET SIMANEAT_RUNTIME_IDENTITY_LIST 1 SIMANEAT_KERNEL_COMMIT)
   list(GET SIMANEAT_RUNTIME_IDENTITY_LIST 2 SIMANEAT_INTERNALS_SYSROOT)
-  if (NOT SIMANEAT_RUNTIME_PROFILE STREQUAL "modalix-3.0.0-b1157" OR
+  if (NOT SIMANEAT_RUNTIME_PROFILE STREQUAL "modalix-3.0.0-b1297" OR
       NOT SIMANEAT_KERNEL_COMMIT MATCHES "^[a-f0-9]+$" OR
-      NOT SIMANEAT_INTERNALS_SYSROOT MATCHES "^3[.]0[.]0~git[0-9]+[.][a-f0-9]+-1157$")
-    message(FATAL_ERROR "Invalid B1157 Internals runtime identity")
+      NOT SIMANEAT_INTERNALS_SYSROOT MATCHES "^3[.]0[.]0~git[0-9]+[.][a-f0-9]+-1297$")
+    message(FATAL_ERROR "Invalid B1297 Internals runtime identity")
   endif()
 endif()
 configure_file(cmake/RequireInternalsProfile.cmake.in
@@ -410,7 +410,7 @@ endif()
 
 if (SIMANEAT_RUNTIME_PROFILE AND SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS AND
     NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
-  message(FATAL_ERROR "B1157 requires the profile-verified exported NeatInternals package; ad hoc discovery is disabled")
+  message(FATAL_ERROR "B1297 requires the profile-verified exported NeatInternals package; ad hoc discovery is disabled")
 endif()
 
 function(simaneat_imported_target_location out_var target_name)
@@ -1626,7 +1626,7 @@ if (SimaLMM_FOUND)
     "libcpp-httplib0.11")
 endif()
 if (SIMANEAT_RUNTIME_PROFILE)
-  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "neat-runtime-profile-b1157 (= 1)")
+  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "neat-runtime-profile-b1297 (= 1)")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(SIMANEAT_DEV_DEBIAN_DEPENDS

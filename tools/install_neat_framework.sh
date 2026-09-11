@@ -700,10 +700,10 @@ try:
         "kernel_commit": manifest.get("kernel-commit"),
         "sysroot_version": manifest.get("expected-internals-sysroot"),
     }
-    if expected["runtime_profile"] != "modalix-3.0.0-b1157" or not all(
+    if expected["runtime_profile"] != "modalix-3.0.0-b1297" or not all(
         isinstance(value, str) and value for value in expected.values()
     ):
-        raise ValueError("missing explicit B1157 runtime identity in Core manifest")
+        raise ValueError("missing explicit B1297 runtime identity in Core manifest")
     selected = {}
     for deb in sys.argv[2:]:
         name = subprocess.check_output(["dpkg-deb", "-f", deb, "Package"], text=True).strip()
@@ -714,7 +714,7 @@ try:
         version = subprocess.check_output(["dpkg-deb", "-f", deb, "Version"], text=True).strip()
         selected[name] = (deb, version)
     if set(selected) != {"neat-runtime", "neat-gst-plugins"}:
-        raise ValueError("B1157 requires bundled neat-runtime and neat-gst-plugins")
+        raise ValueError("B1297 requires bundled neat-runtime and neat-gst-plugins")
     if selected["neat-runtime"][1] != selected["neat-gst-plugins"][1]:
         raise ValueError("bundled Internals runtime/plugin versions differ")
     receipt = None
