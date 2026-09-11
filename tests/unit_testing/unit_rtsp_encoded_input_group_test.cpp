@@ -567,6 +567,7 @@ void check_decoded_source_fps_and_videorate() {
   if (const auto backend =
           describe_backend_if_available(video_rate_group, "MJPEG videorate backend")) {
     require_contains(*backend, "videorate", "videorate backend should be present");
+    require_contains(*backend, "drop-only=true", "RTSP videorate must inherit drop-only default");
     require_contains(*backend, "framerate=30/1",
                      "video_rate_fps should configure downstream framerate caps");
     require_contains(*backend, "dec-fps=120",

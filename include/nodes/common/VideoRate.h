@@ -1,10 +1,11 @@
 /**
  * @file
  * @ingroup nodes_common
- * @brief `VideoRate` Node — adjust framerate (drop / duplicate frames as needed).
+ * @brief `VideoRate` Node — limit framerate by dropping frames.
  *
  * Wraps GStreamer's `videorate`. Combine with a downstream caps filter that pins
- * `framerate=…/1` to coerce the stream to a target rate.
+ * `framerate=…/1` to select the output rate. Always uses drop-only mode, which
+ * preserves input timestamps and does not duplicate frames.
  */
 #pragma once
 

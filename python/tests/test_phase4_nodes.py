@@ -66,6 +66,12 @@ def test_caps_and_media_nodes_construct():
     assert isinstance(node, pyneat.Node)
 
 
+def test_video_rate_drops_only():
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.video_rate())
+  assert "drop-only=true" in graph.describe_backend()
+
+
 def test_camera_input_options_roundtrip():
   opt = pyneat.CameraInputOptions()
   assert opt.width == 1920

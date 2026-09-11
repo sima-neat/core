@@ -258,6 +258,11 @@ Key types:
 ### `nodes/` -- typed pipeline building blocks
 **Purpose:** Provide ready-to-use Node implementations that emit deterministic GStreamer fragments.
 
+`VideoRate()` always emits `videorate drop-only=true`, including when inserted
+by a source group. This avoids duplicated output headers sharing pooled decoder
+memory and preserves source timestamps. The C++ `VideoRate()` and Python
+`video_rate()` factories take no arguments and do not duplicate frames.
+
 Examples:
 - `nodes/io/HttpSource`, `nodes/io/RTSPInput`, `nodes/io/StillImageInput`
 - `nodes/common/*` (Caps, Queue, Output, etc.)

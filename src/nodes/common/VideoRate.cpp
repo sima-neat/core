@@ -18,7 +18,7 @@ public:
   }
 
   std::string backend_fragment(int node_index) const override {
-    return "videorate name=n" + std::to_string(node_index) + "_videorate";
+    return "videorate name=n" + std::to_string(node_index) + "_videorate drop-only=true";
   }
 
   std::vector<std::string> element_names(int node_index) const override {
