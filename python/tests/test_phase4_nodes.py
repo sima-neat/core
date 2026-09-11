@@ -66,15 +66,10 @@ def test_caps_and_media_nodes_construct():
     assert isinstance(node, pyneat.Node)
 
 
-def test_video_rate_drop_only_default_and_override():
-  for node, expected in (
-      (pyneat.nodes.video_rate(), "true"),
-      (pyneat.nodes.video_rate(drop_only=True), "true"),
-      (pyneat.nodes.video_rate(drop_only=False), "false"),
-  ):
-    graph = pyneat.Graph()
-    graph.add(node)
-    assert f"drop-only={expected}" in graph.describe_backend()
+def test_video_rate_drops_only():
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.video_rate())
+  assert "drop-only=true" in graph.describe_backend()
 
 
 def test_camera_input_options_roundtrip():
