@@ -978,8 +978,8 @@ RUN_TEST(
               &wrong_terminal_input_mpk.plugins[wrong_input_terminal_index], &error);
       require(!wrong_terminal_input_flags.has_value(),
               "a selected head bound to the wrong terminal input must fail closed");
-      require_contains(error, "incorrect terminal input binding",
-                       "wrong terminal input rejection should identify binding");
+      require_contains(error, "unique and contiguous",
+                       "wrong terminal input rejection should identify the broken bijection");
 
       auto duplicate_terminal_input_mpk = make_exact_terminal_mpk();
       const std::size_t duplicate_input_terminal_index =
@@ -993,7 +993,7 @@ RUN_TEST(
               &duplicate_terminal_input_mpk.plugins[duplicate_input_terminal_index], &error);
       require(!duplicate_terminal_input_flags.has_value(),
               "duplicate model-owned terminal input bindings must fail closed");
-      require_contains(error, "incorrect terminal input binding",
+      require_contains(error, "unique and contiguous",
                        "duplicate terminal binding should fail the exact per-head bijection");
 
       auto wrong_terminal_mpk = make_exact_terminal_mpk();
@@ -1013,8 +1013,8 @@ RUN_TEST(
           wrong_terminal_mpk, &wrong_terminal_mpk.plugins[exact_wrong_terminal_index], &error);
       require(!wrong_terminal_flags.has_value(),
               "a selected head routed to a different terminal plugin must fail closed");
-      require_contains(error, "wrong terminal destination",
-                       "wrong terminal-plugin rejection should identify destination");
+      require_contains(error, "could not route every MLA logical output",
+                       "wrong terminal-plugin rejection should identify the missing route");
 
       auto bf16_with_sibling_dequant_mpk = exact_packed_bf16_mpk;
       MpkPluginIoContract sibling_dequant;
@@ -2183,7 +2183,7 @@ RUN_TEST(
       require(!conflicting_slice.has_value(),
               "slice output shape conflicting with begin/end must reject");
       require_contains(error, "conflicts with its begin/end extent",
-                       "slice conflict should identify the malformed MPK declaration");
+                       "slice conflict should identify the malformed MPK declaration: " + error);
 
       // AFE single-MLA packages can expose logical dense heads directly from
       // MLA with no unpack/detess stage. The exact shape*dtype byte count is an

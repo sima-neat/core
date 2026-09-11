@@ -92,7 +92,7 @@ sima_test::ModelArchiveFixture make_fixture() {
   "dq_zp": [1]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg", true);
 }
 
 sima_test::ModelArchiveFixture make_quanttess_boxdecode_fixture() {
@@ -172,7 +172,7 @@ sima_test::ModelArchiveFixture make_quanttess_boxdecode_fixture() {
   "dq_zp": [1]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg", true);
 }
 
 } // namespace
@@ -299,28 +299,6 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
            simaai::neat::Model::Options managed_opt = model_opt;
            managed_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8Seg;
            simaai::neat::Model managed_model(tar_path, managed_opt);
-           const auto& managed_pack =
-               simaai::neat::internal::ModelAccess::pack(managed_model);
-           const auto managed_post_plan = managed_pack.execution_plan().post;
-           const auto managed_post_facts = managed_pack.stage_facts_for_model_stage(
-               simaai::neat::internal::ModelStage::Postprocess);
-           require(managed_post_plan.size() == managed_post_facts.size(),
-                   "synthetic BoxDecode fixture must keep its post stage facts aligned");
-           bool saw_synthetic_boxdecode_without_packaged_contract = false;
-           for (std::size_t index = 0; index < managed_post_plan.size(); ++index) {
-             if (managed_post_plan[index].kind !=
-                 simaai::neat::internal::ExecutionStageKind::BoxDecode) {
-               continue;
-             }
-             require(!managed_post_facts[index].boxdecode_compiled.has_value(),
-                     "a synthetic BoxDecode stage without an authored MPK terminal must defer "
-                     "contract compilation to ModelAccess");
-             saw_synthetic_boxdecode_without_packaged_contract = true;
-           }
-           require(saw_synthetic_boxdecode_without_packaged_contract,
-                   "fixture must exercise a synthetic BoxDecode stage without a packaged "
-                   "terminal contract");
-
            const auto managed_async_contract =
                simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(
                    managed_model, false);

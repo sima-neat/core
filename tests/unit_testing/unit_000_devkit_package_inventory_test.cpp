@@ -118,7 +118,6 @@ int main() {
         {"appcomplex", "native-sima"},
         {"simaai-common", "native-sima"},
         {"simaai-palette-modalix", "native-sima"},
-        {"simaai-palette-upgrade", "native-sima"},
         {"libcamera", "native-sima"},
         {"libcamera-tools", "native-sima"},
         {"simaai-a65-plat-tests", "native-sima"},
@@ -132,7 +131,7 @@ int main() {
         {"simaai-memory-lib-dev", "native-sima"},
         {"simaai-parser", "native-sima"},
         {"simaai-pcie-ep", "native-sima"},
-        {"simaai-rctd", "native-sima"},
+        {"simaai-traced", "native-sima"},
         {"simaai-socpipeline", "native-sima"},
         {"simaai-trace", "native-sima"},
     };

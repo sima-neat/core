@@ -1280,9 +1280,10 @@ decode_impl(const std::string_view text,
 
     ModelExecutionPlanData data;
     data.contract_version = required_string(root, "model_sdk_version", "$");
-    if (data.contract_version != "2.0.0" && data.contract_version != "2.1.0") {
+    if (data.contract_version != "2.0.0" && data.contract_version != "2.1.0" &&
+        data.contract_version != "2.1.3") {
       reject(AfeMpkV2DecodeErrorCode::UnsupportedContractVersion, "$.model_sdk_version",
-             "strict decoder supports only exact contract versions 2.0.0 and 2.1.0");
+             "strict decoder supports only exact contract versions 2.0.0, 2.1.0, and 2.1.3");
     }
     result.proof.push_back({"contract.version", "MPK $.model_sdk_version exactly equals '" +
                                                     data.contract_version + "'"});

@@ -512,6 +512,10 @@ void test_exact_registry() {
       lookup_exact_kernel("2.1.0", "EV74", "batch_flatten_transform");
   check(batch_flatten && batch_flatten->kind == OpKind::Reshape,
         "AFE 2.1 batch flatten has one exact address-view registry entry");
+  const auto released_batch_flatten =
+      lookup_exact_kernel("2.1.3", "EV74", "batch_flatten_transform");
+  check(released_batch_flatten && released_batch_flatten->kind == OpKind::Reshape,
+        "Model Compiler 2.1.3 has an explicit frozen AFE v2 registry entry");
   check(!lookup_exact_kernel("2.0.0", "EV74", "batch_flatten_transform"),
         "batch flatten does not acquire a version fallback");
 }
@@ -544,6 +548,18 @@ void test_success_and_immutable_contract() {
             plan.backend_ports()[1].elf_symbol == "data.ofm.b0",
         "exact monolithic symbols retained");
   check(!result.proof.empty(), "deterministic proof report emitted");
+}
+
+void test_model_sdk_2_1_3_contract() {
+  const auto result = AfeMpkV2Decoder{}.decode_json(
+      replace_once(valid_manifest(), "2.0.0", "2.1.3"), monolithic_topology(),
+      "model-sdk-2.1.3.json");
+  if (!result && result.error.has_value()) {
+    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
+  }
+  check(static_cast<bool>(result), "Model Compiler 2.1.3 AFE v2 manifest decodes");
+  check(result.plan && result.plan->contract_version() == "2.1.3",
+        "Model Compiler version is preserved exactly in the execution plan");
 }
 
 void test_unpack_and_slice_are_read_expressions() {
@@ -1241,6 +1257,7 @@ int main(const int argc, char** argv) {
   check(argc == 1, "usage: unit_afe_mpk_v2_decoder_test [manifest elf]");
   test_exact_registry();
   test_success_and_immutable_contract();
+  test_model_sdk_2_1_3_contract();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
   test_registered_detess_layout_is_preserved_through_dequant();
