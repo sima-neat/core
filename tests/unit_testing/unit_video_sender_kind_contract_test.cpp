@@ -30,9 +30,9 @@ int main() {
           layout_aware ? kVideoSenderRawIngressDirectKind : kVideoSenderRawIngressMaterializeKind;
       if (selected->kind() != expected)
         throw std::runtime_error("selected ingress disagrees with input allocation policy");
-      const bool converts = selected->backend_fragment(0).find("videoconvert") != std::string::npos;
-      if (converts == layout_aware)
-        throw std::runtime_error("ingress kind no longer matches its conversion behavior");
+      if (selected->backend_fragment(0).find("neatencoderinput") == std::string::npos)
+        throw std::runtime_error(
+            "ingress must retain actual DMA/layout validation in either variant");
     }
     return 0;
   } catch (const std::exception& error) {

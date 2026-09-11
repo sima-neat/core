@@ -15,6 +15,7 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorTransfer.h"
@@ -1028,9 +1029,30 @@ void apply_tensor_dtype_from_format(simaai::neat::Tensor& tensor, const std::str
 void apply_preproc_output_override(simaai::neat::Tensor& tensor, const PreprocOutputInfo& info) {
   // JSON config overrides caps. Preproc caps can remain RGB even when tessellated.
   if (info.transport_kind == PreprocOutputTransportKind::Dense) {
-    apply_tensor_dims(tensor, info.logical_dims);
+    if (!info.roi_member_shape.empty()) {
+      tensor.shape = info.roi_member_shape;
+      tensor.strides_bytes = info.roi_member_strides_bytes;
+      // The image-stage API exposes one dense image, without its singleton N.
+      // Keep authored CHW/HWC strides rather than rebuilding an HWC view.
+      if (tensor.shape.size() == 4U && tensor.shape.front() == 1) {
+        if (tensor.strides_bytes.size() == tensor.shape.size()) {
+          tensor.strides_bytes.erase(tensor.strides_bytes.begin());
+        }
+        tensor.shape.erase(tensor.shape.begin());
+      }
+    } else {
+      apply_tensor_dims(tensor, info.logical_dims);
+    }
     if (info.logical_layout != TensorLayout::Unknown) {
       tensor.layout = info.logical_layout;
+    }
+    std::uint8_t axes[SIMA_EV_MAX_RANK]{};
+    pipeline_internal::sima::tensorsemantics::fill_axis_semantics_from_shape_layout(
+        tensor.shape, tensor.layout == TensorLayout::CHW ? "CHW" : "HWC", axes);
+    tensor.axis_semantics.clear();
+    for (std::size_t i = 0; i < tensor.shape.size() && i < SIMA_EV_MAX_RANK; ++i) {
+      tensor.axis_semantics.push_back(
+          pipeline_internal::sima::tensorsemantics::from_ev_axis(axes[i]));
     }
   }
   if (info.output_dtype.empty())
@@ -1039,67 +1061,48 @@ void apply_preproc_output_override(simaai::neat::Tensor& tensor, const PreprocOu
   apply_tensor_dtype_from_format(tensor, fmt);
 }
 
-int resolve_preproc_selected_memory_index(const Sample& sample, const PreprocOutputInfo& info) {
-  if (!find_gst_sample_backed_tensor_for_memory_view(sample, -1)) {
-    return -1;
-  }
-  pipeline_internal::TensorBufferView view;
-  std::string view_err;
-  if (!pipeline_internal::tensor_buffer_view_from_sample(sample, &view, &view_err) ||
-      !view.buffer) {
-    throw std::runtime_error("Preproc: tensor buffer descriptor unavailable: " + view_err);
-  }
-  auto memory_index_for = [](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
-    return tensor.memory_index >= 0 ? tensor.memory_index : tensor.physical_index;
+const Tensor& resolve_preproc_selected_tensor(const Sample& sample, const PreprocOutputInfo& info) {
+  // InputStreamPull has already materialized each logical descriptor, including
+  // its composed offset and loan owner. A memory index is not a logical identity:
+  // several outputs may share the same arena memory.
+  const auto find_unique = [&](const auto& predicate) -> const Tensor* {
+    const Tensor* found = nullptr;
+    for (const auto& tensor : sample.tensors) {
+      if (!predicate(tensor)) {
+        continue;
+      }
+      if (found) {
+        throw std::runtime_error("Preproc: selected logical output is ambiguous");
+      }
+      found = &tensor;
+    }
+    return found;
   };
-  const auto find_tensor =
-      [&](const auto& pred) -> const pipeline_internal::TensorBufferTensorDescriptor* {
-    const auto it = std::find_if(view.tensors.begin(), view.tensors.end(), pred);
-    return it == view.tensors.end() ? nullptr : &(*it);
+  const auto name_matches = [&](const Tensor& tensor) {
+    return !info.primary_output_name.empty() &&
+           (tensor.route.name == info.primary_output_name ||
+            tensor.route.backend_name == info.primary_output_name);
   };
-  const auto output_name_matches =
-      [&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
-        return !info.primary_output_name.empty() &&
-               (tensor.logical_name == info.primary_output_name ||
-                tensor.segment_name == info.primary_output_name ||
-                tensor.backend_name == info.primary_output_name);
-      };
-
-  if (const auto* tensor_view =
-          find_tensor([&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
-            return tensor.route_slot == info.primary_route_slot && output_name_matches(tensor);
-          })) {
-    return memory_index_for(*tensor_view);
+  if (const auto* tensor = find_unique([&](const Tensor& candidate) {
+        return name_matches(candidate) && candidate.route.route_slot == info.primary_route_slot;
+      })) {
+    return *tensor;
   }
-  if (const auto* tensor_view = find_tensor(output_name_matches)) {
-    return memory_index_for(*tensor_view);
+  if (const auto* tensor = find_unique(name_matches)) {
+    return *tensor;
   }
   if (info.primary_route_slot >= 0) {
-    if (const auto* tensor_view =
-            find_tensor([&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
-              return tensor.route_slot == info.primary_route_slot;
-            })) {
-      return memory_index_for(*tensor_view);
+    if (const auto* tensor = find_unique([&](const Tensor& candidate) {
+          return candidate.route.route_slot == info.primary_route_slot;
+        })) {
+      return *tensor;
     }
   }
-  if (view.tensors.size() == 1U) {
-    return memory_index_for(view.tensors.front());
+  if (sample.tensors.size() == 1U) {
+    return sample.tensors.front();
   }
-
-  std::ostringstream detail;
-  detail << "Preproc: failed to resolve selected output '" << info.primary_output_name
-         << "' route_slot=" << info.primary_route_slot << " descriptors=[";
-  for (std::size_t i = 0; i < view.tensors.size(); ++i) {
-    const auto& tensor = view.tensors[i];
-    if (i > 0) {
-      detail << "; ";
-    }
-    detail << "{slot=" << tensor.route_slot << ",logical='" << tensor.logical_name << "',backend='"
-           << tensor.backend_name << "',segment='" << tensor.segment_name
-           << "',memory=" << tensor.memory_index << ",physical=" << tensor.physical_index << "}";
-  }
-  detail << "]";
-  throw std::runtime_error(detail.str());
+  throw std::runtime_error("Preproc: failed to resolve selected logical output '" +
+                           info.primary_output_name + "'");
 }
 
 TensorDims mla_output_dims_from_shape(const std::vector<int64_t>& shape) {
@@ -1581,7 +1584,8 @@ make_stage_preprocess_meta_template(const cv::Mat& input, const simaai::neat::Mo
 
 std::vector<std::shared_ptr<Node>>
 clone_preproc_group_with_roi_capacity(const std::vector<std::shared_ptr<Node>>& group,
-                                      int roi_capacity) {
+                                      int roi_capacity, int source_count, int height, int width,
+                                      int channels) {
   if (roi_capacity <= 0) {
     throw std::invalid_argument("Preproc ROI-list: ROI capacity must be positive");
   }
@@ -1591,6 +1595,12 @@ clone_preproc_group_with_roi_capacity(const std::vector<std::shared_ptr<Node>>& 
   for (const auto& node : group) {
     if (const auto* preproc = dynamic_cast<const simaai::neat::Preproc*>(node.get())) {
       PreprocOptions opt = preproc->options();
+      if (!opt.compiled_contract) {
+        throw std::runtime_error("Preproc ROI-list: model has no admitted preprocessing contract");
+      }
+      opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
+          pipeline_internal::sima::specialize_preproc_roi_contract(
+              *opt.compiled_contract, source_count, height, width, channels, roi_capacity));
       opt.batch_size = roi_capacity;
       out.push_back(simaai::neat::nodes::Preproc(std::move(opt)));
       patched = true;
@@ -2267,6 +2277,12 @@ simaai::neat::Tensor select_stage_output_tensor_view(const Sample& sample, int m
   if (const Tensor* sample_tensor =
           find_gst_sample_backed_tensor_for_memory_view(sample, memory_index)) {
     log_stage_tensor_holder_state(source_label, *sample_tensor);
+    if (sample_tensor->route.logical_index >= 0 &&
+        (memory_index < 0 || sample_tensor->route.memory_index == memory_index)) {
+      // This is already the selected logical descriptor, not a raw carrier.
+      // Keep its exact offset, physical identity and shared loan owner.
+      return *sample_tensor;
+    }
     simaai::neat::Tensor tensor =
         pipeline_internal::tensor_view_from_sample_memory(*sample_tensor, memory_index);
     log_stage_tensor_holder_state(selected_label, tensor);
@@ -2410,30 +2426,12 @@ PreprocessAffine compute_roi_affine_and_geometry(PreprocessRuntimeMeta* meta,
   return affine;
 }
 
-int64_t preproc_roi_slot_bytes(const simaai::neat::Tensor& tensor, const PreprocOutputInfo& info,
-                               int roi_capacity) {
-  if (info.transport_kind == PreprocOutputTransportKind::Dense) {
-    const int64_t dense_bytes = tensor_total_bytes(tensor);
-    if (dense_bytes > 0) {
-      return dense_bytes;
-    }
+int64_t preproc_roi_slot_bytes(const PreprocOutputInfo& info) {
+  if (info.roi_slot_bytes == 0U ||
+      info.roi_slot_bytes > static_cast<std::uint64_t>(std::numeric_limits<int64_t>::max())) {
+    throw std::runtime_error("Preproc ROI-list: missing exact output member span");
   }
-  if (roi_capacity <= 0) {
-    return 0;
-  }
-  int64_t backing_bytes = tensor_primary_segment_size(tensor);
-  if (backing_bytes <= 0) {
-    const int memory_index =
-        tensor.route.memory_index >= 0 ? tensor.route.memory_index : tensor.route.physical_index;
-    backing_bytes = tensor_sample_memory_size(tensor, memory_index >= 0 ? memory_index : 0);
-  }
-  if (backing_bytes <= 0 && tensor.storage) {
-    backing_bytes = static_cast<int64_t>(tensor.storage->size_bytes);
-  }
-  if (backing_bytes <= 0 || backing_bytes % roi_capacity != 0) {
-    return 0;
-  }
-  return backing_bytes / roi_capacity;
+  return static_cast<int64_t>(info.roi_slot_bytes);
 }
 
 PreprocessRuntimeMeta scalar_preprocess_meta_for_roi(const PreprocessRuntimeMeta& list_meta,
@@ -2491,9 +2489,18 @@ TensorList split_preproc_roi_output_impl(const simaai::neat::Tensor& batched,
     throw std::runtime_error("Preproc ROI-list: output metadata has fewer ROIs than valid slots");
   }
 
-  const int64_t slot_bytes = preproc_roi_slot_bytes(batched, info, roi_capacity);
+  const int64_t slot_bytes = preproc_roi_slot_bytes(info);
   if (valid_count > 0 && slot_bytes <= 0) {
     throw std::runtime_error("Preproc ROI-list: unable to determine output slot byte size");
+  }
+  if (!batched.storage || batched.byte_offset < 0 || batched.route.physical_byte_offset < 0 ||
+      slot_bytes > std::numeric_limits<int64_t>::max() / roi_capacity ||
+      batched.byte_offset > std::numeric_limits<int64_t>::max() - slot_bytes * roi_capacity ||
+      batched.route.physical_byte_offset >
+          std::numeric_limits<int64_t>::max() - slot_bytes * roi_capacity ||
+      static_cast<std::uint64_t>(batched.byte_offset + slot_bytes * roi_capacity) >
+          batched.storage->size_bytes) {
+    throw std::runtime_error("Preproc ROI-list: exact output slots exceed the selected storage");
   }
 
   out.reserve(static_cast<std::size_t>(valid_count));
@@ -2502,6 +2509,27 @@ TensorList split_preproc_roi_output_impl(const simaai::neat::Tensor& batched,
     const int64_t slot_offset = static_cast<int64_t>(i) * slot_bytes;
     view.byte_offset += slot_offset;
     view.route.physical_byte_offset += slot_offset;
+    if (info.transport_kind == PreprocOutputTransportKind::Dense) {
+      apply_preproc_output_override(view, info);
+    } else {
+      if (info.roi_member_shape.empty() ||
+          (!info.roi_member_strides_bytes.empty() &&
+           info.roi_member_strides_bytes.size() != info.roi_member_shape.size())) {
+        throw std::runtime_error("Preproc ROI-list: missing coherent output member shape");
+      }
+      view.shape = info.roi_member_shape;
+      view.strides_bytes = info.roi_member_strides_bytes;
+    }
+    // The public view is one member, even when the producer published R members.
+    sima_ev_shape_desc member_shape{};
+    std::string shape_error;
+    if (!pipeline_internal::sima::tensorsemantics::fill_shape_desc(
+            view.shape, view.layout == TensorLayout::CHW ? "CHW" : "HWC", &member_shape,
+            &shape_error, "missing member shape", "invalid member rank", "invalid member shape")) {
+      throw std::runtime_error("Preproc ROI-list: " + shape_error);
+    }
+    view.axis_semantics =
+        pipeline_internal::sima::tensorsemantics::host_axis_semantics_from_ev(member_shape);
     view.semantic.preprocess = scalar_preprocess_meta_for_roi(meta, static_cast<std::size_t>(i));
     out.push_back(std::move(view));
   }
@@ -2511,6 +2539,10 @@ TensorList split_preproc_roi_output_impl(const simaai::neat::Tensor& batched,
 } // namespace
 
 namespace internal {
+Tensor select_preproc_output_for_stage(const Sample& sample, const PreprocOutputInfo& info) {
+  return resolve_preproc_selected_tensor(sample, info);
+}
+
 TensorList split_preproc_roi_output_for_stage(const simaai::neat::Tensor& batched,
                                               const PreprocessRuntimeMeta& meta, int roi_capacity,
                                               const PreprocOutputInfo& info) {
@@ -2603,26 +2635,9 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
   log_stage_output_sample("Preproc: output sample", out);
   simaai::neat::Tensor tensor;
   const std::string selected_output_name = preproc_info.primary_output_name;
-  if (sample_has_tensor_list(out) && out.tensors.size() == 1U &&
-      tensor_is_gst_sample_backed(out.tensors.front())) {
-    const int mem_index = resolve_preproc_selected_memory_index(out, preproc_info);
-    if (stage_debug_enabled()) {
-      std::fprintf(stderr, "[stage][preproc-select] primary_output=%s selected_index=%d\n",
-                   selected_output_name.empty() ? "<empty>" : selected_output_name.c_str(),
-                   mem_index);
-    }
-    tensor = select_stage_output_tensor_view(
-        out, mem_index, "Preproc", "Preproc: source before tensor_view_from_sample_memory",
-        "Preproc: selected tensor view", "Preproc: direct tensor");
-  } else {
-    tensor = take_tensor(out, "Preproc");
-    log_stage_tensor_holder_state("Preproc: direct tensor", tensor);
-  }
-  const bool packed_tessellated_handoff =
-      preproc_info.transport_kind == PreprocOutputTransportKind::Packed;
+  tensor = resolve_preproc_selected_tensor(out, preproc_info);
+  log_stage_tensor_holder_state("Preproc: selected logical view", tensor);
   apply_preproc_output_override(tensor, preproc_info);
-  if (!packed_tessellated_handoff) {
-  }
   const std::string pre_fmt = upper_copy(format_from_tensor(tensor));
   if (stage_debug_enabled()) {
     const std::shared_ptr<void> out_holder = pipeline_internal::holder_from_tensor(tensor);
@@ -2671,11 +2686,13 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
 
   auto base_group = simaai::neat::internal::ModelAccess::build_preprocess_nodes(model, true);
   const int roi_capacity = static_cast<int>(rois.size());
-  auto group = clone_preproc_group_with_roi_capacity(base_group, roi_capacity);
+  auto group = clone_preproc_group_with_roi_capacity(
+      base_group, roi_capacity, static_cast<int>(inputs.size()), source_geom.height,
+      source_geom.width, source_geom.channels);
   InputOptions src_opt = appsrc_for_mat(inputs.front(), group);
   log_stage_group_nodes("Preproc ROI-list", group);
 
-  const PreprocOutputInfo preproc_info = stage_preproc_output_info(group);
+  const PreprocOutputInfo preproc_info = stage_preproc_output_info(base_group);
   const auto resolved_preproc = model.resolved_preprocess_plan();
   if (!resolved_preproc.enabled) {
     throw std::runtime_error("Preproc ROI-list: model has no enabled preprocess plan");
@@ -2746,17 +2763,8 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
 
   simaai::neat::Tensor batched;
   const std::string selected_output_name = preproc_info.primary_output_name;
-  if (sample_has_tensor_list(raw_out) && raw_out.tensors.size() == 1U &&
-      tensor_is_gst_sample_backed(raw_out.tensors.front())) {
-    const int mem_index = resolve_preproc_selected_memory_index(raw_out, preproc_info);
-    batched = select_stage_output_tensor_view(
-        raw_out, mem_index, "Preproc ROI-list",
-        "Preproc ROI-list: source before tensor_view_from_sample_memory",
-        "Preproc ROI-list: selected tensor view", "Preproc ROI-list: direct tensor");
-  } else {
-    batched = take_tensor(raw_out, "Preproc ROI-list");
-    log_stage_tensor_holder_state("Preproc ROI-list: direct tensor", batched);
-  }
+  batched = resolve_preproc_selected_tensor(raw_out, preproc_info);
+  log_stage_tensor_holder_state("Preproc ROI-list: selected logical view", batched);
 
   std::optional<PreprocessRuntimeMeta> output_meta = preprocess_meta_from_tensor_or_holder(batched);
   if (!output_meta.has_value()) {
@@ -2774,8 +2782,6 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
 
   apply_preproc_output_override(batched, preproc_info);
   batched = require_supported_tessellated_dtype(std::move(batched), "Preproc ROI-list");
-  batched.route.segment_name =
-      batched.route.segment_name.empty() ? selected_output_name : batched.route.segment_name;
 
   TensorList split =
       split_preproc_roi_output_impl(batched, *output_meta, roi_capacity, preproc_info);

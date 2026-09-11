@@ -3,6 +3,7 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/runtime/RunInternal.h"
 #include "graph/internal/GraphRunState.h"
@@ -30,6 +31,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -102,6 +104,262 @@ private:
   std::string name_;
   std::optional<std::string> prior_;
 };
+
+// Six logical edges are six regions of one retained native frame, not six
+// independently budgeted output carriers. Names deliberately do not identify
+// the allocation role; the container node name is not needed by this policy.
+simaai::neat::BuildResult make_retention_build() {
+  using namespace simaai::neat;
+  namespace sima = pipeline_internal::sima;
+  BuildResult build;
+  build.appsink_name = "mysink";
+  build.pipeline_string = "appsrc name=input ! neatprocesscvu name=actual_preproc num-buffers=1 ! "
+                          "neatprocessmla name=actual_mla num-buffers=1 multi-pipeline=false ! "
+                          "neatprocesscvu name=actual_detess num-buffers=1 ! "
+                          "identity name=adapter ! queue max-size-buffers=1 ! appsink name=mysink";
+  build.rendered_manifest.emplace();
+  for (int i = 0; i < 3; ++i) {
+    sima::StageStaticSpec stage;
+    stage.element_name = i == 0 ? "actual_preproc" : i == 1 ? "actual_mla" : "actual_detess";
+    stage.logical_stage_id = "logical_" + std::to_string(i);
+    stage.plugin_kind = i == 1 ? "neatprocessmla" : "neatprocesscvu";
+    stage.frame_arena_size_bytes = 4096U;
+    stage.frame_arena_role =
+        i == 0 ? sima::FrameArenaRole::Allocate : sima::FrameArenaRole::ReuseInput;
+    stage.frame_arena_provenance = sima::static_contract::ArenaAllocationProvenance::CoreAllocated;
+    for (int head = 0; head < 6; ++head) {
+      sima::PhysicalBufferStaticSpec physical;
+      physical.physical_index = head;
+      physical.size_bytes = 64U;
+      stage.physical_outputs.push_back(physical);
+      sima::LogicalTensorStaticSpec output;
+      output.logical_index = head;
+      output.physical_index = head;
+      output.size_bytes = 64U;
+      stage.logical_outputs.push_back(output);
+      if (i > 0) {
+        stage.physical_inputs.push_back(physical);
+        sima::LogicalInputStaticSpec input;
+        input.logical_index = head;
+        input.physical_index = head;
+        stage.logical_inputs.push_back(input);
+        sima::InputBindingStaticSpec binding;
+        binding.local_logical_input_index = head;
+        binding.src_stage_index = i - 1;
+        binding.src_stage_id = "logical_" + std::to_string(i - 1);
+        binding.src_logical_output_index = head;
+        binding.src_physical_output_index = head;
+        stage.input_bindings.push_back(binding);
+      }
+    }
+    build.rendered_manifest->stages.push_back(std::move(stage));
+  }
+  return build;
+}
+
+// Match the selector-free compiler projection: one preproc handoff, six MLA
+// logical heads over physical parent zero, then six independently named CVU
+// regions. Local source physical ordinals are not global producer identities.
+simaai::neat::BuildResult make_value_bound_retention_build() {
+  auto build = make_retention_build();
+  auto& stages = build.rendered_manifest->stages;
+  auto& preproc = stages[0];
+  preproc.logical_outputs.resize(1U);
+  preproc.physical_outputs.resize(1U);
+  preproc.logical_outputs[0].logical_name = "output_tessellated_image";
+  preproc.logical_outputs[0].segment_name = "tessellate_quantize_0/transform";
+  preproc.logical_outputs[0].shape = {1, 640, 640, 3};
+  auto& mla = stages[1];
+  mla.logical_inputs.resize(1U);
+  mla.physical_inputs.resize(1U);
+  mla.input_bindings.resize(1U);
+  mla.logical_inputs[0].shape = {640, 640, 3};
+  mla.physical_outputs.resize(1U);
+  mla.physical_outputs[0].segment_name = "MLA_0";
+  mla.physical_outputs[0].size_bytes = 6U * 64U;
+  for (std::size_t head = 0; head < mla.logical_outputs.size(); ++head) {
+    auto& output = mla.logical_outputs[head];
+    output.logical_name = "MLA_0_ofm_unpack_transform_" + std::to_string(head);
+    output.backend_name = output.logical_name;
+    output.segment_name = "MLA_0";
+    output.physical_index = 0;
+    output.byte_offset = head * 64U;
+    auto& binding = stages[2].input_bindings[head];
+    binding.cm_input_name = output.logical_name;
+    binding.source_segment_name = "value_" + std::to_string(head + 4U);
+  }
+  mla.input_bindings[0].cm_input_name = preproc.logical_outputs[0].segment_name;
+  mla.input_bindings[0].source_segment_name = preproc.logical_outputs[0].segment_name;
+  for (auto& stage : stages) {
+    for (auto& binding : stage.input_bindings) {
+      binding.src_stage_index = -1;
+      binding.src_stage_id.clear();
+    }
+  }
+  return build;
+}
+
+void require_native_retention_pool_policy() {
+  using namespace simaai::neat;
+  namespace sima = pipeline_internal::sima;
+  const auto check = [](const std::string& pipeline, const std::string& owner, int depth = 1,
+                        int floor = 2) {
+    std::size_t floors = 0U;
+    for (const auto& element : sima::parse_pipeline_elements(pipeline)) {
+      if (element.plugin == "neatprocesscvu" || element.plugin == "neatprocessmla") {
+        require(element.fragment.find("num-buffers=" + std::to_string(depth)) != std::string::npos,
+                "retention storage must not change execution depth or trigger sync prefill");
+      }
+      if (element.fragment.find("output-pool-min-buffers=") != std::string::npos) {
+        ++floors;
+        require(element.element_name == owner &&
+                    element.fragment.find("output-pool-min-buffers=" + std::to_string(floor)) !=
+                        std::string::npos,
+                "only the exact typed Allocate owner should receive a pool-only floor");
+      }
+    }
+    require(floors == (owner.empty() ? 0U : 1U), "one cached carrier must be budgeted only once");
+    require(pipeline.find("max-size-buffers=1") != std::string::npos,
+            "retention policy must preserve the serial queue limit");
+  };
+  const auto reject = [](const BuildResult& build, const std::string& reason) {
+    bool failed = false;
+    try {
+      (void)session_build_clamp_sync_build_result(build, 1);
+    } catch (const std::exception& error) {
+      failed = std::string(error.what()).find(reason) != std::string::npos;
+    }
+    require(failed, "ambiguous native carrier ownership must fail with an actionable diagnostic");
+  };
+
+  auto value_bound = make_value_bound_retention_build();
+  check(session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
+  auto caps_bound = make_value_bound_retention_build();
+  caps_bound.pipeline_string.insert(caps_bound.pipeline_string.find("identity name=adapter"),
+                                    "video/x-raw(memory:DMABuf),format=(string)BGR ! ");
+  check(session_build_clamp_sync_build_result(caps_bound, -1), "actual_preproc");
+  std::string edge_error;
+  const auto edges = sima::edgecontract::resolve_consumer_edge_contracts_exact(
+      *value_bound.rendered_manifest, 2U, &edge_error);
+  require(edge_error.empty() && edges.size() == 6U,
+          "authored head identities must resolve six selector-free packed-parent edges");
+  for (std::size_t head = 0; head < edges.size(); ++head) {
+    require(
+        edges[head].producer_stage_index == 1U &&
+            edges[head].producer_logical_output->logical_index == static_cast<int>(head) &&
+            edges[head].producer_physical_output->physical_index == 0 &&
+            edges[head].binding == &value_bound.rendered_manifest->stages[2].input_bindings[head],
+        "exact producer resolution must preserve each logical head, backing parent and binding");
+  }
+  std::swap(value_bound.rendered_manifest->stages[0], value_bound.rendered_manifest->stages[2]);
+  check(session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
+  value_bound = make_value_bound_retention_build();
+  value_bound.rendered_manifest->stages[0].logical_outputs[0].logical_name =
+      "MLA_0_ofm_unpack_transform_0";
+  reject(value_bound, "ambiguous authored producer value");
+  value_bound = make_value_bound_retention_build();
+  value_bound.rendered_manifest->stages[2].input_bindings[0].cm_input_name = "missing_value";
+  reject(value_bound, "no producer for authored value");
+
+  auto build = make_retention_build();
+  const auto clamped = session_build_clamp_sync_build_result(build, 1);
+  check(clamped, "actual_preproc");
+  build.pipeline_string = clamped;
+  require(session_build_clamp_sync_build_result(build, 1) == clamped,
+          "retention floor and both legacy clamp exclusions must be idempotent");
+  build.pipeline_string.replace(build.pipeline_string.find("output-pool-min-buffers=2"),
+                                std::string("output-pool-min-buffers=2").size(),
+                                "output-pool-min-buffers=7");
+  check(session_build_clamp_sync_build_result(build, 1), "actual_preproc", 1, 7);
+  build = make_retention_build();
+  check(session_build_clamp_sync_build_result(build, 4), "", 4);
+  build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = 0;
+  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
+  check(session_build_clamp_sync_build_result(build, 1), "actual_preproc");
+
+  build = make_retention_build();
+  build.name_transform.prefix = "branch_";
+  build.appsink_name = "branch_mysink";
+  build.pipeline_string =
+      "appsrc name=branch_input ! neatprocesscvu name=branch_actual_preproc num-buffers=1 ! "
+      "neatprocessmla name=branch_actual_mla num-buffers=1 ! "
+      "neatprocesscvu name=branch_actual_detess num-buffers=1 ! "
+      "identity name=adapter ! queue max-size-buffers=1 ! appsink name=branch_mysink";
+  check(session_build_clamp_sync_build_result(build, 1), "branch_actual_preproc");
+
+  build = make_retention_build();
+  build.rendered_manifest->stages[1].frame_arena_role = sima::FrameArenaRole::Allocate;
+  check(session_build_clamp_sync_build_result(build, 1), "actual_mla");
+  build.rendered_manifest->stages[2].frame_arena_role = sima::FrameArenaRole::Allocate;
+  check(session_build_clamp_sync_build_result(build, 1), "actual_detess");
+  build.pipeline_string = "appsrc name=input ! neatprocesscvu name=actual_preproc num-buffers=1 ! "
+                          "neatprocessmla name=actual_mla num-buffers=1 ! "
+                          "queue max-size-buffers=1 ! appsink name=mysink";
+  build.rendered_manifest->stages.pop_back();
+  check(session_build_clamp_sync_build_result(build, 1), "actual_mla");
+
+  build = make_retention_build();
+  build.rendered_manifest->stages[0].frame_arena_role = sima::FrameArenaRole::ReuseInput;
+  build.rendered_manifest->stages[0].frame_arena_provenance =
+      sima::static_contract::ArenaAllocationProvenance::ExternalAdopted;
+  check(session_build_clamp_sync_build_result(build, 1), "");
+
+  build = make_retention_build();
+  build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = -1;
+  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id.clear();
+  reject(build, "omits an explicit producer");
+  build = make_retention_build();
+  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
+  reject(build, "conflicting producer");
+  build = make_retention_build();
+  build.rendered_manifest->stages[0].logical_stage_id = "logical_1";
+  reject(build, "ambiguous producer");
+  build = make_retention_build();
+  build.rendered_manifest->stages[0].element_name = "actual_mla";
+  reject(build, "duplicate typed element");
+  build = make_retention_build();
+  build.pipeline_string.insert(0, "identity name=actual_preproc ! ");
+  reject(build, "not uniquely rendered");
+  build = make_retention_build();
+  for (auto& binding : build.rendered_manifest->stages[1].input_bindings) {
+    binding.src_stage_index = 2;
+    binding.src_stage_id = "logical_2";
+  }
+  reject(build, "cycle at stage");
+  build = make_retention_build();
+  build.rendered_manifest->stages[1].frame_arena_role = sima::FrameArenaRole::Allocate;
+  auto& split_binding = build.rendered_manifest->stages[2].input_bindings[0];
+  split_binding.src_stage_index = 0;
+  split_binding.src_stage_id = "logical_0";
+  reject(build, "different carrier origins");
+  build = make_retention_build();
+  build.pipeline_string += " ! appsink name=second_sink";
+  reject(build, "expected exactly");
+  build = make_retention_build();
+  build.pipeline_string.insert(0, "tee name=t ! t.src_0 ! ");
+  reject(build, "nonlinear");
+  build = make_retention_build();
+  build.pipeline_string.insert(0, "( identity name=in_bin ) ! ");
+  reject(build, "nonlinear");
+  build = make_retention_build();
+  build.pipeline_string.insert(0, "identity name=other_chain ; ");
+  reject(build, "nonlinear");
+  build = make_retention_build();
+  build.pipeline_string.replace(build.pipeline_string.find("appsink name=mysink"),
+                                std::string("appsink name=mysink").size(),
+                                "tee name=t ! t.src_0 ! neatboxdecode name=decoded num-buffers=1 ! "
+                                "appsink name=mysink");
+  const auto materialized = session_build_clamp_sync_build_result(build, 1);
+  require(materialized.find("decoded num-buffers=2") != std::string::npos &&
+              materialized.find("output-pool-min-buffers=") == std::string::npos,
+          "unrelated native topology must not reject a non-native terminal materializer");
+  build = make_retention_build();
+  build.rendered_manifest.reset();
+  const auto legacy = session_build_clamp_sync_build_result(build, 1);
+  require(legacy.find("actual_detess num-buffers=2") != std::string::npos &&
+              legacy.find("output-pool-min-buffers=") == std::string::npos,
+          "untyped routes must retain the existing legacy terminal behavior");
+}
 
 void require_output_policy_matrix() {
   using namespace simaai::neat;
@@ -282,6 +540,7 @@ simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** extern
 
 RUN_TEST(
     "unit_graph_internal_zero_copy_fallback_test", ([] {
+      require_native_retention_pool_policy();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
       {

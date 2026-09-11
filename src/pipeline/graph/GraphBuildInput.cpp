@@ -369,10 +369,6 @@ resolve_memory_policy_from_first_downstream_node(const std::vector<std::shared_p
     if (kind == "Preproc" || kind == "Quant" || kind == "Tess" || kind == "QuantTess") {
       return InputMemoryPolicy::Ev74;
     }
-    if (kind == simaai::neat::nodes::groups::internal::kVideoSenderRawIngressDirectKind ||
-        kind == simaai::neat::nodes::groups::internal::kVideoSenderRawIngressMaterializeKind) {
-      return InputMemoryPolicy::Ev74;
-    }
     if (kind == "ModelFragment") {
       return InputMemoryPolicy::Dms0;
     }
@@ -410,24 +406,6 @@ bool apply_auto_memory_policy_from_downstream(InputOptions& src_opt,
   }
   const InputMemoryPolicy resolved = resolve_memory_policy_from_first_downstream_node(nodes);
   src_opt.memory_policy = resolved;
-  return true;
-}
-
-bool apply_explicit_nv12_materialization_policy(
-    InputOptions& src_opt, const std::vector<std::shared_ptr<Node>>& build_nodes) {
-  if (src_opt.memory_policy != InputMemoryPolicy::SystemMemory) {
-    return false;
-  }
-  if (infer_first_effective_downstream_kind(build_nodes) !=
-      simaai::neat::nodes::groups::internal::kVideoSenderRawIngressMaterializeKind) {
-    return false;
-  }
-
-  // The semantic ingress node is the compiler-authored copy boundary.  Its
-  // transport allocation is standard CMA, while the public source contract
-  // remains SystemMemory.  This is not the old implicit InputStream escape:
-  // only this exact selected node enables the one required CPU->CMA copy.
-  src_opt.memory_policy = InputMemoryPolicy::Ev74;
   return true;
 }
 
@@ -1937,10 +1915,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   }
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
   if (sync_mode) {
-    br.pipeline_string =
-        session_build_clamp_sync_pipeline(std::move(br.pipeline_string), sync_num_buffers_override);
-    br.pipeline_string = session_build_clamp_detess_num_buffers(std::move(br.pipeline_string),
-                                                                sync_num_buffers_override);
+    br.pipeline_string = session_build_clamp_sync_build_result(br, sync_num_buffers_override);
     br.diag->pipeline_string = br.pipeline_string;
   }
   last_pipeline = br.pipeline_string;
@@ -2008,10 +1983,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   const std::string first_effective_downstream_kind =
       infer_first_effective_downstream_kind(build_nodes);
   const InputMemoryPolicy requested_memory_policy = src_opt.memory_policy;
-  const bool explicit_nv12_materialization =
-      apply_explicit_nv12_materialization_policy(src_opt, build_nodes);
   const bool memory_policy_auto_applied =
-      !explicit_nv12_materialization &&
       apply_auto_memory_policy_from_downstream(src_opt, build_nodes);
   if (src_opt.payload_type == PayloadType::Auto) {
     src_opt.payload_type = input_type_from_media_type(seed_spec.media_type);
@@ -2038,10 +2010,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       stream_opt.dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly) {
     stream_opt.stability_frames = 1;
   }
-  stream_opt.require_device_visible_input =
-      !explicit_nv12_materialization && (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
-                                         src_opt.memory_policy == InputMemoryPolicy::Dms0);
-  stream_opt.materialize_device_visible_input = explicit_nv12_materialization;
+  stream_opt.require_device_visible_input = src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
+                                            src_opt.memory_policy == InputMemoryPolicy::Dms0;
 
   BuildAdaptationSummary adaptation;
   adaptation.shape_policy = shape_policy_name(stream_opt.shape_policy);
@@ -2114,11 +2084,10 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     detail << "requested=" << input_memory_policy_name(requested_memory_policy)
            << " transport=" << input_memory_policy_name(src_opt.memory_policy)
            << " first_downstream=" << first_effective_downstream_kind;
-    add_build_adaptation_action(
-        adaptation, "appsrc_memory_policy", true, detail.str(),
-        explicit_nv12_materialization ? "compiler-authored NV12 SystemMemory-to-CMA materialization"
-        : memory_policy_auto_applied  ? "auto policy resolved before appsrc build"
-                                      : "policy already explicit (not auto-overridden)");
+    add_build_adaptation_action(adaptation, "appsrc_memory_policy", true, detail.str(),
+                                memory_policy_auto_applied
+                                    ? "auto policy resolved before appsrc build"
+                                    : "policy already explicit (not auto-overridden)");
   }
 
   if (br.diag) {

@@ -223,9 +223,12 @@ void require_output_traits(const simaai::neat::Tensor& tensor, const ExpectedOut
   require(meta.tessellate == expected.tessellate, label + ": tessellate metadata mismatch");
   require(meta.quantize == expected.quantize, label + ": quantize metadata mismatch");
   if (expected.tessellate) {
-    require(tensor.route.segment_name == "tessellate_1",
-            label + ": expected the MPK-authored tessellate_1 handoff, got " +
-                tensor.route.segment_name);
+    require(tensor.route.name == "output_tessellated_image" &&
+                tensor.route.backend_name == "output_tessellated_image",
+            label + ": expected the selected tessellated logical/backend output");
+    require(!tensor.route.segment_name.empty() && tensor.route.memory_index >= 0 &&
+                tensor.route.physical_byte_offset >= 0,
+            label + ": selected output must retain a concrete physical view");
   }
 }
 

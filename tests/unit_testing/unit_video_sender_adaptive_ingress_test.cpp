@@ -94,7 +94,7 @@ std::string plan_backend_for_kind(const simaai::neat::runtime::ExecutionGraphPla
 }
 
 void require_selected_ingress(const simaai::neat::OutputSpec& input, bool layout_aware,
-                              std::string_view expected_kind, std::size_t expected_converters) {
+                              std::string_view expected_kind) {
   using simaai::neat::internal::InputSpecSpecializationContext;
   using simaai::neat::internal::specialize_nodes_for_input;
   using simaai::neat::nodes::groups::internal::kNeatEncoderInputLayoutAwareCapability;
@@ -112,12 +112,15 @@ void require_selected_ingress(const simaai::neat::OutputSpec& input, bool layout
           "adaptive sender ingress selected the wrong variant");
 
   const std::string backend = selected.nodes.front()->backend_fragment(4);
-  require(count_substrings(backend, "videoconvert name=") == expected_converters,
-          "adaptive sender ingress emitted the wrong converter count");
+  require(count_substrings(backend, "neatencoderinput name=") == 1U,
+          "adaptive sender must retain its runtime DMA layout boundary");
+  require(count_substrings(backend, "videoconvert name=") == 0U,
+          "adaptive sender must not convert into an intermediate CPU allocation");
   require_contains(backend, "format=NV12,width=1280,height=720,framerate=30/1",
                    "adaptive sender ingress must preserve encoder caps");
-  require(selected.output_spec.format == "NV12" && selected.output_spec.width == kWidth &&
-              selected.output_spec.height == kHeight && selected.output_spec.fps_num == kFps,
+  require(selected.output_spec.memory == "SimaAI" && selected.output_spec.format == "NV12" &&
+              selected.output_spec.width == kWidth && selected.output_spec.height == kHeight &&
+              selected.output_spec.fps_num == kFps,
           "adaptive sender ingress output contract must remain fixed NV12");
 }
 
@@ -189,10 +192,10 @@ RUN_TEST(
       const auto authoritative_system =
           raw_spec("NV12", "SystemMemory", SpecCertainty::Authoritative);
       const auto derived_simaai = raw_spec("NV12", "SimaAI", SpecCertainty::Derived);
-      require(can_encode_nv12_direct(derived_system, true),
-              "layout-aware encoder should accept proven system-memory NV12");
-      require(can_encode_nv12_direct(authoritative_system, true),
-              "layout-aware encoder should accept authoritative system-memory NV12");
+      require(!can_encode_nv12_direct(derived_system, true),
+              "CPU NV12 requires explicit final-DMA materialization");
+      require(!can_encode_nv12_direct(authoritative_system, true),
+              "authoritative CPU caps do not prove DMA storage");
       require(can_encode_nv12_direct(derived_simaai, true),
               "layout-aware encoder should accept proven SiMaAI NV12");
       require(!can_encode_nv12_direct(derived_system, false),
@@ -221,16 +224,16 @@ RUN_TEST(
       require(!can_encode_nv12_direct(encoded, true),
               "encoded input must never select the raw direct ingress");
 
-      require_selected_ingress(derived_system, true, kDirectKind, 0U);
-      require_selected_ingress(derived_simaai, true, kDirectKind, 0U);
-      require_selected_ingress(derived_system, false, kConvertKind, 1U);
+      require_selected_ingress(derived_system, true, kConvertKind);
+      require_selected_ingress(derived_simaai, true, kDirectKind);
+      require_selected_ingress(derived_system, false, kConvertKind);
       require_selected_ingress(raw_spec("NV12", "SystemMemory", SpecCertainty::Hint), true,
-                               kConvertKind, 1U);
+                               kConvertKind);
       for (const std::string_view format :
            std::array<std::string_view, 4>{"RGB", "BGR", "GRAY8", "I420"}) {
         require_selected_ingress(
             raw_spec(std::string(format), "SystemMemory", SpecCertainty::Authoritative), true,
-            kConvertKind, 1U);
+            kConvertKind);
       }
 
       // Missing factories/properties are represented explicitly, then collapsed
@@ -269,10 +272,10 @@ RUN_TEST(
         linear.add(make_explicit_push_source(FormatTag::NV12, InputMemoryPolicy::SystemMemory));
         linear.add(make_raw_sender());
         const auto plan = compile_with_context(linear, layout_aware_context);
-        require(count_plan_kinds(plan, kDirectKind) == 1U,
-                "linear explicit NV12 InputOptions should select direct ingress");
-        require(count_plan_kinds(plan, kConvertKind) == 0U,
-                "linear direct ingress must not retain the fallback variant");
+        require(count_plan_kinds(plan, kConvertKind) == 1U,
+                "linear explicit NV12 InputOptions should select explicit DMA ingress");
+        require(count_plan_kinds(plan, kDirectKind) == 0U,
+                "linear CPU ingress must not also retain the native DMA variant");
       }
 
       {
@@ -306,14 +309,13 @@ RUN_TEST(
                          "v1 load must preserve the transformed NV12 caps name");
         require_contains(backend, "format=NV12,width=1280,height=720,framerate=30/1",
                          "save/load should preserve adaptive ingress geometry");
-        require(count_substrings(backend, "videoconvert name=") == 1U,
+        require(count_substrings(backend, "neatencoderinput name=") == 1U,
                 "unknown loaded graph should retain one safe converter");
       }
 
       {
-        // Version-2 connected Graphs retain the same names. If the loaded
-        // ingress specializes to direct mode, it reuses the serialized
-        // fallback's final NV12 caps element rather than regenerating nX_*.
+        // Version-2 connected Graphs retain the same serialized conversion
+        // and caps names when CPU NV12 selects explicit DMA materialization.
         const auto path =
             std::filesystem::temp_directory_path() / "neat_video_sender_connected_ingress.json";
         std::error_code ec;
@@ -331,12 +333,13 @@ RUN_TEST(
         std::filesystem::remove(path, ec);
 
         const auto plan = compile_with_context(loaded, layout_aware_context);
-        const std::string direct_backend = plan_backend_for_kind(plan, kDirectKind);
-        require(!direct_backend.empty(), "loaded connected NV12 sender should specialize directly");
-        require_contains(direct_backend, "name=saved_n1_nv12_caps_instance",
-                         "direct specialization must preserve the serialized NV12 caps name");
-        require(direct_backend.find("videoconvert name=") == std::string::npos,
-                "loaded direct specialization must not restore the converter");
+        const std::string materialized_backend = plan_backend_for_kind(plan, kConvertKind);
+        require(!materialized_backend.empty(),
+                "loaded connected NV12 sender should select explicit DMA materialization");
+        require_contains(materialized_backend, "name=saved_n1_nv12_caps_instance",
+                         "materialization must preserve the serialized NV12 caps name");
+        require(materialized_backend.find("videoconvert name=") == std::string::npos,
+                "materialization must not allocate an intermediate videoconvert output");
       }
 
       {
@@ -358,17 +361,12 @@ RUN_TEST(
         simaai::neat::Graph connected("connected_nv12_sender");
         connected.connect(source, sender);
         const auto plan = compile_with_context(connected, layout_aware_context);
-        require(count_plan_kinds(plan, kDirectKind) == 1U,
-                "connected explicit NV12 contract should select direct ingress");
+        require(count_plan_kinds(plan, kConvertKind) == 1U,
+                "connected explicit NV12 contract should select explicit DMA ingress");
 
-        // The public diagnostic uses the real installed capability. Assert the
-        // corresponding selected variant rather than making this unit depend
-        // on which matched Internals package is installed.
-        const bool installed_layout_aware =
-            simaai::neat::internal::element_boolean_capability("neatencoder", "input-layout-aware")
-                .value_or(false);
-        require_contains(connected.describe_backend(false),
-                         std::string(installed_layout_aware ? kDirectKind : kConvertKind),
+        // CPU storage requires materialization even when the installed
+        // encoder honors producer-authored plane metadata.
+        require_contains(connected.describe_backend(false), std::string(kConvertKind),
                          "connected describe_backend should expose the selected ingress");
       }
 
@@ -381,7 +379,7 @@ RUN_TEST(
         fanout.connect(source, sender);
         fanout.connect(source, simaai::neat::nodes::Output("preview"));
         const auto plan = compile_with_context(fanout, layout_aware_context);
-        require(count_plan_kinds(plan, kDirectKind) == 1U,
+        require(count_plan_kinds(plan, kConvertKind) == 1U,
                 "FanOut should preserve the NV12 contract into VideoSender");
         require(plan_has_kind(plan, "FanOut"), "test topology should materialize a FanOut");
       }

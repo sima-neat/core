@@ -696,6 +696,19 @@ drop policies remain observable; stop wakes blocked operations. Intentional
 Compute stages may allocate their results in different DMA-BUFs without copying
 their inputs merely for transport.
 
+In a synchronous route, appsink can retain its previous sample while waiting for
+the next frame. The retention allowance belongs to the stage that actually
+allocates that sample's storage. Core follows typed `ReuseInput` bindings to
+that allocator and adjusts its output pool independently of execution lanes,
+sync prefill and application loan credits. Retaining additional application
+outputs still consumes the configured bounded capacity.
+
+Standalone ROI preprocessing specializes a copy of the admitted contract for
+source-image count and ROI-output capacity separately. The model's contract
+remains immutable. Each returned ROI is a one-member view at its exact slot
+offset; allocation padding is not part of the slot stride. Logical tensor names
+identify outputs, while segment names identify physical backing storage.
+
 ### Decoder admission lifecycle
 
 Before choosing the single-pipeline or connected-graph runtime, Core scans the
@@ -765,21 +778,21 @@ from the first runtime sample. A `Derived` or `Authoritative` contract may
 select an optimized representation. `Hint`, unknown format/memory, or a missing
 backend capability selects the conservative representation.
 
-For example, raw `VideoSender` omits its NV12 conversion only for a stable NV12
-contract in system or SiMaAI memory and when `neatencoder` advertises its
-read-only `input-layout-aware=true` capability. `OutputSpec` does not currently
-carry plane strides and offsets, so no memory domain bypasses that capability
-gate. An absent or false capability is treated as unsupported so Core remains
-safe with older Internals packages.
+For example, raw `VideoSender` distinguishes NV12 pixel format from encoder
+storage compatibility. SystemMemory is not directly importable just because its
+pixels are already NV12. The encoder-input boundary preserves a compatible
+DMA-BUF or converts/uploads into the final DMA surface before encoding.
 
 Raw-video geometry and physical storage layout remain separate contracts.
 `OutputSpec` and caps describe visible width and height; Core must not round
 those values to codec block, DMA pitch, or surface-height alignment. The
-layout-aware plugin derives physical plane offsets and strides from
-`GstVideoMeta` or `GstVideoInfo`, repacks when the physical contract is not
-compatible, and leaves codec/hardware admission to the encoder service. This
-preserves exact decoded geometry while keeping device-specific alignment out of
-the public graph API.
+encoder-input boundary derives physical plane offsets and strides from
+`GstVideoMeta` or `GstVideoInfo`. Shared video-layout helpers define the final
+surface pitch, storage height and extent. CPU conversion writes directly into
+that surface within a checked DMA-BUF WRITE epoch. The encoder imports only
+compatible DMA-BUF views and retains them until completion; it does not perform
+a hidden upload or repack. Visible geometry and the public graph API remain
+independent of device-specific storage alignment.
 
 ### Parsing & launch
 

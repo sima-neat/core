@@ -97,16 +97,9 @@ struct InputStreamOptions {
   bool holder_loan_credits_auto = false;
   int holder_loan_sample_window = 1;
   int holder_loan_per_sample_arity = 1;
-  // When true, CPU-backed Tensor inputs are rejected before the slow
-  // InputStream memcpy fallback.  Device-first routes should receive tensors
-  // constructed in the required memory placement; set
-  // SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 for legacy compatibility.
+  // Device-first routes reject CPU-backed inputs before any copy fallback.
+  // Explicit software conversion boundaries accept their real source domain.
   bool require_device_visible_input = false;
-  // True only for a compiler-authored ingress operation whose semantics are
-  // the one SystemMemory -> device-visible materialization. It disables
-  // holder passthrough and uses the prepared InputStream pool/copy path; this
-  // is not an environment-controlled compatibility fallback.
-  bool materialize_device_visible_input = false;
   bool reuse_input_buffer = false;
   // True for user-visible Output/appsink endpoints.  False for graph-internal
   // transport appsinks, where downstream edge/view contracts must be preserved

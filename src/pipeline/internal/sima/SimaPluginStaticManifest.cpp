@@ -252,8 +252,7 @@ bool read_int_key(const nlohmann::json& obj, const char* key, int& out) {
   return false;
 }
 
-bool read_u32_key(const nlohmann::json& obj, const char* key,
-                  std::uint32_t& out) {
+bool read_u32_key(const nlohmann::json& obj, const char* key, std::uint32_t& out) {
   if (!obj.contains(key) || !obj[key].is_number_integer()) {
     return false;
   }
@@ -499,13 +498,10 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
   if (spec.frame_arena_size_bytes != 0U) {
     j["frame_arena_size_bytes"] = spec.frame_arena_size_bytes;
     j["frame_arena_role"] = static_cast<int>(spec.frame_arena_role);
-    j["frame_arena_storage_domain"] =
-        static_cast<int>(spec.frame_arena_storage_domain);
+    j["frame_arena_storage_domain"] = static_cast<int>(spec.frame_arena_storage_domain);
     j["frame_arena_provenance"] = static_cast<int>(spec.frame_arena_provenance);
-    j["frame_arena_required_device_access"] =
-        spec.frame_arena_required_device_access;
-    j["frame_arena_escape_policy"] =
-        static_cast<int>(spec.frame_arena_escape_policy);
+    j["frame_arena_required_device_access"] = spec.frame_arena_required_device_access;
+    j["frame_arena_escape_policy"] = static_cast<int>(spec.frame_arena_escape_policy);
   }
   if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
       !spec.processcvu.exact_stage_name_or_id.empty()) {
@@ -561,25 +557,18 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
   if (!spec.elf_ofm_symbol_names.empty()) {
     j["elf_ofm_symbol_names"] = spec.elf_ofm_symbol_names;
   }
-  if (spec.payload_kind == StagePayloadKind::ProcessMla &&
-      spec.processmla.dmabuf_plan_contract) {
+  if (spec.payload_kind == StagePayloadKind::ProcessMla && spec.processmla.dmabuf_plan_contract) {
     j["processmla_dmabuf_plan_contract"] = true;
     j["processmla_executable_bytes"] = spec.processmla.executable_bytes;
     j["processmla_executable_sha256"] = spec.processmla.executable_sha256;
   }
-  if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
-      spec.processcvu.dmabuf_plan_contract) {
+  if (spec.payload_kind == StagePayloadKind::ProcessCvu && spec.processcvu.dmabuf_plan_contract) {
     j["processcvu_dmabuf_plan_contract"] = true;
-    j["processcvu_descriptor_abi_id"] =
-        spec.processcvu.descriptor_abi_id;
-    j["processcvu_descriptor_contract_version"] =
-        spec.processcvu.descriptor_contract_version;
-    j["processcvu_binding_schema_version"] =
-        spec.processcvu.binding_schema_version;
-    j["processcvu_supported_placement_mask"] =
-        spec.processcvu.supported_placement_mask;
-    j["processcvu_allowed_frame_patch_mask"] =
-        spec.processcvu.allowed_frame_patch_mask;
+    j["processcvu_descriptor_abi_id"] = spec.processcvu.descriptor_abi_id;
+    j["processcvu_descriptor_contract_version"] = spec.processcvu.descriptor_contract_version;
+    j["processcvu_binding_schema_version"] = spec.processcvu.binding_schema_version;
+    j["processcvu_supported_placement_mask"] = spec.processcvu.supported_placement_mask;
+    j["processcvu_allowed_frame_patch_mask"] = spec.processcvu.allowed_frame_patch_mask;
     j["processcvu_maximum_members"] = spec.processcvu.maximum_members;
   }
 
@@ -661,13 +650,11 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
     read_string_key(stage_j, "kernel_kind", stage.kernel_kind);
     if (stage_j.contains("frame_arena_size_bytes") &&
         stage_j["frame_arena_size_bytes"].is_number_unsigned()) {
-      stage.frame_arena_size_bytes =
-          stage_j["frame_arena_size_bytes"].get<std::uint64_t>();
+      stage.frame_arena_size_bytes = stage_j["frame_arena_size_bytes"].get<std::uint64_t>();
     } else if (stage_j.contains("frame_arena_size_bytes") &&
                stage_j["frame_arena_size_bytes"].is_number_integer()) {
       const auto raw = stage_j["frame_arena_size_bytes"].get<std::int64_t>();
-      stage.frame_arena_size_bytes =
-          raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+      stage.frame_arena_size_bytes = raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
     }
     int frame_arena_role = static_cast<int>(FrameArenaRole::None);
     read_int_key(stage_j, "frame_arena_role", frame_arena_role);
@@ -675,8 +662,7 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         frame_arena_role <= static_cast<int>(FrameArenaRole::ReuseInput)) {
       stage.frame_arena_role = static_cast<FrameArenaRole>(frame_arena_role);
     }
-    int frame_arena_storage_domain =
-        static_cast<int>(static_contract::ArenaStorageDomain::Unknown);
+    int frame_arena_storage_domain = static_cast<int>(static_contract::ArenaStorageDomain::Unknown);
     int frame_arena_provenance =
         static_cast<int>(static_contract::ArenaAllocationProvenance::Unknown);
     int frame_arena_required_device_access = 0;
@@ -684,18 +670,15 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         static_cast<int>(static_contract::ArenaEscapePolicy::InternalOnly);
     read_int_key(stage_j, "frame_arena_storage_domain", frame_arena_storage_domain);
     read_int_key(stage_j, "frame_arena_provenance", frame_arena_provenance);
-    read_int_key(stage_j, "frame_arena_required_device_access",
-                 frame_arena_required_device_access);
+    read_int_key(stage_j, "frame_arena_required_device_access", frame_arena_required_device_access);
     read_int_key(stage_j, "frame_arena_escape_policy", frame_arena_escape_policy);
     constexpr int kKnownDeviceAccess =
         static_cast<int>(static_contract::ArenaDeviceAccess::CpuA65) |
         static_cast<int>(static_contract::ArenaDeviceAccess::Mla) |
         static_cast<int>(static_contract::ArenaDeviceAccess::Ev74);
     const bool known_domain =
-        frame_arena_storage_domain >=
-            static_cast<int>(static_contract::ArenaStorageDomain::Cma) &&
-        frame_arena_storage_domain <=
-            static_cast<int>(static_contract::ArenaStorageDomain::Dms);
+        frame_arena_storage_domain >= static_cast<int>(static_contract::ArenaStorageDomain::Cma) &&
+        frame_arena_storage_domain <= static_cast<int>(static_contract::ArenaStorageDomain::Dms);
     const bool external_unknown_domain =
         frame_arena_role == static_cast<int>(FrameArenaRole::ReuseInput) &&
         frame_arena_provenance ==
@@ -856,14 +839,11 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         read_string_key(in_j, "segment_name", physical.segment_name);
         if (in_j.contains("required_alignment_bytes") &&
             in_j["required_alignment_bytes"].is_number_unsigned()) {
-          physical.required_alignment_bytes =
-              in_j["required_alignment_bytes"].get<std::uint64_t>();
+          physical.required_alignment_bytes = in_j["required_alignment_bytes"].get<std::uint64_t>();
         } else if (in_j.contains("required_alignment_bytes") &&
                    in_j["required_alignment_bytes"].is_number_integer()) {
-          const auto raw =
-              in_j["required_alignment_bytes"].get<std::int64_t>();
-          physical.required_alignment_bytes =
-              raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+          const auto raw = in_j["required_alignment_bytes"].get<std::int64_t>();
+          physical.required_alignment_bytes = raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
         }
         stage.physical_inputs.push_back(std::move(physical));
       }
@@ -907,10 +887,8 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
               out_j["required_alignment_bytes"].get<std::uint64_t>();
         } else if (out_j.contains("required_alignment_bytes") &&
                    out_j["required_alignment_bytes"].is_number_integer()) {
-          const auto raw =
-              out_j["required_alignment_bytes"].get<std::int64_t>();
-          physical.required_alignment_bytes =
-              raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+          const auto raw = out_j["required_alignment_bytes"].get<std::int64_t>();
+          physical.required_alignment_bytes = raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
         }
         stage.physical_outputs.push_back(std::move(physical));
       }
@@ -1022,12 +1000,10 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
       stage.processmla.executable_bytes =
           stage_j["processmla_executable_bytes"].get<std::uint64_t>();
     }
-    read_string_key(stage_j, "processmla_executable_sha256",
-                    stage.processmla.executable_sha256);
+    read_string_key(stage_j, "processmla_executable_sha256", stage.processmla.executable_sha256);
     read_bool_key(stage_j, "processcvu_dmabuf_plan_contract",
                   stage.processcvu.dmabuf_plan_contract);
-    read_u32_key(stage_j, "processcvu_descriptor_abi_id",
-                 stage.processcvu.descriptor_abi_id);
+    read_u32_key(stage_j, "processcvu_descriptor_abi_id", stage.processcvu.descriptor_abi_id);
     read_u32_key(stage_j, "processcvu_descriptor_contract_version",
                  stage.processcvu.descriptor_contract_version);
     read_u32_key(stage_j, "processcvu_binding_schema_version",
@@ -1036,8 +1012,7 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
                  stage.processcvu.supported_placement_mask);
     read_u32_key(stage_j, "processcvu_allowed_frame_patch_mask",
                  stage.processcvu.allowed_frame_patch_mask);
-    read_u32_key(stage_j, "processcvu_maximum_members",
-                 stage.processcvu.maximum_members);
+    read_u32_key(stage_j, "processcvu_maximum_members", stage.processcvu.maximum_members);
     if (stage_j.contains("elf_ifm_symbol_names") && stage_j["elf_ifm_symbol_names"].is_array()) {
       stage.elf_ifm_symbol_names.clear();
       for (const auto& s : stage_j["elf_ifm_symbol_names"]) {
@@ -1200,7 +1175,9 @@ private:
       return {};
     }
     std::vector<guint8> semantics(SIMA_EV_MAX_RANK, SIMA_EV_AXIS_UNKNOWN);
-    tensorsemantics::fill_axis_semantics_from_shape_layout(shape, normalized, semantics.data());
+    // Preserve an explicitly authored NHWC/NCHW batch axis; normalization is
+    // only a layout-family validity check, not a license to discard N.
+    tensorsemantics::fill_axis_semantics_from_shape_layout(shape, layout, semantics.data());
     semantics.resize(shape.size());
     return semantics;
   }
@@ -1454,8 +1431,7 @@ private:
       abi.segment_name = physical.segment_name.empty() ? nullptr : physical.segment_name.c_str();
       abi.source_physical_index = physical.source_physical_index;
       abi.source_byte_offset = static_cast<gint64>(physical.source_byte_offset);
-      abi.required_alignment_bytes =
-          static_cast<guint64>(physical.required_alignment_bytes);
+      abi.required_alignment_bytes = static_cast<guint64>(physical.required_alignment_bytes);
       out.physical_inputs.push_back(abi);
     }
 
@@ -1471,8 +1447,7 @@ private:
       abi.segment_name = physical.segment_name.empty() ? nullptr : physical.segment_name.c_str();
       abi.source_physical_index = physical.source_physical_index;
       abi.source_byte_offset = static_cast<gint64>(physical.source_byte_offset);
-      abi.required_alignment_bytes =
-          static_cast<guint64>(physical.required_alignment_bytes);
+      abi.required_alignment_bytes = static_cast<guint64>(physical.required_alignment_bytes);
       out.physical_outputs.push_back(abi);
     }
 
@@ -1633,10 +1608,8 @@ private:
         out.required_meta_fields.empty() ? nullptr : out.required_meta_fields.data();
     out.spec.required_preprocess_meta_fields_len =
         static_cast<guint>(out.required_meta_fields.size());
-    out.spec.frame_arena_size_bytes =
-        static_cast<guint64>(stage.frame_arena_size_bytes);
-    out.spec.frame_arena_role =
-        static_cast<SimaPluginFrameArenaRole>(stage.frame_arena_role);
+    out.spec.frame_arena_size_bytes = static_cast<guint64>(stage.frame_arena_size_bytes);
+    out.spec.frame_arena_role = static_cast<SimaPluginFrameArenaRole>(stage.frame_arena_role);
     out.spec.frame_arena_storage_domain =
         static_cast<SimaPluginFrameArenaStorageDomain>(stage.frame_arena_storage_domain);
     out.spec.frame_arena_provenance =
@@ -1742,18 +1715,15 @@ private:
           stage.processcvu.canonical_contract ? TRUE : FALSE;
       out.spec.payload.processcvu.dmabuf_plan_contract =
           stage.processcvu.dmabuf_plan_contract ? TRUE : FALSE;
-      out.spec.payload.processcvu.descriptor_abi_id =
-          stage.processcvu.descriptor_abi_id;
+      out.spec.payload.processcvu.descriptor_abi_id = stage.processcvu.descriptor_abi_id;
       out.spec.payload.processcvu.descriptor_contract_version =
           stage.processcvu.descriptor_contract_version;
-      out.spec.payload.processcvu.binding_schema_version =
-          stage.processcvu.binding_schema_version;
+      out.spec.payload.processcvu.binding_schema_version = stage.processcvu.binding_schema_version;
       out.spec.payload.processcvu.supported_placement_mask =
           stage.processcvu.supported_placement_mask;
       out.spec.payload.processcvu.allowed_frame_patch_mask =
           stage.processcvu.allowed_frame_patch_mask;
-      out.spec.payload.processcvu.maximum_members =
-          stage.processcvu.maximum_members;
+      out.spec.payload.processcvu.maximum_members = stage.processcvu.maximum_members;
       out.spec.payload.processcvu.preproc_single_output_handoff =
           stage.processcvu.preproc_single_output_handoff ? TRUE : FALSE;
       out.spec.payload.processcvu.aspect_ratio = stage.processcvu.aspect_ratio;
@@ -1922,9 +1892,8 @@ private:
           stage.processmla.model_path.empty() ? nullptr : stage.processmla.model_path.c_str();
       out.spec.payload.processmla.executable_bytes = stage.processmla.executable_bytes;
       out.spec.payload.processmla.executable_sha256 =
-          stage.processmla.executable_sha256.empty()
-              ? nullptr
-              : stage.processmla.executable_sha256.c_str();
+          stage.processmla.executable_sha256.empty() ? nullptr
+                                                     : stage.processmla.executable_sha256.c_str();
       out.spec.payload.processmla.batch_size = stage.processmla.batch_size;
       out.spec.payload.processmla.batch_sz_model = stage.processmla.batch_sz_model;
       out.processmla_dispatcher_output_names.clear();
@@ -1957,9 +1926,8 @@ private:
         out.processmla_elf_ifm_symbol_names.push_back(name.empty() ? nullptr : name.c_str());
       }
       out.spec.payload.processmla.elf_ifm_symbol_names =
-          out.processmla_elf_ifm_symbol_names.empty()
-              ? nullptr
-              : out.processmla_elf_ifm_symbol_names.data();
+          out.processmla_elf_ifm_symbol_names.empty() ? nullptr
+                                                      : out.processmla_elf_ifm_symbol_names.data();
       out.spec.payload.processmla.elf_ifm_symbol_names_len =
           static_cast<guint>(out.processmla_elf_ifm_symbol_names.size());
       out.processmla_elf_ofm_symbol_names.clear();
@@ -1968,9 +1936,8 @@ private:
         out.processmla_elf_ofm_symbol_names.push_back(name.empty() ? nullptr : name.c_str());
       }
       out.spec.payload.processmla.elf_ofm_symbol_names =
-          out.processmla_elf_ofm_symbol_names.empty()
-              ? nullptr
-              : out.processmla_elf_ofm_symbol_names.data();
+          out.processmla_elf_ofm_symbol_names.empty() ? nullptr
+                                                      : out.processmla_elf_ofm_symbol_names.data();
       out.spec.payload.processmla.elf_ofm_symbol_names_len =
           static_cast<guint>(out.processmla_elf_ofm_symbol_names.size());
       out.spec.payload.processmla.dmabuf_plan_contract =

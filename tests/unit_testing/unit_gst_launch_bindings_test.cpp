@@ -24,6 +24,8 @@ RUN_TEST(
                                    "encoding-name=H264";
         const Analysis analysis = analyze(launch);
         require(analysis.complete, "ordinary assignments should analyze completely");
+        require(analysis.has_topology_syntax && !analysis.has_nontrivial_topology_syntax,
+                "ordinary links are topology syntax, not grouping or all-pad links");
         const auto names = explicit_name_bindings(analysis);
         require(names.size() == 4U, "expected four exact name assignments");
         require(names[0]->canonical_value == "plain", "unquoted name canonicalization failed");
@@ -80,6 +82,8 @@ RUN_TEST(
         const auto names = explicit_name_bindings(analysis);
         require(names.size() == 1U && names.front()->canonical_value == "real",
                 "URL, caps, and assignment values must not create false name bindings");
+        require(analysis.has_topology_syntax && !analysis.has_nontrivial_topology_syntax,
+                "caps features, typed fields and alternatives are not graph grouping syntax");
       }
 
       {
@@ -118,9 +122,23 @@ RUN_TEST(
         const auto names = explicit_name_bindings(analysis);
         require(analysis.complete,
                 "terminal caps at a bin or chain boundary are valid Gst launch syntax");
+        require(analysis.has_nontrivial_topology_syntax,
+                "bins and separate chains must remain distinguishable from ordinary links");
         require(names.size() == 2U && names[0]->canonical_value == "mysrc" &&
                     names[1]->canonical_value == "after_caps",
                 "terminal caps must not hide later chains or expose caps fields as element names");
+      }
+
+      {
+        const Analysis all_pads = analyze("fakesrc : fakesink");
+        require(all_pads.complete && all_pads.has_topology_syntax &&
+                    all_pads.has_nontrivial_topology_syntax,
+                "all-pad links must not be confused with ordinary single-pad links");
+        const Analysis property =
+            analyze("identity name=plain config=\"path(!;):value\" ! fakesink");
+        require(property.complete && property.has_topology_syntax &&
+                    !property.has_nontrivial_topology_syntax,
+                "topology-like punctuation inside property values must stay opaque");
       }
 
       {
