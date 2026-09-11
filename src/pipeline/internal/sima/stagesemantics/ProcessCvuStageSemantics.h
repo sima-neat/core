@@ -66,6 +66,7 @@ struct ProcessCvuCanonicalOutputFact {
   std::string physical_name;
   std::string logical_name;
   std::vector<std::int64_t> shape;
+  std::vector<std::int64_t> stride_bytes;
   std::string dtype;
   std::string layout;
   std::int64_t byte_offset = 0;
@@ -84,6 +85,7 @@ struct ProcessCvuCanonicalRouteFact {
 struct ProcessCvuCanonicalFacts {
   std::vector<std::string> physical_input_names;
   std::vector<std::string> physical_output_names;
+  std::vector<std::uint64_t> physical_output_size_bytes;
   std::vector<ProcessCvuCanonicalInputFact> inputs;
   std::vector<ProcessCvuCanonicalBindingFact> input_bindings;
   std::vector<ProcessCvuCanonicalOutputFact> outputs;

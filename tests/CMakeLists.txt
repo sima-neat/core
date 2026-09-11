@@ -429,6 +429,7 @@ set(UNIT_TESTS
   unit_modalix_contract_preflight_test
   unit_mpk_graph_dump_test
   unit_mpk_fuse_sibling_pre_mla_test
+  unit_batch2_multi_input_cast_pack_test
   unit_pre_mla_ingress_order_input_offset_test
   unit_mpk_contract_legacy_ingress_test
   unit_mpk_typed_tensor_object_contract_test
