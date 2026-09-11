@@ -191,10 +191,11 @@ void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>
     descriptors.push_back(desc);
   }
 
-  // The MLA takes one input segment. When the route concatenates several model inputs into it,
-  // every submitted tensor is still validated above, but the card is told about the one segment
-  // it expects - two names against a single runtime memory index is a conflict it rejects.
   if (packed_input != nullptr) {
+    if (packed_input->shape.size() > SIMA_TENSOR_SET_MAX_RANK) {
+      throw std::runtime_error("tensor-set metadata supports tensor ranks up to " +
+                               std::to_string(SIMA_TENSOR_SET_MAX_RANK));
+    }
     SimaTensorDescriptorV2 packed = descriptors.front();
     packed.logical_index = 0;
     packed.physical_index = 0;

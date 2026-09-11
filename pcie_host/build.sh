@@ -19,6 +19,7 @@ PACKAGE_DIR="${SCRIPT_DIR}/dist"
 INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
 INSTALLER_STAGE="${PACKAGE_DIR}/install_pciehost.sh"
 PLUGIN_NAME="libgstneatpciehost.so"
+PCIE_LIB_NAME="libsimaaipcie.so"
 TENSOR_META_HEADER="gst/SimaTensorSetMetaAbi.h"
 DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
 ARTIFACT_REPOSITORY="${SIMAPCIE_PCIE_HOST_ARTIFACT_REPOSITORY:-internals}"
@@ -630,6 +631,8 @@ PLUGIN_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/${PLUGIN_NAME}"
 HEADER_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/include/${TENSOR_META_HEADER}"
 PLUGIN_STAGE_DIR="${BUILD_DIR_ABS}/artifacts/neatpciehost/${HOST_MULTIARCH}"
 PLUGIN_STAGE="${PLUGIN_STAGE_DIR}/${PLUGIN_NAME}"
+PCIE_LIB_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/${PCIE_LIB_NAME}"
+PCIE_LIB_STAGE="${PLUGIN_STAGE_DIR}/${PCIE_LIB_NAME}"
 INCLUDE_STAGE_DIR="${BUILD_DIR_ABS}/artifacts/neatpciehost/${HOST_MULTIARCH}/include"
 HEADER_STAGE="${INCLUDE_STAGE_DIR}/${TENSOR_META_HEADER}"
 
@@ -671,6 +674,14 @@ ensure_artifact_downloaded
 if [[ -f "${PLUGIN_SOURCE}" ]]; then
   mkdir -p "${PLUGIN_STAGE_DIR}"
   cp -f "${PLUGIN_SOURCE}" "${PLUGIN_STAGE}"
+  # Artifacts that bundle libsimaaipcie ship it beside the plugin, which binds it
+  # through its $ORIGIN RUNPATH. Older artifacts do not, and the plugin then uses
+  # the system library and falls back to rx-mode=copy.
+  if [[ -f "${PCIE_LIB_SOURCE}" ]]; then
+    cp -f "${PCIE_LIB_SOURCE}" "${PCIE_LIB_STAGE}"
+  else
+    PCIE_LIB_STAGE=""
+  fi
 elif [[ "${MAKE_DEB}" == "ON" ]]; then
   echo "ERROR: missing neatpciehost plugin artifact: ${PLUGIN_SOURCE}" >&2
   echo "       expected layout: artifacts/${HOST_MULTIARCH}/${PLUGIN_NAME}" >&2
@@ -699,6 +710,7 @@ cmake -S . -B "${BUILD_DIR}" \
   -DSIMAPCIE_BUILD_PYTHON="${BUILD_PYTHON}" \
   -DPython_EXECUTABLE="${PYTHON_EXECUTABLE}" \
   -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
+  -DSIMAPCIE_NEATPCIEHOST_LIBSIMAAIPCIE="${PCIE_LIB_STAGE}" \
   -DSIMAPCIE_NEATPCIEHOST_INCLUDE_DIR="${INCLUDE_STAGE_DIR}"
 
 cmake --build "${BUILD_DIR}" -j 2

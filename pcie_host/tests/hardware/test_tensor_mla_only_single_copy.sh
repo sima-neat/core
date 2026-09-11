@@ -7,11 +7,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODEL="${SIMAPCIE_MLA_INT8_MODEL:-${SIMAPCIE_YOLOV8_MODEL:-}}"
+MODEL="${SIMAPCIE_YOLOV8_MODEL:-}"
 LOG_DIR="${SIMAPCIE_STRESS_LOG_DIR:-${TMPDIR:-/tmp}/sima-pcie-host-single-copy-$$}"
 
 if [[ -z "${MODEL}" || ! -f "${MODEL}" ]]; then
-  echo "ERROR: SIMAPCIE_MLA_INT8_MODEL / SIMAPCIE_YOLOV8_MODEL is not set to a readable model" >&2
+  echo "ERROR: SIMAPCIE_YOLOV8_MODEL is not set to a readable model" >&2
   exit 1
 fi
 if [[ ! -x "${SCRIPT_DIR}/test_tensor_mla_only_run" ]]; then

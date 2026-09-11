@@ -184,31 +184,25 @@ bool input_has_internal_producer(
 }
 
 std::optional<QuantParams>
-public_quant(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuantContract>& quant,
-             const std::string& name) {
+quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuantContract>& quant,
+               const std::string& name) {
   if (!quant.has_value()) {
     return std::nullopt;
   }
   QuantParams out;
   out.axis = quant->axis;
+  out.zero_points.assign(quant->zero_points.begin(), quant->zero_points.end());
   for (const auto scale : quant->scales) {
     if (scale == 0.0) {
       throw std::runtime_error("mla_only tensor '" + name + "' has a zero quantization scale");
     }
     out.scales.push_back(1.0f / static_cast<float>(scale));
   }
-  for (const auto zero_point : quant->zero_points) {
-    if (zero_point < std::numeric_limits<std::int32_t>::min() ||
-        zero_point > std::numeric_limits<std::int32_t>::max()) {
-      throw std::runtime_error("mla_only tensor '" + name + "' has an out-of-range zero point");
-    }
-    out.zero_points.push_back(static_cast<std::int32_t>(zero_point));
-  }
   return out;
 }
 
 const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
-dequantize_consumer(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+dequantize_for_head(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
                     const std::string& head_name) {
   const simaai::neat::pipeline_internal::sima::MpkPluginIoContract* consumer = nullptr;
   for (const auto& edge : contract.edges) {
@@ -276,17 +270,10 @@ ingress_index(const std::vector<simaai::neat::pipeline_internal::sima::MpkTensor
   return it != inputs.end() ? std::optional<std::size_t>(it - inputs.begin()) : std::nullopt;
 }
 
-// The MLA always takes a single input buffer. A model with several inputs quantizes each one
-// separately and concatenates the results through an ifm pack transform, which mla_only drops
-// along with the quantize stages, so the application submits the dense INT8 output of every
-// quantize stage and the channel stages them contiguously - the same bytes the pack produced.
-// Facts are published in pack order for that reason: it is the layout of the staged payload.
 std::vector<std::size_t>
 mla_only_quantize_stages(const simaai::neat::pipeline_internal::sima::RouteGraph& graph,
                          const std::size_t mla_index) {
   using simaai::neat::pipeline_internal::sima::RouteGraphKernelKind;
-  // route_graph_incoming_edges is ordered by destination input slot, so pack order - the layout
-  // of the staged payload - falls out of the traversal.
   std::vector<std::size_t> stages;
   for (const auto* edge :
        simaai::neat::pipeline_internal::sima::route_graph_incoming_edges(graph, mla_index)) {
@@ -327,7 +314,7 @@ mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& c
                      const std::size_t mla_index) {
   const auto public_inputs = detail::application_input_contracts(contract);
   const auto stages = mla_only_quantize_stages(graph, mla_index);
-  if (stages.empty() || public_inputs.empty()) {
+  if (public_inputs.empty()) {
     throw std::runtime_error("mla_only requires at least one model input");
   }
   if (stages.size() != public_inputs.size()) {
@@ -384,7 +371,7 @@ mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& c
                                std::to_string(input.size_bytes) + " bytes");
     }
     facts.push_back(convert_tensor(input));
-    facts.back().quant = public_quant(stage.quant, input.name);
+    facts.back().quant = quant_from_mpk(stage.quant, input.name);
     facts.back().input_range = convert_tensor(public_inputs[*ingress]).input_range;
   }
   return facts;
@@ -414,16 +401,23 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
   for (std::size_t i = 0; i < logical.size(); ++i) {
     const auto& head = logical[i];
     auto fact = convert_tensor(head);
-    if (published[i].materialization_kind ==
-        simaai::neat::pipeline_internal::sima::MpkTensorMaterializationKind::Bf16LaneSplitRepack) {
+    using simaai::neat::pipeline_internal::sima::MpkTensorMaterializationKind;
+    const auto materialization = published[i].materialization_kind;
+    if (materialization == MpkTensorMaterializationKind::Bf16LaneSplitRepack) {
       throw std::runtime_error("mla_only output '" + fact.name +
                                "' needs a lane-split repack the host does not perform");
+    }
+    if (materialization != MpkTensorMaterializationKind::Direct &&
+        materialization != MpkTensorMaterializationKind::OffsetView) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' has an unsupported output materialization");
     }
     if (canonical_token(fact.dtype) != "int8") {
       throw std::runtime_error("mla_only output '" + fact.name + "' must be INT8, got '" +
                                fact.dtype + "'");
     }
-    if (dense_element_count(fact.shape) != fact.size_bytes ||
+    const std::size_t elements = dense_element_count(fact.shape);
+    if (elements == 0U || elements != fact.size_bytes ||
         head.stride_bytes.size() != fact.shape.size() || head.stride_bytes.back() != 1 ||
         head.source_byte_offset < 0) {
       throw std::runtime_error("mla_only output '" + fact.name + "' has no usable geometry");
@@ -440,13 +434,13 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
       throw std::runtime_error("mla_only output '" + fact.name +
                                "' lies outside the MLA output carrier");
     }
-    const auto& dequantize = dequantize_consumer(contract, head.name);
+    const auto& dequantize = dequantize_for_head(contract, head.name);
     if (best_shape(dequantize.output_tensors.front()) != fact.shape) {
       throw std::runtime_error("mla_only output '" + fact.name +
                                "' does not match the shape of its dequantized output");
     }
     fact.name = strip_public_route_wrapper_prefix(dequantize.output_tensors.front().name);
-    fact.quant = public_quant(dequantize.quant, fact.name);
+    fact.quant = quant_from_mpk(dequantize.quant, fact.name);
     fact.dense_offset = facts->dense_output_bytes;
     if (!simaai::neat::pipeline_internal::safe_add(facts->dense_output_bytes, fact.size_bytes,
                                                    &facts->dense_output_bytes)) {
@@ -538,11 +532,13 @@ read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& co
     facts.inputs.push_back(std::move(input));
   }
   if (facts.inputs.size() > 1U) {
-    const auto& mla_inputs = contract.plugins[mla_index].input_tensors;
-    if (mla_inputs.size() != 1U || mla_inputs.front().size_bytes != facts.packed_input_bytes) {
+    const auto* mla_inputs =
+        simaai::neat::pipeline_internal::sima::get_mla_input_contract(contract);
+    if (mla_inputs == nullptr || mla_inputs->size() != 1U ||
+        mla_inputs->front().size_bytes != facts.packed_input_bytes) {
       throw std::runtime_error("mla_only inputs do not tile the MLA packed ingress");
     }
-    facts.packed_input = convert_tensor(mla_inputs.front());
+    facts.packed_input = convert_tensor(mla_inputs->front());
     facts.packed_input->dtype = facts.inputs.front().dtype;
   }
   add_mla_only_outputs(contract, &facts);

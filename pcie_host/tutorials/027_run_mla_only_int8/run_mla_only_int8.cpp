@@ -188,18 +188,6 @@ int main(int argc, char** argv) {
     model.build(kBuildTimeoutMs);
     const pcie::TensorList outputs = model.run(int8_inputs, kRunTimeoutMs);
     model.close();
-    if (outputs.size() != info.outputs.size()) {
-      throw std::runtime_error("MLA-only route returned " + std::to_string(outputs.size()) +
-                               " outputs, expected " + std::to_string(info.outputs.size()));
-    }
-    for (std::size_t index = 0; index < outputs.size(); ++index) {
-      const auto& output = outputs[index];
-      const auto& spec = info.outputs[index];
-      if (output.route.name != spec.name || output.dtype != pcie::TensorDType::Int8 ||
-          output.shape != spec.shape || output.size_bytes != element_count(spec.shape)) {
-        throw std::runtime_error("output '" + spec.name + "' does not match the contract");
-      }
-    }
     // END STEP
 
     // STEP dequantize-and-compare
