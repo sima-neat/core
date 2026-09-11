@@ -39,12 +39,15 @@ SIMA_ENABLE_TSAN=OFF
 SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
 INSTALL_NEAT_LLIMA=OFF
+SKIP_NEAT_LLIMA=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}}"
 NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-production}"
 NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
 NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
 NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima/debs}"
+NEAT_INTERNALS_PACKAGE_DIR="${NEAT_INTERNALS_PACKAGE_DIR:-${NEAT_INTERNALS_ARTIFACT_DIR:-}}"
+NEAT_LLIMA_ARTIFACT_DIR="${NEAT_LLIMA_ARTIFACT_DIR:-}"
 NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
 NEAT_PACKAGE_BUILDINFO_JSON="${NEAT_PACKAGE_BUILDINFO_JSON:-${BUILD_DIR}/buildinfo.json}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
@@ -276,6 +279,7 @@ Options:
   --tsan         Enable TSan instrumentation for this build
   --install-neat-internals, --install-deps
                  Download/install internals + LLiMa deps artifacts before build
+  --no-llima     Build LLiMa-independent Core targets using the unavailable stubs
   --doc          Build only docs
   --install      After build/package, install artifacts into the current environment.
                  In paired eLxr SDK mode, also deploy/install on the paired DevKit.
@@ -296,6 +300,14 @@ Environment:
                  Manifest used to resolve Vulcan dependency artifacts.
   NEAT_VULCAN_ENV=production
                  Vulcan environment used for dependency artifact installs.
+  NEAT_INTERNALS_PACKAGE_DIR=/path/to/internals/dist/package
+                 Use a local Internals package directory instead of downloading
+                 the Internals artifact from Vulcan. The directory must contain
+                 internals-manifest.json and the Internals .deb packages. When
+                 unset, ../internals/dist/package is used when available.
+  NEAT_LLIMA_ARTIFACT_DIR=/path/to/llima/dist/debs
+                 Use a local LLiMa package directory instead of downloading the
+                 LLiMa artifact from Vulcan.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
   SIMANEAT_SCCACHE=auto|on|off
@@ -314,6 +326,28 @@ Examples:
   ./build.sh --doc
   ./build.sh --all --clean
 USAGE
+}
+
+select_and_normalize_local_artifact_paths() {
+  local variable_name artifact_dir
+  if [[ -z "${NEAT_INTERNALS_PACKAGE_DIR}" &&
+        -f "${WORKSPACE_ROOT}/internals/dist/package/internals-manifest.json" ]]; then
+    NEAT_INTERNALS_PACKAGE_DIR="${WORKSPACE_ROOT}/internals/dist/package"
+    echo "Using sibling Internals packages: ${NEAT_INTERNALS_PACKAGE_DIR}"
+  fi
+
+  for variable_name in NEAT_INTERNALS_PACKAGE_DIR NEAT_LLIMA_ARTIFACT_DIR; do
+    artifact_dir="${!variable_name}"
+    if [[ -z "${artifact_dir}" ]]; then
+      continue
+    fi
+    if [[ ! -d "${artifact_dir}" ]]; then
+      echo "ERROR: Local artifact directory does not exist: ${artifact_dir}" >&2
+      exit 1
+    fi
+    printf -v "${variable_name}" '%s' "$(cd "${artifact_dir}" && pwd -P)"
+    export "${variable_name}"
+  done
 }
 
 parse_args() {
@@ -395,6 +429,10 @@ parse_args() {
         INSTALL_NEAT_LLIMA=ON
         shift
         ;;
+      --no-llima)
+        SKIP_NEAT_LLIMA=ON
+        shift
+        ;;
       --example)
         echo "ERROR: Core no longer builds examples. Use the separate apps repository for curated examples." >&2
         exit 1
@@ -439,6 +477,10 @@ parse_args() {
 }
 
 validate_build_mode_combinations() {
+  if [[ "${SKIP_NEAT_LLIMA}" == "ON" ]]; then
+    INSTALL_NEAT_LLIMA=OFF
+  fi
+
   if [[ "${INSTALL_AFTER_BUILD}" == "ON" ]]; then
     SKIP_DIST=OFF
   fi
@@ -665,17 +707,13 @@ ensure_llima_sdk_sysroot_deps() {
         ! -f "${install_root}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
     missing_packages+=("libeigen3-dev")
   fi
-  if [[ ! -f "${install_root}/usr/include/fmt/core.h" ]]; then
+  if [[ ! -f "${install_root}/usr/include/fmt/core.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so" ]]; then
     missing_packages+=("libfmt-dev:arm64")
   fi
-  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
-    missing_packages+=("libfmt9:arm64")
-  fi
-  if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ]]; then
+  if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so" ]]; then
     missing_packages+=("libspdlog-dev:arm64")
-  fi
-  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
-    missing_packages+=("libspdlog1.10:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
     missing_packages+=("nlohmann-json3-dev")
@@ -685,11 +723,9 @@ ensure_llima_sdk_sysroot_deps() {
         ! -f "${install_root}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
     missing_packages+=("libbrotli-dev:arm64")
   fi
-  if [[ ! -f "${install_root}/usr/include/httplib.h" ]]; then
+  if [[ ! -f "${install_root}/usr/include/httplib.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ]]; then
     missing_packages+=("libcpp-httplib-dev:arm64")
-  fi
-  if [[ ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
-    missing_packages+=("libcpp-httplib0.11:arm64")
   fi
 
   if (( ${#missing_packages[@]} == 0 )); then
@@ -727,9 +763,11 @@ ensure_llima_sdk_sysroot_deps() {
 
   if [[ ! -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
         ! -f "${install_root}/usr/include/fmt/core.h" ||
-        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so" ||
         ! -f "${install_root}/usr/include/spdlog/spdlog.h" ||
-        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so" ||
+        ! -f "${install_root}/usr/include/httplib.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ||
         ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
       echo "ERROR: LLiMa SDK sysroot dependencies are still incomplete after install." >&2
       rm -rf "${tmp_dir}"
@@ -1438,7 +1476,9 @@ validate_internals_runtime_profile() {
 }
 
 ensure_neat_internals() {
-  # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
+  # Install neat-internals packages, then materialize plugins. A local artifact
+  # directory takes precedence over Vulcan so sibling-repository changes can be
+  # validated before they are published.
   local internals_ref
   if ! resolve_neat_internals_ref; then
     exit 1
@@ -1455,8 +1495,13 @@ ensure_neat_internals() {
   local artifact_dir="${tmp_dir}/package"
   local plugins_list_file="${tmp_dir}/plugin-files.list"
 
-  fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
-  internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  if [[ -n "${NEAT_INTERNALS_PACKAGE_DIR}" ]]; then
+    artifact_dir="${NEAT_INTERNALS_PACKAGE_DIR}"
+    echo "Using local neat-internals packages: ${artifact_dir}"
+  else
+    fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
+    internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  fi
   validate_internals_runtime_profile "${artifact_dir}" || exit 1
   sync_sysroot_from_internals_manifest "${artifact_dir}"
   if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
@@ -1464,7 +1509,7 @@ ensure_neat_internals() {
   fi
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
-    echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
+    echo "ERROR: Internals artifact did not contain .deb packages: ${artifact_dir}" >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
@@ -1492,7 +1537,11 @@ ensure_neat_llima() {
 
   local artifact_dir="${tmp_dir}/package"
   local using_cached_debs=0
-  if [[ -f "${marker_file}" ]] &&
+  if [[ -n "${NEAT_LLIMA_ARTIFACT_DIR}" ]]; then
+    artifact_dir="${NEAT_LLIMA_ARTIFACT_DIR}"
+    using_cached_debs=1
+    echo "Using local LLiMa packages: ${artifact_dir}"
+  elif [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
      compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-core.deb" >/dev/null 2>&1 &&
      compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-dev.deb" >/dev/null 2>&1 &&
@@ -1638,14 +1687,19 @@ ensure_neat_internals_headers() {
     return 0
   fi
 
-  fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
-  internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  if [[ -n "${NEAT_INTERNALS_PACKAGE_DIR}" ]]; then
+    artifact_dir="${NEAT_INTERNALS_PACKAGE_DIR}"
+    echo "Using local neat-internals headers: ${artifact_dir}"
+  else
+    fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
+    internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  fi
   validate_internals_runtime_profile "${artifact_dir}" || exit 1
 
   local dev_deb
   dev_deb="$(find "${artifact_dir}" -type f -name 'neat-internals-dev_*.deb' | sort | head -n 1)"
   if [[ -z "${dev_deb}" ]]; then
-    echo "ERROR: neat-internals-dev package was not found in Vulcan artifact ${internals_ref}" >&2
+    echo "ERROR: neat-internals-dev package was not found in Internals artifact ${artifact_dir}" >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
@@ -1692,8 +1746,13 @@ ensure_neat_llima_headers() {
     return 0
   fi
 
-  fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
-  llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
+  if [[ -n "${NEAT_LLIMA_ARTIFACT_DIR}" ]]; then
+    artifact_dir="${NEAT_LLIMA_ARTIFACT_DIR}"
+    echo "Using local LLiMa headers: ${artifact_dir}"
+  else
+    fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
+    llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
+  fi
 
   local dev_deb
   dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
@@ -1724,7 +1783,9 @@ ensure_dependency_headers() {
     return 0
   fi
   ensure_neat_internals_headers
-  ensure_neat_llima_headers
+  if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    ensure_neat_llima_headers
+  fi
 }
 
 collect_install_artifact_files() {
@@ -1738,6 +1799,9 @@ collect_install_artifact_files() {
   for file in dist/*.deb ./*.deb; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
+    if [[ "${SKIP_NEAT_LLIMA}" == "ON" && "${basename_file}" == sima-lmm-*.deb ]]; then
+      continue
+    fi
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
     seen_basenames["${basename_file}"]=1
     out_files_ref+=("${file}")
@@ -1751,13 +1815,15 @@ collect_install_artifact_files() {
     out_files_ref+=("${file}")
   done
 
-  for file in "${NEAT_LLIMA_DEB_DIR}"/sima-lmm-*.deb; do
-    [[ -e "${file}" ]] || continue
-    basename_file="$(basename "${file}")"
-    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
-    seen_basenames["${basename_file}"]=1
-    out_files_ref+=("${file}")
-  done
+  if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    for file in "${NEAT_LLIMA_DEB_DIR}"/sima-lmm-*.deb; do
+      [[ -e "${file}" ]] || continue
+      basename_file="$(basename "${file}")"
+      [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+      seen_basenames["${basename_file}"]=1
+      out_files_ref+=("${file}")
+    done
+  fi
 
   for file in dist/*.whl; do
     [[ -e "${file}" ]] || continue
@@ -1922,6 +1988,7 @@ print_build_config() {
   echo "sccache        : ${SIMANEAT_SCCACHE_ACTIVE:-OFF}"
   echo "eLxr SDK       : ${ELXR_SDK}"
   echo "Neat LLiMa     : ${INSTALL_NEAT_LLIMA}"
+  echo "Skip LLiMa     : ${SKIP_NEAT_LLIMA}"
   if [[ "${ELXR_SDK}" == "ON" ]]; then
     echo "eLxr SDK ver   : ${ELXR_SDK_VERSION}"
     echo "eLXr ver       : ${ELXR_VERSION}"
@@ -1988,6 +2055,13 @@ configure_cmake() {
       -DSIMANEAT_DOCS_ONLY_CONFIGURE=ON
       -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
       -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
+    )
+  fi
+
+  if [[ "${SKIP_NEAT_LLIMA}" == "ON" ]]; then
+    cmake_args+=(
+      -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
+      -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE
     )
   fi
 
@@ -2511,11 +2585,18 @@ stage_package_artifacts_to_dist() {
     mv -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
-  for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb "${NEAT_LLIMA_DEB_DIR}"/*.deb; do
+  for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do
     [[ -e "${file}" ]] || continue
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
+  if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    for file in "${NEAT_LLIMA_DEB_DIR}"/*.deb; do
+      [[ -e "${file}" ]] || continue
+      cp -f "${file}" "dist/$(basename "${file}")"
+      staged_any=ON
+    done
+  fi
 
   if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
     if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then
@@ -2993,6 +3074,7 @@ main() {
   # High-level pipeline:
   # parse -> bootstrap deps -> sync internals -> configure/build -> package -> summary
   parse_args "$@"
+  select_and_normalize_local_artifact_paths
   maybe_reexec_from_shadow "$@"
   validate_build_mode_combinations
   apply_sanitizer_build_profile

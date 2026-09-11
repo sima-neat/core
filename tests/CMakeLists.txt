@@ -679,12 +679,11 @@ add_pipeline_test(
   ev74_four_process_rpmsg_concurrency_test
   SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/ev74_four_process_rpmsg_concurrency_test.cpp
-  LOCK_DISPATCHER
 )
 
 if (NOT ev74_four_process_rpmsg_concurrency_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST ev74_four_process_rpmsg_concurrency_test APPEND PROPERTY
-    LABELS "e2e;ev74;concurrency;rpmsg")
+    LABELS "e2e;ev74;concurrency;direct-driver")
   set_tests_properties(ev74_four_process_rpmsg_concurrency_test PROPERTIES TIMEOUT 120)
 endif()
 

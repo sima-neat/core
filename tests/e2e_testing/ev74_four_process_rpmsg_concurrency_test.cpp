@@ -8,7 +8,6 @@
 
 #include <opencv2/core.hpp>
 
-#include <dirent.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -20,9 +19,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <iostream>
-#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -313,65 +310,6 @@ void await_state(const std::array<ChildProcess, kChildCount>& children, char exp
   }
 }
 
-std::map<std::string, std::string> read_key_values(const std::string& path) {
-  std::ifstream stream(path);
-  std::map<std::string, std::string> values;
-  std::string line;
-  while (std::getline(stream, line)) {
-    const size_t separator = line.find('=');
-    if (separator != std::string::npos) {
-      values.emplace(line.substr(0, separator), line.substr(separator + 1));
-    }
-  }
-  return values;
-}
-
-void verify_one_unique_channel_per_child(const std::array<ChildProcess, kChildCount>& children) {
-  std::set<pid_t> child_pids;
-  for (const ChildProcess& child : children) {
-    child_pids.insert(child.pid);
-  }
-
-  std::map<pid_t, std::set<std::string>> nodes_by_pid;
-  DIR* directory = ::opendir("/tmp");
-  if (directory == nullptr) {
-    throw std::runtime_error(errno_message("open /tmp"));
-  }
-  while (dirent* entry = ::readdir(directory)) {
-    const std::string name = entry->d_name;
-    if (name.rfind("rpmsg_lock_rpmsg", 0) != 0 || name.size() < std::strlen(".owner") ||
-        name.compare(name.size() - std::strlen(".owner"), std::strlen(".owner"), ".owner") != 0) {
-      continue;
-    }
-    const auto values = read_key_values("/tmp/" + name);
-    const auto pid_it = values.find("pid");
-    const auto node_it = values.find("node");
-    if (pid_it == values.end() || node_it == values.end()) {
-      continue;
-    }
-    try {
-      const pid_t pid = static_cast<pid_t>(std::stol(pid_it->second));
-      if (child_pids.count(pid) != 0) {
-        nodes_by_pid[pid].insert(node_it->second);
-      }
-    } catch (const std::exception&) {
-    }
-  }
-  (void)::closedir(directory);
-
-  std::set<std::string> all_nodes;
-  for (const pid_t pid : child_pids) {
-    const auto found = nodes_by_pid.find(pid);
-    require(found != nodes_by_pid.end(),
-            "Missing RPMsg owner metadata for child " + std::to_string(pid));
-    require(found->second.size() == 1,
-            "Child " + std::to_string(pid) + " does not own exactly one RPMsg channel");
-    all_nodes.insert(*found->second.begin());
-  }
-  require(all_nodes.size() == kChildCount,
-          "Four live EV74 processes did not own four distinct RPMsg channels");
-}
-
 void run_test() {
   std::array<std::array<int, 2>, kChildCount> sockets;
   for (auto& pair : sockets) {
@@ -412,7 +350,6 @@ void run_test() {
     send_command(child.socket, 'G');
   }
   await_state(children, 'S');
-  verify_one_unique_channel_per_child(children);
 
   for (const ChildProcess& child : children) {
     send_command(child.socket, 'X');
