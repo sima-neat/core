@@ -293,6 +293,18 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
   return caps;
 }
 
+ProcessCvuBackendCapabilities processcvu_backend_capabilities(
+    const ProcessCvuStagePayload& payload, std::string_view stage_identity) {
+  ProcessCvuBackendCapabilities caps = processcvu_backend_capabilities(payload);
+  const auto role = processcvu_stage_role(payload, stage_identity, std::nullopt);
+  if (role == ProcessCvuStageRole::Post && caps.supports_a65) {
+    caps.auto_run_target = "A65";
+    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::A65;
+    caps.reason = "a65_preferred_auto_post";
+  }
+  return caps;
+}
+
 ProcessCvuBackendDecision
 resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
                                     const ContractCompileInput& compile_input,

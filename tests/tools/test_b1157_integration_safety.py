@@ -161,14 +161,14 @@ validate_bundled_internals_profile
 
 def test_manifest_disallows_snap_and_gates_before_dependency_install():
     assert MANIFEST["platform-version"] == "3.0.0"
-    assert MANIFEST["internals"] == {"branch": "codex/b1157-internals-compat", "spec": "latest"}
+    assert MANIFEST["internals"] == {"branch": "codex/b1157-mlart-dmabuf", "spec": "latest"}
     script = (ROOT / "build.sh").read_text()
     function = script.split("ensure_neat_internals() {", 1)[1].split("\n}\n", 1)[0]
     assert function.index("validate_internals_runtime_profile") < function.index("sync_sysroot_from_internals_manifest")
     assert function.index("validate_internals_runtime_profile") < function.index("collect_plugin_files_from_debs")
     assert "Direct-driver Core requires an explicit Internals ref" in script
     cmake = (ROOT / "CMakeLists.txt").read_text()
-    assert '"neat-runtime-profile-b1157 (= 1)"' in cmake
+    assert '"neat-runtime-profile-b1297 (= 1)"' in cmake
 
 
 def test_direct_installer_requires_attestation_before_any_action():
@@ -225,7 +225,11 @@ complete_board_install_after_packages
 
 def test_b1157_git_sysroot_receipt_updates_exactly():
     from test_internals_package_boundary import run_sync
-    result, calls = run_sync({"sysroot-version": PROFILE["sysroot_version"]}, "3.0.0")
+    result, calls = run_sync(
+        {"sysroot-version": PROFILE["sysroot_version"]},
+        "3.0.0",
+        sdk_platform_version="3.0.0",
+    )
     assert result.returncode == 0, result.stderr
     assert calls == [f"update {PROFILE['sysroot_version']}", "status"]
 

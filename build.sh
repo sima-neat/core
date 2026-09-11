@@ -1438,7 +1438,7 @@ print(receipt)
     return 0
   fi
 
-  if [[ "${receipt}" == *"~pre"* ]]; then
+  if [[ "${receipt}" == *"~pre"* || "${receipt}" == *"~git"* ]]; then
     echo "Updating SDK sysroot to Internals receipt ${receipt}"
     if ! run_privileged sysroot update "${receipt}"; then
       echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
@@ -1536,10 +1536,9 @@ ensure_neat_llima() {
   tmp_dir="$(mktemp -d /tmp/sima-neat-llima-XXXXXX)"
 
   local artifact_dir="${tmp_dir}/package"
-  local using_cached_debs=0
+  local using_deb_cache=0
   if [[ -n "${NEAT_LLIMA_ARTIFACT_DIR}" ]]; then
     artifact_dir="${NEAT_LLIMA_ARTIFACT_DIR}"
-    using_cached_debs=1
     echo "Using local LLiMa packages: ${artifact_dir}"
   elif [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
@@ -1548,7 +1547,7 @@ ensure_neat_llima() {
      compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-cli.deb" >/dev/null 2>&1; then
     echo "Using cached LLiMa debs (${llima_ref})."
     artifact_dir="${deb_cache_dir}"
-    using_cached_debs=1
+    using_deb_cache=1
   else
     fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
     llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
@@ -1565,7 +1564,7 @@ ensure_neat_llima() {
     exit 1
   fi
 
-  if [[ "${using_cached_debs}" != "1" ]]; then
+  if [[ "${using_deb_cache}" != "1" ]]; then
     mkdir -p "${deb_cache_dir}"
     rm -f "${deb_cache_dir}"/sima-lmm-*.deb
     cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"

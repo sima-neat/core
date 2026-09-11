@@ -163,6 +163,52 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertIn("find_dependency(SimaLMM CONFIG REQUIRED)", exported_config)
         self.assertNotIn("@SIMANEAT_PLATFORM_VERSION@", exported_config)
 
+    def test_explicit_llima_artifact_refreshes_packaging_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "artifact"
+            cache = root / "cache"
+            deps = root / "deps"
+            sysroot = root / "sysroot"
+            artifact.mkdir()
+            cache.mkdir()
+            deps.mkdir()
+            for component in ("core", "dev", "cli"):
+                (artifact / f"sima-lmm-0.4.0+local-Linux-{component}.deb").touch()
+                (cache / f"sima-lmm-0.4.0+stale-Linux-{component}.deb").touch()
+
+            script = f"""
+set -euo pipefail
+resolve_neat_llima_ref() {{
+  NEAT_LLIMA_REQUESTED_REF=local:latest
+}}
+ensure_llima_sdk_sysroot_deps() {{ :; }}
+dpkg-deb() {{
+  mkdir -p "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
+  touch "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake"
+  touch "$3/usr/lib/aarch64-linux-gnu/libsima_lmm_runtime.so"
+}}
+{shell_function("ensure_neat_llima")}
+NEAT_LLIMA_ARTIFACT_DIR={shlex.quote(str(artifact))}
+NEAT_LLIMA_DEB_DIR={shlex.quote(str(cache))}
+NEAT_INTERNALS_DIR={shlex.quote(str(deps))}
+SYSROOT={shlex.quote(str(sysroot))}
+ELXR_SDK=ON
+ensure_neat_llima
+"""
+            result = subprocess.run(
+                ["bash", "-c", script], check=False, text=True, capture_output=True
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                sorted(path.name for path in cache.glob("sima-lmm-*.deb")),
+                [
+                    "sima-lmm-0.4.0+local-Linux-cli.deb",
+                    "sima-lmm-0.4.0+local-Linux-core.deb",
+                    "sima-lmm-0.4.0+local-Linux-dev.deb",
+                ],
+            )
+
     def test_cmake_package_reports_core_release_identity(self) -> None:
         text = cmake()
         self.assertIn("VERSION ${SIMANEAT_PACKAGE_BASE_VERSION}", text)
@@ -231,7 +277,9 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             text,
         )
         self.assertIn("internals-manifest.json", text)
-        self.assertIn('(?:~pre[0-9]+)?', text)
+        self.assertIn(
+            '(?:~(?:pre[0-9]+|git[0-9]{12}[.][a-f0-9]+-[0-9]+))?', text
+        )
         self.assertIn('sysroot update "${receipt}"', text)
         self.assertIn("Using stable SDK sysroot", text)
         self.assertIn("Internals artifact is missing internals-manifest.json", text)

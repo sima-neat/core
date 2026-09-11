@@ -121,6 +121,7 @@ source "$1"
 tmp="$(mktemp -d)"
 INSTALLER_TMP_DIRS=("${tmp}")
 ENV_MODE=modalix-board
+check_b1157_install_maintenance() { :; }
 install_python_environment() { printf 'PYNEAT\n'; }
 install_debs_on_board() { printf 'DEBS\n'; }
 configure_board_i2c_access() { printf 'I2C\n'; }
