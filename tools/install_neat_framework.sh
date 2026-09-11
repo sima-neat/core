@@ -903,8 +903,8 @@ ensure_sima_lmm_sysroot_deps() {
   if [[ ! -f "${sysroot}/usr/include/httplib.h" ]]; then
     missing_packages+=("libcpp-httplib-dev:arm64")
   fi
-  if [[ ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
-    missing_packages+=("libcpp-httplib0.11:arm64")
+  if [[ ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18" ]]; then
+    missing_packages+=("libcpp-httplib0.18:arm64")
   fi
 
   if [[ "${#missing_packages[@]}" -eq 0 ]]; then

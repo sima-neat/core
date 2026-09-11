@@ -1612,9 +1612,9 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libgstreamer-plugins-base1.0-0"
   "libgstrtspserver-1.0-0"
   "libglib2.0-0"
-  "libopencv-core406"
-  "libopencv-imgproc406"
-  "libopencv-imgcodecs406"
+  "libopencv-core410"
+  "libopencv-imgproc410"
+  "libopencv-imgcodecs410"
   # libsima_neat.so links libz directly to inflate model archives in process.
   "zlib1g"
   "neat-runtime"
@@ -1623,7 +1623,7 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
     "sima-lmm-core"
-    "libcpp-httplib0.11")
+    "libcpp-httplib0.18")
 endif()
 if (SIMANEAT_RUNTIME_PROFILE)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "neat-runtime-profile-b1297 (= 1)")
@@ -1638,7 +1638,7 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "libglib2.0-dev"
   "libopencv-dev"
   # Test-only: tests/rtsp_probe_utils.h probes source FPS with cv::VideoCapture.
-  "libopencv-videoio406"
+  "libopencv-videoio410"
   # SimaNeatConfig calls find_dependency(ZLIB), and sima_neat_static exports ZLIB::ZLIB.
   "zlib1g-dev"
   "nlohmann-json3-dev"
