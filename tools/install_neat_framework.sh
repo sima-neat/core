@@ -1228,13 +1228,15 @@ check_b1157_install_maintenance() {
     for command in systemctl pgrep fuser; do
       command -v "$command" >/dev/null || { echo "Missing maintenance check: $command" >&2; exit 1; }
     done
-    for unit in simaai-appcomplex.service simaai-pipeline-manager.service rctd.service encoder.service decoder.service; do
+    # appcomplex initializes MLA at boot on the B1297 platform image, and rctd
+    # provides platform trace collection. Neither is a NEAT runtime owner.
+    for unit in simaai-pipeline-manager.service encoder.service decoder.service; do
       state=$(systemctl is-active "$unit" 2>/dev/null || true)
       case "$state" in inactive|failed|unknown) ;; *) echo "Legacy service is active or unidentified: $unit ($state)" >&2; exit 1;; esac
       state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
       case "$state" in disabled|masked|static|indirect|not-found) ;; *) echo "Legacy service is enabled or unidentified: $unit ($state)" >&2; exit 1;; esac
     done
-    for process in mlashmcomplex rctd simaai_pipeline_handler_new mla_rt_service.py dispatcher_watchdog sima_allegro_encode sima_allegro_decode; do
+    for process in simaai_pipeline_handler_new mla_rt_service.py dispatcher_watchdog sima_allegro_encode sima_allegro_decode; do
       if pgrep -f "(^|/)$process( |$)" >/dev/null; then
         echo "Legacy runtime process is active: $process" >&2; exit 1
       else

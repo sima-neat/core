@@ -298,6 +298,19 @@ def test_installer_uses_only_the_public_read_only_migration_entrypoint():
     assert "/usr/libexec/sima-neat/runtime-migration" not in installer
 
 
+def test_maintenance_preflight_allows_platform_init_and_trace_services():
+    installer = (ROOT / "tools/install_neat_framework.sh").read_text()
+    function = installer.split("check_b1157_install_maintenance() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert "simaai-appcomplex.service" not in function
+    assert "rctd.service" not in function
+    assert "mlashmcomplex" not in function
+    assert " rctd " not in function
+    assert "simaai-pipeline-manager.service" in function
+    assert "simaai_pipeline_handler_new" in function
+
+
 def test_native_video_sender_kind_contract(tmp_path):
     binary = tmp_path / "video-sender-kind"
     subprocess.run([
