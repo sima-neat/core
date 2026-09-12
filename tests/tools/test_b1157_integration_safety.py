@@ -228,10 +228,19 @@ def test_b1157_git_sysroot_receipt_updates_exactly():
     result, calls = run_sync(
         {"sysroot-version": PROFILE["sysroot_version"]},
         "3.0.0",
-        sdk_platform_version="3.0.0",
+        sdk_platform_version="3.0.0~git202609100138.16bca40-1247",
+        sdk_platform_channel="daily",
     )
     assert result.returncode == 0, result.stderr
-    assert calls == [f"update {PROFILE['sysroot_version']}", "status"]
+    assert len(calls) == 3
+    assert calls[0].startswith("install -m 0644 ")
+    assert calls[0].endswith(" /etc/apt/preferences.d/simaai-sdk-version.pref")
+    assert calls[1].startswith(
+        f"setup-sdk-sysroot {PROFILE['sysroot_version']} "
+    )
+    assert calls[2].endswith(
+        "/var/lib/sima-sdk/sysroot-overlay"
+    )
 
 
 @pytest.mark.parametrize("state,expected", [
