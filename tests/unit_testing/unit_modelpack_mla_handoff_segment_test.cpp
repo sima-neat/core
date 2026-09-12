@@ -96,6 +96,64 @@ void require_default_sync_retention_contract(const simaai::neat::Model& model) {
           "default sync YOLO must budget one retained carrier at its actual owner");
 }
 
+void require_standalone_sync_retention_contract(const simaai::neat::Model& model) {
+  using namespace simaai::neat;
+  namespace contract = pipeline_internal::sima;
+  namespace query = pipeline_internal::rendered_stage_query;
+
+  // Match stages::Infer's actual fragment, without inserting its preceding
+  // Preproc Run into this graph or renaming a public input to an MPK value.
+  const auto infer = internal::ModelAccess::build_infer_nodes(model, true);
+  const auto mla_input = query::mla_input_tensor_info_from_nodes(infer);
+  require(mla_input.span_size_bytes > 0, "standalone Infer needs the exact MLA input span");
+  InputOptions input;
+  input.payload_type = PayloadType::Tensor;
+  input.format = FormatTag::ByteStream;
+  input.width = static_cast<int>(mla_input.span_size_bytes);
+  input.height = 1;
+  input.depth = 1;
+  input.buffer_name = "memory0";
+  std::vector<std::shared_ptr<Node>> nodes{nodes::Input(input)};
+  nodes.insert(nodes.end(), infer.begin(), infer.end());
+  nodes.push_back(nodes::Output());
+  nodes = session_build_materialize_model_bound_nodes(nodes, true);
+  session_build_apply_derived_input_contracts(&nodes);
+  auto build = build_pipeline_full(nodes, false, "mysink", false, {});
+  session_build_compile_contracts(&build, nodes, ContractCompileInput{},
+                                  "unit_modelpack_mla_handoff_segment_test.standalone", &nodes);
+  require(build.manifest_diagnostics.errors.empty() && build.rendered_manifest.has_value(),
+          "standalone Infer must compile its existing MPK-derived input contract");
+  const auto& manifest = *build.rendered_manifest;
+  const auto* mla = query::find_mla_stage(manifest);
+  require(mla && mla == &manifest.stages.front() &&
+              mla->frame_arena_role == contract::FrameArenaRole::ReuseInput &&
+              mla->frame_arena_provenance ==
+                  contract::static_contract::ArenaAllocationProvenance::CoreAllocated &&
+              !mla->input_bindings.empty() && !mla->logical_inputs.empty() &&
+              !mla->physical_inputs.empty(),
+          "standalone Infer must retain the pre-existing CoreAllocated arena and typed inputs");
+  std::string edge_error;
+  require(contract::edgecontract::resolve_consumer_edge_contracts_exact(manifest, 0U, &edge_error)
+                  .empty() &&
+              edge_error.find("no producer for authored value") != std::string::npos,
+          "graph ingress must not weaken the compute-only exact producer resolver");
+  const auto unchanged_manifest = contract::serialize_manifest_json(manifest);
+  for (const int depth : {-1, 1}) {
+    const auto pipeline = session_build_clamp_sync_build_result(build, depth);
+    require(pipeline.find("output-pool-min-buffers=") == std::string::npos,
+            "Infer must not invent a native allocation pool for a graph-input carrier");
+    for (const auto& element : contract::parse_pipeline_elements(pipeline)) {
+      if (element.plugin == "neatprocesscvu" || element.plugin == "neatprocessmla") {
+        require(element.fragment.find("num-buffers=1") != std::string::npos,
+                "standalone synchronous Infer must retain one execution lane");
+      }
+    }
+  }
+  require(
+      contract::serialize_manifest_json(manifest) == unchanged_manifest,
+      "standalone retention analysis must preserve authored input names, offsets and provenance");
+}
+
 } // namespace
 
 RUN_TEST(
@@ -211,6 +269,7 @@ RUN_TEST(
       }
 
       require_default_sync_retention_contract(model);
+      require_standalone_sync_retention_contract(model);
 
       const std::vector<std::filesystem::path> bf16_candidates = {
           core_root / "tmp" / "yolov8n_drive" / "yolov8n_A_W_BF16_mpk.tar.gz",

@@ -185,7 +185,6 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
 
   void close_input();
   void stop();
-  void stop_graph();
   void close();
 
   bool push_samples(const Sample& msgs, bool block = true);
@@ -328,12 +327,26 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   mutable std::mutex error_mu;
   bool latency_init = false;
   std::atomic<bool> stop_requested{false};
-  // Who must close `pipeline.stream`; `closed` below only records close() being entered.
+  // Who must close `pipeline.stream`, including an existing detached worker.
   std::atomic<InputStreamCloseState> stream_close_state{
       InputStreamCloseState::RunCoreOwnsWhileInputRunning};
-  std::atomic<bool> closed{false};
   bool diag_enabled = false;
   std::atomic<bool> diag_logged{false};
+
+private:
+  // Cold-path ownership only: never hold lifecycle_mu_ across stream operations,
+  // callbacks, queue locks or joins. InputStreamCloseState remains the actual closer.
+  enum class LifecyclePhase { Active, Stopping, Stopped, CloseClaimed };
+  std::mutex lifecycle_mu_;
+  LifecyclePhase lifecycle_phase_ = LifecyclePhase::Active;
+  bool close_requested_ = false;
+
+  void teardown(bool request_close);
+  void signal_pipeline_stop();
+  void stop_owned();
+  void stop_graph_owned();
+  void finish_input_stop();
+  void close_owned();
 };
 
 void initialize_run_identity(RunCore& core);

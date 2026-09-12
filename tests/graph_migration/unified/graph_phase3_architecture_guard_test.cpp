@@ -163,7 +163,7 @@ RUN_TEST(
       require_present(run_core_text, "GraphRunStats> graph_stats", run_core);
       require_present(run_core_text, "graph_signal_stop", run_core);
       require_present(run_core_text, "graph_request_stop", run_core);
-      require_present(run_core_text, "stop_graph", run_core);
+      require_present(run_core_text, "stop_graph_owned", run_core);
       require_present(run_core_text, "ensure_graph_pipeline_built", run_core);
       require_present(run_core_text, "graph_dispatch_to_stage_group", run_core);
       require_present(run_core_text, "graph_push", run_core);
@@ -189,11 +189,11 @@ RUN_TEST(
 
       const std::string run_core_graph_stop_text =
           strip_cpp_comments(read_text(run_core_graph_stop));
-      require_present(run_core_graph_stop_text, "RunCore::stop_graph", run_core_graph_stop);
+      require_present(run_core_graph_stop_text, "RunCore::stop_graph_owned", run_core_graph_stop);
       require_present(run_core_graph_stop_text, "graph_signal_stop", run_core_graph_stop);
 
       const std::string graph_run_threads_text = strip_cpp_comments(read_text(graph_run_threads));
-      require_present(graph_run_threads_text, "stop_graph", graph_run_threads);
+      require_present(graph_run_threads_text, "state_->core->stop();", graph_run_threads);
       require_absent(graph_run_threads_text, "transport.pull_thread", graph_run_threads);
       require_absent(graph_run_threads_text, "transport.push_thread", graph_run_threads);
       require_absent(graph_run_threads_text, "graph_signal_stop", graph_run_threads);

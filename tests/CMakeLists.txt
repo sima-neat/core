@@ -289,6 +289,9 @@ add_executable(
 target_link_libraries(unit_000_devkit_package_inventory_test
   PRIVATE sima_neat sima_neat_internal_headers
 )
+target_compile_definitions(unit_000_devkit_package_inventory_test
+  PRIVATE SIMANEAT_INVENTORY_WITH_LLIMA=$<BOOL:${SimaLMM_FOUND}>
+)
 target_include_directories(unit_000_devkit_package_inventory_test
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

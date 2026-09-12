@@ -12,6 +12,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/HolderLoanGate.h"
+#include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/runtime/RunCore.h"
 #include "rtsp_probe_utils.h"
 #include "test_utils.h"
@@ -75,16 +76,6 @@ std::vector<std::string> configured_urls() {
     return split_urls(many);
   }
   return {};
-}
-
-std::size_t count_occurrences(const std::string& value, const std::string& needle) {
-  std::size_t count = 0;
-  std::size_t pos = 0;
-  while ((pos = value.find(needle, pos)) != std::string::npos) {
-    ++count;
-    pos += needle.size();
-  }
-  return count;
 }
 
 bool has_injected_input(const simaai::neat::runtime::PipelineSegmentPlan& segment) {
@@ -189,29 +180,32 @@ simaai::neat::Sample pull_frames(simaai::neat::Run& run, const std::string& endp
   return first_sample;
 }
 
-void require_admitted_boundaries(const simaai::neat::Run& run, std::size_t expected_decoders,
-                                 const std::string& where) {
+void require_decoder_count(const simaai::neat::Run& run, std::size_t expected_decoders,
+                           const std::string& where) {
   const auto core = simaai::neat::run_internal::core(run);
   require(core != nullptr, where + ": missing RunCore");
-  require(core->decoder_admission && core->decoder_admission->active(),
-          where + ": decoder graph started without an admission lease");
 
-  std::size_t admitted_decoders = 0;
+  // Direct decoding has process-wide placement accounting, not a global graph lease.
+  const auto decoder_count = [](const std::string& pipeline) {
+    const auto elements = simaai::neat::pipeline_internal::sima::parse_pipeline_elements(pipeline);
+    return static_cast<std::size_t>(
+        std::count_if(elements.begin(), elements.end(),
+                      [](const auto& element) { return element.plugin == "neatdecoder"; }));
+  };
+  std::size_t decoders = 0;
   if (core->graph_execution_) {
     for (const auto& pipeline : core->graph_execution_->pipelines) {
       require(pipeline != nullptr, where + ": missing pipeline segment");
-      admitted_decoders +=
-          count_occurrences(pipeline->last_pipeline, "decoder-admission-required=true");
+      decoders += decoder_count(pipeline->last_pipeline);
     }
   } else {
     const auto diag = core->pipeline.stream.diag_ctx();
     require(diag != nullptr, where + ": simple pipeline has no diagnostics");
-    admitted_decoders = count_occurrences(diag->pipeline_string, "decoder-admission-required=true");
+    decoders = decoder_count(diag->pipeline_string);
   }
 
-  require(admitted_decoders == expected_decoders,
-          where + ": expected " + std::to_string(expected_decoders) + " admitted decoder(s), got " +
-              std::to_string(admitted_decoders));
+  require(decoders == expected_decoders, where + ": expected " + std::to_string(expected_decoders) +
+                                             " decoder(s), got " + std::to_string(decoders));
 }
 
 double measure_throughput(const std::vector<simaai::neat::Run*>& runs,
@@ -397,7 +391,7 @@ double run_combined_graph(const std::vector<std::string>& urls, const std::vecto
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     (void)pull_frames(run, output_name(i), "combined stream " + std::to_string(i));
   }
-  require_admitted_boundaries(run, kStreamCount, "combined graph");
+  require_decoder_count(run, kStreamCount, "combined graph");
   std::vector<simaai::neat::Run*> run_refs(kStreamCount, &run);
   std::vector<std::string> endpoints;
   for (std::size_t i = 0; i < kStreamCount; ++i) {
@@ -424,7 +418,7 @@ double run_independent_graphs(const std::vector<std::string>& urls, const std::v
 
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     (void)pull_frames(runs[i], {}, "independent stream " + std::to_string(i));
-    require_admitted_boundaries(runs[i], 1U, "independent graph " + std::to_string(i));
+    require_decoder_count(runs[i], 1U, "independent graph " + std::to_string(i));
   }
   std::vector<simaai::neat::Run*> run_refs;
   std::vector<std::string> endpoints(kStreamCount);
@@ -445,7 +439,7 @@ void run_close_and_rebuild(const std::string& url, int fps) {
   simaai::neat::Graph graph = make_single_stream_graph(url, fps);
   simaai::neat::Run run = graph.build(run_options());
   (void)pull_frames(run, {}, "simple rebuild");
-  require_admitted_boundaries(run, 1U, "simple rebuild");
+  require_decoder_count(run, 1U, "simple rebuild");
   run.close();
 }
 

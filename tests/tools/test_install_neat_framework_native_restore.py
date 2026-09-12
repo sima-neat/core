@@ -854,6 +854,60 @@ printf 'RECOVERY_SKIPPED_PRECONDITION\n'
 
 
 class SimaNeatLinkRepairTest(unittest.TestCase):
+    def test_board_library_layout_comes_from_unique_package_payload(self) -> None:
+        for lib_dir in ("/usr/lib", "/usr/lib/aarch64-linux-gnu"):
+            with self.subTest(lib_dir=lib_dir):
+                result = run_bash(
+                    r"""
+source "$1"
+fixture_lib_dir=LIB_DIR
+dpkg-query() {
+  [[ "$1" == -L && "$2" == sima-neat ]] || return 2
+  printf '%s\n' "${fixture_lib_dir}/libsima_neat.so.3.0.0" "${fixture_lib_dir}/libsima_neat.so.4"
+}
+[[ "$(find_packaged_sima_neat_versioned_lib)" == "${fixture_lib_dir}/libsima_neat.so.3.0.0" ]]
+[[ "$(sima_neat_global_lib_dir)" == "${fixture_lib_dir}" ]]
+[[ "$(find_packaged_sima_neat_soname_link)" == "${fixture_lib_dir}/libsima_neat.so.4" ]]
+""".replace("LIB_DIR", lib_dir)
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_board_library_layout_rejects_missing_or_ambiguous_payload(self) -> None:
+        for entries in (
+            ["/usr/lib/libsima_neat.so.4"],
+            [
+                "/usr/lib/libsima_neat.so.3.0.0",
+                "/usr/lib/aarch64-linux-gnu/libsima_neat.so.3.0.0",
+            ],
+        ):
+            with self.subTest(entries=entries):
+                result = run_bash(
+                    r"""
+source "$1"
+dpkg-query() {
+  [[ "$1" == -L && "$2" == sima-neat ]] || return 2
+  printf '%s\n' ENTRIES
+}
+sima_neat_global_lib_dir
+""".replace("ENTRIES", " ".join(entries))
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Expected exactly one packaged versioned", result.stderr)
+
+    def test_board_soname_must_share_the_package_payload_directory(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+dpkg-query() {
+  [[ "$1" == -L && "$2" == sima-neat ]] || return 2
+  printf '%s\n' /usr/lib/aarch64-linux-gnu/libsima_neat.so.3.0.0 /usr/lib/libsima_neat.so.4
+}
+find_packaged_sima_neat_soname_link
+"""
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Expected exactly one packaged libsima_neat SONAME link", result.stderr)
+
     def test_sdk_sysroot_rejects_multiple_core_package_pairs(self) -> None:
         result = run_bash(
             r"""

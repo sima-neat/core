@@ -716,9 +716,10 @@ public:
   /// Returns the most recent runtime error string (empty if no error occurred).
   std::string last_error() const;
 
-  /// Stop the pipeline immediately (transitions to NULL). After stop, the Run is no longer running.
+  /// Request cancellation. After stop, the Run is no longer running; bounded teardown may
+  /// retain runtime resources until existing workers finish, including a concurrent stopper.
   void stop();
-  /// Alias for `stop()`. Releases resources.
+  /// Stop and release resources, or leave finalization with the existing retained teardown owner.
   void close();
 
 private:

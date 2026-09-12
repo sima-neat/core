@@ -919,6 +919,12 @@ jobs:
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
+          set -euo pipefail
+          if [[ "${NEAT_INSTALLER_B1157_MAINTENANCE:-}" != confirmed ]]; then
+            echo "B1157 installation requires an exclusive, platform-approved maintenance window with DMA quiescence established externally." >&2
+            echo "Provision NEAT_INSTALLER_B1157_MAINTENANCE=confirmed in this DevKit job only after that procedure; CI does not establish quiescence or reset hardware." >&2
+            exit 1
+          fi
           if ! command -v sima-cli >/dev/null 2>&1; then
             echo "sima-cli not found on test runner." >&2
             exit 1
@@ -1056,15 +1062,28 @@ jobs:
       - name: Verify devkit runtime after installation
         run: |
           set -euo pipefail
-          systemctl is-active --quiet simaai-appcomplex.service
-          for remoteproc in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do
-            state="$(cat "${remoteproc}/state")"
-            echo "${remoteproc}: state=${state}"
-            if [[ "${state}" != "running" ]]; then
-              echo "${remoteproc} is not running after package installation." >&2
-              exit 1
+          ev74_paths=()
+          for remoteproc in /sys/class/remoteproc/remoteproc*; do
+            [[ -r "${remoteproc}/name" ]] || continue
+            if [[ "$(cat "${remoteproc}/name")" == ev74 ]]; then
+              ev74_paths+=("${remoteproc}")
             fi
           done
+          if [[ "${#ev74_paths[@]}" -ne 1 ]]; then
+            echo "Expected exactly one EV74 remote processor after package installation." >&2
+            exit 1
+          fi
+          state="$(cat "${ev74_paths[0]}/state")"
+          echo "${ev74_paths[0]}: name=ev74 state=${state}"
+          if [[ "${state}" != running ]]; then
+            echo "EV74 is not running after package installation." >&2
+            exit 1
+          fi
+          # The full GenAI job requires the CLI independently of Core's linked LLiMa capability.
+          if ! dpkg-query -W -f='${db:Status-Abbrev}' sima-lmm-cli 2>/dev/null | grep -q '^ii '; then
+            echo "The full GenAI test job requires the installed sima-lmm-cli package." >&2
+            exit 1
+          fi
 
       - name: Prepare GenAI models
         run: |

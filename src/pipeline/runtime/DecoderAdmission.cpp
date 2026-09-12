@@ -526,6 +526,20 @@ prepare_decoder_admission(ExecutionGraphPlan& plan,
     return preparation;
   }
 
+#if defined(SIMANEAT_DIRECT_DRIVER_PROFILE)
+  if (!backend) {
+    // Direct command channels arbitrate hardware work, not graph-wide leases.
+    // Never consult a leftover daemon or publish its tokens as authority for
+    // this backend. An explicitly supplied backend remains the contract seam.
+    if (pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false)) {
+      throw std::runtime_error(
+          "RunCore::start: global decoder reservations are not supported by the direct-driver "
+          "runtime; command-channel ownership and process-local placement are not global leases");
+    }
+    return preparation;
+  }
+#endif
+
   const std::string missing = missing_contract_message(plan, candidates);
   if (!missing.empty()) {
     if (pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false)) {

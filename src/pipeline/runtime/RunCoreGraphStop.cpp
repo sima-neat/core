@@ -155,7 +155,7 @@ void close_fused_encoded_output_sinks(ExecutionGraphRuntime& execution) {
 
 } // namespace
 
-void RunCore::stop_graph() {
+void RunCore::stop_graph_owned() {
   if (!graph_execution_) {
     return;
   }

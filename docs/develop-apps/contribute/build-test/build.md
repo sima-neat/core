@@ -67,6 +67,22 @@ Supported `build.sh` options:
 - `--no-node`: Skip Node.js install (docs build may fail if Node is missing).
 - `--install-deps-only`: Install system dependencies and dependency headers, then exit.
 
+## B1157 DevKit CI prerequisites
+
+Before installing on a B1157 DevKit runner, establish an exclusive maintenance
+window and DMA quiescence using the platform procedure. Supply the existing
+`NEAT_INSTALLER_B1157_MAINTENANCE=confirmed` attestation in that DevKit job's
+environment only after completing the procedure. CI does not reset hardware or
+stop accelerator users to obtain it. See
+[Keep Core and Internals paired](/reference/diagnostics#keep-core-and-internals-paired).
+
+The installed-package inventory checks a full development/test installation,
+including development dependencies, not a runtime-only deployment. LLiMa core
+and development packages are required when Core was built with LLiMa support;
+the full GenAI CI job also requires `sima-lmm-cli`. The B1157 runtime check locates
+EV74 by name and requires it to be running; it does not require appcomplex or M4.
+These preflight checks do not replace accelerator execution tests.
+
 ## Compiler Cache
 
 `build.sh` enables `sccache` automatically, and its cache remains available

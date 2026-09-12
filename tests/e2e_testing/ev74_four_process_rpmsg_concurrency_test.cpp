@@ -8,7 +8,6 @@
 
 #include <opencv2/core.hpp>
 
-#include <dirent.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -18,12 +17,12 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <iostream>
-#include <map>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -116,31 +115,69 @@ char receive_command(int fd) {
   return command;
 }
 
-void validate_output(const simaai::neat::TensorList& outputs) {
+std::array<uint8_t, 3> expected_rgb(size_t child_index, size_t round) {
+  const auto base = static_cast<uint8_t>(16U + child_index * 8U + round * 32U);
+  return {base, static_cast<uint8_t>(base + 16U), static_cast<uint8_t>(base + 32U)};
+}
+
+void validate_output(const simaai::neat::TensorList& outputs, size_t child_index, size_t round) {
   require(outputs.size() == 1, "Preproc output missing tensor");
   const simaai::neat::Tensor& tensor = outputs.front();
-  require(tensor.shape.size() >= 2, "Preproc output missing shape");
-  require(tensor.shape[0] == 640 && tensor.shape[1] == 640, "Preproc size mismatch");
+  require(tensor.shape.size() == 3, "Preproc output missing RGB shape");
+  require(tensor.shape[0] == 640 && tensor.shape[1] == 640 && tensor.shape[2] == 3,
+          "Preproc size mismatch");
   require(tensor.dtype == simaai::neat::TensorDType::UInt8 ||
               tensor.dtype == simaai::neat::TensorDType::Int8,
           "Preproc dtype mismatch");
 
-  simaai::neat::Tensor cpu = tensor.clone();
-  simaai::neat::Mapping map = cpu.map(simaai::neat::MapMode::Read);
+  const auto map = tensor.map_read();
   constexpr size_t expected = 640U * 640U * 3U;
   require(map.data != nullptr && map.size_bytes >= expected, "Preproc bytes missing");
+  std::array<size_t, 3> strides{640U * 3U, 3U, 1U};
+  if (!tensor.strides_bytes.empty()) {
+    require(tensor.strides_bytes.size() == strides.size(), "Preproc RGB strides missing");
+    for (size_t axis = 0; axis < strides.size(); ++axis) {
+      require(tensor.strides_bytes[axis] > 0, "Preproc RGB stride must be positive");
+      strides[axis] = static_cast<size_t>(tensor.strides_bytes[axis]);
+    }
+  }
+  size_t span = 1;
+  for (size_t axis = 0; axis < strides.size(); ++axis) {
+    const auto steps = static_cast<size_t>(tensor.shape[axis] - 1);
+    require(strides[axis] <= (map.size_bytes - span) / steps,
+            "Preproc RGB strides exceed mapped bytes");
+    span += strides[axis] * steps;
+  }
+  const auto rgb = expected_rgb(child_index, round);
+  const auto* pixels = static_cast<const uint8_t*>(map.data);
+  // map_read() already applies the Tensor's byte offset. Only logical RGB bytes matter.
+  for (size_t y = 0; y < 640U; ++y) {
+    for (size_t x = 0; x < 640U; ++x) {
+      for (size_t channel = 0; channel < rgb.size(); ++channel) {
+        const auto value = pixels[y * strides[0] + x * strides[1] + channel * strides[2]];
+        if (value != rgb[channel]) {
+          throw std::runtime_error("Child " + std::to_string(child_index) + " round " +
+                                   std::to_string(round) + " RGB mismatch at " + std::to_string(x) +
+                                   "," + std::to_string(y) + " channel " + std::to_string(channel) +
+                                   ": expected=" + std::to_string(rgb[channel]) +
+                                   " actual=" + std::to_string(value));
+        }
+      }
+    }
+  }
 }
 
-int run_child(int socket) {
+int run_child(int socket, size_t child_index) {
   try {
     require(simaai::neat::element_exists("neatprocesscvu"),
             "Missing SIMA preproc plugin (neatprocesscvu)");
 
-    cv::Mat image(720, 1280, CV_8UC3, cv::Scalar(64, 128, 192));
+    const auto initial_rgb = expected_rgb(child_index, 0);
+    cv::Mat image(720, 1280, CV_8UC3, cv::Scalar(initial_rgb[0], initial_rgb[1], initial_rgb[2]));
     if (!image.isContinuous()) {
       image = image.clone();
     }
-    const simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
         image, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74);
 
     simaai::neat::InputOptions input_options;
@@ -186,16 +223,27 @@ int run_child(int socket) {
     graph.add(simaai::neat::nodes::Output(output_options));
 
     simaai::neat::RunOptions run_options;
-    run_options.output_memory = simaai::neat::OutputMemory::Owned;
     run_options.queue_depth = 1;
     auto run = graph.build(simaai::neat::TensorList{input}, run_options);
 
     send_message(socket, 'R');
-    require(receive_command(socket) == 'G', "Expected parent run command");
-
-    validate_output(run.run(simaai::neat::TensorList{input}, kPhaseTimeoutMs));
-    send_message(socket, 'S');
-    require(receive_command(socket) == 'X', "Expected parent close command");
+    for (size_t round = 0;; ++round) {
+      const char command = receive_command(socket);
+      if (command == 'X') {
+        require(round > 0, "Expected a run before parent close command");
+        break;
+      }
+      require(command == 'G' && round < 2, "Expected parent run or close command");
+      if (round != 0) {
+        const auto rgb = expected_rgb(child_index, round);
+        image.setTo(cv::Scalar(rgb[0], rgb[1], rgb[2]));
+        input = simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                                  simaai::neat::TensorMemory::EV74);
+      }
+      validate_output(run.run(simaai::neat::TensorList{input}, kPhaseTimeoutMs), child_index,
+                      round);
+      send_message(socket, 'S');
+    }
 
     run.close();
     send_message(socket, 'C');
@@ -259,7 +307,7 @@ private:
   std::array<ChildProcess, kChildCount>& children_;
 };
 
-void await_state(const std::array<ChildProcess, kChildCount>& children, char expected) {
+void await_state(std::span<const ChildProcess> children, char expected) {
   std::set<size_t> pending;
   for (size_t i = 0; i < children.size(); ++i) {
     pending.insert(i);
@@ -301,75 +349,16 @@ void await_state(const std::array<ChildProcess, kChildCount>& children, char exp
         throw std::runtime_error("Child exited before reporting its state");
       }
       if (message.state == 'F') {
-        throw std::runtime_error("Child " + std::to_string(child_indexes[i]) +
+        throw std::runtime_error("Child PID " + std::to_string(children[child_indexes[i]].pid) +
                                  " failed: " + message.detail);
       }
       if (message.state != expected) {
-        throw std::runtime_error("Child " + std::to_string(child_indexes[i]) +
+        throw std::runtime_error("Child PID " + std::to_string(children[child_indexes[i]].pid) +
                                  " reported unexpected state");
       }
       pending.erase(child_indexes[i]);
     }
   }
-}
-
-std::map<std::string, std::string> read_key_values(const std::string& path) {
-  std::ifstream stream(path);
-  std::map<std::string, std::string> values;
-  std::string line;
-  while (std::getline(stream, line)) {
-    const size_t separator = line.find('=');
-    if (separator != std::string::npos) {
-      values.emplace(line.substr(0, separator), line.substr(separator + 1));
-    }
-  }
-  return values;
-}
-
-void verify_one_unique_channel_per_child(const std::array<ChildProcess, kChildCount>& children) {
-  std::set<pid_t> child_pids;
-  for (const ChildProcess& child : children) {
-    child_pids.insert(child.pid);
-  }
-
-  std::map<pid_t, std::set<std::string>> nodes_by_pid;
-  DIR* directory = ::opendir("/tmp");
-  if (directory == nullptr) {
-    throw std::runtime_error(errno_message("open /tmp"));
-  }
-  while (dirent* entry = ::readdir(directory)) {
-    const std::string name = entry->d_name;
-    if (name.rfind("rpmsg_lock_rpmsg", 0) != 0 || name.size() < std::strlen(".owner") ||
-        name.compare(name.size() - std::strlen(".owner"), std::strlen(".owner"), ".owner") != 0) {
-      continue;
-    }
-    const auto values = read_key_values("/tmp/" + name);
-    const auto pid_it = values.find("pid");
-    const auto node_it = values.find("node");
-    if (pid_it == values.end() || node_it == values.end()) {
-      continue;
-    }
-    try {
-      const pid_t pid = static_cast<pid_t>(std::stol(pid_it->second));
-      if (child_pids.count(pid) != 0) {
-        nodes_by_pid[pid].insert(node_it->second);
-      }
-    } catch (const std::exception&) {
-    }
-  }
-  (void)::closedir(directory);
-
-  std::set<std::string> all_nodes;
-  for (const pid_t pid : child_pids) {
-    const auto found = nodes_by_pid.find(pid);
-    require(found != nodes_by_pid.end(),
-            "Missing RPMsg owner metadata for child " + std::to_string(pid));
-    require(found->second.size() == 1,
-            "Child " + std::to_string(pid) + " does not own exactly one RPMsg channel");
-    all_nodes.insert(*found->second.begin());
-  }
-  require(all_nodes.size() == kChildCount,
-          "Four live EV74 processes did not own four distinct RPMsg channels");
 }
 
 void run_test() {
@@ -396,7 +385,7 @@ void run_test() {
         }
       }
       const int child_socket = sockets[child_index][1];
-      const int result = run_child(child_socket);
+      const int result = run_child(child_socket, child_index);
       (void)::close(child_socket);
       ::_exit(result);
     }
@@ -412,22 +401,31 @@ void run_test() {
     send_command(child.socket, 'G');
   }
   await_state(children, 'S');
-  verify_one_unique_channel_per_child(children);
-
-  for (const ChildProcess& child : children) {
-    send_command(child.socket, 'X');
-  }
-  await_state(children, 'C');
-
-  for (ChildProcess& child : children) {
-    close_fd(child.socket);
-    int status = 0;
-    if (::waitpid(child.pid, &status, 0) != child.pid) {
-      throw std::runtime_error(errno_message("wait for child"));
+  const auto close_children = [](std::span<ChildProcess> retiring) {
+    for (const ChildProcess& child : retiring) {
+      send_command(child.socket, 'X');
     }
-    require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "EV74 child exited unsuccessfully");
-    child.pid = -1;
+    await_state(retiring, 'C');
+    for (ChildProcess& child : retiring) {
+      close_fd(child.socket);
+      int status = 0;
+      if (::waitpid(child.pid, &status, 0) != child.pid) {
+        throw std::runtime_error(errno_message("wait for child"));
+      }
+      child.pid = -1;
+      require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "EV74 child exited unsuccessfully");
+    }
+  };
+
+  // Retiring one completed client must not disrupt the other clients' next results.
+  std::span<ChildProcess> active(children);
+  close_children(active.first(1));
+  active = active.subspan(1);
+  for (const ChildProcess& child : active) {
+    send_command(child.socket, 'G');
   }
+  await_state(active, 'S');
+  close_children(active);
 }
 
 } // namespace

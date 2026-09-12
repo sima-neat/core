@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shlex
 import subprocess
+import textwrap
 
 import pytest
 
@@ -184,6 +185,56 @@ install_for_environment
     assert result.returncode != 0
     assert "MUTATED" not in result.stdout
     assert "NEAT_INSTALLER_B1157_MAINTENANCE=confirmed" in result.stderr
+
+
+def workflow_run_step(name):
+    workflow = (ROOT / ".github/workflows/vulcan-ci.yml").read_text()
+    step = workflow.split(f"      - name: {name}\n", 1)[1].split("\n      - name:", 1)[0]
+    return textwrap.dedent(step.split("        run: |\n", 1)[1])
+
+
+@pytest.mark.parametrize("processors,cli_status,valid", [
+    ([("ev74", "running"), ("m4", "offline")], "ii ", True),
+    ([("m4", "running")], "ii ", False),
+    ([("ev74", "offline")], "ii ", False),
+    ([("ev74", "running"), ("ev74", "running")], "ii ", False),
+    ([], "ii ", False),
+    ([("ev74", "running")], "rc ", False),
+])
+def test_workflow_requires_unique_running_ev74_and_full_job_cli(tmp_path, processors, cli_status, valid):
+    remoteprocs = tmp_path / "remoteproc"
+    remoteprocs.mkdir()
+    for index, (name, state) in enumerate(processors, start=7):
+        processor = remoteprocs / f"remoteproc{index}"
+        processor.mkdir()
+        (processor / "name").write_text(name)
+        (processor / "state").write_text(state)
+    script = workflow_run_step("Verify devkit runtime after installation")
+    script = script.replace("/sys/class/remoteproc", str(remoteprocs))
+    result = bash(f"""
+dpkg-query() {{ printf '%s' {shlex.quote(cli_status)}; }}
+{script}
+""")
+    assert (result.returncode == 0) == valid, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("attestation,valid", [(None, False), ("requested", False), ("confirmed", True)])
+def test_workflow_preserves_existing_maintenance_attestation(attestation, valid):
+    script = workflow_run_step("Install test runtime from Vulcan artifact").split("REF_NAME=", 1)[0]
+    setup = "unset NEAT_INSTALLER_B1157_MAINTENANCE" if attestation is None else (
+        f"export NEAT_INSTALLER_B1157_MAINTENANCE={shlex.quote(attestation)}"
+    )
+    result = bash(f"""
+{setup}
+sima-cli() {{ return 0; }}
+{script}
+printf 'attestation=%s' "${{NEAT_INSTALLER_B1157_MAINTENANCE:-}}"
+""")
+    assert (result.returncode == 0) == valid, result.stdout + result.stderr
+    if valid:
+        assert result.stdout == "attestation=confirmed"
+    else:
+        assert "platform-approved maintenance window" in result.stderr
 
 
 @pytest.mark.parametrize("action", [

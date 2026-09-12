@@ -3086,9 +3086,13 @@ BuildResult build_fused_realtime_source_pipeline(
     first_consumer = false;
   }
   std::vector<std::string> fused_stage_queue_names;
-  const std::string rendered_consumer =
-      insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth,
-                                         name_transform, &fused_stage_queue_names);
+  // As in build_pipeline_full, select the handoff only after all consumer
+  // Nodes have been assembled. Keep the pass inside this linear consumer
+  // chain; independent ingress branches are not adjacent producer edges.
+  const std::string rendered_consumer = session_build_propagate_terminal_consumer_lane_window(
+      session_build_select_terminal_objectdecode_cpu_visibility(
+          insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth,
+                                             name_transform, &fused_stage_queue_names)));
   for (auto& queue_name : fused_stage_queue_names) {
     br.framework_name_origins.push_back(LaunchNameOrigin{
         .kind = LaunchNameOrigin::Kind::Queue,

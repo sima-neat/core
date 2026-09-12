@@ -325,9 +325,6 @@ RUN_TEST(
           };
 
           RunCore core;
-          // This fixture owns no runtime threads. Skip general RunCore teardown and let its graph
-          // storage destruct normally after the focused producer/queue assertions.
-          core.closed.store(true, std::memory_order_release);
           core.graph_execution_ = std::make_unique<ExecutionGraphRuntime>();
           auto& execution = *core.graph_execution_;
           execution.plan.edges.push_back(
@@ -416,7 +413,6 @@ RUN_TEST(
         // eventually leaves the build path.
         {
           simaai::neat::runtime::RunCore core;
-          core.closed.store(true, std::memory_order_release);
           core.graph_execution_ = std::make_unique<simaai::neat::runtime::ExecutionGraphRuntime>();
           require(core.graph_begin_public_push(), "lazy-build fixture input was already closed");
           const auto close_started = std::chrono::steady_clock::now();

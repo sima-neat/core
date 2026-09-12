@@ -199,6 +199,26 @@ simaai::neat::BuildResult make_value_bound_retention_build() {
   return build;
 }
 
+simaai::neat::BuildResult make_ingress_retention_build() {
+  auto build = make_value_bound_retention_build();
+  build.pipeline_string =
+      "appsrc name=input ! identity ! application/vnd.simaai.tensor ! queue max-size-buffers=1 ! "
+      "neatprocessmla name=actual_mla num-buffers=1 ! "
+      "neatprocesscvu name=actual_detess num-buffers=1 ! appsink name=mysink";
+  build.rendered_manifest->stages.erase(build.rendered_manifest->stages.begin());
+  auto& mla = build.rendered_manifest->stages.front();
+  auto& binding = mla.input_bindings.front();
+  binding.cm_input_name = "cast_0";
+  binding.source_segment_name = "cast_0";
+  binding.src_physical_size_bytes = mla.physical_inputs.front().size_bytes;
+  binding.src_physical_byte_offset = 0;
+  binding.required = true;
+  mla.logical_inputs.front().logical_name = "cast_0";
+  mla.logical_inputs.front().segment_name = "cast_0";
+  mla.physical_inputs.front().segment_name = "cast_0";
+  return build;
+}
+
 void require_native_retention_pool_policy() {
   using namespace simaai::neat;
   namespace sima = pipeline_internal::sima;
@@ -261,6 +281,34 @@ void require_native_retention_pool_policy() {
   value_bound.rendered_manifest->stages[2].input_bindings[0].cm_input_name = "missing_value";
   reject(value_bound, "no producer for authored value");
 
+  auto ingress = make_ingress_retention_build();
+  const auto ingress_manifest = sima::serialize_manifest_json(*ingress.rendered_manifest);
+  check(session_build_clamp_sync_build_result(ingress, 1), "");
+  require(
+      sima::serialize_manifest_json(*ingress.rendered_manifest) == ingress_manifest,
+      "graph ingress must preserve authored bindings, arena geometry and CoreAllocated provenance");
+  std::swap(ingress.rendered_manifest->stages[0], ingress.rendered_manifest->stages[1]);
+  check(session_build_clamp_sync_build_result(ingress, 1), "");
+  ingress = make_ingress_retention_build();
+  ingress.rendered_manifest->stages.front().frame_arena_provenance =
+      sima::static_contract::ArenaAllocationProvenance::ExternalAdopted;
+  check(session_build_clamp_sync_build_result(ingress, 1), "");
+  ingress.rendered_manifest->stages.front().input_bindings.front().src_stage_index = 1;
+  reject(ingress, "graph ingress binding names a local producer");
+  ingress = make_ingress_retention_build();
+  ingress.rendered_manifest->stages.front().input_bindings.front().src_stage_id = "missing_stage";
+  reject(ingress, "graph ingress binding names a local producer");
+  ingress = make_ingress_retention_build();
+  ingress.pipeline_string.replace(0, std::string("appsrc").size(), "videotestsrc");
+  reject(ingress, "no producer for authored value");
+  ingress = make_ingress_retention_build();
+  ingress.pipeline_string.insert(ingress.pipeline_string.find("neatprocessmla"), "videoconvert ! ");
+  reject(ingress, "no producer for authored value");
+  ingress = make_ingress_retention_build();
+  ingress.pipeline_string.replace(ingress.pipeline_string.find("neatprocessmla"),
+                                  std::string("neatprocessmla").size(), "identity");
+  reject(ingress, "no producer for authored value");
+
   auto build = make_retention_build();
   const auto clamped = session_build_clamp_sync_build_result(build, 1);
   check(clamped, "actual_preproc");
@@ -303,6 +351,12 @@ void require_native_retention_pool_policy() {
   build.rendered_manifest->stages[0].frame_arena_provenance =
       sima::static_contract::ArenaAllocationProvenance::ExternalAdopted;
   check(session_build_clamp_sync_build_result(build, 1), "");
+
+  build = make_retention_build();
+  build.rendered_manifest->stages[1].frame_arena_provenance =
+      sima::static_contract::ArenaAllocationProvenance::ExternalAdopted;
+  build.rendered_manifest->stages[1].input_bindings.clear();
+  reject(build, "cannot resolve reused carrier");
 
   build = make_retention_build();
   build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = -1;

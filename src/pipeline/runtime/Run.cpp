@@ -602,7 +602,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
 
     if (owns_close) {
       // close() timed out here and skipped teardown, leaving this the last user. Close the
-      // stream directly; RunCore::close() latched `closed` on its way through.
+      // stream directly; RunCore has transferred finalization to this worker.
       st->pipeline.stream.close();
       st->decoder_admission.reset();
       st->stream_close_state.store(runtime::InputStreamCloseState::Closed,
@@ -644,13 +644,16 @@ bool runtime::RunCore::can_pull() const {
 }
 
 bool runtime::RunCore::running() const {
+  if (stop_requested.load(std::memory_order_acquire)) {
+    return false;
+  }
   if (graph_execution_) {
-    return !graph_stop_requested();
+    return true;
   }
   if (pipeline.supports_pull) {
     return pipeline.stream.running();
   }
-  return !stop_requested.load();
+  return true;
 }
 
 std::vector<std::string> runtime::RunCore::input_names() const {

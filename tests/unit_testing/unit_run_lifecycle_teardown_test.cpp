@@ -198,6 +198,92 @@ void failed_start_releases_admission(bool connected) {
           "failed startup did not release decoder admission after teardown");
 }
 
+void concurrent_stop_and_close_share_teardown_owner() {
+  using namespace simaai::neat;
+
+  EnvVarGuard stream_stop_timeout("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", "2000");
+  EnvVarGuard stop_flush("SIMA_INPUTSTREAM_STOP_FLUSH", "0");
+  EnvVarGuard synchronous_teardown("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x47);
+  Run run = sima_test::make_async_rgb_run(seed, 8, 8);
+  auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
+  auto backend = std::make_shared<CountingAdmissionBackend>();
+  core->decoder_admission = make_admission_reservation(backend);
+  GstElement* appsink = find_appsink(core->pipeline.stream.pipeline_handle());
+  GstPad* sink_pad = gst_element_get_static_pad(appsink, "sink");
+  require(sink_pad != nullptr, "concurrent teardown: missing sink pad");
+
+  BlockingProbe probe;
+  gst_pad_add_probe(sink_pad, GST_PAD_PROBE_TYPE_BUFFER, block_pipeline_output, &probe, nullptr);
+  require(run.try_push(TensorList{seed}), "concurrent teardown: push failed");
+  {
+    std::unique_lock<std::mutex> lock(probe.mu);
+    require(probe.cv.wait_for(lock, std::chrono::seconds(2), [&] { return probe.entered; }),
+            "concurrent teardown: blocking probe was not reached");
+  }
+
+  std::exception_ptr owner_error;
+  std::exception_ptr caller_error;
+  std::atomic<bool> owner_returned{false};
+  std::weak_ptr<runtime::RunCore> weak_core = core;
+  std::thread stopper([core, &owner_error, &owner_returned] {
+    try {
+      core->stop();
+    } catch (...) {
+      owner_error = std::current_exception();
+    }
+    owner_returned.store(true, std::memory_order_release);
+  });
+
+  const bool stop_started =
+      wait_until([&] { return core->stop_requested.load(std::memory_order_acquire); },
+                 std::chrono::seconds(2));
+  bool cancelled = false;
+  bool owner_still_active = false;
+  bool admission_retained = false;
+  const auto competing_started_at = std::chrono::steady_clock::now();
+  try {
+    run.stop();
+    cancelled = !run.running() && !run.try_push(TensorList{seed});
+    run.close();
+    owner_still_active = !owner_returned.load(std::memory_order_acquire);
+    admission_retained = backend->release_count.load(std::memory_order_relaxed) == 0;
+  } catch (...) {
+    caller_error = std::current_exception();
+  }
+  const int competing_ms =
+      sima_test::elapsed_ms(competing_started_at, std::chrono::steady_clock::now());
+  core.reset();
+  const bool retained_after_close = !weak_core.expired();
+
+  // Always release the blocked owner and join before evaluating the assertions.
+  {
+    std::lock_guard<std::mutex> lock(probe.mu);
+    probe.released = true;
+  }
+  probe.cv.notify_all();
+  stopper.join();
+  gst_object_unref(sink_pad);
+  gst_object_unref(appsink);
+  if (owner_error) {
+    std::rethrow_exception(owner_error);
+  }
+  if (caller_error) {
+    std::rethrow_exception(caller_error);
+  }
+  require(stop_started && owner_still_active,
+          "concurrent teardown: stop/close did not overlap the active stopper");
+  require(competing_ms < 1000, "concurrent teardown: competing stop/close waited for the owner");
+  require(cancelled, "concurrent teardown: stop did not publish cancellation");
+  require(retained_after_close && admission_retained,
+          "concurrent teardown: close released ownership before the stopper finished");
+  require(wait_until([&] { return weak_core.expired(); }, std::chrono::seconds(3)),
+          "concurrent teardown: pending close was lost after stop completed");
+  require(backend->release_count.load(std::memory_order_relaxed) == 1,
+          "concurrent teardown: admission must be released exactly once");
+}
+
 void detached_stream_stop_retains_runtime_until_cleanup() {
   using namespace simaai::neat;
 
@@ -560,6 +646,7 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            (void)pushes.load(std::memory_order_relaxed);
            (void)pulls.load(std::memory_order_relaxed);
 
+           concurrent_stop_and_close_share_teardown_owner();
            detached_stream_stop_retains_runtime_until_cleanup();
            detached_stream_close_keeps_measurement_reads_safe();
            input_thread_timeout_hands_off_stream_close();

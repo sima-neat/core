@@ -3159,9 +3159,33 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     fail("nonlinear or incomplete native endpoint needs an explicit carrier lifetime budget");
   }
 
+  const auto is_graph_ingress = [&](const std::string& rendered_name) {
+    const auto consumer = std::find_if(elements.begin(), elements.end(), [&](const auto& element) {
+      return element.element_name == rendered_name;
+    });
+    if (consumer->plugin != "neatprocesscvu" && consumer->plugin != "neatprocessmla") {
+      return false;
+    }
+    auto position = static_cast<std::size_t>(consumer - elements.begin());
+    while (position > 0U && transparent(elements[position - 1U]) &&
+           !native_names.contains(elements[position - 1U].element_name)) {
+      --position;
+    }
+    return position == 1U && elements.front().plugin == "appsrc" &&
+           !elements.front().element_name.empty() &&
+           std::count_if(elements.begin(), elements.end(),
+                         [](const auto& element) { return element.plugin == "appsrc"; }) == 1;
+  };
+  struct CarrierOrigin {
+    // An empty local owner means the explicit graph input supplies the carrier,
+    // not that the allocation's original provenance has become ExternalAdopted.
+    std::optional<std::size_t> allocation_stage;
+    bool operator==(const CarrierOrigin&) const = default;
+  };
   std::vector<bool> visiting(manifest.stages.size(), false);
-  std::vector<std::optional<std::size_t>> origins(manifest.stages.size());
-  std::function<std::size_t(std::size_t)> resolve_owner = [&](std::size_t index) -> std::size_t {
+  std::vector<std::optional<CarrierOrigin>> origins(manifest.stages.size());
+  std::function<CarrierOrigin(std::size_t)> resolve_owner =
+      [&](std::size_t index) -> CarrierOrigin {
     const auto& stage = manifest.stages[index];
     if (visiting[index]) {
       fail("cycle at stage '" + stage.element_name + "'");
@@ -3182,13 +3206,22 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
       if (stage.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated) {
         fail("Allocate stage lacks CoreAllocated provenance: '" + stage.element_name + "'");
       }
-      origins[index] = index;
-      return index;
+      origins[index] = CarrierOrigin{index};
+      return *origins[index];
     }
-    if (stage.input_bindings.empty() &&
-        stage.frame_arena_provenance == ArenaAllocationProvenance::ExternalAdopted) {
-      origins[index] = index; // No local pool may be invented for externally loaned storage.
-      return index;
+    if (is_graph_ingress(rendered_name)) {
+      for (const auto& binding : stage.input_bindings) {
+        if (binding.src_stage_index >= 0 || !binding.src_stage_id.empty()) {
+          fail("graph ingress binding names a local producer at '" + stage.element_name + "'");
+        }
+      }
+      // Standalone Infer retains the arena supplied through Input, even when it
+      // was CoreAllocated by a previous Run. Its authored input names/offsets
+      // remain valid; appsrc is deliberately absent from the compute manifest.
+      // This scopes native pool ownership, not runtime DMA admission or the
+      // input adapter's own allocation policy.
+      origins[index] = CarrierOrigin{};
+      return *origins[index];
     }
     visiting[index] = true;
     std::string error;
@@ -3197,7 +3230,7 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     if (edges.empty() || edges.size() != stage.input_bindings.size()) {
       fail("cannot resolve reused carrier at '" + stage.element_name + "': " + error);
     }
-    std::optional<std::size_t> owner;
+    std::optional<CarrierOrigin> owner;
     for (const auto& edge : edges) {
       const auto origin = resolve_owner(edge.producer_stage_index);
       if (owner && *owner != origin) {
@@ -3213,12 +3246,11 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
   auto pipeline = clamp_detess_num_buffers_impl(
       clamp_sync_pipeline_impl(build.pipeline_string, num_buffers_override, false),
       num_buffers_override, native_names);
-  if (manifest.stages[owner].frame_arena_role != FrameArenaRole::Allocate ||
-      num_buffers_override > 1) {
+  if (!owner.allocation_stage || num_buffers_override > 1) {
     return pipeline;
   }
-  const auto owner_name =
-      apply_name_transform(build.name_transform, manifest.stages[owner].element_name);
+  const auto owner_name = apply_name_transform(
+      build.name_transform, manifest.stages[*owner.allocation_stage].element_name);
   elements = sima::parse_pipeline_elements(pipeline);
   std::size_t owner_matches = 0U;
   for (auto& element : elements) {

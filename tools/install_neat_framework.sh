@@ -1508,17 +1508,20 @@ verify_private_dispatcher_runtime() {
 }
 
 sima_neat_global_lib_dir() {
-  printf '%s\n' "/usr/lib"
+  local versioned_lib
+  versioned_lib="$(find_packaged_sima_neat_versioned_lib)" || return 1
+  dirname "${versioned_lib}"
 }
 
 find_packaged_sima_neat_versioned_lib() {
-  local lib_dir package_files candidate basename
+  local package_files candidate basename
   local -a matches=()
-  lib_dir="$(sima_neat_global_lib_dir)"
   package_files="$(dpkg-query -L sima-neat 2>/dev/null)" || return 1
 
+  # The owning package defines its layout, including Debian multiarch installs.
+  # Require one payload across the complete inventory rather than preferring a directory.
   while IFS= read -r candidate; do
-    [[ "$(dirname "${candidate}")" == "${lib_dir}" ]] || continue
+    [[ "${candidate}" == /* ]] || continue
     basename="$(basename "${candidate}")"
     if [[ "${basename}" =~ ^libsima_neat\.so\.[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]; then
       matches+=("${candidate}")
@@ -1535,7 +1538,7 @@ find_packaged_sima_neat_versioned_lib() {
 find_packaged_sima_neat_soname_link() {
   local lib_dir package_files candidate basename
   local -a matches=()
-  lib_dir="$(sima_neat_global_lib_dir)"
+  lib_dir="$(sima_neat_global_lib_dir)" || return 1
   package_files="$(dpkg-query -L sima-neat 2>/dev/null)" || return 1
 
   while IFS= read -r candidate; do

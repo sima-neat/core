@@ -88,7 +88,7 @@ void require_installed_packages(const std::vector<PackageExpectation>& packages)
   }
 
   std::ostringstream message;
-  message << "expected package(s) to remain installed after NEAT install:";
+  message << "required package(s) missing from the installed Neat/image contract:";
   for (const auto& package : missing) {
     message << "\n  [" << package.group << "] " << package.name
             << " status=" << installed_status(package.name);
@@ -108,16 +108,21 @@ int main() {
 
     const std::vector<PackageExpectation> neat_packages = {
         {"sima-neat", "neat"},          {"sima-neat-dev", "neat"},
-        {"neat-common", "neat"},        {"neat-appcomplex", "neat"},
-        {"neat-runtime", "neat"},       {"neat-gst-plugins", "neat"},
-        {"neat-ev74-firmware", "neat"}, {"neat-internals-dev", "neat"},
-        {"sima-lmm-core", "neat"},      {"sima-lmm-dev", "neat"},
-        {"sima-lmm-cli", "neat"},
+        {"neat-common", "neat"},        {"neat-runtime", "neat"},
+        {"neat-gst-plugins", "neat"},   {"neat-ev74-firmware", "neat"},
+        {"neat-internals-dev", "neat"},
+    };
+    const std::vector<PackageExpectation> neat_dev_dependencies = {
+        {"simaai-memory-lib-dev", "neat-dev"},
+#if SIMANEAT_INVENTORY_WITH_LLIMA
+        {"sima-lmm-core", "neat-dev"},
+        {"sima-lmm-dev", "neat-dev"},
+#endif
     };
 
+    // Native packages in the published eLxr 3.0.0 B1157 image manifest.
     const std::vector<PackageExpectation> native_sima_packages = {
         {"simaai-palette-modalix", "native-sima"},
-        {"simaai-palette-upgrade", "native-sima"},
         {"libcamera", "native-sima"},
         {"libcamera-tools", "native-sima"},
         {"simaai-a65-plat-tests", "native-sima"},
@@ -128,16 +133,14 @@ int main() {
         {"simaai-logd", "native-sima"},
         {"simaai-mlart-modalix", "native-sima"},
         {"simaai-memory-lib", "native-sima"},
-        {"simaai-memory-lib-dev", "native-sima"},
         {"simaai-parser", "native-sima"},
         {"simaai-pcie-ep", "native-sima"},
-        {"simaai-rctd", "native-sima"},
         {"simaai-socpipeline", "native-sima"},
         {"simaai-trace", "native-sima"},
-        {"simaai-utils", "native-sima"},
     };
 
     require_installed_packages(neat_packages);
+    require_installed_packages(neat_dev_dependencies);
     require_installed_packages(native_sima_packages);
 
     require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),

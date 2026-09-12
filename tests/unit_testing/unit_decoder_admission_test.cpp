@@ -457,6 +457,13 @@ void check_output_buffer_floor_preserves_default() {
 }
 
 void check_admission_errors_are_structured() {
+  {
+    ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
+    const auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan);
+    require(!prepared.reservation && prepared.warning.empty() && prepared.eligible_decoders == 1U,
+            "direct decoding must not consult the legacy admission service or manufacture a lease");
+    require_direct_output_property(*plan.pipeline_segments.front().nodes.front());
+  }
   ScopedEnvVar require_admission("SIMA_DECODER_ADMISSION_REQUIRE", "1");
   SimaDecodeOptions options = decoder_options();
   options.dec_fps = 0;
@@ -470,8 +477,8 @@ void check_admission_errors_are_structured() {
     threw = true;
     require(error.report().error_code == simaai::neat::error_codes::kPipelineShape,
             "admission failure should retain the graph-start error code");
-    require_contains(error.what(), "missing=fps",
-                     "structured admission failure should retain the root cause");
+    require_contains(error.what(), "global decoder reservations are not supported",
+                     "required global admission must fail honestly before direct hardware startup");
   }
   require(threw, "RunCore::start should wrap admission failures as NeatError");
 }

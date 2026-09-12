@@ -56,11 +56,107 @@ void Run::close_input() {
 }
 
 void runtime::RunCore::stop() {
+  teardown(false);
+}
+
+void runtime::RunCore::close() {
+  teardown(true);
+}
+
+void runtime::RunCore::teardown(bool request_close) {
+  // A competing close may release the public handle while this caller owns stop.
+  // Destruction has no shared owner and keeps the existing inline-stop fallback.
+  const auto owner = weak_from_this().lock();
+  bool owns_stop = false;
+  bool owns_close = false;
+  bool drain = false;
+  {
+    std::lock_guard<std::mutex> lock(lifecycle_mu_);
+    if (request_close) {
+      close_requested_ = true;
+      if (closed_wall_at.time_since_epoch().count() == 0) {
+        closed_wall_at = std::chrono::system_clock::now();
+      }
+    }
+    if (lifecycle_phase_ == LifecyclePhase::Active) {
+      lifecycle_phase_ = LifecyclePhase::Stopping;
+      owns_stop = true;
+      drain = request_close;
+    } else if (lifecycle_phase_ == LifecyclePhase::Stopped && close_requested_) {
+      lifecycle_phase_ = LifecyclePhase::CloseClaimed;
+      owns_close = true;
+    }
+  }
+
+  if (!owns_stop && !owns_close) {
+    // A pull/callback thread cannot wait for an owner that may be joining it.
+    // Cancellation touches only stable Core state, never a closing InputStream.
+    if (!request_close && !stop_requested.load(std::memory_order_acquire)) {
+      if (graph_execution_) {
+        graph_signal_stop();
+      } else {
+        signal_pipeline_stop();
+      }
+    }
+    return;
+  }
+
+  bool stop_finished = !owns_stop;
+  try {
+    if (owns_stop) {
+      if (drain && !stop_requested.load(std::memory_order_acquire)) {
+        const int drain_ms =
+            pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_BEFORE_TEARDOWN_MS", 1500);
+        const int drain_min_outputs =
+            pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_MIN_OUTPUTS", 1);
+        if (drain_ms > 0 && pipeline.supports_pull && !pipeline.stream.can_push() &&
+            outputs_pulled.load(std::memory_order_relaxed) <= drain_min_outputs) {
+          // EOS must reach stateful codecs before their channels are stopped.
+          pipeline.stream.drain_before_teardown(drain_ms);
+        }
+      }
+      stop_owned();
+      stop_finished = true;
+      {
+        std::lock_guard<std::mutex> lock(lifecycle_mu_);
+        owns_close = close_requested_;
+        lifecycle_phase_ = owns_close ? LifecyclePhase::CloseClaimed : LifecyclePhase::Stopped;
+      }
+    }
+    if (owns_close) {
+      close_owned();
+    }
+  } catch (...) {
+    // Keep a concurrent close request, but never label failed stop as complete.
+    // Existing detached stream ownership is independent and is not revoked.
+    std::lock_guard<std::mutex> lock(lifecycle_mu_);
+    lifecycle_phase_ = stop_finished ? LifecyclePhase::Stopped : LifecyclePhase::Active;
+    throw;
+  }
+}
+
+void runtime::RunCore::signal_pipeline_stop() {
+  {
+    std::lock_guard<std::mutex> lock(pipeline.in_mu);
+    pipeline.input_closed = true;
+    stop_requested.store(true, std::memory_order_release);
+  }
+  pipeline.in_cv.notify_all();
+  {
+    // Pair notification with the output waiter's predicate/sleep handshake.
+    std::lock_guard<std::mutex> lock(pipeline.out_mu);
+  }
+  pipeline.out_cv.notify_all();
+}
+
+void runtime::RunCore::stop_owned() {
   if (graph_execution_) {
-    stop_graph();
+    stop_graph_owned();
     return;
   }
   if (!run_core_closes_stream(stream_close_state.load(std::memory_order_acquire))) {
+    // A retry must still settle a handle left after an earlier stream handoff.
+    finish_input_stop();
     return;
   }
   if (stop_trace_enabled()) {
@@ -71,18 +167,15 @@ void runtime::RunCore::stop() {
       pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
     std::fprintf(stderr, "[PIPELINE] stop called\n");
   }
-  // Ensure the input thread can exit cleanly.
-  close_input();
+  // Publish cancellation before releasing queued samples, whose callbacks may reenter stop.
+  signal_pipeline_stop();
   {
     std::lock_guard<std::mutex> lock(st->pipeline.in_mu);
     st->pipeline.in_queue.clear();
   }
-  st->stop_requested.store(true);
   if (st->power_monitor) {
     st->power_monitor->stop();
   }
-  st->pipeline.in_cv.notify_all();
-  st->pipeline.out_cv.notify_all();
   st->pipeline.stream.stop_async();
   // Stop the underlying stream first to unblock any appsrc push waiting on downstream.
   const int stream_stop_timeout_ms =
@@ -140,46 +233,62 @@ void runtime::RunCore::stop() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     };
-    wait_for_stop(stream_stop_timeout_ms);
-    if (ctx->state.load(std::memory_order_acquire) == StopTaskState::Running) {
-      if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
-          pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
-        std::fprintf(stderr,
-                     "[PIPELINE] stop: stream.stop did not exit within %dms; forcing stop\n",
-                     stream_stop_timeout_ms);
-      }
-      st->pipeline.stream.stop_async();
-      wait_for_stop(stream_stop_timeout_ms);
-    }
-
-    if (ctx->state.load(std::memory_order_acquire) == StopTaskState::Completed) {
-      stop_thread.join();
-    } else {
-      const int waited_ms = stream_stop_timeout_ms * 2;
-      if (abort_on_hung_stop_threads()) {
-        std::fprintf(stderr,
-                     "[PIPELINE] stop: stream.stop did not exit after %dms; aborting "
-                     "(SIMA_PIPELINE_ABORT_ON_HUNG_STOP_THREADS=1)\n",
-                     waited_ms);
-        std::terminate();
-      }
-
+    const auto detach_stop_thread = [&] {
       StopTaskState expected = StopTaskState::Running;
       if (ctx->state.compare_exchange_strong(expected, StopTaskState::Detached,
                                              std::memory_order_acq_rel)) {
-        // Only after claiming task detachment: a task that already returned cannot close.
         st->stream_close_state.store(runtime::InputStreamCloseState::StreamStopThreadOwns,
                                      std::memory_order_release);
+      }
+      stop_thread.detach();
+    };
+    try {
+      wait_for_stop(stream_stop_timeout_ms);
+      if (ctx->state.load(std::memory_order_acquire) == StopTaskState::Running) {
+        if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
+            pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
+          std::fprintf(stderr,
+                       "[PIPELINE] stop: stream.stop did not exit within %dms; forcing stop\n",
+                       stream_stop_timeout_ms);
+        }
+        st->pipeline.stream.stop_async();
+        wait_for_stop(stream_stop_timeout_ms);
+      }
+      if (ctx->state.load(std::memory_order_acquire) == StopTaskState::Completed) {
+        stop_thread.join();
+      } else {
+        const int waited_ms = stream_stop_timeout_ms * 2;
+        if (abort_on_hung_stop_threads()) {
+          std::fprintf(stderr,
+                       "[PIPELINE] stop: stream.stop did not exit after %dms; aborting "
+                       "(SIMA_PIPELINE_ABORT_ON_HUNG_STOP_THREADS=1)\n",
+                       waited_ms);
+          std::terminate();
+        }
+        detach_stop_thread();
         std::fprintf(stderr,
                      "[PIPELINE] stop: stream.stop did not exit after %dms; retaining runtime "
                      "until teardown completes\n",
                      waited_ms);
-        stop_thread.detach();
-      } else {
-        stop_thread.join();
       }
+    } catch (...) {
+      // Never unwind a joinable local thread. Its owner capture remains alive;
+      // only an unfinished task receives the existing final-close duty.
+      if (stop_thread.joinable()) {
+        detach_stop_thread();
+      }
+      finish_input_stop();
+      throw;
     }
   }
+  finish_input_stop();
+  if (stop_trace_enabled()) {
+    std::fprintf(stderr, "[STOP] Run::stop end\n");
+  }
+}
+
+void runtime::RunCore::finish_input_stop() {
+  auto* st = this;
   if (st->pipeline.input_thread.joinable()) {
     const int timeout_ms =
         std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", 2000));
@@ -200,7 +309,9 @@ void runtime::RunCore::stop() {
                      "[PIPELINE] stop: input_thread did not exit within %dms; forcing stop\n",
                      timeout_ms);
       }
-      st->pipeline.stream.stop_async();
+      if (run_core_closes_stream(st->stream_close_state.load(std::memory_order_acquire))) {
+        st->pipeline.stream.stop_async();
+      }
       if (timeout_ms_2 > 0) {
         const auto extra_deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms_2);
@@ -241,9 +352,6 @@ void runtime::RunCore::stop() {
   if (run_core_closes_stream(st->stream_close_state.load(std::memory_order_acquire))) {
     st->decoder_admission.reset();
   }
-  if (stop_trace_enabled()) {
-    std::fprintf(stderr, "[STOP] Run::stop end\n");
-  }
 }
 
 void Run::stop() {
@@ -251,12 +359,7 @@ void Run::stop() {
     core_->stop();
 }
 
-void runtime::RunCore::close() {
-  if (closed.exchange(true))
-    return;
-  if (closed_wall_at.time_since_epoch().count() == 0) {
-    closed_wall_at = std::chrono::system_clock::now();
-  }
+void runtime::RunCore::close_owned() {
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::close begin\n");
   }
@@ -264,16 +367,6 @@ void runtime::RunCore::close() {
   if (pipeline_internal::env_bool("SIMA_PIPELINE_TEARDOWN_DEBUG", false)) {
     std::printf("[DBG] Run::close: teardown\n");
   }
-  const int drain_ms = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_BEFORE_TEARDOWN_MS", 1500);
-  const int drain_min_outputs = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_MIN_OUTPUTS", 1);
-  if (drain_ms > 0 && st->pipeline.supports_pull && !st->pipeline.stream.can_push() &&
-      st->outputs_pulled.load(std::memory_order_relaxed) <= drain_min_outputs) {
-    // EOS must reach stateful decoder/encoder elements while the pipeline is
-    // still running.  Stopping first destroys their channels and turns the
-    // normal live-source close into forced command cancellation.
-    st->pipeline.stream.drain_before_teardown(drain_ms);
-  }
-  stop();
   // A detached worker owns the close; leaking until it exits beats blocking the host.
   if (!run_core_closes_stream(st->stream_close_state.load(std::memory_order_acquire))) {
     return;

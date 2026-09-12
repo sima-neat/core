@@ -703,13 +703,41 @@ that allocator and adjusts its output pool independently of execution lanes,
 sync prefill and application loan credits. Retaining additional application
 outputs still consumes the configured bounded capacity.
 
+An explicit `Input` can also supply that carrier from a previous Run, as in
+standalone `stages::Preproc()` followed by `stages::Infer()`. Core identifies
+this boundary from the rendered appsrc connection, not from a missing producer
+name or a public Tensor's segment alias. The original `CoreAllocated`
+provenance, input bindings and physical offsets remain unchanged. The inference
+Run does not create or resize a native output pool for that incoming carrier;
+runtime DMA admission and the input adapter's allocation policy still apply.
+
 Standalone ROI preprocessing specializes a copy of the admitted contract for
 source-image count and ROI-output capacity separately. The model's contract
 remains immutable. Each returned ROI is a one-member view at its exact slot
 offset; allocation padding is not part of the slot stride. Logical tensor names
 identify outputs, while segment names identify physical backing storage.
 
+### Stop and close ownership
+
+Each RunCore has one cold-path teardown owner. A short lifecycle mutex protects
+claim, pending-close and completion transitions, never stream operations,
+callbacks or joins. A concurrent stop requests cancellation without joining the
+same workers again; a concurrent close leaves finalization with the retained
+owner. The existing detached input/stream-stop handoff remains responsible for
+actual stream close and deferred admission release. Cancellation makes the Run
+no longer running, but does not claim that all retained resources are already
+retired. This coordination adds no frame-path lock, worker or copy.
+
 ### Decoder admission lifecycle
+
+The direct-driver runtime does not request legacy daemon leases. Each decoder
+owns its command channel; channel placement and resource accounting are shared
+within the process, not across processes. This is not a global capacity or CMA
+reservation. `SIMA_DECODER_ADMISSION_REQUIRE=1` therefore fails before hardware
+startup on the direct-driver profile rather than returning a synthetic lease.
+
+The following lease lifecycle applies only to a backend that provides graph
+reservations, not to direct-driver command ownership.
 
 Before choosing the single-pipeline or connected-graph runtime, Core scans the
 compiled execution plan for typed H.264/H.265 `SimaDecode` nodes. All eligible
