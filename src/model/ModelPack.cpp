@@ -2138,7 +2138,7 @@ static std::string encode_direct_tvm_contract(
 
   nlohmann::json encoded{{"schema", "sima.neat.direct-tvm-lane"},
                          {"version", 2},
-                         {"command_id", op.id},
+                         {"command_id", command_id},
                          {"command_name", op.name},
                          {"executable", resolved.string()},
                          {"executable_bytes", host->executable_bytes},

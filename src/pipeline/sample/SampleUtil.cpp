@@ -3249,12 +3249,15 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       if (allow_zero_copy) {
         built = try_build_multi_source_tensor_set_backing(bundle, &sample_buf, &sample_caps,
                                                           &backing_err);
-      } else if (const auto packed_parent = packed_tensor_set_parent_segment_name(bundle)) {
-        built = build_packed_tensor_set_backing(bundle, *packed_parent, &sample_buf, &sample_caps,
-                                                &backing_err);
-      } else {
-        built =
-            build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps, &backing_err);
+      }
+      if (!built) {
+        if (const auto packed_parent = packed_tensor_set_parent_segment_name(bundle)) {
+          built = build_packed_tensor_set_backing(bundle, *packed_parent, &sample_buf, &sample_caps,
+                                                  &backing_err);
+        } else {
+          built = build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+                                                        &backing_err);
+        }
       }
       if (!built) {
         if (err) {

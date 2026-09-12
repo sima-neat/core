@@ -883,6 +883,10 @@ RUN_TEST(
                   !join_contracts[0].at("cpu_epoch_end").get<bool>() &&
                   !join_contracts[1].at("cpu_epoch_start").get<bool>() &&
                   join_contracts[1].at("cpu_epoch_end").get<bool>() &&
+                  join_contracts[0].at("command_id").get<std::size_t>() ==
+                      join_plan.infer[1].physical_command_ids.front() &&
+                  join_contracts[1].at("command_id").get<std::size_t>() ==
+                      join_plan.infer[2].physical_command_ids.front() &&
                   join_contracts[1].at("inputs").size() == 2U,
               "A65 DAG join split one rendered CMA CPU epoch or crossed an EV74 "
               "device interruption");

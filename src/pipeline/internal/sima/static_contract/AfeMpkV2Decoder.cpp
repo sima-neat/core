@@ -1387,9 +1387,9 @@ decode_impl(const std::string_view text,
               path + ".config_params");
         }
       } else if (processor == "A65") {
-        if (data.contract_version != "2.1.0") {
+        if (data.contract_version != "2.1.0" && data.contract_version != "2.1.3") {
           reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, path + ".config_params",
-                 "A65 host modules require the exact typed 2.1.0 contract");
+                 "A65 host modules require an exact typed 2.1.0 or 2.1.3 contract");
         }
         require_exact_keys(config, {"input_names", "input_types", "output_types"},
                            path + ".config_params");
@@ -1783,10 +1783,61 @@ decode_impl(const std::string_view text,
                "$.plugins[" + std::to_string(host_op_index) + "].resources.executable",
                "no structural A65 module evidence matches logical identity and executable");
       }
-      if (evidence->input_names != config.input_names ||
-          evidence->input_types.size() != config.input_types.size() ||
+      auto external_input_names = evidence->input_names;
+      auto external_input_types = evidence->input_types;
+      auto output_alias_input = evidence->output_alias_input;
+      std::vector<std::string> linked_parameter_names;
+      if (!evidence->argument_names.empty()) {
+        if (evidence->argument_names.size() != evidence->argument_types.size()) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.plugins[" + std::to_string(host_op_index) + "].config_params",
+                 "embedded TVM graph argument names and types disagree in cardinality");
+        }
+        std::unordered_map<std::string, std::size_t> argument_by_name;
+        for (std::size_t index = 0; index < evidence->argument_names.size(); ++index) {
+          if (!argument_by_name.emplace(evidence->argument_names[index], index).second) {
+            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                   "$.plugins[" + std::to_string(host_op_index) + "].config_params",
+                   "embedded TVM graph argument names are duplicated");
+          }
+        }
+        external_input_names.clear();
+        external_input_types.clear();
+        std::vector<std::int32_t> external_index_by_argument(evidence->argument_names.size(), -1);
+        for (std::size_t index = 0; index < config.input_names.size(); ++index) {
+          const auto found = argument_by_name.find(config.input_names[index]);
+          if (found == argument_by_name.end()) {
+            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                   "$.plugins[" + std::to_string(host_op_index) + "].config_params.input_names[" +
+                       std::to_string(index) + "]",
+                   "MPK external input is absent from the embedded TVM argument table");
+          }
+          external_input_names.push_back(found->first);
+          external_input_types.push_back(evidence->argument_types[found->second]);
+          external_index_by_argument[found->second] = static_cast<std::int32_t>(index);
+        }
+        for (std::size_t index = 0; index < evidence->argument_names.size(); ++index) {
+          if (external_index_by_argument[index] < 0) {
+            linked_parameter_names.push_back(evidence->argument_names[index]);
+          }
+        }
+        for (auto& alias : output_alias_input) {
+          if (alias < 0) {
+            continue;
+          }
+          if (static_cast<std::size_t>(alias) >= external_index_by_argument.size() ||
+              external_index_by_argument[static_cast<std::size_t>(alias)] < 0) {
+            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                   "$.plugins[" + std::to_string(host_op_index) + "].config_params",
+                   "embedded TVM graph output aliases a linked parameter");
+          }
+          alias = external_index_by_argument[static_cast<std::size_t>(alias)];
+        }
+      }
+      if (external_input_names != config.input_names ||
+          external_input_types.size() != config.input_types.size() ||
           evidence->output_types.size() != config.output_types.size() ||
-          evidence->output_alias_input.size() != config.output_types.size()) {
+          output_alias_input.size() != config.output_types.size()) {
         reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                "$.plugins[" + std::to_string(host_op_index) + "].config_params",
                "embedded TVM graph port contract disagrees with the MPK host contract");
@@ -1795,7 +1846,7 @@ decode_impl(const std::string_view text,
         return left.scalar == right.scalar && left.shape == right.shape;
       };
       for (std::size_t index = 0; index < config.input_types.size(); ++index) {
-        if (!types_equal(config.input_types[index], evidence->input_types[index])) {
+        if (!types_equal(config.input_types[index], external_input_types[index])) {
           reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                  "$.plugins[" + std::to_string(host_op_index) + "].config_params.input_types[" +
                      std::to_string(index) + "]",
@@ -1809,14 +1860,15 @@ decode_impl(const std::string_view text,
                      std::to_string(index) + "]",
                  "embedded TVM graph output type disagrees with the MPK");
         }
-        const auto alias = evidence->output_alias_input[index];
+        const auto alias = output_alias_input[index];
         if (alias >= 0 && static_cast<std::size_t>(alias) >= config.input_types.size()) {
           reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                  "$.plugins[" + std::to_string(host_op_index) + "]",
                  "embedded TVM graph output alias index is out of range");
         }
       }
-      config.output_alias_input = evidence->output_alias_input;
+      config.output_alias_input = std::move(output_alias_input);
+      config.linked_parameter_names = std::move(linked_parameter_names);
       config.executable_bytes = evidence->byte_length;
       config.executable_sha256 = evidence->sha256;
       host_evidence_used[evidence_index] = true;

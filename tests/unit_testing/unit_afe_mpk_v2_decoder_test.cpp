@@ -1200,6 +1200,32 @@ void test_exact_multi_mla_evidence() {
             host_output.read_expression->source_value_id == host_op.inputs.front(),
         "exact TVM __nop is an address view rather than a materialized allocation");
 
+  const auto released_typed_manifest = replace_once(typed_manifest, "\"2.1.0\"", "\"2.1.3\"");
+  const auto released_typed_result = AfeMpkV2Decoder{}.decode_json(
+      released_typed_manifest, typed_mla_evidence, host_evidence, "two-mla-a65-typed-2.1.3.json");
+  if (!released_typed_result && released_typed_result.error.has_value()) {
+    std::cerr << released_typed_result.error->json_path << ": "
+              << released_typed_result.error->detail << "\n";
+  }
+  check(static_cast<bool>(released_typed_result),
+        "typed 2.1.3 A65 stage retains its exact registered host contract");
+
+  auto linked_parameter_evidence = host_evidence;
+  linked_parameter_evidence.front().input_names = {"arm_3_i0", "linked_weight"};
+  linked_parameter_evidence.front().input_types = {{"float32", {1, 8}}, {"float32", {8, 8}}};
+  linked_parameter_evidence.front().argument_names = linked_parameter_evidence.front().input_names;
+  linked_parameter_evidence.front().argument_types = linked_parameter_evidence.front().input_types;
+  const auto linked_parameter_result =
+      AfeMpkV2Decoder{}.decode_json(typed_manifest, typed_mla_evidence, linked_parameter_evidence,
+                                    "two-mla-a65-linked-parameter.json");
+  check(static_cast<bool>(linked_parameter_result),
+        "GraphExecutor linked parameters are separated from external A65 inputs");
+  const auto& linked_host =
+      std::get<HostTvmOpConfig>(linked_parameter_result.plan->ops().at(1).config);
+  check(linked_host.input_names == std::vector<std::string>{"arm_3_i0"} &&
+            linked_host.linked_parameter_names == std::vector<std::string>{"linked_weight"},
+        "A65 evidence preserves the disjoint external and linked argument sets");
+
   auto int64_manifest = replace_once(typed_manifest,
                                      "\"scalar\":\"float32\",\"shape\":[1,8]",
                                      "\"scalar\":\"int64\",\"shape\":[1,4]");
