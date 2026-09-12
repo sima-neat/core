@@ -2102,11 +2102,18 @@ configure_cmake() {
     export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-${SYSROOT}}"
     export PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:-$(IFS=:; echo "${pkgconfig_dirs[*]}")}"
     export PKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
-    if [[ -d "${SYSROOT}/usr/include/c++/12" ]]; then
-      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/c++/12"
+    local cross_gcc_major
+    cross_gcc_major="$(aarch64-linux-gnu-g++ -dumpversion)"
+    cross_gcc_major="${cross_gcc_major%%.*}"
+    if [[ ! "${cross_gcc_major}" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: Cannot determine the cross compiler major version." >&2
+      exit 1
     fi
-    if [[ -d "${SYSROOT}/usr/include/aarch64-linux-gnu/c++/12" ]]; then
-      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/aarch64-linux-gnu/c++/12"
+    if [[ -d "${SYSROOT}/usr/include/c++/${cross_gcc_major}" ]]; then
+      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/c++/${cross_gcc_major}"
+    fi
+    if [[ -d "${SYSROOT}/usr/include/aarch64-linux-gnu/c++/${cross_gcc_major}" ]]; then
+      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/aarch64-linux-gnu/c++/${cross_gcc_major}"
     fi
 
     cmake_args+=(

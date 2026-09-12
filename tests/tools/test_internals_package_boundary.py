@@ -233,6 +233,12 @@ ensure_neat_llima
         self.assertNotIn("simaai-memory-lib-dev (=", text)
         self.assertIn('"simaai-memory-lib-dev"', text)
 
+    def test_sdk_build_uses_the_selected_cross_compiler_headers(self) -> None:
+        text = build_script()
+        self.assertIn("aarch64-linux-gnu-g++ -dumpversion", text)
+        self.assertIn("usr/include/c++/${cross_gcc_major}", text)
+        self.assertNotIn("usr/include/c++/12", text)
+
     def test_every_delivered_internals_package_is_forwarded(self) -> None:
         text = build_script()
         self.assertIn('for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do', text)
