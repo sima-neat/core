@@ -336,12 +336,11 @@ std::optional<std::uint64_t> align_up_16(const std::uint64_t value) {
 }
 
 bool is_qmla_dense_output_symbol(const std::string& symbol) {
-  return symbol.rfind("data.ofm.persistent.afe_mla_output_", 0U) == 0U &&
-         symbol.ends_with(".b0");
+  return symbol.rfind("data.ofm.persistent.afe_mla_output_", 0U) == 0U && symbol.ends_with(".b0");
 }
 
-std::optional<std::vector<std::int64_t>> qmla_dense_last_axis_strides(
-    const ValueSpec& value, const std::uint64_t physical_extent) {
+std::optional<std::vector<std::int64_t>>
+qmla_dense_last_axis_strides(const ValueSpec& value, const std::uint64_t physical_extent) {
   if (!value.logical_dtype || !value.logical_shape || value.logical_shape->empty()) {
     return std::nullopt;
   }
@@ -355,8 +354,8 @@ std::optional<std::vector<std::int64_t>> qmla_dense_last_axis_strides(
     return std::nullopt;
   }
   const auto last = value.logical_shape->back();
-  if (last <= 0 || static_cast<std::uint64_t>(last) >
-                       std::numeric_limits<std::uint64_t>::max() / *width) {
+  if (last <= 0 ||
+      static_cast<std::uint64_t>(last) > std::numeric_limits<std::uint64_t>::max() / *width) {
     return std::nullopt;
   }
   const auto padded_row = align_up_16(static_cast<std::uint64_t>(last) * *width);
@@ -367,7 +366,7 @@ std::optional<std::vector<std::int64_t>> qmla_dense_last_axis_strides(
   for (std::size_t axis = 0U; axis + 1U < value.logical_shape->size(); ++axis) {
     const auto dimension = value.logical_shape->at(axis);
     if (dimension <= 0 || prefix > std::numeric_limits<std::uint64_t>::max() /
-                                      static_cast<std::uint64_t>(dimension)) {
+                                       static_cast<std::uint64_t>(dimension)) {
       return std::nullopt;
     }
     prefix *= static_cast<std::uint64_t>(dimension);
@@ -386,8 +385,8 @@ std::optional<std::vector<std::int64_t>> qmla_dense_last_axis_strides(
       stride = *padded_row;
     } else {
       const auto inner = value.logical_shape->at(axis + 1U);
-      if (inner <= 0 || stride > std::numeric_limits<std::uint64_t>::max() /
-                                    static_cast<std::uint64_t>(inner)) {
+      if (inner <= 0 ||
+          stride > std::numeric_limits<std::uint64_t>::max() / static_cast<std::uint64_t>(inner)) {
         return std::nullopt;
       }
       stride *= static_cast<std::uint64_t>(inner);
@@ -400,8 +399,8 @@ std::optional<std::vector<std::int64_t>> qmla_dense_last_axis_strides(
   return strides;
 }
 
-std::optional<std::uint64_t> affine_touched_span(
-    const ValueSpec& value, const std::vector<std::int64_t>& strides) {
+std::optional<std::uint64_t> affine_touched_span(const ValueSpec& value,
+                                                 const std::vector<std::int64_t>& strides) {
   const auto width = value.logical_dtype ? element_width(*value.logical_dtype) : std::nullopt;
   if (!width || !value.logical_shape || value.logical_shape->size() != strides.size()) {
     return std::nullopt;
@@ -415,8 +414,7 @@ std::optional<std::uint64_t> affine_touched_span(
                 static_cast<std::uint64_t>(strides[axis])) {
       return std::nullopt;
     }
-    span += static_cast<std::uint64_t>(dimension - 1) *
-            static_cast<std::uint64_t>(strides[axis]);
+    span += static_cast<std::uint64_t>(dimension - 1) * static_cast<std::uint64_t>(strides[axis]);
   }
   return span;
 }
@@ -440,8 +438,8 @@ void author_mla_output_storage(ModelExecutionPlanData& data, const std::size_t m
            "larger MLA output carrier has no registered QMLA dense layout ABI");
   }
   const auto& mla = std::get<MlaOpConfig>(data.ops.at(mla_op_index).config);
-  if (output_index >= mla.output_types.size() || !value.logical_dtype ||
-      !value.logical_shape || *value.logical_dtype != mla.output_types[output_index].scalar ||
+  if (output_index >= mla.output_types.size() || !value.logical_dtype || !value.logical_shape ||
+      *value.logical_dtype != mla.output_types[output_index].scalar ||
       *value.logical_shape != mla.output_types[output_index].shape) {
     reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
            "larger MLA output carrier has no exact typed dense QMLA contract");
@@ -660,8 +658,7 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
   }
   case OpKind::Reshape: {
     if (kernel == "batch_flatten_transform") {
-      require_exact_keys(params, {"input_shapes", "output_shapes"},
-                         path + ".config_params.params");
+      require_exact_keys(params, {"input_shapes", "output_shapes"}, path + ".config_params.params");
       auto output_shapes = shapes(params, "output_shapes", path + ".params", true);
       if (output_shapes.size() != 1U) {
         reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
@@ -672,8 +669,8 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
     }
     if (kernel != "reshape_transform") {
       reject(AfeMpkV2DecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
-             "reshape operation has no exact typed grammar for kernel '" +
-                 std::string(kernel) + "'");
+             "reshape operation has no exact typed grammar for kernel '" + std::string(kernel) +
+                 "'");
     }
     require_exact_keys(params, {"newshape", "input_shapes", "output_shapes"},
                        path + ".config_params.params");
@@ -914,8 +911,7 @@ void propagate_identity_evidence(ModelExecutionPlanData& data) {
   while (changed) {
     changed = false;
     for (const auto& op : data.ops) {
-      if (op.kind == OpKind::Cast || op.kind == OpKind::Quantize ||
-          op.kind == OpKind::Dequantize) {
+      if (op.kind == OpKind::Cast || op.kind == OpKind::Quantize || op.kind == OpKind::Dequantize) {
         if (op.inputs.size() != 1U || op.outputs.size() != 1U) {
           continue;
         }
@@ -1206,8 +1202,8 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
           auto strides = input.storage_binding->stride_bytes;
           if (strides.empty()) {
             const auto width = element_width(*input.logical_dtype);
-            const auto dense = width ? contiguous_stride_bytes(*input.logical_shape, *width)
-                                     : std::nullopt;
+            const auto dense =
+                width ? contiguous_stride_bytes(*input.logical_shape, *width) : std::nullopt;
             if (!dense) {
               reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                      "$.ops[" + std::to_string(op.id) + "]",
@@ -1231,8 +1227,8 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
     bool contiguous = false;
     if (value.logical_shape.has_value()) {
       const auto width = exact_element_width(value.required_bytes, *value.logical_shape);
-      const auto dense = width ? contiguous_stride_bytes(*value.logical_shape, *width)
-                               : std::nullopt;
+      const auto dense =
+          width ? contiguous_stride_bytes(*value.logical_shape, *width) : std::nullopt;
       contiguous = dense && value.read_expression->stride_bytes == *dense;
     }
     if (contiguous) {
@@ -1378,13 +1374,13 @@ decode_impl(const std::string_view text,
         const bool typed_mla = config.contains("input_types") || config.contains("output_types");
         if (typed_mla) {
           require_exact_keys(config,
-                             {"desired_batch_size", "actual_batch_size",
-                              "number_of_quads_to_user", "input_types", "output_types"},
+                             {"desired_batch_size", "actual_batch_size", "number_of_quads_to_user",
+                              "input_types", "output_types"},
                              path + ".config_params");
         } else {
-          require_exact_keys(
-              config, {"desired_batch_size", "actual_batch_size", "number_of_quads_to_user"},
-              path + ".config_params");
+          require_exact_keys(config,
+                             {"desired_batch_size", "actual_batch_size", "number_of_quads_to_user"},
+                             path + ".config_params");
         }
       } else if (processor == "A65") {
         if (data.contract_version != "2.1.0" && data.contract_version != "2.1.3") {
@@ -1533,7 +1529,8 @@ decode_impl(const std::string_view text,
                  "typed MLA port arity disagrees with MPK nodes");
         }
         for (std::size_t index = 0; index < mla.input_types.size(); ++index) {
-          const auto bytes = dense_bytes(mla.input_types[index].shape, mla.input_types[index].scalar);
+          const auto bytes =
+              dense_bytes(mla.input_types[index].shape, mla.input_types[index].scalar);
           if (!bytes || *bytes != input_nodes[index].bytes) {
             reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
                    path + ".config_params.input_types[" + std::to_string(index) + "]",
@@ -1656,8 +1653,7 @@ decode_impl(const std::string_view text,
       reject(AfeMpkV2DecodeErrorCode::MissingMlaStage, "$.plugins",
              "no exact MLA operation exists");
     }
-    if (pass_count > 1U ||
-        (pass_count == 1U && pass_op_index + 1U != data.ops.size())) {
+    if (pass_count > 1U || (pass_count == 1U && pass_op_index + 1U != data.ops.size())) {
       reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
              "PassThrough, when present, must be the unique terminal publication operation");
     }
@@ -1726,10 +1722,10 @@ decode_impl(const std::string_view text,
                      std::to_string(index) + "].size",
                  "QMLA IFM extent does not exactly equal the logical tensor");
         }
-        data.backend_ports.push_back(
-            {stage_index, BackendPortDirection::Input, index, symbol, value.id,
-             physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
-             BackendPortAlignmentAuthority::LegacyPolicy, BackendPortAccess::ReadOnly});
+        data.backend_ports.push_back({stage_index, BackendPortDirection::Input, index, symbol,
+                                      value.id, physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
+                                      BackendPortAlignmentAuthority::LegacyPolicy,
+                                      BackendPortAccess::ReadOnly});
         result.proof.push_back(
             {"MLA[" + std::to_string(stage_index) + "].IFM[" + std::to_string(index) + "]",
              "ELF symbol '" + symbol + "' and exact stage MPK input agree"});
@@ -1741,10 +1737,10 @@ decode_impl(const std::string_view text,
         author_mla_output_storage(data, mla_op_index, index, symbol, physical_extent,
                                   &result.proof);
         const auto& value = data.values[mla.outputs[index]];
-        data.backend_ports.push_back(
-            {stage_index, BackendPortDirection::Output, index, symbol, value.id,
-             physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
-             BackendPortAlignmentAuthority::LegacyPolicy, BackendPortAccess::WriteOnly});
+        data.backend_ports.push_back({stage_index, BackendPortDirection::Output, index, symbol,
+                                      value.id, physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
+                                      BackendPortAlignmentAuthority::LegacyPolicy,
+                                      BackendPortAccess::WriteOnly});
         result.proof.push_back(
             {"MLA[" + std::to_string(stage_index) + "].OFM[" + std::to_string(index) + "]",
              "ELF symbol '" + symbol + "' and exact stage MPK output agree"});
@@ -1925,15 +1921,15 @@ decode_impl(const std::string_view text,
         const auto value_id = terminal_values.front();
         data.model_outputs.push_back({0U, data.values[value_id].name, value_id});
         result.proof.push_back(
-            {"model.output[0]",
-             "the unique unconsumed terminal produced value '" + data.values[value_id].name +
-                 "' is published directly"});
+            {"model.output[0]", "the unique unconsumed terminal produced value '" +
+                                    data.values[value_id].name + "' is published directly"});
       } else {
         const auto contract = lookup_afe_publication_contract(manifest_sha256);
         if (!contract) {
           reject(AfeMpkV2DecodeErrorCode::MissingPublicationStage, "$.plugins",
                  "multiple terminal values require an exact digest-bound ordered output contract; "
-                 "manifest sha256=" + manifest_sha256);
+                 "manifest sha256=" +
+                     manifest_sha256);
         }
         std::unordered_set<ValueId> terminal_set(terminal_values.begin(), terminal_values.end());
         std::unordered_set<ValueId> selected;
@@ -1944,13 +1940,13 @@ decode_impl(const std::string_view text,
               !selected.emplace(found->second).second) {
             reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
                    "digest-bound output contract contains a missing, nonterminal, or duplicate "
-                   "value '" + wanted + "'");
+                   "value '" +
+                       wanted + "'");
           }
           data.model_outputs.push_back({index, wanted, found->second});
-          result.proof.push_back(
-              {"model.output[" + std::to_string(index) + "]",
-               "exact MPK sha256 " + manifest_sha256 + " publishes terminal value '" + wanted +
-                   "'"});
+          result.proof.push_back({"model.output[" + std::to_string(index) + "]",
+                                  "exact MPK sha256 " + manifest_sha256 +
+                                      " publishes terminal value '" + wanted + "'"});
         }
         if (selected.size() != terminal_set.size()) {
           reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",

@@ -508,8 +508,7 @@ void test_exact_registry() {
         "registry rejects processor case folding");
   check(!lookup_exact_kernel("2.0.1", "EV74", "cast_transform").has_value(),
         "registry rejects version fallback");
-  const auto batch_flatten =
-      lookup_exact_kernel("2.1.0", "EV74", "batch_flatten_transform");
+  const auto batch_flatten = lookup_exact_kernel("2.1.0", "EV74", "batch_flatten_transform");
   check(batch_flatten && batch_flatten->kind == OpKind::Reshape,
         "AFE 2.1 batch flatten has one exact address-view registry entry");
   const auto released_batch_flatten =
@@ -551,9 +550,9 @@ void test_success_and_immutable_contract() {
 }
 
 void test_model_sdk_2_1_3_contract() {
-  const auto result = AfeMpkV2Decoder{}.decode_json(
-      replace_once(valid_manifest(), "2.0.0", "2.1.3"), monolithic_topology(),
-      "model-sdk-2.1.3.json");
+  const auto result =
+      AfeMpkV2Decoder{}.decode_json(replace_once(valid_manifest(), "2.0.0", "2.1.3"),
+                                    monolithic_topology(), "model-sdk-2.1.3.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -563,9 +562,8 @@ void test_model_sdk_2_1_3_contract() {
 }
 
 void test_unpack_and_slice_are_read_expressions() {
-  const auto result = AfeMpkV2Decoder{}.decode_json(packed_read_manifest(),
-                                                    monolithic_topology(32U, 32U),
-                                                    "packed-read-synthetic.json");
+  const auto result = AfeMpkV2Decoder{}.decode_json(
+      packed_read_manifest(), monolithic_topology(32U, 32U), "packed-read-synthetic.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -613,9 +611,8 @@ void test_unpack_and_slice_are_read_expressions() {
 }
 
 void test_reshape_is_an_exact_read_expression() {
-  const auto result =
-      AfeMpkV2Decoder{}.decode_json(reshape_manifest(), monolithic_topology(16U, 8U),
-                                    "reshape.json");
+  const auto result = AfeMpkV2Decoder{}.decode_json(reshape_manifest(),
+                                                    monolithic_topology(16U, 8U), "reshape.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -631,9 +628,8 @@ void test_reshape_is_an_exact_read_expression() {
   const auto mismatch =
       replace_once(reshape_manifest(), "\"output_nodes\":[{\"name\":\"reshaped\",\"size\":16}]",
                    "\"output_nodes\":[{\"name\":\"reshaped\",\"size\":12}]");
-  const auto rejected =
-      AfeMpkV2Decoder{}.decode_json(mismatch, monolithic_topology(16U, 8U),
-                                    "reshape-mismatch.json");
+  const auto rejected = AfeMpkV2Decoder{}.decode_json(mismatch, monolithic_topology(16U, 8U),
+                                                      "reshape-mismatch.json");
   check(!rejected && rejected.error->code == AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
         "reshape that changes the byte extent fails closed");
 }
@@ -657,24 +653,23 @@ void test_registered_detess_layout_is_preserved_through_dequant() {
 }
 
 void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
-  const auto result = AfeMpkV2Decoder{}.decode_json(
-      resnet_batch_flatten_manifest(), monolithic_topology(16U, 1008U),
-      "resnet-batch-flatten.json");
+  const auto result =
+      AfeMpkV2Decoder{}.decode_json(resnet_batch_flatten_manifest(),
+                                    monolithic_topology(16U, 1008U), "resnet-batch-flatten.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
   check(static_cast<bool>(result), "exact ResNet batch-flatten chain decodes");
-  const auto foreign_reshape_grammar = replace_once(
-      resnet_batch_flatten_manifest(),
-      "\"kernel\":\"batch_flatten_transform\",\"params\":{\n"
-      "                          \"input_shapes\"",
-      "\"kernel\":\"batch_flatten_transform\",\"params\":{\n"
-      "                          \"newshape\":[1,1000],\"input_shapes\"");
-  const auto grammar_rejected = AfeMpkV2Decoder{}.decode_json(
-      foreign_reshape_grammar, monolithic_topology(16U, 1008U),
-      "resnet-batch-flatten-foreign-grammar.json");
-  check(!grammar_rejected &&
-            grammar_rejected.error->code == AfeMpkV2DecodeErrorCode::InvalidField,
+  const auto foreign_reshape_grammar =
+      replace_once(resnet_batch_flatten_manifest(),
+                   "\"kernel\":\"batch_flatten_transform\",\"params\":{\n"
+                   "                          \"input_shapes\"",
+                   "\"kernel\":\"batch_flatten_transform\",\"params\":{\n"
+                   "                          \"newshape\":[1,1000],\"input_shapes\"");
+  const auto grammar_rejected =
+      AfeMpkV2Decoder{}.decode_json(foreign_reshape_grammar, monolithic_topology(16U, 1008U),
+                                    "resnet-batch-flatten-foreign-grammar.json");
+  check(!grammar_rejected && grammar_rejected.error->code == AfeMpkV2DecodeErrorCode::InvalidField,
         "batch flatten accepts only its exact two-shape-list grammar");
   const auto& plan = *result.plan;
   check(plan.ops().size() == 4U && plan.ops()[1].kind == OpKind::Detessellate &&
@@ -684,8 +679,7 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
         "batch flatten retains exact compiler identity as the existing Reshape relation");
   const auto* flattened = plan.value(plan.ops()[2].outputs.front());
   check(flattened && flattened->required_bytes == 1000U &&
-            flattened->logical_shape == TensorShape({1, 1000}) &&
-            flattened->read_expression &&
+            flattened->logical_shape == TensorShape({1, 1000}) && flattened->read_expression &&
             flattened->read_expression->source_value_id == plan.ops()[1].outputs.front() &&
             flattened->read_expression->byte_offset == 0U &&
             flattened->read_expression->stride_bytes == std::vector<std::int64_t>({1000, 1}),
@@ -693,9 +687,8 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
 
   std::vector<ValueId> relation_values;
   check(resolve_exact_private_ordered_relation_path(plan, 1U, 3U, &relation_values) &&
-            relation_values ==
-                std::vector<ValueId>({plan.ops()[1].outputs.front(),
-                                      plan.ops()[2].outputs.front()}),
+            relation_values == std::vector<ValueId>(
+                                   {plan.ops()[1].outputs.front(), plan.ops()[2].outputs.front()}),
         "shared physical proof sees exactly the private detess-to-dequant view path");
 
   std::string error;
@@ -719,9 +712,9 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
             !physical->command_for_semantic_op[2U].has_value(),
         "detess/view/dequant is one graph227 submission and the view schedules no command");
 
-  const auto arena = FrameSlotArenaPlan::compile(
-      plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-      kLegacyEvoCmaRegionAlignmentBytes, &error);
+  const auto arena =
+      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
   check(arena.has_value(), "relation-transparent graph227 frame arena compiles");
   const auto contract = build_dmabuf_plan_processcvu_command_contract(
       plan, *physical, graph227_commands, *arena, &error);
@@ -733,10 +726,9 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
     const auto& input = contract->payload.input_tensors.front();
     const auto& output = contract->payload.output_tensors.front();
     const std::array<int, 4U> expected_shape{1, 1, 1, 1000};
-    const std::array<std::uint8_t, 4U> expected_axes{
-        SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W, SIMA_EV_AXIS_C};
-    check(input.shape.rank == expected_shape.size() &&
-              output.shape.rank == expected_shape.size(),
+    const std::array<std::uint8_t, 4U> expected_axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
+                                                     SIMA_EV_AXIS_C};
+    check(input.shape.rank == expected_shape.size() && output.shape.rank == expected_shape.size(),
           "graph227 physical endpoints retain the registered Detess frame rank");
     for (std::size_t axis = 0U; axis < expected_shape.size(); ++axis) {
       check(input.shape.sizes[axis] == expected_shape[axis] &&
@@ -751,47 +743,44 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
     check(contract->payload.output_shapes == std::vector<std::vector<int>>{{1, 1000}} &&
               contract->payload.runtime_output_logical_shapes ==
                   std::vector<std::vector<int>>{{1, 1000}} &&
-              contract->payload.runtime_output_logical_layout_list ==
-                  std::vector<std::string>{""},
+              contract->payload.runtime_output_logical_layout_list == std::vector<std::string>{""},
           "graph227 publication retains the post-view flattened logical contract");
   }
 
-  auto two_views = replace_once(
-      resnet_batch_flatten_manifest(),
-      "\"input_nodes\":[{\"name\":\"EV_1/batch_flatten_0\",\"size\":1000}],\n"
-      "       \"output_nodes\":[{\"name\":\"dequantize_1/resnetv17_dense0_fwd\","
-      "\"size\":4000}]",
-      "\"input_nodes\":[{\"name\":\"second_view\",\"size\":1000}],\n"
-      "       \"output_nodes\":[{\"name\":\"dequantize_1/resnetv17_dense0_fwd\","
-      "\"size\":4000}]");
-  two_views = replace_once(
-      std::move(two_views),
-      "\"input_data_type\":\"int8\",\"input_shapes\":[[1,1000]],\n"
-      "                          \"output_shapes\":[[1,1000]]",
-      "\"input_data_type\":\"int8\",\"input_shapes\":[[1,1,1000]],\n"
-      "                          \"output_shapes\":[[1,1,1000]]");
-  two_views = replace_once(
-      std::move(two_views), "{\"name\":\"dequantize_1\",\"sequence\":4",
-      "{\"name\":\"second_view\",\"sequence\":4,\"processor\":\"EV74\","
-      "\"type\":\"sgpProcess\",\n"
-      "       \"config_params\":{\"desired_batch_size\":1,\"actual_batch_size\":1,\n"
-      "                        \"kernel\":\"reshape_transform\",\"params\":{\n"
-      "                          \"newshape\":[1,1,1000],"
-      "\"input_shapes\":[[1,1000]],\n"
-      "                          \"output_shapes\":[[1,1,1000]]}},\n"
-      "       \"input_nodes\":[{\"name\":\"EV_1/batch_flatten_0\",\"size\":1000}],\n"
-      "       \"output_nodes\":[{\"name\":\"second_view\",\"size\":1000}]},\n"
-      "      {\"name\":\"dequantize_1\",\"sequence\":5");
+  auto two_views =
+      replace_once(resnet_batch_flatten_manifest(),
+                   "\"input_nodes\":[{\"name\":\"EV_1/batch_flatten_0\",\"size\":1000}],\n"
+                   "       \"output_nodes\":[{\"name\":\"dequantize_1/resnetv17_dense0_fwd\","
+                   "\"size\":4000}]",
+                   "\"input_nodes\":[{\"name\":\"second_view\",\"size\":1000}],\n"
+                   "       \"output_nodes\":[{\"name\":\"dequantize_1/resnetv17_dense0_fwd\","
+                   "\"size\":4000}]");
   two_views = replace_once(std::move(two_views),
-                           "{\"name\":\"publish\",\"sequence\":5",
+                           "\"input_data_type\":\"int8\",\"input_shapes\":[[1,1000]],\n"
+                           "                          \"output_shapes\":[[1,1000]]",
+                           "\"input_data_type\":\"int8\",\"input_shapes\":[[1,1,1000]],\n"
+                           "                          \"output_shapes\":[[1,1,1000]]");
+  two_views =
+      replace_once(std::move(two_views), "{\"name\":\"dequantize_1\",\"sequence\":4",
+                   "{\"name\":\"second_view\",\"sequence\":4,\"processor\":\"EV74\","
+                   "\"type\":\"sgpProcess\",\n"
+                   "       \"config_params\":{\"desired_batch_size\":1,\"actual_batch_size\":1,\n"
+                   "                        \"kernel\":\"reshape_transform\",\"params\":{\n"
+                   "                          \"newshape\":[1,1,1000],"
+                   "\"input_shapes\":[[1,1000]],\n"
+                   "                          \"output_shapes\":[[1,1,1000]]}},\n"
+                   "       \"input_nodes\":[{\"name\":\"EV_1/batch_flatten_0\",\"size\":1000}],\n"
+                   "       \"output_nodes\":[{\"name\":\"second_view\",\"size\":1000}]},\n"
+                   "      {\"name\":\"dequantize_1\",\"sequence\":5");
+  two_views = replace_once(std::move(two_views), "{\"name\":\"publish\",\"sequence\":5",
                            "{\"name\":\"publish\",\"sequence\":6");
   const auto twice_decoded = AfeMpkV2Decoder{}.decode_json(
       two_views, monolithic_topology(16U, 1008U), "resnet-two-views.json");
   check(static_cast<bool>(twice_decoded) && twice_decoded.plan->ops().size() == 5U,
         "two consecutive exact views decode without inventing work");
   std::vector<ValueId> twice_values;
-  check(resolve_exact_private_ordered_relation_path(
-            *twice_decoded.plan, 1U, 4U, &twice_values) && twice_values.size() == 3U,
+  check(resolve_exact_private_ordered_relation_path(*twice_decoded.plan, 1U, 4U, &twice_values) &&
+            twice_values.size() == 3U,
         "shared relation proof composes two private dense order-preserving views");
   const auto twice_physical = PhysicalExecutionLowerer::lower(*twice_decoded.plan, &error);
   std::size_t twice_graph227 = 0U;
@@ -800,8 +789,7 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
       twice_graph227 += command.graph_id == 227U ? 1U : 0U;
     }
   }
-  check(twice_physical && twice_graph227 == 1U &&
-            !twice_physical->command_for_semantic_op[2U] &&
+  check(twice_physical && twice_graph227 == 1U && !twice_physical->command_for_semantic_op[2U] &&
             !twice_physical->command_for_semantic_op[3U],
         "two consecutive views remain transparent to one graph227 submission");
 
@@ -814,8 +802,7 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
       "       \"output_nodes\":[{\"name\":\"observed_flatten\",\"size\":1000},"
       "{\"name\":\"output\",\"size\":4000}]");
   const auto observed = AfeMpkV2Decoder{}.decode_json(
-      observed_relation, monolithic_topology(16U, 1008U),
-      "resnet-observed-batch-flatten.json");
+      observed_relation, monolithic_topology(16U, 1008U), "resnet-observed-batch-flatten.json");
   check(static_cast<bool>(observed) && observed.plan->model_outputs().size() == 2U &&
             !resolve_exact_private_ordered_relation_path(*observed.plan, 1U, 3U),
         "a branched/public batch-flatten value is not relation-transparent");
@@ -845,8 +832,8 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
       Case{cast_tess_manifest(), 224U, 128U, "Cast+Tess"},
       Case{quant_tess_manifest(), 226U, 64U, "Quantize+Tess"},
   };
-  const std::array<std::uint8_t, 4U> expected_axes{
-      SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W, SIMA_EV_AXIS_C};
+  const std::array<std::uint8_t, 4U> expected_axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
+                                                   SIMA_EV_AXIS_C};
 
   for (const auto& test_case : cases) {
     const auto decoded = AfeMpkV2Decoder{}.decode_json(
@@ -872,12 +859,12 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
       }
     }
     check(commands.size() == 1U, "raw AFE pair selects one exact fused graph command");
-    const auto arena = FrameSlotArenaPlan::compile(
-        plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-        kLegacyEvoCmaRegionAlignmentBytes, &error);
+    const auto arena =
+        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
     check(arena.has_value(), "raw fused-ingress frame arena compiles");
-    const auto contract = build_dmabuf_plan_processcvu_command_contract(
-        plan, *physical, commands, *arena, &error);
+    const auto contract =
+        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
     check(contract.has_value(), "raw fused-ingress ProcessCVU descriptor contract builds");
     check(contract->payload.input_tensors.size() == 1U &&
               contract->payload.output_tensors.size() == 1U,
@@ -895,9 +882,9 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
 }
 
 void test_tessellate_keeps_yolov8_semantic_shape_separate_from_packed_carrier() {
-  const auto decoded = AfeMpkV2Decoder{}.decode_json(
-      yolov8_quant_tess_ingress_manifest(), monolithic_topology(1228800U, 16U),
-      "yolov8-quant-tess-ingress.json");
+  const auto decoded = AfeMpkV2Decoder{}.decode_json(yolov8_quant_tess_ingress_manifest(),
+                                                     monolithic_topology(1228800U, 16U),
+                                                     "yolov8-quant-tess-ingress.json");
   if (!decoded && decoded.error.has_value()) {
     std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
   }
@@ -925,8 +912,7 @@ void test_tessellate_keeps_yolov8_semantic_shape_separate_from_packed_carrier() 
 
 void test_standalone_quantize_authors_exact_graph222_layout() {
   const auto decoded = AfeMpkV2Decoder{}.decode_json(
-      standalone_quant_mla_manifest(), monolithic_topology(64U, 16U),
-      "standalone-quant.json");
+      standalone_quant_mla_manifest(), monolithic_topology(64U, 16U), "standalone-quant.json");
   if (!decoded && decoded.error.has_value()) {
     std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
   }
@@ -936,8 +922,8 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
   const auto& quant = plan.ops().front();
   const auto* input = plan.value(quant.inputs.front());
   const auto* output = plan.value(quant.outputs.front());
-  check(quant.kind == OpKind::Quantize && input && output &&
-            input->logical_layout == "HWC" && output->logical_layout == "HWC",
+  check(quant.kind == OpKind::Quantize && input && output && input->logical_layout == "HWC" &&
+            output->logical_layout == "HWC",
         "registered graph 222 authors HWC axes on both standalone Quantize endpoints");
 
   std::string error;
@@ -950,19 +936,18 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
     }
   }
   check(commands.size() == 1U, "standalone Quantize selects one exact graph 222 command");
-  const auto arena = FrameSlotArenaPlan::compile(
-      plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-      kLegacyEvoCmaRegionAlignmentBytes, &error);
+  const auto arena =
+      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
   check(arena.has_value(), "standalone Quantize frame arena compiles");
-  const auto contract = build_dmabuf_plan_processcvu_command_contract(
-      plan, *physical, commands, *arena, &error);
+  const auto contract =
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
   check(contract.has_value(), "standalone graph 222 descriptor contract builds");
 
   const auto& payload = contract->payload;
   check(payload.graph_id == 222 && payload.input_tensors.size() == 1U &&
-            payload.output_tensors.size() == 1U && payload.round_off == 1 &&
-            payload.has_q_scale && payload.q_scale == 0.25 && payload.has_q_zp &&
-            payload.q_zp == 0 &&
+            payload.output_tensors.size() == 1U && payload.round_off == 1 && payload.has_q_scale &&
+            payload.q_scale == 0.25 && payload.has_q_zp && payload.q_zp == 0 &&
             payload.q_scale_list == std::vector<double>{0.25} &&
             payload.q_zp_list == std::vector<int>{0},
         "graph 222 retains its exact typed qparams and TONEAREST mode");
@@ -973,30 +958,28 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
             sima_ev_infer_dense_tensor_format(&input_desc) == SIMA_EV_DENSE_FORMAT_NDHWC &&
             sima_ev_infer_dense_tensor_format(&output_desc) == SIMA_EV_DENSE_FORMAT_NDHWC,
         "graph 222 emits exact dense NDHWC FP32-to-INT8 endpoint descriptors");
-  const std::array<std::uint8_t, 4U> expected_axes{
-      SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W, SIMA_EV_AXIS_C};
+  const std::array<std::uint8_t, 4U> expected_axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
+                                                   SIMA_EV_AXIS_C};
   for (std::size_t axis = 0; axis < expected_axes.size(); ++axis) {
     check(input_desc.shape.axis_semantics[axis] == expected_axes[axis] &&
               output_desc.shape.axis_semantics[axis] == expected_axes[axis],
           "graph 222 endpoint descriptors preserve identical N/H/W/C axes");
   }
 
-  const auto contradictory = replace_once(
-      standalone_quant_mla_manifest(), "\"output_shapes\":[[1,2,2,16]]",
-      "\"output_shapes\":[[1,2,1,32]]");
-  const auto rejected = AfeMpkV2Decoder{}.decode_json(
-      contradictory, monolithic_topology(64U, 16U),
-      "standalone-quant-contradictory-shape.json");
+  const auto contradictory =
+      replace_once(standalone_quant_mla_manifest(), "\"output_shapes\":[[1,2,2,16]]",
+                   "\"output_shapes\":[[1,2,1,32]]");
+  const auto rejected = AfeMpkV2Decoder{}.decode_json(contradictory, monolithic_topology(64U, 16U),
+                                                      "standalone-quant-contradictory-shape.json");
   check(!rejected && rejected.error.has_value() &&
             rejected.error->code == AfeMpkV2DecodeErrorCode::ConfigurationMismatch &&
-            rejected.error->detail.find("contradictory exact endpoint shapes") !=
-                std::string::npos,
+            rejected.error->detail.find("contradictory exact endpoint shapes") != std::string::npos,
         "standalone graph 222 rejects contradictory exact endpoint geometry");
 }
 
 void test_qmla_output_physical_extent_and_row_pitch() {
-  const auto decoded = AfeMpkV2Decoder{}.decode_json(
-      qmla_padded_output_manifest(), qmla_padded_topology(), "qmla-padded.json");
+  const auto decoded = AfeMpkV2Decoder{}.decode_json(qmla_padded_output_manifest(),
+                                                     qmla_padded_topology(), "qmla-padded.json");
   if (!decoded && decoded.error) {
     std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
   }
@@ -1004,27 +987,24 @@ void test_qmla_output_physical_extent_and_row_pitch() {
   const auto& plan = *decoded.plan;
   const auto& port = plan.backend_ports(0U, BackendPortDirection::Output).front();
   const auto* value = plan.value(port.value_id);
-  const auto* carrier = value && value->storage_binding
-                            ? plan.carrier(value->storage_binding->carrier_id)
-                            : nullptr;
+  const auto* carrier =
+      value && value->storage_binding ? plan.carrier(value->storage_binding->carrier_id) : nullptr;
   check(port.physical_extent_bytes == 110400U && value && value->required_bytes == 109200U &&
             value->storage_binding && value->storage_binding->physical_span == 110396U &&
-            value->storage_binding->stride_bytes ==
-                std::vector<std::int64_t>({110400, 368, 4}) &&
+            value->storage_binding->stride_bytes == std::vector<std::int64_t>({110400, 368, 4}) &&
             carrier && carrier->required_bytes == 110400U,
         "QMLA physical carrier remains separate from logical addressed logits");
 
   const auto contradictory = AfeMpkV2Decoder{}.decode_json(
-      qmla_padded_output_manifest(), qmla_padded_topology(110416U),
-      "qmla-contradictory.json");
+      qmla_padded_output_manifest(), qmla_padded_topology(110416U), "qmla-contradictory.json");
   check(!contradictory && contradictory.error &&
             contradictory.error->code == AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
         "unregistered larger QMLA extent fails closed instead of guessing padding");
 
   auto missing = qmla_padded_topology();
   missing.ofm_extent_bytes.clear();
-  const auto missing_result = AfeMpkV2Decoder{}.decode_json(
-      qmla_padded_output_manifest(), missing, "qmla-missing-extent.json");
+  const auto missing_result = AfeMpkV2Decoder{}.decode_json(qmla_padded_output_manifest(), missing,
+                                                            "qmla-missing-extent.json");
   check(!missing_result && missing_result.error &&
             missing_result.error->code == AfeMpkV2DecodeErrorCode::ElfTopologyInvalid,
         "missing QMLA extent evidence fails closed");
@@ -1046,8 +1026,7 @@ void test_fail_closed_cases() {
                             "\"params\":{\"ignored\":1,\"out_dtype\":\"bfloat16\""),
                topology, AfeMpkV2DecodeErrorCode::InvalidField,
                "untyped extra operation config is not ignored");
-  expect_error(replace_once(valid_manifest(),
-                            "\"input_shapes\":[[1,4]],\"output_shapes\":[[1,4]]",
+  expect_error(replace_once(valid_manifest(), "\"input_shapes\":[[1,4]],\"output_shapes\":[[1,4]]",
                             "\"input_shapes\":[[1,4]],\"output_shapes\":[[2,2]]"),
                topology, AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                "shape-preserving transform rejects contradictory exact endpoint shapes");
@@ -1068,9 +1047,8 @@ void test_fail_closed_cases() {
 }
 
 void test_direct_publication_without_passthrough() {
-  const auto direct = replace_once(
-      valid_manifest(),
-      R"json(,
+  const auto direct = replace_once(valid_manifest(),
+                                   R"json(,
       {
         "name":"publish","sequence":4,"processor":"EV74","type":"sgpProcess",
         "config_params":{"desired_batch_size":1,"actual_batch_size":1,
@@ -1078,7 +1056,7 @@ void test_direct_publication_without_passthrough() {
         "input_nodes":[{"name":"decorated/model/output:0","size":16}],
         "output_nodes":[{"name":"pass_through_out_0","size":16}]
       })json",
-      "");
+                                   "");
   const auto result =
       AfeMpkV2Decoder{}.decode_json(direct, monolithic_topology(), "direct-output.json");
   if (!result && result.error.has_value()) {
@@ -1095,8 +1073,7 @@ void test_direct_publication_without_passthrough() {
       R"json("output_nodes":[{"name":"decorated/model/output:0","size":16},{"name":"other","size":16}])json");
   const auto rejected =
       AfeMpkV2Decoder{}.decode_json(ambiguous, monolithic_topology(), "ambiguous-output.json");
-  check(!rejected &&
-            rejected.error->code == AfeMpkV2DecodeErrorCode::InvalidKernelArity,
+  check(!rejected && rejected.error->code == AfeMpkV2DecodeErrorCode::InvalidKernelArity,
         "an invalid arity is rejected before publication inference");
 
   const auto extra_authority =
@@ -1137,8 +1114,7 @@ void test_exact_multi_mla_evidence() {
                 32U &&
             plan.backend_ports(1, BackendPortDirection::Input).front().physical_extent_bytes ==
                 32U &&
-            plan.backend_ports(1, BackendPortDirection::Output).front().physical_extent_bytes ==
-                8U,
+            plan.backend_ports(1, BackendPortDirection::Output).front().physical_extent_bytes == 8U,
         "each stage retains an independent dense ordered port span");
 
   auto missing = evidence;
@@ -1226,17 +1202,15 @@ void test_exact_multi_mla_evidence() {
             linked_host.linked_parameter_names == std::vector<std::string>{"linked_weight"},
         "A65 evidence preserves the disjoint external and linked argument sets");
 
-  auto int64_manifest = replace_once(typed_manifest,
-                                     "\"scalar\":\"float32\",\"shape\":[1,8]",
+  auto int64_manifest = replace_once(typed_manifest, "\"scalar\":\"float32\",\"shape\":[1,8]",
                                      "\"scalar\":\"int64\",\"shape\":[1,4]");
-  int64_manifest = replace_once(int64_manifest,
-                                "\"scalar\":\"float32\",\"shape\":[1,8]",
+  int64_manifest = replace_once(int64_manifest, "\"scalar\":\"float32\",\"shape\":[1,8]",
                                 "\"scalar\":\"int64\",\"shape\":[1,4]");
   auto int64_evidence = host_evidence;
   int64_evidence.front().input_types = {{"int64", {1, 4}}};
   int64_evidence.front().output_types = {{"int64", {1, 4}}};
-  const auto int64_result = AfeMpkV2Decoder{}.decode_json(
-      int64_manifest, typed_mla_evidence, int64_evidence, "two-mla-a65-int64.json");
+  const auto int64_result = AfeMpkV2Decoder{}.decode_json(int64_manifest, typed_mla_evidence,
+                                                          int64_evidence, "two-mla-a65-int64.json");
   check(static_cast<bool>(int64_result),
         "typed A65 INT64 ports use the exact registered 8-byte DLPack mapping");
 
