@@ -162,6 +162,10 @@ validate_bundled_internals_profile
 def test_manifest_disallows_snap_and_gates_before_dependency_install():
     assert MANIFEST["platform-version"] == "3.0.0"
     assert MANIFEST["internals"] == {"branch": "codex/b1157-mlart-dmabuf", "spec": "latest"}
+    assert MANIFEST["llima"] == {
+        "branch": "codex/b1157-mlart-dmabuf",
+        "spec": "f3ee6ab701f4",
+    }
     script = (ROOT / "build.sh").read_text()
     function = script.split("ensure_neat_internals() {", 1)[1].split("\n}\n", 1)[0]
     assert function.index("validate_internals_runtime_profile") < function.index("sync_sysroot_from_internals_manifest")

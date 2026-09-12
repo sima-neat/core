@@ -727,6 +727,26 @@ ensure_llima_sdk_sysroot_deps() {
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ]]; then
     missing_packages+=("libcpp-httplib-dev:arm64")
   fi
+  if [[ ! -f "${install_root}/usr/include/fftw3.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfftw3.so" ]]; then
+    missing_packages+=("libfftw3-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavcodec.so" ]]; then
+    missing_packages+=("libavcodec-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavformat.so" ]]; then
+    missing_packages+=("libavformat-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavutil.so" ]]; then
+    missing_packages+=("libavutil-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libswresample.so" ]]; then
+    missing_packages+=("libswresample-dev:arm64")
+  fi
 
   if (( ${#missing_packages[@]} == 0 )); then
     return
@@ -768,6 +788,16 @@ ensure_llima_sdk_sysroot_deps() {
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so" ||
         ! -f "${install_root}/usr/include/httplib.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ||
+        ! -f "${install_root}/usr/include/fftw3.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfftw3.so" ||
+        ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavcodec.so" ||
+        ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavformat.so" ||
+        ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavutil.so" ||
+        ! -f "${install_root}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libswresample.so" ||
         ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
       echo "ERROR: LLiMa SDK sysroot dependencies are still incomplete after install." >&2
       rm -rf "${tmp_dir}"
