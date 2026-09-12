@@ -52,9 +52,15 @@ simaai::neat::Graph VideoInputGroup(const VideoInputGroupOptions& opt) {
   dec.sima_allocator_type = opt.sima_allocator_type;
   dec.out_format = opt.out_format;
   // Native output preserves the decoder DMA-BUF. A non-native format is an
-  // explicit conversion request and retains SimaDecode's adapter behavior.
-  dec.raw_output = opt.out_format.empty() || opt.out_format.tag == FormatTag::NV12 ||
-                   opt.out_format.tag == FormatTag::I420;
+  // explicit conversion request and retains SimaDecode's adapter behavior. An
+  // explicit SystemMemory tail also needs the adapter to materialize the copy;
+  // a caps filter alone cannot change the buffer's memory type.
+  const bool system_memory_output =
+      caps_enabled(opt.output_caps) &&
+      opt.output_caps.memory == simaai::neat::CapsMemory::SystemMemory;
+  dec.raw_output =
+      !system_memory_output && (opt.out_format.empty() || opt.out_format.tag == FormatTag::NV12 ||
+                                opt.out_format.tag == FormatTag::I420);
   nodes.push_back(nodes::SimaDecode(dec));
 
   if (opt.use_videoconvert)

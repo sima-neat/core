@@ -154,6 +154,23 @@ int main(int argc, char** argv) {
     compare_graph_fragments(simaai::neat::nodes::groups::VideoInputGroup(rgb_vo),
                             graph_from_nodes(std::move(rgb_nodes)));
 
+    auto system_memory_vo = vo;
+    system_memory_vo.output_caps.enable = true;
+    system_memory_vo.output_caps.memory = simaai::neat::CapsMemory::SystemMemory;
+    auto system_memory_nodes = manual_vid;
+    simaai::neat::SimaDecodeOptions system_memory_dec;
+    system_memory_dec.type = simaai::neat::SimaDecodeType::H264;
+    system_memory_dec.sima_allocator_type = system_memory_vo.sima_allocator_type;
+    system_memory_dec.out_format = system_memory_vo.out_format;
+    system_memory_dec.raw_output = false;
+    system_memory_nodes.back() = simaai::neat::nodes::SimaDecode(system_memory_dec);
+    const auto& system_caps = system_memory_vo.output_caps;
+    system_memory_nodes.push_back(
+        simaai::neat::nodes::CapsRaw(system_caps.format, system_caps.width, system_caps.height,
+                                     system_caps.fps, system_caps.memory));
+    compare_graph_fragments(simaai::neat::nodes::groups::VideoInputGroup(system_memory_vo),
+                            graph_from_nodes(std::move(system_memory_nodes)));
+
     // ----------------------------
     // RTSP group
     // ----------------------------
