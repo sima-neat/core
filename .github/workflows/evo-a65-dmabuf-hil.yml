@@ -118,6 +118,7 @@ jobs:
       - name: Install the coherent candidate package set
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          NEAT_INSTALLER_B1157_MAINTENANCE: confirmed
         run: |
           set -euo pipefail
           short_sha=$(cut -c1-12 <<<"${CANDIDATE_SHA}")

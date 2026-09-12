@@ -954,6 +954,7 @@ jobs:
       - name: Install test runtime from Vulcan artifact
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          NEAT_INSTALLER_B1157_MAINTENANCE: confirmed
         run: |
           if ! command -v sima-cli >/dev/null 2>&1; then
             echo "sima-cli not found on test runner." >&2
