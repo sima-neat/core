@@ -6,6 +6,7 @@
 #include "pipeline/runtime/RunInternal.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <chrono>
 #include <cctype>
@@ -90,13 +91,11 @@ std::size_t checked_static_element_count(const std::vector<int64_t>& shape) {
   return count;
 }
 neat::Tensor load_fp32_tensor(const std::string& path, const neat::TensorSpec& spec) {
-  if (!spec.dtypes.empty() &&
-      std::find(spec.dtypes.begin(), spec.dtypes.end(), neat::TensorDType::Float32) ==
-          spec.dtypes.end()) {
+  if (!spec.dtypes.empty() && std::find(spec.dtypes.begin(), spec.dtypes.end(),
+                                        neat::TensorDType::Float32) == spec.dtypes.end()) {
     throw std::runtime_error("--input-fp32 is incompatible with the model input dtype contract");
   }
-  const std::vector<int64_t> shape =
-      spec.shape.empty() ? std::vector<int64_t>{1} : spec.shape;
+  const std::vector<int64_t> shape = spec.shape.empty() ? std::vector<int64_t>{1} : spec.shape;
   const std::size_t elements = checked_static_element_count(shape);
   if (elements > std::numeric_limits<std::size_t>::max() / sizeof(float)) {
     throw std::runtime_error("--input-fp32 byte count overflows size_t");
@@ -105,8 +104,7 @@ neat::Tensor load_fp32_tensor(const std::string& path, const neat::TensorSpec& s
   std::error_code ec;
   const std::uintmax_t actual_bytes = std::filesystem::file_size(path, ec);
   if (ec) {
-    throw std::runtime_error("failed to stat --input-fp32 file '" + path + "': " +
-                             ec.message());
+    throw std::runtime_error("failed to stat --input-fp32 file '" + path + "': " + ec.message());
   }
   if (actual_bytes != expected_bytes) {
     throw std::runtime_error("--input-fp32 file size mismatch: expected " +
@@ -124,8 +122,7 @@ neat::Tensor load_fp32_tensor(const std::string& path, const neat::TensorSpec& s
   if (!input.is_open()) {
     throw std::runtime_error("failed to open --input-fp32 file '" + path + "'");
   }
-  input.read(reinterpret_cast<char*>(data.data()),
-             static_cast<std::streamsize>(expected_bytes));
+  input.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(expected_bytes));
   if (!input || input.gcount() != static_cast<std::streamsize>(expected_bytes)) {
     throw std::runtime_error("failed to read exact --input-fp32 bytes from '" + path + "'");
   }
@@ -171,8 +168,7 @@ bool no_external_stage(std::string token) {
                  [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
   return token == "NONE" || token == "OFF";
 }
-std::uint64_t fnv1a64_append(std::uint64_t hash, const void* data,
-                             std::size_t size) {
+std::uint64_t fnv1a64_append(std::uint64_t hash, const void* data, std::size_t size) {
   constexpr std::uint64_t kPrime = 1099511628211ULL;
   const auto* bytes = static_cast<const std::uint8_t*>(data);
   for (std::size_t i = 0; i < size; ++i) {
@@ -181,13 +177,33 @@ std::uint64_t fnv1a64_append(std::uint64_t hash, const void* data,
   }
   return hash;
 }
+std::uint64_t fnv1a64_append_u64(std::uint64_t hash, std::uint64_t value) {
+  std::array<std::uint8_t, sizeof(value)> encoded{};
+  for (std::size_t i = 0; i < encoded.size(); ++i) {
+    encoded[i] = static_cast<std::uint8_t>((value >> (i * 8U)) & 0xFFU);
+  }
+  return fnv1a64_append(hash, encoded.data(), encoded.size());
+}
+std::uint64_t fnv1a64_append_string(std::uint64_t hash, const std::string& value) {
+  hash = fnv1a64_append_u64(hash, static_cast<std::uint64_t>(value.size()));
+  return fnv1a64_append(hash, value.data(), value.size());
+}
+std::uint64_t fnv1a64_append_tensor_contract(std::uint64_t hash, const neat::Tensor& tensor) {
+  hash = fnv1a64_append_string(hash, dtype_token(tensor.dtype));
+  hash = fnv1a64_append_u64(hash, static_cast<std::uint64_t>(tensor.shape.size()));
+  for (const std::int64_t dim : tensor.shape) {
+    hash = fnv1a64_append_u64(hash, static_cast<std::uint64_t>(dim));
+  }
+  hash = fnv1a64_append_u64(
+      hash, static_cast<std::uint64_t>(static_cast<std::int64_t>(tensor.route.logical_index)));
+  return fnv1a64_append_string(hash, tensor.route.name);
+}
 std::string hex64(std::uint64_t value) {
   std::ostringstream out;
   out << std::hex << std::setw(16) << std::setfill('0') << value;
   return out.str();
 }
-void persist_public_outputs(const std::filesystem::path& output_dir,
-                            const std::string& input_fp32,
+void persist_public_outputs(const std::filesystem::path& output_dir, const std::string& input_fp32,
                             const std::vector<int64_t>& input_shape,
                             const neat::TensorList& outputs,
                             const std::vector<std::vector<std::uint8_t>>& output_bytes,
@@ -198,12 +214,12 @@ void persist_public_outputs(const std::filesystem::path& output_dir,
     throw std::runtime_error("--output-dir already exists: " + output_dir.string());
   }
   if (ec) {
-    throw std::runtime_error("failed to inspect --output-dir '" + output_dir.string() + "': " +
-                             ec.message());
+    throw std::runtime_error("failed to inspect --output-dir '" + output_dir.string() +
+                             "': " + ec.message());
   }
   if (!std::filesystem::create_directories(output_dir, ec) || ec) {
-    throw std::runtime_error("failed to create --output-dir '" + output_dir.string() + "': " +
-                             ec.message());
+    throw std::runtime_error("failed to create --output-dir '" + output_dir.string() +
+                             "': " + ec.message());
   }
 
   nlohmann::json manifest{
@@ -227,45 +243,39 @@ void persist_public_outputs(const std::filesystem::path& output_dir,
     const std::filesystem::path output_path = output_dir / filename.str();
     std::ofstream raw(output_path, std::ios::binary | std::ios::trunc);
     if (!raw.is_open()) {
-      throw std::runtime_error("failed to create raw public output '" + output_path.string() +
-                               "'");
+      throw std::runtime_error("failed to create raw public output '" + output_path.string() + "'");
     }
     const auto& bytes = output_bytes[index];
     if (!bytes.empty()) {
-      if (bytes.size() >
-          static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
+      if (bytes.size() > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
         throw std::runtime_error("raw public output is too large for std::ofstream");
       }
       raw.write(reinterpret_cast<const char*>(bytes.data()),
                 static_cast<std::streamsize>(bytes.size()));
     }
     if (!raw.good()) {
-      throw std::runtime_error("failed to write raw public output '" + output_path.string() +
-                               "'");
+      throw std::runtime_error("failed to write raw public output '" + output_path.string() + "'");
     }
     const auto& tensor = outputs[index];
-    manifest["outputs"].push_back(
-        {{"ordinal", index},
-         {"file", filename.str()},
-         {"dtype", dtype_token(tensor.dtype)},
-         {"shape", tensor.shape},
-         {"bytes", bytes.size()},
-         {"fnv1a64", hex64(output_hashes[index])},
-         {"name", tensor.route.name},
-         {"logical_index", tensor.route.logical_index},
-         {"backend_name", tensor.route.backend_name}});
+    manifest["outputs"].push_back({{"ordinal", index},
+                                   {"file", filename.str()},
+                                   {"dtype", dtype_token(tensor.dtype)},
+                                   {"shape", tensor.shape},
+                                   {"bytes", bytes.size()},
+                                   {"fnv1a64", hex64(output_hashes[index])},
+                                   {"name", tensor.route.name},
+                                   {"logical_index", tensor.route.logical_index},
+                                   {"backend_name", tensor.route.backend_name}});
   }
 
   const std::filesystem::path manifest_path = output_dir / "manifest.json";
   std::ofstream manifest_file(manifest_path, std::ios::binary | std::ios::trunc);
   if (!manifest_file.is_open()) {
-    throw std::runtime_error("failed to create output manifest '" + manifest_path.string() +
-                             "'");
+    throw std::runtime_error("failed to create output manifest '" + manifest_path.string() + "'");
   }
   manifest_file << manifest.dump(2) << '\n';
   if (!manifest_file.good()) {
-    throw std::runtime_error("failed to write output manifest '" + manifest_path.string() +
-                             "'");
+    throw std::runtime_error("failed to write output manifest '" + manifest_path.string() + "'");
   }
 }
 } // namespace
@@ -282,15 +292,12 @@ int main(int argc, char** argv) {
   const bool startup_preflight = bool_arg(argc, argv, "--startup-preflight", true);
   const bool mla_only = bool_arg(argc, argv, "--mla-only", false);
   const bool verbose = bool_arg(argc, argv, "--verbose", false);
-  const bool correctness_hash =
-      bool_arg(argc, argv, "--correctness-hash", false);
+  const bool correctness_hash = bool_arg(argc, argv, "--correctness-hash", false);
   const std::string input_fp32 = arg_value(argc, argv, "--input-fp32");
   const std::string output_dir = arg_value(argc, argv, "--output-dir");
   const std::string arena_dump = arg_value(argc, argv, "--arena-dump");
-  const int early_stop_after =
-      std::max(0, int_arg(argc, argv, "--early-stop-after", 0));
-  const int early_stop_delay_ms =
-      std::max(0, int_arg(argc, argv, "--early-stop-delay-ms", 0));
+  const int early_stop_after = std::max(0, int_arg(argc, argv, "--early-stop-after", 0));
+  const int early_stop_delay_ms = std::max(0, int_arg(argc, argv, "--early-stop-delay-ms", 0));
   const std::string mode =
       arg_value(argc, argv, "--mode").empty() ? "sync" : arg_value(argc, argv, "--mode");
   const int inflight = std::max(1, int_arg(argc, argv, "--inflight", 4));
@@ -314,8 +321,7 @@ int main(int argc, char** argv) {
     // tensor directly (RF-DETR is the qualification case). NONE means exactly
     // that application boundary: do not invent a second pre/post adapter
     // around the model-owned MLA/A65/CVU command schedule.
-    opt.preprocess.enable = no_external_stage(pre) ? neat::AutoFlag::Off
-                                                    : neat::AutoFlag::On;
+    opt.preprocess.enable = no_external_stage(pre) ? neat::AutoFlag::Off : neat::AutoFlag::On;
     if (!no_external_stage(pre)) {
       opt.processcvu.pre_run_target = pre;
     }
@@ -417,16 +423,18 @@ int main(int argc, char** argv) {
       captured_bytes.reserve(outputs.size());
       captured_hashes.reserve(outputs.size());
       for (std::size_t i = 0; i < outputs.size(); ++i) {
+        const auto& output = outputs[i];
         std::vector<std::uint8_t> bytes = outputs[i].copy_dense_bytes_tight();
         if (bytes.empty() && outputs[i].dense_bytes_tight() != 0U) {
-          std::cerr << "EVO_TPUT_FAIL stage=output_capture tensor=" << i
-                    << " reason=copy_failed\n";
+          std::cerr << "EVO_TPUT_FAIL stage=output_capture tensor=" << i << " reason=copy_failed\n";
           return 11;
         }
         std::uint64_t tensor_hash = kOffsetBasis;
         tensor_hash = fnv1a64_append(tensor_hash, bytes.data(), bytes.size());
         const std::uint64_t size = static_cast<std::uint64_t>(bytes.size());
-        combined = fnv1a64_append(combined, &size, sizeof(size));
+        combined = fnv1a64_append_u64(combined, static_cast<std::uint64_t>(i));
+        combined = fnv1a64_append_tensor_contract(combined, output);
+        combined = fnv1a64_append_u64(combined, size);
         combined = fnv1a64_append(combined, bytes.data(), bytes.size());
         total_bytes += bytes.size();
         if (i != 0U) {
@@ -488,11 +496,10 @@ int main(int argc, char** argv) {
       }
       runner.close();
       if (correctness_hash) {
-        std::cout << "EVO_CORRECTNESS_HASH status=PASS pre=" << pre
-                  << " post=" << post << " outputs=" << outputs.size()
-                  << " bytes=" << total_bytes << " combined=" << std::hex
-                  << std::setw(16) << std::setfill('0') << combined << std::dec
-                  << " tensors=" << tensor_hashes.str() << "\n";
+        std::cout << "EVO_CORRECTNESS_HASH status=PASS pre=" << pre << " post=" << post
+                  << " outputs=" << outputs.size() << " bytes=" << total_bytes
+                  << " combined=" << std::hex << std::setw(16) << std::setfill('0') << combined
+                  << std::dec << " tensors=" << tensor_hashes.str() << "\n";
       }
       return 0;
     }
@@ -500,21 +507,18 @@ int main(int argc, char** argv) {
     if (early_stop_after > 0) {
       for (int i = 0; i < early_stop_after; ++i) {
         if (!runner.push(inputs)) {
-          std::cerr << "EVO_TPUT_FAIL stage=early_stop_push iter=" << i
-                    << " reason=push_failed\n";
+          std::cerr << "EVO_TPUT_FAIL stage=early_stop_push iter=" << i << " reason=push_failed\n";
           return 9;
         }
       }
       if (early_stop_delay_ms > 0) {
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(early_stop_delay_ms));
+        std::this_thread::sleep_for(std::chrono::milliseconds(early_stop_delay_ms));
       }
       const auto close_start = std::chrono::steady_clock::now();
       runner.close();
       const auto close_end = std::chrono::steady_clock::now();
-      std::cout << "EVO_EARLY_STOP_RESULT status=PASS pushed="
-                << early_stop_after << " delay_ms=" << early_stop_delay_ms
-                << " close_ms="
+      std::cout << "EVO_EARLY_STOP_RESULT status=PASS pushed=" << early_stop_after
+                << " delay_ms=" << early_stop_delay_ms << " close_ms="
                 << std::chrono::duration<double, std::milli>(close_end - close_start).count()
                 << "\n";
       return 0;

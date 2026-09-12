@@ -37,6 +37,9 @@ Optional release locks:
   SIMA_EVO_HIL_EXPECT_NATIVE_MODEL_SHA256
   SIMA_EVO_HIL_EXPECT_PACKED_MODEL_SHA256
 
+Optional lifecycle limit:
+  SIMA_EVO_HIL_RELEASE_CLOSE_BUDGET_MS (default: 2000)
+
 The smoke suite runs 32 throughput cases, 8 correctness cases, and 6
 release-while-in-flight cases. The full suite runs 48, 8, and 24 respectively.
 EOF
@@ -272,12 +275,14 @@ readonly ACCOUNTING_RETRIES="${SIMA_EVO_HIL_ACCOUNTING_RETRIES:-15}"
 readonly ACCOUNTING_RETRY_DELAY_SECONDS="${SIMA_EVO_HIL_ACCOUNTING_RETRY_DELAY_SECONDS:-1}"
 readonly CMA_TOLERANCE_KB="${SIMA_EVO_HIL_CMA_TOLERANCE_KB:-65536}"
 readonly EXPECTED_OUTPUTS="${SIMA_EVO_HIL_EXPECTED_OUTPUTS:-28}"
+readonly RELEASE_CLOSE_BUDGET_MS="${SIMA_EVO_HIL_RELEASE_CLOSE_BUDGET_MS:-2000}"
 
 for integer_value in "$FRAME_TIMEOUT_MS" "$COMMAND_TIMEOUT_SECONDS" \
   "$ACCOUNTING_RETRIES" "$ACCOUNTING_RETRY_DELAY_SECONDS" \
-  "$CMA_TOLERANCE_KB" "$EXPECTED_OUTPUTS"; do
+  "$CMA_TOLERANCE_KB" "$EXPECTED_OUTPUTS" "$RELEASE_CLOSE_BUDGET_MS"; do
   [[ "$integer_value" =~ ^[0-9]+$ ]] || die "invalid numeric gate setting"
 done
+[[ "$RELEASE_CLOSE_BUDGET_MS" -gt 0 ]] || die "release close budget must be positive"
 
 run_benchmark() {
   local registry=$1 depth=$2
@@ -412,7 +417,7 @@ printf 'label\tpre\tpost\troute\tmode\tdepth\trc\tmarker\taccounting\tkernel\tst
   >"$throughput_results"
 printf 'label\tpre\tpost\troute\thash\toutputs\tbytes\trc\taccounting\tkernel\tstatus\n' \
   >"$correctness_results"
-printf 'label\tpre\tpost\troute\titeration\trc\tmarker\taccounting\tkernel\tstatus\n' \
+printf 'label\tpre\tpost\troute\titeration\tclose_ms\tclose_budget_ms\trc\tmarker\taccounting\tkernel\tstatus\n' \
   >"$release_results"
 
 failures=0
@@ -525,12 +530,19 @@ for placement in "${A65_PLACEMENTS[@]}"; do
         --startup-preflight 1 --verbose 1 >"$log" 2>&1
       rc=$?
       set -e
+      line=$(grep 'EVO_EARLY_STOP_RESULT status=PASS pushed=8' "$log" | tail -1 || true)
+      close_ms=$(sed -n 's/.* close_ms=\([^ ]*\).*/\1/p' <<<"$line")
+      close_within_budget=0
+      if [[ "$close_ms" =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+         awk -v actual="$close_ms" -v budget="$RELEASE_CLOSE_BUDGET_MS" \
+           'BEGIN { exit !(actual <= budget) }'; then
+        close_within_budget=1
+      fi
       marker=FAIL
       accounting=FAIL
       kernel=FAIL
       status=FAIL
-      if [[ "$rc" -eq 0 ]] &&
-         grep -q 'EVO_EARLY_STOP_RESULT status=PASS pushed=8' "$log"; then
+      if [[ "$rc" -eq 0 && -n "$line" && "$close_within_budget" -eq 1 ]]; then
         marker=PASS
       fi
       assert_idle "$label" && accounting=PASS
@@ -542,10 +554,12 @@ for placement in "${A65_PLACEMENTS[@]}"; do
         ((failures += 1))
       fi
       ((release_total += 1))
-      printf '%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n' \
-        "$label" "$pre" "$post" "$route" "$iteration" "$rc" "$marker" \
-        "$accounting" "$kernel" "$status" >>"$release_results"
-      printf 'EVO_A65_HIL_CASE kind=release status=%s label=%s\n' "$status" "$label"
+      printf '%s\t%s\t%s\t%s\t%d\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n' \
+        "$label" "$pre" "$post" "$route" "$iteration" "${close_ms:-missing}" \
+        "$RELEASE_CLOSE_BUDGET_MS" "$rc" "$marker" "$accounting" "$kernel" "$status" \
+        >>"$release_results"
+      printf 'EVO_A65_HIL_CASE kind=release status=%s label=%s close_ms=%s close_budget_ms=%d\n' \
+        "$status" "$label" "${close_ms:-missing}" "$RELEASE_CLOSE_BUDGET_MS"
       [[ "$accounting" == PASS && "$kernel" == PASS ]] ||
         die "unsafe terminal state after release $label"
     done
