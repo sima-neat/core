@@ -2625,6 +2625,18 @@ bool buffer_has_dmabuf_memory(GstBuffer* buffer) {
   return false;
 }
 
+bool buffer_has_only_dmabuf_memory(GstBuffer* buffer) {
+  if (!buffer || gst_buffer_n_memory(buffer) == 0U) {
+    return false;
+  }
+  for (guint i = 0; i < gst_buffer_n_memory(buffer); ++i) {
+    if (!gst_is_dmabuf_memory(gst_buffer_peek_memory(buffer, i))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool holder_has_dmabuf_memory(const std::shared_ptr<void>& holder) {
   auto* sample = static_cast<GstSample*>(holder.get());
   return sample && GST_IS_SAMPLE(sample) && buffer_has_dmabuf_memory(gst_sample_get_buffer(sample));

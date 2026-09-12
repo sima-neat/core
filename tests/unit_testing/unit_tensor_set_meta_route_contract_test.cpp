@@ -703,6 +703,15 @@ void dmabuf_auto_projection_and_override_policy() {
             output = output_from_sample_stream(carrier.get(), "DMA output policy", copy,
                                                &override_opt, &state);
           }
+          const bool cache_expected = with_override || !copy || (preserve && !mixed);
+          require(state.tensor_set_output_decode_cache.valid == cache_expected,
+                  "DMA output decode cache did not follow the effective copy policy: mixed=" +
+                      std::to_string(mixed) + " override=" + std::to_string(with_override) +
+                      " copy=" + std::to_string(copy) + " preserve=" + std::to_string(preserve));
+          if (cache_expected) {
+            require(!state.tensor_set_output_decode_cache.signature.copy_output,
+                    "retained DMA output cache was keyed as a materialized copy");
+          }
           require(output.tensors.size() == 2U, "DMA tensor metadata lost projected outputs");
           for (std::size_t i = 0U; i < output.tensors.size(); ++i) {
             const Tensor& tensor = output.tensors[i];

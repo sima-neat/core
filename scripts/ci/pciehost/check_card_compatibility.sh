@@ -32,16 +32,20 @@ if [[ -z "${actual}" ]]; then
   exit 1
 fi
 
-compatible=false
 if [[ "${actual}" == "${expected}" ]]; then
-  compatible=true
   echo "PCIe card platform is compatible: ${actual}"
 else
-  echo "PCIe hardware tests skipped: package platform ${expected}, card platform ${actual}."
+  write_state_var PCIE_CARD_PLATFORM_EXPECTED "${expected}"
+  write_state_var PCIE_CARD_PLATFORM_ACTUAL "${actual}"
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf 'compatible=false\n' >>"${GITHUB_OUTPUT}"
+  fi
+  echo "ERROR: PCIe card platform ${actual} is incompatible with package platform ${expected}." >&2
+  exit 1
 fi
 
 write_state_var PCIE_CARD_PLATFORM_EXPECTED "${expected}"
 write_state_var PCIE_CARD_PLATFORM_ACTUAL "${actual}"
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  printf 'compatible=%s\n' "${compatible}" >>"${GITHUB_OUTPUT}"
+  printf 'compatible=true\n' >>"${GITHUB_OUTPUT}"
 fi

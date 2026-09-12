@@ -1898,7 +1898,12 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
 
 static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char* where,
                                                   bool copy_output, InputStream::State* st) {
-  if (copy_output || !st || tensor_set_debug_enabled() || sample_debug_enabled() ||
+  GstBuffer* sample_buffer = sample ? gst_sample_get_buffer(sample) : nullptr;
+  const bool preserve_complete_dmabuf =
+      copy_output && st && st->opt.preserve_dmabuf_output &&
+      pipeline_internal::buffer_has_only_dmabuf_memory(sample_buffer);
+  const bool effective_copy_output = copy_output && !preserve_complete_dmabuf;
+  if (effective_copy_output || !st || tensor_set_debug_enabled() || sample_debug_enabled() ||
       sample_bytes_enabled()) {
     return tensor_set_from_meta_slow(sample, where, copy_output,
                                      st && st->opt.preserve_dmabuf_output);
@@ -1912,7 +1917,7 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
           inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - cache_lock_start);
     }
     if (st->tensor_set_output_decode_cache.valid &&
-        tensor_set_output_decode_fast_key_matches(sample, copy_output,
+        tensor_set_output_decode_fast_key_matches(sample, effective_copy_output,
                                                   st->tensor_set_output_decode_cache.signature)) {
       const auto instantiate_start = InputStreamDecodeProfileClock::now();
       if (auto fast = instantiate_tensor_set_from_cached_decode(
@@ -1934,14 +1939,14 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
 
   TensorSetOutputDecodeSignature sig;
   const auto sig_start = InputStreamDecodeProfileClock::now();
-  if (!read_tensor_set_output_decode_signature(sample, copy_output, &sig)) {
+  if (!read_tensor_set_output_decode_signature(sample, effective_copy_output, &sig)) {
     if (g_inputstream_decode_profile) {
       g_inputstream_decode_profile->tensor_sig_ms +=
           inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - sig_start);
     }
     const auto slow_start = InputStreamDecodeProfileClock::now();
-    auto slow =
-        tensor_set_from_meta_slow(sample, where, copy_output, st && st->opt.preserve_dmabuf_output);
+    auto slow = tensor_set_from_meta_slow(sample, where, effective_copy_output,
+                                          st && st->opt.preserve_dmabuf_output);
     if (g_inputstream_decode_profile) {
       g_inputstream_decode_profile->tensor_slow_ms +=
           inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - slow_start);
@@ -1981,8 +1986,8 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
   }
 
   const auto slow_start = InputStreamDecodeProfileClock::now();
-  auto slow =
-      tensor_set_from_meta_slow(sample, where, copy_output, st && st->opt.preserve_dmabuf_output);
+  auto slow = tensor_set_from_meta_slow(sample, where, effective_copy_output,
+                                        st && st->opt.preserve_dmabuf_output);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->tensor_slow_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - slow_start);

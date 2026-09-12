@@ -29,6 +29,7 @@ bool sample_has_device_gstsample_producer_lifetime(const Sample& sample,
 std::string cross_run_zero_copy_sample_error(const char* where);
 // Inspect retained standard DMA-BUF storage, independently of legacy device-placement flags.
 bool buffer_has_dmabuf_memory(GstBuffer* buffer);
+bool buffer_has_only_dmabuf_memory(GstBuffer* buffer);
 bool holder_has_dmabuf_memory(const std::shared_ptr<void>& holder);
 bool tensor_has_dmabuf_memory(const Tensor& tensor);
 bool sample_has_dmabuf_memory(const Sample& sample);
