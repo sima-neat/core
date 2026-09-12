@@ -692,7 +692,6 @@ add_pipeline_test_long(
   SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/video_sender_adaptive_ingress_e2e_test.cpp
 )
-target_link_libraries(video_sender_adaptive_ingress_e2e_test PRIVATE NeatInternals::DmaBufPool)
 
 if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
