@@ -1438,7 +1438,7 @@ print(receipt)
     return 0
   fi
 
-  if [[ "${receipt}" == *"~pre"* || "${receipt}" == *"~git"* ]]; then
+  if [[ "${receipt}" == *"~pre"* ]]; then
     echo "Updating SDK sysroot to Internals receipt ${receipt}"
     if ! run_privileged sysroot update "${receipt}"; then
       echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
@@ -1453,10 +1453,10 @@ print(receipt)
     's/^Platform Version[[:space:]]*=[[:space:]]*([^[:space:]]+).*$/\1/p' \
     "${ELXR_SDK_RELEASE_FILE}" 2>/dev/null | head -n1 || true)"
   if [[ "${sdk_platform_version}" != "${receipt}" ]]; then
-    echo "ERROR: SDK platform ${sdk_platform_version:-unknown} does not match required stable platform ${receipt}." >&2
+    echo "ERROR: SDK platform ${sdk_platform_version:-unknown} does not match required platform ${receipt}." >&2
     exit 1
   fi
-  echo "Using stable SDK sysroot ${sdk_platform_version} without updating it."
+  echo "Using SDK sysroot ${sdk_platform_version} without updating it."
 }
 
 preserve_internals_artifact_manifest() {

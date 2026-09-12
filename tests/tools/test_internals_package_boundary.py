@@ -281,7 +281,7 @@ ensure_neat_llima
             '(?:~(?:pre[0-9]+|git[0-9]{12}[.][a-f0-9]+-[0-9]+))?', text
         )
         self.assertIn('sysroot update "${receipt}"', text)
-        self.assertIn("Using stable SDK sysroot", text)
+        self.assertIn("Using SDK sysroot", text)
         self.assertIn("Internals artifact is missing internals-manifest.json", text)
         self.assertIn("invalid sysroot-version", text)
         self.assertIn("platform-version does not match the Internals receipt", text)
@@ -312,7 +312,19 @@ ensure_neat_llima
         result, calls = run_sync({"sysroot-version": base}, base)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
-            "Using stable SDK sysroot 2.1.3 without updating it.", result.stdout
+            "Using SDK sysroot 2.1.3 without updating it.", result.stdout
+        )
+        self.assertEqual(calls, [])
+
+        daily_receipt = "3.0.0~git202609110138.6a3d895-1297"
+        result, calls = run_sync(
+            {"sysroot-version": daily_receipt},
+            "3.0.0",
+            sdk_platform_version=daily_receipt,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            f"Using SDK sysroot {daily_receipt} without updating it.", result.stdout
         )
         self.assertEqual(calls, [])
 
@@ -324,7 +336,7 @@ ensure_neat_llima
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [])
 
-    def test_stable_receipt_requires_a_matching_sdk(self) -> None:
+    def test_immutable_receipt_requires_a_matching_sdk(self) -> None:
         base = "2.1.3"
         for sdk_platform_version, actual in (("2.1.2", "2.1.2"), (None, "unknown")):
             with self.subTest(sdk_platform_version=sdk_platform_version):
@@ -335,7 +347,7 @@ ensure_neat_llima
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
-                    f"SDK platform {actual} does not match required stable platform {base}",
+                    f"SDK platform {actual} does not match required platform {base}",
                     result.stderr,
                 )
                 self.assertEqual(calls, [])
