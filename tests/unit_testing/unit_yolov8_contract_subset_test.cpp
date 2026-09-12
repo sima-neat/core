@@ -52,7 +52,7 @@ std::string yolo_variant_base_url() {
   if (const char* env = std::getenv("SIMA_YOLOV8_VARIANTS_BASE_URL"); env && *env) {
     return trim_trailing_slashes(env);
   }
-  return {};
+  return "https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix";
 }
 
 Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& stem) {
@@ -66,18 +66,17 @@ Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& stem) {
   ec.clear();
   std::filesystem::create_directories(unpack_dir.parent_path(), ec);
 
-  if (!sima_test::is_usable_regular_file(tar_path)) {
+  const sima_test::ScopedFileLock lock(drive_dir / ".download.lock");
+  if (!sima_test::is_listable_tar_gz(tar_path)) {
+    sima_test::purge_unlistable_tar_gz(tar_path);
     const std::string base_url = yolo_variant_base_url();
-    require(!base_url.empty(),
-            "missing YOLOv8n fixture '" + tar_path.string() +
-                "'. Upload the fixture tarballs to the public test-assets repo and set "
-                "SIMA_YOLOV8N_VARIANTS_BASE_URL (or SIMA_YOLOV8_VARIANTS_BASE_URL) "
-                "to the directory/release URL containing " +
-                stem + ".tar.gz");
-
     const std::string url = base_url + "/" + stem + ".tar.gz";
     require(sima_test::download_file(url, tar_path),
-            "failed to download YOLOv8n fixture from " + url + " to " + tar_path.string());
+            "failed to download YOLOv8n fixture from " + url + " to " + tar_path.string() +
+                " (run `sima-cli login` if the docs.sima.ai endpoint requires OAuth, or set "
+                "SIMA_YOLOV8N_VARIANTS_BASE_URL to a mirror)");
+    require(sima_test::is_listable_tar_gz(tar_path),
+            "downloaded YOLOv8n fixture is not a readable tar.gz: " + tar_path.string());
   }
 
   if (!path_has_yolov8_contract_files(unpack_dir)) {

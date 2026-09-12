@@ -231,7 +231,7 @@ function(add_pipeline_test_strict name)
     return()
   endif()
 
-  set(options LOCK_DISPATCHER)
+  set(options LOCK_ACCELERATOR)
   set(oneValueArgs)
   set(multiValueArgs SOURCES ARGS)
   cmake_parse_arguments(APT "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -266,9 +266,9 @@ function(add_pipeline_test_strict name)
 
   simaneat_append_ctest_env(${name})
 
-  if (APT_LOCK_DISPATCHER)
+  if (APT_LOCK_ACCELERATOR)
     set_tests_properties(${name} PROPERTIES
-      RESOURCE_LOCK "dispatcher"
+      RESOURCE_LOCK "accelerator-device"
     )
   endif()
 
@@ -670,7 +670,7 @@ endforeach()
 
 set_tests_properties(detessdequant_output_pool_test PROPERTIES
   TIMEOUT 60
-  RESOURCE_LOCK "dispatcher"
+  RESOURCE_LOCK "accelerator-device"
 )
 set_property(TEST detessdequant_output_pool_test APPEND PROPERTY ENVIRONMENT
   "SIMA_PROCESSCVU_ALLOW_OVERFLOW_ALLOC=0;SIMA_PROCESSCVU_PREPARED_POOL_BUFFERS=0")
@@ -795,7 +795,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
-    set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -806,7 +806,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
-    set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -816,7 +816,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
-    set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -827,7 +827,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
-    set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -838,7 +838,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;asr;long")
-    set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -849,7 +849,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_graph_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_graph_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;asr;long")
-    set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -861,7 +861,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_server_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
-    set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -873,7 +873,7 @@ if (SimaLMM_FOUND)
   if (NOT genai_server_reasoning_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY
       LABELS "e2e;genai;llima;server;reasoning;long")
-    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 endif()
 
@@ -988,7 +988,7 @@ if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
   simaneat_append_ctest_env(ssd_mobilenet_boxdecode_perf_smoke)
   set_tests_properties(ssd_mobilenet_boxdecode_perf_smoke PROPERTIES
     LABELS "perf;ssd;boxdecode;metrics;long;modalix-only"
-    RESOURCE_LOCK "perf-device"
+    RESOURCE_LOCK "perf-device;accelerator-device"
     SKIP_RETURN_CODE 77
   )
   set_property(TEST ssd_mobilenet_boxdecode_perf_smoke
@@ -1247,7 +1247,7 @@ function(add_visual_frontend_tput_preset_test name)
     set_property(TEST ${name} APPEND PROPERTY LABELS "${VFT_LABELS}")
   endif()
   set_tests_properties(${name} PROPERTIES
-    RESOURCE_LOCK "dispatcher"
+    RESOURCE_LOCK "accelerator-device"
     SKIP_RETURN_CODE 77
     TIMEOUT 90
   )
@@ -1725,7 +1725,8 @@ add_pipeline_test(
 if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST yolov8_model_benchmark_metrics_test
     APPEND PROPERTY LABELS "e2e;obj_detection;benchmark;metrics")
-  set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY
+    RESOURCE_LOCK "perf-device;accelerator-device")
 endif()
 
 add_pipeline_test_long(
@@ -1740,7 +1741,7 @@ if (NOT yolov8_boxdecode_model_benchmark_test IN_LIST PIPELINESESSION_TEST_BLACK
   set_property(TEST yolov8_boxdecode_model_benchmark_test
     APPEND PROPERTY LABELS "e2e;obj_detection;boxdecode;benchmark;metrics")
   set_property(TEST yolov8_boxdecode_model_benchmark_test
-    APPEND PROPERTY RESOURCE_LOCK "perf-device")
+    APPEND PROPERTY RESOURCE_LOCK "perf-device;accelerator-device")
 endif()
 
 add_pipeline_test(
@@ -1807,7 +1808,7 @@ endif()
 
 add_pipeline_test_long(
   ssd300_surgical_e2e_test
-  LOCK_DISPATCHER
+  LOCK_ACCELERATOR
   SOURCES
     e2e_pipelines/obj_detection/ssd300_surgical_e2e_test.cpp
     e2e_pipelines/e2e_utils.cpp
@@ -1856,14 +1857,14 @@ add_pipeline_test_long(
 if (NOT preproc_roi_batch_functional_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY
     LABELS "e2e;obj_detection;preproc;roi;long")
-  set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
 add_pipeline_test(
   preproc_roi_user_smoke_test
   e2e_pipelines/obj_detection/preproc_roi_batch_functional_test.cpp
   ARGS ${CMAKE_SOURCE_DIR}
-  LOCK_DISPATCHER
+  LOCK_ACCELERATOR
 )
 
 if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -1885,7 +1886,8 @@ add_pipeline_test(
 if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST async_yolov11_pose_bf16_tput_test
     APPEND PROPERTY LABELS "e2e;obj_detection;perf;tput")
-  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY
+    RESOURCE_LOCK "perf-device;accelerator-device")
   set_tests_properties(async_yolov11_pose_bf16_tput_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
@@ -1985,7 +1987,7 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 
   foreach(test resnet50_modelpack_direct resnet50_modelpack_jpeg resnet50_modelpack_rtsp)
     set_property(TEST ${test} APPEND PROPERTY LABELS "e2e;img_classification")
-    set_property(TEST ${test} APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST ${test} APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endforeach()
   append_pipeline_test_env(resnet50_modelpack_direct)
   append_pipeline_test_env(resnet50_modelpack_jpeg)
@@ -2109,7 +2111,6 @@ if (NOT h265_decode_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_dependencies(h265_decode_resnet50_e2e_test prepare_perf_codec_fixtures)
   set_property(TEST h265_decode_resnet50_e2e_test
     APPEND PROPERTY LABELS "e2e;codec;h265;img_classification;zero_copy;sync;async")
-  set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
@@ -2123,7 +2124,7 @@ if (NOT h265_rtsp_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST h265_rtsp_resnet50_e2e_test
     APPEND PROPERTY LABELS "e2e;codec;h265;rtsp;img_classification")
   set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
-  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
   set_tests_properties(h265_rtsp_resnet50_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
