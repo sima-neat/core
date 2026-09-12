@@ -1478,6 +1478,22 @@ EOF
         echo "ERROR: Failed to refresh daily SDK sysroot to ${receipt}." >&2
         exit 1
       fi
+      local overlay_dir overlay_file
+      overlay_dir="${SYSROOT:-/opt/toolchain/aarch64/modalix}/var/lib/sima-sdk"
+      overlay_file="$(mktemp /tmp/sima-neat-sysroot-overlay.XXXXXX)"
+      cat > "${overlay_file}" <<EOF
+Overlay State = active
+Platform Base = ${receipt%%~*}
+Platform Revision = ${receipt}
+Platform Channel = daily
+Platform Repository = https://debian.neat.sima.ai/daily
+Updated At = $(date -u +%Y-%m-%dT%H:%M:%SZ)
+Package Inventory = ${overlay_dir}/sysroot-packages.tsv
+EOF
+      run_privileged mkdir -p "${overlay_dir}"
+      run_privileged install -m 0644 "${overlay_file}" \
+        "${overlay_dir}/sysroot-overlay"
+      rm -f "${overlay_file}"
       return 0
     fi
     echo "ERROR: SDK platform ${sdk_platform_version:-unknown} does not match required platform ${receipt}." >&2

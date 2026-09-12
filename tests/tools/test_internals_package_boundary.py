@@ -73,6 +73,7 @@ function setup-sdk-sysroot.sh {{
 {shell_function("sync_sysroot_from_internals_manifest")}
 ELXR_SDK=ON
 ELXR_SDK_RELEASE_FILE={shlex.quote(str(sdk_release))}
+SYSROOT={shlex.quote(str(root / "sysroot"))}
 NEAT_SYNC_SYSROOT={shlex.quote(enabled)}
 NEAT_DEPS_MANIFEST={shlex.quote(str(consumer))}
 sync_sysroot_from_internals_manifest {shlex.quote(str(artifact_dir))}
@@ -339,7 +340,7 @@ ensure_neat_llima
             sdk_platform_channel="daily",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertRegex(
             calls[0],
             r"^install -m 0644 /tmp/sima-neat-sdk-version[.]"
@@ -347,6 +348,11 @@ ensure_neat_llima
         )
         self.assertTrue(
             calls[1].startswith(f"setup-sdk-sysroot {daily_receipt} "), calls[1]
+        )
+        self.assertRegex(
+            calls[2],
+            r"^install -m 0644 /tmp/sima-neat-sysroot-overlay[.]"
+            r"[^ ]+ .*/var/lib/sima-sdk/sysroot-overlay$",
         )
 
         result, calls = run_sync(
