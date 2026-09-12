@@ -355,15 +355,14 @@ if __name__ == "__main__":
 
 **Запустити:**
 
-* **Щодо DevKit**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 app.py
-  ```
-* **На хості Neat SDK**
-  ```bash
-  dk app.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 app.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk app.py
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
@@ -467,21 +466,20 @@ int main() {
 
 **Збірка:**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **Запустити:**
 
-* **Щодо DevKit**
-  ```bash
-  ./build/sima_neat_app
-  ```
-* **На хості Neat SDK**
-  ```bash
-  dk build/sima_neat_app
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_app
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_app
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

@@ -39,7 +39,7 @@ SDKを再インストールせずに、より新しい互換性のあるNeat Lib
 
 DevKit へのシェルアクセスを確立した後、インストールされているソフトウェアのバージョンを確認してください。DevKit がネットワーク経由でアクセス可能な場合、またはシリアルコンソール経由で、SSH を使用してシェルを開くことができます。シリアルアクセスに関する手順については、[シリアルアクセスを設定する](https://developer.sima.ai/hardware/getting-started/setup-serial) を参照してください。
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 cat /etc/buildinfo
 </ShellCommand>
 
@@ -59,7 +59,7 @@ DevKit のファームウェアの確認と更新の手順については、[フ
 
 ホストから、現在リリースされている Neat SDK をインストールしてください。
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
@@ -84,13 +84,13 @@ DevKitのソフトウェアバージョンは重要です。なぜなら、デ�
 
 Neat Library 0.4.0の場合：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.4.0
 </ShellCommand>
 
 Neat Library 0.1.0 の変更点：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.1.0
 </ShellCommand>
 
@@ -105,7 +105,7 @@ Neat アプリのバージョンは、Neat Library のバージョンとは独�
 
 互換性のある Neat SDK または DevKit から、Apps 0.5.0 をインストールしてください。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install apps@v0.5.0
 </ShellCommand>
 
@@ -136,7 +136,7 @@ SDKのインストール/設定中に、設定プロセスでは、環境で利�
 
 Neat SDK の内部、または DevKit 上で、次のコマンドを実行します。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 

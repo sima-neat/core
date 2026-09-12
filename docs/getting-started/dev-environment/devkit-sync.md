@@ -26,7 +26,7 @@ files are visible from each environment.
 If you skipped DevKit pairing during installation or need to change it later,
 run this setup command from the host:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -59,7 +59,7 @@ When setup succeeds, you should see output similar to:
 From inside the SDK shell, use `dk status` to confirm the paired DevKit and the
 active workspace sync method:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk status
 </ShellCommand>
 
@@ -71,7 +71,7 @@ address changed.
 
 From inside the Neat SDK container, run:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 source devkit.sh {devkit-ip}
 </ShellCommand>
 
@@ -79,7 +79,7 @@ Replace `{devkit-ip}` with the IP address of the DevKit you want to use.
 
 Example:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 source devkit.sh 192.168.91.221
 </ShellCommand>
 
@@ -88,7 +88,7 @@ source devkit.sh 192.168.91.221
 If the DevKit is not reachable from the Neat SDK host, you can still configure
 the SDK workspace without pairing:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
@@ -147,25 +147,25 @@ When rsync fallback is active:
 
 Check the current pairing and sync method:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk status
 </ShellCommand>
 
 Manually sync the current workspace scope:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync
 </ShellCommand>
 
 Sync a specific file or folder scope:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync /workspace/apps
 </ShellCommand>
 
 Sync the full workspace:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync --all
 </ShellCommand>
 
@@ -185,21 +185,21 @@ When you invoke `dk`, the SDK runs the command on the paired DevKit and
 translates paths so file arguments from the container resolve correctly on the
 DevKit.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk <file> [args...]
 </ShellCommand>
 
 After compiling a C++ application in the SDK workspace, run the generated ARM64
 executable on the DevKit:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk build/sima_neat_hello
 </ShellCommand>
 
 After creating or copying a Python script into the SDK workspace, run it on the
 paired DevKit:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk hello_neat.py
 </ShellCommand>
 

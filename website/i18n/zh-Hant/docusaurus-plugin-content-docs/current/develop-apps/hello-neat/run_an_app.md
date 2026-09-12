@@ -356,15 +356,14 @@ if __name__ == "__main__":
 
 **執行：**
 
-* **在 DevKit 上**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 app.py
-  ```
-* **在 Neat SDK 主機上**
-  ```bash
-  dk app.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 app.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk app.py
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
@@ -468,21 +467,20 @@ int main() {
 
 **建構：**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **執行：**
 
-* **在 DevKit 上**
-  ```bash
-  ./build/sima_neat_app
-  ```
-* **在 Neat SDK 主機上**
-  ```bash
-  dk build/sima_neat_app
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_app
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_app
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

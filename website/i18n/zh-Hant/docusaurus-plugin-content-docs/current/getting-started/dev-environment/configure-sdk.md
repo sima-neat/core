@@ -14,7 +14,7 @@ SDK 安裝指令已經會下載 SDK 映像檔並進行設定。如果您需要�
 
 當您的 DevKit 可以從主機存取，且您想要新增或更新 DevKit 配對時，請使用此指令：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -30,7 +30,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 當您想要更新 SDK 設定，但尚未連線到 DevKit 時，請使用此指令：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 

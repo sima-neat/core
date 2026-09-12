@@ -14,7 +14,7 @@ sidebar_position: 4
 
 Використовуйте цю команду, коли до вашого DevKit можна отримати доступ з хоста, і ви хочете додати або оновити пару DevKit:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -31,7 +31,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 Використовуйте цю команду, коли потрібно оновити налаштування SDK, але DevKit ще недоступний:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 

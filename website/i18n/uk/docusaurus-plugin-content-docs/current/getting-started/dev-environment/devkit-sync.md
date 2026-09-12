@@ -19,7 +19,7 @@ DevKit Sync з’єднує середовище розробки Neat (далі
 Якщо ви пропустили етап підключення DevKit під час встановлення або потребуєте змінити його пізніше,
 виконайте цю команду налаштування на хості:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -52,7 +52,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 Всередині оболонки SDK використовуйте `dk status`, щоб підтвердити підключення DevKit і
 активний метод синхронізації робочого простору:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk status
 </ShellCommand>
 
@@ -62,7 +62,7 @@ dk status
 
 У контейнері Neat SDK виконайте:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 source devkit.sh {devkit-ip}
 </ShellCommand>
 
@@ -70,7 +70,7 @@ source devkit.sh {devkit-ip}
 
 Приклад:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 source devkit.sh 192.168.91.221
 </ShellCommand>
 
@@ -78,7 +78,7 @@ source devkit.sh 192.168.91.221
 
 Якщо до DevKit неможливо отримати доступ з хоста Neat SDK, ви все одно можете налаштувати робочий простір SDK без встановлення з’єднання:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
@@ -130,25 +130,25 @@ DevKit Sync об’єднує три середовища:
 
 Перевірте поточний метод підключення та синхронізації:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk status
 </ShellCommand>
 
 Увімкніть синхронізацію поточного робочого простору вручну:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync
 </ShellCommand>
 
 Синхронізуйте певний файл або теку:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync /workspace/apps
 </ShellCommand>
 
 Синхронізуйте весь робочий простір:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync --all
 </ShellCommand>
 
@@ -161,19 +161,19 @@ SDK містить допоміжний інструмент `dk`, також в
 
 Коли ви викликаєте `dk`, SDK запускає команду на з’єднаному DevKit і перетворює шляхи, щоб аргументи файлів із контейнера правильно розпізнавалися на DevKit.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk <file> [args...]
 </ShellCommand>
 
 Після компіляції програми C++ у робочому просторі SDK запустіть згенерований виконуваний файл ARM64 на DevKit:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk build/sima_neat_hello
 </ShellCommand>
 
 Після створення або копіювання сценарію Python у робочу область SDK запустіть його на з’єднаному пристрої DevKit:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk hello_neat.py
 </ShellCommand>
 

@@ -20,7 +20,7 @@ Run the image install command that matches your SDK release from the host.
 
 For SDK 2.0.0:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli install ghcr:sima-neat/sdk:v2.0.0
 </ShellCommand>
 
@@ -34,13 +34,13 @@ container image.
 
 If your DevKit is reachable from the host, pair it during setup:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 If your DevKit is not reachable yet, set up the SDK workspace without pairing:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
@@ -53,7 +53,7 @@ Sync.
 
 After setup succeeds, open the SDK shell:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk neat
 </ShellCommand>
 

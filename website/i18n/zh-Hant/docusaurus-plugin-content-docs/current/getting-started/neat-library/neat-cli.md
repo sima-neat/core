@@ -8,7 +8,7 @@ sidebar_position: 5
 
 在 SDK 中，狀態輸出還包含來自 `$HOME/.insight-config/neat-port-map.json` 的 Insight 主機與埠的對應關係。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
@@ -46,7 +46,7 @@ Exposed Ports
 
 對於自動化和工具整合，請使用 JSON 輸出：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat --json
 </ShellCommand>
 
@@ -54,7 +54,7 @@ neat --json
 
 若要更新偵測到的管道中的 Neat Library 執行階段、`neat-insight`，以及已安裝的 `sima-cli` 劇本，請執行：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update
 </ShellCommand>
 

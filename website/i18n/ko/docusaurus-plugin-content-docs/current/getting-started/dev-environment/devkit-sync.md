@@ -18,7 +18,7 @@ DevKit Sync는 Neat 개발 환경(Neat SDK로 지칭)을 동일 네트워크의 
 
 설치 중에 DevKit 페어링을 건너뛰었거나 나중에 변경해야 하는 경우, 호스트에서 다음 설정 명령을 실행하세요.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -47,7 +47,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 SDK 셸 내에서 `dk status`를 사용하여 페어링된 DevKit과 활성 상태의 작업 공간 동기화 방법을 확인합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk status
 </ShellCommand>
 
@@ -57,7 +57,7 @@ Neat SDK가 이미 설치되어 있고 다른 DevKit를 페어링하거나 DevKi
 
 Neat SDK 컨테이너 내부에서 다음 명령을 실행합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 source devkit.sh {devkit-ip}
 </ShellCommand>
 
@@ -65,7 +65,7 @@ source devkit.sh {devkit-ip}
 
 예시:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 source devkit.sh 192.168.91.221
 </ShellCommand>
 
@@ -73,7 +73,7 @@ source devkit.sh 192.168.91.221
 
 Neat SDK 호스트에서 DevKit에 연결할 수 없는 경우에도 페어링하지 않고 SDK 작업 공간을 구성할 수 있습니다.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
@@ -116,25 +116,25 @@ rsync 대체 모드가 활성화된 경우:
 
 현재 페어링 및 동기화 방법을 확인하세요.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk status
 </ShellCommand>
 
 현재 작업 영역 범위를 수동으로 동기화합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync
 </ShellCommand>
 
 특정 파일 또는 폴더 범위를 동기화합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync /workspace/apps
 </ShellCommand>
 
 전체 작업 공간을 동기화합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync --all
 </ShellCommand>
 
@@ -147,19 +147,19 @@ SDK에는 ARM64 실행 파일을 SDK 셸 내에서 페어링된 DevKit에서 실
 
 `dk`를 호출하면 SDK가 페어링된 DevKit에서 명령을 실행하고, 컨테이너의 파일 인수가 DevKit에서 올바르게 해석되도록 경로를 변환합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk <file> [args...]
 </ShellCommand>
 
 SDK 작업 공간에서 C++ 애플리케이션을 컴파일한 후, 생성된 ARM64 실행 파일을 DevKit에서 실행합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk build/sima_neat_hello
 </ShellCommand>
 
 SDK 작업 공간에 Python 스크립트를 생성하거나 복사한 후, 페어링된 DevKit에서 실행합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk hello_neat.py
 </ShellCommand>
 

@@ -39,7 +39,7 @@ Palette Neat 包含多個具有版本號的元件。在大多數情況下，相�
 
 在取得對 DevKit 的 Shell 存取權後，請檢查已安裝的軟體版本。當 DevKit 可以在網路中連線時，您可以透過 SSH 開啟 Shell，或者透過序列控制台。如需序列存取指示，請參閱 [設定序列埠存取權限](https://developer.sima.ai/hardware/getting-started/setup-serial)。
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 cat /etc/buildinfo
 </ShellCommand>
 
@@ -59,7 +59,7 @@ cat /etc/buildinfo
 
 從主機安裝目前發布的 Neat SDK。
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
@@ -84,13 +84,13 @@ DevKit 軟體的版本很重要，因為裝置上的執行階段、韌體和系�
 
 對於 Neat Library 0.4.0：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.4.0
 </ShellCommand>
 
 針對 Neat Library 0.1.0：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.1.0
 </ShellCommand>
 
@@ -105,7 +105,7 @@ Neat 應用程式版本與 Neat Library 版本是獨立的。安裝應用程式�
 
 從相容的 Neat SDK 或 DevKit 安裝 Apps 0.5.0：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install apps@v0.5.0
 </ShellCommand>
 
@@ -137,7 +137,7 @@ Model Compiler 可以透過兩種方式安裝：
 
 從 Neat SDK 內部或在 DevKit 上執行：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 

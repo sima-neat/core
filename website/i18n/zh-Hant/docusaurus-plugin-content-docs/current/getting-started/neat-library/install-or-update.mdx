@@ -30,13 +30,13 @@ SiMa.ai 資源，例如用於測試的預先編譯模型。
 
 驗證環境，以便安裝程式可以下載 SiMa.ai 的成品。請參閱 [sima-cli 登入](/tools/sima-cli/login/) 以取得詳細資訊。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli login
 </ShellCommand>
 
 確認環境是否能夠連接到 SiMa.ai 成品的主機：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
 </ShellCommand>
 
@@ -57,13 +57,13 @@ curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && e
 
 準備一個容器本地安裝目錄，例如：`$HOME/neat`。
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 cd $HOME && mkdir -p neat && cd neat
 </ShellCommand>
 
 安裝 `sima-cli` 預設選取的 Neat Library 套件。您可以選擇性地安裝額外內容，包括預先建置的教學課程、原始碼教學課程和測試：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 sima-cli neat install core@v0.4.0
 </ShellCommand>
 
@@ -73,13 +73,13 @@ sima-cli neat install core@v0.4.0
 
 確認容器已正確識別自己為原生 ROS2 SDK，並回報 Neat 套件預期的平台相容性基礎：
 
-<ShellCommand prompt="username@ros2-sdk-latest">
+<ShellCommand prompt="sdk">
 grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 </ShellCommand>
 
 安裝一個相容的 Neat 套件。安裝程式會驗證原生 ARM64 Debian 環境，模擬 APT 交易（停用套件移除功能），並將執行階段和開發套件安裝到容器的系統路徑中。由於 PyNeat 仍然是 DevKit 執行階段功能，因此不會安裝它。
 
-<ShellCommand prompt="username@ros2-sdk-latest">
+<ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
 sima-cli neat install core@release-0.3
 </ShellCommand>
@@ -95,13 +95,13 @@ sima-cli neat install core@release-0.3
 
 請在 `/media/nvme` 下建立一個安裝目錄，以避免填滿根檔案系統：
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 cd /media/nvme && mkdir -p neat && cd neat
 </ShellCommand>
 
 安裝 `sima-cli` 預設選取的 Neat Library 套件。您可以選擇性地安裝額外內容，包括預先建置的教學課程、原始碼教學課程和測試：
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 sima-cli neat install core@v0.2.2
 </ShellCommand>
 
@@ -114,7 +114,7 @@ sima-cli neat install core@v0.2.2
 虛擬環境。這是支援的 PyNeat
 環境——請直接啟用它：
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
 </ShellCommand>
 

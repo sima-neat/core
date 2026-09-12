@@ -46,22 +46,21 @@ SDK内からDevKit上のコマンド（`dk build/sima_neat_hello`や`dk hello_ne
 
 2. 作業ディレクトリは次のようになります。
 
-   ```bash
+   ```text
    sima-neat-hello/
    └── hello_neat.py
    ```
 
 **実行：**
 
-* **DevKit上**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **Neat SDKホスト上**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Pythonランタイムの場所
 Neat SDKコンテナ内からNeatインストーラーを実行した場合でも、`pyneat`はDevKitのランタイム側にインストールされます。
@@ -128,7 +127,7 @@ Neat SDKコンテナ内からNeatインストーラーを実行した場合で�
 
 3. 作業ディレクトリは次のようになります。
 
-   ```bash
+   ```text
    sima-neat-hello/
    ├── CMakeLists.txt
    └── main.cpp
@@ -136,21 +135,20 @@ Neat SDKコンテナ内からNeatインストーラーを実行した場合で�
 
 **例をビルドします：**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **実行：**
 
-* **DevKit上**
-  ```bash
-  ./build/sima_neat_hello
-  ```
-* **Neat SDKホスト上**
-  ```bash
-  dk build/sima_neat_hello
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>
