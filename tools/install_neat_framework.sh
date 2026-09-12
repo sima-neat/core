@@ -853,15 +853,25 @@ has_sima_lmm_sysroot_deps() {
   [[ -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
      -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
      -f "${sysroot}/usr/include/fmt/core.h" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so" &&
      -f "${sysroot}/usr/include/spdlog/spdlog.h" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so" &&
      -f "${sysroot}/usr/include/nlohmann/json.hpp" &&
      -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" &&
      -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" &&
      -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" &&
      -f "${sysroot}/usr/include/httplib.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" &&
+     -f "${sysroot}/usr/include/fftw3.h" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libfftw3.so" &&
+     -f "${sysroot}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavcodec.so" &&
+     -f "${sysroot}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavformat.so" &&
+     -f "${sysroot}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavutil.so" &&
+     -f "${sysroot}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libswresample.so" ]]
 }
 
 ensure_sima_lmm_sysroot_deps() {
@@ -880,17 +890,13 @@ ensure_sima_lmm_sysroot_deps() {
         ! -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
     missing_packages+=("libeigen3-dev")
   fi
-  if [[ ! -f "${sysroot}/usr/include/fmt/core.h" ]]; then
-    missing_packages+=("libfmt-dev:arm64")
+  if [[ ! -f "${sysroot}/usr/include/fmt/core.h" ||
+        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so" ]]; then
+    missing_packages+=("libfmt-dev:arm64" "libfmt10:arm64")
   fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
-    missing_packages+=("libfmt9:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/spdlog/spdlog.h" ]]; then
-    missing_packages+=("libspdlog-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
-    missing_packages+=("libspdlog1.10:arm64")
+  if [[ ! -f "${sysroot}/usr/include/spdlog/spdlog.h" ||
+        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so" ]]; then
+    missing_packages+=("libspdlog-dev:arm64" "libspdlog1.15:arm64")
   fi
   if [[ ! -f "${sysroot}/usr/include/nlohmann/json.hpp" ]]; then
     missing_packages+=("nlohmann-json3-dev")
@@ -900,11 +906,29 @@ ensure_sima_lmm_sysroot_deps() {
         ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
     missing_packages+=("libbrotli-dev:arm64")
   fi
-  if [[ ! -f "${sysroot}/usr/include/httplib.h" ]]; then
-    missing_packages+=("libcpp-httplib-dev:arm64")
+  if [[ ! -f "${sysroot}/usr/include/httplib.h" ||
+        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ]]; then
+    missing_packages+=("libcpp-httplib-dev:arm64" "libcpp-httplib0.18:arm64")
   fi
-  if [[ ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18" ]]; then
-    missing_packages+=("libcpp-httplib0.18:arm64")
+  if [[ ! -f "${sysroot}/usr/include/fftw3.h" ||
+        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libfftw3.so" ]]; then
+    missing_packages+=("libfftw3-dev:arm64" "libfftw3-double3:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" ||
+        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavcodec.so" ]]; then
+    missing_packages+=("libavcodec-dev:arm64" "libavcodec61:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" ||
+        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavformat.so" ]]; then
+    missing_packages+=("libavformat-dev:arm64" "libavformat61:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" ||
+        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavutil.so" ]]; then
+    missing_packages+=("libavutil-dev:arm64" "libavutil59:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" ||
+        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libswresample.so" ]]; then
+    missing_packages+=("libswresample-dev:arm64" "libswresample5:arm64")
   fi
 
   if [[ "${#missing_packages[@]}" -eq 0 ]]; then

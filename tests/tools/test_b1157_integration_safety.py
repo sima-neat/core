@@ -247,6 +247,25 @@ def test_b1157_git_sysroot_receipt_updates_exactly():
     )
 
 
+def test_b1297_llima_sysroot_dependencies_include_runtime_libraries():
+    build = (ROOT / "build.sh").read_text()
+    installer = (ROOT / "tools/install_neat_framework.sh").read_text()
+    for package in (
+        "libfmt10:arm64",
+        "libspdlog1.15:arm64",
+        "libcpp-httplib0.18:arm64",
+        "libfftw3-double3:arm64",
+        "libavcodec61:arm64",
+        "libavformat61:arm64",
+        "libavutil59:arm64",
+        "libswresample5:arm64",
+    ):
+        assert package in build
+        assert package in installer
+    assert "libspdlog1.10:arm64" not in installer
+    assert "--preserve-env=SDK_APT_CHANNEL" in build
+
+
 @pytest.mark.parametrize("state,expected", [
     ("idle", True), ("active", False), ("enabled", False), ("owner", False), ("unknown", False),
 ])

@@ -663,22 +663,26 @@ run_privileged() {
   fi
 
   if command -v sudo >/dev/null 2>&1; then
+    local -a sudo_env=()
+    if [[ -v SDK_APT_CHANNEL ]]; then
+      sudo_env+=("--preserve-env=SDK_APT_CHANNEL")
+    fi
     if sudo -n true 2>/dev/null; then
-      sudo -n "$@"
+      sudo -n "${sudo_env[@]}" "$@"
       return $?
     fi
 
     local sudo_pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
     if [[ -n "${sudo_pw}" ]]; then
       if printf '%s\n' "${sudo_pw}" | sudo -S -v >/dev/null 2>&1; then
-        printf '%s\n' "${sudo_pw}" | sudo -S "$@"
+        printf '%s\n' "${sudo_pw}" | sudo -S "${sudo_env[@]}" "$@"
         return $?
       fi
     fi
 
     # Fallback for local/dev environments where sudo requires a password.
     if [[ -t 0 && -t 1 ]]; then
-      sudo "$@"
+      sudo "${sudo_env[@]}" "$@"
       return $?
     fi
   fi
@@ -709,11 +713,11 @@ ensure_llima_sdk_sysroot_deps() {
   fi
   if [[ ! -f "${install_root}/usr/include/fmt/core.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so" ]]; then
-    missing_packages+=("libfmt-dev:arm64")
+    missing_packages+=("libfmt-dev:arm64" "libfmt10:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so" ]]; then
-    missing_packages+=("libspdlog-dev:arm64")
+    missing_packages+=("libspdlog-dev:arm64" "libspdlog1.15:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
     missing_packages+=("nlohmann-json3-dev")
@@ -725,7 +729,7 @@ ensure_llima_sdk_sysroot_deps() {
   fi
   if [[ ! -f "${install_root}/usr/include/httplib.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ]]; then
-    missing_packages+=("libcpp-httplib-dev:arm64")
+    missing_packages+=("libcpp-httplib-dev:arm64" "libcpp-httplib0.18:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/fftw3.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfftw3.so" ]]; then
@@ -733,19 +737,19 @@ ensure_llima_sdk_sysroot_deps() {
   fi
   if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavcodec.so" ]]; then
-    missing_packages+=("libavcodec-dev:arm64")
+    missing_packages+=("libavcodec-dev:arm64" "libavcodec61:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavformat.so" ]]; then
-    missing_packages+=("libavformat-dev:arm64")
+    missing_packages+=("libavformat-dev:arm64" "libavformat61:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavutil.so" ]]; then
-    missing_packages+=("libavutil-dev:arm64")
+    missing_packages+=("libavutil-dev:arm64" "libavutil59:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libswresample.so" ]]; then
-    missing_packages+=("libswresample-dev:arm64")
+    missing_packages+=("libswresample-dev:arm64" "libswresample5:arm64")
   fi
 
   if (( ${#missing_packages[@]} == 0 )); then
