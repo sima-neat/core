@@ -56,6 +56,12 @@ void Run::close_input() {
 }
 
 void runtime::RunCore::stop() {
+  std::unique_lock<std::mutex> stop_lock(stop_mu);
+  if (stop_started) {
+    return;
+  }
+  stop_started = true;
+
   if (graph_execution_) {
     stop_graph();
     return;

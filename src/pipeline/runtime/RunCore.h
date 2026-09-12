@@ -318,6 +318,10 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
 
   mutable std::mutex latency_mu;
   mutable std::mutex graph_sample_timing_mu;
+  // A graph transport thread may observe EOS while the graph owner is tearing
+  // down the same child pipeline. Only one caller may join its worker threads.
+  mutable std::mutex stop_mu;
+  bool stop_started = false;
   std::unordered_map<GraphSampleIdentityKey, GraphSampleTimingState, GraphSampleIdentityKeyHash>
       graph_sample_timing_by_key;
   std::deque<GraphSampleTimingOrderEntry> graph_sample_timing_order;
