@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/InputStreamStats.h"
+#include "pipeline/internal/InputStreamTeardownPolicy.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/Run.h"
@@ -87,16 +88,17 @@ struct InputStreamOptions {
   int stability_frames = 2;
   std::size_t max_input_bytes = 0;
   bool copy_output = true;
+  // Auto retains standard DMA-BUF payloads; copy_output remains the fallback
+  // for other storage. Explicit Owned disables this intent.
+  bool preserve_dmabuf_output = false;
   bool copy_input = false;
   bool prepare_output_cpu_visible = false;
   int holder_loan_credits = 0;
   bool holder_loan_credits_auto = false;
   int holder_loan_sample_window = 1;
   int holder_loan_per_sample_arity = 1;
-  // When true, CPU-backed Tensor inputs are rejected before the slow
-  // InputStream memcpy fallback.  Device-first routes should receive tensors
-  // constructed in the required memory placement; set
-  // SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 for legacy compatibility.
+  // Device-first routes reject CPU-backed inputs before any copy fallback.
+  // Explicit software conversion boundaries accept their real source domain.
   bool require_device_visible_input = false;
   bool reuse_input_buffer = false;
   // True for user-visible Output/appsink endpoints.  False for graph-internal
@@ -111,13 +113,11 @@ struct InputStreamOptions {
   // runtime, so they do not need a public cross-Run loan attached by Run::pull.
   // Public/cross-Run ingress keeps this false and must carry a transferable loan.
   bool allow_graph_internal_zero_copy_input = false;
-  // Source/live pipelines can continue producing buffers while a deferred
-  // no-flush teardown is waiting on the background reaper.  Prefer a bounded
-  // synchronous state transition to NULL for those pipelines so Run::close()
-  // does not return while camera/RTSP/source streaming threads still touch
-  // downstream plugin/runtime state.  Push/appsrc pipelines keep the legacy
-  // deferred no-flush default unless this flag is set explicitly.
-  bool prefer_synchronous_teardown = false;
+  // Source/live pipelines prefer a bounded NULL transition. Driver-backed
+  // appsrc pipelines require NULL because their stop callback owns exact-once
+  // async-job reclamation. Ordinary push/appsrc pipelines remain deferred.
+  pipeline_internal::InputStreamTeardownPolicy teardown_policy =
+      pipeline_internal::InputStreamTeardownPolicy::Deferred;
   DynamicCapability dynamic_capability = DynamicCapability::StaticOnly;
   ShapePolicy shape_policy = ShapePolicy::BoundedDynamic;
   ResolvedShapeLimits shape_limits{};

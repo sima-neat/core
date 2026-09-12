@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <iomanip>
@@ -19,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <sys/resource.h>
+#include <unistd.h>
 #include <vector>
 
 namespace sima_perf {
@@ -38,6 +40,43 @@ struct PerfMetrics {
 struct ComponentLatencySelection {
   std::string component_id;
   std::vector<const simaai::neat::MeasurePluginLatencyWithPercentiles*> exact_rows;
+};
+
+class ScopedStdoutToStderr {
+public:
+  ScopedStdoutToStderr() : original_buffer_(std::cout.rdbuf(std::cerr.rdbuf())) {
+    std::fflush(stdout);
+    original_fd_ = dup(STDOUT_FILENO);
+    if (original_fd_ >= 0 && dup2(STDERR_FILENO, STDOUT_FILENO) < 0) {
+      close(original_fd_);
+      original_fd_ = -1;
+    }
+  }
+
+  ScopedStdoutToStderr(const ScopedStdoutToStderr&) = delete;
+  ScopedStdoutToStderr& operator=(const ScopedStdoutToStderr&) = delete;
+
+  ~ScopedStdoutToStderr() {
+    restore();
+  }
+
+  void restore() {
+    std::cout.flush();
+    std::fflush(stdout);
+    if (original_fd_ >= 0) {
+      (void)dup2(original_fd_, STDOUT_FILENO);
+      close(original_fd_);
+      original_fd_ = -1;
+    }
+    if (original_buffer_ != nullptr) {
+      std::cout.rdbuf(original_buffer_);
+      original_buffer_ = nullptr;
+    }
+  }
+
+private:
+  std::streambuf* original_buffer_;
+  int original_fd_ = -1;
 };
 
 inline void emit_json_string(std::ostream& out, std::string_view value) {

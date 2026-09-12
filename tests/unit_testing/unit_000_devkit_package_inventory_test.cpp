@@ -108,7 +108,6 @@ int main() {
 
     const std::vector<PackageExpectation> neat_packages = {
         {"sima-neat", "neat"},          {"sima-neat-dev", "neat"},
-        {"neat-common", "neat"},        {"neat-appcomplex", "neat"},
         {"neat-runtime", "neat"},       {"neat-gst-plugins", "neat"},
         {"neat-ev74-firmware", "neat"}, {"neat-internals-dev", "neat"},
         {"sima-lmm-core", "neat"},      {"sima-lmm-dev", "neat"},
@@ -116,8 +115,9 @@ int main() {
     };
 
     const std::vector<PackageExpectation> native_sima_packages = {
+        {"appcomplex", "native-sima"},
+        {"simaai-common", "native-sima"},
         {"simaai-palette-modalix", "native-sima"},
-        {"simaai-palette-upgrade", "native-sima"},
         {"libcamera", "native-sima"},
         {"libcamera-tools", "native-sima"},
         {"simaai-a65-plat-tests", "native-sima"},
@@ -131,10 +131,9 @@ int main() {
         {"simaai-memory-lib-dev", "native-sima"},
         {"simaai-parser", "native-sima"},
         {"simaai-pcie-ep", "native-sima"},
-        {"simaai-rctd", "native-sima"},
+        {"simaai-traced", "native-sima"},
         {"simaai-socpipeline", "native-sima"},
         {"simaai-trace", "native-sima"},
-        {"simaai-utils", "native-sima"},
     };
 
     require_installed_packages(neat_packages);

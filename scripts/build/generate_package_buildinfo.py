@@ -23,7 +23,7 @@ COMPAT_DEFAULTS = {
         "board": "any Modalix DevKit",
         "arch": "aarch64",
         "glibc_min": "2.34",        # neat-runtime Depends libc6 (>= 2.34)
-        "opencv": "4.6",            # sima-neat Depends libopencv-core406
+        "opencv": "4.10",           # sima-neat Depends libopencv-core410
         "gstreamer": "1.0",         # sima-neat Depends libgstreamer1.0-0
         "cxx_std": "20",
     },

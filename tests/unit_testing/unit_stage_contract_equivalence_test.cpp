@@ -66,7 +66,8 @@ RUN_TEST(
                   routed_output->logical_name == rendered_info.primary_output_name,
               "rendered manifest should preserve routed identity for the projected exposed output");
       require(
-          stage.logical_outputs.front().shape == std::vector<std::int64_t>({640, 640, 3}) &&
+          stage.logical_outputs.front().shape ==
+                  std::vector<std::int64_t>({1, 640, 640, 3}) &&
               stage.logical_outputs.front().size_bytes == 640U * 640U * 3U,
           "rendered manifest should expose the preproc tessellated handoff with semantic shape");
       // The rendered manifest now stores per-output logical shapes instead of scalar
@@ -76,7 +77,9 @@ RUN_TEST(
       require(!stage.processcvu.runtime_output_logical_shapes.empty(),
               "rendered manifest should expose runtime output logical shapes");
       const auto& primary_shape = stage.processcvu.runtime_output_logical_shapes.front();
-      require(primary_shape.size() >= 2 && rendered_info.logical_dims.height == primary_shape[0] &&
-                  rendered_info.logical_dims.width == primary_shape[1],
+      require(primary_shape == std::vector<int>({1, 640, 640, 3}) &&
+                  rendered_info.logical_dims.height == 640 &&
+                  rendered_info.logical_dims.width == 640 &&
+                  rendered_info.logical_dims.depth == 3,
               "stage helper and rendered manifest should agree on primary output width and height");
     }));

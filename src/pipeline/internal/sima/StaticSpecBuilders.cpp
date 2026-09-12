@@ -42,6 +42,11 @@ std::string join_shape_debug_local(const std::vector<std::int64_t>& shape) {
 
 std::uint64_t dtype_size_bytes_from_token(const std::string& raw_dtype) {
   const std::string token = upper_copy_local(raw_dtype);
+  if (token.find("INT64") != std::string::npos ||
+      token.find("FLOAT64") != std::string::npos ||
+      token.find("FP64") != std::string::npos) {
+    return 8U;
+  }
   if (token.find("BF16") != std::string::npos || token.find("FLOAT16") != std::string::npos ||
       token.find("FP16") != std::string::npos || token == "INT16" || token == "EVXX_INT16" ||
       token == "UINT16") {
@@ -150,7 +155,8 @@ LogicalTensorStaticSpec build_logical_output_static_spec(
 PhysicalBufferStaticSpec
 build_physical_buffer_static_spec(int physical_index, int allocator_index, std::uint64_t size_bytes,
                                   DeviceKind device_kind, const std::string& segment_name,
-                                  int source_physical_index, std::int64_t source_byte_offset) {
+                                  int source_physical_index, std::int64_t source_byte_offset,
+                                  std::uint64_t required_alignment_bytes) {
   PhysicalBufferStaticSpec physical;
   physical.physical_index = physical_index;
   physical.allocator_index = allocator_index;
@@ -159,6 +165,7 @@ build_physical_buffer_static_spec(int physical_index, int allocator_index, std::
   physical.segment_name = segment_name;
   physical.source_physical_index = source_physical_index;
   physical.source_byte_offset = source_byte_offset;
+  physical.required_alignment_bytes = required_alignment_bytes;
   return physical;
 }
 

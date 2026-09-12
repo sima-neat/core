@@ -13,6 +13,8 @@
 #include "pipeline/internal/TensorUtil.h"
 
 #include <gst/gst.h>
+#include <gst/allocators/gstdmabuf.h>
+#include <gst/video/video.h>
 
 #include <algorithm>
 #include <atomic>
@@ -201,7 +203,7 @@ bool tensor_has_device_gstsample_holder_local(const Tensor& tensor) {
   }
   return tensor.device.type != simaai::neat::DeviceType::CPU ||
          tensor.storage->device.type != simaai::neat::DeviceType::CPU ||
-         tensor.storage->sima_mem_target_flags != 0 ||
+         tensor.storage->sima_mem_target_flags != 0 || tensor_has_dmabuf_memory(tensor) ||
          holder_uses_simaai_segment_memory(tensor.storage->holder);
 }
 
@@ -883,6 +885,11 @@ bool tensor_buffer_view_from_handle(simaai::gst::SimaTensorBufferHandle* handle,
       local.shape.push_back(descriptor.shape[dim]);
       local.stride_bytes.push_back(descriptor.stride_bytes[dim]);
     }
+    if (!local.stride_bytes.empty() &&
+        std::all_of(local.stride_bytes.begin(), local.stride_bytes.end(),
+                    [](std::int64_t stride) { return stride == 0; })) {
+      local.stride_bytes.clear();
+    }
     if (descriptor.has_quant != 0U) {
       TensorBufferQuantDescriptor quant;
       quant.granularity = descriptor.quant_granularity;
@@ -1150,6 +1157,9 @@ void attach_tensor_set_meta_from_tensors_impl(GstBuffer* buffer, const TensorLis
   (void)attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, &attach_err);
 }
 
+bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer** out_buffer,
+                                               GstCaps** out_caps, std::string* err);
+
 GstBuffer* buffer_from_tensor_or_copy(const Sample& field, const SampleSpec& spec, std::string* err,
                                       bool allow_zero_copy = true) {
   if (!sample_has_tensor_list(field) || field.tensors.empty()) {
@@ -1191,7 +1201,39 @@ GstBuffer* buffer_from_tensor_or_copy(const Sample& field, const SampleSpec& spe
   policy.require_contiguous = true;
   policy.allow_device_memory = false;
 
-  GstBuffer* buf = build_gst_buffer_from_tensor(t, spec, policy, err);
+  GstBuffer* buf = nullptr;
+  if (allow_zero_copy && tensor_has_dmabuf_memory(t)) {
+    if (spec.kind == SampleMediaKind::RawVideo) {
+      GstBuffer* source = buffer_from_holder_if_gstsample(t, err);
+      if (!source) {
+        return nullptr;
+      }
+      // An image can span multiple plane memories. Copy only its envelope,
+      // retaining the complete producer-authored video layout and pool lease.
+      buf = gst_buffer_copy(source);
+      const bool retained = buf && gst_buffer_add_parent_buffer_meta(buf, source);
+      gst_buffer_unref(source);
+      if (!retained) {
+        if (buf) {
+          gst_buffer_unref(buf);
+        }
+        if (err) {
+          *err = "Sample DMA video envelope failed to retain its source buffer";
+        }
+        return nullptr;
+      }
+    } else {
+      GstCaps* caps = nullptr;
+      if (!try_build_multi_source_tensor_set_backing(field, &buf, &caps, err)) {
+        return nullptr;
+      }
+      if (caps) {
+        gst_caps_unref(caps);
+      }
+    }
+  } else {
+    buf = build_gst_buffer_from_tensor(t, spec, policy, err);
+  }
   if (!buf)
     return nullptr;
 
@@ -1379,9 +1421,16 @@ bool try_collect_shared_bundle_backing(const Sample& bundle, GstBuffer** out_buf
     return false;
   }
   char* c_err = nullptr;
-  *out_buffer = simaai::gst::sima_tensor_buffer_clone_envelope(view.buffer, &c_err);
+  *out_buffer = buffer_has_dmabuf_memory(view.buffer) && gst_buffer_get_video_meta(view.buffer)
+                    ? gst_buffer_copy(view.buffer)
+                    : simaai::gst::sima_tensor_buffer_clone_envelope(view.buffer, &c_err);
   g_free(c_err);
   if (!*out_buffer) {
+    return false;
+  }
+  if (!gst_buffer_add_parent_buffer_meta(*out_buffer, view.buffer)) {
+    gst_buffer_unref(*out_buffer);
+    *out_buffer = nullptr;
     return false;
   }
   *out_caps = view.caps ? gst_caps_ref(view.caps) : nullptr;
@@ -1458,7 +1507,15 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   }
   *out_buffer = nullptr;
   *out_caps = nullptr;
-  if (!sample_has_tensor_list(bundle) || bundle.tensors.size() <= 1U) {
+  if (!sample_has_tensor_list(bundle) || bundle.tensors.empty()) {
+    return false;
+  }
+  // Appending past GStreamer's memory-slot limit merges payloads. A tensor
+  // envelope must never turn a DMA view into a copy to fit the carrier.
+  if (bundle.tensors.size() > gst_buffer_get_max_memory()) {
+    if (err) {
+      *err = "tensor-set envelope exceeds GStreamer's memory-slot limit";
+    }
     return false;
   }
   if (!build_tensor_set_envelope_caps(bundle, out_caps, err)) {
@@ -1466,163 +1523,125 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   }
 
   GstBuffer* assembled = gst_buffer_new();
+  const auto fail = [&](const std::string& detail) {
+    if (assembled) {
+      gst_buffer_unref(assembled);
+    }
+    if (*out_caps) {
+      gst_caps_unref(*out_caps);
+      *out_caps = nullptr;
+    }
+    if (err) {
+      *err = detail;
+    }
+    return false;
+  };
   if (!assembled) {
-    if (*out_caps) {
-      gst_caps_unref(*out_caps);
-      *out_caps = nullptr;
-    }
-    if (err) {
-      *err = "tensor-set multi-source backing allocation failed";
-    }
-    return false;
+    return fail("tensor-set multi-source backing allocation failed");
   }
 
-  GstBuffer* first_source_buffer = nullptr;
-  bool appended_memory = false;
   TensorList descriptor_tensors = bundle.tensors;
+  std::vector<std::string> carrier_names;
+  carrier_names.reserve(bundle.tensors.size());
   for (std::size_t tensor_index = 0; tensor_index < bundle.tensors.size(); ++tensor_index) {
-    const auto& tensor = bundle.tensors[tensor_index];
-    if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
-        !tensor.storage->holder || !tensor_has_device_gstsample_holder_local(tensor)) {
-      if (first_source_buffer) {
-        gst_buffer_unref(first_source_buffer);
-      }
-      gst_buffer_unref(assembled);
-      if (*out_caps) {
-        gst_caps_unref(*out_caps);
-        *out_caps = nullptr;
-      }
-      return false;
+    const Tensor& tensor = bundle.tensors[tensor_index];
+    if (!tensor.storage) {
+      return fail("tensor-set multi-source tensor is missing storage");
     }
-
+    GstBuffer* source = nullptr;
+    int source_memory_index = 0;
     std::string source_err;
-    GstBuffer* source_buffer = buffer_from_holder_if_gstsample(tensor, &source_err);
-    if (!source_buffer) {
-      if (first_source_buffer) {
-        gst_buffer_unref(first_source_buffer);
+    Tensor& descriptor_tensor = descriptor_tensors[tensor_index];
+    if (tensor.storage->kind == StorageKind::GstSample) {
+      source = buffer_from_holder_if_gstsample(tensor, &source_err);
+      if (source) {
+        source_memory_index = tensor_source_memory_index(tensor, source);
       }
-      gst_buffer_unref(assembled);
-      if (*out_caps) {
-        gst_caps_unref(*out_caps);
-        *out_caps = nullptr;
+    } else if (tensor.storage->kind == StorageKind::CpuOwned ||
+               tensor.storage->kind == StorageKind::CpuExternal) {
+      if (!wrap_cpu_dense_zero_copy(tensor, &source, &source_err)) {
+        // Only this CPU field needs packing. Never materialize its DMA siblings.
+        const std::size_t bytes = tensor_bytes_tight(tensor);
+        if (bytes == 0U) {
+          return fail("tensor-set CPU field has no payload");
+        }
+        source = gst_buffer_new_allocate(nullptr, bytes, nullptr);
+        if (source) {
+          GstMapInfo map{};
+          if (!gst_buffer_map(source, &map, GST_MAP_WRITE)) {
+            gst_buffer_unref(source);
+            return fail("tensor-set CPU field map failed");
+          }
+          const bool copied = copy_tensor_transport_payload_to(
+              tensor, static_cast<std::uint8_t*>(map.data), bytes, &source_err);
+          gst_buffer_unmap(source, &map);
+          if (!copied) {
+            gst_buffer_unref(source);
+            return fail(source_err);
+          }
+        }
       }
-      if (err) {
-        *err = source_err.empty() ? "tensor-set multi-source missing source buffer" : source_err;
-      }
-      return false;
+      // CPU wrappers already incorporate the source offset; copies are tightly
+      // based. The descriptor must not apply the original byte offset twice.
+      descriptor_tensor.byte_offset = 0;
+      const std::size_t logical_bytes = tensor_bytes_tight(tensor);
+      descriptor_tensor.strides_bytes =
+          packed_tensor_descriptor_strides(tensor, logical_bytes, logical_bytes);
     }
-    if (!first_source_buffer) {
-      first_source_buffer = gst_buffer_ref(source_buffer);
+    if (!source) {
+      return fail(source_err.empty() ? "tensor-set multi-source unsupported storage" : source_err);
     }
-
-    const int source_memory_index = tensor_source_memory_index(tensor, source_buffer);
+    const auto source_unref = [](GstBuffer* buffer) { gst_buffer_unref(buffer); };
+    std::unique_ptr<GstBuffer, decltype(source_unref)> source_guard(source, source_unref);
     if (source_memory_index < 0 ||
-        static_cast<guint>(source_memory_index) >= gst_buffer_n_memory(source_buffer)) {
-      gst_buffer_unref(source_buffer);
-      if (first_source_buffer) {
-        gst_buffer_unref(first_source_buffer);
-      }
-      gst_buffer_unref(assembled);
-      if (*out_caps) {
-        gst_caps_unref(*out_caps);
-        *out_caps = nullptr;
-      }
-      if (err) {
-        *err = "tensor-set multi-source tensor references invalid source memory index";
-      }
-      return false;
+        static_cast<guint>(source_memory_index) >= gst_buffer_n_memory(source)) {
+      return fail("tensor-set multi-source tensor references invalid source memory index");
     }
-
-    GstMemory* memory =
-        gst_buffer_peek_memory(source_buffer, static_cast<guint>(source_memory_index));
+    GstMemory* memory = gst_buffer_peek_memory(source, static_cast<guint>(source_memory_index));
     if (!memory) {
-      gst_buffer_unref(source_buffer);
-      if (first_source_buffer) {
-        gst_buffer_unref(first_source_buffer);
-      }
-      gst_buffer_unref(assembled);
-      if (*out_caps) {
-        gst_caps_unref(*out_caps);
-        *out_caps = nullptr;
-      }
-      if (err) {
-        *err = "tensor-set multi-source missing source memory";
-      }
-      return false;
+      return fail("tensor-set multi-source missing source memory");
     }
-
+    if (tensor_index == 0U) {
+      auto flags =
+          static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS);
+      if (bundle.tensors.size() == 1U && gst_buffer_n_memory(source) == 1U) {
+        flags = static_cast<GstBufferCopyFlags>(flags | GST_BUFFER_COPY_META);
+      }
+      if (!gst_buffer_copy_into(assembled, source, flags, 0, -1)) {
+        return fail("tensor-set multi-source timing copy failed");
+      }
+    }
     gst_buffer_append_memory(assembled, gst_memory_ref(memory));
-    descriptor_tensors[tensor_index].route.memory_index = static_cast<int>(tensor_index);
-    appended_memory = true;
-    gst_buffer_unref(source_buffer);
+    // GstMemory retains the allocation, not the producer's GstBuffer pool lease.
+    if (!gst_buffer_add_parent_buffer_meta(assembled, source)) {
+      return fail("tensor-set multi-source failed to retain source buffer");
+    }
+    auto& route = descriptor_tensor.route;
+    route.memory_index = static_cast<int>(tensor_index);
+    route.physical_index = static_cast<int>(tensor_index);
+    const std::string carrier_base =
+        route.segment_name.empty() ? "input_tensor" : route.segment_name;
+    std::string carrier_name = carrier_base;
+    for (std::size_t suffix = 1U;
+         std::find(carrier_names.begin(), carrier_names.end(), carrier_name) != carrier_names.end();
+         ++suffix) {
+      carrier_name = carrier_base + "#" + std::to_string(suffix);
+    }
+    carrier_names.push_back(carrier_name);
+    route.segment_name = std::move(carrier_name);
   }
 
-  if (!appended_memory) {
-    if (first_source_buffer) {
-      gst_buffer_unref(first_source_buffer);
-    }
-    gst_buffer_unref(assembled);
-    if (*out_caps) {
-      gst_caps_unref(*out_caps);
-      *out_caps = nullptr;
-    }
-    if (err) {
-      *err = "tensor-set multi-source backing has no source memories";
-    }
-    return false;
+  std::string detail;
+  if (!copy_bundle_tensor_preprocess_meta(assembled, bundle.tensors, &detail)) {
+    return fail(detail.empty() ? "tensor-set multi-source preprocess meta failed" : detail);
   }
-
-  if (first_source_buffer) {
-    GST_BUFFER_PTS(assembled) = GST_BUFFER_PTS(first_source_buffer);
-    GST_BUFFER_DTS(assembled) = GST_BUFFER_DTS(first_source_buffer);
-    GST_BUFFER_DURATION(assembled) = GST_BUFFER_DURATION(first_source_buffer);
-    GST_BUFFER_OFFSET(assembled) = GST_BUFFER_OFFSET(first_source_buffer);
-    GST_BUFFER_OFFSET_END(assembled) = GST_BUFFER_OFFSET_END(first_source_buffer);
-    GST_MINI_OBJECT_FLAGS(assembled) = GST_MINI_OBJECT_FLAGS(first_source_buffer);
-    gst_buffer_unref(first_source_buffer);
-  }
-
-  std::string preprocess_err;
-  if (!copy_bundle_tensor_preprocess_meta(assembled, bundle.tensors, &preprocess_err)) {
-    gst_buffer_unref(assembled);
-    if (*out_caps) {
-      gst_caps_unref(*out_caps);
-      *out_caps = nullptr;
-    }
-    if (err) {
-      *err = preprocess_err.empty() ? "tensor-set multi-source preprocess meta failed"
-                                    : preprocess_err;
-    }
-    return false;
-  }
-
   TensorBufferView descriptor;
-  std::string descriptor_err;
-  if (!tensor_buffer_descriptor_from_tensors(descriptor_tensors, &descriptor, &descriptor_err)) {
-    gst_buffer_unref(assembled);
-    if (*out_caps) {
-      gst_caps_unref(*out_caps);
-      *out_caps = nullptr;
-    }
-    if (err) {
-      *err = descriptor_err.empty() ? "tensor-set multi-source descriptor failed" : descriptor_err;
-    }
-    return false;
+  if (!tensor_buffer_descriptor_from_tensors(descriptor_tensors, &descriptor, &detail)) {
+    return fail(detail.empty() ? "tensor-set multi-source descriptor failed" : detail);
   }
-
-  std::string attach_err;
-  if (!attach_tensor_set_meta_from_descriptor_view_impl(assembled, descriptor, &attach_err)) {
-    gst_buffer_unref(assembled);
-    if (*out_caps) {
-      gst_caps_unref(*out_caps);
-      *out_caps = nullptr;
-    }
-    if (err) {
-      *err = attach_err.empty() ? "tensor-set multi-source meta attach failed" : attach_err;
-    }
-    return false;
+  if (!attach_tensor_set_meta_from_descriptor_view_impl(assembled, descriptor, &detail)) {
+    return fail(detail.empty() ? "tensor-set multi-source meta attach failed" : detail);
   }
-
   *out_buffer = assembled;
   return true;
 }
@@ -1908,28 +1927,7 @@ bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& pa
   }
   gst_buffer_unmap(source_buffer, &map);
 
-  simaai::gst::SimaTensorBufferBuildSegmentV1 segment{};
-  segment.name = parent_segment_name.c_str();
-  segment.source_buffer = source_buffer;
-  segment.copy_bytes = static_cast<gsize>(total_bytes);
-
-  GstBuffer* segmented = nullptr;
-  char* c_err = nullptr;
-  const gboolean ok =
-      simaai::gst::sima_tensor_buffer_build_segmented_buffer(&segment, 1U, &segmented, &c_err);
-  gst_buffer_unref(source_buffer);
-  if (!ok || !segmented) {
-    if (*out_caps) {
-      gst_caps_unref(*out_caps);
-      *out_caps = nullptr;
-    }
-    if (err) {
-      *err = c_err ? c_err : "tensor-set packed segmented backing allocation failed";
-    }
-    g_free(c_err);
-    return false;
-  }
-  g_free(c_err);
+  GstBuffer* segmented = source_buffer;
 
   std::string preprocess_err;
   if (!copy_bundle_tensor_preprocess_meta(segmented, bundle.tensors, &preprocess_err)) {
@@ -1959,6 +1957,73 @@ bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& pa
   }
 
   *out_buffer = segmented;
+  return true;
+}
+
+bool tensor_buffer_descriptor_from_materialized_tensor_set(
+    const TensorList& tensors, const std::vector<TensorSetSegmentMaterialization>& carriers,
+    TensorBufferView* out, std::string* err) {
+  if (!out || tensors.size() != carriers.size()) {
+    if (err) {
+      *err = "tensor-set materialized descriptor carrier count mismatch";
+    }
+    return false;
+  }
+
+  out->stage_key = tensor_set_stage_key_from_tensors(tensors);
+  out->tensors.clear();
+  out->tensors.reserve(tensors.size());
+  for (std::size_t i = 0; i < tensors.size(); ++i) {
+    const Tensor& tensor = tensors[i];
+    const auto& carrier = carriers[i];
+    const std::size_t logical_bytes = tensor_bytes_tight(tensor);
+    if (logical_bytes == 0U || carrier.buffer_name.empty() || logical_bytes > carrier.size_bytes) {
+      if (err) {
+        *err = "tensor-set materialized descriptor has an invalid carrier span";
+      }
+      return false;
+    }
+
+    TensorBufferTensorDescriptor descriptor;
+    descriptor.logical_index =
+        tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
+    descriptor.physical_index = static_cast<int>(i);
+    descriptor.backend_output_index = tensor.route.backend_output_index >= 0
+                                          ? tensor.route.backend_output_index
+                                          : descriptor.logical_index;
+    descriptor.route_slot =
+        tensor.route.route_slot >= 0 ? tensor.route.route_slot : descriptor.logical_index;
+    descriptor.memory_index = static_cast<int>(i);
+    descriptor.logical_name = !tensor.route.name.empty()
+                                  ? tensor.route.name
+                                  : "output" + std::to_string(descriptor.logical_index);
+    descriptor.backend_name = tensor.route.backend_name;
+    descriptor.segment_name = carrier.buffer_name;
+    descriptor.byte_offset = 0;
+    descriptor.size_bytes = logical_bytes;
+    descriptor.dtype = tensor_set_dtype_from_tensor(tensor);
+    descriptor.layout = tensor_set_layout_from_tensor(tensor);
+    descriptor.shape = tensor.shape;
+    descriptor.stride_bytes =
+        packed_tensor_descriptor_strides(tensor, logical_bytes, logical_bytes);
+    if (tensor.semantic.quant.has_value()) {
+      TensorBufferQuantDescriptor quant;
+      const QuantSpec& source = *tensor.semantic.quant;
+      quant.axis = source.axis;
+      if (source.scales.empty()) {
+        quant.scales.push_back(source.scale);
+      } else {
+        quant.scales.assign(source.scales.begin(), source.scales.end());
+      }
+      if (source.zero_points.empty()) {
+        quant.zero_points.push_back(source.zero_point);
+      } else {
+        quant.zero_points.assign(source.zero_points.begin(), source.zero_points.end());
+      }
+      descriptor.quant = std::move(quant);
+    }
+    out->tensors.push_back(std::move(descriptor));
+  }
   return true;
 }
 
@@ -2026,8 +2091,8 @@ bool build_materialized_tensor_set_backing(const Sample& bundle, GstBuffer** out
       return false;
     }
     std::string copy_err;
-    if (!copy_tensor_payload_to(tensor, static_cast<std::uint8_t*>(map.data), tensor_bytes,
-                                &copy_err)) {
+    if (!copy_tensor_transport_payload_to(tensor, static_cast<std::uint8_t*>(map.data),
+                                          tensor_bytes, &copy_err)) {
       gst_buffer_unmap(source_buffer, &map);
       gst_buffer_unref(source_buffer);
       release_tensor_set_segments(&fields);
@@ -2053,33 +2118,25 @@ bool build_materialized_tensor_set_backing(const Sample& bundle, GstBuffer** out
     fields.push_back(std::move(entry));
   }
 
-  std::vector<simaai::gst::SimaTensorBufferBuildSegmentV1> segments;
-  segments.reserve(fields.size());
-  for (const auto& field : fields) {
-    simaai::gst::SimaTensorBufferBuildSegmentV1 segment{};
-    segment.name = field.buffer_name.c_str();
-    segment.source_buffer = field.buffer;
-    segment.copy_bytes = static_cast<gsize>(field.size_bytes);
-    segments.push_back(std::move(segment));
-  }
-
-  GstBuffer* segmented = nullptr;
-  char* c_err = nullptr;
-  const gboolean ok = simaai::gst::sima_tensor_buffer_build_segmented_buffer(
-      segments.data(), segments.size(), &segmented, &c_err);
-  if (!ok || !segmented) {
+  GstBuffer* segmented = gst_buffer_new();
+  if (!segmented || fields.size() > gst_buffer_get_max_memory()) {
+    if (segmented) {
+      gst_buffer_unref(segmented);
+    }
     release_tensor_set_segments(&fields);
     if (*out_caps) {
       gst_caps_unref(*out_caps);
       *out_caps = nullptr;
     }
     if (err) {
-      *err = c_err ? c_err : "tensor-set materialized backing allocation failed";
+      *err = "tensor-set materialized backing exceeds GStreamer's memory-slot limit or allocation "
+             "failed";
     }
-    g_free(c_err);
     return false;
   }
-  g_free(c_err);
+  for (const auto& field : fields) {
+    gst_buffer_append_memory(segmented, gst_memory_ref(gst_buffer_peek_memory(field.buffer, 0U)));
+  }
 
   std::string preprocess_err;
   if (!copy_bundle_tensor_preprocess_meta(segmented, bundle.tensors, &preprocess_err)) {
@@ -2096,7 +2153,34 @@ bool build_materialized_tensor_set_backing(const Sample& bundle, GstBuffer** out
     return false;
   }
 
-  attach_tensor_set_meta_from_tensors(segmented, bundle.tensors);
+  TensorBufferView descriptor;
+  std::string descriptor_err;
+  if (!tensor_buffer_descriptor_from_materialized_tensor_set(bundle.tensors, fields, &descriptor,
+                                                             &descriptor_err)) {
+    gst_buffer_unref(segmented);
+    release_tensor_set_segments(&fields);
+    if (*out_caps) {
+      gst_caps_unref(*out_caps);
+      *out_caps = nullptr;
+    }
+    if (err) {
+      *err = descriptor_err.empty() ? "tensor-set materialized descriptor failed" : descriptor_err;
+    }
+    return false;
+  }
+  std::string attach_err;
+  if (!attach_tensor_set_meta_from_descriptor_view_impl(segmented, descriptor, &attach_err)) {
+    gst_buffer_unref(segmented);
+    release_tensor_set_segments(&fields);
+    if (*out_caps) {
+      gst_caps_unref(*out_caps);
+      *out_caps = nullptr;
+    }
+    if (err) {
+      *err = attach_err.empty() ? "tensor-set materialized meta attach failed" : attach_err;
+    }
+    return false;
+  }
   release_tensor_set_segments(&fields);
   *out_buffer = segmented;
   return true;
@@ -2179,8 +2263,7 @@ bool tensor_buffer_descriptor_from_materialized_fields(
     TensorBufferTensorDescriptor descriptor_tensor;
     descriptor_tensor.logical_index =
         tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
-    descriptor_tensor.physical_index =
-        tensor.route.physical_index >= 0 ? tensor.route.physical_index : static_cast<int>(i);
+    descriptor_tensor.physical_index = static_cast<int>(i);
     descriptor_tensor.backend_output_index = tensor.route.backend_output_index >= 0
                                                  ? tensor.route.backend_output_index
                                                  : descriptor_tensor.logical_index;
@@ -2449,33 +2532,36 @@ bool build_segmented_bundle_backing(const Sample& bundle, GstBuffer** out_buffer
     return false;
   }
 
-  std::vector<simaai::gst::SimaTensorBufferBuildSegmentV1> segments;
-  segments.reserve(fields.size());
-  for (const auto& field : fields) {
-    simaai::gst::SimaTensorBufferBuildSegmentV1 segment{};
-    segment.name = field.buffer_name.c_str();
-    segment.source_buffer = field.buffer;
-    segment.copy_bytes = static_cast<gsize>(field.spec.required_bytes_actual);
-    segments.push_back(std::move(segment));
-  }
-
-  GstBuffer* segmented = nullptr;
-  char* c_err = nullptr;
-  if (!simaai::gst::sima_tensor_buffer_build_segmented_buffer(segments.data(), segments.size(),
-                                                              &segmented, &c_err) ||
-      !segmented) {
+  GstBuffer* segmented = gst_buffer_new();
+  const auto fail = [&](const std::string& detail) {
+    if (segmented) {
+      gst_buffer_unref(segmented);
+    }
     release_bundle_tensor_fields(&fields);
     if (*out_caps) {
       gst_caps_unref(*out_caps);
       *out_caps = nullptr;
     }
     if (err) {
-      *err = c_err ? c_err : "bundle segmented backing allocation failed";
+      *err = detail;
     }
-    g_free(c_err);
     return false;
+  };
+  if (!segmented) {
+    return fail("bundle backing allocation failed");
   }
-  g_free(c_err);
+  for (const auto& field : fields) {
+    const guint memory_count = gst_buffer_n_memory(field.buffer);
+    if (memory_count > gst_buffer_get_max_memory() - gst_buffer_n_memory(segmented)) {
+      return fail("bundle backing exceeds GStreamer's memory-slot limit");
+    }
+    for (guint i = 0U; i < memory_count; ++i) {
+      gst_buffer_append_memory(segmented, gst_memory_ref(gst_buffer_peek_memory(field.buffer, i)));
+    }
+    if (!gst_buffer_add_parent_buffer_meta(segmented, field.buffer)) {
+      return fail("bundle backing failed to retain source buffer");
+    }
+  }
 
   if (!has_simaai_preprocess_meta(segmented)) {
     for (const auto& field : fields) {
@@ -2525,6 +2611,76 @@ bool build_segmented_bundle_backing(const Sample& bundle, GstBuffer** out_buffer
 
 void attach_tensor_set_meta_from_tensors(GstBuffer* buffer, const TensorList& tensors) {
   attach_tensor_set_meta_from_tensors_impl(buffer, tensors);
+}
+
+bool buffer_has_dmabuf_memory(GstBuffer* buffer) {
+  if (!buffer) {
+    return false;
+  }
+  for (guint i = 0; i < gst_buffer_n_memory(buffer); ++i) {
+    if (gst_is_dmabuf_memory(gst_buffer_peek_memory(buffer, i))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool buffer_has_only_dmabuf_memory(GstBuffer* buffer) {
+  if (!buffer || gst_buffer_n_memory(buffer) == 0U) {
+    return false;
+  }
+  for (guint i = 0; i < gst_buffer_n_memory(buffer); ++i) {
+    if (!gst_is_dmabuf_memory(gst_buffer_peek_memory(buffer, i))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool holder_has_dmabuf_memory(const std::shared_ptr<void>& holder) {
+  auto* sample = static_cast<GstSample*>(holder.get());
+  return sample && GST_IS_SAMPLE(sample) && buffer_has_dmabuf_memory(gst_sample_get_buffer(sample));
+}
+
+bool tensor_has_dmabuf_memory(const Tensor& tensor) {
+  if (!tensor.storage || tensor.storage->kind != StorageKind::GstSample ||
+      !tensor.storage->holder) {
+    return false;
+  }
+  auto* sample = static_cast<GstSample*>(tensor.storage->holder.get());
+  GstBuffer* buffer = sample && GST_IS_SAMPLE(sample) ? gst_sample_get_buffer(sample) : nullptr;
+  if (!buffer) {
+    return false;
+  }
+  // A projected tensor can retain a mixed carrier. Its selected CPU memory must not
+  // inherit another tensor's DMA policy merely because both retain the same GstSample.
+  const guint count = gst_buffer_n_memory(buffer);
+  if (count > 1U && tensor.route.memory_index >= 0 &&
+      static_cast<guint>(tensor.route.memory_index) < count) {
+    return gst_is_dmabuf_memory(gst_buffer_peek_memory(buffer, tensor.route.memory_index));
+  }
+  return buffer_has_dmabuf_memory(buffer);
+}
+
+bool sample_has_dmabuf_memory(const Sample& sample) {
+  if (sample_has_tensor_list(sample)) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor_has_dmabuf_memory(tensor)) {
+        return true;
+      }
+    }
+  }
+  if (sample.tensor.has_value() && tensor_has_dmabuf_memory(*sample.tensor)) {
+    return true;
+  }
+  if (sample.kind == SampleKind::Bundle) {
+    for (const auto& field : sample.fields) {
+      if (sample_has_dmabuf_memory(field)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 bool sample_has_device_gstsample_producer_lifetime(const Sample& sample, bool require_expired) {
@@ -3002,148 +3158,6 @@ void mark_sample_producer_stream_lifetime(Sample& sample, std::shared_ptr<void> 
   walk(walk, sample);
 }
 
-bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_buffer,
-                                    std::string* err) {
-  if (!out_buffer) {
-    if (err)
-      *err = "bundled input: missing out_buffer";
-    return false;
-  }
-  *out_buffer = nullptr;
-  if (tensors.empty()) {
-    if (err)
-      *err = "bundled input: empty tensor list";
-    return false;
-  }
-
-  // Path A: produce ONE GstSimaaiSegmentMemory with N segments, one per tensor.
-  // The plugin's job_builder peeks memory[0] and walks the sima allocator's
-  // segment table (gst_simaai_memory_get_segment_count / _at) to find each
-  // logical input's carrier — the symmetric counterpart of how the post side
-  // (detessdequant) emits multi-output buffers. N appended GstMemory objects
-  // would not be readable through that API and would mis-bind at dispatch
-  // validation. The trade-off vs. zero-copy: we copy CPU tensor bytes into
-  // device-accessible segments. The framework holds the host-side payload as
-  // CPU memory (FP32 image_l, image_uv) which the MLA/CVU cannot read directly,
-  // so a copy was unavoidable; the legacy branch_sessions path materialized
-  // the same bytes via per-ingress casttess output buffers.
-
-  // 1. Describe per-tensor sizes + names for the segmented allocation.
-  GstSimaaiAllocationParams params;
-  gst_simaai_memory_allocation_params_init(&params);
-  gst_allocation_params_init(&params.parent);
-
-  std::vector<std::string> segment_names;
-  segment_names.reserve(tensors.size());
-  std::vector<std::size_t> segment_bytes;
-  segment_bytes.reserve(tensors.size());
-  gsize total_size = 0;
-  for (std::size_t i = 0; i < tensors.size(); ++i) {
-    const Tensor& t = tensors[i];
-    if (!t.storage || !t.storage->data) {
-      if (err)
-        *err = std::string("bundled input: tensor ") + std::to_string(i) + " has no CPU data";
-      return false;
-    }
-    if (!t.is_dense() || !t.is_contiguous()) {
-      if (err)
-        *err =
-            std::string("bundled input: tensor ") + std::to_string(i) + " is not dense/contiguous";
-      return false;
-    }
-    const std::size_t bytes = t.dense_bytes_tight();
-    if (bytes == 0U) {
-      if (err)
-        *err = std::string("bundled input: tensor ") + std::to_string(i) + " has zero dense bytes";
-      return false;
-    }
-    std::string seg_name = t.route.segment_name;
-    if (seg_name.empty()) {
-      seg_name = std::string("ifm") + std::to_string(i);
-    }
-    if (std::find(segment_names.begin(), segment_names.end(), seg_name) != segment_names.end()) {
-      if (err) {
-        *err = std::string("bundled input: duplicate segment name '") + seg_name +
-               "' requires materialized fallback";
-      }
-      return false;
-    }
-    segment_names.push_back(std::move(seg_name));
-    segment_bytes.push_back(bytes);
-    if (!gst_simaai_memory_allocation_params_add_segment(&params, static_cast<gsize>(bytes),
-                                                         segment_names.back().c_str())) {
-      if (err)
-        *err = std::string("bundled input: failed to add segment ") + std::to_string(i);
-      return false;
-    }
-    total_size += static_cast<gsize>(bytes);
-  }
-
-  // 2. Allocate ONE GstSimaaiSegmentMemory with N segments via the standard
-  //    sima allocator. The allocator constructs N simaai_memory_t handles
-  //    backed by one segmented allocation (simaai_memory_alloc_segments_flags).
-  GstAllocator* allocator = gst_simaai_memory_get_segment_allocator();
-  if (!allocator) {
-    if (err)
-      *err = "bundled input: simaai segment allocator unavailable";
-    return false;
-  }
-  GstBuffer* assembled = gst_buffer_new_allocate(allocator, total_size,
-                                                 reinterpret_cast<GstAllocationParams*>(&params));
-  gst_object_unref(allocator);
-  if (!assembled) {
-    if (err)
-      *err = "bundled input: gst_buffer_new_allocate failed";
-    return false;
-  }
-  GstMemory* assembled_memory = gst_buffer_peek_memory(assembled, 0U);
-  if (!assembled_memory) {
-    gst_buffer_unref(assembled);
-    if (err)
-      *err = "bundled input: assembled buffer missing memory";
-    return false;
-  }
-  if (multi_io_bundled_debug_enabled()) {
-    std::fprintf(stderr, "[bundled] assembled buf=%p mem=%p total=%zu n_mem=%u tensors=%zu\n",
-                 static_cast<void*>(assembled), static_cast<void*>(assembled_memory),
-                 static_cast<std::size_t>(total_size), gst_buffer_n_memory(assembled),
-                 tensors.size());
-    for (std::size_t i = 0; i < tensors.size(); ++i) {
-      void* seg = gst_simaai_memory_get_segment(assembled_memory, segment_names[i].c_str());
-      std::fprintf(stderr, "[bundled]  seg[%zu] name=%s bytes=%zu seg_ptr=%p\n", i,
-                   segment_names[i].c_str(), segment_bytes[i], seg);
-    }
-  }
-
-  // 3. Copy each tensor's bytes into the matching segment by name.
-  for (std::size_t i = 0; i < tensors.size(); ++i) {
-    void* segment = gst_simaai_memory_get_segment(assembled_memory, segment_names[i].c_str());
-    if (!segment) {
-      gst_buffer_unref(assembled);
-      if (err)
-        *err = std::string("bundled input: segment lookup failed for '") + segment_names[i] +
-               "' at index " + std::to_string(i);
-      return false;
-    }
-    const auto& t = tensors[i];
-    const auto* src = static_cast<const std::uint8_t*>(t.storage->data) +
-                      static_cast<std::size_t>(std::max<std::int64_t>(t.byte_offset, 0));
-    std::string copy_err;
-    if (!pipeline_internal::copy_into_simaai_segment_memory(segment, src, segment_bytes[i],
-                                                            &copy_err)) {
-      gst_buffer_unref(assembled);
-      if (err)
-        *err = std::string("bundled input: segment copy failed at index ") + std::to_string(i) +
-               ": " + copy_err;
-      return false;
-    }
-  }
-
-  attach_tensor_set_meta_from_tensors_impl(assembled, tensors);
-  *out_buffer = assembled;
-  return true;
-}
-
 bool tensor_buffer_view_from_tensors(const TensorList& tensors, TensorBufferView* out,
                                      std::string* err) {
   return tensor_buffer_view_from_tensors_impl(tensors, out, err);
@@ -3242,75 +3256,26 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
                      static_cast<size_t>(gst_buffer_get_size(sample_buf)));
       }
     } else {
-      std::string materialized_err;
-      const auto packed_parent_segment_name = packed_tensor_set_parent_segment_name(bundle);
-      if (multi_io_bundled_debug_enabled()) {
-        std::fprintf(stderr,
-                     "[bundled-path] tensors=%zu bundle.segment_name='%s' packed_parent='%s'\n",
-                     bundle.tensors.size(), bundle.segment_name.c_str(),
-                     packed_parent_segment_name.has_value() ? packed_parent_segment_name->c_str()
-                                                            : "<nullopt>");
-        for (std::size_t i = 0; i < bundle.tensors.size(); ++i) {
-          const auto& t = bundle.tensors[i];
-          std::fprintf(
-              stderr, "[bundled-path]   tensor[%zu] segment='%s' name='%s' phys=%d mem=%d log=%d\n",
-              i, t.route.segment_name.c_str(), t.route.name.c_str(), t.route.physical_index,
-              t.route.memory_index, t.route.logical_index);
+      std::string backing_err;
+      bool built = false;
+      if (allow_zero_copy) {
+        built = try_build_multi_source_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+                                                          &backing_err);
+      }
+      if (!built) {
+        if (const auto packed_parent = packed_tensor_set_parent_segment_name(bundle)) {
+          built = build_packed_tensor_set_backing(bundle, *packed_parent, &sample_buf, &sample_caps,
+                                                  &backing_err);
+        } else {
+          built = build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+                                                        &backing_err);
         }
       }
-      const bool built =
-          packed_parent_segment_name.has_value()
-              ? build_packed_tensor_set_backing(bundle, *packed_parent_segment_name, &sample_buf,
-                                                &sample_caps, &materialized_err)
-              : ([&]() {
-                  // Native multi-IFM / multi-physical TensorSet ingress should not take the
-                  // generic materialized path first: that path allocates temporary GstBuffers and
-                  // then copies again into a segmented buffer.  Prefer the direct segmented
-                  // allocation for dense CPU tensors (one unavoidable host->SiMa copy) and the
-                  // adopted multi-source path for already device-backed GstSamples.  Fall back to
-                  // the legacy materializer for non-dense tensors or unsupported backing.
-                  std::string direct_err;
-                  if (build_bundled_input_gst_buffer(bundle.tensors, &sample_buf, &direct_err)) {
-                    if (!build_tensor_set_envelope_caps(bundle, &sample_caps, &direct_err)) {
-                      if (sample_buf) {
-                        gst_buffer_unref(sample_buf);
-                        sample_buf = nullptr;
-                      }
-                      materialized_err = direct_err;
-                      return false;
-                    }
-                    std::string preprocess_err;
-                    if (!copy_bundle_tensor_preprocess_meta(sample_buf, bundle.tensors,
-                                                            &preprocess_err)) {
-                      gst_buffer_unref(sample_buf);
-                      sample_buf = nullptr;
-                      if (sample_caps) {
-                        gst_caps_unref(sample_caps);
-                        sample_caps = nullptr;
-                      }
-                      materialized_err = preprocess_err;
-                      return false;
-                    }
-                    return true;
-                  }
-                  if (allow_zero_copy && try_build_multi_source_tensor_set_backing(
-                                             bundle, &sample_buf, &sample_caps, &direct_err)) {
-                    return true;
-                  }
-                  return build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
-                                                               &materialized_err);
-                })();
       if (!built) {
         if (err) {
-          *err = materialized_err.empty() ? "Sample tensor-set materialized backing failed"
-                                          : materialized_err;
+          *err = backing_err.empty() ? "Sample tensor-set backing failed" : backing_err;
         }
         return {};
-      }
-      if (sample_debug_enabled() && sample_buf) {
-        std::fprintf(stderr, "[SAMPLE] tensor-set %s tensor backing bytes=%zu\n",
-                     packed_parent_segment_name.has_value() ? "packed" : "materialized",
-                     static_cast<size_t>(gst_buffer_get_size(sample_buf)));
       }
     }
   } else {
@@ -3421,7 +3386,13 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
         return {};
       }
       std::string outer_meta_err;
-      if (!attach_video_meta(&sample_buf, outer_spec, &outer_meta_err)) {
+      const GstVideoMeta* native_video = allow_zero_copy && sample_has_dmabuf_memory(first_field)
+                                             ? gst_buffer_get_video_meta(sample_buf)
+                                             : nullptr;
+      // A shared DMA carrier keeps the producer's physical layout and span;
+      // logical Tensor views remain in the TensorSet descriptor. Reauthoring
+      // GstVideoMeta here can shrink padding or rebase multi-memory planes.
+      if (!native_video && !attach_video_meta(&sample_buf, outer_spec, &outer_meta_err)) {
         gst_buffer_unref(sample_buf);
         if (sample_caps) {
           gst_caps_unref(sample_caps);
@@ -3602,6 +3573,14 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
     if (err)
       *err = "Sample wrap failed";
     return {};
+  }
+  if (allow_zero_copy) {
+    std::vector<std::shared_ptr<void>> loans;
+    collect_zero_copy_loans_from_sample(bundle, &loans);
+    for (const auto& loan : loans) {
+      attach_zero_copy_loan_to_gst_buffer_local(gst_sample_get_buffer(sample), loan);
+      attach_zero_copy_loan_to_gst_sample_local(sample, loan);
+    }
   }
   auto holder = std::shared_ptr<void>(
       gst_sample_ref(sample), [](void* p) { gst_sample_unref(static_cast<GstSample*>(p)); });
@@ -3860,16 +3839,11 @@ Sample sample_from_tensors(const TensorList& tensors) {
   out.kind = SampleKind::TensorSet;
   out.owned = true;
   out.tensors = tensors;
-  // Stamp positional identity for multi-tensor sets so the SIMA_TENSOR_SET_META
-  // descriptor (built downstream by tensor_buffer_descriptor_from_tensors) gives
-  // each region a distinct logical slot. Each binding shares the same
-  // physical input slot (the packed parent buffer), with memory_index the
-  // disambiguator across regions — same convention the multi-IO renderer
-  // emits (physical_index=0 / memory_index per tensor). Sharing
-  // physical_index lets `packed_tensor_set_parent_segment_name` route the
-  // bundle into the existing packed-buffer materialization path so the
-  // dispatcher consumes one carrier with byte-offset disambiguation.
-  // Only stamps when the caller hasn't already assigned an explicit identity.
+  // Preserve the legacy packed-materialization convention for callers that
+  // provide no route identity. The strict DMA-BUF path does not consume this
+  // provisional physical index: when it adopts the source memories it assigns
+  // each descriptor the actual dense carrier index. Explicit caller identity
+  // is never rewritten here.
   if (out.tensors.size() > 1U) {
     bool any_route_unstamped = false;
     for (const auto& t : out.tensors) {

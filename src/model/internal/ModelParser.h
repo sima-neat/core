@@ -89,7 +89,9 @@ struct ParsedModelInfo {
   std::vector<ParsedKernelStage> plugins;
   std::vector<pipeline_internal::sima::MpkContractEdge> edges;
   std::vector<std::size_t> execution_order;
+  std::vector<std::size_t> mla_plugin_indices;
   int mla_plugin_index = -1;
+  int last_mla_plugin_index = -1;
   ParsedModelNeeds needs;
   ParsedRouteCapabilities capabilities;
   ParsedOutputTopology outputs;

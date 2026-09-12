@@ -72,7 +72,8 @@ sima_test::ModelArchiveFixture make_stage_fixture(const std::string& tag) {
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 } // namespace

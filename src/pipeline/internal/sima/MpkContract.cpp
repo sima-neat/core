@@ -239,6 +239,11 @@ bool is_geometry_shape_semantics_local(const MpkShapeSemantics semantics) {
 
 MpkShapeSemantics classify_mpk_tensor_shape_semantics_local(const MpkPluginIoContract& stage,
                                                             const bool is_input) {
+  // A65 typed input/output shapes describe host tensors, not packed device
+  // extents. A host stage need not carry an EV kernel name.
+  if (lower_copy_local(stage.processor) == "a65") {
+    return MpkShapeSemantics::Geometry;
+  }
   const std::string kernel = canonical_token_local(stage.kernel);
   if (kernel.empty()) {
     return MpkShapeSemantics::Unknown;
@@ -902,8 +907,11 @@ std::uint64_t expected_detess_packed_input_size_bytes_local(const MpkPluginIoCon
   if (shape.size() >= 4U && shape.front() == 1) {
     shape.erase(shape.begin());
   }
-  if (shape.size() < 3U) {
-    return 0U;
+  // AFE may express vector/matrix frame geometry without the leading unit
+  // spatial axes. Graphs 2/3 consume the same storage as canonical HWC; add
+  // only unit address-view axes here (never materialize or reorder data).
+  while (shape.size() < 3U) {
+    shape.insert(shape.begin(), 1);
   }
 
   std::uint64_t batch = 1U;
@@ -959,9 +967,10 @@ canonical_detess_transport_shape_local(const MpkPluginIoContract& stage,
   if (!shape.empty() && shape.front() == 1 && shape.size() > 1U) {
     shape.erase(shape.begin());
   }
-  if (shape.size() < 3U) {
-    throw std::runtime_error("detess transport shape requires canonical frame geometry for '" +
-                             stage.name + "'");
+  // Rank-1/2 AFE tensors are canonical HWC address views with leading unit
+  // axes. This is shape normalization only; byte order and extent are kept.
+  while (shape.size() < 3U) {
+    shape.insert(shape.begin(), 1);
   }
 
   std::uint64_t batch = 1U;
@@ -6411,23 +6420,41 @@ const MpkPluginIoContract* get_stage_io_contract(const MpkContract& contract,
 }
 
 const MpkPluginIoContract* get_mla_stage_io_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* mla_stage = nullptr;
-  for (const auto& plugin : contract.plugins) {
-    const bool by_processor = lower_copy_local(plugin.processor) == "mla";
-    const bool by_kernel = canonical_token_local(plugin.kernel) == "mla";
-    if (!(by_processor || by_kernel)) {
+  const auto stages = get_mla_stage_io_contracts(contract);
+  return stages.size() == 1U ? stages.front() : nullptr;
+}
+
+const MpkPluginIoContract* get_first_mla_stage_io_contract(const MpkContract& contract) {
+  const auto stages = get_mla_stage_io_contracts(contract);
+  return stages.empty() ? nullptr : stages.front();
+}
+
+const MpkPluginIoContract* get_last_mla_stage_io_contract(const MpkContract& contract) {
+  const auto stages = get_mla_stage_io_contracts(contract);
+  return stages.empty() ? nullptr : stages.back();
+}
+
+std::vector<const MpkPluginIoContract*> get_mla_stage_io_contracts(const MpkContract& contract) {
+  std::vector<const MpkPluginIoContract*> stages;
+  for (const auto index : plugins_in_order_internal(contract)) {
+    if (index >= contract.plugins.size()) {
       continue;
     }
-    if (mla_stage != nullptr) {
-      return nullptr;
+    const auto& plugin = contract.plugins[index];
+    // The compiler-authored processor is the execution-engine authority.  Kernel
+    // and artifact names are implementation details and may legitimately contain
+    // "mla" for an A65 operation between MLA stages; inferring the engine from
+    // either would silently change the topology described by the contract.
+    if (lower_copy_local(plugin.processor) != "mla") {
+      continue;
     }
-    mla_stage = &plugin;
+    stages.push_back(&plugin);
   }
-  return mla_stage;
+  return stages;
 }
 
 const MpkPluginIoContract* get_mla_unpack_stage_io_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* mla = get_last_mla_stage_io_contract(contract);
   if (!mla) {
     return nullptr;
   }
@@ -6509,7 +6536,7 @@ const MpkPluginIoContract* get_mla_unpack_stage_io_contract(const MpkContract& c
 }
 
 bool mla_consumer_keeps_distinct_physical_inputs(const MpkContract& contract) {
-  const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* mla = get_first_mla_stage_io_contract(contract);
   if (!mla || mla->input_tensors.size() <= 1U) {
     return false;
   }
@@ -6638,7 +6665,7 @@ const MpkTensorContract* pick_stage_input_for_binding_local(const MpkPluginIoCon
 
 std::vector<MpkTensorContract>
 get_mla_boundary_physical_inputs_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* mla = get_first_mla_stage_io_contract(contract);
   if (!mla) {
     return {};
   }
@@ -6854,7 +6881,7 @@ get_mla_boundary_physical_inputs_contract(const MpkContract& contract) {
 
 std::vector<MpkTensorContract>
 get_mla_boundary_logical_inputs_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* mla = get_first_mla_stage_io_contract(contract);
   if (!mla) {
     return {};
   }
@@ -7143,7 +7170,7 @@ resolve_mla_boundary_tensor_views_local(const MpkContract& contract,
 }
 
 const std::vector<MpkTensorContract>* get_mla_input_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* stage = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* stage = get_first_mla_stage_io_contract(contract);
   if (!stage) {
     return nullptr;
   }
@@ -7151,7 +7178,7 @@ const std::vector<MpkTensorContract>* get_mla_input_contract(const MpkContract& 
 }
 
 const std::vector<MpkTensorContract>* get_mla_outputs_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* stage = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* stage = get_last_mla_stage_io_contract(contract);
   if (!stage) {
     return nullptr;
   }
@@ -7173,7 +7200,7 @@ get_mla_boundary_physical_outputs_contract(const MpkContract& contract) {
 std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContract& contract) {
   auto build_outputs = [&](const bool publish_transport_boundary_views) {
     std::vector<MpkTensorContract> out;
-    const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+    const MpkPluginIoContract* mla = get_last_mla_stage_io_contract(contract);
     if (!mla) {
       return out;
     }
@@ -7491,7 +7518,7 @@ std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContr
 std::vector<MpkTensorContract> get_mla_logical_outputs_contract(const MpkContract& contract) {
   auto build_outputs = [&](const bool publish_transport_boundary_views) {
     std::vector<MpkTensorContract> out;
-    const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+    const MpkPluginIoContract* mla = get_last_mla_stage_io_contract(contract);
     if (!mla) {
       return out;
     }

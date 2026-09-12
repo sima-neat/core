@@ -9,8 +9,10 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/SimaaiMemory.h"
+#include "simaai/neat/internal/dmabuf/DmaBuf.h"
 
 #include <gst/gst.h>
+#include <gst/allocators/gstdmabuf.h>
 
 #include <dlfcn.h>
 
@@ -28,6 +30,18 @@
 namespace simaai::neat::pipeline_internal {
 
 namespace {
+
+internal::dmabuf::CpuAccess dmabuf_cpu_access(MapMode mode) {
+  switch (mode) {
+  case MapMode::Read:
+    return internal::dmabuf::CpuAccess::Read;
+  case MapMode::Write:
+    return internal::dmabuf::CpuAccess::Write;
+  case MapMode::ReadWrite:
+    return internal::dmabuf::CpuAccess::ReadWrite;
+  }
+  return internal::dmabuf::CpuAccess::ReadWrite;
+}
 
 struct CompositeHolder {
   std::shared_ptr<void> primary;
@@ -350,9 +364,11 @@ simaai::neat::Mapping map_tensor_storage_raw(const simaai::neat::Tensor& tensor,
     return base;
   }
   simaai::neat::Mapping out = std::move(base);
-  if (!out.keepalive && tensor.storage) {
-    out.keepalive = std::static_pointer_cast<void>(tensor.storage);
-  }
+  // A custom mapper may retain the original GstSample, predating the public loan
+  // attached to this storage. Keep both guards: Mapping destruction invokes CPU END
+  // before releasing keepalive, including the current storage's producer/loan guard.
+  out.keepalive = std::make_shared<CompositeHolder>(
+      CompositeHolder{std::static_pointer_cast<void>(tensor.storage), std::move(out.keepalive)});
   if (tensor.byte_offset != 0) {
     out.data = static_cast<uint8_t*>(out.data) + tensor.byte_offset;
     if (out.size_bytes > static_cast<std::size_t>(tensor.byte_offset)) {
@@ -588,6 +604,53 @@ std::shared_ptr<void> make_sample_holder(GstSample* sample) {
   });
 }
 
+void set_dmabuf_map_function(const std::shared_ptr<Storage>& storage, guint memory_index) {
+  struct DmaBufMapState {
+    std::mutex mutex;
+    std::optional<internal::dmabuf::CpuMapping> mapping;
+  };
+  auto dma_state = std::make_shared<DmaBufMapState>();
+  auto dma_holder = storage->holder;
+  storage->map_fn = [dma_holder, dma_state, memory_index](MapMode mode) {
+    std::lock_guard<std::mutex> lock(dma_state->mutex);
+    if (dma_state->mapping.has_value()) {
+      return Mapping{};
+    }
+    auto* retained_sample = static_cast<GstSample*>(dma_holder.get());
+    GstBuffer* retained_buffer = retained_sample && GST_IS_SAMPLE(retained_sample)
+                                     ? gst_sample_get_buffer(retained_sample)
+                                     : nullptr;
+    if (!retained_buffer || memory_index >= gst_buffer_n_memory(retained_buffer)) {
+      return Mapping{};
+    }
+
+    internal::dmabuf::Error error;
+    auto view = internal::dmabuf::DmaBufView::fromGstMemory(
+        gst_buffer_peek_memory(retained_buffer, memory_index), &error);
+    if (!view) {
+      return Mapping{};
+    }
+    auto mapped = view->map(dmabuf_cpu_access(mode), &error);
+    if (!mapped) {
+      return Mapping{};
+    }
+    dma_state->mapping.emplace(std::move(*mapped));
+
+    Mapping result;
+    result.data = dma_state->mapping->data();
+    result.size_bytes = dma_state->mapping->size();
+    result.keepalive = dma_holder;
+    result.unmap = [dma_state]() {
+      std::lock_guard<std::mutex> lock(dma_state->mutex);
+      if (dma_state->mapping.has_value()) {
+        (void)dma_state->mapping->finish();
+        dma_state->mapping.reset();
+      }
+    };
+    return result;
+  };
+}
+
 std::shared_ptr<simaai::neat::Storage>
 make_gst_sample_memory_storage(GstSample* sample, guint memory_index, int route_memory_index,
                                std::shared_ptr<void> shared_holder = {},
@@ -615,6 +678,11 @@ make_gst_sample_memory_storage(GstSample* sample, guint memory_index, int route_
   storage->sima_mem_target_flags = mem_info.target_flags;
   storage->sima_mem_flags = mem_info.mem_flags;
   storage->sima_segments = extract_runtime_segments_from_buffer(buffer);
+
+  if (gst_is_dmabuf_memory(mem)) {
+    set_dmabuf_map_function(storage, memory_index);
+    return storage;
+  }
 
   std::size_t route_segment_index =
       find_runtime_segment_index(storage->sima_segments, route_segment_name);
@@ -786,6 +854,23 @@ make_gst_sample_storage_impl(GstSample* sample,
   storage->sima_segments = (cached_segments && !cached_segments->empty())
                                ? *cached_segments
                                : extract_runtime_segments_from_buffer(buffer);
+
+  /*
+   * Standard DMA-BUF memory is the shared codec/CVU/MLA/A65 transport.  Map it
+   * through the existing DmaBufView authority so the actual CPU access is
+   * bracketed by DMA_BUF_IOCTL_SYNC START/END.  A raw GstDmaBufAllocator mmap
+   * has no ownership transition and can return stale decoder pixels from a
+   * recycled pool slot.  Device-only consumers never invoke this map function
+   * and therefore pay no CPU synchronization cost.
+   */
+  if (gst_buffer_n_memory(buffer) == 1U) {
+    GstMemory* memory = gst_buffer_peek_memory(buffer, 0U);
+    if (memory && gst_is_dmabuf_memory(memory)) {
+      set_dmabuf_map_function(storage, 0U);
+      return storage;
+    }
+  }
+
   const std::uint64_t mem_flags = mem_info.mem_flags;
   const std::uint64_t target_flags = mem_info.target_flags;
   storage->map_fn = [holder, map_state, mem_flags, target_flags](simaai::neat::MapMode mode) {
@@ -1319,9 +1404,23 @@ simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& 
   }
 
   GstMapInfo map{};
-  ++g_gst_memory_map_calls;
-  if (!gst_memory_map(mem, &map, GST_MAP_READ)) {
-    throw std::runtime_error("copy_tensor_from_sample_memory: gst_memory_map failed");
+  Mapping dma_mapping;
+  const bool dmabuf = gst_is_dmabuf_memory(mem);
+  if (dmabuf) {
+    // Explicit Owned is a CPU read too: use the same START/END authority as a
+    // retained tensor view, not GstDmaBufAllocator's unsynchronized mmap.
+    auto source_storage = make_gst_sample_memory_storage(sample, index, index, ref.storage->holder);
+    dma_mapping = source_storage->map(MapMode::Read);
+    if (!dma_mapping.data) {
+      throw std::runtime_error("copy_tensor_from_sample_memory: DMA-BUF CPU mapping failed");
+    }
+    map.data = static_cast<guint8*>(dma_mapping.data);
+    map.size = dma_mapping.size_bytes;
+  } else {
+    ++g_gst_memory_map_calls;
+    if (!gst_memory_map(mem, &map, GST_MAP_READ)) {
+      throw std::runtime_error("copy_tensor_from_sample_memory: gst_memory_map failed");
+    }
   }
 
   auto storage = simaai::neat::make_cpu_owned_storage(map.size);
@@ -1331,7 +1430,9 @@ simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& 
   }
   ++g_tensor_copy_count;
   g_tensor_copy_bytes.fetch_add(static_cast<std::uint64_t>(map.size), std::memory_order_relaxed);
-  gst_memory_unmap(mem, &map);
+  if (!dmabuf) {
+    gst_memory_unmap(mem, &map);
+  }
 
   simaai::neat::Tensor out;
   out.storage = std::move(storage);

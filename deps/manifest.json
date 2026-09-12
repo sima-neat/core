@@ -1,9 +1,11 @@
 {
   "internals": {
-    "policy": "snap"
+    "branch": "codex/b1157-mlart-dmabuf",
+    "spec": "61c59afb4fee"
   },
   "llima": {
-    "policy": "snap"
+    "branch": "codex/b1157-mlart-dmabuf",
+    "spec": "7f79c2c3bdf0"
   },
   "sdk": {
     "channel": "develop"

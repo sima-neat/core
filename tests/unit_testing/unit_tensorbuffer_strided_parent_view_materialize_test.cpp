@@ -77,8 +77,11 @@ RUN_TEST("unit_tensorbuffer_strided_parent_view_materialize_test", ([] {
            require(view.tensors.size() == 1U, "publish view should expose one logical tensor");
            require(view.tensors.front().byte_offset == 0,
                    "strided parent view should preserve parent-relative byte offset");
-           require(view.tensors.front().physical_span_bytes == 16U,
-                   "strided parent view physical_span_bytes should include the trailing pad");
+           // The final byte in the 16-byte parent is carrier padding.  The
+           // declared {4,1} view addresses bytes [0,15), so its logical
+           // physical span is 15 bytes rather than the whole allocation.
+           require(view.tensors.front().physical_span_bytes == 15U,
+                   "strided parent view physical_span_bytes should match its addressed range");
 
            simaai::gst::TensorBufferContiguousSpanView span;
            err.clear();
@@ -86,8 +89,10 @@ RUN_TEST("unit_tensorbuffer_strided_parent_view_materialize_test", ([] {
                    std::string("failed to resolve strided span: ") + err);
            require(span.segment != nullptr && span.segment->name == "MLA_0",
                    "resolved strided span should stay bound to the raw parent segment");
-           require(span.physical_span_bytes == 16U,
-                   "resolved span physical_span_bytes should include the trailing pad");
+           require(span.physical_span_bytes == 15U,
+                   "resolved span should exclude unaddressed carrier padding");
+           require(view.segments.size() == 1U && view.segments.front().size_bytes == 16U,
+                   "the parent carrier extent should remain available independently");
 
            std::vector<std::uint8_t> materialized;
            err.clear();

@@ -288,6 +288,21 @@ preproc_output_info_from_manifest(const sima::SimaPluginStaticManifest& manifest
     return {};
   }
 
+  const auto carrier = std::find_if(
+      stage->physical_outputs.begin(), stage->physical_outputs.end(), [&](const auto& physical) {
+        return physical.physical_index == primary_logical->physical_index;
+      });
+  const int batch = std::max(1, stage->processcvu.batch_size);
+  if (carrier != stage->physical_outputs.end() && carrier->size_bytes > 0U &&
+      carrier->size_bytes % static_cast<std::uint64_t>(batch) == 0U) {
+    info.roi_slot_bytes = carrier->size_bytes / static_cast<std::uint64_t>(batch);
+  }
+  info.roi_member_shape = primary_logical->shape;
+  info.roi_member_strides_bytes = primary_logical->stride_bytes;
+  if (batch > 1 && info.roi_member_shape.size() == 4U && info.roi_member_shape.front() == batch) {
+    info.roi_member_shape.front() = 1;
+  }
+
   std::size_t primary_output_index = std::string::npos;
   for (std::size_t i = 0; i < stage->processcvu.default_output_names.size(); ++i) {
     if (stage->processcvu.default_output_names[i] == info.primary_output_name) {
@@ -305,15 +320,14 @@ preproc_output_info_from_manifest(const sima::SimaPluginStaticManifest& manifest
       info.semantic_kind = preproc_semantic_kind_from_manifest(
           stage->processcvu.runtime_output_semantic_kind_list[primary_output_index]);
     }
-    if (primary_output_index < stage->processcvu.runtime_output_logical_shapes.size()) {
-      const auto& shape = stage->processcvu.runtime_output_logical_shapes[primary_output_index];
-      info.logical_dims.height = shape.size() >= 1 ? shape[0] : 0;
-      info.logical_dims.width = shape.size() >= 2 ? shape[1] : 0;
-      info.logical_dims.depth = shape.size() >= 3 ? shape[2] : 0;
-    }
     if (primary_output_index < stage->processcvu.runtime_output_logical_layout_list.size()) {
       info.logical_layout = layout_projection_from_contract_format(
           stage->processcvu.runtime_output_logical_layout_list[primary_output_index]);
+    }
+    if (primary_output_index < stage->processcvu.runtime_output_logical_shapes.size()) {
+      const auto& shape = stage->processcvu.runtime_output_logical_shapes[primary_output_index];
+      info.logical_dims = tensor_dims_projection_from_contract_shape(
+          std::vector<std::int64_t>(shape.begin(), shape.end()), info.logical_layout);
     }
   }
 

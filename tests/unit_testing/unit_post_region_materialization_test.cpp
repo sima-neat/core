@@ -185,8 +185,15 @@ RUN_TEST(
         const auto& payload = compiled.stages.front().processcvu->payload;
         require(payload.graph_family == expected_graph_family,
                 "unexpected packed post graph family for " + model_path.filename().string());
-        require(payload.default_output_names.size() == 1U,
-                "packed post regression should preserve one transport output for " +
+        require(payload.default_output_names.size() ==
+                    static_cast<std::size_t>(expected_num_in_tensor),
+                "packed post regression should preserve every named output view for " +
+                    model_path.filename().string());
+        const auto& runtime = compiled.stages.front().processcvu->runtime_contract;
+        require(runtime.logical_outputs.size() ==
+                        static_cast<std::size_t>(expected_num_in_tensor) &&
+                    runtime.frame_arena_role == pipeline_internal::sima::FrameArenaRole::ReuseInput,
+                "packed post regression must retain all outputs in the imported frame arena for " +
                     model_path.filename().string());
         require(payload.num_in_tensor == expected_num_in_tensor,
                 "packed post regression should preserve semantic tensor count for " +
@@ -233,7 +240,8 @@ RUN_TEST(
                 "BF16 post group should preserve six output heads");
 
         const std::vector<std::vector<std::int64_t>> expected_shapes = {
-            {80, 80, 64}, {40, 40, 64}, {20, 20, 64}, {80, 80, 80}, {40, 40, 80}, {20, 20, 80},
+            {1, 80, 80, 64}, {1, 40, 40, 64}, {1, 20, 20, 64},
+            {1, 80, 80, 80}, {1, 40, 40, 80}, {1, 20, 20, 80},
         };
         for (std::size_t i = 0; i < expected_shapes.size(); ++i) {
           require(runtime->logical_outputs[i].shape == expected_shapes[i],
@@ -242,78 +250,61 @@ RUN_TEST(
         }
       }
 
-      const auto check_routed_input_addressing_matches_published =
-          [](const auto& runtime,
-             const std::vector<pipeline_internal::sima::MpkTensorContract>& published_inputs,
-             const std::string& label, const std::string& model_name) {
-            require(published_inputs.size() >= 6U,
-                    label + " expects six published upstream tensors for " + model_name);
-            require(runtime.logical_inputs.size() == 6U,
-                    label + " should expose six logical input views for " + model_name);
-            require(runtime.input_bindings.size() == 6U,
-                    label + " should expose six input bindings for " + model_name);
+      const auto check_routed_input_addressing_matches_mla = [](const auto& runtime,
+                                                                const ModelPack& pack,
+                                                                const std::string& label,
+                                                                const std::string& model_name) {
+        const auto infer_facts = pack.stage_facts_for_model_stage(ModelStage::MlaOnly);
+        const auto mla =
+            std::find_if(infer_facts.rbegin(), infer_facts.rend(),
+                         [](const auto& fact) { return fact.mla_compiled.has_value(); });
+        require(mla != infer_facts.rend(), label + " requires admitted MLA output facts");
+        const auto& upstream = mla->mla_compiled->runtime_contract;
+        require(upstream.logical_outputs.size() == 6U && runtime.logical_inputs.size() == 6U &&
+                    runtime.physical_inputs.size() == 6U && runtime.input_bindings.size() == 6U,
+                label + " must retain six exact MLA-to-CVU views for " + model_name);
+        require(runtime.frame_arena_role == pipeline_internal::sima::FrameArenaRole::ReuseInput &&
+                    runtime.frame_arena_size_bytes == upstream.frame_arena_size_bytes,
+                label + " must import the existing MLA frame arena for " + model_name);
 
-            std::vector<std::string> expected_physical_segments;
-            expected_physical_segments.reserve(6U);
-            for (std::size_t i = 0; i < 6U; ++i) {
-              const auto& published = published_inputs[i];
-              const std::string expected_segment =
-                  !published.segment_name.empty()
-                      ? published.segment_name
-                      : (!published.name.empty() ? published.name : std::string{});
-              require(!expected_segment.empty(),
-                      label + " requires an MPK-published source segment for " + model_name);
-              if (std::find(expected_physical_segments.begin(), expected_physical_segments.end(),
-                            expected_segment) == expected_physical_segments.end()) {
-                expected_physical_segments.push_back(expected_segment);
-              }
-            }
-
-            require(runtime.physical_inputs.size() == expected_physical_segments.size(),
-                    label + " should preserve MPK physical input cardinality for " + model_name);
-            for (std::size_t i = 0; i < expected_physical_segments.size(); ++i) {
-              require(runtime.physical_inputs[i].segment_name == expected_physical_segments[i],
-                      label + " should preserve MPK physical input segment order for " +
-                          model_name);
-            }
-
-            for (std::size_t i = 0; i < 6U; ++i) {
-              const auto& published = published_inputs[i];
-              const std::string expected_segment =
-                  !published.segment_name.empty()
-                      ? published.segment_name
-                      : (!published.name.empty() ? published.name : std::string{});
-              const auto physical_it =
-                  std::find(expected_physical_segments.begin(), expected_physical_segments.end(),
-                            expected_segment);
-              require(physical_it != expected_physical_segments.end(),
-                      label + " should have a matching local physical input for " + model_name);
-              const int expected_local_physical_index =
-                  static_cast<int>(std::distance(expected_physical_segments.begin(), physical_it));
-              const int expected_source_physical_index =
-                  published.source_physical_index >= 0 ? published.source_physical_index
-                  : published.physical_index >= 0      ? published.physical_index
-                                                       : expected_local_physical_index;
-              const std::int64_t expected_byte_offset = published.byte_offset;
-              const auto& logical = runtime.logical_inputs[i];
-              const auto& binding = runtime.input_bindings[i];
-              require(logical.segment_name == expected_segment,
-                      label + " logical input should preserve MPK source segment for " +
-                          model_name);
-              require(logical.physical_index == expected_local_physical_index,
-                      label + " logical input should target the local physical input for " +
-                          model_name);
-              require(logical.byte_offset == expected_byte_offset,
-                      label + " logical input should preserve MPK byte offset for " + model_name);
-              require(binding.source_segment_name == expected_segment,
-                      label + " binding should preserve MPK source segment for " + model_name);
-              require(binding.src_physical_output_index == expected_source_physical_index,
-                      label + " binding should preserve upstream physical output index for " +
-                          model_name);
-              require(binding.src_physical_byte_offset == expected_byte_offset,
-                      label + " binding should preserve routed MPK byte offset for " + model_name);
-            }
-          };
+        std::vector<std::int64_t> view_offsets;
+        for (std::size_t i = 0; i < 6U; ++i) {
+          const auto& published = upstream.logical_outputs[i];
+          require(published.physical_index >= 0 &&
+                      static_cast<std::size_t>(published.physical_index) <
+                          upstream.physical_outputs.size(),
+                  label + " MLA output must reference its physical carrier for " + model_name);
+          const auto& carrier = upstream.physical_outputs[published.physical_index];
+          const std::int64_t expected_offset = carrier.source_byte_offset + published.byte_offset;
+          view_offsets.push_back(expected_offset);
+          const auto& physical = runtime.physical_inputs[i];
+          const auto& logical = runtime.logical_inputs[i];
+          const auto& binding = runtime.input_bindings[i];
+          require(logical.logical_name == published.logical_name &&
+                      logical.shape == published.shape &&
+                      logical.size_bytes == published.size_bytes,
+                  label + " must preserve the exact upstream logical tensor for " + model_name);
+          require(logical.physical_index == static_cast<int>(i) && logical.byte_offset == 0 &&
+                      physical.physical_index == static_cast<int>(i) &&
+                      physical.source_byte_offset == expected_offset,
+                  label + " must preserve the independently composed MLA arena view offset for " +
+                      model_name);
+          require(!physical.segment_name.empty() && logical.segment_name == physical.segment_name &&
+                      binding.source_segment_name == physical.segment_name,
+                  label + " local descriptor and route must address the same view for " +
+                      model_name);
+          require(binding.local_logical_input_index == static_cast<int>(i) &&
+                      binding.sink_pad_index == 0 &&
+                      binding.src_physical_output_index == static_cast<int>(i) &&
+                      binding.src_physical_byte_offset == 0 &&
+                      binding.src_physical_size_bytes == physical.size_bytes,
+                  label + " must select each local view on the one arena input pad for " +
+                      model_name);
+        }
+        std::sort(view_offsets.begin(), view_offsets.end());
+        require(std::adjacent_find(view_offsets.begin(), view_offsets.end()) == view_offsets.end(),
+                label + " must retain six distinct arena view addresses for " + model_name);
+      };
 
       const auto check_routed_input_addressing = [&](const std::filesystem::path& model_path,
                                                      const std::string& expected_graph_family) {
@@ -350,9 +341,9 @@ RUN_TEST(
         require(stage.payload.graph_family == expected_graph_family,
                 "unexpected packed routed-input graph family for " +
                     model_path.filename().string());
-        check_routed_input_addressing_matches_published(stage.runtime_contract, published_inputs,
-                                                        "routed-input regression",
-                                                        model_path.filename().string());
+        check_routed_input_addressing_matches_mla(stage.runtime_contract, pack,
+                                                  "routed-input regression",
+                                                  model_path.filename().string());
       };
 
       check_routed_input_addressing(int8_mlatess_model_path(), "dequantize");
@@ -387,30 +378,9 @@ RUN_TEST(
                 "INT8 EV74 detessdequant stage should preserve six logical inputs");
         require(detess_stage.runtime_contract.input_bindings.size() == 6U,
                 "INT8 EV74 detessdequant stage should preserve six input bindings");
-        for (std::size_t i = 0; i < 6U; ++i) {
-          const auto& published = published_inputs[i];
-          const std::string expected_segment =
-              !published.segment_name.empty()
-                  ? published.segment_name
-                  : (!published.name.empty() ? published.name : std::string{});
-          const int expected_physical_index =
-              published.source_physical_index >= 0 ? published.source_physical_index
-              : published.physical_index >= 0      ? published.physical_index
-                                                   : static_cast<int>(i);
-          const std::int64_t expected_byte_offset = published.byte_offset;
-          const auto& logical = detess_stage.runtime_contract.logical_inputs[i];
-          const auto& binding = detess_stage.runtime_contract.input_bindings[i];
-          require(logical.segment_name == expected_segment,
-                  "INT8 EV74 detessdequant stage should preserve upstream child segment routing");
-          require(logical.byte_offset == expected_byte_offset,
-                  "INT8 EV74 detessdequant stage should preserve segment-relative byte offsets");
-          require(binding.source_segment_name == expected_segment,
-                  "INT8 EV74 detessdequant stage should preserve child source segment routing");
-          require(binding.src_physical_output_index == expected_physical_index,
-                  "INT8 EV74 detessdequant stage should preserve upstream physical output index");
-          require(binding.src_physical_byte_offset == expected_byte_offset,
-                  "INT8 EV74 detessdequant stage should preserve routed binding byte offsets");
-        }
+        check_routed_input_addressing_matches_mla(detess_stage.runtime_contract, pack,
+                                                  "INT8 EV74 detessdequant",
+                                                  int8_model_path().filename().string());
       }
 
       const auto check_model_managed_dequant_routed_input_addressing = [&](const std::filesystem::
@@ -455,9 +425,9 @@ RUN_TEST(
         require(dequant_stage_fact->processcvu_contract->payload.graph_family == "dequantize",
                 "model-managed dequant regression expects dequantize processcvu family for " +
                     model_path.filename().string());
-        check_routed_input_addressing_matches_published(
-            dequant_stage_fact->processcvu_contract->runtime_contract, published_inputs,
-            "stage fact", model_path.filename().string());
+        check_routed_input_addressing_matches_mla(
+            dequant_stage_fact->processcvu_contract->runtime_contract, pack, "stage fact",
+            model_path.filename().string());
 
         const auto post = ModelAccess::build_postprocess_nodes(model, false);
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
@@ -477,9 +447,9 @@ RUN_TEST(
             "model-managed dequant regression expects compiled dequantize processcvu family for " +
                 model_path.filename().string());
 
-        check_routed_input_addressing_matches_published(
-            compiled.stages.front().processcvu->runtime_contract, published_inputs,
-            "compiled stage", model_path.filename().string());
+        check_routed_input_addressing_matches_mla(
+            compiled.stages.front().processcvu->runtime_contract, pack, "compiled stage",
+            model_path.filename().string());
       };
 
       check_model_managed_dequant_routed_input_addressing(int8_mlatess_model_path());

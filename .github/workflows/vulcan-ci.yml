@@ -99,6 +99,8 @@ jobs:
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
+            tests/tools/test_b1157_integration_safety.py \
+            tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
             tests/tools/test_vulcan_ci_notification.py
@@ -233,8 +235,7 @@ jobs:
       capacity: ${{ needs.resolve-vulcan-config.outputs.capacity }}
       fetch_depth: 0
       checkout_submodules: recursive
-      ensure_sdk_container: true
-      sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight"
+      ensure_sdk_container: false
       artifact_name: neat-core-dist
       artifact_path: dist/*
       artifact_retention_days: 3
@@ -245,6 +246,22 @@ jobs:
       compiler_cache_seed_key_prefix: ${{ needs.resolve-compiler-cache.outputs.seed_key_prefix }}
       compiler_cache_role_arn: ${{ needs.resolve-compiler-cache.outputs.role_arn }}
       compiler_cache_rw_mode: ${{ needs.resolve-compiler-cache.outputs.rw_mode }}
+      pre_build_command: |
+        set -euo pipefail
+
+        mapfile -t sdk_images < <(
+          docker images --format '{{.Repository}}:{{.Tag}}' |
+            awk '/^ghcr[.]io\/sima-neat\/sdk/ && $0 !~ /:<none>$/ { print }'
+        )
+        if [[ "${#sdk_images[@]}" -ne 1 ]]; then
+          printf 'Expected exactly one tagged SDK image; found %d:\n' "${#sdk_images[@]}" >&2
+          printf '  %s\n' "${sdk_images[@]}" >&2
+          exit 1
+        fi
+        /mnt/vulcan/bin/sima-cli sdk setup -y -n --minimal \
+          --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight \
+          --image "${sdk_images[0]}"
+
       build_command: |
         set -euo pipefail
 
@@ -937,6 +954,7 @@ jobs:
       - name: Install test runtime from Vulcan artifact
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          NEAT_INSTALLER_B1157_MAINTENANCE: confirmed
         run: |
           if ! command -v sima-cli >/dev/null 2>&1; then
             echo "sima-cli not found on test runner." >&2
@@ -1544,7 +1562,15 @@ jobs:
           set -euo pipefail
           ./scripts/ci/pciehost/preflight.sh
 
+      - name: Check PCIe card platform compatibility
+        id: check_pcie_card_compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/check_card_compatibility.sh
+
       - name: Install PCIe host package from Vulcan artifact
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: install_pciehost_package
         shell: bash
         run: |
@@ -1552,18 +1578,21 @@ jobs:
           ./scripts/ci/pciehost/install_host_package.sh
 
       - name: Install PCIe host test dependencies
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/install_host_test_deps.sh
 
       - name: Cleanup PCIe queues before card install
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/cleanup_queue.sh
 
       - name: Install Neat runtime on PCIe card
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: install_pcie_card_runtime
         shell: bash
         run: |
@@ -1571,6 +1600,7 @@ jobs:
           ./scripts/ci/pciehost/install_card_runtime.sh
 
       - name: Extract PCIe host extras
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: extract_pciehost_extras
         shell: bash
         run: |
@@ -1578,6 +1608,7 @@ jobs:
           ./scripts/ci/pciehost/extract_extras.sh
 
       - name: Resolve PCIe hardware test assets
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: resolve_pciehost_assets
         shell: bash
         run: |
@@ -1585,6 +1616,7 @@ jobs:
           ./scripts/ci/pciehost/resolve_assets.sh
 
       - name: Verify PCIe card runtime
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: verify_pcie_card_runtime
         shell: bash
         run: |
@@ -1592,12 +1624,14 @@ jobs:
           ./scripts/ci/pciehost/verify_card_runtime.sh
 
       - name: Cleanup PCIe queues before C++ tests
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/cleanup_queue.sh
 
       - name: Run PCIe host C++ CTest suite
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
