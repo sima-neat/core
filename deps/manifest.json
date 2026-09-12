@@ -1,11 +1,11 @@
 {
   "internals": {
     "branch": "codex/b1157-mlart-dmabuf",
-    "spec": "latest"
+    "spec": "61c59afb4fee"
   },
   "llima": {
     "branch": "codex/b1157-mlart-dmabuf",
-    "spec": "f3ee6ab701f4"
+    "spec": "7f79c2c3bdf0"
   },
   "sdk": {
     "channel": "develop"

@@ -1181,7 +1181,7 @@ check_b1157_install_maintenance() {
     for command in systemctl pgrep fuser; do
       command -v "$command" >/dev/null || { echo "Missing maintenance check: $command" >&2; exit 1; }
     done
-    # appcomplex initializes MLA at boot on the B1297 platform image, and rctd
+    # appcomplex initializes MLA at boot on the Modalix 3 platform image, and rctd
     # provides platform trace collection. Neither is a NEAT runtime owner.
     for unit in simaai-pipeline-manager.service encoder.service decoder.service; do
       state=$(systemctl is-active "$unit" 2>/dev/null || true)

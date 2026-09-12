@@ -335,8 +335,8 @@ ensure_neat_llima
         )
         self.assertEqual(calls, [])
 
-        daily_receipt = "3.0.0~git202609110138.6a3d895-1297"
-        old_daily_receipt = "3.0.0~git202609100138.16bca40-1247"
+        daily_receipt = "3.0.0~git202601020304.abcdef0-9999"
+        old_daily_receipt = "3.0.0~git202601010203.1234567-9998"
         result, calls = run_sync(
             {"sysroot-version": daily_receipt},
             "3.0.0",

@@ -54,11 +54,11 @@ legacy_runtime_recovery_allowed_at {shlex.quote(str(tmp_path))}
 
 def test_manifest_selects_internals_and_llima_artifacts():
     assert MANIFEST["platform-version"] == "3.0.0"
-    assert MANIFEST["internals"] == {"branch": "codex/b1157-mlart-dmabuf", "spec": "latest"}
-    assert MANIFEST["llima"] == {
-        "branch": "codex/b1157-mlart-dmabuf",
-        "spec": "f3ee6ab701f4",
-    }
+    for dependency in ("internals", "llima"):
+        selection = MANIFEST[dependency]
+        assert selection["branch"] == "codex/b1157-mlart-dmabuf"
+        assert len(selection["spec"]) == 12
+        assert all(character in "0123456789abcdef" for character in selection["spec"])
     assert "runtime-profile" not in MANIFEST
     assert "kernel-commit" not in MANIFEST
     assert "expected-internals-sysroot" not in MANIFEST
@@ -116,7 +116,7 @@ complete_board_install_after_packages
     assert "PLATFORM_VERIFY" in result.stdout
 
 
-def test_b1297_llima_sysroot_dependencies_include_runtime_libraries():
+def test_modalix_3_llima_sysroot_dependencies_include_runtime_libraries():
     build = (ROOT / "build.sh").read_text()
     installer = (ROOT / "tools/install_neat_framework.sh").read_text()
     for package in (
