@@ -235,8 +235,7 @@ jobs:
       capacity: ${{ needs.resolve-vulcan-config.outputs.capacity }}
       fetch_depth: 0
       checkout_submodules: recursive
-      ensure_sdk_container: true
-      sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight --image latest"
+      ensure_sdk_container: false
       artifact_name: neat-core-dist
       artifact_path: dist/*
       artifact_retention_days: 3
@@ -247,6 +246,22 @@ jobs:
       compiler_cache_seed_key_prefix: ${{ needs.resolve-compiler-cache.outputs.seed_key_prefix }}
       compiler_cache_role_arn: ${{ needs.resolve-compiler-cache.outputs.role_arn }}
       compiler_cache_rw_mode: ${{ needs.resolve-compiler-cache.outputs.rw_mode }}
+      pre_build_command: |
+        set -euo pipefail
+
+        mapfile -t sdk_images < <(
+          docker images --format '{{.Repository}}:{{.Tag}}' |
+            awk '/^ghcr[.]io\/sima-neat\/sdk/ && $0 !~ /:<none>$/ { print }'
+        )
+        if [[ "${#sdk_images[@]}" -ne 1 ]]; then
+          printf 'Expected exactly one tagged SDK image; found %d:\n' "${#sdk_images[@]}" >&2
+          printf '  %s\n' "${sdk_images[@]}" >&2
+          exit 1
+        fi
+        /mnt/vulcan/bin/sima-cli sdk setup -y -n --minimal \
+          --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight \
+          --image "${sdk_images[0]}"
+
       build_command: |
         set -euo pipefail
 
