@@ -34,6 +34,7 @@ def run_sync(
     enabled: str = "ON",
     update_status: int = 0,
     sdk_platform_version: str | None = "2.1.3",
+    sdk_platform_channel: str = "release",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -51,7 +52,9 @@ def run_sync(
         sdk_release = root / "sdk-release"
         if sdk_platform_version is not None:
             sdk_release.write_text(
-                f"Platform Version = {sdk_platform_version}\n", encoding="utf-8"
+                f"Platform Version = {sdk_platform_version}\n"
+                f"Platform Channel = {sdk_platform_channel}\n",
+                encoding="utf-8",
             )
         log = root / "sysroot.log"
         script = f"""
@@ -60,6 +63,11 @@ id() {{ echo 0; }}
 sysroot() {{
   printf '%s\n' "$*" >> {shlex.quote(str(log))}
   [[ "$1" != update ]] || return {update_status}
+}}
+install() {{ printf 'install %s\n' "$*" >> {shlex.quote(str(log))}; }}
+function setup-sdk-sysroot.sh {{
+  printf 'setup-sdk-sysroot %s\n' "$*" >> {shlex.quote(str(log))}
+  return {update_status}
 }}
 {shell_function("run_privileged")}
 {shell_function("sync_sysroot_from_internals_manifest")}
@@ -317,6 +325,24 @@ ensure_neat_llima
         self.assertEqual(calls, [])
 
         daily_receipt = "3.0.0~git202609110138.6a3d895-1297"
+        old_daily_receipt = "3.0.0~git202609100138.16bca40-1247"
+        result, calls = run_sync(
+            {"sysroot-version": daily_receipt},
+            "3.0.0",
+            sdk_platform_version=old_daily_receipt,
+            sdk_platform_channel="daily",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(calls), 2)
+        self.assertRegex(
+            calls[0],
+            r"^install -m 0644 /tmp/sima-neat-sdk-version[.]"
+            r"[^ ]+ /etc/apt/preferences[.]d/simaai-sdk-version[.]pref$",
+        )
+        self.assertTrue(
+            calls[1].startswith(f"setup-sdk-sysroot {daily_receipt} "), calls[1]
+        )
+
         result, calls = run_sync(
             {"sysroot-version": daily_receipt},
             "3.0.0",

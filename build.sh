@@ -1453,6 +1453,33 @@ print(receipt)
     's/^Platform Version[[:space:]]*=[[:space:]]*([^[:space:]]+).*$/\1/p' \
     "${ELXR_SDK_RELEASE_FILE}" 2>/dev/null | head -n1 || true)"
   if [[ "${sdk_platform_version}" != "${receipt}" ]]; then
+    local sdk_platform_channel
+    sdk_platform_channel="$(sed -nE \
+      's/^Platform Channel[[:space:]]*=[[:space:]]*([^[:space:]]+).*$/\1/p' \
+      "${ELXR_SDK_RELEASE_FILE}" 2>/dev/null | head -n1 || true)"
+    if [[ "${receipt}" == *"~git"* && "${sdk_platform_channel}" == "daily" ]]; then
+      local pin_file
+      pin_file="$(mktemp /tmp/sima-neat-sdk-version.XXXXXX)"
+      cat > "${pin_file}" <<EOF
+Package: simaai-palette-modalix
+Pin: version ${receipt}
+Pin-Priority: 1001
+
+Package: simaai-palette-modalix
+Pin: version *
+Pin-Priority: -1
+EOF
+      run_privileged install -m 0644 "${pin_file}" \
+        /etc/apt/preferences.d/simaai-sdk-version.pref
+      rm -f "${pin_file}"
+      echo "Refreshing daily SDK sysroot from ${sdk_platform_version:-unknown} to ${receipt}."
+      if ! SDK_APT_CHANNEL=daily run_privileged setup-sdk-sysroot.sh \
+        "${receipt}" "${SDK_PKG_LIST:-}"; then
+        echo "ERROR: Failed to refresh daily SDK sysroot to ${receipt}." >&2
+        exit 1
+      fi
+      return 0
+    fi
     echo "ERROR: SDK platform ${sdk_platform_version:-unknown} does not match required platform ${receipt}." >&2
     exit 1
   fi
