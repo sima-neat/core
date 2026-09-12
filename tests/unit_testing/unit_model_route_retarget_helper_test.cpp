@@ -160,7 +160,7 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
 
            auto asserted_boxdecode = nodes::SimaBoxDecode(
                *effective, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "retarget_boxdecode",
-               std::nullopt, std::nullopt, 1920, 1080, 0, 0, ResizeMode::Stretch);
+               std::nullopt, std::nullopt, 1920, 1080, 640, 640, ResizeMode::Stretch);
            const auto* asserted_before =
                dynamic_cast<const SimaBoxDecode*>(asserted_boxdecode.get());
            require(asserted_before != nullptr && asserted_before->backend_fragment(0).find(
@@ -171,6 +171,11 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
            require(asserted_after != nullptr && asserted_after->backend_fragment(0).find(
                                                     "resize-mode=stretch") != std::string::npos,
                    "model retarget must preserve an explicit resize assertion");
+           require(asserted_after->backend_fragment(0).find("model-width=640") !=
+                       std::string::npos &&
+                       asserted_after->backend_fragment(0).find("model-height=640") !=
+                           std::string::npos,
+                   "model retarget must preserve explicit model dimensions");
 
            // Cover the route that exposed the product bug: the Model already selected BoxDecode,
            // so no post-kind retarget was needed, but its infer fragment still rendered the MPK

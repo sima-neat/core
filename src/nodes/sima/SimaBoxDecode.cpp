@@ -1271,7 +1271,7 @@ std::shared_ptr<Node> SimaBoxDecode::retargeted_for_model_internal(const Model& 
   return std::make_shared<SimaBoxDecode>(
       model, opt_->decode_type, opt_->detection_threshold, opt_->nms_iou_threshold, opt_->top_k,
       opt_->element_name, route_tess_needed, route_quant_needed, opt_->original_width,
-      opt_->original_height, /*model_width=*/0, /*model_height=*/0, opt_->resize_mode_override,
+      opt_->original_height, opt_->model_width, opt_->model_height, opt_->resize_mode_override,
       opt_->decode_type_option);
 }
 

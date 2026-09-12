@@ -124,7 +124,10 @@ sc::ModelExecutionPlan make_frontend_plan() {
                          sc::StorageAccess::ReadWrite, std::nullopt};
   data.values[4].storage_binding = sc::StorageBinding{
       sc::StorageBindingKind::Root, 4U, 0U, 192U, {}, sc::StorageAccess::ReadWrite, std::nullopt};
-  data.model_inputs = {0U, 1U};
+  // Public ingress order deliberately differs from the EV74/MLA branch order.
+  // The application packs image_1 before image_0, while the command cohort
+  // retains quantize_0 before quantize_1.
+  data.model_inputs = {1U, 0U};
 
   sc::OpSpec quantize_0;
   quantize_0.id = 0U;
@@ -1684,10 +1687,29 @@ RUN_TEST(
                     fused_contract->payload.input_tensors.size() == fused_case.members &&
                     fused_contract->payload.output_tensors.size() == fused_case.members &&
                     fused_contract->runtime_contract.physical_inputs.size() ==
-                        fused_case.members &&
+                        (fused_case.members > 1U ? 1U : fused_case.members) &&
                     fused_contract->runtime_contract.physical_outputs.size() ==
                         fused_case.members,
-                "fused command must publish exactly one outer input/output per member");
+                "fused command must publish one packed public ingress and one output per member");
+        if (fused_case.members > 1U) {
+          require(fused_contract->runtime_contract.physical_inputs.front().segment_name ==
+                          "input_tensor" &&
+                      fused_contract->runtime_contract.frame_arena_role ==
+                          sima::FrameArenaRole::Allocate &&
+                      !fused_contract->runtime_contract.consumer_keeps_distinct_physical_inputs,
+                  "grouped fused ingress must allocate its output arena separately from the "
+                  "packed public input");
+          for (std::size_t member = 0; member < fused_case.members; ++member) {
+            const auto& logical =
+                fused_contract->runtime_contract.logical_inputs[member];
+            const auto& binding =
+                fused_contract->runtime_contract.input_bindings[member];
+            require(logical.physical_index == 0 && binding.sink_pad_index == 0 &&
+                        binding.src_physical_output_index == 0 &&
+                        logical.byte_offset == binding.src_physical_byte_offset,
+                    "grouped fused ingress member must retain its packed-parent byte view");
+          }
+        }
         if (fused_case.members == 1U) {
           require(fused_contract->payload.default_output_names.size() == 1U &&
                       fused_contract->payload.default_output_names.front() == "output_0" &&
@@ -1965,21 +1987,25 @@ RUN_TEST(
       const auto* grouped_region_0 = frontend_arena->region(2U);
       const auto* grouped_region_1 = frontend_arena->region(3U);
       require(grouped_quant.graph_id == 222 && grouped_quant.maximum_members == 32U &&
-                  grouped_runtime.physical_inputs.size() == 2U &&
+                  grouped_runtime.physical_inputs.size() == 1U &&
                   grouped_runtime.physical_outputs.size() == 2U && grouped_region_0 &&
                   grouped_region_1 &&
                   grouped_runtime.physical_inputs[0].physical_index == 0 &&
-                  grouped_runtime.physical_inputs[1].physical_index == 1 &&
                   grouped_runtime.physical_inputs[0].source_physical_index == 0 &&
-                  grouped_runtime.physical_inputs[1].source_physical_index == 1 &&
-                  grouped_runtime.physical_inputs[0].size_bytes == 100U &&
-                  grouped_runtime.physical_inputs[1].size_bytes == 200U &&
+                  grouped_runtime.physical_inputs[0].size_bytes == 300U &&
+                  grouped_runtime.physical_inputs[0].segment_name == "input_tensor" &&
                   grouped_runtime.logical_inputs[0].physical_index == 0 &&
-                  grouped_runtime.logical_inputs[1].physical_index == 1 &&
+                  grouped_runtime.logical_inputs[1].physical_index == 0 &&
+                  grouped_runtime.logical_inputs[0].byte_offset == 200 &&
+                  grouped_runtime.logical_inputs[1].byte_offset == 0 &&
                   grouped_runtime.input_bindings[0].sink_pad_index == 0 &&
-                  grouped_runtime.input_bindings[1].sink_pad_index == 1 &&
+                  grouped_runtime.input_bindings[1].sink_pad_index == 0 &&
                   grouped_runtime.input_bindings[0].src_physical_output_index == 0 &&
-                  grouped_runtime.input_bindings[1].src_physical_output_index == 1 &&
+                  grouped_runtime.input_bindings[1].src_physical_output_index == 0 &&
+                  grouped_runtime.input_bindings[0].src_physical_byte_offset == 200 &&
+                  grouped_runtime.input_bindings[1].src_physical_byte_offset == 0 &&
+                  grouped_runtime.input_bindings[0].src_physical_size_bytes == 100U &&
+                  grouped_runtime.input_bindings[1].src_physical_size_bytes == 200U &&
                   grouped_runtime.physical_outputs[0].source_byte_offset ==
                       static_cast<std::int64_t>(grouped_region_0->byte_offset) &&
                   grouped_runtime.physical_outputs[1].source_byte_offset ==
@@ -1987,9 +2013,9 @@ RUN_TEST(
                   grouped_runtime.logical_outputs[0].byte_offset == 0 &&
                   grouped_runtime.logical_outputs[1].byte_offset == 0 &&
                   grouped_runtime.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  grouped_runtime.consumer_keeps_distinct_physical_inputs,
-              "grouped quantize must retain two public carrier pads and write two absolute arena "
-              "regions");
+                  !grouped_runtime.consumer_keeps_distinct_physical_inputs,
+              "grouped quantize must read one public-order packed carrier and write two absolute "
+              "arena regions");
 
       auto heterogeneous_payload = grouped_quant;
       auto heterogeneous_runtime = grouped_runtime;

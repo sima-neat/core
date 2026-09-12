@@ -728,7 +728,11 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
 }
 
 void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const std::string& path) {
-  if (!op.input_shapes.empty()) {
+  // Pack and Unpack describe their physical carriers with input_shapes. Their
+  // component values retain the semantic shapes established by surrounding
+  // transforms (for example, Tessellate keeps N/H/W/C while Pack names the
+  // flattened byte carrier).
+  if (!op.input_shapes.empty() && op.kind != OpKind::Pack && op.kind != OpKind::Unpack) {
     if (op.input_shapes.size() != op.inputs.size()) {
       reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.input_shapes",

@@ -579,6 +579,7 @@ inline void emit_codec_metrics_json(const CodecPerfConfig& config, int iteration
 inline int run_codec_decode_perf(const CodecPerfConfig& config,
                                  const std::vector<EncodedFrame>& frames) {
   try {
+    sima_perf::ScopedStdoutToStderr progress_output;
     simaai::neat::gst_init_once();
     const int iterations = sima_perf::env_int("SIMA_PERF_ITERS", 1000);
     const int warmup_iterations = sima_perf::env_int("SIMA_PERF_CODEC_WARMUP_ITERS", 200, 0);
@@ -619,6 +620,7 @@ inline int run_codec_decode_perf(const CodecPerfConfig& config,
       metrics.output_drop_count += latency->report.counters.outputs_dropped;
     }
 
+    progress_output.restore();
     emit_codec_metrics_json(config, iterations, metrics, throughput.report,
                             latency.has_value() ? &latency->report : nullptr);
     return 0;

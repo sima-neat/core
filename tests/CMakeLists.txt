@@ -2507,6 +2507,17 @@ install(
     PATTERN "*.py"
 )
 
+# The installed performance runner resolves its baseline profile relative to
+# the prebuilt test directory. Keep that profile with the test executables so
+# the extras archive can run the same strict matrix as the build tree.
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/perf/baselines/
+  DESTINATION lib/sima-neat/tests/perf/baselines
+  COMPONENT extras
+  FILES_MATCHING
+    PATTERN "*.json"
+)
+
 # Install the generated CTest manifests and any nested installed-test metadata
 # from the build tree. CI installs the extras tarball, then discovers tests by
 # finding lib/sima-neat/tests/CTestTestfile.cmake under the extracted prefix.
