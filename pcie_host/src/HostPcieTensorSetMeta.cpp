@@ -112,7 +112,8 @@ MappedSample::~MappedSample() {
 }
 
 void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>& spans,
-                            const std::vector<PcieTensorFact>& input_facts) {
+                            const std::vector<PcieTensorFact>& input_facts,
+                            const PcieTensorFact* packed_input) {
   if (!buffer || spans.empty()) {
     throw std::runtime_error("tensor-set metadata requires a buffer and at least one tensor");
   }
@@ -188,6 +189,38 @@ void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>
       desc.stride_bytes[d] = strides[d];
     }
     descriptors.push_back(desc);
+  }
+
+  if (packed_input != nullptr) {
+    if (packed_input->shape.size() > SIMA_TENSOR_SET_MAX_RANK) {
+      throw std::runtime_error("tensor-set metadata supports tensor ranks up to " +
+                               std::to_string(SIMA_TENSOR_SET_MAX_RANK));
+    }
+    SimaTensorDescriptorV2 packed = descriptors.front();
+    packed.logical_index = 0;
+    packed.physical_index = 0;
+    packed.route_slot = 0;
+    packed.memory_index = 0;
+    packed.logical_name_id = 0;
+    packed.backend_name_id = 0;
+    packed.segment_name_id = 0;
+    packed.byte_offset = 0;
+    packed.size_bytes = static_cast<gint64>(packed_input->size_bytes);
+    packed.rank = static_cast<guint>(packed_input->shape.size());
+    std::int64_t stride =
+        static_cast<std::int64_t>(tensor_dtype_bytes(spans.front().tensor->dtype));
+    for (guint d = 0; d < SIMA_TENSOR_SET_MAX_RANK; ++d) {
+      packed.shape[d] = 0;
+      packed.stride_bytes[d] = 0;
+    }
+    for (guint d = packed.rank; d-- > 0;) {
+      packed.shape[d] = packed_input->shape[d];
+      packed.stride_bytes[d] = stride;
+      stride *= packed_input->shape[d];
+    }
+    names.resize(1U);
+    names[0] = packed_input->name;
+    descriptors.assign(1U, packed);
   }
 
   std::vector<gchar*> name_table;

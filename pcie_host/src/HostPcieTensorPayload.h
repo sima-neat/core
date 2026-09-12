@@ -29,6 +29,10 @@ struct PreparedPayload {
 std::size_t tensor_dtype_bytes(TensorDType dtype);
 std::vector<std::int64_t> contiguous_tensor_strides(const std::vector<std::int64_t>& shape,
                                                     std::size_t elem_size);
+bool copy_dense_rows(const std::uint8_t* src, std::size_t src_size,
+                     const std::vector<std::int64_t>& shape,
+                     const std::vector<std::int64_t>& strides, std::size_t elem_size,
+                     std::size_t dim, std::uint8_t** dst);
 PreparedPayload prepare_tensor_payload(const TensorList& tensors);
 
 } // namespace simaai::neat::pcie::internal

@@ -534,6 +534,55 @@ def test_tensor_parallel_queues_yolov8():
   assert completed == sorted(queues)
 
 
+def test_tensor_run_mla_only():
+  model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
+  options = pcie.ModelOptions()
+  options.mla_only = True
+  try:
+    pcie.Model(str(model), options).info()
+  except (RuntimeError, ValueError) as error:
+    wrong_build = ("does not support stage", "hybrid host/card quantization", "must be INT8")
+    if not any(reason in str(error) for reason in wrong_build):
+      raise
+    pytest.skip(f"{model.name} is not an MLA-only capable build: {error}")
+
+  sync_iterations = _sync_iterations()
+  async_iterations = _test_iterations()
+
+  runtime = None
+  try:
+    runtime = pcie.Model(str(model), options, _connection())
+    runtime.build(_readiness_timeout_ms())
+    info = runtime.info()
+    assert info.inputs[0].dtype == "INT8"
+    assert all(spec.dtype == "INT8" and spec.quant is not None for spec in info.outputs)
+    inputs = _make_inputs(info)
+    first_outputs = []
+
+    def push_once():
+      assert runtime.push(inputs)
+
+    def pull_once():
+      outputs = runtime.pull(_pull_timeout_ms())
+      assert outputs is not None
+      _assert_outputs_match_metadata(outputs, info.outputs)
+      arrays = [output.to_numpy() for output in outputs]
+      for array, spec in zip(arrays, info.outputs):
+        assert array.dtype == np.int8
+        assert array.flags.c_contiguous
+        assert list(array.shape) == spec.shape
+      if not first_outputs:
+        first_outputs.extend(arrays)
+      else:
+        assert all(np.array_equal(a, b) for a, b in zip(first_outputs, arrays))
+
+    _run_sync_push_pull(push_once, pull_once, sync_iterations)
+    _run_async_push_pull(push_once, pull_once, async_iterations, runtime.close)
+  finally:
+    if runtime is not None:
+      runtime.close()
+
+
 def test_image_run_yolov8():
   model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
   image_path = _require_file_env("SIMAPCIE_TEST_IMAGE")

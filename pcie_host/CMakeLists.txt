@@ -34,6 +34,8 @@ set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")
 set(SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR "" CACHE PATH
   "Include directory supplied by the neatpciehost artifact/package")
+set(SIMAPCIE_NEATPCIEHOST_LIBSIMAAIPCIE "" CACHE FILEPATH
+  "Optional libsimaaipcie.so bundled with the neatpciehost artifact")
 
 if (DEFINED COPROC_BUILD_TESTS)
   set(SIMAPCIE_BUILD_TESTS "${COPROC_BUILD_TESTS}")
@@ -74,6 +76,7 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunner.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/model/ModelArchiveLoader.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MpkContract.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/RouteGraph.cpp
 )
 
 add_library(sima_neat_pcie_host STATIC
@@ -175,6 +178,16 @@ if (SIMAPCIE_NEATPCIEHOST_PLUGIN)
     DESTINATION "${SIMAPCIE_HOST_PLUGIN_PRIVATE_DIR}"
     COMPONENT Runtime
   )
+
+  # The plugin resolves libsimaaipcie.so through an $ORIGIN RUNPATH, so a bundled
+  # copy has to land in the same private directory. Artifacts without one keep
+  # using the system library.
+  if (SIMAPCIE_NEATPCIEHOST_LIBSIMAAIPCIE)
+    install(FILES "${SIMAPCIE_NEATPCIEHOST_LIBSIMAAIPCIE}"
+      DESTINATION "${SIMAPCIE_HOST_PLUGIN_PRIVATE_DIR}"
+      COMPONENT Runtime
+    )
+  endif()
 
   install(CODE "
     file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${SIMAPCIE_GSTREAMER_PLUGIN_DIR}\")

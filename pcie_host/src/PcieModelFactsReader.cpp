@@ -2,6 +2,8 @@
 #include "PcieModelFactsReaderInternal.h"
 
 #include "model/internal/ModelArchiveLoader.h"
+#include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/sima/RouteGraph.h"
 
 #include <algorithm>
 #include <cctype>
@@ -111,6 +113,9 @@ convert_tensor(const simaai::neat::pipeline_internal::sima::MpkTensorContract& t
   out.tensor_index = tensor.tensor_index;
   out.physical_index = tensor.physical_index;
   out.byte_offset = tensor.byte_offset;
+  if (tensor.input_range.size() == 2U) {
+    out.input_range = std::make_pair(tensor.input_range[0], tensor.input_range[1]);
+  }
   return out;
 }
 
@@ -178,6 +183,290 @@ bool input_has_internal_producer(
   return false;
 }
 
+std::optional<QuantParams>
+quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuantContract>& quant,
+               const std::string& name) {
+  if (!quant.has_value()) {
+    return std::nullopt;
+  }
+  QuantParams out;
+  out.axis = quant->axis;
+  out.zero_points.assign(quant->zero_points.begin(), quant->zero_points.end());
+  for (const auto scale : quant->scales) {
+    if (scale == 0.0) {
+      throw std::runtime_error("mla_only tensor '" + name + "' has a zero quantization scale");
+    }
+    out.scales.push_back(1.0f / static_cast<float>(scale));
+  }
+  return out;
+}
+
+const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
+dequantize_for_head(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                    const std::string& head_name) {
+  const simaai::neat::pipeline_internal::sima::MpkPluginIoContract* consumer = nullptr;
+  for (const auto& edge : contract.edges) {
+    if (edge.tensor_name != head_name || edge.dst_plugin_index >= contract.plugins.size()) {
+      continue;
+    }
+    const auto& stage = contract.plugins[edge.dst_plugin_index];
+    if (canonical_token(stage.kernel).find("dequant") == std::string::npos ||
+        stage.output_tensors.size() != 1U || consumer != nullptr) {
+      throw std::runtime_error("mla_only output '" + head_name +
+                               "' must feed exactly one dequantize stage");
+    }
+    consumer = &stage;
+  }
+  if (!consumer) {
+    throw std::runtime_error("mla_only output '" + head_name + "' has no dequantize consumer");
+  }
+  return *consumer;
+}
+
+std::size_t dense_element_count(const std::vector<std::int64_t>& shape) {
+  std::size_t elements = shape.empty() ? 0U : 1U;
+  for (const auto dim : shape) {
+    if (dim <= 0 || !simaai::neat::pipeline_internal::safe_mul(
+                        elements, static_cast<std::size_t>(dim), &elements)) {
+      return 0U;
+    }
+  }
+  return elements;
+}
+
+simaai::neat::pipeline_internal::sima::RouteGraph
+validate_mla_only_stages(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
+  using simaai::neat::pipeline_internal::sima::RouteGraphKernelKind;
+  auto graph = simaai::neat::pipeline_internal::sima::build_route_graph(contract);
+  if (graph.mla_plugin_index < 0) {
+    throw std::runtime_error("mla_only requires exactly one MLA stage in the MPK contract");
+  }
+  for (const auto& node : graph.nodes) {
+    switch (node.kind) {
+    case RouteGraphKernelKind::Mla:
+    case RouteGraphKernelKind::Quant:
+    case RouteGraphKernelKind::Unpack:
+    case RouteGraphKernelKind::Slice:
+    case RouteGraphKernelKind::Dequantize:
+    case RouteGraphKernelKind::PassThrough:
+      continue;
+    default:
+      throw std::runtime_error(
+          "mla_only does not support stage '" + node.plugin_name + "' (" +
+          simaai::neat::pipeline_internal::sima::route_graph_kernel_name(node.kind) + ")");
+    }
+  }
+  return graph;
+}
+
+std::optional<std::size_t>
+ingress_index(const std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>& inputs,
+              const std::string& name) {
+  if (name.empty()) {
+    return std::nullopt;
+  }
+  const auto it = std::find_if(inputs.begin(), inputs.end(),
+                               [&](const auto& input) { return input.name == name; });
+  return it != inputs.end() ? std::optional<std::size_t>(it - inputs.begin()) : std::nullopt;
+}
+
+std::vector<std::size_t>
+mla_only_quantize_stages(const simaai::neat::pipeline_internal::sima::RouteGraph& graph,
+                         const std::size_t mla_index) {
+  using simaai::neat::pipeline_internal::sima::RouteGraphKernelKind;
+  std::vector<std::size_t> stages;
+  for (const auto* edge :
+       simaai::neat::pipeline_internal::sima::route_graph_incoming_edges(graph, mla_index)) {
+    const auto* node =
+        simaai::neat::pipeline_internal::sima::route_graph_node(graph, edge->src_plugin_index);
+    if (node == nullptr) {
+      throw std::runtime_error("mla_only cannot resolve the stage feeding the MLA");
+    }
+    if (node->kind == RouteGraphKernelKind::Quant) {
+      stages.push_back(edge->src_plugin_index);
+      continue;
+    }
+    if (node->kind == RouteGraphKernelKind::PassThrough) {
+      for (const auto* packed : simaai::neat::pipeline_internal::sima::route_graph_incoming_edges(
+               graph, edge->src_plugin_index)) {
+        const auto* producer = simaai::neat::pipeline_internal::sima::route_graph_node(
+            graph, packed->src_plugin_index);
+        if (producer == nullptr || producer->kind != RouteGraphKernelKind::Quant) {
+          throw std::runtime_error(
+              "mla_only input '" + packed->tensor_name + "' is produced by stage '" +
+              packed->src_plugin +
+              "', not a quantize stage; hybrid host/card quantization is out of scope");
+        }
+        stages.push_back(packed->src_plugin_index);
+      }
+      continue;
+    }
+    throw std::runtime_error("mla_only MLA input is produced by stage '" + edge->src_plugin +
+                             "', which is neither a quantize nor a pack stage; hybrid host/card "
+                             "quantization is out of scope");
+  }
+  return stages;
+}
+
+std::vector<PcieTensorFact>
+mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                     const simaai::neat::pipeline_internal::sima::RouteGraph& graph,
+                     const std::size_t mla_index) {
+  const auto public_inputs = detail::application_input_contracts(contract);
+  const auto stages = mla_only_quantize_stages(graph, mla_index);
+  if (public_inputs.empty()) {
+    throw std::runtime_error("mla_only requires at least one model input");
+  }
+  if (stages.size() != public_inputs.size()) {
+    throw std::runtime_error("mla_only requires every model input to reach the MLA through its own "
+                             "quantize stage: the model has " +
+                             std::to_string(public_inputs.size()) + " input(s) but " +
+                             std::to_string(stages.size()) +
+                             " quantize stage(s); hybrid host/card quantization is out of scope");
+  }
+
+  std::vector<PcieTensorFact> facts;
+  facts.reserve(stages.size());
+  std::vector<bool> claimed(public_inputs.size(), false);
+  for (const std::size_t stage_index : stages) {
+    const auto& stage = contract.plugins[stage_index];
+    if (stage.output_tensors.size() != 1U) {
+      throw std::runtime_error("mla_only quantize stage '" + stage.name +
+                               "' must produce exactly one tensor");
+    }
+    std::optional<std::size_t> ingress;
+    for (const auto& candidate : stage.input_tensors) {
+      const auto found = ingress_index(public_inputs, candidate.name);
+      if (!found.has_value()) {
+        continue;
+      }
+      if (ingress.has_value()) {
+        throw std::runtime_error("mla_only quantize stage '" + stage.name +
+                                 "' consumes more than one model input");
+      }
+      ingress = found;
+    }
+    if (!ingress.has_value()) {
+      throw std::runtime_error("mla_only quantize stage '" + stage.name +
+                               "' is not fed by a model input; hybrid host/card quantization is "
+                               "out of scope");
+    }
+    if (claimed[*ingress]) {
+      throw std::runtime_error("mla_only model input '" + public_inputs[*ingress].name +
+                               "' feeds more than one quantize stage");
+    }
+    claimed[*ingress] = true;
+
+    auto input = stage.output_tensors.front();
+    input.name = public_inputs[*ingress].name;
+    const std::string dtype = best_dtype(input);
+    if (canonical_token(dtype) != "int8") {
+      throw std::runtime_error("mla_only input '" + input.name + "' must be INT8, got '" + dtype +
+                               "'");
+    }
+    const std::size_t elements = dense_element_count(best_shape(input));
+    if (elements == 0U || elements != input.size_bytes) {
+      throw std::runtime_error("mla_only input '" + input.name +
+                               "' is not a dense INT8 tensor: shape does not cover " +
+                               std::to_string(input.size_bytes) + " bytes");
+    }
+    facts.push_back(convert_tensor(input));
+    facts.back().quant = quant_from_mpk(stage.quant, input.name);
+    facts.back().input_range = convert_tensor(public_inputs[*ingress]).input_range;
+  }
+  return facts;
+}
+
+std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>
+application_output_contracts(const simaai::neat::pipeline_internal::sima::MpkContract& contract);
+
+void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                          PcieModelFacts* facts) {
+  const auto carrier =
+      simaai::neat::pipeline_internal::sima::get_mla_boundary_physical_outputs_contract(contract);
+  if (carrier.size() != 1U || carrier.front().size_bytes == 0U) {
+    throw std::runtime_error("mla_only supports exactly one MLA output carrier");
+  }
+  const std::size_t raw = carrier.front().size_bytes;
+  const auto logical =
+      simaai::neat::pipeline_internal::sima::get_mla_logical_outputs_contract(contract);
+  const auto published =
+      simaai::neat::pipeline_internal::sima::get_mla_published_outputs_contract(contract);
+  if (logical.empty() || logical.size() != published.size()) {
+    throw std::runtime_error("MPK contract does not expose consistent MLA output heads");
+  }
+
+  std::vector<std::pair<std::size_t, std::size_t>> spans;
+  spans.reserve(logical.size());
+  for (std::size_t i = 0; i < logical.size(); ++i) {
+    const auto& head = logical[i];
+    auto fact = convert_tensor(head);
+    using simaai::neat::pipeline_internal::sima::MpkTensorMaterializationKind;
+    const auto materialization = published[i].materialization_kind;
+    if (materialization == MpkTensorMaterializationKind::Bf16LaneSplitRepack) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' needs a lane-split repack the host does not perform");
+    }
+    if (materialization != MpkTensorMaterializationKind::Direct &&
+        materialization != MpkTensorMaterializationKind::OffsetView) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' has an unsupported output materialization");
+    }
+    if (canonical_token(fact.dtype) != "int8") {
+      throw std::runtime_error("mla_only output '" + fact.name + "' must be INT8, got '" +
+                               fact.dtype + "'");
+    }
+    const std::size_t elements = dense_element_count(fact.shape);
+    if (elements == 0U || elements != fact.size_bytes ||
+        head.stride_bytes.size() != fact.shape.size() || head.stride_bytes.back() != 1 ||
+        head.source_byte_offset < 0) {
+      throw std::runtime_error("mla_only output '" + fact.name + "' has no usable geometry");
+    }
+    fact.transport_strides_bytes = head.stride_bytes;
+    fact.payload_offset = static_cast<std::size_t>(head.source_byte_offset);
+    std::size_t end = 0U;
+    if (!simaai::neat::pipeline_internal::safe_mul(
+            static_cast<std::size_t>(fact.shape.front()),
+            static_cast<std::size_t>(head.stride_bytes.front()), &fact.transport_size_bytes) ||
+        !simaai::neat::pipeline_internal::safe_add(fact.payload_offset, fact.transport_size_bytes,
+                                                   &end) ||
+        end > raw) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' lies outside the MLA output carrier");
+    }
+    const auto& dequantize = dequantize_for_head(contract, head.name);
+    if (best_shape(dequantize.output_tensors.front()) != fact.shape) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' does not match the shape of its dequantized output");
+    }
+    fact.name = strip_public_route_wrapper_prefix(dequantize.output_tensors.front().name);
+    fact.quant = quant_from_mpk(dequantize.quant, fact.name);
+    fact.dense_offset = facts->dense_output_bytes;
+    if (!simaai::neat::pipeline_internal::safe_add(facts->dense_output_bytes, fact.size_bytes,
+                                                   &facts->dense_output_bytes)) {
+      throw std::runtime_error("mla_only dense output size overflows");
+    }
+    spans.emplace_back(fact.payload_offset, fact.transport_size_bytes);
+    facts->outputs.push_back(std::move(fact));
+  }
+
+  std::sort(spans.begin(), spans.end());
+  std::size_t next = 0U;
+  for (const auto& [offset, size] : spans) {
+    if (offset != next) {
+      throw std::runtime_error("mla_only output heads do not tile the MLA output carrier");
+    }
+    next += size;
+  }
+  if (next != raw) {
+    throw std::runtime_error("mla_only output heads do not tile the MLA output carrier");
+  }
+  if (facts->outputs.size() != application_output_contracts(contract).size()) {
+    throw std::runtime_error("mla_only heads do not cover every model output");
+  }
+  facts->packed_output_bytes = raw;
+}
+
 } // namespace
 
 namespace detail {
@@ -230,6 +519,30 @@ void validate_supported_input_dtype(
                              "'; supported input dtypes are UINT8, INT8, INT16, INT32, BF16, "
                              "and FP32");
   }
+}
+
+PcieModelFacts
+read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
+  const auto graph = validate_mla_only_stages(contract);
+  const auto mla_index = static_cast<std::size_t>(graph.mla_plugin_index);
+
+  PcieModelFacts facts;
+  for (auto& input : mla_only_input_facts(contract, graph, mla_index)) {
+    facts.packed_input_bytes += input.size_bytes;
+    facts.inputs.push_back(std::move(input));
+  }
+  if (facts.inputs.size() > 1U) {
+    const auto* mla_inputs =
+        simaai::neat::pipeline_internal::sima::get_mla_input_contract(contract);
+    if (mla_inputs == nullptr || mla_inputs->size() != 1U ||
+        mla_inputs->front().size_bytes != facts.packed_input_bytes) {
+      throw std::runtime_error("mla_only inputs do not tile the MLA packed ingress");
+    }
+    facts.packed_input = convert_tensor(mla_inputs->front());
+    facts.packed_input->dtype = facts.inputs.front().dtype;
+  }
+  add_mla_only_outputs(contract, &facts);
+  return facts;
 }
 
 } // namespace detail
@@ -358,7 +671,7 @@ bool graph_has_boxdecode(const simaai::neat::pipeline_internal::sima::MpkContrac
 
 } // namespace
 
-PcieModelFacts read_model_facts(const std::string& model_path) {
+PcieModelFacts read_model_facts(const std::string& model_path, const ModelOptions& options) {
   TempDir temp;
 
   simaai::neat::internal::ModelArchiveLoaderOptions loader_options;
@@ -375,6 +688,9 @@ PcieModelFacts read_model_facts(const std::string& model_path) {
       extracted.package_root, &error);
   if (!contract.has_value()) {
     throw std::runtime_error("failed to read MPK contract: " + error);
+  }
+  if (options.mla_only) {
+    return detail::read_mla_only_facts(*contract);
   }
 
   const auto public_inputs = detail::application_input_contracts(*contract);
@@ -413,13 +729,16 @@ ModelInfo to_public_model_info(const PcieModelFacts& facts) {
     out.inputs.push_back(TensorInfo{.name = input.name,
                                     .dtype = input.dtype,
                                     .shape = input.shape,
-                                    .size_bytes = input.size_bytes});
+                                    .size_bytes = input.size_bytes,
+                                    .quant = input.quant,
+                                    .input_range = input.input_range});
   }
   for (const auto& output : facts.outputs) {
     out.outputs.push_back(TensorInfo{.name = output.name,
                                      .dtype = output.dtype,
                                      .shape = output.shape,
-                                     .size_bytes = output.size_bytes});
+                                     .size_bytes = output.size_bytes,
+                                     .quant = output.quant});
   }
   return out;
 }

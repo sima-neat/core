@@ -4,6 +4,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -18,18 +20,25 @@ struct PcieTensorFact {
   int physical_index = -1;
   std::int64_t byte_offset = 0;
   std::size_t payload_offset = 0;
+  std::vector<std::int64_t> transport_strides_bytes;
+  std::size_t transport_size_bytes = 0;
+  std::size_t dense_offset = 0;
+  std::optional<QuantParams> quant;
+  std::optional<std::pair<double, double>> input_range;
 };
 
 struct PcieModelFacts {
   std::vector<PcieTensorFact> inputs;
   std::vector<PcieTensorFact> outputs;
   std::size_t packed_input_bytes = 0;
+  std::optional<PcieTensorFact> packed_input;
   std::size_t packed_output_bytes = 0;
   bool has_preprocess = false;
   bool has_boxdecode = false;
+  std::size_t dense_output_bytes = 0;
 };
 
-PcieModelFacts read_model_facts(const std::string& model_path);
+PcieModelFacts read_model_facts(const std::string& model_path, const ModelOptions& options = {});
 ModelInfo to_public_model_info(const PcieModelFacts& facts);
 
 } // namespace simaai::neat::pcie::internal

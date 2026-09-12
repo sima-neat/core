@@ -52,7 +52,7 @@ constexpr const char* kPcieSourceBufferName = "n0_pciesrc";
 
 volatile std::sig_atomic_t g_stop_requested = 0;
 
-enum class Mode { Tensor, Image, BoxDecode };
+enum class Mode { Tensor, Image, BoxDecode, MlaOnly };
 
 struct CliOptions {
   std::filesystem::path model;
@@ -119,6 +119,8 @@ std::string mode_name(const Mode mode) {
     return "image";
   case Mode::BoxDecode:
     return "boxdecode";
+  case Mode::MlaOnly:
+    return "mla_only";
   }
   return "unknown";
 }
@@ -498,11 +500,23 @@ nlohmann::json read_model_options_file(const std::filesystem::path& path) {
 }
 
 void validate_model_options_root(const nlohmann::json& root) {
-  reject_unknown_fields(root, {"schema", "preprocess", "boxdecode"}, "root");
+  reject_unknown_fields(root, {"schema", "preprocess", "boxdecode", "execution"}, "root");
   if (!root.contains("schema") || !root["schema"].is_number_integer() ||
       root["schema"].get<int>() != 1) {
     throw PciePipelineError("model_options", "--model-options schema must be integer 1");
   }
+}
+
+bool apply_execution_model_options(const nlohmann::json& execution) {
+  reject_unknown_fields(execution, {"mla_only"}, "execution");
+  const auto it = execution.find("mla_only");
+  if (it == execution.end()) {
+    return false;
+  }
+  if (!it->is_boolean()) {
+    throw PciePipelineError("model_options", "execution.mla_only must be a boolean");
+  }
+  return it->get<bool>();
 }
 
 Mode apply_model_options_json(const nlohmann::json& root, Model::Options* opt) {
@@ -510,6 +524,16 @@ Mode apply_model_options_json(const nlohmann::json& root, Model::Options* opt) {
 
   const bool has_preprocess = root.contains("preprocess");
   const bool has_boxdecode = root.contains("boxdecode");
+  if (const auto it = root.find("execution"); it != root.end()) {
+    if (apply_execution_model_options(*it)) {
+      if (has_preprocess || has_boxdecode) {
+        throw PciePipelineError("model_options",
+                                "execution.mla_only cannot be combined with preprocess or "
+                                "boxdecode options");
+      }
+      return Mode::MlaOnly;
+    }
+  }
   if (!has_preprocess) {
     if (has_boxdecode) {
       throw PciePipelineError("model_options", "boxdecode options require a preprocess object");
@@ -525,7 +549,8 @@ Mode apply_model_options_json(const nlohmann::json& root, Model::Options* opt) {
 }
 
 void apply_route_owned_options(const Mode mode, Model::Options* opt) {
-  opt->preprocess.kind = (mode == Mode::Tensor) ? InputKind::Tensor : InputKind::Image;
+  opt->preprocess.kind =
+      (mode == Mode::Tensor || mode == Mode::MlaOnly) ? InputKind::Tensor : InputKind::Image;
 }
 
 std::string pcie_graph_suffix(const int queue) {
@@ -762,7 +787,7 @@ Graph compose_graph(const CliOptions& opt, const ResolvedOptions& resolved,
   src_options.queue = opt.queue;
   graph.add(simaai::neat::nodes::PCIeSrc(src_options));
 
-  graph.add(model->graph());
+  graph.add(resolved.mode == Mode::MlaOnly ? model->inference() : model->graph());
 
   PCIeSinkOptions sink_options;
   sink_options.queue = opt.queue;

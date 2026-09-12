@@ -282,6 +282,81 @@ detector.close()
 
 Не встановлюйте значення `input_max_width`, `input_max_height` або `input_max_depth` для моделі, яка не потребує початкового значення, якщо застосунку не потрібне чітке обмеження вхідних даних. Neat може визначити цільовий розмір для зміни розміру моделі на основі архіву моделі.
 
+## Запуск лише MLA з тензорами INT8
+
+Типово карта квантує вхід FP32 на EV74, виконує MLA і деквантує результати перед їх поверненням. Установіть `mla_only`, коли квантуванням керує хост: тоді карта виконує лише MLA, приймає тензори INT8 вхідного контракту MLA та повертає сирі голови INT8.
+
+`info()` повідомляє контракт INT8 разом із параметрами квантування кожного тензора. Кожен `TensorInfo` містить `quant` з одним записом `scales` і одним записом `zero_points` на тензор, а кожен вхід також містить `input_range` — діапазон із рухомою комою, для якого модель була відкалібрована:
+
+```text
+x = (q - zero_point) * scale
+q = clamp(round(x / scale) + zero_point, -128, 127)
+```
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+pcie::Model model("model_mlatess_int8.tar.gz", options, connection);
+
+const auto& input_spec = model.info().inputs.front();
+const pcie::QuantParams& quant = *input_spec.quant;   // INT8 ingress
+const auto [low, high] = *input_spec.input_range;     // e.g. [0, 1]
+
+std::vector<std::int8_t> codes(input_spec.size_bytes);
+for (std::size_t i = 0; i < codes.size(); ++i) {
+  const float x = /* value in [low, high] */;
+  const float q = std::nearbyint(x / quant.scales[0]) + quant.zero_points[0];
+  codes[i] = static_cast<std::int8_t>(std::clamp(q, -128.0f, 127.0f));
+}
+
+model.build();
+pcie::TensorList outputs = model.run(
+    pcie::Tensor::from_vector(std::move(codes), input_spec.shape, input_spec.name),
+    /*timeout_ms=*/30000);
+
+const auto& head = model.info().outputs.front();
+const std::int8_t* q = reinterpret_cast<const std::int8_t*>(
+    static_cast<const std::uint8_t*>(outputs[0].data) + outputs[0].byte_offset);
+const float x0 = (q[0] - head.quant->zero_points[0]) * head.quant->scales[0];
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pcie.ModelOptions()
+options.mla_only = True
+model = pcie.Model("model_mlatess_int8.tar.gz", options, connection)
+
+input_spec = model.info().inputs[0]
+scale, zero_point = input_spec.quant.scales[0], input_spec.quant.zero_points[0]
+low, high = input_spec.input_range  # e.g. (0.0, 1.0)
+
+values = np.zeros(input_spec.shape, dtype=np.float32)  # in [low, high]
+codes = np.clip(np.rint(values / scale) + zero_point, -128, 127).astype(np.int8)
+
+model.build()
+outputs = model.run(
+    [pcie.Tensor.from_numpy(codes, copy=True, route_name=input_spec.name)],
+    timeout_ms=30000,
+)
+
+head = model.info().outputs[0]
+x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_points[0]) * head.quant.scales[0]
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Маршрут працює за принципом «усе або нічого». Модель із кількома входами очікує по одному тензору INT8 на кожен вхід у порядку `info().inputs`; корисне навантаження FP32 відхиляється замість квантування на карті. `mla_only` не можна поєднувати з попередньою обробкою зображень чи декодуванням рамок. Конструктор відхиляє архіви, чий етап MLA не скомпільовано для прямого входу та виходу INT8, наприклад архіви Model Zoo, що виконують теселяцію на EV74 (`mla_only does not support stage '...' (tess)`).
+
+Посібник [Запуск лише MLA з тензорами INT8](/tutorials/run-mla-only-int8) квантує зображення на хості та звіряє деквантовані голови з типовим маршрутом.
+
 ## Надійно закривайте.
 
 Викличте `close()`, коли модель більше не знадобиться і перед повторним використанням її черги.
@@ -343,6 +418,7 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 відхиляється.
 - Інтерфейс API хоста PCIe підтримує обмежений набір функцій попередньої обробки моделі Neat і
   параметри декодування об’єкта.
+- `mla_only` вимагає архіву, скомпільованого для прямого входу та виходу INT8 MLA, надсилає кожен вхід як INT8 і повертає неперервні голови INT8.
 - Цей API для спільної обробки не надає доступ до `Graph`, `Node` або `Run` на стороні хоста.
   композиція. Використовуйте стандартну Neat Library на DevKit для створення нативних графічних моделей застосунків.
 

@@ -19,6 +19,7 @@ struct MappedSample {
 };
 
 void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>& spans,
-                            const std::vector<PcieTensorFact>& input_facts);
+                            const std::vector<PcieTensorFact>& input_facts,
+                            const PcieTensorFact* packed_input = nullptr);
 
 } // namespace simaai::neat::pcie::internal

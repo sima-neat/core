@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -226,41 +227,6 @@ void free_wrapped_payload(gpointer user_data) {
   delete holder;
 }
 
-TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owner,
-                                       const PcieModelFacts& facts) {
-  TensorList out;
-  if (!owner || !owner->map.data) {
-    return out;
-  }
-  HostPcieChannel::validate_output_payload_size(owner->map.size, facts.packed_output_bytes);
-  for (std::size_t i = 0; i < facts.outputs.size(); ++i) {
-    const auto& fact = facts.outputs[i];
-    if (fact.payload_offset > owner->map.size ||
-        fact.size_bytes > owner->map.size - fact.payload_offset) {
-      throw std::runtime_error("PCIe output '" + fact.name + "' exceeds the received payload span");
-    }
-
-    Tensor tensor;
-    tensor.owner = owner;
-    tensor.data = static_cast<std::uint8_t*>(owner->map.data) + fact.payload_offset;
-    tensor.size_bytes = fact.size_bytes;
-    tensor.dtype = dtype_from_fact(fact.dtype);
-    tensor.layout = TensorLayout::Unknown;
-    tensor.shape = fact.shape;
-    tensor.strides_bytes =
-        contiguous_tensor_strides(tensor.shape, tensor_dtype_bytes(tensor.dtype));
-    tensor.byte_offset = 0;
-    tensor.read_only = true;
-    tensor.route.name = fact.name.empty() ? "tensor_" + std::to_string(i) : fact.name;
-    tensor.route.logical_index = fact.tensor_index >= 0 ? fact.tensor_index : static_cast<int>(i);
-    tensor.route.backend_output_index = fact.tensor_index;
-    tensor.route.physical_index = fact.physical_index;
-    tensor.route.physical_byte_offset = fact.byte_offset;
-    out.push_back(std::move(tensor));
-  }
-  return out;
-}
-
 bool sample_has_bbox_caps(GstSample* sample) {
   GstCaps* caps = gst_sample_get_caps(sample);
   if (!caps || gst_caps_is_empty(caps)) {
@@ -307,7 +273,7 @@ TensorList tensors_from_output_sample(const std::shared_ptr<MappedSample>& owner
   if (expects_bbox_output || (owner && sample_has_bbox_caps(owner->sample))) {
     return bbox_tensor_from_output_payload(owner);
   }
-  return tensors_from_output_payload(owner, facts);
+  return HostPcieChannel::tensors_from_output_payload(owner, facts);
 }
 
 } // namespace
@@ -348,12 +314,66 @@ std::string HostPcieChannel::tensor_set_caps() {
 }
 
 void HostPcieChannel::validate_output_payload_size(const std::size_t received_bytes,
-                                                   const std::size_t expected_bytes) {
-  if (received_bytes < expected_bytes) {
-    throw std::runtime_error("PCIe output payload is shorter than the model output contract: " +
+                                                   const std::size_t expected_bytes,
+                                                   const bool exact) {
+  if (exact ? received_bytes != expected_bytes : received_bytes < expected_bytes) {
+    throw std::runtime_error("PCIe output payload does not match the model output contract: " +
                              std::to_string(received_bytes) + " bytes received, " +
                              std::to_string(expected_bytes) + " bytes expected");
   }
+}
+
+TensorList HostPcieChannel::tensors_from_output_payload(const std::shared_ptr<MappedSample>& owner,
+                                                        const PcieModelFacts& facts) {
+  TensorList out;
+  if (!owner || !owner->map.data) {
+    return out;
+  }
+  validate_output_payload_size(owner->map.size, facts.packed_output_bytes,
+                               facts.dense_output_bytes > 0U);
+  std::shared_ptr<std::vector<std::uint8_t>> dense;
+  if (facts.dense_output_bytes > 0U) {
+    dense = std::make_shared<std::vector<std::uint8_t>>(facts.dense_output_bytes);
+  }
+  for (std::size_t i = 0; i < facts.outputs.size(); ++i) {
+    const auto& fact = facts.outputs[i];
+    if (fact.payload_offset > owner->map.size ||
+        fact.size_bytes > owner->map.size - fact.payload_offset) {
+      throw std::runtime_error("PCIe output '" + fact.name + "' exceeds the received payload span");
+    }
+
+    Tensor tensor;
+    tensor.dtype = dtype_from_fact(fact.dtype);
+    if (dense) {
+      std::uint8_t* dst = dense->data() + fact.dense_offset;
+      if (!copy_dense_rows(static_cast<const std::uint8_t*>(owner->map.data) + fact.payload_offset,
+                           owner->map.size - fact.payload_offset, fact.shape,
+                           fact.transport_strides_bytes, tensor_dtype_bytes(tensor.dtype), 0U,
+                           &dst)) {
+        throw std::runtime_error("PCIe output '" + fact.name +
+                                 "' exceeds the received payload span");
+      }
+      tensor.owner = dense;
+      tensor.data = dense->data() + fact.dense_offset;
+    } else {
+      tensor.owner = owner;
+      tensor.data = static_cast<std::uint8_t*>(owner->map.data) + fact.payload_offset;
+    }
+    tensor.size_bytes = fact.size_bytes;
+    tensor.layout = TensorLayout::Unknown;
+    tensor.shape = fact.shape;
+    tensor.strides_bytes =
+        contiguous_tensor_strides(tensor.shape, tensor_dtype_bytes(tensor.dtype));
+    tensor.byte_offset = 0;
+    tensor.read_only = true;
+    tensor.route.name = fact.name.empty() ? "tensor_" + std::to_string(i) : fact.name;
+    tensor.route.logical_index = fact.tensor_index >= 0 ? fact.tensor_index : static_cast<int>(i);
+    tensor.route.backend_output_index = fact.tensor_index;
+    tensor.route.physical_index = fact.physical_index;
+    tensor.route.physical_byte_offset = fact.byte_offset;
+    out.push_back(std::move(tensor));
+  }
+  return out;
 }
 
 std::size_t
@@ -449,9 +469,14 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string,
 
   g_object_set(G_OBJECT(pciehost_), "buffersize", static_cast<guint64>(transport_buffer_size_),
                "card-number", card_id_, "queue", pcie_queue_, "queuedepth", queue_depth, nullptr);
-
+  if (facts_.dense_output_bytes > 0U &&
+      g_object_class_find_property(G_OBJECT_GET_CLASS(pciehost_), "rx-mode") != nullptr) {
+    const char* rx_mode = std::getenv("SIMA_PCIE_HOST_RX_MODE");
+    gst_util_set_object_arg(G_OBJECT(pciehost_), "rx-mode",
+                            rx_mode != nullptr && *rx_mode != '\0' ? rx_mode : "mapped");
+  }
   g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
-               FALSE, nullptr);
+               FALSE, "enable-last-sample", FALSE, nullptr);
   g_object_set(G_OBJECT(queue_element_), "max-size-buffers", queue_depth, "max-size-bytes", 0,
                "max-size-time", static_cast<guint64>(0), "leaky", 0, nullptr);
 
@@ -532,6 +557,15 @@ void HostPcieChannel::stop_locked() {
         }
         gst_object_unref(bus);
       }
+    }
+  }
+  if (pipeline_ && appsink_) {
+    gst_element_set_state(appsink_, GST_STATE_NULL);
+    gst_bin_remove(GST_BIN(pipeline_), appsink_);
+    appsink_ = nullptr;
+    if (GstBus* bus = gst_element_get_bus(pipeline_)) {
+      gst_bus_set_flushing(bus, TRUE);
+      gst_object_unref(bus);
     }
   }
   if (pipeline_) {
@@ -783,7 +817,8 @@ bool HostPcieChannel::push_prepared_payload(const std::int32_t request_id,
   }
   if (caps_.find("representation=(string)tensor-set") != std::string::npos) {
     try {
-      attach_tensor_set_meta(buffer, payload.spans, facts_.inputs);
+      attach_tensor_set_meta(buffer, payload.spans, facts_.inputs,
+                             facts_.packed_input ? &*facts_.packed_input : nullptr);
     } catch (...) {
       gst_buffer_unref(buffer);
       throw;
@@ -871,6 +906,7 @@ GstFlowReturn HostPcieChannel::on_new_sample(GstElement* sink) {
         .request_id = *request_id,
         .outputs = tensors_from_output_sample(owner, facts_, expects_bbox_output_),
     };
+    owner.reset();
 
     {
       std::lock_guard<std::mutex> lock(receive_mutex_);

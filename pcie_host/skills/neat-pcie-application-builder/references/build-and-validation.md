@@ -79,6 +79,7 @@ When the PCIe extras bundle is present, prefer its matching-release tutorials ov
 - `share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/`
 - `share/sima-pcie-host/tutorials/025_run_pcie_inference_async/`
 - `share/sima-pcie-host/tutorials/026_run_multiple_models/`
+- `share/sima-pcie-host/tutorials/027_run_mla_only_int8/`
 
 Tutorial 026 uses separate `Model` objects on distinct queues. It does not require the excluded
 `pcie::Runtime` API.

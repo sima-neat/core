@@ -1,6 +1,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -497,7 +498,8 @@ NB_MODULE(_pyneatpcie_core, m) {
       .def_rw("score_threshold", &pcie::ModelOptions::score_threshold)
       .def_rw("nms_iou_threshold", &pcie::ModelOptions::nms_iou_threshold)
       .def_rw("top_k", &pcie::ModelOptions::top_k)
-      .def_rw("num_classes", &pcie::ModelOptions::num_classes);
+      .def_rw("num_classes", &pcie::ModelOptions::num_classes)
+      .def_rw("mla_only", &pcie::ModelOptions::mla_only);
 
   nb::class_<pcie::TensorRoute>(m, "TensorRoute")
       .def(nb::init<>())
@@ -528,12 +530,20 @@ NB_MODULE(_pyneatpcie_core, m) {
       .def("to_bytes", &tensor_to_bytes)
       .def("to_numpy", &tensor_to_numpy);
 
+  nb::class_<pcie::QuantParams>(m, "QuantParams")
+      .def(nb::init<>())
+      .def_rw("axis", &pcie::QuantParams::axis)
+      .def_rw("scales", &pcie::QuantParams::scales)
+      .def_rw("zero_points", &pcie::QuantParams::zero_points);
+
   nb::class_<pcie::TensorInfo>(m, "TensorInfo")
       .def(nb::init<>())
       .def_rw("name", &pcie::TensorInfo::name)
       .def_rw("dtype", &pcie::TensorInfo::dtype)
       .def_rw("shape", &pcie::TensorInfo::shape)
-      .def_rw("size_bytes", &pcie::TensorInfo::size_bytes);
+      .def_rw("size_bytes", &pcie::TensorInfo::size_bytes)
+      .def_rw("quant", &pcie::TensorInfo::quant)
+      .def_rw("input_range", &pcie::TensorInfo::input_range);
 
   nb::class_<pcie::ModelInfo>(m, "ModelInfo")
       .def(nb::init<>())

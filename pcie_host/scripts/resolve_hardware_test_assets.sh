@@ -165,6 +165,13 @@ resolve_yolov8_model() {
     absolute_path "${value}"
     return
   fi
+  # An MLA-tessellated single-input INT8 build serves every route the tests exercise and the
+  # MLA-only one, so prefer it when present: one asset covers the whole hardware suite.
+  if first_existing_file \
+      "${WORKSPACE}/models/yolov8n_mod_1_inputs_mpk_mlatess_int8.tar.gz" \
+      "${WORKSPACE}/../models/yolov8n_mod_1_inputs_mpk_mlatess_int8.tar.gz"; then
+    return
+  fi
   if first_existing_file \
       "${WORKSPACE}/models/yolo_v8s.tar.gz" \
       "${WORKSPACE}/models/yolov8s.tar.gz" \

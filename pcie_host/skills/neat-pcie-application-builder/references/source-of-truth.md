@@ -64,6 +64,9 @@ postprocessing options:
   format and geometry come from the image and preprocessing configuration.
 - `info().outputs` always describes the archive's inference outputs. For example, enabled boxdecode
   replaces those raw outputs at runtime with one `UInt8` tensor whose route name is `BBOX`.
+- With `mla_only`, `info()` describes the MLA's own INT8 contract. `TensorInfo.quant` carries the
+  scale and zero point of each tensor and `TensorInfo.input_range` the calibrated input domain;
+  both come from the archive and are absent in the default mode.
 
 Do not derive an application contract from plugin-private JSON files inside the archive. If
 contributor-level archive inspection is unavoidable, use only `mpk.json` or `*_mpk.json` as the

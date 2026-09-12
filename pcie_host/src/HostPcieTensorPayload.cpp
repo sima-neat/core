@@ -41,40 +41,6 @@ std::size_t dense_size_bytes(const Tensor& tensor) {
   return bytes;
 }
 
-bool copy_dense_rows(const std::uint8_t* src, const std::size_t src_size,
-                     const std::vector<std::int64_t>& shape,
-                     const std::vector<std::int64_t>& strides, const std::size_t elem_size,
-                     const std::size_t dim, std::uint8_t** dst) {
-  if (dim + 1U == shape.size()) {
-    const auto elements = static_cast<std::size_t>(shape[dim]);
-    if (strides[dim] < static_cast<std::int64_t>(elem_size)) {
-      return false;
-    }
-    for (std::size_t i = 0; i < elements; ++i) {
-      const auto src_offset = static_cast<std::size_t>(static_cast<std::int64_t>(i) * strides[dim]);
-      if (src_offset + elem_size > src_size) {
-        return false;
-      }
-      std::memcpy(*dst, src + src_offset, elem_size);
-      *dst += elem_size;
-    }
-    return true;
-  }
-
-  const auto count = static_cast<std::size_t>(shape[dim]);
-  for (std::size_t i = 0; i < count; ++i) {
-    const auto src_offset = static_cast<std::size_t>(static_cast<std::int64_t>(i) * strides[dim]);
-    if (src_offset > src_size) {
-      return false;
-    }
-    if (!copy_dense_rows(src + src_offset, src_size - src_offset, shape, strides, elem_size,
-                         dim + 1U, dst)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 std::vector<std::uint8_t> copy_dense_tensor_payload(const Tensor& tensor) {
   const std::size_t elem = tensor_dtype_bytes(tensor.dtype);
   const std::size_t bytes = dense_size_bytes(tensor);
@@ -349,6 +315,49 @@ std::vector<std::int64_t> contiguous_tensor_strides(const std::vector<std::int64
     stride *= shape[dim];
   }
   return strides;
+}
+
+bool copy_dense_rows(const std::uint8_t* src, const std::size_t src_size,
+                     const std::vector<std::int64_t>& shape,
+                     const std::vector<std::int64_t>& strides, const std::size_t elem_size,
+                     const std::size_t dim, std::uint8_t** dst) {
+  if (dim + 1U == shape.size()) {
+    const auto elements = static_cast<std::size_t>(shape[dim]);
+    if (strides[dim] < static_cast<std::int64_t>(elem_size)) {
+      return false;
+    }
+    if (strides[dim] == static_cast<std::int64_t>(elem_size)) {
+      const std::size_t bytes = elements * elem_size;
+      if (bytes > src_size) {
+        return false;
+      }
+      std::memcpy(*dst, src, bytes);
+      *dst += bytes;
+      return true;
+    }
+    for (std::size_t i = 0; i < elements; ++i) {
+      const auto src_offset = static_cast<std::size_t>(static_cast<std::int64_t>(i) * strides[dim]);
+      if (src_offset + elem_size > src_size) {
+        return false;
+      }
+      std::memcpy(*dst, src + src_offset, elem_size);
+      *dst += elem_size;
+    }
+    return true;
+  }
+
+  const auto count = static_cast<std::size_t>(shape[dim]);
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto src_offset = static_cast<std::size_t>(static_cast<std::int64_t>(i) * strides[dim]);
+    if (src_offset > src_size) {
+      return false;
+    }
+    if (!copy_dense_rows(src + src_offset, src_size - src_offset, shape, strides, elem_size,
+                         dim + 1U, dst)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 PreparedPayload prepare_tensor_payload(const TensorList& tensors) {

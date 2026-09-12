@@ -23,13 +23,14 @@ endfunction()
 
 simapcie_add_hardware_test(test_metadata test_metadata.cpp)
 simapcie_add_hardware_test(test_tensor_run test_tensor_run.cpp)
+simapcie_add_hardware_test(test_tensor_mla_only_run test_tensor_mla_only_run.cpp)
 simapcie_add_hardware_test(test_tensor_perf test_tensor_perf.cpp)
 simapcie_add_hardware_test(test_image_run test_image_run.cpp)
 simapcie_add_hardware_test(test_image_boxdecode_run test_image_boxdecode_run.cpp)
 simapcie_add_hardware_test(test_queue_blocker test_queue_blocker.cpp)
 simapcie_add_hardware_test(test_model_resilience test_model_resilience.cpp)
 
-install(PROGRAMS test_tensor_parallel_queues.sh
+install(PROGRAMS test_tensor_parallel_queues.sh test_tensor_mla_only_single_copy.sh
   DESTINATION "${SIMAPCIE_HARDWARE_TEST_INSTALL_DIR}"
   COMPONENT PcieHostExtras)
 
