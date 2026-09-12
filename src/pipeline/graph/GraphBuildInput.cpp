@@ -16,6 +16,7 @@
 #include "builder/OutputSpec.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/RTSPInput.h"
+#include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/sima/Preproc.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/FormatSpec.h"
@@ -483,7 +484,7 @@ RunOptions sync_run_defaults() {
   opt.preset = RunPreset::Reliable;
   opt.queue_depth = 1;
   opt.overflow_policy = OverflowPolicy::Block;
-  opt.output_memory = OutputMemory::Owned;
+  opt.output_memory = OutputMemory::Auto;
   opt.advanced.copy_input = false;
   opt.advanced.max_input_bytes = 0;
   opt.advanced.sync_num_buffers_override = -1;
@@ -513,17 +514,17 @@ bool resolve_prepare_output_cpu_visible(const RunOptions& opt, bool zero_copy) {
 // public-boundary stream-option builder so every entry point (Model::build,
 // Graph::build/source) agrees on output storage kind.
 struct OutputMemoryResolution {
-  bool zero_copy;           ///< output tensors share backing GstSample (device-visible)
+  bool zero_copy;           ///< non-DMA outputs share backing GstSample
+  bool preserve_dmabuf;     ///< Auto retains actual standard DMA-BUF storage
   bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.
 //
 // - Explicit ZeroCopy/Owned are always honored verbatim.
-// - Auto preserves the existing preset mapping (preset_default_zero_copy) so
-//   the async (preset x mode) matrix is unchanged, and additionally enforces
-//   the framework principle "owned for sync, zero-copy for async": a Sync run
-//   never silently returns a lifetime-coupled zero-copy output.
+// - Auto retains standard DMA-BUF payloads in every mode. Other storage keeps
+//   the existing preset/mode policy: sync defaults to owned output. The actual
+//   payload is inspected at the public boundary, not guessed from graph nodes.
 // - SIMA_OUTPUT_MEMORY_DEFAULT={owned|zerocopy} is a reversible, Auto-only
 //   global override for staged rollout / incident response. It never overrides
 //   an explicit per-run ZeroCopy/Owned choice.
@@ -533,6 +534,7 @@ struct OutputMemoryResolution {
 // stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
 OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode) {
   bool zero_copy;
+  bool preserve_dmabuf = false;
   switch (opt.output_memory) {
   case OutputMemory::ZeroCopy:
     zero_copy = true;
@@ -541,18 +543,21 @@ OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode
     zero_copy = false;
     break;
   case OutputMemory::Auto:
+    preserve_dmabuf = true;
     zero_copy = preset_default_zero_copy(opt.preset) && (mode != RunMode::Sync);
     if (const char* raw = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT"); raw && *raw) {
       const std::string value(raw);
       if (value == "owned") {
         zero_copy = false;
+        preserve_dmabuf = false;
       } else if (value == "zerocopy") {
         zero_copy = true;
       }
     }
     break;
   }
-  return {zero_copy, resolve_prepare_output_cpu_visible(opt, zero_copy)};
+  return {zero_copy, preserve_dmabuf,
+          resolve_prepare_output_cpu_visible(opt, zero_copy || preserve_dmabuf)};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -951,13 +956,27 @@ void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<
   }
 
   const std::vector<std::shared_ptr<Node>> first_nodes{first};
+  const auto first_manifest = rendered_stage_query::rendered_manifest_from_nodes(
+      first_nodes, "GraphBuildInput.ingress_guard");
+  if (!first_manifest.has_value() || first_manifest->stages.empty() ||
+      first_manifest->stages.front().payload_kind !=
+          pipeline_internal::sima::StagePayloadKind::ProcessMla) {
+    // ModelFragment is a container, not an assertion that its first command is
+    // MLA.  A strict compiler-authored schedule may begin with Quant, Cast,
+    // Tess, or A65 and legitimately consume an application-boundary tensor
+    // whose size differs from the later MLA IFM.  The child-stage manifest is
+    // the exact authority for that distinction.
+    return;
+  }
   const auto mla_input = rendered_stage_query::mla_input_tensor_info_from_nodes(first_nodes);
   if (mla_input.span_size_bytes <= 0) {
     return;
   }
 
   const std::size_t expected_bytes = static_cast<std::size_t>(mla_input.span_size_bytes);
-  const std::size_t got_bytes = seed_spec.required_bytes_actual;
+  const std::size_t got_bytes = seed_spec.tensor_view_bytes_actual > 0U
+                                    ? seed_spec.tensor_view_bytes_actual
+                                    : seed_spec.required_bytes_actual;
   const bool byte_stream = sample_spec_is_byte_stream_tensor(seed_spec);
   const bool byte_size_matches = expected_bytes == 0U || got_bytes == expected_bytes;
   // Accept either a byte-stream tensor or any application/vnd.simaai.tensor
@@ -1059,8 +1078,9 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.stability_frames = preset_default_stability_frames(opt.preset);
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
+  stream_opt.preserve_dmabuf_output = output_mem.preserve_dmabuf;
   stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
-  if (output_mem.zero_copy) {
+  if (output_mem.zero_copy || output_mem.preserve_dmabuf) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
     stream_opt.holder_loan_credits_auto = true;
@@ -1091,7 +1111,8 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
 }
 
 void finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
-  if (!stream_opt.holder_loan_credits_auto || stream_opt.copy_output ||
+  if (!stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output) ||
       !stream_opt.public_output_contract) {
     return;
   }
@@ -1704,7 +1725,7 @@ std::string single_sample_preflight_unsupported_reason(const std::string& pipeli
   // appsink sample is pulled and unref'd, there is no generic GStreamer
   // barrier proving the plugin-side buffer pool slot has been returned before
   // the public first frame is pushed.
-  if (!opt.copy_output && has_async_hardware_stage &&
+  if ((!opt.copy_output || opt.preserve_dmabuf_output) && has_async_hardware_stage &&
       max_num_buffers_in_pipeline_local(lower) == 1) {
     return "hardware zero-copy pipeline uses an async stage with a single output buffer";
   }
@@ -1895,15 +1916,16 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   }
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
   if (sync_mode) {
-    br.pipeline_string =
-        session_build_clamp_sync_pipeline(std::move(br.pipeline_string), sync_num_buffers_override);
-    br.pipeline_string = session_build_clamp_detess_num_buffers(std::move(br.pipeline_string),
-                                                                sync_num_buffers_override);
+    br.pipeline_string = session_build_clamp_sync_build_result(br, sync_num_buffers_override);
     br.diag->pipeline_string = br.pipeline_string;
   }
   last_pipeline = br.pipeline_string;
   br.pipeline_string = last_pipeline;
   br.diag->pipeline_string = last_pipeline;
+  const auto teardown_policy = inputstream_pipeline_teardown_policy(last_pipeline);
+  if (teardown_policy == pipeline_internal::InputStreamTeardownPolicy::MustReachNull) {
+    stream_opt.teardown_policy = teardown_policy;
+  }
   session_build_enforce_mla_num_buffers(last_pipeline, "Graph::build(input)", sync_mode);
   if (Traits::dump_pipeline_string()) {
     session_build_maybe_dump_pipeline_string(last_pipeline, "build_input");
@@ -1960,10 +1982,11 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   SampleSpec spec = seed_spec;
   InputOptions src_opt = session_build_resolve_appsrc_options(normalized_input_opt, name_transform);
-  const bool memory_policy_auto_applied =
-      apply_auto_memory_policy_from_downstream(src_opt, build_nodes);
   const std::string first_effective_downstream_kind =
       infer_first_effective_downstream_kind(build_nodes);
+  const InputMemoryPolicy requested_memory_policy = src_opt.memory_policy;
+  const bool memory_policy_auto_applied =
+      apply_auto_memory_policy_from_downstream(src_opt, build_nodes);
   if (src_opt.payload_type == PayloadType::Auto) {
     src_opt.payload_type = input_type_from_media_type(seed_spec.media_type);
   }
@@ -1989,8 +2012,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       stream_opt.dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly) {
     stream_opt.stability_frames = 1;
   }
-  stream_opt.require_device_visible_input = (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
-                                             src_opt.memory_policy == InputMemoryPolicy::Dms0);
+  stream_opt.require_device_visible_input = src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
+                                            src_opt.memory_policy == InputMemoryPolicy::Dms0;
 
   BuildAdaptationSummary adaptation;
   adaptation.shape_policy = shape_policy_name(stream_opt.shape_policy);
@@ -2060,7 +2083,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   {
     std::ostringstream detail;
-    detail << "policy=" << input_memory_policy_name(src_opt.memory_policy)
+    detail << "requested=" << input_memory_policy_name(requested_memory_policy)
+           << " transport=" << input_memory_policy_name(src_opt.memory_policy)
            << " first_downstream=" << first_effective_downstream_kind;
     add_build_adaptation_action(adaptation, "appsrc_memory_policy", true, detail.str(),
                                 memory_policy_auto_applied

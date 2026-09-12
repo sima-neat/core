@@ -42,6 +42,9 @@ struct Analysis {
   std::vector<Reference> references;
   std::vector<Diagnostic> diagnostics;
   bool has_topology_syntax = false;
+  // Grouping, separate chains or all-pad links; ordinary ! links do not set
+  // this flag. Caps and assignment values remain opaque to both flags.
+  bool has_nontrivial_topology_syntax = false;
   bool complete = true;
 };
 

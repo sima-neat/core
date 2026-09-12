@@ -9,11 +9,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "pipeline/TensorTypes.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/InputStreamTeardownPolicy.h"
 
 #include <gst/gst.h>
 
@@ -147,6 +149,9 @@ struct SampleSpec {
   int fps_n = 0;
   int fps_d = 1;
   std::vector<PlaneInfo> planes;
+  // Selected tensor view bytes; required_bytes_actual may instead describe a
+  // larger TensorBuffer carrier transported without a copy.
+  size_t tensor_view_bytes_actual = 0;
   size_t required_bytes_actual = 0;
   CapKey caps_key;
   std::string caps_string;
@@ -154,6 +159,9 @@ struct SampleSpec {
 
 Expected<SampleSpec, Status> derive_sample_spec_or_error(const Sample& sample);
 SampleSpec derive_sample_spec_or_throw(const Sample& sample);
+// Envelope descriptors retain physical strides separately from logical caps.
+SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, const InputOptions& opt,
+                                         const char* where);
 SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const InputOptions& opt,
                                        const char* where);
 simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& opt,
@@ -170,6 +178,12 @@ struct ResolvedInputMemoryPolicy {
 };
 
 ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt);
+
+// Driver-backed async stages own submitted work until their GStreamer stop
+// callback reaps it. Their appsrc pipelines must therefore reach NULL instead
+// of being handed to the detached reaper.
+pipeline_internal::InputStreamTeardownPolicy
+inputstream_pipeline_teardown_policy(std::string_view pipeline);
 
 struct StreamIdOverride {
   std::optional<std::string> value;

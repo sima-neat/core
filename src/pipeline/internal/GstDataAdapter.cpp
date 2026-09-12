@@ -8,6 +8,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "nodes/io/Input.h"
 
+#include <gst/SimaTensorSetMetaAbi.h>
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
@@ -513,6 +514,10 @@ GstBuffer* make_zero_copy_view(GstBuffer* src, const SampleSpec& spec, std::stri
   gst_buffer_add_parent_buffer_meta(view, src);
   copy_custom_meta(view, src, "GstSimaMeta");
   copy_custom_meta(view, src, "GstSimaSampleMeta");
+  // This envelope shares the source memories, so its physical tensor
+  // descriptors remain exact. Preserve them rather than reconstructing the
+  // carrier layout later from logical Tensor routes.
+  copy_custom_meta(view, src, SIMA_TENSOR_SET_META_NAME);
   if (has_simaai_preprocess_meta(src)) {
     std::string copy_err;
     if (!copy_simaai_preprocess_meta(view, src, &copy_err)) {
@@ -736,7 +741,7 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
   }
 
   try {
-    SampleSpec spec = derive_tensor_spec_or_throw(t, opt, "GstDataAdapter::derive_field_spec");
+    SampleSpec spec = describe_tensor_spec_or_throw(t, opt, "GstDataAdapter::derive_field_spec");
     if (spec.caps_string.empty()) {
       if (err)
         *err = "field spec: empty caps_string";

@@ -302,6 +302,10 @@ struct RouteMaterializationPlan {
     bool quant_contract_required = false;
     bool include_pre_stage = false;
     bool boxdecode_selected = false;
+    // The selected terminal implementation consumes the compiler-authored
+    // tensor tail directly from producer memory. This is a capability fact,
+    // not a plugin-name test in ModelPack.
+    bool terminal_consumer_owns_tensor_tail = false;
   };
 
   bool use_preproc = false;

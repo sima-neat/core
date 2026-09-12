@@ -282,9 +282,9 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   // The Balanced fallback is a public-output reliability valve. Graph-internal
   // appsinks are transport edges to downstream EV74/MLA routes, where cloning a
   // zero-copy tensor back to CPU violates the next segment's input contract.
-  st->pipeline.zero_copy_fallback_enabled = stream_opt.public_output_contract &&
-                                            (opt.preset == RunPreset::Balanced) &&
-                                            !stream_opt.copy_output;
+  st->pipeline.zero_copy_fallback_enabled =
+      stream_opt.public_output_contract && (opt.preset == RunPreset::Balanced) &&
+      !stream_opt.copy_output && opt.output_memory != OutputMemory::ZeroCopy;
   if (stream_opt.holder_loan_credits > 0) {
     st->holder_loan_gate =
         std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits);
@@ -387,16 +387,22 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       const int max =
           explicit_output ? st->pipeline.stream_opt.appsink_max_buffers : st->opt.queue_depth;
       const bool has_zero_copy_output = sample_has_zero_copy_tensor(out);
+      const bool has_dmabuf_output = pipeline_internal::sample_has_dmabuf_memory(out);
+      const bool strict_zero_copy = st->opt.output_memory == OutputMemory::ZeroCopy;
+      const bool preserve_dmabuf =
+          has_dmabuf_output &&
+          (st->pipeline.stream_opt.preserve_dmabuf_output || !st->pipeline.stream_opt.copy_output);
       if (!st->pipeline.copy_output_latched.load(std::memory_order_relaxed) &&
-          st->pipeline.zero_copy_fallback_enabled && has_zero_copy_output && max > 0 &&
-          static_cast<int>(st->pipeline.out_queue.size()) >= max) {
+          st->pipeline.zero_copy_fallback_enabled && !has_dmabuf_output && has_zero_copy_output &&
+          max > 0 && static_cast<int>(st->pipeline.out_queue.size()) >= max) {
         st->pipeline.copy_output_latched.store(true, std::memory_order_relaxed);
         if (!st->pipeline.zero_copy_warned.exchange(true, std::memory_order_relaxed)) {
           std::fprintf(stderr, "[WARN] Balanced preset: zero-copy output reliability trip; "
                                "switching to copy-output mode.\n");
         }
       }
-      const bool copy_output = st->pipeline.copy_output_latched.load(std::memory_order_relaxed);
+      const bool copy_output = st->pipeline.copy_output_latched.load(std::memory_order_relaxed) &&
+                               !preserve_dmabuf && !strict_zero_copy;
       if (copy_output && has_zero_copy_output) {
         force_copy_sample_if_zero_copy(out);
         release_incoming_realtime_credits("async-output-copy");
@@ -408,6 +414,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
                             : st->opt.overflow_policy;
         if (output_drop == OverflowPolicy::Block &&
             !st->pipeline.stream_opt.explicit_public_output_options && !copy_output &&
+            !preserve_dmabuf && !strict_zero_copy &&
             pipeline_internal::env_bool("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY", true)) {
           output_drop = OverflowPolicy::KeepLatest;
         }

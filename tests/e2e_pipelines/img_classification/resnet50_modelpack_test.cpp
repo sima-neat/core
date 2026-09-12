@@ -414,10 +414,18 @@ static simaai::neat::Tensor run_direct_infer(const simaai::neat::Model& model, c
   simaai::neat::Graph p;
   p.add(model.graph(route_opt));
 
+  // This accuracy fixture exercises the production async model stages through
+  // Graph::run's synchronous convenience API.  Preserve the model's validated
+  // four-slot device depth instead of letting the generic one-shot adapter
+  // clamp ProcessCVU/ProcessMLA to one slot, which cannot circulate the
+  // prepared ResNet preproc -> MLA -> post-CVU route.
+  simaai::neat::RunOptions run_opt;
+  run_opt.advanced.sync_num_buffers_override = 4;
+
   simaai::neat::TensorList out;
   bool logged_sample = false;
   for (int i = 0; i < 20; ++i) {
-    out = p.run(std::vector<cv::Mat>{rgb});
+    out = p.run(std::vector<cv::Mat>{rgb}, run_opt);
     if (!logged_sample) {
       log_tensor_sample(sample_from_tensors(out), "direct");
       logged_sample = true;

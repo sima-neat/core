@@ -396,6 +396,61 @@ void input_thread_timeout_hands_off_stream_close() {
           "detached input thread did not release decoder admission after closing the stream");
 }
 
+void concurrent_stop_has_one_thread_owner() {
+  using namespace simaai::neat;
+
+  EnvVarGuard stream_stop_timeout("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", "0");
+  EnvVarGuard input_stop_timeout("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "50");
+
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x71);
+  Run run = sima_test::make_async_rgb_run(seed, 8, 8);
+  auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
+
+  require(run.try_push(TensorList{seed}), "concurrent stop: warmup push failed");
+  (void)run.pull(2000);
+
+  std::unique_lock<std::mutex> timing_lock(core->latency_mu);
+  const std::uint64_t enqueued_before = core->inputs_enqueued.load(std::memory_order_acquire);
+  require(run.try_push(TensorList{seed}), "concurrent stop: wedging push failed");
+  require(wait_until([&] { return input_dequeued_after(*core, enqueued_before); },
+                     std::chrono::seconds(3)),
+          "concurrent stop: input was not dequeued before teardown");
+
+  std::atomic<bool> start{false};
+  std::exception_ptr stop_errors[2];
+  std::thread stoppers[2];
+  for (std::size_t i = 0; i < 2; ++i) {
+    stoppers[i] = std::thread([&, i] {
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      try {
+        core->stop();
+      } catch (...) {
+        stop_errors[i] = std::current_exception();
+      }
+    });
+  }
+  start.store(true, std::memory_order_release);
+  for (auto& stopper : stoppers) {
+    stopper.join();
+  }
+  timing_lock.unlock();
+
+  for (const auto& error : stop_errors) {
+    if (error) {
+      std::rethrow_exception(error);
+    }
+  }
+  require(wait_until(
+              [&] {
+                return core->stream_close_state.load(std::memory_order_acquire) ==
+                       runtime::InputStreamCloseState::Closed;
+              },
+              std::chrono::seconds(3)),
+          "concurrent stop: detached input thread did not finish closing the stream");
+}
+
 // Same handoff under an active MeasureScope: a child that detaches closes its own stream
 // during stop_graph(), so its diag context must already have been snapshotted or the
 // measurement loses every per-node metric.
@@ -563,6 +618,7 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            detached_stream_stop_retains_runtime_until_cleanup();
            detached_stream_close_keeps_measurement_reads_safe();
            input_thread_timeout_hands_off_stream_close();
+           concurrent_stop_has_one_thread_owner();
            composite_child_handoff_preserves_measurement_node_metrics();
            failed_start_releases_admission(false);
            failed_start_releases_admission(true);

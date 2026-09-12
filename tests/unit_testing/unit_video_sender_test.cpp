@@ -66,7 +66,7 @@ RUN_TEST(
                          "standalone VideoSender should retain its safe raw-ingress fallback");
 
         const std::string backend = graph.describe_backend();
-        require(backend.find("videoconvert") != std::string::npos,
+        require(backend.find("neatencoderinput") != std::string::npos,
                 "standalone VideoSender should retain one safe format converter");
         require_contains(backend, "caps=\"video/x-raw,width=1280,height=720,framerate=30/1\"",
                          "VideoSender input raw caps mismatch");

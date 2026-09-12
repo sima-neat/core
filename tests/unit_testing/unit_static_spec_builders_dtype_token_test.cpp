@@ -10,6 +10,10 @@ RUN_TEST("unit_static_spec_builders_dtype_token_test", ([] {
                    "FP32 resolution should be case-insensitive");
            require(specbuilders::dtype_size_bytes_from_token("FP16") == 2U,
                    "FP16 must resolve to 2-byte elements");
+           require(specbuilders::dtype_size_bytes_from_token("int64") == 8U &&
+                       specbuilders::dtype_size_bytes_from_token("uint64") == 8U &&
+                       specbuilders::dtype_size_bytes_from_token("float64") == 8U,
+                   "registered 64-bit A65 tensor tokens must resolve to 8-byte elements");
 
            const auto logical = specbuilders::build_logical_output_static_spec(
                /*logical_index=*/0,

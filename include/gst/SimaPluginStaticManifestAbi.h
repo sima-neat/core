@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ev/ev_tensor_abi.h>
+#include <gst/SimaCvuCapabilityAbi.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,7 +28,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)21)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)29)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -123,6 +124,36 @@ typedef enum SimaPluginTensorMaterializationKind {
   SIMA_PLUGIN_TENSOR_MATERIALIZATION_BF16_LANE_SPLIT_REPACK = 3
 } SimaPluginTensorMaterializationKind;
 
+typedef enum SimaPluginFrameArenaRole {
+  SIMA_PLUGIN_FRAME_ARENA_NONE = 0,
+  SIMA_PLUGIN_FRAME_ARENA_ALLOCATE = 1,
+  SIMA_PLUGIN_FRAME_ARENA_REUSE_INPUT = 2
+} SimaPluginFrameArenaRole;
+
+typedef enum SimaPluginFrameArenaStorageDomain {
+  SIMA_PLUGIN_FRAME_ARENA_STORAGE_UNKNOWN = 0,
+  SIMA_PLUGIN_FRAME_ARENA_STORAGE_CMA = 1,
+  SIMA_PLUGIN_FRAME_ARENA_STORAGE_DMS = 2
+} SimaPluginFrameArenaStorageDomain;
+
+typedef enum SimaPluginFrameArenaProvenance {
+  SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_UNKNOWN = 0,
+  SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_CORE_ALLOCATED = 1,
+  SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_EXTERNAL_ADOPTED = 2
+} SimaPluginFrameArenaProvenance;
+
+typedef enum SimaPluginFrameArenaDeviceAccess {
+  SIMA_PLUGIN_FRAME_ARENA_ACCESS_NONE = 0,
+  SIMA_PLUGIN_FRAME_ARENA_ACCESS_CPU_A65 = 1 << 0,
+  SIMA_PLUGIN_FRAME_ARENA_ACCESS_MLA = 1 << 1,
+  SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74 = 1 << 2
+} SimaPluginFrameArenaDeviceAccess;
+
+typedef enum SimaPluginFrameArenaEscapePolicy {
+  SIMA_PLUGIN_FRAME_ARENA_ESCAPE_INTERNAL_ONLY = 0,
+  SIMA_PLUGIN_FRAME_ARENA_ESCAPE_CPU_MAPPABLE_PUBLIC = 1
+} SimaPluginFrameArenaEscapePolicy;
+
 typedef struct SimaPluginPhysicalBuffer {
   gint physical_index;
   gint allocator_index;
@@ -133,6 +164,7 @@ typedef struct SimaPluginPhysicalBuffer {
   const gchar* segment_name;
   gint source_physical_index;
   gint64 source_byte_offset;
+  guint64 required_alignment_bytes;
 } SimaPluginPhysicalBuffer;
 
 typedef struct SimaPluginLogicalTensor {
@@ -229,6 +261,27 @@ typedef enum SimaPluginProcessCvuOutputSemanticKind {
   SIMA_PLUGIN_PROCESSCVU_OUTPUT_SEMANTIC_TENSOR = 5
 } SimaPluginProcessCvuOutputSemanticKind;
 
+typedef enum SimaPluginCvuDescriptorAbiId {
+  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_NONE = 0,
+  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_TENSOR_TRANSFORM_PAIR_V1 =
+      SIMA_CVU_DESCRIPTOR_ABI_TENSOR_TRANSFORM_PAIR_V1,
+  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1 = SIMA_CVU_DESCRIPTOR_ABI_PREPROC_V1,
+  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_VISUAL_FRONTEND_V1 = SIMA_CVU_DESCRIPTOR_ABI_VISUAL_FRONTEND_V1
+} SimaPluginCvuDescriptorAbiId;
+
+typedef enum SimaPluginCvuPlacementMask {
+  SIMA_PLUGIN_CVU_PLACEMENT_EV74 = SIMA_CVU_PLACEMENT_EV74,
+  SIMA_PLUGIN_CVU_PLACEMENT_A65 = SIMA_CVU_PLACEMENT_A65
+} SimaPluginCvuPlacementMask;
+
+typedef enum SimaPluginCvuFramePatchMask {
+  SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA = SIMA_CVU_FRAME_PATCH_METADATA,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY = SIMA_CVU_FRAME_PATCH_PREPROC_GEOMETRY,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI = SIMA_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST = SIMA_CVU_FRAME_PATCH_PREPROC_ROI_LIST,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT = SIMA_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT
+} SimaPluginCvuFramePatchMask;
+
 typedef struct SimaPluginProcessCvuStagePayload {
   const gchar* graph_family;
   SimaPluginProcessCvuGraphFamily graph_family_kind;
@@ -279,6 +332,15 @@ typedef struct SimaPluginProcessCvuStagePayload {
   gint debug;
   guint32 opt_flags;
   gboolean canonical_contract;
+  /* Core admitted this stage through the strict MPK+ELF execution plan.
+   * The plugin consumes the proved contract without dispatcher fallback. */
+  gboolean dmabuf_plan_contract;
+  guint32 descriptor_abi_id;
+  guint32 descriptor_contract_version;
+  guint32 binding_schema_version;
+  guint32 supported_placement_mask;
+  guint32 allowed_frame_patch_mask;
+  guint32 maximum_members;
   gboolean preproc_single_output_handoff;
 
   /* tri-state values: -1 unset, 0 false, 1 true */
@@ -324,12 +386,22 @@ typedef struct SimaPluginProcessCvuStagePayload {
 
 typedef struct SimaPluginProcessMlaStagePayload {
   const gchar* model_path;
+  guint64 executable_bytes;
+  const gchar* executable_sha256;
   gint batch_size;
   gint batch_sz_model;
   const gchar* const* dispatcher_output_names;
   guint dispatcher_output_names_len;
   const guint64* dispatcher_output_sizes;
   guint dispatcher_output_sizes_len;
+  /* Exact compiler-authored physical port table, in numeric ELF port order. */
+  const gchar* const* elf_ifm_symbol_names;
+  guint elf_ifm_symbol_names_len;
+  const gchar* const* elf_ofm_symbol_names;
+  guint elf_ofm_symbol_names_len;
+  /* Core admitted this stage through the strict MPK+ELF decoder.
+   * The plugin consumes the proved contract without a transport fallback. */
+  gboolean dmabuf_plan_contract;
 } SimaPluginProcessMlaStagePayload;
 
 typedef struct SimaPluginSuperPointStagePayloadV1 {
@@ -405,6 +477,13 @@ typedef struct SimaPluginStageSpec {
 
   const gchar* const* required_preprocess_meta_fields;
   guint required_preprocess_meta_fields_len;
+
+  guint64 frame_arena_size_bytes;
+  SimaPluginFrameArenaRole frame_arena_role;
+  SimaPluginFrameArenaStorageDomain frame_arena_storage_domain;
+  SimaPluginFrameArenaProvenance frame_arena_provenance;
+  guint frame_arena_required_device_access;
+  SimaPluginFrameArenaEscapePolicy frame_arena_escape_policy;
 
   SimaPluginStagePayloadKind payload_kind;
   union {

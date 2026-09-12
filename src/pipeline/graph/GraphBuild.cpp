@@ -13,6 +13,7 @@
 #include "gst/GstParseLaunch.h"
 #include "gst/GstBusWatch.h"
 #include "gst/GstHelpers.h"
+#include "gst/internal/GstLaunchBindings.h"
 
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphReport.h"
@@ -33,6 +34,7 @@
 #include "pipeline/internal/contract/ContractApply.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/SyncBuild.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
@@ -1944,6 +1946,213 @@ static std::string set_property_for_factory_segments(std::string fragment, std::
   return fragment;
 }
 
+std::string session_build_select_terminal_objectdecode_cpu_visibility(std::string fragment) {
+  struct SegmentRange {
+    std::size_t begin;
+    std::size_t end;
+  };
+  std::vector<SegmentRange> segments;
+  bool single_quoted = false;
+  bool double_quoted = false;
+  bool escaped = false;
+  std::size_t begin = 0U;
+  for (std::size_t i = 0U; i < fragment.size(); ++i) {
+    const char c = fragment[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c == '\\' && (single_quoted || double_quoted)) {
+      escaped = true;
+      continue;
+    }
+    if (c == '\'' && !double_quoted) {
+      single_quoted = !single_quoted;
+      continue;
+    }
+    if (c == '"' && !single_quoted) {
+      double_quoted = !double_quoted;
+      continue;
+    }
+    if (c == '!' && !single_quoted && !double_quoted) {
+      segments.push_back({begin, i});
+      begin = i + 1U;
+    }
+  }
+  segments.push_back({begin, fragment.size()});
+
+  std::vector<std::size_t> selected;
+  for (std::size_t i = 0U; i < segments.size(); ++i) {
+    const auto current =
+        std::string_view(fragment).substr(segments[i].begin, segments[i].end - segments[i].begin);
+    if (!fragment_segment_uses_factory(current, "neatprocessmla")) {
+      continue;
+    }
+    std::size_t next = i + 1U;
+    while (next < segments.size()) {
+      const auto between = std::string_view(fragment).substr(
+          segments[next].begin, segments[next].end - segments[next].begin);
+      if (!fragment_segment_uses_factory(between, "queue") &&
+          !fragment_segment_uses_factory(between, "queue2")) {
+        break;
+      }
+      ++next;
+    }
+    if (next >= segments.size()) {
+      continue;
+    }
+    const auto consumer = std::string_view(fragment).substr(
+        segments[next].begin, segments[next].end - segments[next].begin);
+    if (fragment_segment_uses_factory(consumer, "neatobjectdecode") ||
+        fragment_segment_uses_factory(consumer, "neatboxdecode")) {
+      selected.push_back(i);
+    }
+  }
+
+  // Edit from right to left so stored source ranges remain valid. This is an
+  // exact graph-rendering decision; plugins never infer adjacency from names,
+  // factories, qdata, or runtime pad topology.
+  for (auto it = selected.rbegin(); it != selected.rend(); ++it) {
+    const SegmentRange range = segments[*it];
+    std::string segment = fragment.substr(range.begin, range.end - range.begin);
+    set_fragment_segment_property(&segment, "defer-output-invalidate", "false");
+    fragment.replace(range.begin, range.end - range.begin, segment);
+  }
+  return fragment;
+}
+
+std::string session_build_propagate_terminal_consumer_lane_window(std::string fragment) {
+  struct SegmentRange {
+    std::size_t begin;
+    std::size_t end;
+  };
+  std::vector<SegmentRange> segments;
+  bool single_quoted = false;
+  bool double_quoted = false;
+  bool escaped = false;
+  std::size_t begin = 0U;
+  for (std::size_t i = 0U; i < fragment.size(); ++i) {
+    const char c = fragment[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c == '\\' && (single_quoted || double_quoted)) {
+      escaped = true;
+      continue;
+    }
+    if (c == '\'' && !double_quoted) {
+      single_quoted = !single_quoted;
+      continue;
+    }
+    if (c == '"' && !single_quoted) {
+      double_quoted = !double_quoted;
+      continue;
+    }
+    if (c == '!' && !single_quoted && !double_quoted) {
+      segments.push_back({begin, i});
+      begin = i + 1U;
+    }
+  }
+  segments.push_back({begin, fragment.size()});
+
+  auto property_value = [](std::string_view segment,
+                           std::string_view property) -> std::optional<std::string> {
+    const std::string key = std::string(property) + "=";
+    std::size_t search = 0U;
+    while (search < segment.size()) {
+      const std::size_t pos = segment.find(key, search);
+      if (pos == std::string_view::npos) {
+        return std::nullopt;
+      }
+      if (pos != 0U && std::isspace(static_cast<unsigned char>(segment[pos - 1U])) == 0) {
+        search = pos + key.size();
+        continue;
+      }
+      std::size_t value_begin = pos + key.size();
+      std::size_t value_end = value_begin;
+      while (value_end < segment.size() &&
+             std::isspace(static_cast<unsigned char>(segment[value_end])) == 0 &&
+             segment[value_end] != '!') {
+        ++value_end;
+      }
+      if (value_end == value_begin) {
+        return std::nullopt;
+      }
+      return std::string(segment.substr(value_begin, value_end - value_begin));
+    }
+    return std::nullopt;
+  };
+  auto transparent = [](std::string_view segment) {
+    return fragment_segment_uses_factory(segment, "queue") ||
+           fragment_segment_uses_factory(segment, "queue2") ||
+           fragment_segment_uses_factory(segment, "identity") ||
+           fragment_segment_uses_factory(segment, "capsfilter");
+  };
+
+  std::vector<std::pair<std::size_t, std::string>> selected;
+  for (std::size_t i = 0U; i < segments.size(); ++i) {
+    const auto producer =
+        std::string_view(fragment).substr(segments[i].begin, segments[i].end - segments[i].begin);
+    const auto cpu_visible = property_value(producer, "defer-output-invalidate");
+    const auto producer_window = property_value(producer, "num-buffers");
+    if (!cpu_visible.has_value() || *cpu_visible != "false" || !producer_window.has_value()) {
+      continue;
+    }
+    const bool positive_window =
+        !producer_window->empty() &&
+        std::all_of(producer_window->begin(), producer_window->end(),
+                    [](unsigned char c) { return std::isdigit(c) != 0; }) &&
+        *producer_window != "0";
+    if (!positive_window) {
+      continue;
+    }
+
+    std::size_t consumer_index = i + 1U;
+    while (consumer_index < segments.size()) {
+      const auto candidate = std::string_view(fragment).substr(segments[consumer_index].begin,
+                                                               segments[consumer_index].end -
+                                                                   segments[consumer_index].begin);
+      if (!transparent(candidate)) {
+        break;
+      }
+      ++consumer_index;
+    }
+    if (consumer_index >= segments.size()) {
+      continue;
+    }
+    const auto consumer = std::string_view(fragment).substr(segments[consumer_index].begin,
+                                                            segments[consumer_index].end -
+                                                                segments[consumer_index].begin);
+    if (!property_value(consumer, "num-buffers").has_value()) {
+      // The consumer did not declare a bounded lane-window contract. Do not
+      // infer capability from a factory name or attach an unknown property.
+      continue;
+    }
+    const auto duplicate = std::find_if(selected.begin(), selected.end(), [&](const auto& entry) {
+      return entry.first == consumer_index;
+    });
+    if (duplicate != selected.end() && duplicate->second != *producer_window) {
+      throw_session_error_simple(error_codes::kPipelineShape,
+                                 "terminal consumer is fed by conflicting producer lane windows");
+    }
+    if (duplicate == selected.end()) {
+      selected.emplace_back(consumer_index, *producer_window);
+    }
+  }
+
+  // Right-to-left edits retain all parsed offsets.
+  std::sort(selected.begin(), selected.end(),
+            [](const auto& lhs, const auto& rhs) { return lhs.first > rhs.first; });
+  for (const auto& [index, window] : selected) {
+    const SegmentRange range = segments[index];
+    std::string segment = fragment.substr(range.begin, range.end - range.begin);
+    set_fragment_segment_property(&segment, "num-buffers", window);
+    fragment.replace(range.begin, range.end - range.begin, segment);
+  }
+  return fragment;
+}
+
 static std::string read_gst_fragment_property(const std::string& fragment,
                                               const std::string& property) {
   const std::string key = property + "=";
@@ -2047,9 +2256,9 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
   fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "async",
                                                processmla_async ? "true" : "false");
   if (sess_opt->processmla.output_pool_buffers > 0) {
-    fragment =
-        set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "num-buffers",
-                                          std::to_string(sess_opt->processmla.output_pool_buffers));
+    const std::string route_depth = std::to_string(sess_opt->processmla.output_pool_buffers);
+    fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla",
+                                                 "num-buffers", route_depth);
   }
   fragment = set_property_for_factory_segments(
       std::move(fragment), "neatprocessmla", "defer-output-invalidate",
@@ -2653,7 +2862,8 @@ std::string clamp_terminal_appsink_num_buffers(std::string pipeline, int num_buf
   return out.str();
 }
 
-std::string clamp_sync_pipeline(std::string pipeline, int num_buffers_override) {
+static std::string clamp_sync_pipeline_impl(std::string pipeline, int num_buffers_override,
+                                            bool legacy_terminal_floor) {
   pipeline = clamp_queue_buffers(std::move(pipeline), 1);
   const int forced = (num_buffers_override > 0) ? num_buffers_override : 1;
   auto trim = [](std::string& s) {
@@ -2752,14 +2962,20 @@ std::string clamp_sync_pipeline(std::string pipeline, int num_buffers_override) 
         [](const std::string& seg) { return seg.find("neatboxdecode") != std::string::npos; });
   }
 
-  if (forced <= 1) {
+  if (forced <= 1 && legacy_terminal_floor) {
     pipeline = clamp_terminal_appsink_num_buffers(std::move(pipeline), num_buffers_override);
   }
 
   return pipeline;
 }
 
-std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_override) {
+std::string clamp_sync_pipeline(std::string pipeline, int num_buffers_override) {
+  return clamp_sync_pipeline_impl(std::move(pipeline), num_buffers_override, true);
+}
+
+static std::string
+clamp_detess_num_buffers_impl(std::string pipeline, int num_buffers_override,
+                              const std::unordered_set<std::string>& native_stage_names) {
   // debugging resnet50: Sync detess stages can deadlock when num-buffers=1 and the
   // previous output sample lifetime overlaps the next push/pull call. Keep at least 2.
   const int forced_min = (num_buffers_override > 0) ? std::max(2, num_buffers_override) : 2;
@@ -2814,6 +3030,10 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
     if (!is_detess_processcvu) {
       continue;
     }
+    const auto elements = pipeline_internal::sima::parse_pipeline_elements(seg);
+    if (elements.size() == 1U && native_stage_names.contains(elements.front().element_name)) {
+      continue;
+    }
     // Skip only when the current value is set AND already meets the floor. Absent /
     // empty / non-numeric all fall through and get the forced value — same semantic
     // as before, but no -1 sentinel conflation.
@@ -2843,6 +3063,204 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
     std::fprintf(stderr, "[DBG] Graph::build(input) clamp_detess_num_buffers min=%d\n", forced_min);
   }
   return out.str();
+}
+
+std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_override) {
+  return clamp_detess_num_buffers_impl(std::move(pipeline), num_buffers_override, {});
+}
+
+std::string session_build_clamp_sync_build_result(const BuildResult& build,
+                                                  int num_buffers_override) {
+  namespace sima = pipeline_internal::sima;
+  using sima::FrameArenaRole;
+  using sima::static_contract::ArenaAllocationProvenance;
+  const auto legacy = [&] {
+    return clamp_detess_num_buffers(
+        clamp_sync_pipeline(build.pipeline_string, num_buffers_override), num_buffers_override);
+  };
+  if (!build.rendered_manifest ||
+      std::none_of(
+          build.rendered_manifest->stages.begin(), build.rendered_manifest->stages.end(),
+          [](const auto& stage) { return stage.frame_arena_role != FrameArenaRole::None; })) {
+    return legacy();
+  }
+  const auto fail = [&](const std::string& detail) -> void {
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        "Cannot budget synchronous appsink carrier retention: " + detail,
+        "Provide an unambiguous single-output native route with exact producer/value bindings; "
+        "pool capacity cannot be inferred from stage order or execution depth.",
+        build.pipeline_string);
+  };
+  const auto& manifest = *build.rendered_manifest;
+  auto elements = sima::parse_pipeline_elements(build.pipeline_string);
+  std::size_t sink = elements.size();
+  std::size_t sink_count = 0U;
+  for (std::size_t i = 0; i < elements.size(); ++i) {
+    if (elements[i].plugin == "appsink") {
+      ++sink_count;
+      if (elements[i].element_name == build.appsink_name) {
+        sink = i;
+      }
+    }
+  }
+  if (sink_count == 0U || sink == elements.size() || sink == 0U) {
+    return legacy();
+  }
+  auto transparent = [](const auto& element) {
+    return element.plugin == "identity" || element.plugin == "queue" ||
+           element.plugin == "queue2" || element.plugin == "capsfilter" ||
+           element.plugin.find('/') != std::string::npos; // Inline caps link.
+  };
+  std::size_t terminal = sink - 1U;
+  while (terminal > 0U && transparent(elements[terminal])) {
+    --terminal;
+  }
+  if (elements[terminal].plugin != "neatprocesscvu" &&
+      elements[terminal].plugin != "neatprocessmla") {
+    return legacy(); // A real non-native materializer owns its own terminal pool.
+  }
+
+  std::unordered_map<std::string, std::size_t> stage_by_element;
+  std::unordered_set<std::string> native_names;
+  for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
+    const auto& stage = manifest.stages[i];
+    const auto name = apply_name_transform(build.name_transform, stage.element_name);
+    if (!name.empty() && !stage_by_element.emplace(name, i).second) {
+      fail("duplicate typed element name '" + name + "'");
+    }
+    if (stage.frame_arena_role != FrameArenaRole::None) {
+      if (name.empty()) {
+        fail("native stage has no exact rendered element identity");
+      }
+      native_names.insert(name);
+    }
+  }
+  const auto endpoint = stage_by_element.find(elements[terminal].element_name);
+  if (endpoint == stage_by_element.end()) {
+    fail("no typed contract for terminal element '" + elements[terminal].element_name + "'");
+  }
+  if (manifest.stages[endpoint->second].frame_arena_role == FrameArenaRole::None) {
+    return legacy();
+  }
+  // Check topology only for the selected native endpoint. An unrelated native
+  // branch must not change the admission of a non-native terminal materializer.
+  // The existing analyzer recognizes pad references/bins; never mistake those
+  // for linear adjacency or guess independent sink-cache lifetime budgets.
+  if (sink_count != 1U) {
+    fail("expected exactly the named appsink '" + build.appsink_name + "'");
+  }
+  const auto launch = gst::launch::analyze(build.pipeline_string);
+  if (!launch.complete || launch.has_nontrivial_topology_syntax || !launch.references.empty() ||
+      std::any_of(elements.begin(), elements.end(), [](const auto& element) {
+        return element.plugin == "tee" || element.plugin == "input-selector" ||
+               element.plugin == "output-selector";
+      })) {
+    fail("nonlinear or incomplete native endpoint needs an explicit carrier lifetime budget");
+  }
+
+  std::vector<bool> visiting(manifest.stages.size(), false);
+  std::vector<std::optional<std::size_t>> origins(manifest.stages.size());
+  std::function<std::size_t(std::size_t)> resolve_owner = [&](std::size_t index) -> std::size_t {
+    const auto& stage = manifest.stages[index];
+    if (visiting[index]) {
+      fail("cycle at stage '" + stage.element_name + "'");
+    }
+    if (origins[index]) {
+      return *origins[index];
+    }
+    const auto rendered_name = apply_name_transform(build.name_transform, stage.element_name);
+    if (std::count_if(elements.begin(), elements.end(), [&](const auto& element) {
+          return element.element_name == rendered_name;
+        }) != 1) {
+      fail("native carrier stage is not uniquely rendered: '" + rendered_name + "'");
+    }
+    if (stage.frame_arena_size_bytes == 0U || stage.frame_arena_role == FrameArenaRole::None) {
+      fail("ReuseInput reaches a stage without a native arena: '" + stage.element_name + "'");
+    }
+    if (stage.frame_arena_role == FrameArenaRole::Allocate) {
+      if (stage.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated) {
+        fail("Allocate stage lacks CoreAllocated provenance: '" + stage.element_name + "'");
+      }
+      origins[index] = index;
+      return index;
+    }
+    if (stage.frame_arena_provenance == ArenaAllocationProvenance::ExternalAdopted) {
+      origins[index] = index; // No local pool may be invented for externally loaned storage.
+      return index;
+    }
+    const auto rendered = std::find_if(elements.begin(), elements.end(), [&](const auto& element) {
+      return element.element_name == rendered_name;
+    });
+    const bool has_rendered_native_predecessor =
+        rendered != elements.end() &&
+        std::any_of(elements.begin(), rendered, [&](const auto& element) {
+          return native_names.contains(element.element_name);
+        });
+    if (stage.frame_arena_role == FrameArenaRole::ReuseInput &&
+        !has_rendered_native_predecessor) {
+      // A public stage fragment can begin at MLA/CVU while retaining the full
+      // MPK's authored producer binding. The incoming GstBuffer owns that
+      // carrier; there is no allocator in this rendered fragment to enlarge.
+      origins[index] = index;
+      return index;
+    }
+    visiting[index] = true;
+    std::string error;
+    const auto edges =
+        sima::edgecontract::resolve_consumer_edge_contracts_exact(manifest, index, &error);
+    if (edges.empty() || edges.size() != stage.input_bindings.size()) {
+      fail("cannot resolve reused carrier at '" + stage.element_name + "': " + error);
+    }
+    std::optional<std::size_t> owner;
+    for (const auto& edge : edges) {
+      const auto origin = resolve_owner(edge.producer_stage_index);
+      if (owner && *owner != origin) {
+        fail("ReuseInput bindings have different carrier origins at '" + stage.element_name + "'");
+      }
+      owner = origin; // Multiple logical heads retain one carrier, not one pool slot per head.
+    }
+    visiting[index] = false;
+    origins[index] = owner;
+    return *owner;
+  };
+  const auto owner = resolve_owner(endpoint->second);
+  auto pipeline = clamp_detess_num_buffers_impl(
+      clamp_sync_pipeline_impl(build.pipeline_string, num_buffers_override, false),
+      num_buffers_override, native_names);
+  if (manifest.stages[owner].frame_arena_role != FrameArenaRole::Allocate ||
+      num_buffers_override > 1) {
+    return pipeline;
+  }
+  const auto owner_name =
+      apply_name_transform(build.name_transform, manifest.stages[owner].element_name);
+  elements = sima::parse_pipeline_elements(pipeline);
+  std::size_t owner_matches = 0U;
+  for (auto& element : elements) {
+    if (element.element_name != owner_name) {
+      continue;
+    }
+    if (element.plugin != "neatprocesscvu" && element.plugin != "neatprocessmla") {
+      fail("native Allocate owner has no supported pool property: '" + owner_name + "'");
+    }
+    ++owner_matches;
+    // Exactly one active serial frame plus appsink's previous cached frame.
+    // This is not an async lane/window override or a general fanout budget.
+    const auto existing = gst_props::get_int(element.fragment, "output-pool-min-buffers=");
+    gst_props::set_prop(element.fragment, "output-pool-min-buffers=",
+                        std::to_string(std::max<std::int64_t>(2, existing.value_or(0))));
+  }
+  if (owner_matches != 1U) {
+    fail("Allocate owner is not uniquely rendered: '" + owner_name + "'");
+  }
+  std::string out;
+  for (const auto& element : elements) {
+    if (!out.empty()) {
+      out += " ! ";
+    }
+    out += element.fragment;
+  }
+  return out;
 }
 
 BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
@@ -2928,7 +3346,8 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     }
   }
 
-  br.diag->pipeline_string = ss.str();
+  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(
+      session_build_select_terminal_objectdecode_cpu_visibility(ss.str()));
   br.pipeline_string = br.diag->pipeline_string;
   return br;
 }
@@ -2982,6 +3401,17 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
     effective_lineages.emplace(lineage_key, std::move(state));
   }
 
+  // Retargeting rebuilds preprocessing before inference. Admit the immutable
+  // physical plan once at this execution boundary so both rebuilt fragments
+  // project the same graph-wide frame arena; otherwise the first fragment can
+  // observe the still-lazy semantic pack and allocate only its local output.
+  for (const auto& [lineage_key, state] : effective_lineages) {
+    (void)lineage_key;
+    if (state.changed) {
+      internal::ModelAccess::prepare_for_execution(*state.effective_model, sync_mode);
+    }
+  }
+
   std::vector<std::shared_ptr<Node>> out;
   out.reserve(nodes.size());
   for (std::size_t i = 0; i < nodes.size();) {
@@ -3022,8 +3452,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
     std::vector<std::shared_ptr<Node>> replacement;
     switch (binding->stage_role) {
     case internal::ModelLineageStageRole::Preprocess:
-      replacement =
-          internal::ModelAccess::build_preprocess_nodes(*it->second.effective_model, sync_mode);
+      replacement = internal::ModelAccess::rebuild_preprocess_route_nodes(
+          *it->second.effective_model, sync_mode);
       break;
     case internal::ModelLineageStageRole::Infer:
       replacement =

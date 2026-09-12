@@ -79,7 +79,8 @@ sima_test::ModelArchiveFixture make_quanttess_detessdequant_fixture(const std::s
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_topology_artifacts=*/true);
 }
 
 class ManualPostProbeNode final : public simaai::neat::Node,
@@ -143,6 +144,14 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
            require(internal::ModelAccess::resolved_post_kind(*effective) ==
                        internal::PostRouteStageKind::BoxDecode,
                    "retargeted model should resolve to boxdecode");
+           const auto effective_options = internal::ModelAccess::options(*effective);
+           require(effective_options.inference_terminal.mla_only,
+                   "model-bound boxdecode should terminate the model fragment at the last MLA");
+           require(!effective_options.inference_terminal.last_stage_index.has_value() &&
+                       !effective_options.inference_terminal.last_stage_name.has_value() &&
+                       !effective_options.inference_terminal.last_plugin_id.has_value() &&
+                       !effective_options.inference_terminal.last_processor.has_value(),
+                   "model-bound boxdecode should have one exact terminal authority");
 
            const auto compiled =
                internal::ModelAccess::build_boxdecode_stage_contract(*effective, false);
@@ -151,7 +160,7 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
 
            auto asserted_boxdecode = nodes::SimaBoxDecode(
                *effective, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "retarget_boxdecode",
-               std::nullopt, std::nullopt, 1920, 1080, 0, 0, ResizeMode::Stretch);
+               std::nullopt, std::nullopt, 1920, 1080, 640, 640, ResizeMode::Stretch);
            const auto* asserted_before =
                dynamic_cast<const SimaBoxDecode*>(asserted_boxdecode.get());
            require(asserted_before != nullptr && asserted_before->backend_fragment(0).find(
@@ -162,6 +171,35 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
            require(asserted_after != nullptr && asserted_after->backend_fragment(0).find(
                                                     "resize-mode=stretch") != std::string::npos,
                    "model retarget must preserve an explicit resize assertion");
+           require(asserted_after->backend_fragment(0).find("model-width=640") !=
+                       std::string::npos &&
+                       asserted_after->backend_fragment(0).find("model-height=640") !=
+                           std::string::npos,
+                   "model retarget must preserve explicit model dimensions");
+
+           // Cover the route that exposed the product bug: the Model already selected BoxDecode,
+           // so no post-kind retarget was needed, but its infer fragment still rendered the MPK
+           // dequant/detess tail.  Materialization must still rebuild it with the exact last-MLA
+           // terminal rather than returning the untrimmed model.
+           Model::Options already_boxdecode_options;
+           already_boxdecode_options.decode_type = BoxDecodeType::YoloV8Seg;
+           Model already_boxdecode(fixture.tar_path, already_boxdecode_options);
+           require(internal::ModelAccess::resolved_post_kind(already_boxdecode) ==
+                       internal::PostRouteStageKind::BoxDecode,
+                   "explicit decode type should preselect the boxdecode route");
+           const auto already_binding = internal::make_model_lineage_binding(
+               already_boxdecode, internal::ModelLineageStageRole::ManualPost,
+               internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
+           changed = false;
+           err.clear();
+           auto already_effective = internal::build_effective_model_for_requested_post(
+               *already_binding, BoxDecodeType::YoloV8Seg, &changed, &err);
+           require(already_effective != nullptr && err.empty(),
+                   "already-selected boxdecode route should materialize cleanly");
+           require(changed,
+                   "already-selected boxdecode route should still acquire the MLA terminal");
+           require(internal::ModelAccess::options(*already_effective).inference_terminal.mla_only,
+                   "already-selected boxdecode route should stop before the MPK post tail");
 
            std::vector<std::shared_ptr<Node>> nodes;
            nodes.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));

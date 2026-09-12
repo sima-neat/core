@@ -129,10 +129,47 @@ int main(int argc, char** argv) {
     vid_dec.type = simaai::neat::SimaDecodeType::H264;
     vid_dec.sima_allocator_type = vo.sima_allocator_type;
     vid_dec.out_format = vo.out_format;
-    vid_dec.raw_output = false;
+    vid_dec.raw_output = true;
     manual_vid.push_back(simaai::neat::nodes::SimaDecode(vid_dec));
 
-    compare_graph_fragments(group_vid, graph_from_nodes(std::move(manual_vid)));
+    compare_graph_fragments(group_vid, graph_from_nodes(manual_vid));
+    require(vo.output_caps.memory == simaai::neat::CapsMemory::Any,
+            "native video tail caps must preserve producer memory by default");
+
+    auto converted_vo = vo;
+    converted_vo.use_videoconvert = true;
+    converted_vo.use_videoscale = true;
+    auto converted_nodes = manual_vid;
+    converted_nodes.push_back(simaai::neat::nodes::VideoConvert());
+    converted_nodes.push_back(simaai::neat::nodes::VideoScale());
+    compare_graph_fragments(simaai::neat::nodes::groups::VideoInputGroup(converted_vo),
+                            graph_from_nodes(std::move(converted_nodes)));
+
+    auto rgb_vo = vo;
+    rgb_vo.out_format = simaai::neat::FormatTag::RGB;
+    auto rgb_nodes = manual_vid;
+    vid_dec.out_format = rgb_vo.out_format;
+    vid_dec.raw_output = false;
+    rgb_nodes.back() = simaai::neat::nodes::SimaDecode(vid_dec);
+    compare_graph_fragments(simaai::neat::nodes::groups::VideoInputGroup(rgb_vo),
+                            graph_from_nodes(std::move(rgb_nodes)));
+
+    auto system_memory_vo = vo;
+    system_memory_vo.output_caps.enable = true;
+    system_memory_vo.output_caps.memory = simaai::neat::CapsMemory::SystemMemory;
+    auto system_memory_nodes = manual_vid;
+    simaai::neat::SimaDecodeOptions system_memory_dec;
+    system_memory_dec.type = simaai::neat::SimaDecodeType::H264;
+    system_memory_dec.sima_allocator_type = system_memory_vo.sima_allocator_type;
+    system_memory_dec.out_format = system_memory_vo.out_format;
+    system_memory_dec.raw_output = false;
+    system_memory_nodes.back() = simaai::neat::nodes::SimaDecode(system_memory_dec);
+    const auto& system_caps = system_memory_vo.output_caps;
+    system_memory_nodes.push_back(
+        simaai::neat::nodes::CapsRaw(system_caps.format, system_caps.width, system_caps.height,
+                                     system_caps.fps, system_caps.memory));
+    compare_graph_fragments(simaai::neat::nodes::groups::VideoInputGroup(system_memory_vo),
+                            graph_from_nodes(std::move(system_memory_nodes)));
 
     // ----------------------------
     // RTSP group

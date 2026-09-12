@@ -4,9 +4,10 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "test_main.h"
 
+#include <array>
 #include <cstdint>
-#include <sstream>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 namespace {
@@ -268,10 +269,117 @@ void verify_non_tess_preproc_semantic_rendering() {
           "non-tess preproc primary runtime output should be image-semantic");
 }
 
+void verify_nested_processcvu_role_placement_rendering() {
+  using namespace simaai::neat;
+  using namespace simaai::neat::pipeline_internal::sima;
+  namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
+
+  struct Case {
+    ProcessCvuGraphFamily family;
+    int graph_id;
+    sc::PhysicalCommandRole role;
+    const char* expected_target;
+    const char* expected_source;
+  };
+  const std::array cases{
+      Case{ProcessCvuGraphFamily::Cast, 221, sc::PhysicalCommandRole::Egress, "A65",
+           "processcvu_post"},
+      Case{ProcessCvuGraphFamily::Dequant, 223, sc::PhysicalCommandRole::Egress, "A65",
+           "processcvu_post"},
+      Case{ProcessCvuGraphFamily::Quant, 222, sc::PhysicalCommandRole::Ingress, "EV74",
+           "processcvu_pre"},
+  };
+
+  ContractCompileInput input;
+  input.processcvu_requested_run_target = "EV74";
+  input.processcvu.pre_run_target = "EV74";
+  input.processcvu.post_run_target = "A65";
+
+  CompiledPipelineContracts compiled;
+  compiled.fully_renderable = true;
+  CompiledNodeContract parent;
+  parent.node_kind = "ModelFragment";
+  parent.plugin_kind = "ModelFragment";
+  parent.renderable = true;
+  for (const auto& item : cases) {
+    CompiledNodeContract child;
+    child.node_kind = "ModelFragmentStage";
+    child.plugin_kind = "processcvu";
+    child.element_name = "physical_cvu_graph_" + std::to_string(item.graph_id);
+    child.logical_stage_id = child.element_name;
+    child.renderable = true;
+    child.processcvu.emplace();
+    child.processcvu->payload.graph_family_enum = item.family;
+    child.processcvu->payload.graph_id = item.graph_id;
+    child.processcvu->payload.graph_name = child.element_name;
+    child.processcvu->payload.graph_family = child.element_name;
+    child.processcvu->physical_command_role = item.role;
+
+    const std::string output_name = child.element_name + "_output";
+    LogicalTensorStaticSpec logical;
+    logical.logical_index = 0;
+    logical.backend_output_index = 0;
+    logical.physical_index = 0;
+    logical.output_slot = 0;
+    logical.tensor_index = 0;
+    logical.logical_name = output_name;
+    logical.backend_name = output_name;
+    logical.segment_name = output_name;
+    logical.dtype = "FP32";
+    logical.layout = "HWC";
+    logical.shape = {1, 1, 1};
+    logical.size_bytes = sizeof(float);
+    child.processcvu->runtime_contract.logical_outputs.push_back(logical);
+
+    PhysicalBufferStaticSpec physical;
+    physical.physical_index = 0;
+    physical.allocator_index = 0;
+    physical.source_physical_index = 0;
+    physical.size_bytes = logical.size_bytes;
+    physical.segment_name = output_name;
+    child.processcvu->runtime_contract.physical_outputs.push_back(physical);
+
+    StageOutputRoute route;
+    route.output_slot = 0;
+    route.logical_output_index = 0;
+    route.tensor_index = 0;
+    route.cm_output_name = output_name;
+    route.segment_name = output_name;
+    child.processcvu->runtime_contract.output_order.push_back(route);
+    child.processcvu->exposed_view.exposed_logical_outputs.push_back(std::move(logical));
+    child.processcvu->exposed_view.exposed_output_order.push_back(std::move(route));
+    child.processcvu->exposed_view.primary_output_name = output_name;
+    parent.child_stages.push_back(std::move(child));
+  }
+  compiled.stages.push_back(std::move(parent));
+
+  ManifestBuildDiagnostics diagnostics;
+  const auto manifest = render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
+  require(manifest.has_value() && diagnostics.errors.empty(),
+          "nested ProcessCVU children should render with their exact physical roles: " +
+              join_errors(diagnostics));
+  require(manifest->stages.size() == cases.size(),
+          "nested ProcessCVU render should retain every child stage");
+  for (std::size_t index = 0; index < cases.size(); ++index) {
+    const auto& expected = cases[index];
+    const auto& payload = manifest->stages[index].processcvu;
+    require(payload.graph_id == expected.graph_id &&
+                payload.requested_run_target == expected.expected_target &&
+                payload.run_target == expected.expected_target &&
+                payload.resolved_exec_backend ==
+                    (std::string(expected.expected_target) == "A65" ? "A65" : "EVXX"),
+            "nested ProcessCVU child must resolve the target from its exact physical role");
+    require(payload.run_target_resolution_reason.find(expected.expected_source) !=
+                std::string::npos,
+            "nested ProcessCVU child must record the role-specific resolution source");
+  }
+}
+
 } // namespace
 
 RUN_TEST("unit_contract_render_manifest_equivalence_test", ([] {
            verify_render_manifest_equivalence();
            verify_runtime_output_order_rendering();
            verify_non_tess_preproc_semantic_rendering();
+           verify_nested_processcvu_role_placement_rendering();
          }));

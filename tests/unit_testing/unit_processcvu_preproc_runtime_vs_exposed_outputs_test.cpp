@@ -51,8 +51,8 @@ RUN_TEST("unit_processcvu_preproc_runtime_vs_exposed_outputs_test", ([] {
                });
            require(tess_runtime_it != contract.runtime_contract.logical_outputs.end(),
                    "runtime contract should retain the tessellated logical output");
-           require(tess_runtime_it->shape == std::vector<std::int64_t>({640, 640, 3}),
-                   "tessellated handoff should preserve the semantic output shape");
+           require(tess_runtime_it->shape == std::vector<std::int64_t>({1, 640, 640, 3}),
+                   "model-managed tessellated handoff should preserve batch-aware semantics");
            require(tess_runtime_it->size_bytes == 640U * 640U * 3U,
                    "tessellated handoff should preserve the packed MLA ingress byte size");
            require(contract.exposed_view.exposed_logical_outputs.size() == 1U,

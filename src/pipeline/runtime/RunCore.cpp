@@ -50,7 +50,8 @@ namespace {
 void tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
                                            const GraphRuntimeOptions& graph_opt,
                                            bool graph_internal_output) {
-  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto || stream_opt.copy_output) {
+  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output)) {
     return;
   }
   const std::size_t edge_queue = graph_opt.edge_queue == 0 ? 256 : graph_opt.edge_queue;
@@ -1591,6 +1592,10 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
 
   std::string local_last_pipeline;
   std::string& last_pipeline = opt.last_pipeline ? *opt.last_pipeline : local_last_pipeline;
+  // Runtime queue capacity and accelerator lane depth are independent
+  // contracts.  RunOptions::queue_depth controls framework ingress/egress
+  // queues; the model-authored ProcessMLA num-buffers value must remain intact
+  // unless GraphOptions carries an explicit ProcessMLA pool override.
   GraphOptions route_options = segment.route_options;
   if (segment.boundary_hints.has_value()) {
     if (!opt.input_route_processor && segment.boundary_hints->input_route_processor) {

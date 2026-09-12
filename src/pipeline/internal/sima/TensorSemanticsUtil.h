@@ -232,7 +232,7 @@ inline std::optional<std::size_t> find_axis(const std::vector<TensorAxisSemantic
 /**
  * @brief Stamp axis-semantic bytes from `(shape, layout_token)` into a raw byte buffer.
  *
- * Handles 4-D leading-N tensors (when shape[0] == 1) for both CHW and HWC layouts. Falls back
+ * Handles explicit NHWC/NCHW batches and implicit singleton-N CHW/HWC tensors. Falls back
  * to a generic best-guess (C/W/H/D/N from fastest to slowest) for unrecognized layouts.
  */
 template <typename ShapeT>
@@ -247,9 +247,12 @@ inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& sha
   }
   const std::uint32_t rank = static_cast<std::uint32_t>(shape.size());
   const std::string layout = normalize_layout_token(raw_layout);
-  const bool leading_batch = rank >= 4U && !shape.empty() &&
-                             shape.front() == static_cast<ShapeT>(1) &&
-                             (layout == "CHW" || layout == "HWC");
+  const std::string explicit_layout = upper_copy_ascii(raw_layout);
+  const bool leading_batch =
+      rank >= 4U && !shape.empty() && shape.front() > 0 &&
+      (shape.front() == static_cast<ShapeT>(1) ||
+       (rank == 4U && (explicit_layout == "NHWC" || explicit_layout == "NCHW"))) &&
+      (layout == "CHW" || layout == "HWC");
   if (layout == "CHW") {
     if (leading_batch) {
       semantics[0] = SIMA_EV_AXIS_N;

@@ -121,6 +121,7 @@ source "$1"
 tmp="$(mktemp -d)"
 INSTALLER_TMP_DIRS=("${tmp}")
 ENV_MODE=modalix-board
+check_b1157_install_maintenance() { :; }
 install_python_environment() { printf 'PYNEAT\n'; }
 install_debs_on_board() { printf 'DEBS\n'; }
 configure_board_i2c_access() { printf 'I2C\n'; }
@@ -847,6 +848,9 @@ calls="${tmp}/calls"
 : > "${calls}"
 export NEAT_RECOVERY_FUNCTIONS_ONLY=ON
 source "$1"
+
+# Legacy ordering is valid only after the profile guard positively admits 2.1.x.
+legacy_runtime_recovery_allowed() { return 0; }
 
 # Record the step labels instead of running them; their order is the contract.
 run_step() { printf '%s\n' "$1" >> "${calls}"; }
