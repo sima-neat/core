@@ -729,7 +729,7 @@ ensure_llima_sdk_sysroot_deps() {
   fi
   if [[ ! -f "${install_root}/usr/include/fftw3.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfftw3.so" ]]; then
-    missing_packages+=("libfftw3-dev:arm64")
+    missing_packages+=("libfftw3-dev:arm64" "libfftw3-double3:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" ||
         ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavcodec.so" ]]; then
