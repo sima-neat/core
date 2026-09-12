@@ -47,22 +47,17 @@ artifact closure without choosing or rewriting dependency versions. Packages
 outside the artifact remain platform-owned; an incompatible platform must be
 updated rather than repaired by Core or LLiMa.
 
-### B1157 runtime identity and recovery
+### Direct-driver recovery
 
-For the direct-driver B1157 profile, `deps/manifest.json` selects an explicit
-Internals artifact branch rather than the legacy snap/develop fallback. Before
-installation, Core validates the artifact's runtime profile, kernel revision,
-and exact sysroot receipt. The exported `NeatInternals` CMake package and installed
-`SimaNeat` consumer config enforce the same identity; ad hoc runtime discovery
-cannot replace a profile-verified package. Debian dependencies also require the
-B1157 runtime-profile capability. These checks do not change the public C++ ABI.
+For the direct-driver platform, `deps/manifest.json` selects the Internals and
+LLiMa artifacts packaged with Core. The package set is the compatibility unit;
+Core does not duplicate Internals runtime, kernel, or sysroot version checks.
 
 Recovery belongs to the selected platform, not to dispatcher error matching.
-`DispatcherRecovery` refuses legacy recovery in a direct-profile build. The
-installed recovery script checks image metadata and Core/Internals runtime
-receipts before **any** mutation, including firmware activation and cleanup.
-Only an explicitly identified legacy Modalix 2.1.x image without direct-profile
-receipts can enter the old recovery sequence. Unknown identity and unknown DMA
+`DispatcherRecovery` refuses legacy recovery in a direct-driver build. The
+installed recovery script checks image metadata before **any** mutation,
+including firmware activation and cleanup. Only an explicitly identified
+legacy Modalix 2.1.x image can enter the old recovery sequence. Unknown identity and unknown DMA
 completion never authorize AppComplex startup, MLA initialization, or remote
 processor resets.
 

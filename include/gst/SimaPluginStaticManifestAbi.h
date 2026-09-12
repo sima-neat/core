@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ev/ev_tensor_abi.h>
-#include "SimaCvuCapabilityAbi.h"
+#include <gst/SimaCvuCapabilityAbi.h>
 
 #ifdef __cplusplus
 extern "C" {

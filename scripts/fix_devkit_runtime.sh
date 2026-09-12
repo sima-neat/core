@@ -18,15 +18,11 @@ if [[ $# -gt 0 ]]; then
 else
   pass="${DEVKIT_PASSWORD:-edgeai}"
 fi
-# Read-only, fail-closed admission. Presence of a runtime receipt (even broken
-# JSON or a dangling link) rules out legacy recovery. Do not source metadata.
+# Read-only, fail-closed admission based on immutable image metadata. Do not
+# source metadata.
 legacy_runtime_recovery_allowed_at() {
   local root="$1"
-  local receipt machine version metadata
-  for receipt in "${root}/usr/share/sima-neat-internals/runtime-profile.json" \
-                 "${root}/usr/share/sima-neat/runtime-profile.json"; do
-    [[ ! -e "${receipt}" && ! -L "${receipt}" ]] || return 1
-  done
+  local machine version metadata
   [[ -r "${root}/etc/buildinfo" ]] || return 1
   metadata="$(awk -F= '
     length($0) > 4096 { exit 1 }

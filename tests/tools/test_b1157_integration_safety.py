@@ -10,11 +10,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = json.loads((ROOT / "deps/manifest.json").read_text())
-PROFILE = {
-    "runtime_profile": MANIFEST["runtime-profile"],
-    "kernel_commit": MANIFEST["kernel-commit"],
-    "sysroot_version": MANIFEST["expected-internals-sysroot"],
-}
 
 
 def bash(script: str) -> subprocess.CompletedProcess:
@@ -57,122 +52,16 @@ legacy_runtime_recovery_allowed_at {shlex.quote(str(tmp_path))}
     assert (result.returncode == 0) == allowed, result.stderr
 
 
-@pytest.mark.parametrize("owner", ["sima-neat", "sima-neat-internals"])
-@pytest.mark.parametrize("marker", ["valid", "malformed", "dangling"])
-def test_shell_refuses_all_recovery_mutation_with_direct_marker(tmp_path, owner, marker):
-    (tmp_path / "etc").mkdir()
-    (tmp_path / "etc/buildinfo").write_text("MACHINE=modalix\nDISTRO_VERSION=2.1.3\n")
-    receipt = tmp_path / "usr/share" / owner / "runtime-profile.json"
-    receipt.parent.mkdir(parents=True)
-    if marker == "dangling":
-        receipt.symlink_to("missing")
-    else:
-        receipt.write_text(json.dumps(PROFILE) if marker == "valid" else "{")
-    result = bash(f"""
-export NEAT_RECOVERY_FUNCTIONS_ONLY=ON
-export SIMA_NEAT_RECOVERY_HARD_RESET=1 SIMA_NEAT_RECOVERY_ALLOW_UNSAFE_RESET=1
-source {shlex.quote(str(ROOT / 'scripts/fix_devkit_runtime.sh'))}
-legacy_runtime_recovery_allowed() {{ legacy_runtime_recovery_allowed_at {shlex.quote(str(tmp_path))}; }}
-run_step() {{ echo MUTATED; }}
-quarantine_stale_global_dispatcher_libs() {{ echo MUTATED; }}
-activate_staged_ev74_firmware_if_needed() {{ echo MUTATED; }}
-recover_devkit_runtime_main
-""")
-    assert result.returncode != 0
-    assert "MUTATED" not in result.stdout
-    assert "Refusing legacy recovery" in result.stderr
-
-
-def artifact_identity():
-    return {
-        "platform-version": MANIFEST["platform-version"],
-        "runtime-profile": PROFILE["runtime_profile"],
-        "kernel-commit": PROFILE["kernel_commit"],
-        "sysroot-version": PROFILE["sysroot_version"],
-    }
-
-
-@pytest.mark.parametrize("mismatch", [None, "platform-version", "runtime-profile", "kernel-commit", "sysroot-version"])
-def test_artifact_profile_is_exact(tmp_path, mismatch):
-    artifact = artifact_identity()
-    if mismatch:
-        artifact[mismatch] = "old"
-    receipt = tmp_path / "internals-manifest.json"
-    receipt.write_text(json.dumps(artifact))
-    result = subprocess.run([
-        "python3", str(ROOT / "scripts/build/validate_internals_profile.py"),
-        str(ROOT / "deps/manifest.json"), str(receipt),
-    ], text=True, capture_output=True, check=False)
-    assert (result.returncode == 0) == (mismatch is None), result.stderr
-
-
-def test_cmake_profile_rejects_old_or_incomplete_installed_package(tmp_path):
-    template = (ROOT / "cmake/RequireInternalsProfile.cmake.in").read_text()
-    for key, value in {
-        "SIMANEAT_RUNTIME_PROFILE": PROFILE["runtime_profile"],
-        "SIMANEAT_KERNEL_COMMIT": PROFILE["kernel_commit"],
-        "SIMANEAT_INTERNALS_SYSROOT": PROFILE["sysroot_version"],
-    }.items():
-        template = template.replace(f"@{key}@", value)
-    for field in (None, "RUNTIME_PROFILE", "KERNEL_COMMIT", "SYSROOT_VERSION"):
-        variables = {
-            "RUNTIME_PROFILE": PROFILE["runtime_profile"],
-            "KERNEL_COMMIT": PROFILE["kernel_commit"],
-            "SYSROOT_VERSION": PROFILE["sysroot_version"],
-        }
-        if field:
-            variables.pop(field)
-        config = tmp_path / "profile.cmake"
-        config.write_text("\n".join(f'set(NeatInternals_{k} "{v}")' for k, v in variables.items()) + "\n" + template)
-        result = subprocess.run(["cmake", "-P", str(config)], text=True, capture_output=True)
-        assert (result.returncode == 0) == (field is None), result.stderr
-
-
-def make_deb(directory, name, version, receipt=None):
-    package = directory / name
-    control = package / "DEBIAN/control"
-    control.parent.mkdir(parents=True)
-    control.write_text(f"Package: {name}\nVersion: {version}\nArchitecture: all\nMaintainer: Test <test@example.invalid>\nDescription: host fixture\n")
-    if receipt is not None:
-        path = package / "usr/share/sima-neat-internals/runtime-profile.json"
-        path.parent.mkdir(parents=True)
-        path.write_text(json.dumps(receipt))
-    output = directory / f"{name}.deb"
-    subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(package), str(output)], check=True, capture_output=True)
-    return output
-
-
-@pytest.mark.parametrize("mode", ["matched", "missing", "old_profile", "mixed_version"])
-def test_installer_checks_package_payload_even_with_platform_override(tmp_path, mode):
-    receipt = dict(PROFILE)
-    if mode == "old_profile":
-        receipt["runtime_profile"] = "legacy"
-    runtime = make_deb(tmp_path, "neat-runtime", "1.0", None if mode == "missing" else receipt)
-    plugins = make_deb(tmp_path, "neat-gst-plugins", "2.0" if mode == "mixed_version" else "1.0")
-    result = bash(f"""
-source {shlex.quote(str(ROOT / 'tools/install_neat_framework.sh'))}
-NEAT_PACKAGE_MANIFEST={shlex.quote(str(ROOT / 'deps/manifest.json'))}
-NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON
-DEBS=({shlex.quote(str(runtime))} {shlex.quote(str(plugins))})
-validate_bundled_internals_profile
-""")
-    assert (result.returncode == 0) == (mode == "matched"), result.stderr
-
-
-def test_manifest_disallows_snap_and_gates_before_dependency_install():
+def test_manifest_selects_internals_and_llima_artifacts():
     assert MANIFEST["platform-version"] == "3.0.0"
     assert MANIFEST["internals"] == {"branch": "codex/b1157-mlart-dmabuf", "spec": "latest"}
     assert MANIFEST["llima"] == {
         "branch": "codex/b1157-mlart-dmabuf",
         "spec": "f3ee6ab701f4",
     }
-    script = (ROOT / "build.sh").read_text()
-    function = script.split("ensure_neat_internals() {", 1)[1].split("\n}\n", 1)[0]
-    assert function.index("validate_internals_runtime_profile") < function.index("sync_sysroot_from_internals_manifest")
-    assert function.index("validate_internals_runtime_profile") < function.index("collect_plugin_files_from_debs")
-    assert "Direct-driver Core requires an explicit Internals ref" in script
-    cmake = (ROOT / "CMakeLists.txt").read_text()
-    assert '"neat-runtime-profile-b1297 (= 1)"' in cmake
+    assert "runtime-profile" not in MANIFEST
+    assert "kernel-commit" not in MANIFEST
+    assert "expected-internals-sysroot" not in MANIFEST
 
 
 def test_direct_installer_requires_attestation_before_any_action():
@@ -225,26 +114,6 @@ complete_board_install_after_packages
     assert "ELF_LINK_CHECK" in result.stdout
     assert "ELF_VERIFY" in result.stdout
     assert "PLATFORM_VERIFY" in result.stdout
-
-
-def test_b1157_git_sysroot_receipt_updates_exactly():
-    from test_internals_package_boundary import run_sync
-    result, calls = run_sync(
-        {"sysroot-version": PROFILE["sysroot_version"]},
-        "3.0.0",
-        sdk_platform_version="3.0.0~git202609100138.16bca40-1247",
-        sdk_platform_channel="daily",
-    )
-    assert result.returncode == 0, result.stderr
-    assert len(calls) == 3
-    assert calls[0].startswith("install -m 0644 ")
-    assert calls[0].endswith(" /etc/apt/preferences.d/simaai-sdk-version.pref")
-    assert calls[1].startswith(
-        f"setup-sdk-sysroot {PROFILE['sysroot_version']} "
-    )
-    assert calls[2].endswith(
-        "/var/lib/sima-sdk/sysroot-overlay"
-    )
 
 
 def test_b1297_llima_sysroot_dependencies_include_runtime_libraries():

@@ -679,69 +679,6 @@ ensure_platform_compatible() {
   log "Platform compatibility verified: ${actual}"
 }
 
-# This wire-profile gate is separate from the SDK/board platform override.
-# Inspect package data without installing it or running maintainer scripts.
-validate_bundled_internals_profile() {
-  local manifest_path
-  manifest_path="$(resolve_package_manifest_path)"
-  python3 - "${manifest_path}" "${DEBS[@]}" <<'PYPROFILE'
-import json
-import subprocess
-import sys
-import tarfile
-from pathlib import Path
-
-try:
-    manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    if str(manifest.get("platform-version", "")).startswith("2.1."):
-        raise SystemExit(0)
-    expected = {
-        "runtime_profile": manifest.get("runtime-profile"),
-        "kernel_commit": manifest.get("kernel-commit"),
-        "sysroot_version": manifest.get("expected-internals-sysroot"),
-    }
-    if expected["runtime_profile"] != "modalix-3.0.0-b1297" or not all(
-        isinstance(value, str) and value for value in expected.values()
-    ):
-        raise ValueError("missing explicit B1297 runtime identity in Core manifest")
-    selected = {}
-    for deb in sys.argv[2:]:
-        name = subprocess.check_output(["dpkg-deb", "-f", deb, "Package"], text=True).strip()
-        if name not in ("neat-runtime", "neat-gst-plugins"):
-            continue
-        if name in selected:
-            raise ValueError(f"multiple bundled {name} packages")
-        version = subprocess.check_output(["dpkg-deb", "-f", deb, "Version"], text=True).strip()
-        selected[name] = (deb, version)
-    if set(selected) != {"neat-runtime", "neat-gst-plugins"}:
-        raise ValueError("B1297 requires bundled neat-runtime and neat-gst-plugins")
-    if selected["neat-runtime"][1] != selected["neat-gst-plugins"][1]:
-        raise ValueError("bundled Internals runtime/plugin versions differ")
-    receipt = None
-    with subprocess.Popen(
-        ["dpkg-deb", "--fsys-tarfile", selected["neat-runtime"][0]], stdout=subprocess.PIPE
-    ) as process:
-        try:
-            with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
-                for member in archive:
-                    if member.name.removeprefix("./") != "usr/share/sima-neat-internals/runtime-profile.json":
-                        continue
-                    if receipt is not None or not member.isfile() or member.size > 16384:
-                        raise ValueError("invalid bundled runtime profile receipt")
-                    receipt = json.load(archive.extractfile(member))
-        except BaseException:
-            process.kill()
-            process.wait()
-            raise
-        if process.wait() != 0:
-            raise ValueError("cannot inspect bundled runtime data")
-    if not isinstance(receipt, dict) or any(receipt.get(key) != value for key, value in expected.items()):
-        raise ValueError("bundled Internals runtime profile does not match Core")
-except (OSError, ValueError, TypeError, AttributeError, subprocess.CalledProcessError, tarfile.TarError) as error:
-    raise SystemExit(f"Refusing incompatible Internals bundle before installation: {error}")
-PYPROFILE
-}
-
 install_skill_for_agent() {
   local source_dir="$1"
   local agent_name="$2"
@@ -1209,14 +1146,6 @@ try:
     manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     if not re.fullmatch(r"2[.]1[.][0-9]+", str(manifest.get("platform-version", ""))):
         raise SystemExit(1)
-    for owner in ("sima-neat", "sima-neat-internals"):
-        path = Path("/usr/share") / owner / "runtime-profile.json"
-        try:
-            path.lstat()
-        except FileNotFoundError:
-            pass
-        else:
-            raise SystemExit(1)
     fields = {}
     for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
         if len(line) > 4096:
@@ -2317,6 +2246,5 @@ fi
 
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
-validate_bundled_internals_profile
 ensure_platform_compatible
 install_for_environment

@@ -1547,11 +1547,6 @@ preserve_internals_artifact_manifest() {
   cp -f "${artifact_manifest}" "${NEAT_INTERNALS_ARTIFACT_MANIFEST}"
 }
 
-validate_internals_runtime_profile() {
-  python3 "${REPO_ROOT}/scripts/build/validate_internals_profile.py" \
-    "${NEAT_DEPS_MANIFEST}" "$1/internals-manifest.json"
-}
-
 ensure_neat_internals() {
   # Install neat-internals packages, then materialize plugins. A local artifact
   # directory takes precedence over Vulcan so sibling-repository changes can be
@@ -1579,7 +1574,6 @@ ensure_neat_internals() {
     fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
     internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
   fi
-  validate_internals_runtime_profile "${artifact_dir}" || exit 1
   sync_sysroot_from_internals_manifest "${artifact_dir}"
   if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
     preserve_internals_artifact_manifest "${artifact_dir}"
@@ -1756,8 +1750,7 @@ ensure_neat_internals_headers() {
   if [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${internals_ref}" ]] &&
      [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ]] &&
-     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]] &&
-     validate_internals_runtime_profile "${NEAT_DEP_HEADERS_DIR}"; then
+     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
     echo "Using cached neat-internals headers (${internals_ref})."
     rm -rf "${tmp_dir}"
     return 0
@@ -1770,8 +1763,6 @@ ensure_neat_internals_headers() {
     fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
     internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
   fi
-  validate_internals_runtime_profile "${artifact_dir}" || exit 1
-
   local dev_deb
   dev_deb="$(find "${artifact_dir}" -type f -name 'neat-internals-dev_*.deb' | sort | head -n 1)"
   if [[ -z "${dev_deb}" ]]; then
@@ -2738,9 +2729,6 @@ if not isinstance(target, dict):
 target["platform-version"] = platform_version
 target["modelzoo-version"] = modelzoo_version
 target["abi-version"] = abi_version
-for key in ("runtime-profile", "kernel-commit", "expected-internals-sysroot"):
-    if key in source:
-        target[key] = source[key]
 target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 PY
 

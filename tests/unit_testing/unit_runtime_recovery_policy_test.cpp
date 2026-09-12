@@ -52,16 +52,6 @@ int main() {
       require(!legacy_runtime_recovery_allowed_at(root, false), "ambiguous identity accepted");
     }
     write_metadata("MACHINE=modalix\nDISTRO_VERSION=2.1.3\n");
-    for (const char* name : {"sima-neat", "sima-neat-internals"}) {
-      const auto receipt = root / "usr/share" / name / "runtime-profile.json";
-      std::filesystem::create_directories(receipt.parent_path());
-      std::ofstream(receipt) << "malformed";
-      require(!legacy_runtime_recovery_allowed_at(root, false), "profile marker ignored");
-      std::filesystem::remove(receipt);
-      std::filesystem::create_symlink("missing", receipt);
-      require(!legacy_runtime_recovery_allowed_at(root, false), "dangling marker ignored");
-      std::filesystem::remove(receipt);
-    }
 #ifdef NEAT_TEST_WRAP_SYSTEM
     setenv("SIMA_NEAT_RECOVERY_HARD_RESET", "1", 1);
     setenv("SIMA_NEAT_RECOVERY_ALLOW_UNSAFE_RESET", "1", 1);

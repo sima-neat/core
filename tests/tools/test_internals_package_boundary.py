@@ -127,13 +127,17 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         for header in (
             "ProcessMlaRuntimeConfig.h",
             "SimaPluginStaticManifestAbi.h",
-            "SimaCvuCapabilityAbi.h",
             "SimaPreparedRuntimeAbi.h",
             "SimaTensorSetMetaAbi.h",
         ):
             with self.subTest(header=header):
                 self.assertTrue((ROOT / "include/gst" / header).is_file())
                 self.assertIn(f'PATTERN "{header}" EXCLUDE', install_headers)
+        self.assertFalse((ROOT / "include/gst/SimaCvuCapabilityAbi.h").exists())
+        self.assertIn(
+            "#include <gst/SimaCvuCapabilityAbi.h>",
+            (ROOT / "include/gst/SimaPluginStaticManifestAbi.h").read_text(),
+        )
         # Consumers obtain these shared ABI headers from their owning package,
         # not duplicate copies in sima-neat-dev that collide during APT install.
         self.assertIn('"neat-internals-dev"', text)

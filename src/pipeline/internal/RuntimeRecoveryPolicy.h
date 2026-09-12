@@ -10,20 +10,11 @@
 
 namespace simaai::neat::pipeline_internal {
 
-// Pure classification seam for tests; production paths are fixed below. The
-// presence of a profile receipt is a deny signal, not permission to reset DMA.
+// Pure classification seam for tests; production paths are fixed below.
 inline bool legacy_runtime_recovery_allowed_at(const std::filesystem::path& root,
                                                bool direct_build) {
   if (direct_build)
     return false;
-  for (const char* receipt : {"usr/share/sima-neat-internals/runtime-profile.json",
-                              "usr/share/sima-neat/runtime-profile.json"}) {
-    std::error_code error;
-    const auto status = std::filesystem::symlink_status(root / receipt, error);
-    if ((error && error != std::errc::no_such_file_or_directory) ||
-        std::filesystem::exists(status) || std::filesystem::is_symlink(status))
-      return false;
-  }
   std::ifstream input(root / "etc/buildinfo");
   if (!input)
     return false;
