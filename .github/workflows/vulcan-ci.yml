@@ -1562,7 +1562,15 @@ jobs:
           set -euo pipefail
           ./scripts/ci/pciehost/preflight.sh
 
+      - name: Check PCIe card platform compatibility
+        id: check_pcie_card_compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/check_card_compatibility.sh
+
       - name: Install PCIe host package from Vulcan artifact
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: install_pciehost_package
         shell: bash
         run: |
@@ -1570,18 +1578,21 @@ jobs:
           ./scripts/ci/pciehost/install_host_package.sh
 
       - name: Install PCIe host test dependencies
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/install_host_test_deps.sh
 
       - name: Cleanup PCIe queues before card install
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/cleanup_queue.sh
 
       - name: Install Neat runtime on PCIe card
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: install_pcie_card_runtime
         shell: bash
         run: |
@@ -1589,6 +1600,7 @@ jobs:
           ./scripts/ci/pciehost/install_card_runtime.sh
 
       - name: Extract PCIe host extras
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: extract_pciehost_extras
         shell: bash
         run: |
@@ -1596,6 +1608,7 @@ jobs:
           ./scripts/ci/pciehost/extract_extras.sh
 
       - name: Resolve PCIe hardware test assets
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: resolve_pciehost_assets
         shell: bash
         run: |
@@ -1603,6 +1616,7 @@ jobs:
           ./scripts/ci/pciehost/resolve_assets.sh
 
       - name: Verify PCIe card runtime
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: verify_pcie_card_runtime
         shell: bash
         run: |
@@ -1610,12 +1624,14 @@ jobs:
           ./scripts/ci/pciehost/verify_card_runtime.sh
 
       - name: Cleanup PCIe queues before C++ tests
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/cleanup_queue.sh
 
       - name: Run PCIe host C++ CTest suite
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
