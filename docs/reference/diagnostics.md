@@ -210,10 +210,9 @@ The installer checks the bundled `neat-runtime` profile and matching
 does not bypass runtime pairing. If a check fails, obtain a matching bundle;
 do not replace its receipt or force an older runtime into the installation.
 
-For a board installation, first establish an exclusive maintenance window and
-DMA quiescence using the platform procedure. Only then set
-`NEAT_INSTALLER_B1157_MAINTENANCE=confirmed` in the **DevKit's installer process**.
-The installer still checks for active accelerator owners and active or enabled
-legacy services; it never stops those owners for you. The attestation is not a
-reset command or a claim that an empty owner scan proves hardware retirement.
-It is not automatically forwarded by SDK-to-DevKit deployment.
+Before a board installation, stop applications using CVU or the hardware codec.
+The full installer activates the staged EV74 firmware after installing all
+packages and refuses to reset EV74 while those devices are open. Set
+`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` to leave the firmware staged for
+later activation with
+`sudo /usr/libexec/sima-neat-firmware/install.sh --activate`.

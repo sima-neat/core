@@ -74,7 +74,6 @@ fi
 echo "Using card installation directory ${card_install_dir}"
 
 export SIMA_CLI_CHECK_FOR_UPDATE=0
-export NEAT_INSTALLER_B1157_MAINTENANCE=confirmed
 export DEVKIT_PASSWORD="${REMOTE_DEVKIT_PASSWORD}"
 export SUDO_PASSWORD="${REMOTE_SUDO_PASSWORD}"
 setup_remote_sudo_wrapper() {

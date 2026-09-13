@@ -61,10 +61,7 @@ set -euo pipefail
 #   board installer refreshes APT metadata before installing local DEBs. AUTO
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
-#   staged EV74 firmware and reset runtime state after legacy 2.1.x package replacement.
-# - NEAT_INSTALLER_B1157_MAINTENANCE: set to confirmed only after an exclusive,
-#   platform-approved maintenance procedure has established DMA quiescence.
-#   Direct-driver installation otherwise fails without changing the board.
+#   staged EV74 firmware after board package replacement.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -1164,49 +1161,6 @@ except (OSError, ValueError, AttributeError, TypeError):
 PYPROFILE
 }
 
-check_b1157_install_maintenance() {
-  board_runtime_is_legacy && return 0
-  if [[ "${NEAT_INSTALLER_B1157_MAINTENANCE:-}" != confirmed ]]; then
-    echo "B1157 installation requires an exclusive, platform-approved maintenance window with DMA quiescence established externally." >&2
-    echo "Only after that procedure, set NEAT_INSTALLER_B1157_MAINTENANCE=confirmed. This does not reset hardware or release retained buffers." >&2
-    return 1
-  fi
-  if [[ -x /usr/bin/neat-b1157-migration-check ]]; then
-    run_sudo /usr/bin/neat-b1157-migration-check || return 1
-  fi
-  # A clear userspace owner scan is necessary, not proof of hardware retirement.
-  # The explicit attestation above also covers work orphaned by prior processes.
-  run_sudo bash -c '
-    set -eu
-    for command in systemctl pgrep fuser; do
-      command -v "$command" >/dev/null || { echo "Missing maintenance check: $command" >&2; exit 1; }
-    done
-    # appcomplex initializes MLA at boot on the Modalix 3 platform image, and rctd
-    # provides platform trace collection. Neither is a NEAT runtime owner.
-    for unit in simaai-pipeline-manager.service encoder.service decoder.service; do
-      state=$(systemctl is-active "$unit" 2>/dev/null || true)
-      case "$state" in inactive|failed|unknown) ;; *) echo "Legacy service is active or unidentified: $unit ($state)" >&2; exit 1;; esac
-      state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
-      case "$state" in disabled|masked|static|indirect|not-found) ;; *) echo "Legacy service is enabled or unidentified: $unit ($state)" >&2; exit 1;; esac
-    done
-    for process in simaai_pipeline_handler_new mla_rt_service.py dispatcher_watchdog sima_allegro_encode sima_allegro_decode; do
-      if pgrep -f "(^|/)$process( |$)" >/dev/null; then
-        echo "Legacy runtime process is active: $process" >&2; exit 1
-      else
-        rc=$?; [ "$rc" -eq 1 ] || exit "$rc"
-      fi
-    done
-    for device in /dev/mla /dev/cvu /dev/allegroIP /dev/allegroDecodeIP; do
-      [ -e "$device" ] || { echo "Missing B1157 accelerator node: $device" >&2; exit 1; }
-      if fuser -s "$device"; then
-        echo "Accelerator has active users: $device" >&2; exit 1
-      else
-        rc=$?; [ "$rc" -eq 1 ] || exit "$rc"
-      fi
-    done
-  '
-}
-
 stop_board_runtime_before_install() {
   if ! board_runtime_is_legacy; then
     log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
@@ -1244,7 +1198,13 @@ stop_board_runtime_before_install() {
 
 activate_board_runtime_after_install() {
   if ! board_runtime_is_legacy; then
-    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
+          -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
+      log "Activating staged EV74 firmware."
+      run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
+    else
+      log "EV74 firmware activation skipped."
+    fi
     return 0
   fi
   if ! command -v systemctl >/dev/null 2>&1; then
@@ -1854,7 +1814,6 @@ install_debs_in_ros2_sdk() {
 }
 
 install_debs_on_board() {
-  check_b1157_install_maintenance || return 1
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
@@ -2217,7 +2176,6 @@ install_for_environment() {
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     modalix-board)
-      check_b1157_install_maintenance || return 1
       # Preserve the established board ordering: provision PyNeat before the
       # board-specific package recovery and runtime restart transaction.
       install_python_environment
