@@ -989,10 +989,6 @@ resolve_neat_internals_ref() {
 
   local branch spec tag
   if [[ "${manifest_spec}" == "__SNAP__" ]]; then
-    if ! python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if str(d.get("platform-version", "")).startswith("2.1.") else 1)' "${NEAT_DEPS_MANIFEST}"; then
-      echo "ERROR: Direct-driver Core requires an explicit Internals ref; snap/develop fallback is disabled." >&2
-      return 1
-    fi
     NEAT_INTERNALS_SNAP_POLICY=ON
     tag="$(current_core_tag)"
     if [[ -n "${tag}" ]]; then

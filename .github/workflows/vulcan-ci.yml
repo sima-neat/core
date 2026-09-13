@@ -1505,7 +1505,8 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    # The available PCIe card runner does not have a 3.0.0 image yet.
+    if: ${{ false }}
     needs:
       - detect-changes
       - resolve-vulcan-config
