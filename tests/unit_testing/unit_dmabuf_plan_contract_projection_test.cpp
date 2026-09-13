@@ -250,12 +250,13 @@ sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 9
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.0.0";
   data.values = {
-      sc::ValueSpec{0U, "image_0", 100U},
-      sc::ValueSpec{1U, "image_1", 200U},
-      sc::ValueSpec{2U, "quantize_0", 640U},
-      sc::ValueSpec{3U, "quantize_1", 320U},
-      sc::ValueSpec{4U, "packed_ifm", packed_ifm_bytes},
-      sc::ValueSpec{5U, "packed_ofm", 400U},
+      sc::ValueSpec{0U, "image_0", 2560U, "float32", sc::TensorShape{640}},
+      sc::ValueSpec{1U, "image_1", 1280U, "float32", sc::TensorShape{320}},
+      sc::ValueSpec{2U, "quantize_0", 640U, "int8", sc::TensorShape{640}},
+      sc::ValueSpec{3U, "quantize_1", 320U, "int8", sc::TensorShape{320}},
+      sc::ValueSpec{4U, "packed_ifm", packed_ifm_bytes, "int8",
+                    sc::TensorShape{static_cast<std::int64_t>(packed_ifm_bytes)}},
+      sc::ValueSpec{5U, "packed_ofm", 400U, "int8", sc::TensorShape{400}},
       sc::ValueSpec{6U,
                     "unpack_0",
                     200U,
@@ -283,15 +284,15 @@ sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 9
                     {},
                     sc::ValueRepresentation::BackendNative,
                     sc::ReadExpression{5U, 200U, {200, 20, 20, 1}}},
-      sc::ValueSpec{9U, "dequant_0", 40U},
-      sc::ValueSpec{10U, "dequant_1", 800U},
+      sc::ValueSpec{9U, "dequant_0", 40U, "float32", sc::TensorShape{10}},
+      sc::ValueSpec{10U, "dequant_1", 800U, "float32", sc::TensorShape{200}},
   };
   data.model_inputs = {0U, 1U};
   data.values[0].storage_binding = sc::StorageBinding{
-      sc::StorageBindingKind::External, 0U, 0U, 100U, {},
+      sc::StorageBindingKind::External, 0U, 0U, 2560U, {},
       sc::StorageAccess::ReadOnly, std::nullopt};
   data.values[1].storage_binding = sc::StorageBinding{
-      sc::StorageBindingKind::External, 1U, 0U, 200U, {},
+      sc::StorageBindingKind::External, 1U, 0U, 1280U, {},
       sc::StorageAccess::ReadOnly, std::nullopt};
   // The frozen batch-one Pack is an address relation.  Its two producers write
   // directly into disjoint spans of the single MLA parent carrier.
@@ -319,9 +320,9 @@ sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 9
     data.ops.push_back(std::move(op));
   };
   add_op(sc::OpKind::Quantize, "quantize_0", {0U}, {2U},
-         sc::QuantizeOpConfig{"int8", 8, "TONEAREST", {}});
+         sc::QuantizeOpConfig{"int8", 8, "TONEAREST", {{0.25, 0}}});
   add_op(sc::OpKind::Quantize, "quantize_1", {1U}, {3U},
-         sc::QuantizeOpConfig{"int8", 8, "TONEAREST", {}});
+         sc::QuantizeOpConfig{"int8", 8, "TONEAREST", {{0.25, 0}}});
   add_op(sc::OpKind::Pack, "pack", {2U, 3U}, {4U},
          sc::PackOpConfig{{sc::PackComponentPlacement{2U, 0U, 640U},
                            sc::PackComponentPlacement{3U, 640U, 320U}}});
@@ -1687,27 +1688,26 @@ RUN_TEST(
                     fused_contract->payload.input_tensors.size() == fused_case.members &&
                     fused_contract->payload.output_tensors.size() == fused_case.members &&
                     fused_contract->runtime_contract.physical_inputs.size() ==
-                        (fused_case.members > 1U ? 1U : fused_case.members) &&
+                        fused_case.members &&
                     fused_contract->runtime_contract.physical_outputs.size() ==
                         fused_case.members,
-                "fused command must publish one packed public ingress and one output per member");
+                "fused command must publish one public carrier and output per member");
         if (fused_case.members > 1U) {
-          require(fused_contract->runtime_contract.physical_inputs.front().segment_name ==
-                          "input_tensor" &&
-                      fused_contract->runtime_contract.frame_arena_role ==
+          require(fused_contract->runtime_contract.frame_arena_role ==
                           sima::FrameArenaRole::Allocate &&
-                      !fused_contract->runtime_contract.consumer_keeps_distinct_physical_inputs,
+                      fused_contract->runtime_contract.consumer_keeps_distinct_physical_inputs,
                   "grouped fused ingress must allocate its output arena separately from the "
-                  "packed public input");
+                  "public input carriers");
           for (std::size_t member = 0; member < fused_case.members; ++member) {
             const auto& logical =
                 fused_contract->runtime_contract.logical_inputs[member];
             const auto& binding =
                 fused_contract->runtime_contract.input_bindings[member];
-            require(logical.physical_index == 0 && binding.sink_pad_index == 0 &&
-                        binding.src_physical_output_index == 0 &&
-                        logical.byte_offset == binding.src_physical_byte_offset,
-                    "grouped fused ingress member must retain its packed-parent byte view");
+            require(logical.physical_index == static_cast<int>(member) &&
+                        binding.sink_pad_index == 0 &&
+                        binding.src_physical_output_index == static_cast<int>(member) &&
+                        logical.byte_offset == 0 && binding.src_physical_byte_offset == 0,
+                    "grouped fused ingress member must retain its distinct TensorSet carrier");
           }
         }
         if (fused_case.members == 1U) {
@@ -1987,22 +1987,24 @@ RUN_TEST(
       const auto* grouped_region_0 = frontend_arena->region(2U);
       const auto* grouped_region_1 = frontend_arena->region(3U);
       require(grouped_quant.graph_id == 222 && grouped_quant.maximum_members == 32U &&
-                  grouped_runtime.physical_inputs.size() == 1U &&
+                  grouped_runtime.physical_inputs.size() == 2U &&
                   grouped_runtime.physical_outputs.size() == 2U && grouped_region_0 &&
                   grouped_region_1 &&
                   grouped_runtime.physical_inputs[0].physical_index == 0 &&
-                  grouped_runtime.physical_inputs[0].source_physical_index == 0 &&
-                  grouped_runtime.physical_inputs[0].size_bytes == 300U &&
-                  grouped_runtime.physical_inputs[0].segment_name == "input_tensor" &&
+                  grouped_runtime.physical_inputs[1].physical_index == 1 &&
+                  grouped_runtime.physical_inputs[0].source_physical_index == 1 &&
+                  grouped_runtime.physical_inputs[1].source_physical_index == 0 &&
+                  grouped_runtime.physical_inputs[0].size_bytes == 100U &&
+                  grouped_runtime.physical_inputs[1].size_bytes == 200U &&
                   grouped_runtime.logical_inputs[0].physical_index == 0 &&
-                  grouped_runtime.logical_inputs[1].physical_index == 0 &&
-                  grouped_runtime.logical_inputs[0].byte_offset == 200 &&
+                  grouped_runtime.logical_inputs[1].physical_index == 1 &&
+                  grouped_runtime.logical_inputs[0].byte_offset == 0 &&
                   grouped_runtime.logical_inputs[1].byte_offset == 0 &&
                   grouped_runtime.input_bindings[0].sink_pad_index == 0 &&
                   grouped_runtime.input_bindings[1].sink_pad_index == 0 &&
-                  grouped_runtime.input_bindings[0].src_physical_output_index == 0 &&
+                  grouped_runtime.input_bindings[0].src_physical_output_index == 1 &&
                   grouped_runtime.input_bindings[1].src_physical_output_index == 0 &&
-                  grouped_runtime.input_bindings[0].src_physical_byte_offset == 200 &&
+                  grouped_runtime.input_bindings[0].src_physical_byte_offset == 0 &&
                   grouped_runtime.input_bindings[1].src_physical_byte_offset == 0 &&
                   grouped_runtime.input_bindings[0].src_physical_size_bytes == 100U &&
                   grouped_runtime.input_bindings[1].src_physical_size_bytes == 200U &&
@@ -2013,8 +2015,8 @@ RUN_TEST(
                   grouped_runtime.logical_outputs[0].byte_offset == 0 &&
                   grouped_runtime.logical_outputs[1].byte_offset == 0 &&
                   grouped_runtime.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  !grouped_runtime.consumer_keeps_distinct_physical_inputs,
-              "grouped quantize must read one public-order packed carrier and write two absolute "
+                  grouped_runtime.consumer_keeps_distinct_physical_inputs,
+              "grouped quantize must map backend order to public TensorSet carriers and write two absolute "
               "arena regions");
 
       auto heterogeneous_payload = grouped_quant;
@@ -2072,6 +2074,34 @@ RUN_TEST(
                       std::vector<std::int64_t>({200, 20, 20, 1}) &&
                   packed_contract.logical_outputs[1].byte_offset == 200,
               "unpack/slice must project only root-relative address expressions");
+
+      auto packed_physical = sc::PhysicalExecutionLowerer::lower(packed_plan, &error);
+      require(packed_physical.has_value(), "packed ProcessCVU plan must lower: " + error);
+      auto packed_arena = sc::FrameSlotArenaPlan::compile(
+          packed_plan, *packed_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+          sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
+      require(packed_arena.has_value(), "packed ProcessCVU arena must compile: " + error);
+      std::vector<sc::PhysicalCommandId> packed_quant_commands;
+      for (const auto& command : packed_physical->commands) {
+        if (command.engine == sc::PhysicalEngine::Cvu && command.graph_id == 222U) {
+          packed_quant_commands.push_back(command.id);
+        }
+      }
+      require(!packed_quant_commands.empty(),
+              "packed ProcessCVU plan must contain a quantize cohort");
+      auto packed_quant_contract = sc::build_dmabuf_plan_processcvu_command_contract(
+          packed_plan, *packed_physical, packed_quant_commands, *packed_arena, &error);
+      const auto* packed_parent_region = packed_arena->region(4U);
+      require(packed_quant_contract.has_value() && packed_parent_region &&
+                  packed_quant_contract->runtime_contract.physical_outputs.size() == 2U &&
+                  packed_quant_contract->runtime_contract.physical_outputs[0]
+                          .source_byte_offset ==
+                      static_cast<std::int64_t>(packed_parent_region->byte_offset) &&
+                  packed_quant_contract->runtime_contract.physical_outputs[1]
+                          .source_byte_offset ==
+                      static_cast<std::int64_t>(packed_parent_region->byte_offset + 640U),
+              "ProcessCVU producers must write directly into their relation-only Pack parent: " +
+                  error);
 
       const auto terminal_bf16_unpack_plan =
           make_terminal_bf16_over_int8_unpack_plan();

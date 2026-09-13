@@ -278,6 +278,58 @@ resolve_cvu_output_placement(const ModelExecutionPlan& plan, const FrameSlotAren
   return CvuOutputPlacement{value, region->byte_offset, alignment};
 }
 
+std::optional<CvuOutputPlacement>
+resolve_processcvu_command_output_placement(const ModelExecutionPlan& plan,
+                                            const FrameSlotArenaPlan& arena,
+                                            const ValueSpec& value,
+                                            std::string* error) {
+  const auto* binding = value.storage_binding ? &*value.storage_binding : nullptr;
+  std::optional<CvuOutputPlacement> packed;
+  for (const auto& op : plan.ops()) {
+    if (op.kind != OpKind::Pack || op.outputs.size() != 1U) {
+      continue;
+    }
+    const auto* config = std::get_if<PackOpConfig>(&op.config);
+    if (!config || config->materializes || config->components.size() != op.inputs.size()) {
+      continue;
+    }
+    const auto component = std::find_if(
+        config->components.begin(), config->components.end(),
+        [&](const PackComponentPlacement& candidate) { return candidate.value_id == value.id; });
+    if (component == config->components.end()) {
+      continue;
+    }
+    const auto* parent = arena.region(op.outputs.front());
+    if (!binding || !parent || component->stored_bytes != binding->physical_span ||
+        component->parent_offset >
+            std::numeric_limits<std::uint64_t>::max() - parent->byte_offset) {
+      fail(error, "ProcessCVU Pack child has no exact parent frame-arena placement");
+      return std::nullopt;
+    }
+    const CvuOutputPlacement candidate{
+        &value, parent->byte_offset + component->parent_offset, 16U};
+    if (packed.has_value() && packed->byte_offset != candidate.byte_offset) {
+      fail(error, "ProcessCVU output has ambiguous direct Pack placement");
+      return std::nullopt;
+    }
+    packed = candidate;
+  }
+  if (packed.has_value()) {
+    return packed;
+  }
+
+  const auto* carrier = binding ? plan.carrier(binding->carrier_id) : nullptr;
+  const auto* region = arena.region(root_value_id(plan, value.id));
+  if (!binding || !carrier || !region || carrier->required_alignment_bytes == 0U ||
+      binding->byte_offset > std::numeric_limits<std::uint64_t>::max() - region->byte_offset ||
+      (region->byte_offset + binding->byte_offset) % carrier->required_alignment_bytes != 0U) {
+    fail(error, "ProcessCVU command output has no exact frame-arena carrier");
+    return std::nullopt;
+  }
+  return CvuOutputPlacement{&value, region->byte_offset + binding->byte_offset,
+                            carrier->required_alignment_bytes};
+}
+
 std::optional<int>
 resolve_pack_parent_physical_source(const ModelExecutionPlan& plan, const ValueSpec& packed_value,
                                     std::span<const LogicalTensorStaticSpec> upstream_outputs,
@@ -1946,40 +1998,8 @@ bool apply_dmabuf_plan_processcvu_command_projection(
         return std::find(plan.model_inputs().begin(), plan.model_inputs().end(), input) !=
                plan.model_inputs().end();
       });
-  std::unordered_map<ValueId, std::uint64_t> application_input_offsets;
-  std::uint64_t packed_application_input_bytes = 0U;
-  std::uint64_t packed_application_input_alignment = 1U;
-  if (bundled_application_ingress) {
-    for (const auto input : plan.model_inputs()) {
-      const auto* value = plan.value(input);
-      const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
-      const auto* carrier = binding ? plan.carrier(binding->carrier_id) : nullptr;
-      if (!value || !binding || !carrier || value->required_bytes == 0U ||
-          carrier->required_alignment_bytes == 0U ||
-          !application_input_offsets.emplace(input, packed_application_input_bytes).second ||
-          !checked_add(packed_application_input_bytes, value->required_bytes,
-                       &packed_application_input_bytes)) {
-        return fail(error, "ProcessCVU bundled application input has no exact packed span");
-      }
-      packed_application_input_alignment =
-          std::max(packed_application_input_alignment, carrier->required_alignment_bytes);
-    }
-    PhysicalBufferStaticSpec physical;
-    physical.physical_index = 0;
-    physical.allocator_index = 0;
-    physical.source_physical_index = 0;
-    physical.size_bytes = packed_application_input_bytes;
-    physical.source_byte_offset = 0;
-    physical.device_kind = input_device;
-    physical.memory_flags = input_memory_flags;
-    physical.segment_name = "input_tensor";
-    physical.required_alignment_bytes = packed_application_input_alignment;
-    runtime->physical_inputs = {physical};
-  }
   std::vector<PhysicalBufferStaticSpec> physical_inputs;
-  if (!bundled_application_ingress) {
-    physical_inputs.reserve(inputs.size());
-  }
+  physical_inputs.reserve(inputs.size());
   for (std::size_t index = 0; index < inputs.size(); ++index) {
     const auto* value = plan.value(inputs[index]);
     const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
@@ -1996,23 +2016,27 @@ bool apply_dmabuf_plan_processcvu_command_projection(
     }
 
     const int logical_index = static_cast<int>(index);
-    const int physical_index = bundled_application_ingress ? 0 : logical_index;
-    const std::uint64_t application_input_offset =
-        bundled_application_ingress ? application_input_offsets.at(value->id) : 0U;
-    if (!bundled_application_ingress) {
-      PhysicalBufferStaticSpec physical;
-      physical.physical_index = physical_index;
-      physical.allocator_index = physical_index;
-      physical.source_physical_index = physical_index;
-      physical.size_bytes = binding->physical_span;
-      physical.source_byte_offset =
-          static_cast<std::int64_t>(arena_offset + binding->byte_offset);
-      physical.device_kind = input_device;
-      physical.memory_flags = input_memory_flags;
-      physical.segment_name = "value_" + std::to_string(value->id);
-      physical.required_alignment_bytes = carrier->required_alignment_bytes;
-      physical_inputs.push_back(std::move(physical));
-    }
+    const auto model_input =
+        std::find(plan.model_inputs().begin(), plan.model_inputs().end(), value->id);
+    const int source_index =
+        model_input == plan.model_inputs().end()
+            ? logical_index
+            : static_cast<int>(std::distance(plan.model_inputs().begin(), model_input));
+    const int physical_index = logical_index;
+    PhysicalBufferStaticSpec physical;
+    physical.physical_index = physical_index;
+    physical.allocator_index = physical_index;
+    physical.source_physical_index = bundled_application_ingress ? source_index : physical_index;
+    physical.size_bytes = binding->physical_span;
+    physical.source_byte_offset = bundled_application_ingress
+                                      ? 0
+                                      : static_cast<std::int64_t>(arena_offset +
+                                                                  binding->byte_offset);
+    physical.device_kind = input_device;
+    physical.memory_flags = input_memory_flags;
+    physical.segment_name = "value_" + std::to_string(value->id);
+    physical.required_alignment_bytes = carrier->required_alignment_bytes;
+    physical_inputs.push_back(std::move(physical));
 
     auto& logical = runtime->logical_inputs[index];
     logical.logical_index = logical_index;
@@ -2025,14 +2049,12 @@ bool apply_dmabuf_plan_processcvu_command_projection(
     // option flags. It is not a request to materialize/repack the input.
     logical.materialization_kind = offset_view ? TensorMaterializationKind::OffsetView
                                                : TensorMaterializationKind::Direct;
-    logical.byte_offset = static_cast<std::int64_t>(application_input_offset);
+    logical.byte_offset = 0;
     logical.size_bytes = value->required_bytes;
     logical.stride_bytes = binding->stride_bytes;
     logical.logical_name = value->name;
     logical.backend_name = value->name;
-    logical.segment_name = bundled_application_ingress
-                               ? "input_tensor"
-                               : physical_inputs.back().segment_name;
+    logical.segment_name = physical_inputs.back().segment_name;
     if (value->logical_dtype) {
       logical.dtype = *value->logical_dtype;
     }
@@ -2059,31 +2081,21 @@ bool apply_dmabuf_plan_processcvu_command_projection(
     }
 
     auto& route = runtime->input_bindings[index];
-    // Every frame-arena region arrives on one upstream arena carrier pad. A
-    // multi-tensor application ingress is packed the same way by Model::run();
-    // the source selectors retain each member's exact view in either parent.
+    // Internal frame-arena regions and a bundled application TensorSet both
+    // arrive on one sink pad.  The former selects byte views in one arena;
+    // the latter selects the distinct GstMemory carrier for each public input.
     route.sink_pad_index = (region || bundled_application_ingress) ? 0 : physical_index;
     route.local_logical_input_index = logical_index;
-    const auto model_input =
-        std::find(plan.model_inputs().begin(), plan.model_inputs().end(), value->id);
-    const int source_index =
-        model_input == plan.model_inputs().end()
-            ? physical_index
-            : static_cast<int>(std::distance(plan.model_inputs().begin(), model_input));
     route.src_logical_output_index = source_index;
     route.src_output_slot = source_index;
-    route.src_physical_output_index = bundled_application_ingress ? 0 : source_index;
-    route.src_physical_size_bytes = bundled_application_ingress ? value->required_bytes
-                                                                 : binding->physical_span;
-    route.src_physical_byte_offset =
-        static_cast<std::int64_t>(application_input_offset);
+    route.src_physical_output_index = bundled_application_ingress ? source_index : physical_index;
+    route.src_physical_size_bytes = binding->physical_span;
+    route.src_physical_byte_offset = 0;
     route.required = true;
     route.cm_input_name = value->name;
     route.source_segment_name = logical.segment_name;
   }
-  if (!bundled_application_ingress) {
-    runtime->physical_inputs = std::move(physical_inputs);
-  }
+  runtime->physical_inputs = std::move(physical_inputs);
 
   const DeviceKind output_device = runtime->physical_outputs.empty()
                                        ? DeviceKind::Evxx
@@ -2095,18 +2107,17 @@ bool apply_dmabuf_plan_processcvu_command_projection(
   for (std::size_t index = 0; index < outputs.size(); ++index) {
     const auto* value = plan.value(outputs[index]);
     const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
-    const auto* carrier = binding ? plan.carrier(binding->carrier_id) : nullptr;
-    const auto* region = value ? arena.region(root_value_id(plan, value->id)) : nullptr;
-    if (!value || !binding || !carrier || !region ||
+    if (!value || !binding ||
         index > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
-        binding->byte_offset > std::numeric_limits<std::uint64_t>::max() - region->byte_offset ||
-        region->byte_offset + binding->byte_offset >
-            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
-        binding->physical_span == 0U || carrier->required_alignment_bytes == 0U ||
-        (region->byte_offset + binding->byte_offset) %
-                carrier->required_alignment_bytes !=
-            0U) {
+        binding->physical_span == 0U) {
       return fail(error, "ProcessCVU command output has no exact frame-arena carrier");
+    }
+    const auto placement =
+        resolve_processcvu_command_output_placement(plan, arena, *value, error);
+    if (!placement ||
+        placement->byte_offset >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      return false;
     }
     const int physical_index = static_cast<int>(index);
     PhysicalBufferStaticSpec physical;
@@ -2114,12 +2125,11 @@ bool apply_dmabuf_plan_processcvu_command_projection(
     physical.allocator_index = physical_index;
     physical.source_physical_index = physical_index;
     physical.size_bytes = binding->physical_span;
-    physical.source_byte_offset = static_cast<std::int64_t>(
-        region->byte_offset + binding->byte_offset);
+    physical.source_byte_offset = static_cast<std::int64_t>(placement->byte_offset);
     physical.device_kind = output_device;
     physical.memory_flags = output_memory_flags;
     physical.segment_name = "value_" + std::to_string(value->id);
-    physical.required_alignment_bytes = carrier->required_alignment_bytes;
+    physical.required_alignment_bytes = placement->required_alignment_bytes;
     physical_outputs.push_back(std::move(physical));
 
     auto& logical = runtime->logical_outputs[index];
@@ -2185,8 +2195,7 @@ bool apply_dmabuf_plan_processcvu_command_projection(
        (consumes_internal_carrier || continues_existing_output_carrier))
           ? FrameArenaRole::ReuseInput
           : FrameArenaRole::Allocate;
-  runtime->consumer_keeps_distinct_physical_inputs =
-      !bundled_application_ingress && inputs.size() > 1U;
+  runtime->consumer_keeps_distinct_physical_inputs = inputs.size() > 1U;
   payload->dmabuf_plan_contract = true;
   if (payload->runtime_output_physical_index_list.size() == outputs.size()) {
     for (std::size_t index = 0; index < outputs.size(); ++index) {
