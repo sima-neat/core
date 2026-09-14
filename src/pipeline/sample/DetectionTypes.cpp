@@ -316,8 +316,8 @@ BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w
   if (const std::size_t ext = extended_extension_bytes(fmt); ext > 0) {
     const std::size_t capacity = infer_extended_capacity(out.raw, ext, "bbox", strict);
     parse_topk = expected_topk > 0
-                     ? static_cast<int>(std::min<std::size_t>(
-                           static_cast<std::size_t>(expected_topk), capacity))
+                     ? static_cast<int>(
+                           std::min<std::size_t>(static_cast<std::size_t>(expected_topk), capacity))
                      : static_cast<int>(std::min<std::size_t>(
                            capacity, static_cast<std::size_t>(std::numeric_limits<int>::max())));
   }
