@@ -99,6 +99,9 @@ const ModelLineageBinding* node_model_lineage_binding(const std::shared_ptr<Node
   if (const auto* cast = dynamic_cast<const Cast*>(node.get())) {
     return cast->options().model_lineage.get();
   }
+  if (const auto* casttess = dynamic_cast<const CastTess*>(node.get())) {
+    return casttess->options().model_lineage.get();
+  }
   if (const auto* box = dynamic_cast<const SimaBoxDecode*>(node.get())) {
     return box->model_lineage_binding_internal().get();
   }

@@ -2,6 +2,9 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
+#include "nodes/sima/CastTess.h"
+#include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
@@ -372,6 +375,48 @@ void verify_yolov8_int8_contract_subset() {
   }
 }
 
+void verify_casttess_frame_arena(const simaai::neat::Model& model) {
+  using namespace simaai::neat;
+  namespace contract = pipeline_internal::sima;
+
+  // Public tensor frontends and repeated invocations must retain their own
+  // admitted arena, exactly as the image-preprocessing route does.
+  for (const std::size_t count : {1U, 2U}) {
+    std::vector<std::shared_ptr<Node>> nodes;
+    for (std::size_t i = 0U; i < count; ++i) {
+      Model::RouteOptions options;
+      options.name_suffix = "_casttess_" + std::to_string(i);
+      const auto route = internal::ModelAccess::build_public_route_nodes(model, options);
+      require(!route.empty() && dynamic_cast<const CastTess*>(route.front().get()),
+              "BF16 tensor route must start with the model-managed CastTess frontend");
+      nodes.insert(nodes.end(), route.begin(), route.end());
+    }
+    contract::ManifestBuildDiagnostics diagnostics;
+    const auto compiled = compile_node_contracts(nodes, {}, &diagnostics);
+    const auto manifest = render_manifest_from_compiled_contracts(compiled, {}, &diagnostics);
+    require(manifest && diagnostics.errors.empty() && manifest->stages.size() == count * 3U,
+            "each BF16 invocation must compile CastTess, MLA and DetessCast");
+    for (std::size_t i = 0U; i < manifest->stages.size(); ++i) {
+      const auto& stage = manifest->stages[i];
+      const auto& owner = manifest->stages[(i / 3U) * 3U];
+      require(owner.frame_arena_size_bytes > 0U &&
+                  stage.frame_arena_size_bytes == owner.frame_arena_size_bytes &&
+                  stage.frame_arena_role == (i % 3U == 0U ? contract::FrameArenaRole::Allocate
+                                                          : contract::FrameArenaRole::ReuseInput),
+              "CastTess frontend must retain one admitted arena through MLA and DetessCast");
+    }
+    const auto* frontend = dynamic_cast<const CastTess*>(nodes.front().get());
+    require(internal::node_model_lineage_binding(nodes.front()) ==
+                    frontend->options().model_lineage.get() &&
+                frontend->options().model_lineage,
+            "CastTess lineage lookup must preserve its model binding");
+    auto unbound = frontend->options();
+    unbound.model_lineage.reset();
+    require(internal::node_model_lineage_binding(std::make_shared<CastTess>(unbound)) == nullptr,
+            "unbound CastTess must not acquire model lineage");
+  }
+}
+
 void verify_yolov8_bf16_contract_subset() {
   using namespace simaai::neat;
   namespace pcs = simaai::neat::pipeline_internal::sima::plugin_contracts;
@@ -419,6 +464,8 @@ void verify_yolov8_bf16_contract_subset() {
           "YOLOv8 BF16 infer stage should be processmla");
   require(plan.post.front().kind == internal::ExecutionStageKind::DetessCast,
           "YOLOv8 BF16 post stage should be detesscast (fused detess+cast)");
+
+  verify_casttess_frame_arena(model);
 
   const auto mpk = load_yolov8_bf16_contract();
 
