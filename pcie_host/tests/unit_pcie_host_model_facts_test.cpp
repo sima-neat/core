@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -362,6 +363,23 @@ void test_mla_only_rejects_missing_quantization() {
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(wide_zero_point); },
                    "out-of-range zero point",
                    "a zero point outside the public int32 type must be rejected");
+
+  for (const double bad : {0.0, -4.0, std::numeric_limits<double>::quiet_NaN()}) {
+    auto bad_scale = mla_only_contract();
+    bad_scale.plugins[0].quant = mpk::MpkQuantContract{.scales = {bad}, .zero_points = {-128}};
+    require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(bad_scale); },
+                     "not finite and positive",
+                     "a quantization scale that is not finite and positive must be rejected");
+  }
+
+  for (const double unrepresentable : {1e300, 1e-300}) {
+    auto out_of_range = mla_only_contract();
+    out_of_range.plugins[0].quant =
+        mpk::MpkQuantContract{.scales = {unrepresentable}, .zero_points = {-128}};
+    require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(out_of_range); },
+                     "outside the representable float range",
+                     "a quantization scale that does not survive the float cast must be rejected");
+  }
 
   auto empty_output_quant = mla_only_contract();
   empty_output_quant.plugins[4].quant = mpk::MpkQuantContract{};

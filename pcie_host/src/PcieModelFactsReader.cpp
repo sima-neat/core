@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
@@ -199,10 +200,16 @@ quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQua
     out.zero_points.push_back(static_cast<std::int32_t>(zero_point));
   }
   for (const auto scale : quant->scales) {
-    if (scale == 0.0) {
-      throw std::runtime_error("mla_only tensor '" + name + "' has a zero quantization scale");
+    if (!std::isfinite(scale) || scale <= 0.0) {
+      throw std::runtime_error("mla_only tensor '" + name +
+                               "' has a quantization scale that is not finite and positive");
     }
-    out.scales.push_back(1.0f / static_cast<float>(scale));
+    const float reciprocal = 1.0f / static_cast<float>(scale);
+    if (!std::isfinite(reciprocal) || reciprocal <= 0.0f) {
+      throw std::runtime_error("mla_only tensor '" + name +
+                               "' has a quantization scale outside the representable float range");
+    }
+    out.scales.push_back(reciprocal);
   }
   return out;
 }
