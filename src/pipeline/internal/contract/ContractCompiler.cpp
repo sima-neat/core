@@ -1,6 +1,7 @@
 #include "pipeline/internal/contract/ContractCompiler.h"
 
 #include "builder/CompiledChildStageProvider.h"
+#include "model/internal/ModelPack.h"
 #include "builder/NodeContractProvider.h"
 #include "nodes/io/Input.h"
 #include "nodes/common/Output.h"
@@ -78,6 +79,16 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     return compiled;
   }
 
+  std::string route_error;
+  const auto model_fragments = internal::prepare_model_fragment_contracts(nodes, &route_error);
+  if (!model_fragments) {
+    compiled.fully_renderable = false;
+    if (diagnostics) {
+      diagnostics->errors.push_back("contract compiler: " + route_error);
+    }
+    return compiled;
+  }
+
   for (std::size_t node_index = 0; node_index < nodes.size(); ++node_index) {
     const auto& node = nodes[node_index];
     if (!node) {
@@ -95,6 +106,7 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     CompiledNodeContract stage;
     stage.node_kind = node->kind();
     ContractCompileInput stage_input = input;
+    stage_input.model_fragments = model_fragments;
     stage_input.node_index =
         use_node_indices ? input.node_indices[node_index] : static_cast<int>(node_index);
     stage_input.immediate_upstream = immediate_upstream;
@@ -122,6 +134,16 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     // most specific one we have.
     std::string provider_err;
     if (provider->compile_node_contract(stage_input, &stage, &provider_err)) {
+      if (!internal::apply_model_fragment_contract_context(*node, stage_input, &stage,
+                                                           &provider_err)) {
+        stage.renderable = false;
+        compiled.fully_renderable = false;
+        if (diagnostics) {
+          diagnostics->errors.push_back("contract compiler: " + provider_err);
+        }
+        compiled.stages.push_back(std::move(stage));
+        continue;
+      }
       compiled.fully_renderable = compiled.fully_renderable && stage.renderable;
       compiled.stages.push_back(std::move(stage));
       immediate_upstream = last_effective_child_stage(&compiled.stages.back());

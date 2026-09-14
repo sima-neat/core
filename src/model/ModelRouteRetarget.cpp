@@ -1,6 +1,17 @@
 #include "model/internal/ModelRouteRetarget.h"
 
 #include "model/internal/ModelInternal.h"
+#include "nodes/sima/Preproc.h"
+#include "nodes/sima/Quant.h"
+#include "nodes/sima/Tess.h"
+#include "nodes/sima/QuantTess.h"
+#include "nodes/sima/Cast.h"
+#include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/CastTess.h"
+#include "nodes/sima/Detess.h"
+#include "nodes/sima/DetessCast.h"
+#include "nodes/sima/DetessDequant.h"
+#include "nodes/sima/Dequant.h"
 
 namespace simaai::neat::internal {
 namespace {
@@ -33,6 +44,69 @@ void select_exact_boxdecode_terminal(Model::Options* opt) {
 }
 
 } // namespace
+
+const CompiledProcessCvuContract*
+node_model_processcvu_contract(const std::shared_ptr<Node>& node) {
+  if (const auto* typed = dynamic_cast<const Preproc*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Quant*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Tess*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const QuantTess*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Cast*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const CastTess*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Detess*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const DetessCast*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const DetessDequant*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Dequant*>(node.get())) {
+    return typed->options().processcvu_compiled_contract.get();
+  }
+  return nullptr;
+}
+
+const ModelLineageBinding* node_model_lineage_binding(const std::shared_ptr<Node>& node) {
+  if (!node) {
+    return nullptr;
+  }
+  if (const auto* pre = dynamic_cast<const Preproc*>(node.get())) {
+    return pre->options().model_lineage.get();
+  }
+  if (const auto* quant = dynamic_cast<const Quant*>(node.get())) {
+    return quant->options().model_lineage.get();
+  }
+  if (const auto* tess = dynamic_cast<const Tess*>(node.get())) {
+    return tess->options().model_lineage.get();
+  }
+  if (const auto* quanttess = dynamic_cast<const QuantTess*>(node.get())) {
+    return quanttess->options().model_lineage.get();
+  }
+  if (const auto* cast = dynamic_cast<const Cast*>(node.get())) {
+    return cast->options().model_lineage.get();
+  }
+  if (const auto* box = dynamic_cast<const SimaBoxDecode*>(node.get())) {
+    return box->model_lineage_binding_internal().get();
+  }
+  if (const auto* provider = dynamic_cast<const ModelLineageProvider*>(node.get())) {
+    return provider->model_lineage_binding();
+  }
+  return nullptr;
+}
 
 RequestedPostRouteKind requested_post_route_from_stage_kind(PostRouteStageKind kind) {
   switch (kind) {
@@ -118,10 +192,9 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
       requested_post_route_from_stage_kind(ModelAccess::resolved_post_kind(*model));
   const RequestedPostRouteKind requested = binding.requested_post;
   if (requested == RequestedPostRouteKind::Auto || requested == current) {
-    const bool boxdecode_type_changed =
-        requested == RequestedPostRouteKind::BoxDecode &&
-        requested_decode_type != BoxDecodeType::Unspecified &&
-        base_opt.decode_type != requested_decode_type;
+    const bool boxdecode_type_changed = requested == RequestedPostRouteKind::BoxDecode &&
+                                        requested_decode_type != BoxDecodeType::Unspecified &&
+                                        base_opt.decode_type != requested_decode_type;
     const bool boxdecode_terminal_changed =
         requested == RequestedPostRouteKind::BoxDecode &&
         !has_exact_boxdecode_terminal(base_opt.inference_terminal);

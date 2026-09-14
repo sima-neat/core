@@ -46,6 +46,11 @@ public:
     return NodeCapsBehavior::Dynamic;
   }
 
+  MemoryContract memory_contract() const override {
+    return variant_ == IngressVariant::DirectNv12 ? MemoryContract::PreferDeviceZeroCopy
+                                                  : MemoryContract::AllowEitherButReport;
+  }
+
   std::string backend_fragment(int node_index) const override {
     const auto names = fallback_element_names(node_index);
     std::ostringstream caps;

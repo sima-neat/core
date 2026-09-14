@@ -247,6 +247,103 @@ int main() {
         "direct tensor-set descriptor identities must mirror its carriers");
     gst_buffer_unref(ingress_buffer);
 
+    {
+      simaai::neat::TensorList too_many;
+      for (guint i = 0U; i <= gst_buffer_get_max_memory(); ++i) {
+        too_many.push_back(i % 2U == 0U ? direct : direct_1);
+      }
+      auto rejected_input = simaai::neat::sample_from_tensors(too_many);
+      rejected_input.payload_type = simaai::neat::PayloadType::Tensor;
+      rejected_input.media_type = "application/vnd.simaai.tensor";
+      std::string detail;
+      require(!simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
+                  rejected_input, &detail, /*allow_zero_copy=*/true) &&
+                  detail.find("memory-slot limit") != std::string::npos,
+              "failed zero-copy admission must not retry by copying DMA inputs");
+    }
+
+    ingress = {};
+    ingress_holder.reset();
+    {
+      // These views retain the exact same GstSample, not merely two wrappers
+      // around one fd. Rebinding must describe the requested views rather than
+      // reuse the parent's tensor order, extent or offsets.
+      auto first = direct;
+      first.shape = {32};
+      first.byte_offset = 64;
+      first.route.name = "first_view";
+      auto second = direct;
+      second.shape = {16};
+      second.byte_offset = 256;
+      second.route.name = "second_view";
+      require(first.storage->holder == second.storage->holder,
+              "shared-view fixture must retain one GstSample holder");
+      auto* parent_sample = static_cast<GstSample*>(direct.storage->holder.get());
+      GstBuffer* parent_buffer = gst_sample_get_buffer(parent_sample);
+      GstMemory* parent_memory = gst_buffer_peek_memory(parent_buffer, 0U);
+      const int parent_fd = gst_dmabuf_memory_get_fd(parent_memory);
+      std::weak_ptr<void> parent_lifetime = direct.storage->holder;
+      std::shared_ptr<void> retained_envelope;
+      for (int frame = 0; frame < 2; ++frame) {
+        second.byte_offset = 256 + frame * 64;
+        auto views =
+            simaai::neat::sample_from_tensors(frame == 0 ? simaai::neat::TensorList{second, first}
+                                                         : simaai::neat::TensorList{second});
+        views.payload_type = simaai::neat::PayloadType::Tensor;
+        views.media_type = "application/vnd.simaai.tensor";
+        std::string view_error;
+        retained_envelope = simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
+            views, &view_error, /*allow_zero_copy=*/true);
+        require(retained_envelope != nullptr, view_error);
+        auto* view_sample = static_cast<GstSample*>(retained_envelope.get());
+        GstBuffer* view_buffer = gst_sample_get_buffer(view_sample);
+        require(gst_buffer_n_memory(view_buffer) == 1U &&
+                    gst_buffer_peek_memory(view_buffer, 0U) == parent_memory &&
+                    gst_dmabuf_memory_get_fd(gst_buffer_peek_memory(view_buffer, 0U)) == parent_fd,
+                "rebinding shared views must preserve the original DMA memory");
+        require(gst_buffer_get_parent_buffer_meta(view_buffer) != nullptr,
+                "rebinding must retain the producer buffer lease");
+        auto* meta = gst_buffer_get_custom_meta(view_buffer, SIMA_TENSOR_SET_META_NAME);
+        require(meta != nullptr, "shared views lost tensor metadata");
+        GstStructure* structure = gst_custom_meta_get_structure(meta);
+        guint count = 0U;
+        require(gst_structure_get_uint(structure, "physical-binding-count", &count) &&
+                    count == views.tensors.size(),
+                "shared views must publish one physical binding per requested view");
+        const GValue* value =
+            gst_structure_get_value(structure, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS);
+        require(value && G_VALUE_HOLDS(value, G_TYPE_BYTES), "missing shared-view descriptors");
+        gsize bytes = 0U;
+        const auto* descriptors = static_cast<const SimaTensorDescriptorV2*>(
+            g_bytes_get_data(static_cast<GBytes*>(g_value_get_boxed(value)), &bytes));
+        require(bytes == count * sizeof(SimaTensorDescriptorV2),
+                "shared-view descriptor count retained stale parent entries");
+        for (guint i = 0U; i < count; ++i) {
+          require(descriptors[i].logical_index == static_cast<int>(i) &&
+                      descriptors[i].physical_index == static_cast<int>(i) &&
+                      descriptors[i].backend_output_index == static_cast<int>(i) &&
+                      descriptors[i].route_slot == static_cast<int>(i) &&
+                      descriptors[i].memory_index == 0 &&
+                      descriptors[i].byte_offset == views.tensors[i].byte_offset &&
+                      descriptors[i].size_bytes ==
+                          static_cast<guint64>(views.tensors[i].shape.front()),
+                  "shared-view binding does not describe this frame's requested view");
+        }
+      }
+      // The wrapper retains the producer GstBuffer, even once all Tensor views
+      // and their shared GstSample holder have gone away.
+      direct_map = {};
+      direct = {};
+      first = {};
+      second = {};
+      require(parent_lifetime.expired(), "fixture still retains its Tensor holder");
+      auto* retained_sample = static_cast<GstSample*>(retained_envelope.get());
+      GstBuffer* retained_buffer = gst_sample_get_buffer(retained_sample);
+      require(gst_buffer_peek_memory(retained_buffer, 0U) == parent_memory &&
+                  gst_buffer_get_parent_buffer_meta(retained_buffer) != nullptr,
+              "retained envelope lost its DMA allocation or producer lease");
+    }
+
     std::cout << "[OK] tensor_device_placement_test passed\n";
     return 0;
   } catch (const std::exception& e) {

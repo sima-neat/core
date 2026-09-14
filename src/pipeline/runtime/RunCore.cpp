@@ -946,8 +946,6 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     start_opt.owner = &pipe;
     start_opt.allow_startup_preflight = allow_startup_preflight;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
-    start_opt.decoder_admission =
-        std::atomic_load_explicit(&decoder_admission, std::memory_order_acquire);
     const auto segment_start = pipeline_internal::build_timing_now();
     auto run_core = RunCore::start_pipeline_segment(pipe.seg, std::move(start_opt));
     const auto segment_us = pipeline_internal::build_timing_us(segment_start);
@@ -1601,10 +1599,9 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     if (!opt.input_route_processor && segment.boundary_hints->input_route_processor) {
       opt.input_route_processor = segment.boundary_hints->input_route_processor;
     }
-    if (!opt.tensor_input_opt_for_cv.has_value() && segment.boundary_hints->tensor_mode &&
-        !segment.boundary_hints->ingress_inputs.empty()) {
-      opt.tensor_input_opt_for_cv = segment.boundary_hints->ingress_inputs.front();
-    }
+  }
+  if (!opt.tensor_input_opt_for_cv.has_value()) {
+    opt.tensor_input_opt_for_cv = pipeline_segment_ingress_input(segment);
   }
 
   if (opt.image_seed && opt.seed.has_value()) {
@@ -1634,7 +1631,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
         std::move(source.stream), source.merged_opt, source.stream_opt, opt.mode,
-        opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor), opt.decoder_admission,
+        opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor),
         std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
@@ -1677,8 +1674,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   const auto start_single_start = pipeline_internal::build_timing_now();
   auto core = RunCore::start_single_pipeline(
       std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, opt.tensor_input_opt_for_cv,
-      std::move(opt.input_route_processor), opt.decoder_admission,
-      std::move(opt.after_pipeline_start_for_test));
+      std::move(opt.input_route_processor), std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",

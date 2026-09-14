@@ -123,57 +123,7 @@ GraphReport make_error_report(const std::shared_ptr<DiagCtx>& diag, const std::s
   throw NeatError(decorate_with_error_code(rep.error_code, rep.repro_note), std::move(rep));
 }
 
-const internal::ModelLineageBinding* node_model_lineage_binding(const std::shared_ptr<Node>& node) {
-  if (!node) {
-    return nullptr;
-  }
-  if (auto* pre = dynamic_cast<Preproc*>(node.get())) {
-#ifdef SIMA_NEAT_INTERNAL
-    return pre->options().model_lineage.get();
-#else
-    return nullptr;
-#endif
-  }
-  if (auto* quant = dynamic_cast<Quant*>(node.get())) {
-#ifdef SIMA_NEAT_INTERNAL
-    return quant->options().model_lineage.get();
-#else
-    return nullptr;
-#endif
-  }
-  if (auto* tess = dynamic_cast<Tess*>(node.get())) {
-#ifdef SIMA_NEAT_INTERNAL
-    return tess->options().model_lineage.get();
-#else
-    return nullptr;
-#endif
-  }
-  if (auto* quanttess = dynamic_cast<QuantTess*>(node.get())) {
-#ifdef SIMA_NEAT_INTERNAL
-    return quanttess->options().model_lineage.get();
-#else
-    return nullptr;
-#endif
-  }
-  if (auto* cast = dynamic_cast<Cast*>(node.get())) {
-#ifdef SIMA_NEAT_INTERNAL
-    return cast->options().model_lineage.get();
-#else
-    return nullptr;
-#endif
-  }
-  if (auto* box = dynamic_cast<SimaBoxDecode*>(node.get())) {
-#ifdef SIMA_NEAT_INTERNAL
-    return box->model_lineage_binding_internal().get();
-#else
-    return nullptr;
-#endif
-  }
-  if (auto* provider = dynamic_cast<const internal::ModelLineageProvider*>(node.get())) {
-    return provider->model_lineage_binding();
-  }
-  return nullptr;
-}
+using internal::node_model_lineage_binding;
 
 struct MaterializedLineageState {
   std::shared_ptr<Model> effective_model;
@@ -3189,19 +3139,18 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
       origins[index] = index; // No local pool may be invented for externally loaned storage.
       return index;
     }
+    // ReuseInput at the public appsrc boundary borrows the caller's carrier,
+    // even when its allocation provenance names a producer outside this
+    // fragment. Transparent transport elements do not introduce an owner.
     const auto rendered = std::find_if(elements.begin(), elements.end(), [&](const auto& element) {
       return element.element_name == rendered_name;
     });
-    const bool has_rendered_native_predecessor =
-        rendered != elements.end() &&
-        std::any_of(elements.begin(), rendered, [&](const auto& element) {
-          return native_names.contains(element.element_name);
-        });
-    if (stage.frame_arena_role == FrameArenaRole::ReuseInput &&
-        !has_rendered_native_predecessor) {
-      // A public stage fragment can begin at MLA/CVU while retaining the full
-      // MPK's authored producer binding. The incoming GstBuffer owns that
-      // carrier; there is no allocator in this rendered fragment to enlarge.
+    auto upstream = rendered;
+    while (upstream != elements.begin() && transparent(*std::prev(upstream))) {
+      --upstream;
+    }
+    if (stage.frame_arena_role == FrameArenaRole::ReuseInput && upstream != elements.begin() &&
+        std::prev(upstream)->plugin == "appsrc") {
       origins[index] = index;
       return index;
     }
@@ -3209,7 +3158,7 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     std::string error;
     const auto edges =
         sima::edgecontract::resolve_consumer_edge_contracts_exact(manifest, index, &error);
-    if (edges.empty() || edges.size() != stage.input_bindings.size()) {
+    if (edges.empty()) {
       fail("cannot resolve reused carrier at '" + stage.element_name + "': " + error);
     }
     std::optional<std::size_t> owner;

@@ -14,6 +14,9 @@
 namespace simaai::neat {
 
 struct CompiledNodeContract;
+namespace internal {
+struct ModelFragmentCompileContext;
+}
 
 struct InputContractFacts {
   std::optional<InputContract> ingress_contract;
@@ -52,6 +55,7 @@ struct ContractCompileInput {
   std::vector<int> node_indices;
   InputContractFacts ingress;
   const CompiledNodeContract* immediate_upstream = nullptr;
+  std::shared_ptr<const internal::ModelFragmentCompileContext> model_fragments;
   bool strict = true;
   std::string processcvu_requested_run_target = "AUTO";
   ProcessCvuOptions processcvu;

@@ -26,8 +26,7 @@ bool is_power_of_two(const std::uint64_t value) {
   return value != 0U && (value & (value - 1U)) == 0U;
 }
 
-bool checked_add(const std::uint64_t lhs, const std::uint64_t rhs,
-                 std::uint64_t* result) {
+bool checked_add(const std::uint64_t lhs, const std::uint64_t rhs, std::uint64_t* result) {
   if (!result || lhs > std::numeric_limits<std::uint64_t>::max() - rhs) {
     return false;
   }
@@ -35,8 +34,7 @@ bool checked_add(const std::uint64_t lhs, const std::uint64_t rhs,
   return true;
 }
 
-std::optional<std::uint64_t> align_up(const std::uint64_t value,
-                                      const std::uint64_t alignment) {
+std::optional<std::uint64_t> align_up(const std::uint64_t value, const std::uint64_t alignment) {
   if (!is_power_of_two(alignment)) {
     return std::nullopt;
   }
@@ -48,14 +46,11 @@ std::optional<std::uint64_t> align_up(const std::uint64_t value,
 }
 
 bool lifetimes_overlap(const ValueLifetime& lhs, const ValueLifetime& rhs) {
-  return lhs.first_sequence <= rhs.last_sequence &&
-         rhs.first_sequence <= lhs.last_sequence;
+  return lhs.first_sequence <= rhs.last_sequence && rhs.first_sequence <= lhs.last_sequence;
 }
 
-bool byte_ranges_overlap(const std::uint64_t lhs_offset,
-                         const std::uint64_t lhs_size,
-                         const std::uint64_t rhs_offset,
-                         const std::uint64_t rhs_size) {
+bool byte_ranges_overlap(const std::uint64_t lhs_offset, const std::uint64_t lhs_size,
+                         const std::uint64_t rhs_offset, const std::uint64_t rhs_size) {
   return lhs_offset < rhs_offset + rhs_size && rhs_offset < lhs_offset + lhs_size;
 }
 
@@ -75,8 +70,7 @@ bool all_accesses_happen_before(const std::vector<PhysicalCommandId>& lhs,
   }
   for (const auto left : lhs) {
     for (const auto right : rhs) {
-      if (left >= schedule.happens_before.size() ||
-          right >= schedule.happens_before.size() ||
+      if (left >= schedule.happens_before.size() || right >= schedule.happens_before.size() ||
           !schedule.happens_before[left][right]) {
         return false;
       }
@@ -85,8 +79,7 @@ bool all_accesses_happen_before(const std::vector<PhysicalCommandId>& lhs,
   return true;
 }
 
-bool physical_lifetimes_overlap(const FrameSlotArenaRegion& lhs,
-                                const FrameSlotArenaRegion& rhs,
+bool physical_lifetimes_overlap(const FrameSlotArenaRegion& lhs, const FrameSlotArenaRegion& rhs,
                                 const PhysicalCarrierSchedule& schedule) {
   const auto left = schedule.accesses.find(lhs.carrier_id);
   const auto right = schedule.accesses.find(rhs.carrier_id);
@@ -101,23 +94,20 @@ bool physical_lifetimes_overlap(const FrameSlotArenaRegion& lhs,
 
 CarrierId carrier_id(const ModelExecutionPlan& plan, const ValueId value_id) {
   const auto* value = plan.value(value_id);
-  return value && value->storage_binding.has_value()
-             ? value->storage_binding->carrier_id
-             : static_cast<CarrierId>(value_id);
+  return value && value->storage_binding.has_value() ? value->storage_binding->carrier_id
+                                                     : static_cast<CarrierId>(value_id);
 }
 
 using LifetimeConflict =
     std::function<bool(const FrameSlotArenaRegion&, const FrameSlotArenaRegion&)>;
 
-bool place_group_first_fit(
-    const std::vector<std::size_t>& group_indices,
-    std::vector<FrameSlotArenaRegion>* regions,
-    const std::uint64_t group_alignment,
-    const std::vector<FrameSlotArenaRegion>& placed,
-    const LifetimeConflict& lifetimes_conflict,
-    std::uint64_t* group_base, std::string* error) {
-  if (!regions || !group_base || group_indices.empty() ||
-      !is_power_of_two(group_alignment)) {
+bool place_group_first_fit(const std::vector<std::size_t>& group_indices,
+                           std::vector<FrameSlotArenaRegion>* regions,
+                           const std::uint64_t group_alignment,
+                           const std::vector<FrameSlotArenaRegion>& placed,
+                           const LifetimeConflict& lifetimes_conflict, std::uint64_t* group_base,
+                           std::string* error) {
+  if (!regions || !group_base || group_indices.empty() || !is_power_of_two(group_alignment)) {
     return fail(error, "frame-slot arena has no valid placement group");
   }
   std::uint64_t cursor = 0U;
@@ -138,8 +128,8 @@ bool place_group_first_fit(
       }
       for (const auto& other : placed) {
         if (!lifetimes_conflict(member, other) ||
-            !byte_ranges_overlap(member_offset, member.size_bytes,
-                                 other.byte_offset, other.size_bytes)) {
+            !byte_ranges_overlap(member_offset, member.size_bytes, other.byte_offset,
+                                 other.size_bytes)) {
           continue;
         }
         std::uint64_t other_end = 0U;
@@ -149,8 +139,7 @@ bool place_group_first_fit(
         // Move this member immediately after the conflicting range.  Because
         // member_offset = group_base + local_offset, subtracting its fixed
         // local offset finds the earliest possible next group base.
-        const auto required_base =
-            other_end > local_offset ? other_end - local_offset : 0U;
+        const auto required_base = other_end > local_offset ? other_end - local_offset : 0U;
         next_cursor = std::max(next_cursor, required_base);
         conflict = true;
       }
@@ -168,14 +157,11 @@ bool place_group_first_fit(
 
 } // namespace
 
-std::optional<FrameSlotArenaPlan>
-FrameSlotArenaPlan::compile_impl(
-    const ModelExecutionPlan& execution_plan,
-    const PhysicalExecutionPlan* physical_plan,
-    const FrameSlotArenaReuse reuse,
-    const std::uint64_t default_region_alignment_bytes,
+std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile_impl(
+    const ModelExecutionPlan& execution_plan, const PhysicalExecutionPlan* physical_plan,
+    const FrameSlotArenaReuse reuse, const std::uint64_t default_region_alignment_bytes,
     std::string* error, const ArenaDmsPolicy dms_policy,
-    const std::span<const ValueId> detached_roots) {
+    const std::span<const ValueId> detached_roots, const FrameSlotArenaRoute* route) {
   if (!is_power_of_two(default_region_alignment_bytes)) {
     fail(error, "frame-slot arena default alignment must be a power of two");
     return std::nullopt;
@@ -187,16 +173,49 @@ FrameSlotArenaPlan::compile_impl(
   std::unordered_map<CarrierId, std::uint64_t> producer_sequence;
   std::unordered_map<CarrierId, std::uint64_t> last_sequence;
   std::unordered_map<CarrierId, std::uint64_t> alignment;
-  std::unordered_map<ValueId, CarrierId> direct_pack_parent_for_child;
   std::unordered_set<CarrierId> physically_required_carriers;
   std::unordered_set<CarrierId> detached_carriers;
-  std::unordered_set<ValueId> detached_values(detached_roots.begin(),
-                                              detached_roots.end());
+  std::unordered_set<ValueId> detached_values(detached_roots.begin(), detached_roots.end());
   std::unordered_set<ValueId> elided_values;
   std::optional<PhysicalCarrierSchedule> physical_schedule;
 
-  for (const auto value_id : execution_plan.model_inputs()) {
+  const auto imported_inputs = route ? std::span<const ValueId>(route->imported_inputs)
+                                     : std::span<const ValueId>(execution_plan.model_inputs());
+  std::vector<ValueId> published_outputs;
+  if (route) {
+    if (!physical_plan || route->commands.empty()) {
+      fail(error, "frame-slot route requires selected physical commands");
+      return std::nullopt;
+    }
+    published_outputs = route->published_outputs;
+  } else {
+    for (const auto& output : execution_plan.model_outputs()) {
+      published_outputs.push_back(output.value_id);
+    }
+  }
+  std::vector<bool> selected(physical_plan ? physical_plan->commands.size() : 0U, !route);
+  if (route) {
+    for (const auto id : route->commands) {
+      if (id >= selected.size() || selected[id]) {
+        fail(error, "frame-slot route has invalid or duplicate command identity");
+        return std::nullopt;
+      }
+      selected[id] = true;
+    }
+  }
+  std::unordered_set<ValueId> imported_values;
+  for (const auto value_id : imported_inputs) {
+    if (!execution_plan.value(value_id) || !imported_values.emplace(value_id).second) {
+      fail(error, "frame-slot route has an invalid or duplicate input value");
+      return std::nullopt;
+    }
     external_carriers.emplace(carrier_id(execution_plan, value_id));
+  }
+  for (const auto value_id : published_outputs) {
+    if (!execution_plan.value(value_id)) {
+      fail(error, "frame-slot route has an invalid output value");
+      return std::nullopt;
+    }
   }
   for (const auto value_id : detached_roots) {
     const auto* value = execution_plan.value(value_id);
@@ -219,35 +238,7 @@ FrameSlotArenaPlan::compile_impl(
   }
   for (const auto& carrier : execution_plan.carriers()) {
     alignment[carrier.id] =
-        std::max<std::uint64_t>(default_region_alignment_bytes,
-                                carrier.required_alignment_bytes);
-  }
-
-  // Frozen batch-one contracts describe direct Pack placement with component
-  // offsets but predate shared carrier bindings.  The Pack itself is still an
-  // address relation: attribute the parent write to the exact commands that
-  // produce its children.  Current span contracts already bind children to the
-  // parent carrier and therefore need no compatibility projection here.
-  for (const auto& op : ops) {
-    if (op.kind != OpKind::Pack || op.outputs.size() != 1U) {
-      continue;
-    }
-    const auto* pack = std::get_if<PackOpConfig>(&op.config);
-    const auto* parent = execution_plan.value(op.outputs.front());
-    if (!pack || pack->materializes || !pack->spans.empty() ||
-        pack->components.size() != op.inputs.size() || !parent ||
-        !parent->storage_binding) {
-      continue;
-    }
-    for (const auto child : op.inputs) {
-      const auto* value = execution_plan.value(child);
-      if (value && value->storage_binding &&
-          value->storage_binding->carrier_id !=
-              parent->storage_binding->carrier_id) {
-        direct_pack_parent_for_child.emplace(
-            child, parent->storage_binding->carrier_id);
-      }
-    }
+        std::max<std::uint64_t>(default_region_alignment_bytes, carrier.required_alignment_bytes);
   }
 
   if (physical_plan) {
@@ -256,21 +247,29 @@ FrameSlotArenaPlan::compile_impl(
       fail(error, "frame-slot physical command count exceeds ABI capacity");
       return std::nullopt;
     }
+    for (std::size_t index = 0; index < physical_plan->commands.size(); ++index) {
+      if (physical_plan->commands[index].id != index ||
+          physical_plan->commands[index].topological_rank != index) {
+        fail(error, "frame-slot physical commands must have dense topological ids");
+        return std::nullopt;
+      }
+    }
     PhysicalCarrierSchedule schedule;
-    schedule.completion =
-        static_cast<PhysicalCommandId>(physical_plan->commands.size());
-    schedule.happens_before.assign(
-        physical_plan->commands.size() + 1U,
-        std::vector<bool>(physical_plan->commands.size() + 1U, false));
+    schedule.completion = static_cast<PhysicalCommandId>(physical_plan->commands.size());
+    schedule.happens_before.assign(physical_plan->commands.size() + 1U,
+                                   std::vector<bool>(physical_plan->commands.size() + 1U, false));
 
     // A member chain is one physical invocation.  Prove and record every
     // chain-internal edge before considering storage so it can neither acquire
     // an arena region nor accidentally reappear as an outer/backend/public
     // binding.
     for (const auto& command : physical_plan->commands) {
+      if (!selected[command.id]) {
+        continue;
+      }
       for (const auto& member : command.members) {
-        for (std::size_t chain_index = 1U;
-             chain_index < member.semantic_chain.size(); ++chain_index) {
+        for (std::size_t chain_index = 1U; chain_index < member.semantic_chain.size();
+             ++chain_index) {
           const auto first_id = member.semantic_chain[chain_index - 1U];
           const auto second_id = member.semantic_chain[chain_index];
           if (first_id >= ops.size() || second_id >= ops.size()) {
@@ -280,11 +279,10 @@ FrameSlotArenaPlan::compile_impl(
           const auto& first = ops[first_id];
           const auto& second = ops[second_id];
           std::vector<ValueId> internal_values;
-          if (!resolve_exact_private_ordered_relation_path(
-                  execution_plan, first.id, second.id, &internal_values) ||
+          if (!resolve_exact_private_ordered_relation_path(execution_plan, first.id, second.id,
+                                                           &internal_values) ||
               internal_values.empty()) {
-            fail(error,
-                 "frame-slot fused member must have one exact private ordered-view path");
+            fail(error, "frame-slot fused member must have one exact private ordered-view path");
             return std::nullopt;
           }
           elided_values.insert(internal_values.begin(), internal_values.end());
@@ -298,10 +296,16 @@ FrameSlotArenaPlan::compile_impl(
         fail(error, "frame-slot physical commands must have dense topological ids");
         return std::nullopt;
       }
+      if (!selected[command.id]) {
+        continue;
+      }
       for (const auto predecessor : command.predecessors) {
         if (predecessor >= command.id) {
           fail(error, "frame-slot physical command has a non-topological predecessor");
           return std::nullopt;
+        }
+        if (!selected[predecessor]) {
+          continue;
         }
         schedule.happens_before[predecessor][command.id] = true;
         for (std::size_t ancestor = 0; ancestor < command.id; ++ancestor) {
@@ -341,6 +345,10 @@ FrameSlotArenaPlan::compile_impl(
         physically_required_carriers.emplace(id);
         schedule.accesses[id].push_back(command.id);
         last_sequence[id] = std::max(last_sequence[id], sequence);
+        if (external_carriers.contains(id)) {
+          fail(error, "frame-slot selected command writes an imported input carrier");
+          return std::nullopt;
+        }
         // An outer command output is a physical write even when the semantic
         // binding is a proved nonzero-offset view into a producer-direct Pack
         // parent. Attribute production to the root carrier; only relation-only
@@ -351,28 +359,15 @@ FrameSlotArenaPlan::compile_impl(
             iterator->second = std::min(iterator->second, sequence);
           }
         }
-        const auto direct_parent = direct_pack_parent_for_child.find(value_id);
-        if (direct_parent != direct_pack_parent_for_child.end()) {
-          physically_required_carriers.emplace(direct_parent->second);
-          schedule.accesses[direct_parent->second].push_back(command.id);
-          last_sequence[direct_parent->second] =
-              std::max(last_sequence[direct_parent->second], sequence);
-          auto [iterator, inserted] =
-              producer_sequence.emplace(direct_parent->second, sequence);
-          if (!inserted) {
-            iterator->second = std::min(iterator->second, sequence);
-          }
-        }
       }
     }
-    const auto public_output_sequence =
-        static_cast<std::uint64_t>(schedule.completion) + 1U;
-    for (const auto& output : execution_plan.model_outputs()) {
-      if (elided_values.contains(output.value_id)) {
+    const auto public_output_sequence = static_cast<std::uint64_t>(schedule.completion) + 1U;
+    for (const auto output : published_outputs) {
+      if (elided_values.contains(output)) {
         fail(error, "frame-slot fused internal edge is a public output");
         return std::nullopt;
       }
-      const auto id = carrier_id(execution_plan, output.value_id);
+      const auto id = carrier_id(execution_plan, output);
       physically_required_carriers.emplace(id);
       schedule.accesses[id].push_back(schedule.completion);
       last_sequence[id] = std::max(last_sequence[id], public_output_sequence);
@@ -401,8 +396,7 @@ FrameSlotArenaPlan::compile_impl(
         last_sequence[id] = std::max(last_sequence[id], op.sequence);
       }
     }
-    const std::uint64_t public_output_sequence =
-        ops.empty() ? 1U : ops.back().sequence + 1U;
+    const std::uint64_t public_output_sequence = ops.empty() ? 1U : ops.back().sequence + 1U;
     for (const auto& output : execution_plan.model_outputs()) {
       const auto id = carrier_id(execution_plan, output.value_id);
       last_sequence[id] = std::max(last_sequence[id], public_output_sequence);
@@ -410,6 +404,10 @@ FrameSlotArenaPlan::compile_impl(
   }
 
   for (const auto& port : execution_plan.backend_ports()) {
+    if (route &&
+        !physically_required_carriers.contains(carrier_id(execution_plan, port.value_id))) {
+      continue;
+    }
     if (physical_plan && elided_values.contains(port.value_id)) {
       fail(error, "frame-slot fused internal edge is bound to a backend port");
       return std::nullopt;
@@ -418,8 +416,7 @@ FrameSlotArenaPlan::compile_impl(
     if (physical_plan) {
       physically_required_carriers.emplace(id);
     }
-    alignment[id] =
-        std::max<std::uint64_t>(alignment[id], port.required_alignment_bytes);
+    alignment[id] = std::max<std::uint64_t>(alignment[id], port.required_alignment_bytes);
   }
   // A materializing transform may conservatively inherit the strongest input
   // offset constraint. This keeps post-MLA CVU outputs legal without inventing
@@ -429,8 +426,8 @@ FrameSlotArenaPlan::compile_impl(
   for (const auto& op : ops) {
     std::uint64_t inherited_alignment = default_region_alignment_bytes;
     for (const auto input_id : op.inputs) {
-      inherited_alignment = std::max(
-          inherited_alignment, alignment[carrier_id(execution_plan, input_id)]);
+      inherited_alignment =
+          std::max(inherited_alignment, alignment[carrier_id(execution_plan, input_id)]);
     }
     for (const auto output_id : op.outputs) {
       const auto id = carrier_id(execution_plan, output_id);
@@ -440,6 +437,7 @@ FrameSlotArenaPlan::compile_impl(
 
   FrameSlotArenaPlan result;
   result.reuse_policy_ = reuse;
+  result.imported_inputs_.assign(imported_inputs.begin(), imported_inputs.end());
   result.detached_roots_.assign(detached_values.begin(), detached_values.end());
   std::sort(result.detached_roots_.begin(), result.detached_roots_.end());
   result.value_to_region_.assign(values.size(), kNoRegion);
@@ -465,11 +463,12 @@ FrameSlotArenaPlan::compile_impl(
     }
     FrameSlotArenaRegion region;
     region.carrier_id = carrier.id;
-    const auto first_value = std::find_if(values.begin(), values.end(), [&](const ValueSpec& value) {
-      return value.storage_binding.has_value() &&
-             value.storage_binding->carrier_id == carrier.id &&
-             value.storage_binding->kind != StorageBindingKind::View;
-    });
+    const auto first_value =
+        std::find_if(values.begin(), values.end(), [&](const ValueSpec& value) {
+          return value.storage_binding.has_value() &&
+                 value.storage_binding->carrier_id == carrier.id &&
+                 value.storage_binding->kind != StorageBindingKind::View;
+        });
     if (first_value == values.end()) {
       fail(error, "frame-slot arena carrier has no materialized logical binding");
       return std::nullopt;
@@ -478,8 +477,7 @@ FrameSlotArenaPlan::compile_impl(
     region.size_bytes = carrier.required_bytes;
     region.required_alignment_bytes = alignment[carrier.id];
     region.lifetime.first_sequence = producer->second;
-    region.lifetime.last_sequence =
-        std::max(producer->second, last_sequence[carrier.id]);
+    region.lifetime.last_sequence = std::max(producer->second, last_sequence[carrier.id]);
     result.regions_.push_back(std::move(region));
   }
   if (result.regions_.empty()) {
@@ -497,12 +495,10 @@ FrameSlotArenaPlan::compile_impl(
 
   const LifetimeConflict lifetimes_conflict =
       physical_schedule
-          ? LifetimeConflict{[&](const FrameSlotArenaRegion& lhs,
-                                 const FrameSlotArenaRegion& rhs) {
+          ? LifetimeConflict{[&](const FrameSlotArenaRegion& lhs, const FrameSlotArenaRegion& rhs) {
               return physical_lifetimes_overlap(lhs, rhs, *physical_schedule);
             }}
-          : LifetimeConflict{[](const FrameSlotArenaRegion& lhs,
-                                const FrameSlotArenaRegion& rhs) {
+          : LifetimeConflict{[](const FrameSlotArenaRegion& lhs, const FrameSlotArenaRegion& rhs) {
               return lifetimes_overlap(lhs.lifetime, rhs.lifetime);
             }};
 
@@ -542,10 +538,8 @@ FrameSlotArenaPlan::compile_impl(
                        [&](const auto lhs, const auto rhs) {
                          const auto& left = result.regions_[lhs];
                          const auto& right = result.regions_[rhs];
-                         if (left.required_alignment_bytes !=
-                             right.required_alignment_bytes) {
-                           return left.required_alignment_bytes >
-                                  right.required_alignment_bytes;
+                         if (left.required_alignment_bytes != right.required_alignment_bytes) {
+                           return left.required_alignment_bytes > right.required_alignment_bytes;
                          }
                          if (left.size_bytes != right.size_bytes) {
                            return left.size_bytes > right.size_bytes;
@@ -561,8 +555,7 @@ FrameSlotArenaPlan::compile_impl(
           return std::nullopt;
         }
         region.byte_offset = *local;
-        group.alignment =
-            std::max(group.alignment, region.required_alignment_bytes);
+        group.alignment = std::max(group.alignment, region.required_alignment_bytes);
       }
       group.used_bytes = local_cursor;
     }
@@ -583,15 +576,13 @@ FrameSlotArenaPlan::compile_impl(
     placed.reserve(result.regions_.size());
     for (const auto& group : groups) {
       std::uint64_t block_offset = 0U;
-      if (!place_group_first_fit(group.region_indices, &result.regions_,
-                                 group.alignment, placed, lifetimes_conflict,
-                                 &block_offset, error)) {
+      if (!place_group_first_fit(group.region_indices, &result.regions_, group.alignment, placed,
+                                 lifetimes_conflict, &block_offset, error)) {
         return std::nullopt;
       }
       for (const auto index : group.region_indices) {
         auto& region = result.regions_[index];
-        if (!checked_add(block_offset, region.byte_offset,
-                         &region.byte_offset)) {
+        if (!checked_add(block_offset, region.byte_offset, &region.byte_offset)) {
           fail(error, "frame-slot lifetime-group base overflows");
           return std::nullopt;
         }
@@ -611,8 +602,7 @@ FrameSlotArenaPlan::compile_impl(
     const auto& region = result.regions_[index];
     carrier_to_region.emplace(region.carrier_id, index);
     result.allocation_alignment_bytes_ =
-        std::max(result.allocation_alignment_bytes_,
-                 region.required_alignment_bytes);
+        std::max(result.allocation_alignment_bytes_, region.required_alignment_bytes);
     if (region.byte_offset % region.required_alignment_bytes != 0U) {
       fail(error, "frame-slot arena produced an unaligned region");
       return std::nullopt;
@@ -620,8 +610,8 @@ FrameSlotArenaPlan::compile_impl(
     for (std::size_t previous = 0; previous < index; ++previous) {
       const auto& other = result.regions_[previous];
       if (lifetimes_conflict(region, other) &&
-          byte_ranges_overlap(region.byte_offset, region.size_bytes,
-                              other.byte_offset, other.size_bytes)) {
+          byte_ranges_overlap(region.byte_offset, region.size_bytes, other.byte_offset,
+                              other.size_bytes)) {
         fail(error, "frame-slot arena reuses storage across overlapping lifetimes");
         return std::nullopt;
       }
@@ -642,6 +632,9 @@ FrameSlotArenaPlan::compile_impl(
   }
   if (physical_plan) {
     for (const auto& command : physical_plan->commands) {
+      if (!selected[command.id]) {
+        continue;
+      }
       std::vector<CarrierId> referenced;
       referenced.reserve(command.inputs.size() + command.outputs.size());
       for (const auto value_id : command.inputs) {
@@ -664,10 +657,9 @@ FrameSlotArenaPlan::compile_impl(
           }
           const auto& lhs = result.regions_[left_region->second];
           const auto& rhs = result.regions_[right_region->second];
-          if (byte_ranges_overlap(lhs.byte_offset, lhs.size_bytes,
-                                  rhs.byte_offset, rhs.size_bytes)) {
-            fail(error, "frame-slot physical command " +
-                            std::to_string(command.id) +
+          if (byte_ranges_overlap(lhs.byte_offset, lhs.size_bytes, rhs.byte_offset,
+                                  rhs.size_bytes)) {
+            fail(error, "frame-slot physical command " + std::to_string(command.id) +
                             " references overlapping carrier regions");
             return std::nullopt;
           }
@@ -675,8 +667,7 @@ FrameSlotArenaPlan::compile_impl(
       }
     }
   }
-  const auto allocation =
-      align_up(result.used_bytes_, result.allocation_alignment_bytes_);
+  const auto allocation = align_up(result.used_bytes_, result.allocation_alignment_bytes_);
   if (!allocation || *allocation == 0U) {
     fail(error, "frame-slot arena allocation rounding overflows");
     return std::nullopt;
@@ -689,13 +680,14 @@ FrameSlotArenaPlan::compile_impl(
   };
   if (physical_plan) {
     for (const auto& command : physical_plan->commands) {
+      if (!selected[command.id]) {
+        continue;
+      }
       const bool touches_arena =
-          std::any_of(command.inputs.begin(), command.inputs.end(), [&](const ValueId id) {
-            return result.region(id) != nullptr;
-          }) ||
-          std::any_of(command.outputs.begin(), command.outputs.end(), [&](const ValueId id) {
-            return result.region(id) != nullptr;
-          });
+          std::any_of(command.inputs.begin(), command.inputs.end(),
+                      [&](const ValueId id) { return result.region(id) != nullptr; }) ||
+          std::any_of(command.outputs.begin(), command.outputs.end(),
+                      [&](const ValueId id) { return result.region(id) != nullptr; });
       if (!touches_arena) {
         continue;
       }
@@ -719,12 +711,10 @@ FrameSlotArenaPlan::compile_impl(
   } else {
     for (const auto& op : execution_plan.ops()) {
       const bool touches_arena =
-          std::any_of(op.inputs.begin(), op.inputs.end(), [&](const ValueId id) {
-            return result.region(id) != nullptr;
-          }) ||
-          std::any_of(op.outputs.begin(), op.outputs.end(), [&](const ValueId id) {
-            return result.region(id) != nullptr;
-          });
+          std::any_of(op.inputs.begin(), op.inputs.end(),
+                      [&](const ValueId id) { return result.region(id) != nullptr; }) ||
+          std::any_of(op.outputs.begin(), op.outputs.end(),
+                      [&](const ValueId id) { return result.region(id) != nullptr; });
       if (!touches_arena) {
         continue;
       }
@@ -740,11 +730,14 @@ FrameSlotArenaPlan::compile_impl(
   }
 
   ArenaEscapePolicy escape = ArenaEscapePolicy::InternalOnly;
-  for (const auto& output : execution_plan.model_outputs()) {
-    if (result.region(output.value_id) != nullptr) {
+  for (const auto output : published_outputs) {
+    if (result.region(output) != nullptr) {
       escape = ArenaEscapePolicy::CpuMappablePublic;
       add_access(ArenaDeviceAccess::CpuA65);
     }
+  }
+  if (route) {
+    required_access |= route->output_device_access;
   }
   if (required_access == 0U) {
     fail(error, "frame-slot arena has no proved device or CPU consumer");
@@ -752,10 +745,9 @@ FrameSlotArenaPlan::compile_impl(
   }
   const bool ev74_required =
       (required_access & static_cast<std::uint32_t>(ArenaDeviceAccess::Ev74)) != 0U;
-  result.placement_.domain =
-      dms_policy == ArenaDmsPolicy::PreferDmsForEligible && !ev74_required
-          ? ArenaStorageDomain::Dms
-          : ArenaStorageDomain::Cma;
+  result.placement_.domain = dms_policy == ArenaDmsPolicy::PreferDmsForEligible && !ev74_required
+                                 ? ArenaStorageDomain::Dms
+                                 : ArenaStorageDomain::Cma;
   result.placement_.provenance = ArenaAllocationProvenance::CoreAllocated;
   result.placement_.required_device_access = required_access;
   result.placement_.escape = escape;
@@ -768,27 +760,27 @@ FrameSlotArenaPlan::compile_impl(
 std::optional<FrameSlotArenaPlan>
 FrameSlotArenaPlan::compile(const ModelExecutionPlan& execution_plan,
                             const FrameSlotArenaReuse reuse,
-                            const std::uint64_t default_region_alignment_bytes,
-                            std::string* error, const ArenaDmsPolicy dms_policy) {
-  return compile_impl(execution_plan, nullptr, reuse,
-                      default_region_alignment_bytes, error, dms_policy, {});
+                            const std::uint64_t default_region_alignment_bytes, std::string* error,
+                            const ArenaDmsPolicy dms_policy) {
+  return compile_impl(execution_plan, nullptr, reuse, default_region_alignment_bytes, error,
+                      dms_policy, {});
 }
 
-std::optional<FrameSlotArenaPlan>
-FrameSlotArenaPlan::compile(const ModelExecutionPlan& execution_plan,
-                            const PhysicalExecutionPlan& physical_plan,
-                            const FrameSlotArenaReuse reuse,
-                            const std::uint64_t default_region_alignment_bytes,
-                            std::string* error, const ArenaDmsPolicy dms_policy,
-                            const std::span<const ValueId> detached_roots) {
-  return compile_impl(execution_plan, &physical_plan, reuse,
-                      default_region_alignment_bytes, error, dms_policy,
-                      detached_roots);
+std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile(
+    const ModelExecutionPlan& execution_plan, const PhysicalExecutionPlan& physical_plan,
+    const FrameSlotArenaReuse reuse, const std::uint64_t default_region_alignment_bytes,
+    std::string* error, const ArenaDmsPolicy dms_policy,
+    const std::span<const ValueId> detached_roots, const FrameSlotArenaRoute* route) {
+  return compile_impl(execution_plan, &physical_plan, reuse, default_region_alignment_bytes, error,
+                      dms_policy, detached_roots, route);
 }
 
-const std::vector<FrameSlotArenaRegion>&
-FrameSlotArenaPlan::regions() const noexcept {
+const std::vector<FrameSlotArenaRegion>& FrameSlotArenaPlan::regions() const noexcept {
   return regions_;
+}
+
+std::span<const ValueId> FrameSlotArenaPlan::imported_inputs() const noexcept {
+  return imported_inputs_;
 }
 
 std::span<const ValueId> FrameSlotArenaPlan::detached_roots() const noexcept {
@@ -796,12 +788,10 @@ std::span<const ValueId> FrameSlotArenaPlan::detached_roots() const noexcept {
 }
 
 bool FrameSlotArenaPlan::is_detached_root(const ValueId value_id) const noexcept {
-  return std::binary_search(detached_roots_.begin(), detached_roots_.end(),
-                            value_id);
+  return std::binary_search(detached_roots_.begin(), detached_roots_.end(), value_id);
 }
 
-const FrameSlotArenaRegion*
-FrameSlotArenaPlan::region(const ValueId value_id) const noexcept {
+const FrameSlotArenaRegion* FrameSlotArenaPlan::region(const ValueId value_id) const noexcept {
   if (value_id >= value_to_region_.size()) {
     return nullptr;
   }

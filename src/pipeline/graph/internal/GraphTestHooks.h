@@ -21,6 +21,9 @@ struct GraphLinkOptions;
 class Node;
 struct Sample;
 struct InputOptions;
+namespace pipeline_internal {
+struct InputMemoryResolution;
+} // namespace pipeline_internal
 namespace runtime {
 struct FusedRealtimeIngress;
 } // namespace runtime
@@ -46,8 +49,9 @@ void reset_rendered_manifests();
 std::vector<pipeline_internal::sima::SimaPluginStaticManifest> get_rendered_manifests();
 void record_rendered_manifest(const pipeline_internal::sima::SimaPluginStaticManifest& manifest);
 std::vector<std::string> sync_cache_rebuild_events_for_test(bool fail_build);
-bool apply_auto_memory_policy_from_downstream_for_test(
-    InputOptions& src_opt, const std::vector<std::shared_ptr<Node>>& nodes);
+pipeline_internal::InputMemoryResolution
+resolve_input_memory_for_test(const InputOptions& options,
+                              const std::vector<std::shared_ptr<Node>>& nodes);
 int parse_sdp_fps_for_rtp_payload_for_test(const char* sdp_text, int payload_type,
                                            const char* encoding_name);
 std::string render_fused_realtime_consumer_pipeline_for_test(

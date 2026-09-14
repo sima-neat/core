@@ -209,6 +209,102 @@ std::optional<std::vector<ByteInterval>> authored_write_intervals(
   return std::vector<ByteInterval>{{binding.byte_offset, end}};
 }
 
+// Frozen component-form Pack describes producer placement, not a runtime
+// operation. Resolve that relation once, before carrier allocation, so writers,
+// aliases, readers and lifetime analysis all use the same storage identity.
+bool normalize_direct_pack_storage(ModelExecutionPlanData& data, std::string* error) {
+  for (const auto& op : data.ops) {
+    const auto* pack = std::get_if<PackOpConfig>(&op.config);
+    if (op.kind != OpKind::Pack || !pack || pack->materializes || !pack->spans.empty()) {
+      continue;
+    }
+    if (op.outputs.size() != 1U || op.outputs.front() >= data.values.size() ||
+        pack->components.size() != op.inputs.size()) {
+      return fail(error, "execution-plan direct Pack has no exact component placement");
+    }
+    const auto& parent_value = data.values[op.outputs.front()];
+    const auto parent = *parent_value.storage_binding;
+    if (parent.kind != StorageBindingKind::Root || parent.access == StorageAccess::ReadOnly) {
+      return fail(error, "execution-plan direct Pack parent is not writable storage");
+    }
+    std::uint64_t previous_end = 0U;
+    for (std::size_t index = 0U; index < pack->components.size(); ++index) {
+      const auto& component = pack->components[index];
+      if (component.value_id >= data.values.size() || component.value_id != op.inputs[index]) {
+        return fail(error, "execution-plan direct Pack component has no exact input");
+      }
+      const auto& child = data.values[component.value_id];
+      const auto binding = *child.storage_binding;
+      std::uint64_t end = 0U;
+      std::uint64_t offset = 0U;
+      if (component.parent_offset != previous_end || component.parent_offset % 16U != 0U ||
+          component.stored_bytes == 0U || component.stored_bytes % 16U != 0U ||
+          component.stored_bytes != child.required_bytes ||
+          binding.physical_span != child.required_bytes ||
+          !checked_add(component.parent_offset, component.stored_bytes, &end) ||
+          end > parent_value.required_bytes ||
+          !checked_add(parent.byte_offset, component.parent_offset, &offset)) {
+        return fail(error, "execution-plan direct Pack requires exact unpadded component spans");
+      }
+      previous_end = end;
+      if (binding.kind != StorageBindingKind::Root || binding.access == StorageAccess::ReadOnly ||
+          std::find(data.model_inputs.begin(), data.model_inputs.end(), child.id) !=
+              data.model_inputs.end()) {
+        return fail(error, "execution-plan direct Pack child is not a movable producer root");
+      }
+      if (binding.carrier_id == parent.carrier_id) {
+        if (binding.byte_offset != offset) {
+          return fail(error, "execution-plan direct Pack contradicts authored child placement");
+        }
+        continue;
+      }
+      // Only unplaced, independent producer carriers may move. Existing shared
+      // placements (including a child required by two different parents) are
+      // contracts, not permission to invent a no-copy alias.
+      if (!data.carriers.empty() || binding.carrier_id != child.id || binding.byte_offset != 0U) {
+        return fail(error,
+                    "execution-plan direct Pack conflicts with an existing carrier placement");
+      }
+      const auto producer = std::find_if(data.ops.begin(), data.ops.end(), [&](const OpSpec& item) {
+        return item.id < op.id &&
+               std::find(item.outputs.begin(), item.outputs.end(), child.id) != item.outputs.end();
+      });
+      if (producer == data.ops.end() || (producer->kind == OpKind::Pack &&
+                                         !std::get<PackOpConfig>(producer->config).materializes)) {
+        return fail(error, "execution-plan direct Pack child has no movable writer");
+      }
+      for (const auto& port : data.backend_ports) {
+        if (port.value_id == child.id &&
+            (port.required_alignment_bytes == 0U || offset % port.required_alignment_bytes != 0U ||
+             port.physical_extent_bytes != component.stored_bytes)) {
+          return fail(error, "execution-plan direct Pack contradicts its producer backend port");
+        }
+      }
+      for (auto& value : data.values) {
+        auto& member = *value.storage_binding;
+        if (member.carrier_id != binding.carrier_id) {
+          continue;
+        }
+        if (value.id != child.id && member.kind != StorageBindingKind::View) {
+          return fail(error, "execution-plan direct Pack conflicts with a shared producer carrier");
+        }
+        if (member.byte_offset > binding.physical_span ||
+            member.physical_span > binding.physical_span - member.byte_offset) {
+          return fail(error, "execution-plan direct Pack alias exceeds its producer span");
+        }
+        if (!checked_add(member.byte_offset, offset, &member.byte_offset)) {
+          return fail(error, "execution-plan direct Pack member offset overflows");
+        }
+        member.carrier_id = parent.carrier_id;
+      }
+    }
+    if (previous_end != parent_value.required_bytes) {
+      return fail(error, "execution-plan direct Pack does not cover its exact parent carrier");
+    }
+  }
+  return true;
+}
+
 bool normalize_storage(ModelExecutionPlanData* data, std::string* error) {
   if (!data) {
     return fail(error, "execution plan has no mutable construction data");
@@ -257,6 +353,10 @@ bool normalize_storage(ModelExecutionPlanData* data, std::string* error) {
                                              value.storage_binding->byte_offset,
                                              value.storage_binding->stride_bytes};
     }
+  }
+
+  if (!normalize_direct_pack_storage(*data, error)) {
+    return false;
   }
 
   if (data->carriers.empty()) {

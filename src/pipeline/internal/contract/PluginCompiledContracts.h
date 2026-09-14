@@ -6,11 +6,15 @@
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace simaai::neat {
+namespace internal {
+struct ModelFragmentPlanSource;
+}
 
 struct CompiledRuntimeContract {
   std::string plugin_kind;
@@ -50,6 +54,10 @@ struct CompiledExposedView {
 };
 
 struct CompiledProcessCvuContract {
+  // Immutable model/command provenance for contextual fragment compilation.
+  // Runtime payloads never consult this build-time source.
+  std::shared_ptr<const internal::ModelFragmentPlanSource> model_execution_source;
+  std::vector<pipeline_internal::sima::static_contract::PhysicalCommandId> physical_command_ids;
   pipeline_internal::sima::ProcessCvuStagePayload payload;
   CompiledRuntimeContract runtime_contract;
   CompiledExposedView exposed_view;
@@ -82,6 +90,9 @@ struct CompiledTransportContract {
       pipeline_internal::sima::StagePayloadKind::None;
   std::optional<pipeline_internal::sima::ProcessCvuStagePayload> processcvu_payload;
   bool model_managed_stage = false;
+  // A65's self-contained property is the serialized form of this same typed
+  // contract; apply it to the per-build element before its READY transition.
+  std::string direct_contract_b64;
 };
 
 } // namespace simaai::neat

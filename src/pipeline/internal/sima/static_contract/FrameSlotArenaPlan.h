@@ -91,14 +91,21 @@ enum class FrameSlotArenaReuse {
 // map to one region. A stage projection may detach an exact terminal public
 // MLA output into its own typed pool; every remaining region keeps this plan's
 // offset and access authority.
+// Selected public fragment boundary. Command ids retain their original dense
+// physical-plan identity; selection never rewrites backend or value identities.
+struct FrameSlotArenaRoute {
+  std::vector<std::uint32_t> commands;
+  std::vector<ValueId> imported_inputs;
+  std::vector<ValueId> published_outputs;
+  std::uint32_t output_device_access = 0U;
+};
+
 class FrameSlotArenaPlan final {
 public:
   [[nodiscard]] static std::optional<FrameSlotArenaPlan>
   compile(const ModelExecutionPlan& execution_plan, FrameSlotArenaReuse reuse,
-          std::uint64_t default_region_alignment_bytes =
-              kLegacyEvoCmaRegionAlignmentBytes,
-          std::string* error = nullptr,
-          ArenaDmsPolicy dms_policy = ArenaDmsPolicy::CmaOnly);
+          std::uint64_t default_region_alignment_bytes = kLegacyEvoCmaRegionAlignmentBytes,
+          std::string* error = nullptr, ArenaDmsPolicy dms_policy = ArenaDmsPolicy::CmaOnly);
 
   // Production placement is compiled against the physical command DAG, not
   // semantic operation order.  Several semantic operations may be one backend
@@ -106,17 +113,15 @@ public:
   // is reused only when the command DAG proves every access to one carrier
   // happens before every access to the other carrier.
   [[nodiscard]] static std::optional<FrameSlotArenaPlan>
-  compile(const ModelExecutionPlan& execution_plan,
-          const PhysicalExecutionPlan& physical_plan,
+  compile(const ModelExecutionPlan& execution_plan, const PhysicalExecutionPlan& physical_plan,
           FrameSlotArenaReuse reuse,
-          std::uint64_t default_region_alignment_bytes =
-              kLegacyEvoCmaRegionAlignmentBytes,
-          std::string* error = nullptr,
-          ArenaDmsPolicy dms_policy = ArenaDmsPolicy::CmaOnly,
-          std::span<const ValueId> detached_roots = {});
+          std::uint64_t default_region_alignment_bytes = kLegacyEvoCmaRegionAlignmentBytes,
+          std::string* error = nullptr, ArenaDmsPolicy dms_policy = ArenaDmsPolicy::CmaOnly,
+          std::span<const ValueId> detached_roots = {}, const FrameSlotArenaRoute* route = nullptr);
 
   [[nodiscard]] const std::vector<FrameSlotArenaRegion>& regions() const noexcept;
   [[nodiscard]] std::span<const ValueId> detached_roots() const noexcept;
+  [[nodiscard]] std::span<const ValueId> imported_inputs() const noexcept;
   [[nodiscard]] bool is_detached_root(ValueId value_id) const noexcept;
   [[nodiscard]] const FrameSlotArenaRegion* region(ValueId value_id) const noexcept;
   [[nodiscard]] std::uint64_t used_bytes() const noexcept;
@@ -127,15 +132,14 @@ public:
 
 private:
   [[nodiscard]] static std::optional<FrameSlotArenaPlan>
-  compile_impl(const ModelExecutionPlan& execution_plan,
-               const PhysicalExecutionPlan* physical_plan,
-               FrameSlotArenaReuse reuse,
-               std::uint64_t default_region_alignment_bytes,
+  compile_impl(const ModelExecutionPlan& execution_plan, const PhysicalExecutionPlan* physical_plan,
+               FrameSlotArenaReuse reuse, std::uint64_t default_region_alignment_bytes,
                std::string* error, ArenaDmsPolicy dms_policy,
-               std::span<const ValueId> detached_roots);
+               std::span<const ValueId> detached_roots, const FrameSlotArenaRoute* route = nullptr);
 
   std::vector<FrameSlotArenaRegion> regions_;
   std::vector<ValueId> detached_roots_;
+  std::vector<ValueId> imported_inputs_;
   std::vector<std::size_t> value_to_region_;
   std::uint64_t used_bytes_ = 0;
   std::uint64_t allocation_bytes_ = 0;

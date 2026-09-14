@@ -82,6 +82,17 @@ bool input_options_expect_tensor_media(const std::optional<InputOptions>& opt) {
   return media == "application/vnd.simaai.tensor";
 }
 
+// Allocation preference also governs compatibility copies. A consumer may accept
+// existing CPU storage while still preferring device allocation for new tensors.
+bool input_prefers_device_storage(const runtime::RunCore& core) {
+  if (core.pipeline.stream_opt.require_device_visible_input) {
+    return true;
+  }
+  const auto& options = core.pipeline.tensor_input_opt_for_cv;
+  return options.has_value() && (options->memory_policy == InputMemoryPolicy::Ev74 ||
+                                 options->memory_policy == InputMemoryPolicy::Dms0);
+}
+
 const runtime::PipelineSegmentPlan* graph_default_input_segment(const runtime::RunCore& core) {
   if (!core.graph_execution_) {
     return nullptr;
@@ -136,17 +147,7 @@ std::optional<InputOptions> graph_default_ingress_input(const runtime::RunCore& 
   if (!segment) {
     return std::nullopt;
   }
-  if (segment->boundary_hints.has_value() &&
-      index < segment->boundary_hints->ingress_inputs.size()) {
-    return segment->boundary_hints->ingress_inputs[index];
-  }
-  if (segment->boundary_hints.has_value() && !segment->boundary_hints->ingress_inputs.empty()) {
-    return segment->boundary_hints->ingress_inputs.front();
-  }
-  if (segment->input_complete) {
-    return simaai::neat::graph::input_opts_from_spec(segment->input_spec, segment->input_complete);
-  }
-  return std::nullopt;
+  return runtime::pipeline_segment_ingress_input(*segment, index);
 }
 
 std::optional<InputOptions> graph_ingress_input_for_endpoint(const runtime::RunCore& core,
@@ -156,17 +157,7 @@ std::optional<InputOptions> graph_ingress_input_for_endpoint(const runtime::RunC
   if (!segment) {
     return std::nullopt;
   }
-  if (segment->boundary_hints.has_value() &&
-      index < segment->boundary_hints->ingress_inputs.size()) {
-    return segment->boundary_hints->ingress_inputs[index];
-  }
-  if (segment->boundary_hints.has_value() && !segment->boundary_hints->ingress_inputs.empty()) {
-    return segment->boundary_hints->ingress_inputs.front();
-  }
-  if (segment->input_complete) {
-    return simaai::neat::graph::input_opts_from_spec(segment->input_spec, segment->input_complete);
-  }
-  return std::nullopt;
+  return runtime::pipeline_segment_ingress_input(*segment, index);
 }
 
 std::string available_input_names(const runtime::RunCore& core) {
@@ -320,6 +311,11 @@ std::optional<cv::Mat> try_materialize_image_sample(const Sample& msg) {
   if (!tensor.semantic.image.has_value()) {
     return std::nullopt;
   }
+  // Allocation preference does not authorize materializing existing DMA storage.
+  // Keep its holder path; explicit input copies are handled by InputStream.
+  if (pipeline_internal::tensor_has_dmabuf_memory(tensor)) {
+    return std::nullopt;
+  }
   const auto fmt = tensor.semantic.image->format;
   if (auto view = tensor.map_cv_mat_view(fmt); view.has_value()) {
     return view->mat.clone();
@@ -463,9 +459,9 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
     item.kind = QueuedInputKind::Message;
     Sample copy = msg;
     const bool force_copy = st->opt.advanced.copy_input;
-    if (force_copy && !st->pipeline.stream_opt.require_device_visible_input) {
+    if (force_copy && !input_prefers_device_storage(*st)) {
       run_internal::force_copy_sample_if_zero_copy(copy);
-    } else if (!st->pipeline.stream_opt.require_device_visible_input) {
+    } else if (!input_prefers_device_storage(*st)) {
       const std::size_t qsize = st->pipeline.in_queue.size();
       run_internal::maybe_force_copy_for_backpressure(
           copy, qsize, "queue_depth",
@@ -506,7 +502,7 @@ bool push_sample_to_core(runtime::RunCore& core, const Sample& msg, bool block) 
   if (core.push_sample_policy == runtime::PushSamplePolicy::PreserveSample) {
     return push_message_to_core(core, msg, block);
   }
-  if (!core.pipeline.stream_opt.require_device_visible_input &&
+  if (!input_prefers_device_storage(core) &&
       !input_options_expect_tensor_media(core.pipeline.tensor_input_opt_for_cv)) {
 #if defined(SIMA_WITH_OPENCV)
     if (auto mat = try_materialize_image_sample(msg); mat.has_value()) {
@@ -582,12 +578,12 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
     InputItem item;
     item.kind = QueuedInputKind::Tensor;
     const bool force_copy = st->opt.advanced.copy_input;
-    if (force_copy && !st->pipeline.stream_opt.require_device_visible_input) {
+    if (force_copy && !input_prefers_device_storage(*st)) {
       item.tensor = input.clone();
       item.tensor.read_only = false;
     } else {
       item.tensor = input;
-      if (!st->pipeline.stream_opt.require_device_visible_input) {
+      if (!input_prefers_device_storage(*st)) {
         const std::size_t qsize = st->pipeline.in_queue.size();
         run_internal::maybe_force_copy_for_backpressure(
             item.tensor, qsize, "queue_depth",
@@ -646,7 +642,7 @@ bool Run::push_sample_impl(const Sample& msg, bool block) {
   if (core_ && core_->push_sample_policy == runtime::PushSamplePolicy::PreserveSample) {
     return push_message_impl(msg, block);
   }
-  if (core_ && !core_->pipeline.stream_opt.require_device_visible_input &&
+  if (core_ && !input_prefers_device_storage(*core_) &&
       !input_options_expect_tensor_media(core_->pipeline.tensor_input_opt_for_cv)) {
 #if defined(SIMA_WITH_OPENCV)
     if (auto mat = try_materialize_image_sample(msg); mat.has_value()) {

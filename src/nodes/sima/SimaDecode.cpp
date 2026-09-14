@@ -50,7 +50,7 @@ void require_raw_output_format_supported(const SimaDecodeOptions& opt) {
 
 void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& opt) {
   // The hardware writes directly into its DMA-BUF pool even when an explicit
-  // software adapter follows this element. Admission uses the same contract.
+  // software adapter follows this element.
   ss << " zero-copy-output=true";
   ss << " sima-allocator-type=" << opt.sima_allocator_type;
   ss << " dec-type=" << decoder_type_name(opt.type);

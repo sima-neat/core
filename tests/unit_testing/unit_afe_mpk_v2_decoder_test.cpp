@@ -83,10 +83,26 @@ const std::string& packed_read_manifest() {
   static const std::string manifest = R"json({
     "name":"packed-read-synthetic",
     "model_sdk_version":"2.0.0",
-    "input_nodes":[{"name":"input0","size":16},{"name":"input1","size":16}],
+    "input_nodes":[{"name":"image0","size":64},{"name":"image1","size":64}],
     "plugins":[
+      {"name":"quant1","sequence":1,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "kernel":"quantization_transform","params":{
+                          "channel_params":[[0.25,0]],"num_bits":8,
+                          "rounding":"TONEAREST","output_data_type":"int8",
+                          "input_shapes":[[1,1,1,16]],"output_shapes":[[1,1,1,16]]}},
+       "input_nodes":[{"name":"image1","size":64}],
+       "output_nodes":[{"name":"input1","size":16}]},
+      {"name":"quant0","sequence":2,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "kernel":"quantization_transform","params":{
+                          "channel_params":[[0.25,0]],"num_bits":8,
+                          "rounding":"TONEAREST","output_data_type":"int8",
+                          "input_shapes":[[1,1,1,16]],"output_shapes":[[1,1,1,16]]}},
+       "input_nodes":[{"name":"image0","size":64}],
+       "output_nodes":[{"name":"input0","size":16}]},
       {
-        "name":"pack","sequence":1,"processor":"EV74","type":"sgpProcess",
+        "name":"pack","sequence":3,"processor":"EV74","type":"sgpProcess",
         "config_params":{"desired_batch_size":1,"actual_batch_size":1,
           "kernel":"pack_transform","params":{"input_shapes":[[1,16],[1,16]],
             "output_shapes":[[1,32]]}},
@@ -94,7 +110,7 @@ const std::string& packed_read_manifest() {
         "output_nodes":[{"name":"packed_ifm","size":32}]
       },
       {
-        "name":"MLA_0","sequence":2,"processor":"MLA","type":"sgpProcess",
+        "name":"MLA_0","sequence":4,"processor":"MLA","type":"sgpProcess",
         "config_params":{"desired_batch_size":1,"actual_batch_size":1,
           "number_of_quads_to_user":4},
         "input_nodes":[{"name":"packed_ifm","size":32}],
@@ -102,7 +118,7 @@ const std::string& packed_read_manifest() {
         "resources":{"executable":"synthetic_mla.elf"}
       },
       {
-        "name":"unpack","sequence":3,"processor":"EV74","type":"sgpProcess",
+        "name":"unpack","sequence":5,"processor":"EV74","type":"sgpProcess",
         "config_params":{"desired_batch_size":1,"actual_batch_size":1,
           "kernel":"unpack_transform","params":{
             "tensor_types":["int8","int8"],
@@ -113,7 +129,7 @@ const std::string& packed_read_manifest() {
         "output_nodes":[{"name":"unpacked0","size":16},{"name":"unpacked1","size":16}]
       },
       {
-        "name":"slice0","sequence":4,"processor":"EV74","type":"sgpProcess",
+        "name":"slice0","sequence":6,"processor":"EV74","type":"sgpProcess",
         "config_params":{"desired_batch_size":1,"actual_batch_size":1,
           "kernel":"slice_transform","params":{
             "begin":[0,0,0,0],"end":[1,2,2,1],
@@ -123,7 +139,7 @@ const std::string& packed_read_manifest() {
         "output_nodes":[{"name":"slice0_out","size":4}]
       },
       {
-        "name":"slice1","sequence":5,"processor":"EV74","type":"sgpProcess",
+        "name":"slice1","sequence":7,"processor":"EV74","type":"sgpProcess",
         "config_params":{"desired_batch_size":1,"actual_batch_size":1,
           "kernel":"slice_transform","params":{
             "begin":[0,0,0,1],"end":[1,2,2,2],
@@ -133,7 +149,7 @@ const std::string& packed_read_manifest() {
         "output_nodes":[{"name":"slice1_out","size":4}]
       },
       {
-        "name":"publish","sequence":6,"processor":"EV74","type":"sgpProcess",
+        "name":"publish","sequence":8,"processor":"EV74","type":"sgpProcess",
         "config_params":{"desired_batch_size":1,"actual_batch_size":1,
           "kernel":"pass_through","params":{}},
         "input_nodes":[{"name":"slice0_out","size":4},{"name":"slice1_out","size":4}],
@@ -571,34 +587,74 @@ void test_unpack_and_slice_are_read_expressions() {
   const auto& plan = *result.plan;
   check(plan.backend_ports().size() == 2U, "packed route remains one IFM and one OFM");
   check(plan.model_outputs().size() == 2U, "both logical reads are published");
-  const auto* pack = std::get_if<PackOpConfig>(&plan.ops().front().config);
+  const auto* pack = std::get_if<PackOpConfig>(&plan.ops()[2].config);
   check(pack != nullptr && pack->components.size() == 2U &&
             pack->components[0].parent_offset == 0U && pack->components[0].stored_bytes == 16U &&
             pack->components[1].parent_offset == 16U && pack->components[1].stored_bytes == 16U,
         "Pack carries exact ordered parent placement");
 
-  // Value order is: two public inputs, pack, MLA, two unpack reads, two
+  // Value order is: two public inputs, two producers, Pack, MLA, two unpack reads, two
   // slice reads.  Every read remains rooted in the
   // single materialized MLA OFM; neither Unpack nor Slice schedules work.
   const auto require_read = [&](const ValueId id, const std::uint64_t offset) {
     const auto* value = plan.value(id);
     check(value != nullptr && value->read_expression.has_value(),
           "logical value carries a compiled read expression");
-    check(value->read_expression->source_value_id == 3U,
+    check(value->read_expression->source_value_id == 5U,
           "logical read is composed to the physical MLA carrier");
     check(value->read_expression->byte_offset == offset,
           "logical read preserves its exact carrier-relative offset");
     check(value->read_expression->stride_bytes == std::vector<std::int64_t>({16, 8, 4, 1}),
           "logical read preserves the exact inherited byte strides");
   };
-  require_read(4U, 0U);
-  require_read(5U, 16U);
   require_read(6U, 0U);
-  require_read(7U, 17U);
-  check(plan.ops().size() == 5U && plan.values().size() == 8U,
+  require_read(7U, 16U);
+  require_read(8U, 0U);
+  require_read(9U, 17U);
+  check(plan.ops().size() == 7U && plan.values().size() == 10U,
         "PassThrough creates neither an executable op nor duplicate output values");
-  check(plan.model_outputs()[0].value_id == 6U && plan.model_outputs()[1].value_id == 7U,
+  check(plan.model_outputs()[0].value_id == 8U && plan.model_outputs()[1].value_id == 9U,
         "publication points directly at the two compiled Slice views");
+
+  const auto& parent = *plan.value(4U)->storage_binding;
+  check(plan.value(2U)->storage_binding->kind == StorageBindingKind::Root &&
+            plan.value(3U)->storage_binding->kind == StorageBindingKind::Root &&
+            plan.value(2U)->storage_binding->carrier_id == parent.carrier_id &&
+            plan.value(3U)->storage_binding->carrier_id == parent.carrier_id &&
+            plan.value(2U)->storage_binding->byte_offset == 16U &&
+            plan.value(3U)->storage_binding->byte_offset == 0U && plan.carriers().size() == 4U,
+        "decoded Pack coalesces producer roots by identity, not producer order");
+  std::string error;
+  const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+  check(physical.has_value(), "decoded direct Pack lowers without a Pack command");
+  const auto arena =
+      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
+  check(arena && arena->region(2U) == arena->region(4U) && arena->region(3U) == arena->region(4U),
+        "producer writes and MLA input allocate one canonical carrier region");
+  std::vector<PhysicalCommandId> commands;
+  for (const auto& command : physical->commands) {
+    if (command.engine == PhysicalEngine::Cvu) {
+      commands.push_back(command.id);
+    }
+  }
+  const auto contract =
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+  if (!contract) {
+    std::cerr << error << '\n';
+  }
+  check(contract && contract->runtime_contract.physical_outputs.size() == 2U,
+        "real decoder-to-generic-projection path emits both producer-direct writes");
+  for (std::size_t index = 0U; index < contract->runtime_contract.logical_outputs.size(); ++index) {
+    const auto& logical = contract->runtime_contract.logical_outputs[index];
+    const auto& output = contract->runtime_contract.physical_outputs[index];
+    const auto offset = logical.logical_name == "input0" ? 0U : 16U;
+    check(output.source_byte_offset ==
+                  static_cast<std::int64_t>(arena->region(4U)->byte_offset + offset) &&
+              output.size_bytes == 16U &&
+              output.source_byte_offset % output.required_alignment_bytes == 0U,
+          "each exact producer range equals its MLA parent component without 4KiB member padding");
+  }
 
   std::size_t read_proofs = 0U;
   for (const auto& fact : result.proof) {
@@ -745,6 +801,19 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
                   std::vector<std::vector<int>>{{1, 1000}} &&
               contract->payload.runtime_output_logical_layout_list == std::vector<std::string>{""},
           "graph227 publication retains the post-view flattened logical contract");
+    check(contract->payload.typed_output_layout_token() == "HWC" &&
+              contract->payload.logical_output_layout_token().empty() &&
+              contract->runtime_contract.logical_outputs.size() == 1U &&
+              contract->runtime_contract.logical_outputs.front().layout.empty(),
+          "unknown post-view layout must not inherit the physical EV image axes");
+    auto layout_payload = contract->payload;
+    layout_payload.runtime_output_logical_layout_list = {"HWC", ""};
+    check(layout_payload.logical_output_layout_token(0U) == "HWC" &&
+              layout_payload.logical_output_layout_token(1U).empty(),
+          "each authored logical layout is authoritative, including an unknown member");
+    layout_payload.runtime_output_logical_layout_list.clear();
+    check(layout_payload.logical_output_layout_token() == "HWC",
+          "payloads without authored logical layout retain physical layout fallback");
   }
 
   auto two_views =

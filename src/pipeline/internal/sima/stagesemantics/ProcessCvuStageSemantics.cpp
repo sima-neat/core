@@ -1506,8 +1506,12 @@ ProcessCvuLogicalDims preproc_logical_dims_from_payload(const ProcessCvuStagePay
 
 std::string preproc_logical_layout_from_payload(const ProcessCvuStagePayload& payload,
                                                 const ProcessCvuLogicalDims& dims) {
-  (void)dims;
-  return payload_runtime_output_layout_token_local(payload);
+  // Graph 200 publishes an image whose axes are fixed by its descriptor and
+  // configured image format. Author that fact before populating the logical
+  // array: an empty entry elsewhere means genuinely unknown tensor axes.
+  const auto descriptor_layout = payload_output_layout_token_local(payload);
+  return descriptor_layout.empty() ? layout_from_image_format(payload.output_img_type, dims.depth)
+                                   : descriptor_layout;
 }
 
 std::string preproc_image_axis_layout_token_local(const std::vector<int>& shape) {

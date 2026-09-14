@@ -125,7 +125,7 @@ sc::ModelExecutionPlan make_frontend_plan() {
   data.values[4].storage_binding = sc::StorageBinding{
       sc::StorageBindingKind::Root, 4U, 0U, 192U, {}, sc::StorageAccess::ReadWrite, std::nullopt};
   // Public ingress order deliberately differs from the EV74/MLA branch order.
-  // The application packs image_1 before image_0, while the command cohort
+  // The application supplies image_1 before image_0, while the command cohort
   // retains quantize_0 before quantize_1.
   data.model_inputs = {1U, 0U};
 
@@ -246,7 +246,7 @@ sc::ModelExecutionPlan make_nonzero_view_to_terminal_mla_plan() {
   return std::move(*plan);
 }
 
-sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 960U) {
+sc::ModelExecutionPlanData make_packed_plan_data(const std::uint64_t packed_ifm_bytes = 960U) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.0.0";
   data.values = {
@@ -288,23 +288,14 @@ sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 9
       sc::ValueSpec{10U, "dequant_1", 800U, "float32", sc::TensorShape{200}},
   };
   data.model_inputs = {0U, 1U};
-  data.values[0].storage_binding = sc::StorageBinding{
-      sc::StorageBindingKind::External, 0U, 0U, 2560U, {},
-      sc::StorageAccess::ReadOnly, std::nullopt};
-  data.values[1].storage_binding = sc::StorageBinding{
-      sc::StorageBindingKind::External, 1U, 0U, 1280U, {},
-      sc::StorageAccess::ReadOnly, std::nullopt};
-  // The frozen batch-one Pack is an address relation.  Its two producers write
-  // directly into disjoint spans of the single MLA parent carrier.
-  data.values[2].storage_binding = sc::StorageBinding{
-      sc::StorageBindingKind::Root, 4U, 0U, 640U, {},
-      sc::StorageAccess::ReadWrite, std::nullopt};
-  data.values[3].storage_binding = sc::StorageBinding{
-      sc::StorageBindingKind::Root, 4U, 640U, 320U, {},
-      sc::StorageAccess::ReadWrite, std::nullopt};
-  data.values[4].storage_binding = sc::StorageBinding{
-      sc::StorageBindingKind::Root, 4U, 0U, packed_ifm_bytes, {},
-      sc::StorageAccess::ReadWrite, std::nullopt};
+  data.values[0].storage_binding =
+      sc::StorageBinding{sc::StorageBindingKind::External, 0U,          0U, 2560U, {},
+                         sc::StorageAccess::ReadOnly,      std::nullopt};
+  data.values[1].storage_binding =
+      sc::StorageBinding{sc::StorageBindingKind::External, 1U,          0U, 1280U, {},
+                         sc::StorageAccess::ReadOnly,      std::nullopt};
+  // Leave producer storage unplaced, as the MPK decoder does. Construction
+  // must canonicalize Pack rather than rely on this fixture prebinding it.
 
   const auto add_op = [&](sc::OpKind kind, std::string name, std::vector<sc::ValueId> inputs,
                           std::vector<sc::ValueId> outputs, sc::OpConfig config) {
@@ -345,6 +336,11 @@ sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 9
                           sc::BackendPortAccess::WriteOnly},
   };
   data.model_outputs = {{0U, "dequant_0", 9U}, {1U, "dequant_1", 10U}};
+  return data;
+}
+
+sc::ModelExecutionPlan make_packed_plan() {
+  auto data = make_packed_plan_data();
   std::string error;
   auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
   require(plan.has_value(), "packed execution plan must be valid: " + error);
@@ -1687,28 +1683,41 @@ RUN_TEST(
                         fused_case.graph_id &&
                     fused_contract->payload.input_tensors.size() == fused_case.members &&
                     fused_contract->payload.output_tensors.size() == fused_case.members &&
-                    fused_contract->runtime_contract.physical_inputs.size() ==
-                        fused_case.members &&
-                    fused_contract->runtime_contract.physical_outputs.size() ==
-                        fused_case.members,
-                "fused command must publish one public carrier and output per member");
-        if (fused_case.members > 1U) {
-          require(fused_contract->runtime_contract.frame_arena_role ==
-                          sima::FrameArenaRole::Allocate &&
-                      fused_contract->runtime_contract.consumer_keeps_distinct_physical_inputs,
-                  "grouped fused ingress must allocate its output arena separately from the "
-                  "public input carriers");
-          for (std::size_t member = 0; member < fused_case.members; ++member) {
-            const auto& logical =
-                fused_contract->runtime_contract.logical_inputs[member];
-            const auto& binding =
-                fused_contract->runtime_contract.input_bindings[member];
-            require(logical.physical_index == static_cast<int>(member) &&
-                        binding.sink_pad_index == 0 &&
-                        binding.src_physical_output_index == static_cast<int>(member) &&
-                        logical.byte_offset == 0 && binding.src_physical_byte_offset == 0,
-                    "grouped fused ingress member must retain its distinct TensorSet carrier");
-          }
+                    fused_contract->runtime_contract.physical_inputs.size() == fused_case.members &&
+                    fused_contract->runtime_contract.logical_inputs.size() == fused_case.members &&
+                    fused_contract->runtime_contract.input_bindings.size() == fused_case.members &&
+                    fused_contract->runtime_contract.physical_outputs.size() == fused_case.members,
+                "fused command must retain one public binding and one output per member");
+        require(fused_contract->runtime_contract.frame_arena_role ==
+                        sima::FrameArenaRole::Allocate &&
+                    fused_contract->runtime_contract.consumer_keeps_distinct_physical_inputs ==
+                        (fused_case.members > 1U),
+                "fused ingress must allocate its output arena independently of public inputs");
+        for (std::size_t member = 0; member < fused_case.members; ++member) {
+          const auto input_id = static_cast<sc::ValueId>(member * 3U);
+          const auto* input = fused_plan.value(input_id);
+          const auto& physical = fused_contract->runtime_contract.physical_inputs[member];
+          const auto& logical = fused_contract->runtime_contract.logical_inputs[member];
+          const auto& binding = fused_contract->runtime_contract.input_bindings[member];
+          const int selector = static_cast<int>(member);
+          require(
+              input && input->storage_binding && fused_plan.model_inputs()[member] == input_id &&
+                  physical.address_source == sima::PhysicalAddressSource::RuntimePhysicalBinding &&
+                  physical.physical_index == selector &&
+                  physical.source_physical_index == selector && physical.source_byte_offset == 0 &&
+                  physical.size_bytes == input->storage_binding->physical_span &&
+                  physical.segment_name == "value_" + std::to_string(input_id) &&
+                  logical.logical_index == selector && logical.physical_index == selector &&
+                  logical.byte_offset == 0 && logical.size_bytes == input->required_bytes &&
+                  binding.sink_pad_index == 0 && binding.local_logical_input_index == selector &&
+                  binding.src_logical_output_index == selector &&
+                  binding.src_output_slot == selector &&
+                  binding.src_physical_output_index == selector &&
+                  binding.src_physical_byte_offset == 0 &&
+                  binding.src_physical_size_bytes == physical.size_bytes &&
+                  binding.source_segment_name == physical.segment_name,
+              "fused ingress must preserve public member order, independent physical "
+              "bindings and exact spans without adding packed or runtime-base offsets");
         }
         if (fused_case.members == 1U) {
           require(fused_contract->payload.default_output_names.size() == 1U &&
@@ -1839,6 +1848,58 @@ RUN_TEST(
           sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy);
       require(unfiltered_frontend_arena.has_value(),
               "grouped command fixture must compile its unfiltered frame arena: " + error);
+      // Public inference fragments import the authored IFMs, not the omitted
+      // preprocessing producer's full arena. Use the same planner and retain
+      // original command ids; output offsets must be shared by continuation.
+      sc::FrameSlotArenaRoute mla_route;
+      for (const auto& command : frontend_physical->commands) {
+        if (command.engine == sc::PhysicalEngine::Mla) {
+          mla_route.commands.push_back(command.id);
+        }
+      }
+      mla_route.imported_inputs = {2U, 3U};
+      mla_route.published_outputs = {4U};
+      auto mla_route_arena = sc::FrameSlotArenaPlan::compile(
+          frontend_plan, *frontend_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy, {},
+          &mla_route);
+      require(mla_route_arena && !mla_route_arena->region(2U) && !mla_route_arena->region(3U) &&
+                  mla_route_arena->region(4U) &&
+                  mla_route_arena->allocation_bytes() <
+                      unfiltered_frontend_arena->allocation_bytes() &&
+                  mla_route_arena->placement().domain == sc::ArenaStorageDomain::Dms,
+              "inference-only route must allocate only selected OFM storage: " + error);
+      auto imported_sources =
+          sc::resolve_mla_input_physical_sources(frontend_plan, 0U, *mla_route_arena, {}, &error);
+      auto imported_mla = make_projection(frontend_plan);
+      require(imported_sources && sc::apply_dmabuf_plan_contract_projection(
+                                      frontend_plan, 0U, *mla_route_arena, &imported_mla,
+                                      *imported_sources, &error),
+              "omitted preprocessing inputs must remain exact imported IFMs: " + error);
+      require(imported_mla.frame_arena_role == sima::FrameArenaRole::Allocate &&
+                  imported_mla.physical_inputs[0].address_source ==
+                      sima::PhysicalAddressSource::RuntimePhysicalBinding &&
+                  imported_mla.physical_inputs[1].address_source ==
+                      sima::PhysicalAddressSource::RuntimePhysicalBinding &&
+                  imported_mla.physical_inputs[0].source_physical_index == 0 &&
+                  imported_mla.physical_inputs[1].source_physical_index == 1 &&
+                  imported_mla.physical_inputs[0].source_byte_offset == 0 &&
+                  imported_mla.physical_inputs[1].source_byte_offset == 0 &&
+                  imported_mla.physical_outputs[0].source_byte_offset ==
+                      static_cast<std::int64_t>(mla_route_arena->region(4U)->byte_offset),
+              "IFM bindings and OFM ownership must agree without transport materialization");
+      mla_route.output_device_access = static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74);
+      auto ev_continuation_arena = sc::FrameSlotArenaPlan::compile(
+          frontend_plan, *frontend_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy, {},
+          &mla_route);
+      require(ev_continuation_arena &&
+                  ev_continuation_arena->placement().domain == sc::ArenaStorageDomain::Cma &&
+                  ev_continuation_arena->allocation_bytes() == mla_route_arena->allocation_bytes(),
+              "an external EV consumer changes visibility, not IFM copying or arena size");
+      require(unfiltered_frontend_arena->region(2U) && unfiltered_frontend_arena->region(3U),
+              "contextual projection must not mutate the complete route arena");
+
       const auto frontend_detached =
           sc::detached_mla_output_roots(frontend_plan, *frontend_physical);
       auto frontend_arena = sc::FrameSlotArenaPlan::compile(
@@ -1986,38 +2047,42 @@ RUN_TEST(
               "two sibling quantize operations must render as one exact cohort: " + error);
       const auto* grouped_region_0 = frontend_arena->region(2U);
       const auto* grouped_region_1 = frontend_arena->region(3U);
-      require(grouped_quant.graph_id == 222 && grouped_quant.maximum_members == 32U &&
-                  grouped_runtime.physical_inputs.size() == 2U &&
-                  grouped_runtime.physical_outputs.size() == 2U && grouped_region_0 &&
-                  grouped_region_1 &&
-                  grouped_runtime.physical_inputs[0].physical_index == 0 &&
-                  grouped_runtime.physical_inputs[1].physical_index == 1 &&
-                  grouped_runtime.physical_inputs[0].source_physical_index == 1 &&
-                  grouped_runtime.physical_inputs[1].source_physical_index == 0 &&
-                  grouped_runtime.physical_inputs[0].size_bytes == 100U &&
-                  grouped_runtime.physical_inputs[1].size_bytes == 200U &&
-                  grouped_runtime.logical_inputs[0].physical_index == 0 &&
-                  grouped_runtime.logical_inputs[1].physical_index == 1 &&
-                  grouped_runtime.logical_inputs[0].byte_offset == 0 &&
-                  grouped_runtime.logical_inputs[1].byte_offset == 0 &&
-                  grouped_runtime.input_bindings[0].sink_pad_index == 0 &&
-                  grouped_runtime.input_bindings[1].sink_pad_index == 0 &&
-                  grouped_runtime.input_bindings[0].src_physical_output_index == 1 &&
-                  grouped_runtime.input_bindings[1].src_physical_output_index == 0 &&
-                  grouped_runtime.input_bindings[0].src_physical_byte_offset == 0 &&
-                  grouped_runtime.input_bindings[1].src_physical_byte_offset == 0 &&
-                  grouped_runtime.input_bindings[0].src_physical_size_bytes == 100U &&
-                  grouped_runtime.input_bindings[1].src_physical_size_bytes == 200U &&
-                  grouped_runtime.physical_outputs[0].source_byte_offset ==
-                      static_cast<std::int64_t>(grouped_region_0->byte_offset) &&
-                  grouped_runtime.physical_outputs[1].source_byte_offset ==
-                      static_cast<std::int64_t>(grouped_region_1->byte_offset) &&
-                  grouped_runtime.logical_outputs[0].byte_offset == 0 &&
-                  grouped_runtime.logical_outputs[1].byte_offset == 0 &&
-                  grouped_runtime.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  grouped_runtime.consumer_keeps_distinct_physical_inputs,
-              "grouped quantize must map backend order to public TensorSet carriers and write two absolute "
-              "arena regions");
+      require(
+          grouped_quant.graph_id == 222 && grouped_quant.maximum_members == 32U &&
+              grouped_runtime.physical_inputs.size() == 2U &&
+              grouped_runtime.physical_outputs.size() == 2U && grouped_region_0 &&
+              grouped_region_1 && grouped_runtime.physical_inputs[0].physical_index == 0 &&
+              grouped_runtime.physical_inputs[0].source_physical_index == 1 &&
+              grouped_runtime.physical_inputs[0].size_bytes == 100U &&
+              grouped_runtime.physical_inputs[0].address_source ==
+                  sima::PhysicalAddressSource::RuntimePhysicalBinding &&
+              grouped_runtime.physical_inputs[1].physical_index == 1 &&
+              grouped_runtime.physical_inputs[1].source_physical_index == 0 &&
+              grouped_runtime.physical_inputs[1].size_bytes == 200U &&
+              grouped_runtime.physical_inputs[1].address_source ==
+                  sima::PhysicalAddressSource::RuntimePhysicalBinding &&
+              grouped_runtime.logical_inputs[0].physical_index == 0 &&
+              grouped_runtime.logical_inputs[1].physical_index == 1 &&
+              grouped_runtime.logical_inputs[0].byte_offset == 0 &&
+              grouped_runtime.logical_inputs[1].byte_offset == 0 &&
+              grouped_runtime.input_bindings[0].sink_pad_index == 0 &&
+              grouped_runtime.input_bindings[1].sink_pad_index == 0 &&
+              grouped_runtime.input_bindings[0].src_physical_output_index == 1 &&
+              grouped_runtime.input_bindings[1].src_physical_output_index == 0 &&
+              grouped_runtime.input_bindings[0].src_physical_byte_offset == 0 &&
+              grouped_runtime.input_bindings[1].src_physical_byte_offset == 0 &&
+              grouped_runtime.input_bindings[0].src_physical_size_bytes == 100U &&
+              grouped_runtime.input_bindings[1].src_physical_size_bytes == 200U &&
+              grouped_runtime.physical_outputs[0].source_byte_offset ==
+                  static_cast<std::int64_t>(grouped_region_0->byte_offset) &&
+              grouped_runtime.physical_outputs[1].source_byte_offset ==
+                  static_cast<std::int64_t>(grouped_region_1->byte_offset) &&
+              grouped_runtime.logical_outputs[0].byte_offset == 0 &&
+              grouped_runtime.logical_outputs[1].byte_offset == 0 &&
+              grouped_runtime.frame_arena_role == sima::FrameArenaRole::Allocate &&
+              grouped_runtime.consumer_keeps_distinct_physical_inputs,
+          "grouped quantize must select independent public bindings in member order and write two "
+          "arena regions");
 
       auto heterogeneous_payload = grouped_quant;
       auto heterogeneous_runtime = grouped_runtime;
@@ -2338,17 +2403,35 @@ RUN_TEST(
                               }),
               "graph225 must retain BF16 consumer descriptors independently of MLA carrier "
               "publication dtype");
-      require(detesscast_contract->runtime_contract.input_bindings.size() ==
-                  kGroupedUnpackMembers,
-              "six graph225 members must publish six exact input selectors");
+      require(
+          detesscast_contract->runtime_contract.input_bindings.size() == kGroupedUnpackMembers &&
+              detesscast_contract->runtime_contract.physical_inputs.size() ==
+                  kGroupedUnpackMembers &&
+              detesscast_contract->runtime_contract.logical_inputs.size() == kGroupedUnpackMembers,
+          "six graph225 members must publish six exact logical and physical input spans");
+      const auto* unpack_parent_region = bf16_unpack_arena->region(1U);
+      require(unpack_parent_region != nullptr,
+              "MLA Unpack parent must retain its frame-arena region");
       for (std::size_t member = 0; member < kGroupedUnpackMembers; ++member) {
         const auto& route = detesscast_contract->runtime_contract.input_bindings[member];
-        require(route.sink_pad_index == 0 &&
-                    route.local_logical_input_index == static_cast<int>(member) &&
-                    route.src_logical_output_index == static_cast<int>(member) &&
-                    route.src_output_slot == static_cast<int>(member) &&
-                    route.src_physical_output_index == static_cast<int>(member),
-                "one internal MLA arena pad must retain six distinct source selectors");
+        const auto& physical = detesscast_contract->runtime_contract.physical_inputs[member];
+        const auto& logical = detesscast_contract->runtime_contract.logical_inputs[member];
+        const int selector = static_cast<int>(member);
+        require(
+            route.sink_pad_index == 0 && route.local_logical_input_index == selector &&
+                route.src_logical_output_index == selector && route.src_output_slot == selector &&
+                route.src_physical_output_index == 0 && route.src_physical_byte_offset == 0 &&
+                route.src_physical_size_bytes == 200U &&
+                physical.address_source == sima::PhysicalAddressSource::FrameArenaSpan &&
+                physical.physical_index == selector && physical.source_physical_index == 0 &&
+                physical.source_byte_offset ==
+                    static_cast<std::int64_t>(unpack_parent_region->byte_offset + member * 200U) &&
+                physical.size_bytes == 200U && logical.logical_index == selector &&
+                logical.physical_index == selector && logical.byte_offset == 0 &&
+                logical.size_bytes == 200U &&
+                logical.logical_name == "unpack_" + std::to_string(member),
+            "one MLA arena carrier must retain six distinct logical identities and exact "
+            "compiler-authored member spans without rebinding memory slots");
       }
 
       sima::ProcessCvuStagePayload packed_pre;
@@ -2383,7 +2466,8 @@ RUN_TEST(
                   packed_pre_runtime.physical_outputs[1].source_byte_offset -
                           packed_pre_runtime.physical_outputs[0].source_byte_offset ==
                       640 &&
-                  packed_pre_runtime.physical_outputs[0].required_alignment_bytes == 16U &&
+                  packed_pre_runtime.physical_outputs[0].required_alignment_bytes == 4096U &&
+                  packed_pre_runtime.physical_outputs[1].required_alignment_bytes == 128U &&
                   !packed_pre_runtime.consumer_keeps_distinct_physical_inputs,
               "Pack children must be direct writes into one ordered parent carrier");
 
@@ -2500,10 +2584,44 @@ RUN_TEST(
       require(!sc::resolve_mla_input_physical_sources(packed_plan, gapped, &error),
               "packed IFM with a gap must fail closed");
 
-      const auto incomplete_parent_plan = make_packed_plan(1920U);
+      require(!sc::ModelExecutionPlan::create(make_packed_plan_data(1920U), &error),
+              "direct Pack without exact parent coverage must fail during plan construction");
+      auto external_pack = make_packed_plan_data();
+      external_pack.values[2].storage_binding =
+          sc::StorageBinding{sc::StorageBindingKind::External, 2U,          0U, 640U, {},
+                             sc::StorageAccess::ReadOnly,      std::nullopt};
+      require(!sc::ModelExecutionPlan::create(std::move(external_pack), &error),
+              "direct Pack must never relocate externally owned input memory");
+      auto conflicting_pack = make_packed_plan_data();
+      conflicting_pack.values[3].storage_binding =
+          sc::StorageBinding{sc::StorageBindingKind::Root, 4U,          0U, 320U, {},
+                             sc::StorageAccess::ReadWrite, std::nullopt};
+      require(!sc::ModelExecutionPlan::create(std::move(conflicting_pack), &error),
+              "direct Pack must reject an overlapping authored child placement");
+
+      auto aliased_pack = make_packed_plan_data();
+      aliased_pack.values.push_back(sc::ValueSpec{11U,
+                                                  "retained_child_view",
+                                                  16U,
+                                                  "int8",
+                                                  sc::TensorShape{16},
+                                                  std::nullopt,
+                                                  {},
+                                                  sc::ValueRepresentation::Dense,
+                                                  sc::ReadExpression{3U, 16U, {1}}});
+      aliased_pack.model_outputs.push_back({2U, "retained_child_view", 11U});
+      const auto aliased_plan = sc::ModelExecutionPlan::create(std::move(aliased_pack), &error);
       require(
-          !sc::resolve_mla_input_physical_sources(incomplete_parent_plan, packed_upstream, &error),
-          "legacy doubled-size BF16 parent without exact producer coverage must fail closed");
+          aliased_plan &&
+              aliased_plan->value(11U)->storage_binding->carrier_id ==
+                  aliased_plan->value(4U)->storage_binding->carrier_id &&
+              aliased_plan->value(11U)->storage_binding->byte_offset == 656U &&
+              aliased_plan->value(11U)->storage_binding->kind == sc::StorageBindingKind::View,
+          "a retained producer view must follow canonical Pack placement without becoming a write");
+      const auto aliased_arena = sc::FrameSlotArenaPlan::compile(
+          *aliased_plan, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096U, &error);
+      require(aliased_arena && aliased_arena->region(11U) == aliased_arena->region(4U),
+              "a public child alias must retain the same parent arena region");
 
       const auto pitched_plan = make_pitched_batch_pack_plan();
       std::vector<sima::LogicalTensorStaticSpec> pitched_upstream(2U);
@@ -2571,9 +2689,30 @@ RUN_TEST(
       require(dequant.dmabuf_plan_contract && dequant.graph_id == 223,
               "dequant must use canonical graph 223 in dmabuf-plan mode");
       require(post_runtime.physical_outputs.size() == 28U &&
-                  post_runtime.logical_outputs[7].physical_index == 7 &&
-                  post_runtime.physical_outputs[7].required_alignment_bytes == 8192U,
-              "post-CVU output region must inherit the exact ordered MLA OFM alignment");
+                  post_runtime.logical_outputs.size() == 28U,
+              "post-CVU must retain all independently placed destination outputs");
+      for (std::size_t index = 0; index < 28U; ++index) {
+        const auto* destination = plan.value(static_cast<sc::ValueId>(30U + index));
+        require(destination && destination->storage_binding,
+                "post-CVU fixture must have canonical destination storage");
+        const auto& storage = *destination->storage_binding;
+        const auto* carrier = plan.carrier(storage.carrier_id);
+        const auto& physical = post_runtime.physical_outputs[index];
+        const auto& logical = post_runtime.logical_outputs[index];
+        require(carrier && storage.byte_offset == 0U &&
+                    carrier->required_alignment_bytes == sc::kLegacyEvoCmaRegionAlignmentBytes &&
+                    physical.required_alignment_bytes == carrier->required_alignment_bytes &&
+                    physical.source_byte_offset >= 0 &&
+                    static_cast<std::uint64_t>(physical.source_byte_offset) %
+                            carrier->required_alignment_bytes ==
+                        0U &&
+                    physical.physical_index == static_cast<int>(index) &&
+                    physical.size_bytes == storage.physical_span &&
+                    physical.segment_name == destination->name &&
+                    logical.physical_index == static_cast<int>(index) && logical.byte_offset == 0,
+                "post-CVU output alignment, identity and span must describe its destination "
+                "carrier, not inherit the independent MLA input carrier's port alignment");
+      }
       require(post_runtime.frame_arena_role == sima::FrameArenaRole::ReuseInput &&
                   post_runtime.frame_arena_size_bytes == contract.frame_arena_size_bytes,
               "post-CVU must reuse the same parent frame arena");
