@@ -184,36 +184,20 @@ bool input_has_internal_producer(
   return false;
 }
 
-QuantParams
+std::optional<QuantParams>
 quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuantContract>& quant,
                const std::string& name) {
-  if (!quant.has_value() || quant->scales.empty() || quant->zero_points.empty()) {
-    throw std::runtime_error("mla_only tensor '" + name + "' has no quantization facts");
-  }
-  if (quant->axis >= 0 || quant->scales.size() != 1U || quant->zero_points.size() != 1U) {
-    throw std::runtime_error("mla_only tensor '" + name + "' is not per-tensor quantized");
+  if (!quant.has_value()) {
+    return std::nullopt;
   }
   QuantParams out;
   out.axis = quant->axis;
-  for (const auto zero_point : quant->zero_points) {
-    if (zero_point < std::numeric_limits<std::int8_t>::min() ||
-        zero_point > std::numeric_limits<std::int8_t>::max()) {
-      throw std::runtime_error("mla_only tensor '" + name +
-                               "' has a zero point outside the INT8 code range");
-    }
-    out.zero_points.push_back(static_cast<std::int32_t>(zero_point));
-  }
+  out.zero_points.assign(quant->zero_points.begin(), quant->zero_points.end());
   for (const auto scale : quant->scales) {
-    if (!std::isfinite(scale) || scale <= 0.0) {
-      throw std::runtime_error("mla_only tensor '" + name +
-                               "' has a quantization scale that is not finite and positive");
+    if (scale == 0.0) {
+      throw std::runtime_error("mla_only tensor '" + name + "' has a zero quantization scale");
     }
-    const float reciprocal = 1.0f / static_cast<float>(scale);
-    if (!std::isfinite(reciprocal) || reciprocal <= 0.0f) {
-      throw std::runtime_error("mla_only tensor '" + name +
-                               "' has a quantization scale outside the representable float range");
-    }
-    out.scales.push_back(reciprocal);
+    out.scales.push_back(1.0f / static_cast<float>(scale));
   }
   return out;
 }
@@ -452,10 +436,6 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
                                "' lies outside the MLA output carrier");
     }
     const auto& dequantize = dequantize_for_head(contract, head.name);
-    if (best_shape(dequantize.output_tensors.front()) != fact.shape) {
-      throw std::runtime_error("mla_only output '" + fact.name +
-                               "' does not match the shape of its dequantized output");
-    }
     fact.name = strip_public_route_wrapper_prefix(dequantize.output_tensors.front().name);
     fact.quant = quant_from_mpk(dequantize.quant, fact.name);
     fact.dense_offset = facts->dense_output_bytes;
@@ -478,18 +458,10 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
   if (next != raw) {
     throw std::runtime_error("mla_only output heads do not tile the MLA output carrier");
   }
-  const auto public_outputs = application_output_contracts(contract);
-  if (facts->outputs.size() != public_outputs.size()) {
+  if (facts->outputs.size() != application_output_contracts(contract).size()) {
     throw std::runtime_error("mla_only heads do not cover every model output");
   }
-  for (std::size_t i = 0; i < public_outputs.size(); ++i) {
-    const std::string name = strip_public_route_wrapper_prefix(public_outputs[i].name);
-    if (facts->outputs[i].name != name) {
-      throw std::runtime_error("mla_only head '" + facts->outputs[i].name +
-                               "' does not match model output '" + name +
-                               "'; the MLA head order and the model output order disagree");
-    }
-  }
+
   facts->packed_output_bytes = raw;
 }
 

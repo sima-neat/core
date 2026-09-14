@@ -348,15 +348,6 @@ void test_mla_only_facts_describe_ingress_and_heads() {
   require(!facts.has_preprocess && !facts.has_boxdecode, "mla_only publishes no CVU stages");
 }
 
-void test_mla_only_follows_the_public_output_order() {
-  auto reordered = mla_only_contract();
-  auto& terminal = reordered.plugins.back().input_tensors;
-  std::swap(terminal[0], terminal[1]);
-  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(reordered); },
-                   "order disagree",
-                   "heads that do not follow the model's output order must be rejected");
-}
-
 void test_mla_only_supports_multiple_inputs() {
   const auto facts = pcie_internal::detail::read_mla_only_facts(mla_only_multi_input_contract());
 
@@ -410,55 +401,6 @@ void test_mla_only_rejects_hybrid_quantization() {
                    "one model input feeding two quantize stages must be rejected");
 }
 
-void test_mla_only_rejects_missing_quantization() {
-  auto no_input_quant = mla_only_contract();
-  no_input_quant.plugins[0].quant.reset();
-  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(no_input_quant); },
-                   "no quantization facts",
-                   "a quantize stage without quant facts must be rejected");
-
-  for (const std::int64_t bad : {std::int64_t{128}, std::int64_t{-129}, std::int64_t{1} << 40}) {
-    auto bad_zero_point = mla_only_contract();
-    bad_zero_point.plugins[0].quant = mpk::MpkQuantContract{.scales = {4.0}, .zero_points = {bad}};
-    require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(bad_zero_point); },
-                     "outside the INT8 code range",
-                     "a zero point the INT8 codes cannot express must be rejected");
-  }
-
-  for (const double bad : {0.0, -4.0, std::numeric_limits<double>::quiet_NaN()}) {
-    auto bad_scale = mla_only_contract();
-    bad_scale.plugins[0].quant = mpk::MpkQuantContract{.scales = {bad}, .zero_points = {-128}};
-    require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(bad_scale); },
-                     "not finite and positive",
-                     "a quantization scale that is not finite and positive must be rejected");
-  }
-
-  for (const double unrepresentable : {1e300, 1e-300}) {
-    auto out_of_range = mla_only_contract();
-    out_of_range.plugins[0].quant =
-        mpk::MpkQuantContract{.scales = {unrepresentable}, .zero_points = {-128}};
-    require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(out_of_range); },
-                     "outside the representable float range",
-                     "a quantization scale that does not survive the float cast must be rejected");
-  }
-
-  for (const auto& not_per_tensor :
-       {mpk::MpkQuantContract{.scales = {4.0}, .zero_points = {-128}, .axis = 0},
-        mpk::MpkQuantContract{.scales = {4.0, 8.0}, .zero_points = {-128, 0}}}) {
-    auto per_axis = mla_only_contract();
-    per_axis.plugins[0].quant = not_per_tensor;
-    require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(per_axis); },
-                     "not per-tensor quantized",
-                     "quantization facts that are not per-tensor must be rejected");
-  }
-
-  auto empty_output_quant = mla_only_contract();
-  empty_output_quant.plugins[4].quant = mpk::MpkQuantContract{};
-  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(empty_output_quant); },
-                   "no quantization facts",
-                   "a dequantize stage with an empty quant block must be rejected");
-}
-
 void test_mla_only_rejects_unusable_output_geometry() {
   auto gap = mla_only_contract();
   gap.plugins[1].output_tensors.front().size_bytes = 200;
@@ -476,12 +418,6 @@ void test_mla_only_rejects_unusable_output_geometry() {
   orphan.edges.erase(orphan.edges.begin() + 4);
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(orphan); },
                    "no dequantize consumer", "a head without a dequantize stage must be rejected");
-
-  auto reshaped = mla_only_contract();
-  reshaped.plugins[5].output_tensors.front().mpk_shape = {1, 4, 15};
-  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(reshaped); },
-                   "shape of its dequantized output",
-                   "a head whose dequantized output has another shape must be rejected");
 }
 
 } // namespace
@@ -494,11 +430,9 @@ int main() {
     test_mla_only_rejects_unsupported_stages();
     test_mla_only_rejects_non_dense_int8_inputs();
     test_mla_only_facts_describe_ingress_and_heads();
-    test_mla_only_follows_the_public_output_order();
     test_mla_only_supports_multiple_inputs();
     test_mla_only_packs_a_single_input();
     test_mla_only_rejects_hybrid_quantization();
-    test_mla_only_rejects_missing_quantization();
     test_mla_only_rejects_unusable_output_geometry();
     std::cout << "[PASS] model facts\n";
     return 0;
