@@ -24,7 +24,8 @@ resolve_memory_policy_from_first_downstream_node(const std::vector<std::shared_p
     if (kind == "Cast") {
       continue;
     }
-    if (kind == "Preproc" || kind == "Quant" || kind == "Tess" || kind == "QuantTess") {
+    if (kind == "Preproc" || kind == "Quant" || kind == "Tess" || kind == "QuantTess" ||
+        kind == "CastTess") {
       return {InputMemoryPolicy::Ev74, true};
     }
     if (kind == "ModelFragment") {

@@ -202,6 +202,8 @@ RUN_TEST(
              MemoryContract::AllowEitherButReport, InputMemoryPolicy::Ev74, true},
             {"Auto QuantTess", InputMemoryPolicy::Auto, true, "QuantTess",
              MemoryContract::AllowEitherButReport, InputMemoryPolicy::Ev74, true},
+            {"Auto CastTess", InputMemoryPolicy::Auto, true, "CastTess",
+             MemoryContract::AllowEitherButReport, InputMemoryPolicy::Ev74, true},
             {"Auto MLA", InputMemoryPolicy::Auto, true, "ModelFragment",
              MemoryContract::AllowEitherButReport, InputMemoryPolicy::Dms0, true},
             {"Pool opt-out", InputMemoryPolicy::Auto, false, "Preproc",

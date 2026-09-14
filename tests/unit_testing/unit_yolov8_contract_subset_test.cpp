@@ -3,6 +3,8 @@
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
 #include "nodes/sima/CastTess.h"
+#include "nodes/io/Input.h"
+#include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
@@ -391,6 +393,12 @@ void verify_casttess_frame_arena(const simaai::neat::Model& model) {
               "BF16 tensor route must start with the model-managed CastTess frontend");
       nodes.insert(nodes.end(), route.begin(), route.end());
     }
+    auto input_nodes = nodes;
+    input_nodes.insert(input_nodes.begin(), nodes::Input());
+    const auto memory = pipeline_internal::resolve_input_memory({}, input_nodes);
+    require(memory.allocation == InputMemoryPolicy::Ev74 && memory.require_device_visible_input,
+            "Auto BF16 input must resolve EV74 allocation and device-visible admission");
+
     contract::ManifestBuildDiagnostics diagnostics;
     const auto compiled = compile_node_contracts(nodes, {}, &diagnostics);
     const auto manifest = render_manifest_from_compiled_contracts(compiled, {}, &diagnostics);
