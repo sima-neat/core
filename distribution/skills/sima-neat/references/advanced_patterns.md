@@ -9,7 +9,7 @@ Before using hardware/path-specific flows, check required elements:
 
 Use this for:
 
-- SimaAI processing plugins (`simaaiprocesscvu`, `simaaiprocessmla`, `simaaiboxdecode`)
+- SimaAI processing plugins (`simaaiprocesscvu`, `simaaiprocessmla`, `neatobjectdecode`)
 - PCIe plugins (`simaaipciesrc`, `simaaipciesink`)
 
 ## `InputAppSrcOptions` contract-heavy setups
