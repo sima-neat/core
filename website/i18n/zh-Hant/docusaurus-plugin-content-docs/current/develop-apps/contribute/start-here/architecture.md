@@ -319,7 +319,7 @@ GStreamer 域/程式碼僅用於除錯。在 `NeatError` 建立時，會添加�
 進行確定性的多輸入映射；舊版輸入緩衝區名稱僅作為備援。
 
 如果提供 `logical_stage_id`，則會從 `stage-id`/`stage_id` 管線屬性中解析，否則它會回退到元素名稱。
-SIMA 模型路徑片段建構器預設會在 `simaaiprocesscvu`、`simaaiprocessmla` 和 `simaaiboxdecode` 元素上設定 `stage-id`。
+SIMA 模型路徑片段建構器預設會在 `simaaiprocesscvu`、`simaaiprocessmla` 和 `neatobjectdecode` 元素上設定 `stage-id`。
 
 ##### YOLO26 BoxDecode 類別計數合約
 
@@ -331,7 +331,7 @@ SuperPoint 使用與其他模型管理的 BoxDecode 系列相同的 MPK 到靜�
 
 - MPK 記錄擁有檢測器-logits 和描述符-grid 張量識別碼、儲存表示法、dtype/shape 資訊、數值設定檔來源，以及可選的明確 NMS 和邊界控制。核心永遠不會從張量值中識別這些角色。
 - 核心將精確地將一個張量繫結到每個角色，驗證設定檔指紋和支援的表示法，應用明確的 `Model::Options::superpoint` 覆寫，並且僅解決省略的設定檔預設值。更改設定檔會重新計算其衍生的預設值，同時保留 MPK 或 API 明確設定的控制項。
-- 版本化的靜態資訊清單 ABI 攜帶已解決的合約到 `simaaiboxdecode`。外掛程式僅在設定期間借用資訊清單指標，並且必須複製執行階段所需的任何狀態；核心在管線的整個生命週期內保留資訊清單的所有權。
+- 版本化的靜態資訊清單 ABI 攜帶已解決的合約到 `neatobjectdecode`。外掛程式僅在設定期間借用資訊清單指標，並且必須複製執行階段所需的任何狀態；核心在管線的整個生命週期內保留資訊清單的所有權。
 - 實際輸出使用 `FEATURE_POINTS_V1` 線格式和特徵語義中繼資料。`FEATURE_POINTS_LEGACY_A65_V0` 僅在明確選擇以用於相容性時才可用；使用者不應從緩衝區大小推斷任何一種格式。
 
 ---
