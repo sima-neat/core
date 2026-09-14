@@ -282,13 +282,21 @@ std::map<std::string, Head> run_default_route(const Args& args, const pcie::Conn
                              std::to_string(mla_only_info.inputs.size()));
   }
   pcie::TensorList submitted;
-  for (std::size_t i = 0; i < info.inputs.size(); ++i) {
-    const auto& shape = mla_only_info.inputs[i].shape;
-    if (info.inputs[i].dtype != "FP32" || info.inputs[i].shape != shape) {
-      throw std::runtime_error("default route input " + std::to_string(i) + " is not FP32 " +
+  for (const pcie::TensorInfo& ingress : info.inputs) {
+    const auto match = std::find_if(
+        mla_only_info.inputs.begin(), mla_only_info.inputs.end(),
+        [&](const pcie::TensorInfo& candidate) { return candidate.name == ingress.name; });
+    if (match == mla_only_info.inputs.end()) {
+      throw std::runtime_error("mla_only exposes no input named '" + ingress.name + "'");
+    }
+    const auto& shape = match->shape;
+    if (ingress.dtype != "FP32" || ingress.shape != shape) {
+      throw std::runtime_error("default route input '" + ingress.name + "' is not FP32 " +
                                shape_string(shape));
     }
-    submitted.push_back(pcie::Tensor::from_vector(inputs[i], shape, info.inputs[i].name));
+    const std::size_t index =
+        static_cast<std::size_t>(std::distance(mla_only_info.inputs.begin(), match));
+    submitted.push_back(pcie::Tensor::from_vector(inputs[index], shape, ingress.name));
   }
   std::map<std::string, Head> heads;
   for (const auto& output : model.run(submitted, args.pull_timeout_ms)) {
