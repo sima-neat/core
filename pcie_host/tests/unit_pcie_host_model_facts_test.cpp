@@ -356,6 +356,13 @@ void test_mla_only_rejects_missing_quantization() {
                    "no quantization facts",
                    "a quantize stage without quant facts must be rejected");
 
+  auto wide_zero_point = mla_only_contract();
+  wide_zero_point.plugins[0].quant =
+      mpk::MpkQuantContract{.scales = {4.0}, .zero_points = {1LL << 40}};
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(wide_zero_point); },
+                   "out-of-range zero point",
+                   "a zero point outside the public int32 type must be rejected");
+
   auto empty_output_quant = mla_only_contract();
   empty_output_quant.plugins[4].quant = mpk::MpkQuantContract{};
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(empty_output_quant); },
