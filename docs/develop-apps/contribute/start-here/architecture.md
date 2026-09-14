@@ -742,6 +742,10 @@ An input memory policy selects storage for new allocations; it does not implicit
 materialize an already DMA-BUF-backed image for a CPU-capable consumer. Such images
 use the existing Sample holder path in synchronous and asynchronous runs. Explicit
 input copying and incompatible format/caps requests retain their own contracts.
+CPU-only TensorSets retain the existing packed/materialized fallback when a
+zero-copy envelope cannot represent them. If any selected tensor is DMA-backed,
+implicit packing remains forbidden; ordinary successful zero-copy paths are unchanged.
+
 On CPU-admissible ingress, `advanced.copy_input=true` takes its protective copy at
 queue admission, even when new allocations prefer device memory. A strict
 device-visible ingress requirement is distinct from this allocation preference.

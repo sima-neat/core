@@ -877,6 +877,60 @@ void mixed_dmabuf_envelope_preserves_pool_loan_and_cpu_packing() {
           "producer pool did not reuse the original DMA allocation");
 }
 
+void cpu_tensor_set_fallback_preserves_dma_policy() {
+  using namespace simaai::neat;
+  const guint count = gst_buffer_get_max_memory() + 1U;
+  TensorList tensors;
+  tensors.reserve(count);
+  for (guint i = 0U; i < count; ++i) {
+    Tensor tensor = Tensor::from_vector(std::vector<std::uint8_t>{static_cast<std::uint8_t>(i)},
+                                        {1}, TensorMemory::CPU);
+    tensor.route.name = "field" + std::to_string(i);
+    tensor.route.logical_index = static_cast<int>(i);
+    tensor.route.physical_index = 0;
+    tensor.route.segment_name = "packed_cpu";
+    tensors.push_back(std::move(tensor));
+  }
+  Sample input = sample_from_tensors(tensors);
+  std::string detail;
+  const auto holder = pipeline_internal::sample_to_gst_envelope_holder(input, &detail);
+  require(holder != nullptr, "copyable CPU packed-parent fallback failed: " + detail);
+  GstBufferPtr buffer(pipeline_internal::buffer_from_tensor_holder(holder));
+  require(buffer && gst_buffer_n_memory(buffer.get()) == 1U &&
+              !pipeline_internal::buffer_has_dmabuf_memory(buffer.get()),
+          "CPU packed-parent fallback must produce one ordinary memory");
+  pipeline_internal::TensorBufferView descriptor;
+  require(pipeline_internal::tensor_buffer_descriptor_from_sample(
+              static_cast<GstSample*>(holder.get()), &descriptor, &detail) &&
+              descriptor.tensors.size() == count,
+          "CPU fallback lost its logical tensor descriptors: " + detail);
+  GstMapInfo map{};
+  require(gst_buffer_map(buffer.get(), &map, GST_MAP_READ), "CPU fallback payload map failed");
+  bool correct = map.size == count;
+  for (guint i = 0U; i < count; ++i) {
+    const auto& tensor = descriptor.tensors[i];
+    correct = correct && map.data[i] == static_cast<std::uint8_t>(i) && tensor.memory_index == 0 &&
+              tensor.byte_offset == i && tensor.size_bytes == 1U &&
+              tensor.logical_index == static_cast<int>(i);
+  }
+  gst_buffer_unmap(buffer.get(), &map);
+  require(correct, "CPU fallback changed payload order or descriptor offsets");
+
+  // One DMA sibling makes implicit packing forbidden. Reject before mapping
+  // rather than relaxing the slot limit and letting GStreamer merge memories.
+  GstBufferPtr dma(sima_test::make_bookkeeping_dmabuf(64U));
+  GstSamplePtr dma_sample(gst_sample_new(dma.get(), nullptr, nullptr, nullptr));
+  input.tensors.front().storage = pipeline_internal::make_gst_sample_storage(dma_sample.get());
+  input.tensors.front().route.memory_index = 0;
+  pipeline_internal::reset_tensor_io_stats();
+  const auto mixed = pipeline_internal::sample_to_gst_envelope_holder(input, &detail);
+  const auto stats = pipeline_internal::snapshot_tensor_io_stats();
+  require(!mixed && detail.find("memory-slot limit") != std::string::npos,
+          "oversized mixed tensor set must not silently pack its DMA sibling");
+  require(stats.tensor_copy_count == 0U && stats.gst_memory_map_calls == 0U,
+          "rejected mixed tensor set entered a copy or mapping fallback");
+}
+
 void dma_video_envelope_preserves_native_span_and_planes() {
   using namespace simaai::neat;
   for (const bool planar : {false, true}) {
@@ -990,6 +1044,7 @@ int main() {
     simaai::neat::gst_init_once();
     dmabuf_auto_projection_and_override_policy();
     mixed_dmabuf_envelope_preserves_pool_loan_and_cpu_packing();
+    cpu_tensor_set_fallback_preserves_dma_policy();
     dma_video_envelope_preserves_native_span_and_planes();
     unresolved_mixed_dmabuf_descriptor_fails_without_copy();
     GstSample* sample = make_tensor_sample_with_contract_meta();

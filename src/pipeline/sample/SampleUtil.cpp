@@ -3331,7 +3331,9 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
         built = try_build_multi_source_tensor_set_backing(bundle, &sample_buf, &sample_caps,
                                                           &backing_err);
       }
-      if (!allow_zero_copy) {
+      // Zero-copy is a preference for CPU inputs, but a DMA sibling must
+      // never be materialized implicitly when the shared envelope cannot fit.
+      if (!built && (!allow_zero_copy || !sample_has_dmabuf_memory(bundle))) {
         if (const auto packed_parent = packed_tensor_set_parent_segment_name(bundle)) {
           built = build_packed_tensor_set_backing(bundle, *packed_parent, &sample_buf, &sample_caps,
                                                   &backing_err);
