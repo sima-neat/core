@@ -3275,6 +3275,9 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   if (opt.top_k > 0) {
     box_model_opt.top_k = opt.top_k;
   }
+  if (!opt.pose_classes.empty()) {
+    box_model_opt.pose_classes = opt.pose_classes;
+  }
   simaai::neat::Model box_model =
       simaai::neat::internal::ModelAccess::clone_with_options(model, box_model_opt);
   return Postprocess(input, box_model);

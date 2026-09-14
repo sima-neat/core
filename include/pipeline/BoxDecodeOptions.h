@@ -21,7 +21,7 @@ struct BoxDecodeOptions {
   double nms_iou_threshold = 0.0;
   int top_k = 0;
   SuperPointOptions superpoint;
-  /// Class indices that carry keypoints; empty treats every class as pose-bearing.
+  /// Class indices that carry keypoints; empty inherits the model's or MPK's gate.
   std::vector<int> pose_classes;
 };
 

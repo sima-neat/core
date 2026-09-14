@@ -4341,7 +4341,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("detection_threshold", &simaai::neat::BoxDecodeOptions::detection_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::BoxDecodeOptions::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::BoxDecodeOptions::top_k)
-      .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint);
+      .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint)
+      .def_rw("pose_classes", &simaai::neat::BoxDecodeOptions::pose_classes);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
       .value("Quiet", simaai::neat::VerbosityLevel::Quiet)
