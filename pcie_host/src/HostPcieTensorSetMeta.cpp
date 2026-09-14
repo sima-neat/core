@@ -84,6 +84,16 @@ std::string shape_string(const std::vector<std::int64_t>& shape) {
   return out.str();
 }
 
+int tensor_set_layout_for_rank(const std::size_t rank) {
+  if (rank == 2)
+    return SIMA_TENSOR_SET_LAYOUT_HW_V1;
+  if (rank == 3)
+    return SIMA_TENSOR_SET_LAYOUT_HWC_V1;
+  if (rank == 4)
+    return SIMA_TENSOR_SET_LAYOUT_NHWC_V1;
+  return SIMA_TENSOR_SET_LAYOUT_UNKNOWN_V1;
+}
+
 int tensor_set_layout(const Tensor& tensor) {
   if (tensor.layout == TensorLayout::HW)
     return SIMA_TENSOR_SET_LAYOUT_HW_V1;
@@ -91,13 +101,7 @@ int tensor_set_layout(const Tensor& tensor) {
     return SIMA_TENSOR_SET_LAYOUT_HWC_V1;
   if (tensor.layout == TensorLayout::NHWC)
     return SIMA_TENSOR_SET_LAYOUT_NHWC_V1;
-  if (tensor.shape.size() == 2)
-    return SIMA_TENSOR_SET_LAYOUT_HW_V1;
-  if (tensor.shape.size() == 3)
-    return SIMA_TENSOR_SET_LAYOUT_HWC_V1;
-  if (tensor.shape.size() == 4)
-    return SIMA_TENSOR_SET_LAYOUT_NHWC_V1;
-  return SIMA_TENSOR_SET_LAYOUT_UNKNOWN_V1;
+  return tensor_set_layout_for_rank(tensor.shape.size());
 }
 
 } // namespace
@@ -196,23 +200,14 @@ void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>
       throw std::runtime_error("tensor-set metadata supports tensor ranks up to " +
                                std::to_string(SIMA_TENSOR_SET_MAX_RANK));
     }
-    SimaTensorDescriptorV2 packed = descriptors.front();
-    packed.logical_index = 0;
-    packed.physical_index = 0;
-    packed.route_slot = 0;
-    packed.memory_index = 0;
-    packed.logical_name_id = 0;
-    packed.backend_name_id = 0;
-    packed.segment_name_id = 0;
-    packed.byte_offset = 0;
+    SimaTensorDescriptorV2 packed{};
+    packed.backend_output_index = -1;
+    packed.dtype = tensor_set_dtype(spans.front().tensor->dtype);
+    packed.layout = tensor_set_layout_for_rank(packed_input->shape.size());
     packed.size_bytes = static_cast<gint64>(packed_input->size_bytes);
     packed.rank = static_cast<guint>(packed_input->shape.size());
     std::int64_t stride =
         static_cast<std::int64_t>(tensor_dtype_bytes(spans.front().tensor->dtype));
-    for (guint d = 0; d < SIMA_TENSOR_SET_MAX_RANK; ++d) {
-      packed.shape[d] = 0;
-      packed.stride_bytes[d] = 0;
-    }
     for (guint d = packed.rank; d-- > 0;) {
       packed.shape[d] = packed_input->shape[d];
       packed.stride_bytes[d] = stride;
