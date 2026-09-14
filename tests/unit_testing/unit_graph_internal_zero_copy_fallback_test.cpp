@@ -452,15 +452,15 @@ void require_output_policy_matrix() {
           "existing synchronous detess zero-copy override must remain explicit");
 }
 
-void require_device_preferred_input_preserves_samples() {
+void require_device_preferred_input_ownership() {
   using namespace simaai::neat;
   ScopedEnv cap("SIMA_GRAPH_ZERO_COPY_BACKPRESSURE_CAP", "1");
   for (const auto allocation :
        {InputMemoryPolicy::Ev74, InputMemoryPolicy::Dms0, InputMemoryPolicy::SystemMemory}) {
     for (const bool dma : {false, true}) {
       for (const bool copy_input : {false, true}) {
-        // No streaming worker: inspect queue admission without submitting the
-        // bookkeeping DMA-BUF to hardware or permitting any payload mapping.
+        // No streaming worker: inspect ownership at queue admission. Only an
+        // explicit compatibility copy may map the payload.
         auto core = std::make_shared<runtime::RunCore>();
         core->pipeline.supports_push = true;
         core->opt.queue_depth = 4;
@@ -473,8 +473,14 @@ void require_device_preferred_input_preserves_samples() {
         require(core->push_sample_policy == runtime::PushSamplePolicy::PublicCompatibility,
                 "device preference must not require graph-internal sample policy");
 
-        GstBuffer* buffer = dma ? sima_test::make_bookkeeping_dmabuf(4)
-                                : gst_buffer_new_allocate(nullptr, 4, nullptr);
+        const bool copy_at_admission =
+            copy_input && !core->pipeline.stream_opt.require_device_visible_input;
+        std::uint8_t borrowed[4] = {0x31, 0x32, 0x33, 0x34};
+        GstBuffer* buffer =
+            dma ? (copy_at_admission ? sima_test::allocate_cma_dmabuf(4)
+                                     : sima_test::make_bookkeeping_dmabuf(4))
+                : gst_buffer_new_wrapped_full(GST_MEMORY_FLAG_READONLY, borrowed, sizeof(borrowed),
+                                              0, sizeof(borrowed), nullptr, nullptr);
         Sample sample = sample_from_buffer(buffer);
         gst_buffer_unref(buffer);
         auto& tensor = sample.tensors.front();
@@ -487,13 +493,21 @@ void require_device_preferred_input_preserves_samples() {
           require(core->push_samples(sample, false), "device-preferred sample must enqueue");
           const auto& queued = core->pipeline.in_queue.back();
           require(queued.kind == QueuedInputKind::Message &&
-                      queued.msg.tensors.front().storage == storage,
-                  "device preference must preserve the original Sample and storage in queue");
+                      (queued.msg.tensors.front().storage == storage) != copy_at_admission,
+                  "device preference must preserve storage unless an admissible copy is requested");
         }
         const auto after = pipeline_internal::snapshot_tensor_io_stats();
-        require(after.tensor_copy_count == before.tensor_copy_count &&
-                    after.gst_memory_map_calls == before.gst_memory_map_calls,
-                "device preference must not materialize images or clone under queue pressure");
+        if (!copy_at_admission) {
+          require(after.tensor_copy_count == before.tensor_copy_count &&
+                      after.gst_memory_map_calls == before.gst_memory_map_calls,
+                  "device preference must not materialize images or clone under queue pressure");
+        } else if (!dma) {
+          borrowed[0] = 0xff;
+          const auto mapping =
+              core->pipeline.in_queue.front().msg.tensors.front().map(MapMode::Read);
+          require(mapping.data && *static_cast<const std::uint8_t*>(mapping.data) == 0x31,
+                  "explicit input copy must isolate caller mutations before the worker runs");
+        }
       }
     }
   }
@@ -666,7 +680,7 @@ RUN_TEST(
       require_native_retention_pool_policy();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
-      require_device_preferred_input_preserves_samples();
+      require_device_preferred_input_ownership();
       require_cpu_admissible_input_preserves_dmabuf_images();
       {
         simaai::neat::runtime::ExecutionGraphPlan plan;

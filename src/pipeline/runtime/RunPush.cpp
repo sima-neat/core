@@ -82,8 +82,8 @@ bool input_options_expect_tensor_media(const std::optional<InputOptions>& opt) {
   return media == "application/vnd.simaai.tensor";
 }
 
-// Allocation preference also governs compatibility copies. A consumer may accept
-// existing CPU storage while still preferring device allocation for new tensors.
+// Allocation preference suppresses implicit compatibility copies, not explicit
+// copy_input requests. A preference can still admit existing CPU storage.
 bool input_prefers_device_storage(const runtime::RunCore& core) {
   if (core.pipeline.stream_opt.require_device_visible_input) {
     return true;
@@ -459,7 +459,7 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
     item.kind = QueuedInputKind::Message;
     Sample copy = msg;
     const bool force_copy = st->opt.advanced.copy_input;
-    if (force_copy && !input_prefers_device_storage(*st)) {
+    if (force_copy && !st->pipeline.stream_opt.require_device_visible_input) {
       run_internal::force_copy_sample_if_zero_copy(copy);
     } else if (!input_prefers_device_storage(*st)) {
       const std::size_t qsize = st->pipeline.in_queue.size();
@@ -578,7 +578,7 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
     InputItem item;
     item.kind = QueuedInputKind::Tensor;
     const bool force_copy = st->opt.advanced.copy_input;
-    if (force_copy && !input_prefers_device_storage(*st)) {
+    if (force_copy && !st->pipeline.stream_opt.require_device_visible_input) {
       item.tensor = input.clone();
       item.tensor.read_only = false;
     } else {

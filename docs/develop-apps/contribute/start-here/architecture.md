@@ -735,6 +735,9 @@ An input memory policy selects storage for new allocations; it does not implicit
 materialize an already DMA-BUF-backed image for a CPU-capable consumer. Such images
 use the existing Sample holder path in synchronous and asynchronous runs. Explicit
 input copying and incompatible format/caps requests retain their own contracts.
+On CPU-admissible ingress, `advanced.copy_input=true` takes its protective copy at
+queue admission, even when new allocations prefer device memory. A strict
+device-visible ingress requirement is distinct from this allocation preference.
 
 ### DMA-BUF output ownership
 
