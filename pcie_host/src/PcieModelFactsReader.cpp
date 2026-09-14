@@ -190,6 +190,9 @@ quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQua
   if (!quant.has_value() || quant->scales.empty() || quant->zero_points.empty()) {
     throw std::runtime_error("mla_only tensor '" + name + "' has no quantization facts");
   }
+  if (quant->axis >= 0 || quant->scales.size() != 1U || quant->zero_points.size() != 1U) {
+    throw std::runtime_error("mla_only tensor '" + name + "' is not per-tensor quantized");
+  }
   QuantParams out;
   out.axis = quant->axis;
   for (const auto zero_point : quant->zero_points) {

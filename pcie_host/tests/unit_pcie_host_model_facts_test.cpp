@@ -433,6 +433,16 @@ void test_mla_only_rejects_missing_quantization() {
                      "a quantization scale that does not survive the float cast must be rejected");
   }
 
+  for (const auto& not_per_tensor :
+       {mpk::MpkQuantContract{.scales = {4.0}, .zero_points = {-128}, .axis = 0},
+        mpk::MpkQuantContract{.scales = {4.0, 8.0}, .zero_points = {-128, 0}}}) {
+    auto per_axis = mla_only_contract();
+    per_axis.plugins[0].quant = not_per_tensor;
+    require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(per_axis); },
+                     "not per-tensor quantized",
+                     "quantization facts that are not per-tensor must be rejected");
+  }
+
   auto empty_output_quant = mla_only_contract();
   empty_output_quant.plugins[4].quant = mpk::MpkQuantContract{};
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(empty_output_quant); },
