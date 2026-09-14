@@ -110,7 +110,7 @@ RUN_TEST(
       StageStaticSpec box;
       box.element_name = "box";
       box.logical_stage_id = "stage_box";
-      box.plugin_kind = "neatboxdecode";
+      box.plugin_kind = "neatobjectdecode";
       box.kernel_kind = "boxdecode";
       box.payload_kind = StagePayloadKind::BoxDecode;
       box.boxdecode.decode_type = simaai::neat::BoxDecodeType::YoloV8;
@@ -155,7 +155,7 @@ RUN_TEST(
       StageStaticSpec superpoint_box;
       superpoint_box.element_name = "superpoint_box";
       superpoint_box.logical_stage_id = "stage_superpoint_box";
-      superpoint_box.plugin_kind = "neatboxdecode";
+      superpoint_box.plugin_kind = "neatobjectdecode";
       superpoint_box.kernel_kind = "boxdecode";
       superpoint_box.payload_kind = StagePayloadKind::BoxDecode;
       superpoint_box.boxdecode.decode_type = simaai::neat::BoxDecodeType::SuperPoint;

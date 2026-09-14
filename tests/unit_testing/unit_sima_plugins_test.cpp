@@ -13,10 +13,10 @@ int main() {
   try {
     const bool has_neatargmax = simaai::neat::element_exists("neatargmax");
     const bool has_neatrender = simaai::neat::element_exists("neatrender");
-    require(simaai::neat::element_exists("neatboxdecode"),
-            "required plugin missing (neatboxdecode)");
+    require(simaai::neat::element_exists("neatobjectdecode"),
+            "required plugin missing (neatobjectdecode)");
 
-    simaai::neat::require_element("neatboxdecode", "unit_sima_plugins_test");
+    simaai::neat::require_element("neatobjectdecode", "unit_sima_plugins_test");
     if (has_neatargmax) {
       simaai::neat::require_element("neatargmax", "unit_sima_plugins_test");
     }

@@ -17,7 +17,7 @@ SimaPluginStaticManifest make_manifest(const char* element_name, const char* sta
   StageStaticSpec stage;
   stage.element_name = element_name;
   stage.logical_stage_id = stage_id;
-  stage.plugin_kind = "neatboxdecode";
+  stage.plugin_kind = "neatobjectdecode";
   stage.kernel_kind = "boxdecode";
   stage.payload_kind = StagePayloadKind::BoxDecode;
   stage.boxdecode.decode_type = simaai::neat::BoxDecodeType::YoloV8;

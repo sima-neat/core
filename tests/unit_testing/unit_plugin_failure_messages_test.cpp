@@ -300,7 +300,7 @@ static void test_boxdecode_failure() {
                                             "}\n");
   Graph p;
   const std::string frag =
-      "fakesrc ! neatboxdecode name=box_fail config=" + cfg.path + " ! fakesink";
+      "fakesrc ! neatobjectdecode name=box_fail config=" + cfg.path + " ! fakesink";
   p.add(Custom(frag, simaai::neat::InputRole::Source));
 
   RunOptions opt;
@@ -314,8 +314,8 @@ static void test_boxdecode_failure() {
 }
 
 static void test_boxdecode_missing_manifest_context_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatboxdecode name=box_ctx_fail stage-id=stage_box_ctx ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatobjectdecode name=box_ctx_fail "
+                               "stage-id=stage_box_ctx ! fakesink";
   const std::string err = expect_raw_gst_pipeline_error("boxdecode_missing_context", pipeline);
 
   maybe_dump_error("boxdecode_missing_context", err);
@@ -325,7 +325,7 @@ static void test_boxdecode_missing_manifest_context_failure() {
 }
 
 static void test_boxdecode_missing_manifest_stage_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatboxdecode name=box_stage_fail "
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatobjectdecode name=box_stage_fail "
                                "stage-id=stage_box_missing ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-missing-stage",
@@ -333,7 +333,7 @@ static void test_boxdecode_missing_manifest_stage_failure() {
       {
         "element_name": "some_other_stage",
         "logical_stage_id": "stage_other",
-        "plugin_kind": "neatboxdecode",
+        "plugin_kind": "neatobjectdecode",
         "kernel_kind": "boxdecode"
       }
     ]
@@ -348,15 +348,15 @@ static void test_boxdecode_missing_manifest_stage_failure() {
 }
 
 static void test_boxdecode_ambiguous_sink_map_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatboxdecode name=box_map_fail stage-id=stage_box_map ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatobjectdecode name=box_map_fail "
+                               "stage-id=stage_box_map ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-ambiguous-map",
     "stages": [
       {
         "element_name": "box_map_fail",
         "logical_stage_id": "stage_box_map",
-        "plugin_kind": "neatboxdecode",
+        "plugin_kind": "neatobjectdecode",
         "kernel_kind": "boxdecode",
         "logical_inputs": [
           {
@@ -720,14 +720,14 @@ int main() {
       std::cout << "[SKIP] neatprocesscvu element missing\n";
     }
 
-    if (simaai::neat::element_exists("neatboxdecode")) {
+    if (simaai::neat::element_exists("neatobjectdecode")) {
       test_boxdecode_failure();
       test_boxdecode_missing_manifest_context_failure();
       test_boxdecode_missing_manifest_stage_failure();
       test_boxdecode_ambiguous_sink_map_failure();
       ran_any = true;
     } else {
-      std::cout << "[SKIP] neatboxdecode element missing\n";
+      std::cout << "[SKIP] neatobjectdecode element missing\n";
     }
 
     if (simaai::neat::element_exists("neatdecoder")) {

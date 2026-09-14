@@ -2003,8 +2003,7 @@ std::string session_build_select_terminal_objectdecode_cpu_visibility(std::strin
     }
     const auto consumer = std::string_view(fragment).substr(
         segments[next].begin, segments[next].end - segments[next].begin);
-    if (fragment_segment_uses_factory(consumer, "neatobjectdecode") ||
-        fragment_segment_uses_factory(consumer, "neatboxdecode")) {
+    if (fragment_segment_uses_factory(consumer, "neatobjectdecode")) {
       selected.push_back(i);
     }
   }
@@ -2959,7 +2958,7 @@ static std::string clamp_sync_pipeline_impl(std::string pipeline, int num_buffer
   }
   if (force_boxdecode) {
     apply_num_buffers(
-        [](const std::string& seg) { return seg.find("neatboxdecode") != std::string::npos; });
+        [](const std::string& seg) { return seg.find("neatobjectdecode") != std::string::npos; });
   }
 
   if (forced <= 1 && legacy_terminal_floor) {

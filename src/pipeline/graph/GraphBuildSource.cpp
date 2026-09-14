@@ -2736,7 +2736,7 @@ std::string fused_consumer_segment_factory(const std::string& segment) {
 
 bool is_fused_consumer_stage_factory(const std::string& factory) {
   return factory == "neatprocesscvu" || factory == "neatprocessmla" ||
-         factory == "neatobjectdecode" || factory == "neatboxdecode";
+         factory == "neatobjectdecode";
 }
 
 bool fused_consumer_fragment_replaces_buffers(const std::string& fragment) {

@@ -259,8 +259,8 @@ RUN_TEST(
               "startup factory required set is missing");
       const auto factories =
           quoted_literals(gst_init_text.substr(required, required_end - required));
-      require(factories == std::vector<std::string>{"neatprocesscvu", "neatprocessmla",
-                                                    "neatboxdecode"},
+      require(factories ==
+                  std::vector<std::string>{"neatprocesscvu", "neatprocessmla", "neatobjectdecode"},
               "strict startup must require only ProcessCVU, ProcessMLA, and BoxDecode; "
               "legacy Detess/Dequant factories are route-local");
     }));

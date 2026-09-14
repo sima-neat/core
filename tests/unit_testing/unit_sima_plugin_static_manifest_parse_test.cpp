@@ -12,7 +12,7 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            const std::string pipeline =
                "fakesrc ! neatprocesscvu name=pre stage-id=pre_stage ! "
                "neatprocessmla name=mla stage_id=mla_stage config=/tmp/mla.json ! "
-               "neatboxdecode name=box config=/tmp/box.json decode-type=yolov8 "
+               "neatobjectdecode name=box config=/tmp/box.json decode-type=yolov8 "
                "detection-threshold=0.35 nms-iou-threshold=0.5 topk=120 ! fakesink";
 
            const std::vector<PipelineElementSpec> elements = parse_pipeline_elements(pipeline);
@@ -27,7 +27,7 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            require(elements[2].stage_id == "mla_stage",
                    "stage_id alias should be parsed for MLA stage");
 
-           require(elements[3].plugin == "neatboxdecode", "unexpected plugin at index 3");
+           require(elements[3].plugin == "neatobjectdecode", "unexpected plugin at index 3");
            require(elements[3].stage_id.empty(), "box stage-id should be empty when not set");
            require(elements[3].config_path == "/tmp/box.json", "box config path parse mismatch");
            require(elements[3].decode_type_property.has_value(),

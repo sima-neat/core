@@ -159,7 +159,7 @@ std::vector<std::shared_ptr<simaai::neat::Node>> make_consumer_nodes() {
   nodes.push_back(std::make_shared<FragmentNode>(
       "ModelRoute", "neatprocesscvu", "preproc",
       " async=false num-buffers=4 ! neatprocessmla name=n0_mla async=false num-buffers=4 "
-      "defer-output-invalidate=true ! neatboxdecode name=n0_boxdecode num-buffers=2 ! appsink "
+      "defer-output-invalidate=true ! neatobjectdecode name=n0_boxdecode num-buffers=2 ! appsink "
       "name=n0_output"));
   return nodes;
 }
@@ -170,7 +170,7 @@ simaai::neat::Graph make_composed_consumer_graph() {
   graph.add(std::make_shared<FragmentNode>(
       "ModelRoute", "neatprocesscvu", "preproc",
       " async=false num-buffers=4 ! neatprocessmla name=n1_mla async=false num-buffers=4 "
-      "defer-output-invalidate=true ! neatboxdecode name=n1_boxdecode num-buffers=2"));
+      "defer-output-invalidate=true ! neatobjectdecode name=n1_boxdecode num-buffers=2"));
   graph.add(simaai::neat::nodes::Output("detections"));
   return graph;
 }
@@ -354,7 +354,7 @@ RUN_TEST(
           objectdecode_fragment,
           "neatobjectdecode name=boxdecode_1 num-buffers=7",
           "a declared terminal lane window must use the resolved MLA route depth");
-      require_contains(pipeline, "neatboxdecode name=n0_boxdecode num-buffers=7",
+      require_contains(pipeline, "neatobjectdecode name=n0_boxdecode num-buffers=7",
                        "rendered BoxDecode must share the exact MLA route depth");
       require_contains(pipeline, "defer-output-invalidate=false",
                        "terminal MLA-to-ObjectDecode must select producer CPU visibility");
@@ -400,12 +400,11 @@ RUN_TEST(
       // The Model's terminal MLA and the public SimaBoxDecode therefore become
       // adjacent only after build_pipeline_full inserts its inter-node queue.
       const std::vector<std::shared_ptr<simaai::neat::Node>> split_cpu_nodes{
-          std::make_shared<FragmentNode>(
-              "Model", "identity", "model_fragment",
-              " ! neatprocessmla name=split_terminal_mla "
-              "defer-output-invalidate=true"),
-          std::make_shared<FragmentNode>("SimaBoxDecode", "neatboxdecode",
-                                         "split_boxdecode", " num-buffers=2")};
+          std::make_shared<FragmentNode>("Model", "identity", "model_fragment",
+                                         " ! neatprocessmla name=split_terminal_mla "
+                                         "defer-output-invalidate=true"),
+          std::make_shared<FragmentNode>("SimaBoxDecode", "neatobjectdecode", "split_boxdecode",
+                                         " num-buffers=2")};
       const auto split_cpu_pipeline = simaai::neat::build_pipeline_full(
           split_cpu_nodes, false, "mysink", true, simaai::neat::NameTransform{},
           &options);
@@ -415,7 +414,7 @@ RUN_TEST(
           "defer-output-invalidate=false async=true num-buffers=7 ! queue ",
           "final ordinary-pipeline pass must select CPU visibility across separate Nodes");
       require_contains(split_cpu_pipeline.pipeline_string,
-                       "neatboxdecode name=n1_split_boxdecode num-buffers=7",
+                       "neatobjectdecode name=n1_split_boxdecode num-buffers=7",
                        "separate BoxDecode Node must share the exact route depth");
 
       const std::vector<std::shared_ptr<simaai::neat::Node>> split_device_nodes{
@@ -460,8 +459,8 @@ RUN_TEST(
               "an unspecified pool override must not invent an ObjectDecode depth");
       const std::string queue_independent_boxdecode_fragment =
           simaai::neat::session_build_apply_fast_path_options_to_fragment(
-              "neatboxdecode name=linear_boxdecode", &queue_independent_options);
-      require(queue_independent_boxdecode_fragment == "neatboxdecode name=linear_boxdecode",
+              "neatobjectdecode name=linear_boxdecode", &queue_independent_options);
+      require(queue_independent_boxdecode_fragment == "neatobjectdecode name=linear_boxdecode",
               "an unspecified pool override must not invent a BoxDecode depth");
 
       const std::string queue_properties = "max-size-buffers=4 max-size-bytes=0 max-size-time=0";
@@ -479,10 +478,10 @@ RUN_TEST(
                        "second fused queue must decouple ProcessCVU from ProcessMLA");
       require_contains(pipeline,
                        "defer-output-invalidate=false ! queue name=queue_neat_fused_stage_2 " +
-                           queue_properties + " ! neatboxdecode",
+                           queue_properties + " ! neatobjectdecode",
                        "third fused queue must preserve terminal CPU visibility selection");
       require_contains(pipeline,
-                       "neatboxdecode name=n0_boxdecode num-buffers=7 ! appsink name=n0_output",
+                       "neatobjectdecode name=n0_boxdecode num-buffers=7 ! appsink name=n0_output",
                        "terminal Output must stay directly connected to decode");
 
       {
@@ -1786,4 +1785,11 @@ RUN_TEST(
               "explicit public synchronous options must not enable fused async stages");
       require_contains(synchronous_pipeline, "defer-output-invalidate=false",
                        "explicit public cache-sync option must be preserved by fused rendering");
+
+      const std::string clamped_sync_pipeline = simaai::neat::session_build_clamp_sync_pipeline(
+          "neatprocessmla name=sync_mla num-buffers=8 ! "
+          "neatobjectdecode name=sync_boxdecode num-buffers=8 ! fakesink",
+          3);
+      require_contains(clamped_sync_pipeline, "neatobjectdecode name=sync_boxdecode num-buffers=3",
+                       "synchronous pool override must reach the canonical decoder");
     }));

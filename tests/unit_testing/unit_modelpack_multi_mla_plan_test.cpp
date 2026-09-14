@@ -716,6 +716,11 @@ RUN_TEST(
         route_flags.boxdecode_selected = true;
         route_flags.terminal_consumer_owns_tensor_tail = true;
         candidate.set_model_managed_stage_facts(route_flags, {ExecutionStageKind::BoxDecode});
+        const auto selected_plan = candidate.semantic_execution_plan();
+        require(selected_plan.post.size() == 1U &&
+                    selected_plan.post.front().kind == ExecutionStageKind::BoxDecode &&
+                    selected_plan.post.front().factory_name == "neatobjectdecode",
+                "selected BoxDecode stage must use the canonical decoder factory");
         return std::tuple{std::move(candidate), full_proof, full_digest};
       };
       const auto require_proof_unchanged = [](const auto& before, const auto& after) {
