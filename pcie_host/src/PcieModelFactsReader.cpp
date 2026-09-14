@@ -193,9 +193,10 @@ quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQua
   QuantParams out;
   out.axis = quant->axis;
   for (const auto zero_point : quant->zero_points) {
-    if (zero_point < std::numeric_limits<std::int32_t>::min() ||
-        zero_point > std::numeric_limits<std::int32_t>::max()) {
-      throw std::runtime_error("mla_only tensor '" + name + "' has an out-of-range zero point");
+    if (zero_point < std::numeric_limits<std::int8_t>::min() ||
+        zero_point > std::numeric_limits<std::int8_t>::max()) {
+      throw std::runtime_error("mla_only tensor '" + name +
+                               "' has a zero point outside the INT8 code range");
     }
     out.zero_points.push_back(static_cast<std::int32_t>(zero_point));
   }
