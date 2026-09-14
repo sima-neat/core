@@ -538,13 +538,6 @@ def test_tensor_run_mla_only():
   model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
   options = pcie.ModelOptions()
   options.mla_only = True
-  try:
-    pcie.Model(str(model), options).info()
-  except (RuntimeError, ValueError) as error:
-    wrong_build = ("does not support stage", "hybrid host/card quantization", "must be INT8")
-    if not any(reason in str(error) for reason in wrong_build):
-      raise
-    pytest.skip(f"{model.name} is not an MLA-only capable build: {error}")
 
   sync_iterations = _sync_iterations()
   async_iterations = _test_iterations()

@@ -45,13 +45,7 @@ def test_load_metadata_from_mla_only_model():
 
   options = pcie.ModelOptions()
   options.mla_only = True
-  try:
-    info = pcie.Model(str(model_path), options).info()
-  except (RuntimeError, ValueError) as error:
-    wrong_build = ("does not support stage", "hybrid host/card quantization", "must be INT8")
-    if not any(reason in str(error) for reason in wrong_build):
-      raise
-    pytest.skip(f"{model_path.name} is not an MLA-only capable build: {error}")
+  info = pcie.Model(str(model_path), options).info()
 
   assert len(info.inputs) == 1
   assert info.inputs[0].dtype == "INT8"
