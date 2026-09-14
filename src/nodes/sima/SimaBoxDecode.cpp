@@ -1285,11 +1285,18 @@ std::shared_ptr<Node> SimaBoxDecode::retargeted_for_model_internal(const Model& 
   const auto route_quant_needed = opt_->model_route_flags.has_value()
                                       ? std::optional<bool>(opt_->model_route_flags->quant_needed)
                                       : std::nullopt;
-  return std::make_shared<SimaBoxDecode>(
+  auto retargeted = std::make_shared<SimaBoxDecode>(
       model, opt_->decode_type, opt_->detection_threshold, opt_->nms_iou_threshold, opt_->top_k,
       opt_->element_name, route_tess_needed, route_quant_needed, opt_->original_width,
       opt_->original_height, /*model_width=*/0, /*model_height=*/0, opt_->resize_mode_override,
       opt_->decode_type_option);
+  if (!opt_->pose_classes.empty()) {
+    // Revalidates the gate against the retargeted model's num_classes.
+    BoxDecodeOptions named(opt_->decode_type);
+    named.pose_classes = opt_->pose_classes;
+    apply_named_pose_class_options(retargeted->opt_.get(), named);
+  }
+  return retargeted;
 }
 
 BoxDecodeTypeOption SimaBoxDecode::decode_type_option_internal() const {
