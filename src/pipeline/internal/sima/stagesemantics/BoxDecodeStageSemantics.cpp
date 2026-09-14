@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 
+#include "pipeline/DetectionTypes.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
@@ -408,12 +409,18 @@ int infer_yolox_seg_pose_positional_class_depth(const BoxDecodeStaticContract& c
     return 0;
   }
   int class_depth = 0;
+  int kpt_depth = 0;
   for (int head = 0; head < kHeads; ++head) {
-    // Confirm the non-class slots before trusting the class slot's position.
+    // Confirm the non-class slots before trusting the class slot's position. Keypoints are
+    // (x, y, visible) triplets, must match across heads, and cannot exceed the fixed number
+    // the combined payload carries per detection.
+    const int kpt = depth[slot(kKpt, head)];
     if (depth[slot(kBbox, head)] != kBboxDepth || depth[slot(kMaskCoeff, head)] != kProtoDepth ||
-        (depth[slot(kKpt, head)] % 3) != 0) {
+        (kpt % 3) != 0 || kpt / 3 > kDecodedPoseKeypoints ||
+        (kpt_depth != 0 && kpt_depth != kpt)) {
       return 0;
     }
+    kpt_depth = kpt;
     const int candidate = depth[slot(kClass, head)];
     if (candidate <= 1 || (class_depth != 0 && class_depth != candidate)) {
       return 0;
@@ -702,32 +709,33 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
     // The class tensor is Concat(objectness[1], classes[N]), so N is the head depth minus
     // one. Derive it rather than demanding it: the standalone SimaBoxDecode route always
     // finalizes with 0, so requiring a count made the decode type unusable outside an MPK.
-    int class_head_depth = infer_named_class_depth(contract);
+    // Names are a hint, not the contract, so the geometry is validated either way: a
+    // recognized class name must not excuse a malformed layout.
+    const int class_head_depth = infer_yolox_seg_pose_positional_class_depth(contract);
     if (class_head_depth <= 1) {
-      // Names are a hint, not the contract: fall back to the documented head positions.
-      class_head_depth = infer_yolox_seg_pose_positional_class_depth(contract);
-    }
-    if (class_head_depth > 1) {
-      const int encoded = class_head_depth - 1;
-      if (user_num_classes > 0 && user_num_classes != encoded) {
-        // A caller typo is detectable here and nowhere downstream: the backend would
-        // simply mis-stride the scorer and emit plausible-looking wrong classes.
-        throw std::invalid_argument(
-            std::string(context ? context : "BoxDecode") +
-            " yolox-seg-pose num_classes=" + std::to_string(user_num_classes) +
-            " disagrees with the class head depth " + std::to_string(class_head_depth) +
-            " (objectness packed in channel 0 implies " + std::to_string(encoded) + ")");
-      }
-      return encoded;
-    }
-    // No usable class head to derive from; the caller's value is all we have.
-    if (user_num_classes <= 0) {
       throw std::invalid_argument(
           std::string(context ? context : "BoxDecode") +
-          " yolox-seg-pose requires an explicit num_classes: its class tensor packs objectness "
-          "into channel 0, so the class-block width cannot be inferred from the channel count.");
+          " yolox-seg-pose requires 13 tensors grouped by role: three heads of "
+          "[bbox, class, mask_coeff, kpt] plus one 32-channel mask prototype");
     }
-    return user_num_classes;
+    const int named_depth = infer_named_class_depth(contract);
+    if (named_depth > 1 && named_depth != class_head_depth) {
+      throw std::invalid_argument(
+          std::string(context ? context : "BoxDecode") +
+          " yolox-seg-pose class head depth " + std::to_string(class_head_depth) +
+          " disagrees with the tensor names, which imply " + std::to_string(named_depth));
+    }
+    const int encoded = class_head_depth - 1;
+    if (user_num_classes > 0 && user_num_classes != encoded) {
+      // A caller typo is detectable here and nowhere downstream: the backend would
+      // simply mis-stride the scorer and emit plausible-looking wrong classes.
+      throw std::invalid_argument(
+          std::string(context ? context : "BoxDecode") +
+          " yolox-seg-pose num_classes=" + std::to_string(user_num_classes) +
+          " disagrees with the class head depth " + std::to_string(class_head_depth) +
+          " (objectness packed in channel 0 implies " + std::to_string(encoded) + ")");
+    }
+    return encoded;
   }
 
   const int inferred = infer_boxdecode_num_classes_from_contract(contract);
