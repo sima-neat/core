@@ -545,7 +545,17 @@ read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& co
     facts.packed_input_bytes += input.size_bytes;
     facts.inputs.push_back(std::move(input));
   }
-  if (facts.inputs.size() > 1U) {
+  const auto mla_edges =
+      simaai::neat::pipeline_internal::sima::route_graph_incoming_edges(graph, mla_index);
+  const bool packed_ingress =
+      std::any_of(mla_edges.begin(), mla_edges.end(), [&](const auto* edge) {
+        const auto* node =
+            simaai::neat::pipeline_internal::sima::route_graph_node(graph, edge->src_plugin_index);
+        return node != nullptr &&
+               node->kind ==
+                   simaai::neat::pipeline_internal::sima::RouteGraphKernelKind::PassThrough;
+      });
+  if (facts.inputs.size() > 1U || packed_ingress) {
     const auto* mla_inputs =
         simaai::neat::pipeline_internal::sima::get_mla_input_contract(contract);
     if (mla_inputs == nullptr || mla_inputs->size() != 1U ||

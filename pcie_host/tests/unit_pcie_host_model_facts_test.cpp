@@ -169,6 +169,46 @@ mpk::MpkContract mla_only_contract() {
   return contract;
 }
 
+// One input can reach the MLA through a pack stage too. The MLA then ingests the packed segment,
+// not the quantized tensor the host submits, so the facts have to carry the carrier descriptor.
+mpk::MpkContract mla_only_packed_single_input_contract() {
+  mpk::MpkContract contract;
+  contract.ingress_tensors.push_back(tensor("input_0", "FP32", {2, 3, 4}, 96));
+
+  const auto quantized = head("quantize_0", {1, 2, 3, 4}, {2, 3, 4}, 24);
+  const auto packed = tensor("MLA_0_ifm_pack_transform", "", {1, 24}, 24);
+  const auto carrier = tensor("MLA_0", "", {1, 160}, 160);
+  const auto unpack_0 = head("MLA_0_ofm_unpack_transform_0", {1, 2, 3, 16}, {2, 3, 16}, 96);
+  const auto unpack_1 = head("MLA_0_ofm_unpack_transform_1", {1, 1, 4, 16}, {1, 4, 16}, 64);
+  const auto out_0 = tensor("dequantize_1/head_0", "FP32", {2, 3, 16}, 384);
+  const auto out_1 = tensor("dequantize_2/head_1", "FP32", {1, 4, 16}, 256);
+
+  contract.plugins = {
+      stage("quantize_0", "quantization_transform", {tensor("input_0", "FP32", {2, 3, 4}, 96)},
+            {quantized}),
+      stage("MLA_0_ifm_pack_transform", "pack_transform", {quantized}, {packed}),
+      stage("MLA_0", "mla", {packed}, {carrier}),
+      stage("MLA_0_ofm_unpack_transform", "unpack_transform", {carrier}, {unpack_0, unpack_1}),
+      stage("dequantize_1", "dequantization_transform", {unpack_0}, {out_0}),
+      stage("dequantize_2", "dequantization_transform", {unpack_1}, {out_1}),
+      stage("PassThrough", "pass_through", {out_0, out_1}, {out_0, out_1}),
+  };
+  contract.plugins[0].quant = mpk::MpkQuantContract{.scales = {4.0}, .zero_points = {-128}};
+  contract.plugins[4].quant = mpk::MpkQuantContract{.scales = {0.5}, .zero_points = {3}};
+  contract.plugins[5].quant = mpk::MpkQuantContract{.scales = {2.0}, .zero_points = {-7}};
+  for (std::size_t i = 0; i < contract.plugins.size(); ++i) {
+    contract.plugins[i].sequence = static_cast<int>(i);
+  }
+  link(contract, 0, 0, 1, 0);
+  link(contract, 1, 0, 2, 0);
+  link(contract, 2, 0, 3, 0);
+  link(contract, 3, 0, 4, 0);
+  link(contract, 3, 1, 5, 0);
+  link(contract, 4, 0, 6, 0);
+  link(contract, 5, 0, 6, 1);
+  return contract;
+}
+
 // A multi-input model quantizes each input separately and concatenates the results through an
 // ifm pack transform; the MLA itself always takes one buffer. The pack here consumes quantize_1
 // first so that publishing in pack order - the layout of the staged payload - is load-bearing.
@@ -330,6 +370,17 @@ void test_mla_only_supports_multiple_inputs() {
           "input_0 must publish its own quantize parameters");
 }
 
+void test_mla_only_packs_a_single_input() {
+  const auto facts =
+      pcie_internal::detail::read_mla_only_facts(mla_only_packed_single_input_contract());
+  require(facts.inputs.size() == 1U, "the packed single-input model exposes one input");
+  require(facts.packed_input.has_value(),
+          "one input reaching the MLA through a pack still needs the packed carrier");
+  require(facts.packed_input->name == "MLA_0_ifm_pack_transform", "packed input name mismatch");
+  require(facts.packed_input->size_bytes == facts.packed_input_bytes, "packed input size mismatch");
+  require(facts.packed_input->dtype == facts.inputs.front().dtype, "packed input dtype mismatch");
+}
+
 void test_mla_only_rejects_hybrid_quantization() {
   auto not_quantized = mla_only_multi_input_contract();
   not_quantized.plugins[1].kernel = "pass_through";
@@ -425,6 +476,7 @@ int main() {
     test_mla_only_rejects_non_dense_int8_inputs();
     test_mla_only_facts_describe_ingress_and_heads();
     test_mla_only_supports_multiple_inputs();
+    test_mla_only_packs_a_single_input();
     test_mla_only_rejects_hybrid_quantization();
     test_mla_only_rejects_missing_quantization();
     test_mla_only_rejects_unusable_output_geometry();
