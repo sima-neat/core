@@ -658,6 +658,13 @@ Key APIs:
 This is used for hybrid flows where preproc is done once and MLA/BoxDecode are run
 in a separate graph or thread.
 
+Frame-arena planning joins consecutive regions of one model invocation, including
+model-owned postprocess nodes. A full route or a restart of preprocessing/inference
+begins a separate invocation, even when the model source is shared. Split stages
+within one invocation retain one placement authority; repeated invocations keep
+separate command selections and arena ownership. This is a build-time distinction
+and does not copy tensor payloads or change asynchronous execution.
+
 ---
 
 ### Where work runs (CPU / CVU / MLA)

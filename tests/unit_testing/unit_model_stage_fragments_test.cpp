@@ -110,6 +110,87 @@ RUN_TEST(
                 "cold public route must retain one placement authority across all stages");
       }
 
+      // Naming overrides create distinct graph vertices, not distinct model
+      // sources. Contract planning must preserve each invocation's own arena.
+      Model::RouteOptions first_route;
+      first_route.name_suffix = "_first";
+      Model::RouteOptions second_route;
+      second_route.name_suffix = "_second";
+      auto repeated_nodes = internal::ModelAccess::build_public_route_nodes(model, first_route);
+      const auto second_nodes =
+          internal::ModelAccess::build_public_route_nodes(model, second_route);
+      repeated_nodes.insert(repeated_nodes.end(), second_nodes.begin(), second_nodes.end());
+      pipeline_internal::sima::ManifestBuildDiagnostics repeated_diagnostics;
+      const auto repeated_contracts =
+          compile_node_contracts(repeated_nodes, {}, &repeated_diagnostics);
+      require(repeated_diagnostics.errors.empty(),
+              "separate model routes must not share command selection: " +
+                  (repeated_diagnostics.errors.empty() ? std::string{}
+                                                       : repeated_diagnostics.errors.front()));
+      const auto repeated_manifest =
+          render_manifest_from_compiled_contracts(repeated_contracts, {}, &repeated_diagnostics);
+      require(repeated_manifest && repeated_diagnostics.errors.empty() &&
+                  repeated_manifest->stages.size() == 2U * cold_manifest->stages.size(),
+              "repeated routes must preserve every stage of both invocations");
+      for (std::size_t i = 0; i < repeated_manifest->stages.size(); ++i) {
+        const auto& stage = repeated_manifest->stages[i];
+        const auto& original = cold_manifest->stages[i % cold_manifest->stages.size()];
+        require(stage.frame_arena_role == original.frame_arena_role &&
+                    stage.frame_arena_size_bytes == original.frame_arena_size_bytes,
+                "each invocation must retain its admitted arena ownership and placement");
+      }
+
+      // Whole-region fragments also carry an invocation boundary when there
+      // is no typed preprocess node between successive executions.
+      const auto& pack = internal::ModelAccess::pack(model);
+      for (const auto stage : {internal::ModelStage::MlaOnly, internal::ModelStage::Full}) {
+        auto region_nodes = pack.to_nodes(stage);
+        const auto next_region = pack.to_nodes(stage);
+        region_nodes.insert(region_nodes.end(), next_region.begin(), next_region.end());
+        pipeline_internal::sima::ManifestBuildDiagnostics region_diagnostics;
+        const auto regions = compile_node_contracts(region_nodes, {}, &region_diagnostics);
+        require(regions.fully_renderable && region_diagnostics.errors.empty() &&
+                    regions.stages.size() == 2U,
+                "repeating a whole region must compile as two independent invocations (stage=" +
+                    std::to_string(static_cast<int>(stage)) + "): " +
+                    (region_diagnostics.errors.empty() ? std::string("no diagnostic")
+                                                       : region_diagnostics.errors.front()));
+        const auto manifest =
+            render_manifest_from_compiled_contracts(regions, {}, &region_diagnostics);
+        require(manifest && region_diagnostics.errors.empty(),
+                "repeated whole regions must retain renderable physical contracts");
+        if (stage == internal::ModelStage::MlaOnly) {
+          for (const auto& invocation : manifest->stages) {
+            require(invocation.frame_arena_role ==
+                            pipeline_internal::sima::FrameArenaRole::Allocate &&
+                        !invocation.physical_inputs.empty() &&
+                        invocation.physical_inputs.front().address_source ==
+                            pipeline_internal::sima::PhysicalAddressSource::RuntimePhysicalBinding,
+                    "each inference-only invocation must import its IFM, not reuse a prior arena");
+          }
+        }
+      }
+
+      // Advancing through the model's regions still describes one invocation.
+      auto split_nodes = pack.to_nodes(internal::ModelStage::Preprocess);
+      for (const auto stage : {internal::ModelStage::MlaOnly, internal::ModelStage::Postprocess}) {
+        const auto region = pack.to_nodes(stage);
+        split_nodes.insert(split_nodes.end(), region.begin(), region.end());
+      }
+      pipeline_internal::sima::ManifestBuildDiagnostics split_diagnostics;
+      const auto split = compile_node_contracts(split_nodes, {}, &split_diagnostics);
+      const auto split_manifest =
+          render_manifest_from_compiled_contracts(split, {}, &split_diagnostics);
+      require(split_manifest && split_diagnostics.errors.empty() &&
+                  split_manifest->stages.size() == cold_manifest->stages.size(),
+              "split regions of one invocation must retain one complete route");
+      for (std::size_t i = 0; i < split_manifest->stages.size(); ++i) {
+        require(split_manifest->stages[i].frame_arena_role ==
+                        cold_manifest->stages[i].frame_arena_role &&
+                    split_manifest->stages[i].frame_arena_size_bytes == arena_bytes,
+                "split regions must preserve the full route's admitted placement");
+      }
+
       Graph pre = model.preprocess();
       Graph infer = model.inference();
       Graph post = model.postprocess();
@@ -197,6 +278,16 @@ RUN_TEST(
                   post_stage->physical_inputs.front().address_source ==
                       sima::PhysicalAddressSource::FrameArenaSpan,
               "standalone post must reuse the selected output arena, never the input-only IFM");
+
+      // A duplicated typed continuation is not a new whole-region invocation.
+      // Keep the exact-command guard rather than treating a collision as a fence.
+      direct_nodes.push_back(std::make_shared<DetessDequant>(DetessDequantOptions(model)));
+      pipeline_internal::sima::ManifestBuildDiagnostics duplicate_diagnostics;
+      const auto duplicate = compile_node_contracts(direct_nodes, {}, &duplicate_diagnostics);
+      require(!duplicate.fully_renderable && !duplicate_diagnostics.errors.empty(),
+              "duplicate commands within an invocation must still be rejected");
+      require_contains(duplicate_diagnostics.errors.front(), "physical command identity",
+                       "duplicate continuation must retain the exact command diagnostic");
 
       const auto legacy = sima_test::make_model_archive_fixture(
           "model_stage_fragments_legacy_missing_mpk", {

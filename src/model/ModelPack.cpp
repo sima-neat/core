@@ -3401,16 +3401,22 @@ prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes
       const auto& source = entry->plan_source();
       const auto* lineage = entry->model_lineage_binding();
       std::size_t end = first + 1U;
-      // A compilation invocation represents an actual pipeline segment. Join
-      // only model fragments in that segment with the same immutable model
-      // lineage and admitted command graph. Value/carrier ids below, not
-      // generated stage names, establish each producer relationship.
+      auto last_stage = entry->stage_context();
+      // A fragment contains its entire selected model region. Only a later
+      // region can continue that invocation; restarting a region (or entering
+      // a full route) starts another execution of the same immutable model.
+      // Names and shared lineage identify the model, not the invocation.
       {
-        while (end < nodes.size()) {
+        while (end < nodes.size() && last_stage != ModelStage::Full) {
           const auto* next = dynamic_cast<const ModelFragmentNode*>(nodes[end].get());
           const auto* cvu = node_model_processcvu_contract(nodes[end]);
           if (!next && cvu && cvu->model_execution_source.get() == &source &&
               !cvu->physical_command_ids.empty()) {
+            const auto* binding = node_model_lineage_binding(nodes[end]);
+            if (binding && binding->stage_role == ModelLineageStageRole::Preprocess) {
+              break; // The next invocation owns its own ingress arena.
+            }
+            last_stage = ModelStage::Postprocess;
             ++end;
             continue;
           }
@@ -3419,9 +3425,11 @@ prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes
                                     next_lineage->lineage_key == lineage->lineage_key;
           const bool same_source = next && &next->plan_source() == &source;
           if (!next || (!same_lineage && !same_source) ||
-              next->plan_source().digest != source.digest) {
+              next->plan_source().digest != source.digest ||
+              next->stage_context() == ModelStage::Full || next->stage_context() <= last_stage) {
             break;
           }
+          last_stage = next->stage_context();
           ++end;
         }
       }
