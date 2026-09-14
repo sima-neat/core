@@ -939,6 +939,9 @@ GStreamer name collisions.
 
 * **Input formats must match caps**: `InputOptions` and model configs must agree on format/width/height.
   Mismatches fail fast during negotiation or when pushing inputs.
+  An unspecified image `Input` directly connected to a model adopts its ingress format before
+  wrapping either `cv::Mat` or tensor seeds. This labels the supplied storage; it does not
+  convert pixel data. Explicit input formats remain authoritative.
 * **Capability-gated dynamic input**: runtime renegotiation is allowed only when the built graph advertises dynamic capability. `FullyDynamic` graphs can renegotiate raw-video geometry/format/fps/media caps; `IngressDynamicCvuOnly` allows geometry changes and permits format changes only when build-time downstream contract checks prove stable output behavior.
 * **Dynamic within effective bounds**: `max_*` are hard ceilings; if `max_*` is unset, `width/height/depth` act as implicit ceilings.
 * **Model vs Graph defaults**: both flows now resolve seed/max/byte-guard policy through `src/pipeline/internal/InputPolicy.*`; `Model` still applies its documented metadata-backed defaults (for example 1920x1080 ceilings) while `Graph` remains node-option driven unless configured.

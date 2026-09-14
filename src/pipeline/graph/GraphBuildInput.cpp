@@ -113,6 +113,14 @@ const Input* first_input_node(const std::vector<std::shared_ptr<Node>>& nodes) {
   return nullptr;
 }
 
+template <typename View>
+InputOptions linear_seed_input_options(const View& view, const Input& input) {
+  const auto source = std::find_if(view.vertices.begin(), view.vertices.end(),
+                                   [&input](const auto& node) { return node.get() == &input; });
+  return pipeline_internal::normalize_shape_bounds(pipeline_internal::public_input_options(
+      view, static_cast<std::size_t>(source - view.vertices.begin())));
+}
+
 struct SessionBuildInputDebugFlags {
   bool build_mode_debug = env_bool("SIMA_BUILD_MODE_DEBUG", false);
   bool inputstream_debug = env_bool("SIMA_INPUTSTREAM_DEBUG", false);
@@ -2689,7 +2697,8 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
   const auto nodes = linear_nodes_snapshot("Graph::build(inputs)");
   const BuildInputContext ctx = session_build_prepare_build_input_context(nodes, opt_, mode, opt);
   progress.step("Preparing input stream...");
-  InputOptions src_opt = pipeline_internal::normalize_shape_bounds(ctx.src_node->options());
+  InputOptions src_opt =
+      linear_seed_input_options(composition_view_for_internal_compile(), *ctx.src_node);
   src_opt.memory_policy = pipeline_internal::resolve_input_memory(src_opt, nodes).allocation;
   if (!input_options_expect_tensor_media(src_opt) && inputs.size() != 1U) {
     throw std::runtime_error("Graph::build(inputs): raw-image ingress supports exactly one "
@@ -2752,12 +2761,7 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
   const Input* explicit_input = first_input_node(nodes);
   InputOptions src_opt;
   if (explicit_input) {
-    const auto view = composition_view_for_internal_compile();
-    const auto source =
-        std::find_if(view.vertices.begin(), view.vertices.end(),
-                     [explicit_input](const auto& node) { return node.get() == explicit_input; });
-    src_opt = pipeline_internal::normalize_shape_bounds(pipeline_internal::public_input_options(
-        view, static_cast<std::size_t>(source - view.vertices.begin())));
+    src_opt = linear_seed_input_options(composition_view_for_internal_compile(), *explicit_input);
   }
   Sample seed = input_route_processor_
                     ? input_route_processor_->seed_tensors(inputs, "Graph::build(inputs)")
