@@ -98,11 +98,11 @@ def main() -> None:
 
         # STEP quantize-on-host
         int8_inputs = []
-        fp32_inputs = []
+        fp32_by_name = {}
         for spec in info.inputs:
             codes = quantize_image(image, spec)
             scale, zero_point = require_quant(spec)
-            fp32_inputs.append(dequantize(codes, scale, zero_point))
+            fp32_by_name[spec.name] = dequantize(codes, scale, zero_point)
             int8_inputs.append(
                 pcie.Tensor.from_numpy(codes, copy=True, route_name=spec.name)
             )
@@ -117,9 +117,11 @@ def main() -> None:
     # STEP dequantize-and-compare
     with pcie.Model(str(model_path), connection=connection) as reference:
         reference.build(BUILD_TIMEOUT_MS)
+        # The default route lists its inputs in ingress order, mla_only in the order they are
+        # packed for the MLA. Look them up by name rather than by position.
         fp32_tensors = [
-            pcie.Tensor.from_numpy(values, copy=True, route_name=spec.name)
-            for values, spec in zip(fp32_inputs, info.inputs)
+            pcie.Tensor.from_numpy(fp32_by_name[spec.name], copy=True, route_name=spec.name)
+            for spec in reference.info().inputs
         ]
         reference_outputs = reference.run(fp32_tensors, RUN_TIMEOUT_MS)
 

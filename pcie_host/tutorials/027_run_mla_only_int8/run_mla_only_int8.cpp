@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -172,14 +173,14 @@ int main(int argc, char** argv) {
 
     // STEP quantize-on-host
     pcie::TensorList int8_inputs;
-    std::vector<std::vector<float>> fp32_inputs;
+    std::map<std::string, std::vector<float>> fp32_by_name;
     for (const auto& input : info.inputs) {
       std::vector<std::int8_t> codes = quantize_image(image, input);
       std::vector<float> values(codes.size());
       for (std::size_t index = 0; index < codes.size(); ++index) {
         values[index] = dequantize(codes[index], *input.quant);
       }
-      fp32_inputs.push_back(std::move(values));
+      fp32_by_name[input.name] = std::move(values);
       int8_inputs.push_back(pcie::Tensor::from_vector(std::move(codes), input.shape, input.name));
     }
     // END STEP
@@ -194,9 +195,9 @@ int main(int argc, char** argv) {
     pcie::Model reference(args.model, {}, connection);
     reference.build(kBuildTimeoutMs);
     pcie::TensorList fp32_tensors;
-    for (std::size_t index = 0; index < info.inputs.size(); ++index) {
-      fp32_tensors.push_back(pcie::Tensor::from_vector(
-          std::move(fp32_inputs[index]), info.inputs[index].shape, info.inputs[index].name));
+    for (const auto& spec : reference.info().inputs) {
+      fp32_tensors.push_back(
+          pcie::Tensor::from_vector(std::move(fp32_by_name.at(spec.name)), spec.shape, spec.name));
     }
     const pcie::TensorList reference_outputs = reference.run(fp32_tensors, kRunTimeoutMs);
     reference.close();
