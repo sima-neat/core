@@ -20,7 +20,6 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -29,7 +28,6 @@ namespace pcie = simaai::neat::pcie;
 
 namespace {
 
-constexpr int kSkipExitCode = 77;
 // Largest tolerated deviation from the default route, in units of each head's quantization
 // scale. Correct behaviour measures 0; a wrong zero point measures >= 1, a wrong scale ~100.
 constexpr double kMaxErrorScales = 0.05;
@@ -86,8 +84,8 @@ void usage(const char* argv0) {
                " [--queue n] [--image path] [--card-env 'NAME=VALUE ...']"
                " [--card-gst-debug spec] [--card-gst-debug-file path]\n"
                "Without --model the archive comes from SIMAPCIE_YOLOV8_MODEL; without --image the\n"
-               "input is a synthetic ramp over every INT8 code. Exits 77 when no model is\n"
-               "configured or the archive is not an MLA-only capable build.\n";
+               "input is a synthetic ramp over every INT8 code. The archive has to be an\n"
+               "MLA-only capable build.\n";
 }
 
 Args parse_args(int argc, char** argv) {
@@ -400,24 +398,14 @@ void expect_fp32_rejected(pcie::Model& model, const pcie::ModelInfo& info,
   throw std::runtime_error("FP32 push to the mla_only model was accepted");
 }
 
-bool not_mla_only_capable(const std::string& reason) {
-  for (const char* needle :
-       {"does not support stage", "must be INT8", "hybrid host/card quantization"}) {
-    if (reason.find(needle) != std::string::npos) {
-      return true;
-    }
-  }
-  return false;
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
   try {
     const Args args = parse_args(argc, argv);
     if (args.model.empty()) {
-      std::cout << "SKIP: SIMAPCIE_YOLOV8_MODEL is not set and no --model was given\n";
-      return kSkipExitCode;
+      std::cerr << "ERROR: SIMAPCIE_YOLOV8_MODEL is not set and no --model was given\n";
+      return 1;
     }
     std::fesetround(FE_TONEAREST); // the card rounds to nearest; keep the host quantizer in step
 
@@ -432,23 +420,13 @@ int main(int argc, char** argv) {
 
     pcie::ModelOptions options;
     options.mla_only = true;
-    std::unique_ptr<pcie::Model> model;
-    try {
-      model = std::make_unique<pcie::Model>(args.model, options, conn);
-    } catch (const std::exception& e) {
-      if (!not_mla_only_capable(e.what())) {
-        throw;
-      }
-      std::cout << "SKIP: " << args.model << " is not an MLA-only capable build: " << e.what()
-                << "\n";
-      return kSkipExitCode;
-    }
-    pcie::test::SignalCloseGuard guard(*model);
+    pcie::Model model(args.model, options, conn);
+    pcie::test::SignalCloseGuard guard(model);
 
     std::cout << "PCIe MLA-only tensor run test\n  model=" << args.model
               << "\n  card_host=" << conn.card_host << " card_id=" << conn.card_id
               << " queue=" << conn.queue << "\n";
-    const pcie::ModelInfo info = model->info();
+    const pcie::ModelInfo info = model.info();
     std::cout << "mla_only model metadata\n";
     for (std::size_t i = 0; i < info.inputs.size(); ++i) {
       print_tensor_info("input", i, info.inputs[i]);
@@ -461,16 +439,16 @@ int main(int argc, char** argv) {
     const std::map<std::string, Head> reference = run_default_route(args, conn, info, inputs.fp32);
 
     std::cout << "mla_only route: host quantizes and dequantizes\n";
-    model->build(args.readiness_timeout_ms);
-    const pcie::TensorList first = model->run(inputs.int8, args.pull_timeout_ms);
+    model.build(args.readiness_timeout_ms);
+    const pcie::TensorList first = model.run(inputs.int8, args.pull_timeout_ms);
     check_outputs(first, info);
-    const pcie::TensorList second = model->run(inputs.int8, args.pull_timeout_ms);
+    const pcie::TensorList second = model.run(inputs.int8, args.pull_timeout_ms);
     check_outputs(second, info);
     require_identical(first, second);
     compare_with_reference(first, info, reference);
-    expect_fp32_rejected(*model, info, inputs.fp32[0]);
+    expect_fp32_rejected(model, info, inputs.fp32[0]);
 
-    model->close();
+    model.close();
     std::cout << "done\n";
     return 0;
   } catch (const std::exception& e) {

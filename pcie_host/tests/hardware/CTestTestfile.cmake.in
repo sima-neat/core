@@ -19,7 +19,7 @@ add_test(test_model_resilience ./test_model_resilience)
 
 set_tests_properties(test_metadata PROPERTIES TIMEOUT 60)
 set_tests_properties(test_tensor_run PROPERTIES TIMEOUT 3600)
-set_tests_properties(test_tensor_mla_only_run PROPERTIES TIMEOUT 3600 SKIP_RETURN_CODE 77)
+set_tests_properties(test_tensor_mla_only_run PROPERTIES TIMEOUT 3600)
 set_tests_properties(test_tensor_latency PROPERTIES TIMEOUT 3600)
 set_tests_properties(test_tensor_throughput PROPERTIES TIMEOUT 3600)
 set_tests_properties(test_queue_blocker PROPERTIES TIMEOUT 3600)
