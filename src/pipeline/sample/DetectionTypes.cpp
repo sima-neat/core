@@ -272,6 +272,24 @@ std::vector<Box> parse_bbox_bytes(const std::vector<uint8_t>& bytes, int img_w, 
   return parse_bbox_records(bytes, img_w, img_h, expected_topk, strict).boxes;
 }
 
+namespace {
+// Per-slot bytes following each box; 0 for plain BBOX, which needs no extra bound.
+std::size_t extended_extension_bytes(const std::string& format) {
+  const std::size_t mask_bytes =
+      static_cast<std::size_t>(kDecodedMaskWidth) * static_cast<std::size_t>(kDecodedMaskHeight);
+  if (detection_format_is_segmentation_pose(format)) {
+    return mask_bytes + sizeof(RawPoseOut);
+  }
+  if (detection_format_is_segmentation(format)) {
+    return mask_bytes;
+  }
+  if (detection_format_is_pose(format)) {
+    return sizeof(RawPoseOut);
+  }
+  return 0;
+}
+} // namespace
+
 BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w, int img_h,
                                    int expected_topk, bool strict) {
   if (!read_feature_format(tensor).empty()) {
@@ -292,7 +310,18 @@ BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w
 
   BoxDecodeResult out;
   out.raw = copy_detection_payload(tensor, "bbox");
-  out.boxes = parse_bbox_bytes(out.raw, img_w, img_h, expected_topk, strict);
+  // The box region is strided by the slot count, not by the buffer size: without this
+  // bound a corrupt count reads mask bytes as boxes and strict mode never fires.
+  int parse_topk = expected_topk;
+  if (const std::size_t ext = extended_extension_bytes(fmt); ext > 0) {
+    const std::size_t capacity = infer_extended_capacity(out.raw, ext, "bbox", strict);
+    parse_topk = expected_topk > 0
+                     ? static_cast<int>(std::min<std::size_t>(
+                           static_cast<std::size_t>(expected_topk), capacity))
+                     : static_cast<int>(std::min<std::size_t>(
+                           capacity, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+  }
+  out.boxes = parse_bbox_bytes(out.raw, img_w, img_h, parse_topk, strict);
   return out;
 }
 

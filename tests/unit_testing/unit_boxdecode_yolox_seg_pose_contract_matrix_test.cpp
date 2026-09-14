@@ -259,30 +259,38 @@ RUN_TEST(
       cases.push_back(
           {.name = "model-managed/gate", .model_managed = true, .pose_classes = {2, 9}});
 
-      // Malformed contracts must fail before lowering rather than reach the backend.
-      // Geometry that defeats positional inference must surface the explicit-num_classes
-      // diagnostic, not a downstream symptom.
-      const std::string kNeedsCount = "requires an explicit num_classes";
-      cases.push_back({.name = "malformed/short-tensor-count",
-                       .descriptive_names = false,
-                       .tensor_count_override = 12,
-                       .expect_error = kNeedsCount});
-      cases.push_back({.name = "malformed/mask-coeff-depth",
-                       .heads = {.mask_coeff = 31},
-                       .descriptive_names = false,
-                       .expect_error = kNeedsCount});
-      cases.push_back({.name = "malformed/proto-depth",
-                       .heads = {.proto = 31},
-                       .descriptive_names = false,
-                       .expect_error = kNeedsCount});
-      cases.push_back({.name = "malformed/bbox-depth",
-                       .heads = {.bbox = 6},
-                       .descriptive_names = false,
-                       .expect_error = kNeedsCount});
-      cases.push_back({.name = "malformed/kpt-depth",
-                       .heads = {.keypoints = 0},
-                       .descriptive_names = false,
-                       .expect_error = kNeedsCount});
+      // Malformed contracts must fail before lowering rather than reach the backend, and
+      // on either name set: a recognized class name must not skip the geometry check.
+      const std::string kBadGeometry = "requires 13 tensors grouped by role";
+      for (const bool descriptive : {true, false}) {
+        const std::string suffix = descriptive ? "/named" : "/generic";
+        cases.push_back({.name = "malformed/short-tensor-count" + suffix,
+                         .descriptive_names = descriptive,
+                         .tensor_count_override = 12,
+                         .expect_error = kBadGeometry});
+        cases.push_back({.name = "malformed/mask-coeff-depth" + suffix,
+                         .heads = {.mask_coeff = 31},
+                         .descriptive_names = descriptive,
+                         .expect_error = kBadGeometry});
+        cases.push_back({.name = "malformed/proto-depth" + suffix,
+                         .heads = {.proto = 31},
+                         .descriptive_names = descriptive,
+                         .expect_error = kBadGeometry});
+        cases.push_back({.name = "malformed/bbox-depth" + suffix,
+                         .heads = {.bbox = 6},
+                         .descriptive_names = descriptive,
+                         .expect_error = kBadGeometry});
+        cases.push_back({.name = "malformed/kpt-depth" + suffix,
+                         .heads = {.keypoints = 0},
+                         .descriptive_names = descriptive,
+                         .expect_error = kBadGeometry});
+        // 17 is the fixed per-detection capacity of the combined payload; 18 cannot be
+        // carried, so it must be refused here rather than truncated by the backend.
+        cases.push_back({.name = "malformed/kpt-over-capacity" + suffix,
+                         .heads = {.keypoints = 18},
+                         .descriptive_names = descriptive,
+                         .expect_error = kBadGeometry});
+      }
       cases.push_back({.name = "malformed/gate-out-of-range",
                        .pose_classes = {36},
                        .expect_error = "must lie in [0, 36)"});
