@@ -23,7 +23,7 @@ RUN_TEST("unit_sima_plugin_context_injection_test", ([] {
            StageStaticSpec stage;
            stage.element_name = "stage_a";
            stage.logical_stage_id = "stage_a_id";
-           stage.plugin_kind = "neatboxdecode";
+           stage.plugin_kind = "neatobjectdecode";
            stage.kernel_kind = "boxdecode";
            stage.payload_kind = StagePayloadKind::BoxDecode;
            stage.boxdecode.decode_type = simaai::neat::BoxDecodeType::YoloV8;

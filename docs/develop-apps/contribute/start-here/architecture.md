@@ -538,7 +538,12 @@ is used for deterministic multi-input mapping; legacy input-buffer names remain 
 `logical_stage_id` is resolved from `stage-id`/`stage_id` pipeline properties when provided,
 otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
-`simaaiboxdecode` elements by default.
+`neatobjectdecode` elements by default.
+
+Generic BoxDecode uses `neatobjectdecode` for startup validation, model fragments,
+and public `SimaBoxDecode` nodes. Deploy matching runtime packages and rebuild
+Core when upgrading the decoder backend; C++ and Python application APIs are
+unchanged.
 
 ##### YOLOv5 and YOLO26 BoxDecode class-count contracts
 
@@ -569,7 +574,7 @@ families, with these additional invariants:
   representations, applies explicit `Model::Options::superpoint` overrides, and resolves only
   omitted profile defaults. Changing a profile recomputes its derived defaults while preserving
   controls explicitly authored by the MPK or API.
-- The versioned static-manifest ABI carries the resolved contract to `simaaiboxdecode`. Plugins
+- The versioned static-manifest ABI carries the resolved contract to `neatobjectdecode`. Plugins
   borrow manifest pointers only during configuration and must copy any state needed at runtime;
   Core retains manifest ownership for the pipeline lifetime.
 - Production output uses the `FEATURE_POINTS_V1` wire format and feature semantic metadata.

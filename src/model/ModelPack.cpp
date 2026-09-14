@@ -260,7 +260,7 @@ static std::string require_stage_factory(ExecutionStageKind kind,
       factory = "neatprocesscvu";
       break;
     case ExecutionStageKind::BoxDecode:
-      factory = "neatboxdecode";
+      factory = "neatobjectdecode";
       break;
     case ExecutionStageKind::Unknown:
       break;
@@ -2814,8 +2814,7 @@ private:
           }
           return {};
         }
-        const std::string plugin_kind =
-            plugin.find("objectdecode") != std::string::npos ? "neatobjectdecode" : "neatboxdecode";
+        const std::string plugin_kind = "neatobjectdecode";
         if (!entry->boxdecode_compiled.has_value()) {
           if (err) {
             *err = "ModelFragment contract compile: missing cached boxdecode contract for '" +

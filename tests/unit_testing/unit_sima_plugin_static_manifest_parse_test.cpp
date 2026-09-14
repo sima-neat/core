@@ -12,7 +12,7 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            const std::string pipeline =
                "fakesrc ! neatprocesscvu name=pre stage-id=pre_stage ! "
                "neatprocessmla name=mla stage_id=mla_stage config=/tmp/mla.json ! "
-               "neatboxdecode name=box config=/tmp/box.json decode-type=yolov8 "
+               "neatobjectdecode name=box config=/tmp/box.json decode-type=yolov8 "
                "detection-threshold=0.35 nms-iou-threshold=0.5 topk=120 ! fakesink";
 
            const std::vector<PipelineElementSpec> elements = parse_pipeline_elements(pipeline);
@@ -27,7 +27,7 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            require(elements[2].stage_id == "mla_stage",
                    "stage_id alias should be parsed for MLA stage");
 
-           require(elements[3].plugin == "neatboxdecode", "unexpected plugin at index 3");
+           require(elements[3].plugin == "neatobjectdecode", "unexpected plugin at index 3");
            require(elements[3].stage_id.empty(), "box stage-id should be empty when not set");
            require(elements[3].config_path == "/tmp/box.json", "box config path parse mismatch");
            require(elements[3].decode_type_property.has_value(),
@@ -58,33 +58,26 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            stage.frame_arena_size_bytes = 4U * 1024U * 1024U;
            stage.frame_arena_role = FrameArenaRole::ReuseInput;
            stage.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Dms;
-           stage.frame_arena_provenance =
-               static_contract::ArenaAllocationProvenance::CoreAllocated;
+           stage.frame_arena_provenance = static_contract::ArenaAllocationProvenance::CoreAllocated;
            stage.frame_arena_required_device_access =
                static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::CpuA65) |
                static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::Mla);
-           stage.frame_arena_escape_policy =
-               static_contract::ArenaEscapePolicy::CpuMappablePublic;
+           stage.frame_arena_escape_policy = static_contract::ArenaEscapePolicy::CpuMappablePublic;
            alignment_manifest.stages.push_back(std::move(stage));
 
            std::string parse_error;
-           const auto parsed = parse_manifest_json(
-               serialize_manifest_json(alignment_manifest), &parse_error);
+           const auto parsed =
+               parse_manifest_json(serialize_manifest_json(alignment_manifest), &parse_error);
            require(parsed.has_value(),
                    "physical alignment manifest must round-trip: " + parse_error);
-           require(parsed->stages.size() == 1U &&
-                       parsed->stages[0].physical_inputs.size() == 1U &&
-                       parsed->stages[0].physical_inputs[0]
-                               .required_alignment_bytes == 64U,
+           require(parsed->stages.size() == 1U && parsed->stages[0].physical_inputs.size() == 1U &&
+                       parsed->stages[0].physical_inputs[0].required_alignment_bytes == 64U,
                    "physical IFM alignment must survive JSON round-trip");
            require(parsed->stages[0].physical_outputs.size() == 1U &&
-                       parsed->stages[0].physical_outputs[0]
-                               .required_alignment_bytes == 8192U,
+                       parsed->stages[0].physical_outputs[0].required_alignment_bytes == 8192U,
                    "physical OFM alignment must survive JSON round-trip");
-           require(parsed->stages[0].frame_arena_size_bytes ==
-                           4U * 1024U * 1024U &&
-                       parsed->stages[0].frame_arena_role ==
-                           FrameArenaRole::ReuseInput &&
+           require(parsed->stages[0].frame_arena_size_bytes == 4U * 1024U * 1024U &&
+                       parsed->stages[0].frame_arena_role == FrameArenaRole::ReuseInput &&
                        parsed->stages[0].frame_arena_storage_domain ==
                            static_contract::ArenaStorageDomain::Dms &&
                        parsed->stages[0].frame_arena_provenance ==
@@ -99,8 +92,8 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
                static_contract::ArenaStorageDomain::Unknown;
            adopted_manifest.stages[0].frame_arena_provenance =
                static_contract::ArenaAllocationProvenance::ExternalAdopted;
-           const auto adopted = parse_manifest_json(
-               serialize_manifest_json(adopted_manifest), &parse_error);
+           const auto adopted =
+               parse_manifest_json(serialize_manifest_json(adopted_manifest), &parse_error);
            require(adopted.has_value() &&
                        adopted->stages[0].frame_arena_storage_domain ==
                            static_contract::ArenaStorageDomain::Unknown &&

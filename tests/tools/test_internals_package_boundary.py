@@ -142,6 +142,37 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         # not duplicate copies in sima-neat-dev that collide during APT install.
         self.assertIn('"neat-internals-dev"', text)
 
+    def test_public_header_discovery_searches_an_empty_cache(self) -> None:
+        text = cmake()
+        start = text.index("\nset(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT\n")
+        end = text.index("\nset(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB", start)
+        discovery = text[start:end]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            headers = root / "headers"
+            (headers / "gst").mkdir(parents=True)
+            (headers / "gst/SimaPreparedRuntimeAbi.h").touch()
+            for explicit in (False, True):
+                with self.subTest(explicit=explicit):
+                    selected = root / "explicit" if explicit else headers
+                    initial = selected.as_posix() if explicit else ""
+                    script = root / "discover.cmake"
+                    script.write_text(
+                        'set(SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE ON)\n'
+                        f'set(SIMANEAT_LOCAL_DEP_HEADER_ROOT "{headers.as_posix()}")\n'
+                        f'set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT "{initial}" CACHE PATH "")\n'
+                        + discovery
+                        + f'\nif(NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT STREQUAL "{selected.as_posix()}")\n'
+                        '  message(FATAL_ERROR "Wrong public header root: ${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")\n'
+                        'endif()\n',
+                        encoding="utf-8",
+                    )
+                    result = subprocess.run(
+                        ["cmake", "-P", str(script)],
+                        check=False, text=True, capture_output=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_no_manually_constructed_internals_version_ranges(self) -> None:
         text = cmake()
         for removed in (

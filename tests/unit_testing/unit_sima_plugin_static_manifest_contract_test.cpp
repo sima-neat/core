@@ -35,19 +35,16 @@ RUN_TEST(
       pre.processcvu.default_output_names = {"output_rgb_image"};
       pre.processcvu.primary_output_name = "output_rgb_image";
       pre.processcvu.preproc_single_output_handoff = true;
-      pre.processcvu.descriptor_abi_id =
-          SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1;
+      pre.processcvu.descriptor_abi_id = SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1;
       pre.processcvu.descriptor_contract_version = 1U;
       pre.processcvu.binding_schema_version = 1U;
       pre.processcvu.maximum_members = 1U;
-      pre.processcvu.supported_placement_mask =
-          SIMA_PLUGIN_CVU_PLACEMENT_EV74;
-      pre.processcvu.allowed_frame_patch_mask =
-          SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA |
-          SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY |
-          SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI |
-          SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST |
-          SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT;
+      pre.processcvu.supported_placement_mask = SIMA_PLUGIN_CVU_PLACEMENT_EV74;
+      pre.processcvu.allowed_frame_patch_mask = SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA |
+                                                SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY |
+                                                SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI |
+                                                SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST |
+                                                SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT;
       pre.processcvu.input_shapes = {{720, 1280, 3}};
       pre.processcvu.output_shapes = {{640, 640, 3}};
       pre.processcvu.normalize = 1;
@@ -56,13 +53,11 @@ RUN_TEST(
       pre.frame_arena_size_bytes = 2U * 1024U * 1024U;
       pre.frame_arena_role = FrameArenaRole::Allocate;
       pre.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Cma;
-      pre.frame_arena_provenance =
-          static_contract::ArenaAllocationProvenance::CoreAllocated;
+      pre.frame_arena_provenance = static_contract::ArenaAllocationProvenance::CoreAllocated;
       pre.frame_arena_required_device_access =
           static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::Ev74) |
           static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::Mla);
-      pre.frame_arena_escape_policy =
-          static_contract::ArenaEscapePolicy::InternalOnly;
+      pre.frame_arena_escape_policy = static_contract::ArenaEscapePolicy::InternalOnly;
       pre.logical_inputs.push_back(LogicalInputStaticSpec{
           .logical_index = 0,
           .backend_input_index = 0,
@@ -110,7 +105,7 @@ RUN_TEST(
       StageStaticSpec box;
       box.element_name = "box";
       box.logical_stage_id = "stage_box";
-      box.plugin_kind = "neatboxdecode";
+      box.plugin_kind = "neatobjectdecode";
       box.kernel_kind = "boxdecode";
       box.payload_kind = StagePayloadKind::BoxDecode;
       box.boxdecode.decode_type = simaai::neat::BoxDecodeType::YoloV8;
@@ -155,7 +150,7 @@ RUN_TEST(
       StageStaticSpec superpoint_box;
       superpoint_box.element_name = "superpoint_box";
       superpoint_box.logical_stage_id = "stage_superpoint_box";
-      superpoint_box.plugin_kind = "neatboxdecode";
+      superpoint_box.plugin_kind = "neatobjectdecode";
       superpoint_box.kernel_kind = "boxdecode";
       superpoint_box.payload_kind = StagePayloadKind::BoxDecode;
       superpoint_box.boxdecode.decode_type = simaai::neat::BoxDecodeType::SuperPoint;
@@ -315,15 +310,12 @@ RUN_TEST(
       require(pre_stage->physical_outputs[0].required_alignment_bytes == 128U,
               "pre stage physical output alignment mismatch");
       require(pre_stage->frame_arena_size_bytes == 2U * 1024U * 1024U &&
-                  pre_stage->frame_arena_role ==
-                      SIMA_PLUGIN_FRAME_ARENA_ALLOCATE &&
-                  pre_stage->frame_arena_storage_domain ==
-                      SIMA_PLUGIN_FRAME_ARENA_STORAGE_CMA &&
+                  pre_stage->frame_arena_role == SIMA_PLUGIN_FRAME_ARENA_ALLOCATE &&
+                  pre_stage->frame_arena_storage_domain == SIMA_PLUGIN_FRAME_ARENA_STORAGE_CMA &&
                   pre_stage->frame_arena_provenance ==
                       SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_CORE_ALLOCATED &&
                   pre_stage->frame_arena_required_device_access ==
-                      (SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74 |
-                       SIMA_PLUGIN_FRAME_ARENA_ACCESS_MLA) &&
+                      (SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74 | SIMA_PLUGIN_FRAME_ARENA_ACCESS_MLA) &&
                   pre_stage->frame_arena_escape_policy ==
                       SIMA_PLUGIN_FRAME_ARENA_ESCAPE_INTERNAL_ONLY,
               "pre stage frame-arena ownership contract mismatch");

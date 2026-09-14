@@ -363,10 +363,10 @@ void require_native_retention_pool_policy() {
   build.pipeline_string.insert(0, "identity name=other_chain ; ");
   reject(build, "nonlinear");
   build = make_retention_build();
-  build.pipeline_string.replace(build.pipeline_string.find("appsink name=mysink"),
-                                std::string("appsink name=mysink").size(),
-                                "tee name=t ! t.src_0 ! neatboxdecode name=decoded num-buffers=1 ! "
-                                "appsink name=mysink");
+  build.pipeline_string.replace(
+      build.pipeline_string.find("appsink name=mysink"), std::string("appsink name=mysink").size(),
+      "tee name=t ! t.src_0 ! neatobjectdecode name=decoded num-buffers=1 ! "
+      "appsink name=mysink");
   const auto materialized = session_build_clamp_sync_build_result(build, 1);
   require(materialized.find("decoded num-buffers=2") != std::string::npos &&
               materialized.find("output-pool-min-buffers=") == std::string::npos,

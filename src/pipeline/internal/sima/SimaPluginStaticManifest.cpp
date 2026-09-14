@@ -51,8 +51,7 @@ bool manifest_context_debug_relevant_element(GstElement* element) {
   return factory.find("neatprocessmla") != std::string::npos ||
          factory.find("neatprocesscvu") != std::string::npos ||
          factory.find("neatdetess") != std::string::npos ||
-         factory.find("neatobjectdecode") != std::string::npos ||
-         factory.find("neatboxdecode") != std::string::npos;
+         factory.find("neatobjectdecode") != std::string::npos;
 }
 
 void manifest_context_debug_log(const char* action, GstElement* element, GstContext* context,

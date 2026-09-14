@@ -3263,7 +3263,7 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   }
   if (original_width <= 0 || original_height <= 0) {
     throw std::runtime_error(
-        "BoxDecode: stage='boxdecode' plugin='neatboxdecode' preprocess metadata contract "
+        "BoxDecode: stage='boxdecode' plugin='neatobjectdecode' preprocess metadata contract "
         "violation: preproc_original_width/preproc_original_height must be > 0 "
         "(no fallback allowed)");
   }

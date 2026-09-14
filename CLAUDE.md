@@ -188,7 +188,7 @@ them as load-bearing.
 - Wiring source of truth (in order):
   1. Deterministic GStreamer element names from node fragments.
   2. `stage-id` on SIMA model-path elements
-     (`simaaiprocesscvu`, `simaaiprocessmla`, `simaaiboxdecode`).
+     (`simaaiprocesscvu`, `simaaiprocessmla`, `neatobjectdecode`).
   3. `sima.model.manifest.v1` `GstContext` for static stage/tensor lookup.
 - Repo boundary: this repo must **not** add build-time dependencies on
   plugin/dispatcher repos. Integration is interface-only (runtime
