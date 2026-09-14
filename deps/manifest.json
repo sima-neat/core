@@ -1,6 +1,7 @@
 {
   "internals": {
-    "policy": "snap"
+    "branch": "3.0.0-prep",
+    "spec": "latest"
   },
   "llima": {
     "policy": "snap"
