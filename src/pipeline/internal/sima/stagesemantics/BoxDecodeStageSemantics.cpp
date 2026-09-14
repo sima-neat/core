@@ -416,8 +416,7 @@ int infer_yolox_seg_pose_positional_class_depth(const BoxDecodeStaticContract& c
     // the combined payload carries per detection.
     const int kpt = depth[slot(kKpt, head)];
     if (depth[slot(kBbox, head)] != kBboxDepth || depth[slot(kMaskCoeff, head)] != kProtoDepth ||
-        (kpt % 3) != 0 || kpt / 3 > kDecodedPoseKeypoints ||
-        (kpt_depth != 0 && kpt_depth != kpt)) {
+        (kpt % 3) != 0 || kpt / 3 > kDecodedPoseKeypoints || (kpt_depth != 0 && kpt_depth != kpt)) {
       return 0;
     }
     kpt_depth = kpt;
@@ -721,9 +720,9 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
     const int named_depth = infer_named_class_depth(contract);
     if (named_depth > 1 && named_depth != class_head_depth) {
       throw std::invalid_argument(
-          std::string(context ? context : "BoxDecode") +
-          " yolox-seg-pose class head depth " + std::to_string(class_head_depth) +
-          " disagrees with the tensor names, which imply " + std::to_string(named_depth));
+          std::string(context ? context : "BoxDecode") + " yolox-seg-pose class head depth " +
+          std::to_string(class_head_depth) + " disagrees with the tensor names, which imply " +
+          std::to_string(named_depth));
     }
     const int encoded = class_head_depth - 1;
     if (user_num_classes > 0 && user_num_classes != encoded) {

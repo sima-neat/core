@@ -89,58 +89,57 @@ bool rejects(BoxDecodeStaticContract contract) {
 
 } // namespace
 
-RUN_TEST(
-    "unit_boxdecode_yolox_seg_pose_class_inference_test", ([] {
-      // Renaming otherwise identical inputs must not change the resolved class count.
-      require(resolve(make_contract(/*role_major=*/true, /*descriptive_names=*/true)) ==
-                  kExpectedClasses,
-              "role-major named heads must resolve num_classes=36");
-      require(resolve(make_contract(/*role_major=*/true, /*descriptive_names=*/false)) ==
-                  kExpectedClasses,
-              "role-major generic heads must resolve num_classes=36");
-      require(resolve(make_contract(/*role_major=*/false, /*descriptive_names=*/false)) ==
-                  kExpectedClasses,
-              "head-major generic heads must resolve num_classes=36");
+RUN_TEST("unit_boxdecode_yolox_seg_pose_class_inference_test", ([] {
+           // Renaming otherwise identical inputs must not change the resolved class count.
+           require(resolve(make_contract(/*role_major=*/true, /*descriptive_names=*/true)) ==
+                       kExpectedClasses,
+                   "role-major named heads must resolve num_classes=36");
+           require(resolve(make_contract(/*role_major=*/true, /*descriptive_names=*/false)) ==
+                       kExpectedClasses,
+                   "role-major generic heads must resolve num_classes=36");
+           require(resolve(make_contract(/*role_major=*/false, /*descriptive_names=*/false)) ==
+                       kExpectedClasses,
+                   "head-major generic heads must resolve num_classes=36");
 
-      // The padded 48-channel storage must never be mistaken for the class depth.
-      require(align_c16(kClassDepth) == 48, "class head must be stored padded to 48 channels");
+           // The padded 48-channel storage must never be mistaken for the class depth.
+           require(align_c16(kClassDepth) == 48, "class head must be stored padded to 48 channels");
 
-      // An explicit count still has to agree with the derived one, on either name set.
-      for (const bool descriptive : {true, false}) {
-        auto contract = make_contract(/*role_major=*/true, descriptive);
-        contract.num_classes = kExpectedClasses;
-        require(resolve(contract) == kExpectedClasses,
-                "a matching explicit num_classes must be accepted");
-        contract.num_classes = kExpectedClasses + 1;
-        require(rejects(contract), "a mismatched explicit num_classes must be rejected");
-      }
+           // An explicit count still has to agree with the derived one, on either name set.
+           for (const bool descriptive : {true, false}) {
+             auto contract = make_contract(/*role_major=*/true, descriptive);
+             contract.num_classes = kExpectedClasses;
+             require(resolve(contract) == kExpectedClasses,
+                     "a matching explicit num_classes must be accepted");
+             contract.num_classes = kExpectedClasses + 1;
+             require(rejects(contract), "a mismatched explicit num_classes must be rejected");
+           }
 
-      // Malformed geometry must fail loudly instead of resolving a plausible wrong count.
-      // Both name sets: a recognized class name must not skip the geometry check.
-      for (const bool descriptive : {true, false}) {
-        Roles bad_mask_coeff;
-        bad_mask_coeff.mask_coeff = 31;
-        require(rejects(make_contract(/*role_major=*/true, descriptive, bad_mask_coeff)),
-                "a non-32 mask-coefficient depth must not yield a derived class count");
+           // Malformed geometry must fail loudly instead of resolving a plausible wrong count.
+           // Both name sets: a recognized class name must not skip the geometry check.
+           for (const bool descriptive : {true, false}) {
+             Roles bad_mask_coeff;
+             bad_mask_coeff.mask_coeff = 31;
+             require(rejects(make_contract(/*role_major=*/true, descriptive, bad_mask_coeff)),
+                     "a non-32 mask-coefficient depth must not yield a derived class count");
 
-        Roles bad_kpt;
-        bad_kpt.kpt = 40; // not a multiple of 3
-        require(rejects(make_contract(/*role_major=*/true, descriptive, bad_kpt)),
-                "a keypoint depth that is not 3*K must not yield a derived class count");
+             Roles bad_kpt;
+             bad_kpt.kpt = 40; // not a multiple of 3
+             require(rejects(make_contract(/*role_major=*/true, descriptive, bad_kpt)),
+                     "a keypoint depth that is not 3*K must not yield a derived class count");
 
-        Roles over_capacity_kpt;
-        over_capacity_kpt.kpt = 54; // 18 points; the payload carries 17
-        require(rejects(make_contract(/*role_major=*/true, descriptive, over_capacity_kpt)),
-                "a keypoint count beyond the payload capacity must be rejected");
+             Roles over_capacity_kpt;
+             over_capacity_kpt.kpt = 54; // 18 points; the payload carries 17
+             require(rejects(make_contract(/*role_major=*/true, descriptive, over_capacity_kpt)),
+                     "a keypoint count beyond the payload capacity must be rejected");
 
-        Roles bad_bbox;
-        bad_bbox.bbox = 6;
-        require(rejects(make_contract(/*role_major=*/true, descriptive, bad_bbox)),
-                "a non-4 bbox depth must not yield a derived class count");
+             Roles bad_bbox;
+             bad_bbox.bbox = 6;
+             require(rejects(make_contract(/*role_major=*/true, descriptive, bad_bbox)),
+                     "a non-4 bbox depth must not yield a derived class count");
 
-        auto short_contract = make_contract(/*role_major=*/true, descriptive);
-        short_contract.tensors.pop_back();
-        require(rejects(short_contract), "a contract without the mask prototype must be "
-                                         "rejected rather than derived positionally");
-      }
-    }));
+             auto short_contract = make_contract(/*role_major=*/true, descriptive);
+             short_contract.tensors.pop_back();
+             require(rejects(short_contract), "a contract without the mask prototype must be "
+                                              "rejected rather than derived positionally");
+           }
+         }));
