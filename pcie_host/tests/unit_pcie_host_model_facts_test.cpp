@@ -348,6 +348,15 @@ void test_mla_only_facts_describe_ingress_and_heads() {
   require(!facts.has_preprocess && !facts.has_boxdecode, "mla_only publishes no CVU stages");
 }
 
+void test_mla_only_follows_the_public_output_order() {
+  auto reordered = mla_only_contract();
+  auto& terminal = reordered.plugins.back().input_tensors;
+  std::swap(terminal[0], terminal[1]);
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(reordered); },
+                   "order disagree",
+                   "heads that do not follow the model's output order must be rejected");
+}
+
 void test_mla_only_supports_multiple_inputs() {
   const auto facts = pcie_internal::detail::read_mla_only_facts(mla_only_multi_input_contract());
 
@@ -485,6 +494,7 @@ int main() {
     test_mla_only_rejects_unsupported_stages();
     test_mla_only_rejects_non_dense_int8_inputs();
     test_mla_only_facts_describe_ingress_and_heads();
+    test_mla_only_follows_the_public_output_order();
     test_mla_only_supports_multiple_inputs();
     test_mla_only_packs_a_single_input();
     test_mla_only_rejects_hybrid_quantization();

@@ -478,8 +478,17 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
   if (next != raw) {
     throw std::runtime_error("mla_only output heads do not tile the MLA output carrier");
   }
-  if (facts->outputs.size() != application_output_contracts(contract).size()) {
+  const auto public_outputs = application_output_contracts(contract);
+  if (facts->outputs.size() != public_outputs.size()) {
     throw std::runtime_error("mla_only heads do not cover every model output");
+  }
+  for (std::size_t i = 0; i < public_outputs.size(); ++i) {
+    const std::string name = strip_public_route_wrapper_prefix(public_outputs[i].name);
+    if (facts->outputs[i].name != name) {
+      throw std::runtime_error("mla_only head '" + facts->outputs[i].name +
+                               "' does not match model output '" + name +
+                               "'; the MLA head order and the model output order disagree");
+    }
   }
   facts->packed_output_bytes = raw;
 }
