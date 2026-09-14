@@ -5,8 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <utility>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::pcie::internal {
