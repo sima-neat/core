@@ -3196,8 +3196,7 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
         std::any_of(elements.begin(), rendered, [&](const auto& element) {
           return native_names.contains(element.element_name);
         });
-    if (stage.frame_arena_role == FrameArenaRole::ReuseInput &&
-        !has_rendered_native_predecessor) {
+    if (stage.frame_arena_role == FrameArenaRole::ReuseInput && !has_rendered_native_predecessor) {
       // A public stage fragment can begin at MLA/CVU while retaining the full
       // MPK's authored producer binding. The incoming GstBuffer owns that
       // carrier; there is no allocator in this rendered fragment to enlarge.

@@ -350,10 +350,8 @@ RUN_TEST(
                       "num-buffers=4 ! queue ! neatobjectdecode name=boxdecode_1 "
                       "num-buffers=2",
                       &options)));
-      require_contains(
-          objectdecode_fragment,
-          "neatobjectdecode name=boxdecode_1 num-buffers=7",
-          "a declared terminal lane window must use the resolved MLA route depth");
+      require_contains(objectdecode_fragment, "neatobjectdecode name=boxdecode_1 num-buffers=7",
+                       "a declared terminal lane window must use the resolved MLA route depth");
       require_contains(pipeline, "neatobjectdecode name=n0_boxdecode num-buffers=7",
                        "rendered BoxDecode must share the exact MLA route depth");
       require_contains(pipeline, "defer-output-invalidate=false",
@@ -368,11 +366,10 @@ RUN_TEST(
                       "defer-output-invalidate=true ! queue ! queue2 ! "
                       "neatobjectdecode name=cpu_consumer num-buffers=2",
                       &options)));
-      require_contains(
-          scoped_visibility_fragment,
-          "neatprocessmla name=device_mla async=true num-buffers=7 "
-          "defer-output-invalidate=true ! queue ! neatprocesscvu",
-          "MLA-to-device routes must remain device-produced");
+      require_contains(scoped_visibility_fragment,
+                       "neatprocessmla name=device_mla async=true num-buffers=7 "
+                       "defer-output-invalidate=true ! queue ! neatprocesscvu",
+                       "MLA-to-device routes must remain device-produced");
       require_contains(
           scoped_visibility_fragment,
           "neatprocessmla name=terminal_mla defer-output-invalidate=false",
@@ -385,8 +382,7 @@ RUN_TEST(
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
               "producer name=p num-buffers=4 defer-output-invalidate=false ! identity ! "
               "genericterminal name=c num-buffers=2");
-      require_contains(generic_lane_window,
-                       "genericterminal name=c num-buffers=4",
+      require_contains(generic_lane_window, "genericterminal name=c num-buffers=4",
                        "lane propagation must depend on rendered contracts, not plugin names");
       const std::string undeclared_lane_window =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
@@ -406,8 +402,7 @@ RUN_TEST(
           std::make_shared<FragmentNode>("SimaBoxDecode", "neatobjectdecode", "split_boxdecode",
                                          " num-buffers=2")};
       const auto split_cpu_pipeline = simaai::neat::build_pipeline_full(
-          split_cpu_nodes, false, "mysink", true, simaai::neat::NameTransform{},
-          &options);
+          split_cpu_nodes, false, "mysink", true, simaai::neat::NameTransform{}, &options);
       require_contains(
           split_cpu_pipeline.pipeline_string,
           "neatprocessmla name=split_terminal_mla "
@@ -418,20 +413,16 @@ RUN_TEST(
                        "separate BoxDecode Node must share the exact route depth");
 
       const std::vector<std::shared_ptr<simaai::neat::Node>> split_device_nodes{
-          std::make_shared<FragmentNode>(
-              "Model", "identity", "device_model_fragment",
-              " ! neatprocessmla name=split_device_mla "
-              "defer-output-invalidate=true"),
-          std::make_shared<FragmentNode>("DevicePost", "neatprocesscvu",
-                                         "split_device_post")};
+          std::make_shared<FragmentNode>("Model", "identity", "device_model_fragment",
+                                         " ! neatprocessmla name=split_device_mla "
+                                         "defer-output-invalidate=true"),
+          std::make_shared<FragmentNode>("DevicePost", "neatprocesscvu", "split_device_post")};
       const auto split_device_pipeline = simaai::neat::build_pipeline_full(
-          split_device_nodes, false, "mysink", true,
-          simaai::neat::NameTransform{}, &options);
-      require_contains(
-          split_device_pipeline.pipeline_string,
-          "neatprocessmla name=split_device_mla "
-          "defer-output-invalidate=true async=true num-buffers=7 ! queue ",
-          "final ordinary-pipeline pass must keep MLA-to-CVU device-produced");
+          split_device_nodes, false, "mysink", true, simaai::neat::NameTransform{}, &options);
+      require_contains(split_device_pipeline.pipeline_string,
+                       "neatprocessmla name=split_device_mla "
+                       "defer-output-invalidate=true async=true num-buffers=7 ! queue ",
+                       "final ordinary-pipeline pass must keep MLA-to-CVU device-produced");
 
       simaai::neat::GraphOptions queue_independent_options = options;
       queue_independent_options.processmla.output_pool_buffers = 0;
@@ -439,8 +430,7 @@ RUN_TEST(
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
               make_consumer_nodes(), queue_independent_options);
       require_contains(
-          queue_independent_pipeline,
-          "neatprocessmla name=n0_mla async=true num-buffers=4",
+          queue_independent_pipeline, "neatprocessmla name=n0_mla async=true num-buffers=4",
           "an unspecified ProcessMLA pool override must preserve the model-authored depth");
       require(queue_independent_pipeline.find("neatprocessmla name=n0_mla async=true "
                                               "num-buffers=1") == std::string::npos,
@@ -454,8 +444,7 @@ RUN_TEST(
       const std::string queue_independent_objectdecode_fragment =
           simaai::neat::session_build_apply_fast_path_options_to_fragment(
               "neatobjectdecode name=linear_boxdecode", &queue_independent_options);
-      require(queue_independent_objectdecode_fragment ==
-                  "neatobjectdecode name=linear_boxdecode",
+      require(queue_independent_objectdecode_fragment == "neatobjectdecode name=linear_boxdecode",
               "an unspecified pool override must not invent an ObjectDecode depth");
       const std::string queue_independent_boxdecode_fragment =
           simaai::neat::session_build_apply_fast_path_options_to_fragment(
@@ -752,10 +741,10 @@ RUN_TEST(
       require(composed_mla_begin != std::string::npos,
               "actual composed fused graph must retain ProcessMLA");
       const auto composed_mla_end = composed_pipeline.find('!', composed_mla_begin);
-      const std::string composed_mla_segment = composed_pipeline.substr(
-          composed_mla_begin,
-          composed_mla_end == std::string::npos ? std::string::npos
-                                                : composed_mla_end - composed_mla_begin);
+      const std::string composed_mla_segment =
+          composed_pipeline.substr(composed_mla_begin, composed_mla_end == std::string::npos
+                                                           ? std::string::npos
+                                                           : composed_mla_end - composed_mla_begin);
       require_contains(composed_mla_segment, "num-buffers=4",
                        "fused queue_depth=1 must preserve the model-authored MLA depth");
       require(composed_mla_segment.find("num-buffers=1") == std::string::npos,
