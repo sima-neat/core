@@ -349,6 +349,20 @@ void test_mla_only_rejects_hybrid_quantization() {
                    "one model input feeding two quantize stages must be rejected");
 }
 
+void test_mla_only_rejects_missing_quantization() {
+  auto no_input_quant = mla_only_contract();
+  no_input_quant.plugins[0].quant.reset();
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(no_input_quant); },
+                   "no quantization facts",
+                   "a quantize stage without quant facts must be rejected");
+
+  auto empty_output_quant = mla_only_contract();
+  empty_output_quant.plugins[4].quant = mpk::MpkQuantContract{};
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(empty_output_quant); },
+                   "no quantization facts",
+                   "a dequantize stage with an empty quant block must be rejected");
+}
+
 void test_mla_only_rejects_unusable_output_geometry() {
   auto gap = mla_only_contract();
   gap.plugins[1].output_tensors.front().size_bytes = 200;
@@ -386,6 +400,7 @@ int main() {
     test_mla_only_facts_describe_ingress_and_heads();
     test_mla_only_supports_multiple_inputs();
     test_mla_only_rejects_hybrid_quantization();
+    test_mla_only_rejects_missing_quantization();
     test_mla_only_rejects_unusable_output_geometry();
     std::cout << "[PASS] model facts\n";
     return 0;

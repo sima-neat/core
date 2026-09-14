@@ -183,11 +183,11 @@ bool input_has_internal_producer(
   return false;
 }
 
-std::optional<QuantParams>
+QuantParams
 quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuantContract>& quant,
                const std::string& name) {
-  if (!quant.has_value()) {
-    return std::nullopt;
+  if (!quant.has_value() || quant->scales.empty() || quant->zero_points.empty()) {
+    throw std::runtime_error("mla_only tensor '" + name + "' has no quantization facts");
   }
   QuantParams out;
   out.axis = quant->axis;
