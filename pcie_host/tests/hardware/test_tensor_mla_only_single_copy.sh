@@ -19,8 +19,8 @@ if [[ ! -x "${SCRIPT_DIR}/test_tensor_mla_only_run" ]]; then
   exit 1
 fi
 if ! gst-inspect-1.0 neatpciehost 2>/dev/null | grep -q '^  rx-mode'; then
-  echo "ERROR: the installed neatpciehost has no rx-mode property; the host package predates" >&2
-  echo "       the mapped receive mode. Install a neatpciehost built from internals a11e701+." >&2
+  echo "ERROR: the installed neatpciehost has no rx-mode property; rebuild and reinstall the" >&2
+  echo "       host package to pick up a current plugin artifact." >&2
   exit 1
 fi
 
@@ -46,9 +46,7 @@ run_mode() {
 mapped="$(run_mode mapped)"
 if grep -q 'needs a libsimaaipcie with' "${LOG_DIR}/mapped.log"; then
   echo "ERROR: the installed libsimaaipcie has no si_mla_read_mapped(), so the plugin refused" >&2
-  echo "       rx-mode=mapped and kept copying. /usr/lib/libsimaaipcie.so ships from the PCIe" >&2
-  echo "       host driver installer (Bitbucket sima-ai/swsoc-pcie-host, linux/lib/simaaipcie);" >&2
-  echo "       the mapped API has to land there, an internals build alone is not enough." >&2
+  echo "       rx-mode=mapped and kept copying. Update the PCIe host driver installation." >&2
   exit 1
 fi
 copied="$(run_mode copy)"
