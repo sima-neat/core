@@ -457,7 +457,8 @@ struct VisionLanguageModel::Impl {
       return language_model->run_model_speculative_decoding(
           *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft);
     }
-    return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens);
+    return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens,
+                                     std::nullopt, prepared.stable_prefix_token_count);
   }
 
   bool prompt_opens_reasoning(const GenerationRequest& request) const {
@@ -489,6 +490,7 @@ struct VisionLanguageModel::Impl {
     std::vector<std::vector<Eigen::bfloat16>> image_tensors;
     std::vector<CachedVisionOutput> cached_vision_outputs;
     std::size_t expected_image_count = 0;
+    uint16_t stable_prefix_token_count = 0;
   };
 
   PreparedInput prepare_input(const GenerationRequest& request) {
@@ -512,6 +514,7 @@ struct VisionLanguageModel::Impl {
 
     PreparedInput prepared;
     prepared.input_token_ids = std::move(preprocessed.input_token_ids);
+    prepared.stable_prefix_token_count = preprocessed.stable_prefix_token_count;
     prepared.expected_image_count = built.expected_image_count;
     if (!built.images.empty()) {
       if (!image_processor) {
