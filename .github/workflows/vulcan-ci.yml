@@ -1127,11 +1127,12 @@ jobs:
       - name: Prepare LightGlue NEAT-68 regression model
         run: |
           set -euo pipefail
-          MODEL_ROOT="${RUNNER_TEMP:-/tmp}/sima-lightglue-neat68-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          # Keep the final extracted MLA executable path below the runtime's 256-byte capacity.
+          MODEL_ROOT="$(mktemp -d /tmp/neat-lg.XXXXXX)"
+          echo "SIMA_TEST_LIGHTGLUE_ROOT=${MODEL_ROOT}" >> "${GITHUB_ENV}"
           MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
           # The restricted regression fixture is intentionally staging-only.
           MODEL_VULCAN_ENV=stg
-          mkdir -p "${MODEL_ROOT}"
           sima-cli neat install \
             --env "${MODEL_VULCAN_ENV}" \
             --install-dir "${MODEL_ROOT}" \
@@ -1466,8 +1467,9 @@ jobs:
           fi
 
           echo "Cleaning per-test mkdtemp roots and downloaded fixtures under ${TMP_ROOT}"
-          find "${TMP_ROOT}" -maxdepth 1 -type d -name 'sima-lightglue-neat68-*' \
-            -exec rm -rf {} + 2>/dev/null || true
+          if [[ "${SIMA_TEST_LIGHTGLUE_ROOT:-}" =~ ^/tmp/neat-lg\.[[:alnum:]]{6}$ ]]; then
+            rm -rf -- "${SIMA_TEST_LIGHTGLUE_ROOT}"
+          fi
           rm -rf \
             "${TMP_ROOT}/sima_neat_mpk_tests" \
             "${TMP_ROOT}/sima_neat_mpk_fixtures" \
