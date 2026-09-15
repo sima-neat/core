@@ -687,7 +687,13 @@ find_path(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
     ${SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES}
 )
 
+set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
+  "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}"
+  CACHE PATH
+  "Root include directory that contains gst/, ev/, and neat/ headers exported by internals")
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT)
+  # An empty cache entry suppresses find_path, even when packaged headers exist.
+  unset(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT CACHE)
   find_path(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
     NAMES gst/SimaPreparedRuntimeAbi.h
     DOC "Root include directory that contains gst/, ev/, and neat/ headers exported by internals"

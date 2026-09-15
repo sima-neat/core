@@ -73,7 +73,7 @@ struct TensorStaticSpec {
   int max_h = 0;                   ///< Envelope max height.
   int max_stride = 0;              ///< Envelope max row stride.
   std::string semantic_tag;        ///< Semantic tag (e.g., `"image"`, `"tensor"`).
-  bool parent_carrier = false;      ///< Slot anchors a larger packed physical carrier.
+  bool parent_carrier = false;     ///< Slot anchors a larger packed physical carrier.
 };
 
 /// Provenance trace capturing how one resolved field was chosen.

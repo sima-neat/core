@@ -80,7 +80,7 @@ SimaPluginStaticManifest transform_manifest_stage_names(const SimaPluginStaticMa
 
 bool pipeline_element_is_boxdecode_plugin(
     const pipeline_internal::sima::PipelineElementSpec& spec) {
-  return spec.plugin == "neatobjectdecode" || spec.plugin == "neatboxdecode";
+  return spec.plugin == "neatobjectdecode";
 }
 
 const StageStaticSpec* find_boxdecode_manifest_stage(const SimaPluginStaticManifest& manifest,

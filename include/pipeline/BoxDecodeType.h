@@ -23,7 +23,7 @@ namespace simaai::neat {
  * @brief Decode families accepted by the BoxDecode backend.
  *
  * `Unspecified` is an internal unset sentinel and must fail fast before runtime decode.
- * Most YOLO-family variants share the same class-inference contract in `genericboxdecode_v2`:
+ * Most YOLO-family variants share the same class-inference contract in `neatobjectdecode`:
  * - decoupled heads: repeated class-depth tensors, class depth > 4
  * - packed heads: depth = 3 * (num_classes + 5), consistent across heads
  * `YoloV5` detection is the standard three-head packed profile: P3/P4/P5 in

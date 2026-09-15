@@ -2636,8 +2636,8 @@ MpkGraphKernelContract kernel_contract_template_local(const std::string& actual_
                              "output_img_type", "output_dtype", "output_shapes", "scaling_type",
                              "padding_type", "debug"});
   } else if (op == "boxdecode") {
-    contract.kernel_name = "simaai_boxdecode_configure_from_runtime_v2/run";
-    contract.contract_type = "configure:SimaBoxDecodeRuntimeConfigV2 + run(...)";
+    contract.kernel_name = "configure/simaai_boxdecode_run";
+    contract.contract_type = "configure:JSON + simaai_boxdecode_run(...)";
     add_kernel_fields_local(
         &contract, MpkGraphKernelFieldKind::Argument,
         {"instance_id", "in_data", "in_data_size", "out_data", "out_data_size"});

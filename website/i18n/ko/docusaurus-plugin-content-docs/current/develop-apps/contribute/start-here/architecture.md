@@ -302,7 +302,7 @@ GStreamer 오류는 하나의 내부 파서, 분류기 및 렌더러를 거칩�
 
 `simaaiprocesscvu`의 경우, CM에서 파생된 배선은 먼저 추론하고 컨텍스트 `sink_pad_tensor_index_map`를 사용하여 결정적인 다중 입력 매핑을 수행합니다. 기존 입력 버퍼 이름은 폴백 전용으로 유지됩니다.
 
-`logical_stage_id`는 제공된 경우 `stage-id`/`stage_id` 파이프라인 속성에서 해결되고, 그렇지 않으면 요소 이름으로 폴백됩니다. SIMA 모델 경로 조각 빌더는 기본적으로 `stage-id`를 `simaaiprocesscvu`, `simaaiprocessmla` 및 `simaaiboxdecode` 요소에 설정합니다.
+`logical_stage_id`는 제공된 경우 `stage-id`/`stage_id` 파이프라인 속성에서 해결되고, 그렇지 않으면 요소 이름으로 폴백됩니다. SIMA 모델 경로 조각 빌더는 기본적으로 `stage-id`를 `simaaiprocesscvu`, `simaaiprocessmla` 및 `neatobjectdecode` 요소에 설정합니다.
 
 ##### YOLO26 BoxDecode 클래스 수 계약
 
@@ -314,7 +314,7 @@ SuperPoint는 다른 모델에서 관리하는 BoxDecode 계열과 동일한 MPK
 
 - MPK 레코드는 검출기-로짓과 디스크립터-그리드 텐서의 식별자, 저장 표현, dtype/shape 정보, 숫자 프로필 출처, 그리고 선택적인 명시적 NMS 및 경계 제어를 소유합니다. 코어는 텐서 값을 통해 이러한 역할을 식별하지 않습니다.
 - 코어는 각 역할에 정확히 하나의 텐서를 바인딩하고, 프로필 지문과 지원되는 표현을 검증하며, 명시적인 `Model::Options::superpoint` 재정의를 적용하고, 누락된 프로필 기본값만 해결합니다. 프로필을 변경하면 해당 프로필의 파생된 기본값이 다시 계산되지만, MPK 또는 API에서 명시적으로 작성된 제어는 유지됩니다.
-- 버전이 지정된 정적 매니페스트 ABI는 해결된 계약을 `simaaiboxdecode`로 전달합니다. 플러그인은 구성 중에만 매니페스트 포인터를 참조하고 런타임에 필요한 모든 상태를 복사해야 합니다. 코어는 파이프라인 수명 동안 매니페스트 소유권을 유지합니다.
+- 버전이 지정된 정적 매니페스트 ABI는 해결된 계약을 `neatobjectdecode`로 전달합니다. 플러그인은 구성 중에만 매니페스트 포인터를 참조하고 런타임에 필요한 모든 상태를 복사해야 합니다. 코어는 파이프라인 수명 동안 매니페스트 소유권을 유지합니다.
 - 프로덕션 출력은 `FEATURE_POINTS_V1` 와이어 형식과 특징 의미 메타데이터를 사용합니다. `FEATURE_POINTS_LEGACY_A65_V0`는 호환성을 위해 명시적으로 선택한 경우에만 사용할 수 있습니다. 소비자는 버퍼 크기를 통해 어떤 형식인지 추론해서는 안 됩니다.
 
 ---
