@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
-#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -473,14 +472,8 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string,
 
   g_object_set(G_OBJECT(pciehost_), "buffersize", static_cast<guint64>(transport_buffer_size_),
                "card-number", card_id_, "queue", pcie_queue_, "queuedepth", queue_depth, nullptr);
-  if (facts_.dense_output_bytes > 0U &&
-      g_object_class_find_property(G_OBJECT_GET_CLASS(pciehost_), "rx-mode") != nullptr) {
-    const char* rx_mode = std::getenv("SIMA_PCIE_HOST_RX_MODE");
-    gst_util_set_object_arg(G_OBJECT(pciehost_), "rx-mode",
-                            rx_mode != nullptr && *rx_mode != '\0' ? rx_mode : "mapped");
-  }
   g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
-               FALSE, "enable-last-sample", FALSE, nullptr);
+               FALSE, nullptr);
   g_object_set(G_OBJECT(queue_element_), "max-size-buffers", queue_depth, "max-size-bytes", 0,
                "max-size-time", static_cast<guint64>(0), "leaky", 0, nullptr);
 
@@ -561,15 +554,6 @@ void HostPcieChannel::stop_locked() {
         }
         gst_object_unref(bus);
       }
-    }
-  }
-  if (pipeline_ && appsink_) {
-    gst_element_set_state(appsink_, GST_STATE_NULL);
-    gst_bin_remove(GST_BIN(pipeline_), appsink_);
-    appsink_ = nullptr;
-    if (GstBus* bus = gst_element_get_bus(pipeline_)) {
-      gst_bus_set_flushing(bus, TRUE);
-      gst_object_unref(bus);
     }
   }
   if (pipeline_) {
