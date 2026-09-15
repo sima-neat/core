@@ -399,6 +399,7 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract():
           {
               "shape": list(tensor.shape),
               "dtype": tensor.dtype,
+              "layout": tensor.layout,
               "payload_tag": output.payload_tag,
               "format": output.format,
               "media_type": output.media_type,
@@ -409,10 +410,12 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract():
   finally:
     runner.close()
 
-  assert all(summary["shape"] == [1, 1, 1, 1000] for summary in summaries)
+  # The fixture explicitly flattens the Detess frame before terminal dequantization.
+  assert all(summary["shape"] == [1, 1000] for summary in summaries)
   assert all(summary["dtype"] == pyneat.TensorDType.Float32 for summary in summaries)
-  assert all(summary["payload_tag"] in ("", "DETESSDEQUANT") for summary in summaries)
-  assert all(summary["format"] in ("", "DETESSDEQUANT") for summary in summaries)
+  assert all(summary["layout"] == pyneat.TensorLayout.Unknown for summary in summaries)
+  assert all(summary["payload_tag"] == "EVXX_FLOAT32" for summary in summaries)
+  assert all(summary["format"] == "EVXX_FLOAT32" for summary in summaries)
   assert all(summary["media_type"] == "application/vnd.simaai.tensor" for summary in summaries)
   assert [summary["argmax"] for summary in summaries] == [839, 839, 839]
 
@@ -570,14 +573,17 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
   for model in (model_a, model_b):
     input_spec = model.input_specs()[0]
     appsrc = model.input_appsrc_options(True)
-    backend = model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
+    info = model.info()
 
     assert input_spec.dtypes == [pyneat.TensorDType.Float32]
     assert list(input_spec.shape) == [640, 640, 3]
     assert appsrc.payload_type == pyneat.PayloadType.Tensor
     assert appsrc.format == pyneat.Format.FP32
-    assert "quanttess" in backend
-    assert "preproc" not in backend
+    # Image preprocessing is disabled; the authored tensor frontend remains active.
+    assert list(info.pre_kernels) == ["quantize", "tessellate"]
+    assert info.needs.pre_quantization and info.needs.pre_tessellation
+    assert info.capabilities.has_pre_quantization and info.capabilities.has_pre_tessellation
+    assert "neatprocesscvu" in model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
 
 
 def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():

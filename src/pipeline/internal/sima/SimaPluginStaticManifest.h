@@ -73,7 +73,7 @@ struct TensorStaticSpec {
   int max_h = 0;                   ///< Envelope max height.
   int max_stride = 0;              ///< Envelope max row stride.
   std::string semantic_tag;        ///< Semantic tag (e.g., `"image"`, `"tensor"`).
-  bool parent_carrier = false;      ///< Slot anchors a larger packed physical carrier.
+  bool parent_carrier = false;     ///< Slot anchors a larger packed physical carrier.
 };
 
 /// Provenance trace capturing how one resolved field was chosen.
@@ -115,6 +115,13 @@ enum class FrameArenaRole : std::uint8_t {
   ReuseInput = 2,
 };
 
+/// Authority that supplies a physical input's carrier and base offset.
+enum class PhysicalAddressSource {
+  DirectCarrierSpan = 0,
+  RuntimePhysicalBinding = 1,
+  FrameArenaSpan = 2,
+};
+
 /// Static spec for one physical buffer (input or output) on a stage.
 struct PhysicalBufferStaticSpec {
   int physical_index = -1;                      ///< Stage-local physical index.
@@ -127,6 +134,7 @@ struct PhysicalBufferStaticSpec {
   int segment_name_id = -1; ///< Index into the stage's name table for `segment_name`.
   std::string segment_name; ///< Segment name.
   std::uint64_t required_alignment_bytes = 0; ///< Required DMA base/offset alignment.
+  PhysicalAddressSource address_source = PhysicalAddressSource::DirectCarrierSpan;
 };
 
 /// Static spec for one logical (publishable) output tensor on a stage.
@@ -369,14 +377,12 @@ struct ProcessCvuStagePayload {
     return {};
   }
 
-  /// Logical-output layout token (with normalization), falling back to typed output layout.
+  /// An authored logical layout, including unknown, takes precedence over physical geometry.
   std::string logical_output_layout_token(std::size_t index = 0U) const {
-    if (index < runtime_output_logical_layout_list.size() &&
-        !runtime_output_logical_layout_list[index].empty()) {
+    if (index < runtime_output_logical_layout_list.size()) {
       return tensorsemantics::normalize_layout_token(runtime_output_logical_layout_list[index]);
     }
-    if (!runtime_output_logical_layout_list.empty() &&
-        !runtime_output_logical_layout_list.front().empty()) {
+    if (!runtime_output_logical_layout_list.empty()) {
       return tensorsemantics::normalize_layout_token(runtime_output_logical_layout_list.front());
     }
     return typed_output_layout_token(index);

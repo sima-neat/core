@@ -1,5 +1,8 @@
+#include "gst/GstInit.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/PublicInputContract.h"
+#include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/EncodedSampleUtil.h"
@@ -286,7 +289,7 @@ simaai::neat::Tensor make_padded_decoder_nv12_tensor(int w, int visible_h, int p
 int main() {
   try {
     using namespace simaai::neat;
-    gst_init(nullptr, nullptr);
+    gst_init_once();
 
     {
       const int w = 8;
@@ -518,6 +521,104 @@ int main() {
               "runtime shared-parent subview spec kind mismatch");
       require(spec.tensor_envelope_transport,
               "runtime shared-parent subview should use tensor envelope transport");
+    }
+
+    {
+      Tensor tensor = make_rgb_tensor(16, 12);
+      tensor.semantic.image.reset();
+      InputOptions input;
+      input.payload_type = PayloadType::Image;
+      input.format = "BGR";
+      Sample image = pipeline_internal::sample_from_tensors_for_input({tensor}, input);
+      const SampleSpec spec = derive_sample_spec_or_throw(image);
+      require(spec.kind == SampleMediaKind::RawVideo && spec.format == "BGR" && spec.width == 16 &&
+                  spec.height == 12,
+              "explicit image ingress must interpret an untagged tensor");
+      require(image.tensors.front().storage == tensor.storage &&
+                  image.tensors.front().byte_offset == tensor.byte_offset &&
+                  image.tensors.front().strides_bytes == tensor.strides_bytes &&
+                  !image.tensors.front().semantic.image.has_value(),
+              "image ingress must preserve storage and caller Tensor semantics");
+      std::string error;
+      auto holder = pipeline_internal::make_sample_holder_from_bundle(image, &error);
+      require(holder != nullptr, "contextual image envelope must retain format: " + error);
+
+      tensor.semantic.image = ImageSpec{ImageSpec::PixelFormat::RGB, ""};
+      bool rejected = false;
+      try {
+        (void)derive_sample_spec_or_throw(
+            pipeline_internal::sample_from_tensors_for_input({tensor}, input));
+      } catch (const std::invalid_argument&) {
+        rejected = true;
+      }
+      require(rejected, "explicit source and tensor format disagreement must not be relabeled");
+      const Sample images =
+          pipeline_internal::sample_from_tensors_for_input({tensor, tensor}, input);
+      require(images.tensors.size() == 2U && images.payload_type == PayloadType::Image &&
+                  images.tensors.front().storage == tensor.storage,
+              "context completion must preserve existing multi-image transport");
+    }
+
+    {
+      struct Edge {
+        std::size_t from;
+        std::size_t to;
+      };
+      struct View {
+        std::vector<std::shared_ptr<Node>> vertices;
+        std::vector<Edge> edges;
+        std::vector<runtime::FragmentPlan> fragments;
+      };
+      InputOptions source;
+      source.max_width = 4096;
+      source.memory_policy = InputMemoryPolicy::SystemMemory;
+      source.do_timestamp = false;
+      View view;
+      view.vertices.push_back(std::make_shared<Input>("image", source));
+      view.edges.push_back({0, 1});
+      runtime::FragmentPlan model;
+      model.graph_start = 1;
+      model.graph_end = 3;
+      model.boundary_hints.emplace();
+      InputOptions ingress;
+      ingress.payload_type = PayloadType::Image;
+      ingress.format = "BGR";
+      ingress.max_width = 1920;
+      model.boundary_hints->ingress_inputs.push_back(ingress);
+      view.fragments.push_back(model);
+      model.graph_start = 3;
+      model.graph_end = 100;
+      model.boundary_hints->ingress_inputs.front().format = "RGB";
+      view.fragments.push_back(model);
+      const auto resolved = pipeline_internal::public_input_options(view, 0);
+      require(resolved.payload_type == PayloadType::Image && resolved.format.str() == "BGR",
+              "public input must use its connected ingress, not the largest model fragment");
+      require(resolved.max_width == source.max_width &&
+                  resolved.memory_policy == source.memory_policy &&
+                  resolved.do_timestamp == source.do_timestamp,
+              "model ingress must not replace source geometry, memory or timestamps");
+      for (const auto format : {FormatTag::FP32, FormatTag::ByteStream, FormatTag::H264}) {
+        InputOptions explicit_format = source;
+        explicit_format.format = format;
+        view.vertices.front() = std::make_shared<Input>("image", explicit_format);
+        const auto preserved = pipeline_internal::public_input_options(view, 0);
+        require(preserved.payload_type == PayloadType::Auto && preserved.format.tag == format,
+                "explicit non-image source format must not acquire model image semantics");
+      }
+      view.vertices.front() = std::make_shared<Input>("image", source);
+      view.fragments.push_back(view.fragments.front());
+      require(pipeline_internal::public_input_options(view, 0).format.str() == "BGR",
+              "duplicate equivalent ingress declarations must retain one interpretation");
+      view.edges.push_back({0, 3});
+      const auto ambiguous = pipeline_internal::public_input_options(view, 0);
+      require(ambiguous.payload_type == PayloadType::Auto && ambiguous.format.empty(),
+              "ambiguous inference must remain unspecified, not reject an explicit sample");
+      source.format = "RGB";
+      view.vertices.front() = std::make_shared<Input>("image", source);
+      const auto explicit_image = pipeline_internal::public_input_options(view, 0);
+      require(explicit_image.payload_type == PayloadType::Image &&
+                  explicit_image.format.str() == "RGB",
+              "explicit image format must remain authoritative across multiple consumers");
     }
 
     std::cout << "[OK] unit_samplespec_test passed\n";

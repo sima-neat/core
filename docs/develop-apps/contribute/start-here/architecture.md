@@ -439,12 +439,30 @@ The prepared plan is cached and reused by graph and synchronous-runner clones.
 Routing preserves the compiler's pre/inference/post partition and does not
 change when the executable cache becomes ready.
 
+A public model-fragment entry compiles ownership for its selected commands with
+the same frame-arena planner. Application inputs retain their physical bindings
+and DMA-BUF storage; they are not treated as a full-model arena. Participating
+model fragments and typed model-owned CVU stages share one build-local placement
+plan, preserving command and value identities. The cached full-model plan stays
+immutable. A real model-owned preprocessing producer retains its admitted shared
+arena for downstream stages.
+
 Device transfers and InputStream allocation use standard DMA-BUF memory and
 resolved CMA/DMS placement. Shared TensorSet envelopes retain each source
 memory, its parent buffer and existing loan credit, including when a CPU sibling
 requires packing. Explicit CPU memory and Owned outputs remain supported;
 required device allocations fail rather than silently falling back to CPU
 memory. Applications do not select a memory backend or initialize GStreamer.
+
+Input allocation preference and runtime admission are separate decisions. Core
+resolves both from the declared `Input` and its executable downstream route at
+build time; it does not rewrite `Auto` into an explicit device requirement.
+`PreferDeviceZeroCopy` favors device allocation without rejecting an existing
+CPU-backed input. Explicit EV74/DMS0 policies and device-only routes retain their
+device-visible input checks. Device-preferred routes forward caller-owned
+`Tensor` and `Sample` storage without a CPU image round trip. Compatible DMA-BUF
+input remains zero-copy; CPU input may still require materialization at an
+existing device-ingress boundary such as `neatencoderinput`.
 
 Execution preparation invokes the same side-effect-free
 `try_compile_dmabuf_plan()` operation used by the offline
@@ -460,18 +478,32 @@ filesystem paths. Execution preparation records the same canonical plan digest a
 fails rather than constructing or retrying a legacy executor after rejection.
 
 Only after admission does Core set `processmla.dmabuf_plan_contract` in static
-manifest ABI version 25. Core also projects each backend port's `required_alignment_bytes`
+manifest ABI version 30. Core also projects each backend port's `required_alignment_bytes`
 and the immutable frame-arena placement plan into its physical buffer record;
 ProcessMLA consumes that value rather than duplicating the legacy
 page-alignment policy. It consumes these Core-owned facts; it must not infer missing ports
 or fall back to a legacy transport. Core and every plugin that consumes the static-manifest
-header must therefore be built and released together at ABI version 25.
+header must therefore be built and released together at ABI version 30.
 
 Public Tensor device transfers allocate standard CMA or DMS DMA-BUF memory,
 perform the required cache-synchronized host copy, and record device placement
 in Tensor storage metadata. Shared tensor-list ingress retains each DMA-backed
 field's existing memory and producer lifetime. CPU fields can share storage or
 pack independently; packing a CPU field never copies its DMA-backed siblings.
+Public input positions identify logical views, not concatenated allocations.
+Each frame's compact physical-binding table identifies the memory slot, offset
+and extent of each requested view, including reordered or subset views of one
+shared sample. ProcessCVU resolves application bindings separately from direct
+memory inputs and compiler-owned frame-arena spans. Only a frame-arena input
+can establish ownership of a reused output arena.
+
+A non-materializing, component-form Pack establishes producer placement before
+carrier allocation. Writable producer outputs occupy their final component
+ranges in the shared parent; allocation, lifetime analysis and device commands
+use that single storage relationship. Parent base alignment does not impose
+page alignment on every interior component. This placement does not combine
+externally owned allocations or insert a runtime copy.
+
 Invalid DMA views fail rather than falling back to segmented allocation or
 whole-envelope materialization. Explicit Owned output and CPU/device transfers
 remain intentional copy operations.
@@ -631,6 +663,13 @@ Key APIs:
 This is used for hybrid flows where preproc is done once and MLA/BoxDecode are run
 in a separate graph or thread.
 
+Frame-arena planning joins consecutive regions of one model invocation, including
+model-owned postprocess nodes. A full route or a restart of preprocessing/inference
+begins a separate invocation, even when the model source is shared. Split stages
+within one invocation retain one placement authority; repeated invocations keep
+separate command selections and arena ownership. This is a build-time distinction
+and does not copy tensor payloads or change asynchronous execution.
+
 ---
 
 ### Where work runs (CPU / CVU / MLA)
@@ -703,6 +742,19 @@ For RTP JPEG, a compatibility probe after `rtpjpegdepay` appends a missing JPEG
 end marker before parsing. Correctly terminated images pass unchanged; this
 does not repair packet loss or other malformed JPEG data.
 
+Application input allocation and existing-buffer ownership are separate contracts.
+An input memory policy selects storage for new allocations; it does not implicitly
+materialize an already DMA-BUF-backed image for a CPU-capable consumer. Such images
+use the existing Sample holder path in synchronous and asynchronous runs. Explicit
+input copying and incompatible format/caps requests retain their own contracts.
+CPU-only TensorSets retain the existing packed/materialized fallback when a
+zero-copy envelope cannot represent them. If any selected tensor is DMA-backed,
+implicit packing remains forbidden; ordinary successful zero-copy paths are unchanged.
+
+On CPU-admissible ingress, `advanced.copy_input=true` takes its protective copy at
+queue admission, even when new allocations prefer device memory. A strict
+device-visible ingress requirement is distinct from this allocation preference.
+
 ### DMA-BUF output ownership
 
 Hardware decode allocates decoded frames directly in a fixed standard DMA-BUF
@@ -745,24 +797,18 @@ remains immutable. Each returned ROI is a one-member view at its exact slot
 offset; allocation padding is not part of the slot stride. Logical tensor names
 identify outputs, while segment names identify physical backing storage.
 
-### Decoder admission lifecycle
+### Direct decoder lifecycle
 
-Before choosing the single-pipeline or connected-graph runtime, Core scans the
-compiled execution plan for typed H.264/H.265 `SimaDecode` nodes. All eligible
-decoders are admitted as one group, and the resulting reservation is owned by
-the top-level `Run` until its pipeline workers have stopped. This applies
-equally to linear `Graph::add(...)` pipelines, ordinary connected segments, and
-fused realtime branches.
-
-Admission requires a known decoder width, height, and frame rate. Core never
-invents a frame rate. An incomplete contract or unavailable optional admission
-endpoint produces a warning and leaves the plan unchanged; with
-`SIMA_DECODER_ADMISSION_REQUIRE=1`, either condition fails before decoder
-hardware starts. Capacity rejection and malformed lease responses always fail.
+The decoder plugin opens and owns the hardware codec session. Core does not
+reserve capacity through a decoder daemon or hold a separate admission lease.
+Session startup reports hardware errors through the existing pipeline error
+path, and teardown releases the session and its output pool.
 
 Decoder allocation policy does not depend on whether the next reader is the app,
-CVU or MLA. Typed hardware decode requests direct output consistently; an explicit
-software-adapter tail advertises its own exposed memory contract instead.
+CVU or MLA. Typed hardware decode requests direct DMA-BUF output consistently;
+an explicit software-adapter tail advertises its own exposed memory contract
+instead. Explicit pool and tuning options pass through to the decoder, which
+applies its hardware pool requirements.
 
 ### Realtime fan-in lowering
 
@@ -912,6 +958,9 @@ GStreamer name collisions.
 
 * **Input formats must match caps**: `InputOptions` and model configs must agree on format/width/height.
   Mismatches fail fast during negotiation or when pushing inputs.
+  An unspecified image `Input` directly connected to a model adopts its ingress format before
+  wrapping either `cv::Mat` or tensor seeds. This labels the supplied storage; it does not
+  convert pixel data. Explicit input formats remain authoritative.
 * **Capability-gated dynamic input**: runtime renegotiation is allowed only when the built graph advertises dynamic capability. `FullyDynamic` graphs can renegotiate raw-video geometry/format/fps/media caps; `IngressDynamicCvuOnly` allows geometry changes and permits format changes only when build-time downstream contract checks prove stable output behavior.
 * **Dynamic within effective bounds**: `max_*` are hard ceilings; if `max_*` is unset, `width/height/depth` act as implicit ceilings.
 * **Model vs Graph defaults**: both flows now resolve seed/max/byte-guard policy through `src/pipeline/internal/InputPolicy.*`; `Model` still applies its documented metadata-backed defaults (for example 1920x1080 ceilings) while `Graph` remains node-option driven unless configured.
@@ -930,10 +979,11 @@ GStreamer name collisions.
 
 Sources attach `Sample::attributes` as a nested structure in `GstSimaMeta`. Elements that
 preserve a buffer carry the metadata naturally; Core boundaries that allocate or reuse a
-buffer deep-copy the attributes and clear stale values. `neatdecoder` snapshots the same
-frame context before decode and restores it by a daemon-provided correlation ID, so reordered
-or dropped frames cannot shift attributes onto another output. A negotiated decoder/daemon
-protocol owns that correlation contract; the legacy decoder protocol remains FIFO-only.
+buffer deep-copy the attributes and clear stale values. `neatdecoder` snapshots each input's frame context before submission and
+restores it using the frame identity returned by the in-process codec. Dropped
+identities are retired, and completions from an earlier session generation are
+rejected, so reordered or recycled buffers cannot inherit another frame's
+attributes.
 
 The supported user-facing paths and limits are documented in
 [Per-frame attributes](../../advanced-concepts/data-model-contracts/frame_attributes.md).

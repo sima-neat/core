@@ -3737,7 +3737,7 @@ public:
         prepared[i] = stamped.tensors.front();
       }
     }
-    stamp_fan_in_packed_parent(&prepared);
+    stamp_fan_in_identity(&prepared);
     Sample out = sample_from_tensors(prepared);
     if (prepared.size() > 1U) {
       out.segment_name = fan_in_parent_segment_name();
@@ -3761,7 +3761,7 @@ public:
       }
       prepared.push_back(tensors.front());
     }
-    stamp_fan_in_packed_parent(&prepared);
+    stamp_fan_in_identity(&prepared);
     Sample out = sample_from_tensors(prepared);
     propagate_common_sample_identity(inputs, &out);
     if (prepared.size() > 1U) {
@@ -3798,7 +3798,7 @@ private:
 
   internal::IngressConsumerTensorIdentity
   direct_mla_consumer_identity(const internal::IngressTensorContract& ingress,
-                               std::size_t public_index, std::size_t transport_index) const {
+                               std::size_t public_index) const {
     const int consumer_index = direct_mla_consumer_input_index(ingress, public_index);
     internal::IngressConsumerTensorIdentity identity;
     if (consumer_index >= 0 &&
@@ -3808,24 +3808,22 @@ private:
     if (identity.logical_index < 0) {
       identity.logical_index = consumer_index;
     }
-    if (identity.physical_index < 0) {
-      identity.physical_index = consumer_keeps_distinct_physical_inputs_ ? consumer_index : 0;
-    }
     if (identity.route_slot < 0) {
       identity.route_slot = consumer_index;
     }
-    // TensorSet transport order is the MLA/plugin input order below. Keep the
-    // memory index aligned with that order so processmla binds each Gst memory
-    // region to the matching compiled MLA input, while preserving the public
-    // model input order at Model::input_specs()/Model::build(TensorList).
-    identity.memory_index = static_cast<int>(transport_index);
+    // Consumer identity does not select storage in the source GstSample.
+    // TensorSet publication assigns destination bindings after resolving each
+    // original memory index, including reordered views of one shared holder.
+    // Preserve physical_index too: it is the source selector when memory_index
+    // has not been explicitly set.
+    identity.physical_index = -1;
+    identity.memory_index = -1;
     return identity;
   }
 
   Tensor stamp_direct_mla_ingress_tensor(Tensor tensor,
                                          const internal::IngressTensorContract& ingress,
-                                         std::size_t public_index,
-                                         std::size_t transport_index) const {
+                                         std::size_t public_index) const {
     const std::string ingress_name =
         !ingress.source_tensor_name.empty()
             ? ingress.source_tensor_name
@@ -3836,7 +3834,7 @@ private:
       tensor.route.backend_name = ingress_name;
     }
     return internal::remap_tensor_to_consumer_identity(
-        std::move(tensor), direct_mla_consumer_identity(ingress, public_index, transport_index));
+        std::move(tensor), direct_mla_consumer_identity(ingress, public_index));
   }
 
   TensorList prepare_direct_mla_tensors(const TensorList& inputs, const char* where) const {
@@ -3850,8 +3848,7 @@ private:
       Tensor tensor = inputs[public_index];
       validate_single_tensor_ingress_expectation(ingress, input_info_from_tensor(tensor, false),
                                                  where);
-      prepared.push_back(stamp_direct_mla_ingress_tensor(std::move(tensor), ingress, public_index,
-                                                         transport_index));
+      prepared.push_back(stamp_direct_mla_ingress_tensor(std::move(tensor), ingress, public_index));
     }
     return prepared;
   }
@@ -3883,16 +3880,12 @@ private:
   }
 
   std::string fan_in_parent_segment_name() const {
-    // ProcessCvu pre-adapter kernels expose one ConfigManager input named
-    // "input_tensor". Bundled appsrc fan-in is the appsrc -> first-consumer
-    // boundary, so it must describe all logical user inputs as byte-offset views
-    // into that single parent even when the final MLA boundary later preserves
-    // native distinct physical inputs. The original ingress names remain on
-    // route.name/logical_index for TensorSet metadata.
+    // The envelope has one input name; its logical views retain independent
+    // physical bindings rather than implying concatenated payload storage.
     return "input_tensor";
   }
 
-  void stamp_fan_in_packed_parent(TensorList* tensors) const {
+  void stamp_fan_in_identity(TensorList* tensors) const {
     if (!tensors || tensors->size() <= 1U) {
       return;
     }
@@ -3905,8 +3898,6 @@ private:
       if (tensor.route.route_slot < 0) {
         tensor.route.route_slot = tensor.route.logical_index;
       }
-      tensor.route.physical_index = 0;
-      tensor.route.memory_index = static_cast<int>(i);
       tensor.route.segment_name = parent_segment_name;
       if (tensor.route.backend_name.empty()) {
         tensor.route.backend_name = parent_segment_name;
@@ -8411,6 +8402,8 @@ std::vector<std::shared_ptr<Node>> ModelAccess::build_public_postprocess_nodes(c
 
 std::vector<std::shared_ptr<Node>> ModelAccess::build_public_route_nodes(const Model& model,
                                                                          Model::RouteOptions opt) {
+  // Prepare before copying so every stage shares one immutable placement source.
+  model.impl_->pack.prepare_for_execution();
   internal::ModelPack pack = model.impl_->pack;
   if (!opt.name_suffix.empty()) {
     pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);

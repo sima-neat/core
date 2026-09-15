@@ -409,6 +409,7 @@ nlohmann::json to_json(const PhysicalBufferStaticSpec& spec) {
   j["physical_index"] = spec.physical_index;
   j["allocator_index"] = spec.allocator_index;
   j["source_physical_index"] = spec.source_physical_index;
+  j["address_source"] = static_cast<int>(spec.address_source);
   j["size_bytes"] = spec.size_bytes;
   j["source_byte_offset"] = spec.source_byte_offset;
   j["device_kind"] = static_cast<int>(spec.device_kind);
@@ -814,6 +815,9 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         read_int_key(in_j, "physical_index", physical.physical_index);
         read_int_key(in_j, "allocator_index", physical.allocator_index);
         read_int_key(in_j, "source_physical_index", physical.source_physical_index);
+        int address_source = 0;
+        read_int_key(in_j, "address_source", address_source);
+        physical.address_source = static_cast<PhysicalAddressSource>(address_source);
         if (in_j.contains("size_bytes") && in_j["size_bytes"].is_number_unsigned()) {
           physical.size_bytes = in_j["size_bytes"].get<std::uint64_t>();
         } else if (in_j.contains("size_bytes") && in_j["size_bytes"].is_number_integer()) {
@@ -856,6 +860,9 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         read_int_key(out_j, "physical_index", physical.physical_index);
         read_int_key(out_j, "allocator_index", physical.allocator_index);
         read_int_key(out_j, "source_physical_index", physical.source_physical_index);
+        int address_source = 0;
+        read_int_key(out_j, "address_source", address_source);
+        physical.address_source = static_cast<PhysicalAddressSource>(address_source);
         if (out_j.contains("size_bytes") && out_j["size_bytes"].is_number_unsigned()) {
           physical.size_bytes = out_j["size_bytes"].get<std::uint64_t>();
         } else if (out_j.contains("size_bytes") && out_j["size_bytes"].is_number_integer()) {
@@ -1429,6 +1436,7 @@ private:
       abi.segment_name_id = physical.segment_name_id;
       abi.segment_name = physical.segment_name.empty() ? nullptr : physical.segment_name.c_str();
       abi.source_physical_index = physical.source_physical_index;
+      abi.address_source = static_cast<SimaPluginPhysicalAddressSource>(physical.address_source);
       abi.source_byte_offset = static_cast<gint64>(physical.source_byte_offset);
       abi.required_alignment_bytes = static_cast<guint64>(physical.required_alignment_bytes);
       out.physical_inputs.push_back(abi);
@@ -1445,6 +1453,7 @@ private:
       abi.segment_name_id = physical.segment_name_id;
       abi.segment_name = physical.segment_name.empty() ? nullptr : physical.segment_name.c_str();
       abi.source_physical_index = physical.source_physical_index;
+      abi.address_source = static_cast<SimaPluginPhysicalAddressSource>(physical.address_source);
       abi.source_byte_offset = static_cast<gint64>(physical.source_byte_offset);
       abi.required_alignment_bytes = static_cast<guint64>(physical.required_alignment_bytes);
       out.physical_outputs.push_back(abi);

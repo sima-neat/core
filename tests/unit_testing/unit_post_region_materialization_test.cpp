@@ -293,13 +293,19 @@ RUN_TEST(
                       binding.source_segment_name == physical.segment_name,
                   label + " local descriptor and route must address the same view for " +
                       model_name);
-          require(binding.local_logical_input_index == static_cast<int>(i) &&
-                      binding.sink_pad_index == 0 &&
-                      binding.src_physical_output_index == static_cast<int>(i) &&
-                      binding.src_physical_byte_offset == 0 &&
-                      binding.src_physical_size_bytes == physical.size_bytes,
-                  label + " must select each local view on the one arena input pad for " +
-                      model_name);
+          require(
+              binding.local_logical_input_index == static_cast<int>(i) &&
+                  binding.src_logical_output_index == static_cast<int>(i) &&
+                  binding.src_output_slot == static_cast<int>(i) && binding.sink_pad_index == 0 &&
+                  physical.address_source ==
+                      pipeline_internal::sima::PhysicalAddressSource::FrameArenaSpan &&
+                  physical.source_physical_index == 0 && binding.src_physical_output_index == 0 &&
+                  binding.src_physical_byte_offset == 0 &&
+                  binding.src_physical_size_bytes == physical.size_bytes,
+              label +
+                  " must retain each logical view while selecting the one MLA arena "
+                  "carrier for " +
+                  model_name);
         }
         std::sort(view_offsets.begin(), view_offsets.end());
         require(std::adjacent_find(view_offsets.begin(), view_offsets.end()) == view_offsets.end(),

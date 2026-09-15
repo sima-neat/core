@@ -636,6 +636,27 @@ Sample tensor_sample_from_tensor(const Tensor& tensor, std::size_t /*index*/) {
   return field;
 }
 
+Sample tensor_field_with_envelope(const Tensor& tensor, const Sample& envelope) {
+  Sample field = tensor_sample_from_tensor(tensor, 0);
+  field.owned = envelope.owned;
+  if (envelope.payload_type != PayloadType::Auto) {
+    field.payload_type = envelope.payload_type;
+  }
+  if (!envelope.media_type.empty()) {
+    field.media_type = envelope.media_type;
+    if (field.payload_type == PayloadType::Auto) {
+      field.payload_type = payload_type_from_media_type(envelope.media_type);
+    }
+  }
+  if (!envelope.payload_tag.empty()) {
+    field.payload_tag = envelope.payload_tag;
+  }
+  if (!envelope.format.empty()) {
+    field.format = envelope.format;
+  }
+  return field;
+}
+
 void log_bundle_field(const Sample& field) {
   std::ostringstream ss;
   const std::string name = !field.stream_label.empty()
@@ -1408,6 +1429,28 @@ bool ensure_sima_meta_fields(GstBuffer* buffer, const std::optional<int64_t>& fr
   return true;
 }
 
+// Public input positions select logical views, not allocation ordinals. Build
+// descriptors against their source storage before remapping destination slots.
+bool attach_public_tensor_views(GstBuffer* buffer, const TensorList& tensors,
+                                const std::vector<int>& memory_indices, std::string* err) {
+  TensorBufferView descriptor;
+  if (!tensor_buffer_descriptor_from_tensors(tensors, &descriptor, err)) {
+    return false;
+  }
+  for (std::size_t i = 0; i < descriptor.tensors.size(); ++i) {
+    auto& view = descriptor.tensors[i];
+    view.logical_index = static_cast<int>(i);
+    view.physical_index = static_cast<int>(i);
+    view.backend_output_index = static_cast<int>(i);
+    view.route_slot = static_cast<int>(i);
+    view.memory_index = memory_indices[i];
+    // Views of one memory share its segment identity, while their logical
+    // names, offsets and extents remain independent.
+    view.segment_name = "memory" + std::to_string(view.memory_index);
+  }
+  return attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, err);
+}
+
 bool try_collect_shared_bundle_backing(const Sample& bundle, GstBuffer** out_buffer,
                                        GstCaps** out_caps) {
   if (!out_buffer || !out_caps) {
@@ -1416,8 +1459,32 @@ bool try_collect_shared_bundle_backing(const Sample& bundle, GstBuffer** out_buf
   *out_buffer = nullptr;
   *out_caps = nullptr;
   TensorBufferView view;
-  std::string view_err;
-  if (!tensor_buffer_view_from_sample_impl(bundle, &view, &view_err) || !view.buffer) {
+  if (sample_has_tensor_list(bundle) && !bundle.tensors.empty()) {
+    const auto& storage = bundle.tensors.front().storage;
+    if (!storage || storage->kind != StorageKind::GstSample || !storage->holder) {
+      return false;
+    }
+    for (const auto& tensor : bundle.tensors) {
+      if (!tensor.storage || tensor.storage->kind != StorageKind::GstSample ||
+          tensor.storage->holder != storage->holder) {
+        return false;
+      }
+    }
+    auto* sample = static_cast<GstSample*>(storage->holder.get());
+    if (!GST_IS_SAMPLE(sample)) {
+      return false;
+    }
+    // Rebinding supplies its own current descriptors. The source need not
+    // already publish a TensorSet (a freshly allocated DMA Tensor may not).
+    view.buffer = gst_sample_get_buffer(sample);
+    view.caps = gst_sample_get_caps(sample);
+  } else {
+    std::string view_err;
+    if (!tensor_buffer_view_from_sample_impl(bundle, &view, &view_err)) {
+      return false;
+    }
+  }
+  if (!view.buffer) {
     return false;
   }
   char* c_err = nullptr;
@@ -1541,8 +1608,8 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   }
 
   TensorList descriptor_tensors = bundle.tensors;
-  std::vector<std::string> carrier_names;
-  carrier_names.reserve(bundle.tensors.size());
+  std::vector<int> memory_indices;
+  memory_indices.reserve(bundle.tensors.size());
   for (std::size_t tensor_index = 0; tensor_index < bundle.tensors.size(); ++tensor_index) {
     const Tensor& tensor = bundle.tensors[tensor_index];
     if (!tensor.storage) {
@@ -1616,30 +1683,15 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
     if (!gst_buffer_add_parent_buffer_meta(assembled, source)) {
       return fail("tensor-set multi-source failed to retain source buffer");
     }
-    auto& route = descriptor_tensor.route;
-    route.memory_index = static_cast<int>(tensor_index);
-    route.physical_index = static_cast<int>(tensor_index);
-    const std::string carrier_base =
-        route.segment_name.empty() ? "input_tensor" : route.segment_name;
-    std::string carrier_name = carrier_base;
-    for (std::size_t suffix = 1U;
-         std::find(carrier_names.begin(), carrier_names.end(), carrier_name) != carrier_names.end();
-         ++suffix) {
-      carrier_name = carrier_base + "#" + std::to_string(suffix);
-    }
-    carrier_names.push_back(carrier_name);
-    route.segment_name = std::move(carrier_name);
+    descriptor_tensor.route.memory_index = source_memory_index;
+    memory_indices.push_back(static_cast<int>(tensor_index));
   }
 
   std::string detail;
   if (!copy_bundle_tensor_preprocess_meta(assembled, bundle.tensors, &detail)) {
     return fail(detail.empty() ? "tensor-set multi-source preprocess meta failed" : detail);
   }
-  TensorBufferView descriptor;
-  if (!tensor_buffer_descriptor_from_tensors(descriptor_tensors, &descriptor, &detail)) {
-    return fail(detail.empty() ? "tensor-set multi-source descriptor failed" : detail);
-  }
-  if (!attach_tensor_set_meta_from_descriptor_view_impl(assembled, descriptor, &detail)) {
+  if (!attach_public_tensor_views(assembled, descriptor_tensors, memory_indices, &detail)) {
     return fail(detail.empty() ? "tensor-set multi-source meta attach failed" : detail);
   }
   *out_buffer = assembled;
@@ -3198,6 +3250,39 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       sample_buf = gst_buffer_ref(shared_buffer);
       gst_buffer_unref(shared_buffer);
       sample_caps = shared_caps;
+      if (bundle.payload_type == PayloadType::Tensor ||
+          bundle.media_type == "application/vnd.simaai.tensor") {
+        TensorList source_views = bundle.tensors;
+        std::vector<int> memory_indices;
+        memory_indices.reserve(source_views.size());
+        for (auto& tensor : source_views) {
+          const int memory_index = tensor_source_memory_index(tensor, sample_buf);
+          if (memory_index < 0) {
+            gst_buffer_unref(sample_buf);
+            if (sample_caps) {
+              gst_caps_unref(sample_caps);
+            }
+            if (err) {
+              *err = "tensor-set shared view references invalid source memory index";
+            }
+            return {};
+          }
+          tensor.route.memory_index = memory_index;
+          memory_indices.push_back(memory_index);
+        }
+        if (sample_caps) {
+          gst_caps_unref(sample_caps);
+          sample_caps = nullptr;
+        }
+        if (!build_tensor_set_envelope_caps(bundle, &sample_caps, err) ||
+            !attach_public_tensor_views(sample_buf, source_views, memory_indices, err)) {
+          gst_buffer_unref(sample_buf);
+          if (sample_caps) {
+            gst_caps_unref(sample_caps);
+          }
+          return {};
+        }
+      }
       if (sample_debug_enabled() && sample_buf) {
         std::fprintf(stderr, "[SAMPLE] tensor-set reusing shared backing buffer bytes=%zu\n",
                      static_cast<size_t>(gst_buffer_get_size(sample_buf)));
@@ -3213,23 +3298,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
         }
       }
     } else if (bundle.tensors.size() == 1U && bundle.fields.empty()) {
-      Sample first_field = tensor_sample_from_tensor(bundle.tensors.front(), 0);
-      first_field.owned = bundle.owned;
-      if (bundle.payload_type != PayloadType::Auto) {
-        first_field.payload_type = bundle.payload_type;
-      }
-      if (!bundle.media_type.empty()) {
-        first_field.media_type = bundle.media_type;
-        if (first_field.payload_type == PayloadType::Auto) {
-          first_field.payload_type = payload_type_from_media_type(bundle.media_type);
-        }
-      }
-      if (!bundle.payload_tag.empty()) {
-        first_field.payload_tag = bundle.payload_tag;
-      }
-      if (!bundle.format.empty()) {
-        first_field.format = bundle.format;
-      }
+      Sample first_field = tensor_field_with_envelope(bundle.tensors.front(), bundle);
 
       SampleSpec direct_spec;
       std::string direct_err;
@@ -3262,7 +3331,9 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
         built = try_build_multi_source_tensor_set_backing(bundle, &sample_buf, &sample_caps,
                                                           &backing_err);
       }
-      if (!built) {
+      // Zero-copy is a preference for CPU inputs, but a DMA sibling must
+      // never be materialized implicitly when the shared envelope cannot fit.
+      if (!built && (!allow_zero_copy || !sample_has_dmabuf_memory(bundle))) {
         if (const auto packed_parent = packed_tensor_set_parent_segment_name(bundle)) {
           built = build_packed_tensor_set_backing(bundle, *packed_parent, &sample_buf, &sample_caps,
                                                   &backing_err);
@@ -3357,15 +3428,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
     Sample first_field;
     bool have_first_field = false;
     if (sample_has_tensor_list(bundle) && !bundle.tensors.empty()) {
-      first_field = tensor_sample_from_tensor(bundle.tensors.front(), 0);
-      first_field.owned = bundle.owned;
-      first_field.payload_type = PayloadType::Image;
-      first_field.media_type = "video/x-raw";
-      if (bundle.tensors.front().semantic.image.has_value()) {
-        first_field.payload_tag =
-            Sample::image_format_string(bundle.tensors.front().semantic.image->format);
-        first_field.format = first_field.payload_tag;
-      }
+      first_field = tensor_field_with_envelope(bundle.tensors.front(), bundle);
       have_first_field = true;
     } else if (!bundle.fields.empty()) {
       first_field = bundle.fields.front();
@@ -3384,6 +3447,15 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
           *err = outer_spec_err.empty() ? "Sample outer video caps missing" : outer_spec_err;
         }
         return {};
+      }
+      // A DMA Tensor may have tensor caps even though this application boundary
+      // explicitly interprets its unchanged allocation as an image.
+      if (!sample_caps || gst_caps_is_empty(sample_caps) || gst_caps_is_any(sample_caps) ||
+          !gst_structure_has_name(gst_caps_get_structure(sample_caps, 0), "video/x-raw")) {
+        if (sample_caps) {
+          gst_caps_unref(sample_caps);
+        }
+        sample_caps = gst_caps_from_string(outer_spec.caps_string.c_str());
       }
       std::string outer_meta_err;
       const GstVideoMeta* native_video = allow_zero_copy && sample_has_dmabuf_memory(first_field)
@@ -3942,6 +4014,21 @@ Sample pipeline_internal::collapse_single_tensor_sample(Sample sample) {
 Sample pipeline_internal::sample_from_tensors_for_input(const TensorList& tensors,
                                                         const InputOptions& opt) {
   Sample out = sample_from_tensors(tensors);
+  if (tensors.size() == 1U && resolve_input_media_type(opt) == "video/x-raw" &&
+      !opt.format.empty()) {
+    const auto& semantic = tensors.front().semantic;
+    if (semantic.byte_stream.has_value() || semantic.tess.has_value() ||
+        semantic.encoded.has_value()) {
+      throw std::invalid_argument("Image Input cannot reinterpret explicit tensor transport");
+    }
+    // Context belongs to the Sample, not to the caller's Tensor. The existing
+    // image spec validator checks format/shape agreement without mapping bytes.
+    out.payload_type = PayloadType::Image;
+    out.media_type = "video/x-raw";
+    out.format = opt.format.str();
+    out.payload_tag = out.format;
+    return out;
+  }
   if (out.media_type == "application/vnd.simaai.tensor" &&
       lower_copy(resolve_input_media_type(opt)) == "application/vnd.simaai.tensor") {
     const std::string format = normalize_caps_format_for_media(out.media_type, opt.format.str());

@@ -455,6 +455,12 @@ resolve_consumer_edge_contracts_exact(const SimaPluginStaticManifest& manifest,
   for (std::size_t binding_index = 0; binding_index < consumer.input_bindings.size();
        ++binding_index) {
     const auto& binding = consumer.input_bindings[binding_index];
+    const auto* logical = find_consumer_logical_input(consumer, binding);
+    const auto* physical = find_consumer_physical_input(consumer, logical, binding);
+    if (physical && physical->address_source == PhysicalAddressSource::RuntimePhysicalBinding) {
+      continue; // The application owns this binding; it is not a producer-stage edge.
+    }
+
     const auto fail = [&](std::string detail) {
       set_error(error_message, binding_label(consumer_stage_index, binding_index) + ": " + detail);
       return std::vector<ResolvedEdgeContract>{};

@@ -234,6 +234,23 @@ void require_native_retention_pool_policy() {
 
   auto value_bound = make_value_bound_retention_build();
   check(session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
+  auto mixed = make_value_bound_retention_build();
+  auto& mixed_stage = mixed.rendered_manifest->stages.back();
+  auto external_physical = mixed_stage.physical_inputs.front();
+  external_physical.physical_index = 6;
+  external_physical.address_source = sima::PhysicalAddressSource::RuntimePhysicalBinding;
+  mixed_stage.physical_inputs.push_back(external_physical);
+  auto external_logical = mixed_stage.logical_inputs.front();
+  external_logical.logical_index = 6;
+  external_logical.physical_index = 6;
+  mixed_stage.logical_inputs.push_back(external_logical);
+  auto external_binding = mixed_stage.input_bindings.front();
+  external_binding.local_logical_input_index = 6;
+  external_binding.sink_pad_index = 1;
+  external_binding.cm_input_name = "external_tensor";
+  external_binding.source_segment_name = "external_tensor";
+  mixed_stage.input_bindings.push_back(external_binding);
+  check(session_build_clamp_sync_build_result(mixed, -1), "actual_preproc");
   auto caps_bound = make_value_bound_retention_build();
   caps_bound.pipeline_string.insert(caps_bound.pipeline_string.find("identity name=adapter"),
                                     "video/x-raw(memory:DMABuf),format=(string)BGR ! ");
@@ -435,6 +452,108 @@ void require_output_policy_matrix() {
           "existing synchronous detess zero-copy override must remain explicit");
 }
 
+void require_device_preferred_input_ownership() {
+  using namespace simaai::neat;
+  ScopedEnv cap("SIMA_GRAPH_ZERO_COPY_BACKPRESSURE_CAP", "1");
+  for (const auto allocation :
+       {InputMemoryPolicy::Ev74, InputMemoryPolicy::Dms0, InputMemoryPolicy::SystemMemory}) {
+    for (const bool dma : {false, true}) {
+      for (const bool copy_input : {false, true}) {
+        // No streaming worker: inspect ownership at queue admission. Only an
+        // explicit compatibility copy may map the payload.
+        auto core = std::make_shared<runtime::RunCore>();
+        core->pipeline.supports_push = true;
+        core->opt.queue_depth = 4;
+        core->opt.advanced.copy_input = copy_input;
+        core->pipeline.tensor_input_opt_for_cv = InputOptions{};
+        core->pipeline.tensor_input_opt_for_cv->memory_policy = allocation;
+        // Also cover the strict requirement when cached allocation is not device.
+        core->pipeline.stream_opt.require_device_visible_input =
+            allocation == InputMemoryPolicy::SystemMemory;
+        require(core->push_sample_policy == runtime::PushSamplePolicy::PublicCompatibility,
+                "device preference must not require graph-internal sample policy");
+
+        const bool copy_at_admission =
+            copy_input && !core->pipeline.stream_opt.require_device_visible_input;
+        std::uint8_t borrowed[4] = {0x31, 0x32, 0x33, 0x34};
+        GstBuffer* buffer =
+            dma ? (copy_at_admission ? sima_test::allocate_cma_dmabuf(4)
+                                     : sima_test::make_bookkeeping_dmabuf(4))
+                : gst_buffer_new_wrapped_full(GST_MEMORY_FLAG_READONLY, borrowed, sizeof(borrowed),
+                                              0, sizeof(borrowed), nullptr, nullptr);
+        Sample sample = sample_from_buffer(buffer);
+        gst_buffer_unref(buffer);
+        auto& tensor = sample.tensors.front();
+        tensor.layout = TensorLayout::HW;
+        tensor.shape = {2, 2};
+        tensor.semantic.image = ImageSpec{ImageSpec::PixelFormat::GRAY8, ""};
+        const auto storage = tensor.storage;
+        const auto before = pipeline_internal::snapshot_tensor_io_stats();
+        for (int i = 0; i < 2; ++i) {
+          require(core->push_samples(sample, false), "device-preferred sample must enqueue");
+          const auto& queued = core->pipeline.in_queue.back();
+          require(queued.kind == QueuedInputKind::Message &&
+                      (queued.msg.tensors.front().storage == storage) != copy_at_admission,
+                  "device preference must preserve storage unless an admissible copy is requested");
+        }
+        const auto after = pipeline_internal::snapshot_tensor_io_stats();
+        if (!copy_at_admission) {
+          require(after.tensor_copy_count == before.tensor_copy_count &&
+                      after.gst_memory_map_calls == before.gst_memory_map_calls,
+                  "device preference must not materialize images or clone under queue pressure");
+        } else if (!dma) {
+          borrowed[0] = 0xff;
+          const auto mapping =
+              core->pipeline.in_queue.front().msg.tensors.front().map(MapMode::Read);
+          require(mapping.data && *static_cast<const std::uint8_t*>(mapping.data) == 0x31,
+                  "explicit input copy must isolate caller mutations before the worker runs");
+        }
+      }
+    }
+  }
+}
+
+void require_cpu_admissible_input_preserves_dmabuf_images() {
+  using namespace simaai::neat;
+  ScopedEnv cap("SIMA_GRAPH_ZERO_COPY_BACKPRESSURE_CAP", "1");
+  for (const auto allocation : {InputMemoryPolicy::Auto, InputMemoryPolicy::SystemMemory}) {
+    // Allocation preference must not materialize storage that the caller already
+    // owns. Keep strict device admission disabled to exercise public compatibility.
+    auto core = std::make_shared<runtime::RunCore>();
+    core->pipeline.supports_push = true;
+    core->opt.queue_depth = 4;
+    core->opt.advanced.copy_input = false;
+    core->pipeline.tensor_input_opt_for_cv = InputOptions{};
+    core->pipeline.tensor_input_opt_for_cv->memory_policy = allocation;
+    core->pipeline.stream_opt.require_device_visible_input = false;
+    require(core->push_sample_policy == runtime::PushSamplePolicy::PublicCompatibility,
+            "DMA image preservation must not require an internal sample policy");
+
+    // No streaming worker: this bookkeeping DMA-BUF must never be mapped or
+    // submitted to hardware, even when queue pressure reaches the copy threshold.
+    GstBuffer* buffer = sima_test::make_bookkeeping_dmabuf(4);
+    Sample sample = sample_from_buffer(buffer);
+    gst_buffer_unref(buffer);
+    auto& tensor = sample.tensors.front();
+    tensor.layout = TensorLayout::HW;
+    tensor.shape = {2, 2};
+    tensor.semantic.image = ImageSpec{ImageSpec::PixelFormat::GRAY8, ""};
+    const auto storage = tensor.storage;
+    const auto before = pipeline_internal::snapshot_tensor_io_stats();
+    for (int i = 0; i < 2; ++i) {
+      require(core->push_samples(sample, false), "CPU-admissible DMA image must enqueue");
+      const auto& queued = core->pipeline.in_queue.back();
+      require(queued.kind == QueuedInputKind::Message &&
+                  queued.msg.tensors.front().storage == storage,
+              "CPU allocation preference must retain the DMA image rather than a Mat copy");
+    }
+    const auto after = pipeline_internal::snapshot_tensor_io_stats();
+    require(after.tensor_copy_count == before.tensor_copy_count &&
+                after.gst_memory_map_calls == before.gst_memory_map_calls,
+            "DMA image compatibility admission must not map or copy its payload");
+  }
+}
+
 void require_dmabuf_loans_and_pressure_preserve_storage() {
   using namespace simaai::neat;
   gst_init(nullptr, nullptr);
@@ -561,6 +680,8 @@ RUN_TEST(
       require_native_retention_pool_policy();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
+      require_device_preferred_input_ownership();
+      require_cpu_admissible_input_preserves_dmabuf_images();
       {
         simaai::neat::runtime::ExecutionGraphPlan plan;
 

@@ -32,6 +32,10 @@ namespace cv {
 class Mat;
 }
 
+namespace simaai::neat {
+struct ContractCompileInput;
+}
+
 namespace simaai::neat::internal {
 
 /// NVMe model-store candidates parsed from `/proc/mounts` content, in file order. Separated from
@@ -41,6 +45,15 @@ std::vector<std::string> nvme_model_bases_from_mounts(std::istream& mounts);
 /// Device class backing `path`, for load diagnostics: "NVMe", "eMMC", or the `/proc/mounts` device
 /// name when it is neither. Names the runtime package path, not where inference runs.
 std::string modelpack_storage_label(const std::string& path);
+
+struct ModelFragmentCompileContext;
+struct ModelFragmentPlanSource;
+std::shared_ptr<const ModelFragmentCompileContext>
+prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                 std::string* error);
+
+bool apply_model_fragment_contract_context(const Node& node, const ContractCompileInput& input,
+                                           CompiledNodeContract* compiled, std::string* error);
 
 enum class PipelineType : std::uint8_t { Preproc, Quant, Tess, QuantTess, CastTess, Cast };
 
@@ -257,6 +270,7 @@ private:
   mutable std::optional<
       simaai::neat::pipeline_internal::sima::static_contract::PhysicalExecutionPlan>
       dmabuf_physical_execution_plan_;
+  mutable std::shared_ptr<const ModelFragmentPlanSource> dmabuf_fragment_source_;
   mutable pipeline_internal::DmabufEligibilityReport execution_admission_;
   mutable std::string execution_plan_digest_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;

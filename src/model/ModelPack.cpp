@@ -6,7 +6,6 @@
 #include "pipeline/internal/ErrorUtil.h"
 
 #include "builder/NodeContractConfigurable.h"
-#include "builder/CompiledChildStageProvider.h"
 #include "builder/NodeContractProvider.h"
 #include "gst/GstHelpers.h"
 #include "nodes/sima/Preproc.h"
@@ -68,6 +67,20 @@
 #include <unistd.h>
 
 namespace simaai::neat::internal {
+struct ModelFragmentCompileContext {
+  std::unordered_map<const Node*, std::vector<ModelFragment::StageFacts>> stage_facts;
+  std::unordered_map<const Node*, CompiledProcessCvuContract> processcvu;
+  std::unordered_set<const Node*> admitted_original;
+};
+
+struct ModelFragmentPlanSource {
+  pipeline_internal::sima::static_contract::ModelExecutionPlan execution;
+  pipeline_internal::sima::static_contract::PhysicalExecutionPlan physical;
+  pipeline_internal::sima::static_contract::FrameSlotArenaPlan arena;
+  std::optional<pipeline_internal::sima::MpkContract> mpk;
+  std::string digest;
+};
+
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
@@ -2410,6 +2423,31 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
             "ModelFragment: strict ProcessCVU cohort has no exact uniform placement role");
       }
       entry.processcvu_contract->physical_command_role = command_role;
+      auto& cvu = *entry.processcvu_contract;
+      if (command_role == pipeline_internal::sima::static_contract::PhysicalCommandRole::Ingress &&
+          dmabuf_plan_execution_plan
+                  .backend_ports(
+                      0U, pipeline_internal::sima::static_contract::BackendPortDirection::Input)
+                  .size() == 1U &&
+          cvu.runtime_contract.logical_outputs.size() == 1U &&
+          cvu.exposed_view.exposed_logical_outputs.size() == 1U) {
+        // Preserve the model preadapter's canonical public transport alias.
+        // Backend/segment names still identify the exact compiler value and
+        // carrier; publishing this alias neither changes placement nor packs
+        // distinct inputs into another buffer.
+        constexpr auto transport_name = "output_tensor";
+        cvu.payload.default_output_names = {transport_name};
+        cvu.payload.primary_output_name = transport_name;
+        cvu.runtime_contract.logical_outputs.front().logical_name = transport_name;
+        for (auto& route : cvu.runtime_contract.output_order) {
+          route.cm_output_name = transport_name;
+        }
+        cvu.exposed_view.primary_output_name = transport_name;
+        cvu.exposed_view.exposed_logical_outputs.front().logical_name = transport_name;
+        for (auto& route : cvu.exposed_view.exposed_output_order) {
+          route.cm_output_name = transport_name;
+        }
+      }
     }
 
     if (stage.kind == ExecutionStageKind::Mla) {
@@ -2531,11 +2569,11 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
           stage_index + 1U == stages.size() ||
           !can_continue_direct_tvm_cpu_epoch(stage, stages[stage_index + 1U],
                                              dmabuf_plan_execution_plan, dmabuf_frame_arena_plan);
-      entry.fragment_properties.emplace_back(
-          "direct-contract-b64",
-          encode_direct_tvm_contract(dmabuf_plan_execution_plan, dmabuf_frame_arena_plan,
-                                     dmabuf_physical_execution_plan, op, *mpk_contract,
-                                     cpu_epoch_start, cpu_epoch_end));
+      entry.transport_compiled->direct_contract_b64 = encode_direct_tvm_contract(
+          dmabuf_plan_execution_plan, dmabuf_frame_arena_plan, dmabuf_physical_execution_plan, op,
+          *mpk_contract, cpu_epoch_start, cpu_epoch_end);
+      entry.fragment_properties.emplace_back("direct-contract-b64",
+                                             entry.transport_compiled->direct_contract_b64);
     }
 
     if (stage.kind == ExecutionStageKind::BoxDecode) {
@@ -2618,7 +2656,6 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
 }
 
 class ModelFragmentNode final : public Node,
-                                public CompiledChildStageProvider,
                                 public NodeContractProvider,
                                 public NodeContractConfigurable,
                                 public ModelLineageProvider {
@@ -2626,10 +2663,15 @@ public:
   ModelFragmentNode(std::string kind, std::string label, std::string fragment,
                     std::vector<std::string> elements,
                     std::vector<ModelFragment::StageFacts> stage_facts,
-                    std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr)
+                    std::shared_ptr<const ModelLineageBinding> model_lineage,
+                    std::shared_ptr<const ModelFragmentPlanSource> plan_source,
+                    std::vector<ExecutionStage> execution_stages, ModelStage stage_context,
+                    std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags)
       : kind_(std::move(kind)), label_(std::move(label)), fragment_(std::move(fragment)),
         elements_(std::move(elements)), stage_facts_(std::move(stage_facts)),
-        model_lineage_(std::move(model_lineage)) {}
+        model_lineage_(std::move(model_lineage)), plan_source_(std::move(plan_source)),
+        execution_stages_(std::move(execution_stages)), stage_context_(stage_context),
+        route_flags_(std::move(route_flags)) {}
 
   std::string kind() const override {
     return kind_;
@@ -2659,25 +2701,45 @@ public:
     return def;
   }
 
-  bool compile_child_stage_contracts(std::vector<CompiledNodeContract>* out,
-                                     std::string* err) const override {
-    if (!out) {
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
+                             std::string* err) const override {
+    if (!out || !input.model_fragments) {
       if (err) {
-        *err = "ModelFragment contract compile: child stage output is null";
+        *err = "ModelFragment: missing build-local contract context";
       }
       return false;
     }
-    *out = compile_fragment_contracts(err);
-    if (out->empty()) {
-      if (err && err->empty()) {
-        *err = "ModelFragment contract compile: fragment produced no semantic stages";
+    const auto found = input.model_fragments->stage_facts.find(this);
+    if (found == input.model_fragments->stage_facts.end() &&
+        !input.model_fragments->admitted_original.contains(this)) {
+      if (err) {
+        *err = "ModelFragment: selected node has no contextual contract authority";
       }
       return false;
     }
-    if (err) {
-      err->clear();
-    }
-    return true;
+    const auto& facts =
+        found == input.model_fragments->stage_facts.end() ? stage_facts_ : found->second;
+    out->node_kind = kind_;
+    out->plugin_kind = "ModelFragment";
+    out->element_name = elements_.empty() ? std::string() : elements_.front();
+    out->logical_stage_id = label_;
+    out->definition = contract_definition();
+    out->child_stages = compile_fragment_contracts(err, &facts);
+    out->renderable = !out->child_stages.empty();
+    return out->renderable;
+  }
+
+  const ModelFragmentPlanSource& plan_source() const {
+    return *plan_source_;
+  }
+  const std::vector<ExecutionStage>& execution_stages() const {
+    return execution_stages_;
+  }
+  ModelStage stage_context() const {
+    return stage_context_;
+  }
+  const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags() const {
+    return route_flags_;
   }
 
   void apply_compiled_contract(const CompiledNodeContract&, std::string* err) override {
@@ -2691,11 +2753,13 @@ public:
   }
 
 private:
-  const ModelFragment::StageFacts* find_stage_facts(const std::string& stage_name) const {
+  const ModelFragment::StageFacts*
+  find_stage_facts(const std::string& stage_name,
+                   const std::vector<ModelFragment::StageFacts>& facts) const {
     if (stage_name.empty()) {
       return nullptr;
     }
-    for (const auto& entry : stage_facts_) {
+    for (const auto& entry : facts) {
       if (entry.stage_name == stage_name) {
         return &entry;
       }
@@ -2703,7 +2767,10 @@ private:
     return nullptr;
   }
 
-  std::vector<CompiledNodeContract> compile_fragment_contracts(std::string* err) const {
+  std::vector<CompiledNodeContract>
+  compile_fragment_contracts(std::string* err,
+                             const std::vector<ModelFragment::StageFacts>* contextual) const {
+    const auto& facts = *contextual;
     using namespace simaai::neat::pipeline_internal::sima;
 
     if (err) {
@@ -2714,17 +2781,17 @@ private:
     auto resolve_stage_facts =
         [&](const PipelineElementSpec& element) -> const ModelFragment::StageFacts* {
       if (!element.stage_id.empty()) {
-        if (const auto* entry = find_stage_facts(element.stage_id)) {
+        if (const auto* entry = find_stage_facts(element.stage_id, facts)) {
           return entry;
         }
       }
       if (!element.element_name.empty()) {
-        if (const auto* entry = find_stage_facts(element.element_name)) {
+        if (const auto* entry = find_stage_facts(element.element_name, facts)) {
           return entry;
         }
       }
-      if (stage_facts_.size() == 1U) {
-        return &stage_facts_.front();
+      if (facts.size() == 1U) {
+        return &facts.front();
       }
       return nullptr;
     };
@@ -2911,14 +2978,22 @@ private:
   std::vector<std::string> elements_;
   std::vector<ModelFragment::StageFacts> stage_facts_;
   std::shared_ptr<const ModelLineageBinding> model_lineage_;
+  std::shared_ptr<const ModelFragmentPlanSource> plan_source_;
+  std::vector<ExecutionStage> execution_stages_;
+  ModelStage stage_context_;
+  std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags_;
 };
 
 static std::vector<std::shared_ptr<Node>>
 make_fragment_nodes(const ModelFragment& frag, const std::string& label,
-                    std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr) {
+                    std::shared_ptr<const ModelLineageBinding> model_lineage,
+                    std::shared_ptr<const ModelFragmentPlanSource> source,
+                    std::vector<ExecutionStage> execution_stages, ModelStage stage_context,
+                    std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags) {
   std::vector<std::shared_ptr<Node>> nodes;
   nodes.push_back(std::make_shared<ModelFragmentNode>(
-      "ModelFragment", label, frag.gst, frag.elements, frag.stage_facts, std::move(model_lineage)));
+      "ModelFragment", label, frag.gst, frag.elements, frag.stage_facts, std::move(model_lineage),
+      std::move(source), std::move(execution_stages), stage_context, std::move(route_flags)));
   return nodes;
 }
 
@@ -3310,6 +3385,258 @@ static ModelFragment build_fragment_linear(const std::vector<ExecutionStage>& st
 
 } // namespace
 
+std::shared_ptr<const ModelFragmentCompileContext>
+prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                 std::string* error) {
+  namespace sc = pipeline_internal::sima::static_contract;
+  auto context = std::make_shared<ModelFragmentCompileContext>();
+  try {
+    for (std::size_t first = 0; first < nodes.size();) {
+      const auto* entry = dynamic_cast<const ModelFragmentNode*>(nodes[first].get());
+      if (!entry) {
+        ++first;
+        continue;
+      }
+      const auto& source = entry->plan_source();
+      const auto* lineage = entry->model_lineage_binding();
+      std::size_t end = first + 1U;
+      auto last_stage = entry->stage_context();
+      // A fragment contains its entire selected model region. Only a later
+      // region can continue that invocation; restarting a region (or entering
+      // a full route) starts another execution of the same immutable model.
+      // Names and shared lineage identify the model, not the invocation.
+      {
+        while (end < nodes.size() && last_stage != ModelStage::Full) {
+          const auto* next = dynamic_cast<const ModelFragmentNode*>(nodes[end].get());
+          const auto* cvu = node_model_processcvu_contract(nodes[end]);
+          if (!next && cvu && cvu->model_execution_source.get() == &source &&
+              !cvu->physical_command_ids.empty()) {
+            const auto* binding = node_model_lineage_binding(nodes[end]);
+            if (binding && binding->stage_role == ModelLineageStageRole::Preprocess) {
+              break; // The next invocation owns its own ingress arena.
+            }
+            last_stage = ModelStage::Postprocess;
+            ++end;
+            continue;
+          }
+          const auto* next_lineage = next ? next->model_lineage_binding() : nullptr;
+          const bool same_lineage = lineage && next_lineage && !lineage->lineage_key.empty() &&
+                                    next_lineage->lineage_key == lineage->lineage_key;
+          const bool same_source = next && &next->plan_source() == &source;
+          if (!next || (!same_lineage && !same_source) ||
+              next->plan_source().digest != source.digest ||
+              next->stage_context() == ModelStage::Full || next->stage_context() <= last_stage) {
+            break;
+          }
+          last_stage = next->stage_context();
+          ++end;
+        }
+      }
+      const auto preserve_admitted = [&] {
+        for (std::size_t index = first; index < end; ++index) {
+          context->admitted_original.emplace(nodes[index].get());
+        }
+      };
+      const auto* upstream_lineage =
+          first > 0U ? node_model_lineage_binding(nodes[first - 1U]) : nullptr;
+      const auto* upstream_cvu =
+          first > 0U ? node_model_processcvu_contract(nodes[first - 1U]) : nullptr;
+
+      sc::FrameSlotArenaRoute route;
+      std::unordered_set<sc::PhysicalCommandId> selected;
+      std::unordered_map<sc::PhysicalCommandId, std::size_t> positions;
+      const auto add_commands = [&](std::span<const sc::PhysicalCommandId> commands,
+                                    std::size_t position) {
+        for (const auto id : commands) {
+          if (id >= source.physical.commands.size() || !selected.emplace(id).second) {
+            throw std::runtime_error("ModelFragment: selected route repeats or omits an exact "
+                                     "physical command identity");
+          }
+          positions.emplace(id, position);
+          route.commands.push_back(id);
+        }
+      };
+      for (std::size_t i = first; i < end; ++i) {
+        if (const auto* fragment = dynamic_cast<const ModelFragmentNode*>(nodes[i].get())) {
+          for (const auto& stage : fragment->execution_stages()) {
+            add_commands(stage.physical_command_ids, i);
+          }
+        } else {
+          add_commands(node_model_processcvu_contract(nodes[i])->physical_command_ids, i);
+        }
+      }
+      for (const auto id : route.commands) {
+        for (const auto predecessor : source.physical.commands[id].predecessors) {
+          const auto found = positions.find(predecessor);
+          if (found != positions.end() && found->second > positions.at(id)) {
+            throw std::runtime_error(
+                "ModelFragment: route reads a carrier before its selected producer");
+          }
+        }
+      }
+      if (lineage && upstream_lineage && !lineage->lineage_key.empty() &&
+          upstream_lineage->lineage_key == lineage->lineage_key &&
+          upstream_lineage->stage_role == ModelLineageStageRole::Preprocess && upstream_cvu &&
+          upstream_cvu->model_execution_source.get() == &source &&
+          upstream_cvu->runtime_contract.frame_arena_size_bytes ==
+              source.arena.allocation_bytes()) {
+        // The real model-owned ingress already allocated the admitted arena.
+        // Its immutable offsets remain the authority for all following stages.
+        preserve_admitted();
+        first = end;
+        continue;
+      }
+
+      if (route.commands.empty()) {
+        throw std::runtime_error("ModelFragment: selected route has no physical commands");
+      }
+      std::sort(route.commands.begin(), route.commands.end());
+      if (route.commands.size() == source.physical.commands.size()) {
+        preserve_admitted();
+        first = end; // Complete route: preserve the existing admitted placement.
+        continue;
+      }
+      const auto carrier = [&](sc::ValueId id) {
+        const auto* value = source.execution.value(id);
+        if (!value || !value->storage_binding) {
+          throw std::runtime_error("ModelFragment: route value has no physical carrier");
+        }
+        return value->storage_binding->carrier_id;
+      };
+      std::unordered_set<sc::CarrierId> produced, consumed;
+      for (const auto id : route.commands) {
+        const auto& command = source.physical.commands[id];
+        for (const auto value : command.outputs) {
+          produced.emplace(carrier(value));
+        }
+        for (const auto value : command.inputs) {
+          consumed.emplace(carrier(value));
+        }
+      }
+      std::unordered_set<sc::ValueId> imported;
+      std::unordered_set<sc::CarrierId> published;
+      const auto derives_from = [&](sc::ValueId value, sc::ValueId root) {
+        for (std::size_t remaining = source.execution.values().size(); remaining > 0U;
+             --remaining) {
+          if (value == root) {
+            return true;
+          }
+          const auto* current = source.execution.value(value);
+          if (!current || !current->storage_binding || !current->storage_binding->source_value_id) {
+            return false;
+          }
+          value = *current->storage_binding->source_value_id;
+        }
+        return false;
+      };
+      const auto import = [&](sc::ValueId value) {
+        if (!produced.contains(carrier(value)) && imported.emplace(value).second) {
+          route.imported_inputs.push_back(value);
+        }
+      };
+      // Preserve authored public input order before introducing the ports at a
+      // newly exposed fragment boundary. Input samples keep that same order.
+      for (const auto value : source.execution.model_inputs()) {
+        const bool selected_input = std::any_of(
+            route.commands.begin(), route.commands.end(), [&](sc::PhysicalCommandId id) {
+              const auto& inputs = source.physical.commands[id].inputs;
+              return std::any_of(inputs.begin(), inputs.end(),
+                                 [&](sc::ValueId input) { return derives_from(input, value); });
+            });
+        if (selected_input) {
+          import(value);
+        }
+      }
+      for (const auto id : route.commands) {
+        for (const auto value : source.physical.commands[id].inputs) {
+          const bool imported_view =
+              std::any_of(route.imported_inputs.begin(), route.imported_inputs.end(),
+                          [&](sc::ValueId root) { return derives_from(value, root); });
+          if (!imported_view) {
+            import(value);
+          }
+        }
+      }
+      for (const auto id : route.commands) {
+        for (const auto value : source.physical.commands[id].outputs) {
+          const auto root = carrier(value);
+          if (!consumed.contains(root) && published.emplace(root).second) {
+            route.published_outputs.push_back(value);
+          }
+        }
+      }
+      for (const auto& output : source.execution.model_outputs()) {
+        const auto root = carrier(output.value_id);
+        if (produced.contains(root) && published.emplace(root).second) {
+          route.published_outputs.push_back(output.value_id);
+        }
+      }
+      // An external consumer is outside this model's placement authority.
+      // Keep the shared interoperable heap when a further processing node is
+      // selected; an application-only terminal needs only CPU/MLA visibility.
+      if (end < nodes.size() && nodes[end] && nodes[end]->kind() != "Output") {
+        route.output_device_access = static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74);
+      }
+      std::string plan_error;
+      auto arena = sc::FrameSlotArenaPlan::compile(
+          source.execution, source.physical, source.arena.reuse_policy(),
+          sc::kLegacyEvoCmaRegionAlignmentBytes, &plan_error, sc::kModalixProductionArenaDmsPolicy,
+          {}, &route);
+      if (!arena) {
+        throw std::runtime_error("ModelFragment: selected route arena: " + plan_error);
+      }
+      for (std::size_t i = first; i < end; ++i) {
+        if (const auto* fragment = dynamic_cast<const ModelFragmentNode*>(nodes[i].get())) {
+          context->stage_facts.emplace(fragment, build_stage_facts_from_execution_plan(
+                                                     fragment->execution_stages(), source.mpk,
+                                                     fragment->route_flags(), std::nullopt,
+                                                     fragment->stage_context(), source.execution,
+                                                     *arena, source.physical));
+        } else {
+          const auto* original = node_model_processcvu_contract(nodes[i]);
+          auto cvu = sc::build_dmabuf_plan_processcvu_command_contract(
+              source.execution, source.physical, original->physical_command_ids, *arena,
+              &plan_error);
+          if (!cvu) {
+            throw std::runtime_error("ModelFragment: selected CVU continuation: " + plan_error);
+          }
+          cvu->physical_command_role = original->physical_command_role;
+          cvu->model_execution_source = original->model_execution_source;
+          cvu->physical_command_ids = original->physical_command_ids;
+          context->processcvu.emplace(nodes[i].get(), std::move(*cvu));
+        }
+      }
+      first = end;
+    }
+  } catch (const std::exception& ex) {
+    if (error) {
+      *error = ex.what();
+    }
+    return nullptr;
+  }
+  if (error) {
+    error->clear();
+  }
+  return context;
+}
+
+bool apply_model_fragment_contract_context(const Node& node, const ContractCompileInput& input,
+                                           CompiledNodeContract* compiled, std::string* error) {
+  if (!compiled || !input.model_fragments) {
+    if (error) {
+      *error = "ModelFragment: missing contextual compilation result";
+    }
+    return false;
+  }
+  const auto found = input.model_fragments->processcvu.find(&node);
+  if (found == input.model_fragments->processcvu.end()) {
+    return true;
+  }
+  return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
+      compiled->node_kind, compiled->element_name, compiled->logical_stage_id, compiled->definition,
+      found->second, compiled, error);
+}
+
 // Automatic selection accepts only a local NVMe data volume. Matching the block device keeps NFS
 // and every other network filesystem out without maintaining an fstype allow-list, and a read-only
 // or system mount is never a model store.
@@ -3465,6 +3792,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   execution_admission_ = {};
   execution_plan_digest_.clear();
   mpk_contract_.reset();
+  dmabuf_fragment_source_.reset();
   dmabuf_plan_execution_plan_.reset();
   dmabuf_frame_arena_plan_.reset();
   dmabuf_physical_execution_plan_.reset();
@@ -3634,6 +3962,9 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   dmabuf_plan_execution_plan_ = std::move(compiled.plan);
   dmabuf_frame_arena_plan_ = std::move(compiled.arena_plan);
   dmabuf_physical_execution_plan_ = std::move(compiled.physical_plan);
+  dmabuf_fragment_source_ = std::make_shared<const ModelFragmentPlanSource>(
+      ModelFragmentPlanSource{*dmabuf_plan_execution_plan_, *dmabuf_physical_execution_plan_,
+                              *dmabuf_frame_arena_plan_, mpk_contract_, execution_plan_digest_});
 }
 
 void ModelPack::prepare_for_execution() const {
@@ -3708,9 +4039,16 @@ std::vector<ModelFragment::StageFacts> ModelPack::build_stage_facts(
     const std::vector<ExecutionStage>& stages,
     const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract,
     ModelStage stage_context) const {
-  return build_stage_facts_from_execution_plan(
+  auto facts = build_stage_facts_from_execution_plan(
       stages, mpk_contract_, model_managed_route_flags_, upstream_handoff_contract, stage_context,
       *dmabuf_plan_execution_plan_, *dmabuf_frame_arena_plan_, *dmabuf_physical_execution_plan_);
+  for (std::size_t index = 0; index < facts.size(); ++index) {
+    if (facts[index].processcvu_contract) {
+      facts[index].processcvu_contract->model_execution_source = dmabuf_fragment_source_;
+      facts[index].processcvu_contract->physical_command_ids = stages[index].physical_command_ids;
+    }
+  }
+  return facts;
 }
 
 std::vector<ModelFragment::StageFacts>
@@ -3796,7 +4134,9 @@ std::vector<std::shared_ptr<Node>> ModelPack::to_nodes(ModelStage stage) const {
   if (frag.gst.empty())
     return {};
   const std::string label = stage_label(stage);
-  return make_fragment_nodes(frag, label);
+  return make_fragment_nodes(frag, label, nullptr, dmabuf_fragment_source_,
+                             flatten_execution_plan(execution_plan(), stage), stage,
+                             model_managed_route_flags_);
 }
 
 CompiledProcessCvuContract
@@ -3824,6 +4164,8 @@ ModelPack::project_model_managed_preproc_contract(const PreprocOptions& options)
     throw std::runtime_error(
         "ModelPack: model-managed graph-200 ingress projection absorbed no physical command");
   }
+  compiled.model_execution_source = dmabuf_fragment_source_;
+  compiled.physical_command_ids = std::move(absorbed);
   return compiled;
 }
 
@@ -3915,7 +4257,8 @@ ModelPack::infer_block(const std::string& upstream_name,
                             options_.name_suffix, std::move(stage_facts));
   if (frag.gst.empty())
     return {};
-  return make_fragment_nodes(frag, "infer", std::move(model_lineage));
+  return make_fragment_nodes(frag, "infer", std::move(model_lineage), dmabuf_fragment_source_,
+                             std::move(infer_seq), ModelStage::MlaOnly, model_managed_route_flags_);
 }
 
 std::string ModelPack::apply_name_suffix(const std::string& base) const {

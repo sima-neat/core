@@ -5,6 +5,7 @@
 #include "model/internal/InputPlanner.h"
 #include "model/internal/RoutePlanner.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+#include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "test_main.h"
@@ -1212,6 +1213,32 @@ RUN_TEST(
                     occurrences("batch-sz-model=") == 0U,
                 "strict DMA-BUF MLA fragment leaked deprecated property-owned runtime "
                 "configuration instead of using its typed manifest");
+        simaai::neat::ContractCompileInput compile_input;
+        simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics compile_diagnostics;
+        const auto contextual = simaai::neat::compile_node_contracts(
+            real_model.to_nodes(ModelStage::MlaOnly), compile_input, &compile_diagnostics);
+        require(contextual.fully_renderable && compile_diagnostics.errors.empty(),
+                "partial A65 route must retain a complete per-build contract");
+        std::size_t contextual_a65 = 0U;
+        const auto check_a65 = [&](const auto& self,
+                                   const simaai::neat::CompiledNodeContract& stage) -> void {
+          for (const auto& child : stage.child_stages)
+            self(self, child);
+          if (!stage.transport || stage.transport->plugin_kind != "neatprocesstvm")
+            return;
+          const auto encoded =
+              direct_tvm_contracts("direct-contract-b64=" + stage.transport->direct_contract_b64);
+          require(encoded.size() == 1U &&
+                      encoded.front().at("arena_bytes").get<std::uint64_t>() ==
+                          stage.transport->runtime_contract.frame_arena_size_bytes,
+                  "per-build A65 property and typed carrier contract must use the same arena");
+          ++contextual_a65;
+        };
+        for (const auto& stage : contextual.stages)
+          check_a65(check_a65, stage);
+        require(contextual_a65 == host_indices.size(),
+                "every selected A65 stage must carry its contextual runtime property");
+
         const auto a65_contracts = direct_tvm_contracts(fragment);
         require(a65_contracts.size() == 3U,
                 "RF-DETR fragment lost one prepared direct A65 contract");

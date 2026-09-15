@@ -696,6 +696,7 @@ if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_
   unset(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT CACHE)
   find_path(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
     NAMES gst/SimaPreparedRuntimeAbi.h
+    DOC "Root include directory that contains gst/, ev/, and neat/ headers exported by internals"
     HINTS
       ${SIMANEAT_LOCAL_DEP_HEADER_ROOT}
       /usr/include

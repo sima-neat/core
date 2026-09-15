@@ -1237,8 +1237,12 @@ def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
   graph.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
   graph.add(pyneat.nodes.output())
 
-  text = graph.describe_backend().lower()
-  assert "detessdequant" in text
+  # A fused physical cohort need not use the logical operation as its element name.
+  assert "detessdequant" in graph.describe().lower()
+  info = model.info()
+  assert info.capabilities.has_post_detessellation
+  assert info.capabilities.has_post_dequantization
+  assert "neatprocesscvu" in graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_sima_box_decode_stage(tmp_path):

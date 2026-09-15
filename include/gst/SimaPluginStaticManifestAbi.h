@@ -28,7 +28,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)29)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)30)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -154,6 +154,13 @@ typedef enum SimaPluginFrameArenaEscapePolicy {
   SIMA_PLUGIN_FRAME_ARENA_ESCAPE_CPU_MAPPABLE_PUBLIC = 1
 } SimaPluginFrameArenaEscapePolicy;
 
+/* Address authority for an input span; independent of output arena ownership. */
+typedef enum SimaPluginPhysicalAddressSource {
+  SIMA_PLUGIN_PHYSICAL_ADDRESS_DIRECT_CARRIER_SPAN = 0,
+  SIMA_PLUGIN_PHYSICAL_ADDRESS_RUNTIME_PHYSICAL_BINDING = 1,
+  SIMA_PLUGIN_PHYSICAL_ADDRESS_FRAME_ARENA_SPAN = 2
+} SimaPluginPhysicalAddressSource;
+
 typedef struct SimaPluginPhysicalBuffer {
   gint physical_index;
   gint allocator_index;
@@ -165,6 +172,7 @@ typedef struct SimaPluginPhysicalBuffer {
   gint source_physical_index;
   gint64 source_byte_offset;
   guint64 required_alignment_bytes;
+  SimaPluginPhysicalAddressSource address_source;
 } SimaPluginPhysicalBuffer;
 
 typedef struct SimaPluginLogicalTensor {
