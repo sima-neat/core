@@ -132,8 +132,160 @@ install_for_environment
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertEqual(
             result.stdout.splitlines(),
-            ["PYNEAT", "DEBS", "I2C", "SKILLS"],
+            ["DEBS", "I2C", "SKILLS"],
         )
+
+
+class BoardInstallPreflightTest(unittest.TestCase):
+    def run_board_install(
+        self, *, fail_at: str = "", wheel_count: int = 1
+    ) -> subprocess.CompletedProcess[str]:
+        return run_bash(
+            rf"""
+source "$1"
+tmp="$(mktemp -d)"
+INSTALLER_TMP_DIRS=("${{tmp}}")
+DEBS=(./core.deb ./firmware.deb)
+events="${{tmp}}/events"
+trap 'cat "${{events}}"; cleanup_installer_tmp_dirs' EXIT
+step() {{
+  printf '%s\n' "$1" >> "${{events}}"
+  [[ "$1" != '{fail_at}' ]]
+}}
+verify_bundled_board_runtime() {{ step RUNTIME; }}
+collect_wheel_files() {{
+  local -n out="$2"
+  out=()
+  for ((i = 0; i < {wheel_count}; i++)); do out+=(./pyneat.whl); done
+}}
+refresh_apt_metadata_for_board_install() {{ step METADATA; }}
+apt_package_database_is_healthy() {{ step HEALTH; }}
+collect_board_heal_specs() {{ printf '%s\n' 'platform=installed'; }}
+verify_simulated_package_removals() {{ step REMOVALS; }}
+install_python_environment() {{
+  [[ "$1" == ./pyneat.whl ]] || return 2
+  step PYNEAT
+  true  # A guarded caller must not suppress errexit on an earlier failure.
+}}
+stop_board_runtime_before_install() {{ step STOP; }}
+complete_board_install_after_packages() {{ step COMPLETE; }}
+run_sudo() {{
+  if [[ " $* " == *" --simulate "* ]]; then
+    printf '%s\n' "$@" | grep -v '^--simulate$' > "${{tmp}}/simulation-args"
+    step SIMULATE
+  elif [[ "$2" == install ]]; then
+    printf '%s\n' "$@" > "${{tmp}}/install-args"
+    cmp "${{tmp}}/simulation-args" "${{tmp}}/install-args" || return 2
+    step APPLY
+  else
+    step CHECK
+  fi
+}}
+install_debs_on_board
+"""
+        )
+
+    def test_checks_runtime_and_apt_before_python_or_runtime_shutdown(self) -> None:
+        result = self.run_board_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines()[-10:],
+            ["RUNTIME", "METADATA", "HEALTH", "SIMULATE", "REMOVALS",
+             "PYNEAT", "STOP", "APPLY", "CHECK", "COMPLETE"],
+        )
+
+    def test_preflight_failure_does_not_modify_python_or_runtime(self) -> None:
+        for stage in ("RUNTIME", "HEALTH", "SIMULATE", "REMOVALS"):
+            with self.subTest(stage=stage):
+                result = self.run_board_install(fail_at=stage)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(stage, result.stdout.splitlines())
+                for mutation in ("PYNEAT", "STOP", "APPLY", "COMPLETE"):
+                    self.assertNotIn(mutation, result.stdout.splitlines())
+
+    def test_missing_or_ambiguous_wheel_fails_before_mutations(self) -> None:
+        for count in (0, 2):
+            with self.subTest(wheel_count=count):
+                result = self.run_board_install(wheel_count=count)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("exactly one wheel", result.stderr)
+                for step in ("METADATA", "PYNEAT", "STOP", "APPLY"):
+                    self.assertNotIn(step, result.stdout.splitlines())
+
+    def test_python_failure_does_not_stop_runtime_or_apply_packages(self) -> None:
+        result = self.run_board_install(fail_at="PYNEAT")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PYNEAT", result.stdout.splitlines())
+        self.assertNotIn("STOP", result.stdout.splitlines())
+        self.assertNotIn("APPLY", result.stdout.splitlines())
+
+    def run_incoming_firmware_check(
+        self, *, receipt: str = "qualified", missing: str = "", duplicate: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        return run_bash(
+            rf"""
+source "$1"
+tmp="$(mktemp -d)"
+INSTALLER_TMP_DIRS=("${{tmp}}")
+root="${{tmp}}/package"
+mkdir -p "${{root}}/DEBIAN" "${{root}}/usr/libexec/sima-neat-firmware" \
+  "${{root}}/usr/share/sima-neat-firmware"
+cat > "${{root}}/DEBIAN/control" <<'CONTROL'
+Package: neat-ev74-firmware
+Version: 1.0
+Architecture: arm64
+Maintainer: Test <test@example.com>
+Description: Incoming runtime preflight fixture
+CONTROL
+cat > "${{root}}/usr/libexec/sima-neat-firmware/activate-ev74-firmware.sh" <<'VERIFIER'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --check-runtime ]]
+[[ "$(cat "$2")" == qualified ]]
+printf 'INCOMING_RECEIPT_OK\n'
+VERIFIER
+printf '%s\n' '{receipt}' > "${{root}}/usr/share/sima-neat-firmware/runtime-profile.json"
+case '{missing}' in
+  verifier) rm "${{root}}/usr/libexec/sima-neat-firmware/activate-ev74-firmware.sh" ;;
+  receipt) rm "${{root}}/usr/share/sima-neat-firmware/runtime-profile.json" ;;
+esac
+dpkg-deb --build "${{root}}" "${{tmp}}/firmware.deb" >/dev/null
+DEBS=("${{tmp}}/firmware.deb")
+if [[ '{duplicate}' == True ]]; then DEBS+=("${{tmp}}/firmware.deb"); fi
+board_runtime_is_legacy() {{ return 1; }}
+verify_bundled_board_runtime
+printf 'VERIFIED\n'
+"""
+        )
+
+    def test_direct_profile_requires_firmware_but_legacy_does_not(self) -> None:
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                result = run_bash(
+                    f'''
+source "$1"
+DEBS=()
+board_runtime_is_legacy() {{ return {0 if legacy else 1}; }}
+verify_bundled_board_runtime
+'''
+                )
+                self.assertEqual(result.returncode, 0 if legacy else 1)
+                if not legacy:
+                    self.assertIn("firmware package is missing", result.stderr)
+
+    def test_verifies_incoming_package_receipt(self) -> None:
+        result = self.run_incoming_firmware_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("INCOMING_RECEIPT_OK", result.stdout)
+        self.assertIn("VERIFIED", result.stdout)
+
+    def test_rejects_unqualified_or_malformed_incoming_firmware(self) -> None:
+        for options in ({"receipt": "unqualified"}, {"missing": "receipt"},
+                        {"missing": "verifier"}, {"duplicate": True}):
+            with self.subTest(options=options):
+                result = self.run_incoming_firmware_check(**options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("VERIFIED", result.stdout)
 
 
 class Ros2SdkInstallTest(unittest.TestCase):

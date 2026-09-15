@@ -47,6 +47,15 @@ artifact closure without choosing or rewriting dependency versions. Packages
 outside the artifact remain platform-owned; an incompatible platform must be
 updated rather than repaired by Core or LLiMa.
 
+Install on a DevKit that satisfies the selected Internals runtime profile. The
+pinned SDK records the build environment; a matching release number alone does
+not establish kernel, firmware, or platform-package compatibility. Before
+changing Python, installed packages, or runtime state, the board installer runs
+the incoming Internals runtime check and simulates the package transaction. If
+either check fails, use a compatible platform image and package set rather than
+forcing dependencies or downgrading platform libraries. This preflight catches
+incompatibilities early; it does not make Python and APT installation atomic.
+
 ### Direct-driver recovery
 
 For the direct-driver platform, `deps/manifest.json` selects the Internals and

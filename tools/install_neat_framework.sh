@@ -1813,12 +1813,56 @@ install_debs_in_ros2_sdk() {
   fi
 }
 
+# Use the incoming firmware's verifier and receipt, not the installed version.
+# Only these two small files are extracted; no payload or maintainer script runs.
+verify_bundled_board_runtime() {
+  if board_runtime_is_legacy; then
+    return 0
+  fi
+
+  local deb package firmware_deb="" preflight_dir
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package)" || return 1
+    if [[ "${package}" == neat-ev74-firmware ]]; then
+      if [[ -n "${firmware_deb}" ]]; then
+        echo "Expected one incoming neat-ev74-firmware package, found multiple." >&2
+        return 1
+      fi
+      firmware_deb="${deb}"
+    fi
+  done
+  if [[ -z "${firmware_deb}" ]]; then
+    echo "Cannot verify the board runtime: incoming neat-ev74-firmware package is missing." >&2
+    return 1
+  fi
+
+  preflight_dir="$(mktemp -d /tmp/sima-neat-runtime-preflight-XXXXXX)" || return 1
+  INSTALLER_TMP_DIRS+=("${preflight_dir}")
+  local verifier=./usr/libexec/sima-neat-firmware/activate-ev74-firmware.sh
+  local receipt=./usr/share/sima-neat-firmware/runtime-profile.json
+  if ! dpkg-deb --fsys-tarfile "${firmware_deb}" |
+      tar -xf - -C "${preflight_dir}" "${verifier}" "${receipt}"; then
+    echo "Incoming firmware package lacks its runtime verifier or receipt." >&2
+    return 1
+  fi
+  if ! bash "${preflight_dir}/${verifier}" --check-runtime "${preflight_dir}/${receipt}"; then
+    echo "Incoming Neat runtime is not qualified for this board. Select a matching platform image and package bundle before installing." >&2
+    return 1
+  fi
+}
+
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
+  verify_bundled_board_runtime || return 1
+  local -a wheel_files=()
+  collect_wheel_files "." wheel_files
+  if [[ "${#wheel_files[@]}" -ne 1 ]]; then
+    echo "Board installation requires exactly one wheel file in the current directory." >&2
+    return 1
+  fi
   refresh_apt_metadata_for_board_install
-  stop_board_runtime_before_install
 
   # Do not start a large package transaction from an unhealthy APT state.
   if ! apt_package_database_is_healthy; then
@@ -1866,6 +1910,11 @@ install_debs_on_board() {
     exit 1
   fi
 
+  # Reject incompatible bundles before changing Python, packages or runtime state.
+  # Keep one transaction for simulation and application; this is not rollback.
+  install_python_environment "${wheel_files[0]}"
+  stop_board_runtime_before_install
+
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
     complete_board_install_after_packages
@@ -1909,6 +1958,7 @@ remove_stale_global_sima_lmm_pip_install() {
 }
 
 install_python_environment() {
+  local wheel_file="$1"
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
   remove_stale_global_sima_lmm_pip_install
@@ -1919,14 +1969,7 @@ install_python_environment() {
   print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 
-  WHEEL_FILES=()
-  collect_wheel_files "." WHEEL_FILES
-  WHEEL_FILE="${WHEEL_FILES[0]:-}"
-  if [[ -z "${WHEEL_FILE}" ]]; then
-    echo "No wheel file found in current directory." >&2
-    exit 1
-  fi
-  "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
+  "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${wheel_file}"
 }
 
 validate_single_sima_neat_package_pair() {
@@ -2176,9 +2219,8 @@ install_for_environment() {
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     modalix-board)
-      # Preserve the established board ordering: provision PyNeat before the
-      # board-specific package recovery and runtime restart transaction.
-      install_python_environment
+      # The board path validates the incoming runtime and package transaction
+      # before provisioning PyNeat or replacing installed packages.
       install_debs_on_board
       configure_board_i2c_access
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
