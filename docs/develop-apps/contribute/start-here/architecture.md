@@ -438,6 +438,53 @@ families, with these additional invariants:
   `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
   consumers must not infer either format from buffer size.
 
+##### YOLOX segmentation + pose BoxDecode contract
+
+`yolox-seg-pose` is the packed YOLOX export that carries box, mask, and keypoint heads in one
+model. It uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
+families, with these additional invariants:
+
+- The inference contract is thirteen grouped-by-role inputs: three feature levels of
+  `[bbox, class, mask_coeff, kpt]` in stride-8/16/32 order, followed by one shared mask
+  prototype. Roles are positional, not inferred from tensor values. `Auto` resolves to
+  `GroupedByRoleLogit`, any layout other than `GroupedByRole`/`GroupedByRoleLogit` is rejected
+  before lowering, and score activation is always normalized to sigmoid.
+- The class head is `Concat(objectness[1], classes[N])`, so its depth is one greater than the
+  class-block width. Core derives `N` as that depth minus one: `Model::Options::num_classes = 0`
+  selects the derived value, and a positive value must match it. This differs from the YOLO26
+  rule only by the objectness offset — the class-head depth remains authoritative, and a
+  contradiction fails during contract construction rather than reaching the backend, where a
+  wrong count mis-strides the scorer and yields plausible but incorrect classes.
+- The MPK-authored and standalone routes normalize through the same family overrides, so a
+  model-managed subset and a hand-built static contract compile to the same layout, activation,
+  and class count.
+- Output is a single box-leading buffer carrying three regions — boxes, masks, then keypoints —
+  each strided by `top_k`. Because boxes lead, `decode_bbox(...)` and `BoxDecodeResults(...)`
+  stay valid on the same payload, while `decode_segmentation_pose(...)` returns all three.
+- The payload does not encode `top_k`, so region offsets are not directly readable from it.
+  `decode_segmentation_pose(...)` recovers the slot count by division —
+  `(size - 4) / (24 + 160*160 + 204)` — and derives the offsets from that. The division is
+  well posed only under all four conditions below, and a consumer reimplementing it must hold
+  the same ones:
+  - The detection-format tag selects the layout before any size arithmetic runs. A tag naming
+    a different layout is rejected, and an untagged buffer is accepted only as rank-1 `UInt8`.
+  - Every record size is a compile-time constant: a 4-byte count header, a 24-byte box record
+    and a 204-byte pose record (both `static_assert`ed), and one `160x160` mask plane.
+  - All three regions share one slot count, which the backend guarantees by sizing every
+    region from `out_box_slots()`. Upstream instead strided its box array by a fixed capacity
+    and its masks by `top_k`, which the same division cannot resolve; a65 `boxrender` still
+    reads masks at a hardcoded 20-box stride and so misreads any payload with `top_k != 20`.
+  - A body that is not a whole multiple of the combined stride is rejected rather than
+    rounded, and the count header is clamped to the derived capacity, so a corrupt header
+    cannot drive reads past the end of the buffer.
+- Keypoint gating by class travels through `Model::Options::pose_classes`, the typed static
+  manifest's `pose_classes` field, and the backend's JSON control of the same name. Core
+  copies keypoint rows through without interpreting them; the zeroing is the backend's. With
+  a gate set, a detection whose class carries no keypoints arrives all-zero including
+  visibility, so consumers gate on visibility rather than on a decoder-side class list.
+  Leaving it empty treats every class as pose-bearing. Core validates the list against the
+  resolved `num_classes` and rejects it for decode types that cannot gate keypoints.
+
 ---
 
 ### `contracts/` -- validation rules
