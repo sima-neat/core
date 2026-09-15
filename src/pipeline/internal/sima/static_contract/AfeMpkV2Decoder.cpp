@@ -1279,15 +1279,10 @@ decode_impl(const std::string_view text,
     }
 
     ModelExecutionPlanData data;
-    data.contract_version = required_string(root, "model_sdk_version", "$");
-    if (data.contract_version != "2.0.0" && data.contract_version != "2.1.0" &&
-        data.contract_version != "2.1.3" && data.contract_version != "3.0.0") {
-      reject(AfeMpkV2DecodeErrorCode::UnsupportedContractVersion, "$.model_sdk_version",
-             "strict decoder supports only exact contract versions 2.0.0, 2.1.0, 2.1.3, and "
-             "3.0.0");
+    if (const auto version = root.find("model_sdk_version");
+        version != root.end() && version->is_string()) {
+      data.contract_version = version->get<std::string>();
     }
-    result.proof.push_back({"contract.version", "MPK $.model_sdk_version exactly equals '" +
-                                                    data.contract_version + "'"});
 
     const auto& input_array = *required_member_ptr(root, "input_nodes", "$");
     if (!input_array.is_array() || input_array.empty()) {
@@ -1388,10 +1383,6 @@ decode_impl(const std::string_view text,
                              path + ".config_params");
         }
       } else if (processor == "A65") {
-        if (data.contract_version != "2.1.0" && data.contract_version != "2.1.3") {
-          reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, path + ".config_params",
-                 "A65 host modules require an exact typed 2.1.0 or 2.1.3 contract");
-        }
         require_exact_keys(config, {"input_names", "input_types", "output_types"},
                            path + ".config_params");
       } else {
@@ -1423,11 +1414,10 @@ decode_impl(const std::string_view text,
         reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + ".config_params.kernel",
                "non-MLA plugin has no exact kernel token");
       }
-      const auto descriptor = lookup_exact_kernel(data.contract_version, processor, kernel);
+      const auto descriptor = lookup_exact_kernel(processor, kernel);
       if (!descriptor.has_value()) {
         reject(AfeMpkV2DecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
-               "no exact registry entry for ('" + data.contract_version + "', '" + processor +
-                   "', '" + kernel + "')");
+               "no exact registry entry for ('" + processor + "', '" + kernel + "')");
       }
 
       const auto input_nodes = nodes(plugin, "input_nodes", path);
@@ -1637,9 +1627,9 @@ decode_impl(const std::string_view text,
         data.values.push_back(std::move(value));
       }
 
-      result.proof.push_back({"op[" + std::to_string(op.id) + "]",
-                              "exact registry key ('" + data.contract_version + "', '" + processor +
-                                  "', '" + kernel + "') resolves plugin '" + name + "'"});
+      result.proof.push_back(
+          {"op[" + std::to_string(op.id) + "]", "exact registry key ('" + processor + "', '" +
+                                                    kernel + "') resolves plugin '" + name + "'"});
       if (op.kind == OpKind::Mla) {
         ++mla_count;
         mla_op_indices.push_back(data.ops.size());

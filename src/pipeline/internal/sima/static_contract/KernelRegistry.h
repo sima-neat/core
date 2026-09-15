@@ -12,7 +12,6 @@
 namespace simaai::neat::pipeline_internal::sima::static_contract {
 
 struct KernelDescriptor {
-  std::string_view contract_version;
   std::string_view processor;
   std::string_view kernel;
   OpKind kind = OpKind::PassThrough;
@@ -22,10 +21,9 @@ struct KernelDescriptor {
   std::size_t maximum_outputs = 0;
 };
 
-// Exact, versioned lookup only. There is deliberately no case folding,
+// Exact processor/kernel lookup only. There is deliberately no case folding,
 // substring matching, suffix stripping, processor aliasing, or default entry.
-std::optional<KernelDescriptor> lookup_exact_kernel(std::string_view contract_version,
-                                                    std::string_view processor,
+std::optional<KernelDescriptor> lookup_exact_kernel(std::string_view processor,
                                                     std::string_view kernel) noexcept;
 
 bool exact_kernel_arity_is_valid(const KernelDescriptor& descriptor, std::size_t input_count,

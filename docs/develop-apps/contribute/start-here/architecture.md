@@ -199,8 +199,9 @@ storage. Core compiles model-load facts into one immutable internal
   authority, and access direction; and
 - public outputs contain only publication order and the value they expose.
 
-Frozen untyped AFE v2 MPKs use the quarantined `AfeMpkV2Decoder`. It accepts
-only the exact registered `(model SDK version, processor, kernel)` vocabulary,
+AFE v2 MPKs use `AfeMpkV2Decoder`. The optional `model_sdk_version`
+string is retained as provenance and does not restrict admission. The decoder
+accepts only the exact registered `(processor, kernel)` vocabulary,
 resolves full tensor names, validates operation byte equations, and reconciles
 each MPK MLA stage independently with its exact ELF IFM/OFM topology. The
 decoder joins executable evidence by both compiler-authored logical stage ID

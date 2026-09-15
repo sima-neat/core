@@ -7,6 +7,8 @@
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
+#include <nlohmann/json.hpp>
+
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -498,24 +500,6 @@ void expect_error(const std::string& manifest, const MlaElfIoTopology& topology,
 }
 
 void test_exact_registry() {
-  const auto legacy = lookup_exact_kernel("2.0.0", "EV74", "cast_transform");
-  const auto modern_alias = lookup_exact_kernel("2.0.0", "EV74", "cast");
-  check(legacy.has_value() && legacy->kind == OpKind::Cast, "legacy cast token has an exact entry");
-  check(modern_alias.has_value() && modern_alias->kind == OpKind::Cast,
-        "new cast spelling has its own exact entry");
-  check(!lookup_exact_kernel("2.0.0", "EV74", "prefix_cast_transform").has_value(),
-        "registry rejects substring matches");
-  check(!lookup_exact_kernel("2.0.0", "ev74", "cast_transform").has_value(),
-        "registry rejects processor case folding");
-  check(!lookup_exact_kernel("2.0.1", "EV74", "cast_transform").has_value(),
-        "registry rejects version fallback");
-  const auto batch_flatten = lookup_exact_kernel("2.1.0", "EV74", "batch_flatten_transform");
-  check(batch_flatten && batch_flatten->kind == OpKind::Reshape,
-        "AFE 2.1 batch flatten has one exact address-view registry entry");
-  const auto released_batch_flatten =
-      lookup_exact_kernel("2.1.3", "EV74", "batch_flatten_transform");
-  check(released_batch_flatten && released_batch_flatten->kind == OpKind::Reshape,
-        "Model Compiler 2.1.3 has an explicit frozen AFE v2 registry entry");
   struct ExpectedKernel {
     const char* processor;
     const char* kernel;
@@ -523,37 +507,84 @@ void test_exact_registry() {
     std::size_t inputs;
     std::size_t outputs;
   };
-  constexpr std::array<ExpectedKernel, 7> model_sdk_3_yolo_kernels = {{
+  constexpr std::array<ExpectedKernel, 14> capabilities = {{
+      {"EV74", "cast_transform", OpKind::Cast, 1, 1},
+      {"EV74", "cast", OpKind::Cast, 1, 1},
       {"EV74", "quantization_transform", OpKind::Quantize, 1, 1},
       {"EV74", "tessellation_transform", OpKind::Tessellate, 1, 1},
-      {"MLA", "", OpKind::Mla, 1, 1},
+      {"EV74", "pack_transform", OpKind::Pack, 2, 1},
+      {"MLA", "", OpKind::Mla, 2, 3},
       {"EV74", "unpack_transform", OpKind::Unpack, 1, 6},
+      {"EV74", "slice_transform", OpKind::Slice, 1, 1},
+      {"EV74", "reshape_transform", OpKind::Reshape, 1, 1},
+      {"EV74", "batch_flatten_transform", OpKind::Reshape, 1, 1},
       {"EV74", "detessellation_transform", OpKind::Detessellate, 1, 1},
       {"EV74", "dequantization_transform", OpKind::Dequantize, 1, 1},
+      {"A65", "", OpKind::HostTvm, 2, 3},
       {"EV74", "pass_through", OpKind::PassThrough, 6, 6},
   }};
-  for (const auto& expected : model_sdk_3_yolo_kernels) {
-    const auto descriptor = lookup_exact_kernel("3.0.0", expected.processor, expected.kernel);
-    check(descriptor && descriptor->kind == expected.kind &&
-              descriptor->minimum_inputs == expected.inputs &&
-              descriptor->maximum_inputs == expected.inputs &&
-              descriptor->minimum_outputs == expected.outputs &&
-              descriptor->maximum_outputs == expected.outputs,
-          "Model Compiler 3.0.0 registry matches an observed YOLO operation");
+  for (const auto& expected : capabilities) {
+    const auto descriptor = lookup_exact_kernel(expected.processor, expected.kernel);
+    check(descriptor && descriptor->kind == expected.kind,
+          "supported processor/kernel pair resolves exactly");
+    check(exact_kernel_arity_is_valid(*descriptor, expected.inputs, expected.outputs),
+          "supported operation arity is accepted");
+    check(!exact_kernel_arity_is_valid(*descriptor, 0U, expected.outputs) &&
+              !exact_kernel_arity_is_valid(*descriptor, expected.inputs, 0U),
+          "empty operation ports are rejected");
   }
-  constexpr std::array<const char*, 6> excluded_model_sdk_3_kernels = {
-      "cast_transform",         "cast", "pack_transform", "slice_transform", "reshape_transform",
-      "batch_flatten_transform"};
-  for (const auto* kernel : excluded_model_sdk_3_kernels) {
-    check(!lookup_exact_kernel("3.0.0", "EV74", kernel),
-          "Model Compiler 3.0.0 does not admit an unobserved kernel");
+  check(!lookup_exact_kernel("EV74", "prefix_cast_transform"),
+        "registry rejects substring matches");
+  check(!lookup_exact_kernel("ev74", "cast_transform"), "registry rejects processor case folding");
+  check(!lookup_exact_kernel("EV74", "CAST"), "registry rejects kernel case folding");
+  check(!lookup_exact_kernel("unknown", ""), "registry rejects unknown processors");
+  check(!exact_kernel_arity_is_valid(*lookup_exact_kernel("EV74", "pack_transform"), 1U, 1U),
+        "pack requires multiple inputs");
+  check(!exact_kernel_arity_is_valid(*lookup_exact_kernel("EV74", "unpack_transform"), 2U, 1U),
+        "unpack requires one input");
+  check(!exact_kernel_arity_is_valid(*lookup_exact_kernel("EV74", "pass_through"), 2U, 1U),
+        "pass-through requires equal port counts");
+}
+
+void test_compiler_version_does_not_restrict_admission() {
+  const std::vector<nlohmann::json> versions = {nullptr,
+                                                true,
+                                                42,
+                                                nlohmann::json::array(),
+                                                nlohmann::json::object(),
+                                                "",
+                                                "2.0.0",
+                                                "2.1.0",
+                                                "2.1.3",
+                                                "3.0.0",
+                                                "3.0.1",
+                                                "99.0.0"};
+  struct Fixture {
+    const std::string& manifest;
+    MlaElfIoTopology topology;
+  };
+  const std::array<Fixture, 3> fixtures = {{
+      {valid_manifest(), monolithic_topology()},
+      {yolov8_quant_tess_ingress_manifest(), monolithic_topology(1228800U, 16U)},
+      {resnet_batch_flatten_manifest(), monolithic_topology(16U, 1008U)},
+  }};
+  for (const auto& fixture : fixtures) {
+    auto manifest = nlohmann::json::parse(fixture.manifest);
+    for (std::size_t index = 0; index <= versions.size(); ++index) {
+      if (index == versions.size()) {
+        manifest.erase("model_sdk_version");
+      } else {
+        manifest["model_sdk_version"] = versions[index];
+      }
+      const auto result = AfeMpkV2Decoder{}.decode_json(manifest.dump(), fixture.topology);
+      check(static_cast<bool>(result), "compiler version metadata does not restrict admission");
+      const auto expected_version = index < versions.size() && versions[index].is_string()
+                                        ? versions[index].get<std::string>()
+                                        : std::string{};
+      check(result.plan->contract_version() == expected_version,
+            "string version metadata remains available as provenance");
+    }
   }
-  check(!lookup_exact_kernel("3.0.0", "A65", ""),
-        "Model Compiler 3.0.0 does not admit an unobserved processor");
-  check(!lookup_exact_kernel("3.0.1", "EV74", "quantization_transform"),
-        "Model Compiler 3.0.0 registry entry does not enable version fallback");
-  check(!lookup_exact_kernel("2.0.0", "EV74", "batch_flatten_transform"),
-        "batch flatten does not acquire a version fallback");
 }
 
 void test_success_and_immutable_contract() {
@@ -1062,27 +1093,18 @@ void test_qmla_output_physical_extent_and_row_pitch() {
 
 void test_fail_closed_cases() {
   const auto topology = monolithic_topology();
-  expect_error(replace_once(valid_manifest(), "2.0.0", "2.0.1"), topology,
-               AfeMpkV2DecodeErrorCode::UnsupportedContractVersion,
-               "unsupported version fails closed");
-  expect_error(replace_once(valid_manifest(), "2.0.0", "3.0.1"), topology,
-               AfeMpkV2DecodeErrorCode::UnsupportedContractVersion,
-               "unsupported Model Compiler 3 version fails closed");
   const auto model_sdk_3_manifest =
       replace_once(yolov8_quant_tess_ingress_manifest(), "\"2.1.0\"", "\"3.0.0\"");
   expect_error(
       replace_once(model_sdk_3_manifest, "quantization_transform", "quantization_transform_suffix"),
       monolithic_topology(1228800U, 16U), AfeMpkV2DecodeErrorCode::UnsupportedKernel,
       "Model Compiler 3 kernel substring is not an alias");
-  expect_error(replace_once(valid_manifest(), "2.0.0", "3.0.0"), topology,
-               AfeMpkV2DecodeErrorCode::UnsupportedKernel,
-               "Model Compiler 3 does not admit an unobserved cast kernel");
   expect_error(replace_once(model_sdk_3_manifest,
                             "\"output_nodes\":[{\"name\":\"quantize_0\",\"size\":1228800}]",
                             "\"output_nodes\":[{\"name\":\"quantize_0\",\"size\":1228800},"
                             "{\"name\":\"extra\",\"size\":1}]"),
                monolithic_topology(1228800U, 16U), AfeMpkV2DecodeErrorCode::InvalidKernelArity,
-               "Model Compiler 3 rejects arity outside the observed YOLO contract");
+               "quantization rejects multiple outputs");
   expect_error(replace_once(valid_manifest(), "cast_transform", "cast_transform_suffix"), topology,
                AfeMpkV2DecodeErrorCode::UnsupportedKernel, "kernel substring is not an alias");
   expect_error(replace_once(valid_manifest(),
@@ -1207,22 +1229,7 @@ void test_exact_multi_mla_evidence() {
             ambiguous_single.error->code == AfeMpkV2DecodeErrorCode::MultipleMlaStages,
         "single-topology compatibility API rejects a multi-stage manifest");
 
-  const auto a65_result = AfeMpkV2Decoder{}.decode_json(two_mla_with_a65_module_manifest(),
-                                                        evidence, "two-mla-a65.json");
-  check(!a65_result && a65_result.error->code == AfeMpkV2DecodeErrorCode::UnsupportedHostModule &&
-            a65_result.error->json_path.find("config_params") != std::string::npos,
-        "the frozen 2.0 contract cannot acquire A65 meaning from a filename suffix");
-
-  const auto model_sdk_3_a65_manifest =
-      replace_once(two_mla_with_a65_module_manifest(), "\"2.0.0\"", "\"3.0.0\"");
-  const auto model_sdk_3_a65_result =
-      AfeMpkV2Decoder{}.decode_json(model_sdk_3_a65_manifest, evidence, "two-mla-a65-3.0.0.json");
-  check(!model_sdk_3_a65_result && model_sdk_3_a65_result.error &&
-            model_sdk_3_a65_result.error->code == AfeMpkV2DecodeErrorCode::UnsupportedHostModule,
-        "Model Compiler 3 does not admit an unobserved A65 contract");
-
-  const auto typed_manifest =
-      replace_once(two_mla_with_a65_module_manifest(), "\"2.0.0\"", "\"2.1.0\"");
+  const auto typed_manifest = two_mla_with_a65_module_manifest();
   const std::vector<HostTvmExecutableEvidence> host_evidence{{
       "APU_module",
       "middle.so",
@@ -1238,8 +1245,7 @@ void test_exact_multi_mla_evidence() {
   if (!typed_result && typed_result.error.has_value()) {
     std::cerr << typed_result.error->json_path << ": " << typed_result.error->detail << "\n";
   }
-  check(static_cast<bool>(typed_result),
-        "typed 2.1 A65 stage joins exact structural module evidence");
+  check(static_cast<bool>(typed_result), "typed A65 stage joins exact structural module evidence");
   const auto& host_op = typed_result.plan->ops().at(1);
   check(host_op.kind == OpKind::HostTvm,
         "processor A65 lowers to the explicit host TVM operation kind");
@@ -1252,15 +1258,15 @@ void test_exact_multi_mla_evidence() {
             host_output.read_expression->source_value_id == host_op.inputs.front(),
         "exact TVM __nop is an address view rather than a materialized allocation");
 
-  const auto released_typed_manifest = replace_once(typed_manifest, "\"2.1.0\"", "\"2.1.3\"");
-  const auto released_typed_result = AfeMpkV2Decoder{}.decode_json(
-      released_typed_manifest, typed_mla_evidence, host_evidence, "two-mla-a65-typed-2.1.3.json");
-  if (!released_typed_result && released_typed_result.error.has_value()) {
-    std::cerr << released_typed_result.error->json_path << ": "
-              << released_typed_result.error->detail << "\n";
+  for (const auto* version : {"2.1.0", "2.1.3", "3.0.0", "99.0.0"}) {
+    const auto manifest = replace_once(typed_manifest, "2.0.0", version);
+    const auto result = AfeMpkV2Decoder{}.decode_json(manifest, typed_mla_evidence, host_evidence);
+    check(static_cast<bool>(result), "typed A65 capability is independent of compiler version");
+    const auto missing_host = AfeMpkV2Decoder{}.decode_json(manifest, typed_mla_evidence);
+    check(!missing_host && missing_host.error &&
+              missing_host.error->code == AfeMpkV2DecodeErrorCode::UnsupportedHostModule,
+          "A65 still requires exact host executable evidence");
   }
-  check(static_cast<bool>(released_typed_result),
-        "typed 2.1.3 A65 stage retains its exact registered host contract");
 
   auto linked_parameter_evidence = host_evidence;
   linked_parameter_evidence.front().input_names = {"arm_3_i0", "linked_weight"};
@@ -1332,6 +1338,7 @@ int main(const int argc, char** argv) {
   }
   check(argc == 1, "usage: unit_afe_mpk_v2_decoder_test [manifest elf]");
   test_exact_registry();
+  test_compiler_version_does_not_restrict_admission();
   test_success_and_immutable_contract();
   test_model_sdk_2_1_3_contract();
   test_model_sdk_3_0_0_contract();
