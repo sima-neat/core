@@ -1173,10 +1173,6 @@ jobs:
           echo "Installed immutable LightGlue regression model: ${archives[0]}"
 
       - name: Build docs C++ examples from DevKit-installed package
-        # B1369 installs an incomplete linux-imx-libc-dev provider without
-        # /usr/include/linux/types.h. Re-enable after the platform image ships
-        # the matching Linux UAPI development headers.
-        if: ${{ false }}
         run: |
           tests/docs/build_docs_examples.sh \
             --environment devkit \
