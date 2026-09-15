@@ -306,25 +306,36 @@ Run these from your project directory (the one containing `assets/`).
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
-Rebuild with the same commands as Hello Neat!, then run the binary:
+Rebuild with the same commands as Hello Neat!:
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/sima_neat_hello      # on the DevKit
-dk build/sima_neat_hello     # from the Palette SDK host
-```
+</ShellCommand>
+
+Then run the binary:
+
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 Run the script:
 
-```bash
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
-python3 hello_neat.py        # on the DevKit
-dk hello_neat.py             # from the Palette SDK host
-```
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

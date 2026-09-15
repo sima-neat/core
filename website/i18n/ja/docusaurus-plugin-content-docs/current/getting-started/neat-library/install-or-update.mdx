@@ -29,13 +29,13 @@ Neat Library をインストールする予定の環境に、`sima-cli` をイ�
 
 環境を認証し、インストーラーが SiMa.ai のアーティファクトをダウンロードできるようにします。詳細については、[sima-cli にログイン](/tools/sima-cli/login/) を参照してください。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli login
 </ShellCommand>
 
 環境が SiMa.ai のアーティファクトが保存されているホストにアクセスできることを確認してください。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
 </ShellCommand>
 
@@ -56,13 +56,13 @@ curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && e
 
 `$HOME/neat` のような、コンテナローカルのインストールディレクトリを準備してください。
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 cd $HOME && mkdir -p neat && cd neat
 </ShellCommand>
 
 `sima-cli` で選択されたデフォルトの Neat Library パッケージをインストールします。必要に応じて、事前に作成されたチュートリアル、ソースコードのチュートリアル、およびテストなど、追加のパッケージをインストールすることもできます。
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 sima-cli neat install core@v0.4.0
 </ShellCommand>
 
@@ -72,13 +72,13 @@ sima-cli neat install core@v0.4.0
 
 コンテナが、ネイティブの ROS2 SDK として自身を識別し、Neat パッケージによって期待されるプラットフォーム互換性の基本情報を報告することを確認してください。
 
-<ShellCommand prompt="username@ros2-sdk-latest">
+<ShellCommand prompt="sdk">
 grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 </ShellCommand>
 
 互換性のある Neat パッケージをインストールします。インストーラーは、ネイティブの ARM64 Debian 環境を検証し、パッケージの削除を無効にして APT トランザクションをシミュレートし、ランタイムと開発パッケージをコンテナーのシステムパスにインストールします。PyNeat は、DevKit ランタイム機能のままなので、インストールされません。
 
-<ShellCommand prompt="username@ros2-sdk-latest">
+<ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
 sima-cli neat install core@release-0.3
 </ShellCommand>
@@ -93,13 +93,13 @@ DevKit に Neat Library をインストールする前に、DevKit のソフト�
 
 ルートファイルシステムがいっぱいにならないように、`/media/nvme` の下にインストールディレクトリを準備してください。
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 cd /media/nvme && mkdir -p neat && cd neat
 </ShellCommand>
 
 `sima-cli` で選択されたデフォルトの Neat Library パッケージをインストールします。必要に応じて、事前に作成されたチュートリアル、ソースコードのチュートリアル、テストなど、追加のパッケージをインストールすることもできます。
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 sima-cli neat install core@v0.2.2
 </ShellCommand>
 
@@ -110,7 +110,7 @@ sima-cli neat install core@v0.2.2
 
 Neat Library を DevKit にインストールすると、`~/pyneat` 上の DevKit にデフォルトの PyNeat 仮想環境が設定されます。これがサポートされている PyNeat 環境です。直接アクティブにしてください。
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
 </ShellCommand>
 

@@ -31,26 +31,26 @@ command, and `x86_64` means use the `amd64` command.
 
 For `amd64` Neat SDK containers:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
 For `arm64` Neat SDK containers:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 After installation, activate the compiler environment from inside the Neat SDK
 shell:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 activate-model-compiler
 </ShellCommand>
 
 To return to the default Neat SDK shell, run:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 deactivate-model-compiler
 </ShellCommand>
 
@@ -64,19 +64,19 @@ and `aarch64` uses the `arm64` command.
 
 For Model Compiler 2.1.3 on `amd64` hosts:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
 For Model Compiler 2.1.3 on `arm64` hosts:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 For Model Compiler 2.0.0 on `amd64` hosts:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli install -v 2.0.0 tools/model-compiler/amd64
 </ShellCommand>
 

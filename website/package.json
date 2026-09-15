@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "scripts": {
     "start": "docusaurus start",
-    "prebuild": "npm run check:i18n-complete && npm run check:i18n-navigation && npm run check:analytics",
+    "test": "node --test src/components/",
+    "prebuild": "npm run test && npm run check:i18n-complete && npm run check:i18n-navigation && npm run check:analytics",
     "build": "NO_UPDATE_NOTIFIER=1 docusaurus build",
     "check:i18n": "sima-i18n check --config ../sima-i18n.config.json && node scripts/check-i18n-catalogs.js",
     "check:i18n-complete": "sima-i18n check --config ../sima-i18n.config.json --require-complete && node scripts/check-i18n-catalogs.js",
