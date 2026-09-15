@@ -101,6 +101,7 @@ jobs:
             tests/tools/test_internals_package_boundary.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_vulcan_ci_lightglue_path.py \
             tests/tools/test_vulcan_ci_notification.py
 
       - name: Resolve cache namespace and access
