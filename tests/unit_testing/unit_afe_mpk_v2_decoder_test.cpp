@@ -1,4 +1,5 @@
 #define SIMA_NEAT_INTERNAL 1
+#include "gst/SimaPluginStaticManifestAbi.h"
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
