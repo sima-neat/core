@@ -143,6 +143,9 @@ struct StageKey {
   std::string model_id;
   StageInputKey input;
   BoxDecodeOptions box_opt{BoxDecodeType::Unspecified};
+  int box_original_width = 0;
+  int box_original_height = 0;
+  std::optional<ResizeMode> box_resize_mode;
   int preproc_roi_capacity = 0;
   int preproc_roi_source_batch_size = 0;
 };
@@ -1436,7 +1439,9 @@ bool operator==(const BoxDecodeOptions& a, const BoxDecodeOptions& b) {
 
 bool operator==(const StageKey& a, const StageKey& b) {
   return a.kind == b.kind && a.model_id == b.model_id && a.input == b.input &&
-         a.box_opt == b.box_opt && a.preproc_roi_capacity == b.preproc_roi_capacity &&
+         a.box_opt == b.box_opt && a.box_original_width == b.box_original_width &&
+         a.box_original_height == b.box_original_height && a.box_resize_mode == b.box_resize_mode &&
+         a.preproc_roi_capacity == b.preproc_roi_capacity &&
          a.preproc_roi_source_batch_size == b.preproc_roi_source_batch_size;
 }
 
@@ -1465,6 +1470,12 @@ struct StageKeyHash {
     h = hash_combine(h, std::hash<double>()(k.box_opt.detection_threshold));
     h = hash_combine(h, std::hash<double>()(k.box_opt.nms_iou_threshold));
     h = hash_combine(h, std::hash<int>()(k.box_opt.top_k));
+    h = hash_combine(h, std::hash<int>()(k.box_original_width));
+    h = hash_combine(h, std::hash<int>()(k.box_original_height));
+    h = hash_combine(h, std::hash<bool>()(k.box_resize_mode.has_value()));
+    if (k.box_resize_mode) {
+      h = hash_combine(h, std::hash<int>()(static_cast<int>(*k.box_resize_mode)));
+    }
     h = hash_combine(h, std::hash<int>()(k.preproc_roi_capacity));
     h = hash_combine(h, std::hash<int>()(k.preproc_roi_source_batch_size));
     return h;
@@ -3130,7 +3141,8 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
       select_tensor_sample(stage_input, "Postprocess input");
   const TensorList& selected_input_tensors =
       sample_tensor_list(const_cast<Sample&>(*selected_input.sample), "Postprocess input");
-  const simaai::neat::Tensor& selected_tensor = selected_input_tensors.front();
+  // Keep the tensor alive when stage_input is replaced below.
+  const simaai::neat::Tensor selected_tensor = selected_input_tensors.front();
   const WireCaps wire = build_wire_caps_from_tensor(group, selected_tensor, nullptr,
                                                     "application/vnd.simaai.tensor", nullptr);
   WireCaps stage_wire = wire;
@@ -3148,6 +3160,16 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   key.kind = StageKind::Postprocess;
   key.model_id = simaai::neat::internal::ModelAccess::model_id(model);
   key.input = make_input_key(src_opt, &wire_input.tensor);
+  const auto model_opt = simaai::neat::internal::ModelAccess::options(model);
+  // Clones of the same pack share model_id; postprocess options select the runner.
+  key.box_opt.decode_type = model_opt.decode_type;
+  key.box_opt.detection_threshold = model_opt.score_threshold;
+  key.box_opt.nms_iou_threshold = model_opt.nms_iou_threshold;
+  key.box_opt.top_k = model_opt.top_k;
+  key.box_opt.superpoint = model_opt.superpoint;
+  key.box_original_width = model_opt.boxdecode_original_width;
+  key.box_original_height = model_opt.boxdecode_original_height;
+  key.box_resize_mode = model_opt.boxdecode_resize_mode;
 
   auto runner = get_or_build(key, [&]() {
     RunOptions run_opt = stage_run_defaults();
@@ -3265,13 +3287,14 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   auto box_model_opt = simaai::neat::internal::ModelAccess::options(model);
   box_model_opt.decode_type = opt.decode_type;
   box_model_opt.superpoint = opt.superpoint;
-  if (opt.detection_threshold > 0.0) {
+  const bool rfdetr = box_decode_type_is_rfdetr(opt.decode_type);
+  if (rfdetr || opt.detection_threshold > 0.0) {
     box_model_opt.score_threshold = static_cast<float>(opt.detection_threshold);
   }
-  if (opt.nms_iou_threshold > 0.0) {
+  if (rfdetr || opt.nms_iou_threshold > 0.0) {
     box_model_opt.nms_iou_threshold = static_cast<float>(opt.nms_iou_threshold);
   }
-  if (opt.top_k > 0) {
+  if (rfdetr || opt.top_k > 0) {
     box_model_opt.top_k = opt.top_k;
   }
   simaai::neat::Model box_model =

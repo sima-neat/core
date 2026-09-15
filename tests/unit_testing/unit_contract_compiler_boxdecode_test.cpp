@@ -1,3 +1,4 @@
+#include "model/Model.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
@@ -13,6 +14,13 @@ RUN_TEST(
       using namespace simaai::neat;
       using namespace simaai::neat::pipeline_internal::sima;
       using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
+
+      // Existing positional option initialization must remain source compatible.
+      const Model::Options legacy_options{
+          {}, BoxDecodeType::SuperPoint, BoxDecodeTypeOption::Auto, 0.0f, 0.0f,
+          0,  SuperPointOptions{}};
+      require(legacy_options.decode_type == BoxDecodeType::SuperPoint,
+              "existing Model::Options aggregate initialization remains valid");
 
       auto mark_storage = [](BoxDecodeStaticContract& contract,
                              BoxDecodeSourceStorageKind storage_kind) {
@@ -289,6 +297,22 @@ RUN_TEST(
       }
       require(rejected_yolov5_node_override,
               "model-managed YOLOv5 must reject an incompatible node layout override");
+
+      for (const auto type : {BoxDecodeType::RfDetr, BoxDecodeType::RfDetrSeg}) {
+        validate_model_managed_boxdecode_option_override(type, BoxDecodeTypeOption::Auto);
+        for (const auto option :
+             {BoxDecodeTypeOption::GroupedByRoleProbability,
+              BoxDecodeTypeOption::GroupedByRoleLogit, BoxDecodeTypeOption::PackedPerHead}) {
+          bool rejected = false;
+          try {
+            validate_model_managed_boxdecode_option_override(type, option);
+          } catch (const std::invalid_argument&) {
+            rejected = true;
+          }
+          require(rejected,
+                  "RF-DETR must reject a layout override contradicting its export contract");
+        }
+      }
 
       BoxDecodeStaticContract packed_contract;
       packed_contract.decode_type = BoxDecodeType::YoloV8;

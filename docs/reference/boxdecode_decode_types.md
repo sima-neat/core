@@ -6,7 +6,7 @@ sidebar_position: 6
 
 # BoxDecode Decode Types
 
-`nodes::SimaBoxDecode` converts raw detection-head tensors into detection results. It runs after model inference, applies the decode math for the selected model family, filters low-confidence boxes, runs NMS, and emits a tensor payload that starts with decoded boxes. Detection models can parse that payload as boxes; pose and segmentation models can also parse the keypoints or masks that follow the boxes.
+`nodes::SimaBoxDecode` converts raw detection-head tensors into detection results. It runs after model inference, applies the decode math for the selected model family, filters low-confidence boxes, runs NMS when the selected family uses it, and emits a tensor payload that starts with decoded boxes. Detection models can parse that payload as boxes; pose and segmentation models can also parse the keypoints or masks that follow the boxes.
 
 For normal model-pack usage, prefer the `Model`-aware constructor. The model archive supplies the tensor order, layout, quantization, class count, resize metadata, and score-domain hints needed by the decoder. Your application usually only chooses the decode family and filtering thresholds.
 
@@ -370,3 +370,56 @@ seg = pyneat.decode_segmentation(outputs)[0]
 seg_boxes = seg.boxes.to_numpy()
 masks = seg.masks.to_numpy()
 ```
+
+## RF-DETR detection and segmentation
+
+Select `RfDetr` for detection or `RfDetrSeg` for instance segmentation. Both
+filter by confidence and return the highest-scoring detections without NMS.
+
+```cpp
+Model::Options options;
+options.decode_type = BoxDecodeType::RfDetrSeg;
+options.score_threshold = 0.3f;
+options.top_k = 100;
+Model model("rfdetr-seg-transformer.tar.gz", options);
+```
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.RfDetrSeg
+options.score_threshold = 0.3
+options.top_k = 100
+model = pyneat.Model("rfdetr-seg-transformer.tar.gz", options)
+```
+
+| Option | Meaning |
+| --- | --- |
+| `decode_type` | `RfDetr` returns boxes; `RfDetrSeg` also returns masks. |
+| `score_threshold` | Minimum class probability, inclusive, between 0 and 1. |
+| `top_k` | Maximum returned detections. Zero uses the RF export's limit of 300 query/class pairs. |
+
+The existing model-aware `BoxDecodeOptions` uses `detection_threshold` for the
+same confidence setting. Leave `nms_iou_threshold` at zero; RF-DETR rejects a
+nonzero NMS threshold. Use a Model-backed decoder so Neat can read tensor
+shapes, data types and storage from the model pack.
+
+Read detection results with `decode_bbox(outputs)`, or segmentation results with
+`decode_segmentation(outputs)`:
+
+```python
+result = pyneat.decode_segmentation(outputs)[0]
+boxes = result.boxes.to_numpy()  # float32 [N, 6]: x1, y1, x2, y2, score, class_id
+masks = result.masks.to_numpy()  # float32 [N, H, W]: probabilities from 0 to 1
+```
+
+Boxes use source-image pixel coordinates, including fractional pixels. Each mask
+matches the box at the same index. Mask height and width come from the model;
+Neat returns the selected masks at their native resolution. Resize, threshold
+and extract polygons in the application. Empty results have `N=0` and retain
+their other dimensions.
+
+For split backbone/transformer applications, the transformer receives feature
+maps rather than an image. Preserve the upstream sample identity and image
+preprocessing metadata, or supply the existing `boxdecode_original_width`,
+`boxdecode_original_height` and `boxdecode_resize_mode` settings. The RF-DETR
+Apps example uses explicit source dimensions and `Stretch`.
