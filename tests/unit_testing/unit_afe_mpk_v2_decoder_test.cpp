@@ -515,6 +515,42 @@ void test_exact_registry() {
       lookup_exact_kernel("2.1.3", "EV74", "batch_flatten_transform");
   check(released_batch_flatten && released_batch_flatten->kind == OpKind::Reshape,
         "Model Compiler 2.1.3 has an explicit frozen AFE v2 registry entry");
+  struct ExpectedKernel {
+    const char* processor;
+    const char* kernel;
+    OpKind kind;
+    std::size_t inputs;
+    std::size_t outputs;
+  };
+  constexpr std::array<ExpectedKernel, 7> model_sdk_3_yolo_kernels = {{
+      {"EV74", "quantization_transform", OpKind::Quantize, 1, 1},
+      {"EV74", "tessellation_transform", OpKind::Tessellate, 1, 1},
+      {"MLA", "", OpKind::Mla, 1, 1},
+      {"EV74", "unpack_transform", OpKind::Unpack, 1, 6},
+      {"EV74", "detessellation_transform", OpKind::Detessellate, 1, 1},
+      {"EV74", "dequantization_transform", OpKind::Dequantize, 1, 1},
+      {"EV74", "pass_through", OpKind::PassThrough, 6, 6},
+  }};
+  for (const auto& expected : model_sdk_3_yolo_kernels) {
+    const auto descriptor = lookup_exact_kernel("3.0.0", expected.processor, expected.kernel);
+    check(descriptor && descriptor->kind == expected.kind &&
+              descriptor->minimum_inputs == expected.inputs &&
+              descriptor->maximum_inputs == expected.inputs &&
+              descriptor->minimum_outputs == expected.outputs &&
+              descriptor->maximum_outputs == expected.outputs,
+          "Model Compiler 3.0.0 registry matches an observed YOLO operation");
+  }
+  constexpr std::array<const char*, 6> excluded_model_sdk_3_kernels = {
+      "cast_transform",         "cast", "pack_transform", "slice_transform", "reshape_transform",
+      "batch_flatten_transform"};
+  for (const auto* kernel : excluded_model_sdk_3_kernels) {
+    check(!lookup_exact_kernel("3.0.0", "EV74", kernel),
+          "Model Compiler 3.0.0 does not admit an unobserved kernel");
+  }
+  check(!lookup_exact_kernel("3.0.0", "A65", ""),
+        "Model Compiler 3.0.0 does not admit an unobserved processor");
+  check(!lookup_exact_kernel("3.0.1", "EV74", "quantization_transform"),
+        "Model Compiler 3.0.0 registry entry does not enable version fallback");
   check(!lookup_exact_kernel("2.0.0", "EV74", "batch_flatten_transform"),
         "batch flatten does not acquire a version fallback");
 }
@@ -559,6 +595,19 @@ void test_model_sdk_2_1_3_contract() {
   check(static_cast<bool>(result), "Model Compiler 2.1.3 AFE v2 manifest decodes");
   check(result.plan && result.plan->contract_version() == "2.1.3",
         "Model Compiler version is preserved exactly in the execution plan");
+}
+
+void test_model_sdk_3_0_0_contract() {
+  const auto manifest =
+      replace_once(yolov8_quant_tess_ingress_manifest(), "\"2.1.0\"", "\"3.0.0\"");
+  const auto result = AfeMpkV2Decoder{}.decode_json(manifest, monolithic_topology(1228800U, 16U),
+                                                    "model-sdk-3.0.0.json");
+  if (!result && result.error.has_value()) {
+    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
+  }
+  check(static_cast<bool>(result), "Model Compiler 3.0.0 AFE v2 manifest decodes");
+  check(result.plan && result.plan->contract_version() == "3.0.0",
+        "Model Compiler 3.0.0 version is preserved exactly in the execution plan");
 }
 
 void test_unpack_and_slice_are_read_expressions() {
@@ -1015,6 +1064,24 @@ void test_fail_closed_cases() {
   expect_error(replace_once(valid_manifest(), "2.0.0", "2.0.1"), topology,
                AfeMpkV2DecodeErrorCode::UnsupportedContractVersion,
                "unsupported version fails closed");
+  expect_error(replace_once(valid_manifest(), "2.0.0", "3.0.1"), topology,
+               AfeMpkV2DecodeErrorCode::UnsupportedContractVersion,
+               "unsupported Model Compiler 3 version fails closed");
+  const auto model_sdk_3_manifest =
+      replace_once(yolov8_quant_tess_ingress_manifest(), "\"2.1.0\"", "\"3.0.0\"");
+  expect_error(
+      replace_once(model_sdk_3_manifest, "quantization_transform", "quantization_transform_suffix"),
+      monolithic_topology(1228800U, 16U), AfeMpkV2DecodeErrorCode::UnsupportedKernel,
+      "Model Compiler 3 kernel substring is not an alias");
+  expect_error(replace_once(valid_manifest(), "2.0.0", "3.0.0"), topology,
+               AfeMpkV2DecodeErrorCode::UnsupportedKernel,
+               "Model Compiler 3 does not admit an unobserved cast kernel");
+  expect_error(replace_once(model_sdk_3_manifest,
+                            "\"output_nodes\":[{\"name\":\"quantize_0\",\"size\":1228800}]",
+                            "\"output_nodes\":[{\"name\":\"quantize_0\",\"size\":1228800},"
+                            "{\"name\":\"extra\",\"size\":1}]"),
+               monolithic_topology(1228800U, 16U), AfeMpkV2DecodeErrorCode::InvalidKernelArity,
+               "Model Compiler 3 rejects arity outside the observed YOLO contract");
   expect_error(replace_once(valid_manifest(), "cast_transform", "cast_transform_suffix"), topology,
                AfeMpkV2DecodeErrorCode::UnsupportedKernel, "kernel substring is not an alias");
   expect_error(replace_once(valid_manifest(),
@@ -1145,6 +1212,14 @@ void test_exact_multi_mla_evidence() {
             a65_result.error->json_path.find("config_params") != std::string::npos,
         "the frozen 2.0 contract cannot acquire A65 meaning from a filename suffix");
 
+  const auto model_sdk_3_a65_manifest =
+      replace_once(two_mla_with_a65_module_manifest(), "\"2.0.0\"", "\"3.0.0\"");
+  const auto model_sdk_3_a65_result =
+      AfeMpkV2Decoder{}.decode_json(model_sdk_3_a65_manifest, evidence, "two-mla-a65-3.0.0.json");
+  check(!model_sdk_3_a65_result && model_sdk_3_a65_result.error &&
+            model_sdk_3_a65_result.error->code == AfeMpkV2DecodeErrorCode::UnsupportedHostModule,
+        "Model Compiler 3 does not admit an unobserved A65 contract");
+
   const auto typed_manifest =
       replace_once(two_mla_with_a65_module_manifest(), "\"2.0.0\"", "\"2.1.0\"");
   const std::vector<HostTvmExecutableEvidence> host_evidence{{
@@ -1258,6 +1333,7 @@ int main(const int argc, char** argv) {
   test_exact_registry();
   test_success_and_immutable_contract();
   test_model_sdk_2_1_3_contract();
+  test_model_sdk_3_0_0_contract();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
   test_registered_detess_layout_is_preserved_through_dequant();
