@@ -216,9 +216,11 @@ reaches the backend on both configuration paths: the typed `neatobjectdecode` pa
 it in `SimaPluginBoxDecodeStagePayload::pose_classes`, and the JSON path accepts the
 `pose_classes` key directly.
 
-An empty list is not "no classes" — it disables the gate, and the backend then treats
-**every** class as pose-bearing. That is the right default for a model whose classes all
-carry keypoints; set the list only when they are mixed.
+An empty `Model::Options::pose_classes` is not "no classes" — it disables the gate, and the
+backend then treats **every** class as pose-bearing. That is the right default for a model
+whose classes all carry keypoints; set the list only when they are mixed. The per-node
+`BoxDecodeOptions::pose_classes` is an override, so leaving it empty inherits whatever gate
+the model or MPK resolved rather than clearing it.
 
 Core validates the list at contract construction: entries must be unique and within
 `[0, num_classes)`, and the option is rejected for decode types that cannot gate keypoints
