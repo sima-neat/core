@@ -138,14 +138,16 @@ install_for_environment
 
 class BoardInstallPreflightTest(unittest.TestCase):
     def run_board_install(
-        self, *, fail_at: str = "", wheel_count: int = 1
+        self, *, fail_at: str = "", wheel_count: int = 1, recovery: bool = False
     ) -> subprocess.CompletedProcess[str]:
         return run_bash(
             rf"""
 source "$1"
 tmp="$(mktemp -d)"
 INSTALLER_TMP_DIRS=("${{tmp}}")
-DEBS=(./core.deb ./firmware.deb)
+DEBS=(./core.deb ./firmware.deb ./sdk-memory.deb)
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=ON
 events="${{tmp}}/events"
 trap 'cat "${{events}}"; cleanup_installer_tmp_dirs' EXIT
 step() {{
@@ -160,6 +162,14 @@ collect_wheel_files() {{
 }}
 refresh_apt_metadata_for_board_install() {{ step METADATA; }}
 apt_package_database_is_healthy() {{ step HEALTH; }}
+resolve_board_memory_dev_package() {{
+  local -n out="$1"
+  out=(./core.deb ./firmware.deb ./board-memory.deb)
+}}
+remove_installed_local_deb_packages() {{
+  [[ "${{DEBS[*]}}" == './core.deb ./firmware.deb ./board-memory.deb' ]] || return 2
+  step REMOVE_SELECTED
+}}
 collect_board_heal_specs() {{ printf '%s\n' 'platform=installed'; }}
 verify_simulated_package_removals() {{ step REMOVALS; }}
 install_python_environment() {{
@@ -170,20 +180,34 @@ install_python_environment() {{
 stop_board_runtime_before_install() {{ step STOP; }}
 complete_board_install_after_packages() {{ step COMPLETE; }}
 run_sudo() {{
-  if [[ " $* " == *" --simulate "* ]]; then
+  [[ " $* " != *" ./sdk-memory.deb "* ]] || return 2
+  if [[ "$1" == dpkg ]]; then
+    [[ " $* " == *" ./board-memory.deb "* ]] || return 2
+    step DPKG
+  elif [[ " $* " == *" --simulate "* ]]; then
     printf '%s\n' "$@" | grep -v '^--simulate$' > "${{tmp}}/simulation-args"
     step SIMULATE
   elif [[ "$2" == install ]]; then
     printf '%s\n' "$@" > "${{tmp}}/install-args"
     cmp "${{tmp}}/simulation-args" "${{tmp}}/install-args" || return 2
     step APPLY
+    [[ '{recovery}' != True ]]
   else
     step CHECK
   fi
 }}
 install_debs_on_board
+[[ "${{DEBS[*]}}" == './core.deb ./firmware.deb ./sdk-memory.deb' ]]
 """
         )
+
+    def test_recovery_keeps_the_resolved_board_package_set(self) -> None:
+        result = self.run_board_install(recovery=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines().count("APPLY"), 2)
+        self.assertIn("REMOVE_SELECTED", result.stdout.splitlines())
+        self.assertIn("DPKG", result.stdout.splitlines())
+        self.assertIn("COMPLETE", result.stdout.splitlines())
 
     def test_checks_runtime_and_apt_before_python_or_runtime_shutdown(self) -> None:
         result = self.run_board_install()
@@ -286,6 +310,133 @@ verify_bundled_board_runtime
                 result = self.run_incoming_firmware_check(**options)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("VERIFIED", result.stdout)
+
+
+class BoardMemoryDevelopmentPackageTest(unittest.TestCase):
+    def run_selection(
+        self, *, installed: bool | str = False, local: bool = False,
+        repository: str = "matching", runtime: str = "installed",
+    ) -> subprocess.CompletedProcess[str]:
+        return run_bash(
+            rf"""
+source "$1"
+tmp="$(mktemp -d)"
+INSTALLER_TMP_DIRS=("${{tmp}}")
+cd "${{tmp}}"
+version=2.1.0+board
+make_deb() {{
+  local dest="$1" package_version="$2" dependency="$3"
+  mkdir -p "$dest/DEBIAN"
+  cat > "$dest/DEBIAN/control" <<CONTROL
+Package: simaai-memory-lib-dev
+Version: $package_version
+Architecture: arm64
+Maintainer: Test <test@example.com>
+Description: Official memory development package fixture
+Depends: simaai-memory-lib (= $dependency)
+CONTROL
+  dpkg-deb --build "$dest" "$dest.deb" >/dev/null
+}}
+make_deb sdk 2.1.0+sdk 2.1.0+sdk
+mkdir repo
+if [[ '{repository}' == corrupt ]]; then
+  make_deb repo/memory "$version" 2.1.0+wrong
+else
+  make_deb repo/memory "$version" "$version"
+fi
+if [[ '{repository}' == bundled ]]; then cp repo/memory.deb ./sdk.deb; fi
+if [[ '{local}' == True ]]; then cp repo/memory.deb ./supplied.deb; fi
+# Supplied packages need not be listed in the immutable SDK manifest.
+printf 'sdk.deb\n' > neat-install-manifest.txt
+DEBS=(./sdk.deb)
+before="$(sha256sum sdk.deb neat-install-manifest.txt)"
+dpkg-query() {{
+  if [[ "${{@: -1}}" == simaai-memory-lib:arm64 ]]; then
+    [[ '{runtime}' == installed ]] || return 1
+    printf 'installed\t%s\tarm64\n' "$version"
+  elif [[ '{installed}' == True ]]; then
+    printf 'installed\t%s\tarm64\tsimaai-memory-lib (= %s)\n' "$version" "$version"
+  elif [[ '{installed}' == mismatch ]]; then
+    printf 'installed\t2.1.0+old\tarm64\tsimaai-memory-lib (= 2.1.0+old)\n'
+  else
+    return 1
+  fi
+}}
+apt-get() {{
+  printf 'FETCH %s\n' "$*" >&2
+  [[ "$*" == "download simaai-memory-lib-dev:arm64=$version" ]] || return 2
+  [[ '{repository}' != missing ]] || return 100
+  cp "$tmp/repo/memory.deb" ./downloaded.deb
+}}
+resolved=()
+resolve_board_memory_dev_package resolved
+for deb in "${{resolved[@]}}"; do printf 'SELECTED %s\n' "$(basename "$deb")"; done
+[[ "${{DEBS[*]}}" == ./sdk.deb ]]
+[[ "$before" == "$(sha256sum sdk.deb neat-install-manifest.txt)" ]]
+echo SDK_UNCHANGED
+"""
+        )
+
+    def test_matching_installed_package_is_preferred_offline(self) -> None:
+        result = self.run_selection(installed=True, local=True, repository="missing")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("SELECTED", result.stdout)
+        self.assertNotIn("FETCH", result.stderr)
+        self.assertIn("SDK_UNCHANGED", result.stdout)
+
+    def test_matching_local_package_is_used_without_repository(self) -> None:
+        result = self.run_selection(local=True, repository="missing")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SELECTED supplied.deb", result.stdout)
+        self.assertNotIn("SELECTED sdk.deb", result.stdout)
+        self.assertNotIn("FETCH", result.stderr)
+        self.assertIn("SDK_UNCHANGED", result.stdout)
+
+    def test_matching_sdk_companion_is_reused(self) -> None:
+        result = self.run_selection(repository="bundled")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SELECTED sdk.deb", result.stdout)
+        self.assertNotIn("FETCH", result.stderr)
+        self.assertIn("SDK_UNCHANGED", result.stdout)
+
+    def test_mismatched_installed_headers_are_not_reused(self) -> None:
+        result = self.run_selection(installed="mismatch", local=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SELECTED supplied.deb", result.stdout)
+        self.assertNotIn("FETCH", result.stderr)
+
+    def test_repository_download_uses_installed_runtime_not_latest(self) -> None:
+        result = self.run_selection()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("FETCH download simaai-memory-lib-dev:arm64=2.1.0+board", result.stderr)
+        self.assertIn("SELECTED downloaded.deb", result.stdout)
+        self.assertNotIn("SELECTED sdk.deb", result.stdout)
+        self.assertIn("SDK_UNCHANGED", result.stdout)
+
+    def test_missing_runtime_or_matching_package_fails(self) -> None:
+        for options in ({"runtime": "missing"}, {"repository": "missing"},
+                        {"repository": "corrupt"}):
+            with self.subTest(options=options):
+                result = self.run_selection(**options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("SELECTED", result.stdout)
+                if options.get("runtime") == "missing":
+                    self.assertNotIn("FETCH", result.stderr)
+
+    def test_simulation_rejects_memory_runtime_version_changes(self) -> None:
+        for version in ("2.1.0+board", "2.1.0+older", "2.1.0+newer"):
+            with self.subTest(version=version):
+                result = run_bash(
+                    rf"""
+source "$1"
+tmp="$(mktemp -d)"
+INSTALLER_TMP_DIRS=("${{tmp}}")
+printf '%s\n' 'Inst simaai-memory-lib:arm64 [2.1.0+board] ({version} platform [arm64])' > "$tmp/simulation"
+dpkg-query() {{ echo 2.1.0+board; }}
+verify_simulated_package_removals "$tmp/simulation"
+"""
+                )
+                self.assertEqual(result.returncode, 0 if version == "2.1.0+board" else 1)
 
 
 class Ros2SdkInstallTest(unittest.TestCase):

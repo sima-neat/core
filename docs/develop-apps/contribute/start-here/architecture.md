@@ -47,6 +47,14 @@ artifact closure without choosing or rewriting dependency versions. Packages
 outside the artifact remain platform-owned; an incompatible platform must be
 updated rather than repaired by Core or LLiMa.
 
+The SDK keeps its pinned `simaai-memory-lib-dev` package. On a DevKit, the
+installer instead uses the official development package matching the installed
+`simaai-memory-lib`: first an installed package, then a matching local DEB, then
+an exact-version download from the configured APT repositories. For offline
+installation, supply the matching official DEB beside the bundle; do not edit
+its install manifest. The board transaction excludes an incompatible SDK
+companion without changing the bundle or downgrading the memory runtime.
+
 Install on a DevKit that satisfies the selected Internals runtime profile. The
 pinned SDK records the build environment; a matching release number alone does
 not establish kernel, firmware, or platform-package compatibility. Before

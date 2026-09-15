@@ -191,6 +191,18 @@ verify_simulated_package_removals() {
   local -a verified_replacements=()
   local package package_name installed_version replacement_deb
 
+  # A board development package must not move the platform memory runtime.
+  local memory_version planned_version
+  while IFS= read -r planned_version; do
+    memory_version="$(dpkg-query -W -f='${Version}' simaai-memory-lib:arm64 2>/dev/null)" || return 1
+    if [[ "${planned_version}" != "${memory_version}" ]]; then
+      echo "Refusing to change simaai-memory-lib from ${memory_version} to ${planned_version}. Select development headers matching the installed runtime." >&2
+      return 1
+    fi
+  done < <(awk '$1 == "Inst" && ($2 == "simaai-memory-lib" || $2 == "simaai-memory-lib:arm64") {
+    for (i = 3; i <= NF; ++i) if (substr($i, 1, 1) == "(") { print substr($i, 2); break }
+  }' "${simulation_log}")
+
   mapfile -t removed_packages < <(awk '$1 == "Remv" {print $2}' "${simulation_log}")
   for package in "${removed_packages[@]}"; do
     package_name="${package%%:*}"
@@ -1851,10 +1863,96 @@ verify_bundled_board_runtime() {
   fi
 }
 
+# Keep the SDK bundle immutable. Only the board's effective package list changes.
+resolve_board_memory_dev_package() {
+  local -n resolved_debs="$1"
+  resolved_debs=()
+  local runtime_status runtime_version runtime_arch runtime_receipt
+  if ! runtime_receipt="$(dpkg-query -W \
+      -f='${db:Status-Status}\t${Version}\t${Architecture}\n' \
+      simaai-memory-lib:arm64 2>/dev/null)"; then
+    echo "Cannot read the installed simaai-memory-lib:arm64 runtime." >&2
+    return 1
+  fi
+  IFS=$'\t' read -r runtime_status runtime_version runtime_arch <<< "${runtime_receipt}"
+  if [[ "${runtime_status}" != installed || "${runtime_arch}" != arm64 ||
+        -z "${runtime_version}" ]]; then
+    echo "Board dependency selection requires a fully installed simaai-memory-lib:arm64 runtime." >&2
+    return 1
+  fi
+
+  local dev_status dev_version dev_arch dev_depends installed_match=0
+  if IFS=$'\t' read -r dev_status dev_version dev_arch dev_depends < <(
+      dpkg-query -W -f='${db:Status-Status}\t${Version}\t${Architecture}\t${Depends}\n' \
+        simaai-memory-lib-dev:arm64 2>/dev/null) &&
+      [[ "${dev_status}" == installed && "${dev_version}" == "${runtime_version}" &&
+         "${dev_arch}" == "${runtime_arch}" ]] &&
+      relation_field_provides_exact_version "${dev_depends}" simaai-memory-lib "${runtime_version}"; then
+    installed_match=1
+  fi
+
+  local deb package matching_deb=""
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package)" || return 1
+    if [[ "${package}" != simaai-memory-lib-dev ]]; then
+      resolved_debs+=("${deb}")
+      continue
+    fi
+    # Do not feed a mismatched SDK companion to APT, including on recovery.
+    if [[ "${installed_match}" == 0 && -z "${matching_deb}" ]] &&
+        memory_dev_deb_matches_runtime "${deb}" "${runtime_version}" "${runtime_arch}"; then
+      matching_deb="${deb}"
+    fi
+  done
+  if [[ "${installed_match}" == 1 ]]; then
+    log "Using installed simaai-memory-lib-dev ${runtime_version}."
+    return 0
+  fi
+  if [[ -z "${matching_deb}" ]]; then
+    # A customer may supply the official companion beside an immutable bundle
+    # without adding it to that bundle's install manifest.
+    while IFS= read -r deb; do
+      if memory_dev_deb_matches_runtime "${deb}" "${runtime_version}" "${runtime_arch}"; then
+        matching_deb="${deb}"
+        break
+      fi
+    done < <(find . -maxdepth 1 -type f -name '*.deb' | sort)
+  fi
+  if [[ -z "${matching_deb}" ]]; then
+    local download_dir
+    download_dir="$(mktemp -d /tmp/sima-neat-memory-dev-XXXXXX)" || return 1
+    INSTALLER_TMP_DIRS+=("${download_dir}")
+    # APT uses the configured repositories and verifies the official package.
+    # Download an exact version, never the repository's newest candidate.
+    if ! (cd "${download_dir}" && apt-get download \
+        "simaai-memory-lib-dev:${runtime_arch}=${runtime_version}"); then
+      echo "Cannot obtain simaai-memory-lib-dev:${runtime_arch}=${runtime_version} for the installed runtime. Refresh the configured APT indexes or supply the matching official DEB locally for offline installation." >&2
+      return 1
+    fi
+    local -a downloaded_debs=()
+    append_matching_files downloaded_debs "${download_dir}" '*.deb'
+    if [[ "${#downloaded_debs[@]}" != 1 ]] ||
+        ! memory_dev_deb_matches_runtime "${downloaded_debs[0]}" "${runtime_version}" "${runtime_arch}"; then
+      echo "Downloaded memory development package does not match the installed runtime." >&2
+      return 1
+    fi
+    matching_deb="${downloaded_debs[0]}"
+  fi
+  log "Using board memory development package ${matching_deb}."
+  resolved_debs+=("${matching_deb}")
+}
+
+memory_dev_deb_matches_runtime() {
+  local deb="$1" version="$2" arch="$3" depends
+  [[ "$(dpkg-deb -f "${deb}" Package)" == simaai-memory-lib-dev &&
+     "$(dpkg-deb -f "${deb}" Version)" == "${version}" &&
+     "$(dpkg-deb -f "${deb}" Architecture)" == "${arch}" ]] || return 1
+  depends="$(dpkg-deb -f "${deb}" Depends)" || return 1
+  relation_field_provides_exact_version "${depends}" simaai-memory-lib "${version}"
+}
+
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
-  printf '[install_neat_framework] DEB install set:\n'
-  printf '  %s\n' "${DEBS[@]}"
   verify_bundled_board_runtime || return 1
   local -a wheel_files=()
   collect_wheel_files "." wheel_files
@@ -1870,6 +1968,14 @@ install_debs_on_board() {
     echo "Repair the board package database first, then rerun this installer." >&2
     exit 1
   fi
+
+  local -a board_debs=()
+  resolve_board_memory_dev_package board_debs || return 1
+  # Bash dynamic scope keeps every existing install/recovery helper on the same
+  # resolved files while leaving the caller's SDK artifact list unchanged.
+  local -a DEBS=("${board_debs[@]}")
+  printf '[install_neat_framework] DEB install set:\n'
+  printf '  %s\n' "${DEBS[@]}"
 
   local -a board_install_specs=()
   local -A seen_install_specs=()
