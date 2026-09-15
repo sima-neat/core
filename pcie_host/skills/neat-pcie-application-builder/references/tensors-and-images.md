@@ -47,6 +47,11 @@ For multi-input models, pass one tensor per logical input in the order reported 
 and set each tensor's route name to the corresponding input name. Do not assume physical output
 indices or memory offsets from list position alone; output `Tensor.route` carries routing metadata.
 
+With `mla_only` enabled (see `model-options.md`), `info().inputs` is the INT8 MLA ingress contract.
+Quantize on the host with the input's `quant.scales[0]` and `quant.zero_points[0]`, mapping source
+values onto `input_range` first, and submit `int8` tensors of exactly `size_bytes` bytes. In Python,
+`Tensor.from_numpy(codes, copy=True, route_name=spec.name)` with an `np.int8` array is sufficient.
+
 ## Image Input
 
 Image mode sends decoded pixels and enables configured card-side preprocessing. Set
@@ -87,3 +92,7 @@ postprocessing does not update `ModelInfo`. When boxdecode is enabled, runtime o
 `UInt8` tensor with route name `BBOX`, not application-specific detection objects. Parse that tensor
 according to the installed PCIe boxdecode tutorial rather than assuming a generic bounding-box
 layout.
+
+With `mla_only`, outputs are the raw INT8 heads in the order and with the names of
+`info().outputs`, each dense and contiguous. Dequantize with that output's `quant`:
+`x = (q - zero_point) * scale`.

@@ -72,7 +72,7 @@ public:
     validate_max_inflight(connection_.max_inflight);
     // Generate once during construction to validate the options before model loading.
     (void)internal::write_model_options_json(options_);
-    facts_ = internal::read_model_facts(model_path_);
+    facts_ = internal::read_model_facts(model_path_, options_);
     model_info_ = internal::to_public_model_info(facts_);
   }
 

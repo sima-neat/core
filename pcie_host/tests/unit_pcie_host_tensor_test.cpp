@@ -118,6 +118,21 @@ int main() {
     }
 
     {
+      const std::vector<std::uint8_t> interleaved{'A', 0xEE, 'B', 0xEE, 'C', 0xEE,
+                                                  'D', 0xEE, 'E', 0xEE, 'F', 0xEE};
+      std::vector<std::uint8_t> out(6);
+      std::uint8_t* dst = out.data();
+      require(simaai::neat::pcie::internal::copy_dense_rows(interleaved.data(), interleaved.size(),
+                                                            {2, 3}, {6, 2}, 1U, 0U, &dst) &&
+                  out == std::vector<std::uint8_t>({'A', 'B', 'C', 'D', 'E', 'F'}),
+              "element-strided rows must compact through the per-element path");
+      dst = out.data();
+      require(!simaai::neat::pcie::internal::copy_dense_rows(interleaved.data(), 5, {2, 3}, {4, 1},
+                                                             1U, 0U, &dst),
+              "row copy must reject a source shorter than its rows");
+    }
+
+    {
       pcie::TensorList tensors;
       tensors.push_back(pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input_0"));
       tensors.push_back(pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input_1"));
@@ -154,8 +169,8 @@ int main() {
     }
 
     {
-      pcie::Tensor tensor = pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input");
-      auto payload = simaai::neat::pcie::internal::prepare_tensor_payload({tensor});
+      pcie::TensorList tensors{pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input")};
+      auto payload = simaai::neat::pcie::internal::prepare_tensor_payload(tensors);
       simaai::neat::pcie::internal::PcieTensorFact fact;
       fact.name = "input";
       fact.dtype = "INT8";
@@ -173,6 +188,21 @@ int main() {
             simaai::neat::pcie::internal::attach_tensor_set_meta(buffer, payload.spans, {fact});
           },
           "tensor-set metadata must reject a mismatched shape");
+      fact.shape = {2, 2};
+      simaai::neat::pcie::internal::PcieTensorFact packed;
+      packed.name = "packed";
+      packed.dtype = "FP32";
+      packed.shape = {1, 1, 1, 1, 1, 1, 1, 1, 4};
+      packed.size_bytes = 16;
+      bool rejected_packed_rank = false;
+      try {
+        simaai::neat::pcie::internal::attach_tensor_set_meta(buffer, payload.spans, {fact},
+                                                             &packed);
+      } catch (const std::runtime_error&) {
+        rejected_packed_rank = true;
+      }
+      require(rejected_packed_rank,
+              "tensor-set metadata must reject a packed input beyond the descriptor rank");
       gst_buffer_unref(buffer);
     }
 

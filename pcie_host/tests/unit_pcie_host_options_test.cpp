@@ -201,6 +201,56 @@ int main() {
       require(threw, "NV12 output must throw");
     }
 
+    {
+      pcie::ModelOptions opt;
+      opt.mla_only = true;
+      const auto json = pcie_internal::write_model_options_json(opt);
+      require(json.json.has_value(), "mla_only route must emit JSON");
+      require(*json.json == "{\n  \"schema\": 1,\n  \"execution\": {\n    \"mla_only\": true\n"
+                            "  }\n}\n",
+              "mla_only JSON must be schema plus execution.mla_only");
+      require(!json.has_boxdecode, "mla_only route must not expect BBOX output");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.mla_only = true;
+      opt.preprocess.kind = pcie::InputKind::Image;
+      bool threw = false;
+      try {
+        (void)pcie_internal::write_model_options_json(opt);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "mla_only with image preprocess must throw");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.mla_only = true;
+      opt.preprocess.normalize.preset = pcie::NormalizePreset::ImageNet;
+      bool threw = false;
+      try {
+        (void)pcie_internal::write_model_options_json(opt);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "mla_only with preprocess options must throw");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.mla_only = true;
+      opt.decode_type = pcie::BoxDecodeType::YoloV8;
+      bool threw = false;
+      try {
+        (void)pcie_internal::write_model_options_json(opt);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "mla_only with boxdecode must throw");
+    }
+
     std::cout << "[PASS] model options JSON writer\n";
     return 0;
   } catch (const std::exception& e) {

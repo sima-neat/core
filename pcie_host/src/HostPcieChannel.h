@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -17,6 +18,8 @@
 #include <gst/gst.h>
 
 namespace simaai::neat::pcie::internal {
+
+struct MappedSample;
 
 class HostPcieChannel {
 public:
@@ -42,7 +45,10 @@ public:
   static std::size_t required_transport_buffer_size(std::size_t packed_input_bytes,
                                                     std::size_t packed_output_bytes,
                                                     std::size_t submitted_payload_bytes);
-  static void validate_output_payload_size(std::size_t received_bytes, std::size_t expected_bytes);
+  static void validate_output_payload_size(std::size_t received_bytes, std::size_t expected_bytes,
+                                           bool exact = false);
+  static TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owner,
+                                                const PcieModelFacts& facts);
   static void attach_request_id(GstBuffer* buffer, std::int32_t request_id);
   static std::optional<std::int32_t> request_id_from_buffer(GstBuffer* buffer);
 

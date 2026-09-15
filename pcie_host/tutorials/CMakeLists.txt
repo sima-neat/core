@@ -45,6 +45,9 @@ simapcie_add_tutorial(tutorial_025_run_pcie_inference_async
 simapcie_add_tutorial(tutorial_026_run_multiple_models
   026_run_multiple_models/run_multiple_models.cpp)
 
+simapcie_add_tutorial(tutorial_027_run_mla_only_int8
+  027_run_mla_only_int8/run_mla_only_int8.cpp)
+
 if (SIMAPCIE_TUTORIAL_TARGETS)
   install(
     TARGETS ${SIMAPCIE_TUTORIAL_TARGETS}

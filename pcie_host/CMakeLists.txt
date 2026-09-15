@@ -74,6 +74,7 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunner.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/model/ModelArchiveLoader.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MpkContract.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/RouteGraph.cpp
 )
 
 add_library(sima_neat_pcie_host STATIC

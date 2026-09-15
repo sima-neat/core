@@ -279,6 +279,81 @@ detector.close()
 
 設定しないでください。 `input_max_width`, `input_max_height`または `input_max_depth` 種なしモデルの場合、アプリケーションで明示的な入力制限が必要ない限り。 Neat モデルアーカイブから、モデル側のリサイズ対象を推測できます。
 
+## INT8テンソルでMLAのみを実行する
+
+デフォルトでは、カードはEV74でFP32入力を量子化し、MLAを実行し、結果を逆量子化してから返します。ホストが量子化を所有する場合は`mla_only`を設定します。カードはMLAのみを実行し、MLAの入口コントラクトのINT8テンソルを受け付け、生のINT8ヘッドを返します。
+
+`info()`は、すべてのテンソルの量子化パラメータとともにINT8コントラクトを報告します。各`TensorInfo`は、テンソルごとに1つの`scales`と1つの`zero_points`エントリを持つ`quant`を持ち、各入力はさらに、モデルがキャリブレーションされた浮動小数点の範囲である`input_range`を持ちます。
+
+```text
+x = (q - zero_point) * scale
+q = clamp(round(x / scale) + zero_point, -128, 127)
+```
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+pcie::Model model("model_mlatess_int8.tar.gz", options, connection);
+
+const auto& input_spec = model.info().inputs.front();
+const pcie::QuantParams& quant = *input_spec.quant;   // INT8 ingress
+const auto [low, high] = *input_spec.input_range;     // e.g. [0, 1]
+
+std::vector<std::int8_t> codes(input_spec.size_bytes);
+for (std::size_t i = 0; i < codes.size(); ++i) {
+  const float x = /* value in [low, high] */;
+  const float q = std::nearbyint(x / quant.scales[0]) + quant.zero_points[0];
+  codes[i] = static_cast<std::int8_t>(std::clamp(q, -128.0f, 127.0f));
+}
+
+model.build();
+pcie::TensorList outputs = model.run(
+    pcie::Tensor::from_vector(std::move(codes), input_spec.shape, input_spec.name),
+    /*timeout_ms=*/30000);
+
+const auto& head = model.info().outputs.front();
+const std::int8_t* q = reinterpret_cast<const std::int8_t*>(
+    static_cast<const std::uint8_t*>(outputs[0].data) + outputs[0].byte_offset);
+const float x0 = (q[0] - head.quant->zero_points[0]) * head.quant->scales[0];
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pcie.ModelOptions()
+options.mla_only = True
+model = pcie.Model("model_mlatess_int8.tar.gz", options, connection)
+
+input_spec = model.info().inputs[0]
+scale, zero_point = input_spec.quant.scales[0], input_spec.quant.zero_points[0]
+low, high = input_spec.input_range  # e.g. (0.0, 1.0)
+
+values = np.zeros(input_spec.shape, dtype=np.float32)  # in [low, high]
+codes = np.clip(np.rint(values / scale) + zero_point, -128, 127).astype(np.int8)
+
+model.build()
+outputs = model.run(
+    [pcie.Tensor.from_numpy(codes, copy=True, route_name=input_spec.name)],
+    timeout_ms=30000,
+)
+
+head = model.info().outputs[0]
+x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_points[0]) * head.quant.scales[0]
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+このルートは全か無かです。複数入力モデルは、`info().inputs`の順序で入力ごとに1つのINT8テンソルを期待します。FP32ペイロードはカード上で量子化されるのではなく拒否されます。`mla_only`は画像の前処理やボックスデコードと組み合わせることはできません。コンストラクターは、MLAステージが直接のINT8入出力用にコンパイルされていないアーカイブ、たとえばEV74でテッセレーションを行うModel Zooのアーカイブを拒否します（`mla_only does not support stage '...' (tess)`）。
+
+チュートリアル[INT8テンソルでMLAのみを実行](/tutorials/run-mla-only-int8)では、ホスト上で画像を量子化し、逆量子化したヘッドをデフォルトルートと照合します。
+
 ## 確実に閉じる
 
 モデルが不要になった場合、およびそのキューを再利用する前に、`close()` を呼び出してください。
@@ -339,6 +414,7 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
   ペイロード。アクティブな転送容量よりも大きいペイロードは、後で送信された場合、拒否されます。
 - PCIeホストAPIは、Neatモデルの前処理における、特定のサブセットをサポートします。
   オブジェクトのデコードに関するオプション。
+- `mla_only`には、直接のINT8 MLA入出力用にコンパイルされたアーカイブが必要です。すべての入力をINT8として送信し、連続したINT8ヘッドを返します。
 - この共同処理 API は、ホスト側の`Graph`、`Node`、または`Run`を公開しません。
   構成。ネイティブアプリケーションのグラフを作成するには、DevKit 上で通常の Neat Library を使用します。
 

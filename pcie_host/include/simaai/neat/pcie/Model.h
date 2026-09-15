@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #if __has_include(<opencv2/core/mat.hpp>)
@@ -162,6 +163,8 @@ struct ModelOptions {
   int top_k = 0;
   /// Number of model classes. Zero leaves the model/default value unchanged.
   int num_classes = 0;
+  /// Run only the MLA stage on the card. The application quantizes inputs and dequantizes outputs.
+  bool mla_only = false;
 };
 
 enum class TensorDType {
@@ -445,11 +448,19 @@ struct Tensor {
 
 using TensorList = std::vector<Tensor>;
 
+struct QuantParams {
+  int axis = -1;
+  std::vector<float> scales;
+  std::vector<std::int32_t> zero_points;
+};
+
 struct TensorInfo {
   std::string name;
   std::string dtype;
   std::vector<std::int64_t> shape;
   std::size_t size_bytes = 0;
+  std::optional<QuantParams> quant;
+  std::optional<std::pair<double, double>> input_range;
 };
 
 struct ModelInfo {
