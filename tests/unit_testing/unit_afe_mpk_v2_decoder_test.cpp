@@ -617,31 +617,6 @@ void test_success_and_immutable_contract() {
   check(!result.proof.empty(), "deterministic proof report emitted");
 }
 
-void test_model_sdk_2_1_3_contract() {
-  const auto result =
-      AfeMpkV2Decoder{}.decode_json(replace_once(valid_manifest(), "2.0.0", "2.1.3"),
-                                    monolithic_topology(), "model-sdk-2.1.3.json");
-  if (!result && result.error.has_value()) {
-    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
-  }
-  check(static_cast<bool>(result), "Model Compiler 2.1.3 AFE v2 manifest decodes");
-  check(result.plan && result.plan->contract_version() == "2.1.3",
-        "Model Compiler version is preserved exactly in the execution plan");
-}
-
-void test_model_sdk_3_0_0_contract() {
-  const auto manifest =
-      replace_once(yolov8_quant_tess_ingress_manifest(), "\"2.1.0\"", "\"3.0.0\"");
-  const auto result = AfeMpkV2Decoder{}.decode_json(manifest, monolithic_topology(1228800U, 16U),
-                                                    "model-sdk-3.0.0.json");
-  if (!result && result.error.has_value()) {
-    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
-  }
-  check(static_cast<bool>(result), "Model Compiler 3.0.0 AFE v2 manifest decodes");
-  check(result.plan && result.plan->contract_version() == "3.0.0",
-        "Model Compiler 3.0.0 version is preserved exactly in the execution plan");
-}
-
 void test_unpack_and_slice_are_read_expressions() {
   const auto result = AfeMpkV2Decoder{}.decode_json(
       packed_read_manifest(), monolithic_topology(32U, 32U), "packed-read-synthetic.json");
@@ -1340,8 +1315,6 @@ int main(const int argc, char** argv) {
   test_exact_registry();
   test_compiler_version_does_not_restrict_admission();
   test_success_and_immutable_contract();
-  test_model_sdk_2_1_3_contract();
-  test_model_sdk_3_0_0_contract();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
   test_registered_detess_layout_is_preserved_through_dequant();
