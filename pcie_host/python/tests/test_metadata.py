@@ -35,13 +35,13 @@ def test_load_metadata_from_yolov8_model():
 
 
 def test_load_metadata_from_mla_only_model():
-  model = os.environ.get("SIMAPCIE_YOLOV8_MODEL")
+  model = os.environ.get("SIMAPCIE_MLA_ONLY_MODEL") or os.environ.get("SIMAPCIE_YOLOV8_MODEL")
   if not model:
-    pytest.skip("SIMAPCIE_YOLOV8_MODEL is not set")
+    pytest.skip("SIMAPCIE_MLA_ONLY_MODEL and SIMAPCIE_YOLOV8_MODEL are not set")
 
   model_path = Path(model)
   if not model_path.is_file():
-    pytest.skip(f"SIMAPCIE_YOLOV8_MODEL does not exist: {model_path}")
+    pytest.skip(f"MLA-only model does not exist: {model_path}")
 
   options = pcie.ModelOptions()
   options.mla_only = True

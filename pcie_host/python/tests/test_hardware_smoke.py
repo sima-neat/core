@@ -535,7 +535,9 @@ def test_tensor_parallel_queues_yolov8():
 
 
 def test_tensor_run_mla_only():
-  model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
+  model = _require_file_env(
+      "SIMAPCIE_MLA_ONLY_MODEL" if _env("SIMAPCIE_MLA_ONLY_MODEL") else "SIMAPCIE_YOLOV8_MODEL"
+  )
   options = pcie.ModelOptions()
   options.mla_only = True
 

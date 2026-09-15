@@ -58,7 +58,9 @@ int env_int_or_default(const char* name, const int fallback) {
 }
 
 struct Args {
-  std::string model = env_or_default("SIMAPCIE_YOLOV8_MODEL", DEFAULT_MODEL_PATH);
+  std::string model =
+      env_or_default("SIMAPCIE_MLA_ONLY_MODEL",
+                     env_or_default("SIMAPCIE_YOLOV8_MODEL", DEFAULT_MODEL_PATH).c_str());
   std::string card_host = env_or_default("SIMAPCIE_CARD_HOST", "");
   std::string user = env_or_default("SIMAPCIE_USER", "sima");
   int card_id = env_int_or_default("SIMAPCIE_CARD_ID", 0);
@@ -83,9 +85,9 @@ void usage(const char* argv0) {
             << " [--model mla_int8_model.tar.gz] [--card-host host] [--card-id n] [--user user]"
                " [--queue n] [--image path] [--card-env 'NAME=VALUE ...']"
                " [--card-gst-debug spec] [--card-gst-debug-file path]\n"
-               "Without --model the archive comes from SIMAPCIE_YOLOV8_MODEL; without --image the\n"
-               "input is a synthetic ramp over every INT8 code. The archive has to be an\n"
-               "MLA-only capable build.\n";
+               "Without --model the archive comes from SIMAPCIE_MLA_ONLY_MODEL, then\n"
+               "SIMAPCIE_YOLOV8_MODEL; without --image the input is a synthetic ramp over\n"
+               "every INT8 code. The archive has to be an MLA-only capable build.\n";
 }
 
 Args parse_args(int argc, char** argv) {
@@ -412,7 +414,8 @@ int main(int argc, char** argv) {
   try {
     const Args args = parse_args(argc, argv);
     if (args.model.empty()) {
-      std::cerr << "ERROR: SIMAPCIE_YOLOV8_MODEL is not set and no --model was given\n";
+      std::cerr << "ERROR: neither SIMAPCIE_MLA_ONLY_MODEL nor SIMAPCIE_YOLOV8_MODEL is set and no "
+                   "--model was given\n";
       return 1;
     }
     std::fesetround(FE_TONEAREST); // the card rounds to nearest; keep the host quantizer in step
