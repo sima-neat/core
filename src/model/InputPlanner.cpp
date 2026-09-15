@@ -534,7 +534,7 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
       break;
     }
   }
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
+  const auto* mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
   if (!mla_stage) {
     throw std::runtime_error(
         "preprocess planner: MPK contract is missing an MLA stage for pre route selection."

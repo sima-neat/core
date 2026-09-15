@@ -3,6 +3,9 @@
 #endif
 
 #include "pipeline/Graph.h"
+#include "pipeline/TensorAdapters.h"
+#include "pipeline/gst/InputStreamInternal.h"
+#include "dmabuf_test_utils.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "nodes/io/Input.h"
@@ -13,7 +16,9 @@
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <optional>
@@ -114,11 +119,139 @@ simaai::neat::Tensor make_multimemory_nv12_holder_with_relative_offsets(int w, i
   return tensor;
 }
 
+void test_dmabuf_metadata_envelope_lifetime() {
+  using namespace simaai::neat;
+  namespace internal = pipeline_internal;
+  GstBuffer* allocation = sima_test::allocate_cma_dmabuf(128U);
+  GstBuffer* source = gst_buffer_new();
+  GstMemory* view = gst_memory_share(gst_buffer_peek_memory(allocation, 0U), 16, 96);
+  require(view != nullptr, "failed to create DMA metadata subview");
+  gst_buffer_append_memory(source, view);
+  // Preserve the allocator's original parent, not just the FD or shared memory.
+  require(gst_buffer_add_parent_buffer_meta(source, allocation) != nullptr,
+          "failed to retain DMA allocation parent");
+  auto parent_released = std::make_shared<std::atomic<bool>>(false);
+  gst_mini_object_weak_ref(
+      GST_MINI_OBJECT_CAST(allocation),
+      [](gpointer data, GstMiniObject*) {
+        std::unique_ptr<std::shared_ptr<std::atomic<bool>>> released(
+            static_cast<std::shared_ptr<std::atomic<bool>>*>(data));
+        (*released)->store(true);
+      },
+      new std::shared_ptr<std::atomic<bool>>(parent_released));
+  gst_buffer_unref(allocation);
+  const auto expected_span = sima_test::dmabuf_span(source);
+  gsize offsets[GST_VIDEO_MAX_PLANES] = {0U, 64U};
+  gint strides[GST_VIDEO_MAX_PLANES] = {8, 8};
+  require(gst_buffer_add_video_meta_full(source, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_NV12,
+                                         8U, 8U, 2U, offsets, strides) != nullptr,
+          "failed to attach authored DMA video layout");
+  GstCaps* caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width",
+                                      G_TYPE_INT, 8, "height", G_TYPE_INT, 8, nullptr);
+  GstSample* original = gst_sample_new(source, caps, nullptr, nullptr);
+  gst_caps_unref(caps);
+  gst_buffer_unref(source);
+  Sample sample = sample_from_tensors(TensorList{from_gst_sample(original)});
+  sample.input_seq = 23;
+  auto gate = std::make_shared<internal::HolderLoanGate>(1);
+  require(internal::attach_zero_copy_loan_to_sample(sample, gate), "metadata fixture loan failed");
+  InputStream::State state;
+  PreprocessRuntimeMeta meta;
+  meta.original_width = 8;
+  meta.original_height = 8;
+  meta.resized_width = 8;
+  meta.resized_height = 8;
+  state.preprocess_meta_by_input_seq.emplace(23, meta);
+  // The original is deliberately still shared and lacks preprocess GstMeta.
+  maybe_restore_cached_preprocess_meta_on_sample(state, &sample);
+  require(sample.tensors.size() == 1U && sample.tensors.front().semantic.preprocess.has_value(),
+          "preprocess semantic restoration failed");
+  GstBuffer* envelope = internal::buffer_from_tensor_holder(sample.tensors.front().storage->holder);
+  require(envelope != nullptr && envelope != gst_sample_get_buffer(original),
+          "non-writable DMA parent needs a distinct metadata envelope");
+  require(sima_test::dmabuf_span(envelope) == expected_span,
+          "metadata restoration changed DMA backing, root offset or span");
+  GstVideoMeta* video = gst_buffer_get_video_meta(envelope);
+  require(video && video->n_planes == 2U && video->offset[0] == 0U && video->offset[1] == 64U &&
+              video->stride[0] == 8 && video->stride[1] == 8,
+          "metadata envelope changed authored video offsets/strides");
+  require(has_simaai_preprocess_meta(envelope), "DMA envelope lacks restored preprocess GstMeta");
+  require(gst_buffer_get_parent_buffer_meta(envelope) != nullptr,
+          "metadata envelope lost decoder pool parent ownership");
+  gst_sample_unref(original);
+  sample = {};
+  require(!parent_released->load() && gate->inflight() == 1,
+          "metadata envelope released original pool parent/loan before its consumer");
+  gst_buffer_unref(envelope);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!parent_released->load() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(parent_released->load(),
+          "metadata envelope retained its pool parent after final release");
+  require(gate->inflight() == 0 && gate->released() == 1U,
+          "metadata envelope did not release its output loan exactly once");
+}
+
+void test_mixed_dmabuf_metadata_selected_memory() {
+  using namespace simaai::neat;
+  namespace internal = pipeline_internal;
+  GstBuffer* dma = sima_test::allocate_cma_dmabuf(64U);
+  const auto expected_span = sima_test::dmabuf_span(dma);
+  GstCaps* caps = gst_caps_new_simple(
+      "application/vnd.simaai.tensor", "width", G_TYPE_INT, 8, "height", G_TYPE_INT, 8, "depth",
+      G_TYPE_INT, 1, "dtype", G_TYPE_STRING, "UINT8", "layout", G_TYPE_STRING, "HW", nullptr);
+  {
+    GstSample* init = gst_sample_new(dma, caps, nullptr, nullptr);
+    auto storage = internal::make_gst_sample_storage(init);
+    gst_sample_unref(init);
+    const Mapping write = storage->map(MapMode::Write);
+    require(write.data && write.size_bytes >= 64U, "mixed metadata DMA initialization failed");
+    std::memset(write.data, 0x6D, write.size_bytes);
+  }
+  GstBuffer* mixed = gst_buffer_new_allocate(nullptr, 64U, nullptr);
+  gst_buffer_memset(mixed, 0U, 0xA1, 64U);
+  gst_buffer_append_memory(mixed, gst_memory_ref(gst_buffer_peek_memory(dma, 0U)));
+  require(gst_buffer_add_parent_buffer_meta(mixed, dma) != nullptr,
+          "mixed metadata fixture did not retain allocation parent");
+  gst_buffer_unref(dma);
+  GstSample* original = gst_sample_new(mixed, caps, nullptr, nullptr);
+  gst_caps_unref(caps);
+  gst_buffer_unref(mixed);
+  Tensor tensor = internal::tensor_view_from_sample_memory(from_gst_sample(original), 1, true);
+  tensor.byte_offset = 8;
+  tensor.shape = {4, 8};
+  tensor.strides_bytes = {8, 1};
+  Sample sample = sample_from_tensors(TensorList{tensor});
+  sample.input_seq = 25;
+  InputStream::State state;
+  PreprocessRuntimeMeta meta;
+  meta.original_width = 8;
+  meta.original_height = 8;
+  state.preprocess_meta_by_input_seq.emplace(25, meta);
+  maybe_restore_cached_preprocess_meta_on_sample(state, &sample);
+  const Tensor& restored = sample.tensors.front();
+  require(internal::tensor_has_dmabuf_memory(restored) && restored.route.memory_index == 1 &&
+              restored.byte_offset == 8,
+          "metadata restoration lost selected DMA memory or logical offset");
+  const Mapping mapped = restored.map_read();
+  require(mapped.data && mapped.size_bytes == 56U &&
+              static_cast<const uint8_t*>(mapped.data)[0] == 0x6D,
+          "metadata restoration mapped or merged the CPU carrier instead of selected DMA");
+  GstBuffer* envelope = internal::buffer_from_tensor_holder(restored.storage->holder);
+  require(envelope && gst_buffer_n_memory(envelope) == 2U &&
+              sima_test::dmabuf_span(gst_buffer_peek_memory(envelope, 1U)) == expected_span,
+          "mapping restored metadata changed the mixed carrier's DMA allocation");
+  gst_buffer_unref(envelope);
+  gst_sample_unref(original);
+}
+
 } // namespace
 
 int main() {
   try {
     using namespace simaai::neat;
+    setenv("SIMA_INPUTSTREAM_RESTORE_PREPROC_BUFFER_META", "1", 1);
 
     const int w = 4;
     const int h = 4;
@@ -306,6 +439,9 @@ int main() {
       gst_buffer_unref(input_buffer);
       run.close();
     }
+
+    test_dmabuf_metadata_envelope_lifetime();
+    test_mixed_dmabuf_metadata_selected_memory();
 
     std::cout << "[OK] unit_gst_video_meta_test passed\n";
     return 0;

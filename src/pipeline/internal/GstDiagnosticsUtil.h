@@ -6,6 +6,7 @@
 
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/Diagnostics.h" // provides simaai::neat::pipeline_internal::DiagCtx
+#include "pipeline/internal/InputStreamTeardownPolicy.h"
 #include "pipeline/GraphReport.h"
 
 #include <gst/gst.h>
@@ -80,11 +81,14 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
 // pipelines add their effective per-source TEARDOWN waits, capped at 30s
 // SIMA_GST_TEARDOWN_ASYNC: skip wait, defer to reaper
 // SIMA_GST_TEARDOWN_REAPER_MS: retry interval (ms)
-// SIMA_GST_TEARDOWN_DEFER_NO_FLUSH: defer no-flush teardowns to reaper
+// SIMA_GST_TEARDOWN_DEFER_NO_FLUSH: defer eligible no-flush teardowns to reaper;
+// ignored for InputStreamTeardownPolicy::MustReachNull
 // -----------------------------
 void stop_and_unref(GstElement*& e);
 // Skip flush events during teardown (avoid gst_element_send_event deadlocks).
-void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous = false);
+void stop_and_unref_no_flush(
+    GstElement*& e,
+    InputStreamTeardownPolicy policy = InputStreamTeardownPolicy::Deferred);
 
 // Internal observability/test hook for the bounded synchronous live-source
 // teardown policy. Adds each rtspsrc's effective TEARDOWN wait to the supplied

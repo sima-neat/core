@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "model_name": "yolo_v9c_seg",
+  "source_archive": "yolo_v9c_seg_mpk.tar.gz",
+  "source_archive_sha256": "dbcf660e59f47acc28a5f7f7b9ec346929592933f866af65be13bac7ed37b2f1",
+  "mpk_json": "yolo_v9c_seg_mpk.json",
+  "mpk_json_sha256": "bf3c96dd5863446349be7f675c078cfebd8032b658a4ee3355393c5590575f74",
+  "mpk_json_size_bytes": 47224,
+  "ordered_semantic_heads": [
+    "bbox_0", "bbox_1", "bbox_2",
+    "class_prob_0", "class_prob_1", "class_prob_2",
+    "mask_coeff_0", "mask_coeff_1", "mask_coeff_2",
+    "mask"
+  ]
+}

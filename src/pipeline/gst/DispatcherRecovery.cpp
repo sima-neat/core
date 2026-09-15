@@ -2,7 +2,7 @@
 #include "pipeline/internal/DispatcherRecovery.h"
 
 #include "pipeline/internal/EnvUtil.h"
-#include "pipeline/internal/GstDiagnosticsUtil.h"
+#include "pipeline/internal/RuntimeRecoveryPolicy.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +10,15 @@
 
 namespace simaai::neat::pipeline_internal {
 namespace {
+
+bool legacy_runtime_recovery_allowed() {
+#ifdef SIMANEAT_DIRECT_DRIVER_PROFILE
+  constexpr bool direct_build = true;
+#else
+  constexpr bool direct_build = false;
+#endif
+  return legacy_runtime_recovery_allowed_at("/", direct_build);
+}
 
 int run_cmd(const char* cmd) {
   const int rc = std::system(cmd);
@@ -56,13 +65,24 @@ bool is_dispatcher_unavailable(const GraphReport& report) {
 }
 
 bool attempt_dispatcher_recovery(GraphReport* report, bool auto_recover) {
-  append_note(report, "DispatcherUnavailable: auto recovery will run and you should retry.");
+  // An unavailable legacy dispatcher on a direct-driver image is not a reason
+  // to start AppComplex or reset hardware. In-flight DMA may still be active.
+  if (!legacy_runtime_recovery_allowed()) {
+    append_note(report, "DispatcherUnavailable: legacy recovery refused for a direct-driver or "
+                        "unidentified runtime profile. No services, MLA memory initialization, or "
+                        "remote processors were changed. Preserve unknown-completion buffer loans; "
+                        "use the platform-approved recovery procedure before retrying.");
+    return false;
+  }
+
   if (!auto_recover) {
     append_note(
         report,
         "DispatcherUnavailable: auto recovery disabled; run the recovery commands and retry.");
     return false;
   }
+
+  append_note(report, "DispatcherUnavailable: attempting legacy 2.1.x runtime recovery.");
 
   const bool hard_reset_requested = env_truthy("SIMA_NEAT_RECOVERY_HARD_RESET");
   const bool unsafe_hard_reset = env_truthy("SIMA_NEAT_RECOVERY_ALLOW_UNSAFE_RESET");

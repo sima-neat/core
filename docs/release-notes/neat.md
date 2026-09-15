@@ -11,11 +11,20 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Breaking changes
 
+- Model outputs now expose the terminal logical shape and layout authored in the
+  MPK, rather than an intermediate device shape. For example, the ResNet-50
+  batch-flatten output has shape `[1, 1000]` and unknown logical layout, not a
+  four-dimensional HWC shape. Its Float32 tensor format may be `EVXX_FLOAT32`
+  instead of `FP32`. Use the tensor's dtype and shape to interpret values; do not
+  infer logical axes from a backend format tag.
 - The Neat Library C++ ABI is now 4 and the shared-library SONAME is `libsima_neat.so.4`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, and `GraphLinkOptions` contains realtime admission limits. Rebuild C++ applications and plugins and install matching Core runtime and development packages.
 - Realtime graph composition now uses `GraphLinkOptions`, `Graph::connect()`, and `Graph::build()`. The preview `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()`, and `RealtimeEveryFrameByStream` APIs were removed. Saved graphs containing `realtime_every_frame_by_stream` must be recreated with a supported policy; see [Connect live fragments](/develop-apps/development-workflow/graph/#connect-live-fragments).
 
 ### Runtime changes
 
+- Hardware decode uses direct codec sessions and DMA-BUF output. Core no longer
+  uses decoder-daemon admission leases or `SIMA_DECODER_ADMISSION_REQUIRE`.
+  Decoder pool and tuning options remain available.
 - Native H.265/HEVC decode is available through `SimaDecode` and
   `RtspDecodedInput` in C++ and Python. `RtspEncodedInput` provides parsed H.265
   access units without decoding them. H.265 inputs must use HEVC Main profile,
@@ -28,10 +37,16 @@ Release notes for the SiMa.ai Neat Library.
   by default; H.264 keeps 96. `H264RtpUdpFromEncoded()` is deprecated in favor
   of `Passthrough(RtspCodec::H264)`.
 - Raw `VideoSender` input now omits its format conversion automatically for
-  proven NV12 in system or SiMaAI memory when the installed encoder advertises
-  `input-layout-aware=true`. Other raw formats, unknown memory/layouts, and
-  inputs without a reliable format contract retain the existing conversion to
-  NV12. The `H264RtpUdpFromRaw(...)` C++ and Python APIs are unchanged.
+  compatible DMA-backed NV12 when the installed encoder advertises
+  `input-layout-aware=true`. The existing encoder-input boundary prepares other
+  raw inputs in final encoder storage. The `H264RtpUdpFromRaw(...)` C++ and Python
+  APIs are unchanged.
+- `InputMemoryPolicy::Auto` distinguishes preferred allocation from required
+  input storage. Device-preferred routes retain caller-owned `Tensor` and
+  `Sample` storage instead of converting it through a CPU image. Compatible
+  DMA-BUF inputs stay zero-copy; existing CPU inputs can still require
+  device-ingress materialization. Explicit EV74/DMS0 input requirements remain
+  enforced.
 - RTSP inputs select the RTP payload type with a single codec-neutral
   `payload_type` field on `RtspEncodedInputOptions` and
   `RtspDecodedInputOptions`: `-1` selects the codec default (96 for H.264/H.265,
@@ -49,6 +64,10 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Graph construction and validation
 
+- A default public `Input` directly connected to one model image ingress now
+  inherits its declared image format. Explicit input options remain authoritative;
+  ambiguous connections require explicit options. This changes sample
+  interpretation without adding a payload copy.
 - Graph composition now treats one Node object as one logical vertex. Duplicate insertion and
   overlapping fragment imports fail atomically, while repeated `connect()` calls reuse an existing
   Node for fan-out.

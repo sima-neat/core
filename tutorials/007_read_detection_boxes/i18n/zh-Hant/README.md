@@ -179,7 +179,7 @@ SimaBoxDecode(const Model& model,
 
 ### 解碼類型和張量合約
 
-`BoxDecodeType` 是一種類型化的 API（`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`），並且在解碼階段應始終明確設定。以下執行階段合約來自 `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp`（`infer_num_classes`、`infer_yolo_decoupled_classes`、`infer_yolo_packed_classes`、`compute_required_output_size`）。
+`BoxDecodeType` 是一種類型化的 API（`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`），並且在解碼階段應始終明確設定。以下執行階段合約來自 `internals/gst_plugins/neatobjectdecode/gstneatboxdecode.cpp`（`infer_num_classes`、`infer_yolo_decoupled_classes`、`infer_yolo_packed_classes`、`compute_required_output_size`）。
 
 核心張量合約規則：
 - 除了 `yolov5` 偵測以外的 YOLO 系列解碼類型（`yolo`、`yolov5-seg`、`yolov7*`、`yolov8*`、`yolov9*`、`yolov10*`）：

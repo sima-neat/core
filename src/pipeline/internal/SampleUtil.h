@@ -27,6 +27,12 @@ void attach_tensor_set_meta_from_tensors(GstBuffer* buffer, const TensorList& te
 bool sample_has_device_gstsample_producer_lifetime(const Sample& sample,
                                                    bool require_expired = false);
 std::string cross_run_zero_copy_sample_error(const char* where);
+// Inspect retained standard DMA-BUF storage, independently of legacy device-placement flags.
+bool buffer_has_dmabuf_memory(GstBuffer* buffer);
+bool buffer_has_only_dmabuf_memory(GstBuffer* buffer);
+bool holder_has_dmabuf_memory(const std::shared_ptr<void>& holder);
+bool tensor_has_dmabuf_memory(const Tensor& tensor);
+bool sample_has_dmabuf_memory(const Sample& sample);
 bool sample_has_device_gstsample_holder(const Sample& sample);
 void attach_holder_release_to_sample(const Sample& sample, std::function<void()> on_release);
 void mark_sample_producer_stream_lifetime(Sample& sample, std::shared_ptr<void> lifetime_token);
@@ -39,8 +45,5 @@ bool holder_has_zero_copy_loans(const std::shared_ptr<void>& holder);
 bool attach_zero_copy_loans_from_holder_to_gst_buffer(GstBuffer* buffer,
                                                       const std::shared_ptr<void>& holder);
 int count_distinct_device_gstsample_holders(const Sample& sample);
-
-bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_buffer,
-                                    std::string* err);
 
 } // namespace simaai::neat::pipeline_internal

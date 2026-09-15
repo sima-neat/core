@@ -99,6 +99,7 @@ jobs:
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
+            tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
             tests/tools/test_vulcan_ci_lightglue_path.py \
@@ -234,8 +235,7 @@ jobs:
       capacity: ${{ needs.resolve-vulcan-config.outputs.capacity }}
       fetch_depth: 0
       checkout_submodules: recursive
-      ensure_sdk_container: true
-      sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight"
+      ensure_sdk_container: false
       artifact_name: neat-core-dist
       artifact_path: dist/*
       artifact_retention_days: 3
@@ -246,6 +246,22 @@ jobs:
       compiler_cache_seed_key_prefix: ${{ needs.resolve-compiler-cache.outputs.seed_key_prefix }}
       compiler_cache_role_arn: ${{ needs.resolve-compiler-cache.outputs.role_arn }}
       compiler_cache_rw_mode: ${{ needs.resolve-compiler-cache.outputs.rw_mode }}
+      pre_build_command: |
+        set -euo pipefail
+
+        mapfile -t sdk_images < <(
+          docker images --format '{{.Repository}}:{{.Tag}}' |
+            awk '/^ghcr[.]io\/sima-neat\/sdk/ && $0 !~ /:<none>$/ { print }'
+        )
+        if [[ "${#sdk_images[@]}" -ne 1 ]]; then
+          printf 'Expected exactly one tagged SDK image; found %d:\n' "${#sdk_images[@]}" >&2
+          printf '  %s\n' "${sdk_images[@]}" >&2
+          exit 1
+        fi
+        /mnt/vulcan/bin/sima-cli sdk setup -y -n --minimal \
+          --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight \
+          --image "${sdk_images[0]}"
+
       build_command: |
         set -euo pipefail
 
@@ -1077,14 +1093,23 @@ jobs:
         run: |
           set -euo pipefail
           systemctl is-active --quiet simaai-appcomplex.service
-          for remoteproc in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do
-            state="$(cat "${remoteproc}/state")"
-            echo "${remoteproc}: state=${state}"
-            if [[ "${state}" != "running" ]]; then
-              echo "${remoteproc} is not running after package installation." >&2
-              exit 1
+          ev74_paths=()
+          for remoteproc in /sys/class/remoteproc/remoteproc*; do
+            [[ -r "${remoteproc}/name" ]] || continue
+            if [[ "$(cat "${remoteproc}/name")" == ev74 ]]; then
+              ev74_paths+=("${remoteproc}")
             fi
           done
+          if [[ "${#ev74_paths[@]}" -ne 1 ]]; then
+            echo "Expected exactly one EV74 remote processor after package installation." >&2
+            exit 1
+          fi
+          state="$(cat "${ev74_paths[0]}/state")"
+          echo "${ev74_paths[0]}: name=ev74 state=${state}"
+          if [[ "${state}" != running ]]; then
+            echo "EV74 is not running after package installation." >&2
+            exit 1
+          fi
 
       - name: Prepare GenAI models
         run: |
@@ -1226,10 +1251,13 @@ jobs:
           SIMA_CTEST_E2E_JOBS: "1"
         run: |
           set -x
-          if [[ -z "${SIMANEAT_TEST_RTSP_H265_URL}" && -z "${SIMANEAT_TEST_RTSP_H265_URLS}" ]]; then
-            echo "Set SIMANEAT_TEST_RTSP_H265_URL or SIMANEAT_TEST_RTSP_H265_URLS for H.265 E2E coverage." >&2
-            exit 1
-          fi
+          # Temporary external RTSP pause until runner connectivity is restored: core#890.
+          # Restore the H.265 URL prerequisite check when removing this pause.
+          # Keep HTTP cases in the mixed codec tests enabled by clearing only RTSP URLs.
+          unset SIMANEAT_TEST_RTSP_H264_URL SIMANEAT_TEST_RTSP_H264_URLS \
+            SIMANEAT_TEST_RTSP_H265_URL SIMANEAT_TEST_RTSP_H265_URLS \
+            SIMANEAT_TEST_RTSP_MJPEG_URL SIMANEAT_TEST_RTSP_MJPEG_URLS
+          echo "External RTSP cases temporarily disabled; restore under core#890."
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
           mkdir -p "${MPK_ROOT}"
@@ -1241,7 +1269,9 @@ jobs:
           echo "SIMA_CTEST_E2E_JOBS=${SIMA_CTEST_E2E_JOBS:-<unset>}"
 
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
-          SKIP_REGEX='^(unit_dispatcher_watchdog_test)$'
+          # Temporary external RTSP exclusions; remove under core#890.
+          EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1375,7 +1405,9 @@ jobs:
 
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
-          ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
+          # Temporary external RTSP exclusions; remove under core#890.
+          ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure \
+            -E '^tutorial_018_consume_rtsp_stream(_h265)?$'
 
           RESNET_TAR="${TUTORIAL_MODEL_DIR}/resnet_50.tar.gz"
           YOLO_TAR="${TUTORIAL_MODEL_DIR}/yolo_v8s.tar.gz"
@@ -1427,7 +1459,9 @@ jobs:
           for test_case in "${genai_pytests[@]}"; do
             "${PYTHON_BIN}" -m pytest -q "${test_case}"
           done
-          "${PYTHON_BIN}" -m pytest -q "${TUTORIALS_PYTEST_DIR}"
+          # Temporary external RTSP exclusions; retain the FPS probe unit tests (core#890).
+          "${PYTHON_BIN}" -m pytest -q "${TUTORIALS_PYTEST_DIR}" \
+            -k 'not (test_rtsp_codec_tutorial and (h264 or h265)) and not (test_tutorial_runs and 018_consume_rtsp_stream)'
 
       - name: Run weekly long Python pytest from installed extras
         if: ${{ inputs.run_long_tests }}
@@ -1490,7 +1524,8 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    # The available PCIe card runner does not have a 3.0.0 image yet.
+    if: ${{ false }}
     needs:
       - detect-changes
       - resolve-vulcan-config
@@ -1547,7 +1582,15 @@ jobs:
           set -euo pipefail
           ./scripts/ci/pciehost/preflight.sh
 
+      - name: Check PCIe card platform compatibility
+        id: check_pcie_card_compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/check_card_compatibility.sh
+
       - name: Install PCIe host package from Vulcan artifact
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: install_pciehost_package
         shell: bash
         run: |
@@ -1555,18 +1598,21 @@ jobs:
           ./scripts/ci/pciehost/install_host_package.sh
 
       - name: Install PCIe host test dependencies
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/install_host_test_deps.sh
 
       - name: Cleanup PCIe queues before card install
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/cleanup_queue.sh
 
       - name: Install Neat runtime on PCIe card
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: install_pcie_card_runtime
         shell: bash
         run: |
@@ -1574,6 +1620,7 @@ jobs:
           ./scripts/ci/pciehost/install_card_runtime.sh
 
       - name: Extract PCIe host extras
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: extract_pciehost_extras
         shell: bash
         run: |
@@ -1581,6 +1628,7 @@ jobs:
           ./scripts/ci/pciehost/extract_extras.sh
 
       - name: Resolve PCIe hardware test assets
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: resolve_pciehost_assets
         shell: bash
         run: |
@@ -1588,6 +1636,7 @@ jobs:
           ./scripts/ci/pciehost/resolve_assets.sh
 
       - name: Verify PCIe card runtime
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         id: verify_pcie_card_runtime
         shell: bash
         run: |
@@ -1595,12 +1644,14 @@ jobs:
           ./scripts/ci/pciehost/verify_card_runtime.sh
 
       - name: Cleanup PCIe queues before C++ tests
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/cleanup_queue.sh
 
       - name: Run PCIe host C++ CTest suite
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
