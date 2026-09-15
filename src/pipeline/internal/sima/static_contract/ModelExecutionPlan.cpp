@@ -435,9 +435,6 @@ bool validate_read_expression(const ModelExecutionPlanData& data, const ValueSpe
 }
 
 bool validate(const ModelExecutionPlanData& data, std::string* error) {
-  if (data.contract_version.empty()) {
-    return fail(error, "execution plan has an empty contract version");
-  }
   if (data.values.empty()) {
     return fail(error, "execution plan has no values");
   }

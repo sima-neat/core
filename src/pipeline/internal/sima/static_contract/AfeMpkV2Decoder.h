@@ -91,7 +91,7 @@ struct AfeMpkV2DecodeResult {
   }
 };
 
-// Exact decoder for the frozen 2.0.0 contract and the typed 2.1.0 contract.
+// Exact decoder for supported AFE MPK processor/kernel capabilities.
 // It accepts an explicitly supplied manifest plus exact setup-time MLA ELF and
 // A65 GraphExecutor evidence; archive names, filename suffixes, sidecar JSON,
 // environment, and runtime metadata are never semantic authority.
