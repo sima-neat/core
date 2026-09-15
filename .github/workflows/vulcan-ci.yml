@@ -1128,7 +1128,8 @@ jobs:
         run: |
           set -euo pipefail
           # Keep the final extracted MLA executable path below the runtime's 256-byte capacity.
-          MODEL_ROOT="/tmp/neat-lg-${RUNNER_NAME:-local}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          TMP_ROOT="${RUNNER_TEMP:-/tmp}"
+          MODEL_ROOT="${TMP_ROOT}/lg-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
           MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
           # The restricted regression fixture is intentionally staging-only.
           MODEL_VULCAN_ENV=stg
@@ -1467,7 +1468,7 @@ jobs:
           fi
 
           echo "Cleaning per-test mkdtemp roots and downloaded fixtures under ${TMP_ROOT}"
-          find /tmp -maxdepth 1 -type d -name "neat-lg-${RUNNER_NAME:-local}-*" \
+          find "${TMP_ROOT}" -maxdepth 1 -type d -name 'lg-*' \
             -exec rm -rf {} + 2>/dev/null || true
           rm -rf \
             "${TMP_ROOT}/sima_neat_mpk_tests" \
