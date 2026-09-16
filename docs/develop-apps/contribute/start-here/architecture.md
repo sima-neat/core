@@ -1029,12 +1029,14 @@ The option reaches the card as `execution.mla_only` in the model options JSON.
 It requires `InputKind::Tensor` and rejects preprocess and box-decode options,
 which configure stages this route does not run.
 
-The MLA writes its heads tessellated and padded. The host plugin copies the
-frame out of the driver buffer, and the PCIe host channel compacts the padded
-heads into one dense block before publishing them, so a public tensor is always
-dense INT8 or BF16 in the model's logical shape. Compaction sits on top of the existing
-`si_mla_read()` copy contract: the route costs one host copy more than the
-default one and needs no new `libsimaaipcie.so` symbols.
+The MLA writes its heads tessellated and, depending on the model, padded. The
+host plugin copies the frame out of the driver buffer. Heads that are already
+contiguous in that frame are published as views into the received buffer;
+padded or strided heads are compacted into one dense allocation before
+publication. Either way a public tensor is dense INT8 or BF16 in the model's
+logical shape. Compaction sits on top of the existing `si_mla_read()` copy
+contract: the route costs at most one host copy more than the default one and
+needs no new `libsimaaipcie.so` symbols.
 
 The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
 native API. OAAX ownership rules, status codes, and last-error storage belong

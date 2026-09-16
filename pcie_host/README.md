@@ -239,9 +239,10 @@ Python mirrors core: `Tensor.from_numpy(array)` defaults to zero-copy for
 C-contiguous NumPy arrays, and `Tensor.from_numpy(array, copy=True)` makes an
 owned copy when isolation is preferred.
 
-With `mla_only` the card runs only `neatprocessmla`. The host submits one dense INT8 or BF16 tensor per model input, matching `info().inputs`; any other dtype is rejected rather than quantized on the card. Results are the raw INT8 or BF16 heads,
-compacted on the host into one contiguous block per sample so the MLA's padded
-layout is never visible:
+With `mla_only` the card runs only `neatprocessmla`. The host submits one dense INT8 or BF16 tensor per model input, matching `info().inputs`; any other dtype is rejected rather than quantized on the card. Results are the raw INT8 or BF16 heads in
+the model's logical shapes. Heads that are already contiguous remain views into the received
+buffer; padded or strided heads are compacted on the host into one dense block, so the MLA's
+padded layout is never visible:
 
 ```cpp
 pcie::ModelOptions options;
