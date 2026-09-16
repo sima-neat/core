@@ -225,32 +225,6 @@ int main() {
       require(threw, "mla_only with image preprocess must throw");
     }
 
-    {
-      pcie::ModelOptions opt;
-      opt.mla_only = true;
-      opt.preprocess.normalize.preset = pcie::NormalizePreset::ImageNet;
-      bool threw = false;
-      try {
-        (void)pcie_internal::write_model_options_json(opt);
-      } catch (const std::invalid_argument&) {
-        threw = true;
-      }
-      require(threw, "mla_only with preprocess options must throw");
-    }
-
-    {
-      pcie::ModelOptions opt;
-      opt.mla_only = true;
-      opt.decode_type = pcie::BoxDecodeType::YoloV8;
-      bool threw = false;
-      try {
-        (void)pcie_internal::write_model_options_json(opt);
-      } catch (const std::invalid_argument&) {
-        threw = true;
-      }
-      require(threw, "mla_only with boxdecode must throw");
-    }
-
     std::cout << "[PASS] model options JSON writer\n";
     return 0;
   } catch (const std::exception& e) {

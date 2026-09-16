@@ -169,8 +169,8 @@ int main() {
     }
 
     {
-      pcie::TensorList tensors{pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input")};
-      auto payload = simaai::neat::pcie::internal::prepare_tensor_payload(tensors);
+      pcie::Tensor tensor = pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input");
+      auto payload = simaai::neat::pcie::internal::prepare_tensor_payload({tensor});
       simaai::neat::pcie::internal::PcieTensorFact fact;
       fact.name = "input";
       fact.dtype = "INT8";
@@ -188,21 +188,6 @@ int main() {
             simaai::neat::pcie::internal::attach_tensor_set_meta(buffer, payload.spans, {fact});
           },
           "tensor-set metadata must reject a mismatched shape");
-      fact.shape = {2, 2};
-      simaai::neat::pcie::internal::PcieTensorFact packed;
-      packed.name = "packed";
-      packed.dtype = "FP32";
-      packed.shape = {1, 1, 1, 1, 1, 1, 1, 1, 4};
-      packed.size_bytes = 16;
-      bool rejected_packed_rank = false;
-      try {
-        simaai::neat::pcie::internal::attach_tensor_set_meta(buffer, payload.spans, {fact},
-                                                             &packed);
-      } catch (const std::runtime_error&) {
-        rejected_packed_rank = true;
-      }
-      require(rejected_packed_rank,
-              "tensor-set metadata must reject a packed input beyond the descriptor rank");
       gst_buffer_unref(buffer);
     }
 

@@ -21,7 +21,6 @@ struct PcieTensorFact {
   std::int64_t byte_offset = 0;
   std::size_t payload_offset = 0;
   std::vector<std::int64_t> transport_strides_bytes;
-  std::size_t transport_size_bytes = 0;
   std::size_t dense_offset = 0;
   std::optional<QuantParams> quant;
   std::optional<std::pair<double, double>> input_range;

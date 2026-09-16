@@ -507,25 +507,14 @@ void validate_model_options_root(const nlohmann::json& root) {
   }
 }
 
-bool apply_execution_model_options(const nlohmann::json& execution) {
-  reject_unknown_fields(execution, {"mla_only"}, "execution");
-  const auto it = execution.find("mla_only");
-  if (it == execution.end()) {
-    return false;
-  }
-  if (!it->is_boolean()) {
-    throw PciePipelineError("model_options", "execution.mla_only must be a boolean");
-  }
-  return it->get<bool>();
-}
-
 Mode apply_model_options_json(const nlohmann::json& root, Model::Options* opt) {
   validate_model_options_root(root);
 
   const bool has_preprocess = root.contains("preprocess");
   const bool has_boxdecode = root.contains("boxdecode");
   if (const auto it = root.find("execution"); it != root.end()) {
-    if (apply_execution_model_options(*it)) {
+    reject_unknown_fields(*it, {"mla_only"}, "execution");
+    if (it->value("mla_only", false)) {
       if (has_preprocess || has_boxdecode) {
         throw PciePipelineError("model_options",
                                 "execution.mla_only cannot be combined with preprocess or "

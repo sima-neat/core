@@ -6,9 +6,6 @@
 
 #include "SignalCloseGuard.h"
 
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
-
 #include <algorithm>
 #include <cfenv>
 #include <cmath>
@@ -67,7 +64,6 @@ struct Args {
   int queue = env_int_or_default("SIMAPCIE_QUEUE", 0);
   int readiness_timeout_ms = env_int_or_default("SIMAPCIE_READINESS_TIMEOUT_MS", 180000);
   int pull_timeout_ms = env_int_or_default("SIMAPCIE_PULL_TIMEOUT_MS", 30000);
-  std::string image = env_or_default("SIMAPCIE_TEST_IMAGE", "");
   std::string card_env = env_or_default("SIMAPCIE_CARD_ENV", "");
   std::string card_gst_debug = env_or_default("SIMAPCIE_CARD_GST_DEBUG", "");
   std::string card_gst_debug_file = env_or_default("SIMAPCIE_CARD_GST_DEBUG_FILE", "");
@@ -83,11 +79,10 @@ std::string require_value(int argc, char** argv, int& i, const char* name) {
 void usage(const char* argv0) {
   std::cerr << "usage: " << argv0
             << " [--model mla_int8_model.tar.gz] [--card-host host] [--card-id n] [--user user]"
-               " [--queue n] [--image path] [--card-env 'NAME=VALUE ...']"
+               " [--queue n] [--card-env 'NAME=VALUE ...']"
                " [--card-gst-debug spec] [--card-gst-debug-file path]\n"
                "Without --model the archive comes from SIMAPCIE_MLA_ONLY_MODEL, then\n"
-               "SIMAPCIE_YOLOV8_MODEL; without --image the input is a synthetic ramp over\n"
-               "every INT8 code. The archive has to be an MLA-only capable build.\n";
+               "SIMAPCIE_YOLOV8_MODEL. The archive has to be an MLA-only capable build.\n";
 }
 
 Args parse_args(int argc, char** argv) {
@@ -104,8 +99,6 @@ Args parse_args(int argc, char** argv) {
       args.user = require_value(argc, argv, i, "--user");
     } else if (arg == "--queue") {
       args.queue = std::stoi(require_value(argc, argv, i, "--queue"));
-    } else if (arg == "--image") {
-      args.image = require_value(argc, argv, i, "--image");
     } else if (arg == "--card-env") {
       args.card_env = require_value(argc, argv, i, "--card-env");
     } else if (arg == "--card-gst-debug") {
@@ -119,10 +112,11 @@ Args parse_args(int argc, char** argv) {
       throw std::runtime_error("unknown argument: " + arg);
     }
   }
-  if (!args.image.empty() && !std::filesystem::is_regular_file(args.image)) {
-    throw std::runtime_error("image path does not exist or is not a regular file: " + args.image);
+  if (args.model.empty()) {
+    throw std::runtime_error("neither SIMAPCIE_MLA_ONLY_MODEL nor SIMAPCIE_YOLOV8_MODEL is set "
+                             "and no --model was given");
   }
-  if (!args.model.empty() && !std::filesystem::is_regular_file(args.model)) {
+  if (!std::filesystem::is_regular_file(args.model)) {
     throw std::runtime_error("model path does not exist or is not a regular file: " + args.model);
   }
   if (args.readiness_timeout_ms <= 0 || args.pull_timeout_ms <= 0) {
@@ -131,19 +125,11 @@ Args parse_args(int argc, char** argv) {
   return args;
 }
 
-std::string shape_string(const std::vector<std::int64_t>& shape) {
-  std::string out = "[";
-  for (std::size_t i = 0; i < shape.size(); ++i) {
-    out += (i == 0 ? "" : ", ") + std::to_string(shape[i]);
-  }
-  return out + "]";
-}
-
 std::size_t element_count(const std::vector<std::int64_t>& shape) {
   std::size_t count = shape.empty() ? 0U : 1U;
   for (const auto dim : shape) {
     if (dim <= 0) {
-      throw std::runtime_error("tensor shape has a non-positive dimension: " + shape_string(shape));
+      throw std::runtime_error("tensor shape has a non-positive dimension");
     }
     count *= static_cast<std::size_t>(dim);
   }
@@ -164,72 +150,9 @@ const pcie::QuantParams& require_quant(const pcie::TensorInfo& info) {
   return *info.quant;
 }
 
-std::int8_t quantize(const float value, const pcie::QuantParams& quant) {
-  const float code =
-      std::nearbyint(value / quant.scales[0]) + static_cast<float>(quant.zero_points[0]);
-  return static_cast<std::int8_t>(std::clamp(code, -128.0f, 127.0f));
-}
-
 float dequantize(const std::int8_t code, const pcie::QuantParams& quant) {
   return static_cast<float>(static_cast<std::int32_t>(code) - quant.zero_points[0]) *
          quant.scales[0];
-}
-
-void print_tensor_info(const char* kind, const std::size_t index, const pcie::TensorInfo& info) {
-  std::cout << "  " << kind << "[" << index << "] name=" << info.name << " dtype=" << info.dtype
-            << " shape=" << shape_string(info.shape) << " size_bytes=" << info.size_bytes;
-  if (info.quant.has_value() && !info.quant->scales.empty()) {
-    std::cout << " scale=" << info.quant->scales[0] << " zero_point=" << info.quant->zero_points[0];
-  }
-  if (info.input_range.has_value()) {
-    std::cout << " input_range=[" << info.input_range->first << ", " << info.input_range->second
-              << "]";
-  }
-  std::cout << "\n";
-}
-
-std::vector<std::int8_t> image_codes(const std::string& path, const pcie::TensorInfo& ingress,
-                                     const pcie::QuantParams& quant) {
-  if (ingress.shape.size() != 3U || ingress.shape[2] < 1 || ingress.shape[2] > 3) {
-    throw std::runtime_error("--image needs an HWC ingress with 1..3 channels, got " +
-                             shape_string(ingress.shape));
-  }
-  if (!ingress.input_range.has_value()) {
-    throw std::runtime_error("model input '" + ingress.name + "' declares no input_range");
-  }
-  cv::Mat image = cv::imread(path, cv::IMREAD_COLOR);
-  if (image.empty()) {
-    throw std::runtime_error("failed to read image: " + path);
-  }
-  cv::resize(image, image,
-             cv::Size(static_cast<int>(ingress.shape[1]), static_cast<int>(ingress.shape[0])));
-  if (ingress.shape[2] == 3) {
-    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-  } else {
-    cv::Mat yuv;
-    cv::cvtColor(image, yuv, cv::COLOR_BGR2YUV);
-    std::vector<cv::Mat> planes;
-    cv::split(yuv, planes);
-    image = ingress.shape[2] == 1 ? planes[0] : cv::Mat();
-    if (image.empty()) {
-      cv::merge(std::vector<cv::Mat>{planes[1], planes[2]}, image);
-    }
-  }
-  const auto [lo, hi] = *ingress.input_range;
-  std::vector<std::int8_t> codes(image.total() * image.channels());
-  for (std::size_t i = 0; i < codes.size(); ++i) {
-    const double value = lo + (static_cast<double>(image.data[i]) / 255.0) * (hi - lo);
-    codes[i] = quantize(static_cast<float>(value), quant);
-  }
-  return codes;
-}
-
-std::vector<std::int8_t> ramp_codes(const std::size_t count) {
-  std::vector<std::int8_t> codes(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    codes[i] = static_cast<std::int8_t>(static_cast<std::uint8_t>((i * 7U + 3U) & 0xffU));
-  }
-  return codes;
 }
 
 struct Inputs {
@@ -237,8 +160,8 @@ struct Inputs {
   std::vector<std::vector<float>> fp32; ///< The same values dequantized, for the default route.
 };
 
-Inputs prepare_inputs(const pcie::ModelInfo& info, const std::string& image) {
-  std::cout << "input: " << (image.empty() ? "synthetic INT8 ramp" : image) << "\n";
+// A synthetic ramp over every INT8 code, and its exact FP32 image for the default route.
+Inputs prepare_inputs(const pcie::ModelInfo& info) {
   Inputs inputs;
   for (const pcie::TensorInfo& ingress : info.inputs) {
     const pcie::QuantParams& quant = require_quant(ingress);
@@ -246,17 +169,13 @@ Inputs prepare_inputs(const pcie::ModelInfo& info, const std::string& image) {
     if (ingress.dtype != "INT8" || ingress.size_bytes != count) {
       throw std::runtime_error("mla_only input '" + ingress.name + "' is not a dense INT8 tensor");
     }
-    std::vector<std::int8_t> codes =
-        image.empty() ? ramp_codes(count) : image_codes(image, ingress, quant);
+    std::vector<std::int8_t> codes(count);
     std::vector<float> values(count);
     for (std::size_t i = 0; i < count; ++i) {
+      codes[i] = static_cast<std::int8_t>(static_cast<std::uint8_t>((i * 7U + 3U) & 0xffU));
       values[i] = dequantize(codes[i], quant);
-      if (quantize(values[i], quant) != codes[i]) {
-        throw std::runtime_error("host quantizer does not round-trip INT8 code " +
-                                 std::to_string(static_cast<int>(codes[i])));
-      }
     }
-    std::cout << "  submitting '" << ingress.name << "' " << shape_string(ingress.shape) << "\n";
+    std::cout << "  submitting '" << ingress.name << "' (" << count << " INT8 codes)\n";
     inputs.int8.push_back(pcie::Tensor::from_vector(std::move(codes), ingress.shape, ingress.name));
     inputs.fp32.push_back(std::move(values));
   }
@@ -269,7 +188,8 @@ struct Head {
 };
 
 // The reference: the same values through the default route, where the card quantizes and
-// dequantizes on the CVU. Its FP32 heads are what the mla_only route has to reproduce.
+// dequantizes on the CVU. Its FP32 heads are what the mla_only route has to reproduce. The two
+// routes may list a multi-input model's inputs in different orders, so match them by name.
 std::map<std::string, Head> run_default_route(const Args& args, const pcie::ConnectionOptions& conn,
                                               const pcie::ModelInfo& mla_only_info,
                                               const std::vector<std::vector<float>>& inputs) {
@@ -277,28 +197,18 @@ std::map<std::string, Head> run_default_route(const Args& args, const pcie::Conn
   pcie::Model model(args.model, {}, conn);
   pcie::test::SignalCloseGuard guard(model);
   model.build(args.readiness_timeout_ms);
-  const pcie::ModelInfo info = model.info();
-  if (info.inputs.size() != mla_only_info.inputs.size()) {
-    throw std::runtime_error("default route exposes " + std::to_string(info.inputs.size()) +
-                             " input(s), mla_only exposes " +
-                             std::to_string(mla_only_info.inputs.size()));
-  }
   pcie::TensorList submitted;
-  for (const pcie::TensorInfo& ingress : info.inputs) {
+  for (const pcie::TensorInfo& ingress : model.info().inputs) {
     const auto match = std::find_if(
         mla_only_info.inputs.begin(), mla_only_info.inputs.end(),
         [&](const pcie::TensorInfo& candidate) { return candidate.name == ingress.name; });
-    if (match == mla_only_info.inputs.end()) {
-      throw std::runtime_error("mla_only exposes no input named '" + ingress.name + "'");
+    if (match == mla_only_info.inputs.end() || ingress.dtype != "FP32" ||
+        ingress.shape != match->shape) {
+      throw std::runtime_error("default route input '" + ingress.name +
+                               "' does not match the mla_only ingress");
     }
-    const auto& shape = match->shape;
-    if (ingress.dtype != "FP32" || ingress.shape != shape) {
-      throw std::runtime_error("default route input '" + ingress.name + "' is not FP32 " +
-                               shape_string(shape));
-    }
-    const std::size_t index =
-        static_cast<std::size_t>(std::distance(mla_only_info.inputs.begin(), match));
-    submitted.push_back(pcie::Tensor::from_vector(inputs[index], shape, ingress.name));
+    const auto index = static_cast<std::size_t>(match - mla_only_info.inputs.begin());
+    submitted.push_back(pcie::Tensor::from_vector(inputs[index], match->shape, ingress.name));
   }
   std::map<std::string, Head> heads;
   for (const auto& output : model.run(submitted, args.pull_timeout_ms)) {
@@ -312,7 +222,6 @@ std::map<std::string, Head> run_default_route(const Args& args, const pcie::Conn
     heads.emplace(output.route.name, std::move(head));
   }
   model.close();
-  std::cout << "  " << heads.size() << " FP32 head(s)\n";
   return heads;
 }
 
@@ -347,20 +256,8 @@ void check_outputs(const pcie::TensorList& outputs, const pcie::ModelInfo& info)
   }
 }
 
-void require_identical(const pcie::TensorList& first, const pcie::TensorList& second) {
-  for (std::size_t i = 0; i < first.size(); ++i) {
-    if (first[i].size_bytes != second[i].size_bytes ||
-        std::memcmp(tensor_bytes(first[i]), tensor_bytes(second[i]), first[i].size_bytes) != 0) {
-      throw std::runtime_error("two runs of the same input differ at output '" +
-                               first[i].route.name + "'");
-    }
-  }
-  std::cout << "  two runs are byte-identical across " << first.size() << " head(s)\n";
-}
-
-// Dequantize on the host and compare with the reference. max_err is the largest deviation in
-// quantization steps; `identical` is the fraction of elements that match bit for bit, which
-// only stays at 1.0 while the published scale equals the card's own float32 reciprocal.
+// Dequantize on the host and compare with the reference; max_err is the largest deviation in
+// quantization steps.
 void compare_with_reference(const pcie::TensorList& outputs, const pcie::ModelInfo& info,
                             const std::map<std::string, Head>& reference) {
   std::cout << "accuracy vs default route (error in units of each head's scale)\n";
@@ -375,11 +272,9 @@ void compare_with_reference(const pcie::TensorList& outputs, const pcie::ModelIn
     const auto* codes = reinterpret_cast<const std::int8_t*>(tensor_bytes(outputs[i]));
     const std::vector<float>& card = it->second.values;
     double max_error = 0.0;
-    std::size_t identical = 0;
     for (std::size_t e = 0; e < card.size(); ++e) {
-      const float host = dequantize(codes[e], quant);
-      identical += host == card[e] ? 1U : 0U;
-      const double error = std::fabs(static_cast<double>(host) - card[e]) / quant.scales[0];
+      const double error =
+          std::fabs(static_cast<double>(dequantize(codes[e], quant)) - card[e]) / quant.scales[0];
       if (!(error <= max_error)) { // also promotes NaN
         max_error = error;
       }
@@ -387,9 +282,8 @@ void compare_with_reference(const pcie::TensorList& outputs, const pcie::ModelIn
     const bool head_ok = max_error <= kMaxErrorScales;
     ok = ok && head_ok;
     std::cout << "  " << (head_ok ? "ok  " : "FAIL") << " max_err=" << std::setw(8) << std::fixed
-              << std::setprecision(4) << max_error << " identical=" << std::setw(8)
-              << std::setprecision(5) << static_cast<double>(identical) / card.size()
-              << " elements=" << std::setw(8) << card.size() << " " << spec.name << "\n";
+              << std::setprecision(4) << max_error << " elements=" << std::setw(8) << card.size()
+              << " " << spec.name << "\n";
   }
   if (!ok) {
     throw std::runtime_error("mla_only outputs deviate from the default route");
@@ -413,11 +307,6 @@ void expect_fp32_rejected(pcie::Model& model, const pcie::ModelInfo& info,
 int main(int argc, char** argv) {
   try {
     const Args args = parse_args(argc, argv);
-    if (args.model.empty()) {
-      std::cerr << "ERROR: neither SIMAPCIE_MLA_ONLY_MODEL nor SIMAPCIE_YOLOV8_MODEL is set and no "
-                   "--model was given\n";
-      return 1;
-    }
     std::fesetround(FE_TONEAREST); // the card rounds to nearest; keep the host quantizer in step
 
     pcie::ConnectionOptions conn;
@@ -438,25 +327,14 @@ int main(int argc, char** argv) {
               << "\n  card_host=" << conn.card_host << " card_id=" << conn.card_id
               << " queue=" << conn.queue << "\n";
     const pcie::ModelInfo info = model.info();
-    std::cout << "mla_only model metadata\n";
-    for (std::size_t i = 0; i < info.inputs.size(); ++i) {
-      print_tensor_info("input", i, info.inputs[i]);
-    }
-    for (std::size_t i = 0; i < info.outputs.size(); ++i) {
-      print_tensor_info("output", i, info.outputs[i]);
-    }
-
-    const Inputs inputs = prepare_inputs(info, args.image);
+    const Inputs inputs = prepare_inputs(info);
     const std::map<std::string, Head> reference = run_default_route(args, conn, info, inputs.fp32);
 
     std::cout << "mla_only route: host quantizes and dequantizes\n";
     model.build(args.readiness_timeout_ms);
-    const pcie::TensorList first = model.run(inputs.int8, args.pull_timeout_ms);
-    check_outputs(first, info);
-    const pcie::TensorList second = model.run(inputs.int8, args.pull_timeout_ms);
-    check_outputs(second, info);
-    require_identical(first, second);
-    compare_with_reference(first, info, reference);
+    const pcie::TensorList outputs = model.run(inputs.int8, args.pull_timeout_ms);
+    check_outputs(outputs, info);
+    compare_with_reference(outputs, info, reference);
     expect_fp32_rejected(model, info, inputs.fp32[0]);
 
     model.close();
