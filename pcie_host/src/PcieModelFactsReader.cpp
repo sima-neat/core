@@ -453,10 +453,14 @@ read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& co
   }
   if (packed) {
     if (mla->input_tensors.size() != 1U ||
-        mla->input_tensors.front().size_bytes != facts.packed_input_bytes) {
-      throw std::runtime_error("mla_only inputs do not tile the MLA packed ingress");
+        mla->input_tensors.front().size_bytes < facts.packed_input_bytes) {
+      throw std::runtime_error("mla_only inputs do not fit the MLA packed ingress");
     }
     facts.packed_input = convert_tensor(mla->input_tensors.front());
+    facts.packed_input->size_bytes = facts.packed_input_bytes;
+    facts.packed_input->shape = {
+        1, static_cast<std::int64_t>(facts.packed_input_bytes /
+                                     mla_only_dtype_bytes(facts.inputs.front().dtype))};
   }
   add_mla_only_outputs(contract, &facts);
   return facts;

@@ -292,6 +292,20 @@ void test_mla_only_supports_multiple_inputs() {
   require(facts.inputs[1].quant.has_value() && facts.inputs[1].quant->scale == 0.25f &&
               facts.inputs[1].quant->zero_point == -128,
           "input_0 must publish its own quantize parameters");
+
+  // The manifest sizes a BF16 pack carrier at twice its payload while the MLA ingests the inputs
+  // back to back, so the carrier is described by the bytes the host sends.
+  auto oversized = mla_only_contract(2, true, "BF16");
+  auto& carrier = oversized.plugins[oversized.plugins.size() - 6U].input_tensors.front();
+  require(carrier.name == "MLA_0_ifm_pack_transform", "fixture layout changed");
+  carrier.size_bytes *= 2U;
+  const auto bf16 = pcie_internal::detail::read_mla_only_facts(oversized);
+  require(bf16.packed_input->size_bytes == 80U &&
+              bf16.packed_input->shape == std::vector<std::int64_t>({1, 40}),
+          "an oversized carrier must be described by the packed payload");
+  carrier.size_bytes = 8U;
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(oversized); },
+                   "do not fit", "a carrier smaller than the inputs must be rejected");
 }
 
 // One input can reach the MLA through a pack stage too. The MLA then ingests the packed segment,
@@ -317,7 +331,6 @@ void test_mla_only_rejects_hybrid_quantization() {
                    "hybrid host/card quantization",
                    "a model input without its own quantize stage must be rejected");
 }
-
 
 void test_mla_only_publishes_heads_in_model_output_order() {
   auto contract = mla_only_contract();
