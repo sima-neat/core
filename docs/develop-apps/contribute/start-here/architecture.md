@@ -276,6 +276,12 @@ Public headers under `include/` are installed and treated as stable API.
 Internal headers under `src/**/internal` are not installed; examples/tutorials
 should use only public API.
 
+The shared Core CMake target exports C++20 and its public GStreamer, OpenCV,
+and JSON requirements. Internals, memory-library, and LLiMa development files
+belong to Core's build, while their shared libraries remain runtime dependencies.
+Static consumers explicitly request the Static component and provision its
+implementation link dependencies.
+
 Runtime environment notes:
 
 - If using bundled GStreamer plugins in `deps/gst-plugins`, set

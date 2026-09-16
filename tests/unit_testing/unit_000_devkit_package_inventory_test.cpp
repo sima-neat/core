@@ -107,10 +107,8 @@ int main() {
     }
 
     const std::vector<PackageExpectation> neat_packages = {
-        {"sima-neat", "neat"},          {"sima-neat-dev", "neat"},
-        {"neat-runtime", "neat"},       {"neat-gst-plugins", "neat"},
-        {"neat-ev74-firmware", "neat"}, {"neat-internals-dev", "neat"},
-        {"sima-lmm-core", "neat"},      {"sima-lmm-dev", "neat"},
+        {"sima-neat", "neat"},        {"sima-neat-dev", "neat"},      {"neat-runtime", "neat"},
+        {"neat-gst-plugins", "neat"}, {"neat-ev74-firmware", "neat"}, {"sima-lmm-core", "neat"},
         {"sima-lmm-cli", "neat"},
     };
 
@@ -128,7 +126,6 @@ int main() {
         {"simaai-logd", "native-sima"},
         {"simaai-mlart-modalix", "native-sima"},
         {"simaai-memory-lib", "native-sima"},
-        {"simaai-memory-lib-dev", "native-sima"},
         {"simaai-parser", "native-sima"},
         {"simaai-pcie-ep", "native-sima"},
         {"simaai-traced", "native-sima"},

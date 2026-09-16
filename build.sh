@@ -1851,6 +1851,12 @@ ensure_dependency_headers() {
   fi
 }
 
+is_customer_deb() {
+  case "$(dpkg-deb -f "$1" Package)" in
+    neat-internals-dev|simaai-memory-lib-dev|sima-lmm-dev) return 1 ;;
+  esac
+}
+
 collect_install_artifact_files() {
   local -n out_files_ref="$1"
   out_files_ref=()
@@ -1861,6 +1867,7 @@ collect_install_artifact_files() {
 
   for file in dist/*.deb ./*.deb; do
     [[ -e "${file}" ]] || continue
+    is_customer_deb "${file}" || continue
     basename_file="$(basename "${file}")"
     if [[ "${SKIP_NEAT_LLIMA}" == "ON" && "${basename_file}" == sima-lmm-*.deb ]]; then
       continue
@@ -1872,6 +1879,7 @@ collect_install_artifact_files() {
 
   for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do
     [[ -e "${file}" ]] || continue
+    is_customer_deb "${file}" || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
     seen_basenames["${basename_file}"]=1
@@ -1881,6 +1889,7 @@ collect_install_artifact_files() {
   if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
     for file in "${NEAT_LLIMA_DEB_DIR}"/sima-lmm-*.deb; do
       [[ -e "${file}" ]] || continue
+      is_customer_deb "${file}" || continue
       basename_file="$(basename "${file}")"
       [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
       seen_basenames["${basename_file}"]=1
@@ -2657,12 +2666,14 @@ stage_package_artifacts_to_dist() {
   done
   for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do
     [[ -e "${file}" ]] || continue
+    is_customer_deb "${file}" || continue
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
   if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
     for file in "${NEAT_LLIMA_DEB_DIR}"/*.deb; do
       [[ -e "${file}" ]] || continue
+      is_customer_deb "${file}" || continue
       cp -f "${file}" "dist/$(basename "${file}")"
       staged_any=ON
     done
