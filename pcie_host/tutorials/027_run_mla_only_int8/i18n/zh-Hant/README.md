@@ -19,6 +19,8 @@ x = (q - zero_point) * scale
 q = clamp(round(x / scale) + zero_point, -128, 127)
 ```
 
+本教學示範 INT8 的情況。`mla_only` 也支援相容的 BF16 封存檔；BF16 張量沒有量化參數。
+
 ## Walkthrough
 
 一支程式在主機上量化影像、執行僅 MLA 的路徑、反量化輸出頭，並在同一個佇列上與預設路徑進行比對。
@@ -95,9 +97,9 @@ Dequantized MLA-only outputs vs the default route (error in scale units):
 
 ## In Practice
 
-當應用程式自行掌握量化時，請啟用 `mla_only`：它已經從感測器或前一個模型產生 INT8、需要原始 INT8 輸出頭進行自己的後處理，或想從卡端延遲中移除量化與反量化階段。每個 scale 與 zero point 都應從 `model.info()` 讀取，切勿從模型的另一個建置複製。
+對於 INT8 封存檔，當應用程式自行掌握量化時，請啟用 `mla_only`：它已經從感測器或前一個模型產生 INT8、需要原始 INT8 輸出頭進行自己的後處理，或想從卡端延遲中移除量化與反量化階段。每個 scale 與 zero point 都應從 `model.info()` 讀取，切勿從模型的另一個建置複製。
 
-此路徑是全有或全無。多輸入模型的每個輸入都必須以 INT8 送達，且影像前處理或方框解碼無法與 `mla_only` 併用。當主機持有 FP32 資料且不需要控制量化時，請保留預設路徑。
+此路徑是全有或全無。每個輸入都必須符合其對應 `info().inputs` 項目的 dtype、形狀與位元組大小，且影像前處理或方框解碼無法與 `mla_only` 併用。當主機持有 FP32 資料且不需要自行進行轉換時，請保留預設路徑。
 
 如需部署診斷，請繼續閱讀 [PCIe 模型工作流程](/develop-apps/development-workflow/pcie-model/)。
 

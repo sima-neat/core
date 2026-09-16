@@ -26,6 +26,9 @@ x = (q - zero_point) * scale
 q = clamp(round(x / scale) + zero_point, -128, 127)
 ```
 
+This tutorial demonstrates the INT8 variant. `mla_only` also supports compatible
+BF16 archives; BF16 tensors have no quantization parameters.
+
 ## Walkthrough
 
 One program quantizes an image on the host, runs the MLA-only route, dequantizes
@@ -122,16 +125,16 @@ The default is card 0 and queue 0. Pass `--card N` only when using another card.
 
 ## In Practice
 
-Enable `mla_only` when the application owns quantization: it already produces
-INT8 from a sensor or an earlier model, it needs the raw INT8 heads for its own
-postprocessing, or it wants to remove the quantize and dequantize stages from
-the card-side latency. Read every scale and zero point from `model.info()`; never
-copy them from another build of the model.
+For an INT8 archive, enable `mla_only` when the application owns quantization:
+it already produces INT8 from a sensor or an earlier model, it needs the raw INT8
+heads for its own postprocessing, or it wants to remove the quantize and
+dequantize stages from the card-side latency. Read every scale and zero point
+from `model.info()`; never copy them from another build of the model.
 
-The route is all or nothing. Every input of a multi-input model must arrive as
-INT8, and image preprocessing or box decode cannot be combined with `mla_only`.
-Keep the default route when the host holds FP32 data and does not need to
-control quantization.
+The route is all or nothing. Every input must match the dtype, shape and byte
+size of its `info().inputs` entry, and image preprocessing or box decode cannot
+be combined with `mla_only`. Keep the default route when the host holds FP32
+data and does not need to own the conversion.
 
 For deployment diagnostics, continue with the
 [PCIe model workflow](/develop-apps/development-workflow/pcie-model/).
