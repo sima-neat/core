@@ -532,9 +532,8 @@ NB_MODULE(_pyneatpcie_core, m) {
 
   nb::class_<pcie::QuantParams>(m, "QuantParams")
       .def(nb::init<>())
-      .def_rw("axis", &pcie::QuantParams::axis)
-      .def_rw("scales", &pcie::QuantParams::scales)
-      .def_rw("zero_points", &pcie::QuantParams::zero_points);
+      .def_rw("scale", &pcie::QuantParams::scale)
+      .def_rw("zero_point", &pcie::QuantParams::zero_point);
 
   nb::class_<pcie::TensorInfo>(m, "TensorInfo")
       .def(nb::init<>())

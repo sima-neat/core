@@ -449,9 +449,8 @@ struct Tensor {
 using TensorList = std::vector<Tensor>;
 
 struct QuantParams {
-  int axis = -1;
-  std::vector<float> scales;
-  std::vector<std::int32_t> zero_points;
+  float scale = 0.0f;
+  std::int32_t zero_point = 0;
 };
 
 struct TensorInfo {

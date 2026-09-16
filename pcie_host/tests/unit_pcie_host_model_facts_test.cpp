@@ -240,17 +240,15 @@ void test_mla_only_facts_describe_ingress_and_heads() {
           "input must use the MLA logical shape");
   require(facts.inputs.front().size_bytes == 24U && facts.packed_input_bytes == 24U,
           "input must use the MLA byte size");
-  require(facts.inputs.front().quant.has_value() &&
-              facts.inputs.front().quant->scales == std::vector<float>{0.25f} &&
-              facts.inputs.front().quant->zero_points == std::vector<std::int32_t>{-128},
+  require(facts.inputs.front().quant.has_value() && facts.inputs.front().quant->scale == 0.25f &&
+              facts.inputs.front().quant->zero_point == -128,
           "input quant must publish the inverted quantize scale");
   require(!facts.packed_input.has_value(), "a direct MLA input needs no packed carrier");
 
   require(facts.outputs.size() == 2U, "expected two mla_only heads");
   const auto& sliced = facts.outputs[0];
   require(sliced.name == "head_0", "sliced head must carry the dequantized output name");
-  require(sliced.quant.has_value() && sliced.quant->scales == std::vector<float>{2.0f} &&
-              sliced.quant->zero_points == std::vector<std::int32_t>{3},
+  require(sliced.quant.has_value() && sliced.quant->scale == 2.0f && sliced.quant->zero_point == 3,
           "sliced head must publish the inverted dequantize scale");
   require(sliced.dtype == "INT8" && sliced.shape == std::vector<std::int64_t>({2, 3, 2}) &&
               sliced.size_bytes == 12U,
@@ -261,9 +259,8 @@ void test_mla_only_facts_describe_ingress_and_heads() {
           "sliced head must start the carrier and the dense block");
 
   const auto& direct = facts.outputs[1];
-  require(direct.name == "head_1" && direct.quant.has_value() &&
-              direct.quant->scales == std::vector<float>{0.5f} &&
-              direct.quant->zero_points == std::vector<std::int32_t>{-7},
+  require(direct.name == "head_1" && direct.quant.has_value() && direct.quant->scale == 0.5f &&
+              direct.quant->zero_point == -7,
           "direct head must carry its dequantized name and parameters");
   require(direct.shape == std::vector<std::int64_t>({1, 4, 16}) && direct.size_bytes == 64U,
           "direct head must publish its logical INT8 geometry");
@@ -289,13 +286,11 @@ void test_mla_only_supports_multiple_inputs() {
   require(facts.inputs[0].size_bytes == 16U && facts.inputs[1].size_bytes == 24U,
           "each input must carry the byte size of its own quantize stage");
   require(facts.packed_input_bytes == 40U, "packed input bytes must sum every input");
-  require(facts.inputs[0].quant.has_value() &&
-              facts.inputs[0].quant->scales == std::vector<float>{0.125f} &&
-              facts.inputs[0].quant->zero_points == std::vector<std::int32_t>{5},
+  require(facts.inputs[0].quant.has_value() && facts.inputs[0].quant->scale == 0.125f &&
+              facts.inputs[0].quant->zero_point == 5,
           "input_1 must publish its own quantize parameters");
-  require(facts.inputs[1].quant.has_value() &&
-              facts.inputs[1].quant->scales == std::vector<float>{0.25f} &&
-              facts.inputs[1].quant->zero_points == std::vector<std::int32_t>{-128},
+  require(facts.inputs[1].quant.has_value() && facts.inputs[1].quant->scale == 0.25f &&
+              facts.inputs[1].quant->zero_point == -128,
           "input_0 must publish its own quantize parameters");
 }
 
@@ -363,6 +358,12 @@ void test_mla_only_supports_bf16_cast_boundaries() {
               facts.outputs[0].transport_strides_bytes == std::vector<std::int64_t>({96, 32, 2}),
           "BF16 head must publish two-byte geometry without quantization parameters");
   require(facts.dense_output_bytes == 152U, "BF16 dense block must count two bytes per element");
+
+  auto per_channel = mla_only_contract();
+  per_channel.plugins[0].quant->scales = {4.0, 2.0};
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(per_channel); },
+                   "one scale and zero point",
+                   "per-channel activation quantization must be rejected");
 
   auto unquantized = mla_only_contract();
   unquantized.plugins[0].quant.reset();

@@ -182,18 +182,20 @@ bool input_has_internal_producer(
   return false;
 }
 
-std::optional<QuantParams> quant_from_mpk(
-    const std::optional<simaai::neat::pipeline_internal::sima::MpkQuantContract>& quant) {
+// The manifest stores the reciprocal scale; the public contract is per-tensor only.
+std::optional<QuantParams>
+quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuantContract>& quant,
+               const std::string& name) {
   if (!quant.has_value()) {
     return std::nullopt;
   }
-  QuantParams out;
-  out.axis = quant->axis;
-  out.zero_points.assign(quant->zero_points.begin(), quant->zero_points.end());
-  for (const auto scale : quant->scales) {
-    out.scales.push_back(1.0f / static_cast<float>(scale));
+  if (quant->scales.size() != 1U || quant->zero_points.size() != 1U) {
+    throw std::runtime_error("mla_only tensor '" + name +
+                             "' has per-channel quantization parameters; only one scale and zero "
+                             "point per tensor is supported");
   }
-  return out;
+  return QuantParams{.scale = 1.0f / static_cast<float>(quant->scales.front()),
+                     .zero_point = static_cast<std::int32_t>(quant->zero_points.front())};
 }
 
 const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
@@ -295,7 +297,7 @@ mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& c
                                " bytes");
     }
     facts.push_back(convert_tensor(input));
-    facts.back().quant = quant_from_mpk(producer->quant);
+    facts.back().quant = quant_from_mpk(producer->quant, input.name);
   }
   return facts;
 }
@@ -348,7 +350,7 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
       throw std::runtime_error("mla_only INT8 output '" + fact.name +
                                "' has no quantization parameters");
     }
-    fact.quant = quant_from_mpk(consumer.quant);
+    fact.quant = quant_from_mpk(consumer.quant, fact.name);
     fact.dense_offset = facts->dense_output_bytes;
     if (!simaai::neat::pipeline_internal::safe_add(facts->dense_output_bytes, fact.size_bytes,
                                                    &facts->dense_output_bytes)) {

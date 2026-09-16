@@ -147,12 +147,10 @@ bool is_int8(const pcie::TensorInfo& info) {
   return info.dtype == "INT8";
 }
 
-// Every MLA-tessellated INT8 archive seen so far quantizes per tensor; per-axis parameters would
-// need a channel lookup this reference does not implement.
 const pcie::QuantParams& require_quant(const pcie::TensorInfo& info) {
-  if (!info.quant.has_value() || info.quant->scales.size() != 1U ||
-      info.quant->zero_points.size() != 1U) {
-    throw std::runtime_error("tensor '" + info.name + "' needs per-tensor quantization parameters");
+  if (!info.quant.has_value()) {
+    throw std::runtime_error("INT8 tensor '" + info.name +
+                             "' publishes no quantization parameters");
   }
   return *info.quant;
 }
@@ -174,15 +172,14 @@ std::uint16_t float_to_bf16(const float value) { // round to nearest even, like 
 float decode(const pcie::TensorInfo& spec, const std::uint8_t* codes, const std::size_t i) {
   if (is_int8(spec)) {
     const pcie::QuantParams& quant = require_quant(spec);
-    return static_cast<float>(static_cast<std::int8_t>(codes[i]) - quant.zero_points[0]) *
-           quant.scales[0];
+    return static_cast<float>(static_cast<std::int8_t>(codes[i]) - quant.zero_point) * quant.scale;
   }
   return bf16_to_float(reinterpret_cast<const std::uint16_t*>(codes)[i]);
 }
 
 // The head's resolution at `value`: one quantization step, or one BF16 ulp.
 double resolution(const pcie::TensorInfo& spec, const float value) {
-  return is_int8(spec) ? spec.quant->scales[0] : std::ldexp(1.0, std::ilogb(value) - 7);
+  return is_int8(spec) ? spec.quant->scale : std::ldexp(1.0, std::ilogb(value) - 7);
 }
 
 struct Inputs {

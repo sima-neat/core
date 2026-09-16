@@ -534,10 +534,11 @@ def test_tensor_parallel_queues_yolov8():
   assert completed == sorted(queues)
 
 
-def test_tensor_run_mla_only():
-  model = _require_file_env(
-      "SIMAPCIE_MLA_ONLY_MODEL" if _env("SIMAPCIE_MLA_ONLY_MODEL") else "SIMAPCIE_YOLOV8_MODEL"
-  )
+@pytest.mark.parametrize("model_env", ["SIMAPCIE_MLA_ONLY_MODEL", "SIMAPCIE_MLA_ONLY_BF16_MODEL"])
+def test_tensor_run_mla_only(model_env):
+  if model_env == "SIMAPCIE_MLA_ONLY_MODEL" and not _env(model_env):
+    model_env = "SIMAPCIE_YOLOV8_MODEL"
+  model = _require_file_env(model_env)
   options = pcie.ModelOptions()
   options.mla_only = True
 
@@ -549,8 +550,12 @@ def test_tensor_run_mla_only():
     runtime = pcie.Model(str(model), options, _connection())
     runtime.build(_readiness_timeout_ms())
     info = runtime.info()
-    assert info.inputs[0].dtype == "INT8"
-    assert all(spec.dtype == "INT8" and spec.quant is not None for spec in info.outputs)
+    dtype = info.inputs[0].dtype
+    assert dtype in ("INT8", "BF16")
+    assert all(
+        spec.dtype == dtype and (spec.quant is not None) == (dtype == "INT8")
+        for spec in info.outputs
+    )
     inputs = _make_inputs(info)
     first_outputs = []
 
@@ -563,7 +568,7 @@ def test_tensor_run_mla_only():
       _assert_outputs_match_metadata(outputs, info.outputs)
       arrays = [output.to_numpy() for output in outputs]
       for array, spec in zip(arrays, info.outputs):
-        assert array.dtype == np.int8
+        assert array.dtype == (np.int8 if dtype == "INT8" else np.uint16)
         assert array.flags.c_contiguous
         assert list(array.shape) == spec.shape
       if not first_outputs:
