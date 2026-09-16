@@ -1,11 +1,9 @@
 {
   "internals": {
-    "branch": "3.0.0-prep",
-    "spec": "20fd6d19d49f"
+    "policy": "snap"
   },
   "llima": {
-    "branch": "3.0.0-prep",
-    "spec": "3ceaf7bd34bb"
+    "policy": "snap"
   },
   "sdk": {
     "channel": "develop"
