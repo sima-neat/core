@@ -162,7 +162,8 @@ struct ModelOptions {
   int top_k = 0;
   /// Number of model classes. Zero leaves the model/default value unchanged.
   int num_classes = 0;
-  /// Run only the MLA stage on the card. The application quantizes inputs and dequantizes outputs.
+  /// Run only the MLA stage on the card. The application submits tensors matching
+  /// ModelInfo::inputs and receives the MLA's native outputs; see TensorInfo::quant.
   bool mla_only = false;
 };
 

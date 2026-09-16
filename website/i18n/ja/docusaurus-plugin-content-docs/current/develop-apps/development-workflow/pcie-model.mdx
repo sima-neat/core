@@ -279,18 +279,20 @@ detector.close()
 
 設定しないでください。 `input_max_width`, `input_max_height`または `input_max_depth` 種なしモデルの場合、アプリケーションで明示的な入力制限が必要ない限り。 Neat モデルアーカイブから、モデル側のリサイズ対象を推測できます。
 
-## INT8テンソルでMLAのみを実行する
+## MLAのみを実行する
 
-デフォルトでは、カードはFP32入力を量子化し、MLAを実行し、結果を逆量子化してからFP32として返します。ホストが量子化を所有する場合は`mla_only`を設定します。カードはMLAのみを実行し、MLAの入口コントラクトのINT8テンソルを受け付け、生のINT8ヘッドを返します。
+デフォルトでは、カードはFP32入力をMLAのdtypeに変換し、MLAを実行し、結果を変換し戻してからFP32として返します。`mla_only`はそのdtype変換の境界をアプリケーション側に移します。カードはMLAのみを実行し、ホストは`info().inputs`の各エントリに一致するテンソルを送信し、MLAネイティブの出力を論理形状で受け取ります。
 
-BF16アクティベーションでコンパイルされたアーカイブは、量子化の代わりにキャストを行います。`mla_only`では、`quant`のないBF16テンソルを報告します。ホストは入力時にFP32を最近接偶数丸めでBF16にキャストし、出力時にBF16ヘッドを広げます。Pythonでは、BF16は`uint16`のビットパターンとして`Tensor.from_bytes(..., pcie.TensorDType.BFloat16, ...)`と`to_numpy()`を通ります。
-
-`info()`は、すべてのテンソルの量子化パラメータとともにINT8コントラクトを報告します。各`TensorInfo`は、テンソルごとに1つの`scale`と1つの`zero_point`エントリを持つ`quant`を持ちます。
+`info()`はそのコントラクトを記述します。INT8テンソルは、1つの`scale`と1つの`zero_point`を持つ`quant`を持ちます。
 
 ```text
 x = (q - zero_point) * scale
 q = clamp(round(x / scale) + zero_point, -128, 127)
 ```
+
+BF16テンソルは`quant`を持ちません。ホストは入力時にFP32を最近接偶数丸めでBF16に丸め、出力時にBF16ヘッドを広げます。Pythonでは、BF16は`uint16`のビットパターンとして`Tensor.from_bytes(..., pcie.TensorDType.BFloat16, ...)`と`to_numpy()`を通ります。
+
+以下の例はINT8の場合です。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -350,9 +352,9 @@ model.close()
 </CodeTab>
 </CodeTabs>
 
-このルートは全か無かです。複数入力モデルは、`info().inputs`の順序で入力ごとに1つのINT8テンソルを期待します。FP32ペイロードはカード上で量子化されるのではなく拒否されます。`mla_only`は画像の前処理やボックスデコードと組み合わせることはできません。コンストラクターは、MLAステージが直接のINT8入出力用にコンパイルされていないアーカイブ、たとえばCVUでテッセレーションを行うModel Zooの`yolo_v8s`ビルドを拒否します（`mla_only does not support stage '...' (tess)`）。
+このルートは全か無かです。送信する各テンソルは、対応する`info().inputs`エントリのdtype、形状、バイトサイズにその順序で一致する必要があります。他のdtypeのペイロードはカード上で変換されるのではなく拒否されます。`mla_only`は画像の前処理やボックスデコードと組み合わせることはできません。コンストラクターは、MLAステージが直接のMLA入出力用にコンパイルされていないアーカイブ、たとえばCVUでテッセレーションを行うModel Zooの`yolo_v8s`ビルドを拒否します（`mla_only does not support stage '...' (tess)`）。
 
-チュートリアル[INT8テンソルでMLAのみを実行](/tutorials/run-mla-only-int8)では、ホスト上で画像を量子化し、逆量子化したヘッドをデフォルトルートと照合します。
+チュートリアル[INT8テンソルでMLAのみを実行](/tutorials/run-mla-only-int8)はINT8の場合を示します。ホスト上で画像を量子化し、逆量子化したヘッドをデフォルトルートと照合します。
 
 ## 確実に閉じる
 
@@ -414,7 +416,7 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
   ペイロード。アクティブな転送容量よりも大きいペイロードは、後で送信された場合、拒否されます。
 - PCIeホストAPIは、Neatモデルの前処理における、特定のサブセットをサポートします。
   オブジェクトのデコードに関するオプション。
-- `mla_only`には、直接のINT8またはBF16 MLA入出力用にコンパイルされたアーカイブが必要です。すべての入力をそのdtypeで送信し、同じdtypeの連続したヘッドを返します。
+- `mla_only`には、直接のMLA入出力用にコンパイルされたアーカイブが必要です。各入力は`info().inputs`エントリのdtypeで送信され、ヘッドはMLAのdtypeで連続して返されます。
 - この共同処理 API は、ホスト側の`Graph`、`Node`、または`Run`を公開しません。
   構成。ネイティブアプリケーションのグラフを作成するには、DevKit 上で通常の Neat Library を使用します。
 
