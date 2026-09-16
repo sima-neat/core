@@ -286,6 +286,9 @@ mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& c
   return facts;
 }
 
+std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>
+application_output_contracts(const simaai::neat::pipeline_internal::sima::MpkContract& contract);
+
 void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
                           PcieModelFacts* facts) {
   using simaai::neat::pipeline_internal::sima::MpkTensorMaterializationKind;
@@ -330,6 +333,18 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
     }
     facts->outputs.push_back(std::move(fact));
   }
+
+  std::vector<PcieTensorFact> ordered;
+  for (const auto& output : application_output_contracts(contract)) {
+    const std::string name = strip_public_route_wrapper_prefix(output.name);
+    const auto it = std::find_if(facts->outputs.begin(), facts->outputs.end(),
+                                 [&](const PcieTensorFact& fact) { return fact.name == name; });
+    if (it == facts->outputs.end()) {
+      throw std::runtime_error("mla_only has no head for model output '" + name + "'");
+    }
+    ordered.push_back(std::move(*it));
+  }
+  facts->outputs = std::move(ordered);
   facts->packed_output_bytes = carrier.front().size_bytes;
 }
 

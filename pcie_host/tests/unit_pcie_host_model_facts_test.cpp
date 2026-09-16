@@ -312,6 +312,18 @@ void test_mla_only_rejects_hybrid_quantization() {
                    "a model input without its own quantize stage must be rejected");
 }
 
+
+void test_mla_only_publishes_heads_in_model_output_order() {
+  auto contract = mla_only_contract();
+  auto& terminal = contract.plugins.back();
+  std::swap(terminal.input_tensors[0], terminal.input_tensors[1]);
+  const auto facts = pcie_internal::detail::read_mla_only_facts(contract);
+  require(facts.outputs[0].name == "head_1" && facts.outputs[1].name == "head_0",
+          "heads must be published in the model output order");
+  require(facts.outputs[0].payload_offset == 96U && facts.outputs[0].dense_offset == 12U,
+          "reordering must keep each head's carrier and dense offsets");
+}
+
 void test_mla_only_rejects_unusable_output_geometry() {
   auto lane_split = mla_only_contract();
   lane_split.plugins[1].has_align_c16 = true;
@@ -339,6 +351,7 @@ int main() {
     test_mla_only_supports_multiple_inputs();
     test_mla_only_packs_a_single_input();
     test_mla_only_rejects_hybrid_quantization();
+    test_mla_only_publishes_heads_in_model_output_order();
     test_mla_only_rejects_unusable_output_geometry();
     std::cout << "[PASS] model facts\n";
     return 0;
