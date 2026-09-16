@@ -195,7 +195,7 @@ verify_simulated_package_removals() {
   for package in "${removed_packages[@]}"; do
     package_name="${package%%:*}"
     case "${package_name}" in
-      sima-neat | sima-neat-dev)
+      sima-neat | sima-neat-dev | neat-internals-dev | sima-lmm-dev)
         continue
         ;;
       neat-libcamera | neat-libcamera-dev | neat-libcamera-tools)
@@ -782,128 +782,50 @@ sysroot_neat_install_packages_dir() {
   printf '%s\n' "$(sysroot_path)/neat-install-packages"
 }
 
-has_sima_lmm_sysroot_deps() {
-  local sysroot="$1"
-  [[ -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
-     -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
-     -f "${sysroot}/usr/include/fmt/core.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so" &&
-     -f "${sysroot}/usr/include/spdlog/spdlog.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so" &&
-     -f "${sysroot}/usr/include/nlohmann/json.hpp" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" &&
-     -f "${sysroot}/usr/include/httplib.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" &&
-     -f "${sysroot}/usr/include/fftw3.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libfftw3.so" &&
-     -f "${sysroot}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavcodec.so" &&
-     -f "${sysroot}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavformat.so" &&
-     -f "${sysroot}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavutil.so" &&
-     -f "${sysroot}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libswresample.so" ]]
-}
-
 ensure_sima_lmm_sysroot_deps() {
   local sysroot="$1"
-
-  if ! compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
-    return 0
+  local -a dependencies=("usr/include/nlohmann/json.hpp:nlohmann-json3-dev")
+  if compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
+    dependencies+=(
+      "usr/lib/aarch64-linux-gnu/libfmt.so.10:libfmt10:arm64"
+      "usr/lib/aarch64-linux-gnu/libspdlog.so.1.15:libspdlog1.15:arm64"
+      "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
+      "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
+      "usr/lib/aarch64-linux-gnu/libfftw3.so.3:libfftw3-double3:arm64"
+      "usr/lib/aarch64-linux-gnu/libavcodec.so.61:libavcodec61:arm64"
+      "usr/lib/aarch64-linux-gnu/libavformat.so.61:libavformat61:arm64"
+      "usr/lib/aarch64-linux-gnu/libavutil.so.59:libavutil59:arm64"
+      "usr/lib/aarch64-linux-gnu/libswresample.so.5:libswresample5:arm64"
+    )
   fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "apt-get is required to install SimaLMM SDK/sysroot dependencies." >&2
-    exit 1
-  fi
-
+  local dependency
   local -a missing_packages=()
-  if [[ ! -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
-        ! -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
-    missing_packages+=("libeigen3-dev")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/fmt/core.h" ||
-        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so" ]]; then
-    missing_packages+=("libfmt-dev:arm64" "libfmt10:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/spdlog/spdlog.h" ||
-        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so" ]]; then
-    missing_packages+=("libspdlog-dev:arm64" "libspdlog1.15:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/nlohmann/json.hpp" ]]; then
-    missing_packages+=("nlohmann-json3-dev")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" ||
-        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" ||
-        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
-    missing_packages+=("libbrotli-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/httplib.h" ||
-        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ]]; then
-    missing_packages+=("libcpp-httplib-dev:arm64" "libcpp-httplib0.18:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/fftw3.h" ||
-        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libfftw3.so" ]]; then
-    missing_packages+=("libfftw3-dev:arm64" "libfftw3-double3:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" ||
-        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavcodec.so" ]]; then
-    missing_packages+=("libavcodec-dev:arm64" "libavcodec61:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" ||
-        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavformat.so" ]]; then
-    missing_packages+=("libavformat-dev:arm64" "libavformat61:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" ||
-        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libavutil.so" ]]; then
-    missing_packages+=("libavutil-dev:arm64" "libavutil59:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" ||
-        ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libswresample.so" ]]; then
-    missing_packages+=("libswresample-dev:arm64" "libswresample5:arm64")
-  fi
-
-  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
-    return 0
-  fi
+  for dependency in "${dependencies[@]}"; do
+    [[ -e "${sysroot}/${dependency%%:*}" ]] || missing_packages+=("${dependency#*:}")
+  done
+  [[ "${#missing_packages[@]}" -gt 0 ]] || return 0
 
   local tmp_dir
-  tmp_dir="$(mktemp -d /tmp/sima-lmm-sysroot-deps-XXXXXX)"
-
-  log "Installing SimaLMM SDK/sysroot dependencies:"
-  printf '  %s\n' "${missing_packages[@]}"
-  if ! (
-    cd "${tmp_dir}"
-    apt-get download "${missing_packages[@]}"
-  ); then
+  tmp_dir="$(mktemp -d /tmp/neat-sysroot-deps-XXXXXX)"
+  log "Installing customer SDK dependencies: ${missing_packages[*]}"
+  if ! (cd "${tmp_dir}" && apt-get download "${missing_packages[@]}"); then
     rm -rf "${tmp_dir}"
-    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    echo "Failed to download customer SDK dependencies." >&2
     exit 1
   fi
-
-  local -a downloaded_debs=()
-  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
-  if [[ "${#downloaded_debs[@]}" -lt 1 ]]; then
-    rm -rf "${tmp_dir}"
-    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
-    exit 1
-  fi
-
   local dep_deb
-  for dep_deb in "${downloaded_debs[@]}"; do
-    log "Extracting $(basename "${dep_deb}") into ${sysroot}"
+  for dep_deb in "${tmp_dir}"/*.deb; do
     if ! dpkg-deb -x "${dep_deb}" "${sysroot}" 2>/dev/null; then
       run_sudo dpkg-deb -x "${dep_deb}" "${sysroot}"
     fi
   done
   rm -rf "${tmp_dir}"
-
-  if ! has_sima_lmm_sysroot_deps "${sysroot}"; then
-    echo "SimaLMM SDK/sysroot dependencies are still incomplete after install." >&2
-    exit 1
-  fi
+  for dependency in "${dependencies[@]}"; do
+    if [[ ! -e "${sysroot}/${dependency%%:*}" ]]; then
+      echo "Missing customer SDK dependency after install: ${dependency#*:}" >&2
+      exit 1
+    fi
+  done
 }
 
 ensure_sdk_neat_cli_symlink() {

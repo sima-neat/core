@@ -138,9 +138,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "#include <gst/SimaCvuCapabilityAbi.h>",
             (ROOT / "include/gst/SimaPluginStaticManifestAbi.h").read_text(),
         )
-        # Consumers obtain these shared ABI headers from their owning package,
-        # not duplicate copies in sima-neat-dev that collide during APT install.
-        self.assertIn('"neat-internals-dev"', text)
+        self.assertNotIn('"neat-internals-dev"', text)
 
     def test_public_header_discovery_searches_an_empty_cache(self) -> None:
         text = cmake()
@@ -184,7 +182,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "neat-internals-dev (<<",
         ):
             self.assertNotIn(removed, text, removed)
-        for kept in ('"neat-runtime"', '"neat-gst-plugins"', '"neat-internals-dev"'):
+        for kept in ('"neat-runtime"', '"neat-gst-plugins"'):
             self.assertIn(kept, text, kept)
 
     def test_llima_is_consumed_without_a_version_policy(self) -> None:
@@ -267,7 +265,7 @@ ensure_neat_llima
         self.assertNotIn("SIMANEAT_MEMORY_DEV_PACKAGE_VERSION", text)
         self.assertNotIn("SIMANEAT_BUNDLED_MEMORY_DEV_DEBS", text)
         self.assertNotIn("simaai-memory-lib-dev (=", text)
-        self.assertIn('"simaai-memory-lib-dev"', text)
+        self.assertNotIn('"simaai-memory-lib-dev"', text)
 
     def test_sdk_build_uses_the_selected_cross_compiler_headers(self) -> None:
         text = build_script()
@@ -275,17 +273,67 @@ ensure_neat_llima
         self.assertIn("usr/include/c++/${cross_gcc_major}", text)
         self.assertNotIn("usr/include/c++/12", text)
 
-    def test_every_delivered_internals_package_is_forwarded(self) -> None:
-        text = build_script()
-        self.assertIn('for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do', text)
-        for removed in (
-            '"${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb',
-            "dist/simaai-common*.deb",
-            "'simaai-memory-lib_*.deb'",
-            "'libcamera_*.deb'",
-            "'neat-runtime_*.deb'",
-        ):
-            self.assertNotIn(removed, text, removed)
+    def test_customer_package_selection_preserves_runtime_and_public_dev(self) -> None:
+        for package in ("neat-internals-dev", "simaai-memory-lib-dev", "sima-lmm-dev",
+                        "sima-neat-dev", "neat-runtime", "neat-gst-plugins",
+                        "neat-ev74-firmware", "simaai-memory-lib", "sima-lmm-core", "sima-lmm-cli"):
+            with self.subTest(package=package):
+                result = subprocess.run(
+                    ["bash", "-c", f'dpkg-deb() {{ echo {shlex.quote(package)}; }}\n'
+                     + shell_function("is_customer_deb") + '\nis_customer_deb unused.deb'],
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, int(package in {
+                    "neat-internals-dev", "simaai-memory-lib-dev", "sima-lmm-dev"
+                }), result.stderr)
+
+
+    def test_shared_package_discovery_is_scoped_and_hides_implementation_sdks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "FindPkgConfig.cmake").write_text("""
+set(PkgConfig_FOUND TRUE)
+function(pkg_check_modules prefix)
+  set(${prefix}_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/public" PARENT_SCOPE)
+  set(${prefix}_LIBRARY_DIRS "${CMAKE_SOURCE_DIR}/lib" PARENT_SCOPE)
+endfunction()
+""")
+            (root / "nlohmann_jsonConfig.cmake").write_text("set(nlohmann_json_FOUND TRUE)\n")
+            (root / "SimaNeatTargets.cmake").write_text("""
+add_library(SimaNeat::sima_neat INTERFACE IMPORTED)
+add_library(SimaNeat::sima_neat_common INTERFACE IMPORTED)
+""")
+            (root / "CMakeLists.txt").write_text(f"""
+cmake_minimum_required(VERSION 3.18)
+project(CustomerPackage NONE)
+list(PREPEND CMAKE_MODULE_PATH "${{CMAKE_SOURCE_DIR}}")
+list(PREPEND CMAKE_PREFIX_PATH "${{CMAKE_SOURCE_DIR}}")
+set(CMAKE_DISABLE_FIND_PACKAGE_NeatInternals TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaLMM TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)
+set(SIMANEAT_CONFIG_WITH_LLIMA TRUE)
+include(CMakePackageConfigHelpers)
+configure_package_config_file("{ROOT}/cmake/SimaNeatConfig.cmake.in"
+  "${{CMAKE_SOURCE_DIR}}/SimaNeatConfig.cmake" INSTALL_DESTINATION .)
+add_subdirectory(first)
+add_subdirectory(second)
+""")
+            for name in ("first", "second"):
+                (root / name).mkdir()
+                (root / name / "CMakeLists.txt").write_text("""
+find_package(SimaNeat CONFIG REQUIRED)
+find_package(SimaNeat CONFIG REQUIRED)
+get_target_property(includes SimaNeat::sima_neat_common INTERFACE_INCLUDE_DIRECTORIES)
+if (NOT "${CMAKE_SOURCE_DIR}/public" IN_LIST includes)
+  message(FATAL_ERROR "Missing public dependency includes")
+endif()
+if (TARGET SimaNeat::sima_neat_static)
+  message(FATAL_ERROR "Static target leaked into shared discovery")
+endif()
+""")
+            result = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build")],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_selected_internals_artifact_is_installed_before_build(self) -> None:
         text = build_script()

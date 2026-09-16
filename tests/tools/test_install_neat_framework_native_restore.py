@@ -24,6 +24,27 @@ def run_bash(
     )
 
 
+
+class CustomerSdkDependenciesTest(unittest.TestCase):
+    def test_runtime_package_does_not_request_implementation_dev_packages(self) -> None:
+        result = run_bash(r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cd "${tmp}"
+touch sima-lmm-core.deb
+apt-get() { printf 'DOWNLOAD %s\n' "$*"; return 1; }
+ensure_sima_lmm_sysroot_deps "${tmp}/sysroot"
+""")
+        self.assertNotEqual(result.returncode, 0)
+        requested = next(line for line in result.stdout.splitlines() if line.startswith("DOWNLOAD"))
+        self.assertIn("nlohmann-json3-dev", requested)
+        self.assertIn("libcpp-httplib0.18:arm64", requested)
+        self.assertIn("libavcodec61:arm64", requested)
+        for package in ("libeigen3-dev", "libfmt-dev", "libspdlog-dev", "libbrotli-dev",
+                        "libcpp-httplib-dev", "libfftw3-dev", "libavcodec-dev"):
+            self.assertNotIn(package, requested)
+
 class ModalixI2cAccessTest(unittest.TestCase):
     @staticmethod
     def run_setup(
@@ -576,7 +597,7 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
             result.stderr,
         )
 
-    def test_board_transaction_accepts_retired_neat_libcamera_removals(self) -> None:
+    def test_board_transaction_accepts_retired_neat_package_removals(self) -> None:
         result = run_bash(
             r"""
 source "$1"
@@ -586,7 +607,9 @@ simulation="${tmp}/simulation.log"
 printf '%s\n' \
   'Remv neat-libcamera [2.1.1~pre3348]' \
   'Remv neat-libcamera-dev [2.1.1~pre3348]' \
-  'Remv neat-libcamera-tools [2.1.1~pre3348]' > "${simulation}"
+  'Remv neat-libcamera-tools [2.1.1~pre3348]' \
+  'Remv neat-internals-dev [0.5.0+3.0.0-prep.6223db77f5b8]' \
+  'Remv sima-lmm-dev [0.4.0+3.0.0-prep.0762b12269dd]' > "${simulation}"
 verify_simulated_package_removals "${simulation}"
 """
         )

@@ -328,6 +328,7 @@ set_property(TEST unit_000_devkit_package_inventory_test APPEND PROPERTY
   LABELS "unit;devkit-package-inventory")
 
 set(UNIT_TESTS
+  unit_memory_runtime_loader_test
   unit_builder_test
   unit_caps_bridge_test
   unit_contract_compiler_boxdecode_test
@@ -2545,3 +2546,16 @@ install(
   DESTINATION lib/sima-neat/tests
   COMPONENT extras
 )
+
+foreach(_target codec_runtime_stream_test decoder_multirun_admission_boundary_test h265_rtsp_resnet50_e2e_test)
+  if (TARGET ${_target})
+    target_link_libraries(${_target} PRIVATE opencv_videoio)
+  endif()
+endforeach()
+
+foreach(_target yolov8_variant_route_matrix_test graph_migration_legacy_yolov8_variant_route_matrix_test
+    graph_migration_unified_yolov8_variant_route_matrix_test)
+  if (TARGET ${_target})
+    target_link_libraries(${_target} PRIVATE opencv_dnn)
+  endif()
+endforeach()
