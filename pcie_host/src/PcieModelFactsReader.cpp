@@ -3,7 +3,6 @@
 
 #include "model/internal/ModelArchiveLoader.h"
 #include "pipeline/internal/TensorMath.h"
-#include "pipeline/internal/sima/RouteGraph.h"
 
 #include <algorithm>
 #include <cctype>
@@ -224,98 +223,50 @@ std::size_t dense_element_count(const std::vector<std::int64_t>& shape) {
   return elements;
 }
 
-simaai::neat::pipeline_internal::sima::RouteGraph
-validate_mla_only_stages(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
-  using simaai::neat::pipeline_internal::sima::RouteGraphKernelKind;
-  auto graph = simaai::neat::pipeline_internal::sima::build_route_graph(contract);
-  if (graph.mla_plugin_index < 0) {
-    throw std::runtime_error("mla_only requires exactly one MLA stage in the MPK contract");
-  }
-  for (const auto& node : graph.nodes) {
-    switch (node.kind) {
-    case RouteGraphKernelKind::Mla:
-    case RouteGraphKernelKind::Quant:
-    case RouteGraphKernelKind::Unpack:
-    case RouteGraphKernelKind::Slice:
-    case RouteGraphKernelKind::Dequantize:
-    case RouteGraphKernelKind::PassThrough:
-      continue;
-    default:
-      throw std::runtime_error(
-          "mla_only does not support stage '" + node.plugin_name + "' (" +
-          simaai::neat::pipeline_internal::sima::route_graph_kernel_name(node.kind) + ")");
-    }
-  }
-  return graph;
-}
-
-// The quantize stages feeding the MLA, in pack-slot order. Sets `packed` when they reach the MLA
-// through an ifm pack stage.
-std::vector<std::size_t>
-mla_only_quantize_stages(const simaai::neat::pipeline_internal::sima::RouteGraph& graph,
-                         const std::size_t mla_index, bool* packed) {
-  using simaai::neat::pipeline_internal::sima::RouteGraphKernelKind;
-  std::vector<std::size_t> stages;
-  for (const auto* edge :
-       simaai::neat::pipeline_internal::sima::route_graph_incoming_edges(graph, mla_index)) {
-    const auto* node =
-        simaai::neat::pipeline_internal::sima::route_graph_node(graph, edge->src_plugin_index);
-    if (node != nullptr && node->kind == RouteGraphKernelKind::Quant) {
-      stages.push_back(edge->src_plugin_index);
-      continue;
-    }
-    if (node == nullptr || node->kind != RouteGraphKernelKind::PassThrough) {
-      throw std::runtime_error("mla_only MLA input is produced by stage '" + edge->src_plugin +
-                               "', which is neither a quantize nor a pack stage; hybrid host/card "
-                               "quantization is out of scope");
-    }
-    *packed = true;
-    for (const auto* part : simaai::neat::pipeline_internal::sima::route_graph_incoming_edges(
-             graph, edge->src_plugin_index)) {
-      const auto* producer =
-          simaai::neat::pipeline_internal::sima::route_graph_node(graph, part->src_plugin_index);
-      if (producer == nullptr || producer->kind != RouteGraphKernelKind::Quant) {
-        throw std::runtime_error(
-            "mla_only input '" + part->tensor_name + "' is produced by stage '" + part->src_plugin +
-            "', not a quantize stage; hybrid host/card quantization is out of scope");
-      }
-      stages.push_back(part->src_plugin_index);
-    }
-  }
-  return stages;
-}
-
 std::vector<PcieTensorFact>
 mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
-                     const std::vector<std::size_t>& stages) {
+                     const simaai::neat::pipeline_internal::sima::MpkPluginIoContract& mla,
+                     bool* packed) {
   const auto public_inputs = detail::application_input_contracts(contract);
-  if (stages.size() != public_inputs.size()) {
+  const auto boundary =
+      simaai::neat::pipeline_internal::sima::get_mla_boundary_logical_inputs_contract(contract);
+  if (boundary.size() != public_inputs.size()) {
     throw std::runtime_error("mla_only requires every model input to reach the MLA through its own "
                              "quantize stage: the model has " +
                              std::to_string(public_inputs.size()) + " input(s) but " +
-                             std::to_string(stages.size()) +
+                             std::to_string(boundary.size()) +
                              " quantize stage(s); hybrid host/card quantization is out of scope");
   }
+  *packed = boundary.size() != 1U || mla.input_tensors.size() != 1U ||
+            mla.input_tensors.front().name != boundary.front().name;
 
   std::vector<PcieTensorFact> facts;
-  for (const std::size_t stage_index : stages) {
-    const auto& stage = contract.plugins[stage_index];
-    if (stage.output_tensors.size() != 1U) {
-      throw std::runtime_error("mla_only quantize stage '" + stage.name +
-                               "' must produce exactly one tensor");
+  for (const auto& tensor : boundary) {
+    const auto producer =
+        std::find_if(contract.plugins.begin(), contract.plugins.end(), [&](const auto& stage) {
+          return std::any_of(stage.output_tensors.begin(), stage.output_tensors.end(),
+                             [&](const auto& output) { return output.name == tensor.name; });
+        });
+    if (producer == contract.plugins.end()) {
+      throw std::runtime_error("mla_only input '" + tensor.name + "' has no producing stage");
+    }
+    if (canonical_token(producer->kernel).find("quant") == std::string::npos) {
+      throw std::runtime_error(
+          "mla_only input '" + tensor.name + "' is produced by stage '" + producer->name +
+          "', not a quantize stage; hybrid host/card quantization is out of scope");
     }
     const auto ingress =
         std::find_if(public_inputs.begin(), public_inputs.end(), [&](const auto& input) {
-          return std::any_of(stage.input_tensors.begin(), stage.input_tensors.end(),
+          return std::any_of(producer->input_tensors.begin(), producer->input_tensors.end(),
                              [&](const auto& candidate) { return candidate.name == input.name; });
         });
     if (ingress == public_inputs.end()) {
-      throw std::runtime_error("mla_only quantize stage '" + stage.name +
+      throw std::runtime_error("mla_only quantize stage '" + producer->name +
                                "' is not fed by a model input; hybrid host/card quantization is "
                                "out of scope");
     }
 
-    auto input = stage.output_tensors.front();
+    auto input = tensor;
     input.name = ingress->name;
     input.input_range = ingress->input_range;
     const std::string dtype = best_dtype(input);
@@ -330,7 +281,7 @@ mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& c
                                std::to_string(input.size_bytes) + " bytes");
     }
     facts.push_back(convert_tensor(input));
-    facts.back().quant = quant_from_mpk(stage.quant);
+    facts.back().quant = quant_from_mpk(producer->quant);
   }
   return facts;
 }
@@ -438,24 +389,34 @@ void validate_supported_input_dtype(
 
 PcieModelFacts
 read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
-  const auto graph = validate_mla_only_stages(contract);
-  bool packed = false;
-  const auto stages =
-      mla_only_quantize_stages(graph, static_cast<std::size_t>(graph.mla_plugin_index), &packed);
+  const auto* mla = simaai::neat::pipeline_internal::sima::get_mla_stage_io_contract(contract);
+  if (mla == nullptr) {
+    throw std::runtime_error("mla_only requires exactly one MLA stage in the MPK contract");
+  }
+  for (const auto& stage : contract.plugins) {
+    const std::string kernel = canonical_token(stage.kernel);
+    const bool supported =
+        &stage == mla || is_pass_through_stage(stage) || kernel.find("pack") != std::string::npos ||
+        kernel.find("slice") != std::string::npos || kernel.find("dequant") != std::string::npos ||
+        (kernel.find("quant") != std::string::npos && kernel.find("tess") == std::string::npos);
+    if (!supported) {
+      throw std::runtime_error("mla_only does not support stage '" + stage.name + "' (" +
+                               stage.kernel + ")");
+    }
+  }
 
   PcieModelFacts facts;
-  for (auto& input : mla_only_input_facts(contract, stages)) {
+  bool packed = false;
+  for (auto& input : mla_only_input_facts(contract, *mla, &packed)) {
     facts.packed_input_bytes += input.size_bytes;
     facts.inputs.push_back(std::move(input));
   }
-  if (packed || facts.inputs.size() > 1U) {
-    const auto* mla_inputs =
-        simaai::neat::pipeline_internal::sima::get_mla_input_contract(contract);
-    if (mla_inputs == nullptr || mla_inputs->size() != 1U ||
-        mla_inputs->front().size_bytes != facts.packed_input_bytes) {
+  if (packed) {
+    if (mla->input_tensors.size() != 1U ||
+        mla->input_tensors.front().size_bytes != facts.packed_input_bytes) {
       throw std::runtime_error("mla_only inputs do not tile the MLA packed ingress");
     }
-    facts.packed_input = convert_tensor(mla_inputs->front());
+    facts.packed_input = convert_tensor(mla->input_tensors.front());
   }
   add_mla_only_outputs(contract, &facts);
   return facts;
