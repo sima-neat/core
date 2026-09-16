@@ -291,10 +291,12 @@ void compare_with_reference(const pcie::TensorList& outputs, const pcie::ModelIn
 }
 
 // The route accepts nothing but the INT8 ingress; the application cannot fall back to FP32.
-void expect_fp32_rejected(pcie::Model& model, const pcie::ModelInfo& info,
-                          const std::vector<float>& fp32) {
+void expect_fp32_rejected(pcie::Model& model, const pcie::ModelInfo& info, const Inputs& inputs) {
+  pcie::TensorList submitted = inputs.int8;
+  submitted[0] =
+      pcie::Tensor::from_vector(inputs.fp32[0], info.inputs[0].shape, info.inputs[0].name);
   try {
-    (void)model.push(pcie::Tensor::from_vector(fp32, info.inputs[0].shape, info.inputs[0].name));
+    (void)model.push(submitted);
   } catch (const std::exception& e) {
     std::cout << "FP32 push rejected: " << e.what() << "\n";
     return;
@@ -335,7 +337,7 @@ int main(int argc, char** argv) {
     const pcie::TensorList outputs = model.run(inputs.int8, args.pull_timeout_ms);
     check_outputs(outputs, info);
     compare_with_reference(outputs, info, reference);
-    expect_fp32_rejected(model, info, inputs.fp32[0]);
+    expect_fp32_rejected(model, info, inputs);
 
     model.close();
     std::cout << "done\n";
