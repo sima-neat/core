@@ -7,7 +7,7 @@
 | Category | PCIe Co-Processing |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15분 |
-| Model | yolo26n-det-int8-b1 (Model Zoo, compiled for direct MLA input and output) |
+| Model | yolo26n-det-int8-b1 (Model Zoo, 직접 MLA 입출력용으로 컴파일됨) |
 | Labels | PCIe, MLA, INT8, quantization, tensor |
 
 ## Concept
@@ -103,7 +103,7 @@ INT8 아카이브에서는 애플리케이션이 양자화를 소유할 때 `mla
 
 배포 진단은 [PCIe 모델 워크플로](/develop-apps/development-workflow/pcie-model/)에서 계속하세요.
 
-## Source Files
+## 소스 파일
 
 - `run_mla_only_int8.cpp`
 - `run_mla_only_int8.py`

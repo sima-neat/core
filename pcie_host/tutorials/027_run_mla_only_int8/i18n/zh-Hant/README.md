@@ -7,7 +7,7 @@
 | Category | PCIe Co-Processing |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15 分鐘 |
-| Model | yolo26n-det-int8-b1 (Model Zoo, compiled for direct MLA input and output) |
+| Model | yolo26n-det-int8-b1（Model Zoo，為直接 MLA 輸入輸出而編譯） |
 | Labels | PCIe, MLA, INT8, quantization, tensor |
 
 ## Concept
@@ -103,7 +103,7 @@ Dequantized MLA-only outputs vs the default route (error in scale units):
 
 如需部署診斷，請繼續閱讀 [PCIe 模型工作流程](/develop-apps/development-workflow/pcie-model/)。
 
-## Source Files
+## 原始檔案
 
 - `run_mla_only_int8.cpp`
 - `run_mla_only_int8.py`
