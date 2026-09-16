@@ -305,6 +305,7 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
     throw std::runtime_error("MPK contract does not expose consistent MLA output heads");
   }
 
+  bool padded = false;
   for (std::size_t i = 0; i < logical.size(); ++i) {
     const auto& head = logical[i];
     auto fact = convert_tensor(head);
@@ -323,6 +324,9 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
     }
     fact.transport_strides_bytes = head.stride_bytes;
     fact.payload_offset = static_cast<std::size_t>(head.source_byte_offset);
+    padded =
+        padded || head.stride_bytes !=
+                      simaai::neat::pipeline_internal::contiguous_strides_bytes(fact.shape, 1U);
     const auto& dequantize = dequantize_for_head(contract, head.name);
     fact.name = strip_public_route_wrapper_prefix(dequantize.output_tensors.front().name);
     fact.quant = quant_from_mpk(dequantize.quant);
@@ -345,6 +349,9 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
     ordered.push_back(std::move(*it));
   }
   facts->outputs = std::move(ordered);
+  if (!padded) {
+    facts->dense_output_bytes = 0;
+  }
   facts->packed_output_bytes = carrier.front().size_bytes;
 }
 

@@ -324,6 +324,21 @@ void test_mla_only_publishes_heads_in_model_output_order() {
           "reordering must keep each head's carrier and dense offsets");
 }
 
+void test_mla_only_skips_compaction_for_dense_heads() {
+  auto contract = mla_only_contract();
+  auto& unpack_0 = contract.plugins[2].output_tensors[0];
+  unpack_0.mpk_shape = {1, 2, 3, 2};
+  unpack_0.logical_shape = {2, 3, 2};
+  unpack_0.size_bytes = 12;
+  contract.plugins[3].input_tensors[0] = unpack_0;
+  contract.plugins[1].output_tensors[0].size_bytes = 76;
+  contract.plugins[2].input_tensors[0].size_bytes = 76;
+  const auto facts = pcie_internal::detail::read_mla_only_facts(contract);
+  require(facts.dense_output_bytes == 0U, "dense heads must not request a compaction block");
+  require(facts.outputs[1].payload_offset == 12U && facts.packed_output_bytes == 76U,
+          "dense heads must keep their carrier offsets");
+}
+
 void test_mla_only_rejects_unusable_output_geometry() {
   auto lane_split = mla_only_contract();
   lane_split.plugins[1].has_align_c16 = true;
@@ -352,6 +367,7 @@ int main() {
     test_mla_only_packs_a_single_input();
     test_mla_only_rejects_hybrid_quantization();
     test_mla_only_publishes_heads_in_model_output_order();
+    test_mla_only_skips_compaction_for_dense_heads();
     test_mla_only_rejects_unusable_output_geometry();
     std::cout << "[PASS] model facts\n";
     return 0;
