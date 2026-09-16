@@ -1021,10 +1021,9 @@ actionable error rather than leaving it blocked.
 `ModelOptions::mla_only` moves the execution boundary. The card then runs the
 MLA stage alone, with no quantize before it and no dequantize after it, and the
 application owns both conversions. `Model::info()` publishes what that needs:
-every `TensorInfo` carries `quant` with one scale and one zero point, and every
-input also carries `input_range`, the calibrated floating-point domain. The
-route accepts nothing but its INT8 ingress, so an FP32 tensor is rejected
-instead of being converted silently.
+for an INT8 archive every `TensorInfo` carries `quant` with one scale and one
+zero point; a BF16 archive casts at both boundaries and publishes none. The route accepts nothing but its INT8 or BF16 ingress, so an FP32
+tensor is rejected instead of being converted silently.
 
 The option reaches the card as `execution.mla_only` in the model options JSON.
 It requires `InputKind::Tensor` and rejects preprocess and box-decode options,
@@ -1033,7 +1032,7 @@ which configure stages this route does not run.
 The MLA writes its heads tessellated and padded. The host plugin copies the
 frame out of the driver buffer, and the PCIe host channel compacts the padded
 heads into one dense block before publishing them, so a public tensor is always
-dense INT8 in the model's logical shape. Compaction sits on top of the existing
+dense INT8 or BF16 in the model's logical shape. Compaction sits on top of the existing
 `si_mla_read()` copy contract: the route costs one host copy more than the
 default one and needs no new `libsimaaipcie.so` symbols.
 

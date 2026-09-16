@@ -36,8 +36,8 @@ FP32.
 
 Set `mla_only = true` when the application owns quantization. The card then runs only the MLA:
 `info()` reports INT8 inputs and outputs with `quant` (one scale and one zero point per tensor)
-and `input_range` on inputs, the host submits INT8 tensors that match that contract, and the raw
-INT8 heads come back dense and contiguous.
+or BF16 tensors without `quant` for a BF16 archive; the host submits
+tensors in that dtype, and the raw heads come back dense and contiguous.
 
 ```cpp
 pcie::ModelOptions options;

@@ -33,7 +33,8 @@ from the Neat Library used inside the SDK or directly on a DevKit.
   mode, treat that information as the card-side preprocessing output contract, not the submitted
   image contract.
 - Enable `mla_only` only when the application quantizes on the host; then `model.info()` is the
-  INT8 contract and its `quant` parameters are the only valid source for the conversion.
+  INT8 or BF16 contract and, for INT8, its `quant` parameters are the only valid source for the
+  conversion.
 - Use `run()` for ordinary request/response inference. Use `push()` and `pull()` only when the
   application benefits from bounded pipelining.
 - Use finite build and inference timeouts in applications that must fail predictably.

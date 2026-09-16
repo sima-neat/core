@@ -7,12 +7,12 @@
 | Category | PCIe Co-Processing |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15 хвилин |
-| Model | any archive compiled for direct MLA input and output |
+| Model | yolo26n-det-int8-b1 (Model Zoo, compiled for direct MLA input and output) |
 | Labels | PCIe, MLA, INT8, quantization, tensor |
 
 ## Concept
 
-Типовий маршрут PCIe надсилає тензори FP32 на карту, де EV74 квантує їх, виконується MLA, а EV74 деквантує результати назад у FP32. Застосунок, який уже має дані INT8 або хоче самостійно керувати кроком квантування, може встановити `ModelOptions.mla_only`. Тоді карта виконує лише MLA: хост надсилає тензори INT8, що відповідають вхідному контракту MLA, і отримує сирі голови INT8. `model.info()` публікує параметри квантування кожного тензора, тож хост може квантувати й деквантувати за однією формулою:
+Типовий маршрут PCIe надсилає тензори FP32 на карту, де вхід квантується, виконується MLA, а вихід деквантується й повертається на хост як FP32. Застосунок, який уже має дані INT8 або хоче самостійно керувати кроком квантування, може встановити `ModelOptions.mla_only`. Тоді карта виконує лише MLA: хост надсилає тензори INT8, що відповідають вхідному контракту MLA, і отримує сирі голови INT8. `model.info()` публікує параметри квантування кожного тензора, тож хост може квантувати й деквантувати за однією формулою:
 
 ```text
 x = (q - zero_point) * scale
@@ -25,11 +25,11 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 ### Перегляньте контракт лише MLA {#step-inspect-contract}
 
-Створіть `Model` з увімкненим `mla_only`. Тепер `info()` повідомляє входи та виходи INT8, кожен із `quant.scales[0]` та `quant.zero_points[0]`. Входи також містять `input_range` — діапазон із рухомою комою, для якого модель була відкалібрована. Модель із кількома входами перелічує по одному тензору INT8 на кожен вхід у порядку подання.
+Створіть `Model` з увімкненим `mla_only`. Тепер `info()` повідомляє входи та виходи INT8, кожен із `quant.scale` та `quant.zero_point`. Еталонна модель має один вхід, `images`, тензор INT8 `[640, 640, 3]` HWC.
 
 ### Квантуйте на хості {#step-quantize-on-host}
 
-Змініть розмір зображення до геометрії входу, перетворіть BGR на RGB, відобразіть пікселі на `input_range` і застосуйте формулу квантування з параметрами входу. Збережіть декванотовані значення тих самих кодів: це точний вхід FP32, який потрібен типовому маршруту для порівняння за однакових умов.
+Еталонна модель очікує одне зображення RGB з пікселями в діапазоні `[0, 1]`. Змініть розмір зображення до `640x640`, перетворіть BGR на RGB, поділіть на 255 і застосуйте формулу квантування з параметрами входу. Ця попередня обробка належить моделі, а не контракту архіву: іншій моделі потрібен власний рецепт. Збережіть деквантовані значення тих самих кодів: це точний вхід FP32, який потрібен типовому маршруту для порівняння за однакових умов.
 
 ### Виконайте маршрут INT8 {#step-run-int8}
 
@@ -43,27 +43,31 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 Установіть пакет хоста PCIe та завантажте набір навчальних матеріалів, як описано в розділі [Налаштування навчальних матеріалів](/tutorials/before-you-run).
 
-Для цього посібника потрібен архів, скомпільований для прямого входу та виходу MLA: `tessellate_parameters` у Model SDK з `enable_mla=True`, розкладкою DRAM `HWC` на кожному вході та `HWC16` на кожному виході. Архіви Model Zoo натомість виконують теселяцію на EV74 і відхиляються, коли ввімкнено `mla_only`:
+Посібник виконує архів YOLO26n INT8 з Model Zoo, скомпільований для прямого входу та виходу MLA. Завантажте його в корінь розпакованих додаткових матеріалів PCIe:
+
+```bash
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz
+```
+
+Інші архіви підходять, якщо їх скомпільовано з `tessellate_parameters` у Model SDK з `enable_mla=True`, розкладкою DRAM `HWC` на кожному вході та `HWC16` на кожному виході. Архіви, що натомість виконують теселяцію на CVU, як-от збірка `yolo_v8s` з Model Zoo, відхиляються, коли ввімкнено `mla_only`:
 
 ```text
 mla_only does not support stage 'tessellate_quantize_0_MLA_0/...' (tess)
 ```
-
-Скопіюйте відповідний архів у корінь розпакованих додаткових матеріалів PCIe, наприклад як `model_mlatess_int8.tar.gz`, і передайте його шлях через `--model`.
 
 **Python:**
 
 ```bash
 source ~/pyneatpcie/bin/activate
 python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.py \
-  --model model_mlatess_int8.tar.gz
+  --model yolo26n-det-int8-b1.tar.gz
 ```
 
 **C++ (prebuilt):**
 
 ```bash
 ./lib/sima-pcie-host/tutorials/tutorial_027_run_mla_only_int8 \
-  --model model_mlatess_int8.tar.gz
+  --model yolo26n-det-int8-b1.tar.gz
 ```
 
 **C++ (build from source):**
@@ -71,18 +75,18 @@ python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.p
 ```bash
 ./build.sh --target tutorial_027_run_mla_only_int8
 ./build/tutorials-standalone/tutorial_027_run_mla_only_int8 \
-  --model model_mlatess_int8.tar.gz
+  --model yolo26n-det-int8-b1.tar.gz
 ```
 
-З архівом YOLOv8n, скомпільованим для прямого входу та виходу MLA, обидві версії виводять контракт і нульове відхилення для кожної голови:
+Обидві версії виводять контракт і нульове відхилення для кожної голови:
 
 ```text
 MLA-only contract:
-  input images INT8 [640, 640, 3] scale=0.00391965 zero_point=-128 range=[0, 1]
-  output bbox_0 INT8 [80, 80, 64] scale=0.0828159 zero_point=-60
+  input images INT8 [640, 640, 3] scale=0.00390434 zero_point=-128
+  output bbox_0 INT8 [80, 80, 4] scale=0.0302856 zero_point=-117
   ...
 Dequantized MLA-only outputs vs the default route (error in scale units):
-  bbox_0 [80, 80, 64] max_err=0.0000
+  bbox_0 [80, 80, 4] max_err=0.0000
   ...
 [OK] 027_run_mla_only_int8
 ```
@@ -91,7 +95,7 @@ Dequantized MLA-only outputs vs the default route (error in scale units):
 
 ## In Practice
 
-Умикайте `mla_only`, коли застосунок сам відповідає за квантування: він уже отримує INT8 із сенсора або попередньої моделі, йому потрібні сирі голови INT8 для власної постобробки, або він хоче прибрати етапи EV74 із затримки на боці карти. Читайте кожен scale, zero point і діапазон входу з `model.info()`; ніколи не копіюйте їх з іншої збірки моделі.
+Умикайте `mla_only`, коли застосунок сам відповідає за квантування: він уже отримує INT8 із сенсора або попередньої моделі, йому потрібні сирі голови INT8 для власної постобробки, або він хоче прибрати етапи квантування й деквантування із затримки на боці карти. Читайте кожен scale і zero point з `model.info()`; ніколи не копіюйте їх з іншої збірки моделі.
 
 Маршрут працює за принципом «усе або нічого». Кожен вхід моделі з кількома входами має надходити як INT8, а попередню обробку зображень чи декодування рамок не можна поєднувати з `mla_only`. Залишайте типовий маршрут, коли хост має дані FP32 і не потребує керування квантуванням.
 

@@ -307,15 +307,20 @@ infer the model-side resize target from the model archive.
 
 ## Run the MLA only with INT8 tensors
 
-By default the card quantizes FP32 input on the EV74, runs the MLA, and
-dequantizes the results before returning them. Set `mla_only` when the host
+By default the card quantizes the FP32 input, runs the MLA, and dequantizes
+the results before returning them as FP32. Set `mla_only` when the host
 owns quantization: the card then runs nothing but the MLA, accepts the INT8
 tensors of the MLA ingress contract, and returns the raw INT8 heads.
 
+An archive compiled with BF16 activations casts instead of quantizing. With `mla_only`
+it reports BF16 tensors without `quant`: the host casts FP32 to BF16 with round to
+nearest even on the way in and widens the BF16 heads on the way out. In Python, BF16
+travels as `uint16` bit patterns through
+`Tensor.from_bytes(..., pcie.TensorDType.BFloat16, ...)` and `to_numpy()`.
+
 `info()` reports the INT8 contract together with the quantization parameters
-of every tensor. Each `TensorInfo` carries `quant` with one `scales` and one
-`zero_points` entry per tensor, and each input also carries `input_range`, the
-floating-point domain the model was calibrated for:
+of every tensor. Each INT8 `TensorInfo` carries `quant` with one `scale` and one
+`zero_point`:
 
 ```text
 x = (q - zero_point) * scale
@@ -332,12 +337,11 @@ pcie::Model model("model_mlatess_int8.tar.gz", options, connection);
 
 const auto& input_spec = model.info().inputs.front();
 const pcie::QuantParams& quant = *input_spec.quant;   // INT8 ingress
-const auto [low, high] = *input_spec.input_range;     // e.g. [0, 1]
 
 std::vector<std::int8_t> codes(input_spec.size_bytes);
 for (std::size_t i = 0; i < codes.size(); ++i) {
-  const float x = /* value in [low, high] */;
-  const float q = std::nearbyint(x / quant.scales[0]) + quant.zero_points[0];
+  const float x = /* value in the model's input domain, e.g. [0, 1] */;
+  const float q = std::nearbyint(x / quant.scale) + quant.zero_point;
   codes[i] = static_cast<std::int8_t>(std::clamp(q, -128.0f, 127.0f));
 }
 
@@ -349,7 +353,7 @@ pcie::TensorList outputs = model.run(
 const auto& head = model.info().outputs.front();
 const std::int8_t* q = reinterpret_cast<const std::int8_t*>(
     static_cast<const std::uint8_t*>(outputs[0].data) + outputs[0].byte_offset);
-const float x0 = (q[0] - head.quant->zero_points[0]) * head.quant->scales[0];
+const float x0 = (q[0] - head.quant->zero_point) * head.quant->scale;
 model.close();
 ```
 
@@ -362,10 +366,9 @@ options.mla_only = True
 model = pcie.Model("model_mlatess_int8.tar.gz", options, connection)
 
 input_spec = model.info().inputs[0]
-scale, zero_point = input_spec.quant.scales[0], input_spec.quant.zero_points[0]
-low, high = input_spec.input_range  # e.g. (0.0, 1.0)
+scale, zero_point = input_spec.quant.scale, input_spec.quant.zero_point
 
-values = np.zeros(input_spec.shape, dtype=np.float32)  # in [low, high]
+values = np.zeros(input_spec.shape, dtype=np.float32)  # in the model's input domain, e.g. [0, 1]
 codes = np.clip(np.rint(values / scale) + zero_point, -128, 127).astype(np.int8)
 
 model.build()
@@ -375,7 +378,7 @@ outputs = model.run(
 )
 
 head = model.info().outputs[0]
-x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_points[0]) * head.quant.scales[0]
+x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_point) * head.quant.scale
 model.close()
 ```
 
@@ -386,8 +389,8 @@ The route is all or nothing. A multi-input model expects one INT8 tensor per
 input, in the order of `info().inputs`; an FP32 payload is rejected rather than
 quantized on the card. `mla_only` cannot be combined with image preprocessing
 or box decode. The constructor rejects archives whose MLA stage is not compiled
-for direct INT8 input and output, for example Model Zoo archives that
-tessellate on the EV74 (`mla_only does not support stage '...' (tess)`).
+for direct INT8 input and output, for example the Model Zoo `yolo_v8s` build,
+which tessellates on the CVU (`mla_only does not support stage '...' (tess)`).
 
 Tutorial [Run the MLA Only with INT8 Tensors](/tutorials/run-mla-only-int8)
 quantizes an image on the host and checks the dequantized heads against the
@@ -457,8 +460,9 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
   rejected.
 - The PCIe host API supports a focused subset of Neat model preprocessing and
   object-decode options.
-- `mla_only` requires an archive compiled for direct INT8 MLA input and
-  output, submits every input as INT8, and returns contiguous INT8 heads.
+- `mla_only` requires an archive compiled for direct INT8 or BF16 MLA input and
+  output, submits every input in that dtype, and returns contiguous heads of the
+  same dtype.
 - This co-processing API does not expose host-side `Graph`, `Node`, or `Run`
   composition. Use the regular Neat Library on a DevKit for native application
   graphs.

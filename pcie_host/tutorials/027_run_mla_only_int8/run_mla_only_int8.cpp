@@ -1,7 +1,7 @@
 // Quantize on the host, run only the MLA over PCIe, and dequantize the INT8 results.
 //
 // Usage:
-//   tutorial_027_run_mla_only_int8 --model model_mlatess_int8.tar.gz [--card 0]
+//   tutorial_027_run_mla_only_int8 --model yolo26n-det-int8-b1.tar.gz [--card 0]
 
 #include <simaai/neat/pcie/Model.h>
 
@@ -16,7 +16,6 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
-#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,14 +50,14 @@ Args parse_args(int argc, char** argv) {
     } else if (arg == "--card") {
       args.card_id = std::stoi(require_value(argc, argv, index, "--card"));
     } else if (arg == "-h" || arg == "--help") {
-      std::cout << "Usage: " << argv[0] << " --model model_mlatess_int8.tar.gz [--card 0]\n";
+      std::cout << "Usage: " << argv[0] << " --model yolo26n-det-int8-b1.tar.gz [--card 0]\n";
       std::exit(0);
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
   }
   if (args.model.empty()) {
-    throw std::runtime_error("--model is required: an archive compiled for direct MLA I/O");
+    throw std::runtime_error("--model is required: yolo26n-det-int8-b1.tar.gz from the Model Zoo");
   }
   return args;
 }
@@ -83,22 +82,19 @@ std::size_t element_count(const std::vector<std::int64_t>& shape) {
 //   x = (q - zero_point) * scale
 //   q = clamp(round(x / scale) + zero_point, -128, 127)
 const pcie::QuantParams& require_quant(const pcie::TensorInfo& info) {
-  if (!info.quant.has_value() || info.quant->scales.size() != 1 ||
-      info.quant->zero_points.size() != 1) {
-    throw std::runtime_error("tensor '" + info.name + "' needs per-tensor quantization parameters");
+  if (!info.quant.has_value()) {
+    throw std::runtime_error("tensor '" + info.name + "' publishes no quantization parameters");
   }
   return *info.quant;
 }
 
 std::int8_t quantize(const float value, const pcie::QuantParams& quant) {
-  const float code =
-      std::nearbyint(value / quant.scales[0]) + static_cast<float>(quant.zero_points[0]);
+  const float code = std::nearbyint(value / quant.scale) + static_cast<float>(quant.zero_point);
   return static_cast<std::int8_t>(std::clamp(code, -128.0F, 127.0F));
 }
 
 float dequantize(const std::int8_t code, const pcie::QuantParams& quant) {
-  return static_cast<float>(static_cast<std::int32_t>(code) - quant.zero_points[0]) *
-         quant.scales[0];
+  return static_cast<float>(static_cast<std::int32_t>(code) - quant.zero_point) * quant.scale;
 }
 
 const std::int8_t* int8_data(const pcie::Tensor& tensor) {
@@ -106,26 +102,22 @@ const std::int8_t* int8_data(const pcie::Tensor& tensor) {
                                               tensor.byte_offset);
 }
 
-// Resize the image to the ingress geometry, convert to RGB, map the pixels onto the model's
-// declared input range, and quantize with the ingress parameters.
+// Preprocessing of the reference model: one RGB HWC image with pixels in [0, 1]. Resize, BGR to
+// RGB, divide by 255, then quantize with the ingress parameters. Another model needs its own
+// recipe.
 std::vector<std::int8_t> quantize_image(const cv::Mat& bgr, const pcie::TensorInfo& input) {
   if (input.shape.size() != 3 || input.shape[2] != 3) {
-    throw std::runtime_error("this tutorial feeds three-channel HWC inputs, got " +
+    throw std::runtime_error("the reference model takes a three-channel HWC input, got " +
                              shape_string(input.shape));
-  }
-  if (!input.input_range.has_value()) {
-    throw std::runtime_error("input '" + input.name + "' declares no input_range");
   }
   const pcie::QuantParams& quant = require_quant(input);
   cv::Mat rgb;
   cv::resize(bgr, rgb,
              cv::Size(static_cast<int>(input.shape[1]), static_cast<int>(input.shape[0])));
   cv::cvtColor(rgb, rgb, cv::COLOR_BGR2RGB);
-  const auto [low, high] = *input.input_range;
   std::vector<std::int8_t> codes(rgb.total() * rgb.channels());
   for (std::size_t index = 0; index < codes.size(); ++index) {
-    const double value = low + (rgb.data[index] / 255.0) * (high - low);
-    codes[index] = quantize(static_cast<float>(value), quant);
+    codes[index] = quantize(static_cast<float>(rgb.data[index] / 255.0), quant);
   }
   return codes;
 }
@@ -151,38 +143,33 @@ int main(int argc, char** argv) {
     options.mla_only = true;
     pcie::Model model(args.model, options, connection);
     const pcie::ModelInfo info = model.info();
+    if (info.inputs.size() != 1) {
+      throw std::runtime_error("the reference model has exactly one input");
+    }
     std::cout << "MLA-only contract:\n";
     for (const auto& input : info.inputs) {
       const pcie::QuantParams& quant = require_quant(input);
       std::cout << "  input " << input.name << " " << input.dtype << " "
-                << shape_string(input.shape) << " scale=" << quant.scales[0]
-                << " zero_point=" << quant.zero_points[0];
-      if (input.input_range.has_value()) {
-        std::cout << " range=[" << input.input_range->first << ", " << input.input_range->second
-                  << "]";
-      }
-      std::cout << '\n';
+                << shape_string(input.shape) << " scale=" << quant.scale
+                << " zero_point=" << quant.zero_point << '\n';
     }
     for (const auto& output : info.outputs) {
       const pcie::QuantParams& quant = require_quant(output);
       std::cout << "  output " << output.name << " " << output.dtype << " "
-                << shape_string(output.shape) << " scale=" << quant.scales[0]
-                << " zero_point=" << quant.zero_points[0] << '\n';
+                << shape_string(output.shape) << " scale=" << quant.scale
+                << " zero_point=" << quant.zero_point << '\n';
     }
     // END STEP
 
     // STEP quantize-on-host
-    pcie::TensorList int8_inputs;
-    std::map<std::string, std::vector<float>> fp32_by_name;
-    for (const auto& input : info.inputs) {
-      std::vector<std::int8_t> codes = quantize_image(image, input);
-      std::vector<float> values(codes.size());
-      for (std::size_t index = 0; index < codes.size(); ++index) {
-        values[index] = dequantize(codes[index], *input.quant);
-      }
-      fp32_by_name[input.name] = std::move(values);
-      int8_inputs.push_back(pcie::Tensor::from_vector(std::move(codes), input.shape, input.name));
+    const pcie::TensorInfo& ingress = info.inputs.front();
+    std::vector<std::int8_t> codes = quantize_image(image, ingress);
+    std::vector<float> fp32_input(codes.size());
+    for (std::size_t index = 0; index < codes.size(); ++index) {
+      fp32_input[index] = dequantize(codes[index], *ingress.quant);
     }
+    pcie::TensorList int8_inputs;
+    int8_inputs.push_back(pcie::Tensor::from_vector(std::move(codes), ingress.shape, ingress.name));
     // END STEP
 
     // STEP run-int8
@@ -195,10 +182,8 @@ int main(int argc, char** argv) {
     pcie::Model reference(args.model, {}, connection);
     reference.build(kBuildTimeoutMs);
     pcie::TensorList fp32_tensors;
-    for (const auto& spec : reference.info().inputs) {
-      fp32_tensors.push_back(
-          pcie::Tensor::from_vector(std::move(fp32_by_name.at(spec.name)), spec.shape, spec.name));
-    }
+    fp32_tensors.push_back(
+        pcie::Tensor::from_vector(std::move(fp32_input), ingress.shape, ingress.name));
     const pcie::TensorList reference_outputs = reference.run(fp32_tensors, kRunTimeoutMs);
     reference.close();
 
@@ -216,7 +201,7 @@ int main(int argc, char** argv) {
       double max_error = 0.0;
       for (std::size_t element = 0; element < element_count(spec.shape); ++element) {
         const double host = dequantize(codes[element], quant);
-        max_error = std::max(max_error, std::fabs(host - card_values[element]) / quant.scales[0]);
+        max_error = std::max(max_error, std::fabs(host - card_values[element]) / quant.scale);
       }
       std::cout << "  " << spec.name << " " << shape_string(spec.shape) << " max_err=" << std::fixed
                 << std::setprecision(4) << max_error << '\n';

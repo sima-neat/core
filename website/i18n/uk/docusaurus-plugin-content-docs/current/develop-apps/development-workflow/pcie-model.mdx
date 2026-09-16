@@ -284,9 +284,11 @@ detector.close()
 
 ## Запуск лише MLA з тензорами INT8
 
-Типово карта квантує вхід FP32 на EV74, виконує MLA і деквантує результати перед їх поверненням. Установіть `mla_only`, коли квантуванням керує хост: тоді карта виконує лише MLA, приймає тензори INT8 вхідного контракту MLA та повертає сирі голови INT8.
+Типово карта квантує вхід FP32, виконує MLA і деквантує результати перед їх поверненням як FP32. Установіть `mla_only`, коли квантуванням керує хост: тоді карта виконує лише MLA, приймає тензори INT8 вхідного контракту MLA та повертає сирі голови INT8.
 
-`info()` повідомляє контракт INT8 разом із параметрами квантування кожного тензора. Кожен `TensorInfo` містить `quant` з одним записом `scales` і одним записом `zero_points` на тензор, а кожен вхід також містить `input_range` — діапазон із рухомою комою, для якого модель була відкалібрована:
+Архів, скомпільований з активаціями BF16, виконує приведення типу замість квантування. З `mla_only` він повідомляє тензори BF16 без `quant`: хост приводить FP32 до BF16 з округленням до найближчого парного на вході та розширює голови BF16 на виході. У Python BF16 передається як бітові шаблони `uint16` через `Tensor.from_bytes(..., pcie.TensorDType.BFloat16, ...)` і `to_numpy()`.
+
+`info()` повідомляє контракт INT8 разом із параметрами квантування кожного тензора. Кожен `TensorInfo` містить `quant` з одним записом `scale` і одним записом `zero_point` на тензор:
 
 ```text
 x = (q - zero_point) * scale
@@ -303,12 +305,11 @@ pcie::Model model("model_mlatess_int8.tar.gz", options, connection);
 
 const auto& input_spec = model.info().inputs.front();
 const pcie::QuantParams& quant = *input_spec.quant;   // INT8 ingress
-const auto [low, high] = *input_spec.input_range;     // e.g. [0, 1]
 
 std::vector<std::int8_t> codes(input_spec.size_bytes);
 for (std::size_t i = 0; i < codes.size(); ++i) {
-  const float x = /* value in [low, high] */;
-  const float q = std::nearbyint(x / quant.scales[0]) + quant.zero_points[0];
+  const float x = /* value in the model's input domain, e.g. [0, 1] */;
+  const float q = std::nearbyint(x / quant.scale) + quant.zero_point;
   codes[i] = static_cast<std::int8_t>(std::clamp(q, -128.0f, 127.0f));
 }
 
@@ -320,7 +321,7 @@ pcie::TensorList outputs = model.run(
 const auto& head = model.info().outputs.front();
 const std::int8_t* q = reinterpret_cast<const std::int8_t*>(
     static_cast<const std::uint8_t*>(outputs[0].data) + outputs[0].byte_offset);
-const float x0 = (q[0] - head.quant->zero_points[0]) * head.quant->scales[0];
+const float x0 = (q[0] - head.quant->zero_point) * head.quant->scale;
 model.close();
 ```
 
@@ -333,10 +334,9 @@ options.mla_only = True
 model = pcie.Model("model_mlatess_int8.tar.gz", options, connection)
 
 input_spec = model.info().inputs[0]
-scale, zero_point = input_spec.quant.scales[0], input_spec.quant.zero_points[0]
-low, high = input_spec.input_range  # e.g. (0.0, 1.0)
+scale, zero_point = input_spec.quant.scale, input_spec.quant.zero_point
 
-values = np.zeros(input_spec.shape, dtype=np.float32)  # in [low, high]
+values = np.zeros(input_spec.shape, dtype=np.float32)  # in the model's input domain, e.g. [0, 1]
 codes = np.clip(np.rint(values / scale) + zero_point, -128, 127).astype(np.int8)
 
 model.build()
@@ -346,14 +346,14 @@ outputs = model.run(
 )
 
 head = model.info().outputs[0]
-x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_points[0]) * head.quant.scales[0]
+x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_point) * head.quant.scale
 model.close()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-Маршрут працює за принципом «усе або нічого». Модель із кількома входами очікує по одному тензору INT8 на кожен вхід у порядку `info().inputs`; корисне навантаження FP32 відхиляється замість квантування на карті. `mla_only` не можна поєднувати з попередньою обробкою зображень чи декодуванням рамок. Конструктор відхиляє архіви, чий етап MLA не скомпільовано для прямого входу та виходу INT8, наприклад архіви Model Zoo, що виконують теселяцію на EV74 (`mla_only does not support stage '...' (tess)`).
+Маршрут працює за принципом «усе або нічого». Модель із кількома входами очікує по одному тензору INT8 на кожен вхід у порядку `info().inputs`; корисне навантаження FP32 відхиляється замість квантування на карті. `mla_only` не можна поєднувати з попередньою обробкою зображень чи декодуванням рамок. Конструктор відхиляє архіви, чий етап MLA не скомпільовано для прямого входу та виходу INT8, наприклад збірку `yolo_v8s` з Model Zoo, що виконує теселяцію на CVU (`mla_only does not support stage '...' (tess)`).
 
 Посібник [Запуск лише MLA з тензорами INT8](/tutorials/run-mla-only-int8) квантує зображення на хості та звіряє деквантовані голови з типовим маршрутом.
 
@@ -418,7 +418,7 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 відхиляється.
 - Інтерфейс API хоста PCIe підтримує обмежений набір функцій попередньої обробки моделі Neat і
   параметри декодування об’єкта.
-- `mla_only` вимагає архіву, скомпільованого для прямого входу та виходу INT8 MLA, надсилає кожен вхід як INT8 і повертає неперервні голови INT8.
+- `mla_only` вимагає архіву, скомпільованого для прямого входу та виходу MLA у INT8 або BF16, надсилає кожен вхід у цьому dtype і повертає неперервні голови того самого dtype.
 - Цей API для спільної обробки не надає доступ до `Graph`, `Node` або `Run` на стороні хоста.
   композиція. Використовуйте стандартну Neat Library на DevKit для створення нативних графічних моделей застосунків.
 

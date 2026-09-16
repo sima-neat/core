@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 520" role="img" aria-labelledby="ftl ftd">
 <title id="ftl">Run the MLA Only with INT8 Tensors</title>
-<desc id="ftd">The default PCIe route sends FP32 tensors to the card, where the EV74 quantizes them, the MLA runs, and the EV74 dequantizes the results back to FP32.</desc>
+<desc id="ftd">The default PCIe route sends FP32 tensors to the card, where the input is quantized, the MLA runs, and the output is dequantized before it returns to the host as FP32.</desc>
 <defs>
 <linearGradient id="fbg" x1="80" y1="40" x2="1240" y2="500" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F8F6"/></linearGradient>
 <linearGradient id="fgreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>
@@ -12,8 +12,8 @@
 <circle cx="1188" cy="82" r="58" fill="#C0E8DB" opacity="0.5"/>
 <circle cx="112" cy="432" r="50" fill="#BFE0CF" opacity="0.45"/>
 <text x="54" y="68" class="fsans fttl">Run the MLA Only with INT8 Tensors</text>
-<text x="54" y="96" class="fsans fsub">The default PCIe route sends FP32 tensors to the card, where the EV74 quantizes them, the MLA runs, and the EV74 dequantizes the</text>
-<text x="54" y="116" class="fsans fsub">results back to FP32.</text>
+<text x="54" y="96" class="fsans fsub">The default PCIe route sends FP32 tensors to the card, where the input is quantized, the MLA runs, and the output is dequantized</text>
+<text x="54" y="116" class="fsans fsub">before it returns to the host as FP32.</text>
 <g filter="url(#fsh)">
 <rect x="54" y="132" width="470" height="316" rx="26" fill="#1F232A"/>
 <rect x="54" y="132" width="470" height="46" rx="26" fill="#181C22"/>
@@ -30,20 +30,20 @@
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">    info = model.info()</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">    print(&quot;MLA-only contract:&quot;)</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">    if len(info.inputs) != 1:</text>
 </g>
 <g id="code1" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Quantize on host</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">int8_inputs = []</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">ingress = info.inputs[0]</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">fp32_inputs = []</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">codes = quantize_image(image, ingress)</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">for spec in info.inputs:</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">scale, zero_point = require_quant(ingress)</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">    codes = quantize_image(image, spec)</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">fp32_input = dequantize(codes, scale, zero_…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">    scale, zero_point = require_quant(spec)</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">int8_inputs = [pcie.Tensor.from_numpy(codes…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Run int8</text>
@@ -52,11 +52,7 @@
 <text x="76" y="274" class="fmono fln">2</text>
 <text x="104" y="274" class="fmono fcode" xml:space="preserve">    outputs = model.run(int8_inputs, RUN_TI…</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">if len(outputs) != len(info.outputs):</text>
-<text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">    raise RuntimeError(</text>
-<text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">        f&quot;MLA-only route returned {len(outp…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">codes_by_head = {spec.name: output.to_numpy…</text>
 </g>
 <g id="code3" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 4 · Dequantize and compare</text>
@@ -65,11 +61,11 @@
 <text x="76" y="274" class="fmono fln">2</text>
 <text x="104" y="274" class="fmono fcode" xml:space="preserve">    reference.build(BUILD_TIMEOUT_MS)</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">    fp32_tensors = [</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">    fp32_tensor = pcie.Tensor.from_numpy(fp…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">        pcie.Tensor.from_numpy(values, copy…</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">    reference_outputs = reference.run([fp32…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">        for values, spec in zip(fp32_inputs…</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">print(&quot;Dequantized MLA-only outputs vs the…</text>
 </g>
 </g>
 <g filter="url(#fsh)">
