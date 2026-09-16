@@ -14,13 +14,12 @@
 
 The default PCIe route sends FP32 tensors to the card, where the input is
 quantized, the MLA runs, and the output is dequantized before it returns to the
-host as FP32. An
-application that already holds INT8 data, or that wants the quantization step
-under its own control, can set `ModelOptions.mla_only`. The card then runs
-nothing but the MLA: the host submits INT8 tensors that match the MLA ingress
-contract and receives the raw INT8 heads. `model.info()` publishes the
-quantization parameters of every tensor so the host can quantize and dequantize
-with one equation:
+host as FP32. An application that already holds INT8 data, or that wants the
+quantization step under its own control, can set `ModelOptions.mla_only`. The
+card then runs nothing but the MLA: the host submits INT8 tensors that match the
+MLA ingress contract and receives the raw INT8 heads. `model.info()` publishes
+the quantization parameters of every tensor so the host can quantize and
+dequantize with one equation:
 
 ```text
 x = (q - zero_point) * scale
