@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace simaai::neat::pcie::internal {
@@ -23,7 +22,6 @@ struct PcieTensorFact {
   std::vector<std::int64_t> transport_strides_bytes;
   std::size_t dense_offset = 0;
   std::optional<QuantParams> quant;
-  std::optional<std::pair<double, double>> input_range;
 };
 
 struct PcieModelFacts {

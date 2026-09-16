@@ -112,9 +112,6 @@ convert_tensor(const simaai::neat::pipeline_internal::sima::MpkTensorContract& t
   out.tensor_index = tensor.tensor_index;
   out.physical_index = tensor.physical_index;
   out.byte_offset = tensor.byte_offset;
-  if (tensor.input_range.size() == 2U) {
-    out.input_range = std::make_pair(tensor.input_range[0], tensor.input_range[1]);
-  }
   return out;
 }
 
@@ -279,7 +276,6 @@ mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& c
 
     auto input = tensor;
     input.name = ingress->name;
-    input.input_range = ingress->input_range;
     const std::string dtype = best_dtype(input);
     const std::size_t elem = mla_only_dtype_bytes(dtype);
     if (elem == 0U) {
@@ -651,8 +647,7 @@ ModelInfo to_public_model_info(const PcieModelFacts& facts) {
                                     .dtype = input.dtype,
                                     .shape = input.shape,
                                     .size_bytes = input.size_bytes,
-                                    .quant = input.quant,
-                                    .input_range = input.input_range});
+                                    .quant = input.quant});
   }
   for (const auto& output : facts.outputs) {
     out.outputs.push_back(TensorInfo{.name = output.name,
