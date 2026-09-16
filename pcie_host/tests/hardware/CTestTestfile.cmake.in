@@ -4,6 +4,8 @@
 add_test(test_metadata ./test_metadata)
 add_test(test_tensor_run ./test_tensor_run)
 add_test(test_tensor_mla_only_run ./test_tensor_mla_only_run)
+add_test(test_tensor_mla_only_bf16_run
+         sh -c "./test_tensor_mla_only_run --model \"$SIMAPCIE_MLA_ONLY_BF16_MODEL\"")
 add_test(test_tensor_latency
          ./test_tensor_perf --mode latency --warmup 100 --iterations 3000
          --max-mean-latency-ms 15)
@@ -19,6 +21,7 @@ add_test(test_model_resilience ./test_model_resilience)
 set_tests_properties(test_metadata PROPERTIES TIMEOUT 60)
 set_tests_properties(test_tensor_run PROPERTIES TIMEOUT 3600)
 set_tests_properties(test_tensor_mla_only_run PROPERTIES TIMEOUT 3600)
+set_tests_properties(test_tensor_mla_only_bf16_run PROPERTIES TIMEOUT 3600)
 set_tests_properties(test_tensor_latency PROPERTIES TIMEOUT 3600)
 set_tests_properties(test_tensor_throughput PROPERTIES TIMEOUT 3600)
 set_tests_properties(test_queue_blocker PROPERTIES TIMEOUT 3600)

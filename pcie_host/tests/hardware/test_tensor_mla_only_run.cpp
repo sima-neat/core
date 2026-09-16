@@ -1,6 +1,6 @@
-// Proves the mla_only route against the default route on the same input: the host quantizes,
-// the card runs only the MLA, the host dequantizes, and every head must match what the card
-// produces when it quantizes and dequantizes itself. It doubles as the reference for using
+// Proves the mla_only route against the default route on the same input: the host quantizes (or
+// casts to BF16), the card runs only the MLA, the host converts back, and every head must match
+// what the card produces when it converts itself. It doubles as the reference for using
 // ModelOptions::mla_only from an application.
 #include <simaai/neat/pcie/Model.h>
 
@@ -140,8 +140,15 @@ const std::uint8_t* tensor_bytes(const pcie::Tensor& tensor) {
   return static_cast<const std::uint8_t*>(tensor.data) + tensor.byte_offset;
 }
 
-// Every MLA-tessellated archive seen so far quantizes per tensor; per-axis parameters would need
-// a channel lookup this reference does not implement.
+bool is_int8(const pcie::TensorInfo& info) {
+  if (info.dtype != "INT8" && info.dtype != "BF16") {
+    throw std::runtime_error("tensor '" + info.name + "' has unsupported dtype " + info.dtype);
+  }
+  return info.dtype == "INT8";
+}
+
+// Every MLA-tessellated INT8 archive seen so far quantizes per tensor; per-axis parameters would
+// need a channel lookup this reference does not implement.
 const pcie::QuantParams& require_quant(const pcie::TensorInfo& info) {
   if (!info.quant.has_value() || info.quant->scales.size() != 1U ||
       info.quant->zero_points.size() != 1U) {
@@ -150,33 +157,69 @@ const pcie::QuantParams& require_quant(const pcie::TensorInfo& info) {
   return *info.quant;
 }
 
-float dequantize(const std::int8_t code, const pcie::QuantParams& quant) {
-  return static_cast<float>(static_cast<std::int32_t>(code) - quant.zero_points[0]) *
-         quant.scales[0];
+float bf16_to_float(const std::uint16_t code) {
+  const std::uint32_t bits = static_cast<std::uint32_t>(code) << 16;
+  float value;
+  std::memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
+std::uint16_t float_to_bf16(const float value) { // round to nearest even, like the card's cast
+  std::uint32_t bits;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return static_cast<std::uint16_t>((bits + 0x7FFFU + ((bits >> 16) & 1U)) >> 16);
+}
+
+// Element `i` of a published head as FP32: dequantized INT8 or widened BF16.
+float decode(const pcie::TensorInfo& spec, const std::uint8_t* codes, const std::size_t i) {
+  if (is_int8(spec)) {
+    const pcie::QuantParams& quant = require_quant(spec);
+    return static_cast<float>(static_cast<std::int8_t>(codes[i]) - quant.zero_points[0]) *
+           quant.scales[0];
+  }
+  return bf16_to_float(reinterpret_cast<const std::uint16_t*>(codes)[i]);
+}
+
+// The head's resolution at `value`: one quantization step, or one BF16 ulp.
+double resolution(const pcie::TensorInfo& spec, const float value) {
+  return is_int8(spec) ? spec.quant->scales[0] : std::ldexp(1.0, std::ilogb(value) - 7);
 }
 
 struct Inputs {
-  pcie::TensorList int8; ///< What the mla_only route consumes: one dense INT8 tensor per input.
-  std::vector<std::vector<float>> fp32; ///< The same values dequantized, for the default route.
+  pcie::TensorList codes; ///< What the mla_only route consumes: one dense tensor per input.
+  std::vector<std::vector<float>> fp32; ///< The same values as FP32, for the default route.
 };
 
-// A synthetic ramp over every INT8 code, and its exact FP32 image for the default route.
+// A synthetic ramp over the input codes, and its exact FP32 image for the default route.
 Inputs prepare_inputs(const pcie::ModelInfo& info) {
   Inputs inputs;
   for (const pcie::TensorInfo& ingress : info.inputs) {
-    const pcie::QuantParams& quant = require_quant(ingress);
     const std::size_t count = element_count(ingress.shape);
-    if (ingress.dtype != "INT8" || ingress.size_bytes != count) {
-      throw std::runtime_error("mla_only input '" + ingress.name + "' is not a dense INT8 tensor");
+    const bool int8 = is_int8(ingress);
+    if (ingress.size_bytes != count * (int8 ? 1U : 2U)) {
+      throw std::runtime_error("mla_only input '" + ingress.name + "' is not dense");
     }
-    std::vector<std::int8_t> codes(count);
     std::vector<float> values(count);
-    for (std::size_t i = 0; i < count; ++i) {
-      codes[i] = static_cast<std::int8_t>(static_cast<std::uint8_t>((i * 7U + 3U) & 0xffU));
-      values[i] = dequantize(codes[i], quant);
+    pcie::Tensor tensor;
+    if (int8) {
+      std::vector<std::int8_t> codes(count);
+      for (std::size_t i = 0; i < count; ++i) {
+        codes[i] = static_cast<std::int8_t>(static_cast<std::uint8_t>((i * 7U + 3U) & 0xffU));
+        values[i] = decode(ingress, reinterpret_cast<const std::uint8_t*>(codes.data()), i);
+      }
+      tensor = pcie::Tensor::from_vector(std::move(codes), ingress.shape, ingress.name);
+    } else {
+      std::vector<std::uint16_t> codes(count);
+      for (std::size_t i = 0; i < count; ++i) {
+        codes[i] = float_to_bf16(static_cast<float>((i * 7U + 3U) & 0xffU) / 255.0f);
+        values[i] = bf16_to_float(codes[i]);
+      }
+      tensor = pcie::Tensor::from_vector(std::move(codes), ingress.shape, ingress.name);
+      tensor.dtype = pcie::TensorDType::BFloat16;
     }
-    std::cout << "  submitting '" << ingress.name << "' (" << count << " INT8 codes)\n";
-    inputs.int8.push_back(pcie::Tensor::from_vector(std::move(codes), ingress.shape, ingress.name));
+    std::cout << "  submitting '" << ingress.name << "' (" << count << " " << ingress.dtype
+              << " codes)\n";
+    inputs.codes.push_back(std::move(tensor));
     inputs.fp32.push_back(std::move(values));
   }
   return inputs;
@@ -226,7 +269,7 @@ std::map<std::string, Head> run_default_route(const Args& args, const pcie::Conn
 }
 
 // What the mla_only route promises about its outputs: the heads info() described, as dense
-// contiguous INT8 tensors that share one owning block - the HWC16 padding is never visible.
+// contiguous tensors that share one owning block - the transport padding is never visible.
 void check_outputs(const pcie::TensorList& outputs, const pcie::ModelInfo& info) {
   if (outputs.size() != info.outputs.size()) {
     throw std::runtime_error("output count mismatch: got " + std::to_string(outputs.size()) +
@@ -239,12 +282,13 @@ void check_outputs(const pcie::TensorList& outputs, const pcie::ModelInfo& info)
     if (output.route.name != spec.name || output.shape != spec.shape) {
       throw std::runtime_error("name or shape mismatch" + where);
     }
-    const std::size_t dense = element_count(spec.shape);
-    if (output.dtype != pcie::TensorDType::Int8 || output.size_bytes != dense ||
-        spec.size_bytes != dense) {
-      throw std::runtime_error("output is not dense INT8" + where);
+    const bool int8 = is_int8(spec);
+    const std::size_t dense = element_count(spec.shape) * (int8 ? 1U : 2U);
+    if (output.dtype != (int8 ? pcie::TensorDType::Int8 : pcie::TensorDType::BFloat16) ||
+        output.size_bytes != dense || spec.size_bytes != dense) {
+      throw std::runtime_error("output is not dense " + spec.dtype + where);
     }
-    std::int64_t stride = 1;
+    std::int64_t stride = int8 ? 1 : 2;
     for (std::size_t d = spec.shape.size(); d-- > 0; stride *= spec.shape[d]) {
       if (output.strides_bytes[d] != stride) {
         throw std::runtime_error("output is not contiguous" + where);
@@ -256,25 +300,28 @@ void check_outputs(const pcie::TensorList& outputs, const pcie::ModelInfo& info)
   }
 }
 
-// Dequantize on the host and compare with the reference; max_err is the largest deviation in
-// quantization steps.
+// Convert on the host and compare with the reference; max_err is the largest deviation in units
+// of the head's resolution (quantization step or BF16 ulp).
 void compare_with_reference(const pcie::TensorList& outputs, const pcie::ModelInfo& info,
                             const std::map<std::string, Head>& reference) {
-  std::cout << "accuracy vs default route (error in units of each head's scale)\n";
+  std::cout << "accuracy vs default route (error in units of each head's resolution)\n";
   bool ok = true;
   for (std::size_t i = 0; i < info.outputs.size(); ++i) {
     const auto& spec = info.outputs[i];
-    const auto& quant = require_quant(spec);
     const auto it = reference.find(spec.name);
     if (it == reference.end() || it->second.shape != spec.shape) {
       throw std::runtime_error("default route has no matching output '" + spec.name + "'");
     }
-    const auto* codes = reinterpret_cast<const std::int8_t*>(tensor_bytes(outputs[i]));
+    const std::uint8_t* codes = tensor_bytes(outputs[i]);
     const std::vector<float>& card = it->second.values;
     double max_error = 0.0;
     for (std::size_t e = 0; e < card.size(); ++e) {
+      const float host = decode(spec, codes, e);
+      if (host == card[e]) {
+        continue;
+      }
       const double error =
-          std::fabs(static_cast<double>(dequantize(codes[e], quant)) - card[e]) / quant.scales[0];
+          std::fabs(static_cast<double>(host) - card[e]) / resolution(spec, card[e]);
       if (!(error <= max_error)) { // also promotes NaN
         max_error = error;
       }
@@ -292,7 +339,7 @@ void compare_with_reference(const pcie::TensorList& outputs, const pcie::ModelIn
 
 // The route accepts nothing but the INT8 ingress; the application cannot fall back to FP32.
 void expect_fp32_rejected(pcie::Model& model, const pcie::ModelInfo& info, const Inputs& inputs) {
-  pcie::TensorList submitted = inputs.int8;
+  pcie::TensorList submitted = inputs.codes;
   submitted[0] =
       pcie::Tensor::from_vector(inputs.fp32[0], info.inputs[0].shape, info.inputs[0].name);
   try {
@@ -334,7 +381,7 @@ int main(int argc, char** argv) {
 
     std::cout << "mla_only route: host quantizes and dequantizes\n";
     model.build(args.readiness_timeout_ms);
-    const pcie::TensorList outputs = model.run(inputs.int8, args.pull_timeout_ms);
+    const pcie::TensorList outputs = model.run(inputs.codes, args.pull_timeout_ms);
     check_outputs(outputs, info);
     compare_with_reference(outputs, info, reference);
     expect_fp32_rejected(model, info, inputs);

@@ -90,10 +90,11 @@ mpk::MpkPluginIoContract stage(std::string name, std::string kernel,
 }
 
 mpk::MpkTensorContract head(std::string name, std::vector<std::int64_t> mpk_shape,
-                            std::vector<std::int64_t> logical_shape, const std::size_t size_bytes) {
-  auto out = tensor(std::move(name), "INT8", std::move(mpk_shape), size_bytes);
+                            std::vector<std::int64_t> logical_shape, const std::size_t size_bytes,
+                            const std::string& dtype = "INT8") {
+  auto out = tensor(std::move(name), dtype, std::move(mpk_shape), size_bytes);
   out.logical_shape = std::move(logical_shape);
-  out.logical_dtype = "INT8";
+  out.logical_dtype = dtype;
   return out;
 }
 
@@ -114,32 +115,41 @@ void link(mpk::MpkContract& contract, const std::size_t src, const int src_outpu
 // An MLA-only capable contract: one quantize stage per input, optionally joined by an ifm pack
 // (the MLA always ingests one buffer), the MLA, an unpack into two heads, a slice on the first
 // head, and one dequantize per head. The pack consumes the inputs in reverse order so that
-// publishing in pack order - the layout of the staged payload - is load-bearing.
-mpk::MpkContract mla_only_contract(const std::size_t input_count = 1, const bool pack = false) {
+// publishing in pack order - the layout of the staged payload - is load-bearing. A BF16 contract
+// casts instead of quantizing and carries no quantization parameters.
+mpk::MpkContract mla_only_contract(const std::size_t input_count = 1, const bool pack = false,
+                                   const std::string& dtype = "INT8") {
   mpk::MpkContract contract;
+  const std::size_t e = dtype == "INT8" ? 1U : 2U;
+  const char* pre = e == 1U ? "quantization_transform" : "cast_transform";
+  const char* post = e == 1U ? "dequantization_transform" : "cast_transform";
   const mpk::MpkTensorContract ingress[] = {tensor("input_0", "FP32", {2, 3, 4}, 96),
                                             tensor("input_1", "FP32", {1, 4, 4}, 64)};
-  const mpk::MpkTensorContract quantized[] = {head("quantize_0", {1, 2, 3, 4}, {2, 3, 4}, 24),
-                                              head("quantize_1", {1, 1, 4, 4}, {1, 4, 4}, 16)};
+  const mpk::MpkTensorContract quantized[] = {
+      head("quantize_0", {1, 2, 3, 4}, {2, 3, 4}, 24 * e, dtype),
+      head("quantize_1", {1, 1, 4, 4}, {1, 4, 4}, 16 * e, dtype)};
   const mpk::MpkQuantContract input_quant[] = {{.scales = {4.0}, .zero_points = {-128}},
                                                {.scales = {8.0}, .zero_points = {5}}};
   std::vector<mpk::MpkTensorContract> packed_parts;
   std::size_t packed_bytes = 0;
   for (std::size_t i = 0; i < input_count; ++i) {
     contract.ingress_tensors.push_back(ingress[i]);
-    contract.plugins.push_back(
-        stage(quantized[i].name, "quantization_transform", {ingress[i]}, {quantized[i]}));
-    contract.plugins.back().quant = input_quant[i];
+    contract.plugins.push_back(stage(quantized[i].name, pre, {ingress[i]}, {quantized[i]}));
+    if (e == 1U) {
+      contract.plugins.back().quant = input_quant[i];
+    }
     packed_parts.insert(packed_parts.begin(), quantized[i]);
     packed_bytes += quantized[i].size_bytes;
   }
   const auto packed = tensor("MLA_0_ifm_pack_transform", "",
                              {1, static_cast<std::int64_t>(packed_bytes)}, packed_bytes);
-  const auto carrier = tensor("MLA_0", "", {1, 160}, 160);
-  const auto unpack_0 = head("MLA_0_ofm_unpack_transform_0", {1, 2, 3, 16}, {2, 3, 16}, 96);
-  const auto unpack_1 = head("MLA_0_ofm_unpack_transform_1", {1, 1, 4, 16}, {1, 4, 16}, 64);
+  const auto carrier = tensor("MLA_0", "", {1, 160 * static_cast<std::int64_t>(e)}, 160 * e);
+  const auto unpack_0 =
+      head("MLA_0_ofm_unpack_transform_0", {1, 2, 3, 16}, {2, 3, 16}, 96 * e, dtype);
+  const auto unpack_1 =
+      head("MLA_0_ofm_unpack_transform_1", {1, 1, 4, 16}, {1, 4, 16}, 64 * e, dtype);
   const auto slice_0 =
-      head("slice_MLA_0/tuple_get_item_0_slice_transform", {1, 2, 3, 2}, {2, 3, 2}, 12);
+      head("slice_MLA_0/tuple_get_item_0_slice_transform", {1, 2, 3, 2}, {2, 3, 2}, 12 * e, dtype);
   const auto out_0 = tensor("dequantize_2/head_0", "FP32", {2, 3, 2}, 48);
   const auto out_1 = tensor("dequantize_3/head_1", "FP32", {1, 4, 16}, 256);
 
@@ -152,11 +162,12 @@ mpk::MpkContract mla_only_contract(const std::size_t input_count = 1, const bool
       stage("MLA_0_ofm_unpack_transform", "unpack_transform", {carrier}, {unpack_0, unpack_1}));
   contract.plugins.push_back(stage(slice_0.name, "slice_transform", {unpack_0}, {slice_0}));
   contract.plugins.back().slice_begin = {0, 0, 0, 0};
-  contract.plugins.push_back(stage("dequantize_2", "dequantization_transform", {slice_0}, {out_0}));
-  contract.plugins.back().quant = mpk::MpkQuantContract{.scales = {0.5}, .zero_points = {3}};
-  contract.plugins.push_back(
-      stage("dequantize_3", "dequantization_transform", {unpack_1}, {out_1}));
-  contract.plugins.back().quant = mpk::MpkQuantContract{.scales = {2.0}, .zero_points = {-7}};
+  contract.plugins.push_back(stage("dequantize_2", post, {slice_0}, {out_0}));
+  contract.plugins.push_back(stage("dequantize_3", post, {unpack_1}, {out_1}));
+  if (e == 1U) {
+    contract.plugins[mla + 3].quant = mpk::MpkQuantContract{.scales = {0.5}, .zero_points = {3}};
+    contract.plugins[mla + 4].quant = mpk::MpkQuantContract{.scales = {2.0}, .zero_points = {-7}};
+  }
   contract.plugins.push_back(stage("PassThrough", "pass_through", {out_0, out_1}, {out_0, out_1}));
   for (std::size_t i = 0; i < contract.plugins.size(); ++i) {
     contract.plugins[i].sequence = static_cast<int>(i);
@@ -207,11 +218,11 @@ void test_mla_only_rejects_unsupported_stages() {
                    "a fused quantize+tessellate stage must be rejected");
 }
 
-void test_mla_only_rejects_non_dense_int8_inputs() {
-  auto bf16 = mla_only_contract();
-  bf16.plugins[0].output_tensors.front().logical_dtype = "BF16";
-  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(bf16); }, "must be INT8",
-                   "a BF16 MLA input must be rejected");
+void test_mla_only_rejects_non_dense_inputs() {
+  auto fp16 = mla_only_contract();
+  fp16.plugins[0].output_tensors.front().logical_dtype = "FP16";
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(fp16); }, "must be INT8",
+                   "an FP16 MLA input must be rejected");
 
   auto padded = mla_only_contract();
   padded.plugins[0].output_tensors.front().size_bytes = 32;
@@ -302,7 +313,7 @@ void test_mla_only_rejects_hybrid_quantization() {
   auto not_quantized = mla_only_contract(2, true);
   not_quantized.plugins[1].kernel = "pass_through";
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(not_quantized); },
-                   "not a quantize stage",
+                   "not a quantize or cast stage",
                    "a packed input not produced by a quantize stage must be rejected");
 
   auto stranded = mla_only_contract(2, true);
@@ -339,6 +350,27 @@ void test_mla_only_skips_compaction_for_dense_heads() {
           "dense heads must keep their carrier offsets");
 }
 
+// A BF16 archive casts at both boundaries and publishes no quantization parameters; an INT8
+// archive must publish them.
+void test_mla_only_supports_bf16_cast_boundaries() {
+  const auto facts =
+      pcie_internal::detail::read_mla_only_facts(mla_only_contract(1, false, "BF16"));
+  require(facts.inputs.front().dtype == "BF16" && facts.inputs.front().size_bytes == 48U &&
+              !facts.inputs.front().quant.has_value(),
+          "BF16 input must be published without quantization parameters");
+  require(facts.outputs[0].dtype == "BF16" && facts.outputs[0].size_bytes == 24U &&
+              !facts.outputs[0].quant.has_value() &&
+              facts.outputs[0].transport_strides_bytes == std::vector<std::int64_t>({96, 32, 2}),
+          "BF16 head must publish two-byte geometry without quantization parameters");
+  require(facts.dense_output_bytes == 152U, "BF16 dense block must count two bytes per element");
+
+  auto unquantized = mla_only_contract();
+  unquantized.plugins[0].quant.reset();
+  require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(unquantized); },
+                   "quantization parameters",
+                   "an INT8 input without quantization parameters must be rejected");
+}
+
 void test_mla_only_rejects_unusable_output_geometry() {
   auto lane_split = mla_only_contract();
   lane_split.plugins[1].has_align_c16 = true;
@@ -351,7 +383,8 @@ void test_mla_only_rejects_unusable_output_geometry() {
     return edge.tensor_name == "MLA_0_ofm_unpack_transform_1";
   });
   require_rejected([&] { (void)pcie_internal::detail::read_mla_only_facts(orphan); },
-                   "no dequantize consumer", "a head without a dequantize stage must be rejected");
+                   "no dequantize or cast consumer",
+                   "a head without a dequantize stage must be rejected");
 }
 
 } // namespace
@@ -361,13 +394,14 @@ int main() {
     test_ingress_uses_root_consumer();
     test_unsupported_input_dtypes_fail_early();
     test_mla_only_rejects_unsupported_stages();
-    test_mla_only_rejects_non_dense_int8_inputs();
+    test_mla_only_rejects_non_dense_inputs();
     test_mla_only_facts_describe_ingress_and_heads();
     test_mla_only_supports_multiple_inputs();
     test_mla_only_packs_a_single_input();
     test_mla_only_rejects_hybrid_quantization();
     test_mla_only_publishes_heads_in_model_output_order();
     test_mla_only_skips_compaction_for_dense_heads();
+    test_mla_only_supports_bf16_cast_boundaries();
     test_mla_only_rejects_unusable_output_geometry();
     std::cout << "[PASS] model facts\n";
     return 0;

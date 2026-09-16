@@ -197,19 +197,27 @@ std::optional<QuantParams> quant_from_mpk(
 }
 
 const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
-dequantize_for_head(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
-                    const std::string& head_name) {
+public_consumer_for_head(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                         const std::string& head_name) {
   for (const auto& edge : contract.edges) {
     if (edge.tensor_name != head_name || edge.dst_plugin_index >= contract.plugins.size()) {
       continue;
     }
     const auto& stage = contract.plugins[edge.dst_plugin_index];
-    if (canonical_token(stage.kernel).find("dequant") != std::string::npos &&
+    const std::string kernel = canonical_token(stage.kernel);
+    if ((kernel.find("dequant") != std::string::npos || kernel.find("cast") != std::string::npos) &&
         !stage.output_tensors.empty()) {
       return stage;
     }
   }
-  throw std::runtime_error("mla_only output '" + head_name + "' has no dequantize consumer");
+  throw std::runtime_error("mla_only output '" + head_name +
+                           "' has no dequantize or cast consumer");
+}
+
+// Element size of the activation dtypes the route publishes; 0 for anything else.
+std::size_t mla_only_dtype_bytes(const std::string& dtype) {
+  const std::string token = canonical_token(dtype);
+  return token == "int8" ? 1U : (token == "bf16" || token == "bfloat16") ? 2U : 0U;
 }
 
 std::size_t dense_element_count(const std::vector<std::int64_t>& shape) {
@@ -250,10 +258,11 @@ mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& c
     if (producer == contract.plugins.end()) {
       throw std::runtime_error("mla_only input '" + tensor.name + "' has no producing stage");
     }
-    if (canonical_token(producer->kernel).find("quant") == std::string::npos) {
+    const std::string kernel = canonical_token(producer->kernel);
+    if (kernel.find("quant") == std::string::npos && kernel.find("cast") == std::string::npos) {
       throw std::runtime_error(
           "mla_only input '" + tensor.name + "' is produced by stage '" + producer->name +
-          "', not a quantize stage; hybrid host/card quantization is out of scope");
+          "', not a quantize or cast stage; hybrid host/card quantization is out of scope");
     }
     const auto ingress =
         std::find_if(public_inputs.begin(), public_inputs.end(), [&](const auto& input) {
@@ -270,15 +279,20 @@ mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& c
     input.name = ingress->name;
     input.input_range = ingress->input_range;
     const std::string dtype = best_dtype(input);
-    if (canonical_token(dtype) != "int8") {
-      throw std::runtime_error("mla_only input '" + input.name + "' must be INT8, got '" + dtype +
-                               "'");
+    const std::size_t elem = mla_only_dtype_bytes(dtype);
+    if (elem == 0U) {
+      throw std::runtime_error("mla_only input '" + input.name + "' must be INT8 or BF16, got '" +
+                               dtype + "'");
+    }
+    if (elem == 1U && !producer->quant.has_value()) {
+      throw std::runtime_error("mla_only INT8 input '" + input.name +
+                               "' has no quantization parameters");
     }
     const std::size_t elements = dense_element_count(best_shape(input));
-    if (elements == 0U || elements != input.size_bytes) {
-      throw std::runtime_error("mla_only input '" + input.name +
-                               "' is not a dense INT8 tensor: shape does not cover " +
-                               std::to_string(input.size_bytes) + " bytes");
+    if (elements == 0U || elements * elem != input.size_bytes) {
+      throw std::runtime_error("mla_only input '" + input.name + "' is not a dense " + dtype +
+                               " tensor: shape does not cover " + std::to_string(input.size_bytes) +
+                               " bytes");
     }
     facts.push_back(convert_tensor(input));
     facts.back().quant = quant_from_mpk(producer->quant);
@@ -313,12 +327,13 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
       throw std::runtime_error("mla_only output '" + fact.name +
                                "' needs a lane-split repack the host does not perform");
     }
-    if (canonical_token(fact.dtype) != "int8") {
-      throw std::runtime_error("mla_only output '" + fact.name + "' must be INT8, got '" +
+    const std::size_t elem = mla_only_dtype_bytes(fact.dtype);
+    if (elem == 0U) {
+      throw std::runtime_error("mla_only output '" + fact.name + "' must be INT8 or BF16, got '" +
                                fact.dtype + "'");
     }
     const std::size_t elements = dense_element_count(fact.shape);
-    if (elements == 0U || elements != fact.size_bytes ||
+    if (elements == 0U || elements * elem != fact.size_bytes ||
         head.stride_bytes.size() != fact.shape.size() || head.source_byte_offset < 0) {
       throw std::runtime_error("mla_only output '" + fact.name + "' has no usable geometry");
     }
@@ -326,10 +341,14 @@ void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContra
     fact.payload_offset = static_cast<std::size_t>(head.source_byte_offset);
     padded =
         padded || head.stride_bytes !=
-                      simaai::neat::pipeline_internal::contiguous_strides_bytes(fact.shape, 1U);
-    const auto& dequantize = dequantize_for_head(contract, head.name);
-    fact.name = strip_public_route_wrapper_prefix(dequantize.output_tensors.front().name);
-    fact.quant = quant_from_mpk(dequantize.quant);
+                      simaai::neat::pipeline_internal::contiguous_strides_bytes(fact.shape, elem);
+    const auto& consumer = public_consumer_for_head(contract, head.name);
+    fact.name = strip_public_route_wrapper_prefix(consumer.output_tensors.front().name);
+    if (elem == 1U && !consumer.quant.has_value()) {
+      throw std::runtime_error("mla_only INT8 output '" + fact.name +
+                               "' has no quantization parameters");
+    }
+    fact.quant = quant_from_mpk(consumer.quant);
     fact.dense_offset = facts->dense_output_bytes;
     if (!simaai::neat::pipeline_internal::safe_add(facts->dense_output_bytes, fact.size_bytes,
                                                    &facts->dense_output_bytes)) {
@@ -420,7 +439,8 @@ read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& co
     const bool supported =
         &stage == mla || is_pass_through_stage(stage) || kernel.find("pack") != std::string::npos ||
         kernel.find("slice") != std::string::npos || kernel.find("dequant") != std::string::npos ||
-        (kernel.find("quant") != std::string::npos && kernel.find("tess") == std::string::npos);
+        ((kernel.find("quant") != std::string::npos || kernel.find("cast") != std::string::npos) &&
+         kernel.find("tess") == std::string::npos);
     if (!supported) {
       throw std::runtime_error("mla_only does not support stage '" + stage.name + "' (" +
                                stage.kernel + ")");
