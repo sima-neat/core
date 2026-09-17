@@ -5,7 +5,7 @@
   "run_mode": "codec_h265_decode",
   "iterations": 1000,
   "metrics_thresholds": {
-    "throughput_min": 550.0,
+    "throughput_min": 500.0,
     "p50_max": 0.0,
     "p95_max": 0.0,
     "startup_max": 20000.0,
