@@ -6324,7 +6324,8 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       }
     }
     if (stage.batch_sz_model <= 0 && config_actual_batch_size > 1) {
-      if (kernel_token.find("slice") != std::string::npos ||
+      if (kernel_token == "cast" || kernel_token == "casttransform" ||
+          kernel_token.find("slice") != std::string::npos ||
           kernel_token.find("batchflatten") != std::string::npos) {
         stage.batch_sz_model = config_actual_batch_size;
       }
