@@ -50,7 +50,8 @@ namespace {
 void tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
                                            const GraphRuntimeOptions& graph_opt,
                                            bool graph_internal_output) {
-  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto || stream_opt.copy_output) {
+  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output)) {
     return;
   }
   const std::size_t edge_queue = graph_opt.edge_queue == 0 ? 256 : graph_opt.edge_queue;
@@ -945,8 +946,6 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     start_opt.owner = &pipe;
     start_opt.allow_startup_preflight = allow_startup_preflight;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
-    start_opt.decoder_admission =
-        std::atomic_load_explicit(&decoder_admission, std::memory_order_acquire);
     const auto segment_start = pipeline_internal::build_timing_now();
     auto run_core = RunCore::start_pipeline_segment(pipe.seg, std::move(start_opt));
     const auto segment_us = pipeline_internal::build_timing_us(segment_start);
@@ -1591,15 +1590,18 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
 
   std::string local_last_pipeline;
   std::string& last_pipeline = opt.last_pipeline ? *opt.last_pipeline : local_last_pipeline;
+  // Runtime queue capacity and accelerator lane depth are independent
+  // contracts.  RunOptions::queue_depth controls framework ingress/egress
+  // queues; the model-authored ProcessMLA num-buffers value must remain intact
+  // unless GraphOptions carries an explicit ProcessMLA pool override.
   GraphOptions route_options = segment.route_options;
   if (segment.boundary_hints.has_value()) {
     if (!opt.input_route_processor && segment.boundary_hints->input_route_processor) {
       opt.input_route_processor = segment.boundary_hints->input_route_processor;
     }
-    if (!opt.tensor_input_opt_for_cv.has_value() && segment.boundary_hints->tensor_mode &&
-        !segment.boundary_hints->ingress_inputs.empty()) {
-      opt.tensor_input_opt_for_cv = segment.boundary_hints->ingress_inputs.front();
-    }
+  }
+  if (!opt.tensor_input_opt_for_cv.has_value()) {
+    opt.tensor_input_opt_for_cv = pipeline_segment_ingress_input(segment);
   }
 
   if (opt.image_seed && opt.seed.has_value()) {
@@ -1629,7 +1631,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
         std::move(source.stream), source.merged_opt, source.stream_opt, opt.mode,
-        opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor), opt.decoder_admission,
+        opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor),
         std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
@@ -1672,8 +1674,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   const auto start_single_start = pipeline_internal::build_timing_now();
   auto core = RunCore::start_single_pipeline(
       std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, opt.tensor_input_opt_for_cv,
-      std::move(opt.input_route_processor), opt.decoder_admission,
-      std::move(opt.after_pipeline_start_for_test));
+      std::move(opt.input_route_processor), std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",

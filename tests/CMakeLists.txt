@@ -9,6 +9,14 @@ enable_testing()
 include(CMakeParseArguments)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+add_test(
+  NAME unit_afe_publication_ledger_generated
+  COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tools/generate_afe_publication_ledger.py
+    ${CMAKE_SOURCE_DIR}/src/pipeline/internal/sima/static_contract/data/afe_publication_ledger.json
+    ${CMAKE_SOURCE_DIR}/src/pipeline/internal/sima/static_contract/generated/AfePublicationLedger.inc
+    --check)
+
 if (NOT DEFINED SIMANEAT_MODELZOO_VERSION OR SIMANEAT_MODELZOO_VERSION STREQUAL "")
   message(FATAL_ERROR "SIMANEAT_MODELZOO_VERSION must be resolved from deps/manifest.json")
 endif()
@@ -87,6 +95,11 @@ add_custom_target(prepare_test_fixtures ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_model_archive_fixtures.py
     --root ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}
     --manifest ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST}
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}/strict-seeds
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets/model-archive/strict-seeds
+    ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}/strict-seeds
   COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_decoder_dynamic_fixture.py
     --output ${SIMA_TEST_DECODER_FIXTURE}
@@ -218,7 +231,7 @@ function(add_pipeline_test_strict name)
     return()
   endif()
 
-  set(options LOCK_DISPATCHER)
+  set(options LOCK_ACCELERATOR)
   set(oneValueArgs)
   set(multiValueArgs SOURCES ARGS)
   cmake_parse_arguments(APT "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -253,9 +266,9 @@ function(add_pipeline_test_strict name)
 
   simaneat_append_ctest_env(${name})
 
-  if (APT_LOCK_DISPATCHER)
+  if (APT_LOCK_ACCELERATOR)
     set_tests_properties(${name} PROPERTIES
-      RESOURCE_LOCK "dispatcher"
+      RESOURCE_LOCK "accelerator-device"
     )
   endif()
 
@@ -315,6 +328,7 @@ set_property(TEST unit_000_devkit_package_inventory_test APPEND PROPERTY
   LABELS "unit;devkit-package-inventory")
 
 set(UNIT_TESTS
+  unit_memory_runtime_loader_test
   unit_builder_test
   unit_caps_bridge_test
   unit_contract_compiler_boxdecode_test
@@ -337,6 +351,8 @@ set(UNIT_TESTS
   unit_route_capability_mpk_static_contract_test
   unit_route_plan_detess_adapter_test
   unit_dispatcher_recovery_test
+  unit_runtime_recovery_policy_test
+  unit_video_sender_kind_contract_test
   unit_dispatcher_watchdog_test
   unit_error_code_taxonomy_test
   unit_gst_error_normalizer_test
@@ -433,6 +449,13 @@ set(UNIT_TESTS
   unit_mpk_contract_legacy_ingress_test
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
+  unit_dmabuf_eligibility_test
+  unit_afe_mpk_v2_decoder_test
+  unit_physical_execution_plan_test
+  unit_tvm_host_module_graph_test
+  unit_modelpack_multi_mla_plan_test
+  unit_frame_slot_arena_plan_test
+  unit_dmabuf_plan_contract_projection_test
   unit_model_archive_loader_test
   unit_modelpack_compact_extraction_path_test
   unit_outputspec_test
@@ -527,6 +550,24 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+# Optional frozen-corpus gate. The normal unit target uses synthetic JSON/ELF
+# fixtures and is always available; this integration test is registered only
+# when a developer/CI job explicitly supplies the external official corpus.
+set(SIMANEAT_EVO_MPK_CORPUS_DIR "$ENV{SIMANEAT_EVO_MPK_CORPUS_DIR}" CACHE PATH
+    "Directory containing the 12 frozen official EVO MPK archives")
+if (SIMANEAT_EVO_MPK_CORPUS_DIR)
+  add_test(
+    NAME integration_legacy_afe_evo_corpus_test
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_legacy_afe_evo_corpus_test.py
+      --validator $<TARGET_FILE:unit_afe_mpk_v2_decoder_test>
+      --corpus "${SIMANEAT_EVO_MPK_CORPUS_DIR}"
+  )
+  simaneat_append_ctest_env(integration_legacy_afe_evo_corpus_test)
+  set_tests_properties(integration_legacy_afe_evo_corpus_test PROPERTIES
+    LABELS "integration;model-contract;evo-corpus")
+endif()
 
 if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -630,7 +671,7 @@ endforeach()
 
 set_tests_properties(detessdequant_output_pool_test PROPERTIES
   TIMEOUT 60
-  RESOURCE_LOCK "dispatcher"
+  RESOURCE_LOCK "accelerator-device"
 )
 set_property(TEST detessdequant_output_pool_test APPEND PROPERTY ENVIRONMENT
   "SIMA_PROCESSCVU_ALLOW_OVERFLOW_ALLOC=0;SIMA_PROCESSCVU_PREPARED_POOL_BUFFERS=0")
@@ -639,49 +680,12 @@ add_pipeline_test(
   ev74_four_process_rpmsg_concurrency_test
   SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/ev74_four_process_rpmsg_concurrency_test.cpp
-  LOCK_DISPATCHER
 )
 
 if (NOT ev74_four_process_rpmsg_concurrency_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST ev74_four_process_rpmsg_concurrency_test APPEND PROPERTY
-    LABELS "e2e;ev74;concurrency;rpmsg")
+    LABELS "e2e;ev74;concurrency;direct-driver")
   set_tests_properties(ev74_four_process_rpmsg_concurrency_test PROPERTIES TIMEOUT 120)
-endif()
-
-add_pipeline_test(
-  ev74_dispatcher_lifetime_test
-  SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/ev74_dispatcher_lifetime_test.cpp
-  LOCK_DISPATCHER
-)
-if (NOT ev74_dispatcher_lifetime_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST ev74_dispatcher_lifetime_test APPEND PROPERTY
-    LABELS "e2e;ev74;concurrency;rpmsg")
-  set_tests_properties(ev74_dispatcher_lifetime_test PROPERTIES TIMEOUT 120)
-  add_test(NAME ev74_dispatcher_default_timeout_test
-    COMMAND ev74_dispatcher_lifetime_test --default-timeout)
-  simaneat_append_ctest_env(ev74_dispatcher_default_timeout_test)
-  set_tests_properties(ev74_dispatcher_default_timeout_test PROPERTIES
-    LABELS "strict;e2e;ev74;concurrency;rpmsg"
-    RESOURCE_LOCK "dispatcher;accelerator-device"
-    TIMEOUT 60)
-  foreach(old_clients IN ITEMS 1 2)
-    set(close_test ev74_dispatcher_concurrent_close_${old_clients}_test)
-    add_test(NAME ${close_test}
-      COMMAND ev74_dispatcher_lifetime_test --concurrent-close ${old_clients})
-    simaneat_append_ctest_env(${close_test})
-    set_tests_properties(${close_test} PROPERTIES
-      LABELS "strict;e2e;ev74;concurrency;rpmsg;lifecycle"
-      RESOURCE_LOCK "dispatcher;accelerator-device"
-      TIMEOUT 120)
-  endforeach()
-  add_test(NAME ev74_dispatcher_destructor_reliability_test
-    COMMAND ev74_dispatcher_lifetime_test --destructor-reliability)
-  simaneat_append_ctest_env(ev74_dispatcher_destructor_reliability_test)
-  set_tests_properties(ev74_dispatcher_destructor_reliability_test PROPERTIES
-    LABELS "strict;e2e;ev74;concurrency;rpmsg;lifecycle"
-    RESOURCE_LOCK "dispatcher;accelerator-device"
-    TIMEOUT 180)
 endif()
 
 add_pipeline_test_long(
@@ -792,7 +796,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
-    set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -803,7 +807,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
-    set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -813,7 +817,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
-    set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -824,7 +828,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
-    set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -835,7 +839,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;asr;long")
-    set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -846,7 +850,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_graph_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_graph_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;asr;long")
-    set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -858,7 +862,7 @@ if (SimaLMM_FOUND)
 
   if (NOT genai_server_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
-    set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 
   add_pipeline_test_long(
@@ -870,7 +874,7 @@ if (SimaLMM_FOUND)
   if (NOT genai_server_reasoning_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY
       LABELS "e2e;genai;llima;server;reasoning;long")
-    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endif()
 endif()
 
@@ -985,7 +989,7 @@ if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
   simaneat_append_ctest_env(ssd_mobilenet_boxdecode_perf_smoke)
   set_tests_properties(ssd_mobilenet_boxdecode_perf_smoke PROPERTIES
     LABELS "perf;ssd;boxdecode;metrics;long;modalix-only"
-    RESOURCE_LOCK "perf-device"
+    RESOURCE_LOCK "perf-device;accelerator-device"
     SKIP_RETURN_CODE 77
   )
   set_property(TEST ssd_mobilenet_boxdecode_perf_smoke
@@ -1244,7 +1248,7 @@ function(add_visual_frontend_tput_preset_test name)
     set_property(TEST ${name} APPEND PROPERTY LABELS "${VFT_LABELS}")
   endif()
   set_tests_properties(${name} PROPERTIES
-    RESOURCE_LOCK "dispatcher"
+    RESOURCE_LOCK "accelerator-device"
     SKIP_RETURN_CODE 77
     TIMEOUT 90
   )
@@ -1722,7 +1726,8 @@ add_pipeline_test(
 if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST yolov8_model_benchmark_metrics_test
     APPEND PROPERTY LABELS "e2e;obj_detection;benchmark;metrics")
-  set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY
+    RESOURCE_LOCK "perf-device;accelerator-device")
 endif()
 
 add_pipeline_test_long(
@@ -1737,7 +1742,7 @@ if (NOT yolov8_boxdecode_model_benchmark_test IN_LIST PIPELINESESSION_TEST_BLACK
   set_property(TEST yolov8_boxdecode_model_benchmark_test
     APPEND PROPERTY LABELS "e2e;obj_detection;boxdecode;benchmark;metrics")
   set_property(TEST yolov8_boxdecode_model_benchmark_test
-    APPEND PROPERTY RESOURCE_LOCK "perf-device")
+    APPEND PROPERTY RESOURCE_LOCK "perf-device;accelerator-device")
 endif()
 
 add_pipeline_test(
@@ -1804,7 +1809,7 @@ endif()
 
 add_pipeline_test_long(
   ssd300_surgical_e2e_test
-  LOCK_DISPATCHER
+  LOCK_ACCELERATOR
   SOURCES
     e2e_pipelines/obj_detection/ssd300_surgical_e2e_test.cpp
     e2e_pipelines/e2e_utils.cpp
@@ -1853,14 +1858,14 @@ add_pipeline_test_long(
 if (NOT preproc_roi_batch_functional_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY
     LABELS "e2e;obj_detection;preproc;roi;long")
-  set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
 add_pipeline_test(
   preproc_roi_user_smoke_test
   e2e_pipelines/obj_detection/preproc_roi_batch_functional_test.cpp
   ARGS ${CMAKE_SOURCE_DIR}
-  LOCK_DISPATCHER
+  LOCK_ACCELERATOR
 )
 
 if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -1882,7 +1887,8 @@ add_pipeline_test(
 if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST async_yolov11_pose_bf16_tput_test
     APPEND PROPERTY LABELS "e2e;obj_detection;perf;tput")
-  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY
+    RESOURCE_LOCK "perf-device;accelerator-device")
   set_tests_properties(async_yolov11_pose_bf16_tput_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
@@ -1982,7 +1988,7 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 
   foreach(test resnet50_modelpack_direct resnet50_modelpack_jpeg resnet50_modelpack_rtsp)
     set_property(TEST ${test} APPEND PROPERTY LABELS "e2e;img_classification")
-    set_property(TEST ${test} APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+    set_property(TEST ${test} APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   endforeach()
   append_pipeline_test_env(resnet50_modelpack_direct)
   append_pipeline_test_env(resnet50_modelpack_jpeg)
@@ -2106,7 +2112,6 @@ if (NOT h265_decode_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_dependencies(h265_decode_resnet50_e2e_test prepare_perf_codec_fixtures)
   set_property(TEST h265_decode_resnet50_e2e_test
     APPEND PROPERTY LABELS "e2e;codec;h265;img_classification;zero_copy;sync;async")
-  set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
@@ -2120,7 +2125,7 @@ if (NOT h265_rtsp_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST h265_rtsp_resnet50_e2e_test
     APPEND PROPERTY LABELS "e2e;codec;h265;rtsp;img_classification")
   set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
-  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
   set_tests_properties(h265_rtsp_resnet50_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
@@ -2240,7 +2245,6 @@ endfunction()
 # accelerator-heavy test to own the device runtime at a time.
 foreach(test
     ev74_four_process_rpmsg_concurrency_test
-    ev74_dispatcher_lifetime_test
     hybrid_graph_stage_model_test
     preproc_standalone_test
     preproc_build_input_repro_test
@@ -2426,6 +2430,11 @@ install(
   COMPONENT extras
 )
 install(
+  DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/model-archive/strict-seeds/"
+  DESTINATION lib/sima-neat/test-assets/model-archive/strict-seeds
+  COMPONENT extras
+)
+install(
   DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/decoder/"
   DESTINATION lib/sima-neat/test-assets/decoder
   COMPONENT extras
@@ -2499,6 +2508,17 @@ install(
     PATTERN "*.py"
 )
 
+# The installed performance runner resolves its baseline profile relative to
+# the prebuilt test directory. Keep that profile with the test executables so
+# the extras archive can run the same strict matrix as the build tree.
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/perf/baselines/
+  DESTINATION lib/sima-neat/tests/perf/baselines
+  COMPONENT extras
+  FILES_MATCHING
+    PATTERN "*.json"
+)
+
 # Install the generated CTest manifests and any nested installed-test metadata
 # from the build tree. CI installs the extras tarball, then discovers tests by
 # finding lib/sima-neat/tests/CTestTestfile.cmake under the extracted prefix.
@@ -2526,3 +2546,16 @@ install(
   DESTINATION lib/sima-neat/tests
   COMPONENT extras
 )
+
+foreach(_target codec_runtime_stream_test decoder_multirun_admission_boundary_test h265_rtsp_resnet50_e2e_test)
+  if (TARGET ${_target})
+    target_link_libraries(${_target} PRIVATE opencv_videoio)
+  endif()
+endforeach()
+
+foreach(_target yolov8_variant_route_matrix_test graph_migration_legacy_yolov8_variant_route_matrix_test
+    graph_migration_unified_yolov8_variant_route_matrix_test)
+  if (TARGET ${_target})
+    target_link_libraries(${_target} PRIVATE opencv_dnn)
+  endif()
+endforeach()

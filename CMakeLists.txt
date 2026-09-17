@@ -317,19 +317,13 @@ find_path(SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
     "/usr/include/eigen3")
 if (SimaLMM_FOUND)
-  pkg_check_modules(HTTPLIB REQUIRED cpp-httplib)
-  find_library(SIMANEAT_HTTPLIB_LIBRARY
-    NAMES cpp-httplib
-    PATHS ${HTTPLIB_LIBRARY_DIRS}
-    NO_DEFAULT_PATH)
-  if (NOT SIMANEAT_HTTPLIB_LIBRARY)
-    message(FATAL_ERROR "Could not find libcpp-httplib. Install libcpp-httplib-dev.")
-  endif()
+  pkg_check_modules(HTTPLIB REQUIRED IMPORTED_TARGET cpp-httplib)
 endif()
 
 if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
   pkg_check_modules(GST QUIET
     gstreamer-1.0
+    gstreamer-allocators-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
     gstreamer-allocators-1.0
@@ -343,6 +337,7 @@ if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
 else()
   pkg_check_modules(GST REQUIRED
     gstreamer-1.0
+    gstreamer-allocators-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
     gstreamer-allocators-1.0
@@ -455,6 +450,8 @@ endfunction()
 set(SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES "")
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   foreach(_simaneat_internals_target IN ITEMS
+      NeatInternals::DmaBuf
+      NeatInternals::DmaBufPool
       NeatInternals::neatprocessmlaruntime
       NeatInternals::PreparedRuntimeBridge
       NeatInternals::neattensorbufferfast
@@ -500,6 +497,8 @@ set(SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES
   $ENV{HOME}/.local/include/simaai
 )
 set(SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES
+  ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/build-required-gst/artifacts/gst-plugins
+  ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/build/artifacts/gst-plugins
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/prepared-runtime-bridge
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/processmla-runtime
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/metadata
@@ -520,6 +519,26 @@ list(APPEND SIMANEAT_NEAT_ALLOCATOR_HINTS
 )
 
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+  if (NOT TARGET NeatInternals::DmaBuf)
+    message(FATAL_ERROR
+      "NeatInternals package is missing the required shared DmaBuf runtime target")
+  endif()
+  simaneat_imported_target_location(_simaneat_dmabuf_imported_location
+    NeatInternals::DmaBuf)
+  if (_simaneat_dmabuf_imported_location)
+    set(SIMANEAT_NEAT_DMABUF_LIB
+      "${_simaneat_dmabuf_imported_location}"
+      CACHE FILEPATH "NEAT shared DMA-BUF runtime from exported NeatInternals package" FORCE)
+  endif()
+
+  simaneat_imported_target_location(_simaneat_dmabufpool_imported_location
+    NeatInternals::DmaBufPool)
+  if (_simaneat_dmabufpool_imported_location)
+    set(SIMANEAT_NEAT_DMABUFPOOL_LIB
+      "${_simaneat_dmabufpool_imported_location}"
+      CACHE FILEPATH "NEAT DMA-BUF runtime from exported NeatInternals package" FORCE)
+  endif()
+
   simaneat_imported_target_location(_simaneat_allocator_imported_location
     NeatInternals::Allocator)
   if (_simaneat_allocator_imported_location)
@@ -563,6 +582,15 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       CACHE PATH "NEAT allocator include directory from exported NeatInternals package" FORCE)
   endif()
 
+  simaneat_find_exported_include_dir(_simaneat_dmabuf_include_root
+    NeatInternals::DmaBufPool
+    simaai/neat/internal/dmabuf/DmaBufPool.h)
+  if (_simaneat_dmabuf_include_root)
+    set(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
+      "${_simaneat_dmabuf_include_root}"
+      CACHE PATH "NEAT DMA-BUF include root from exported NeatInternals package" FORCE)
+  endif()
+
   simaneat_find_exported_include_dir(_simaneat_tensorbuffer_include_dir
     NeatInternals::TensorBuffer
     gstsimaaitensorbuffer.h)
@@ -585,6 +613,26 @@ endif()
 find_library(SIMANEAT_NEAT_ALLOCATOR_LIB
   NAMES gstneatallocator
   HINTS ${SIMANEAT_NEAT_ALLOCATOR_HINTS}
+)
+find_library(SIMANEAT_NEAT_DMABUFPOOL_LIB
+  NAMES neatdmabufpool
+  HINTS
+    ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
+    ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
+)
+find_library(SIMANEAT_NEAT_DMABUF_LIB
+  NAMES neatdmabuf
+  HINTS
+    ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
+    ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
+)
+find_path(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
+  NAMES simaai/neat/internal/dmabuf/DmaBufPool.h
+  HINTS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/core/dmabuf/include
+    ${SIMANEAT_ELXR_SYSROOT}/usr/include
+    /usr/include
+    /usr/local/include
 )
 find_path(SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR
   NAMES gstsimaaiallocator.h
@@ -637,8 +685,11 @@ set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
   CACHE PATH
   "Root include directory that contains gst/, ev/, and neat/ headers exported by internals")
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT)
+  # An empty cache entry suppresses find_path, even when packaged headers exist.
+  unset(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT CACHE)
   find_path(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
     NAMES gst/SimaPreparedRuntimeAbi.h
+    DOC "Root include directory that contains gst/, ev/, and neat/ headers exported by internals"
     HINTS
       ${SIMANEAT_LOCAL_DEP_HEADER_ROOT}
       /usr/include
@@ -729,6 +780,12 @@ simaneat_require_dependency(SIMANEAT_SIMAAIMEM_INCLUDE_ROOT
   "Required simaai memory headers not found: simaai/simaai_memory.h.")
 simaneat_require_dependency(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
   "Required NEAT tensor buffer headers not found: gstsimaaitensorbuffer.h.")
+simaneat_require_dependency(SIMANEAT_NEAT_DMABUFPOOL_LIB
+  "Required NEAT DMA-BUF runtime not found: libneatdmabufpool.so.")
+simaneat_require_dependency(SIMANEAT_NEAT_DMABUF_LIB
+  "Required shared NEAT DMA-BUF implementation not found: libneatdmabuf.so.")
+simaneat_require_dependency(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
+  "Required NEAT DMA-BUF headers not found: simaai/neat/internal/dmabuf/DmaBufPool.h.")
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   simaneat_require_dependency(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
     "Prepared-runtime bridge headers not found. Expected an include root containing gst/SimaPreparedRuntimeAbi.h, ev/ev_tensor_abi.h, and neat/PreparedRuntimeBridge.h.")
@@ -867,12 +924,19 @@ set_target_properties(sima_neat_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
 target_compile_definitions(sima_neat_objects PRIVATE SIMA_NEAT_INTERNAL=1)
+if (NOT SIMANEAT_PLATFORM_VERSION MATCHES "^2[.]1[.]")
+  target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_DIRECT_DRIVER_PROFILE=1)
+endif()
+
 
 if (NOT GIT_HASH)
   set(GIT_HASH "unknown")
 endif()
 
 add_library(sima_neat_common INTERFACE)
+target_compile_features(sima_neat_common INTERFACE cxx_std_20)
+find_package(nlohmann_json CONFIG REQUIRED)
+target_link_libraries(sima_neat_common INTERFACE nlohmann_json::nlohmann_json)
 
 add_library(sima_neat SHARED
   $<TARGET_OBJECTS:sima_neat_objects>
@@ -950,6 +1014,7 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       "${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}"
       "${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}"
       "${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}"
+      "${SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT}"
       "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}"
       "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
     if (_simaneat_neat_include_dir AND
@@ -963,13 +1028,7 @@ elseif (SIMANEAT_CPP_TIDY AND SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT)
     "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}")
 endif()
 
-# GStreamer/OpenCV headers are part of the public surface (e.g. pipeline/Graph.h),
-# but their absolute include paths are build-host specific (the SDK cross sysroot
-# under /opt/toolchain/... vs a DevKit's native /usr). Use them to build Neat
-# itself via $<BUILD_INTERFACE:...>, but do NOT bake them into the exported
-# target -- SimaNeatConfig.cmake re-discovers them with pkg-config on the
-# consuming machine so the installed package is relocatable (it works both when
-# cross-compiling in the Neat SDK and when building natively on the DevKit).
+# Resolve public dependency paths on the consuming machine.
 if (GST_FOUND)
   target_include_directories(sima_neat_common SYSTEM INTERFACE "$<BUILD_INTERFACE:${GST_INCLUDE_DIRS}>")
 endif()
@@ -983,9 +1042,6 @@ endif()
 if (OPENCV_FOUND)
   target_compile_options(sima_neat_objects PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
-if (SimaLMM_FOUND)
-  target_compile_options(sima_neat_objects PRIVATE ${HTTPLIB_CFLAGS_OTHER})
-endif()
 
 if (OPENCV_FOUND)
   target_link_directories(sima_neat PRIVATE ${OPENCV_LIBRARY_DIRS})
@@ -996,34 +1052,17 @@ if (GST_FOUND)
   target_link_directories(sima_neat_static PRIVATE ${GST_LIBRARY_DIRS})
 endif()
 
-if (SimaLMM_FOUND)
-  target_link_libraries(sima_neat_common
-    INTERFACE
-      SimaLMM::sima_lmm_runtime
-  )
-endif()
-
-if (SimaLMM_FOUND)
-  target_include_directories(sima_neat_objects SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
-  target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
-  target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
-endif()
-
-# Model archives are inflated in process. No public header uses zlib, so this stays PRIVATE, but a
-# static archive does not absorb its dependencies: CMake emits them in INTERFACE_LINK_LIBRARIES for
-# sima_neat_static regardless. The imported target exports as `ZLIB::ZLIB`, which SimaNeatConfig
-# resolves with find_dependency(ZLIB); ${ZLIB_LIBRARIES} would instead bake this build host's
-# absolute library path into SimaNeatTargets.cmake and break relocatable consumers.
+set(SIMANEAT_PRIVATE_LIBRARIES ZLIB::ZLIB)
 find_package(ZLIB REQUIRED)
-target_include_directories(sima_neat_objects PRIVATE ${ZLIB_INCLUDE_DIRS})
-target_link_libraries(sima_neat PRIVATE ZLIB::ZLIB)
-target_link_libraries(sima_neat_static PRIVATE ZLIB::ZLIB)
+if (SimaLMM_FOUND)
+  list(APPEND SIMANEAT_PRIVATE_LIBRARIES SimaLMM::sima_lmm_runtime PkgConfig::HTTPLIB)
+endif()
 
 if (GST_FOUND)
   target_link_libraries(sima_neat_common INTERFACE ${GST_LIBRARIES})
 endif()
 if (OPENCV_FOUND)
-  target_link_libraries(sima_neat_common INTERFACE ${OPENCV_LIBRARIES})
+  target_link_libraries(sima_neat_common INTERFACE opencv_core opencv_imgproc opencv_imgcodecs)
 endif()
 
 if (SIMA_WITH_OPENCV)
@@ -1031,40 +1070,52 @@ if (SIMA_WITH_OPENCV)
 endif()
 
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
-  target_link_libraries(sima_neat_common INTERFACE
+  list(APPEND SIMANEAT_PRIVATE_LIBRARIES
     NeatInternals::Allocator
     NeatInternals::BufferPool
-    NeatInternals::TensorBuffer)
+    NeatInternals::TensorBuffer
+    NeatInternals::DmaBuf
+    NeatInternals::DmaBufPool)
 else()
   if (SIMANEAT_NEAT_ALLOCATOR_LIB)
-    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_ALLOCATOR_LIB})
+    list(APPEND SIMANEAT_PRIVATE_LIBRARIES ${SIMANEAT_NEAT_ALLOCATOR_LIB})
   endif()
   if (SIMANEAT_NEAT_BUFFERPOOL_LIB)
-    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_BUFFERPOOL_LIB})
+    list(APPEND SIMANEAT_PRIVATE_LIBRARIES ${SIMANEAT_NEAT_BUFFERPOOL_LIB})
   endif()
   if (SIMANEAT_NEAT_TENSORBUFFER_LIB)
-    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
+    list(APPEND SIMANEAT_PRIVATE_LIBRARIES ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
+  endif()
+  if (SIMANEAT_NEAT_DMABUFPOOL_LIB)
+    list(APPEND SIMANEAT_PRIVATE_LIBRARIES ${SIMANEAT_NEAT_DMABUFPOOL_LIB})
+  endif()
+  if (SIMANEAT_NEAT_DMABUF_LIB)
+    list(APPEND SIMANEAT_PRIVATE_LIBRARIES ${SIMANEAT_NEAT_DMABUF_LIB})
   endif()
 endif()
 if (SIMANEAT_SIMAAIMEM_LIB)
-  target_link_libraries(sima_neat_common INTERFACE
-    "$<BUILD_INTERFACE:${SIMANEAT_SIMAAIMEM_LIB}>"
-    "$<INSTALL_INTERFACE:simaaimem>")
+  add_library(SimaNeat::Memory UNKNOWN IMPORTED)
+  set_target_properties(SimaNeat::Memory PROPERTIES IMPORTED_LOCATION "${SIMANEAT_SIMAAIMEM_LIB}")
+  list(APPEND SIMANEAT_PRIVATE_LIBRARIES SimaNeat::Memory)
 endif()
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
-    target_link_libraries(sima_neat_common INTERFACE NeatInternals::PreparedRuntimeBridge)
+    list(APPEND SIMANEAT_PRIVATE_LIBRARIES NeatInternals::PreparedRuntimeBridge)
   else()
     if (SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB)
-      target_link_libraries(sima_neat_common INTERFACE
+      list(APPEND SIMANEAT_PRIVATE_LIBRARIES
         ${SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB})
     endif()
     if (SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB)
-      target_link_libraries(sima_neat_common INTERFACE
+      list(APPEND SIMANEAT_PRIVATE_LIBRARIES
         ${SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB})
     endif()
   endif()
 endif()
+
+foreach(_target sima_neat_objects sima_neat sima_neat_static)
+  target_link_libraries(${_target} PRIVATE ${SIMANEAT_PRIVATE_LIBRARIES})
+endforeach()
 
 target_compile_definitions(sima_neat_common INTERFACE SIMA_HAS_SIMAAI_POOL=1)
 
@@ -1246,6 +1297,7 @@ endfunction()
 # Internal-only helper targets (tests/bench/tools/bindings)
 # ------------------------------------------------------------------------------
 add_library(sima_neat_internal_headers INTERFACE)
+target_link_libraries(sima_neat_internal_headers INTERFACE ${SIMANEAT_PRIVATE_LIBRARIES})
 target_include_directories(sima_neat_internal_headers INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
@@ -1273,6 +1325,21 @@ add_library(sima_neat_internal INTERFACE)
 target_link_libraries(sima_neat_internal INTERFACE
   sima_neat
   sima_neat_internal_headers
+)
+
+# Phase-1 offline structural admission tool. It shares the exact pure plan
+# compiler used by ModelPack and never opens an accelerator device.
+add_executable(neat-dmabuf-plan-audit
+  tools/dmabuf_plan_audit.cpp
+)
+target_link_libraries(neat-dmabuf-plan-audit PRIVATE
+  sima_neat
+  sima_neat_internal_headers
+)
+install(
+  TARGETS neat-dmabuf-plan-audit
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  COMPONENT core
 )
 
 # ------------------------------------------------------------------------------
@@ -1325,7 +1392,7 @@ endif()
 # Install / Package
 # ------------------------------------------------------------------------------
 install(
-  TARGETS sima_neat sima_neat_static sima_neat_common
+  TARGETS sima_neat sima_neat_common
   EXPORT SimaNeatTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     COMPONENT dev
@@ -1334,6 +1401,12 @@ install(
     NAMELINK_COMPONENT dev
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT core
+)
+
+install(TARGETS sima_neat_static
+  EXPORT SimaNeatStaticTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  COMPONENT dev
 )
 
 install(
@@ -1419,22 +1492,16 @@ write_basic_package_version_file(
   COMPATIBILITY SameMajorVersion
 )
 
-# Export build-tree package targets as well so external helper binaries built
-# against the active build tree do not silently fall back to ad hoc archive
-# imports that can drift out of sync with the current plugin/runtime build.
-export(
-  EXPORT SimaNeatTargets
-  FILE ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatTargets.cmake
-  NAMESPACE SimaNeat::
-)
-
-install(
-  EXPORT SimaNeatTargets
-  FILE SimaNeatTargets.cmake
-  NAMESPACE SimaNeat::
-  DESTINATION ${SimaNeat_INSTALL_CMAKEDIR}
-  COMPONENT dev
-)
+foreach(_export SimaNeatTargets SimaNeatStaticTargets)
+  export(EXPORT ${_export}
+    FILE ${CMAKE_CURRENT_BINARY_DIR}/${_export}.cmake
+    NAMESPACE SimaNeat::)
+  install(EXPORT ${_export}
+    FILE ${_export}.cmake
+    NAMESPACE SimaNeat::
+    DESTINATION ${SimaNeat_INSTALL_CMAKEDIR}
+    COMPONENT dev)
+endforeach()
 
 install(
   FILES
@@ -1477,9 +1544,9 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libgstreamer-plugins-base1.0-0"
   "libgstrtspserver-1.0-0"
   "libglib2.0-0"
-  "libopencv-core406"
-  "libopencv-imgproc406"
-  "libopencv-imgcodecs406"
+  "libopencv-core410"
+  "libopencv-imgproc410"
+  "libopencv-imgcodecs410"
   # libsima_neat.so links libz directly to inflate model archives in process.
   "zlib1g"
   "neat-runtime"
@@ -1488,7 +1555,7 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
     "sima-lmm-core"
-    "libcpp-httplib0.11")
+    "libcpp-httplib0.18")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(SIMANEAT_DEV_DEBIAN_DEPENDS
@@ -1499,18 +1566,8 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "libgstrtspserver-1.0-dev"
   "libglib2.0-dev"
   "libopencv-dev"
-  # Test-only: tests/rtsp_probe_utils.h probes source FPS with cv::VideoCapture.
-  "libopencv-videoio406"
-  # SimaNeatConfig calls find_dependency(ZLIB), and sima_neat_static exports ZLIB::ZLIB.
-  "zlib1g-dev"
   "nlohmann-json3-dev"
-  "neat-internals-dev"
-  "simaai-memory-lib-dev"
 )
-if (SimaLMM_FOUND)
-  list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
-    "sima-lmm-dev")
-endif()
 string(JOIN ", " CPACK_DEBIAN_DEV_PACKAGE_DEPENDS ${SIMANEAT_DEV_DEBIAN_DEPENDS})
 set(CPACK_INSTALL_CMAKE_PROJECTS
   "${CMAKE_BINARY_DIR};SimaNeat;ALL;/"

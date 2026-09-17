@@ -11,7 +11,10 @@
 #include "nodes/sima/DetessDequant.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
+#include "model/internal/ModelPack.h"
 #include "pipeline/internal/TensorTransfer.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
+#include "dmabuf_test_utils.h"
 
 #include "e2e_pipelines/e2e_utils.h"
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
@@ -23,13 +26,17 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -221,6 +228,14 @@ void log_tensor_sample(const simaai::neat::Sample& s, const std::string& label) 
 }
 
 void log_sample_caps(const simaai::neat::Sample& s, const std::string& label) {
+  if (s.kind == simaai::neat::SampleKind::TensorSet) {
+    for (std::size_t i = 0; i < s.tensors.size(); ++i) {
+      simaai::neat::Sample head;
+      head.tensor = s.tensors[i];
+      log_tensor_sample(head, label + ".head" + std::to_string(i));
+    }
+    return;
+  }
   if (s.kind != simaai::neat::SampleKind::Bundle) {
     log_tensor_sample(s, label);
     return;
@@ -322,6 +337,91 @@ bool extract_tensor_payload_any(const simaai::neat::Sample& result, int iter,
                                          used_cpu_transfer);
 }
 
+struct ExpectedHead {
+  std::string name;
+  std::vector<std::int64_t> shape;
+  std::size_t size_bytes = 0U;
+};
+
+std::vector<ExpectedHead> expected_raw_heads(const simaai::neat::Model& model) {
+  // Read the loader's MPK-only contract, independently of the runtime output
+  // descriptors under test. No model sidecar or decoded-box interpretation.
+  const auto& mpk = simaai::neat::internal::ModelAccess::pack(model).mpk_contract();
+  require(mpk.has_value(), "sync: expected an MPK manifest contract");
+  std::vector<ExpectedHead> heads;
+  for (const auto& plugin : mpk->plugins) {
+    if (plugin.kernel != "dequantization_transform") {
+      continue;
+    }
+    for (const auto& output : plugin.output_tensors) {
+      const auto dtype = objdet::upper_ascii_copy(
+          output.logical_dtype.empty() ? output.dtype : output.logical_dtype);
+      require(dtype == "FLOAT32" || dtype == "FP32", "sync: MPK head must be FP32");
+      // These are dense dequantization outputs: mpk_shape preserves the
+      // authored output_shapes rank, including N=1. logical_shape is the
+      // loader's legacy geometry projection and intentionally strips that axis.
+      const auto& shape = output.mpk_shape;
+      require(!output.name.empty() && !shape.empty(), "sync: MPK head identity/shape missing");
+      std::size_t bytes = sizeof(float);
+      for (const auto dim : shape) {
+        require(dim > 0 && static_cast<std::uint64_t>(dim) <=
+                               std::numeric_limits<std::size_t>::max() / bytes,
+                "sync: invalid MPK head shape");
+        bytes *= static_cast<std::size_t>(dim);
+      }
+      require(bytes == output.size_bytes, "sync: MPK head shape/byte extent mismatch");
+      require(std::none_of(heads.begin(), heads.end(),
+                           [&](const auto& head) { return head.name == output.name; }),
+              "sync: duplicate MPK head identity");
+      heads.push_back({output.name, shape, bytes});
+    }
+  }
+  require(heads.size() == 6U, "sync: expected the six MPK-authored YOLOv8 raw heads");
+  return heads;
+}
+
+sima_test::DmaBufBackingIdentity validate_raw_heads(const simaai::neat::Sample& sample,
+                                                    const std::vector<ExpectedHead>& expected) {
+  require(sample.kind == simaai::neat::SampleKind::TensorSet &&
+              sample.tensors.size() == expected.size(),
+          "sync: expected all six raw output tensors");
+  simaai::neat::pipeline_internal::TensorBufferView carrier;
+  std::string error;
+  require(simaai::neat::pipeline_internal::tensor_buffer_view_from_sample(sample, &carrier, &error),
+          "sync: raw heads must retain their shared native carrier: " + error);
+  const auto backing = sima_test::dmabuf_span(carrier.buffer).backing;
+  for (const auto& head : expected) {
+    const auto matches = [&](const auto& tensor) { return tensor.route.name == head.name; };
+    require(std::count_if(sample.tensors.begin(), sample.tensors.end(), matches) == 1,
+            "sync: missing/duplicate MPK output identity " + head.name);
+    const auto& tensor = *std::find_if(sample.tensors.begin(), sample.tensors.end(), matches);
+    if (tensor.shape != head.shape || tensor.dtype != simaai::neat::TensorDType::Float32 ||
+        !tensor.is_dense() || !tensor.is_contiguous()) {
+      std::ostringstream detail;
+      detail << "sync: raw head shape/dtype/layout mismatch " << head.name
+             << " expected=FP32 dense contiguous shape=[";
+      for (std::size_t axis = 0; axis < head.shape.size(); ++axis) {
+        detail << (axis ? "," : "") << head.shape[axis];
+      }
+      detail << "] bytes=" << head.size_bytes << " actual=" << tensor.debug_string()
+             << " dense=" << tensor.is_dense() << " contiguous=" << tensor.is_contiguous();
+      throw std::runtime_error(detail.str());
+    }
+    const auto mapping = tensor.map_read();
+    require(mapping.data && mapping.size_bytes >= head.size_bytes,
+            "sync: unreadable raw head " + head.name);
+    const auto* data = static_cast<const std::uint8_t*>(mapping.data);
+    for (std::size_t offset = 0; offset < head.size_bytes; offset += sizeof(float)) {
+      float value = 0.0f;
+      std::memcpy(&value, data + offset, sizeof(value));
+      if (!std::isfinite(value)) {
+        throw std::runtime_error("sync: non-finite raw head " + head.name);
+      }
+    }
+  }
+  return backing;
+}
+
 RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
                            const SyncTestConfig& cfg) {
   RunSummary res;
@@ -361,6 +461,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   }
   model_opt.upstream_name = "decoder";
   auto model = simaai::neat::Model(tar_gz, model_opt);
+  const auto raw_heads = expected_raw_heads(model);
   const int topk = 100;
 
   // [canonical_pipeline]
@@ -385,9 +486,14 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
 
   const auto start = std::chrono::steady_clock::now();
   bool logged_sample = false;
-  bool noted_skip = false;
-  bool noted_payload = false;
   bool noted_cpu_transfer = false;
+  std::optional<simaai::neat::Sample> retained_first;
+  simaai::neat::Mapping retained_view;
+  std::vector<std::uint8_t> retained_bytes;
+  std::optional<sima_test::DmaBufBackingIdentity> retained_backing;
+  cv::Mat replacement_input;
+  bool saw_raw_heads = false;
+  bool checked_retained_view = false;
   const int pull_timeout_ms = env_int("SIMA_SYNC_PULL_TIMEOUT_MS", -1);
   const int log_every = env_int("SIMA_SYNC_LOG_EVERY", 1);
   for (int i = 0; i < cfg.iters; ++i) {
@@ -400,7 +506,8 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
       step_log("sync: before run");
       auto outs = runner.run(
           simaai::neat::Sample{simaai::neat::Sample::from_image(
-              img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
+              i == 1 && retained_first ? replacement_input : img,
+              simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
           pull_timeout_ms);
       require(outs.size() == 1, "sync: expected one output sample");
       out = std::move(outs.front());
@@ -420,6 +527,40 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
       logged_sample = true;
     }
 
+    if (out.kind == simaai::neat::SampleKind::TensorSet) {
+      saw_raw_heads = true;
+      try {
+        const auto backing = validate_raw_heads(out, raw_heads);
+        if (i == 0 && cfg.iters > 1) {
+          retained_first = out;
+          retained_backing = backing;
+          retained_view = retained_first->tensors.front().map_read();
+          const auto* begin = static_cast<const std::uint8_t*>(retained_view.data);
+          retained_bytes.assign(begin, begin + retained_view.size_bytes);
+          replacement_input = cv::Mat::zeros(img.size(), img.type());
+        } else if (i == 1 && retained_first) {
+          require(retained_backing && backing != *retained_backing,
+                  "sync: second output reused the still-retained first DMA allocation");
+          require(std::memcmp(retained_view.data, retained_bytes.data(), retained_bytes.size()) ==
+                      0,
+                  "sync: retained first output changed during second frame execution");
+          // Release before producing frame three: this checks two-carrier
+          // progress, not unbounded progress while old user outputs stay live.
+          retained_view = {};
+          retained_first.reset();
+          retained_backing.reset();
+          retained_bytes.clear();
+          checked_retained_view = true;
+          append_note(res.note, "six_raw_heads_finite retained_view_stable");
+        }
+      } catch (const std::exception& ex) {
+        append_note(res.note, "raw_head_validation=" + sanitize_note(ex.what()));
+        break;
+      }
+      res.outputs += 1;
+      continue;
+    }
+
     std::vector<uint8_t> payload;
     std::string err;
     std::string fmt;
@@ -432,14 +573,11 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
       noted_cpu_transfer = true;
     }
     if (!payload_ok) {
-      if (!noted_payload) {
-        append_note(res.note, err);
-        noted_payload = true;
-      }
+      append_note(res.note, err);
+      break; // Unreadable outputs must not count toward a twenty-frame pass.
     }
 
-    const bool should_verify = fmt_upper.empty() || fmt_upper == "BBOX";
-    if (should_verify && payload_ok) {
+    if (fmt_upper == "BBOX") {
       try {
         const auto boxes = objdet::parse_boxes_strict(payload, img.cols, img.rows, topk, false);
         const objdet::MatchResult match =
@@ -449,27 +587,28 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
           break;
         }
       } catch (const std::exception& ex) {
-        if (!noted_skip) {
-          const std::string label = fmt_upper.empty() ? "UNKNOWN" : fmt_upper;
-          append_note(res.note, "skip_bbox_verify parse_failed format=" + label);
-          noted_skip = true;
-        }
+        append_note(res.note, "bbox_parse_failed=" + sanitize_note(ex.what()));
+        break;
       }
-    } else if (!should_verify && !noted_skip) {
-      const std::string label = fmt_upper.empty() ? "UNKNOWN" : fmt_upper;
-      append_note(res.note, "skip_bbox_verify format=" + label);
-      noted_skip = true;
+    } else {
+      append_note(res.note, "unexpected_output_format=" + fmt_upper);
+      break; // Raw heads are tensors, never an unlabelled serialized BBOX array.
     }
 
     res.outputs += 1;
   }
   const auto end = std::chrono::steady_clock::now();
+  retained_view = {};
+  retained_first.reset();
 
   res.diagnostics = p.last_pipeline();
 
   const double elapsed_s = std::chrono::duration<double>(end - start).count();
   res.avg_fps = (elapsed_s > 0.0) ? (static_cast<double>(res.outputs) / elapsed_s) : 0.0;
   res.ok = (res.outputs == cfg.iters);
+  if (saw_raw_heads && cfg.iters > 1 && !checked_retained_view) {
+    res.ok = false;
+  }
   if (elapsed_s <= 0.0) {
     append_note(res.note, "sync_timing_incomplete");
     res.ok = false;

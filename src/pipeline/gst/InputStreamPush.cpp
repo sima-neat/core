@@ -272,15 +272,10 @@ bool tensor_requires_cpu_to_device_copy_for_push(const simaai::neat::Tensor& ten
       tensor.storage->kind == simaai::neat::StorageKind::CpuExternal) {
     return true;
   }
-  // Device-created tensors are GstSample-backed too.  Treat a GstSample as
-  // CPU-backed only when it has no SiMa allocator target; otherwise appsrc can
-  // forward the original device-visible GstMemory without a hidden memcpy.
+  // Device visibility belongs to the selected memory, not the tensor's CPU/device
+  // label or logical segment names. Standard DMA-BUF views can be forwarded as-is.
   if (tensor.storage->kind == simaai::neat::StorageKind::GstSample) {
-    if (!tensor.storage->sima_segments.empty()) {
-      return false;
-    }
-    return tensor.storage->sima_mem_target_flags == 0 &&
-           tensor.device.type == simaai::neat::DeviceType::CPU;
+    return !pipeline_internal::tensor_has_dmabuf_memory(tensor);
   }
   return tensor.device.type == simaai::neat::DeviceType::CPU;
 }
@@ -498,7 +493,7 @@ void validate_spec_with_limits(const InputStream::State& st, const SampleSpec& s
 
 std::function<void(GstBuffer**)>
 make_prepare_for_spec(const SampleSpec& spec, const char* where,
-                      GstBuffer* source_preproc_meta_buffer = nullptr,
+                      std::shared_ptr<GstBuffer> source_preproc_meta_buffer = {},
                       const TensorList* tensor_set_meta_tensors = nullptr,
                       std::optional<PreprocessRuntimeMeta> tensor_preprocess_meta = std::nullopt) {
   return [spec, where, source_preproc_meta_buffer, tensor_set_meta_tensors,
@@ -518,9 +513,10 @@ make_prepare_for_spec(const SampleSpec& spec, const char* where,
       return;
     }
 
-    if (source_preproc_meta_buffer && has_simaai_preprocess_meta(source_preproc_meta_buffer)) {
+    if (source_preproc_meta_buffer &&
+        has_simaai_preprocess_meta(source_preproc_meta_buffer.get())) {
       std::string copy_err;
-      if (!copy_simaai_preprocess_meta(*buf, source_preproc_meta_buffer, &copy_err)) {
+      if (!copy_simaai_preprocess_meta(*buf, source_preproc_meta_buffer.get(), &copy_err)) {
         throw std::runtime_error(std::string(where ? where : "InputStream::make_prepare_for_spec") +
                                  ": failed to preserve preprocess metadata: " + copy_err);
       }
@@ -1044,6 +1040,8 @@ GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
   return (sample && GST_IS_SAMPLE(sample)) ? sample : nullptr;
 }
 
+} // namespace
+
 bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Sample* sample,
                                                   const std::shared_ptr<void>& holder,
                                                   const char* where) {
@@ -1169,6 +1167,8 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
   }
   return true;
 }
+
+namespace {
 
 bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, GstBuffer* buffer,
                                     const char* where, bool record_timings, const Sample* fail_msg,
@@ -2136,10 +2136,12 @@ bool InputStream::try_push_message(const Sample& msg) {
   cache_preprocess_meta(*st, transport_msg, seq.input_seq, seq.orig_input_seq);
   SampleSpec spec = derive_sample_spec_or_throw(transport_msg);
   const bool use_tensor_envelope_transport = spec.tensor_envelope_transport;
-  // Fail-fast (set-complete) guard: covers every transport kind below,
-  // including the tensor-envelope branch which previously had no guard.
-  enforce_device_visible_push_or_throw(st->opt.require_device_visible_input, transport_msg,
-                                       "InputStream::try_push_message");
+  // Compressed ingress is CPU-supported; only decoded/raw tensors need device visibility.
+  // The set-complete guard still covers every field of a tensor envelope.
+  if (spec.kind != SampleMediaKind::Encoded) {
+    enforce_device_visible_push_or_throw(st->opt.require_device_visible_input, transport_msg,
+                                         "InputStream::try_push_message");
+  }
   enforce_live_gstsample_producer_or_throw(transport_msg, "InputStream::try_push_message",
                                            st->opt.allow_graph_internal_zero_copy_input);
   if (spec.kind == SampleMediaKind::RawVideo) {
@@ -2276,16 +2278,19 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
 
   const size_t input_bytes = spec.required_bytes_actual;
-  GstBuffer* source_preproc_meta_buffer = nullptr;
+  std::shared_ptr<GstBuffer> source_preproc_meta_buffer;
   if (input.storage && input.storage->holder) {
-    source_preproc_meta_buffer =
-        pipeline_internal::buffer_from_tensor_holder(input.storage->holder);
+    if (GstBuffer* retained = pipeline_internal::buffer_from_tensor_holder(input.storage->holder)) {
+      source_preproc_meta_buffer =
+          std::shared_ptr<GstBuffer>(retained, [](GstBuffer* buffer) { gst_buffer_unref(buffer); });
+    }
   }
   const TensorList* tensor_set_meta_tensors =
       sample_has_tensor_list(transport_msg) ? &transport_msg.tensors : nullptr;
-  const std::function<void(GstBuffer**)> prepare =
-      make_prepare_for_spec(spec, "InputStream::try_push_message", source_preproc_meta_buffer,
-                            tensor_set_meta_tensors, tensor_preprocess_meta);
+  const SampleSpec& transport_spec = spec;
+  const std::function<void(GstBuffer**)> prepare = make_prepare_for_spec(
+      transport_spec, "InputStream::try_push_message", source_preproc_meta_buffer,
+      tensor_set_meta_tensors, tensor_preprocess_meta);
 
   if (allow_zero_copy_transport && cpu_owned_zero_copy_input_enabled()) {
     CpuZeroCopyFastPathResult cpu_zc_result = try_push_message_cpu_owned_zero_copy_fastpath(
@@ -2308,14 +2313,16 @@ bool InputStream::try_push_message(const Sample& msg) {
   const std::function<void(GstBuffer**)> copy_prepare = make_copy_prepare_with_attributes(
       prepare, meta.attributes, "InputStream::try_push_message(copy)");
 
-  if (auto admitted = admit_copy_payload_nonpush(
-          *st, decision, "InputStream::try_push_message", spec, fill, meta.frame_id, seq.input_seq,
-          seq.orig_input_seq, meta.stream_id, meta.stream_label, timing_override, copy_prepare);
+  if (auto admitted = admit_copy_payload_nonpush(*st, decision, "InputStream::try_push_message",
+                                                 transport_spec, fill, meta.frame_id, seq.input_seq,
+                                                 seq.orig_input_seq, meta.stream_id,
+                                                 meta.stream_label, timing_override, copy_prepare);
       admitted.has_value()) {
     return *admitted;
   }
 
-  ensure_alloc_for_bytes(*state_, spec.required_bytes_actual, "InputStream::try_push_message");
+  ensure_alloc_for_bytes(*state_, transport_spec.required_bytes_actual,
+                         "InputStream::try_push_message");
 
   const char* where = "InputStream::try_push_message";
   std::string where_detail;
@@ -2324,9 +2331,10 @@ bool InputStream::try_push_message(const Sample& msg) {
         push_fail_context(where, msg, spec, st->src_opt, seq.input_seq, seq.orig_input_seq);
     where = where_detail.c_str();
   }
-  const bool pushed = push_with_fill(where, fill, input_bytes, meta.frame_id, seq.input_seq,
-                                     seq.orig_input_seq, meta.stream_id, meta.stream_label,
-                                     timing_override, copy_prepare, spec.width, spec.height);
+  const bool pushed =
+      push_with_fill(where, fill, transport_spec.required_bytes_actual, meta.frame_id,
+                     seq.input_seq, seq.orig_input_seq, meta.stream_id, meta.stream_label,
+                     timing_override, copy_prepare, spec.width, spec.height);
   if (pushed) {
     maybe_drop_holder_after_push(input, "InputStream::try_push_message(copy)");
   }

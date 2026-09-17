@@ -23,6 +23,7 @@
 #include "pipeline/internal/InputSpecCapabilities.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/InputPolicy.h"
+#include "pipeline/internal/PublicInputContract.h"
 
 #include <algorithm>
 #include <cctype>
@@ -2674,6 +2675,63 @@ void apply_public_fragment_metadata(
     }
 
     segment.boundary_hints = *fragment->boundary_hints;
+    // Provenance can describe any overlapping model; ingress belongs only to
+    // the fragment starting at this segment's first executable vertex (possibly
+    // including its Input declarations). Merely containing a later segment is
+    // not evidence that the segment consumes the model's original ingress.
+    std::size_t ingress_vertex = start;
+    while (ingress_vertex < end &&
+           dynamic_cast<const Input*>(view.vertices[ingress_vertex].get())) {
+      ++ingress_vertex;
+    }
+    const FragmentPlan* ingress_fragment = nullptr;
+    bool ambiguous_ingress = false;
+    for (const auto& candidate : view.fragments) {
+      if (!candidate.boundary_hints.has_value() ||
+          candidate.boundary_hints->ingress_inputs.empty() || candidate.graph_start < start ||
+          candidate.graph_start > ingress_vertex || candidate.graph_end <= ingress_vertex) {
+        continue;
+      }
+      const auto extent = candidate.graph_end - candidate.graph_start;
+      if (!ingress_fragment ||
+          extent < ingress_fragment->graph_end - ingress_fragment->graph_start) {
+        ingress_fragment = &candidate;
+        ambiguous_ingress = false;
+      } else if (extent == ingress_fragment->graph_end - ingress_fragment->graph_start) {
+        const auto& owner = ingress_fragment->provenance;
+        const auto& duplicate = candidate.provenance;
+        const auto& owner_hints = *ingress_fragment->boundary_hints;
+        const auto& duplicate_hints = *candidate.boundary_hints;
+        const bool same_identity =
+            !owner.model_id.empty() && owner.model_id == duplicate.model_id &&
+            owner.model_source_path == duplicate.model_source_path &&
+            owner.model_options_json == duplicate.model_options_json &&
+            owner.model_stage_role == duplicate.model_stage_role &&
+            owner_hints.ingress_endpoint_names == duplicate_hints.ingress_endpoint_names &&
+            owner_hints.input_route_processor == duplicate_hints.input_route_processor;
+        ambiguous_ingress = ambiguous_ingress || !same_identity;
+      }
+    }
+    if (ambiguous_ingress) {
+      // Ambiguous provenance is not an invalid explicit source contract. Keep
+      // inference unset; the public Input and actual Sample remain authoritative.
+      ingress_fragment = nullptr;
+    }
+    auto& hints = *segment.boundary_hints;
+    if (ingress_fragment) {
+      const auto& ingress_hints = *ingress_fragment->boundary_hints;
+      hints.ingress_inputs = ingress_hints.ingress_inputs;
+      hints.ingress_endpoint_names = ingress_hints.ingress_endpoint_names;
+      hints.input_route_processor = ingress_hints.input_route_processor;
+      hints.tensor_mode = ingress_hints.tensor_mode;
+      hints.bundled_fan_in = ingress_hints.bundled_fan_in;
+    } else {
+      hints.ingress_inputs.clear();
+      hints.ingress_endpoint_names.clear();
+      hints.input_route_processor.reset();
+      hints.tensor_mode = false;
+      hints.bundled_fan_in = false;
+    }
     const bool input_is_stable = segment.input_spec.certainty == SpecCertainty::Derived ||
                                  segment.input_spec.certainty == SpecCertainty::Authoritative;
     if (segment.boundary.needs_input && !segment.boundary_hints->ingress_inputs.empty() &&
@@ -2693,6 +2751,20 @@ bool plan_has_input_spec_specializer(const ExecutionGraphPlan& plan) {
                  dynamic_cast<const simaai::neat::internal::InputSpecSpecializer*>(node.get());
         });
       });
+}
+
+void resolve_pipeline_input_memory(ExecutionGraphPlan& plan) {
+  for (auto& segment : plan.pipeline_segments) {
+    if (segment.nodes.empty()) {
+      continue;
+    }
+    const auto* input = dynamic_cast<const simaai::neat::Input*>(segment.nodes.front().get());
+    if (!input) {
+      continue;
+    }
+    segment.resolved_input_memory_policy =
+        pipeline_internal::resolve_input_memory(input->options(), segment.nodes).allocation;
+  }
 }
 
 void specialize_pipeline_segments(
@@ -2718,10 +2790,15 @@ void specialize_pipeline_segments(
     segment.output_spec = std::move(specialized.output_spec);
     segment.output_complete = output_spec_complete(segment.output_spec);
   }
+  resolve_pipeline_input_memory(*plan);
 }
 
 void specialize_pipeline_segments_with_discovered_context(ExecutionGraphPlan* plan) {
-  if (!plan || !plan_has_input_spec_specializer(*plan)) {
+  if (!plan) {
+    return;
+  }
+  if (!plan_has_input_spec_specializer(*plan)) {
+    resolve_pipeline_input_memory(*plan);
     return;
   }
   const auto context = pipeline_internal::discover_input_spec_specialization_context();
@@ -2953,7 +3030,21 @@ ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
                                         const RunOptions& opt, std::optional<Sample> seed) {
   const auto total_start = pipeline_internal::build_timing_now();
-  const auto view = public_graph.composition_view_for_internal_compile();
+  auto view = public_graph.composition_view_for_internal_compile();
+  for (std::size_t vertex = 0; vertex < view.vertices.size(); ++vertex) {
+    const auto* input = dynamic_cast<const simaai::neat::Input*>(view.vertices[vertex].get());
+    if (!input) {
+      continue;
+    }
+    auto resolved = std::make_shared<simaai::neat::Input>(
+        input->endpoint_name(), pipeline_internal::public_input_options(view, vertex));
+    for (auto& node : view.linear_nodes) {
+      if (node.get() == input) {
+        node = resolved;
+      }
+    }
+    view.vertices[vertex] = std::move(resolved);
+  }
   (void)view.groups;
   validate_unique_source_buffer_names(view.vertices, view.edges);
 

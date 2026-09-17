@@ -19,6 +19,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -327,7 +328,15 @@ bool populate_tensor_contract_from_stage_tensor(
   if (!out) {
     return false;
   }
-  const auto shape = preferred_tensor_shape(tensor);
+  auto shape = preferred_tensor_shape(tensor);
+  if constexpr (std::is_same_v<ContractT, EgressTensorContract>) {
+    // Image routing uses normalized dimensions, but public output metadata
+    // must retain the authored tensor rank, including a singleton batch.
+    if (tensor.shape_semantics == pipeline_internal::sima::MpkShapeSemantics::Geometry &&
+        !tensor.mpk_shape.empty()) {
+      shape = tensor.mpk_shape;
+    }
+  }
   const auto parsed_shape = parse_tensor_shape_contract(shape);
   if (!parsed_shape.valid) {
     return false;
@@ -725,8 +734,9 @@ bool populate_route_mla_facts_from_mpk_contract(
     return false;
   }
 
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
-  if (!mla_stage) {
+  const auto* first_mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
+  const auto* last_mla_stage = pipeline_internal::sima::get_last_mla_stage_io_contract(contract);
+  if (!first_mla_stage || !last_mla_stage) {
     if (error_message) {
       *error_message = "MPK contract is missing an MLA stage";
     }
@@ -745,12 +755,12 @@ bool populate_route_mla_facts_from_mpk_contract(
   const std::vector<pipeline_internal::sima::MpkTensorContract>& planning_outputs =
       !published_outputs.empty()
           ? published_outputs
-          : (logical_outputs.empty() ? mla_stage->output_tensors : logical_outputs);
+          : (logical_outputs.empty() ? last_mla_stage->output_tensors : logical_outputs);
   const std::string node_name_hint =
-      !mla_stage->name.empty() ? mla_stage->name : mla_stage->plugin_id;
+      !first_mla_stage->name.empty() ? first_mla_stage->name : first_mla_stage->plugin_id;
   const auto mla_contract = pipeline_internal::sima::build_mla_static_contract_from_mpk_stage(
-      *mla_stage, planning_outputs,
-      physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs, node_name_hint,
+      *first_mla_stage, planning_outputs,
+      physical_outputs.empty() ? last_mla_stage->output_tensors : physical_outputs, node_name_hint,
       boundary_inputs.empty() ? nullptr : &boundary_inputs);
 
   if (mla_contract.logical_inputs.empty()) {
@@ -1441,6 +1451,9 @@ std::string graph_node_source_stage_name_local(const pipeline_internal::sima::Mp
 
 pipeline_internal::sima::RouteGraphKernelKind
 route_graph_kind_from_mpk_node_local(const pipeline_internal::sima::MpkGraphNode& node) {
+  if (lower_copy(node.processor) == "a65") {
+    return pipeline_internal::sima::RouteGraphKernelKind::Unknown;
+  }
   std::string kernel_source = !node.canonical_op.empty() ? node.canonical_op : node.kernel;
   if (kernel_source.empty()) {
     kernel_source = node.name;
@@ -1519,7 +1532,8 @@ struct MpkPostGraphView {
   std::size_t mla_node_index = std::numeric_limits<std::size_t>::max();
 };
 
-MpkPostGraphView build_mpk_post_graph_view_local(const pipeline_internal::sima::MpkGraph& graph) {
+MpkPostGraphView build_mpk_post_graph_view_local(const pipeline_internal::sima::MpkGraph& graph,
+                                                 const std::size_t last_mla_plugin_index) {
   MpkPostGraphView view;
   view.node_index_by_id.reserve(graph.nodes.size());
   view.incoming_edges.resize(graph.nodes.size());
@@ -1528,7 +1542,7 @@ MpkPostGraphView build_mpk_post_graph_view_local(const pipeline_internal::sima::
 
   for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
     view.node_index_by_id.emplace(graph.nodes[i].node_id, i);
-    if (view.mla_node_index == std::numeric_limits<std::size_t>::max() &&
+    if (graph.nodes[i].plugin_index == last_mla_plugin_index &&
         route_graph_kind_from_mpk_node_local(graph.nodes[i]) ==
             pipeline_internal::sima::RouteGraphKernelKind::Mla) {
       view.mla_node_index = i;
@@ -2504,7 +2518,8 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
   if (graph.nodes.empty()) {
     return {};
   }
-  const auto view = build_mpk_post_graph_view_local(graph);
+  const auto view = build_mpk_post_graph_view_local(
+      graph, static_cast<std::size_t>(pack.route_graph().last_mla_plugin_index));
   if (view.mla_node_index == std::numeric_limits<std::size_t>::max()) {
     return {};
   }
@@ -2593,14 +2608,27 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   }
   const auto& graph = pack.route_graph();
   const auto& contract = *pack.mpk_contract();
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
-  if (!mla_stage) {
+  const auto mla_stages = pipeline_internal::sima::get_mla_stage_io_contracts(contract);
+  if (mla_stages.empty()) {
     return false;
   }
   const auto mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(
-      contract, !mla_stage->name.empty() ? mla_stage->name : mla_stage->plugin_id);
-  if (!mla_idx.has_value()) {
+      contract,
+      !mla_stages.front()->name.empty() ? mla_stages.front()->name : mla_stages.front()->plugin_id);
+  const auto last_mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(
+      contract,
+      !mla_stages.back()->name.empty() ? mla_stages.back()->name : mla_stages.back()->plugin_id);
+  if (!mla_idx.has_value() || !last_mla_idx.has_value()) {
     return false;
+  }
+  std::unordered_set<std::size_t> mla_indices;
+  mla_indices.reserve(mla_stages.size());
+  for (const auto* stage : mla_stages) {
+    const auto index = pipeline_internal::sima::find_plugin_index_by_name_or_id(
+        contract, !stage->name.empty() ? stage->name : stage->plugin_id);
+    if (!index.has_value() || !mla_indices.insert(*index).second) {
+      return false;
+    }
   }
   const auto ordered = pipeline_internal::sima::plugins_in_execution_order(contract);
   std::unordered_map<std::size_t, std::size_t> rank_by_index;
@@ -2613,6 +2641,11 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     return false;
   }
   const std::size_t mla_rank = mla_rank_it->second;
+  const auto last_mla_rank_it = rank_by_index.find(*last_mla_idx);
+  if (last_mla_rank_it == rank_by_index.end()) {
+    return false;
+  }
+  const std::size_t last_mla_rank = last_mla_rank_it->second;
   const auto pre_kind_dbg = [](PreRouteStageKind kind) -> const char* {
     switch (kind) {
     case PreRouteStageKind::None:
@@ -2653,8 +2686,10 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   };
   if (route_debug_enabled()) {
     std::fprintf(stderr,
-                 "[route-debug] source=mpk_graph plugins=%zu edges=%zu mla_idx=%zu mla_rank=%zu\n",
-                 contract.plugins.size(), contract.edges.size(), *mla_idx, mla_rank);
+                 "[route-debug] source=mpk_graph plugins=%zu edges=%zu first_mla_idx=%zu "
+                 "first_mla_rank=%zu last_mla_idx=%zu last_mla_rank=%zu\n",
+                 contract.plugins.size(), contract.edges.size(), *mla_idx, mla_rank, *last_mla_idx,
+                 last_mla_rank);
   }
 
   out->pre_kind = PreRouteStageKind::None;
@@ -2694,7 +2729,7 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   };
 
   for (const std::size_t plugin_idx : ordered) {
-    if (plugin_idx >= contract.plugins.size() || plugin_idx == *mla_idx) {
+    if (plugin_idx >= contract.plugins.size() || mla_indices.count(plugin_idx) > 0U) {
       continue;
     }
     const auto rank_it = rank_by_index.find(plugin_idx);
@@ -2702,16 +2737,33 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
       continue;
     }
     const bool before_mla = rank_it->second < mla_rank;
-    std::string kernel_source = contract.plugins[plugin_idx].kernel;
+    const bool after_mla = rank_it->second > last_mla_rank;
+    // Intermediate commands belong to the physical inference region, not to
+    // the model's application-boundary preprocessing or postprocessing.
+    if (!before_mla && !after_mla) {
+      continue;
+    }
+    const auto& plugin = contract.plugins[plugin_idx];
+    if (lower_copy(plugin.processor) == "a65") {
+      // Host stages are part of infer, never synthesized as CVU adapters.
+      // Keep their terminal tensor contracts for application output planning.
+      if (after_mla &&
+          pipeline_internal::sima::route_graph_outgoing_edges(graph, plugin_idx).empty()) {
+        auto outputs = stage_output_contracts_from_plugin(plugin);
+        out->egress_contracts.insert(out->egress_contracts.end(), outputs.begin(), outputs.end());
+      }
+      continue;
+    }
+    std::string kernel_source = plugin.kernel;
     if (kernel_source.empty()) {
       kernel_source = contract.plugins[plugin_idx].name;
     }
     const std::string kernel = canonical_mpk_kernel_kind(kernel_source);
     if (route_debug_enabled()) {
       std::fprintf(stderr,
-                   "[route-debug] mpk_plugin idx=%zu rank=%zu before_mla=%d raw_kernel=%s "
-                   "raw_name=%s canonical=%s\n",
-                   plugin_idx, rank_it->second, before_mla ? 1 : 0,
+                   "[route-debug] mpk_plugin idx=%zu rank=%zu before_mla=%d after_mla=%d "
+                   "raw_kernel=%s raw_name=%s canonical=%s\n",
+                   plugin_idx, rank_it->second, before_mla ? 1 : 0, after_mla ? 1 : 0,
                    contract.plugins[plugin_idx].kernel.c_str(),
                    contract.plugins[plugin_idx].name.c_str(), kernel.c_str());
     }
@@ -3861,6 +3913,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
   out.model_managed_route_flags.pre_cast_needed = out.preproc_context.pre_cast_needed;
   out.model_managed_route_flags.include_pre_stage = out.include_pre_stage;
   out.model_managed_route_flags.boxdecode_selected = out.boxdecode_selected;
+  out.model_managed_route_flags.terminal_consumer_owns_tensor_tail = out.boxdecode_selected;
   out.cast_symmetry_ok = semantics.cast_symmetry_ok;
 
   if (!out.ingress_contracts.empty()) {
@@ -3906,6 +3959,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
   } else {
     out.post_regions = post_regions_from_post_chain(out.post_chain, out.egress_contracts);
   }
+
   finalize_post_summary_from_regions(&out);
   out.infer_only = !out.include_pre_stage && !out.include_post_stage;
 

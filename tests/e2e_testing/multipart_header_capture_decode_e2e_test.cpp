@@ -25,9 +25,11 @@
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -205,25 +207,33 @@ struct Decoded {
 };
 
 /// Average luma over a central patch, away from any edge artifacts.
-int center_luma(GstBuffer* buffer) {
-  GstMapInfo map;
-  if (!buffer || gst_buffer_map(buffer, &map, GST_MAP_READ) != TRUE) {
+int center_luma(GstSample* sample) {
+  GstBuffer* buffer = sample ? gst_sample_get_buffer(sample) : nullptr;
+  GstCaps* caps = sample ? gst_sample_get_caps(sample) : nullptr;
+  GstVideoInfo info;
+  gst_video_info_init(&info);
+  if (!buffer || !caps || !gst_video_info_from_caps(&info, caps) ||
+      GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_NV12 ||
+      GST_VIDEO_INFO_WIDTH(&info) != kWidth || GST_VIDEO_INFO_HEIGHT(&info) != kHeight) {
+    return -1;
+  }
+  GstVideoFrame frame{};
+  if (!gst_video_frame_map(&frame, &info, buffer, GST_MAP_READ)) {
     return -1;
   }
   long total = 0;
   int count = 0;
-  // NV12: luma plane is width*height at the start. Sample a small central block.
-  const int stride = kWidth;
+  // GstVideoFrame resolves the producer's plane offset and padded row stride.
+  const auto* luma = static_cast<const guint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0));
+  const gint stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
   for (int y = kHeight / 2 - 4; y < kHeight / 2 + 4; ++y) {
+    const auto* row = luma + static_cast<std::ptrdiff_t>(y) * stride;
     for (int x = kWidth / 2 - 4; x < kWidth / 2 + 4; ++x) {
-      const std::size_t offset = static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x);
-      if (offset < map.size) {
-        total += map.data[offset];
-        ++count;
-      }
+      total += row[x];
+      ++count;
     }
   }
-  gst_buffer_unmap(buffer, &map);
+  gst_video_frame_unmap(&frame);
   return count > 0 ? static_cast<int>(total / count) : -1;
 }
 
@@ -279,7 +289,7 @@ int decode_reference_luma(const std::string& jpeg) {
   const GstFlowReturn push_flow = gst_app_src_push_buffer(GST_APP_SRC(source), input);
   const GstFlowReturn eos_flow = gst_app_src_end_of_stream(GST_APP_SRC(source));
   GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 10 * GST_SECOND);
-  const int luma = sample ? center_luma(gst_sample_get_buffer(sample)) : -1;
+  const int luma = center_luma(sample);
   if (sample) {
     gst_sample_unref(sample);
   }
@@ -304,7 +314,7 @@ std::vector<Decoded> drain(GstElement* sink) {
     }
     GstBuffer* buffer = gst_sample_get_buffer(sample);
     Decoded decoded;
-    decoded.luma = center_luma(buffer);
+    decoded.luma = center_luma(sample);
     simaai::neat::gst_internal::read_attributes(buffer, &decoded.attributes);
     frames.push_back(decoded);
     gst_sample_unref(sample);

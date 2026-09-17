@@ -1,15 +1,17 @@
 ---
-title: "SIMA 外掛程式 JSON 真值對應表"
-description: "用於模型管線 SIMA 階段的已凍結 JSON 欄位使用地圖"
+title: "SIMA 外掛程式 JSON 真值對應表（歷史快照）"
+description: "2026 年 2 月模型管線 SIMA 階段的 JSON 欄位使用歷史記錄"
 sidebar_position: 2
 slug: /develop-apps/contribute/sima_plugin_json_truth_map
 ---
 
-# SIMA 外掛程式 JSON 真值對應表（已凍結）
+# SIMA 外掛程式 JSON 真值對應表（歷史快照）
 
-_上次更新：2026-02-17_
+_快照日期: 2026-02-17_
 
-本檔案規定了模型管線 SIMA 階段中 JSON 欄位的用法，以便對其移除進行控制和測試。
+本檔案保留 2026 年 2 月模型管線 SIMA 階段的 JSON 欄位使用調查結果。下文提及的「目前」行為均指該快照當時的狀態。
+
+> **歷史合約：** 下列外掛程式名稱與必要 JSON 欄位並非 Platform 3.0.0 的部署合約。通用 BoxDecode 目前使用 `neatobjectdecode`，透過具型別的資訊清單階段與執行階段屬性進行設定。下列舊版 `simaaiboxdecode` 要求不代表應用程式端的設定要求。現行設定與相容套件要求請參閱 [SIMA 靜態資訊清單內容合約](../start-here/architecture.md)。
 
 ## 1. 確定範圍和外掛程式矩陣
 

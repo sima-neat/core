@@ -7,8 +7,10 @@
 #include "nodes/io/Input.h"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace simaai::neat {
 
@@ -43,6 +45,16 @@ struct GraphInputPolicyResult {
 };
 
 using ResolvedLimits = InputStreamOptions::ResolvedShapeLimits;
+
+// Allocation preference does not imply a requirement on caller-owned storage.
+struct InputMemoryResolution {
+  InputMemoryPolicy allocation = InputMemoryPolicy::SystemMemory;
+  bool require_device_visible_input = false;
+};
+
+// Resolve from the executable source route without changing the Input declaration.
+InputMemoryResolution resolve_input_memory(const InputOptions& options,
+                                           const std::vector<std::shared_ptr<Node>>& nodes);
 
 InputOptions normalize_shape_bounds(const InputOptions& opt);
 

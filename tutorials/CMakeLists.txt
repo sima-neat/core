@@ -311,3 +311,5 @@ install(
   FILES_MATCHING
     PATTERN "*"
 )
+
+target_link_libraries(tutorial_018_consume_rtsp_stream PRIVATE opencv_videoio)

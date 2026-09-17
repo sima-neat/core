@@ -1,15 +1,17 @@
 ---
-title: SIMA Plugin JSON Truth Map
-description: Frozen JSON-field usage map for model-pipeline SIMA stages
+title: SIMA Plugin JSON Truth Map (Historical)
+description: Historical February 2026 JSON-field usage map for model-pipeline SIMA stages
 sidebar_position: 2
 slug: /develop-apps/contribute/sima_plugin_json_truth_map
 ---
 
-# SIMA Plugin JSON Truth Map (Frozen)
+# SIMA Plugin JSON Truth Map (Historical)
 
-_Last updated: 2026-02-17_
+_Snapshot date: 2026-02-17_
 
-This document freezes JSON-field usage for model-pipeline SIMA stages so removals are controlled and testable.
+This document preserves the February 2026 JSON-field usage findings for model-pipeline SIMA stages. References to "current" behavior below describe that snapshot.
+
+> **Historical contract:** The plugin names and required JSON fields below are not the Platform 3.0.0 deployment contract. Generic BoxDecode now uses `neatobjectdecode`, configured from the typed manifest stage and runtime properties. The old `simaaiboxdecode` requirements below do not define its application-facing configuration. See the [current SIMA static manifest context contract](../start-here/architecture.md#sima-static-manifest-context-contract) for the active configuration and matching-package requirements.
 
 ## 1. Freeze Scope and Plugin Matrix
 

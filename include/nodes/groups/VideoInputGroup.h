@@ -54,7 +54,7 @@ struct VideoInputGroupOptions {
     int height = -1;                     ///< Output height (-1 = leave unspecified).
     int fps = -1;                        ///< Output frame rate (-1 = leave unspecified).
     simaai::neat::CapsMemory memory =
-        simaai::neat::CapsMemory::SystemMemory; ///< Buffer memory domain.
+        simaai::neat::CapsMemory::Any; ///< Preserve producer memory unless explicitly constrained.
   } output_caps; ///< Optional explicit output caps applied at the group's tail.
 
   /// Optional raw GStreamer fragment inserted into the group (advanced use).

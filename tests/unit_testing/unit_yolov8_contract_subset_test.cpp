@@ -2,6 +2,11 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
+#include "nodes/sima/CastTess.h"
+#include "nodes/io/Input.h"
+#include "pipeline/internal/InputPolicy.h"
+#include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
@@ -9,9 +14,13 @@
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
 #include "test_main.h"
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -48,7 +57,7 @@ std::string yolo_variant_base_url() {
   if (const char* env = std::getenv("SIMA_YOLOV8_VARIANTS_BASE_URL"); env && *env) {
     return trim_trailing_slashes(env);
   }
-  return {};
+  return "https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix";
 }
 
 Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& stem) {
@@ -62,18 +71,17 @@ Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& stem) {
   ec.clear();
   std::filesystem::create_directories(unpack_dir.parent_path(), ec);
 
-  if (!sima_test::is_usable_regular_file(tar_path)) {
+  const sima_test::ScopedFileLock lock(drive_dir / ".download.lock");
+  if (!sima_test::is_listable_tar_gz(tar_path)) {
+    sima_test::purge_unlistable_tar_gz(tar_path);
     const std::string base_url = yolo_variant_base_url();
-    require(!base_url.empty(),
-            "missing YOLOv8n fixture '" + tar_path.string() +
-                "'. Upload the fixture tarballs to the public test-assets repo and set "
-                "SIMA_YOLOV8N_VARIANTS_BASE_URL (or SIMA_YOLOV8_VARIANTS_BASE_URL) "
-                "to the directory/release URL containing " +
-                stem + ".tar.gz");
-
     const std::string url = base_url + "/" + stem + ".tar.gz";
     require(sima_test::download_file(url, tar_path),
-            "failed to download YOLOv8n fixture from " + url + " to " + tar_path.string());
+            "failed to download YOLOv8n fixture from " + url + " to " + tar_path.string() +
+                " (run `sima-cli login` if the docs.sima.ai endpoint requires OAuth, or set "
+                "SIMA_YOLOV8N_VARIANTS_BASE_URL to a mirror)");
+    require(sima_test::is_listable_tar_gz(tar_path),
+            "downloaded YOLOv8n fixture is not a readable tar.gz: " + tar_path.string());
   }
 
   if (!path_has_yolov8_contract_files(unpack_dir)) {
@@ -369,6 +377,54 @@ void verify_yolov8_int8_contract_subset() {
   }
 }
 
+void verify_casttess_frame_arena(const simaai::neat::Model& model) {
+  using namespace simaai::neat;
+  namespace contract = pipeline_internal::sima;
+
+  // Public tensor frontends and repeated invocations must retain their own
+  // admitted arena, exactly as the image-preprocessing route does.
+  for (const std::size_t count : {1U, 2U}) {
+    std::vector<std::shared_ptr<Node>> nodes;
+    for (std::size_t i = 0U; i < count; ++i) {
+      Model::RouteOptions options;
+      options.name_suffix = "_casttess_" + std::to_string(i);
+      const auto route = internal::ModelAccess::build_public_route_nodes(model, options);
+      require(!route.empty() && dynamic_cast<const CastTess*>(route.front().get()),
+              "BF16 tensor route must start with the model-managed CastTess frontend");
+      nodes.insert(nodes.end(), route.begin(), route.end());
+    }
+    auto input_nodes = nodes;
+    input_nodes.insert(input_nodes.begin(), nodes::Input());
+    const auto memory = pipeline_internal::resolve_input_memory({}, input_nodes);
+    require(memory.allocation == InputMemoryPolicy::Ev74 && memory.require_device_visible_input,
+            "Auto BF16 input must resolve EV74 allocation and device-visible admission");
+
+    contract::ManifestBuildDiagnostics diagnostics;
+    const auto compiled = compile_node_contracts(nodes, {}, &diagnostics);
+    const auto manifest = render_manifest_from_compiled_contracts(compiled, {}, &diagnostics);
+    require(manifest && diagnostics.errors.empty() && manifest->stages.size() == count * 3U,
+            "each BF16 invocation must compile CastTess, MLA and DetessCast");
+    for (std::size_t i = 0U; i < manifest->stages.size(); ++i) {
+      const auto& stage = manifest->stages[i];
+      const auto& owner = manifest->stages[(i / 3U) * 3U];
+      require(owner.frame_arena_size_bytes > 0U &&
+                  stage.frame_arena_size_bytes == owner.frame_arena_size_bytes &&
+                  stage.frame_arena_role == (i % 3U == 0U ? contract::FrameArenaRole::Allocate
+                                                          : contract::FrameArenaRole::ReuseInput),
+              "CastTess frontend must retain one admitted arena through MLA and DetessCast");
+    }
+    const auto* frontend = dynamic_cast<const CastTess*>(nodes.front().get());
+    require(internal::node_model_lineage_binding(nodes.front()) ==
+                    frontend->options().model_lineage.get() &&
+                frontend->options().model_lineage,
+            "CastTess lineage lookup must preserve its model binding");
+    auto unbound = frontend->options();
+    unbound.model_lineage.reset();
+    require(internal::node_model_lineage_binding(std::make_shared<CastTess>(unbound)) == nullptr,
+            "unbound CastTess must not acquire model lineage");
+  }
+}
+
 void verify_yolov8_bf16_contract_subset() {
   using namespace simaai::neat;
   namespace pcs = simaai::neat::pipeline_internal::sima::plugin_contracts;
@@ -416,6 +472,8 @@ void verify_yolov8_bf16_contract_subset() {
           "YOLOv8 BF16 infer stage should be processmla");
   require(plan.post.front().kind == internal::ExecutionStageKind::DetessCast,
           "YOLOv8 BF16 post stage should be detesscast (fused detess+cast)");
+
+  verify_casttess_frame_arena(model);
 
   const auto mpk = load_yolov8_bf16_contract();
 
@@ -545,10 +603,13 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
     require(plan.pre.size() == 1U, label + " should expose one preprocess execution stage");
     require(pre_facts.size() == 1U, label + " should expose one preprocess stage fact");
     require(plan.pre.front().kind == kind, label + " preprocess stage kind should match");
-    require(plan.pre.front().stage_name == expected_stage_name,
-            label + " preprocess stage should preserve the canonical family stage name");
-    require(pre_facts.front().stage_name == expected_stage_name,
-            label + " preprocess stage fact should preserve the canonical family stage name");
+    const auto semantic_plan = pack.semantic_execution_plan();
+    require(semantic_plan.pre.size() == 1U &&
+                semantic_plan.pre.front().stage_name == expected_stage_name,
+            label + " semantic preprocess stage should preserve the canonical family name");
+    require(!plan.pre.front().stage_name.empty() &&
+                pre_facts.front().stage_name == plan.pre.front().stage_name,
+            label + " preprocess stage fact should preserve its admitted physical stage identity");
     require(pre_facts.front().processcvu_contract.has_value(),
             label + " preprocess stage fact should include a processcvu contract");
 
@@ -560,10 +621,33 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
             label + " preprocess stage fact should match the canonical graph id");
     require(from_fact.payload.graph_family == generic.payload.graph_family,
             label + " preprocess stage fact should match the canonical graph family");
-    require(from_fact.payload.input_shapes == generic.payload.input_shapes,
-            label + " preprocess stage fact should match canonical input geometry");
-    require(from_fact.payload.output_shapes == generic.payload.output_shapes,
-            label + " preprocess stage fact should match canonical output geometry");
+    const auto* quant = pipeline_internal::sima::get_stage_io_contract(mpk, "quantize_0");
+    require(quant != nullptr && quant->input_tensors.size() == 1U,
+            label + " requires the authored quantization input tensor");
+    const auto& authored_shape = quant->input_tensors.front().mpk_shape;
+    require(authored_shape == std::vector<std::int64_t>({1, 640, 640, 3}),
+            label + " MPK must preserve its explicit singleton-batch geometry");
+    const std::vector<std::vector<int>> expected_shapes{
+        std::vector<int>(authored_shape.begin(), authored_shape.end())};
+    require(from_fact.payload.input_shapes == expected_shapes,
+            label + " physical preprocess input must preserve the exact authored MPK geometry");
+    require(from_fact.payload.output_shapes == expected_shapes,
+            label + " shape-preserving QuantTess must retain the exact authored geometry");
+    // Batch is authored beside params, independently of the normalized semantic subset.
+    std::ifstream mpk_stream(mpk.mpk_json_path);
+    require(mpk_stream.is_open(), label + " requires the authoritative MPK manifest");
+    const auto authored_mpk = nlohmann::json::parse(mpk_stream);
+    const auto& plugins = authored_mpk.at("plugins");
+    const auto authored_quant =
+        std::find_if(plugins.begin(), plugins.end(),
+                     [&](const auto& plugin) { return plugin.at("name") == quant->name; });
+    require(authored_quant != plugins.end(), label + " requires the authored quantization stage");
+    const auto& config = authored_quant->at("config_params");
+    const int desired_batch_size = config.at("desired_batch_size").get<int>();
+    require(desired_batch_size == 1 && config.at("actual_batch_size").get<int>() == 1,
+            label + " MPK must explicitly author singleton desired and actual batches");
+    require(from_fact.payload.batch_size == desired_batch_size,
+            label + " physical preprocess must retain the explicit MPK batch count");
     require(from_fact.payload.input_dtype == generic.payload.input_dtype &&
                 from_fact.payload.output_dtype == generic.payload.output_dtype,
             label + " preprocess stage fact should match canonical dtypes");

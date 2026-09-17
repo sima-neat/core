@@ -158,6 +158,7 @@ mpk::MpkContract mla_only_contract(const std::size_t input_count = 1, const bool
   }
   const std::size_t mla = contract.plugins.size();
   contract.plugins.push_back(stage("MLA_0", "mla", {pack ? packed : quantized[0]}, {carrier}));
+  contract.plugins[mla].processor = "MLA";
   contract.plugins.push_back(
       stage("MLA_0_ofm_unpack_transform", "unpack_transform", {carrier}, {unpack_0, unpack_1}));
   contract.plugins.push_back(stage(slice_0.name, "slice_transform", {unpack_0}, {slice_0}));

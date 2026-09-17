@@ -70,7 +70,8 @@ PhysicalBufferStaticSpec build_physical_buffer_static_spec(int physical_index, i
                                                            DeviceKind device_kind,
                                                            const std::string& segment_name,
                                                            int source_physical_index = -1,
-                                                           std::int64_t source_byte_offset = 0);
+                                                           std::int64_t source_byte_offset = 0,
+                                                           std::uint64_t required_alignment_bytes = 0);
 
 /// Build an `InputBindingStaticSpec` connecting one of this stage's inputs to an upstream output.
 InputBindingStaticSpec build_input_binding_static_spec(

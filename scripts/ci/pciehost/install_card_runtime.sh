@@ -103,5 +103,8 @@ SUDO_WRAPPER
 setup_remote_sudo_wrapper
 trap 'rm -rf "${REMOTE_SUDO_WRAPPER_DIR:-}" "${cleanup_card_install_dir:-}"' EXIT
 cd "${card_install_dir}"
-sima-cli install --neat --env "${REMOTE_VULCAN_ENV}" "${REMOTE_PACKAGE_SPEC}" -t all
+# PCIe cards expose the Modalix userspace as Debian to sima-cli. Let the
+# package installer perform the authoritative /etc/buildinfo and runtime
+# profile checks after bypassing that outer metadata classification.
+sima-cli install --neat --force --env "${REMOTE_VULCAN_ENV}" "${REMOTE_PACKAGE_SPEC}" -t all
 REMOTE_INSTALL

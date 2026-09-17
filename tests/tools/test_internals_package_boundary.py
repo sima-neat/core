@@ -34,6 +34,7 @@ def run_sync(
     enabled: str = "ON",
     update_status: int = 0,
     sdk_platform_version: str | None = "2.1.3",
+    sdk_platform_channel: str = "release",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -51,7 +52,9 @@ def run_sync(
         sdk_release = root / "sdk-release"
         if sdk_platform_version is not None:
             sdk_release.write_text(
-                f"Platform Version = {sdk_platform_version}\n", encoding="utf-8"
+                f"Platform Version = {sdk_platform_version}\n"
+                f"Platform Channel = {sdk_platform_channel}\n",
+                encoding="utf-8",
             )
         log = root / "sysroot.log"
         script = f"""
@@ -61,10 +64,16 @@ sysroot() {{
   printf '%s\n' "$*" >> {shlex.quote(str(log))}
   [[ "$1" != update ]] || return {update_status}
 }}
+install() {{ printf 'install %s\n' "$*" >> {shlex.quote(str(log))}; }}
+function setup-sdk-sysroot.sh {{
+  printf 'setup-sdk-sysroot %s\n' "$*" >> {shlex.quote(str(log))}
+  return {update_status}
+}}
 {shell_function("run_privileged")}
 {shell_function("sync_sysroot_from_internals_manifest")}
 ELXR_SDK=ON
 ELXR_SDK_RELEASE_FILE={shlex.quote(str(sdk_release))}
+SYSROOT={shlex.quote(str(root / "sysroot"))}
 NEAT_SYNC_SYSROOT={shlex.quote(enabled)}
 NEAT_DEPS_MANIFEST={shlex.quote(str(consumer))}
 sync_sysroot_from_internals_manifest {shlex.quote(str(artifact_dir))}
@@ -111,6 +120,57 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             exported_config,
         )
 
+    def test_internals_abi_headers_have_one_package_owner(self) -> None:
+        text = cmake()
+        start = text.index("  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/")
+        install_headers = text[start : text.index("\n)", start)]
+        for header in (
+            "ProcessMlaRuntimeConfig.h",
+            "SimaPluginStaticManifestAbi.h",
+            "SimaPreparedRuntimeAbi.h",
+            "SimaTensorSetMetaAbi.h",
+        ):
+            with self.subTest(header=header):
+                self.assertTrue((ROOT / "include/gst" / header).is_file())
+                self.assertIn(f'PATTERN "{header}" EXCLUDE', install_headers)
+        self.assertFalse((ROOT / "include/gst/SimaCvuCapabilityAbi.h").exists())
+        self.assertIn(
+            "#include <gst/SimaCvuCapabilityAbi.h>",
+            (ROOT / "include/gst/SimaPluginStaticManifestAbi.h").read_text(),
+        )
+        self.assertNotIn('"neat-internals-dev"', text)
+
+    def test_public_header_discovery_searches_an_empty_cache(self) -> None:
+        text = cmake()
+        start = text.index("\nset(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT\n")
+        end = text.index("\nset(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB", start)
+        discovery = text[start:end]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            headers = root / "headers"
+            (headers / "gst").mkdir(parents=True)
+            (headers / "gst/SimaPreparedRuntimeAbi.h").touch()
+            for explicit in (False, True):
+                with self.subTest(explicit=explicit):
+                    selected = root / "explicit" if explicit else headers
+                    initial = selected.as_posix() if explicit else ""
+                    script = root / "discover.cmake"
+                    script.write_text(
+                        'set(SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE ON)\n'
+                        f'set(SIMANEAT_LOCAL_DEP_HEADER_ROOT "{headers.as_posix()}")\n'
+                        f'set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT "{initial}" CACHE PATH "")\n'
+                        + discovery
+                        + f'\nif(NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT STREQUAL "{selected.as_posix()}")\n'
+                        '  message(FATAL_ERROR "Wrong public header root: ${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")\n'
+                        'endif()\n',
+                        encoding="utf-8",
+                    )
+                    result = subprocess.run(
+                        ["cmake", "-P", str(script)],
+                        check=False, text=True, capture_output=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_no_manually_constructed_internals_version_ranges(self) -> None:
         text = cmake()
         for removed in (
@@ -122,7 +182,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "neat-internals-dev (<<",
         ):
             self.assertNotIn(removed, text, removed)
-        for kept in ('"neat-runtime"', '"neat-gst-plugins"', '"neat-internals-dev"'):
+        for kept in ('"neat-runtime"', '"neat-gst-plugins"'):
             self.assertIn(kept, text, kept)
 
     def test_llima_is_consumed_without_a_version_policy(self) -> None:
@@ -145,6 +205,52 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertIn("find_dependency(SimaLMM CONFIG REQUIRED)", exported_config)
         self.assertNotIn("@SIMANEAT_PLATFORM_VERSION@", exported_config)
 
+    def test_explicit_llima_artifact_refreshes_packaging_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "artifact"
+            cache = root / "cache"
+            deps = root / "deps"
+            sysroot = root / "sysroot"
+            artifact.mkdir()
+            cache.mkdir()
+            deps.mkdir()
+            for component in ("core", "dev", "cli"):
+                (artifact / f"sima-lmm-0.4.0+local-Linux-{component}.deb").touch()
+                (cache / f"sima-lmm-0.4.0+stale-Linux-{component}.deb").touch()
+
+            script = f"""
+set -euo pipefail
+resolve_neat_llima_ref() {{
+  NEAT_LLIMA_REQUESTED_REF=local:latest
+}}
+ensure_llima_sdk_sysroot_deps() {{ :; }}
+dpkg-deb() {{
+  mkdir -p "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
+  touch "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake"
+  touch "$3/usr/lib/aarch64-linux-gnu/libsima_lmm_runtime.so"
+}}
+{shell_function("ensure_neat_llima")}
+NEAT_LLIMA_ARTIFACT_DIR={shlex.quote(str(artifact))}
+NEAT_LLIMA_DEB_DIR={shlex.quote(str(cache))}
+NEAT_INTERNALS_DIR={shlex.quote(str(deps))}
+SYSROOT={shlex.quote(str(sysroot))}
+ELXR_SDK=ON
+ensure_neat_llima
+"""
+            result = subprocess.run(
+                ["bash", "-c", script], check=False, text=True, capture_output=True
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                sorted(path.name for path in cache.glob("sima-lmm-*.deb")),
+                [
+                    "sima-lmm-0.4.0+local-Linux-cli.deb",
+                    "sima-lmm-0.4.0+local-Linux-core.deb",
+                    "sima-lmm-0.4.0+local-Linux-dev.deb",
+                ],
+            )
+
     def test_cmake_package_reports_core_release_identity(self) -> None:
         text = cmake()
         self.assertIn("VERSION ${SIMANEAT_PACKAGE_BASE_VERSION}", text)
@@ -159,19 +265,75 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertNotIn("SIMANEAT_MEMORY_DEV_PACKAGE_VERSION", text)
         self.assertNotIn("SIMANEAT_BUNDLED_MEMORY_DEV_DEBS", text)
         self.assertNotIn("simaai-memory-lib-dev (=", text)
-        self.assertIn('"simaai-memory-lib-dev"', text)
+        self.assertNotIn('"simaai-memory-lib-dev"', text)
 
-    def test_every_delivered_internals_package_is_forwarded(self) -> None:
+    def test_sdk_build_uses_the_selected_cross_compiler_headers(self) -> None:
         text = build_script()
-        self.assertIn('for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do', text)
-        for removed in (
-            '"${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb',
-            "dist/simaai-common*.deb",
-            "'simaai-memory-lib_*.deb'",
-            "'libcamera_*.deb'",
-            "'neat-runtime_*.deb'",
-        ):
-            self.assertNotIn(removed, text, removed)
+        self.assertIn("aarch64-linux-gnu-g++ -dumpversion", text)
+        self.assertIn("usr/include/c++/${cross_gcc_major}", text)
+        self.assertNotIn("usr/include/c++/12", text)
+
+    def test_customer_package_selection_preserves_runtime_and_public_dev(self) -> None:
+        for package in ("neat-internals-dev", "simaai-memory-lib-dev", "sima-lmm-dev",
+                        "sima-neat-dev", "neat-runtime", "neat-gst-plugins",
+                        "neat-ev74-firmware", "simaai-memory-lib", "sima-lmm-core", "sima-lmm-cli"):
+            with self.subTest(package=package):
+                result = subprocess.run(
+                    ["bash", "-c", f'dpkg-deb() {{ echo {shlex.quote(package)}; }}\n'
+                     + shell_function("is_customer_deb") + '\nis_customer_deb unused.deb'],
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, int(package in {
+                    "neat-internals-dev", "simaai-memory-lib-dev", "sima-lmm-dev"
+                }), result.stderr)
+
+
+    def test_shared_package_discovery_is_scoped_and_hides_implementation_sdks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "FindPkgConfig.cmake").write_text("""
+set(PkgConfig_FOUND TRUE)
+function(pkg_check_modules prefix)
+  set(${prefix}_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/public" PARENT_SCOPE)
+  set(${prefix}_LIBRARY_DIRS "${CMAKE_SOURCE_DIR}/lib" PARENT_SCOPE)
+endfunction()
+""")
+            (root / "nlohmann_jsonConfig.cmake").write_text("set(nlohmann_json_FOUND TRUE)\n")
+            (root / "SimaNeatTargets.cmake").write_text("""
+add_library(SimaNeat::sima_neat INTERFACE IMPORTED)
+add_library(SimaNeat::sima_neat_common INTERFACE IMPORTED)
+""")
+            (root / "CMakeLists.txt").write_text(f"""
+cmake_minimum_required(VERSION 3.18)
+project(CustomerPackage NONE)
+list(PREPEND CMAKE_MODULE_PATH "${{CMAKE_SOURCE_DIR}}")
+list(PREPEND CMAKE_PREFIX_PATH "${{CMAKE_SOURCE_DIR}}")
+set(CMAKE_DISABLE_FIND_PACKAGE_NeatInternals TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaLMM TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)
+set(SIMANEAT_CONFIG_WITH_LLIMA TRUE)
+include(CMakePackageConfigHelpers)
+configure_package_config_file("{ROOT}/cmake/SimaNeatConfig.cmake.in"
+  "${{CMAKE_SOURCE_DIR}}/SimaNeatConfig.cmake" INSTALL_DESTINATION .)
+add_subdirectory(first)
+add_subdirectory(second)
+""")
+            for name in ("first", "second"):
+                (root / name).mkdir()
+                (root / name / "CMakeLists.txt").write_text("""
+find_package(SimaNeat CONFIG REQUIRED)
+find_package(SimaNeat CONFIG REQUIRED)
+get_target_property(includes SimaNeat::sima_neat_common INTERFACE_INCLUDE_DIRECTORIES)
+if (NOT "${CMAKE_SOURCE_DIR}/public" IN_LIST includes)
+  message(FATAL_ERROR "Missing public dependency includes")
+endif()
+if (TARGET SimaNeat::sima_neat_static)
+  message(FATAL_ERROR "Static target leaked into shared discovery")
+endif()
+""")
+            result = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build")],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_selected_internals_artifact_is_installed_before_build(self) -> None:
         text = build_script()
@@ -213,9 +375,11 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             text,
         )
         self.assertIn("internals-manifest.json", text)
-        self.assertIn('(?:~pre[0-9]+)?', text)
+        self.assertIn(
+            '(?:~(?:pre[0-9]+|git[0-9]{12}[.][a-f0-9]+-[0-9]+))?', text
+        )
         self.assertIn('sysroot update "${receipt}"', text)
-        self.assertIn("Using stable SDK sysroot", text)
+        self.assertIn("Using SDK sysroot", text)
         self.assertIn("Internals artifact is missing internals-manifest.json", text)
         self.assertIn("invalid sysroot-version", text)
         self.assertIn("platform-version does not match the Internals receipt", text)
@@ -246,7 +410,42 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         result, calls = run_sync({"sysroot-version": base}, base)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
-            "Using stable SDK sysroot 2.1.3 without updating it.", result.stdout
+            "Using SDK sysroot 2.1.3 without updating it.", result.stdout
+        )
+        self.assertEqual(calls, [])
+
+        daily_receipt = "3.0.0~git202601020304.abcdef0-9999"
+        old_daily_receipt = "3.0.0~git202601010203.1234567-9998"
+        result, calls = run_sync(
+            {"sysroot-version": daily_receipt},
+            "3.0.0",
+            sdk_platform_version=old_daily_receipt,
+            sdk_platform_channel="daily",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(calls), 3)
+        self.assertRegex(
+            calls[0],
+            r"^install -m 0644 /tmp/sima-neat-sdk-version[.]"
+            r"[^ ]+ /etc/apt/preferences[.]d/simaai-sdk-version[.]pref$",
+        )
+        self.assertTrue(
+            calls[1].startswith(f"setup-sdk-sysroot {daily_receipt} "), calls[1]
+        )
+        self.assertRegex(
+            calls[2],
+            r"^install -m 0644 /tmp/sima-neat-sysroot-overlay[.]"
+            r"[^ ]+ .*/var/lib/sima-sdk/sysroot-overlay$",
+        )
+
+        result, calls = run_sync(
+            {"sysroot-version": daily_receipt},
+            "3.0.0",
+            sdk_platform_version=daily_receipt,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            f"Using SDK sysroot {daily_receipt} without updating it.", result.stdout
         )
         self.assertEqual(calls, [])
 
@@ -258,7 +457,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [])
 
-    def test_stable_receipt_requires_a_matching_sdk(self) -> None:
+    def test_immutable_receipt_requires_a_matching_sdk(self) -> None:
         base = "2.1.3"
         for sdk_platform_version, actual in (("2.1.2", "2.1.2"), (None, "unknown")):
             with self.subTest(sdk_platform_version=sdk_platform_version):
@@ -269,7 +468,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
-                    f"SDK platform {actual} does not match required stable platform {base}",
+                    f"SDK platform {actual} does not match required platform {base}",
                     result.stderr,
                 )
                 self.assertEqual(calls, [])
