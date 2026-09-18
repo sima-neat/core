@@ -35,13 +35,17 @@ mdx:
 :::
 
 1. **모델과 입력 이미지에 대한 자산 디렉터리를 만듭니다.**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
-    ```
+    </ShellCommand>
+
 2. **모델을 다운로드하세요:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli 모델 다운로드
     만약 `sima-cli` 모델을 지정된 위치가 아닌 다른 곳에 기록합니다. `assets` 디렉터리, 해당 파일을 복사하여 `assets/yolo_v8s_mpk.tar.gz`.
     :::

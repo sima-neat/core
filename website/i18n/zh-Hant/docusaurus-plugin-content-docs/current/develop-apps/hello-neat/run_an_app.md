@@ -35,13 +35,17 @@ mdx:
 :::
 
 1. **建立一個資料夾**，用於存放模型和輸入圖像：
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
-    ```
+    </ShellCommand>
+
 2. **下載模型：**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli 模型下載
     如果 `sima-cli` 將模型寫入的目錄與 `assets` 目錄不同，請將該檔案複製到 `assets/yolo_v8s_mpk.tar.gz`。
     :::

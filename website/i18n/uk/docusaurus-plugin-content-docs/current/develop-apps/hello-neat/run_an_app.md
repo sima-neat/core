@@ -35,13 +35,17 @@ mdx:
 :::
 
 1. **Створіть теку для ресурсів** для моделі та вхідного зображення:
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
-    ```
+    </ShellCommand>
+
 2. **Завантажте модель:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli завантажити модель
     Якщо `sima-cli` зберігає модель в іншому місці, ніж директорія `assets`, скопіюйте цей файл до `assets/yolo_v8s_mpk.tar.gz`.
 3. **Завантажте зразок зображення** з документації та збережіть його під назвою `assets/tutorial_sample_image.png`.

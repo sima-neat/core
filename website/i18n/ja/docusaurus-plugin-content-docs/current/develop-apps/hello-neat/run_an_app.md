@@ -35,13 +35,17 @@ mdx:
 :::
 
 1. **モデルと入力画像用のアセットディレクトリを作成します。**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
-    ```
+    </ShellCommand>
+
 2. **モデルをダウンロードします:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli モデルのダウンロード
     `sima-cli` がモデルを `assets` ディレクトリ以外の場所に書き込む場合は、そのファイルを `assets/yolo_v8s_mpk.tar.gz` にコピーしてください。
 :::

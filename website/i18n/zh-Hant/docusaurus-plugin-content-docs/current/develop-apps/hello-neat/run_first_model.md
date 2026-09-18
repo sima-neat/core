@@ -21,14 +21,18 @@ sidebar_position: 2
 ## 取得模型和範例圖片
 
 1. **建立一個「assets」目錄**，我們將在其中儲存模型和輸入圖片：
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
     cd assets
-    ```
+    </ShellCommand>
+
 2. **下載模型：**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli 模型下載
     如果 `sima-cli` 將模型寫入的目錄與 `assets` 目錄不同，請將該檔案複製到 `assets/yolo_v8s_mpk.tar.gz`。
     :::
@@ -36,9 +40,11 @@ sidebar_position: 2
 
     [開啟或下載範例圖片](../../images/tutorial_sample_image.png)。
 4. **傳回您的專案目錄：**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     cd ..
-    ```
+    </ShellCommand>
+
 
 ## 逐步說明
 

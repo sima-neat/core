@@ -21,14 +21,18 @@ You do not need to master the full API yet; for now, focus on how `Model` and `M
 ## Get the model and a sample image
 
 1. **Make an assets directory** where we will store the model and input image:
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
     cd assets
-    ```
+    </ShellCommand>
+
 2. **Download the model:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli model download
     If `sima-cli` writes the model somewhere other than the `assets` directory, copy that file into `assets/yolo_v8s_mpk.tar.gz`.
     :::
@@ -36,9 +40,11 @@ You do not need to master the full API yet; for now, focus on how `Model` and `M
 
     [Open or download the sample image](../../images/tutorial_sample_image.png).
 4. **Return to your project directory:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     cd ..
-    ```
+    </ShellCommand>
+
 
 ## Walkthrough
 
