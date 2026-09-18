@@ -49,6 +49,13 @@ test('an empty prompt is rejected', () => {
   }
 });
 
+test('a stray separator is rejected rather than normalised away', () => {
+  // These used to filter down to a valid list, so malformed syntax built fine.
+  for (const value of ['sdk|', '|sdk', 'sdk||devkit', 'sdk| |devkit', '|sdk|devkit|']) {
+    assert.throws(() => parseEnvironments(value), /empty segment/, `accepted "${value}"`);
+  }
+});
+
 test('one bad token rejects the whole combination', () => {
   assert.throws(() => parseEnvironments('sdk|nope'), /unknown environment\(s\): nope/);
 });

@@ -13,15 +13,24 @@
 export const ENVIRONMENTS = ['host', 'sdk', 'devkit', 'pcie-host'];
 
 export function parseEnvironments(prompt) {
+  // Split without discarding empties: a stray separator such as "sdk|" or
+  // "sdk||devkit" is malformed, and silently normalising it away would defeat
+  // the point of validating here at all.
   const tokens = String(prompt)
     .split('|')
-    .map((token) => token.trim())
-    .filter(Boolean);
+    .map((token) => token.trim());
 
-  if (!tokens.length) {
+  if (tokens.every((token) => !token)) {
     throw new Error(
       `<ShellCommand prompt="${prompt}"> has no environment. ` +
         `Use one of: ${ENVIRONMENTS.join(', ')}.`,
+    );
+  }
+
+  if (tokens.some((token) => !token)) {
+    throw new Error(
+      `<ShellCommand prompt="${prompt}"> has an empty segment around a "|". ` +
+        `Separate exactly two or more environments, for example prompt="sdk|devkit".`,
     );
   }
 
