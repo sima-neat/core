@@ -31,8 +31,7 @@ using pipeline_internal::sima::StagePayloadKind;
 using pipeline_internal::sima::StageStaticSpec;
 using pipeline_internal::sima::TensorStaticSpec;
 
-bool checked_align_up(std::uint64_t value, std::uint64_t alignment,
-                      std::uint64_t* result) {
+bool checked_align_up(std::uint64_t value, std::uint64_t alignment, std::uint64_t* result) {
   if (!result || alignment == 0U || (alignment & (alignment - 1U)) != 0U ||
       value > std::numeric_limits<std::uint64_t>::max() - (alignment - 1U)) {
     return false;
@@ -41,8 +40,7 @@ bool checked_align_up(std::uint64_t value, std::uint64_t alignment,
   return true;
 }
 
-bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage,
-                                                    std::string* error) {
+bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage, std::string* error) {
   using pipeline_internal::sima::FrameArenaRole;
   using pipeline_internal::sima::static_contract::ArenaAllocationProvenance;
   using pipeline_internal::sima::static_contract::ArenaDeviceAccess;
@@ -71,8 +69,7 @@ bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage,
   }
 
   SimaCvuCapabilityAbiRecord capability{};
-  if (!sima_cvu_capability_abi_lookup(static_cast<std::uint32_t>(payload.graph_id),
-                                      &capability)) {
+  if (!sima_cvu_capability_abi_lookup(static_cast<std::uint32_t>(payload.graph_id), &capability)) {
     if (error) {
       *error = "standalone ProcessCVU graph has no generated direct capability";
     }
@@ -103,11 +100,11 @@ bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage,
       return false;
     }
     const int selected_physical_index = stage->logical_outputs.front().physical_index;
-    const auto selected = std::find_if(
-        stage->physical_outputs.begin(), stage->physical_outputs.end(),
-        [selected_physical_index](const auto& output) {
-          return output.physical_index == selected_physical_index;
-        });
+    const auto selected =
+        std::find_if(stage->physical_outputs.begin(), stage->physical_outputs.end(),
+                     [selected_physical_index](const auto& output) {
+                       return output.physical_index == selected_physical_index;
+                     });
     if (selected_physical_index < 0 || selected == stage->physical_outputs.end()) {
       if (error) {
         *error = "standalone Preproc output has no physical carrier";
@@ -148,8 +145,7 @@ bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage,
   stage->frame_arena_role = FrameArenaRole::Allocate;
   stage->frame_arena_storage_domain = ArenaStorageDomain::Cma;
   stage->frame_arena_provenance = ArenaAllocationProvenance::CoreAllocated;
-  stage->frame_arena_required_device_access =
-      static_cast<std::uint32_t>(ArenaDeviceAccess::CpuA65);
+  stage->frame_arena_required_device_access = static_cast<std::uint32_t>(ArenaDeviceAccess::CpuA65);
   if (payload.resolved_exec_backend == "EVXX") {
     stage->frame_arena_required_device_access |=
         static_cast<std::uint32_t>(ArenaDeviceAccess::Ev74);
@@ -894,8 +890,7 @@ render_stages_from_compiled_contract(const CompiledNodeContract& stage,
   if (!stage.child_stages.empty()) {
     std::vector<StageStaticSpec> rendered;
     for (const auto& child : stage.child_stages) {
-      auto child_rendered =
-          render_stages_from_compiled_contract(child, compile_input, diagnostics);
+      auto child_rendered = render_stages_from_compiled_contract(child, compile_input, diagnostics);
       rendered.insert(rendered.end(), std::make_move_iterator(child_rendered.begin()),
                       std::make_move_iterator(child_rendered.end()));
     }
@@ -912,23 +907,20 @@ render_stages_from_compiled_contract(const CompiledNodeContract& stage,
       }
       return {};
     }
-    const std::string stage_identity = !rendered.logical_stage_id.empty()
-                                           ? rendered.logical_stage_id
-                                           : rendered.element_name;
+    const std::string stage_identity =
+        !rendered.logical_stage_id.empty() ? rendered.logical_stage_id : rendered.element_name;
     resolve_processcvu_run_target(&rendered.processcvu, compile_input, stage_identity,
                                   stage.processcvu->physical_command_role);
-    if (!stage.processcvu->physical_command_role.has_value() &&
-        rendered.processcvu.graph_id >= 0) {
+    if (!stage.processcvu->physical_command_role.has_value() && rendered.processcvu.graph_id >= 0) {
       SimaCvuCapabilityAbiRecord capability{};
-      if (sima_cvu_capability_abi_lookup(
-              static_cast<std::uint32_t>(rendered.processcvu.graph_id), &capability)) {
+      if (sima_cvu_capability_abi_lookup(static_cast<std::uint32_t>(rendered.processcvu.graph_id),
+                                         &capability)) {
         std::string projection_error;
-        if (!project_standalone_processcvu_direct_contract(&rendered,
-                                                           &projection_error)) {
+        if (!project_standalone_processcvu_direct_contract(&rendered, &projection_error)) {
           if (diagnostics) {
-            diagnostics->errors.push_back(
-                "contract render: standalone processcvu stage '" + stage.node_kind +
-                "' failed direct projection: " + projection_error);
+            diagnostics->errors.push_back("contract render: standalone processcvu stage '" +
+                                          stage.node_kind +
+                                          "' failed direct projection: " + projection_error);
           }
           return {};
         }
@@ -996,8 +988,7 @@ render_manifest_from_compiled_contracts(
   SimaPluginStaticManifest manifest;
 
   for (const auto& stage : compiled.stages) {
-    for (auto& rendered :
-         render_stages_from_compiled_contract(stage, compile_input, diagnostics)) {
+    for (auto& rendered : render_stages_from_compiled_contract(stage, compile_input, diagnostics)) {
       manifest.stages.push_back(std::move(rendered));
     }
   }

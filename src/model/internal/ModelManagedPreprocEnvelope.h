@@ -24,11 +24,9 @@ model_managed_preproc_max_input_shape(const PreprocOptions& options) {
   return shape;
 }
 
-inline PreprocOptions
-model_managed_preproc_static_envelope_options(const PreprocOptions& options) {
+inline PreprocOptions model_managed_preproc_static_envelope_options(const PreprocOptions& options) {
   PreprocOptions envelope = options;
-  if (!options.model_managed_contract || !options.dynamic_input_dims ||
-      !options.model_lineage) {
+  if (!options.model_managed_contract || !options.dynamic_input_dims || !options.model_lineage) {
     return envelope;
   }
 

@@ -39,21 +39,23 @@ enum class MlaOutputCarrierPolicy : std::uint8_t {
   SeparateCpuVisible = 1,
 };
 
-[[nodiscard]] MlaOutputCarrierPolicy select_mla_output_carrier_policy(
-    const ModelExecutionPlan& plan, const PhysicalExecutionPlan& physical_plan,
-    std::size_t mla_stage_index);
+[[nodiscard]] MlaOutputCarrierPolicy
+select_mla_output_carrier_policy(const ModelExecutionPlan& plan,
+                                 const PhysicalExecutionPlan& physical_plan,
+                                 std::size_t mla_stage_index);
 
 // Complete materialized roots removed from the shared FrameSlotArena because
 // the exact terminal policy above assigns them to a stage-owned output pool.
 // This is the sole bridge between topology selection and arena filtering.
-[[nodiscard]] std::vector<ValueId> detached_mla_output_roots(
-    const ModelExecutionPlan& plan, const PhysicalExecutionPlan& physical_plan);
+[[nodiscard]] std::vector<ValueId>
+detached_mla_output_roots(const ModelExecutionPlan& plan,
+                          const PhysicalExecutionPlan& physical_plan);
 
 // Read the already-compiled placement decision; no topology is re-inferred
 // while rendering stage contracts.
-[[nodiscard]] MlaOutputCarrierPolicy mla_output_carrier_policy_from_arena(
-    const ModelExecutionPlan& plan, const FrameSlotArenaPlan& arena,
-    std::size_t mla_stage_index);
+[[nodiscard]] MlaOutputCarrierPolicy
+mla_output_carrier_policy_from_arena(const ModelExecutionPlan& plan,
+                                     const FrameSlotArenaPlan& arena, std::size_t mla_stage_index);
 
 // Resolve MLA input ValueIds to physical roots. A direct value maps to the
 // exact upstream physical carrier. A Pack value maps to one parent only when
@@ -68,11 +70,9 @@ resolve_mla_input_physical_sources(const ModelExecutionPlan& plan, std::size_t m
 // Arena-aware multi-stage entry point. Any materialized internal IFM is read
 // as an offset view of the one retained frame-arena DMA-BUF; several MLA IFM
 // ports may therefore bind the same source memory at different byte offsets.
-std::optional<std::vector<PhysicalPortSource>>
-resolve_mla_input_physical_sources(const ModelExecutionPlan& plan, std::size_t mla_stage_index,
-                                   const FrameSlotArenaPlan& arena,
-                                   std::span<const LogicalTensorStaticSpec> upstream_outputs,
-                                   std::string* error = nullptr);
+std::optional<std::vector<PhysicalPortSource>> resolve_mla_input_physical_sources(
+    const ModelExecutionPlan& plan, std::size_t mla_stage_index, const FrameSlotArenaPlan& arena,
+    std::span<const LogicalTensorStaticSpec> upstream_outputs, std::string* error = nullptr);
 
 // Source-compatible single-stage entry point. It rejects an ambiguous plan.
 std::optional<std::vector<PhysicalPortSource>>
@@ -86,13 +86,10 @@ resolve_mla_input_physical_sources(const ModelExecutionPlan& plan,
 // multi-IFM policy; on failure leave the contract unusable by dmabuf-plan.
 // `output_carrier_policy` must equal the policy already authored by `arena`;
 // the explicit form remains available for low-level fail-closed tests only.
-bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
-                                           std::size_t mla_stage_index,
-                                           const FrameSlotArenaPlan& arena,
-                                           MlaOutputCarrierPolicy output_carrier_policy,
-                                           MlaStaticContract* contract,
-                                           std::span<const PhysicalPortSource> input_sources,
-                                           std::string* error = nullptr);
+bool apply_dmabuf_plan_contract_projection(
+    const ModelExecutionPlan& plan, std::size_t mla_stage_index, const FrameSlotArenaPlan& arena,
+    MlaOutputCarrierPolicy output_carrier_policy, MlaStaticContract* contract,
+    std::span<const PhysicalPortSource> input_sources, std::string* error = nullptr);
 
 bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
                                            std::size_t mla_stage_index,
@@ -140,9 +137,8 @@ std::optional<CompiledProcessCvuContract> build_dmabuf_plan_processcvu_command_c
 
 bool apply_dmabuf_plan_processcvu_command_projection(
     const ModelExecutionPlan& plan, const PhysicalExecutionPlan& physical_plan,
-    std::span<const PhysicalCommandId> command_ids,
-    const FrameSlotArenaPlan& arena, ProcessCvuStagePayload* payload,
-    ::simaai::neat::CompiledRuntimeContract* runtime,
+    std::span<const PhysicalCommandId> command_ids, const FrameSlotArenaPlan& arena,
+    ProcessCvuStagePayload* payload, ::simaai::neat::CompiledRuntimeContract* runtime,
     ::simaai::neat::CompiledExposedView* exposed_view, std::string* error = nullptr);
 
 // Resolve the exact linear compiler-authored ingress transform prefix that a
@@ -152,19 +148,20 @@ bool apply_dmabuf_plan_processcvu_command_projection(
 // returned command ids are the only physical stages that the compatibility
 // renderer may omit; an empty/ambiguous/multi-IFM route fails closed.
 std::optional<std::vector<PhysicalCommandId>>
-resolve_model_managed_preproc_ingress_commands(
-    const ModelExecutionPlan& plan, const PhysicalExecutionPlan& physical_plan,
-    std::string* error = nullptr);
+resolve_model_managed_preproc_ingress_commands(const ModelExecutionPlan& plan,
+                                               const PhysicalExecutionPlan& physical_plan,
+                                               std::string* error = nullptr);
 
 // Project an already-compiled graph-200 contract onto the exact output carrier
 // of the absorbed compiler ingress prefix.  This reuses the one FrameSlotArena
 // and the existing MLA-boundary projection; it neither invents a second arena
 // contract nor relaxes graph-200/MLA tensor semantics.
-bool project_model_managed_preproc_contract(
-    const ModelExecutionPlan& plan, const PhysicalExecutionPlan& physical_plan,
-    const FrameSlotArenaPlan& arena, ::simaai::neat::CompiledProcessCvuContract* contract,
-    std::vector<PhysicalCommandId>* absorbed_command_ids,
-    std::string* error = nullptr);
+bool project_model_managed_preproc_contract(const ModelExecutionPlan& plan,
+                                            const PhysicalExecutionPlan& physical_plan,
+                                            const FrameSlotArenaPlan& arena,
+                                            ::simaai::neat::CompiledProcessCvuContract* contract,
+                                            std::vector<PhysicalCommandId>* absorbed_command_ids,
+                                            std::string* error = nullptr);
 
 bool apply_dmabuf_plan_processcvu_contract_projection(
     const ModelExecutionPlan& plan, std::size_t adjacent_mla_stage_index,

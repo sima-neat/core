@@ -152,9 +152,9 @@ ModelManagedRouteFlags
 model_route_flags_from_boxdecode_semantics(const ModelBoxdecodeSemantics& semantics);
 
 /// Combine planner-owned pre-route fields with exact MPK-owned BoxDecode terminal fields.
-ModelManagedRouteFlags reconcile_exact_boxdecode_route_flags(
-    const ModelManagedRouteFlags& planner_flags,
-    const ModelManagedRouteFlags& exact_boxdecode_flags);
+ModelManagedRouteFlags
+reconcile_exact_boxdecode_route_flags(const ModelManagedRouteFlags& planner_flags,
+                                      const ModelManagedRouteFlags& exact_boxdecode_flags);
 
 /**
  * @brief Resolve route flags by inspecting the MPK contract.

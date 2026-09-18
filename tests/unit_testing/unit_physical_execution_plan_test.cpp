@@ -24,20 +24,28 @@ enum class FusedFamily { QuantTess, CastTess, DetessCast, DetessDequant };
 
 std::uint32_t graph_id(FusedFamily family) {
   switch (family) {
-  case FusedFamily::QuantTess: return 226U;
-  case FusedFamily::CastTess: return 224U;
-  case FusedFamily::DetessCast: return 225U;
-  case FusedFamily::DetessDequant: return 227U;
+  case FusedFamily::QuantTess:
+    return 226U;
+  case FusedFamily::CastTess:
+    return 224U;
+  case FusedFamily::DetessCast:
+    return 225U;
+  case FusedFamily::DetessDequant:
+    return 227U;
   }
   return 0U;
 }
 
 std::string family_name(FusedFamily family) {
   switch (family) {
-  case FusedFamily::QuantTess: return "quant+tess";
-  case FusedFamily::CastTess: return "cast+tess";
-  case FusedFamily::DetessCast: return "detess+cast";
-  case FusedFamily::DetessDequant: return "detess+dequant";
+  case FusedFamily::QuantTess:
+    return "quant+tess";
+  case FusedFamily::CastTess:
+    return "cast+tess";
+  case FusedFamily::DetessCast:
+    return "detess+cast";
+  case FusedFamily::DetessDequant:
+    return "detess+dequant";
   }
   return {};
 }
@@ -95,13 +103,12 @@ sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
       data.values.push_back(value(id, "middle_" + std::to_string(lane), middle_dtype));
       intermediates.push_back(id);
       if (family == FusedFamily::QuantTess) {
-        add_unary(data, sc::OpKind::Quantize, "quant_" + std::to_string(lane),
-                  boundary_values[lane], id,
-                  sc::QuantizeOpConfig{malformed_first && lane == 0 ? "BF16" : "INT8", 8,
-                                       "TONEAREST", {{0.25, -7}}});
+        add_unary(
+            data, sc::OpKind::Quantize, "quant_" + std::to_string(lane), boundary_values[lane], id,
+            sc::QuantizeOpConfig{
+                malformed_first && lane == 0 ? "BF16" : "INT8", 8, "TONEAREST", {{0.25, -7}}});
       } else {
-        add_unary(data, sc::OpKind::Cast, "cast_" + std::to_string(lane),
-                  boundary_values[lane], id,
+        add_unary(data, sc::OpKind::Cast, "cast_" + std::to_string(lane), boundary_values[lane], id,
                   sc::CastOpConfig{malformed_first && lane == 0 ? "FP32" : "BF16"});
       }
     }
@@ -110,13 +117,12 @@ sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
       data.values.push_back(value(id, "tess_" + std::to_string(lane), middle_dtype,
                                   sc::ValueRepresentation::Tessellated));
       outer_values.push_back(id);
-      add_unary(data, sc::OpKind::Tessellate, "tess_" + std::to_string(lane),
-                intermediates[lane], id,
-                sc::TessellateOpConfig{{1, 1, 1, 16}, false, false, middle_dtype});
+      add_unary(data, sc::OpKind::Tessellate, "tess_" + std::to_string(lane), intermediates[lane],
+                id, sc::TessellateOpConfig{{1, 1, 1, 16}, false, false, middle_dtype});
     }
     const auto mla_output = static_cast<sc::ValueId>(data.values.size());
-    data.values.push_back(value(mla_output, "mla_output", "INT8",
-                                sc::ValueRepresentation::BackendNative));
+    data.values.push_back(
+        value(mla_output, "mla_output", "INT8", sc::ValueRepresentation::BackendNative));
     sc::OpSpec mla;
     mla.id = static_cast<sc::OpId>(data.ops.size());
     mla.sequence = data.ops.size() + 1U;
@@ -128,10 +134,10 @@ sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
     mla.config = sc::MlaOpConfig{"model.elf", 4};
     data.ops.push_back(std::move(mla));
     for (std::size_t port = 0; port < outer_values.size(); ++port) {
-      data.backend_ports.push_back(
-          {0U, sc::BackendPortDirection::Input, port, "data.ifm." + std::to_string(port),
-           outer_values[port], 16U, 4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
-           sc::BackendPortAccess::ReadOnly});
+      data.backend_ports.push_back({0U, sc::BackendPortDirection::Input, port,
+                                    "data.ifm." + std::to_string(port), outer_values[port], 16U,
+                                    4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
+                                    sc::BackendPortAccess::ReadOnly});
     }
     data.backend_ports.push_back(
         {0U, sc::BackendPortDirection::Output, 0U, "data.ofm.b0", mla_output, 16U, 4096U,
@@ -158,14 +164,14 @@ sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
     mla.outputs = boundary_values;
     mla.config = sc::MlaOpConfig{"model.elf", 4};
     data.ops.push_back(std::move(mla));
-    data.backend_ports.push_back(
-        {0U, sc::BackendPortDirection::Input, 0U, "data.ifm.b0", mla_input, 16U, 4096U,
-         sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly});
+    data.backend_ports.push_back({0U, sc::BackendPortDirection::Input, 0U, "data.ifm.b0", mla_input,
+                                  16U, 4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
+                                  sc::BackendPortAccess::ReadOnly});
     for (std::size_t lane = 0; lane < lanes; ++lane) {
-      data.backend_ports.push_back(
-          {0U, sc::BackendPortDirection::Output, lane, "data.ofm." + std::to_string(lane),
-           boundary_values[lane], 16U, 4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
-           sc::BackendPortAccess::WriteOnly});
+      data.backend_ports.push_back({0U, sc::BackendPortDirection::Output, lane,
+                                    "data.ofm." + std::to_string(lane), boundary_values[lane], 16U,
+                                    4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
+                                    sc::BackendPortAccess::WriteOnly});
     }
     for (std::size_t lane = 0; lane < lanes; ++lane) {
       const auto id = static_cast<sc::ValueId>(data.values.size());
@@ -173,7 +179,10 @@ sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
       intermediates.push_back(id);
       add_unary(data, sc::OpKind::Detessellate, "detess_" + std::to_string(lane),
                 boundary_values[lane], id,
-                sc::DetessellateOpConfig{{1, 1, 1, 16}, {1, 1, 1, 16}, false, false,
+                sc::DetessellateOpConfig{{1, 1, 1, 16},
+                                         {1, 1, 1, 16},
+                                         false,
+                                         false,
                                          malformed_first && lane == 0 ? "FP32" : middle_dtype});
     }
     for (std::size_t lane = 0; lane < lanes; ++lane) {
@@ -181,8 +190,8 @@ sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
       data.values.push_back(value(id, "output_" + std::to_string(lane), "FP32"));
       outer_values.push_back(id);
       if (family == FusedFamily::DetessCast) {
-        add_unary(data, sc::OpKind::Cast, "cast_" + std::to_string(lane),
-                  intermediates[lane], id, sc::CastOpConfig{"FP32"});
+        add_unary(data, sc::OpKind::Cast, "cast_" + std::to_string(lane), intermediates[lane], id,
+                  sc::CastOpConfig{"FP32"});
       } else {
         add_unary(data, sc::OpKind::Dequantize, "dequant_" + std::to_string(lane),
                   intermediates[lane], id, sc::DequantizeOpConfig{"INT8", {{0.25, -7}}});
@@ -192,12 +201,13 @@ sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
   }
 
   if (publish_first_intermediate) {
-    data.model_outputs.push_back(
-        {data.model_outputs.size(), data.values[intermediates.front()].name, intermediates.front()});
+    data.model_outputs.push_back({data.model_outputs.size(),
+                                  data.values[intermediates.front()].name, intermediates.front()});
   }
   if (branch_first_intermediate) {
     const auto id = static_cast<sc::ValueId>(data.values.size());
-    data.values.push_back(value(id, "branch_output", data.values[intermediates.front()].logical_dtype.value()));
+    data.values.push_back(
+        value(id, "branch_output", data.values[intermediates.front()].logical_dtype.value()));
     add_unary(data, sc::OpKind::PassThrough, "branch", intermediates.front(), id,
               sc::PassThroughOpConfig{});
     data.model_outputs.push_back({data.model_outputs.size(), "branch_output", id});
@@ -215,7 +225,8 @@ sc::ModelExecutionPlan make_overlapping_pattern_plan() {
   data.model_inputs = {0U};
   data.values = {
       value(0U, "input", "BF16", sc::ValueRepresentation::BackendNative),
-      value(1U, "detess", "BF16"), value(2U, "cast", "BF16"),
+      value(1U, "detess", "BF16"),
+      value(2U, "cast", "BF16"),
       value(3U, "tess", "BF16", sc::ValueRepresentation::Tessellated),
       value(4U, "mla_output", "INT8", sc::ValueRepresentation::BackendNative),
   };
@@ -254,7 +265,8 @@ sc::ModelExecutionPlan make_nonzero_view_barrier_plan() {
   data.values = {
       value(0U, "mla_input", "INT8"),
       value(1U, "mla_ofm", "INT8", sc::ValueRepresentation::BackendNative),
-      value(2U, "detess", "INT8"), value(3U, "offset_view", "INT8"),
+      value(2U, "detess", "INT8"),
+      value(3U, "offset_view", "INT8"),
       value(4U, "output", "FP32"),
   };
   data.values[3].logical_shape = sc::TensorShape{1, 16};
@@ -279,8 +291,7 @@ sc::ModelExecutionPlan make_nonzero_view_barrier_plan() {
   data.ops.push_back(std::move(mla));
   add_unary(data, sc::OpKind::Detessellate, "detess", 1U, 2U,
             sc::DetessellateOpConfig{{1, 1, 1, 16}, {1, 1, 1, 16}, false, false, "INT8"});
-  add_unary(data, sc::OpKind::Reshape, "offset_view", 2U, 3U,
-            sc::ReshapeOpConfig{{1, 16}});
+  add_unary(data, sc::OpKind::Reshape, "offset_view", 2U, 3U, sc::ReshapeOpConfig{{1, 16}});
   data.ops.back().output_shapes = {{1, 16}};
   add_unary(data, sc::OpKind::Dequantize, "dequant", 3U, 4U,
             sc::DequantizeOpConfig{"INT8", {{0.25, -7}}});
@@ -306,8 +317,10 @@ sc::ModelExecutionPlan make_materializing_pack_barrier_plan() {
   data.values = {
       value(0U, "mla_input", "INT8"),
       value(1U, "mla_ofm", "INT8", sc::ValueRepresentation::BackendNative),
-      value(2U, "detess", "INT8"), value(3U, "pack_peer", "INT8"),
-      value(4U, "packed", "INT8"), value(5U, "output", "FP32"),
+      value(2U, "detess", "INT8"),
+      value(3U, "pack_peer", "INT8"),
+      value(4U, "packed", "INT8"),
+      value(5U, "output", "FP32"),
   };
   data.values[4].required_bytes = 32U;
   data.values[4].logical_shape = sc::TensorShape{1, 32};
@@ -359,10 +372,11 @@ sc::ModelExecutionPlan make_materializing_pack_barrier_plan() {
 }
 
 std::vector<const sc::PhysicalCommand*> commands(const sc::PhysicalExecutionPlan& plan,
-                                                  std::uint32_t graph) {
+                                                 std::uint32_t graph) {
   std::vector<const sc::PhysicalCommand*> result;
   for (const auto& command : plan.commands) {
-    if (command.graph_id == graph) result.push_back(&command);
+    if (command.graph_id == graph)
+      result.push_back(&command);
   }
   return result;
 }
@@ -384,10 +398,9 @@ void verify_family_and_capacity(FusedFamily family, std::size_t lanes) {
     const auto expected = std::min<std::size_t>(32U, lanes - seen);
     require(fused[chunk]->members.size() == expected,
             family_name(family) + " chunk has exact capacity split");
-    const auto expected_role =
-        family == FusedFamily::QuantTess || family == FusedFamily::CastTess
-            ? sc::PhysicalCommandRole::Ingress
-            : sc::PhysicalCommandRole::Egress;
+    const auto expected_role = family == FusedFamily::QuantTess || family == FusedFamily::CastTess
+                                   ? sc::PhysicalCommandRole::Ingress
+                                   : sc::PhysicalCommandRole::Egress;
     require(fused[chunk]->role == expected_role,
             family_name(family) + " retains its exact MLA-boundary placement role");
     require(fused[chunk]->inputs.size() == expected && fused[chunk]->outputs.size() == expected,
@@ -404,14 +417,14 @@ void verify_family_and_capacity(FusedFamily family, std::size_t lanes) {
     }
   }
   require(seen == lanes, family_name(family) + " preserves every semantic lane");
-  const auto mla = std::find_if(physical->commands.begin(), physical->commands.end(),
-                                [](const auto& command) {
-                                  return command.engine == sc::PhysicalEngine::Mla;
-                                });
+  const auto mla =
+      std::find_if(physical->commands.begin(), physical->commands.end(),
+                   [](const auto& command) { return command.engine == sc::PhysicalEngine::Mla; });
   require(mla != physical->commands.end(), "fixture retains MLA command");
   if (family == FusedFamily::QuantTess || family == FusedFamily::CastTess) {
     std::vector<sc::PhysicalCommandId> fused_ids;
-    for (const auto* command : fused) fused_ids.push_back(command->id);
+    for (const auto* command : fused)
+      fused_ids.push_back(command->id);
     std::sort(fused_ids.begin(), fused_ids.end());
     require(mla->predecessors == fused_ids,
             family_name(family) + " makes MLA wait for every capacity chunk");
@@ -424,8 +437,8 @@ void verify_family_and_capacity(FusedFamily family, std::size_t lanes) {
 }
 
 void test_all_families_at_capacity_boundaries() {
-  for (const auto family : {FusedFamily::QuantTess, FusedFamily::CastTess,
-                            FusedFamily::DetessCast, FusedFamily::DetessDequant}) {
+  for (const auto family : {FusedFamily::QuantTess, FusedFamily::CastTess, FusedFamily::DetessCast,
+                            FusedFamily::DetessDequant}) {
     for (const auto lanes : {1U, 2U, 3U, 31U, 32U, 33U, 65U}) {
       verify_family_and_capacity(family, lanes);
     }
@@ -443,8 +456,8 @@ void test_public_and_branch_barriers_do_not_fuse_observed_edge() {
     const auto tess = commands(*physical, 2U);
     require(fused.size() == 1U && fused.front()->members.size() == 2U,
             "barrier terminates only the observed lane");
-    require(quant.size() == 1U && tess.size() == 1U &&
-                quant.front()->members.size() == 1U && tess.front()->members.size() == 1U,
+    require(quant.size() == 1U && tess.size() == 1U && quant.front()->members.size() == 1U &&
+                tess.front()->members.size() == 1U,
             "observed lane remains true standalone commands rather than partial fusion");
   }
 }
@@ -462,15 +475,14 @@ void test_relation_transparency_rejects_offset_and_materialization() {
   require(!sc::resolve_exact_private_ordered_relation_path(materializing, 1U, 3U),
           "materializing Pack is never an address-only fusion relation");
   error.clear();
-  const auto materializing_physical =
-      sc::PhysicalExecutionLowerer::lower(materializing, &error);
+  const auto materializing_physical = sc::PhysicalExecutionLowerer::lower(materializing, &error);
   require(!materializing_physical && error.find("no implementation") != std::string::npos,
           "materializing relation fails closed without a registered implementation");
 }
 
 void test_invalid_mandatory_pair_fails_without_standalone_fallback() {
-  for (const auto family : {FusedFamily::QuantTess, FusedFamily::CastTess,
-                            FusedFamily::DetessCast, FusedFamily::DetessDequant}) {
+  for (const auto family : {FusedFamily::QuantTess, FusedFamily::CastTess, FusedFamily::DetessCast,
+                            FusedFamily::DetessDequant}) {
     std::string error;
     const auto physical = sc::PhysicalExecutionLowerer::lower(
         make_fused_plan(family, 1U, false, false, true), &error);
@@ -491,14 +503,15 @@ void test_deterministic_repeat() {
   const auto semantic = make_fused_plan(FusedFamily::QuantTess, 33U);
   const auto first = sc::PhysicalExecutionLowerer::lower(semantic);
   const auto second = sc::PhysicalExecutionLowerer::lower(semantic);
-  require(first && second && first->deterministic_digest_material == second->deterministic_digest_material,
+  require(first && second &&
+              first->deterministic_digest_material == second->deterministic_digest_material,
           "repeated fused lowering produces identical digest material");
 }
 
 void test_dependency_tracker_chunk_failure() {
   std::string error;
-  const auto physical = sc::PhysicalExecutionLowerer::lower(
-      make_fused_plan(FusedFamily::QuantTess, 33U), &error);
+  const auto physical =
+      sc::PhysicalExecutionLowerer::lower(make_fused_plan(FusedFamily::QuantTess, 33U), &error);
   require(physical.has_value(), "tracker fixture lowers: " + error);
   auto tracker = sc::PhysicalExecutionTracker::create(*physical, &error);
   require(tracker.has_value(), "tracker accepts fused plan: " + error);
@@ -517,18 +530,23 @@ void test_dependency_tracker_chunk_failure() {
 void test_dependency_tracker_cross_engine_parallelism() {
   sc::PhysicalExecutionPlan plan;
   plan.commands = {
-      sc::PhysicalCommand{.id = 0U, .topological_rank = 0U,
+      sc::PhysicalCommand{.id = 0U,
+                          .topological_rank = 0U,
                           .engine = sc::PhysicalEngine::Cvu,
                           .role = sc::PhysicalCommandRole::Interstitial,
-                          .implementation_id = "cvu.graph221.cast.v1", .graph_id = 221U,
+                          .implementation_id = "cvu.graph221.cast.v1",
+                          .graph_id = 221U,
                           .maximum_members = 32U,
                           .members = {{0U, {0U}, {0U}, {1U}}},
-                          .inputs = {0U}, .outputs = {1U}},
-      sc::PhysicalCommand{.id = 1U, .topological_rank = 1U,
+                          .inputs = {0U},
+                          .outputs = {1U}},
+      sc::PhysicalCommand{.id = 1U,
+                          .topological_rank = 1U,
                           .engine = sc::PhysicalEngine::A65,
                           .implementation_id = "a65.available",
                           .members = {{0U, {1U}, {2U}, {3U}}},
-                          .inputs = {2U}, .outputs = {3U}},
+                          .inputs = {2U},
+                          .outputs = {3U}},
   };
   std::string error;
   auto tracker = sc::PhysicalExecutionTracker::create(plan, &error);
@@ -552,15 +570,13 @@ void test_exact_physical_role_placement_precedes_coarse_target() {
   cast.graph_id = 221;
   cast.graph_name = "cast";
   cast.graph_family = "cast";
-  const auto post = sima::resolve_processcvu_backend_decision(
-      cast, input, "physical_cvu_cohort_1",
-      sc::PhysicalCommandRole::Egress);
+  const auto post = sima::resolve_processcvu_backend_decision(cast, input, "physical_cvu_cohort_1",
+                                                              sc::PhysicalCommandRole::Egress);
   require(post.effective_run_target == "A65" &&
               post.reason.find("processcvu_post") != std::string::npos,
           "post graph221 must honor explicit post=A65 before coarse EV74");
-  const auto pre = sima::resolve_processcvu_backend_decision(
-      cast, input, "physical_cvu_cohort_1",
-      sc::PhysicalCommandRole::Ingress);
+  const auto pre = sima::resolve_processcvu_backend_decision(cast, input, "physical_cvu_cohort_1",
+                                                             sc::PhysicalCommandRole::Ingress);
   require(pre.effective_run_target == "EV74" &&
               pre.reason.find("processcvu_pre") != std::string::npos,
           "pre graph221 must retain explicit pre=EV74");
@@ -596,8 +612,7 @@ void test_exact_physical_role_placement_precedes_coarse_target() {
   require(::setenv("SIMA_PROCESSCVU_RUN_TARGET", "A65", 1) == 0,
           "test must install the legacy environment override");
   const auto middle = sima::resolve_processcvu_backend_decision(
-      interstitial, input, "physical_cvu_cohort_1",
-      sc::PhysicalCommandRole::Interstitial);
+      interstitial, input, "physical_cvu_cohort_1", sc::PhysicalCommandRole::Interstitial);
   if (saved_env.has_value()) {
     require(::setenv("SIMA_PROCESSCVU_RUN_TARGET", saved_env->c_str(), 1) == 0,
             "test must restore the processcvu environment override");

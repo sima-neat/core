@@ -152,8 +152,7 @@ RUN_TEST("unit_tensorbuffer_padded_hwc_gap_inference_test", ([] {
                    std::string("failed to build dense oversized-carrier view: ") + err);
            require(dense_view.tensors.size() == 1U,
                    "dense oversized-carrier view should expose one logical tensor");
-           require(dense_view.tensors[0].stride_bytes ==
-                       std::vector<std::int64_t>({6, 3, 1}),
+           require(dense_view.tensors[0].stride_bytes == std::vector<std::int64_t>({6, 3, 1}),
                    "carrier capacity must not rewrite declared dense strides");
            require(dense_view.tensors[0].physical_span_bytes == 6U,
                    "dense logical span must not expand to carrier capacity");

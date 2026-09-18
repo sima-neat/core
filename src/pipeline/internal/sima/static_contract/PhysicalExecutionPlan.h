@@ -89,9 +89,9 @@ struct PhysicalExecutionPlan {
 // one-to-one address views which preserve the complete byte sequence at offset
 // zero. `internal_values`, when requested, receives every value on that path,
 // including the direct edge value and all relation outputs.
-[[nodiscard]] bool resolve_exact_private_ordered_relation_path(
-    const ModelExecutionPlan& plan, OpId first, OpId second,
-    std::vector<ValueId>* internal_values = nullptr);
+[[nodiscard]] bool
+resolve_exact_private_ordered_relation_path(const ModelExecutionPlan& plan, OpId first, OpId second,
+                                            std::vector<ValueId>* internal_values = nullptr);
 
 [[nodiscard]] std::optional<std::uint32_t>
 minimum_cvu_member_capacity(const PhysicalExecutionPlan& plan) noexcept;
@@ -110,8 +110,8 @@ enum class PhysicalCommandState : std::uint8_t {
 // after create().
 class PhysicalExecutionTracker final {
 public:
-  static std::optional<PhysicalExecutionTracker>
-  create(const PhysicalExecutionPlan& plan, std::string* error = nullptr);
+  static std::optional<PhysicalExecutionTracker> create(const PhysicalExecutionPlan& plan,
+                                                        std::string* error = nullptr);
 
   [[nodiscard]] bool ready(PhysicalCommandId id) const noexcept;
   [[nodiscard]] std::optional<PhysicalCommandId> next_ready() const noexcept;

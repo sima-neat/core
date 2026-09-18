@@ -247,8 +247,7 @@ RUN_TEST(
       const auto reconciled_bf16 =
           reconcile_exact_boxdecode_route_flags(stale_planner_flags, exact_bf16_flags);
       require(reconciled_bf16.tess_needed && !reconciled_bf16.quant_needed &&
-                  !reconciled_bf16.quant_contract_required &&
-                  reconciled_bf16.boxdecode_selected,
+                  !reconciled_bf16.quant_contract_required && reconciled_bf16.boxdecode_selected,
               "exact BF16 terminal facts must override stale planner quant flags");
       require(reconciled_bf16.pre_cast_needed && reconciled_bf16.include_pre_stage,
               "planner-owned pre-route fields must survive exact terminal reconciliation");
@@ -265,8 +264,7 @@ RUN_TEST(
       const auto reconciled_int8 =
           reconcile_exact_boxdecode_route_flags(permissive_planner_flags, exact_int8_flags);
       require(reconciled_int8.tess_needed && reconciled_int8.quant_needed &&
-                  reconciled_int8.quant_contract_required &&
-                  reconciled_int8.boxdecode_selected,
+                  reconciled_int8.quant_contract_required && reconciled_int8.boxdecode_selected,
               "exact INT8 terminal facts must override permissive planner flags");
       const auto reconciled_sync =
           reconcile_exact_boxdecode_route_flags(stale_planner_flags, exact_bf16_flags);
@@ -552,7 +550,7 @@ RUN_TEST(
       };
       constexpr std::array<double, 6> exact_scales = {
           13.470379316726476, 14.793570210081732, 14.266452350921979,
-          651.989127865681,  330.2695539904479,   282.32459069196017,
+          651.989127865681,   330.2695539904479,  282.32459069196017,
       };
       constexpr std::array<std::int64_t, 6> exact_zps = {
           -66, -58, -45, -128, -128, -128,
@@ -597,8 +595,7 @@ RUN_TEST(
         const auto& tensor = extracted_exact_yolov8->tensors[i];
         require(tensor.logical_name == exact_names[i] && tensor.backend_name == exact_names[i],
                 "exact packed YOLO route must preserve compiler-authored head order and roles");
-        require(tensor.input_shape ==
-                    std::vector<int>({widths[i], widths[i], channels[i]}) &&
+        require(tensor.input_shape == std::vector<int>({widths[i], widths[i], channels[i]}) &&
                     tensor.slice_shape == std::vector<int>({1, widths[i], channels[i]}),
                 "exact packed YOLO route must preserve full frame and tile geometry");
         require(tensor.data_type == "INT8" &&
@@ -614,12 +611,10 @@ RUN_TEST(
                 "exact packed YOLO route must preserve per-head dequantization parameters");
       }
 
-      const auto finalized_exact_yolov8 =
-          stagesemantics::finalize_boxdecode_static_contract(
-              *extracted_exact_yolov8, simaai::neat::BoxDecodeType::YoloV8, std::nullopt,
-              make_flags(true, false),
-              simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability, 0.25, 0.55, 100, 80,
-              {"orig_width", "orig_height"});
+      const auto finalized_exact_yolov8 = stagesemantics::finalize_boxdecode_static_contract(
+          *extracted_exact_yolov8, simaai::neat::BoxDecodeType::YoloV8, std::nullopt,
+          make_flags(true, false), simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability,
+          0.25, 0.55, 100, 80, {"orig_width", "orig_height"});
       const auto compiled_exact_yolov8 =
           stagesemantics::build_boxdecode_compiled_contract(finalized_exact_yolov8);
       const auto& exact_payload = compiled_exact_yolov8.payload;
@@ -640,8 +635,7 @@ RUN_TEST(
                       exact_names.size(),
               "BoxDecode runtime ABI must carry one logical input and binding per exact head");
       for (std::size_t i = 0; i < exact_names.size(); ++i) {
-        require(shape_desc_matches(exact_payload.slice_shapes[i],
-                                   {1, widths[i], channels[i]}) &&
+        require(shape_desc_matches(exact_payload.slice_shapes[i], {1, widths[i], channels[i]}) &&
                     exact_payload.tensor_storage_kind[i] ==
                         static_cast<int>(BoxDecodeSourceStorageKind::PackedCBlock),
                 "BoxDecode backend payload must preserve exact CBlock tile geometry");
@@ -670,8 +664,8 @@ RUN_TEST(
                   exact_int8_route_flags->quant_contract_required,
               "exact packed INT8 Detess/Dequant lineage must select internal detess/dequant: " +
                   error);
-      const auto exact_int8_after_permissive_planner = reconcile_exact_boxdecode_route_flags(
-          permissive_planner_flags, *exact_int8_route_flags);
+      const auto exact_int8_after_permissive_planner =
+          reconcile_exact_boxdecode_route_flags(permissive_planner_flags, *exact_int8_route_flags);
       const auto extracted_exact_int8_after_planner = build_boxdecode_static_contract_from_mpk(
           exact_yolov8_mpk, exact_int8_after_permissive_planner, &error);
       require(extracted_exact_int8_after_planner.has_value() &&
@@ -730,8 +724,8 @@ RUN_TEST(
                   !exact_bf16_route_flags->quant_contract_required,
               "exact packed BF16 Detess/Cast lineage must ignore advisory INT8 unpack tokens: " +
                   error);
-      const auto exact_bf16_after_stale_planner = reconcile_exact_boxdecode_route_flags(
-          stale_planner_flags, *exact_bf16_route_flags);
+      const auto exact_bf16_after_stale_planner =
+          reconcile_exact_boxdecode_route_flags(stale_planner_flags, *exact_bf16_route_flags);
       require(exact_bf16_after_stale_planner.tess_needed &&
                   !exact_bf16_after_stale_planner.quant_needed &&
                   !exact_bf16_after_stale_planner.quant_contract_required &&
@@ -772,9 +766,9 @@ RUN_TEST(
       // Dequant stage. In that form the canonical MLA qparam vector is accepted only as one exact
       // scalar contract per selected logical source slot.
       auto exact_int8_mla_fallback_mpk = exact_yolov8_mpk;
-      exact_int8_mla_fallback_mpk.plugins[0].quant = MpkQuantContract{
-          std::vector<double>(exact_scales.begin(), exact_scales.end()),
-          std::vector<std::int64_t>(exact_zps.begin(), exact_zps.end()), -1};
+      exact_int8_mla_fallback_mpk.plugins[0].quant =
+          MpkQuantContract{std::vector<double>(exact_scales.begin(), exact_scales.end()),
+                           std::vector<std::int64_t>(exact_zps.begin(), exact_zps.end()), -1};
       for (std::size_t i = 0; i < exact_names.size(); ++i) {
         auto& pass = exact_int8_mla_fallback_mpk.plugins[3U + (2U * i)];
         pass.name = "pass_through_" + std::to_string(i);
@@ -786,8 +780,8 @@ RUN_TEST(
         pass.output_tensors.front().name = exact_names[i];
       }
       const auto exact_int8_mla_fallback_flags =
-          resolve_model_managed_boxdecode_route_flags_from_mpk(
-              exact_int8_mla_fallback_mpk, nullptr, &error);
+          resolve_model_managed_boxdecode_route_flags_from_mpk(exact_int8_mla_fallback_mpk, nullptr,
+                                                               &error);
       require(exact_int8_mla_fallback_flags.has_value() &&
                   exact_int8_mla_fallback_flags->tess_needed &&
                   exact_int8_mla_fallback_flags->quant_needed,
@@ -850,8 +844,7 @@ RUN_TEST(
       bf16_with_off_route_dequant_mpk.plugins.push_back(std::move(off_route_dequant));
       const auto bf16_with_off_route_flags = resolve_model_managed_boxdecode_route_flags_from_mpk(
           bf16_with_off_route_dequant_mpk, nullptr, &error);
-      require(bf16_with_off_route_flags.has_value() &&
-                  !bf16_with_off_route_flags->quant_needed,
+      require(bf16_with_off_route_flags.has_value() && !bf16_with_off_route_flags->quant_needed,
               "off-route Dequant metadata must not change an exact BF16 selected carrier: " +
                   error);
 
@@ -894,10 +887,9 @@ RUN_TEST(
           .dst_plugin = bf16_cycle_mpk.plugins[2].name,
           .tensor_name = bf16_cycle_mpk.plugins[3].output_tensors[0].name,
       });
-      const auto bf16_cycle_flags = resolve_model_managed_boxdecode_route_flags_from_mpk(
-          bf16_cycle_mpk, nullptr, &error);
-      require(!bf16_cycle_flags.has_value(),
-              "a typed selected-lineage cycle must fail closed");
+      const auto bf16_cycle_flags =
+          resolve_model_managed_boxdecode_route_flags_from_mpk(bf16_cycle_mpk, nullptr, &error);
+      require(!bf16_cycle_flags.has_value(), "a typed selected-lineage cycle must fail closed");
       require_contains(error, "contains a cycle",
                        "typed selected-lineage cycle rejection should identify the cycle");
 
@@ -961,8 +953,8 @@ RUN_TEST(
           .tensor_name = terminal_sibling_mpk.plugins[3].output_tensors[0].name,
       });
       const auto terminal_sibling_flags = resolve_model_managed_boxdecode_route_flags_from_mpk(
-          terminal_sibling_mpk,
-          &terminal_sibling_mpk.plugins[terminal_sibling_terminal_index], &error);
+          terminal_sibling_mpk, &terminal_sibling_mpk.plugins[terminal_sibling_terminal_index],
+          &error);
       require(!terminal_sibling_flags.has_value(),
               "a terminal edge plus typed sibling edge must fail closed");
       require_contains(error, "ambiguous post-MLA fanout",
@@ -972,10 +964,9 @@ RUN_TEST(
       const std::size_t wrong_input_terminal_index = wrong_terminal_input_mpk.plugins.size() - 1U;
       wrong_terminal_input_mpk.edges[wrong_terminal_input_mpk.edges.size() - exact_names.size()]
           .dst_input_index = 1;
-      const auto wrong_terminal_input_flags =
-          resolve_model_managed_boxdecode_route_flags_from_mpk(
-              wrong_terminal_input_mpk,
-              &wrong_terminal_input_mpk.plugins[wrong_input_terminal_index], &error);
+      const auto wrong_terminal_input_flags = resolve_model_managed_boxdecode_route_flags_from_mpk(
+          wrong_terminal_input_mpk, &wrong_terminal_input_mpk.plugins[wrong_input_terminal_index],
+          &error);
       require(!wrong_terminal_input_flags.has_value(),
               "a selected head bound to the wrong terminal input must fail closed");
       require_contains(error, "unique and contiguous",
@@ -984,8 +975,8 @@ RUN_TEST(
       auto duplicate_terminal_input_mpk = make_exact_terminal_mpk();
       const std::size_t duplicate_input_terminal_index =
           duplicate_terminal_input_mpk.plugins.size() - 1U;
-      duplicate_terminal_input_mpk.edges[
-          duplicate_terminal_input_mpk.edges.size() - exact_names.size() + 1U]
+      duplicate_terminal_input_mpk
+          .edges[duplicate_terminal_input_mpk.edges.size() - exact_names.size() + 1U]
           .dst_input_index = 0;
       const auto duplicate_terminal_input_flags =
           resolve_model_managed_boxdecode_route_flags_from_mpk(
@@ -1035,8 +1026,7 @@ RUN_TEST(
           .size_bytes = 80U * 80U * 64U * 4U,
       });
       bf16_with_sibling_dequant_mpk.plugins.push_back(std::move(sibling_dequant));
-      const std::size_t sibling_dequant_index =
-          bf16_with_sibling_dequant_mpk.plugins.size() - 1U;
+      const std::size_t sibling_dequant_index = bf16_with_sibling_dequant_mpk.plugins.size() - 1U;
       bf16_with_sibling_dequant_mpk.edges.push_back(MpkContractEdge{
           .src_plugin_index = 1U,
           .src_output_index = 0,
@@ -1092,9 +1082,8 @@ RUN_TEST(
       // This is exactly an INT8 C16 carrier span. It must not be accepted as BF16 merely because
       // 8 derived physical channels are greater than the four logical channels.
       contradictory_detess.input_tensors.front().size_bytes = 80U * 80U * 16U;
-      const auto contradictory_small_c_flags =
-          resolve_model_managed_boxdecode_route_flags_from_mpk(
-              contradictory_small_c_bf16_mpk, nullptr, &error);
+      const auto contradictory_small_c_flags = resolve_model_managed_boxdecode_route_flags_from_mpk(
+          contradictory_small_c_bf16_mpk, nullptr, &error);
       require(!contradictory_small_c_flags.has_value(),
               "an INT8 C16 span must not masquerade as a BF16 C4 carrier");
       require_contains(error, "exact C16-aligned frame_shape*dtype extent",
@@ -1157,8 +1146,7 @@ RUN_TEST(
               .dtype = "BF16",
               .mpk_shape = {widths[i], widths[i], channels[i]},
               .shape_semantics = MpkShapeSemantics::Geometry,
-              .size_bytes =
-                  static_cast<std::size_t>(widths[i] * widths[i] * channels[i] * 2),
+              .size_bytes = static_cast<std::size_t>(widths[i] * widths[i] * channels[i] * 2),
               .logical_shape = {widths[i], widths[i], channels[i]},
           });
           cast_stage.output_tensors.push_back(MpkTensorContract{
@@ -1167,8 +1155,7 @@ RUN_TEST(
               .dtype = "FP32",
               .mpk_shape = {widths[i], widths[i], channels[i]},
               .shape_semantics = MpkShapeSemantics::Geometry,
-              .size_bytes =
-                  static_cast<std::size_t>(widths[i] * widths[i] * channels[i] * 4),
+              .size_bytes = static_cast<std::size_t>(widths[i] * widths[i] * channels[i] * 4),
               .logical_shape = {widths[i], widths[i], channels[i]},
           });
           contract.plugins.push_back(std::move(cast_stage));
@@ -1195,8 +1182,7 @@ RUN_TEST(
               .dtype = "FP32",
               .mpk_shape = {widths[i], widths[i], channels[i]},
               .shape_semantics = MpkShapeSemantics::Geometry,
-              .size_bytes =
-                  static_cast<std::size_t>(widths[i] * widths[i] * channels[i] * 4),
+              .size_bytes = static_cast<std::size_t>(widths[i] * widths[i] * channels[i] * 4),
               .logical_shape = {widths[i], widths[i], channels[i]},
           });
           pass_through.output_tensors.push_back(MpkTensorContract{
@@ -1205,8 +1191,7 @@ RUN_TEST(
               .dtype = "FP32",
               .mpk_shape = {widths[i], widths[i], channels[i]},
               .shape_semantics = MpkShapeSemantics::Geometry,
-              .size_bytes =
-                  static_cast<std::size_t>(widths[i] * widths[i] * channels[i] * 4),
+              .size_bytes = static_cast<std::size_t>(widths[i] * widths[i] * channels[i] * 4),
               .logical_shape = {widths[i], widths[i], channels[i]},
           });
           contract.edges.push_back(MpkContractEdge{
@@ -1224,11 +1209,11 @@ RUN_TEST(
       };
 
       const auto require_bf16_score_domain = [&](const std::string& domain,
-                                                  BoxDecodeScoreActivation activation,
-                                                  simaai::neat::BoxDecodeTypeOption option) {
+                                                 BoxDecodeScoreActivation activation,
+                                                 simaai::neat::BoxDecodeTypeOption option) {
         auto bf16_mpk = make_bf16_cast_yolov8_mpk(domain);
-        const auto extracted_bf16 = build_boxdecode_static_contract_from_mpk(
-            bf16_mpk, make_flags(false, false), &error);
+        const auto extracted_bf16 =
+            build_boxdecode_static_contract_from_mpk(bf16_mpk, make_flags(false, false), &error);
         require(extracted_bf16.has_value(),
                 "BF16 value-preserving Cast lineage should preserve its score domain: " + error);
         require(extracted_bf16->tensors.size() == 6U &&
@@ -1256,8 +1241,8 @@ RUN_TEST(
 
         auto finalized_bf16 = stagesemantics::finalize_boxdecode_static_contract(
             *extracted_bf16, simaai::neat::BoxDecodeType::YoloV8, std::nullopt,
-            make_flags(false, false), simaai::neat::BoxDecodeTypeOption::Auto, 0.25, 0.55, 100,
-            80, {"orig_width", "orig_height"});
+            make_flags(false, false), simaai::neat::BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 80,
+            {"orig_width", "orig_height"});
         stagesemantics::resolve_grouped_yolo_dfl_score_domain(&finalized_bf16);
         require(finalized_bf16.decode_type_option == option &&
                     finalized_bf16.score_activation == activation,
@@ -1273,23 +1258,20 @@ RUN_TEST(
           const auto& logical = compiled_bf16.runtime_contract.logical_inputs[i];
           const auto& binding = compiled_bf16.runtime_contract.input_bindings[i];
           require(logical.logical_name == finalized_bf16.tensors[i].logical_name &&
-                      logical.dtype == "BF16" &&
-                      binding.src_output_slot == static_cast<int>(i) &&
+                      logical.dtype == "BF16" && binding.src_output_slot == static_cast<int>(i) &&
                       binding.src_physical_output_index == static_cast<int>(i) &&
                       binding.source_segment_name == "MLA_0_" + std::to_string(i),
                   "compiled BF16 bindings must stay in exact role/head/raw-port order");
         }
       };
 
-      require_bf16_score_domain(
-          "prob", BoxDecodeScoreActivation::Identity,
-          simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability);
+      require_bf16_score_domain("prob", BoxDecodeScoreActivation::Identity,
+                                simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability);
       require_bf16_score_domain("logit", BoxDecodeScoreActivation::Sigmoid,
                                 simaai::neat::BoxDecodeTypeOption::GroupedByRoleLogit);
 
       auto conflicting_bf16_mpk = make_bf16_cast_yolov8_mpk("prob");
-      conflicting_bf16_mpk.plugins[7].output_tensors[3].name =
-          "pass_through/class_logit_0";
+      conflicting_bf16_mpk.plugins[7].output_tensors[3].name = "pass_through/class_logit_0";
       const auto conflicting_bf16 = build_boxdecode_static_contract_from_mpk(
           conflicting_bf16_mpk, make_flags(false, false), &error);
       require(!conflicting_bf16.has_value(),
@@ -1322,8 +1304,7 @@ RUN_TEST(
       auto direct_probability_bf16_mpk = make_bf16_cast_yolov8_mpk("prob");
       auto direct_logit_bf16_mpk = make_bf16_cast_yolov8_mpk("logit");
       for (std::size_t i = 0; i < 3U; ++i) {
-        direct_probability_bf16_mpk.plugins[0].output_tensors[i].name =
-            "bbox_" + std::to_string(i);
+        direct_probability_bf16_mpk.plugins[0].output_tensors[i].name = "bbox_" + std::to_string(i);
         direct_probability_bf16_mpk.plugins[0].output_tensors[i + 3U].name =
             "class_prob_" + std::to_string(i);
         direct_logit_bf16_mpk.plugins[0].output_tensors[i].name = "bbox_" + std::to_string(i);
@@ -1333,8 +1314,7 @@ RUN_TEST(
       const auto direct_probability_bf16 = build_boxdecode_static_contract_from_mpk(
           direct_probability_bf16_mpk, make_flags(false, false), &error);
       require(direct_probability_bf16.has_value() &&
-                  direct_probability_bf16->score_activation ==
-                      BoxDecodeScoreActivation::Identity,
+                  direct_probability_bf16->score_activation == BoxDecodeScoreActivation::Identity,
               "direct MLA class_prob names must remain exact probability authority");
       const auto direct_logit_bf16 = build_boxdecode_static_contract_from_mpk(
           direct_logit_bf16_mpk, make_flags(false, false), &error);
@@ -1359,8 +1339,8 @@ RUN_TEST(
       try {
         auto finalized_missing = stagesemantics::finalize_boxdecode_static_contract(
             *missing_bf16, simaai::neat::BoxDecodeType::YoloV8, std::nullopt,
-            make_flags(false, false), simaai::neat::BoxDecodeTypeOption::Auto, 0.25, 0.55, 100,
-            80, {"orig_width", "orig_height"});
+            make_flags(false, false), simaai::neat::BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 80,
+            {"orig_width", "orig_height"});
         stagesemantics::resolve_grouped_yolo_dfl_score_domain(&finalized_missing);
       } catch (const std::exception& e) {
         missing_bf16_rejected = true;
@@ -1426,8 +1406,8 @@ RUN_TEST(
       try {
         auto finalized_missing = stagesemantics::finalize_boxdecode_static_contract(
             *missing_int8, simaai::neat::BoxDecodeType::YoloV8, std::nullopt,
-            make_flags(true, false), simaai::neat::BoxDecodeTypeOption::Auto, 0.25, 0.55, 100,
-            80, {"orig_width", "orig_height"});
+            make_flags(true, false), simaai::neat::BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 80,
+            {"orig_width", "orig_height"});
         stagesemantics::resolve_grouped_yolo_dfl_score_domain(&finalized_missing);
       } catch (const std::exception& e) {
         missing_int8_rejected = true;
@@ -1442,17 +1422,15 @@ RUN_TEST(
           "bbox_0", "class_prob_0", "bbox_1", "class_prob_1", "bbox_2", "class_prob_2",
       };
       for (std::size_t i = 0; i < interleaved_names.size(); ++i) {
-        const std::string wrapped =
-            "cast_" + std::to_string(i + 2U) + "/" + interleaved_names[i];
+        const std::string wrapped = "cast_" + std::to_string(i + 2U) + "/" + interleaved_names[i];
         interleaved_unspecified_mpk.plugins[i + 1U].output_tensors[0].name = wrapped;
         interleaved_unspecified_mpk.plugins[7].input_tensors[i].name = wrapped;
         interleaved_unspecified_mpk.edges[6U + i].tensor_name = wrapped;
       }
       const auto interleaved_unspecified = build_boxdecode_static_contract_from_mpk(
           interleaved_unspecified_mpk, make_flags(false, false), &error);
-      require(interleaved_unspecified.has_value() &&
-                  interleaved_unspecified->decode_type_option ==
-                      simaai::neat::BoxDecodeTypeOption::Auto,
+      require(interleaved_unspecified.has_value() && interleaved_unspecified->decode_type_option ==
+                                                         simaai::neat::BoxDecodeTypeOption::Auto,
               "Unspecified interleaved lineage must not be claimed as grouped YOLO");
 
       auto spoofed_dequant_mpk = exact_yolov8_mpk;
@@ -1747,8 +1725,7 @@ RUN_TEST(
       }
 
       const auto extracted_superpoint_hwc = build_boxdecode_static_contract_from_mpk(
-          superpoint_hwc_parent, make_flags(true, true),
-          &superpoint_hwc_parent.plugins[4], &error);
+          superpoint_hwc_parent, make_flags(true, true), &superpoint_hwc_parent.plugins[4], &error);
       require(extracted_superpoint_hwc.has_value(),
               "cblock=false SuperPoint route should extract tiled-HWC source facts: " + error);
       require(extracted_superpoint_hwc->decode_type == simaai::neat::BoxDecodeType::SuperPoint &&
@@ -2147,8 +2124,8 @@ RUN_TEST(
       require(dense_slice_flags.has_value() && dense_slice_flags->quant_needed &&
                   dense_slice_flags->quant_contract_required,
               "dense INT8 slice route must select its exact MLA quant contract: " + error);
-      const auto extracted_dense_slice = build_boxdecode_static_contract_from_mpk(
-          dense_slice_mpk, *dense_slice_flags, &error);
+      const auto extracted_dense_slice =
+          build_boxdecode_static_contract_from_mpk(dense_slice_mpk, *dense_slice_flags, &error);
       require(extracted_dense_slice.has_value(),
               "dense HWC slice route should extract storage facts: " + error);
       require(extracted_dense_slice->tensors[0].source_storage_kind ==

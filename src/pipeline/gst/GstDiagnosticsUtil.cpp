@@ -225,8 +225,7 @@ TeardownResult finish_teardown(GstElement* pipeline, GstStateChangeReturn begin_
   result.current = cur;
   result.pending = pend;
   const bool stable_null =
-      cur == GST_STATE_NULL &&
-      (pend == GST_STATE_VOID_PENDING || pend == GST_STATE_NULL);
+      cur == GST_STATE_NULL && (pend == GST_STATE_VOID_PENDING || pend == GST_STATE_NULL);
   if (!stable_null) {
     result.status =
         begin_result == GST_STATE_CHANGE_FAILURE || wait_result == GST_STATE_CHANGE_FAILURE
@@ -886,10 +885,9 @@ void stop_and_unref_no_flush(GstElement*& e, InputStreamTeardownPolicy policy) {
   // rtspsrc children may already be disappearing.
   const bool prefer_synchronous = policy != InputStreamTeardownPolicy::Deferred;
   const bool must_reach_null = policy == InputStreamTeardownPolicy::MustReachNull;
-  const int timeout_ms = prefer_synchronous
-                             ? effective_synchronous_teardown_timeout_ms(
-                                   local, teardown_timeout_ms())
-                             : teardown_timeout_ms();
+  const int timeout_ms =
+      prefer_synchronous ? effective_synchronous_teardown_timeout_ms(local, teardown_timeout_ms())
+                         : teardown_timeout_ms();
 
   // Defer teardown to the reaper to avoid blocking in gst_element_set_state for
   // legacy push/appsrc paths.  Live/source pipelines (CameraInput/RTSP/etc.)
@@ -897,8 +895,7 @@ void stop_and_unref_no_flush(GstElement*& e, InputStreamTeardownPolicy policy) {
   // var remains an escape hatch for deferred and bounded-live teardown, but
   // cannot bypass a driver's exact-once stop callback.
   const bool defer_no_flush =
-      !must_reach_null &&
-      env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
+      !must_reach_null && env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
   if (defer_no_flush) {
     enqueue_teardown(local, /*flush=*/false);
     return;

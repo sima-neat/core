@@ -93,11 +93,9 @@ std::string sanitize_detail(std::string detail, const std::filesystem::path& mpk
   return detail;
 }
 
-std::string detached_root_proof(
-    const std::span<const sc::ValueId> detached_roots) {
-  std::string result = ";detached_count=" +
-                       std::to_string(detached_roots.size()) +
-                       ";detached_roots=[";
+std::string detached_root_proof(const std::span<const sc::ValueId> detached_roots) {
+  std::string result =
+      ";detached_count=" + std::to_string(detached_roots.size()) + ";detached_roots=[";
   for (std::size_t index = 0; index < detached_roots.size(); ++index) {
     if (index != 0U) {
       result.push_back(',');
@@ -413,19 +411,19 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
       const char* kind = binding.kind == sc::StorageBindingKind::External
                              ? "external"
                              : (binding.kind == sc::StorageBindingKind::View ? "view" : "root");
-      const char* access = binding.access == sc::StorageAccess::ReadOnly
-                               ? "read"
-                               : (binding.access == sc::StorageAccess::WriteOnly ? "write"
-                                                                                : "read-write");
-      entry["storage_binding"] = {
-          {"kind", kind},
-          {"carrier_id", binding.carrier_id},
-          {"byte_offset", binding.byte_offset},
-          {"physical_span", binding.physical_span},
-          {"stride_bytes", binding.stride_bytes},
-          {"access", access},
-          {"source_value_id", binding.source_value_id ? Json(*binding.source_value_id)
-                                                       : Json(nullptr)}};
+      const char* access =
+          binding.access == sc::StorageAccess::ReadOnly
+              ? "read"
+              : (binding.access == sc::StorageAccess::WriteOnly ? "write" : "read-write");
+      entry["storage_binding"] = {{"kind", kind},
+                                  {"carrier_id", binding.carrier_id},
+                                  {"byte_offset", binding.byte_offset},
+                                  {"physical_span", binding.physical_span},
+                                  {"stride_bytes", binding.stride_bytes},
+                                  {"access", access},
+                                  {"source_value_id", binding.source_value_id
+                                                          ? Json(*binding.source_value_id)
+                                                          : Json(nullptr)}};
     } else {
       entry["storage_binding"] = nullptr;
     }
@@ -506,9 +504,9 @@ std::string dmabuf_plan_digest(const sc::ModelExecutionPlan& plan) {
   return sha256_text(canonical_dmabuf_plan_json(plan));
 }
 
-std::string canonical_dmabuf_execution_json(
-    const sc::ModelExecutionPlan& plan, const sc::PhysicalExecutionPlan& physical,
-    const sc::FrameSlotArenaPlan& arena) {
+std::string canonical_dmabuf_execution_json(const sc::ModelExecutionPlan& plan,
+                                            const sc::PhysicalExecutionPlan& physical,
+                                            const sc::FrameSlotArenaPlan& arena) {
   Json root = Json::parse(canonical_dmabuf_plan_json(plan));
   root["schema_version"] = 3;
 
@@ -516,9 +514,15 @@ std::string canonical_dmabuf_execution_json(
   for (const auto& command : physical.commands) {
     const char* engine = "unknown";
     switch (command.engine) {
-    case sc::PhysicalEngine::Mla: engine = "mla"; break;
-    case sc::PhysicalEngine::A65: engine = "a65"; break;
-    case sc::PhysicalEngine::Cvu: engine = "cvu"; break;
+    case sc::PhysicalEngine::Mla:
+      engine = "mla";
+      break;
+    case sc::PhysicalEngine::A65:
+      engine = "a65";
+      break;
+    case sc::PhysicalEngine::Cvu:
+      engine = "cvu";
+      break;
     }
     commands.push_back({{"id", command.id},
                         {"engine", engine},
@@ -533,8 +537,7 @@ std::string canonical_dmabuf_execution_json(
   const auto& placement = arena.placement();
   const char* domain = placement.domain == sc::ArenaStorageDomain::Cma
                            ? "cma"
-                           : (placement.domain == sc::ArenaStorageDomain::Dms ? "dms"
-                                                                              : "unknown");
+                           : (placement.domain == sc::ArenaStorageDomain::Dms ? "dms" : "unknown");
   const char* provenance =
       placement.provenance == sc::ArenaAllocationProvenance::CoreAllocated
           ? "core-allocated"
@@ -559,12 +562,10 @@ std::string canonical_dmabuf_execution_json(
     detached_roots.push_back(root_id);
   }
   root["frame_arena"] = {{"allocation_bytes", arena.allocation_bytes()},
-                         {"allocation_alignment_bytes",
-                          arena.allocation_alignment_bytes()},
+                         {"allocation_alignment_bytes", arena.allocation_alignment_bytes()},
                          {"storage_domain", domain},
                          {"allocation_provenance", provenance},
-                         {"required_device_access",
-                          placement.required_device_access},
+                         {"required_device_access", placement.required_device_access},
                          {"escape_policy", escape},
                          {"detached_roots", std::move(detached_roots)},
                          {"regions", std::move(regions)}};

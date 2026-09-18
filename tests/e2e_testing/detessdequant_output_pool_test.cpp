@@ -20,7 +20,8 @@ constexpr int kElements = 16 * 16 * 16;
 sima_test::ModelArchiveFixture make_fixture() {
   // Exercise retained zero-copy output pressure on the pre-MLA ProcessCVU
   // arena without executing the placeholder MLA program.
-  auto fixture = sima_test::make_model_archive_fixture("detessdequant_pool", {{"pool_mpk.json", R"json({
+  auto fixture =
+      sima_test::make_model_archive_fixture("detessdequant_pool", {{"pool_mpk.json", R"json({
     "name": "pool_test", "model_sdk_version": "2.0.0",
     "model_path": "share/placeholder.elf", "sequence": 1,
     "input_nodes": [{"name": "model_input", "type": "buffer", "size": 16384,
@@ -64,14 +65,15 @@ sima_test::ModelArchiveFixture make_fixture() {
        "output_nodes": [{"name": "output_tensor", "type": "buffer", "size": 16384}],
        "type": "sgpProcess"}
     ]
-  })json"}}, false);
+  })json"}},
+                                            false);
   const auto share = std::filesystem::path(fixture.root_dir) / "share";
   std::filesystem::create_directories(share);
-  sima_test::write_topology_elf(share / "placeholder.elf", "data.ifm.b0", 4096U,
-                                "data.ofm.b0", 4096U);
-  const std::string archive =
-      "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) + " -C " +
-      sima_test::model_archive_shell_quote(fixture.root_dir) + " .";
+  sima_test::write_topology_elf(share / "placeholder.elf", "data.ifm.b0", 4096U, "data.ofm.b0",
+                                4096U);
+  const std::string archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
+                              " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) +
+                              " .";
   require(std::system(archive.c_str()) == 0,
           "failed to archive detess/dequant output-pool topology fixture");
   return fixture;
@@ -81,9 +83,8 @@ Sample make_input(int frame) {
   Sample sample;
   sample.kind = SampleKind::TensorSet;
   sample.frame_id = frame;
-  sample.tensors = {Tensor::from_vector(
-      std::vector<float>(kElements, static_cast<float>(frame)), {16, 16, 16},
-      TensorMemory::EV74)};
+  sample.tensors = {Tensor::from_vector(std::vector<float>(kElements, static_cast<float>(frame)),
+                                        {16, 16, 16}, TensorMemory::EV74)};
   return sample;
 }
 
@@ -99,13 +100,11 @@ void check_output(const Sample& sample, int frame) {
     require(value == static_cast<std::int8_t>(frame),
             "retained output was corrupted or delivered out of order at element " +
                 std::to_string(i) + ": got " + std::to_string(static_cast<int>(value)) +
-                ", expected " + std::to_string(frame) +
-                ", mapped bytes " + std::to_string(map.size_bytes) +
-                ", byte offset " + std::to_string(outputs.front().byte_offset) +
-                ", physical offset " +
-                std::to_string(outputs.front().route.physical_byte_offset) +
-                ", segment " + outputs.front().route.segment_name +
-                ", storage kind " +
+                ", expected " + std::to_string(frame) + ", mapped bytes " +
+                std::to_string(map.size_bytes) + ", byte offset " +
+                std::to_string(outputs.front().byte_offset) + ", physical offset " +
+                std::to_string(outputs.front().route.physical_byte_offset) + ", segment " +
+                outputs.front().route.segment_name + ", storage kind " +
                 std::to_string(static_cast<int>(outputs.front().storage->kind)));
   }
 }

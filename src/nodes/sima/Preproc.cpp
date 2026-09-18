@@ -668,8 +668,7 @@ bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledN
     // Input-contract materialization records the current frame geometry in opt_. Keep that
     // observable state intact, but compile the immutable processcvu envelope from the model's
     // declared source capacity so the first frame cannot shrink later admissible geometry.
-    PreprocOptions compile_opt =
-        internal::model_managed_preproc_static_envelope_options(opt_);
+    PreprocOptions compile_opt = internal::model_managed_preproc_static_envelope_options(opt_);
     const auto compiled = compile_opt.compiled_contract
                               ? *compile_opt.compiled_contract
                               : pipeline_internal::sima::stagesemantics::

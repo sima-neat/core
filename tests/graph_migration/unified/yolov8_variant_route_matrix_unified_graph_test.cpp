@@ -59,10 +59,9 @@ int main(int argc, char** argv) {
 
     for (const auto& tar : packs) {
       try {
-        auto model_options =
-            boxdecode_mode == BoxDecodeRunMode::Model
-                ? canonical_model_options(BoxDecodeRunMode::Model)
-                : canonical_model_bound_standalone_boxdecode_options();
+        auto model_options = boxdecode_mode == BoxDecodeRunMode::Model
+                                 ? canonical_model_options(BoxDecodeRunMode::Model)
+                                 : canonical_model_bound_standalone_boxdecode_options();
         if (boxdecode_mode == BoxDecodeRunMode::Model) {
           model_options.boxdecode_original_width = img_bgr.cols;
           model_options.boxdecode_original_height = img_bgr.rows;
@@ -126,8 +125,7 @@ int main(int argc, char** argv) {
                   << "\n";
         const auto tensor_io_after = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
         const auto tensor_io = tensor_io_delta(tensor_io_before, tensor_io_after);
-        const std::string output_payload_digest =
-            ordered_payload_digest_string_local(infer_sample);
+        const std::string output_payload_digest = ordered_payload_digest_string_local(infer_sample);
 
         if (boxdecode_mode == BoxDecodeRunMode::NoModel) {
           require_preprocess_meta_on_output_local(infer_sample, img_bgr.cols, img_bgr.rows,
@@ -139,8 +137,7 @@ int main(int argc, char** argv) {
           const AccuracyResult host_acc = run_hostdecode_accuracy_on_sample_local(
               infer_sample, model, img_bgr, "hostdecode_trace");
           std::cerr << "[matrix-host-accuracy] ok=" << (host_acc.ok ? 1 : 0)
-                    << " boxes=" << host_acc.parsed_boxes << " note=\""
-                    << host_acc.note << "\"\n";
+                    << " boxes=" << host_acc.parsed_boxes << " note=\"" << host_acc.note << "\"\n";
         }
         const AccuracyResult acc =
             boxdecode_mode == BoxDecodeRunMode::Model
@@ -154,9 +151,8 @@ int main(int argc, char** argv) {
                   << (processcvu_placement.empty() ? "default" : processcvu_placement)
                   << " boxdecode_mode=" << boxdecode_run_mode_name(boxdecode_mode)
                   << " signature=\"" << sample_output_signature_local(infer_sample) << "\""
-                  << " output_payload_digest=\"" << output_payload_digest << "\""
-                  << " accuracy=\"" << acc.note << "\" tensor_io=\""
-                  << tensor_io_stats_string(tensor_io) << "\"\n";
+                  << " output_payload_digest=\"" << output_payload_digest << "\"" << " accuracy=\""
+                  << acc.note << "\" tensor_io=\"" << tensor_io_stats_string(tensor_io) << "\"\n";
       } catch (const std::exception& ex) {
         failures += 1;
         std::cerr << "[FAIL] model=" << tar.filename().string() << " err=" << ex.what() << "\n";

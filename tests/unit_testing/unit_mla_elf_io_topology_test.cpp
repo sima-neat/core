@@ -58,8 +58,7 @@ constexpr std::uint32_t kQmlaShtData = 0x71ba0002U;
 
 bool is_mla_io_section(const std::string& name) {
   return name == "data.ifm.b0" || name == "data.ofm.b0" ||
-         name.starts_with("data.ifm.persistent.") ||
-         name.starts_with("data.ofm.persistent.");
+         name.starts_with("data.ifm.persistent.") || name.starts_with("data.ofm.persistent.");
 }
 
 void append_u64_le(std::vector<std::uint8_t>& bytes, const std::uint64_t value) {
@@ -70,10 +69,9 @@ void append_u64_le(std::vector<std::uint8_t>& bytes, const std::uint64_t value) 
 
 // Build a minimal ELF64 file containing compiler-authored 16-byte QMLA
 // SHT_DATA headers for every recognized I/O section plus a shstrtab.
-std::filesystem::path write_minimal_elf(const std::string& tag,
-                                        const std::vector<std::string>& section_names,
-                                        const std::unordered_map<std::string, std::uint64_t>&
-                                            extent_overrides = {}) {
+std::filesystem::path
+write_minimal_elf(const std::string& tag, const std::vector<std::string>& section_names,
+                  const std::unordered_map<std::string, std::uint64_t>& extent_overrides = {}) {
   // First section is always the NULL section (name index 0). We append the
   // requested names, then append ".shstrtab" as the final section so its name
   // is also represented in the table.
@@ -102,9 +100,8 @@ std::filesystem::path write_minimal_elf(const std::string& tag,
     }
     payload_offsets[i] = header_bytes + qmla_headers.size();
     const auto override = extent_overrides.find(names[i]);
-    const auto extent = override == extent_overrides.end()
-                            ? static_cast<std::uint64_t>(i) * 16U
-                            : override->second;
+    const auto extent =
+        override == extent_overrides.end() ? static_cast<std::uint64_t>(i) * 16U : override->second;
     append_u64_le(qmla_headers, extent);
     append_u64_le(qmla_headers, 1U); // one address segment
   }
@@ -224,23 +221,19 @@ void test_qmla_flat_topology() {
 }
 
 void test_afe_direct_input_topology() {
-  const auto path = write_minimal_elf(
-      "afe_direct_input",
-      {"code.r0.c0", "data.ifm.persistent.afe_direct_input_0.b0",
-       "data.ifm.persistent.afe_direct_input_1.b0",
-       "data.ofm.persistent.afe_mla_output_0.b0"});
+  const auto path = write_minimal_elf("afe_direct_input",
+                                      {"code.r0.c0", "data.ifm.persistent.afe_direct_input_0.b0",
+                                       "data.ifm.persistent.afe_direct_input_1.b0",
+                                       "data.ofm.persistent.afe_mla_output_0.b0"});
   simaai::neat::pipeline_internal::sima::MlaElfIoTopology topology;
-  const bool ok =
-      simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
+  const bool ok = simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
   check(ok && topology.valid, "afe_direct_input: parser accepted current AFE symbols");
   check(topology.ifm_symbol_names.size() == 2U, "afe_direct_input: two IFM ports");
   check(topology.ofm_symbol_names.size() == 1U, "afe_direct_input: one OFM port");
-  check(topology.ifm_symbol_names[1] ==
-            "data.ifm.persistent.afe_direct_input_1.b0",
+  check(topology.ifm_symbol_names[1] == "data.ifm.persistent.afe_direct_input_1.b0",
         "afe_direct_input: stable indexed order");
   std::filesystem::remove(path);
 }
-
 
 void test_monolithic_topology() {
   const auto path = write_minimal_elf("monolithic", {
@@ -302,11 +295,9 @@ void test_strict_validation_and_reconciliation() {
         "strict valid: mismatch reports exact IFM counts");
   std::filesystem::remove(valid_path);
 
-  const std::string missing_extent_ifm =
-      "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0";
+  const std::string missing_extent_ifm = "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0";
   const auto missing_extent_path = write_minimal_elf(
-      "strict_missing_extent", {missing_extent_ifm, "data.ofm.b0"},
-      {{missing_extent_ifm, 0U}});
+      "strict_missing_extent", {missing_extent_ifm, "data.ofm.b0"}, {{missing_extent_ifm, 0U}});
   MlaElfIoTopology missing_extent;
   check(read_mla_elf_io_topology(missing_extent_path, &missing_extent),
         "strict missing extent: parser retains topology evidence");

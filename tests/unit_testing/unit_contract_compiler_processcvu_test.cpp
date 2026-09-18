@@ -607,9 +607,9 @@ RUN_TEST(
               "physical_cvu_cohort_1_" + std::to_string(identity_case.graph_id);
           CompiledNodeContract compiled;
           std::string error;
-          require(build_processcvu_node_contract(
-                      "PhysicalProcessCvu", identity, identity, NodeContractDefinition{}, physical,
-                      &compiled, &error),
+          require(build_processcvu_node_contract("PhysicalProcessCvu", identity, identity,
+                                                 NodeContractDefinition{}, physical, &compiled,
+                                                 &error),
                   "strict physical ProcessCVU identity fixture must compile: " + error);
           require(compiled.element_name == identity && compiled.logical_stage_id == identity,
                   "graphs 224-227 must preserve the exact caller-authored physical element and "
@@ -955,10 +955,10 @@ RUN_TEST(
       require(processcvu.runtime_contract.logical_inputs.size() == 1U,
               "preproc runtime contract should expose one logical input");
       require(processcvu.payload.output_shapes.size() == 2U &&
-                  std::all_of(processcvu.payload.output_shapes.begin(),
-                              processcvu.payload.output_shapes.end(), [](const auto& shape) {
-                                return shape == std::vector<int>({640, 640, 3});
-                              }) &&
+                  std::all_of(
+                      processcvu.payload.output_shapes.begin(),
+                      processcvu.payload.output_shapes.end(),
+                      [](const auto& shape) { return shape == std::vector<int>({640, 640, 3}); }) &&
                   processcvu.payload.runtime_output_logical_shapes.size() == 2U &&
                   processcvu.payload.runtime_output_logical_shapes[0] ==
                       std::vector<int>({1, 640, 640, 3}) &&
@@ -1018,10 +1018,10 @@ RUN_TEST(
       const auto direct_inputs =
           build_processcvu_compile_inputs_from_options(make_preproc_options());
       require(direct_inputs.payload.output_shapes.size() == 2U &&
-                  std::all_of(direct_inputs.payload.output_shapes.begin(),
-                              direct_inputs.payload.output_shapes.end(), [](const auto& shape) {
-                                return shape == std::vector<int>({640, 640, 3});
-                              }),
+                  std::all_of(
+                      direct_inputs.payload.output_shapes.begin(),
+                      direct_inputs.payload.output_shapes.end(),
+                      [](const auto& shape) { return shape == std::vector<int>({640, 640, 3}); }),
               "graph-200 physical output geometry must remain HWC");
       require(direct_inputs.payload.runtime_output_logical_shapes.size() == 2U &&
                   direct_inputs.payload.runtime_output_logical_shapes[0] ==

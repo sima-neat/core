@@ -377,8 +377,7 @@ std::uint64_t mla_elf_ifm_extent_bytes(const MlaElfIoTopology& topology,
   if (topology.monolithic_ifm) {
     return port_index == 0U ? topology.monolithic_ifm_extent_bytes : 0U;
   }
-  return port_index < topology.ifm_extent_bytes.size() ? topology.ifm_extent_bytes[port_index]
-                                                       : 0U;
+  return port_index < topology.ifm_extent_bytes.size() ? topology.ifm_extent_bytes[port_index] : 0U;
 }
 
 std::uint64_t mla_elf_ofm_extent_bytes(const MlaElfIoTopology& topology,
@@ -386,8 +385,7 @@ std::uint64_t mla_elf_ofm_extent_bytes(const MlaElfIoTopology& topology,
   if (topology.monolithic_ofm) {
     return port_index == 0U ? topology.monolithic_ofm_extent_bytes : 0U;
   }
-  return port_index < topology.ofm_extent_bytes.size() ? topology.ofm_extent_bytes[port_index]
-                                                       : 0U;
+  return port_index < topology.ofm_extent_bytes.size() ? topology.ofm_extent_bytes[port_index] : 0U;
 }
 
 MlaElfIoTopologyValidation validate_mla_elf_io_topology_strict(const MlaElfIoTopology& topology) {

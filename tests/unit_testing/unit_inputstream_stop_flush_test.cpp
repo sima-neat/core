@@ -271,18 +271,16 @@ RUN_TEST(
         GstElement* teardown_owned = delayed;
         std::atomic<bool> teardown_returned{false};
         std::thread teardown_thread([&]() {
-          pipeline_internal::stop_and_unref_no_flush(
-              teardown_owned, InputStreamTeardownPolicy::MustReachNull);
+          pipeline_internal::stop_and_unref_no_flush(teardown_owned,
+                                                     InputStreamTeardownPolicy::MustReachNull);
           teardown_returned.store(true, std::memory_order_release);
         });
 
         const auto deadline = TestClock::now() + 100ms;
-        while (!teardown_returned.load(std::memory_order_acquire) &&
-               TestClock::now() < deadline) {
+        while (!teardown_returned.load(std::memory_order_acquire) && TestClock::now() < deadline) {
           std::this_thread::sleep_for(1ms);
         }
-        const bool returned_while_non_null =
-            teardown_returned.load(std::memory_order_acquire);
+        const bool returned_while_non_null = teardown_returned.load(std::memory_order_acquire);
 
         auto* delayed_state = reinterpret_cast<GstTestDelayedNull*>(observed);
         g_atomic_int_set(&delayed_state->delay_ready_to_null, 0);

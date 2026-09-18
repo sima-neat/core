@@ -102,8 +102,8 @@ std::string canonical_processcvu_graph_family(const std::string& graph_family);
 
 // Canonical graph225 option policy shared by MPK-authored and physical-command
 // contract assembly. Raw firmware bits remain private to the implementation.
-std::uint32_t processcvu_detesscast_optimized_flags(
-    bool requires_bf16_noncompact_c16_lane_split) noexcept;
+std::uint32_t
+processcvu_detesscast_optimized_flags(bool requires_bf16_noncompact_c16_lane_split) noexcept;
 
 ProcessCvuCanonicalCompileInputs
 build_processcvu_compile_inputs_from_options(const ::simaai::neat::PreprocOptions& opt);

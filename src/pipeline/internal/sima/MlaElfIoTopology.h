@@ -120,10 +120,8 @@ MlaElfIoTopologyValidation reconcile_mla_elf_io_topology_strict(const MlaElfIoTo
 // result is used for binding; these helpers deliberately perform no fallback.
 std::size_t mla_elf_ifm_port_count(const MlaElfIoTopology& topology);
 std::size_t mla_elf_ofm_port_count(const MlaElfIoTopology& topology);
-std::uint64_t mla_elf_ifm_extent_bytes(const MlaElfIoTopology& topology,
-                                       std::size_t port_index);
-std::uint64_t mla_elf_ofm_extent_bytes(const MlaElfIoTopology& topology,
-                                       std::size_t port_index);
+std::uint64_t mla_elf_ifm_extent_bytes(const MlaElfIoTopology& topology, std::size_t port_index);
+std::uint64_t mla_elf_ofm_extent_bytes(const MlaElfIoTopology& topology, std::size_t port_index);
 
 // True iff the .elf's IFM layout demands per-physical-input dispatch (i.e.
 // there are >=2 placeholder slots and no monolithic data.ifm.b0 carrier).

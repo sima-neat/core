@@ -87,8 +87,7 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
 void stop_and_unref(GstElement*& e);
 // Skip flush events during teardown (avoid gst_element_send_event deadlocks).
 void stop_and_unref_no_flush(
-    GstElement*& e,
-    InputStreamTeardownPolicy policy = InputStreamTeardownPolicy::Deferred);
+    GstElement*& e, InputStreamTeardownPolicy policy = InputStreamTeardownPolicy::Deferred);
 
 // Internal observability/test hook for the bounded synchronous live-source
 // teardown policy. Adds each rtspsrc's effective TEARDOWN wait to the supplied

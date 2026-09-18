@@ -73,18 +73,15 @@ ProcessCvuBackendCapabilities processcvu_backend_capabilities(const ProcessCvuSt
 
 /// Compute the final run-target decision for a stage given the compile input.
 /// @throws std::invalid_argument when an explicit target is unsupported by the stage.
-ProcessCvuBackendDecision
-resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
-                                    const ContractCompileInput& compile_input,
-                                    std::string_view stage_identity = {},
-                                    std::optional<static_contract::PhysicalCommandRole>
-                                        physical_command_role = std::nullopt);
+ProcessCvuBackendDecision resolve_processcvu_backend_decision(
+    const ProcessCvuStagePayload& payload, const ContractCompileInput& compile_input,
+    std::string_view stage_identity = {},
+    std::optional<static_contract::PhysicalCommandRole> physical_command_role = std::nullopt);
 
 /// Resolve the run-target and stamp the result back onto the stage payload in place.
-void resolve_processcvu_run_target(ProcessCvuStagePayload* payload,
-                                   const ContractCompileInput& compile_input,
-                                   std::string_view stage_identity = {},
-                                   std::optional<static_contract::PhysicalCommandRole>
-                                       physical_command_role = std::nullopt);
+void resolve_processcvu_run_target(
+    ProcessCvuStagePayload* payload, const ContractCompileInput& compile_input,
+    std::string_view stage_identity = {},
+    std::optional<static_contract::PhysicalCommandRole> physical_command_role = std::nullopt);
 
 } // namespace simaai::neat::pipeline_internal::sima

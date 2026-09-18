@@ -73,10 +73,9 @@ enum class ProcessCvuStageRole {
   Post,
 };
 
-ProcessCvuStageRole processcvu_stage_role(const ProcessCvuStagePayload& payload,
-                                          std::string_view stage_identity,
-                                          const std::optional<static_contract::PhysicalCommandRole>
-                                              physical_command_role) {
+ProcessCvuStageRole processcvu_stage_role(
+    const ProcessCvuStagePayload& payload, std::string_view stage_identity,
+    const std::optional<static_contract::PhysicalCommandRole> physical_command_role) {
   if (physical_command_role.has_value()) {
     switch (*physical_command_role) {
     case static_contract::PhysicalCommandRole::Ingress:
@@ -160,8 +159,8 @@ struct ExplicitProcessCvuTarget {
   throw std::invalid_argument(message);
 }
 
-std::optional<ExplicitProcessCvuTarget>
-explicit_prepost_target(const ProcessCvuStageRole role, const ProcessCvuOptions& options) {
+std::optional<ExplicitProcessCvuTarget> explicit_prepost_target(const ProcessCvuStageRole role,
+                                                                const ProcessCvuOptions& options) {
   switch (role) {
   case ProcessCvuStageRole::Pre:
     if (explicit_run_target_token(options.pre_run_target)) {
@@ -293,8 +292,8 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
   return caps;
 }
 
-ProcessCvuBackendCapabilities processcvu_backend_capabilities(
-    const ProcessCvuStagePayload& payload, std::string_view stage_identity) {
+ProcessCvuBackendCapabilities processcvu_backend_capabilities(const ProcessCvuStagePayload& payload,
+                                                              std::string_view stage_identity) {
   ProcessCvuBackendCapabilities caps = processcvu_backend_capabilities(payload);
   const auto role = processcvu_stage_role(payload, stage_identity, std::nullopt);
   if (role == ProcessCvuStageRole::Post && caps.supports_a65) {
@@ -305,15 +304,12 @@ ProcessCvuBackendCapabilities processcvu_backend_capabilities(
   return caps;
 }
 
-ProcessCvuBackendDecision
-resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
-                                    const ContractCompileInput& compile_input,
-                                    std::string_view stage_identity,
-                                    const std::optional<static_contract::PhysicalCommandRole>
-                                        physical_command_role) {
+ProcessCvuBackendDecision resolve_processcvu_backend_decision(
+    const ProcessCvuStagePayload& payload, const ContractCompileInput& compile_input,
+    std::string_view stage_identity,
+    const std::optional<static_contract::PhysicalCommandRole> physical_command_role) {
   ProcessCvuBackendDecision decision;
-  const auto stage_role =
-      processcvu_stage_role(payload, stage_identity, physical_command_role);
+  const auto stage_role = processcvu_stage_role(payload, stage_identity, physical_command_role);
   std::string requested_source = "legacy_or_env";
   if (explicit_run_target_token(payload.requested_run_target)) {
     decision.requested_run_target =
@@ -323,8 +319,8 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
     decision.requested_run_target = match->run_target;
     requested_source = match->source;
   } else if (physical_command_role.has_value()) {
-    decision.requested_run_target = normalize_processcvu_run_target_token_no_env(
-        compile_input.processcvu_requested_run_target);
+    decision.requested_run_target =
+        normalize_processcvu_run_target_token_no_env(compile_input.processcvu_requested_run_target);
     requested_source = "coarse_request";
   } else {
     decision.requested_run_target =
@@ -373,17 +369,15 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
   return decision;
 }
 
-void resolve_processcvu_run_target(ProcessCvuStagePayload* payload,
-                                   const ContractCompileInput& compile_input,
-                                   std::string_view stage_identity,
-                                   const std::optional<static_contract::PhysicalCommandRole>
-                                       physical_command_role) {
+void resolve_processcvu_run_target(
+    ProcessCvuStagePayload* payload, const ContractCompileInput& compile_input,
+    std::string_view stage_identity,
+    const std::optional<static_contract::PhysicalCommandRole> physical_command_role) {
   if (!payload) {
     return;
   }
-  const ProcessCvuBackendDecision decision =
-      resolve_processcvu_backend_decision(*payload, compile_input, stage_identity,
-                                          physical_command_role);
+  const ProcessCvuBackendDecision decision = resolve_processcvu_backend_decision(
+      *payload, compile_input, stage_identity, physical_command_role);
   payload->requested_run_target = decision.requested_run_target;
   payload->run_target = decision.effective_run_target;
   payload->resolved_exec_backend =

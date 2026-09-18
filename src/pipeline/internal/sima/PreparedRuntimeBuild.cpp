@@ -359,9 +359,8 @@ bool processcvu_stage_is_manifest_substitution_local(const StageStaticSpec& stag
          canonical_family == "detessellate" || canonical_family == "dequantize" ||
          canonical_family == "detessdequant" || canonical_family == "detesscast" ||
          canonical_family == "cast" || canonical_family == "casttess" ||
-         canonical_family == "feature_histogram" ||
-         canonical_family == "grider_fast" || canonical_family == "track_descriptor" ||
-         canonical_family == "track_klt";
+         canonical_family == "feature_histogram" || canonical_family == "grider_fast" ||
+         canonical_family == "track_descriptor" || canonical_family == "track_klt";
 }
 
 bool stage_is_graph_owned_local(const StageStaticSpec& stage) {
@@ -3568,8 +3567,8 @@ bool build_processmla_prepared_stage_from_manifest_stage_local(
   };
   const auto logical_input_contract = [&](const LogicalInputStaticSpec& logical) {
     simaai::neat::GraphTensorContract tensor;
-    tensor.tensor_index = logical.backend_input_index >= 0 ? logical.backend_input_index
-                                                           : logical.logical_index;
+    tensor.tensor_index =
+        logical.backend_input_index >= 0 ? logical.backend_input_index : logical.logical_index;
     tensor.physical_index = logical.physical_index;
     tensor.name = !logical.logical_name.empty() ? logical.logical_name : logical.backend_name;
     tensor.segment_name = logical.segment_name;
@@ -3583,8 +3582,8 @@ bool build_processmla_prepared_stage_from_manifest_stage_local(
   };
   const auto logical_output_contract = [&](const LogicalTensorStaticSpec& logical) {
     simaai::neat::GraphTensorContract tensor;
-    tensor.tensor_index = logical.backend_output_index >= 0 ? logical.backend_output_index
-                                                            : logical.tensor_index;
+    tensor.tensor_index =
+        logical.backend_output_index >= 0 ? logical.backend_output_index : logical.tensor_index;
     tensor.physical_index = logical.physical_index;
     tensor.name = !logical.logical_name.empty() ? logical.logical_name : logical.backend_name;
     tensor.segment_name = logical.segment_name;
@@ -3623,9 +3622,8 @@ bool build_processmla_prepared_stage_from_manifest_stage_local(
                               : physical.physical_index;
     tensor.physical_index = physical.physical_index;
     tensor.source_physical_index = physical.source_physical_index;
-    tensor.name = logical && !logical->logical_name.empty()
-                      ? logical->logical_name
-                      : physical.segment_name;
+    tensor.name =
+        logical && !logical->logical_name.empty() ? logical->logical_name : physical.segment_name;
     tensor.segment_name = physical.segment_name;
     tensor.dtype = logical ? logical->dtype : std::string{};
     tensor.shape = logical ? logical->shape : std::vector<std::int64_t>{};
@@ -3677,8 +3675,8 @@ bool build_processmla_prepared_stage_from_manifest_stage_local(
   // Preserve the complete compiler-authored publication contract, including
   // ordered output routes and quantization.  The bridge owns runtime object
   // construction; the manifest remains the sole physical/semantic authority.
-  if (!build_publish_contract_from_manifest_stage_local(
-          stage, &prepared.output_publish_contract, error_message)) {
+  if (!build_publish_contract_from_manifest_stage_local(stage, &prepared.output_publish_contract,
+                                                        error_message)) {
     return false;
   }
   simaai::gst::TensorBufferPreparedMetaTemplate meta_template;
@@ -4879,9 +4877,8 @@ bool build_graph_owned_prepared_stage_local(
 
   if (stage_is_processmla_local(transformed_stage) ||
       (original_stage && stage_is_processmla_local(*original_stage))) {
-    const StageStaticSpec& exact_stage = stage_is_processmla_local(transformed_stage)
-                                             ? transformed_stage
-                                             : *original_stage;
+    const StageStaticSpec& exact_stage =
+        stage_is_processmla_local(transformed_stage) ? transformed_stage : *original_stage;
     simaai::gst::ProcessMlaPreparedStage processmla_stage;
     if (!build_processmla_prepared_stage_from_manifest_stage_local(
             exact_stage, transformed_stage_key, &processmla_stage, error_message)) {

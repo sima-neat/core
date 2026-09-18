@@ -75,9 +75,8 @@ bool is_dense_order_preserving_view(const ValueSpec& root, const ValueSpec& prev
 
   std::uint64_t elements = 1U;
   for (const auto dimension : *view.logical_shape) {
-    if (dimension <= 0 ||
-        elements > std::numeric_limits<std::uint64_t>::max() /
-                       static_cast<std::uint64_t>(dimension)) {
+    if (dimension <= 0 || elements > std::numeric_limits<std::uint64_t>::max() /
+                                         static_cast<std::uint64_t>(dimension)) {
       return false;
     }
     elements *= static_cast<std::uint64_t>(dimension);
@@ -128,8 +127,8 @@ std::optional<std::uint32_t> cvu_semantic_op(const OpKind kind) {
   return std::nullopt;
 }
 
-std::optional<SimaCvuCapabilityAbiRecord>
-cvu_capability(const std::vector<OpId>& chain, const ModelExecutionPlan& plan) {
+std::optional<SimaCvuCapabilityAbiRecord> cvu_capability(const std::vector<OpId>& chain,
+                                                         const ModelExecutionPlan& plan) {
   if (chain.empty() || chain.size() > 2U) {
     return std::nullopt;
   }
@@ -143,8 +142,8 @@ cvu_capability(const std::vector<OpId>& chain, const ModelExecutionPlan& plan) {
     return std::nullopt;
   }
   SimaCvuCapabilityAbiRecord record{};
-  if (!sima_cvu_capability_abi_lookup_semantic_pattern(
-          static_cast<std::uint32_t>(chain.size()), *first, *second, &record) ||
+  if (!sima_cvu_capability_abi_lookup_semantic_pattern(static_cast<std::uint32_t>(chain.size()),
+                                                       *first, *second, &record) ||
       record.maximum_members == 0U) {
     return std::nullopt;
   }
@@ -160,9 +159,8 @@ bool is_groupable_cvu(const OpSpec& op, const ModelExecutionPlan& plan) {
 }
 
 std::string cvu_implementation_id(const SimaCvuCapabilityAbiRecord& capability) {
-  return "cvu.graph" + std::to_string(capability.graph_id) + "." +
-         capability.canonical_token + ".v" +
-         std::to_string(capability.descriptor_contract_version);
+  return "cvu.graph" + std::to_string(capability.graph_id) + "." + capability.canonical_token +
+         ".v" + std::to_string(capability.descriptor_contract_version);
 }
 
 std::string implementation_id(const OpSpec& op, const ModelExecutionPlan& plan) {
@@ -211,7 +209,8 @@ std::string canonical_dtype(std::string value) {
   std::string result;
   result.reserve(value.size());
   for (const auto character : value) {
-    if (character != '_' && character != '-' && !std::isspace(static_cast<unsigned char>(character))) {
+    if (character != '_' && character != '-' &&
+        !std::isspace(static_cast<unsigned char>(character))) {
       result.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(character))));
     }
   }
@@ -230,11 +229,9 @@ std::string canonical_dtype(std::string value) {
 bool value_has_dtype(const ModelExecutionPlan& plan, const ValueId value_id,
                      const std::string_view expected, std::string* detail) {
   const auto* value = plan.value(value_id);
-  if (!value || !value->logical_dtype ||
-      canonical_dtype(*value->logical_dtype) != expected) {
+  if (!value || !value->logical_dtype || canonical_dtype(*value->logical_dtype) != expected) {
     if (detail) {
-      *detail = value ? "value '" + value->name + "' must have dtype " +
-                            std::string(expected)
+      *detail = value ? "value '" + value->name + "' must have dtype " + std::string(expected)
                       : "fused transform references an absent value";
     }
     return false;
@@ -245,24 +242,21 @@ bool value_has_dtype(const ModelExecutionPlan& plan, const ValueId value_id,
 bool positive_quantization(const std::vector<QuantizationSpec>& params) {
   // Tensor-transform-pair ABI v1 carries one scale/zero-point per member. Do
   // not silently collapse an authored per-channel contract to its first row.
-  return params.size() == 1U &&
-         std::all_of(params.begin(), params.end(), [](const auto& param) {
+  return params.size() == 1U && std::all_of(params.begin(), params.end(), [](const auto& param) {
            return std::isfinite(param.scale) && param.scale > 0.0;
          });
 }
 
-bool validate_fused_member(const ModelExecutionPlan& plan,
-                           const std::vector<OpId>& chain,
+bool validate_fused_member(const ModelExecutionPlan& plan, const std::vector<OpId>& chain,
                            std::string* detail) {
-  if (chain.size() != 2U || chain[0] >= plan.ops().size() ||
-      chain[1] >= plan.ops().size()) {
+  if (chain.size() != 2U || chain[0] >= plan.ops().size() || chain[1] >= plan.ops().size()) {
     return record_error(detail, "fused transform must contain two valid operations");
   }
   const auto& first = plan.ops()[chain[0]];
   const auto& second = plan.ops()[chain[1]];
   if (first.processor != second.processor || first.processor != "EV74" ||
-      first.inputs.size() != 1U || first.outputs.size() != 1U ||
-      second.inputs.size() != 1U || second.outputs.size() != 1U ||
+      first.inputs.size() != 1U || first.outputs.size() != 1U || second.inputs.size() != 1U ||
+      second.outputs.size() != 1U ||
       !resolve_exact_private_ordered_relation_path(plan, first.id, second.id)) {
     return record_error(
         detail,
@@ -285,9 +279,8 @@ bool validate_fused_member(const ModelExecutionPlan& plan,
     const auto* quantize = std::get_if<QuantizeOpConfig>(&first.config);
     const auto* tessellate = std::get_if<TessellateOpConfig>(&second.config);
     if (!quantize || !tessellate || canonical_dtype(quantize->output_dtype) != "INT8" ||
-        canonical_dtype(tessellate->frame_type) != "INT8" ||
-        quantize->rounding.empty() || !positive_quantization(quantize->channel_params) ||
-        tessellate->slice_shape.empty() ||
+        canonical_dtype(tessellate->frame_type) != "INT8" || quantize->rounding.empty() ||
+        !positive_quantization(quantize->channel_params) || tessellate->slice_shape.empty() ||
         !value_has_dtype(plan, outer_input, "FP32", detail) ||
         !value_has_dtype(plan, intermediate, "INT8", detail) ||
         !value_has_dtype(plan, transformed_intermediate, "INT8", detail) ||
@@ -303,8 +296,7 @@ bool validate_fused_member(const ModelExecutionPlan& plan,
     const auto* cast = std::get_if<CastOpConfig>(&first.config);
     const auto* tessellate = std::get_if<TessellateOpConfig>(&second.config);
     if (!cast || !tessellate || canonical_dtype(cast->output_dtype) != "BF16" ||
-        canonical_dtype(tessellate->frame_type) != "BF16" ||
-        tessellate->slice_shape.empty() ||
+        canonical_dtype(tessellate->frame_type) != "BF16" || tessellate->slice_shape.empty() ||
         !value_has_dtype(plan, outer_input, "FP32", detail) ||
         !value_has_dtype(plan, intermediate, "BF16", detail) ||
         !value_has_dtype(plan, transformed_intermediate, "BF16", detail) ||
@@ -320,9 +312,8 @@ bool validate_fused_member(const ModelExecutionPlan& plan,
     const auto* detessellate = std::get_if<DetessellateOpConfig>(&first.config);
     const auto* cast = std::get_if<CastOpConfig>(&second.config);
     if (!detessellate || !cast || canonical_dtype(detessellate->frame_type) != "BF16" ||
-        canonical_dtype(cast->output_dtype) != "FP32" ||
-        detessellate->slice_shape.empty() || detessellate->frame_shape.empty() ||
-        !value_has_dtype(plan, outer_input, "BF16", detail) ||
+        canonical_dtype(cast->output_dtype) != "FP32" || detessellate->slice_shape.empty() ||
+        detessellate->frame_shape.empty() || !value_has_dtype(plan, outer_input, "BF16", detail) ||
         !value_has_dtype(plan, intermediate, "BF16", detail) ||
         !value_has_dtype(plan, transformed_intermediate, "BF16", detail) ||
         !value_has_dtype(plan, outer_output, "FP32", detail)) {
@@ -336,11 +327,9 @@ bool validate_fused_member(const ModelExecutionPlan& plan,
   if (first.kind == OpKind::Detessellate && second.kind == OpKind::Dequantize) {
     const auto* detessellate = std::get_if<DetessellateOpConfig>(&first.config);
     const auto* dequantize = std::get_if<DequantizeOpConfig>(&second.config);
-    if (!detessellate || !dequantize ||
-        canonical_dtype(detessellate->frame_type) != "INT8" ||
-        canonical_dtype(dequantize->input_dtype) != "INT8" ||
-        detessellate->slice_shape.empty() || detessellate->frame_shape.empty() ||
-        !positive_quantization(dequantize->channel_params) ||
+    if (!detessellate || !dequantize || canonical_dtype(detessellate->frame_type) != "INT8" ||
+        canonical_dtype(dequantize->input_dtype) != "INT8" || detessellate->slice_shape.empty() ||
+        detessellate->frame_shape.empty() || !positive_quantization(dequantize->channel_params) ||
         !value_has_dtype(plan, outer_input, "INT8", detail) ||
         !value_has_dtype(plan, intermediate, "INT8", detail) ||
         !value_has_dtype(plan, transformed_intermediate, "INT8", detail) ||
@@ -429,9 +418,10 @@ std::vector<OpId> ingress_lane(const ModelExecutionPlan& plan, const ProducerTab
   return reverse;
 }
 
-std::optional<OpId> next_groupable_cvu_consumer(
-    const ModelExecutionPlan& plan, const ConsumerTable& consumers,
-    const std::unordered_set<ValueId>& public_values, ValueId value_id) {
+std::optional<OpId> next_groupable_cvu_consumer(const ModelExecutionPlan& plan,
+                                                const ConsumerTable& consumers,
+                                                const std::unordered_set<ValueId>& public_values,
+                                                ValueId value_id) {
   for (std::size_t traversed = 0U; traversed <= plan.ops().size(); ++traversed) {
     if (value_id >= consumers.size() || public_values.contains(value_id) ||
         consumers[value_id].size() != 1U) {
@@ -456,17 +446,17 @@ std::optional<OpId> next_groupable_cvu_consumer(
 // boundary into its compiler-authored child order so every direct producer is
 // retained as one CVU member.  Materializing/ambiguous Pack and any branch or
 // public observation remain hard barriers.
-void expand_ingress_relation_frontier(
-    const ModelExecutionPlan& plan, const ProducerTable& producers,
-    const ConsumerTable& consumers, const ValueId value_id,
-    const OpId expected_consumer,
-    const std::unordered_set<ValueId>& public_values,
-    std::unordered_set<ValueId>* visiting,
-    std::vector<IngressFrontierValue>* frontier) {
+void expand_ingress_relation_frontier(const ModelExecutionPlan& plan,
+                                      const ProducerTable& producers,
+                                      const ConsumerTable& consumers, const ValueId value_id,
+                                      const OpId expected_consumer,
+                                      const std::unordered_set<ValueId>& public_values,
+                                      std::unordered_set<ValueId>* visiting,
+                                      std::vector<IngressFrontierValue>* frontier) {
   if (!visiting || !frontier || value_id >= producers.size() ||
       !visiting->emplace(value_id).second || public_values.contains(value_id) ||
-      consumers[value_id].size() != 1U ||
-      consumers[value_id].front() != expected_consumer || !producers[value_id]) {
+      consumers[value_id].size() != 1U || consumers[value_id].front() != expected_consumer ||
+      !producers[value_id]) {
     if (frontier && value_id < producers.size()) {
       frontier->push_back({value_id, expected_consumer});
     }
@@ -514,22 +504,18 @@ void expand_ingress_relation_frontier(
     frontier->push_back({value_id, expected_consumer});
     return;
   }
-  expand_ingress_relation_frontier(plan, producers, consumers,
-                                   relation.inputs.front(), relation.id,
+  expand_ingress_relation_frontier(plan, producers, consumers, relation.inputs.front(), relation.id,
                                    public_values, visiting, frontier);
 }
 
 std::vector<OpId> egress_lane(const ModelExecutionPlan& plan, const ConsumerTable& consumers,
-                              ValueId value_id,
-                              const std::unordered_set<ValueId>& public_values) {
+                              ValueId value_id, const std::unordered_set<ValueId>& public_values) {
   std::vector<OpId> result;
   std::optional<OpId> previous;
   while (value_id < consumers.size()) {
-    const auto consumer_id =
-        next_groupable_cvu_consumer(plan, consumers, public_values, value_id);
+    const auto consumer_id = next_groupable_cvu_consumer(plan, consumers, public_values, value_id);
     if (!consumer_id ||
-        (previous &&
-         !resolve_exact_private_ordered_relation_path(plan, *previous, *consumer_id))) {
+        (previous && !resolve_exact_private_ordered_relation_path(plan, *previous, *consumer_id))) {
       break;
     }
     const auto& consumer = plan.ops()[*consumer_id];
@@ -553,15 +539,13 @@ std::vector<OpId> egress_lane(const ModelExecutionPlan& plan, const ConsumerTabl
 // through only the exact relation forms whose output order is compiler-authored
 // and preserve that order as the physical member ordinal.  Branches, joins,
 // public intermediates, and materializing Pack operations remain barriers.
-void expand_egress_relation_frontier(const ModelExecutionPlan& plan,
-                                     const ConsumerTable& consumers,
+void expand_egress_relation_frontier(const ModelExecutionPlan& plan, const ConsumerTable& consumers,
                                      const ValueId value_id,
                                      const std::unordered_set<ValueId>& public_values,
                                      std::unordered_set<ValueId>* visiting,
                                      std::vector<ValueId>* frontier) {
-  if (!visiting || !frontier || value_id >= consumers.size() ||
-      public_values.contains(value_id) || !visiting->emplace(value_id).second ||
-      consumers[value_id].size() != 1U) {
+  if (!visiting || !frontier || value_id >= consumers.size() || public_values.contains(value_id) ||
+      !visiting->emplace(value_id).second || consumers[value_id].size() != 1U) {
     if (frontier && value_id < consumers.size()) {
       frontier->push_back(value_id);
     }
@@ -584,16 +568,14 @@ void expand_egress_relation_frontier(const ModelExecutionPlan& plan,
   // PassThrough may be crossed only as exact one-to-one views.  A
   // relation-only Pack is a fan-in and cannot be traversed from one input.
   const bool ordered_unpack = relation.kind == OpKind::Unpack;
-  const bool exact_one_to_one = relation.kind != OpKind::Pack &&
-                                relation.outputs.size() == 1U;
+  const bool exact_one_to_one = relation.kind != OpKind::Pack && relation.outputs.size() == 1U;
   if (!ordered_unpack && !exact_one_to_one) {
     frontier->push_back(value_id);
     return;
   }
 
   for (const auto output : relation.outputs) {
-    expand_egress_relation_frontier(plan, consumers, output, public_values, visiting,
-                                    frontier);
+    expand_egress_relation_frontier(plan, consumers, output, public_values, visiting, frontier);
   }
 }
 
@@ -613,8 +595,8 @@ void implementation_flags(const ModelExecutionPlan& plan, const std::vector<OpId
   }
 }
 
-std::optional<std::vector<ReducedMember>>
-reduce_lane(const ModelExecutionPlan& plan, const Lane& lane, std::string* error) {
+std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& plan,
+                                                      const Lane& lane, std::string* error) {
   std::vector<ReducedMember> result;
   std::vector<std::optional<SimaCvuCapabilityAbiRecord>> pair_matches(
       lane.operations.size() > 1U ? lane.operations.size() - 1U : 0U);
@@ -624,8 +606,7 @@ reduce_lane(const ModelExecutionPlan& plan, const Lane& lane, std::string* error
     const bool exact_private_edge =
         resolve_exact_private_ordered_relation_path(plan, first.id, second.id);
     if (exact_private_edge) {
-      pair_matches[index] =
-          cvu_capability(std::vector<OpId>{first.id, second.id}, plan);
+      pair_matches[index] = cvu_capability(std::vector<OpId>{first.id, second.id}, plan);
     }
   }
   for (std::size_t index = 1; index < pair_matches.size(); ++index) {
@@ -648,8 +629,8 @@ reduce_lane(const ModelExecutionPlan& plan, const Lane& lane, std::string* error
       std::string detail;
       if (!validate_fused_member(plan, candidate, &detail)) {
         if (pair_matches[index]->mandatory_when_matched != 0U) {
-          record_error(error, "mandatory fused CVU chain '" + first.name + " -> " +
-                                  second.name + "' is invalid: " + detail);
+          record_error(error, "mandatory fused CVU chain '" + first.name + " -> " + second.name +
+                                  "' is invalid: " + detail);
           return std::nullopt;
         }
       } else {
@@ -676,8 +657,7 @@ reduce_lane(const ModelExecutionPlan& plan, const Lane& lane, std::string* error
     member.capability = *capability;
     member.batch = batch_for(first);
     if (member.batch <= 0 ||
-        static_cast<std::uint64_t>(member.batch) >
-            std::numeric_limits<std::uint32_t>::max()) {
+        static_cast<std::uint64_t>(member.batch) > std::numeric_limits<std::uint32_t>::max()) {
       record_error(error, "physical lowering found an invalid CVU batch contract");
       return std::nullopt;
     }
@@ -689,14 +669,11 @@ reduce_lane(const ModelExecutionPlan& plan, const Lane& lane, std::string* error
   return result;
 }
 
-using CohortKey =
-    std::tuple<std::size_t, std::uint32_t, std::int64_t, std::string, bool, bool>;
+using CohortKey = std::tuple<std::size_t, std::uint32_t, std::int64_t, std::string, bool, bool>;
 
 bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes,
-                         const bool align_from_boundary_end,
-                         const PhysicalCommandRole role,
-                         std::unordered_set<OpId>* claimed,
-                         std::vector<DraftCommand>* drafts,
+                         const bool align_from_boundary_end, const PhysicalCommandRole role,
+                         std::unordered_set<OpId>* claimed, std::vector<DraftCommand>* drafts,
                          PhysicalCohortId* next_cohort_id, std::string* error) {
   std::map<CohortKey, std::vector<ReducedMember>> cohorts;
   for (const auto& lane : lanes) {
@@ -706,10 +683,9 @@ bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes
     }
     for (std::size_t index = 0; index < reduced->size(); ++index) {
       auto& member = (*reduced)[index];
-      const auto boundary_distance =
-          align_from_boundary_end ? reduced->size() - index - 1U : index;
-      cohorts[{boundary_distance, member.capability.graph_id, member.batch,
-               member.processor, member.align_c16, member.cblock}]
+      const auto boundary_distance = align_from_boundary_end ? reduced->size() - index - 1U : index;
+      cohorts[{boundary_distance, member.capability.graph_id, member.batch, member.processor,
+               member.align_c16, member.cblock}]
           .push_back(std::move(member));
     }
   }
@@ -722,8 +698,8 @@ bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes
     const auto& capability = cohort.front().capability;
     const auto cohort_id = (*next_cohort_id)++;
     for (std::size_t begin = 0; begin < cohort.size(); begin += capability.maximum_members) {
-      const auto end = std::min(cohort.size(),
-                                begin + static_cast<std::size_t>(capability.maximum_members));
+      const auto end =
+          std::min(cohort.size(), begin + static_cast<std::size_t>(capability.maximum_members));
       DraftCommand draft;
       draft.cohort_id = cohort_id;
       draft.engine = PhysicalEngine::Cvu;
@@ -734,9 +710,9 @@ bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes
       draft.maximum_members = capability.maximum_members;
       for (std::size_t index = begin; index < end; ++index) {
         auto& member = cohort[index].physical;
-        const auto already_claimed = std::count_if(
-            member.semantic_chain.begin(), member.semantic_chain.end(),
-            [&](const auto op_id) { return claimed->contains(op_id); });
+        const auto already_claimed =
+            std::count_if(member.semantic_chain.begin(), member.semantic_chain.end(),
+                          [&](const auto op_id) { return claimed->contains(op_id); });
         if (already_claimed == static_cast<std::ptrdiff_t>(member.semantic_chain.size())) {
           continue;
         }
@@ -768,14 +744,12 @@ bool is_address_relation_op(const OpSpec& op) noexcept {
 }
 
 bool resolve_exact_private_ordered_relation_path(const ModelExecutionPlan& plan,
-                                                 const OpId first_id,
-                                                 const OpId second_id,
+                                                 const OpId first_id, const OpId second_id,
                                                  std::vector<ValueId>* internal_values) {
   if (internal_values) {
     internal_values->clear();
   }
-  if (first_id >= plan.ops().size() || second_id >= plan.ops().size() ||
-      first_id == second_id) {
+  if (first_id >= plan.ops().size() || second_id >= plan.ops().size() || first_id == second_id) {
     return false;
   }
   const auto& first = plan.ops()[first_id];
@@ -832,10 +806,9 @@ bool resolve_exact_private_ordered_relation_path(const ModelExecutionPlan& plan,
       return false;
     }
     const auto& relation = plan.ops()[*consumer_id];
-    if (!is_relation(relation) || relation.inputs.size() != 1U ||
-        relation.outputs.size() != 1U || relation.inputs.front() != cursor ||
-        !relation.dependencies.empty() || relation.sequence <= first.sequence ||
-        relation.sequence >= second.sequence) {
+    if (!is_relation(relation) || relation.inputs.size() != 1U || relation.outputs.size() != 1U ||
+        relation.inputs.front() != cursor || !relation.dependencies.empty() ||
+        relation.sequence <= first.sequence || relation.sequence >= second.sequence) {
       return false;
     }
     const auto next_id = relation.outputs.front();
@@ -880,37 +853,32 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
   std::vector<DraftCommand> drafts;
   PhysicalCohortId next_cohort_id = 0U;
   const auto mla_count = static_cast<std::size_t>(
-      std::count_if(ops.begin(), ops.end(), [](const auto& op) {
-        return op.kind == OpKind::Mla;
-      }));
+      std::count_if(ops.begin(), ops.end(), [](const auto& op) { return op.kind == OpKind::Mla; }));
   std::size_t mla_ordinal = 0U;
   for (const auto& mla : ops) {
     if (mla.kind != OpKind::Mla) {
       continue;
     }
-    const auto ingress_role = mla_ordinal == 0U ? PhysicalCommandRole::Ingress
-                                                : PhysicalCommandRole::Interstitial;
-    const auto egress_role = mla_ordinal + 1U == mla_count
-                                 ? PhysicalCommandRole::Egress
-                                 : PhysicalCommandRole::Interstitial;
+    const auto ingress_role =
+        mla_ordinal == 0U ? PhysicalCommandRole::Ingress : PhysicalCommandRole::Interstitial;
+    const auto egress_role = mla_ordinal + 1U == mla_count ? PhysicalCommandRole::Egress
+                                                           : PhysicalCommandRole::Interstitial;
     std::vector<Lane> ingress;
     std::vector<IngressFrontierValue> ingress_frontier;
     for (const auto input : mla.inputs) {
       std::unordered_set<ValueId> visiting;
-      expand_ingress_relation_frontier(semantic, producers, consumers, input, mla.id,
-                                       public_values, &visiting, &ingress_frontier);
+      expand_ingress_relation_frontier(semantic, producers, consumers, input, mla.id, public_values,
+                                       &visiting, &ingress_frontier);
     }
     ingress.reserve(ingress_frontier.size());
     for (std::size_t ordinal = 0; ordinal < ingress_frontier.size(); ++ordinal) {
       ingress.push_back(
           {static_cast<std::uint32_t>(ordinal),
-           ingress_lane(semantic, producers, consumers,
-                        ingress_frontier[ordinal].value_id,
-                        ingress_frontier[ordinal].expected_consumer,
-                        public_values)});
+           ingress_lane(semantic, producers, consumers, ingress_frontier[ordinal].value_id,
+                        ingress_frontier[ordinal].expected_consumer, public_values)});
     }
-    if (!add_aligned_cohorts(semantic, std::move(ingress), true, ingress_role,
-                             &claimed, &drafts, &next_cohort_id, error)) {
+    if (!add_aligned_cohorts(semantic, std::move(ingress), true, ingress_role, &claimed, &drafts,
+                             &next_cohort_id, error)) {
       return std::nullopt;
     }
 
@@ -923,12 +891,11 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     std::vector<Lane> egress;
     egress.reserve(egress_frontier.size());
     for (std::size_t ordinal = 0; ordinal < egress_frontier.size(); ++ordinal) {
-      egress.push_back(
-          {static_cast<std::uint32_t>(ordinal),
-           egress_lane(semantic, consumers, egress_frontier[ordinal], public_values)});
+      egress.push_back({static_cast<std::uint32_t>(ordinal),
+                        egress_lane(semantic, consumers, egress_frontier[ordinal], public_values)});
     }
-    if (!add_aligned_cohorts(semantic, std::move(egress), false, egress_role,
-                             &claimed, &drafts, &next_cohort_id, error)) {
+    if (!add_aligned_cohorts(semantic, std::move(egress), false, egress_role, &claimed, &drafts,
+                             &next_cohort_id, error)) {
       return std::nullopt;
     }
     ++mla_ordinal;
@@ -946,8 +913,8 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
         first.outputs.size() != 1U || public_values.contains(first.outputs.front())) {
       continue;
     }
-    const auto second_id = next_groupable_cvu_consumer(
-        semantic, consumers, public_values, first.outputs.front());
+    const auto second_id =
+        next_groupable_cvu_consumer(semantic, consumers, public_values, first.outputs.front());
     if (!second_id || *second_id >= ops.size() || claimed.contains(*second_id) ||
         !resolve_exact_private_ordered_relation_path(semantic, first.id, *second_id) ||
         !cvu_capability(std::vector<OpId>{first.id, *second_id}, semantic)) {
@@ -955,15 +922,16 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     }
     if (!residual_pair_ops.emplace(first.id).second ||
         !residual_pair_ops.emplace(*second_id).second) {
-      record_error(error, "overlapping mandatory CVU patterns require a registered longer implementation");
+      record_error(error,
+                   "overlapping mandatory CVU patterns require a registered longer implementation");
       return std::nullopt;
     }
     residual_pairs.emplace_back(first.id, *second_id);
   }
   for (const auto& [first, second] : residual_pairs) {
     if (!add_aligned_cohorts(semantic, {{0U, {first, second}}}, false,
-                             PhysicalCommandRole::Interstitial, &claimed, &drafts,
-                             &next_cohort_id, error)) {
+                             PhysicalCommandRole::Interstitial, &claimed, &drafts, &next_cohort_id,
+                             error)) {
       return std::nullopt;
     }
   }
@@ -977,21 +945,20 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     }
     const auto identity = implementation_id(op, semantic);
     if (identity.empty()) {
-      record_error(error, "physical lowering has no implementation for semantic operation '" + op.name +
-                      "'");
+      record_error(error, "physical lowering has no implementation for semantic operation '" +
+                              op.name + "'");
       return std::nullopt;
     }
     DraftCommand draft;
     draft.cohort_id = next_cohort_id++;
     draft.stable_order = op.sequence;
     draft.engine = engine_for(op);
-    draft.role = draft.engine == PhysicalEngine::Cvu
-                     ? PhysicalCommandRole::Interstitial
-                     : PhysicalCommandRole::NonCvu;
+    draft.role = draft.engine == PhysicalEngine::Cvu ? PhysicalCommandRole::Interstitial
+                                                     : PhysicalCommandRole::NonCvu;
     draft.implementation_id = identity;
     const auto batch = batch_for(op);
-    if (batch <= 0 || static_cast<std::uint64_t>(batch) >
-                          std::numeric_limits<std::uint32_t>::max()) {
+    if (batch <= 0 ||
+        static_cast<std::uint64_t>(batch) > std::numeric_limits<std::uint32_t>::max()) {
       record_error(error, "physical lowering found an invalid command batch contract");
       return std::nullopt;
     }
@@ -1145,8 +1112,7 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     std::sort(command.successors.begin(), command.successors.end());
     digest << command.id << '@' << command.cohort_id << ':'
            << static_cast<unsigned int>(command.role) << ':' << command.graph_id << ':'
-           << command.batch_size << ':'
-           << command.implementation_id << ':'
+           << command.batch_size << ':' << command.implementation_id << ':'
            << command.maximum_members << ':';
     for (const auto& member : command.members) {
       digest << '[' << member.ordinal << ':';
@@ -1183,15 +1149,13 @@ minimum_cvu_member_capacity(const PhysicalExecutionPlan& plan) noexcept {
     if (command.engine != PhysicalEngine::Cvu || command.maximum_members == 0U) {
       continue;
     }
-    result = result ? std::min(*result, command.maximum_members)
-                    : command.maximum_members;
+    result = result ? std::min(*result, command.maximum_members) : command.maximum_members;
   }
   return result;
 }
 
 PhysicalExecutionTracker::PhysicalExecutionTracker(const PhysicalExecutionPlan* plan)
-    : plan_(plan), states_(plan ? plan->commands.size() : 0U,
-                          PhysicalCommandState::Pending) {}
+    : plan_(plan), states_(plan ? plan->commands.size() : 0U, PhysicalCommandState::Pending) {}
 
 std::optional<PhysicalExecutionTracker>
 PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string* error) {
@@ -1200,8 +1164,7 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     return std::nullopt;
   }
   using CvuCohortContract =
-      std::tuple<PhysicalCommandRole, std::uint32_t, std::uint32_t, std::string,
-                 std::uint32_t>;
+      std::tuple<PhysicalCommandRole, std::uint32_t, std::uint32_t, std::string, std::uint32_t>;
   std::unordered_map<PhysicalCohortId, CvuCohortContract> cvu_cohorts;
   for (std::size_t index = 0; index < plan.commands.size(); ++index) {
     const auto& command = plan.commands[index];
@@ -1210,11 +1173,11 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
       return std::nullopt;
     }
     SimaCvuCapabilityAbiRecord capability{};
-    const bool valid_cvu_identity =
-        command.engine == PhysicalEngine::Cvu && command.graph_id != 0U &&
-        sima_cvu_capability_abi_lookup(command.graph_id, &capability) &&
-        command.maximum_members == capability.maximum_members &&
-        command.implementation_id == cvu_implementation_id(capability);
+    const bool valid_cvu_identity = command.engine == PhysicalEngine::Cvu &&
+                                    command.graph_id != 0U &&
+                                    sima_cvu_capability_abi_lookup(command.graph_id, &capability) &&
+                                    command.maximum_members == capability.maximum_members &&
+                                    command.implementation_id == cvu_implementation_id(capability);
     if (command.batch_size == 0U || command.members.empty() ||
         (command.engine == PhysicalEngine::Cvu &&
          (command.role == PhysicalCommandRole::NonCvu || !valid_cvu_identity ||
@@ -1227,8 +1190,7 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     }
     if (command.engine == PhysicalEngine::Cvu) {
       const CvuCohortContract contract{command.role, command.graph_id, command.batch_size,
-                                       command.implementation_id,
-                                       command.maximum_members};
+                                       command.implementation_id, command.maximum_members};
       const auto [found, inserted] = cvu_cohorts.emplace(command.cohort_id, contract);
       if (!inserted && found->second != contract) {
         record_error(error, "physical execution tracker found an inconsistent CVU cohort");
@@ -1267,8 +1229,8 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     for (const auto predecessor : command.predecessors) {
       if (predecessor >= index ||
           std::find(plan.commands[predecessor].successors.begin(),
-                    plan.commands[predecessor].successors.end(), command.id) ==
-              plan.commands[predecessor].successors.end()) {
+                    plan.commands[predecessor].successors.end(),
+                    command.id) == plan.commands[predecessor].successors.end()) {
         record_error(error, "physical execution tracker found a non-topological predecessor");
         return std::nullopt;
       }
@@ -1276,8 +1238,8 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     for (const auto successor : command.successors) {
       if (successor <= index || successor >= plan.commands.size() ||
           std::find(plan.commands[successor].predecessors.begin(),
-                    plan.commands[successor].predecessors.end(), command.id) ==
-              plan.commands[successor].predecessors.end()) {
+                    plan.commands[successor].predecessors.end(),
+                    command.id) == plan.commands[successor].predecessors.end()) {
         record_error(error, "physical execution tracker found an invalid successor");
         return std::nullopt;
       }
@@ -1292,21 +1254,23 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
       return std::nullopt;
     }
   }
-  if (error) error->clear();
+  if (error)
+    error->clear();
   return PhysicalExecutionTracker(&plan);
 }
 
 std::optional<PhysicalCommandId> PhysicalExecutionTracker::next_ready() const noexcept {
-  if (!plan_) return std::nullopt;
+  if (!plan_)
+    return std::nullopt;
   for (const auto& command : plan_->commands) {
-    if (ready(command.id)) return command.id;
+    if (ready(command.id))
+      return command.id;
   }
   return std::nullopt;
 }
 
 bool PhysicalExecutionTracker::ready(const PhysicalCommandId id) const noexcept {
-  if (!plan_ || id >= states_.size() ||
-      states_[id] != PhysicalCommandState::Pending) {
+  if (!plan_ || id >= states_.size() || states_[id] != PhysicalCommandState::Pending) {
     return false;
   }
   const auto& command = plan_->commands[id];
@@ -1316,31 +1280,29 @@ bool PhysicalExecutionTracker::ready(const PhysicalCommandId id) const noexcept 
                      });
 }
 
-bool PhysicalExecutionTracker::claim(const PhysicalCommandId id,
-                                     std::string* error) noexcept {
+bool PhysicalExecutionTracker::claim(const PhysicalCommandId id, std::string* error) noexcept {
   if (!ready(id)) {
     return record_error(error, "physical command is not ready");
   }
   states_[id] = PhysicalCommandState::Submitted;
-  if (error) error->clear();
+  if (error)
+    error->clear();
   return true;
 }
 
-bool PhysicalExecutionTracker::complete(const PhysicalCommandId id,
-                                        std::string* error) noexcept {
+bool PhysicalExecutionTracker::complete(const PhysicalCommandId id, std::string* error) noexcept {
   if (id >= states_.size() || states_[id] != PhysicalCommandState::Submitted) {
     return record_error(error, "physical completion does not name a submitted command");
   }
   states_[id] = PhysicalCommandState::Completed;
-  if (error) error->clear();
+  if (error)
+    error->clear();
   return true;
 }
 
-bool PhysicalExecutionTracker::fail(const PhysicalCommandId id,
-                                    std::string* error) noexcept {
+bool PhysicalExecutionTracker::fail(const PhysicalCommandId id, std::string* error) noexcept {
   if (!plan_ || id >= states_.size() || states_[id] != PhysicalCommandState::Submitted) {
-    return record_error(error,
-                                 "physical failure does not name a submitted command");
+    return record_error(error, "physical failure does not name a submitted command");
   }
   states_[id] = PhysicalCommandState::Failed;
   // A frame is atomic at publication. Once any command fails, starting more
@@ -1352,20 +1314,19 @@ bool PhysicalExecutionTracker::fail(const PhysicalCommandId id,
       state = PhysicalCommandState::Blocked;
     }
   }
-  if (error) error->clear();
+  if (error)
+    error->clear();
   return true;
 }
 
-PhysicalCommandState
-PhysicalExecutionTracker::state(const PhysicalCommandId id) const noexcept {
+PhysicalCommandState PhysicalExecutionTracker::state(const PhysicalCommandId id) const noexcept {
   return id < states_.size() ? states_[id] : PhysicalCommandState::Blocked;
 }
 
 bool PhysicalExecutionTracker::succeeded() const noexcept {
-  return !states_.empty() &&
-         std::all_of(states_.begin(), states_.end(), [](const auto state) {
-           return state == PhysicalCommandState::Completed;
-         });
+  return !states_.empty() && std::all_of(states_.begin(), states_.end(), [](const auto state) {
+    return state == PhysicalCommandState::Completed;
+  });
 }
 
 bool PhysicalExecutionTracker::terminal() const noexcept {

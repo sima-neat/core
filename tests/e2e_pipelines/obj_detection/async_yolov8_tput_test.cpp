@@ -395,8 +395,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     step_log("async: before warmup");
     const auto warmup_start = std::chrono::steady_clock::now();
     for (int i = 0; i < cfg.warm; ++i) {
-      (void)async.run(ev74_inputs[static_cast<std::size_t>(i % input_pool_depth)],
-                      warm_timeout_ms);
+      (void)async.run(ev74_inputs[static_cast<std::size_t>(i % input_pool_depth)], warm_timeout_ms);
     }
     const auto warmup_end = std::chrono::steady_clock::now();
     if (profile.enabled) {
@@ -699,8 +698,7 @@ int main(int argc, char** argv) {
     cfg.iters = std::max(1, env_int("SIMA_ASYNC_YOLOV8_ITERS", cfg.iters));
     cfg.warm = std::max(0, env_int("SIMA_ASYNC_YOLOV8_WARM", cfg.warm));
     cfg.inflight = std::max(1, env_int("SIMA_ASYNC_YOLOV8_INFLIGHT", cfg.inflight));
-    cfg.queue_depth =
-        std::max(1, env_int("SIMA_ASYNC_YOLOV8_QUEUE_DEPTH", cfg.queue_depth));
+    cfg.queue_depth = std::max(1, env_int("SIMA_ASYNC_YOLOV8_QUEUE_DEPTH", cfg.queue_depth));
     cfg.excluded_preproc_dispatches =
         std::max(0, env_int("SIMA_ASYNC_YOLOV8_EXCLUDE_PREPROC_DISPATCHES",
                             cfg.excluded_preproc_dispatches));

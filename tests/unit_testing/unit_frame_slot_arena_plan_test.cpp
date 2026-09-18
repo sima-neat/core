@@ -12,13 +12,12 @@ namespace {
 
 int failures = 0;
 
-#define CHECK(expr)                                                            \
-  do {                                                                         \
-    if (!(expr)) {                                                             \
-      std::cerr << __FILE__ << ':' << __LINE__ << ": CHECK failed: " #expr    \
-                << '\n';                                                       \
-      ++failures;                                                              \
-    }                                                                          \
+#define CHECK(expr)                                                                                \
+  do {                                                                                             \
+    if (!(expr)) {                                                                                 \
+      std::cerr << __FILE__ << ':' << __LINE__ << ": CHECK failed: " #expr << '\n';                \
+      ++failures;                                                                                  \
+    }                                                                                              \
   } while (false)
 
 sc::ValueSpec value(sc::ValueId id, std::string name, std::uint64_t bytes) {
@@ -33,9 +32,8 @@ sc::ModelExecutionPlan make_plan() {
   sc::ModelExecutionPlanData data;
   data.contract_version = "arena-test-v1";
   data.values = {
-      value(0, "input0", 64),  value(1, "input1", 64),
-      value(2, "ifm0", 1024), value(3, "ifm1", 2048),
-      value(4, "ofm0", 1536), value(5, "ofm1", 512),
+      value(0, "input0", 64), value(1, "input1", 64), value(2, "ifm0", 1024),
+      value(3, "ifm1", 2048), value(4, "ofm0", 1536), value(5, "ofm1", 512),
       value(6, "out0", 768),  value(7, "out1", 2304),
   };
   data.model_inputs = {0, 1};
@@ -75,17 +73,13 @@ sc::ModelExecutionPlan make_plan() {
 
   data.backend_ports = {
       {0, sc::BackendPortDirection::Input, 0, "ifm0", 2, 1024, 4096,
-       sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::ReadOnly},
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly},
       {0, sc::BackendPortDirection::Input, 1, "ifm1", 3, 2048, 4096,
-       sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::ReadOnly},
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly},
       {0, sc::BackendPortDirection::Output, 0, "ofm0", 4, 1536, 8192,
-       sc::BackendPortAlignmentAuthority::Contract,
-       sc::BackendPortAccess::WriteOnly},
+       sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::WriteOnly},
       {0, sc::BackendPortDirection::Output, 1, "ofm1", 5, 512, 4096,
-       sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::WriteOnly},
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly},
   };
   data.model_outputs = {{0, "out0", 6}, {1, "out1", 7}};
 
@@ -102,9 +96,8 @@ sc::ModelExecutionPlan make_staggered_read_plan() {
   sc::ModelExecutionPlanData data;
   data.contract_version = "arena-read-test-v1";
   data.values = {
-      value(0, "input", 64), value(1, "ofm0", 4096),
-      value(2, "ofm1", 4096), value(3, "view0", 4096),
-      value(4, "post0", 4096), value(5, "view1", 4096),
+      value(0, "input", 64),   value(1, "ofm0", 4096),  value(2, "ofm1", 4096),
+      value(3, "view0", 4096), value(4, "post0", 4096), value(5, "view1", 4096),
       value(6, "post1", 4096),
   };
   data.values[3].logical_shape = sc::TensorShape{4096};
@@ -113,8 +106,7 @@ sc::ModelExecutionPlan make_staggered_read_plan() {
   data.values[5].read_expression = sc::ReadExpression{2, 0, {1}};
   data.model_inputs = {0};
 
-  const auto add = [&](sc::OpKind kind, std::string name,
-                       std::vector<sc::ValueId> inputs,
+  const auto add = [&](sc::OpKind kind, std::string name, std::vector<sc::ValueId> inputs,
                        std::vector<sc::ValueId> outputs, sc::OpConfig config) {
     sc::OpSpec op;
     op.id = static_cast<sc::OpId>(data.ops.size());
@@ -127,24 +119,18 @@ sc::ModelExecutionPlan make_staggered_read_plan() {
     op.config = std::move(config);
     data.ops.push_back(std::move(op));
   };
-  add(sc::OpKind::Mla, "mla", {0}, {1, 2},
-      sc::MlaOpConfig{"model.elf", 4});
+  add(sc::OpKind::Mla, "mla", {0}, {1, 2}, sc::MlaOpConfig{"model.elf", 4});
   add(sc::OpKind::Slice, "slice0", {1}, {3}, sc::SliceOpConfig{});
-  add(sc::OpKind::Dequantize, "post0", {3}, {4},
-      sc::DequantizeOpConfig{});
+  add(sc::OpKind::Dequantize, "post0", {3}, {4}, sc::DequantizeOpConfig{});
   add(sc::OpKind::Slice, "slice1", {2}, {5}, sc::SliceOpConfig{});
-  add(sc::OpKind::Dequantize, "post1", {5}, {6},
-      sc::DequantizeOpConfig{});
+  add(sc::OpKind::Dequantize, "post1", {5}, {6}, sc::DequantizeOpConfig{});
   data.backend_ports = {
       {0, sc::BackendPortDirection::Input, 0, "ifm0", 0, 64, 4096,
-       sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::ReadOnly},
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly},
       {0, sc::BackendPortDirection::Output, 0, "ofm0", 1, 4096, 4096,
-       sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::WriteOnly},
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly},
       {0, sc::BackendPortDirection::Output, 1, "ofm1", 2, 4096, 4096,
-       sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::WriteOnly},
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly},
   };
   data.model_outputs = {{0, "post0", 4}, {1, "post1", 6}};
   std::string error;
@@ -230,16 +216,14 @@ sc::ModelExecutionPlan make_fused_quanttess_arena_plan(std::size_t lanes,
   mla.config = sc::MlaOpConfig{"model.elf", 4};
   data.ops.push_back(std::move(mla));
   for (std::size_t lane = 0; lane < lanes; ++lane) {
-    data.backend_ports.push_back(
-        {0U, sc::BackendPortDirection::Input, lane, "ifm_" + std::to_string(lane),
-         (*final_tess)[lane], 16U, 4096U,
-         sc::BackendPortAlignmentAuthority::LegacyPolicy,
-         sc::BackendPortAccess::ReadOnly});
+    data.backend_ports.push_back({0U, sc::BackendPortDirection::Input, lane,
+                                  "ifm_" + std::to_string(lane), (*final_tess)[lane], 16U, 4096U,
+                                  sc::BackendPortAlignmentAuthority::LegacyPolicy,
+                                  sc::BackendPortAccess::ReadOnly});
   }
-  data.backend_ports.push_back(
-      {0U, sc::BackendPortDirection::Output, 0U, "ofm", mla_output, 16U, 4096U,
-       sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::WriteOnly});
+  data.backend_ports.push_back({0U, sc::BackendPortDirection::Output, 0U, "ofm", mla_output, 16U,
+                                4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
+                                sc::BackendPortAccess::WriteOnly});
   data.model_outputs = {{0U, "mla_output", mla_output}};
   std::string error;
   auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
@@ -250,9 +234,10 @@ sc::ModelExecutionPlan make_fused_quanttess_arena_plan(std::size_t lanes,
   return std::move(*plan);
 }
 
-sc::ModelExecutionPlan make_producer_direct_pack_plan(
-    std::size_t lanes, std::vector<sc::ValueId>* intermediates,
-    std::vector<sc::ValueId>* producer_outputs, sc::ValueId* parent_value) {
+sc::ModelExecutionPlan make_producer_direct_pack_plan(std::size_t lanes,
+                                                      std::vector<sc::ValueId>* intermediates,
+                                                      std::vector<sc::ValueId>* producer_outputs,
+                                                      sc::ValueId* parent_value) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "arena-direct-pack-v1";
   std::vector<sc::ValueId> inputs;
@@ -292,9 +277,9 @@ sc::ModelExecutionPlan make_producer_direct_pack_plan(
     item.logical_dtype = "INT8";
     item.logical_shape = sc::TensorShape{1, 1, 1, 16};
     item.representation = sc::ValueRepresentation::Tessellated;
-    item.storage_binding = sc::StorageBinding{
-        sc::StorageBindingKind::Root, shared_parent, lane * 16U, 16U, {},
-        sc::StorageAccess::WriteOnly, std::nullopt};
+    item.storage_binding =
+        sc::StorageBinding{sc::StorageBindingKind::Root, shared_parent, lane * 16U, 16U, {},
+                           sc::StorageAccess::WriteOnly, std::nullopt};
     data.values.push_back(std::move(item));
     producer_outputs->push_back(id);
     sc::OpSpec tess;
@@ -313,20 +298,18 @@ sc::ModelExecutionPlan make_producer_direct_pack_plan(
   *parent_value = static_cast<sc::ValueId>(data.values.size());
   auto parent = value(*parent_value, "packed_parent", lanes * 16U);
   parent.logical_dtype = "INT8";
-  parent.logical_shape = sc::TensorShape{1, 1, 1,
-                                         static_cast<std::int64_t>(lanes * 16U)};
+  parent.logical_shape = sc::TensorShape{1, 1, 1, static_cast<std::int64_t>(lanes * 16U)};
   parent.representation = sc::ValueRepresentation::Packed;
-  parent.storage_binding = sc::StorageBinding{
-      sc::StorageBindingKind::Root, shared_parent, 0U, lanes * 16U, {},
-      sc::StorageAccess::ReadWrite, std::nullopt};
+  parent.storage_binding =
+      sc::StorageBinding{sc::StorageBindingKind::Root, shared_parent, 0U, lanes * 16U, {},
+                         sc::StorageAccess::ReadWrite, std::nullopt};
   data.values.push_back(std::move(parent));
   sc::PackOpConfig pack_config;
   pack_config.batch_count = 1U;
   pack_config.parent_required_bytes = lanes * 16U;
   pack_config.materializes = false;
   for (std::size_t lane = 0; lane < lanes; ++lane) {
-    pack_config.spans.push_back({(*producer_outputs)[lane], 0U, 0U, lane * 16U,
-                                 16U, 16U, "none"});
+    pack_config.spans.push_back({(*producer_outputs)[lane], 0U, 0U, lane * 16U, 16U, 16U, "none"});
   }
   sc::OpSpec pack;
   pack.id = static_cast<sc::OpId>(data.ops.size());
@@ -355,12 +338,10 @@ sc::ModelExecutionPlan make_producer_direct_pack_plan(
   mla.config = sc::MlaOpConfig{"model.elf", 4};
   data.ops.push_back(std::move(mla));
   data.backend_ports = {
-      {0U, sc::BackendPortDirection::Input, 0U, "ifm", *parent_value,
-       lanes * 16U, 4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::ReadOnly},
+      {0U, sc::BackendPortDirection::Input, 0U, "ifm", *parent_value, lanes * 16U, 4096U,
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly},
       {0U, sc::BackendPortDirection::Output, 0U, "ofm", mla_output, 16U, 4096U,
-       sc::BackendPortAlignmentAuthority::LegacyPolicy,
-       sc::BackendPortAccess::WriteOnly},
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly},
   };
   data.model_outputs = {{0U, "mla_output", mla_output}};
   std::string error;
@@ -372,8 +353,7 @@ sc::ModelExecutionPlan make_producer_direct_pack_plan(
   return std::move(*plan);
 }
 
-bool overlaps(const sc::FrameSlotArenaRegion& lhs,
-              const sc::FrameSlotArenaRegion& rhs) {
+bool overlaps(const sc::FrameSlotArenaRegion& lhs, const sc::FrameSlotArenaRegion& rhs) {
   return lhs.byte_offset < rhs.byte_offset + rhs.size_bytes &&
          rhs.byte_offset < lhs.byte_offset + lhs.size_bytes;
 }
@@ -381,8 +361,8 @@ bool overlaps(const sc::FrameSlotArenaRegion& lhs,
 void test_no_reuse_oracle() {
   const auto execution = make_plan();
   std::string error;
-  const auto plan = sc::FrameSlotArenaPlan::compile(
-      execution, sc::FrameSlotArenaReuse::Disabled, 4096, &error);
+  const auto plan =
+      sc::FrameSlotArenaPlan::compile(execution, sc::FrameSlotArenaReuse::Disabled, 4096, &error);
   CHECK(plan.has_value());
   CHECK(error.empty());
   if (!plan) {
@@ -400,8 +380,7 @@ void test_no_reuse_oracle() {
   CHECK(plan->allocation_bytes() == 32768U);
   CHECK(plan->allocation_alignment_bytes() == 8192U);
   CHECK(plan->placement().domain == sc::ArenaStorageDomain::Cma);
-  CHECK(plan->placement().provenance ==
-        sc::ArenaAllocationProvenance::CoreAllocated);
+  CHECK(plan->placement().provenance == sc::ArenaAllocationProvenance::CoreAllocated);
   CHECK(plan->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
   CHECK(plan->placement().requires_access(sc::ArenaDeviceAccess::Mla));
   CHECK(plan->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
@@ -413,8 +392,8 @@ void test_disjoint_lifetime_reuse() {
   std::string error;
   const auto reused = sc::FrameSlotArenaPlan::compile(
       execution, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error);
-  const auto oracle = sc::FrameSlotArenaPlan::compile(
-      execution, sc::FrameSlotArenaReuse::Disabled, 4096, &error);
+  const auto oracle =
+      sc::FrameSlotArenaPlan::compile(execution, sc::FrameSlotArenaReuse::Disabled, 4096, &error);
   CHECK(reused.has_value());
   CHECK(oracle.has_value());
   if (!reused || !oracle) {
@@ -451,8 +430,8 @@ void test_disjoint_lifetime_reuse() {
 void test_invalid_alignment_fails_closed() {
   const auto execution = make_plan();
   std::string error;
-  CHECK(!sc::FrameSlotArenaPlan::compile(
-      execution, sc::FrameSlotArenaReuse::DisjointLifetimes, 24, &error));
+  CHECK(!sc::FrameSlotArenaPlan::compile(execution, sc::FrameSlotArenaReuse::DisjointLifetimes, 24,
+                                         &error));
   CHECK(!error.empty());
 }
 
@@ -517,8 +496,7 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
   CHECK(semantic && overlaps(*semantic->region(1), *semantic->region(6)));
 
   const auto arena = sc::FrameSlotArenaPlan::compile(
-      execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-      4096, &error);
+      execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error);
   CHECK(arena.has_value());
   CHECK(error.empty());
   if (!arena) {
@@ -532,17 +510,16 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
   CHECK(!overlaps(*arena->region(4), *arena->region(6)));
 
   const auto cma_with_ev = sc::FrameSlotArenaPlan::compile(
-      execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-      4096, &error, sc::ArenaDmsPolicy::PreferDmsForEligible);
+      execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
+      sc::ArenaDmsPolicy::PreferDmsForEligible);
   CHECK(cma_with_ev.has_value());
-  CHECK(cma_with_ev &&
-        cma_with_ev->placement().domain == sc::ArenaStorageDomain::Cma);
+  CHECK(cma_with_ev && cma_with_ev->placement().domain == sc::ArenaStorageDomain::Cma);
 
   auto a65_physical = physical;
   a65_physical.commands[1].engine = sc::PhysicalEngine::A65;
   const auto dms = sc::FrameSlotArenaPlan::compile(
-      execution, a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-      4096, &error, sc::ArenaDmsPolicy::PreferDmsForEligible);
+      execution, a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
+      sc::ArenaDmsPolicy::PreferDmsForEligible);
   CHECK(dms.has_value());
   if (dms) {
     CHECK(dms->placement().domain == sc::ArenaStorageDomain::Dms);
@@ -595,11 +572,9 @@ void test_resolved_a65_mla_a65_route_selects_one_dms_arena() {
   data.ops = {std::move(pre), std::move(mla), std::move(post)};
   data.backend_ports = {
       {0, sc::BackendPortDirection::Input, 0, "data.ifm.b0", 1, 64, 4096,
-       sc::BackendPortAlignmentAuthority::Contract,
-       sc::BackendPortAccess::ReadOnly},
+       sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::ReadOnly},
       {0, sc::BackendPortDirection::Output, 0, "data.ofm.b0", 2, 64, 4096,
-       sc::BackendPortAlignmentAuthority::Contract,
-       sc::BackendPortAccess::WriteOnly},
+       sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::WriteOnly},
   };
   data.model_outputs = {{0, "public_output", 3}};
 
@@ -646,9 +621,9 @@ void test_resolved_a65_mla_a65_route_selects_one_dms_arena() {
       },
   };
 
-  const auto arena = sc::FrameSlotArenaPlan::compile(
-      *execution, physical, sc::FrameSlotArenaReuse::Disabled, 4096U, &error,
-      sc::ArenaDmsPolicy::PreferDmsForEligible);
+  const auto arena =
+      sc::FrameSlotArenaPlan::compile(*execution, physical, sc::FrameSlotArenaReuse::Disabled,
+                                      4096U, &error, sc::ArenaDmsPolicy::PreferDmsForEligible);
   CHECK(arena.has_value());
   CHECK(error.empty());
   if (!arena) {
@@ -658,8 +633,7 @@ void test_resolved_a65_mla_a65_route_selects_one_dms_arena() {
   CHECK(arena->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
   CHECK(arena->placement().requires_access(sc::ArenaDeviceAccess::Mla));
   CHECK(!arena->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
-  CHECK(arena->placement().provenance ==
-        sc::ArenaAllocationProvenance::CoreAllocated);
+  CHECK(arena->placement().provenance == sc::ArenaAllocationProvenance::CoreAllocated);
   CHECK(arena->region(1) != nullptr);
   CHECK(arena->region(2) != nullptr);
   CHECK(arena->region(3) != nullptr);
@@ -717,8 +691,8 @@ void test_multiple_values_share_one_authored_carrier() {
   if (!execution) {
     return;
   }
-  const auto arena = sc::FrameSlotArenaPlan::compile(
-      *execution, sc::FrameSlotArenaReuse::Disabled, 16, &error);
+  const auto arena =
+      sc::FrameSlotArenaPlan::compile(*execution, sc::FrameSlotArenaReuse::Disabled, 16, &error);
   CHECK(arena.has_value());
   if (!arena) {
     return;
@@ -733,8 +707,7 @@ void test_fused_intermediates_are_not_materialized_at_capacity_boundaries() {
   for (const auto lanes : {1U, 32U, 33U}) {
     std::vector<sc::ValueId> intermediates;
     std::vector<sc::ValueId> final_tess;
-    const auto execution =
-        make_fused_quanttess_arena_plan(lanes, &intermediates, &final_tess);
+    const auto execution = make_fused_quanttess_arena_plan(lanes, &intermediates, &final_tess);
     std::string error;
     const auto physical = sc::PhysicalExecutionLowerer::lower(execution, &error);
     CHECK(physical.has_value());
@@ -765,8 +738,8 @@ void test_producer_direct_pack_preserves_every_lane_and_parent_offset() {
     std::vector<sc::ValueId> intermediates;
     std::vector<sc::ValueId> producer_outputs;
     sc::ValueId parent = 0U;
-    const auto execution = make_producer_direct_pack_plan(
-        lanes, &intermediates, &producer_outputs, &parent);
+    const auto execution =
+        make_producer_direct_pack_plan(lanes, &intermediates, &producer_outputs, &parent);
     std::string error;
     const auto physical = sc::PhysicalExecutionLowerer::lower(execution, &error);
     CHECK(physical.has_value());
