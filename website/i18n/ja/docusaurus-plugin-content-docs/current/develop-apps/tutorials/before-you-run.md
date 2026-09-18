@@ -22,7 +22,7 @@ PCIeチュートリアルは、SDKコンテナ内またはカード上で直接�
 
 [Neat Library がインストールされました。](/getting-started/neat-library/install-or-update/)がインストールされていることを確認し、チュートリアルのバンドルを配置したいディレクトリから次のコマンドを実行します。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core -t extras
 cd sima-neat-*-Linux-extras
 </ShellCommand>
@@ -65,7 +65,7 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 チュートリアルで指定されたモデルをダウンロードするには、Model Zoo を使用します。例：
 
-<ShellCommand prompt="sdk-devkit-or-pcie-host">
+<ShellCommand prompt="sdk|devkit|pcie-host">
 sima-cli modelzoo get resnet_50
 sima-cli modelzoo get yolo_v8s
 </ShellCommand>
@@ -89,7 +89,7 @@ cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
 
 抽出した追加ファイルのルートディレクトリから、チュートリアルのコマンドを実行します。そこに、ビルドヘルパー、事前にビルドされたC++プログラム、およびチュートリアルのソースコードが含まれていることを確認してください。
 
-<ShellCommand prompt="sdk-or-pcie-host">
+<ShellCommand prompt="sdk|pcie-host">
 test -x build.sh
 ls lib/*/tutorials/
 ls share/*/tutorials/

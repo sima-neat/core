@@ -18,7 +18,7 @@ SDK container.
 Use this command when your DevKit is reachable from the host and you want to add
 or update DevKit pairing:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -37,7 +37,7 @@ NFS and mounts it as `/workspace` on the DevKit by default.
 Use this command when you want to update SDK settings but the DevKit is not
 reachable yet:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 

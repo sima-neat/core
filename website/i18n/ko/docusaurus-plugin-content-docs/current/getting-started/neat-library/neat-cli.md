@@ -8,7 +8,7 @@ sidebar_position: 5
 
 SDK에서 상태 출력에는 `$HOME/.insight-config/neat-port-map.json`의 Insight 호스트-포트 매핑 정보도 포함됩니다.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
@@ -46,7 +46,7 @@ Exposed Ports
 
 자동화 및 도구 통합을 위해 JSON 형식을 사용하세요.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat --json
 </ShellCommand>
 
@@ -54,7 +54,7 @@ neat --json
 
 감지된 채널에서 Neat Library 런타임, `neat-insight` 및 설치된 `sima-cli` 플레이북을 업데이트하려면 다음 명령을 실행하세요.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update
 </ShellCommand>
 

@@ -23,7 +23,7 @@ slug: /reference/tutorial-assets
 
 У навчальних прикладах команди все ще підтримують явне використання прапорців. Для одноразового запуску краще використовувати `--model <path>`; якщо ж потрібно, щоб багато команд використовували один і той самий артефакт, слід використовувати змінні середовища.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
@@ -57,7 +57,7 @@ Neat розпаковує архіви моделей перед їх запус
 Деякі тести, що використовують структуру вихідного коду, використовують зразок зображення COCO і можуть завантажити його, якщо він відсутній.
 За потреби використання локального дзеркала, змініть URL-адресу:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_COCO_URL=https://example.com/path/to/coco_sample.jpg
 </ShellCommand>
 

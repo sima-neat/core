@@ -1,12 +1,47 @@
+/* Each command block is colour-coded by the environment it runs in. Colour is
+   never the only signal: the environment name is always spelled out in the
+   prompt, so the block still reads correctly in greyscale, in print, and for
+   colour-blind readers. */
+
 .shellCommand {
-  position: relative;
   margin: 1rem 0;
+
+  /* Overridden per environment below. */
+  --shell-accent: #9aa4b8;
+}
+
+.envHost {
+  --shell-accent: #7fb3ff;
+}
+
+.envSdk {
+  --shell-accent: #c39bf5;
+}
+
+.envDevkit {
+  --shell-accent: #7fd88f;
+}
+
+.envPcieHost {
+  --shell-accent: #f0c063;
+}
+
+/* A command that runs in either of several environments gets the neutral
+   accent, so a specific colour never implies a single place to run it. */
+.envMulti {
+  --shell-accent: #9aa4b8;
+}
+
+
+.terminal {
+  position: relative;
 }
 
 .pre {
   margin: 0;
   padding: 1rem 1rem 1rem 1.1rem;
   border-radius: 10px;
+  border-left: 4px solid var(--shell-accent);
   background: #292d3e;
   color: #bfc7d5;
   overflow-x: auto;
@@ -28,7 +63,7 @@
 }
 
 .prompt {
-  color: #8e97a8;
+  color: var(--shell-accent);
   user-select: none;
 }
 
@@ -58,8 +93,8 @@
   transition: opacity var(--ifm-transition-fast) ease, background var(--ifm-transition-fast) ease;
 }
 
-.shellCommand:hover .copyButton,
-.shellCommand:focus-within .copyButton,
+.terminal:hover .copyButton,
+.terminal:focus-within .copyButton,
 .copyButton:hover {
   opacity: 1;
   pointer-events: auto;

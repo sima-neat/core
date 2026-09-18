@@ -21,14 +21,18 @@ sidebar_position: 2
 ## 모델 및 샘플 이미지 가져오기
 
 1. **모델과 입력 이미지를 저장할 assets 디렉터리를 만듭니다.**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
     cd assets
-    ```
+    </ShellCommand>
+
 2. **모델을 다운로드하세요:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli 모델 다운로드
     `sima-cli`가 모델을 `assets` 디렉터리 이외의 다른 곳에 저장하는 경우, 해당 파일을 `assets/yolo_v8s_mpk.tar.gz`로 복사합니다.
     :::
@@ -36,9 +40,11 @@ sidebar_position: 2
 
     [샘플 이미지를 열거나 다운로드하세요.](../../images/tutorial_sample_image.png).
 4. **프로젝트 디렉터리로 돌아갑니다:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     cd ..
-    ```
+    </ShellCommand>
+
 
 ## 단계별 설명
 
@@ -306,25 +312,36 @@ if __name__ == "__main__":
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
-Hello Neat!과 동일한 명령어를 사용하여 다시 빌드한 다음, 실행 파일을 실행합니다.
+Hello Neat!과 동일한 명령어를 사용하여 다시 빌드합니다.
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/sima_neat_hello      # on the DevKit
-dk build/sima_neat_hello     # from the Palette SDK host
-```
+</ShellCommand>
+
+그런 다음 실행 파일을 실행합니다.
+
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 스크립트를 실행합니다.
 
-```bash
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
-python3 hello_neat.py        # on the DevKit
-dk hello_neat.py             # from the Palette SDK host
-```
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>
