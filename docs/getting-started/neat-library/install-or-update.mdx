@@ -21,6 +21,34 @@ Run the installer from the environment where you build or run Neat applications:
 | ROS2 SDK | You want to compile ROS 2 applications natively on ARM64 with Neat headers and libraries installed in the container's system paths. |
 | DevKit | You want to install or update the runtime directly on the device. |
 
+## C++ development packages
+
+The minimal installation includes the runtime and `sima-neat-dev`. The default
+installation offers tutorials and tests as optional extras; `all` includes them.
+Shared-library applications need Core's public headers and GStreamer, OpenCV,
+and JSON development files. They do not need Internals, memory-library, heap,
+or LLiMa development packages. Their runtime libraries remain required.
+
+Use the installed shared target:
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
+```
+
+The static archive remains in `sima-neat-dev`. Existing static consumers must add
+`COMPONENTS Static` and provision compatible `neat-internals-dev`,
+`simaai-memory-lib-dev`, `zlib1g-dev`, and, for LLiMa-enabled builds,
+`sima-lmm-dev` and `libcpp-httplib-dev` with their dependencies:
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
+```
+
+Static Core still uses shared implementation libraries. Building Core from source
+also requires implementation development packages.
+
 ## Prerequisites
 
 Install `sima-cli` in the environment where you plan to install the Neat Library.

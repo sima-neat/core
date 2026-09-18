@@ -2,6 +2,9 @@
 #include "model/Model.h"
 #include "nodes/common/Output.h"
 #include "gst/GstHelpers.h"
+#include "model/internal/ModelInternal.h"
+#include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 
 #include "asset_utils.h"
 #include "cli_utils.h"
@@ -83,17 +86,33 @@ static simaai::neat::Model make_resnet_model(const std::string& tar_gz, bool mla
   return simaai::neat::Model(tar_gz, opt);
 }
 
-static bool pipeline_has_fused_classifier_post(const std::string& pipeline) {
-  if (pipeline.find("detessdequant") != std::string::npos ||
-      pipeline.find("detess_dequant") != std::string::npos) {
-    return true;
+static bool has_classifier_post(
+    const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
+  namespace contract = simaai::neat::pipeline_internal::sima;
+  namespace query = simaai::neat::pipeline_internal::rendered_stage_query;
+  for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
+    const auto& stage = manifest.stages[i];
+    const bool detessdequant =
+        stage.payload_kind == contract::StagePayloadKind::DetessDequant ||
+        (stage.payload_kind == contract::StagePayloadKind::ProcessCvu &&
+         stage.processcvu.graph_family_enum == contract::ProcessCvuGraphFamily::DetessDequant);
+    if (!detessdequant || i + 1U != manifest.stages.size() || stage.logical_outputs.size() != 1U ||
+        stage.input_bindings.size() != 1U) {
+      continue;
+    }
+    const auto edge = contract::edgecontract::resolve_edge_contract_for_binding(manifest, i, 0U);
+    const auto& output = stage.logical_outputs.front();
+    if (edge && edge->producer_stage &&
+        edge->producer_stage->payload_kind == contract::StagePayloadKind::ProcessMla &&
+        edge->producer_logical_output &&
+        query::dtype_from_contract_token(edge->producer_logical_output->dtype) ==
+            simaai::neat::TensorDType::Int8 &&
+        query::dtype_from_contract_token(output.dtype) == simaai::neat::TensorDType::Float32 &&
+        output.size_bytes == 1000U * sizeof(float)) {
+      return true;
+    }
   }
-  const bool has_fused_processcvu = pipeline.find("! neatprocesscvu ") != std::string::npos;
-  const bool has_fused_stage_id = pipeline.find("stage-id=dequantize_") != std::string::npos ||
-                                  pipeline.find(" name=dequantize_") != std::string::npos ||
-                                  pipeline.find("stage-id=detessdequant_") != std::string::npos ||
-                                  pipeline.find(" name=detessdequant_") != std::string::npos;
-  return has_fused_processcvu && has_fused_stage_id;
+  return false;
 }
 
 static void add_mla_terminal_argmax_route(simaai::neat::Graph& graph,
@@ -362,13 +381,21 @@ int main(int argc, char** argv) {
       std::cout << "[argmax] pipeline:\n" << argmax_pipeline << "\n";
     }
 
-    const bool baseline_has_detess = pipeline_has_fused_classifier_post(baseline_pipeline);
-    require(baseline_has_detess,
-            "baseline pipeline is missing detessdequant stage; cannot validate replacement");
-
-    const bool argmax_has_detess = pipeline_has_fused_classifier_post(argmax_pipeline);
-    require(!argmax_has_detess,
-            "argmax pipeline still contains detessdequant; expected MLA terminal replacement");
+    // Inspect selected nodes, not cohort names or the full immutable model plan:
+    // terminal selection can intentionally omit postprocessing from that plan.
+    namespace query = simaai::neat::pipeline_internal::rendered_stage_query;
+    const auto baseline_manifest = query::rendered_manifest_from_nodes(
+        simaai::neat::internal::ModelAccess::build_public_route_nodes(baseline_model,
+                                                                      baseline_route_opt));
+    const auto replacement_manifest = query::rendered_manifest_from_nodes(
+        simaai::neat::internal::ModelAccess::build_public_inference_nodes(mla_model));
+    require(baseline_manifest && has_classifier_post(*baseline_manifest),
+            "baseline route lacks typed MLA-to-Float32 classifier postprocessing");
+    require(replacement_manifest && !replacement_manifest->stages.empty() &&
+                !has_classifier_post(*replacement_manifest) &&
+                replacement_manifest->stages.back().payload_kind ==
+                    simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessMla,
+            "argmax inference route must terminate at MLA without classifier postprocessing");
 
     const bool argmax_has_mla = argmax_pipeline.find("neatprocessmla") != std::string::npos ||
                                 argmax_pipeline.find("processmla") != std::string::npos;

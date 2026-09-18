@@ -395,6 +395,20 @@ int main(int argc, char** argv) {
           std::cout << "GRAPH_MODEL_IMAGE model=" << model_name << " status=OK accuracy=\""
                     << image_acc.note << "\"\n";
 
+          cv::Mat img_rgb;
+          cv::cvtColor(img_bgr, img_rgb, cv::COLOR_BGR2RGB);
+          auto rgb_options = graph_image_model_options();
+          rgb_options.preprocess.color_convert.input_format =
+              simaai::neat::PreprocessColorFormat::RGB;
+          simaai::neat::Model rgb_model(tar.string(), rgb_options);
+          const simaai::neat::Sample rgb_sample =
+              run_graph_image_add_model_sample(img_rgb, rgb_model);
+          const AccuracyResult rgb_acc = run_framework_boxdecode_accuracy(
+              rgb_sample, rgb_model, img_bgr, BoxDecodeRunMode::NoModel);
+          require(rgb_acc.ok, "RGB image Graph::add(model) accuracy failed: " + rgb_acc.note);
+          std::cout << "GRAPH_MODEL_IMAGE_RGB model=" << model_name << " status=OK accuracy=\""
+                    << rgb_acc.note << "\"\n";
+
           simaai::neat::Model stage_model(tar.string(), graph_image_model_options());
           const simaai::neat::Sample stage_sample =
               run_graph_explicit_stage_fragments_sample(img_bgr, stage_model);

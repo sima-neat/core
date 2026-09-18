@@ -16,6 +16,7 @@
 #include "builder/OutputSpec.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/RTSPInput.h"
+#include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/sima/Preproc.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/FormatSpec.h"
@@ -27,6 +28,7 @@
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/InputSpecCapabilities.h"
 #include "pipeline/internal/InputPolicy.h"
+#include "pipeline/internal/PublicInputContract.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/internal/SampleUtil.h"
@@ -109,6 +111,14 @@ const Input* first_input_node(const std::vector<std::shared_ptr<Node>>& nodes) {
     return dynamic_cast<const Input*>(node.get());
   }
   return nullptr;
+}
+
+template <typename View>
+InputOptions linear_seed_input_options(const View& view, const Input& input) {
+  const auto source = std::find_if(view.vertices.begin(), view.vertices.end(),
+                                   [&input](const auto& node) { return node.get() == &input; });
+  return pipeline_internal::normalize_shape_bounds(pipeline_internal::public_input_options(
+      view, static_cast<std::size_t>(source - view.vertices.begin())));
 }
 
 struct SessionBuildInputDebugFlags {
@@ -194,19 +204,7 @@ connected_default_input_segment_or_throw(const runtime::ExecutionGraphPlan& plan
 std::optional<InputOptions>
 connected_default_ingress_input(const runtime::PipelineSegmentPlan& segment,
                                 std::size_t index = 0) {
-  if (segment.boundary_hints.has_value()) {
-    const auto& ingress = segment.boundary_hints->ingress_inputs;
-    if (index < ingress.size()) {
-      return ingress[index];
-    }
-    if (!ingress.empty()) {
-      return ingress.front();
-    }
-  }
-  if (segment.input_complete) {
-    return simaai::neat::graph::input_opts_from_spec(segment.input_spec, segment.input_complete);
-  }
-  return std::nullopt;
+  return runtime::pipeline_segment_ingress_input(segment, index);
 }
 
 pipeline_internal::InputRouteProcessorPtr
@@ -352,31 +350,6 @@ const char* input_memory_policy_name(InputMemoryPolicy policy) {
   return "auto";
 }
 
-InputMemoryPolicy
-resolve_memory_policy_from_first_downstream_node(const std::vector<std::shared_ptr<Node>>& nodes) {
-  if (nodes.size() <= 1U) {
-    return InputMemoryPolicy::SystemMemory;
-  }
-  for (std::size_t i = 1U; i < nodes.size(); ++i) {
-    const auto& node = nodes[i];
-    if (!node) {
-      continue;
-    }
-    const std::string kind = node->kind();
-    if (kind == "Cast") {
-      continue;
-    }
-    if (kind == "Preproc" || kind == "Quant" || kind == "Tess" || kind == "QuantTess") {
-      return InputMemoryPolicy::Ev74;
-    }
-    if (kind == "ModelFragment") {
-      return InputMemoryPolicy::Dms0;
-    }
-    return InputMemoryPolicy::SystemMemory;
-  }
-  return InputMemoryPolicy::SystemMemory;
-}
-
 std::string infer_first_effective_downstream_kind(const std::vector<std::shared_ptr<Node>>& nodes) {
   if (nodes.size() <= 1U) {
     return "<none>";
@@ -393,20 +366,6 @@ std::string infer_first_effective_downstream_kind(const std::vector<std::shared_
     return kind;
   }
   return "<none>";
-}
-
-bool apply_auto_memory_policy_from_downstream(InputOptions& src_opt,
-                                              const std::vector<std::shared_ptr<Node>>& nodes) {
-  if (src_opt.memory_policy != InputMemoryPolicy::Auto) {
-    return false;
-  }
-  if (!src_opt.use_simaai_pool) {
-    src_opt.memory_policy = InputMemoryPolicy::SystemMemory;
-    return true;
-  }
-  const InputMemoryPolicy resolved = resolve_memory_policy_from_first_downstream_node(nodes);
-  src_opt.memory_policy = resolved;
-  return true;
 }
 
 void maybe_log_build_mode(const char* where, RunMode mode, bool insert_queue2) {
@@ -483,7 +442,7 @@ RunOptions sync_run_defaults() {
   opt.preset = RunPreset::Reliable;
   opt.queue_depth = 1;
   opt.overflow_policy = OverflowPolicy::Block;
-  opt.output_memory = OutputMemory::Owned;
+  opt.output_memory = OutputMemory::Auto;
   opt.advanced.copy_input = false;
   opt.advanced.max_input_bytes = 0;
   opt.advanced.sync_num_buffers_override = -1;
@@ -513,17 +472,17 @@ bool resolve_prepare_output_cpu_visible(const RunOptions& opt, bool zero_copy) {
 // public-boundary stream-option builder so every entry point (Model::build,
 // Graph::build/source) agrees on output storage kind.
 struct OutputMemoryResolution {
-  bool zero_copy;           ///< output tensors share backing GstSample (device-visible)
+  bool zero_copy;           ///< non-DMA outputs share backing GstSample
+  bool preserve_dmabuf;     ///< Auto retains actual standard DMA-BUF storage
   bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.
 //
 // - Explicit ZeroCopy/Owned are always honored verbatim.
-// - Auto preserves the existing preset mapping (preset_default_zero_copy) so
-//   the async (preset x mode) matrix is unchanged, and additionally enforces
-//   the framework principle "owned for sync, zero-copy for async": a Sync run
-//   never silently returns a lifetime-coupled zero-copy output.
+// - Auto retains standard DMA-BUF payloads in every mode. Other storage keeps
+//   the existing preset/mode policy: sync defaults to owned output. The actual
+//   payload is inspected at the public boundary, not guessed from graph nodes.
 // - SIMA_OUTPUT_MEMORY_DEFAULT={owned|zerocopy} is a reversible, Auto-only
 //   global override for staged rollout / incident response. It never overrides
 //   an explicit per-run ZeroCopy/Owned choice.
@@ -533,6 +492,7 @@ struct OutputMemoryResolution {
 // stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
 OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode) {
   bool zero_copy;
+  bool preserve_dmabuf = false;
   switch (opt.output_memory) {
   case OutputMemory::ZeroCopy:
     zero_copy = true;
@@ -541,18 +501,21 @@ OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode
     zero_copy = false;
     break;
   case OutputMemory::Auto:
+    preserve_dmabuf = true;
     zero_copy = preset_default_zero_copy(opt.preset) && (mode != RunMode::Sync);
     if (const char* raw = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT"); raw && *raw) {
       const std::string value(raw);
       if (value == "owned") {
         zero_copy = false;
+        preserve_dmabuf = false;
       } else if (value == "zerocopy") {
         zero_copy = true;
       }
     }
     break;
   }
-  return {zero_copy, resolve_prepare_output_cpu_visible(opt, zero_copy)};
+  return {zero_copy, preserve_dmabuf,
+          resolve_prepare_output_cpu_visible(opt, zero_copy || preserve_dmabuf)};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -951,13 +914,27 @@ void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<
   }
 
   const std::vector<std::shared_ptr<Node>> first_nodes{first};
+  const auto first_manifest = rendered_stage_query::rendered_manifest_from_nodes(
+      first_nodes, "GraphBuildInput.ingress_guard");
+  if (!first_manifest.has_value() || first_manifest->stages.empty() ||
+      first_manifest->stages.front().payload_kind !=
+          pipeline_internal::sima::StagePayloadKind::ProcessMla) {
+    // ModelFragment is a container, not an assertion that its first command is
+    // MLA.  A strict compiler-authored schedule may begin with Quant, Cast,
+    // Tess, or A65 and legitimately consume an application-boundary tensor
+    // whose size differs from the later MLA IFM.  The child-stage manifest is
+    // the exact authority for that distinction.
+    return;
+  }
   const auto mla_input = rendered_stage_query::mla_input_tensor_info_from_nodes(first_nodes);
   if (mla_input.span_size_bytes <= 0) {
     return;
   }
 
   const std::size_t expected_bytes = static_cast<std::size_t>(mla_input.span_size_bytes);
-  const std::size_t got_bytes = seed_spec.required_bytes_actual;
+  const std::size_t got_bytes = seed_spec.tensor_view_bytes_actual > 0U
+                                    ? seed_spec.tensor_view_bytes_actual
+                                    : seed_spec.required_bytes_actual;
   const bool byte_stream = sample_spec_is_byte_stream_tensor(seed_spec);
   const bool byte_size_matches = expected_bytes == 0U || got_bytes == expected_bytes;
   // Accept either a byte-stream tensor or any application/vnd.simaai.tensor
@@ -1059,8 +1036,9 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.stability_frames = preset_default_stability_frames(opt.preset);
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
+  stream_opt.preserve_dmabuf_output = output_mem.preserve_dmabuf;
   stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
-  if (output_mem.zero_copy) {
+  if (output_mem.zero_copy || output_mem.preserve_dmabuf) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
     stream_opt.holder_loan_credits_auto = true;
@@ -1091,7 +1069,8 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
 }
 
 void finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
-  if (!stream_opt.holder_loan_credits_auto || stream_opt.copy_output ||
+  if (!stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output) ||
       !stream_opt.public_output_contract) {
     return;
   }
@@ -1608,7 +1587,7 @@ std::string parse_named_element_for_error(const std::string& pipeline, const std
 
 std::string infer_error_node_name(const std::string& pipeline) {
   for (const char* element : {"neatdecoder", "neatencoder", "neatprocesscvu", "neatprocessmla",
-                              "neatobjectdecode", "neatboxdecode", "neatdequant", "neatdetess"}) {
+                              "neatobjectdecode", "neatdequant", "neatdetess"}) {
     const std::string name = parse_named_element_for_error(pipeline, element);
     if (!name.empty())
       return name;
@@ -1704,7 +1683,7 @@ std::string single_sample_preflight_unsupported_reason(const std::string& pipeli
   // appsink sample is pulled and unref'd, there is no generic GStreamer
   // barrier proving the plugin-side buffer pool slot has been returned before
   // the public first frame is pushed.
-  if (!opt.copy_output && has_async_hardware_stage &&
+  if ((!opt.copy_output || opt.preserve_dmabuf_output) && has_async_hardware_stage &&
       max_num_buffers_in_pipeline_local(lower) == 1) {
     return "hardware zero-copy pipeline uses an async stage with a single output buffer";
   }
@@ -1895,15 +1874,16 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   }
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
   if (sync_mode) {
-    br.pipeline_string =
-        session_build_clamp_sync_pipeline(std::move(br.pipeline_string), sync_num_buffers_override);
-    br.pipeline_string = session_build_clamp_detess_num_buffers(std::move(br.pipeline_string),
-                                                                sync_num_buffers_override);
+    br.pipeline_string = session_build_clamp_sync_build_result(br, sync_num_buffers_override);
     br.diag->pipeline_string = br.pipeline_string;
   }
   last_pipeline = br.pipeline_string;
   br.pipeline_string = last_pipeline;
   br.diag->pipeline_string = last_pipeline;
+  const auto teardown_policy = inputstream_pipeline_teardown_policy(last_pipeline);
+  if (teardown_policy == pipeline_internal::InputStreamTeardownPolicy::MustReachNull) {
+    stream_opt.teardown_policy = teardown_policy;
+  }
   session_build_enforce_mla_num_buffers(last_pipeline, "Graph::build(input)", sync_mode);
   if (Traits::dump_pipeline_string()) {
     session_build_maybe_dump_pipeline_string(last_pipeline, "build_input");
@@ -1960,10 +1940,12 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   SampleSpec spec = seed_spec;
   InputOptions src_opt = session_build_resolve_appsrc_options(normalized_input_opt, name_transform);
-  const bool memory_policy_auto_applied =
-      apply_auto_memory_policy_from_downstream(src_opt, build_nodes);
   const std::string first_effective_downstream_kind =
       infer_first_effective_downstream_kind(build_nodes);
+  const InputMemoryPolicy requested_memory_policy = src_opt.memory_policy;
+  const auto memory = pipeline_internal::resolve_input_memory(src_opt, build_nodes);
+  const bool memory_policy_auto_applied = requested_memory_policy == InputMemoryPolicy::Auto;
+  src_opt.memory_policy = memory.allocation;
   if (src_opt.payload_type == PayloadType::Auto) {
     src_opt.payload_type = input_type_from_media_type(seed_spec.media_type);
   }
@@ -1989,8 +1971,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       stream_opt.dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly) {
     stream_opt.stability_frames = 1;
   }
-  stream_opt.require_device_visible_input = (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
-                                             src_opt.memory_policy == InputMemoryPolicy::Dms0);
+  stream_opt.require_device_visible_input = memory.require_device_visible_input;
 
   BuildAdaptationSummary adaptation;
   adaptation.shape_policy = shape_policy_name(stream_opt.shape_policy);
@@ -2060,7 +2041,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   {
     std::ostringstream detail;
-    detail << "policy=" << input_memory_policy_name(src_opt.memory_policy)
+    detail << "requested=" << input_memory_policy_name(requested_memory_policy)
+           << " transport=" << input_memory_policy_name(src_opt.memory_policy)
            << " first_downstream=" << first_effective_downstream_kind;
     add_build_adaptation_action(adaptation, "appsrc_memory_policy", true, detail.str(),
                                 memory_policy_auto_applied
@@ -2520,9 +2502,10 @@ std::vector<std::string> sync_cache_rebuild_events_for_test(bool fail_build) {
   return events;
 }
 
-bool apply_auto_memory_policy_from_downstream_for_test(
-    InputOptions& src_opt, const std::vector<std::shared_ptr<Node>>& nodes) {
-  return apply_auto_memory_policy_from_downstream(src_opt, nodes);
+pipeline_internal::InputMemoryResolution
+resolve_input_memory_for_test(const InputOptions& options,
+                              const std::vector<std::shared_ptr<Node>>& nodes) {
+  return pipeline_internal::resolve_input_memory(options, nodes);
 }
 
 } // namespace session_test
@@ -2714,39 +2697,17 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
   const auto nodes = linear_nodes_snapshot("Graph::build(inputs)");
   const BuildInputContext ctx = session_build_prepare_build_input_context(nodes, opt_, mode, opt);
   progress.step("Preparing input stream...");
-  InputOptions tensor_src_opt = pipeline_internal::normalize_shape_bounds(ctx.src_node->options());
-  if (!input_options_expect_tensor_media(tensor_src_opt)) {
-    if (inputs.size() != 1U) {
-      throw std::runtime_error("Graph::build(inputs): raw-image ingress supports exactly one "
-                               "cv::Mat per inference item");
-    }
-    TensorList compile_tensors =
-        tensor_list_from_mats(inputs, tensor_src_opt, "Graph::build(inputs)");
-    Sample compile_seed =
-        input_route_processor_
-            ? input_route_processor_->process_tensors(compile_tensors, "Graph::build(inputs)")
-            : pipeline_internal::sample_from_tensors_for_input(compile_tensors, tensor_src_opt);
-    progress.step("Building graph...");
-    runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, compile_seed);
-    runtime::RunCoreStartOptions start_opt;
-    start_opt.run_options = opt;
-    start_opt.mode = mode;
-    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
-    start_opt.image_seed = std::make_shared<cv::Mat>(inputs.front());
-    start_opt.guard = guard_;
-    start_opt.input_route_processor = input_route_processor_;
-    start_opt.last_pipeline = &last_pipeline_;
-    start_opt.owner = this;
-    start_opt.allow_startup_preflight = true;
-    auto core = runtime::RunCore::start(std::move(plan), std::move(start_opt));
-    progress.done("Graph ready");
-    return Run(std::move(core));
+  InputOptions src_opt =
+      linear_seed_input_options(composition_view_for_internal_compile(), *ctx.src_node);
+  src_opt.memory_policy = pipeline_internal::resolve_input_memory(src_opt, nodes).allocation;
+  if (!input_options_expect_tensor_media(src_opt) && inputs.size() != 1U) {
+    throw std::runtime_error("Graph::build(inputs): raw-image ingress supports exactly one "
+                             "cv::Mat per inference item");
   }
-  TensorList tensors = tensor_list_from_mats(inputs, tensor_src_opt, "Graph::build(inputs)");
-  const Sample seed =
-      input_route_processor_
-          ? input_route_processor_->process_tensors(tensors, "Graph::build(inputs)")
-          : pipeline_internal::sample_from_tensors_for_input(tensors, tensor_src_opt);
+  TensorList tensors = tensor_list_from_mats(inputs, src_opt, "Graph::build(inputs)");
+  Sample seed = input_route_processor_
+                    ? input_route_processor_->process_tensors(tensors, "Graph::build(inputs)")
+                    : pipeline_internal::sample_from_tensors_for_input(tensors, src_opt);
   progress.step("Building graph...");
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
   runtime::RunCoreStartOptions start_opt;
@@ -2754,7 +2715,6 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
   start_opt.mode = mode;
   start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
   start_opt.seed = std::move(seed);
-  start_opt.tensor_input_opt_for_cv = tensor_src_opt;
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;
   start_opt.last_pipeline = &last_pipeline_;
@@ -2799,23 +2759,20 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
   const auto nodes = linear_nodes_snapshot("Graph::build(inputs)");
   progress.step("Preparing input stream...");
   const Input* explicit_input = first_input_node(nodes);
-  const InputOptions src_opt =
-      explicit_input ? pipeline_internal::normalize_shape_bounds(explicit_input->options())
-                     : InputOptions{};
+  InputOptions src_opt;
+  if (explicit_input) {
+    src_opt = linear_seed_input_options(composition_view_for_internal_compile(), *explicit_input);
+  }
   Sample seed = input_route_processor_
                     ? input_route_processor_->seed_tensors(inputs, "Graph::build(inputs)")
                     : pipeline_internal::sample_from_tensors_for_input(inputs, src_opt);
   progress.step("Building graph...");
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
-  const std::optional<InputOptions> tensor_src_opt = input_options_expect_tensor_media(src_opt)
-                                                         ? std::optional<InputOptions>(src_opt)
-                                                         : std::nullopt;
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
   start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
   start_opt.seed = std::move(seed);
-  start_opt.tensor_input_opt_for_cv = tensor_src_opt;
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;
   start_opt.last_pipeline = &last_pipeline_;

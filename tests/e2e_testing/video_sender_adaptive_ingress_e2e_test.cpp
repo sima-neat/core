@@ -13,6 +13,8 @@
 
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
+#include "simaai/neat/internal/dmabuf/DmaBufVideo.h"
+
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
@@ -488,17 +490,28 @@ RawFrame convert_frame(const RawFrame& input, FormatTag output_format) {
   return tight_frame_from_sample(sample.get(), output_format, context);
 }
 
-Tensor tensor_from_frame(const RawFrame& frame, int row_padding,
-                         GstAllocator* allocator = nullptr) {
+Tensor tensor_from_frame(const RawFrame& frame, int row_padding, bool use_dmabuf = false) {
   const MappedPlaneLayout source_layout = tight_layout(frame.format, frame.width, frame.height);
   const MappedPlaneLayout destination_layout =
       tight_layout(frame.format, frame.width, frame.height, row_padding);
 
-  GstBuffer* buffer = gst_buffer_new_allocate(
-      allocator, static_cast<gsize>(destination_layout.total_bytes), nullptr);
+  namespace dma = simaai::neat::internal::dmabuf;
+  GstBuffer* buffer =
+      use_dmabuf ? dma::allocateDmaBufBuffer(dma::HeapKind::Cma, destination_layout.total_bytes)
+                 : gst_buffer_new_allocate(nullptr, destination_layout.total_bytes, nullptr);
   require(buffer != nullptr, "failed to allocate real-frame GstBuffer");
   GstMapInfo map{};
-  require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "failed to map real-frame GstBuffer");
+  dma::Error error;
+  std::optional<dma::CpuMapping> write;
+  if (use_dmabuf) {
+    auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(buffer, 0), &error);
+    write = view ? view->map(dma::CpuAccess::Write, &error) : std::nullopt;
+    require(write.has_value(), "cannot write DMA fixture: " + error.message());
+    map.data = static_cast<guint8*>(write->data());
+    map.size = write->size();
+  } else {
+    require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "cannot map CPU fixture");
+  }
   std::memset(map.data, kPaddingSentinel, map.size);
   for (guint plane = 0; plane < destination_layout.plane_count; ++plane) {
     for (int row = 0; row < destination_layout.rows[plane]; ++row) {
@@ -509,7 +522,10 @@ Tensor tensor_from_frame(const RawFrame& frame, int row_padding,
                   static_cast<std::size_t>(destination_layout.row_bytes[plane]));
     }
   }
-  gst_buffer_unmap(buffer, &map);
+  if (write)
+    require(write->finish(&error), "cannot finish DMA fixture WRITE: " + error.message());
+  else
+    gst_buffer_unmap(buffer, &map);
 
   add_video_meta(buffer, frame.format, frame.width, frame.height, destination_layout,
                  "real-frame buffer");
@@ -959,7 +975,7 @@ MappedPlaneLayout decoder_padded_layout(FormatTag format, int width, int height)
   throw std::invalid_argument("decoder padding is only defined for NV12 and I420");
 }
 
-GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, GstAllocator* allocator) {
+GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, bool use_dmabuf) {
   const MappedPlaneLayout source = tight_layout(frame.format, frame.width, frame.height);
   const MappedPlaneLayout destination =
       decoder_padded_layout(frame.format, frame.width, frame.height);
@@ -974,12 +990,24 @@ GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, GstAllocator* alloc
     require(plane_end(destination, plane) <= destination.total_bytes,
             "decoder-style destination plane exceeds its allocation");
   }
-  GstBuffer* buffer =
-      gst_buffer_new_allocate(allocator, static_cast<gsize>(destination.total_bytes), nullptr);
+  namespace dma = simaai::neat::internal::dmabuf;
+  GstBuffer* buffer = use_dmabuf
+                          ? dma::allocateDmaBufBuffer(dma::HeapKind::Cma, destination.total_bytes)
+                          : gst_buffer_new_allocate(nullptr, destination.total_bytes, nullptr);
   require(buffer != nullptr, "failed to allocate decoder-style padded input");
 
   GstMapInfo map{};
-  require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "failed to map decoder-style padded input");
+  dma::Error error;
+  std::optional<dma::CpuMapping> write;
+  if (use_dmabuf) {
+    auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(buffer, 0), &error);
+    write = view ? view->map(dma::CpuAccess::Write, &error) : std::nullopt;
+    require(write.has_value(), "cannot write DMA fixture: " + error.message());
+    map.data = static_cast<guint8*>(write->data());
+    map.size = write->size();
+  } else {
+    require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "cannot map CPU fixture");
+  }
   std::memset(map.data, kPaddingSentinel, map.size);
   for (guint plane = 0; plane < destination.plane_count; ++plane) {
     for (int row = 0; row < destination.rows[plane]; ++row) {
@@ -990,7 +1018,10 @@ GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, GstAllocator* alloc
                   static_cast<std::size_t>(destination.row_bytes[plane]));
     }
   }
-  gst_buffer_unmap(buffer, &map);
+  if (write)
+    require(write->finish(&error), "cannot finish DMA fixture WRITE: " + error.message());
+  else
+    gst_buffer_unmap(buffer, &map);
 
   gsize offsets[GST_VIDEO_MAX_PLANES] = {};
   gint strides[GST_VIDEO_MAX_PLANES] = {};
@@ -1010,21 +1041,19 @@ void run_plugin_padded_scenario(const std::string& name, const RawFrame& input,
                                 const RawFrame& expected_rgb, bool use_sima_memory) {
   const int port = choose_udp_port();
   RtpReceiver receiver(port, kH264);
-  const std::string encoder_format = input.format == FormatTag::NV12 ? "NV12" : "YUV420P";
+  const std::string encoder_format = "NV12";
   const std::string context = name + " plugin pipeline";
   auto pipeline = parse_pipeline(
       "appsrc name=source is-live=false format=time block=true caps=\"" + raw_caps(input.format) +
-          "\" ! neatencoder enc-width=" + std::to_string(g_geometry.width) + " enc-height=" +
-          std::to_string(g_geometry.height) + " enc-frame-rate=" + std::to_string(kFps) +
-          " enc-bitrate=4000 enc-fmt=" + encoder_format +
+          "\" ! neatencoderinput ! neatencoder enc-width=" + std::to_string(g_geometry.width) +
+          " enc-height=" + std::to_string(g_geometry.height) + " enc-frame-rate=" +
+          std::to_string(kFps) + " enc-bitrate=4000 enc-fmt=" + encoder_format +
           " enc-ip-mode=async ! h264parse config-interval=1 ! "
           "rtph264pay pt=96 config-interval=1 timestamp-offset=0 ! "
           "udpsink host=127.0.0.1 port=" +
           std::to_string(port) + " sync=false async=false",
       context);
   GstElement* source = required_element(pipeline.get(), "source", context);
-  GstAllocator* allocator = use_sima_memory ? gst_allocator_find("NeatSimaaiMemory") : nullptr;
-  require(!use_sima_memory || allocator != nullptr, name + ": SiMa input allocator is unavailable");
   start_pipeline(pipeline.get(), context);
 
   std::vector<GstBuffer*> retained;
@@ -1032,7 +1061,7 @@ void run_plugin_padded_scenario(const std::string& name, const RawFrame& input,
   retained.reserve(kFramesPerScenario);
   hashes.reserve(kFramesPerScenario);
   for (int frame_index = 0; frame_index < kFramesPerScenario; ++frame_index) {
-    GstBuffer* buffer = make_decoder_padded_buffer(input, allocator);
+    GstBuffer* buffer = make_decoder_padded_buffer(input, use_sima_memory);
     GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(frame_index) * GST_SECOND / kFps;
     GST_BUFFER_DTS(buffer) = GST_BUFFER_PTS(buffer);
     GST_BUFFER_DURATION(buffer) = GST_SECOND / kFps;
@@ -1073,9 +1102,6 @@ void run_plugin_padded_scenario(const std::string& name, const RawFrame& input,
   for (std::size_t index = 0; index < retained.size(); ++index) {
     require(fnv1a(retained[index]) == hashes[index], name + ": encoder modified a source buffer");
     gst_buffer_unref(retained[index]);
-  }
-  if (allocator) {
-    gst_object_unref(allocator);
   }
   gst_object_unref(source);
   std::cout << "[PASS] " << name << " decoded=" << decoded.size() << " min_psnr_db=" << quality
@@ -1150,18 +1176,120 @@ void require_selected_path(const simaai::neat::Graph& graph, const RawScenario& 
           std::string(scenario.name) + ": selected the wrong adaptive ingress variant\n" + backend);
 }
 
+void verify_dma_ingress_boundary() {
+  namespace dma = simaai::neat::internal::dmabuf;
+  const std::string context = "encoder ingress ownership";
+  GstVideoInfo visible, storage;
+  gst_video_info_init(&visible);
+  require(gst_video_info_set_format(&visible, GST_VIDEO_FORMAT_NV12, 64, 8), context);
+  dma::Error error;
+  require(dma::encoderInputInfo(visible, &storage, &error), error.message());
+  GstObjectPtr<GstBufferPool> pool(dma::createEncoderInputPool(storage, 1, 1, &error));
+  require(pool != nullptr, error.message());
+  GstBuffer* owned = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool.get(), &owned, nullptr) == GST_FLOW_OK, context);
+  std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> input(owned, gst_buffer_unref);
+  auto pipeline = parse_pipeline(
+      "appsrc name=source is-live=true format=time "
+      "caps=\"video/x-raw,format=NV12,width=64,height=8,framerate=0/1\" "
+      "! neatencoderinput ! appsink name=sink sync=false async=false enable-last-sample=false",
+      context);
+  GstObjectPtr<GstElement> source(required_element(pipeline.get(), "source", context));
+  GstObjectPtr<GstElement> sink(required_element(pipeline.get(), "sink", context));
+  start_pipeline(pipeline.get(), context);
+  GstMemory* memory = gst_buffer_peek_memory(input.get(), 0);
+  const GstVideoMeta* metadata = gst_buffer_get_video_meta(input.get());
+  GST_BUFFER_PTS(input.get()) = 123456;
+  require(gst_app_src_push_buffer(GST_APP_SRC(source.get()), gst_buffer_ref(input.get())) ==
+              GST_FLOW_OK,
+          context + ": push failed");
+  GstSamplePtr sample(gst_app_sink_try_pull_sample(GST_APP_SINK(sink.get()), 3 * GST_SECOND));
+  require(sample != nullptr, context + ": no output: " + bus_error(pipeline.get()));
+  GstBuffer* result = gst_sample_get_buffer(sample.get());
+  const GstVideoMeta* result_metadata = gst_buffer_get_video_meta(result);
+  // appsrc may make a writable metadata-only envelope (for example, to mark
+  // DISCONT). Zero-copy requires the allocation and authored layout, not the
+  // GstBuffer/GstVideoMeta header addresses, to survive this whole pipeline.
+  const bool same_memory = gst_buffer_n_memory(result) == 1 &&
+                           gst_buffer_peek_memory(result, 0) == memory &&
+                           gst_buffer_get_size(result) == gst_buffer_get_size(input.get());
+  bool same_layout = metadata && result_metadata && metadata->format == result_metadata->format &&
+                     metadata->width == result_metadata->width &&
+                     metadata->height == result_metadata->height &&
+                     metadata->n_planes == result_metadata->n_planes;
+  std::ostringstream identity;
+  identity << "input_buffer=" << input.get() << " output_buffer=" << result
+           << " input_memory=" << memory << " output_memory=" << gst_buffer_peek_memory(result, 0)
+           << " input_meta=" << metadata << " output_meta=" << result_metadata;
+  if (metadata && result_metadata) {
+    identity << " input_layout=" << metadata->format << ':' << metadata->width << 'x'
+             << metadata->height << '/' << metadata->n_planes
+             << " output_layout=" << result_metadata->format << ':' << result_metadata->width << 'x'
+             << result_metadata->height << '/' << result_metadata->n_planes;
+    for (guint plane = 0; plane < std::min(metadata->n_planes, result_metadata->n_planes);
+         ++plane) {
+      same_layout = same_layout && metadata->offset[plane] == result_metadata->offset[plane] &&
+                    metadata->stride[plane] == result_metadata->stride[plane];
+      identity << " plane" << plane << '=' << metadata->offset[plane] << ':'
+               << metadata->stride[plane] << "->" << result_metadata->offset[plane] << ':'
+               << result_metadata->stride[plane];
+    }
+  }
+  require(same_memory && same_layout,
+          context +
+              ": compatible DMA allocation or authored layout was replaced: " + identity.str());
+  std::cout << "[INFO] " << context << ": " << identity.str() << '\n';
+  require(GST_BUFFER_PTS(result) == 123456, context + ": timestamp changed");
+  sample.reset();
+  GstBuffer* cpu = gst_buffer_new_allocate(nullptr, visible.size, nullptr);
+  require(cpu != nullptr, context + ": CPU fixture allocation failed");
+  gst_buffer_memset(cpu, 0, 83, visible.size);
+  GstCaps* clock = gst_caps_from_string("timestamp/x-unix");
+  require(gst_buffer_add_reference_timestamp_meta(cpu, clock, 987654, 123) != nullptr, context);
+  gst_caps_unref(clock);
+  require(gst_app_src_push_buffer(GST_APP_SRC(source.get()), cpu) == GST_FLOW_OK,
+          context + ": CPU push failed");
+  sample.reset(gst_app_sink_try_pull_sample(GST_APP_SINK(sink.get()), 3 * GST_SECOND));
+  require(sample != nullptr, context + ": no converted CPU output: " + bus_error(pipeline.get()));
+  result = gst_sample_get_buffer(sample.get());
+  require(dma::isEncoderInputBuffer(result, visible), context + ": CPU output is not final DMA");
+  const auto* timestamp = gst_buffer_get_reference_timestamp_meta(result, nullptr);
+  require(timestamp && timestamp->timestamp == 987654 && timestamp->duration == 123,
+          context + ": conversion lost independent frame metadata");
+  auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(result, 0), &error);
+  auto read = view ? view->map(dma::CpuAccess::Read, &error) : std::nullopt;
+  require(read.has_value(), context + ": output READ failed: " + error.message());
+  const auto* pixels = static_cast<const std::uint8_t*>(read->data());
+  require(pixels[0] == 83 && pixels[storage.offset[1]] == 83,
+          context + ": NV12 upload changed visible pixels");
+  require(read->finish(&error), context + ": output READ completion failed: " + error.message());
+  require(gst_element_set_state(pipeline.get(), GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
+          context);
+  sample.reset();
+  input.reset();
+  // The producer pool has exactly one slot. A stray passthrough reference
+  // would still hold it after all input, output and pipeline owners are gone.
+  GstBufferPoolAcquireParams acquire{};
+  acquire.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+  GstBuffer* recycled = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool.get(), &recycled, &acquire) == GST_FLOW_OK,
+          context + ": passthrough retained the producer pool slot after teardown");
+  std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> returned(recycled, gst_buffer_unref);
+  require(gst_buffer_peek_memory(returned.get(), 0) == memory,
+          context + ": producer pool replaced the passthrough allocation");
+  returned.reset();
+  require(gst_buffer_pool_set_active(pool.get(), FALSE), context + ": pool did not close");
+}
+
 void run_raw_scenario(const RawScenario& scenario, const RawFrame& input,
                       const RawFrame& expected_rgb) {
+  if (std::string_view(scenario.name) == "system_nv12_tight") {
+    verify_dma_ingress_boundary();
+  }
   const int port = choose_udp_port();
   RtpReceiver receiver(port, kH264);
   simaai::neat::Graph graph = scenario_graph(scenario, port);
   require_selected_path(graph, scenario);
-  GstObjectPtr<GstAllocator> input_allocator;
-  if (scenario.memory == InputMemoryPolicy::Ev74) {
-    input_allocator.reset(gst_allocator_find("NeatSimaaiMemory"));
-    require(input_allocator != nullptr,
-            std::string(scenario.name) + ": EV74 input allocator is unavailable");
-  }
 
   if (scenario.save_load) {
     const std::filesystem::path saved_path =
@@ -1175,7 +1303,8 @@ void run_raw_scenario(const RawScenario& scenario, const RawFrame& input,
     require_selected_path(graph, scenario);
   }
 
-  Tensor seed = tensor_from_frame(input, scenario.row_padding, input_allocator.get());
+  Tensor seed =
+      tensor_from_frame(input, scenario.row_padding, scenario.memory == InputMemoryPolicy::Ev74);
   const std::uint64_t seed_hash = fnv1a(seed);
   Sample seed_sample = simaai::neat::sample_from_tensors(simaai::neat::TensorList{seed});
   seed_sample.frame_id = 0;
@@ -1196,7 +1325,8 @@ void run_raw_scenario(const RawScenario& scenario, const RawFrame& input,
   // Graph::build uses the seed for contract discovery; submit every frame
   // explicitly through the public streaming API.
   for (int frame_index = 0; frame_index < kFramesPerScenario; ++frame_index) {
-    inputs.push_back(tensor_from_frame(input, scenario.row_padding, input_allocator.get()));
+    inputs.push_back(
+        tensor_from_frame(input, scenario.row_padding, scenario.memory == InputMemoryPolicy::Ev74));
     input_hashes.push_back(fnv1a(inputs.back()));
     const std::int64_t pts_ns = static_cast<std::int64_t>(frame_index) * 1000000000LL / kFps;
     // sample_from_tensors keeps a GstSample-backed tensor as the transport
@@ -1418,9 +1548,9 @@ int main(int argc, char** argv) {
     };
 
     const std::array<RawScenario, 9> scenarios{{
-        {"system_nv12_tight", FormatTag::NV12, InputMemoryPolicy::SystemMemory, 0, true,
+        {"system_nv12_tight", FormatTag::NV12, InputMemoryPolicy::SystemMemory, 0, false,
          Topology::Connected, true},
-        {"system_nv12_padded", FormatTag::NV12, InputMemoryPolicy::SystemMemory, 128, true,
+        {"system_nv12_padded", FormatTag::NV12, InputMemoryPolicy::SystemMemory, 128, false,
          Topology::Connected, false},
         {"auto_nv12", FormatTag::NV12, InputMemoryPolicy::Auto, 0, true, Topology::Fanout, false},
         {"ev74_nv12", FormatTag::NV12, InputMemoryPolicy::Ev74, 0, true, Topology::Linear, false},

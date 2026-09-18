@@ -323,6 +323,23 @@ void prepared_runtime_view_edge_fills_source_offset_from_consumer_view() {
   assert(input_binding.shape == std::vector<std::int64_t>({1, 1, 1}));
 }
 
+void prepared_runtime_fixed_transform_uses_complete_manifest_without_graph_overlay() {
+  auto manifest = processcvu_routing_manifest(
+      binding_to_producer(0, "branching_producer", 1, 1, 1, "head1", 16U), false);
+  auto& transform = manifest.stages[1];
+  transform.logical_stage_id = "tessellate_stage";
+  transform.processcvu.graph_family = "tessellate";
+  transform.processcvu.graph_name = "tessellate";
+
+  // A physical execution stage is already a complete, Core-authored contract.
+  // It must not be coupled back to an MPK graph-node name (which can differ
+  // after cohorting/name sanitization) merely to prepare the fixed CVU op.
+  const auto input_binding = single_prepared_processcvu_input_binding(std::move(manifest));
+  assert(input_binding.source_logical_index == 1);
+  assert(input_binding.source_physical_index == 1);
+  assert(input_binding.segment_name == "head1");
+}
+
 } // namespace
 
 int main() {
@@ -336,5 +353,6 @@ int main() {
   prepared_runtime_keeps_explicit_source_fields_when_edge_resolves();
   prepared_runtime_keeps_explicit_zero_offset_when_source_fields_are_complete();
   prepared_runtime_view_edge_fills_source_offset_from_consumer_view();
+  prepared_runtime_fixed_transform_uses_complete_manifest_without_graph_overlay();
   return 0;
 }

@@ -61,7 +61,7 @@ set -euo pipefail
 #   board installer refreshes APT metadata before installing local DEBs. AUTO
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
-#   staged EV74 firmware and reset runtime state after board package replacement.
+#   staged EV74 firmware after board package replacement.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -195,7 +195,7 @@ verify_simulated_package_removals() {
   for package in "${removed_packages[@]}"; do
     package_name="${package%%:*}"
     case "${package_name}" in
-      sima-neat | sima-neat-dev)
+      sima-neat | sima-neat-dev | neat-internals-dev | sima-lmm-dev)
         continue
         ;;
       neat-libcamera | neat-libcamera-dev | neat-libcamera-tools)
@@ -782,104 +782,50 @@ sysroot_neat_install_packages_dir() {
   printf '%s\n' "$(sysroot_path)/neat-install-packages"
 }
 
-has_sima_lmm_sysroot_deps() {
-  local sysroot="$1"
-  [[ -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
-     -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
-     -f "${sysroot}/usr/include/fmt/core.h" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" &&
-     -f "${sysroot}/usr/include/spdlog/spdlog.h" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" &&
-     -f "${sysroot}/usr/include/nlohmann/json.hpp" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" &&
-     -f "${sysroot}/usr/include/httplib.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]
-}
-
 ensure_sima_lmm_sysroot_deps() {
   local sysroot="$1"
-
-  if ! compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
-    return 0
+  local -a dependencies=("usr/include/nlohmann/json.hpp:nlohmann-json3-dev")
+  if compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
+    dependencies+=(
+      "usr/lib/aarch64-linux-gnu/libfmt.so.10:libfmt10:arm64"
+      "usr/lib/aarch64-linux-gnu/libspdlog.so.1.15:libspdlog1.15:arm64"
+      "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
+      "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
+      "usr/lib/aarch64-linux-gnu/libfftw3.so.3:libfftw3-double3:arm64"
+      "usr/lib/aarch64-linux-gnu/libavcodec.so.61:libavcodec61:arm64"
+      "usr/lib/aarch64-linux-gnu/libavformat.so.61:libavformat61:arm64"
+      "usr/lib/aarch64-linux-gnu/libavutil.so.59:libavutil59:arm64"
+      "usr/lib/aarch64-linux-gnu/libswresample.so.5:libswresample5:arm64"
+    )
   fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "apt-get is required to install SimaLMM SDK/sysroot dependencies." >&2
-    exit 1
-  fi
-
+  local dependency
   local -a missing_packages=()
-  if [[ ! -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
-        ! -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
-    missing_packages+=("libeigen3-dev")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/fmt/core.h" ]]; then
-    missing_packages+=("libfmt-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
-    missing_packages+=("libfmt9:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/spdlog/spdlog.h" ]]; then
-    missing_packages+=("libspdlog-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
-    missing_packages+=("libspdlog1.10:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/nlohmann/json.hpp" ]]; then
-    missing_packages+=("nlohmann-json3-dev")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" ||
-        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" ||
-        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
-    missing_packages+=("libbrotli-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/httplib.h" ]]; then
-    missing_packages+=("libcpp-httplib-dev:arm64")
-  fi
-  if [[ ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
-    missing_packages+=("libcpp-httplib0.11:arm64")
-  fi
-
-  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
-    return 0
-  fi
+  for dependency in "${dependencies[@]}"; do
+    [[ -e "${sysroot}/${dependency%%:*}" ]] || missing_packages+=("${dependency#*:}")
+  done
+  [[ "${#missing_packages[@]}" -gt 0 ]] || return 0
 
   local tmp_dir
-  tmp_dir="$(mktemp -d /tmp/sima-lmm-sysroot-deps-XXXXXX)"
-
-  log "Installing SimaLMM SDK/sysroot dependencies:"
-  printf '  %s\n' "${missing_packages[@]}"
-  if ! (
-    cd "${tmp_dir}"
-    apt-get download "${missing_packages[@]}"
-  ); then
+  tmp_dir="$(mktemp -d /tmp/neat-sysroot-deps-XXXXXX)"
+  log "Installing customer SDK dependencies: ${missing_packages[*]}"
+  if ! (cd "${tmp_dir}" && apt-get download "${missing_packages[@]}"); then
     rm -rf "${tmp_dir}"
-    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    echo "Failed to download customer SDK dependencies." >&2
     exit 1
   fi
-
-  local -a downloaded_debs=()
-  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
-  if [[ "${#downloaded_debs[@]}" -lt 1 ]]; then
-    rm -rf "${tmp_dir}"
-    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
-    exit 1
-  fi
-
   local dep_deb
-  for dep_deb in "${downloaded_debs[@]}"; do
-    log "Extracting $(basename "${dep_deb}") into ${sysroot}"
+  for dep_deb in "${tmp_dir}"/*.deb; do
     if ! dpkg-deb -x "${dep_deb}" "${sysroot}" 2>/dev/null; then
       run_sudo dpkg-deb -x "${dep_deb}" "${sysroot}"
     fi
   done
   rm -rf "${tmp_dir}"
-
-  if ! has_sima_lmm_sysroot_deps "${sysroot}"; then
-    echo "SimaLMM SDK/sysroot dependencies are still incomplete after install." >&2
-    exit 1
-  fi
+  for dependency in "${dependencies[@]}"; do
+    if [[ ! -e "${sysroot}/${dependency%%:*}" ]]; then
+      echo "Missing customer SDK dependency after install: ${dependency#*:}" >&2
+      exit 1
+    fi
+  done
 }
 
 ensure_sdk_neat_cli_symlink() {
@@ -1108,7 +1054,40 @@ remove_installed_local_deb_packages() {
   run_sudo dpkg --remove --force-depends "${packages[@]}"
 }
 
+board_runtime_is_legacy() {
+  python3 - "$(resolve_package_manifest_path)" "${NEAT_BUILDINFO_FILE}" <<'PYPROFILE'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if not re.fullmatch(r"2[.]1[.][0-9]+", str(manifest.get("platform-version", ""))):
+        raise SystemExit(1)
+    fields = {}
+    for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
+        if len(line) > 4096:
+            raise SystemExit(1)
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if separator and key in ("MACHINE", "DISTRO_VERSION"):
+            if key in fields:
+                raise SystemExit(1)
+            fields[key] = value.strip()
+    raise SystemExit(0 if fields.get("MACHINE") == "modalix" and re.fullmatch(
+        r"2[.]1[.][0-9]+([.~+_-][A-Za-z0-9_.+~-]+)?", fields.get("DISTRO_VERSION", "")
+    ) else 1)
+except (OSError, ValueError, AttributeError, TypeError):
+    raise SystemExit(1)
+PYPROFILE
+}
+
 stop_board_runtime_before_install() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1140,6 +1119,16 @@ stop_board_runtime_before_install() {
 }
 
 activate_board_runtime_after_install() {
+  if ! board_runtime_is_legacy; then
+    if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
+          -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
+      log "Activating staged EV74 firmware."
+      run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
+    else
+      log "EV74 firmware activation skipped."
+    fi
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1166,6 +1155,10 @@ activate_board_runtime_after_install() {
 }
 
 verify_board_runtime_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   local service="simaai-appcomplex.service"
 
   if ! command -v systemctl >/dev/null 2>&1; then
@@ -1201,6 +1194,10 @@ verify_board_runtime_services() {
 
 
 restart_board_codec_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1229,6 +1226,10 @@ restart_board_codec_services() {
 }
 
 verify_board_codec_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1556,8 +1557,10 @@ verify_global_sima_neat_lib_links() {
 }
 
 complete_board_install_after_packages() {
-  migrate_stale_global_dispatcher_libs
-  verify_private_dispatcher_runtime
+  if board_runtime_is_legacy; then
+    migrate_stale_global_dispatcher_libs
+    verify_private_dispatcher_runtime
+  fi
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
   verify_canonical_palette_and_ota_installation

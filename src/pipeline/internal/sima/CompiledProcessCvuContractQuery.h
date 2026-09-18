@@ -53,6 +53,126 @@ inline bool processcvu_contract_primary_output_uses_packed_transport(
 }
 
 /**
+ * Specialize a model's admitted graph-200 handoff for a standalone ROI invocation.
+ * Source N and output capacity R are independent. Only the packed source and
+ * published output carriers are batched; the exact firmware output descriptor
+ * remains one member (the driver finalizer applies R). No options round-trip is
+ * permitted here: it would discard model-authored tile/storage facts.
+ */
+inline CompiledProcessCvuContract
+specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int source_count,
+                                int height, int width, int channels, int roi_capacity) {
+  if (source_count <= 0 || source_count > 50 || height <= 0 || width <= 0 ||
+      (channels != 1 && channels != 3) || roi_capacity <= 0 || roi_capacity > 50 ||
+      admitted.payload.graph_id != 200 || !admitted.preproc_single_output_handoff ||
+      admitted.payload.batch_size != 1 || admitted.payload.input_tensors.size() != 1U ||
+      admitted.payload.output_tensors.size() != 1U ||
+      admitted.runtime_contract.physical_inputs.size() != 1U ||
+      admitted.runtime_contract.logical_inputs.size() != 1U ||
+      admitted.runtime_contract.input_bindings.size() != 1U ||
+      admitted.runtime_contract.physical_outputs.size() != 1U ||
+      admitted.runtime_contract.logical_outputs.size() != 1U ||
+      admitted.exposed_view.exposed_logical_outputs.size() != 1U) {
+    throw std::invalid_argument("Preproc ROI-list: requires an admitted single-member handoff");
+  }
+  auto multiply = [](std::uint64_t bytes, int count) {
+    if (bytes == 0U ||
+        bytes > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) /
+                    static_cast<std::uint64_t>(count)) {
+      throw std::invalid_argument("Preproc ROI-list: invocation carrier span overflows");
+    }
+    return bytes * static_cast<std::uint64_t>(count);
+  };
+  auto result = admitted;
+  auto& payload = result.payload;
+  auto& runtime = result.runtime_contract;
+  const auto& selected_output = runtime.logical_outputs.front();
+  if (selected_output.backend_output_index != 0 || selected_output.physical_index != 0 ||
+      runtime.physical_outputs.front().physical_index != 0 ||
+      payload.output_tensors.front().storage.nbytes == 0U ||
+      (!selected_output.stride_bytes.empty() &&
+       selected_output.stride_bytes.size() != selected_output.shape.size())) {
+    throw std::invalid_argument("Preproc ROI-list: inconsistent admitted output descriptor/view");
+  }
+  const auto row_bytes = multiply(static_cast<std::uint64_t>(width), channels);
+  const auto frame_bytes = multiply(row_bytes, height);
+  const auto source_bytes = multiply(frame_bytes, source_count);
+  const std::vector<int> source_shape{source_count, height, width, channels};
+  std::string detail;
+  if (!tensorsemantics::build_dense_tensor_desc(
+          source_shape, "UINT8", "NHWC", &payload.input_tensors.front(), &detail,
+          "missing source descriptor", "invalid source rank", "invalid source dimension",
+          "invalid source dtype", "invalid source stride")) {
+    throw std::invalid_argument("Preproc ROI-list: " + detail);
+  }
+  payload.input_tensors.front().storage.nbytes = source_bytes;
+  // Public PreprocOptions keeps HWC positional accessors. N is explicit only
+  // in the typed/logical source descriptor, not in its image-shape option.
+  payload.input_shapes = {{height, width, channels}};
+  payload.input_stride = width; // graph-200 RGB/BGR stride is pixels, not bytes
+  payload.input_offset = 0;
+  payload.batch_size = roi_capacity;
+  auto& source = runtime.logical_inputs.front();
+  source.shape.assign(source_shape.begin(), source_shape.end());
+  source.stride_bytes = {static_cast<std::int64_t>(frame_bytes),
+                         static_cast<std::int64_t>(row_bytes), channels, 1};
+  source.layout = "NHWC";
+  source.byte_offset = 0;
+  source.size_bytes = source_bytes;
+  runtime.physical_inputs.front().size_bytes = source_bytes;
+  runtime.physical_inputs.front().source_byte_offset = 0;
+  runtime.input_bindings.front().src_physical_size_bytes = source_bytes;
+  runtime.input_bindings.front().src_physical_byte_offset = 0;
+
+  const auto slot_bytes = runtime.physical_outputs.front().size_bytes;
+  runtime.physical_outputs.front().size_bytes = multiply(slot_bytes, roi_capacity);
+  auto& output = runtime.logical_outputs.front();
+  const auto output_axes =
+      tensorsemantics::host_axis_semantics_from_ev(payload.output_tensors.front().shape);
+  const auto batch_axis = tensorsemantics::find_axis(output_axes, TensorAxisSemantic::N);
+  if (batch_axis) {
+    if (*batch_axis != 0U || *batch_axis >= output.shape.size() || output.shape[*batch_axis] != 1 ||
+        payload.output_tensors.front().shape.sizes[*batch_axis] != 1) {
+      throw std::invalid_argument("Preproc ROI-list: output descriptor is not one member");
+    }
+    output.shape[*batch_axis] = roi_capacity;
+    if (!output.stride_bytes.empty()) {
+      output.stride_bytes[*batch_axis] = static_cast<std::int64_t>(slot_bytes);
+    }
+  } else {
+    output.shape.insert(output.shape.begin(), roi_capacity);
+    if (!output.stride_bytes.empty()) {
+      output.stride_bytes.insert(output.stride_bytes.begin(),
+                                 static_cast<std::int64_t>(slot_bytes));
+    }
+  }
+  output.size_bytes = multiply(output.size_bytes, roi_capacity);
+  const auto member_layout = tensorsemantics::normalize_layout_token(output.layout);
+  if (output.shape.size() != 4U || (member_layout != "HWC" && member_layout != "CHW")) {
+    throw std::invalid_argument("Preproc ROI-list: unsupported batched output semantics");
+  }
+  output.layout = member_layout == "CHW" ? "NCHW" : "NHWC";
+  result.exposed_view.exposed_logical_outputs = {output};
+  payload.runtime_output_logical_shapes = {
+      std::vector<int>(output.shape.begin(), output.shape.end())};
+  payload.runtime_output_logical_layout_list = {output.layout};
+
+  // A standalone invocation must not inherit offsets/extent/access policy from
+  // the model-wide Ingress arena. The existing standalone renderer authors the
+  // new Allocate/CMA arena after run-target resolution using its shared policy.
+  result.physical_command_role.reset();
+  payload.dmabuf_plan_contract = false;
+  runtime.frame_arena_size_bytes = 0;
+  runtime.frame_arena_role = FrameArenaRole::None;
+  runtime.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Unknown;
+  runtime.frame_arena_provenance = static_contract::ArenaAllocationProvenance::Unknown;
+  runtime.frame_arena_required_device_access = 0;
+  runtime.frame_arena_escape_policy = static_contract::ArenaEscapePolicy::InternalOnly;
+  runtime.physical_outputs.front().source_byte_offset = 0;
+  return result;
+}
+
+/**
  * @brief Adjust an MLA contract's logical input to match a packed upstream handoff.
  *
  * When the upstream process-CVU emits packed transport, the MLA must read the entire physical

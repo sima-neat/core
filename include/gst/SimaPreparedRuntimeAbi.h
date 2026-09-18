@@ -15,7 +15,7 @@
 #include <vector>
 
 #define SIMA_PREPARED_RUNTIME_CONTEXT_TYPE "sima.model.prepared-runtime"
-#define SIMA_PREPARED_RUNTIME_ABI_VERSION ((guint)3)
+#define SIMA_PREPARED_RUNTIME_ABI_VERSION ((guint)4)
 
 #define SIMA_PREPARED_RUNTIME_KEY_SESSION_ID "session_id"
 #define SIMA_PREPARED_RUNTIME_KEY_MODEL_ID "model_id"

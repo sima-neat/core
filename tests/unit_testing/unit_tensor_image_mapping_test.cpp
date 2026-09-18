@@ -1,8 +1,16 @@
 #include "pipeline/TensorCore.h"
+#include "pipeline/TensorAdapters.h"
+#include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/HolderLoanGate.h"
+#include "pipeline/internal/TensorUtil.h"
+#include "dmabuf_test_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <gst/gst.h>
+
 #include <cstring>
+#include <memory>
 #include <functional>
 #include <string>
 
@@ -62,10 +70,91 @@ bool throws_with(const std::function<void()>& fn, const std::string& needle) {
   return false;
 }
 
+void test_dmabuf_mapping_lifetime(bool projected) {
+  using namespace simaai::neat;
+  namespace internal = pipeline_internal;
+  GstBuffer* buffer = sima_test::allocate_cma_dmabuf(128U);
+  const auto backing = sima_test::dmabuf_span(buffer);
+  GstCaps* caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "GRAY8", "width",
+                                      G_TYPE_INT, 8, "height", G_TYPE_INT, 8, nullptr);
+  GstSample* gst_sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+  gst_caps_unref(caps);
+  gst_buffer_unref(buffer);
+  Tensor tensor = from_gst_sample(gst_sample);
+  gst_sample_unref(gst_sample);
+  if (projected) {
+    tensor = internal::tensor_view_from_sample_memory(tensor, 0, true);
+    tensor.byte_offset = 16;
+    tensor.shape = {4, 8};
+    tensor.strides_bytes = {8, 1};
+  }
+  require(internal::tensor_has_dmabuf_memory(tensor), "DMA storage classification missing");
+  require(tensor.device.type == DeviceType::CPU && tensor.storage->sima_mem_target_flags == 0U,
+          "shared DMA storage must not acquire fake device placement or legacy flags");
+  {
+    // Fixture initialization uses the same synchronized mapping authority as app reads.
+    auto write = tensor.storage->map(MapMode::Write);
+    require(write.data && write.size_bytes >= 64U, "real DMA-BUF writable mapping failed");
+    std::memset(write.data, 0x5A, write.size_bytes);
+  }
+  require(throws_with([&] { (void)tensor.map(MapMode::Write); }, "read-only"),
+          "read-only DMA Tensor accepted writable app access");
+
+  struct FixtureState {
+    bool end_completed = false;
+    bool producer_released = false;
+    bool end_before_release = false;
+  };
+  auto state = std::make_shared<FixtureState>();
+  auto original_map = std::move(tensor.storage->map_fn);
+  tensor.storage->map_fn = [original_map = std::move(original_map), state](MapMode mode) {
+    Mapping mapped = original_map(mode);
+    mapped.unmap = [finish = std::move(mapped.unmap), state]() {
+      if (finish) {
+        finish();
+      }
+      state->end_completed = true;
+    };
+    return mapped;
+  };
+  auto producer = std::shared_ptr<void>(new int(0), [state](void* value) {
+    state->end_before_release = state->end_completed;
+    state->producer_released = true;
+    delete static_cast<int*>(value);
+  });
+  auto gate = std::make_shared<internal::HolderLoanGate>(1);
+  Sample sample = sample_from_tensors(TensorList{tensor});
+  internal::mark_sample_producer_stream_lifetime(sample, producer);
+  require(internal::attach_zero_copy_loan_to_sample(sample, gate), "DMA loan attachment failed");
+  producer.reset();
+  require(gate->inflight() == 1, "DMA map fixture did not acquire one output loan");
+  Mapping mapping = tensor.map_read();
+  require(mapping.data && mapping.size_bytes >= 32U, "real DMA-BUF read mapping failed");
+  require(static_cast<const uint8_t*>(mapping.data)[0] == 0x5A,
+          "DMA mapping did not expose the initialized producer allocation");
+  auto* retained = static_cast<GstSample*>(tensor.storage->holder.get());
+  require(sima_test::dmabuf_span(gst_sample_get_buffer(retained)) == backing,
+          "mapping replaced producer backing allocation");
+  std::weak_ptr<Storage> storage = tensor.storage;
+  sample = {};
+  tensor = {};
+  require(!storage.expired() && gate->inflight() == 1 && !state->producer_released,
+          "Mapping outlived its Tensor but lost the current storage/loan/producer guard");
+  require(!state->end_completed, "DMA CPU epoch ended before Mapping release");
+  mapping = {};
+  require(storage.expired() && gate->inflight() == 0 && gate->released() == 1U,
+          "DMA Mapping did not release its final loan exactly once");
+  require(state->producer_released && state->end_before_release,
+          "producer loan released before the real DMA CPU epoch finished");
+}
+
 } // namespace
 
 RUN_TEST("unit_tensor_image_mapping_test", ([] {
            using namespace simaai::neat;
+           gst_init(nullptr, nullptr);
+           test_dmabuf_mapping_lifetime(false);
+           test_dmabuf_mapping_lifetime(true);
 
            const Tensor nv12 = make_nv12_tensor(8, 6, 0x22);
            require(nv12.is_nv12(), "expected NV12 tensor");

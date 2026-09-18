@@ -68,6 +68,7 @@ enum class StageNodeKind {
 struct ModelAccess {
   static const class ModelPack& pack(const Model& model);
   static const class ModelPack& pack_for_sync(const Model& model);
+  static void prepare_for_execution(const Model& model, bool sync);
   static std::string model_id(const Model& model);
   static std::string source_path(const Model& model);
   static Run& run(Model::Runner& runner);
@@ -98,6 +99,8 @@ struct ModelAccess {
   static std::vector<std::shared_ptr<Node>> build_public_stage_fragment_nodes(const Model& model,
                                                                               Model::Stage stage);
   static simaai::neat::Graph build_stage_graph_fragment(const Model& model, Model::Stage stage);
+  static std::vector<std::shared_ptr<Node>> rebuild_preprocess_route_nodes(const Model& model,
+                                                                           bool sync);
   static std::vector<std::shared_ptr<Node>> build_preprocess_nodes(const Model& model, bool sync);
   static std::vector<std::shared_ptr<Node>>
   build_preprocess_nodes_for_input(const Model& model, const InputOptions& input, bool sync);

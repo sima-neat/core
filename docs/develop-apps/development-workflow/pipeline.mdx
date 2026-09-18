@@ -276,13 +276,32 @@ When you combine streams, preserve the matching key that the graph expects. `Com
 | Normal app serving | `RunPreset::Balanced` | Good default once the graph works. |
 | Jittery source needs bounded buffering | `queue_depth` | Increase only enough to absorb jitter. A deep queue can hide stale frames and delayed backpressure. |
 | App stores outputs after pull | `OutputMemory::Owned` | Keeps output lifetime independent of runtime buffers. |
-| App consumes outputs immediately | `OutputMemory::Auto` | Let Neat choose the right ownership path first. |
+| App consumes outputs without a transport copy | `OutputMemory::Auto` | Retains standard DMA-BUF outputs in sync and async runs; other storage follows the preset/mode policy. |
 | Default wait time should be explicit | `input_timeout_ms` | Sets the default timeout for build/run input-mode paths. Per-call timeouts still win. |
 | Seeded build should catch first-sample errors early | `startup_preflight = true` | Keeps seeded build honest. Disable only when first-sample failures can surface later through `pull(...)` or `last_error()`. |
 | Source buffer lifetime is short | `advanced.copy_input = true` | Protects input memory that may disappear after `push(...)`. |
 | Input size needs a guardrail | `advanced.max_input_bytes` | Rejects oversized input before it enters the graph. |
 | You need drop telemetry | `on_input_drop` | Counts overload and size-guard drops by stream and reason. |
 | You need build-time evidence | `run_export` | Writes a run snapshot when the run is built. |
+
+### Retain and release DMA-BUF outputs
+
+Native hardware decode writes directly into a DMA-BUF pool. The default file-input
+path preserves that storage: it does not insert a hidden `videoconvert` or request
+SystemMemory. Device consumers import the allocation, and `Tensor::map(MapMode::Read)` maps
+it for app reads without creating a pixel copy. A preprocessing operation can
+produce a different result allocation; that is computation, not a transport copy.
+
+With `OutputMemory::Auto` or `ZeroCopy`, retained DMA-BUF outputs keep their pool
+loans. A `Mapping` keeps its loan even after you release the Tensor. Release both
+when you finish reading so the producer can reuse its buffers. Queue pressure
+does not switch DMA-BUF outputs to copies or silently turn `Block` into dropping;
+explicit latest-frame/drop policies still apply.
+
+Use `OutputMemory::Owned` or `clone()` when you deliberately need independent
+storage. Explicit software conversion and `advanced.copy_input` remain copy
+boundaries. `SIMA_OUTPUT_MEMORY_DEFAULT=owned` deliberately selects owned output
+for `Auto`; it does not override an explicit per-run choice.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

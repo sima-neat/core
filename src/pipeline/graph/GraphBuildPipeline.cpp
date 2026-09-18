@@ -80,7 +80,7 @@ SimaPluginStaticManifest transform_manifest_stage_names(const SimaPluginStaticMa
 
 bool pipeline_element_is_boxdecode_plugin(
     const pipeline_internal::sima::PipelineElementSpec& spec) {
-  return spec.plugin == "neatobjectdecode" || spec.plugin == "neatboxdecode";
+  return spec.plugin == "neatobjectdecode";
 }
 
 const StageStaticSpec* find_boxdecode_manifest_stage(const SimaPluginStaticManifest& manifest,
@@ -915,6 +915,47 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
     }
   }
 
+  // Most native stages receive their compiled manifest below. A65 instead
+  // consumes one self-contained property. Set it on this new pipeline instance
+  // from the same per-build contract, not the original descriptive fragment's
+  // full-model arena encoding. No shared Node/Model state is modified.
+  if (build.compiled_contracts) {
+    const auto configure_transport = [&](const auto& self,
+                                         const CompiledNodeContract& stage) -> void {
+      for (const auto& child : stage.child_stages) {
+        self(self, child);
+      }
+      if (!stage.transport || stage.transport->direct_contract_b64.empty()) {
+        return;
+      }
+      const auto name = apply_name_transform(build.name_transform, stage.element_name);
+      GstElement* element = gst_bin_get_by_name(GST_BIN(pipeline), name.c_str());
+      GParamSpec* property =
+          element ? g_object_class_find_property(G_OBJECT_GET_CLASS(element), "direct-contract-b64")
+                  : nullptr;
+      const bool valid = element && stage.transport->plugin_kind == "neatprocesstvm" && property &&
+                         G_PARAM_SPEC_VALUE_TYPE(property) == G_TYPE_STRING &&
+                         (property->flags & G_PARAM_WRITABLE) != 0U;
+      if (valid) {
+        g_object_set(element, "direct-contract-b64", stage.transport->direct_contract_b64.c_str(),
+                     nullptr);
+      }
+      if (element) {
+        gst_object_unref(element);
+      }
+      if (!valid) {
+        session_build_throw_session_error_simple(
+            error_codes::kPipelineShape,
+            "Cannot attach compiled direct TVM contract to element '" + name + "'",
+            "Install matching Core and Internals; each compiled A65 stage needs its exact element.",
+            build.pipeline_string);
+      }
+    };
+    for (const auto& stage : build.compiled_contracts->stages) {
+      configure_transport(configure_transport, stage);
+    }
+  }
+
   pipeline = parsed.release();
 
   using namespace simaai::neat::pipeline_internal::sima;
@@ -1001,6 +1042,19 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
     simaai::neat::session_test::record_rendered_manifest(manifest);
     const auto pipeline_elements =
         pipeline_internal::sima::parse_pipeline_elements(build.pipeline_string);
+    // Validate the C++ bridge boundary before constructing any object across
+    // it.  A late check cannot protect move-assignment/destruction when the two
+    // sides were built from different prepared-runtime layouts.
+    if (std::string abi_error = validate_prepared_runtime_bridge_abi(); !abi_error.empty()) {
+      gst_object_unref(pipeline);
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build") +
+              ": failed to attach sima prepared runtime context: " + abi_error,
+          "Use a libneatpreparedruntimebridge.so built from the same source/runtime package as "
+          "libsima_neat.so.",
+          build.pipeline_string);
+    }
     dump_mla_contract_debug(manifest, where);
     if (env_bool("SIMA_MANIFEST_DEBUG", false)) {
       const std::string manifest_json = serialize_manifest_json(manifest);

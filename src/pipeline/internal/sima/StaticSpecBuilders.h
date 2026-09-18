@@ -65,12 +65,10 @@ LogicalTensorStaticSpec build_logical_output_static_spec(
     const std::optional<QuantStaticSpec>& quant = std::nullopt);
 
 /// Build a `PhysicalBufferStaticSpec` for a stage's physical input or output buffer.
-PhysicalBufferStaticSpec build_physical_buffer_static_spec(int physical_index, int allocator_index,
-                                                           std::uint64_t size_bytes,
-                                                           DeviceKind device_kind,
-                                                           const std::string& segment_name,
-                                                           int source_physical_index = -1,
-                                                           std::int64_t source_byte_offset = 0);
+PhysicalBufferStaticSpec build_physical_buffer_static_spec(
+    int physical_index, int allocator_index, std::uint64_t size_bytes, DeviceKind device_kind,
+    const std::string& segment_name, int source_physical_index = -1,
+    std::int64_t source_byte_offset = 0, std::uint64_t required_alignment_bytes = 0);
 
 /// Build an `InputBindingStaticSpec` connecting one of this stage's inputs to an upstream output.
 InputBindingStaticSpec build_input_binding_static_spec(

@@ -21,18 +21,19 @@ Use the raw path when the pipeline input to `VideoSender` is raw video frames.
 Neat selects the safe encoder ingress automatically:
 
 ```text
-NV12 with a proven compatible boundary:
+NV12 in a compatible DMA-BUF:
 H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
 
-Other or unknown raw formats:
-VideoConvert -> H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
+CPU input or raw frames requiring conversion:
+Convert/upload into encoder DMA-BUF -> H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
 ```
 
 The automatic selection does not add an application option or change the
-`H264RtpUdpFromRaw(...)` API. Proven NV12 in system or SiMaAI memory can feed
-the H.264 encoder directly when the installed encoder advertises
-`input-layout-aware=true`. RGB, BGR, grayscale, I420, unknown memory/layouts,
-and inputs without a reliable format contract retain one conversion to NV12.
+`H264RtpUdpFromRaw(...)` API. Compatible NV12 DMA-BUF input retains its backing
+allocation. CPU-backed NV12 requires an upload; RGB, BGR, grayscale and I420
+require conversion. Neat performs that work at the encoder-input boundary,
+writing into the final DMA surface rather than staging a second copy inside
+the encoder. Applications do not need to select a memory backend.
 
 ### Raw frame geometry and layout
 
@@ -43,7 +44,7 @@ the remaining minimum and maximum limits. For example, `680x382`, `672x384`,
 and `642x480` are valid shapes when the installed encoder accepts them.
 
 Hardware storage alignment is separate from visible geometry. Neat preserves
-the requested dimensions in caps and allocates or stages into encoder surfaces
+the requested dimensions in caps and produces encoder surfaces
 with the pitch and storage height required by the hardware. A raw buffer with a
 custom physical layout must carry `GstVideoMeta` with authoritative plane
 offsets and strides. Without that metadata, the negotiated GStreamer layout is

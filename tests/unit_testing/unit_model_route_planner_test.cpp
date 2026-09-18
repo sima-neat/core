@@ -70,7 +70,8 @@ sima_test::ModelArchiveFixture make_bf16_mla_tess_fixture(const std::string& tag
   "output_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 sima_test::ModelArchiveFixture make_quanttess_post_fixture(const std::string& tag) {
@@ -151,7 +152,8 @@ sima_test::ModelArchiveFixture make_quanttess_post_fixture(const std::string& ta
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 sima_test::ModelArchiveFixture make_quant_no_post_fixture(const std::string& tag) {
@@ -232,7 +234,8 @@ sima_test::ModelArchiveFixture make_quant_no_post_fixture(const std::string& tag
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 sima_test::ModelArchiveFixture make_ambiguous_tess_fixture(const std::string& tag) {
@@ -306,7 +309,8 @@ sima_test::ModelArchiveFixture make_ambiguous_tess_fixture(const std::string& ta
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 sima_test::ModelArchiveFixture make_multi_ingress_cast_join_fixture(const std::string& tag) {
@@ -613,6 +617,10 @@ RoutePlannerFixtureResult route_plan_for_fixture(const sima_test::ModelArchiveFi
   opt.preprocess.kind = InputKind::Tensor;
   opt.preprocess.enable = AutoFlag::On;
   Model model(fixture.tar_path, opt);
+  for (const auto& warning : model.resolved_preprocess_plan().warnings) {
+    require(warning.rfind("route: ", 0U) != 0U,
+            "route-selection diagnostics must not be promoted to preprocess warnings");
+  }
 
   const auto& pack = ModelAccess::pack(model);
   const PreprocessCapabilities capabilities = inspect_preprocess_capabilities(pack);
