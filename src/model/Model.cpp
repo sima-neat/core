@@ -6916,6 +6916,7 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["score_threshold"] = opt.score_threshold;
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
+  out["pose_classes"] = opt.pose_classes;
   out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
@@ -8413,6 +8414,12 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
       }
     }
     apply_model_superpoint_options(&compiled->payload, opt, "Model-managed boxdecode stage");
+    if (!opt.pose_classes.empty()) {
+      compiled->payload.pose_classes =
+          pipeline_internal::sima::stagesemantics::normalize_boxdecode_pose_classes(
+              compiled->payload.decode_type, opt.pose_classes, compiled->payload.num_classes,
+              "Model-managed boxdecode stage");
+    }
     return *compiled;
   }
 
@@ -8453,6 +8460,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   contract->topk = opt.top_k;
   contract->detection_threshold = opt.score_threshold;
   contract->nms_iou_threshold = opt.nms_iou_threshold;
+  contract->pose_classes = opt.pose_classes;
   contract->model_owned_flags = true;
   contract->quant_contract_required = route_flags->quant_contract_required;
   contract->required_preprocess_meta_fields =

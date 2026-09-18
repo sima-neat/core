@@ -79,6 +79,8 @@ STANDARD_SCENARIO_IDS = (
     "runtime_codec_h264_decode",
     "runtime_codec_h265_decode",
     "runtime_model_archive_load",
+    "yolox_seg_pose_payload_decode_representative",
+    "yolox_seg_pose_payload_decode_heavy",
 )
 
 LONG_SCENARIO_IDS = (

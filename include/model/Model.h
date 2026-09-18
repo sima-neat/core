@@ -270,6 +270,10 @@ public:
     /// class-head depth cannot be inferred reliably (for example single-class YOLO split heads).
     /// `0` keeps legacy inference / MPK-provided metadata.
     int num_classes = 0;
+    /// Class indices that carry keypoints, for pose decode types whose classes are mixed.
+    /// Detections of any other class get a zeroed keypoint record. Empty treats every class
+    /// as pose-bearing.
+    std::vector<int> pose_classes;
     /// Original-image width hint for BoxDecode coordinate inversion.
     /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
     /// transition.
