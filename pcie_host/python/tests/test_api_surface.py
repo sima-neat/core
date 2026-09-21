@@ -18,10 +18,13 @@ def test_options_surface():
   opt.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
   opt.preprocess.resize.enable = pcie.AutoFlag.On
   opt.decode_type = pcie.BoxDecodeType.YoloV8
+  opt.mla_only = True
 
   assert opt.preprocess.kind == pcie.InputKind.Image
   assert opt.preprocess.color_convert.input_format == pcie.ColorFormat.BGR
   assert opt.decode_type == pcie.BoxDecodeType.YoloV8
+  assert opt.mla_only is True
+  assert pcie.TensorInfo().quant is None
   assert not hasattr(pcie, "SimaPCIeHost")
   assert not hasattr(pcie.Model, "try_push")
   assert not hasattr(pcie.Model, "pull_result")

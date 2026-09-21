@@ -89,6 +89,26 @@ run.close();
 
 選擇與來源相符的策略。檔案和批次作業通常需要 `Block`。即時串流通常需要新鮮度策略。
 
+## 內嵌佇列
+
+`RunOptions::overflow_policy` 會控制 `Run` 輸入端的佇列。若要控制圖形節點之間的佇列，請新增已設定的 `Queue`：
+
+```cpp
+simaai::neat::QueueOptions queue;
+queue.max_buffers = 1;
+queue.overflow_policy = simaai::neat::OverflowPolicy::KeepLatest;
+graph.add(simaai::neat::nodes::Queue(queue));
+```
+
+```python
+queue = pyneat.QueueOptions()
+queue.max_buffers = 1
+queue.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+graph.add(pyneat.nodes.queue(queue))
+```
+
+不設定 `max_buffers` 即會使用預設的佇列上限。設為正值時，緩衝區數量會成為唯一的容量上限。`Block` 會等待空間，`KeepLatest` 會捨棄等待中最舊的緩衝區，`DropIncoming` 則會捨棄新的緩衝區。
+
 ## 拉取時機
 
 `Run::pull(...)` 從輸出邊界傳回下一個可用的 `Sample`。

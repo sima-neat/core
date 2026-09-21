@@ -70,6 +70,14 @@ int main() {
               "non-contig clone data mismatch");
     }
 
+    simaai::neat::Tensor empty;
+    empty.storage = simaai::neat::make_cpu_owned_storage(0);
+    empty.dtype = simaai::neat::TensorDType::Float32;
+    empty.shape = {0, 256};
+    empty.strides_bytes = {1024, 4};
+    empty.device = {simaai::neat::DeviceType::CPU, 0};
+    require(empty.copy_dense_bytes_tight().empty(), "empty tensor copy failed");
+
     {
       const int w = 4;
       const int h = 2;

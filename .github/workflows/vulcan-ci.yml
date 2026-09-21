@@ -101,6 +101,7 @@ jobs:
             tests/tools/test_internals_package_boundary.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_vulcan_ci_lightglue_path.py \
             tests/tools/test_vulcan_ci_notification.py
 
       - name: Resolve cache namespace and access
@@ -1127,7 +1128,9 @@ jobs:
       - name: Prepare LightGlue NEAT-68 regression model
         run: |
           set -euo pipefail
-          MODEL_ROOT="${RUNNER_TEMP:-/tmp}/sima-lightglue-neat68-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          # Keep the final extracted MLA executable path below the runtime's 256-byte capacity.
+          TMP_ROOT="${RUNNER_TEMP:-/tmp}"
+          MODEL_ROOT="${TMP_ROOT}/lg-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
           MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
           # The restricted regression fixture is intentionally staging-only.
           MODEL_VULCAN_ENV=stg
@@ -1466,7 +1469,7 @@ jobs:
           fi
 
           echo "Cleaning per-test mkdtemp roots and downloaded fixtures under ${TMP_ROOT}"
-          find "${TMP_ROOT}" -maxdepth 1 -type d -name 'sima-lightglue-neat68-*' \
+          find "${TMP_ROOT}" -maxdepth 1 -type d -name 'lg-*' \
             -exec rm -rf {} + 2>/dev/null || true
           rm -rf \
             "${TMP_ROOT}/sima_neat_mpk_tests" \

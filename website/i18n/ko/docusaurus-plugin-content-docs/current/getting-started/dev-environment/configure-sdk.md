@@ -13,7 +13,7 @@ SDK 설치 명령어는 이미 SDK 이미지를 다운로드하고 설정을 완
 
 DevKit이 호스트에서 접근 가능한 상태이고, DevKit 페어링을 추가하거나 업데이트하려는 경우 이 명령어를 사용하세요.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -29,7 +29,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 SDK 설정을 업데이트하되 DevKit에 아직 연결할 수 없는 경우 이 명령을 사용하세요.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 

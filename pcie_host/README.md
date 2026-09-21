@@ -164,11 +164,17 @@ The normal production launch path is unchanged when `card_gst_debug` is empty.
 Returned by `Model::info()`.
 
 ```cpp
+struct QuantParams {                    // per tensor: x = (q - zero_point) * scale
+  float scale;
+  std::int32_t zero_point;
+};
+
 struct TensorInfo {
   std::string name;
   std::string dtype;
   std::vector<std::int64_t> shape;
   std::size_t size_bytes = 0;
+  std::optional<QuantParams> quant;                      // mla_only only.
 };
 
 struct ModelInfo {
@@ -179,6 +185,11 @@ struct ModelInfo {
 
 `ModelInfo` reports the inference tensor contract from the model archive.
 Runtime preprocessing and postprocessing options are not included.
+
+With `ModelOptions::mla_only` the contract is the MLA's own: INT8 inputs and
+outputs with `quant` set (or BF16 without `quant`) so the application can convert with
+`x = (q - zero_point) * scale` and `q = clamp(round(x / scale) + zero_point,
+-128, 127)`.
 
 ### Payloads And Results
 
@@ -227,6 +238,22 @@ host.push({input0, input1});
 Python mirrors core: `Tensor.from_numpy(array)` defaults to zero-copy for
 C-contiguous NumPy arrays, and `Tensor.from_numpy(array, copy=True)` makes an
 owned copy when isolation is preferred.
+
+With `mla_only` the card runs only `neatprocessmla`. The host submits one dense INT8 or BF16 tensor per model input, matching `info().inputs`; any other dtype is rejected rather than quantized on the card. Results are the raw INT8 or BF16 heads in
+the model's logical shapes. Heads that are already contiguous remain views into the received
+buffer; padded or strided heads are compacted on the host into one dense block, so the MLA's
+padded layout is never visible:
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+pcie::Model model("model_mlatess_int8.tar.gz", options);
+const auto& ingress = model.info().inputs.front();   // INT8, quant set
+std::vector<std::int8_t> codes = quantize_somehow(ingress);
+model.build();
+pcie::TensorList heads = model.run(
+    pcie::Tensor::from_vector(std::move(codes), ingress.shape, ingress.name));
+```
 
 ### Model Methods
 
@@ -509,6 +536,7 @@ Implemented in the initial PCIe host package:
 - host `appsrc ! queue ! neatpciehost ! appsink` channel
 - tensor push through tensor-set/tensorbuffer caps and `GstSimaTensorSetMeta`
 - image tensor push for RGB/BGR/GRAY8/NV12/I420
+- `mla_only` INT8 and BF16 route with published quantization parameters
 
 Validated on a Modalix PCIe Card:
 
@@ -516,3 +544,4 @@ Validated on a Modalix PCIe Card:
 - packaged C++ and Python tensor, image, and boxdecode routes
 - simultaneous execution across four PCIe queues
 - YOLOv8n and EVO50 model variants
+- `mla_only` against the default route, single- and multi-input archives

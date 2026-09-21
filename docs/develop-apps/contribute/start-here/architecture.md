@@ -13,6 +13,17 @@ without breaking its module and runtime contracts.
 
 ---
 
+## EV74 dispatcher ownership
+
+Graph and Model builds reserve EV74 RPMsg channels during dispatcher initialization,
+before startup returns, even with payload preflight disabled. Each worker owns a
+distinct endpoint. Graphs in the same process share the dispatcher; closing the last
+client releases its channels. Idle periods do not release them.
+
+Capacity exhaustion fails the build with `infra.dispatcher_unavailable`. A faulted
+dispatcher cannot accept new graphs; close all its clients before rebuilding.
+The implementation and channel locks belong to Neat Internals, not Core.
+
 ## Framework vs environment
 
 The word "Neat" is used for two related but separate concerns:
@@ -246,6 +257,11 @@ Key types:
 
 ### `nodes/` -- typed pipeline building blocks
 **Purpose:** Provide ready-to-use Node implementations that emit deterministic GStreamer fragments.
+
+`VideoRate()` always emits `videorate drop-only=true`, including when inserted
+by a source group. This avoids duplicated output headers sharing pooled decoder
+memory and preserves source timestamps. The C++ `VideoRate()` and Python
+`video_rate()` factories take no arguments and do not duplicate frames.
 
 Examples:
 - `nodes/io/HttpSource`, `nodes/io/RTSPInput`, `nodes/io/StillImageInput`
@@ -1048,6 +1064,26 @@ Successful work returns a DATA response. A decoder drop, flush, restart, or
 downstream failure returns a correlated `NEAT_PCIE_FRAME_RETURN_ERROR`, which
 releases the same host credit and terminates the affected host pipeline with an
 actionable error rather than leaving it blocked.
+
+`ModelOptions::mla_only` moves the execution boundary. The card then runs the
+MLA stage alone, with no quantize before it and no dequantize after it, and the
+application owns both conversions. `Model::info()` publishes what that needs:
+for an INT8 archive every `TensorInfo` carries `quant` with one scale and one
+zero point; a BF16 archive casts at both boundaries and publishes none. The route accepts nothing but its INT8 or BF16 ingress, so an FP32
+tensor is rejected instead of being converted silently.
+
+The option reaches the card as `execution.mla_only` in the model options JSON.
+It requires `InputKind::Tensor` and rejects preprocess and box-decode options,
+which configure stages this route does not run.
+
+The MLA writes its heads tessellated and, depending on the model, padded. The
+host plugin copies the frame out of the driver buffer. Heads that are already
+contiguous in that frame are published as views into the received buffer;
+padded or strided heads are compacted into one dense allocation before
+publication. Either way a public tensor is dense INT8 or BF16 in the model's
+logical shape. Compaction sits on top of the existing `si_mla_read()` copy
+contract: the route costs at most one host copy more than the default one and
+needs no new `libsimaaipcie.so` symbols.
 
 The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
 native API. OAAX ownership rules, status codes, and last-error storage belong

@@ -250,7 +250,15 @@ ModelOptionsJson write_model_options_json(const ModelOptions& options) {
     if (wants_boxdecode) {
       reject("boxdecode requires preprocess.kind=InputKind::Image");
     }
-    return {};
+    if (!options.mla_only) {
+      return {};
+    }
+    ModelOptionsJson out;
+    out.json = ordered_json{{"schema", 1}, {"execution", {{"mla_only", true}}}}.dump(2) + "\n";
+    return out;
+  }
+  if (options.mla_only) {
+    reject("mla_only requires preprocess.kind=InputKind::Tensor");
   }
   if (options.preprocess.kind != InputKind::Image) {
     reject("unsupported preprocess.kind");

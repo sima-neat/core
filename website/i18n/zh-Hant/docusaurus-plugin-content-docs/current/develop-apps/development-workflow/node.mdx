@@ -229,7 +229,7 @@ graph.add(pyneat.nodes.output("frames"))
 </CodeTab>
 </CodeTabs>
 
-對於 H.265，`RtspDecodedInput(...)` 會同時針對已解析的 caps 和解碼器 `dec-fps` 使用 `source_fps`。當 RTSP caps 不包含有效的幀率時，請設定此值；如果缺少任何一個值，解碼器啟動將會失敗。Neat 不會針對此值探查 RTSP URL。它會宣告來源的幀率，且不會要求進行幀率轉換。若要變更輸出幀率，請啟用 `use_videorate`，並設定 `video_rate_fps`。
+對於 H.265，`RtspDecodedInput(...)` 會同時針對已解析的 caps 和解碼器 `dec-fps` 使用 `source_fps`。當 RTSP caps 不包含有效的幀率時，請設定此值；如果缺少任何一個值，解碼器啟動將會失敗。Neat 不會針對此值探查 RTSP URL。它會宣告來源的幀率，且不會要求進行幀率轉換。若要變更輸出幀率，請啟用 `use_videorate`，並設定 `video_rate_fps`。 幀率轉換會捨棄多餘的幀並保留來源時間戳記。`nodes::VideoRate()` 與 `pyneat.nodes.video_rate()` 工廠函式不接受任何引數，且一律使用 `drop-only=true`，包括由來源群組插入時亦然。它們不會為了提高輸出幀率而複製幀。
 
 對於 HTTP 多部分 MJPEG，請使用 `HttpMjpegDecodedInput(...)`。HTTP 多部分 MJPEG 不是 RTP，因此它使用 `HttpSource -> MultipartJpegDemux -> JpegParse ->
 SimaDecode(MJPEG)`，而不是 RTSP 解封包。

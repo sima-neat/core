@@ -35,13 +35,17 @@ mdx:
 :::
 
 1. **モデルと入力画像用のアセットディレクトリを作成します。**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
-    ```
+    </ShellCommand>
+
 2. **モデルをダウンロードします:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli モデルのダウンロード
     `sima-cli` がモデルを `assets` ディレクトリ以外の場所に書き込む場合は、そのファイルを `assets/yolo_v8s_mpk.tar.gz` にコピーしてください。
 :::
@@ -356,15 +360,14 @@ if __name__ == "__main__":
 
 **実行:**
 
-* **DevKit 上で**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 app.py
-  ```
-* **Neat SDK がインストールされているホスト**
-  ```bash
-  dk app.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 app.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk app.py
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
@@ -468,21 +471,20 @@ int main() {
 
 **構築：**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **実行:**
 
-* **DevKit 上で**
-  ```bash
-  ./build/sima_neat_app
-  ```
-* **Neat SDK がインストールされているホスト**
-  ```bash
-  dk build/sima_neat_app
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_app
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_app
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

@@ -261,7 +261,10 @@ decoder `dec-fps`. Set it when the RTSP caps do not carry a valid frame rate;
 without either value, decoder startup fails. Neat does not probe the RTSP URL
 for this value. It declares the source cadence and does not request rate
 conversion. To change the output cadence, enable `use_videorate` and set
-`video_rate_fps`.
+`video_rate_fps`. Rate conversion drops excess frames and preserves source
+timestamps. The `nodes::VideoRate()` and `pyneat.nodes.video_rate()` factories
+take no arguments and always use `drop-only=true`, including when inserted by
+source groups. They do not duplicate frames to increase the output rate.
 
 For HTTP multipart MJPEG, use `HttpMjpegDecodedInput(...)`. HTTP multipart
 MJPEG is not RTP, so it uses `HttpSource -> MultipartJpegDemux -> JpegParse ->

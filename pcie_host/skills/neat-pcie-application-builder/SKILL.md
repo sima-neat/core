@@ -32,6 +32,9 @@ from the Neat Library used inside the SDK or directly on a DevKit.
 - In tensor mode, inspect `model.info()` before allocating or naming model-ready inputs. In image
   mode, treat that information as the card-side preprocessing output contract, not the submitted
   image contract.
+- Enable `mla_only` only when the application owns the model's dtype conversion; then
+  `model.info()` is the MLA's own contract and, for INT8 tensors, its `quant` parameters are the
+  only valid source for the conversion.
 - Use `run()` for ordinary request/response inference. Use `push()` and `pull()` only when the
   application benefits from bounded pipelining.
 - Use finite build and inference timeouts in applications that must fail predictably.
