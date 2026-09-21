@@ -89,6 +89,26 @@ run.close();
 
 ソースに合ったポリシーを選択します。ファイルおよびバッチジョブでは通常、`Block` が必要です。ライブストリームでは通常、最新性を保つポリシーが必要です。
 
+## インラインキュー
+
+`RunOptions::overflow_policy` は `Run` の入力にあるキューを制御します。グラフノード間のキューを制御するには、設定済みの `Queue` を追加します。
+
+```cpp
+simaai::neat::QueueOptions queue;
+queue.max_buffers = 1;
+queue.overflow_policy = simaai::neat::OverflowPolicy::KeepLatest;
+graph.add(simaai::neat::nodes::Queue(queue));
+```
+
+```python
+queue = pyneat.QueueOptions()
+queue.max_buffers = 1
+queue.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+graph.add(pyneat.nodes.queue(queue))
+```
+
+`max_buffers` を設定しないままにすると、既定のキュー制限が使用されます。正の値を設定すると、バッファー数が唯一の容量制限になります。`Block` は空きができるまで待機し、`KeepLatest` は待機中の最も古いバッファーを破棄し、`DropIncoming` は新しいバッファーを破棄します。
+
 ## プルタイミング
 
 `Run::pull(...)` は、出力境界から次の利用可能な `Sample` を返します。
