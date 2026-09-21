@@ -89,6 +89,26 @@ run.close();
 
 소스에 맞는 정책을 선택하세요. 파일 및 배치 작업은 일반적으로 `Block`를 사용합니다. 실시간 스트림은 일반적으로 최신 상태 유지 정책을 사용합니다.
 
+## 인라인 큐
+
+`RunOptions::overflow_policy`는 `Run` 입력의 큐를 제어합니다. 그래프 노드 사이의 큐를 제어하려면 구성된 `Queue`를 추가합니다.
+
+```cpp
+simaai::neat::QueueOptions queue;
+queue.max_buffers = 1;
+queue.overflow_policy = simaai::neat::OverflowPolicy::KeepLatest;
+graph.add(simaai::neat::nodes::Queue(queue));
+```
+
+```python
+queue = pyneat.QueueOptions()
+queue.max_buffers = 1
+queue.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+graph.add(pyneat.nodes.queue(queue))
+```
+
+`max_buffers`를 설정하지 않으면 기본 큐 제한이 사용됩니다. 양수 값으로 설정하면 버퍼 수가 유일한 용량 제한이 됩니다. `Block`은 공간이 생길 때까지 대기하고, `KeepLatest`는 대기 중인 가장 오래된 버퍼를 버리며, `DropIncoming`은 새 버퍼를 버립니다.
+
 ## 풀 타이밍
 
 `Run::pull(...)`는 출력 경계에서 다음 사용 가능한 `Sample`을 반환합니다.

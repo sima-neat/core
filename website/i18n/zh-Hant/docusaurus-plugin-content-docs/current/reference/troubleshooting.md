@@ -437,3 +437,5 @@ export SIMA_GST_DOT_DIR=/tmp     # writes .dot graphs on build/failure; default:
 | `infra.dispatcher_unavailable` | 無法取得加速器訊息分派器，包括建置期間 EV74 RPMsg 通道耗盡的情況。沒有 CPU 備援機制。|
 
 這是一份簡短的疑難排解指南。請針對每個錯誤代碼以及 C++/Python 常數名稱，參考 [完整的錯誤碼目錄](/reference/error-codes)。
+
+若啟動時出現 `EVXX/EV74 RPMsg capacity exhausted` 錯誤，請關閉未使用的圖形執行或停止競用的工作負載，然後重新建置。共用同一訊息分派器的圖形會保留其通道，直到最後一個客戶端關閉為止。取得作業預設最多等待 15 秒，可透過 `SIMA_RPMSG_ACQUIRE_TIMEOUT_MS` 設定。已淘汰的 `SIMA_RPCEVXX_IDLE_RELEASE_MS` 設定只會發出警告且不具作用；閒置的圖形仍會保留其保留項目。其他保留失敗則會一併提供探索、權限或傳輸的診斷資訊。

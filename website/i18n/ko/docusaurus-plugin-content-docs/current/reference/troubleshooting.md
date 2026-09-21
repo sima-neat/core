@@ -438,3 +438,5 @@ export SIMA_GST_DOT_DIR=/tmp     # writes .dot graphs on build/failure; default:
 | `infra.dispatcher_unavailable` | 가속기 디스패처를 가져올 수 없습니다. 빌드 중 EV74 RPMsg 채널이 고갈된 경우도 포함됩니다. CPU로 대체할 수 없습니다. |
 
 이것은 간단한 문제 해결 안내서입니다. 모든 코드와 C++/Python 상수 이름에 대해서는 [완전한 오류 코드 목록](/reference/error-codes)를 참조하십시오.
+
+`EVXX/EV74 RPMsg capacity exhausted` 시작 오류가 발생하면 사용하지 않는 그래프 실행을 종료하거나 경합하는 워크로드를 중지한 후 다시 빌드하십시오. 디스패처를 공유하는 그래프는 마지막 클라이언트가 종료될 때까지 해당 채널을 유지합니다. 획득은 기본적으로 최대 15초 동안 대기하며 `SIMA_RPMSG_ACQUIRE_TIMEOUT_MS`로 구성할 수 있습니다. 더 이상 사용되지 않는 `SIMA_RPCEVXX_IDLE_RELEASE_MS` 설정은 경고만 표시할 뿐 효과가 없으며, 유휴 그래프는 예약을 그대로 유지합니다. 그 밖의 예약 실패에는 검색, 권한 또는 전송 진단 정보가 함께 포함됩니다.
