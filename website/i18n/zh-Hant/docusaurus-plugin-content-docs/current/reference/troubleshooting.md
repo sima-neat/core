@@ -434,6 +434,6 @@ export SIMA_GST_DOT_DIR=/tmp     # writes .dot graphs on build/failure; default:
 | 自訂的 GStreamer 片段的語法無效。| `build.pipeline_syntax` |
 | `build.parse_launch` | 由於無法更精確地分類，因此無法判斷 `gst_parse_launch` 失敗的原因。|
 | `runtime.pull` | 某次拉取操作失敗，但沒有提供更具體的上游/根本原因代碼。|
-| `infra.dispatcher_unavailable` | 無法取得 MLA/EV74/A65 訊息分派器——可能是韌體未載入、缺少授權或硬體故障。沒有 CPU 備援機制。|
+| `infra.dispatcher_unavailable` | 無法取得加速器訊息分派器，包括建置期間 EV74 RPMsg 通道耗盡的情況。沒有 CPU 備援機制。|
 
 這是一份簡短的疑難排解指南。請針對每個錯誤代碼以及 C++/Python 常數名稱，參考 [完整的錯誤碼目錄](/reference/error-codes)。

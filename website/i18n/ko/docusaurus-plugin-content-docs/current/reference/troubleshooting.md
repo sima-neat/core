@@ -435,6 +435,6 @@ export SIMA_GST_DOT_DIR=/tmp     # writes .dot graphs on build/failure; default:
 | `build.pipeline_syntax` | 사용자 정의 GStreamer 구문이 올바르지 않습니다. |
 | `build.parse_launch` | `gst_parse_launch` 오류를 더 구체적으로 분류할 수 없습니다. |
 | `runtime.pull` | 더 구체적인 상위 수준 또는 근본 원인 코드가 없는 상태에서 풀(pull) 작업이 실패했습니다. |
-| `infra.dispatcher_unavailable` | MLA/EV74/A65 디스패처를 가져올 수 없습니다. 펌웨어가 로드되지 않았거나, 라이선스가 없거나, 하드웨어 오류가 발생했습니다. CPU로 대체할 수 없습니다. |
+| `infra.dispatcher_unavailable` | 가속기 디스패처를 가져올 수 없습니다. 빌드 중 EV74 RPMsg 채널이 고갈된 경우도 포함됩니다. CPU로 대체할 수 없습니다. |
 
 이것은 간단한 문제 해결 안내서입니다. 모든 코드와 C++/Python 상수 이름에 대해서는 [완전한 오류 코드 목록](/reference/error-codes)를 참조하십시오.
