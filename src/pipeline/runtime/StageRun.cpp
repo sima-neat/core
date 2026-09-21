@@ -3149,6 +3149,13 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   key.kind = StageKind::Postprocess;
   key.model_id = simaai::neat::internal::ModelAccess::model_id(model);
   key.input = make_input_key(src_opt, &wire_input.tensor);
+  const auto box_model_opt = simaai::neat::internal::ModelAccess::options(model);
+  key.box_opt.decode_type = box_model_opt.decode_type;
+  key.box_opt.detection_threshold = box_model_opt.score_threshold;
+  key.box_opt.nms_iou_threshold = box_model_opt.nms_iou_threshold;
+  key.box_opt.top_k = box_model_opt.top_k;
+  key.box_opt.superpoint = box_model_opt.superpoint;
+  key.box_opt.pose_classes = box_model_opt.pose_classes;
 
   auto runner = get_or_build(key, [&]() {
     RunOptions run_opt = stage_run_defaults();
