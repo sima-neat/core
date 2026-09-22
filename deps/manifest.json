@@ -1,7 +1,5 @@
 {
-  "internals": {
-    "policy": "snap"
-  },
+  "internals": "feature/yolox-seg-pose:bd13419ef426",
   "llima": {
     "policy": "snap"
   },
