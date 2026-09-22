@@ -60,11 +60,7 @@ sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
 
 安裝程式會新增所有必要的元件，以便開發和執行 Neat PCIe 主機應用程式，包括 C++ API 和位於 `~/pyneatpcie` 的 Python 環境。
 
-它還會安裝來自 `sima-neat/core` 儲存庫的 `neat-pcie-application-builder` 編碼代理技能，適用於 Codex 和 Claude。技能安裝採用盡力而為的方式，因此暫時性的 GitHub 或編碼代理設定問題不會阻止 PCIe 主機套件的安裝。如果出現警告訊息，請嘗試重新執行：
-
-<ShellCommand prompt="pcie-host">
-sima-cli playbooks install gh:sima-neat/core/pcie_host/skills/neat-pcie-application-builder
-</ShellCommand>
+安裝程式也會安裝套件內附的 Codex 與 Claude 編碼代理技能 `neat-pcie-application-builder`。重新安裝 PCIe 主機套件時，已安裝的技能也會更新為相符的套件版本。
 
 在第一次安裝期間，SSH 設定程序可以要求提供卡片的 `sima` 帳戶密碼。它會建立或重新使用 `~/.ssh/sima_neat_pcie_ed25519`，並將其公鑰安裝到卡片上。之後，正常的 PCIe 作業會使用無密碼的 SSH 來進行卡片端模型的設定。
 

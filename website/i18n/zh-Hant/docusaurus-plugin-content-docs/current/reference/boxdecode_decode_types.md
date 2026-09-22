@@ -58,6 +58,7 @@ opt.top_k = 100;
 | 偵測 | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 框：`x1, y1, x2, y2, score, class_id` |
 | 姿勢 | `decode_pose(...)` | `pyneat.decode_pose(...)` | 方框 `[N, 6]` 和關鍵點 `[N, 17, 3]` float32：`x, y, visibility` |
 | 分割 | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 方塊 `[N, 6]` float32，以及遮罩 `[N, 160, 160]` uint8 |
+| 分割 + 姿態 | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | 邊界框 `[N, 6]` float32、遮罩 `[N, 160, 160]` uint8、關鍵點 `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | 關鍵點 `[N,2]`，分數 `[N]`，描述子 `[N,D]` |
 
 偵測顯示圖可以將結果傳送到 `SimaRender`。如果應用程式碼只需要框選結果，則可以繼續使用 `decode_bbox(...)` 處理 BoxDecode 的輸出。
@@ -155,6 +156,38 @@ offset  size  content
 
 如果存在上游預處理的元資料，則座標將以原始影像的像素為單位。它們不會正規化到 `[0, 1]`，也不會以模型內部「黑邊」輸入空間的形式表示。
 
+### 分割 + 姿態的組合酬載
+
+`yolox-seg-pose` 輸出單一緩衝區，其中包含三個區域。所有區域均依相同的槽位數 `top_k` 配置：
+
+| 區域 | 偏移量 | 步幅 | 內容 |
+| --- | --- | --- | --- |
+| 標頭 | `0` | 4 | `int32` 偵測數 |
+| 邊界框 | `4` | 24 | 如上所述的 `BoundingBoxOut` 記錄 |
+| 遮罩 | `4 + 24*top_k` | `mask_w * mask_h` | `uint8`，每個槽位一個平面 |
+| 姿態 | `4 + (24 + mask_w*mask_h)*top_k` | 204 | 17 x `{uint32 x, uint32 y, float32 visibility}` |
+
+使用 `decode_segmentation_pose(...)` 取得邊界框、遮罩及關鍵點。各張量的第 `i` 列代表同一次偵測。若只需邊界框，請使用 `decode_bbox(...)` 或 `BoxDecodeResults(...)`。
+
+每次偵測有 17 個關鍵點槽位。後端會將未使用的槽位及被 `pose_classes` 排除之類別的關鍵點設為零。輔助函式會原樣複製這些值。
+
+由於通道 0 儲存物件性，Core 以類別頭深度減一推算 `num_classes`。例如，30 個通道表示 29 個類別。明確指定的 `num_classes` 必須一致。
+
+### 關鍵點類別
+
+設定具有關鍵點的類別 ID：
+
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.YoloXSegPose)
+options.yolox_seg_pose.pose_classes = [0, 5]
+```
+
+`ModelOptions.yolox_seg_pose` 也接受相同設定。
+
+- 清單以外類別的關鍵點座標及可見度會設為零。
+- 空的 `BoxDecodeOptions` 清單會繼承模型設定。未設定清單時，每個類別都會產生關鍵點。
+- ID 必須唯一且位於 `[0, num_classes)` 範圍內。此選項僅支援 `YoloXSegPose`。
+
 ## 當 `model.run` 傳回原始的標題時
 
 某些模型路徑會從 `model.run(...)` 傳回原始的特徵圖頭，而不是傳回已解碼的 `BBOX` 張量。這並不是表示執行失敗。這表示模型已執行，但該路徑在您讀取輸出時並沒有包含「框解碼」步驟。
@@ -218,6 +251,7 @@ offset  size  content
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 分割 |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 偵測 |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX 偵測 |
+| `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | 同時包含邊界框、遮罩及關鍵點頭的 YOLOX 封裝匯出 |
 | `BoxDecodeType::Ssd` | `ssd` | 精確選擇已準備好的 SSD300、SSD-Mobile-300、SSD-Mobile-320 或 SSDlite-Mobile-320 合約，並從已排序的磁碟頭幾何結構中選取。 |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint 檢測器和描述符後處理 |
 | `BoxDecodeType::Detr` | `detr` | DETR 樣式的變壓器檢測 |
@@ -302,3 +336,9 @@ seg = pyneat.decode_segmentation(outputs)[0]
 seg_boxes = seg.boxes.to_numpy()
 masks = seg.masks.to_numpy()
 ```
+
+## 升級
+
+將預覽 API 的頂層 `pose_classes` 替換為 `yolox_seg_pose.pose_classes`。
+
+新選項會改變 C++ 物件佈局。Core 使用 ABI 5、`libsima_neat.so.5`。請使用相符的標頭與函式庫，重新建置 C++ 應用程式、外掛程式及 Python 繫結。請勿透過相容性符號連結將 ABI 4 二進位檔連接至 ABI 5。

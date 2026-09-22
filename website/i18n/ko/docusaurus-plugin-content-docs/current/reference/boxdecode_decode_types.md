@@ -58,6 +58,7 @@ opt.top_k = 100;
 | 감지 | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 박스: `x1, y1, x2, y2, score, class_id` |
 | 자세 | `decode_pose(...)` | `pyneat.decode_pose(...)` | 박스 `[N, 6]` 및 키포인트 `[N, 17, 3]` float32: `x, y, visibility` |
 | 분할 | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 박스 `[N, 6]` float32 및 마스크 `[N, 160, 160]` uint8 |
+| 분할 + 포즈 | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | 박스 `[N, 6]` float32, 마스크 `[N, 160, 160]` uint8, 키포인트 `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | 키포인트 `[N,2]`, 점수 `[N]`, 디스크립터 `[N,D]` |
 
 감지-표시 그래프는 결과를 `SimaRender`에 전달할 수 있습니다. 단순히 박스만 필요한 애플리케이션 코드는 BoxDecode 출력에 대해 `decode_bbox(...)`를 계속 사용할 수 있습니다.
@@ -153,6 +154,38 @@ offset  size  content
 
 업스트림 전처리 메타데이터가 있는 경우 좌표는 원본 이미지 픽셀 단위로 표시됩니다. 좌표는 `[0, 1]`로 정규화되지 않으며 모델의 내부 레터박스 입력 공간으로 표현되지 않습니다.
 
+### 분할 + 포즈 결합 페이로드
+
+`yolox-seg-pose`는 세 영역을 담은 단일 버퍼를 출력합니다. 모든 영역은 동일한 슬롯 수 `top_k`를 기준으로 배치됩니다.
+
+| 영역 | 오프셋 | 스트라이드 | 내용 |
+| --- | --- | --- | --- |
+| 헤더 | `0` | 4 | `int32` 검출 개수 |
+| 박스 | `4` | 24 | 위에서 설명한 `BoundingBoxOut` 레코드 |
+| 마스크 | `4 + 24*top_k` | `mask_w * mask_h` | `uint8`, 슬롯당 평면 하나 |
+| 포즈 | `4 + (24 + mask_w*mask_h)*top_k` | 204 | 17 x `{uint32 x, uint32 y, float32 visibility}` |
+
+`decode_segmentation_pose(...)`로 박스, 마스크, 키포인트를 가져옵니다. 각 텐서의 행 `i`는 동일한 검출을 나타냅니다. 박스만 필요하면 `decode_bbox(...)` 또는 `BoxDecodeResults(...)`를 사용하십시오.
+
+검출마다 키포인트 슬롯이 17개 있습니다. 백엔드는 사용하지 않는 슬롯과 `pose_classes`에서 제외된 클래스의 키포인트를 0으로 설정합니다. 헬퍼는 이 값을 그대로 복사합니다.
+
+채널 0에 객체성이 있으므로 Core는 클래스 헤드 깊이에서 1을 빼 `num_classes`를 구합니다. 예를 들어 30채널이면 클래스가 29개입니다. 명시한 `num_classes`는 이 값과 일치해야 합니다.
+
+### 키포인트 클래스
+
+키포인트가 있는 클래스 ID를 설정하십시오.
+
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.YoloXSegPose)
+options.yolox_seg_pose.pose_classes = [0, 5]
+```
+
+`ModelOptions.yolox_seg_pose`에도 같은 설정을 사용할 수 있습니다.
+
+- 목록에 없는 클래스는 키포인트 좌표와 가시성이 0이 됩니다.
+- `BoxDecodeOptions` 목록이 비어 있으면 모델 설정을 상속합니다. 목록을 설정하지 않으면 모든 클래스에 키포인트가 생성됩니다.
+- ID는 중복 없이 `[0, num_classes)` 범위에 있어야 합니다. 이 옵션은 `YoloXSegPose`에서만 지원됩니다.
+
 ## `model.run`이 원본 헤더를 반환할 때
 
 일부 모델 경로는 디코딩된 `BBOX` 텐서 대신 `model.run(...)`에서 원시 특징 맵 헤드를 반환합니다. 이는 실패한 실행이 아닙니다. 모델이 실행되었지만 해당 경로에 출력을 읽는 시점에 BoxDecode가 포함되지 않았다는 의미입니다.
@@ -216,6 +249,7 @@ offset  size  content
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 분할 |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 감지 |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX 감지 |
+| `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | 박스, 마스크 및 키포인트 헤드를 함께 포함하는 YOLOX 압축 내보내기 |
 | `BoxDecodeType::Ssd` | `ssd` | 주문된 헤드 지오메트리에서 선택한 정확한 준비된 SSD300, SSD-Mobile-300, SSD-Mobile-320 또는 SSDlite-Mobile-320 계약 |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint 검출기 및 특징점 후처리 |
 | `BoxDecodeType::Detr` | `detr` | DETR 스타일의 트랜스포머 기반 객체 검출 |
@@ -300,3 +334,9 @@ seg = pyneat.decode_segmentation(outputs)[0]
 seg_boxes = seg.boxes.to_numpy()
 masks = seg.masks.to_numpy()
 ```
+
+## 업그레이드
+
+미리보기 API의 최상위 `pose_classes`를 `yolox_seg_pose.pose_classes`로 바꾸십시오.
+
+새 옵션으로 C++ 객체 레이아웃이 변경됩니다. Core는 ABI 5, `libsima_neat.so.5`를 사용합니다. 일치하는 헤더와 라이브러리로 C++ 애플리케이션, 플러그인 및 Python 바인딩을 다시 빌드하십시오. 호환성 심볼릭 링크로 ABI 4 바이너리를 ABI 5에 연결하지 마십시오.

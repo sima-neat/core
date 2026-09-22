@@ -545,7 +545,7 @@ C++ 和 Python 都會在 `GraphLinkOptions` 上公開這些欄位，該欄位會
 
 :::caution 升級預覽應用程式和已儲存的圖。
 
-這個版本在 `GraphLinkOptions` 中新增了許可欄位。目前的 Neat Library C++ ABI 和共享函式庫 SONAME 為 4。請重新建置 C++ 應用程式和外掛程式，使其與對應的核心套件相容。請勿將為較早版本的 `libsima_neat` SONAME 建置的二進位檔與 `libsima_neat.so.4` 混合使用。
+`GraphLinkOptions` 新增准入設定。請針對 Core ABI 5、`libsima_neat.so.5` 重新建置 C++ 應用程式和外掛程式，並使用相符的標頭與執行階段套件。
 
 請按照以下方式遷移預覽原始程式碼：
 
