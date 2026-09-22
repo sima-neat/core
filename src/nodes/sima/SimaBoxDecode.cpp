@@ -672,20 +672,20 @@ options_from_customer(BoxDecodeType decode_type, double detection_threshold,
 
 void apply_named_pose_class_options(BoxDecodeOptionsInternal* opt,
                                     const BoxDecodeOptions& options) {
-  if (options.pose_classes.empty()) {
+  if (options.yolox_seg_pose.pose_classes.empty()) {
     return;
   }
   if (!opt->compiled_contract) {
     // Standalone route: num_classes resolves during contract finalization, which validates
     // the gate there.
-    opt->pose_classes = options.pose_classes;
+    opt->pose_classes = options.yolox_seg_pose.pose_classes;
     return;
   }
   auto compiled = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
   compiled->payload.pose_classes =
       pipeline_internal::sima::stagesemantics::normalize_boxdecode_pose_classes(
-          compiled->payload.decode_type, options.pose_classes, compiled->payload.num_classes,
-          "SimaBoxDecode");
+          compiled->payload.decode_type, options.yolox_seg_pose.pose_classes,
+          compiled->payload.num_classes, "SimaBoxDecode");
   opt->pose_classes = compiled->payload.pose_classes;
   opt->compiled_contract = std::move(compiled);
 }
@@ -1293,7 +1293,7 @@ std::shared_ptr<Node> SimaBoxDecode::retargeted_for_model_internal(const Model& 
   if (!opt_->pose_classes.empty()) {
     // Revalidates the gate against the retargeted model's num_classes.
     BoxDecodeOptions named(opt_->decode_type);
-    named.pose_classes = opt_->pose_classes;
+    named.yolox_seg_pose.pose_classes = opt_->pose_classes;
     apply_named_pose_class_options(retargeted->opt_.get(), named);
   }
   return retargeted;

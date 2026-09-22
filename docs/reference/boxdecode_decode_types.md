@@ -210,16 +210,16 @@ anyway is allowed and is cross-checked against that derivation: a mismatch is re
 at contract compilation rather than reaching the backend, where a wrong count silently
 mis-strides the scorer and yields plausible-looking wrong classes.
 
-Keypoint gating by class is set with `Model::Options::pose_classes` (or
-`BoxDecodeOptions::pose_classes`), listing the class indices that carry keypoints. It
+Keypoint gating by class is set with `Model::Options::yolox_seg_pose.pose_classes` (or
+`BoxDecodeOptions::yolox_seg_pose.pose_classes`), listing the class indices that carry keypoints. It
 reaches the backend on both configuration paths: the typed `neatobjectdecode` path carries
 it in `SimaPluginBoxDecodeStagePayload::pose_classes`, and the JSON path accepts the
 `pose_classes` key directly.
 
-An empty `Model::Options::pose_classes` is not "no classes" — it disables the gate, and the
+An empty `Model::Options::yolox_seg_pose.pose_classes` is not "no classes" — it disables the gate, and the
 backend then treats **every** class as pose-bearing. That is the right default for a model
 whose classes all carry keypoints; set the list only when they are mixed. The per-node
-`BoxDecodeOptions::pose_classes` is an override, so leaving it empty inherits whatever gate
+`BoxDecodeOptions::yolox_seg_pose.pose_classes` is an override, so leaving it empty inherits whatever gate
 the model or MPK resolved rather than clearing it.
 
 Core validates the list at contract construction: entries must be unique and within
@@ -420,3 +420,22 @@ seg = pyneat.decode_segmentation(outputs)[0]
 seg_boxes = seg.boxes.to_numpy()
 masks = seg.masks.to_numpy()
 ```
+
+## YOLOX segmentation/pose options and ABI migration
+
+Set decoder-specific keypoint classes through the nested options:
+
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.YoloXSegPose)
+options.yolox_seg_pose.pose_classes = [0, 5]  # Use the model's actual class IDs.
+```
+
+`ModelOptions.yolox_seg_pose` accepts the same settings. Replace the development
+PR's top-level `pose_classes` field with `yolox_seg_pose.pose_classes`.
+The internal decoder payload is unchanged.
+
+The added options change the public C++ object layouts. Core therefore uses
+ABI 5 (`libsima_neat.so.5`). Rebuild C++ applications and Python bindings against
+the matching headers and library; binaries built for ABI 4 must not load ABI 5
+through a compatibility symlink. Existing source that does not set the new
+options continues to compile.

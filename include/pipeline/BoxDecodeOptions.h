@@ -7,8 +7,7 @@
 
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/SuperPointTypes.h"
-
-#include <vector>
+#include "pipeline/YoloXSegPoseTypes.h"
 
 namespace simaai::neat {
 
@@ -21,8 +20,7 @@ struct BoxDecodeOptions {
   double nms_iou_threshold = 0.0;
   int top_k = 0;
   SuperPointOptions superpoint;
-  /// Class indices that carry keypoints; empty inherits the model's or MPK's gate.
-  std::vector<int> pose_classes;
+  YoloXSegPoseOptions yolox_seg_pose;
 };
 
 } // namespace simaai::neat

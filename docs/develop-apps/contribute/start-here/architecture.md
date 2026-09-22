@@ -477,7 +477,7 @@ families, with these additional invariants:
   - A body that is not a whole multiple of the combined stride is rejected rather than
     rounded, and the count header is clamped to the derived capacity, so a corrupt header
     cannot drive reads past the end of the buffer.
-- Keypoint gating by class travels through `Model::Options::pose_classes`, the typed static
+- Keypoint gating by class travels through `Model::Options::yolox_seg_pose.pose_classes`, the typed static
   manifest's `pose_classes` field, and the backend's JSON control of the same name. Core
   copies keypoint rows through without interpreting them; the zeroing is the backend's. With
   a gate set, a detection whose class carries no keypoints arrives all-zero including

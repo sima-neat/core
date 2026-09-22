@@ -2095,7 +2095,7 @@ NB_MODULE(_pyneat_core, m) {
       "`keypoints` [N, 17, 3] float32 with columns (x, y, visibility). All three are\n"
       "parallel: row i of each describes the same detection.\n\n"
       "Keypoint rows are copied through verbatim; zeroing is the backend's, driven by\n"
-      "the `pose_classes` gate. Set `Model.Options.pose_classes` on a model whose\n"
+      "the `pose_classes` gate. Set `ModelOptions.yolox_seg_pose.pose_classes` on a model whose\n"
       "classes are mixed and a detection whose class carries no keypoints arrives\n"
       "all-zero, visibility included, so you can gate on visibility rather than\n"
       "needing the class list. Leaving it empty treats every class as pose-bearing.\n\n"
@@ -4335,6 +4335,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("descriptor_output_dtype", &simaai::neat::SuperPointOptions::descriptor_output_dtype)
       .def_rw("output_format", &simaai::neat::SuperPointOptions::output_format);
 
+  nb::class_<simaai::neat::YoloXSegPoseOptions>(m, "YoloXSegPoseOptions")
+      .def(nb::init<>())
+      .def_rw("pose_classes", &simaai::neat::YoloXSegPoseOptions::pose_classes);
+
   nb::class_<simaai::neat::BoxDecodeOptions>(m, "BoxDecodeOptions")
       .def(nb::init<simaai::neat::BoxDecodeType>(), "decode_type"_a)
       .def_rw("decode_type", &simaai::neat::BoxDecodeOptions::decode_type)
@@ -4342,7 +4346,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("nms_iou_threshold", &simaai::neat::BoxDecodeOptions::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::BoxDecodeOptions::top_k)
       .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint)
-      .def_rw("pose_classes", &simaai::neat::BoxDecodeOptions::pose_classes);
+      .def_rw("yolox_seg_pose", &simaai::neat::BoxDecodeOptions::yolox_seg_pose);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
       .value("Quiet", simaai::neat::VerbosityLevel::Quiet)
@@ -4464,7 +4468,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
       .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
-      .def_rw("pose_classes", &simaai::neat::Model::Options::pose_classes)
+      .def_rw("yolox_seg_pose", &simaai::neat::Model::Options::yolox_seg_pose)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)

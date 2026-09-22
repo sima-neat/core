@@ -111,11 +111,11 @@ struct SegmentationDecodeTensors {
  *
  * Keypoint rows are copied through verbatim: this decoder does not zero, mask, or
  * otherwise interpret them. Zeroing is the backend's, driven by the `pose_classes`
- * gate. Set `Model::Options::pose_classes` (or `BoxDecodeOptions::pose_classes`) on a
- * model whose classes are mixed, and a detection whose class carries no keypoints
- * arrives all-zero, visibility included, so a consumer can gate on visibility rather
- * than needing the decoder's class list. Leaving it empty treats every class as
- * pose-bearing, which is what a model with a single pose class wants.
+ * gate. Set `Model::Options::yolox_seg_pose.pose_classes` (or
+ * `BoxDecodeOptions::yolox_seg_pose.pose_classes`) on a model whose classes are mixed, and a
+ * detection whose class carries no keypoints arrives all-zero, visibility included, so a consumer
+ * can gate on visibility rather than needing the decoder's class list. Leaving it empty treats
+ * every class as pose-bearing, which is what a model with a single pose class wants.
  */
 struct SegmentationPoseDecodeTensors {
   simaai::neat::Tensor boxes;

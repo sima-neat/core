@@ -6,9 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(SimaNeat REQUIRED)
-if (NOT SimaNeat_ABI_VERSION STREQUAL "4")
+if (NOT SimaNeat_ABI_VERSION STREQUAL "5")
   message(FATAL_ERROR
-    "Expected SimaNeat public ABI 4, got '${SimaNeat_ABI_VERSION}'")
+    "Expected SimaNeat public ABI 5, got '${SimaNeat_ABI_VERSION}'")
 endif()
 
 add_executable(install_smoke_app main.cpp)

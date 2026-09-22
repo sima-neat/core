@@ -1432,7 +1432,7 @@ bool operator==(const BoxDecodeOptions& a, const BoxDecodeOptions& b) {
          a.superpoint.border_margin == b.superpoint.border_margin &&
          a.superpoint.descriptor_output_dtype == b.superpoint.descriptor_output_dtype &&
          a.superpoint.output_format == b.superpoint.output_format &&
-         a.pose_classes == b.pose_classes;
+         a.yolox_seg_pose.pose_classes == b.yolox_seg_pose.pose_classes;
 }
 
 bool operator==(const StageKey& a, const StageKey& b) {
@@ -3155,7 +3155,7 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   key.box_opt.nms_iou_threshold = box_model_opt.nms_iou_threshold;
   key.box_opt.top_k = box_model_opt.top_k;
   key.box_opt.superpoint = box_model_opt.superpoint;
-  key.box_opt.pose_classes = box_model_opt.pose_classes;
+  key.box_opt.yolox_seg_pose.pose_classes = box_model_opt.yolox_seg_pose.pose_classes;
 
   auto runner = get_or_build(key, [&]() {
     RunOptions run_opt = stage_run_defaults();
@@ -3282,8 +3282,8 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   if (opt.top_k > 0) {
     box_model_opt.top_k = opt.top_k;
   }
-  if (!opt.pose_classes.empty()) {
-    box_model_opt.pose_classes = opt.pose_classes;
+  if (!opt.yolox_seg_pose.pose_classes.empty()) {
+    box_model_opt.yolox_seg_pose.pose_classes = opt.yolox_seg_pose.pose_classes;
   }
   simaai::neat::Model box_model =
       simaai::neat::internal::ModelAccess::clone_with_options(model, box_model_opt);

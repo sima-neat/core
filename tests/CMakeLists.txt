@@ -331,6 +331,7 @@ set(UNIT_TESTS
   unit_boxdecode_yolox_seg_pose_standalone_contract_test
   unit_boxdecode_pose_class_gate_test
   unit_boxdecode_yolox_seg_pose_contract_matrix_test
+  unit_boxdecode_yolox_seg_pose_raw_test
   unit_boxdecode_seg_pose_determinism_test
   unit_model_route_retarget_helper_test
   unit_dequant_processcvu_contract_equivalence_test
@@ -956,6 +957,7 @@ set(PERF_TARGETS
   perf_ssd_mobilenet_boxdecode_test
   perf_yolox_seg_pose_payload_representative_test
   perf_yolox_seg_pose_payload_heavy_test
+  perf_yolox_seg_pose_raw_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -1015,6 +1017,18 @@ foreach(seg_pose_perf representative heavy)
     )
   endif()
 endforeach()
+
+foreach(raw_target unit_boxdecode_yolox_seg_pose_raw_test perf_yolox_seg_pose_raw_test)
+  if (TARGET ${raw_target})
+    target_link_libraries(${raw_target} PRIVATE ${CMAKE_DL_LIBS})
+  endif()
+endforeach()
+if (TARGET perf_yolox_seg_pose_raw_test)
+  add_test(NAME yolox_seg_pose_raw_perf COMMAND perf_yolox_seg_pose_raw_test)
+  simaneat_append_ctest_env(yolox_seg_pose_raw_perf)
+  set_tests_properties(yolox_seg_pose_raw_perf PROPERTIES
+    LABELS "perf;boxdecode;metrics" TIMEOUT 300)
+endif()
 
 set(PERF_PYTHON_TESTS
   test_perf_schema

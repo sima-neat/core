@@ -21,6 +21,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,6 +48,7 @@ struct Case {
   bool role_major = true;
   bool descriptive_names = true;
   bool pad_c16 = false;
+  int channel_slice_depth = 0;
   bool model_managed = false;
   std::string dtype = "BF16";
   BoxDecodeSourceStorageKind storage = BoxDecodeSourceStorageKind::DenseHwcPhysical;
@@ -84,7 +86,8 @@ BoxDecodeStaticContract build_contract(const Case& c) {
     // Padding models align_channels(): storage rounds up to a 16-channel stripe while
     // slice_shape keeps the logical depth the decoder must stride by.
     t.input_shape = {h, w, c.pad_c16 ? align_c16(depth) : depth};
-    t.slice_shape = {h, w, depth};
+    t.slice_shape = {h, w,
+                     c.channel_slice_depth > 0 ? std::min(depth, c.channel_slice_depth) : depth};
     t.source_storage_kind = c.storage;
     t.source_logical_output_index = static_cast<int>(contract.tensors.size());
     t.source_output_slot = t.source_logical_output_index;
@@ -212,6 +215,19 @@ RUN_TEST(
           {.name = "storage/packed-cblock", .storage = BoxDecodeSourceStorageKind::PackedCBlock});
       cases.push_back(
           {.name = "storage/packed-hwc-c16", .storage = BoxDecodeSourceStorageKind::PackedHwcC16});
+
+      for (const auto storage :
+           {BoxDecodeSourceStorageKind::PackedCBlock, BoxDecodeSourceStorageKind::PackedHwcC16}) {
+        for (const bool named : {false, true}) {
+          for (const bool managed : {false, true}) {
+            cases.push_back({.name = "packed/channel-slices-16",
+                             .descriptive_names = named,
+                             .channel_slice_depth = 16,
+                             .model_managed = managed,
+                             .storage = storage});
+          }
+        }
+      }
 
       // C16 padding: the padded extent must never be mistaken for the logical depth,
       // on either name set, since only the generic one reads depths positionally.

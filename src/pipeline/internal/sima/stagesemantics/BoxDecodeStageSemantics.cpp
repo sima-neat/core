@@ -168,7 +168,7 @@ int logical_channel_depth(const BoxDecodeTensorStaticContract& tensor) {
   return 0;
 }
 
-int yolov5_packed_channel_depth(const BoxDecodeTensorStaticContract& tensor) {
+int storage_aware_channel_depth(const BoxDecodeTensorStaticContract& tensor) {
   if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
       tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16) {
     return tensor.input_shape.size() >= 3U ? tensor.input_shape.back() : 0;
@@ -264,7 +264,7 @@ std::optional<TensorHwc> yolov5_head_hwc(const BoxDecodeTensorStaticContract& te
       tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16) {
     // Packed slice_shape describes a storage tile. The input shape remains the
     // logical YOLO head geometry and channel depth.
-    head->semantic_c = yolov5_packed_channel_depth(tensor);
+    head->semantic_c = storage_aware_channel_depth(tensor);
     return head;
   }
 
@@ -358,7 +358,9 @@ int infer_named_class_depth(const BoxDecodeStaticContract& contract) {
     if (!tensor_name_is_class_role(tensor)) {
       continue;
     }
-    const int c = logical_channel_depth(tensor);
+    const int c = contract.decode_type == BoxDecodeType::YoloXSegPose
+                      ? storage_aware_channel_depth(tensor)
+                      : logical_channel_depth(tensor);
     if (c <= 0) {
       continue;
     }
@@ -393,7 +395,7 @@ int infer_yolox_seg_pose_positional_class_depth(const BoxDecodeStaticContract& c
   }
   std::array<int, kTensors> depth{};
   for (std::size_t i = 0; i < kTensors; ++i) {
-    depth[i] = logical_channel_depth(contract.tensors[i]);
+    depth[i] = storage_aware_channel_depth(contract.tensors[i]);
     if (depth[i] <= 0) {
       return 0;
     }
@@ -588,7 +590,7 @@ int infer_packed_yolo_class_depth(const BoxDecodeStaticContract& contract) {
   std::optional<int> classes;
   for (const auto& tensor : contract.tensors) {
     const int c = contract.decode_type == BoxDecodeType::YoloV5
-                      ? yolov5_packed_channel_depth(tensor)
+                      ? storage_aware_channel_depth(tensor)
                       : logical_channel_depth(tensor);
     if (c <= 0 || (c % 3) != 0) {
       return 0;
