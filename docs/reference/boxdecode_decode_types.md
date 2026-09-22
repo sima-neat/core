@@ -190,41 +190,26 @@ strided by the same slot count, `top_k`:
 | masks | `4 + 24*top_k` | `mask_w * mask_h` | `uint8`, one plane per slot |
 | poses | `4 + (24 + mask_w*mask_h)*top_k` | 204 | 17 x `{uint32 x, uint32 y, float32 visibility}` |
 
-Use `decode_segmentation_pose(...)` for all three tensors. `decode_bbox(...)` and
-`BoxDecodeResults(...)` still work when you only need boxes, because the payload is
-box-leading.
+Use `decode_segmentation_pose(...)` to get boxes, masks and keypoints. Row `i` in each tensor describes the same detection. Use `decode_bbox(...)` or `BoxDecodeResults(...)` if you only need boxes.
 
-`decode_segmentation_pose(...)` copies keypoint rows through verbatim; it does not zero,
-mask, or interpret them. The zeroing is the backend's, driven by the `pose_classes` gate
-described below. With a gate set, a detection whose class carries no keypoints arrives
-all-zero including visibility, so gate on visibility rather than needing the decoder's
-class list.
+There are 17 keypoint slots per detection. The backend zeros unused slots and keypoints for classes excluded by `pose_classes`. The helper copies those values unchanged.
 
-A model may also use fewer than the 17 reserved keypoint slots. Unused trailing slots are
-zeroed by the wire format itself and are not affected by the gate.
+Core derives `num_classes` from the class-head depth minus one, because channel 0 holds objectness. For example, 30 channels means 29 classes. An explicit `num_classes` must match.
 
-`num_classes` is derived from the class head for this family and does not have to be
-supplied. Its class tensor packs objectness into channel 0, so the class-block width is
-the class head depth minus one — a 30-channel head means 29 classes. Supplying a value
-anyway is allowed and is cross-checked against that derivation: a mismatch is rejected
-at contract compilation rather than reaching the backend, where a wrong count silently
-mis-strides the scorer and yields plausible-looking wrong classes.
+### Keypoint classes
 
-Keypoint gating by class is set with `Model::Options::yolox_seg_pose.pose_classes` (or
-`BoxDecodeOptions::yolox_seg_pose.pose_classes`), listing the class indices that carry keypoints. It
-reaches the backend on both configuration paths: the typed `neatobjectdecode` path carries
-it in `SimaPluginBoxDecodeStagePayload::pose_classes`, and the JSON path accepts the
-`pose_classes` key directly.
+Set the class IDs that have keypoints:
 
-An empty `Model::Options::yolox_seg_pose.pose_classes` is not "no classes" — it disables the gate, and the
-backend then treats **every** class as pose-bearing. That is the right default for a model
-whose classes all carry keypoints; set the list only when they are mixed. The per-node
-`BoxDecodeOptions::yolox_seg_pose.pose_classes` is an override, so leaving it empty inherits whatever gate
-the model or MPK resolved rather than clearing it.
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.YoloXSegPose)
+options.yolox_seg_pose.pose_classes = [0, 5]
+```
 
-Core validates the list at contract construction: entries must be unique and within
-`[0, num_classes)`, and the option is rejected for decode types that cannot gate keypoints
-by class. The resolved list is emitted ascending.
+`ModelOptions.yolox_seg_pose` accepts the same setting.
+
+- Classes outside the list get zero keypoint coordinates and visibility.
+- An empty `BoxDecodeOptions` list inherits the model's settings. With no list configured, every class gets keypoints.
+- IDs must be unique and in `[0, num_classes)`. This option is only supported for `YoloXSegPose`.
 
 ## When `model.run` returns raw heads
 
@@ -421,21 +406,8 @@ seg_boxes = seg.boxes.to_numpy()
 masks = seg.masks.to_numpy()
 ```
 
-## YOLOX segmentation/pose options and ABI migration
+## Upgrading
 
-Set decoder-specific keypoint classes through the nested options:
+Replace the preview API's top-level `pose_classes` with `yolox_seg_pose.pose_classes`.
 
-```python
-options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.YoloXSegPose)
-options.yolox_seg_pose.pose_classes = [0, 5]  # Use the model's actual class IDs.
-```
-
-`ModelOptions.yolox_seg_pose` accepts the same settings. Replace the development
-PR's top-level `pose_classes` field with `yolox_seg_pose.pose_classes`.
-The internal decoder payload is unchanged.
-
-The added options change the public C++ object layouts. Core therefore uses
-ABI 5 (`libsima_neat.so.5`). Rebuild C++ applications and Python bindings against
-the matching headers and library; binaries built for ABI 4 must not load ABI 5
-through a compatibility symlink. Existing source that does not set the new
-options continues to compile.
+The new options change C++ object layouts. Core uses ABI 5, `libsima_neat.so.5`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 4 binaries to ABI 5 through a compatibility symlink.

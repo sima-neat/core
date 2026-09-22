@@ -11,7 +11,7 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Breaking changes
 
-- The Neat Library C++ ABI is now 5 and the shared-library SONAME is `libsima_neat.so.5`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, `GraphLinkOptions` contains realtime admission limits, and model/BoxDecode options contain `yolox_seg_pose` settings. Rebuild C++ applications and plugins and install matching Core runtime and development packages.
+- Core uses C++ ABI 5, `libsima_neat.so.5`. Public tensor, GenAI, graph-link and YOLOX segmentation/pose option layouts changed. Rebuild C++ applications, plugins and Python bindings with matching Core headers and runtime packages.
 - Realtime graph composition now uses `GraphLinkOptions`, `Graph::connect()`, and `Graph::build()`. The preview `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()`, and `RealtimeEveryFrameByStream` APIs were removed. Saved graphs containing `realtime_every_frame_by_stream` must be recreated with a supported policy; see [Connect live fragments](/develop-apps/development-workflow/graph/#connect-live-fragments).
 
 ### Runtime changes
