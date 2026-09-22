@@ -212,6 +212,25 @@ port spans for every MLA operation. Ambiguity, missing slots, or conflicting
 evidence is a model-load error; sidecar JSON, substring matching, environment
 state, and runtime buffers are not evidence.
 
+Compiler ELF sections named `data.ifm.persistent.MLA_<stage>/<tensor>.b0`
+and `data.ofm.persistent.MLA_<stage>/<tensor>.b0` omit explicit port indices.
+Core binds such a section to port zero only when it is the sole section in
+that direction. Multiple unindexed sections or mixed indexed and unindexed
+sections are rejected because their mapping to MPK ports has not been established.
+The QMLA storage extent and existing monolithic-layout conflict checks still apply.
+For these native compiler input ports, a typed dense batch-one tensor may have
+an ELF extent equal to its logical bytes rounded up to 16 bytes. Core preserves
+the logical tensor size and allocates the full physical extent in its frame arena.
+This rule does not admit padding between batch rows or arbitrary excess storage.
+
+Detessellation takes its logical geometry and dtype from `frame_shape` and
+`frame_type`. Its `input_shapes` may name that frame or the exact `[1, byte_count]`
+carrier; a byte count must not be interpreted as a count of BF16 elements.
+
+Cast records may additionally declare the source dtype as `in_dtype`.
+When present, it must agree with the registered FP32/BF16 transition selected
+by `out_dtype`; Core rejects a contradictory declaration.
+
 An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
 by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
 without loading it into the host process, proves its section topology, and

@@ -562,6 +562,166 @@ void test_exact_registry() {
         "pass-through requires equal port counts");
 }
 
+void test_explicit_cast_input_dtype() {
+  const auto topology = monolithic_topology();
+  const auto legacy = AfeMpkV2Decoder{}.decode_json(valid_manifest(), topology);
+  check(static_cast<bool>(legacy), "legacy casts without in_dtype remain admitted");
+  auto manifest = nlohmann::json::parse(valid_manifest());
+  manifest["plugins"][0]["config_params"]["params"]["in_dtype"] = "float32";
+  manifest["plugins"][2]["config_params"]["params"]["in_dtype"] = "bfloat16";
+  const auto explicit_casts = AfeMpkV2Decoder{}.decode_json(manifest.dump(), topology);
+  check(static_cast<bool>(explicit_casts),
+        "explicit FP32/BF16 casts in both directions are admitted");
+  check(explicit_casts.plan->values().size() == legacy.plan->values().size(),
+        "explicit source dtype does not change the admitted values");
+  for (std::size_t index = 0; index < legacy.plan->values().size(); ++index) {
+    check(explicit_casts.plan->values()[index].logical_dtype ==
+              legacy.plan->values()[index].logical_dtype,
+          "explicit source dtype preserves the inferred value dtypes");
+  }
+  for (const auto plugin_index : {0, 2}) {
+    for (const auto& bad_dtype : {"int8", "float16", "unknown"}) {
+      auto invalid = manifest;
+      invalid["plugins"][plugin_index]["config_params"]["params"]["in_dtype"] = bad_dtype;
+      expect_error(invalid.dump(), topology, AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                   "unsupported explicit source dtype is rejected");
+    }
+    auto contradictory = manifest;
+    auto& params = contradictory["plugins"][plugin_index]["config_params"]["params"];
+    params["in_dtype"] = params["out_dtype"];
+    expect_error(contradictory.dump(), topology, AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "same-dtype cast contradicts the registered conversion");
+    for (const auto& bad_type : {nlohmann::json(nullptr), nlohmann::json(1), nlohmann::json(true),
+                                 nlohmann::json::array()}) {
+      auto invalid = manifest;
+      invalid["plugins"][plugin_index]["config_params"]["params"]["in_dtype"] = bad_type;
+      expect_error(invalid.dump(), topology, AfeMpkV2DecodeErrorCode::InvalidField,
+                   "explicit source dtype must be a string");
+    }
+    auto extra = manifest;
+    extra["plugins"][plugin_index]["config_params"]["params"]["ignored"] = 1;
+    expect_error(extra.dump(), topology, AfeMpkV2DecodeErrorCode::InvalidField,
+                 "explicit source dtype does not permit unrelated config fields");
+  }
+}
+
+MlaStaticContract project_single_mla(const ModelExecutionPlan& plan) {
+  MlaStaticContract contract;
+  std::vector<PhysicalPortSource> sources;
+  for (const auto& port : plan.backend_ports()) {
+    const auto* value = plan.value(port.value_id);
+    PhysicalBufferStaticSpec physical;
+    physical.physical_index = static_cast<int>(port.port_index);
+    physical.size_bytes = value->required_bytes;
+    physical.segment_name = value->name;
+    if (port.direction == BackendPortDirection::Input) {
+      contract.physical_inputs.push_back(physical);
+      TensorStaticSpec logical;
+      logical.tensor_index = static_cast<int>(port.port_index);
+      contract.logical_inputs.push_back(logical);
+      sources.push_back({value->id, static_cast<int>(port.port_index)});
+    } else {
+      contract.dispatcher_physical_outputs.push_back(physical);
+    }
+  }
+  std::string error;
+  const bool projected = apply_dmabuf_plan_contract_projection(plan, &contract, sources, &error);
+  if (!projected) {
+    std::cerr << error << "\n";
+  }
+  check(projected, "decoded exact contracts project through the frame arena");
+  return contract;
+}
+
+void test_detess_byte_carrier_keeps_logical_frame() {
+  auto manifest = nlohmann::json::parse(detess_dequant_manifest());
+  const nlohmann::json frame = {1, 3, 5, 7};
+  auto& plugins = manifest["plugins"];
+  plugins[0]["output_nodes"][0]["size"] = 480;
+  plugins[1]["input_nodes"][0]["size"] = 480;
+  plugins[1]["output_nodes"][0]["size"] = 210;
+  auto& params = plugins[1]["config_params"]["params"];
+  params["frame_type"] = "bfloat16";
+  params["frame_shape"] = frame;
+  params["slice_shape"] = {3, 5, 7};
+  params["align_c16"] = true;
+  params["cblock"] = true;
+  params["input_shapes"] = {{1, 480}};
+  params["output_shapes"] = nlohmann::json::array({frame});
+  plugins[2]["config_params"]["kernel"] = "cast_transform";
+  plugins[2]["config_params"]["params"] = {{"in_dtype", "bfloat16"},
+                                           {"out_dtype", "float32"},
+                                           {"input_shapes", nlohmann::json::array({frame})},
+                                           {"output_shapes", nlohmann::json::array({frame})}};
+  plugins[2]["input_nodes"][0]["size"] = 210;
+  plugins[2]["output_nodes"][0]["size"] = 420;
+  plugins[3]["input_nodes"][0]["size"] = 420;
+  plugins[3]["output_nodes"][0]["size"] = 420;
+  const auto decoded =
+      AfeMpkV2Decoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 480U));
+  check(static_cast<bool>(decoded), "BF16 detess byte-carrier contract is admitted");
+  const auto& plan = *decoded.plan;
+  const auto* value = plan.value(plan.ops()[1].inputs.front());
+  check(value->logical_shape == TensorShape({1, 3, 5, 7}) && value->logical_dtype == "bfloat16" &&
+            value->required_bytes == 480U &&
+            plan.ops()[1].input_shapes == std::vector<TensorShape>{{1, 480}},
+        "detess preserves frame geometry separately from its authored 480-byte carrier");
+  const auto contract = project_single_mla(plan);
+  check(contract.logical_outputs.front().shape == TensorShape({1, 3, 5, 7}) &&
+            contract.physical_outputs.front().size_bytes == 480U,
+        "MLA projects 210 logical BF16 bytes over the exact 480-byte tiled carrier");
+  params["input_shapes"] = {{1, 240}};
+  expect_error(manifest.dump(), monolithic_topology(16U, 480U),
+               AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+               "detess cannot reinterpret a contradictory carrier shape as BF16 element counts");
+}
+
+void test_dense_ifm_tail_padding() {
+  auto manifest = nlohmann::json::parse(valid_manifest());
+  manifest["input_nodes"][0]["size"] = 28;
+  auto& cast = manifest["plugins"][0];
+  cast["input_nodes"][0]["size"] = 28;
+  cast["output_nodes"][0]["size"] = 14;
+  cast["config_params"]["params"]["input_shapes"] = {{1, 7}};
+  cast["config_params"]["params"]["output_shapes"] = {{1, 7}};
+  manifest["plugins"][1]["input_nodes"][0]["size"] = 14;
+  auto topology = monolithic_topology(16U, 8U);
+  topology.monolithic_ifm = false;
+  topology.monolithic_ifm_extent_bytes = 0U;
+  topology.ifm_symbol_names = {"data.ifm.persistent.MLA_0/placeholder_0_0.b0"};
+  topology.ifm_extent_bytes = {16U};
+  const auto decoded = AfeMpkV2Decoder{}.decode_json(manifest.dump(), topology);
+  check(static_cast<bool>(decoded), "exact dense 14-byte BF16 input admits 16-byte ELF extent");
+  const auto& plan = *decoded.plan;
+  const auto& port = plan.backend_ports(0U, BackendPortDirection::Input).front();
+  const auto* value = plan.value(port.value_id);
+  check(value->required_bytes == 14U && value->logical_shape == TensorShape({1, 7}) &&
+            port.physical_extent_bytes == 16U,
+        "IFM tail padding does not alter the dense logical tensor");
+  const auto contract = project_single_mla(plan);
+  check(contract.physical_inputs.front().size_bytes == 16U &&
+            contract.input_bindings.front().src_physical_size_bytes == 16U,
+        "IFM arena projection binds all padded bytes without enlarging the logical input");
+  for (const auto bad_extent : {13U, 15U, 17U, 32U}) {
+    topology.ifm_extent_bytes = {bad_extent};
+    expect_error(manifest.dump(), topology, AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+                 "undersized, unaligned, and excessive IFM extents remain rejected");
+  }
+  expect_error(manifest.dump(), monolithic_topology(16U, 8U),
+               AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+               "native IFM tail-padding rule does not relax legacy carrier equality");
+  topology.ifm_extent_bytes = {16U};
+  auto batched = manifest;
+  batched["plugins"][1]["config_params"]["actual_batch_size"] = 2;
+  batched["plugins"][1]["config_params"]["desired_batch_size"] = 2;
+  expect_error(batched.dump(), topology, AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+               "batch-row padding requires a separate contract and cannot use the batch-one rule");
+  cast["config_params"]["params"]["input_shapes"] = {{7, 1}};
+  cast["config_params"]["params"]["output_shapes"] = {{7, 1}};
+  expect_error(manifest.dump(), topology, AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+               "logical leading dimension must also prove batch one");
+}
+
 void test_compiler_version_does_not_restrict_admission() {
   const std::vector<nlohmann::json> versions = {nullptr,
                                                 true,
@@ -1384,6 +1544,9 @@ int main(const int argc, char** argv) {
   test_exact_registry();
   test_compiler_version_does_not_restrict_admission();
   test_success_and_immutable_contract();
+  test_explicit_cast_input_dtype();
+  test_detess_byte_carrier_keeps_logical_frame();
+  test_dense_ifm_tail_padding();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
   test_registered_detess_layout_is_preserved_through_dequant();

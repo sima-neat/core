@@ -530,13 +530,27 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
                             const Json& config, const Json& params, const std::string& path) {
   switch (kind) {
   case OpKind::Cast: {
-    require_exact_keys(params, {"out_dtype", "input_shapes", "output_shapes"},
-                       path + ".config_params.params");
+    if (params.contains("in_dtype")) {
+      require_exact_keys(params, {"in_dtype", "out_dtype", "input_shapes", "output_shapes"},
+                         path + ".config_params.params");
+    } else {
+      require_exact_keys(params, {"out_dtype", "input_shapes", "output_shapes"},
+                         path + ".config_params.params");
+    }
     CastOpConfig result{required_string(params, "out_dtype", path + ".params")};
     if (result.output_dtype != "bfloat16" && result.output_dtype != "float32") {
       reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.out_dtype",
              "legacy cast has no exact registered transition for this dtype");
+    }
+    if (params.contains("in_dtype")) {
+      const auto input_dtype = required_string(params, "in_dtype", path + ".config_params.params");
+      const auto expected_input_dtype = result.output_dtype == "bfloat16" ? "float32" : "bfloat16";
+      if (input_dtype != expected_input_dtype) {
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+               path + ".config_params.params.in_dtype",
+               "explicit cast input dtype contradicts the registered FP32/BF16 transition");
+      }
     }
     return result;
   }
@@ -732,7 +746,8 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
   // component values retain the semantic shapes established by surrounding
   // transforms (for example, Tessellate keeps N/H/W/C while Pack names the
   // flattened byte carrier).
-  if (!op.input_shapes.empty() && op.kind != OpKind::Pack && op.kind != OpKind::Unpack) {
+  if (!op.input_shapes.empty() && op.kind != OpKind::Pack && op.kind != OpKind::Unpack &&
+      op.kind != OpKind::Detessellate) {
     if (op.input_shapes.size() != op.inputs.size()) {
       reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.input_shapes",
@@ -780,13 +795,27 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
     // geometry. This is target ABI evidence, not a shape/name heuristic.
     merge_layout(data.values[op.inputs.front()], "HWC", path);
     break;
-  case OpKind::Detessellate:
-    merge_dtype(data.values[op.inputs.front()],
-                std::get<DetessellateOpConfig>(op.config).frame_type, path);
-    // Graph 3 is the inverse of the same canonical HWC transform. Retain the
-    // semantic axes even though its input bytes are backend-native/tiled.
-    merge_layout(data.values[op.inputs.front()], "HWC", path);
+  case OpKind::Detessellate: {
+    const auto& config = std::get<DetessellateOpConfig>(op.config);
+    auto& input = data.values[op.inputs.front()];
+    // AFE can describe this input as [1, carrier bytes]. Those dimensions
+    // are not BF16 element counts; frame_shape authors the logical geometry.
+    const bool byte_carrier =
+        input.required_bytes <=
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) &&
+        op.input_shapes ==
+            std::vector<TensorShape>{{1, static_cast<std::int64_t>(input.required_bytes)}};
+    if (op.input_shapes != std::vector<TensorShape>{config.frame_shape} && !byte_carrier) {
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+             path + ".config_params.params.input_shapes",
+             "detessellation input shape is neither its exact frame nor byte carrier");
+    }
+    merge_shape(input, config.frame_shape, path);
+    merge_dtype(input, config.frame_type, path);
+    // Graph 3 is the inverse of the same canonical HWC transform.
+    merge_layout(input, "HWC", path);
     break;
+  }
   case OpKind::Dequantize: {
     const auto& config = std::get<DequantizeOpConfig>(op.config);
     merge_dtype(data.values[op.inputs.front()], config.input_dtype, path);
@@ -1712,10 +1741,31 @@ decode_impl(const std::string_view text,
         const auto& value = data.values[mla.inputs[index]];
         const auto physical_extent = mla_elf_ifm_extent_bytes(topology, index);
         if (physical_extent != value.required_bytes) {
-          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
-                 "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes[" +
-                     std::to_string(index) + "].size",
-                 "QMLA IFM extent does not exactly equal the logical tensor");
+          const auto logical_bytes = value.logical_shape && value.logical_dtype
+                                         ? dense_bytes(*value.logical_shape, *value.logical_dtype)
+                                         : std::nullopt;
+          const auto aligned_bytes = align_up_16(value.required_bytes);
+          // Native compiler tensor ports retain dense element strides and pad
+          // only the allocation tail to one 16-byte transfer unit. The frame
+          // arena sizes its carrier from this exact ELF extent independently.
+          const bool exact_dense_tail =
+              symbol.starts_with("data.ifm.persistent.MLA_") && symbol.ends_with(".b0") &&
+              value.representation == ValueRepresentation::Dense && !value.read_expression &&
+              value.logical_shape && !value.logical_shape->empty() &&
+              value.logical_shape->front() == 1 &&
+              ordered[mla_op_index].plugin->at("config_params").at("actual_batch_size") == 1 &&
+              logical_bytes && *logical_bytes == value.required_bytes && aligned_bytes &&
+              *aligned_bytes == physical_extent;
+          if (!exact_dense_tail) {
+            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+                   "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes[" +
+                       std::to_string(index) + "].size",
+                   "QMLA IFM extent is neither exact logical bytes nor registered batch-one dense "
+                   "tail padding");
+          }
+          result.proof.push_back({"MLA.IFM[" + std::to_string(index) + "].layout",
+                                  "typed dense logical bytes and ELF extent prove exact 16-byte "
+                                  "allocation tail padding"});
         }
         data.backend_ports.push_back({stage_index, BackendPortDirection::Input, index, symbol,
                                       value.id, physical_extent, kLegacyEvoCmaRegionAlignmentBytes,

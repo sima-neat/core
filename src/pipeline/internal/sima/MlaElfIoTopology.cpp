@@ -196,6 +196,12 @@ std::optional<std::size_t> parse_ofm_section_index(const std::string& name) {
   return std::nullopt;
 }
 
+bool is_unindexed_section(const std::string& name, const std::string& prefix) {
+  std::size_t stage_index = 0U;
+  return parse_section_index_after_prefix(name, prefix, true, &stage_index) &&
+         name.find('/') + 1U < name.size() - 3U;
+}
+
 // Insert `name` at slot `index` in `dst`, growing the vector as needed. If
 // `dst` already has a value at that index, prefer the existing one (keeps the
 // first-seen entry on duplicate scan; multi-section ELFs sometimes mention the
@@ -292,6 +298,8 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
 
   // Walk every section name and classify.
   std::size_t recognized = 0U;
+  std::vector<std::pair<std::string, std::uint64_t>> unindexed_ifm;
+  std::vector<std::pair<std::string, std::uint64_t>> unindexed_ofm;
   for (const auto& s : sections) {
     const std::string name = section_name_at(shstrtab, s.sh_name);
     if (name.empty()) {
@@ -339,6 +347,32 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       ++recognized;
       continue;
     }
+    if (is_unindexed_section(name, "data.ifm.persistent.MLA_")) {
+      unindexed_ifm.emplace_back(name, has_extent ? extent : 0U);
+      ++recognized;
+    } else if (is_unindexed_section(name, "data.ofm.persistent.MLA_")) {
+      unindexed_ofm.emplace_back(name, has_extent ? extent : 0U);
+      ++recognized;
+    }
+  }
+
+  // Unindexed tensor names establish port zero only when no ordering choice exists.
+  const auto bind_unindexed = [&](const auto& sections, auto* names, auto* extents,
+                                  const char* direction) {
+    if (sections.empty()) {
+      return true;
+    }
+    if (sections.size() != 1U || !names->empty()) {
+      out->error = std::string("elf-io-topology: ambiguous unindexed ") + direction +
+                   " sections; explicit port indices are required for multiple sections";
+      return false;
+    }
+    place_at_index(names, extents, 0U, sections.front().first, sections.front().second);
+    return true;
+  };
+  if (!bind_unindexed(unindexed_ifm, &out->ifm_symbol_names, &out->ifm_extent_bytes, "IFM") ||
+      !bind_unindexed(unindexed_ofm, &out->ofm_symbol_names, &out->ofm_extent_bytes, "OFM")) {
+    return false;
   }
 
   if (recognized == 0U) {
