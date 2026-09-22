@@ -24,29 +24,43 @@ bool has_byte_variation(const std::vector<std::uint8_t>& bytes) {
   return false;
 }
 
-void require_decoded_accuracy_sample(const sima_codec_perf::CodecPerfConfig& config,
-                                     const simaai::neat::Sample& sample) {
+std::vector<std::uint8_t>
+require_decoded_accuracy_sample(const sima_codec_perf::CodecPerfConfig& config,
+                                const simaai::neat::Sample& sample, bool i420) {
   sima_codec_perf::require_decoded_sample(sample, config.scenario_id);
   const simaai::neat::TensorList tensors = simaai::neat::tensors_from_sample(sample, true);
   const simaai::neat::Tensor& tensor = tensors.front();
   require(tensor.width() == config.width, config.scenario_id + ": decoded width mismatch");
   require(tensor.height() == config.height, config.scenario_id + ": decoded height mismatch");
-  require(tensor.is_nv12(), config.scenario_id + ": decoded output should be NV12");
-
-  const std::vector<std::uint8_t> bytes = tensor.copy_nv12_contiguous();
+  require(i420 ? tensor.is_i420() : tensor.is_nv12(),
+          config.scenario_id + ": decoded output format mismatch");
+  const std::vector<std::uint8_t> bytes =
+      i420 ? tensor.copy_i420_contiguous() : tensor.copy_nv12_contiguous();
   const std::size_t min_luma_bytes =
       static_cast<std::size_t>(config.width) * static_cast<std::size_t>(config.height);
   require(bytes.size() >= min_luma_bytes, config.scenario_id + ": decoded payload is too small");
   require(has_byte_variation(bytes), config.scenario_id + ": decoded payload is constant");
+  if (i420) {
+    return bytes;
+  }
+  std::vector<std::uint8_t> planar(bytes.begin(), bytes.begin() + min_luma_bytes);
+  for (std::size_t component = 0; component < 2; ++component) {
+    for (std::size_t i = min_luma_bytes + component; i < bytes.size(); i += 2) {
+      planar.push_back(bytes[i]);
+    }
+  }
+  return planar;
 }
 
-void run_accuracy_case(const sima_codec_perf::CodecPerfConfig& config,
-                       const std::vector<sima_codec_perf::EncodedFrame>& frames) {
+std::vector<std::uint8_t>
+run_accuracy_case(const sima_codec_perf::CodecPerfConfig& config,
+                  const std::vector<sima_codec_perf::EncodedFrame>& frames, bool i420 = false) {
   require(!frames.empty(), config.scenario_id + ": no encoded frames");
   const std::vector<simaai::neat::Sample> samples =
       sima_codec_perf::make_sample_sequence(frames, config, 1);
   const simaai::neat::Sample& seed = samples.front();
-  simaai::neat::Graph graph = sima_codec_perf::make_decode_graph(config, seed, 8);
+  simaai::neat::Graph graph =
+      sima_codec_perf::make_decode_graph(config, seed, 8, false, false, i420);
   simaai::neat::Run run =
       graph.build(simaai::neat::Sample{seed}, sima_codec_perf::codec_run_options(8));
 
@@ -56,10 +70,12 @@ void run_accuracy_case(const sima_codec_perf::CodecPerfConfig& config,
   run.close_input();
   const simaai::neat::Sample out =
       sima_codec_perf::pull_or_throw(run, 5000, config.scenario_id + ": pull");
-  require_decoded_accuracy_sample(config, out);
+  const auto pixels = require_decoded_accuracy_sample(config, out, i420);
   run.stop();
   std::cout << "[OK] " << config.scenario_id << " width=" << config.width
-            << " height=" << config.height << " fps=" << config.fps << "\n";
+            << " height=" << config.height << " fps=" << config.fps
+            << " format=" << (i420 ? "I420" : "NV12") << "\n";
+  return pixels;
 }
 
 } // namespace
@@ -74,7 +90,9 @@ int main() {
                                                  .width = 1280,
                                                  .height = 720,
                                                  .fps = 30};
-    run_accuracy_case(mjpeg, sima_codec_perf::make_mjpeg_frames(mjpeg));
+    const auto jpeg_frames = sima_codec_perf::make_mjpeg_frames(mjpeg);
+    require(run_accuracy_case(mjpeg, jpeg_frames) == run_accuracy_case(mjpeg, jpeg_frames, true),
+            "MJPEG NV12 and I420 visible pixels differ");
 
     const sima_codec_perf::CodecPerfConfig h264{.scenario_id = "codec_accuracy_h264_decode",
                                                 .run_mode = "codec_accuracy",
@@ -82,7 +100,9 @@ int main() {
                                                 .width = 1280,
                                                 .height = 720,
                                                 .fps = 30};
-    run_accuracy_case(h264, sima_codec_perf::extract_h264_access_units(1));
+    const auto h264_frames = sima_codec_perf::extract_h264_access_units(1);
+    require(run_accuracy_case(h264, h264_frames) == run_accuracy_case(h264, h264_frames, true),
+            "H.264 NV12 and I420 visible pixels differ");
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

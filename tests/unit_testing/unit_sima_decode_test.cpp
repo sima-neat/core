@@ -143,6 +143,8 @@ void check_jpeg_raw_output_options() {
                    "SimaDecode should use decoder name as output buffer name");
   require_contains(fragment, "dec-fmt=YUV420P",
                    "SimaDecode should map public I420 to decoder YUV420P");
+  require_contains(fragment, "zero-copy-output=false",
+                   "SimaDecode I420 requires decoder copy/conversion output");
   require_contains(fragment, "next-element=CVU", "SimaDecode next-element missing");
   require_contains(fragment, "dec-width=640", "SimaDecode width override missing");
   require_contains(fragment, "dec-height=480", "SimaDecode height override missing");
