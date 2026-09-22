@@ -694,6 +694,7 @@ class NestedSourceMountTests(unittest.TestCase):
             sources[model_sdk_index + 1]["mount"],
             "compile-a-model/quantization-aware-training",
         )
+        self.assertTrue(sources[model_sdk_index + 1]["localization"])
 
 
 class AutodocMainTests(unittest.TestCase):
