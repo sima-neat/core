@@ -442,12 +442,11 @@ dist/install_pciehost.sh
 ```
 
 The installer looks for the PCIe host debs in the same directory as the script.
-It also uses `sima-cli playbooks install` to install the
-`neat-pcie-application-builder` skill for Codex and Claude from the
-`sima-neat/core` repository. Skill installation is best-effort: a missing
-`sima-cli`, unavailable GitHub source, or playbook installation failure emits a
-warning without failing the PCIe host package installation. Set
-`SIMAPCIE_SKILL_SOURCE` to override the default GitHub source.
+The runtime deb includes the `neat-pcie-application-builder` skill. The
+installer copies that package-matched version to the Codex and Claude skill
+directories, replacing an older copy on reinstall. Set
+`SIMAPCIE_INSTALL_CODEX_SKILL=OFF` or `SIMAPCIE_INSTALL_CLAUDE_SKILL=OFF` to
+skip a target, or set `SIMAPCIE_SKILL_DIR` to use a local skill directory.
 
 It runs `pcie-setup.sh` at the end. Setup is interactive by default
 and can prompt while provisioning passwordless SSH for `Model::build()`. Pass

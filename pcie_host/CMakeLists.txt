@@ -128,6 +128,21 @@ install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
   COMPONENT Runtime
 )
 
+set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR
+  ${CMAKE_INSTALL_DATADIR}/sima-pcie-host/skills/neat-pcie-application-builder)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/SKILL.md
+  DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}
+  COMPONENT Runtime
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/references/
+  DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}/references
+  COMPONENT Runtime
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/targets/codex/agents/
+  DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}/agents
+  COMPONENT Runtime
+)
+
 set(SimaPCIeHost_INSTALL_CMAKEDIR
   ${CMAKE_INSTALL_LIBDIR}/cmake/SimaPCIeHost
 )

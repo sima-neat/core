@@ -526,11 +526,18 @@ jobs:
 
           python_venv="${RUNNER_TEMP}/pyneatpcie-package-smoke"
           consumer_build="${RUNNER_TEMP}/sima-pcie-host-consumer"
+          skill_home="${RUNNER_TEMP}/sima-pcie-host-skill-smoke"
 
-          pcie_host/dist/install_pciehost.sh \
+          CODEX_HOME="${skill_home}/codex" \
+          CLAUDE_HOME="${skill_home}/claude" \
+            pcie_host/dist/install_pciehost.sh \
             --skip-setup \
             --python \
             --python-venv "${python_venv}"
+
+          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/SKILL.md"
+          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/agents/openai.yaml"
+          test -f "${skill_home}/claude/skills/neat-pcie-application-builder/SKILL.md"
 
           cmake \
             -S pcie_host/tests/package_smoke \
