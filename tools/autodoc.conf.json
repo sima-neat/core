@@ -69,6 +69,23 @@
       ]
     },
     {
+      "key": "qat",
+      "title": "Quantization-Aware Training",
+      "repo": "https://github.com/sima-neat/qat.git",
+      "branch": "main",
+      "branch_policy": "snap",
+      "fallback_branch": "main",
+      "githash": "",
+      "docs_subpath": "docs",
+      "mount": "compile-a-model/quantization-aware-training",
+      "sidebar_position": 5,
+      "files_order": [
+        "index",
+        "training-lifecycle",
+        "operator-support"
+      ]
+    },
+    {
       "key": "model-sdk-api",
       "title": "Model Compiler API",
       "repo": "https://github.com/sima-neat/model-compiler.git",

@@ -630,6 +630,72 @@ class LocalizedAutodocTests(unittest.TestCase):
             self.assertFalse((destination / "commands").exists())
 
 
+class NestedSourceMountTests(unittest.TestCase):
+    def test_parent_then_child_refresh_preserves_nested_section(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            build_dir = repo_root / "build"
+            out_root = repo_root / "docs-output"
+            parent_docs = build_dir / "autodoc/model-sdk-guides/docs"
+            child_docs = build_dir / "autodoc/qat/docs"
+            parent_docs.mkdir(parents=True)
+            child_docs.mkdir(parents=True)
+            (parent_docs / "index.md").write_text(
+                "# Compile a Model\n", encoding="utf-8"
+            )
+            (child_docs / "index.md").write_text(
+                "# Quantization-Aware Training\n", encoding="utf-8"
+            )
+            parent = {
+                "key": "model-sdk-guides",
+                "title": "Compile a Model",
+                "repo": "unused",
+                "branch": "main",
+                "docs_subpath": "docs",
+                "mount": "compile-a-model",
+            }
+            child = {
+                "key": "qat",
+                "title": "Quantization-Aware Training",
+                "repo": "unused",
+                "branch": "main",
+                "docs_subpath": "docs",
+                "mount": "compile-a-model/quantization-aware-training",
+            }
+
+            with mock.patch.object(MODULE, "acquire_source", return_value="main"):
+                for source in (parent, child, parent, child):
+                    ok, message = MODULE.process_source(
+                        source,
+                        repo_root,
+                        build_dir,
+                        out_root,
+                    )
+                    self.assertTrue(ok, message)
+
+            self.assertTrue((out_root / "compile-a-model/index.md").is_file())
+            self.assertTrue(
+                (
+                    out_root
+                    / "compile-a-model/quantization-aware-training/index.md"
+                ).is_file()
+            )
+
+    def test_qat_source_follows_model_sdk_guides_in_manifest(self):
+        manifest = json.loads(
+            (ROOT / "tools/autodoc.conf.json").read_text(encoding="utf-8")
+        )
+        sources = manifest["sources"]
+        keys = [source["key"] for source in sources]
+        model_sdk_index = keys.index("model-sdk-guides")
+
+        self.assertEqual(keys[model_sdk_index + 1], "qat")
+        self.assertEqual(
+            sources[model_sdk_index + 1]["mount"],
+            "compile-a-model/quantization-aware-training",
+        )
+
+
 class AutodocMainTests(unittest.TestCase):
     def run_main_with_result(self, result):
         with tempfile.TemporaryDirectory() as directory:
