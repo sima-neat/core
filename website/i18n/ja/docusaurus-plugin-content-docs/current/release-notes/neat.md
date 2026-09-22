@@ -11,7 +11,7 @@ SiMa.ai Neat Library のリリースノート。
 
 ### 互換性のない変更
 
-- Neat LibraryのC++ ABIは現在バージョン4となり、共有ライブラリのSONAMEは`libsima_neat.so.4`です。テンソルは、特徴抽出器のセマンティックメタデータを持ちます。公開されているGenAIのリクエスト/結果の型は、ASRタスク、言語、およびプローブのメタデータを持ちます。`GraphLinkOptions`には、リアルタイムの許容制限が含まれます。C++アプリケーションとプラグインを再構築し、対応するCoreランタイムと開発パッケージをインストールしてください。
+- Core は C++ ABI 5、`libsima_neat.so.5` を使用します。公開テンソル、GenAI、グラフ接続、YOLOX セグメンテーション／ポーズのオプションのオブジェクトレイアウトが変更されました。対応する Core ヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。
 - リアルタイムのグラフ合成では、`GraphLinkOptions`、`Graph::connect()`、および`Graph::build()`が使用されます。プレビュー用の`RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()`/ `build_fused_realtime_source()`、および`RealtimeEveryFrameByStream` APIは削除されました。`realtime_every_frame_by_stream`を含む保存されたグラフは、サポートされているポリシーを使用して再作成する必要があります。詳細は[ライブフラグメントを接続する](/develop-apps/development-workflow/graph/#connect-live-fragments)を参照してください。
 
 ### ランタイムの変更

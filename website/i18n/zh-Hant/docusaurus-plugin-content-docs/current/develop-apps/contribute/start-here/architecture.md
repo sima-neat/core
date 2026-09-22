@@ -345,6 +345,26 @@ SuperPoint 使用與其他模型管理的 BoxDecode 系列相同的 MPK 到靜�
 - 版本化的靜態資訊清單 ABI 攜帶已解決的合約到 `simaaiboxdecode`。外掛程式僅在設定期間借用資訊清單指標，並且必須複製執行階段所需的任何狀態；核心在管線的整個生命週期內保留資訊清單的所有權。
 - 實際輸出使用 `FEATURE_POINTS_V1` 線格式和特徵語義中繼資料。`FEATURE_POINTS_LEGACY_A65_V0` 僅在明確選擇以用於相容性時才可用；使用者不應從緩衝區大小推斷任何一種格式。
 
+##### YOLOX 分割 + 姿態的 BoxDecode 契約
+
+`yolox-seg-pose` 與其他 BoxDecode 系列使用相同的 MPK 至靜態資訊清單路徑。
+
+- 輸入共 13 個張量：3 個邊界框、3 個類別頭、3 個遮罩係數頭、3 個關鍵點頭，最後是 1 個遮罩原型。各組依步幅 8/16/32 排序。
+- `Auto` 選擇 `GroupedByRoleLogit`。僅接受 `GroupedByRole` 和 `GroupedByRoleLogit`；分數使用 sigmoid。
+- 類別頭先包含一個物件性通道，後接類別通道。Core 以深度減一推算類別數，並拒絕不一致的明確指定值。
+- 模型管理路徑與獨立路徑會解析出相同的佈局、啟用函數及類別數。
+- 輸出包含邊界框、遮罩與關鍵點，各有 `top_k` 個槽位。`decode_segmentation_pose(...)` 傳回全部三者；`decode_bbox(...)` 和 `BoxDecodeResults(...)` 讀取前段的邊界框。
+
+輸出有一個 4 位元組的計數標頭。每個槽位使用 24 位元組儲存邊界框、`160*160` 位元組儲存遮罩，以及 204 位元組儲存 17 個關鍵點。輔助函式以下式推算容量：
+
+```text
+capacity = (buffer_bytes - 4) / (24 + 160*160 + 204)
+```
+
+它會拒絕不相容的格式標籤及不完整的記錄，只接受秩為 1 的 `UInt8` 無標籤緩衝區，並將偵測數限制在容量內。三個區域必須使用相同容量。舊版 a65 `boxrender` 假設有 20 個邊界框槽位，無法正確讀取其他容量。
+
+`Model::Options::yolox_seg_pose.pose_classes` 透過具型別的酬載或 JSON `pose_classes` 欄位傳至後端。Core 會驗證類別 ID 及解碼器支援情況。後端將排除類別的關鍵點及可見度設為零；Core 原樣複製結果。未設定清單時，每個類別都會產生關鍵點。
+
 ---
 
 ### `contracts/` -- 驗證規則
