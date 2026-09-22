@@ -1,6 +1,7 @@
 #include "simaai/neat/pcie/Model.h"
 
 #include "HostPcieChannel.h"
+#include "ModelArchiveSnapshot.h"
 #include "ModelOptionsJsonWriter.h"
 #include "PcieModelFactsReader.h"
 #include "RemoteRuntime.h"
@@ -65,14 +66,14 @@ private:
 
 public:
   Impl(std::string model_path, ModelOptions options, ConnectionOptions connection)
-      : model_path_(std::move(model_path)), options_(std::move(options)),
-        connection_(std::move(connection)), remote_(connection_) {
+      : options_(std::move(options)), connection_(std::move(connection)), remote_(connection_) {
     validate_queue(connection_.queue);
     validate_card_id(connection_.card_id);
     validate_max_inflight(connection_.max_inflight);
     // Generate once during construction to validate the options before model loading.
     (void)internal::write_model_options_json(options_);
-    facts_ = internal::read_model_facts(model_path_, options_);
+    model_archive_ = std::make_unique<internal::ModelArchiveSnapshot>(model_path);
+    facts_ = internal::read_model_facts(model_archive_->path(), options_);
     model_info_ = internal::to_public_model_info(facts_);
   }
 
@@ -127,7 +128,7 @@ public:
     remote_pid_.reset();
     remote_uploads_may_be_in_use_ = false;
     try {
-      remote_model_upload_ = remote_.upload_file(model_path_);
+      remote_model_upload_ = remote_.upload_file(model_archive_->path());
 
       if (model_options.json.has_value()) {
         const std::string local_options_path = write_temp_model_options(*model_options.json);
@@ -418,7 +419,7 @@ private:
     }
   }
 
-  std::string model_path_;
+  std::unique_ptr<internal::ModelArchiveSnapshot> model_archive_;
   ModelOptions options_;
   ConnectionOptions connection_;
   internal::RemoteRuntime remote_;
