@@ -58,6 +58,7 @@ opt.top_k = 100;
 | Detection | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
 | Pose | `decode_pose(...)` | `pyneat.decode_pose(...)` | boxes `[N, 6]` and keypoints `[N, 17, 3]` float32: `x, y, visibility` |
 | Segmentation | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | boxes `[N, 6]` float32 and masks `[N, 160, 160]` uint8 |
+| Segmentation + pose | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | boxes `[N, 6]` float32, masks `[N, 160, 160]` uint8, keypoints `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | keypoints `[N,2]`, scores `[N]`, descriptors `[N,D]` |
 
 Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
@@ -177,6 +178,39 @@ Coordinates are in original-image pixels when upstream preprocessing metadata is
 present. They are not normalized to `[0, 1]` and are not expressed in the
 model's internal letterboxed input space.
 
+### Combined segmentation + pose payload
+
+`yolox-seg-pose` emits a single buffer carrying three regions. Every region is
+strided by the same slot count, `top_k`:
+
+| Region | Offset | Stride | Contents |
+| --- | --- | --- | --- |
+| header | `0` | 4 | `int32` detection count |
+| boxes | `4` | 24 | `BoundingBoxOut` records, as above |
+| masks | `4 + 24*top_k` | `mask_w * mask_h` | `uint8`, one plane per slot |
+| poses | `4 + (24 + mask_w*mask_h)*top_k` | 204 | 17 x `{uint32 x, uint32 y, float32 visibility}` |
+
+Use `decode_segmentation_pose(...)` to get boxes, masks and keypoints. Row `i` in each tensor describes the same detection. Use `decode_bbox(...)` or `BoxDecodeResults(...)` if you only need boxes.
+
+There are 17 keypoint slots per detection. The backend zeros unused slots and keypoints for classes excluded by `pose_classes`. The helper copies those values unchanged.
+
+Core derives `num_classes` from the class-head depth minus one, because channel 0 holds objectness. For example, 30 channels means 29 classes. An explicit `num_classes` must match.
+
+### Keypoint classes
+
+Set the class IDs that have keypoints:
+
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.YoloXSegPose)
+options.yolox_seg_pose.pose_classes = [0, 5]
+```
+
+`ModelOptions.yolox_seg_pose` accepts the same setting.
+
+- Classes outside the list get zero keypoint coordinates and visibility.
+- An empty `BoxDecodeOptions` list inherits the model's settings. With no list configured, every class gets keypoints.
+- IDs must be unique and in `[0, num_classes)`. This option is only supported for `YoloXSegPose`.
+
 ## When `model.run` returns raw heads
 
 Some model routes return raw feature-map heads from `model.run(...)` instead of
@@ -248,6 +282,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
+| `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | YOLOX packed export carrying box, mask and keypoint heads together |
 | `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300, SSD-Mobile-300, SSD-Mobile-320, or SSDlite-Mobile-320 contract, selected from ordered head geometry |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
@@ -370,3 +405,9 @@ seg = pyneat.decode_segmentation(outputs)[0]
 seg_boxes = seg.boxes.to_numpy()
 masks = seg.masks.to_numpy()
 ```
+
+## Upgrading
+
+Replace the preview API's top-level `pose_classes` with `yolox_seg_pose.pose_classes`.
+
+The new options change C++ object layouts. Core uses ABI 5, `libsima_neat.so.5`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 4 binaries to ABI 5 through a compatibility symlink.

@@ -438,6 +438,26 @@ families, with these additional invariants:
   `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
   consumers must not infer either format from buffer size.
 
+##### YOLOX segmentation + pose BoxDecode contract
+
+`yolox-seg-pose` uses the same MPK-to-static-manifest path as other BoxDecode families.
+
+- Inputs are 13 tensors: three boxes, three class heads, three mask-coefficient heads, three keypoint heads, then one mask prototype. Each group uses stride-8/16/32 order.
+- `Auto` selects `GroupedByRoleLogit`. Only `GroupedByRole` and `GroupedByRoleLogit` are accepted; scores use sigmoid.
+- The class head contains one objectness channel followed by class channels. Core derives the class count as depth minus one and rejects a conflicting explicit count.
+- Model-managed and standalone routes resolve the same layout, activation and class count.
+- Output contains boxes, masks and keypoints, each with `top_k` slots. `decode_segmentation_pose(...)` returns all three; `decode_bbox(...)` and `BoxDecodeResults(...)` read the leading boxes.
+
+The output has a 4-byte count header. Each slot uses 24 bytes for a box, `160*160` bytes for a mask and 204 bytes for 17 keypoints. The helper derives capacity from:
+
+```text
+capacity = (buffer_bytes - 4) / (24 + 160*160 + 204)
+```
+
+It rejects incompatible format tags and partial records, accepts untagged buffers only as rank-1 `UInt8`, and clamps the detection count to capacity. All three regions must use that same capacity. The legacy a65 `boxrender` assumes 20 box slots and cannot read other capacities correctly.
+
+`Model::Options::yolox_seg_pose.pose_classes` reaches the backend through the typed payload or JSON `pose_classes` field. Core validates class IDs and decoder support. The backend zeros excluded classes' keypoints, including visibility; Core copies the results unchanged. With no list configured, every class gets keypoints.
+
 ---
 
 ### `contracts/` -- validation rules
