@@ -17,9 +17,10 @@
 
 namespace yolox_test {
 
-// Two detections with known masks; only class zero carries keypoints.
+// Eight detections exercise parallel decoding; only class zero carries keypoints.
 class RawHeads {
 public:
+  static constexpr int detections = 8;
   static constexpr int capacity = 20;
   static constexpr int mask_bytes = 160 * 160;
   static constexpr int pose_bytes = 17 * 12;
@@ -51,8 +52,8 @@ public:
         return input_[offsets[tensor] + (cell * widths_[tensor] + cell) * stored_[tensor] +
                       channel];
       };
-      for (int cls = 0; cls < 2; ++cls) {
-        const int cell = cls == 0 ? 20 : 40;
+      for (int cls = 0; cls < detections; ++cls) {
+        const int cell = 20 + cls * 4;
         value(0, cell, 2) = std::log(2.0f);
         value(0, cell, 3) = std::log(2.0f);
         value(3, cell, 0) = 8.0f;
@@ -118,15 +119,15 @@ public:
   }
 
   void verify_reference() const {
-    require(read<int>(0) == 2, "exactly two raw-head detections");
+    require(read<int>(0) == detections, "all raw-head detections survive decoding");
     const float confidence = std::pow(1.0f / (1.0f + std::exp(-8.0f)), 2);
-    std::array<bool, 2> seen{};
-    for (int row = 0; row < 2; ++row) {
+    std::array<bool, detections> seen{};
+    for (int row = 0; row < detections; ++row) {
       const int box = 4 + row * 24;
       const int cls = read<int>(box + 20);
-      require(cls >= 0 && cls < 2 && !seen[cls], "each expected class occurs once");
+      require(cls >= 0 && cls < detections && !seen[cls], "each expected class occurs once");
       seen[cls] = true;
-      const int cell = cls == 0 ? 20 : 40;
+      const int cell = 20 + cls * 4;
       require(read<int>(box) == std::lround((cell * 8 - 8) * sx_ + ox_), "reference box x");
       require(read<int>(box + 4) == std::lround((cell * 8 - 8) * sy_ + oy_), "reference box y");
       require(read<int>(box + 8) == std::lround(16 * sx_), "reference box width");
