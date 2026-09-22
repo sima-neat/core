@@ -190,6 +190,43 @@ bool RemoteRuntime::status_owner_matches(const RemoteStatus& status, const int e
   return status.state.empty() || status.state == "malformed" || status.pid == expected_pid;
 }
 
+bool RemoteRuntime::start_failure_cleanup_safe(const int exit_code, const bool timed_out) {
+  if (timed_out) {
+    return false;
+  }
+  switch (exit_code) {
+  case 9:  // queue busy before launch, or launched child terminated and reaped
+  case 10: // missing builder, before launch
+  case 11: // missing runtime directory, before launch
+  case 12: // missing log directory, before launch
+  case 14: // start-lock timeout, before launch
+  case 15: // launched child exited and was reaped
+  case 16: // queue-claim timeout after launched child was terminated and reaped
+    return true;
+  default:
+    return false;
+  }
+}
+
+std::string RemoteRuntime::child_cleanup_shell_function() {
+  return "child_exited() { "
+         "! kill -0 \"$launched_pid\" >/dev/null 2>&1 || "
+         "grep -q '^State:[[:space:]]*Z' \"/proc/$launched_pid/status\" 2>/dev/null; "
+         "}; "
+         "terminate_launched() { "
+         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
+         "kill -TERM \"$launched_pid\" >/dev/null 2>&1 || true; "
+         "for i in $(seq 1 20); do "
+         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
+         "sleep 0.05; done; "
+         "kill -KILL \"$launched_pid\" >/dev/null 2>&1 || true; "
+         "for i in $(seq 1 20); do "
+         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
+         "sleep 0.05; done; "
+         "return 1; "
+         "}; ";
+}
+
 void RemoteRuntime::remove_upload(const std::string& remote_path) const {
   if (!is_managed_upload_path(remote_path)) {
     throw std::invalid_argument("refusing to remove unmanaged remote upload path: " + remote_path);
@@ -260,7 +297,7 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   const std::string start_lock_path =
       "/run/sima-neat/pcie/q" + std::to_string(queue) + ".start.lock";
   std::ostringstream ss;
-  ss << "[ -x " << SshRunner::shell_escape(kRemoteHelper)
+  ss << child_cleanup_shell_function() << "[ -x " << SshRunner::shell_escape(kRemoteHelper)
      << " ] || { echo missing_builder; exit 10; }; "
      << "[ -d /run/sima-neat/pcie ] || { echo missing_run_dir; exit 11; }; "
      << "[ -d /var/log/sima-neat/pcie ] || { echo missing_log_dir; exit 12; }; "
@@ -301,18 +338,18 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   if (remote_model_options_path.has_value()) {
     ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
   }
-  ss << " 9>&- >/dev/null 2>&1 & " << "launched_pid=$!; " << "for i in $(seq 1 200); do "
-     << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
-     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then "
-     << "echo \"launched_pid=$launched_pid\"; exit 0; fi; "
+  ss << " 9>&- >/dev/null 2>&1 & " << "launched_pid=$!; " << "echo \"launched_pid=$launched_pid\"; "
+     << "for i in $(seq 1 200); do " << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then exit 0; fi; "
      << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
      << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | "
-        "grep -q 'pcie-pipeline-builder'; then echo queue_busy; exit 9; fi; "
-     << "if ! kill -0 \"$launched_pid\" >/dev/null 2>&1; then "
+        "grep -q 'pcie-pipeline-builder'; then "
+     << "if terminate_launched; then echo queue_busy; exit 9; fi; "
+     << "echo queue_busy_cleanup_failed; exit 17; fi; " << "if child_exited; then "
      << "wait \"$launched_pid\"; child_rc=$?; "
      << "echo builder_exited_before_queue_claim:$child_rc; exit 15; fi; " << "sleep 0.05; "
-     << "done; " << "kill -TERM \"$launched_pid\" >/dev/null 2>&1 || true; "
-     << "echo queue_claim_timeout; exit 16";
+     << "done; " << "if terminate_launched; then echo queue_claim_timeout; exit 16; fi; "
+     << "echo queue_claim_cleanup_failed; exit 18";
 
   std::vector<std::string> cmd = ssh_base();
   cmd.push_back(ss.str());
@@ -324,10 +361,16 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
                            true);
   }
   if (result.timed_out || result.exit_code != 0) {
+    std::optional<int> launched_pid;
+    try {
+      launched_pid = parse_launched_pid(result.output);
+    } catch (const std::exception&) {
+    }
+    const bool cleanup_safe = start_failure_cleanup_safe(result.exit_code, result.timed_out);
     throw RemoteStartError(
         "remote pcie-pipeline-builder start failed (exit=" + std::to_string(result.exit_code) +
             ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output,
-        !result.timed_out);
+        cleanup_safe, cleanup_safe ? std::nullopt : launched_pid);
   }
   try {
     return parse_launched_pid(result.output);
@@ -424,6 +467,36 @@ void RemoteRuntime::stop(const int queue, const int expected_pid) const {
   std::vector<std::string> cmd = ssh_base();
   cmd.push_back(ss.str());
   run_or_throw(cmd, kCommandTimeoutSec + 10, "remote pcie-pipeline-builder stop");
+}
+
+void RemoteRuntime::stop_process(const int expected_pid,
+                                 const std::string& expected_model_path) const {
+  if (expected_pid <= 0) {
+    throw std::invalid_argument("remote process PID must be positive");
+  }
+  if (!is_managed_upload_path(expected_model_path)) {
+    throw std::invalid_argument("remote process model path is not a managed upload");
+  }
+
+  std::ostringstream ss;
+  ss << "pid=" << expected_pid << "; " << "kill -0 \"$pid\" >/dev/null 2>&1 || exit 0; "
+     << "command=$(tr '\\0' '\\n' < \"/proc/$pid/cmdline\" 2>/dev/null | head -n1); "
+     << "[ \"$command\" = " << SshRunner::shell_escape(kRemoteHelper)
+     << " ] || { echo unexpected_process; exit 19; }; "
+     << "tr '\\0' '\\n' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -Fx -- "
+     << SshRunner::shell_escape(expected_model_path)
+     << " >/dev/null || { echo unexpected_model; exit 19; }; "
+     << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; " << "for i in $(seq 1 20); do "
+     << "kill -0 \"$pid\" >/dev/null 2>&1 || exit 0; "
+     << "grep -q '^State:[[:space:]]*Z' \"/proc/$pid/status\" 2>/dev/null && exit 0; "
+     << "sleep 0.25; done; " << "kill -KILL \"$pid\" >/dev/null 2>&1 || true; "
+     << "for i in $(seq 1 20); do " << "kill -0 \"$pid\" >/dev/null 2>&1 || exit 0; "
+     << "grep -q '^State:[[:space:]]*Z' \"/proc/$pid/status\" 2>/dev/null && exit 0; "
+     << "sleep 0.25; done; " << "echo still_running_after_sigkill; exit 20";
+
+  std::vector<std::string> cmd = ssh_base();
+  cmd.push_back(ss.str());
+  run_or_throw(cmd, kCommandTimeoutSec + 10, "remote unclaimed pcie-pipeline-builder stop");
 }
 
 } // namespace simaai::neat::pcie::internal

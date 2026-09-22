@@ -126,6 +126,7 @@ public:
     state_ = State::Starting;
     remote_started_ = false;
     remote_pid_.reset();
+    remote_pid_unclaimed_ = false;
     remote_uploads_may_be_in_use_ = false;
     try {
       remote_model_upload_ = remote_.upload_file(model_archive_->path());
@@ -149,6 +150,11 @@ public:
             remote_.start(connection_.queue, *remote_model_upload_, remote_options_upload_);
       } catch (const internal::RemoteStartError& e) {
         remote_uploads_may_be_in_use_ = !e.cleanup_safe();
+        if (!e.cleanup_safe() && e.launched_pid().has_value()) {
+          remote_pid_ = e.launched_pid();
+          remote_started_ = true;
+          remote_pid_unclaimed_ = true;
+        }
         throw;
       } catch (...) {
         remote_uploads_may_be_in_use_ = false;
@@ -167,10 +173,7 @@ public:
       channel_.stop();
       if (remote_started_) {
         try {
-          remote_.stop(connection_.queue, *remote_pid_);
-          remote_started_ = false;
-          remote_pid_.reset();
-          remote_uploads_may_be_in_use_ = false;
+          stop_remote_locked();
         } catch (...) {
         }
       }
@@ -379,10 +382,7 @@ private:
       std::exception_ptr remote_stop_error;
       if (remote_started_) {
         try {
-          remote_.stop(connection_.queue, *remote_pid_);
-          remote_started_ = false;
-          remote_pid_.reset();
-          remote_uploads_may_be_in_use_ = false;
+          stop_remote_locked();
         } catch (...) {
           remote_stop_error = std::current_exception();
         }
@@ -419,6 +419,24 @@ private:
     }
   }
 
+  void stop_remote_locked() {
+    if (!remote_started_ || !remote_pid_.has_value()) {
+      return;
+    }
+    if (remote_pid_unclaimed_) {
+      if (!remote_model_upload_.has_value()) {
+        throw std::runtime_error("unclaimed remote builder has no associated model upload");
+      }
+      remote_.stop_process(*remote_pid_, *remote_model_upload_);
+    } else {
+      remote_.stop(connection_.queue, *remote_pid_);
+    }
+    remote_started_ = false;
+    remote_pid_.reset();
+    remote_pid_unclaimed_ = false;
+    remote_uploads_may_be_in_use_ = false;
+  }
+
   std::unique_ptr<internal::ModelArchiveSnapshot> model_archive_;
   ModelOptions options_;
   ConnectionOptions connection_;
@@ -434,6 +452,7 @@ private:
   bool synchronous_run_active_ = false;
   bool remote_started_ = false;
   std::optional<int> remote_pid_;
+  bool remote_pid_unclaimed_ = false;
   bool remote_uploads_may_be_in_use_ = false;
   bool timed_out_run_pending_ = false;
   std::optional<std::string> remote_model_upload_;
