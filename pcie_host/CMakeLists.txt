@@ -256,6 +256,9 @@ if (SIMAPCIE_BUILD_TESTS)
   add_executable(unit_pcie_host_lifecycle_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_lifecycle_test.cpp
   )
+  target_include_directories(unit_pcie_host_lifecycle_test PRIVATE
+    ${SIMA_NEAT_CORE_ROOT}/tests
+  )
   target_link_libraries(unit_pcie_host_lifecycle_test PRIVATE sima_neat_pcie_host)
 
   add_executable(unit_pcie_host_runtime_test
