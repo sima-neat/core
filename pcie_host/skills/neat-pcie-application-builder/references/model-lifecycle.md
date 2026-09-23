@@ -83,6 +83,13 @@ Maintain an application-side count or FIFO so every accepted push has exactly on
 for one `Model` arrive in submission order. Drain all pushed work before calling `run()` on the same
 model.
 
+For a performance-sensitive tensor pipeline, keep a bounded ring of reusable contiguous input
+buffers, normally sized to the intended in-flight window. Wrap each slot with
+`Tensor::from_external()` in C++ or `Tensor.from_numpy(..., copy=False)` in Python. Move a slot to
+the in-flight FIFO only after `push()` accepts it, leave its bytes unchanged while in flight, and
+recycle it only after the corresponding ordered result is pulled. The packaged
+`028_wrap_external_tensor_memory` tutorial is the reference C++ implementation.
+
 A timeout from `run()` or an empty result from timed `pull()` stops waiting; it does not cancel an
 input already accepted by the card. After a timeout, either drain the outstanding result with
 `pull()` or close the model before beginning a new request sequence.
