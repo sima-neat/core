@@ -35,12 +35,13 @@ struct QuantizationSpec {
 // A compile-time tensor view over one canonical materialized carrier.  This is
 // an address expression consumed by the next real kernel, not an execution
 // operation and not a request to copy/repack bytes.  `byte_offset` is relative
-// to the root carrier and `stride_bytes` describes how the logical shape is
-// read from that address.
+// to the root carrier. Strides describe storage_shape when explicitly authored,
+// otherwise the logical shape. Tiled byte carriers retain their own geometry.
 struct ReadExpression {
   ValueId source_value_id = 0;
   std::uint64_t byte_offset = 0;
   std::vector<std::int64_t> stride_bytes;
+  TensorShape storage_shape = {};
 };
 
 enum class StorageBindingKind {
@@ -261,8 +262,8 @@ struct BackendPortSpec {
   std::size_t port_index = 0;
   std::string elf_symbol;
   ValueId value_id = 0;
-  // Exact compiler-authored physical address extent for this backend port.
-  // ValueSpec::required_bytes remains the logical tensor byte count.
+  // Backend access span; input transfers retain the MPK-declared byte count.
+  // An ELF input allocation may reserve additional tail alignment.
   std::uint64_t physical_extent_bytes = 0;
   std::size_t required_alignment_bytes = 0;
   BackendPortAlignmentAuthority alignment_authority = BackendPortAlignmentAuthority::Contract;

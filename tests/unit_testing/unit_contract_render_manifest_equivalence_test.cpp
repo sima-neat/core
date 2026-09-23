@@ -233,6 +233,152 @@ void verify_runtime_output_order_rendering() {
           "manual multi-output runtime contract should default logical shape for output 1");
 }
 
+void verify_projected_cast_mla_boundary_preserves_storage() {
+  using namespace simaai::neat;
+  using namespace simaai::neat::pipeline_internal::sima;
+  namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
+
+  CompiledNodeContract cast_stage;
+  cast_stage.node_kind = "ModelFragmentStage";
+  cast_stage.plugin_kind = "processcvu";
+  cast_stage.element_name = "cast_1";
+  cast_stage.logical_stage_id = "cast_1";
+  cast_stage.renderable = true;
+  cast_stage.processcvu.emplace();
+  auto& cast = *cast_stage.processcvu;
+  cast.payload.graph_family = "cast";
+  cast.payload.graph_name = "cast";
+  cast.payload.graph_id = 221;
+  cast.payload.dmabuf_plan_contract = true;
+  cast.physical_command_role = sc::PhysicalCommandRole::Ingress;
+  cast.runtime_contract.frame_arena_size_bytes = 16384U;
+  cast.runtime_contract.frame_arena_role = FrameArenaRole::Allocate;
+  cast.runtime_contract.consumer_keeps_distinct_physical_inputs = true;
+
+  CompiledNodeContract mla_stage;
+  mla_stage.node_kind = "ModelFragmentStage";
+  mla_stage.plugin_kind = "processmla";
+  mla_stage.element_name = "MLA_0";
+  mla_stage.logical_stage_id = "MLA_0";
+  mla_stage.renderable = true;
+  mla_stage.processmla.emplace();
+  auto& mla = *mla_stage.processmla;
+  mla.payload.dmabuf_plan_contract = true;
+  mla.runtime_contract.consumer_keeps_distinct_physical_inputs = true;
+  mla.runtime_contract.frame_arena_size_bytes = 16384U;
+  mla.runtime_contract.frame_arena_role = FrameArenaRole::ReuseInput;
+
+  const std::array<std::uint64_t, 2> sizes{60U, 120U};
+  for (int index = 0; index < 2; ++index) {
+    const auto name = "cast_" + std::to_string(index);
+    PhysicalBufferStaticSpec physical;
+    physical.physical_index = index;
+    physical.allocator_index = index;
+    physical.source_physical_index = index;
+    physical.size_bytes = sizes[index];
+    physical.source_byte_offset = 4096 * (index + 1);
+    physical.required_alignment_bytes = 128U << index;
+    physical.memory_flags = 0x10U << index;
+    physical.device_kind = DeviceKind::Evxx;
+    physical.address_source = PhysicalAddressSource::FrameArenaSpan;
+    physical.segment_name = name;
+    cast.runtime_contract.physical_outputs.push_back(physical);
+    mla.runtime_contract.physical_inputs.push_back(physical);
+
+    LogicalTensorStaticSpec logical;
+    logical.logical_index = index;
+    logical.backend_output_index = index;
+    logical.physical_index = index;
+    logical.output_slot = index;
+    logical.tensor_index = index;
+    logical.size_bytes = sizes[index];
+    logical.shape = {1, 3, 5, 2 * (index + 1)};
+    logical.dtype = "BF16";
+    logical.layout = "HWC";
+    logical.logical_name = name;
+    logical.backend_name = name;
+    logical.segment_name = name;
+    cast.runtime_contract.logical_outputs.push_back(logical);
+    cast.exposed_view.exposed_logical_outputs.push_back(logical);
+
+    StageOutputRoute output;
+    output.output_slot = index;
+    output.logical_output_index = index;
+    output.tensor_index = index;
+    output.cm_output_name = name;
+    output.segment_name = name;
+    cast.runtime_contract.output_order.push_back(output);
+    cast.exposed_view.exposed_output_order.push_back(output);
+    cast.payload.default_output_names.push_back(name);
+
+    InputBindingStaticSpec input;
+    input.sink_pad_index = 0;
+    input.local_logical_input_index = index;
+    input.src_logical_output_index = index;
+    input.src_output_slot = index;
+    input.src_physical_output_index = index;
+    input.src_physical_size_bytes = sizes[index];
+    input.cm_input_name = name;
+    input.source_segment_name = name;
+    input.required = true;
+    mla.runtime_contract.input_bindings.push_back(input);
+  }
+  cast.exposed_view.primary_output_name = "cast_0";
+  const auto expected_outputs = cast.runtime_contract.physical_outputs;
+  CompiledPipelineContracts compiled;
+  compiled.fully_renderable = true;
+  compiled.stages.push_back(std::move(cast_stage));
+  compiled.stages.push_back(std::move(mla_stage));
+  ManifestBuildDiagnostics diagnostics;
+  const auto manifest =
+      render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
+  require(manifest.has_value() && diagnostics.errors.empty(),
+          "projected grouped cast/MLA boundary should render: " + join_errors(diagnostics));
+  require(manifest->stages.size() == 2U, "both projected stages must survive rendering");
+  const auto& producer = manifest->stages[0];
+  const auto& consumer = manifest->stages[1];
+  require(producer.frame_arena_role == FrameArenaRole::Allocate &&
+              consumer.frame_arena_role == FrameArenaRole::ReuseInput &&
+              producer.frame_arena_size_bytes == 16384U &&
+              consumer.frame_arena_size_bytes == 16384U,
+          "rendering must preserve projected arena ownership");
+  require(producer.physical_outputs.size() == 2U && producer.logical_outputs.size() == 2U &&
+              producer.output_order.size() == 2U && consumer.input_bindings.size() == 2U &&
+              consumer.physical_inputs.size() == 2U,
+          "rendering must preserve both distinct MLA input routes");
+  for (int index = 0; index < 2; ++index) {
+    const auto& expected = expected_outputs[index];
+    for (const auto* actual :
+         {&producer.physical_outputs[index], &consumer.physical_inputs[index]}) {
+      require(actual->physical_index == expected.physical_index &&
+                  actual->allocator_index == expected.allocator_index &&
+                  actual->source_physical_index == expected.source_physical_index &&
+                  actual->size_bytes == expected.size_bytes &&
+                  actual->source_byte_offset == expected.source_byte_offset &&
+                  actual->required_alignment_bytes == expected.required_alignment_bytes &&
+                  actual->memory_flags == expected.memory_flags &&
+                  actual->device_kind == expected.device_kind &&
+                  actual->address_source == expected.address_source &&
+                  actual->segment_name == expected.segment_name,
+              "rendering must not reconstruct projected physical buffers with missing facts");
+    }
+    const auto& logical = producer.logical_outputs[index];
+    const auto& output = producer.output_order[index];
+    const auto& input = consumer.input_bindings[index];
+    require(logical.physical_index == index && logical.logical_name == expected.segment_name &&
+                logical.segment_name == expected.segment_name && logical.byte_offset == 0 &&
+                output.output_slot == index && output.logical_output_index == index &&
+                output.tensor_index == index && output.cm_output_name == expected.segment_name &&
+                input.local_logical_input_index == index &&
+                input.src_logical_output_index == index && input.src_output_slot == index &&
+                input.src_physical_output_index == index &&
+                input.src_physical_size_bytes == sizes[index] &&
+                input.cm_input_name == expected.segment_name &&
+                input.source_segment_name == expected.segment_name,
+            "rendering must retain each cast output and MLA inbound binding identity");
+  }
+}
+
 void verify_non_tess_preproc_semantic_rendering() {
   using namespace simaai::neat;
 
@@ -380,6 +526,7 @@ void verify_nested_processcvu_role_placement_rendering() {
 RUN_TEST("unit_contract_render_manifest_equivalence_test", ([] {
            verify_render_manifest_equivalence();
            verify_runtime_output_order_rendering();
+           verify_projected_cast_mla_boundary_preserves_storage();
            verify_non_tess_preproc_semantic_rendering();
            verify_nested_processcvu_role_placement_rendering();
          }));

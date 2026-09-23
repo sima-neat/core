@@ -193,13 +193,13 @@ storage. Core compiles model-load facts into one immutable internal
 
 - values contain exact names, required bytes, optional logical type facts, and
   an optional root-relative read expression `{source ValueId, byte offset,
-  byte strides}`;
+  byte strides, optional storage shape}`;
 - operations contain exact ordered edges and operation-specific configuration;
 - MLA backend ports contain ELF/model order, exact required bytes, alignment
   authority, and access direction; and
 - public outputs contain only publication order and the value they expose.
 
-AFE v2 MPKs use `AfeMpkV2Decoder`. The optional `model_sdk_version`
+MPK manifests use `MpkDecoder`. The optional `model_sdk_version`
 string is retained as provenance and does not restrict admission. The decoder
 accepts only the exact registered `(processor, kernel)` vocabulary,
 resolves full tensor names, validates operation byte equations, and reconciles
@@ -214,22 +214,34 @@ state, and runtime buffers are not evidence.
 
 Compiler ELF sections named `data.ifm.persistent.MLA_<stage>/<tensor>.b0`
 and `data.ofm.persistent.MLA_<stage>/<tensor>.b0` omit explicit port indices.
-Core binds such a section to port zero only when it is the sole section in
-that direction. Multiple unindexed sections or mixed indexed and unindexed
-sections are rejected because their mapping to MPK ports has not been established.
+Core preserves ELF encounter order within each direction and maps it to the
+ordered MPK MLA arguments. Tensor names and sizes do not determine port order.
+Mixed indexed/unindexed sections and duplicate native section names are rejected.
 The QMLA storage extent and existing monolithic-layout conflict checks still apply.
-For these native compiler input ports, a typed dense batch-one tensor may have
-an ELF extent equal to its logical bytes rounded up to 16 bytes. Core preserves
-the logical tensor size and allocates the full physical extent in its frame arena.
-This rule does not admit padding between batch rows or arbitrary excess storage.
+For typed dense batch-one inputs, native and monolithic ELF allocations may
+reserve the MPK byte count rounded up to 16 bytes. Core preserves the MPK input
+length through arena planning and MLA submission; allocation tail alignment does
+not enlarge the transfer. Shape, dtype, port identity and exact alignment are
+still validated. This rule does not admit padding between batch rows or arbitrary
+excess storage.
 
 Detessellation takes its logical geometry and dtype from `frame_shape` and
 `frame_type`. Its `input_shapes` may name that frame or the exact `[1, byte_count]`
 carrier; a byte count must not be interpreted as a count of BF16 elements.
+Unpack retains its authored storage shape and byte strides independently from
+that logical frame. MLA publication and CVU input metadata use the carrier view;
+the detessellation descriptor uses the frame shape and dtype. Each view remains
+bounded by its packed carrier, with no copy or intermediate allocation.
 
 Cast records may additionally declare the source dtype as `in_dtype`.
 When present, it must agree with the registered FP32/BF16 transition selected
 by `out_dtype`; Core rejects a contradictory declaration.
+Cast preserves layout established by connected operations, such as tessellation
+or detessellation. Scalar conversion alone does not establish image axes; generic
+tensors retain their authored shape and strides with unknown layout.
+Model-managed image preprocessing supplies its own explicit image layout when
+the MLA target leaves axes unspecified. Its output must still match the exact
+target shape, dtype, byte extent and any layout the MPK does establish.
 
 An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
 by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
@@ -714,6 +726,10 @@ in the model archive) plus optional runtime overrides:
 
 Practical impact: more buffers and explicit routing can improve throughput, while
 caps mismatches or undersized buffers will fail fast during negotiation.
+
+MLA-specific pool validation applies only to routes containing an MLA element.
+Standalone CVU graphs retain the plugin default pool size or an explicit
+`num_buffers` setting.
 
 ---
 

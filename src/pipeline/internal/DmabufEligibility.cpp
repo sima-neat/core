@@ -4,7 +4,7 @@
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
-#include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "pipeline/internal/sima/static_contract/TvmHostModuleGraph.h"
 
@@ -255,53 +255,51 @@ Json op_config_json(const sc::OpConfig& config) {
       config);
 }
 
-DmabufEligibilityCode map_decode_code(const sc::AfeMpkV2DecodeErrorCode code) noexcept {
+DmabufEligibilityCode map_decode_code(const sc::MpkDecodeErrorCode code) noexcept {
   switch (code) {
-  case sc::AfeMpkV2DecodeErrorCode::InvalidJson:
+  case sc::MpkDecodeErrorCode::InvalidJson:
     return DmabufEligibilityCode::InvalidJson;
-  case sc::AfeMpkV2DecodeErrorCode::MissingRequiredField:
+  case sc::MpkDecodeErrorCode::MissingRequiredField:
     return DmabufEligibilityCode::MissingRequiredField;
-  case sc::AfeMpkV2DecodeErrorCode::InvalidField:
+  case sc::MpkDecodeErrorCode::InvalidField:
     return DmabufEligibilityCode::InvalidField;
-  case sc::AfeMpkV2DecodeErrorCode::UnsupportedContractVersion:
-    return DmabufEligibilityCode::UnsupportedContractVersion;
-  case sc::AfeMpkV2DecodeErrorCode::UnsupportedKernel:
+  case sc::MpkDecodeErrorCode::UnsupportedKernel:
     return DmabufEligibilityCode::UnsupportedKernel;
-  case sc::AfeMpkV2DecodeErrorCode::UnsupportedHostModule:
+  case sc::MpkDecodeErrorCode::UnsupportedHostModule:
     return DmabufEligibilityCode::UnsupportedKernel;
-  case sc::AfeMpkV2DecodeErrorCode::InvalidKernelArity:
+  case sc::MpkDecodeErrorCode::InvalidKernelArity:
     return DmabufEligibilityCode::InvalidKernelArity;
-  case sc::AfeMpkV2DecodeErrorCode::DuplicateSequence:
+  case sc::MpkDecodeErrorCode::DuplicateSequence:
     return DmabufEligibilityCode::DuplicateSequence;
-  case sc::AfeMpkV2DecodeErrorCode::DuplicateProducer:
+  case sc::MpkDecodeErrorCode::DuplicateProducer:
     return DmabufEligibilityCode::DuplicateProducer;
-  case sc::AfeMpkV2DecodeErrorCode::MissingProducer:
+  case sc::MpkDecodeErrorCode::MissingProducer:
     return DmabufEligibilityCode::MissingProducer;
-  case sc::AfeMpkV2DecodeErrorCode::ValueSizeMismatch:
+  case sc::MpkDecodeErrorCode::ValueSizeMismatch:
     return DmabufEligibilityCode::ValueSizeMismatch;
-  case sc::AfeMpkV2DecodeErrorCode::ConfigurationMismatch:
+  case sc::MpkDecodeErrorCode::ConfigurationMismatch:
     return DmabufEligibilityCode::ConfigurationMismatch;
-  case sc::AfeMpkV2DecodeErrorCode::MissingMlaStage:
+  case sc::MpkDecodeErrorCode::MissingMlaStage:
     return DmabufEligibilityCode::MissingMlaStage;
-  case sc::AfeMpkV2DecodeErrorCode::MultipleMlaStages:
+  case sc::MpkDecodeErrorCode::MultipleMlaStages:
     return DmabufEligibilityCode::MultipleMlaStages;
-  case sc::AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence:
+  case sc::MpkDecodeErrorCode::MissingMlaExecutableEvidence:
     return DmabufEligibilityCode::MissingMlaExecutableEvidence;
-  case sc::AfeMpkV2DecodeErrorCode::AmbiguousMlaExecutableEvidence:
+  case sc::MpkDecodeErrorCode::AmbiguousMlaExecutableEvidence:
     return DmabufEligibilityCode::AmbiguousMlaExecutableEvidence;
-  case sc::AfeMpkV2DecodeErrorCode::UnexpectedMlaExecutableEvidence:
+  case sc::MpkDecodeErrorCode::UnexpectedMlaExecutableEvidence:
     return DmabufEligibilityCode::UnexpectedMlaExecutableEvidence;
-  case sc::AfeMpkV2DecodeErrorCode::MissingPublicationStage:
+  case sc::MpkDecodeErrorCode::MissingPublicationStage:
     return DmabufEligibilityCode::MissingPublicationStage;
-  case sc::AfeMpkV2DecodeErrorCode::InvalidPublicationStage:
+  case sc::MpkDecodeErrorCode::InvalidPublicationStage:
     return DmabufEligibilityCode::InvalidPublicationStage;
-  case sc::AfeMpkV2DecodeErrorCode::ElfTopologyInvalid:
+  case sc::MpkDecodeErrorCode::ElfTopologyInvalid:
     return DmabufEligibilityCode::ElfTopologyInvalid;
-  case sc::AfeMpkV2DecodeErrorCode::ElfTopologyMismatch:
+  case sc::MpkDecodeErrorCode::ElfTopologyMismatch:
     return DmabufEligibilityCode::ElfTopologyMismatch;
-  case sc::AfeMpkV2DecodeErrorCode::PlanValidationFailed:
+  case sc::MpkDecodeErrorCode::PlanValidationFailed:
     return DmabufEligibilityCode::PlanValidationFailed;
-  case sc::AfeMpkV2DecodeErrorCode::IoError:
+  case sc::MpkDecodeErrorCode::IoError:
     return DmabufEligibilityCode::IoError;
   }
   return DmabufEligibilityCode::InternalError;
@@ -343,8 +341,6 @@ const char* dmabuf_eligibility_code_name(const DmabufEligibilityCode code) noexc
     return "missing-required-field";
   case DmabufEligibilityCode::InvalidField:
     return "invalid-field";
-  case DmabufEligibilityCode::UnsupportedContractVersion:
-    return "unsupported-contract-version";
   case DmabufEligibilityCode::UnsupportedKernel:
     return "unsupported-kernel";
   case DmabufEligibilityCode::InvalidKernelArity:
@@ -402,7 +398,8 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
     if (value.read_expression) {
       entry["read_expression"] = {{"source_value_id", value.read_expression->source_value_id},
                                   {"byte_offset", value.read_expression->byte_offset},
-                                  {"stride_bytes", value.read_expression->stride_bytes}};
+                                  {"stride_bytes", value.read_expression->stride_bytes},
+                                  {"storage_shape", value.read_expression->storage_shape}};
     } else {
       entry["read_expression"] = nullptr;
     }
@@ -614,7 +611,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       return result;
     }
 
-    sc::AfeMpkV2Decoder decoder;
+    sc::MpkDecoder decoder;
     auto decoded = decoder.decode_file(mpk_manifest, topology);
     if (!decoded || !decoded.plan) {
       const auto code = decoded.error ? map_decode_code(decoded.error->code)
@@ -810,7 +807,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
     }
     const auto artifact_digest = sha256_text(artifact_identity);
 
-    auto decoded = sc::AfeMpkV2Decoder{}.decode_file(mpk_manifest, evidence, host_evidence);
+    auto decoded = sc::MpkDecoder{}.decode_file(mpk_manifest, evidence, host_evidence);
     if (!decoded || !decoded.plan) {
       const auto code = decoded.error ? map_decode_code(decoded.error->code)
                                       : DmabufEligibilityCode::InternalError;

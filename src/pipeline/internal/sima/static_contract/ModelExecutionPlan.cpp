@@ -72,12 +72,14 @@ bool is_power_of_two(const std::size_t value) {
 
 std::optional<std::uint64_t> physical_span_for(const ValueSpec& value,
                                                const std::vector<std::int64_t>& strides) {
-  if (!value.logical_shape.has_value() || value.logical_shape->empty() ||
-      strides.size() != value.logical_shape->size()) {
+  const auto* shape = value.read_expression && !value.read_expression->storage_shape.empty()
+                          ? &value.read_expression->storage_shape
+                          : (value.logical_shape ? &*value.logical_shape : nullptr);
+  if (!shape || shape->empty() || strides.size() != shape->size()) {
     return std::nullopt;
   }
   std::uint64_t element_count = 1U;
-  for (const auto dimension : *value.logical_shape) {
+  for (const auto dimension : *shape) {
     if (dimension <= 0 ||
         !checked_mul(element_count, static_cast<std::uint64_t>(dimension), &element_count)) {
       return std::nullopt;
@@ -97,7 +99,7 @@ std::optional<std::uint64_t> physical_span_for(const ValueSpec& value,
       return std::nullopt;
     }
     std::uint64_t axis_span = 0U;
-    if (!checked_mul(static_cast<std::uint64_t>((*value.logical_shape)[axis] - 1),
+    if (!checked_mul(static_cast<std::uint64_t>((*shape)[axis] - 1),
                      static_cast<std::uint64_t>(strides[axis]), &axis_span) ||
         !checked_add(span, axis_span, &span)) {
       return std::nullopt;
@@ -413,11 +415,6 @@ bool validate_read_expression(const ModelExecutionPlanData& data, const ValueSpe
   if (source.read_expression.has_value()) {
     return fail(error, "execution-plan read expression is not composed to its root carrier");
   }
-  if (!value.logical_shape.has_value() || value.logical_shape->empty() ||
-      expression.stride_bytes.size() != value.logical_shape->size()) {
-    return fail(error, "execution-plan read expression has no exact shape/stride relation");
-  }
-
   const auto required_span = physical_span_for(value, expression.stride_bytes);
   if (!required_span) {
     return fail(error, "execution-plan read expression has no exact physical span");

@@ -356,18 +356,28 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     }
   }
 
-  // Unindexed tensor names establish port zero only when no ordering choice exists.
+  // Native tensor names carry no port index. MLA-RT assigns their ports in
+  // ELF encounter order, matching the MPK MLA argument list. Preserve that
+  // order without interpreting placeholder names or comparing tensor sizes.
   const auto bind_unindexed = [&](const auto& sections, auto* names, auto* extents,
                                   const char* direction) {
     if (sections.empty()) {
       return true;
     }
-    if (sections.size() != 1U || !names->empty()) {
-      out->error = std::string("elf-io-topology: ambiguous unindexed ") + direction +
-                   " sections; explicit port indices are required for multiple sections";
+    if (!names->empty()) {
+      out->error = std::string("elf-io-topology: mixed indexed and unindexed ") + direction +
+                   " sections have conflicting port orders";
       return false;
     }
-    place_at_index(names, extents, 0U, sections.front().first, sections.front().second);
+    for (const auto& [name, extent] : sections) {
+      if (std::find(names->begin(), names->end(), name) != names->end()) {
+        out->error = std::string("elf-io-topology: duplicate unindexed ") + direction +
+                     " section '" + name + "'";
+        return false;
+      }
+      names->push_back(name);
+      extents->push_back(extent);
+    }
     return true;
   };
   if (!bind_unindexed(unindexed_ifm, &out->ifm_symbol_names, &out->ifm_extent_bytes, "IFM") ||

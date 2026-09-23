@@ -1,4 +1,5 @@
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
@@ -1621,10 +1622,153 @@ sc::ModelExecutionPlan make_model_managed_tess_preproc_absorption_plan() {
   return std::move(*plan);
 }
 
+void test_cast_preproc_absorption_uses_explicit_image_layout() {
+  const std::string manifest = R"json({
+    "name":"cast-preproc","input_nodes":[{"name":"input","size":48}],
+    "plugins":[
+      {"name":"cast_in","sequence":1,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+         "kernel":"cast_transform","params":{"in_dtype":"float32","out_dtype":"bfloat16",
+           "input_shapes":[[1,2,2,3]],"output_shapes":[[1,2,2,3]]}},
+       "input_nodes":[{"name":"input","size":48}],
+       "output_nodes":[{"name":"cast_in","size":24}]},
+      {"name":"MLA_0","sequence":2,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,"number_of_quads_to_user":4},
+       "resources":{"executable":"synthetic.elf"},
+       "input_nodes":[{"name":"cast_in","size":24}],
+       "output_nodes":[{"name":"mla_out","size":8}]},
+      {"name":"cast_out","sequence":3,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+         "kernel":"cast_transform","params":{"in_dtype":"bfloat16","out_dtype":"float32",
+           "input_shapes":[[1,4]],"output_shapes":[[1,4]]}},
+       "input_nodes":[{"name":"mla_out","size":8}],
+       "output_nodes":[{"name":"output","size":16}]}
+    ]})json";
+  sima::MlaElfIoTopology topology;
+  topology.valid = true;
+  topology.monolithic_ifm = true;
+  topology.monolithic_ofm = true;
+  topology.monolithic_ifm_extent_bytes = 24U;
+  topology.monolithic_ofm_extent_bytes = 8U;
+  topology.source_path = "synthetic.elf";
+  const auto decoded = sc::MpkDecoder{}.decode_json(manifest, topology);
+  require(static_cast<bool>(decoded),
+          "synthetic Cast ingress must decode: " +
+              (decoded.error ? decoded.error->json_path + ": " + decoded.error->detail : ""));
+  const auto& plan = *decoded.plan;
+  const auto target_id = plan.backend_ports(0U, sc::BackendPortDirection::Input).front().value_id;
+  const auto* target = plan.value(target_id);
+  require(target && !target->logical_layout && target->logical_dtype == "bfloat16" &&
+              target->logical_shape == sc::TensorShape({1, 2, 2, 3}) &&
+              target->required_bytes == 24U,
+          "decoded Cast target must retain exact tensor facts without image layout");
+  std::string error;
+  const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
+  require(physical.has_value(), "Cast ingress must lower: " + error);
+  const auto detached = sc::detached_mla_output_roots(plan, *physical);
+  const auto arena =
+      sc::FrameSlotArenaPlan::compile(plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+                                      sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
+                                      sc::kModalixProductionArenaDmsPolicy, detached);
+  require(arena.has_value(), "Cast ingress arena must compile: " + error);
+
+  simaai::neat::PreprocOptions options;
+  options.model_managed_contract = true;
+  options.input_shape = {2, 2, 3};
+  options.output_shape = {2, 2, 3};
+  options.scaled_height = 2;
+  options.scaled_width = 2;
+  options.input_img_type = "NV12";
+  options.output_img_type = "RGB";
+  options.output_dtype = "BF16";
+  options.tessellate = false;
+  const auto original =
+      sima::stagesemantics::build_processcvu_compiled_contract_from_options(options);
+  auto contract = original;
+  std::vector<sc::PhysicalCommandId> absorbed;
+  require(sc::project_model_managed_preproc_contract(plan, *physical, *arena, &contract, &absorbed,
+                                                     &error),
+          "explicit graph-200 image layout must absorb generic Cast ingress: " + error);
+  require(absorbed.size() == 1U &&
+              physical->commands[absorbed.front()].members.front().semantic_chain ==
+                  std::vector<sc::OpId>{plan.ops().front().id} &&
+              contract.payload.graph_id == 200 && contract.payload.output_tensors.size() == 1U,
+          "graph-200 must replace only the leading Cast command");
+  const auto& output = contract.payload.output_tensors.front();
+  const std::array<std::uint8_t, 4> axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
+                                         SIMA_EV_AXIS_C};
+  require(output.dtype == SIMA_EV_DTYPE_BF16 && output.shape.rank == 4U &&
+              output.storage.nbytes == 24U && output.layout_kind == SIMA_EV_LAYOUT_STRIDED,
+          "graph-200 descriptor must preserve exact target rank, precision and bytes");
+  for (std::size_t axis = 0; axis < axes.size(); ++axis) {
+    require(output.shape.sizes[axis] == target->logical_shape->at(axis) &&
+                output.shape.axis_semantics[axis] == axes[axis],
+            "graph-200 supplies explicit NHWC descriptor axes without changing dimensions");
+  }
+  require(contract.payload.runtime_output_logical_layout_list == std::vector<std::string>{"HWC"} &&
+              contract.runtime_contract.logical_outputs.size() == 1U &&
+              contract.exposed_view.exposed_logical_outputs.size() == 1U,
+          "graph-200 must publish one explicit image layout");
+  for (const auto* logical : {&contract.runtime_contract.logical_outputs.front(),
+                              &contract.exposed_view.exposed_logical_outputs.front()}) {
+    require(logical->layout == "HWC" && logical->dtype == "BF16" &&
+                logical->shape == *target->logical_shape && logical->size_bytes == 24U,
+            "runtime and exposed graph-200 outputs must retain exact BF16 image semantics");
+  }
+  require(!target->logical_layout && !plan.value(plan.model_inputs().front())->logical_layout,
+          "graph-200 projection must not invent layout inside the immutable Cast plan");
+
+  const auto reject = [&](const sc::ModelExecutionPlan& candidate_plan, auto candidate,
+                          const std::string& diagnostic) {
+    std::vector<sc::PhysicalCommandId> rejected_commands;
+    error.clear();
+    require(!sc::project_model_managed_preproc_contract(candidate_plan, *physical, *arena,
+                                                        &candidate, &rejected_commands, &error) &&
+                error.find(diagnostic) != std::string::npos,
+            "invalid graph-200 evidence must fail with the contract diagnostic: " + error);
+  };
+  for (const auto& defect : {"missing-layout", "unknown-layout", "shape", "dtype"}) {
+    auto invalid = original;
+    auto selected =
+        std::find_if(invalid.runtime_contract.logical_outputs.begin(),
+                     invalid.runtime_contract.logical_outputs.end(), [&](const auto& logical) {
+                       return logical.logical_name == invalid.payload.primary_output_name;
+                     });
+    require(selected != invalid.runtime_contract.logical_outputs.end(),
+            "graph-200 must have its named primary output before negative mutation");
+    const std::string kind = defect;
+    if (kind == "missing-layout") {
+      selected->layout.clear();
+    } else if (kind == "unknown-layout") {
+      selected->layout = "unknown";
+    } else if (kind == "shape") {
+      selected->shape = {1, 3, 2, 2};
+    } else {
+      selected->dtype = "FP32";
+    }
+    reject(plan, std::move(invalid),
+           kind.ends_with("layout") ? "no explicit image layout"
+                                    : "contradicts the exact first-MLA");
+  }
+  sc::ModelExecutionPlanData conflicting_data{plan.contract_version(),
+                                              plan.values(),
+                                              plan.carriers(),
+                                              plan.model_inputs(),
+                                              plan.ops(),
+                                              plan.backend_ports(),
+                                              plan.model_outputs(),
+                                              {}};
+  conflicting_data.values[target_id].logical_layout = "CHW";
+  const auto conflicting = sc::ModelExecutionPlan::create(std::move(conflicting_data), &error);
+  require(conflicting.has_value(), "explicit conflicting layout fixture must form a valid plan");
+  reject(*conflicting, original, "contradicts the exact first-MLA");
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_dmabuf_plan_contract_projection_test", ([] {
+      test_cast_preproc_absorption_uses_explicit_image_layout();
       const auto plan = make_plan();
       auto contract = make_projection(plan);
       std::string error;

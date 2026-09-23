@@ -26,7 +26,6 @@ enum class DmabufEligibilityCode {
   InvalidJson,
   MissingRequiredField,
   InvalidField,
-  UnsupportedContractVersion,
   UnsupportedKernel,
   InvalidKernelArity,
   DuplicateSequence,

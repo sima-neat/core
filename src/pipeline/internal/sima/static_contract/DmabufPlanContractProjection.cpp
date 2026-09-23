@@ -398,6 +398,7 @@ std::vector<const ValueSpec*> read_views_consumed_after_mla(const ModelExecution
 }
 
 struct PublicationTransportView {
+  TensorShape carrier_shape;
   std::string carrier_dtype;
   std::optional<std::string> carrier_layout;
   std::uint64_t physical_span = 0U;
@@ -479,8 +480,11 @@ resolve_publication_transport_view(const ModelExecutionPlan& plan, const ValueSp
   } else if (value.storage_binding.has_value()) {
     strides = value.storage_binding->stride_bytes;
   }
+  const auto& carrier_shape = value.read_expression && !value.read_expression->storage_shape.empty()
+                                  ? value.read_expression->storage_shape
+                                  : *value.logical_shape;
   std::uint64_t physical_span = 0U;
-  if (!exact_logical_tensor_span(*value.logical_shape, strides, carrier_dtype, &physical_span)) {
+  if (!exact_logical_tensor_span(carrier_shape, strides, carrier_dtype, &physical_span)) {
     fail(error, "MLA publication carrier shape/stride/dtype is not exact");
     return std::nullopt;
   }
@@ -492,8 +496,8 @@ resolve_publication_transport_view(const ModelExecutionPlan& plan, const ValueSp
     fail(error, "MLA publication carrier view disagrees with normalized storage");
     return std::nullopt;
   }
-  return PublicationTransportView{std::move(carrier_dtype), std::move(carrier_layout),
-                                  physical_span};
+  return PublicationTransportView{carrier_shape, std::move(carrier_dtype),
+                                  std::move(carrier_layout), physical_span};
 }
 
 bool project_terminal_mla_publications(const ModelExecutionPlan& plan,
@@ -569,7 +573,7 @@ bool project_terminal_mla_publications(const ModelExecutionPlan& plan,
     logical.tensor_index = logical_index;
     logical.byte_offset = static_cast<std::int64_t>(byte_offset);
     logical.size_bytes = value->required_bytes;
-    logical.shape = *value->logical_shape;
+    logical.shape = transport->carrier_shape;
     logical.stride_bytes.assign(strides.begin(), strides.end());
     logical.dtype = transport->carrier_dtype;
     logical.dtype_source = DTypeSource::InternalContract;
@@ -1597,7 +1601,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
         logical.tensor_index = slot;
         logical.byte_offset = static_cast<std::int64_t>(expression.byte_offset);
         logical.size_bytes = value.required_bytes;
-        logical.shape = *value.logical_shape;
+        logical.shape = transport->carrier_shape;
         logical.stride_bytes = expression.stride_bytes;
         logical.dtype = transport->carrier_dtype;
         logical.dtype_source = DTypeSource::InternalContract;
@@ -1996,6 +2000,15 @@ bool apply_dmabuf_plan_processcvu_command_projection(
       logical.shape = *value->logical_shape;
     }
     logical.layout = value->logical_layout.value_or("");
+    if (value->read_expression && !value->read_expression->storage_shape.empty()) {
+      const auto transport = resolve_publication_transport_view(plan, *value, error);
+      if (!transport) {
+        return false;
+      }
+      logical.shape = transport->carrier_shape;
+      logical.dtype = transport->carrier_dtype;
+      logical.layout = transport->carrier_layout.value_or("");
+    }
     const bool application_boundary_input = !region;
     if (application_boundary_input && logical.shape.size() >= 4U && logical.shape.front() == 1) {
       // ModelExecutionPlan retains AFE's explicit N=1 semantic axis.  Neat's
@@ -2265,8 +2278,7 @@ bool project_model_managed_preproc_contract(const ModelExecutionPlan& plan,
 
   const auto mla_inputs = plan.backend_ports(0U, BackendPortDirection::Input);
   const auto* target = mla_inputs.size() == 1U ? plan.value(mla_inputs.front().value_id) : nullptr;
-  if (!target || !target->logical_dtype || !target->logical_shape || !target->logical_layout ||
-      !target->storage_binding) {
+  if (!target || !target->logical_dtype || !target->logical_shape || !target->storage_binding) {
     return fail(error,
                 "model-managed preproc target has no exact typed first-MLA storage contract");
   }
@@ -2383,6 +2395,9 @@ bool project_model_managed_preproc_contract(const ModelExecutionPlan& plan,
   }
 
   const auto& logical = contract->runtime_contract.logical_outputs.front();
+  if (tensorsemantics::normalize_layout_token(logical.layout).empty()) {
+    return fail(error, "model-managed preproc output has no explicit image layout");
+  }
   if (has_tess) {
     contract->runtime_contract.logical_outputs.front().size_bytes = target->required_bytes;
     contract->runtime_contract.physical_outputs.front().size_bytes =
@@ -2393,7 +2408,8 @@ bool project_model_managed_preproc_contract(const ModelExecutionPlan& plan,
   if (!tensorsemantics::dtype_token_to_ev(logical.dtype, &logical_dtype) ||
       !tensorsemantics::dtype_token_to_ev(*target->logical_dtype, &target_dtype) ||
       logical_dtype != target_dtype || logical.shape != *target->logical_shape ||
-      logical.layout != *target->logical_layout || logical.size_bytes != target->required_bytes ||
+      (target->logical_layout && logical.layout != *target->logical_layout) ||
+      logical.size_bytes != target->required_bytes ||
       contract->runtime_contract.physical_outputs.front().size_bytes !=
           target->storage_binding->physical_span) {
     const auto describe_shape = [](const auto& shape) {
@@ -2411,7 +2427,7 @@ bool project_model_managed_preproc_contract(const ModelExecutionPlan& plan,
                 "dtype=" +
                     logical.dtype + "/" + *target->logical_dtype + " shape=" +
                     describe_shape(logical.shape) + "/" + describe_shape(*target->logical_shape) +
-                    " layout=" + logical.layout + "/" + *target->logical_layout +
+                    " layout=" + logical.layout + "/" + target->logical_layout.value_or("unknown") +
                     " logical_bytes=" + std::to_string(logical.size_bytes) + "/" +
                     std::to_string(target->required_bytes) + " physical_bytes=" +
                     std::to_string(contract->runtime_contract.physical_outputs.front().size_bytes) +
@@ -2440,7 +2456,8 @@ bool project_model_managed_preproc_contract(const ModelExecutionPlan& plan,
                               tess->align_c16 || tess->cblock, &selected_output, error)) {
       return false;
     }
-  } else if (!build_cvu_dense_desc(*target, {}, {}, &selected_output, error)) {
+  } else if (!build_cvu_dense_desc_with_geometry(*target, *target->logical_shape, logical.layout,
+                                                 {}, &selected_output, error)) {
     return false;
   }
 
@@ -2456,7 +2473,7 @@ bool project_model_managed_preproc_contract(const ModelExecutionPlan& plan,
                                                          : ProcessCvuOutputTransportKind::Dense};
   payload.runtime_output_semantic_kind_list = {ProcessCvuOutputSemanticKind::Image};
   payload.runtime_output_logical_shapes = {cvu_shape(*target)};
-  payload.runtime_output_logical_layout_list = {*target->logical_layout};
+  payload.runtime_output_logical_layout_list = {logical.layout};
   payload.num_in_tensor = 1;
 
   // A public video input is still one concrete DMA-BUF carrier.  It has no

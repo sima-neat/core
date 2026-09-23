@@ -1,7 +1,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
-#include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
@@ -507,8 +507,8 @@ std::string replace_once(std::string value, const std::string& before, const std
 }
 
 void expect_error(const std::string& manifest, const MlaElfIoTopology& topology,
-                  const AfeMpkV2DecodeErrorCode expected, const char* message) {
-  const auto result = AfeMpkV2Decoder{}.decode_json(manifest, topology, "synthetic.json");
+                  const MpkDecodeErrorCode expected, const char* message) {
+  const auto result = MpkDecoder{}.decode_json(manifest, topology, "synthetic.json");
   check(!result, message);
   check(result.error.has_value() && result.error->code == expected, message);
   check(!result.error->json_path.empty() && !result.error->detail.empty(),
@@ -564,12 +564,12 @@ void test_exact_registry() {
 
 void test_explicit_cast_input_dtype() {
   const auto topology = monolithic_topology();
-  const auto legacy = AfeMpkV2Decoder{}.decode_json(valid_manifest(), topology);
+  const auto legacy = MpkDecoder{}.decode_json(valid_manifest(), topology);
   check(static_cast<bool>(legacy), "legacy casts without in_dtype remain admitted");
   auto manifest = nlohmann::json::parse(valid_manifest());
   manifest["plugins"][0]["config_params"]["params"]["in_dtype"] = "float32";
   manifest["plugins"][2]["config_params"]["params"]["in_dtype"] = "bfloat16";
-  const auto explicit_casts = AfeMpkV2Decoder{}.decode_json(manifest.dump(), topology);
+  const auto explicit_casts = MpkDecoder{}.decode_json(manifest.dump(), topology);
   check(static_cast<bool>(explicit_casts),
         "explicit FP32/BF16 casts in both directions are admitted");
   check(explicit_casts.plan->values().size() == legacy.plan->values().size(),
@@ -583,25 +583,159 @@ void test_explicit_cast_input_dtype() {
     for (const auto& bad_dtype : {"int8", "float16", "unknown"}) {
       auto invalid = manifest;
       invalid["plugins"][plugin_index]["config_params"]["params"]["in_dtype"] = bad_dtype;
-      expect_error(invalid.dump(), topology, AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+      expect_error(invalid.dump(), topology, MpkDecodeErrorCode::ConfigurationMismatch,
                    "unsupported explicit source dtype is rejected");
     }
     auto contradictory = manifest;
     auto& params = contradictory["plugins"][plugin_index]["config_params"]["params"];
     params["in_dtype"] = params["out_dtype"];
-    expect_error(contradictory.dump(), topology, AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+    expect_error(contradictory.dump(), topology, MpkDecodeErrorCode::ConfigurationMismatch,
                  "same-dtype cast contradicts the registered conversion");
     for (const auto& bad_type : {nlohmann::json(nullptr), nlohmann::json(1), nlohmann::json(true),
                                  nlohmann::json::array()}) {
       auto invalid = manifest;
       invalid["plugins"][plugin_index]["config_params"]["params"]["in_dtype"] = bad_type;
-      expect_error(invalid.dump(), topology, AfeMpkV2DecodeErrorCode::InvalidField,
+      expect_error(invalid.dump(), topology, MpkDecodeErrorCode::InvalidField,
                    "explicit source dtype must be a string");
     }
     auto extra = manifest;
     extra["plugins"][plugin_index]["config_params"]["params"]["ignored"] = 1;
-    expect_error(extra.dump(), topology, AfeMpkV2DecodeErrorCode::InvalidField,
+    expect_error(extra.dump(), topology, MpkDecodeErrorCode::InvalidField,
                  "explicit source dtype does not permit unrelated config fields");
+  }
+}
+
+void test_generic_cast_does_not_invent_image_layout() {
+  const std::array<TensorShape, 5> shapes{{{1, 7}, {7}, {2, 3, 7}, {1, 2, 3, 7}, {1, 2, 3, 5, 7}}};
+  for (const auto& shape : shapes) {
+    std::uint64_t elements = 1U;
+    for (const auto dim : shape) {
+      elements *= static_cast<std::uint64_t>(dim);
+    }
+    const auto bf16_bytes = elements * 2U;
+    const auto fp32_bytes = elements * 4U;
+    const bool padded_rank2 = shape.size() == 2U;
+    const auto ofm_bytes = padded_rank2 ? 16U : bf16_bytes;
+    auto manifest = nlohmann::json::parse(valid_manifest());
+    manifest["input_nodes"][0]["size"] = fp32_bytes;
+    auto& plugins = manifest["plugins"];
+    for (const auto index : {0, 2}) {
+      auto& params = plugins[index]["config_params"]["params"];
+      params["in_dtype"] = index == 0 ? "float32" : "bfloat16";
+      params["input_shapes"] = nlohmann::json::array({shape});
+      params["output_shapes"] = nlohmann::json::array({shape});
+      plugins[index]["input_nodes"][0]["size"] = index == 0 ? fp32_bytes : bf16_bytes;
+      plugins[index]["output_nodes"][0]["size"] = index == 0 ? bf16_bytes : fp32_bytes;
+    }
+    plugins[1]["input_nodes"][0]["size"] = bf16_bytes;
+    plugins[1]["output_nodes"][0]["size"] = ofm_bytes;
+    plugins[3]["input_nodes"][0]["size"] = fp32_bytes;
+    plugins[3]["output_nodes"][0]["size"] = fp32_bytes;
+    if (padded_rank2) {
+      plugins[2]["input_nodes"][0]["name"] = "sliced";
+      plugins[2]["sequence"] = 4;
+      plugins[3]["sequence"] = 5;
+      const nlohmann::json slice = {{"name", "slice"},
+                                    {"sequence", 3},
+                                    {"processor", "EV74"},
+                                    {"type", "sgpProcess"},
+                                    {"config_params",
+                                     {{"desired_batch_size", 1},
+                                      {"actual_batch_size", 1},
+                                      {"kernel", "slice_transform"},
+                                      {"params",
+                                       {{"begin", {0, 0}},
+                                        {"end", {1, 7}},
+                                        {"input_shape", {1, 8}},
+                                        {"output_shape", shape},
+                                        {"input_shapes", {{1, 8}}},
+                                        {"output_shapes", nlohmann::json::array({shape})}}}}},
+                                    {"input_nodes", {{{"name", "mla0"}, {"size", ofm_bytes}}}},
+                                    {"output_nodes", {{{"name", "sliced"}, {"size", bf16_bytes}}}}};
+      plugins.insert(plugins.begin() + 2, slice);
+    }
+    const auto decoded =
+        MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(bf16_bytes, ofm_bytes));
+    if (!decoded && decoded.error) {
+      std::cerr << decoded.error->json_path << ": " << decoded.error->detail << '\n';
+    }
+    check(static_cast<bool>(decoded),
+          "generic Cast chain preserves authored ranks one through five");
+    const auto& plan = *decoded.plan;
+    for (const auto& value : plan.values()) {
+      check(!value.logical_layout.has_value(),
+            "Cast must not invent image layout on generic tensors");
+    }
+    const auto* published = plan.value(plan.model_outputs().front().value_id);
+    check(published && published->logical_shape == shape && published->logical_dtype == "float32" &&
+              published->required_bytes == fp32_bytes,
+          "generic Cast publication preserves exact shape, dtype and byte extent");
+    if (padded_rank2) {
+      const auto& slice = plan.ops()[2];
+      check(slice.kind == OpKind::Slice &&
+                plan.value(slice.inputs.front())->required_bytes == 16U &&
+                plan.value(slice.outputs.front())->required_bytes == 14U &&
+                plan.value(slice.outputs.front())->read_expression.has_value(),
+            "rank-two slice preserves the padded carrier and exact seven-element BF16 view");
+    }
+
+    std::string error;
+    const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+    check(physical.has_value(), "generic Cast chain lowers physically");
+    const auto arena =
+        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
+    check(arena.has_value(), "generic Cast frame arena compiles");
+    std::size_t cast_commands = 0U;
+    for (const auto& command : physical->commands) {
+      if (command.engine != PhysicalEngine::Cvu) {
+        continue;
+      }
+      ++cast_commands;
+      const std::array<std::uint32_t, 1> command_ids{command.id};
+      const auto contract = build_dmabuf_plan_processcvu_command_contract(
+          plan, *physical, command_ids, *arena, &error);
+      if (!contract) {
+        std::cerr << error << '\n';
+      }
+      check(contract && contract->payload.input_tensors.size() == 1U &&
+                contract->payload.output_tensors.size() == 1U,
+            "generic Cast projection authors one input/output descriptor pair");
+      const auto& input = contract->payload.input_tensors.front();
+      const auto& output = contract->payload.output_tensors.front();
+      check(input.shape.rank == shape.size() && output.shape.rank == shape.size(),
+            "Cast descriptors preserve the authored rank");
+      check((input.dtype == SIMA_EV_DTYPE_FP32 && output.dtype == SIMA_EV_DTYPE_BF16) ||
+                (input.dtype == SIMA_EV_DTYPE_BF16 && output.dtype == SIMA_EV_DTYPE_FP32),
+            "Cast descriptors preserve the exact scalar conversion");
+      check(input.storage.nbytes == (input.dtype == SIMA_EV_DTYPE_FP32 ? fp32_bytes : bf16_bytes) &&
+                output.storage.nbytes ==
+                    (output.dtype == SIMA_EV_DTYPE_FP32 ? fp32_bytes : bf16_bytes),
+            "Cast descriptor byte extents remain independent of layout evidence");
+      std::int64_t input_stride = input.dtype == SIMA_EV_DTYPE_FP32 ? 4 : 2;
+      std::int64_t output_stride = output.dtype == SIMA_EV_DTYPE_FP32 ? 4 : 2;
+      for (std::size_t reverse = shape.size(); reverse > 0U; --reverse) {
+        const auto axis = reverse - 1U;
+        check(input.shape.sizes[axis] == shape[axis] && output.shape.sizes[axis] == shape[axis] &&
+                  input.shape.axis_semantics[axis] == SIMA_EV_AXIS_UNKNOWN &&
+                  output.shape.axis_semantics[axis] == SIMA_EV_AXIS_UNKNOWN,
+              "generic Cast descriptors retain authored shape without invented axes");
+        // The sliced [1,7] BF16 view retains its [1,8] parent row stride.
+        const auto expected_input_stride =
+            padded_rank2 && input.dtype == SIMA_EV_DTYPE_BF16 && axis == 0U ? 16 : input_stride;
+        check(input.layout.strided.strides_bytes[axis] == expected_input_stride &&
+                  output.layout.strided.strides_bytes[axis] == output_stride,
+              "generic Cast descriptors retain exact dense or sliced-parent strides");
+        input_stride *= shape[axis];
+        output_stride *= shape[axis];
+      }
+      check(contract->runtime_contract.logical_outputs.size() == 1U &&
+                contract->runtime_contract.logical_outputs.front().layout.empty() &&
+                contract->payload.runtime_output_logical_layout_list ==
+                    std::vector<std::string>{""},
+            "generic Cast publication retains unknown layout through runtime projection");
+    }
+    check(cast_commands == 2U, "both FP32-to-BF16 and BF16-to-FP32 Cast descriptors are checked");
   }
 }
 
@@ -657,8 +791,7 @@ void test_detess_byte_carrier_keeps_logical_frame() {
   plugins[2]["output_nodes"][0]["size"] = 420;
   plugins[3]["input_nodes"][0]["size"] = 420;
   plugins[3]["output_nodes"][0]["size"] = 420;
-  const auto decoded =
-      AfeMpkV2Decoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 480U));
+  const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 480U));
   check(static_cast<bool>(decoded), "BF16 detess byte-carrier contract is admitted");
   const auto& plan = *decoded.plan;
   const auto* value = plan.value(plan.ops()[1].inputs.front());
@@ -666,14 +799,203 @@ void test_detess_byte_carrier_keeps_logical_frame() {
             value->required_bytes == 480U &&
             plan.ops()[1].input_shapes == std::vector<TensorShape>{{1, 480}},
         "detess preserves frame geometry separately from its authored 480-byte carrier");
+  const auto& cast = plan.ops()[2];
+  check(cast.kind == OpKind::Cast && plan.value(cast.inputs.front())->logical_layout == "HWC" &&
+            plan.value(cast.outputs.front())->logical_layout == "HWC" &&
+            plan.value(plan.model_outputs().front().value_id)->logical_layout == "HWC",
+        "Cast and publication preserve the exact layout established by Detess");
   const auto contract = project_single_mla(plan);
   check(contract.logical_outputs.front().shape == TensorShape({1, 3, 5, 7}) &&
             contract.physical_outputs.front().size_bytes == 480U,
         "MLA projects 210 logical BF16 bytes over the exact 480-byte tiled carrier");
   params["input_shapes"] = {{1, 240}};
   expect_error(manifest.dump(), monolithic_topology(16U, 480U),
-               AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+               MpkDecodeErrorCode::ConfigurationMismatch,
                "detess cannot reinterpret a contradictory carrier shape as BF16 element counts");
+}
+
+void test_unpack_tiled_carriers_keep_storage_geometry() {
+  auto manifest = nlohmann::json::parse(valid_manifest());
+  auto& plugins = manifest["plugins"];
+  plugins.erase(plugins.begin() + 2, plugins.end());
+  plugins[1]["output_nodes"] = {{{"name", "packed_ofm"}, {"size", 576}}};
+  auto unpack = nlohmann::json::parse(packed_read_manifest())["plugins"][4];
+  unpack["sequence"] = 3;
+  unpack["input_nodes"] = {{{"name", "packed_ofm"}, {"size", 576}}};
+  unpack["output_nodes"] = {{{"name", "tiled0"}, {"size", 480}},
+                            {{"name", "tiled1"}, {"size", 96}}};
+  auto& unpack_params = unpack["config_params"]["params"];
+  unpack_params["tensor_shapes"] = {{1, 480}, {1, 96}};
+  unpack_params["input_shapes"] = {{1, 576}};
+  unpack_params["output_shapes"] = {{1, 480}, {1, 96}};
+  plugins.push_back(unpack);
+
+  const std::array<TensorShape, 2> frames{{{1, 3, 5, 7}, {1, 1, 3, 14}}};
+  const std::array<std::uint64_t, 2> stored_bytes{480U, 96U};
+  const std::array<std::uint64_t, 2> dense_bytes{210U, 84U};
+  const auto detess_template = nlohmann::json::parse(detess_dequant_manifest())["plugins"][1];
+  const auto cast_template = nlohmann::json::parse(valid_manifest())["plugins"][2];
+  for (std::size_t index = 0; index < frames.size(); ++index) {
+    const auto suffix = std::to_string(index);
+    auto detess = detess_template;
+    detess["name"] = "detess" + suffix;
+    detess["sequence"] = 4U + index * 2U;
+    detess["input_nodes"] = {{{"name", "tiled" + suffix}, {"size", stored_bytes[index]}}};
+    detess["output_nodes"] = {{{"name", "detess" + suffix}, {"size", dense_bytes[index]}}};
+    auto& params = detess["config_params"]["params"];
+    params["frame_type"] = "bfloat16";
+    params["frame_shape"] = frames[index];
+    params["slice_shape"] = TensorShape(frames[index].begin() + 1, frames[index].end());
+    params["align_c16"] = true;
+    params["cblock"] = true;
+    params["input_shapes"] = {{1, stored_bytes[index]}};
+    params["output_shapes"] = nlohmann::json::array({frames[index]});
+    plugins.push_back(detess);
+    auto cast = cast_template;
+    cast["name"] = "cast_out" + suffix;
+    cast["sequence"] = 5U + index * 2U;
+    cast["input_nodes"] = {{{"name", "detess" + suffix}, {"size", dense_bytes[index]}}};
+    cast["output_nodes"] = {{{"name", "output" + suffix}, {"size", dense_bytes[index] * 2U}}};
+    cast["config_params"]["params"] = {{"in_dtype", "bfloat16"},
+                                       {"out_dtype", "float32"},
+                                       {"input_shapes", nlohmann::json::array({frames[index]})},
+                                       {"output_shapes", nlohmann::json::array({frames[index]})}};
+    plugins.push_back(cast);
+  }
+
+  auto publish = nlohmann::json::parse(valid_manifest())["plugins"][3];
+  publish["sequence"] = 8;
+  publish["input_nodes"] = {{{"name", "output0"}, {"size", 420}},
+                            {{"name", "output1"}, {"size", 168}}};
+  publish["output_nodes"] = {{{"name", "public0"}, {"size", 420}},
+                             {{"name", "public1"}, {"size", 168}}};
+  plugins.push_back(publish);
+
+  const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(8U, 576U));
+  if (!decoded && decoded.error) {
+    std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
+  }
+  check(static_cast<bool>(decoded),
+        "two BF16 tiled Unpack carriers decode independently of frames");
+  const auto& plan = *decoded.plan;
+  const auto& unpack_op = plan.ops()[2];
+  check(unpack_op.kind == OpKind::Unpack && unpack_op.outputs.size() == 2U,
+        "two tiled outputs retain their compiler-authored Unpack order");
+  const auto contract = project_single_mla(plan);
+  check(contract.physical_outputs.size() == 1U &&
+            contract.physical_outputs.front().size_bytes == 576U &&
+            contract.logical_outputs.size() == 2U,
+        "MLA publishes two carrier views over one exact 576-byte OFM");
+  for (std::size_t index = 0; index < frames.size(); ++index) {
+    const auto* value = plan.value(unpack_op.outputs[index]);
+    const TensorShape storage_shape{1, static_cast<std::int64_t>(stored_bytes[index])};
+    const std::vector<std::int64_t> strides{static_cast<std::int64_t>(stored_bytes[index]), 1};
+    const std::uint64_t offset = index == 0U ? 0U : 480U;
+    check(value && value->logical_shape == frames[index] && value->logical_dtype == "bfloat16" &&
+              value->required_bytes == stored_bytes[index],
+          "Unpack preserves semantic BF16 frame separately from tiled storage bytes");
+    check(value->read_expression && value->read_expression->storage_shape == storage_shape &&
+              value->read_expression->stride_bytes == strides &&
+              value->read_expression->source_value_id == unpack_op.inputs.front() &&
+              value->read_expression->byte_offset == offset,
+          "Unpack read expression retains explicit byte-carrier shape, strides, and offset");
+    check(value->storage_binding && value->storage_binding->physical_span == stored_bytes[index] &&
+              value->storage_binding->byte_offset == offset &&
+              value->storage_binding->carrier_id ==
+                  plan.value(unpack_op.inputs.front())->storage_binding->carrier_id,
+          "both tiled views bind their exact disjoint spans in the shared MLA carrier");
+    const auto& logical = contract.logical_outputs[index];
+    check(logical.shape == storage_shape && logical.dtype == "int8" &&
+              logical.stride_bytes == strides && logical.size_bytes == stored_bytes[index] &&
+              logical.byte_offset == static_cast<std::int64_t>(offset) && logical.layout.empty(),
+          "MLA projection publishes byte-carrier geometry without semantic BF16/HWC leakage");
+  }
+
+  std::string error;
+  const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+  check(physical.has_value(), "tiled Unpack branches lower to physical commands");
+  std::vector<PhysicalCommandId> detesscast_commands;
+  for (const auto& command : physical->commands) {
+    if (command.engine == PhysicalEngine::Cvu && command.graph_id == 225U) {
+      detesscast_commands.push_back(command.id);
+    }
+  }
+  check(!detesscast_commands.empty(), "BF16 tiled branches select graph225 Detess+Cast");
+  const auto arena =
+      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
+  check(arena.has_value(), "tiled Unpack branches compile their shared frame arena");
+  const auto cvu = build_dmabuf_plan_processcvu_command_contract(
+      plan, *physical, detesscast_commands, *arena, &error);
+  if (!cvu) {
+    std::cerr << error << "\n";
+  }
+  check(cvu && cvu->payload.input_tensors.size() == frames.size() &&
+            cvu->payload.output_tensors.size() == frames.size() &&
+            cvu->runtime_contract.logical_inputs.size() == frames.size() &&
+            cvu->runtime_contract.physical_inputs.size() == frames.size(),
+        "graph225 projection retains both tiled input and dense output contracts");
+  const auto* parent_region = arena->region(unpack_op.inputs.front());
+  check(parent_region != nullptr, "packed MLA output owns one arena region");
+  for (std::size_t index = 0; index < frames.size(); ++index) {
+    const auto& input = cvu->payload.input_tensors[index];
+    const auto& output = cvu->payload.output_tensors[index];
+    check(input.dtype == SIMA_EV_DTYPE_BF16 && input.shape.rank == frames[index].size() &&
+              input.storage.nbytes == stored_bytes[index] && output.dtype == SIMA_EV_DTYPE_FP32 &&
+              output.shape.rank == frames[index].size() &&
+              output.storage.nbytes == dense_bytes[index] * 2U,
+          "CVU payload retains semantic precision and exact tiled/dense storage sizes");
+    for (std::size_t axis = 0; axis < frames[index].size(); ++axis) {
+      check(input.shape.sizes[axis] == frames[index][axis] &&
+                output.shape.sizes[axis] == frames[index][axis],
+            "CVU descriptors retain frame geometry instead of byte-carrier geometry");
+    }
+    const auto& logical = cvu->runtime_contract.logical_inputs[index];
+    const auto& binding = cvu->runtime_contract.physical_inputs[index];
+    const auto offset = index == 0U ? 0U : 480U;
+    check(logical.shape == TensorShape({1, static_cast<std::int64_t>(stored_bytes[index])}) &&
+              logical.dtype == "int8" && logical.layout.empty() &&
+              logical.stride_bytes ==
+                  std::vector<std::int64_t>({static_cast<std::int64_t>(stored_bytes[index]), 1}) &&
+              logical.size_bytes == stored_bytes[index] && logical.byte_offset == 0 &&
+              binding.size_bytes == stored_bytes[index] &&
+              binding.address_source == PhysicalAddressSource::FrameArenaSpan &&
+              binding.source_byte_offset ==
+                  static_cast<std::int64_t>(parent_region->byte_offset + offset),
+          "CVU runtime inputs use exact byte-carrier metadata and shared-arena offsets");
+  }
+
+  auto incompatible_consumer = manifest;
+  auto& consumer_plugins = incompatible_consumer["plugins"];
+  auto tess = consumer_plugins[3];
+  tess["name"] = "tess_on_tiled_carrier";
+  tess["sequence"] = 8;
+  tess["config_params"]["kernel"] = "tessellation_transform";
+  auto& tess_params = tess["config_params"]["params"];
+  tess_params.erase("frame_shape");
+  tess_params["input_shapes"] = nlohmann::json::array({frames.front()});
+  tess_params["output_shapes"] = {{1, 480}};
+  tess["output_nodes"] = {{{"name", "retiled"}, {"size", 480}}};
+  consumer_plugins.back()["sequence"] = 9;
+  consumer_plugins.back()["input_nodes"].push_back({{"name", "retiled"}, {"size", 480}});
+  consumer_plugins.back()["output_nodes"].push_back({{"name", "public2"}, {"size", 480}});
+  consumer_plugins.insert(consumer_plugins.end() - 1, tess);
+  const auto rejected_consumer =
+      MpkDecoder{}.decode_json(incompatible_consumer.dump(), monolithic_topology(8U, 576U));
+  check(!rejected_consumer && rejected_consumer.error &&
+            rejected_consumer.error->code == MpkDecodeErrorCode::ConfigurationMismatch &&
+            rejected_consumer.error->detail.find(
+                "storage view 'tiled0' has incompatible consumer 'tess_on_tiled_carrier'") !=
+                std::string::npos,
+        "contiguous carrier bytes cannot authorize a shared dense Tessellate consumer");
+
+  auto incompatible = manifest;
+  auto& incompatible_params = incompatible["plugins"][2]["config_params"]["params"];
+  incompatible_params["tensor_shapes"][1] = {1, 95};
+  incompatible_params["output_shapes"][1] = {1, 95};
+  expect_error(incompatible.dump(), monolithic_topology(8U, 576U),
+               MpkDecodeErrorCode::ValueSizeMismatch,
+               "Unpack rejects a carrier shape inconsistent with its declared byte length");
 }
 
 void test_dense_ifm_tail_padding() {
@@ -690,35 +1012,54 @@ void test_dense_ifm_tail_padding() {
   topology.monolithic_ifm_extent_bytes = 0U;
   topology.ifm_symbol_names = {"data.ifm.persistent.MLA_0/placeholder_0_0.b0"};
   topology.ifm_extent_bytes = {16U};
-  const auto decoded = AfeMpkV2Decoder{}.decode_json(manifest.dump(), topology);
+  const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
   check(static_cast<bool>(decoded), "exact dense 14-byte BF16 input admits 16-byte ELF extent");
   const auto& plan = *decoded.plan;
   const auto& port = plan.backend_ports(0U, BackendPortDirection::Input).front();
   const auto* value = plan.value(port.value_id);
   check(value->required_bytes == 14U && value->logical_shape == TensorShape({1, 7}) &&
-            port.physical_extent_bytes == 16U,
-        "IFM tail padding does not alter the dense logical tensor");
+            port.physical_extent_bytes == 14U,
+        "IFM allocation tail does not enlarge the MPK transfer");
   const auto contract = project_single_mla(plan);
-  check(contract.physical_inputs.front().size_bytes == 16U &&
-            contract.input_bindings.front().src_physical_size_bytes == 16U,
-        "IFM arena projection binds all padded bytes without enlarging the logical input");
+  check(contract.physical_inputs.front().size_bytes == 14U &&
+            contract.input_bindings.front().src_physical_size_bytes == 14U,
+        "IFM arena projection binds exactly the MPK bytes");
   for (const auto bad_extent : {13U, 15U, 17U, 32U}) {
     topology.ifm_extent_bytes = {bad_extent};
-    expect_error(manifest.dump(), topology, AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+    expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                  "undersized, unaligned, and excessive IFM extents remain rejected");
   }
-  expect_error(manifest.dump(), monolithic_topology(16U, 8U),
-               AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
-               "native IFM tail-padding rule does not relax legacy carrier equality");
+  const auto monolithic = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 8U));
+  check(static_cast<bool>(monolithic), "monolithic allocation tail preserves MPK transfer length");
+  check(project_single_mla(*monolithic.plan).physical_inputs.front().size_bytes == 14U,
+        "monolithic transfer is not rounded to the ELF reservation");
+  auto spatial = manifest;
+  spatial["input_nodes"][0]["size"] = 420;
+  spatial["plugins"][0]["input_nodes"][0]["size"] = 420;
+  spatial["plugins"][0]["output_nodes"][0]["size"] = 210;
+  spatial["plugins"][0]["config_params"]["params"]["input_shapes"] = {{1, 3, 5, 7}};
+  spatial["plugins"][0]["config_params"]["params"]["output_shapes"] = {{1, 3, 5, 7}};
+  spatial["plugins"][1]["input_nodes"][0]["size"] = 210;
+  const auto c7 = MpkDecoder{}.decode_json(spatial.dump(), monolithic_topology(224U, 8U));
+  check(static_cast<bool>(c7), "C7 BF16 HWC input admits 210-byte MPK transfer with 224-byte ELF");
+  const auto c7_contract = project_single_mla(*c7.plan);
+  check(c7_contract.physical_inputs.front().size_bytes == 210U &&
+            c7_contract.input_bindings.front().src_physical_size_bytes == 210U,
+        "C7 BF16 HWC projection retains exactly 210 bytes");
+  for (const auto bad_extent : {209U, 211U, 223U, 225U, 240U}) {
+    expect_error(spatial.dump(), monolithic_topology(bad_extent, 8U),
+                 MpkDecodeErrorCode::ValueSizeMismatch,
+                 "monolithic transfer rejects inconsistent ELF allocation extents");
+  }
   topology.ifm_extent_bytes = {16U};
   auto batched = manifest;
   batched["plugins"][1]["config_params"]["actual_batch_size"] = 2;
   batched["plugins"][1]["config_params"]["desired_batch_size"] = 2;
-  expect_error(batched.dump(), topology, AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+  expect_error(batched.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                "batch-row padding requires a separate contract and cannot use the batch-one rule");
   cast["config_params"]["params"]["input_shapes"] = {{7, 1}};
   cast["config_params"]["params"]["output_shapes"] = {{7, 1}};
-  expect_error(manifest.dump(), topology, AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+  expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                "logical leading dimension must also prove batch one");
 }
 
@@ -752,7 +1093,7 @@ void test_compiler_version_does_not_restrict_admission() {
       } else {
         manifest["model_sdk_version"] = versions[index];
       }
-      const auto result = AfeMpkV2Decoder{}.decode_json(manifest.dump(), fixture.topology);
+      const auto result = MpkDecoder{}.decode_json(manifest.dump(), fixture.topology);
       check(static_cast<bool>(result), "compiler version metadata does not restrict admission");
       const auto expected_version = index < versions.size() && versions[index].is_string()
                                         ? versions[index].get<std::string>()
@@ -765,7 +1106,7 @@ void test_compiler_version_does_not_restrict_admission() {
 
 void test_success_and_immutable_contract() {
   const auto result =
-      AfeMpkV2Decoder{}.decode_json(valid_manifest(), monolithic_topology(), "synthetic.json");
+      MpkDecoder{}.decode_json(valid_manifest(), monolithic_topology(), "synthetic.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -794,7 +1135,7 @@ void test_success_and_immutable_contract() {
 }
 
 void test_unpack_and_slice_are_read_expressions() {
-  const auto result = AfeMpkV2Decoder{}.decode_json(
+  const auto result = MpkDecoder{}.decode_json(
       packed_read_manifest(), monolithic_topology(32U, 32U), "packed-read-synthetic.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
@@ -883,8 +1224,8 @@ void test_unpack_and_slice_are_read_expressions() {
 }
 
 void test_reshape_is_an_exact_read_expression() {
-  const auto result = AfeMpkV2Decoder{}.decode_json(reshape_manifest(),
-                                                    monolithic_topology(16U, 8U), "reshape.json");
+  const auto result =
+      MpkDecoder{}.decode_json(reshape_manifest(), monolithic_topology(16U, 8U), "reshape.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -900,15 +1241,15 @@ void test_reshape_is_an_exact_read_expression() {
   const auto mismatch =
       replace_once(reshape_manifest(), "\"output_nodes\":[{\"name\":\"reshaped\",\"size\":16}]",
                    "\"output_nodes\":[{\"name\":\"reshaped\",\"size\":12}]");
-  const auto rejected = AfeMpkV2Decoder{}.decode_json(mismatch, monolithic_topology(16U, 8U),
-                                                      "reshape-mismatch.json");
-  check(!rejected && rejected.error->code == AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+  const auto rejected =
+      MpkDecoder{}.decode_json(mismatch, monolithic_topology(16U, 8U), "reshape-mismatch.json");
+  check(!rejected && rejected.error->code == MpkDecodeErrorCode::ValueSizeMismatch,
         "reshape that changes the byte extent fails closed");
 }
 
 void test_registered_detess_layout_is_preserved_through_dequant() {
-  const auto result = AfeMpkV2Decoder{}.decode_json(
-      detess_dequant_manifest(), monolithic_topology(16U, 16U), "detess-layout.json");
+  const auto result = MpkDecoder{}.decode_json(detess_dequant_manifest(),
+                                               monolithic_topology(16U, 16U), "detess-layout.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -926,8 +1267,8 @@ void test_registered_detess_layout_is_preserved_through_dequant() {
 
 void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   const auto result =
-      AfeMpkV2Decoder{}.decode_json(resnet_batch_flatten_manifest(),
-                                    monolithic_topology(16U, 1008U), "resnet-batch-flatten.json");
+      MpkDecoder{}.decode_json(resnet_batch_flatten_manifest(), monolithic_topology(16U, 1008U),
+                               "resnet-batch-flatten.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -939,9 +1280,9 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
                    "\"kernel\":\"batch_flatten_transform\",\"params\":{\n"
                    "                          \"newshape\":[1,1000],\"input_shapes\"");
   const auto grammar_rejected =
-      AfeMpkV2Decoder{}.decode_json(foreign_reshape_grammar, monolithic_topology(16U, 1008U),
-                                    "resnet-batch-flatten-foreign-grammar.json");
-  check(!grammar_rejected && grammar_rejected.error->code == AfeMpkV2DecodeErrorCode::InvalidField,
+      MpkDecoder{}.decode_json(foreign_reshape_grammar, monolithic_topology(16U, 1008U),
+                               "resnet-batch-flatten-foreign-grammar.json");
+  check(!grammar_rejected && grammar_rejected.error->code == MpkDecodeErrorCode::InvalidField,
         "batch flatten accepts only its exact two-shape-list grammar");
   const auto& plan = *result.plan;
   check(plan.ops().size() == 4U && plan.ops()[1].kind == OpKind::Detessellate &&
@@ -1059,8 +1400,8 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
                    "      {\"name\":\"dequantize_1\",\"sequence\":5");
   two_views = replace_once(std::move(two_views), "{\"name\":\"publish\",\"sequence\":5",
                            "{\"name\":\"publish\",\"sequence\":6");
-  const auto twice_decoded = AfeMpkV2Decoder{}.decode_json(
-      two_views, monolithic_topology(16U, 1008U), "resnet-two-views.json");
+  const auto twice_decoded =
+      MpkDecoder{}.decode_json(two_views, monolithic_topology(16U, 1008U), "resnet-two-views.json");
   check(static_cast<bool>(twice_decoded) && twice_decoded.plan->ops().size() == 5U,
         "two consecutive exact views decode without inventing work");
   std::vector<ValueId> twice_values;
@@ -1086,8 +1427,8 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
       "{\"name\":\"dequantize_1/resnetv17_dense0_fwd\",\"size\":4000}],\n"
       "       \"output_nodes\":[{\"name\":\"observed_flatten\",\"size\":1000},"
       "{\"name\":\"output\",\"size\":4000}]");
-  const auto observed = AfeMpkV2Decoder{}.decode_json(
-      observed_relation, monolithic_topology(16U, 1008U), "resnet-observed-batch-flatten.json");
+  const auto observed = MpkDecoder{}.decode_json(observed_relation, monolithic_topology(16U, 1008U),
+                                                 "resnet-observed-batch-flatten.json");
   check(static_cast<bool>(observed) && observed.plan->model_outputs().size() == 2U &&
             !resolve_exact_private_ordered_relation_path(*observed.plan, 1U, 3U),
         "a branched/public batch-flatten value is not relation-transparent");
@@ -1121,14 +1462,21 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
                                                    SIMA_EV_AXIS_C};
 
   for (const auto& test_case : cases) {
-    const auto decoded = AfeMpkV2Decoder{}.decode_json(
-        test_case.manifest, monolithic_topology(test_case.mla_ifm_bytes, 16U),
-        std::string(test_case.label) + ".json");
+    const auto decoded = MpkDecoder{}.decode_json(test_case.manifest,
+                                                  monolithic_topology(test_case.mla_ifm_bytes, 16U),
+                                                  std::string(test_case.label) + ".json");
     if (!decoded && decoded.error.has_value()) {
       std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
     }
     check(static_cast<bool>(decoded), "raw fused-ingress AFE manifest decodes");
     const auto& plan = *decoded.plan;
+    for (const auto& op : plan.ops()) {
+      if (op.kind == OpKind::Cast) {
+        check(plan.value(op.inputs.front())->logical_layout == "HWC" &&
+                  plan.value(op.outputs.front())->logical_layout == "HWC",
+              "Cast preserves downstream Tess layout evidence at both exact endpoints");
+      }
+    }
     const auto* outer_input = plan.value(plan.model_inputs().front());
     check(outer_input && outer_input->logical_shape == TensorShape({1, 2, 2, 16}) &&
               outer_input->logical_layout == "HWC",
@@ -1167,9 +1515,9 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
 }
 
 void test_tessellate_keeps_yolov8_semantic_shape_separate_from_packed_carrier() {
-  const auto decoded = AfeMpkV2Decoder{}.decode_json(yolov8_quant_tess_ingress_manifest(),
-                                                     monolithic_topology(1228800U, 16U),
-                                                     "yolov8-quant-tess-ingress.json");
+  const auto decoded = MpkDecoder{}.decode_json(yolov8_quant_tess_ingress_manifest(),
+                                                monolithic_topology(1228800U, 16U),
+                                                "yolov8-quant-tess-ingress.json");
   if (!decoded && decoded.error.has_value()) {
     std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
   }
@@ -1196,7 +1544,7 @@ void test_tessellate_keeps_yolov8_semantic_shape_separate_from_packed_carrier() 
 }
 
 void test_standalone_quantize_authors_exact_graph222_layout() {
-  const auto decoded = AfeMpkV2Decoder{}.decode_json(
+  const auto decoded = MpkDecoder{}.decode_json(
       standalone_quant_mla_manifest(), monolithic_topology(64U, 16U), "standalone-quant.json");
   if (!decoded && decoded.error.has_value()) {
     std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
@@ -1254,17 +1602,17 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
   const auto contradictory =
       replace_once(standalone_quant_mla_manifest(), "\"output_shapes\":[[1,2,2,16]]",
                    "\"output_shapes\":[[1,2,1,32]]");
-  const auto rejected = AfeMpkV2Decoder{}.decode_json(contradictory, monolithic_topology(64U, 16U),
-                                                      "standalone-quant-contradictory-shape.json");
+  const auto rejected = MpkDecoder{}.decode_json(contradictory, monolithic_topology(64U, 16U),
+                                                 "standalone-quant-contradictory-shape.json");
   check(!rejected && rejected.error.has_value() &&
-            rejected.error->code == AfeMpkV2DecodeErrorCode::ConfigurationMismatch &&
+            rejected.error->code == MpkDecodeErrorCode::ConfigurationMismatch &&
             rejected.error->detail.find("contradictory exact endpoint shapes") != std::string::npos,
         "standalone graph 222 rejects contradictory exact endpoint geometry");
 }
 
 void test_qmla_output_physical_extent_and_row_pitch() {
-  const auto decoded = AfeMpkV2Decoder{}.decode_json(qmla_padded_output_manifest(),
-                                                     qmla_padded_topology(), "qmla-padded.json");
+  const auto decoded = MpkDecoder{}.decode_json(qmla_padded_output_manifest(),
+                                                qmla_padded_topology(), "qmla-padded.json");
   if (!decoded && decoded.error) {
     std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
   }
@@ -1280,18 +1628,18 @@ void test_qmla_output_physical_extent_and_row_pitch() {
             carrier && carrier->required_bytes == 110400U,
         "QMLA physical carrier remains separate from logical addressed logits");
 
-  const auto contradictory = AfeMpkV2Decoder{}.decode_json(
+  const auto contradictory = MpkDecoder{}.decode_json(
       qmla_padded_output_manifest(), qmla_padded_topology(110416U), "qmla-contradictory.json");
   check(!contradictory && contradictory.error &&
-            contradictory.error->code == AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+            contradictory.error->code == MpkDecodeErrorCode::ConfigurationMismatch,
         "unregistered larger QMLA extent fails closed instead of guessing padding");
 
   auto missing = qmla_padded_topology();
   missing.ofm_extent_bytes.clear();
-  const auto missing_result = AfeMpkV2Decoder{}.decode_json(qmla_padded_output_manifest(), missing,
-                                                            "qmla-missing-extent.json");
+  const auto missing_result =
+      MpkDecoder{}.decode_json(qmla_padded_output_manifest(), missing, "qmla-missing-extent.json");
   check(!missing_result && missing_result.error &&
-            missing_result.error->code == AfeMpkV2DecodeErrorCode::ElfTopologyInvalid,
+            missing_result.error->code == MpkDecodeErrorCode::ElfTopologyInvalid,
         "missing QMLA extent evidence fails closed");
 }
 
@@ -1301,28 +1649,27 @@ void test_fail_closed_cases() {
       replace_once(yolov8_quant_tess_ingress_manifest(), "\"2.1.0\"", "\"3.0.0\"");
   expect_error(
       replace_once(model_sdk_3_manifest, "quantization_transform", "quantization_transform_suffix"),
-      monolithic_topology(1228800U, 16U), AfeMpkV2DecodeErrorCode::UnsupportedKernel,
+      monolithic_topology(1228800U, 16U), MpkDecodeErrorCode::UnsupportedKernel,
       "Model Compiler 3 kernel substring is not an alias");
   expect_error(replace_once(model_sdk_3_manifest,
                             "\"output_nodes\":[{\"name\":\"quantize_0\",\"size\":1228800}]",
                             "\"output_nodes\":[{\"name\":\"quantize_0\",\"size\":1228800},"
                             "{\"name\":\"extra\",\"size\":1}]"),
-               monolithic_topology(1228800U, 16U), AfeMpkV2DecodeErrorCode::InvalidKernelArity,
+               monolithic_topology(1228800U, 16U), MpkDecodeErrorCode::InvalidKernelArity,
                "quantization rejects multiple outputs");
   expect_error(replace_once(valid_manifest(), "cast_transform", "cast_transform_suffix"), topology,
-               AfeMpkV2DecodeErrorCode::UnsupportedKernel, "kernel substring is not an alias");
-  expect_error(replace_once(valid_manifest(),
-                            "\"name\":\"cast0\",\"size\":8}],\n        \"output_nodes\"",
-                            "\"name\":\"missing\",\"size\":8}],\n        \"output_nodes\""),
-               topology, AfeMpkV2DecodeErrorCode::MissingProducer,
-               "missing full-name producer fails closed");
+               MpkDecodeErrorCode::UnsupportedKernel, "kernel substring is not an alias");
+  expect_error(
+      replace_once(valid_manifest(), "\"name\":\"cast0\",\"size\":8}],\n        \"output_nodes\"",
+                   "\"name\":\"missing\",\"size\":8}],\n        \"output_nodes\""),
+      topology, MpkDecodeErrorCode::MissingProducer, "missing full-name producer fails closed");
   expect_error(replace_once(valid_manifest(), "\"params\":{\"out_dtype\":\"bfloat16\"",
                             "\"params\":{\"ignored\":1,\"out_dtype\":\"bfloat16\""),
-               topology, AfeMpkV2DecodeErrorCode::InvalidField,
+               topology, MpkDecodeErrorCode::InvalidField,
                "untyped extra operation config is not ignored");
   expect_error(replace_once(valid_manifest(), "\"input_shapes\":[[1,4]],\"output_shapes\":[[1,4]]",
                             "\"input_shapes\":[[1,4]],\"output_shapes\":[[2,2]]"),
-               topology, AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+               topology, MpkDecodeErrorCode::ConfigurationMismatch,
                "shape-preserving transform rejects contradictory exact endpoint shapes");
 
   auto two_ifm = topology;
@@ -1331,12 +1678,12 @@ void test_fail_closed_cases() {
   two_ifm.ifm_symbol_names = {"data.ifm.persistent.qmla_ifm_0.b0",
                               "data.ifm.persistent.qmla_ifm_1.b0"};
   two_ifm.ifm_extent_bytes = {8U, 8U};
-  expect_error(valid_manifest(), two_ifm, AfeMpkV2DecodeErrorCode::ElfTopologyMismatch,
+  expect_error(valid_manifest(), two_ifm, MpkDecodeErrorCode::ElfTopologyMismatch,
                "MPK/ELF port arity mismatch fails before plan creation");
 
   auto conflict = topology;
   conflict.ifm_layout_conflict = true;
-  expect_error(valid_manifest(), conflict, AfeMpkV2DecodeErrorCode::ElfTopologyInvalid,
+  expect_error(valid_manifest(), conflict, MpkDecodeErrorCode::ElfTopologyInvalid,
                "ambiguous ELF layout fails closed");
 }
 
@@ -1351,8 +1698,7 @@ void test_direct_publication_without_passthrough() {
         "output_nodes":[{"name":"pass_through_out_0","size":16}]
       })json",
                                    "");
-  const auto result =
-      AfeMpkV2Decoder{}.decode_json(direct, monolithic_topology(), "direct-output.json");
+  const auto result = MpkDecoder{}.decode_json(direct, monolithic_topology(), "direct-output.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -1366,17 +1712,16 @@ void test_direct_publication_without_passthrough() {
       direct, R"json("output_nodes":[{"name":"decorated/model/output:0","size":16}])json",
       R"json("output_nodes":[{"name":"decorated/model/output:0","size":16},{"name":"other","size":16}])json");
   const auto rejected =
-      AfeMpkV2Decoder{}.decode_json(ambiguous, monolithic_topology(), "ambiguous-output.json");
-  check(!rejected && rejected.error->code == AfeMpkV2DecodeErrorCode::InvalidKernelArity,
+      MpkDecoder{}.decode_json(ambiguous, monolithic_topology(), "ambiguous-output.json");
+  check(!rejected && rejected.error->code == MpkDecodeErrorCode::InvalidKernelArity,
         "an invalid arity is rejected before publication inference");
 
   const auto extra_authority =
       replace_once(direct, R"json("name":"synthetic",)json",
                    R"json("name":"synthetic","execution_contract":{},)json");
-  const auto authority_rejected = AfeMpkV2Decoder{}.decode_json(
-      extra_authority, monolithic_topology(), "second-authority.json");
-  check(!authority_rejected &&
-            authority_rejected.error->code == AfeMpkV2DecodeErrorCode::InvalidField &&
+  const auto authority_rejected =
+      MpkDecoder{}.decode_json(extra_authority, monolithic_topology(), "second-authority.json");
+  check(!authority_rejected && authority_rejected.error->code == MpkDecodeErrorCode::InvalidField &&
             authority_rejected.error->json_path == "$.execution_contract",
         "a superseded second execution authority is rejected rather than ignored");
 }
@@ -1388,7 +1733,7 @@ void test_exact_multi_mla_evidence() {
       {"MLA_decoder", "decoder.elf", decoder_topology},
       {"MLA_encoder", "encoder.so", encoder_topology},
   };
-  const auto result = AfeMpkV2Decoder{}.decode_json(two_mla_manifest(), evidence, "two-mla.json");
+  const auto result = MpkDecoder{}.decode_json(two_mla_manifest(), evidence, "two-mla.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -1413,24 +1758,21 @@ void test_exact_multi_mla_evidence() {
 
   auto missing = evidence;
   missing.pop_back();
-  const auto missing_result =
-      AfeMpkV2Decoder{}.decode_json(two_mla_manifest(), missing, "two-mla.json");
+  const auto missing_result = MpkDecoder{}.decode_json(two_mla_manifest(), missing, "two-mla.json");
   check(!missing_result &&
-            missing_result.error->code == AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence,
+            missing_result.error->code == MpkDecodeErrorCode::MissingMlaExecutableEvidence,
         "missing exact stage evidence fails before plan creation");
 
   auto wrong = evidence;
   wrong[1].executable = "decoder.elf";
-  const auto wrong_result =
-      AfeMpkV2Decoder{}.decode_json(two_mla_manifest(), wrong, "two-mla.json");
+  const auto wrong_result = MpkDecoder{}.decode_json(two_mla_manifest(), wrong, "two-mla.json");
   check(!wrong_result &&
-            wrong_result.error->code == AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence,
+            wrong_result.error->code == MpkDecodeErrorCode::MissingMlaExecutableEvidence,
         "swapped executable identity cannot bind by topology position");
 
   const auto ambiguous_single =
-      AfeMpkV2Decoder{}.decode_json(two_mla_manifest(), encoder_topology, "two-mla.json");
-  check(!ambiguous_single &&
-            ambiguous_single.error->code == AfeMpkV2DecodeErrorCode::MultipleMlaStages,
+      MpkDecoder{}.decode_json(two_mla_manifest(), encoder_topology, "two-mla.json");
+  check(!ambiguous_single && ambiguous_single.error->code == MpkDecodeErrorCode::MultipleMlaStages,
         "single-topology compatibility API rejects a multi-stage manifest");
 
   const auto typed_manifest = two_mla_with_a65_module_manifest();
@@ -1444,8 +1786,8 @@ void test_exact_multi_mla_evidence() {
   }};
   auto typed_mla_evidence = evidence;
   typed_mla_evidence[1].executable = "encoder.elf";
-  const auto typed_result = AfeMpkV2Decoder{}.decode_json(typed_manifest, typed_mla_evidence,
-                                                          host_evidence, "two-mla-a65-typed.json");
+  const auto typed_result = MpkDecoder{}.decode_json(typed_manifest, typed_mla_evidence,
+                                                     host_evidence, "two-mla-a65-typed.json");
   if (!typed_result && typed_result.error.has_value()) {
     std::cerr << typed_result.error->json_path << ": " << typed_result.error->detail << "\n";
   }
@@ -1464,11 +1806,11 @@ void test_exact_multi_mla_evidence() {
 
   for (const auto* version : {"2.1.0", "2.1.3", "3.0.0", "99.0.0"}) {
     const auto manifest = replace_once(typed_manifest, "2.0.0", version);
-    const auto result = AfeMpkV2Decoder{}.decode_json(manifest, typed_mla_evidence, host_evidence);
+    const auto result = MpkDecoder{}.decode_json(manifest, typed_mla_evidence, host_evidence);
     check(static_cast<bool>(result), "typed A65 capability is independent of compiler version");
-    const auto missing_host = AfeMpkV2Decoder{}.decode_json(manifest, typed_mla_evidence);
+    const auto missing_host = MpkDecoder{}.decode_json(manifest, typed_mla_evidence);
     check(!missing_host && missing_host.error &&
-              missing_host.error->code == AfeMpkV2DecodeErrorCode::UnsupportedHostModule,
+              missing_host.error->code == MpkDecodeErrorCode::UnsupportedHostModule,
           "A65 still requires exact host executable evidence");
   }
 
@@ -1478,8 +1820,8 @@ void test_exact_multi_mla_evidence() {
   linked_parameter_evidence.front().argument_names = linked_parameter_evidence.front().input_names;
   linked_parameter_evidence.front().argument_types = linked_parameter_evidence.front().input_types;
   const auto linked_parameter_result =
-      AfeMpkV2Decoder{}.decode_json(typed_manifest, typed_mla_evidence, linked_parameter_evidence,
-                                    "two-mla-a65-linked-parameter.json");
+      MpkDecoder{}.decode_json(typed_manifest, typed_mla_evidence, linked_parameter_evidence,
+                               "two-mla-a65-linked-parameter.json");
   check(static_cast<bool>(linked_parameter_result),
         "GraphExecutor linked parameters are separated from external A65 inputs");
   const auto& linked_host =
@@ -1495,16 +1837,16 @@ void test_exact_multi_mla_evidence() {
   auto int64_evidence = host_evidence;
   int64_evidence.front().input_types = {{"int64", {1, 4}}};
   int64_evidence.front().output_types = {{"int64", {1, 4}}};
-  const auto int64_result = AfeMpkV2Decoder{}.decode_json(int64_manifest, typed_mla_evidence,
-                                                          int64_evidence, "two-mla-a65-int64.json");
+  const auto int64_result = MpkDecoder{}.decode_json(int64_manifest, typed_mla_evidence,
+                                                     int64_evidence, "two-mla-a65-int64.json");
   check(static_cast<bool>(int64_result),
         "typed A65 INT64 ports use the exact registered 8-byte DLPack mapping");
 
   auto wrong_host_evidence = host_evidence;
   wrong_host_evidence.front().input_names.front() = "guessed_input";
-  const auto wrong_host = AfeMpkV2Decoder{}.decode_json(
-      typed_manifest, typed_mla_evidence, wrong_host_evidence, "two-mla-a65-typed.json");
-  check(!wrong_host && wrong_host.error->code == AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+  const auto wrong_host = MpkDecoder{}.decode_json(typed_manifest, typed_mla_evidence,
+                                                   wrong_host_evidence, "two-mla-a65-typed.json");
+  check(!wrong_host && wrong_host.error->code == MpkDecodeErrorCode::ConfigurationMismatch,
         "MPK and embedded GraphExecutor ports must agree exactly");
 }
 
@@ -1514,7 +1856,7 @@ int validate_explicit_pair(const char* manifest_path, const char* elf_path) {
     std::cerr << topology.error << "\n";
     return 2;
   }
-  const auto result = AfeMpkV2Decoder{}.decode_file(manifest_path, topology);
+  const auto result = MpkDecoder{}.decode_file(manifest_path, topology);
   if (!result) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
     return 1;
@@ -1540,12 +1882,14 @@ int main(const int argc, char** argv) {
   if (argc == 3) {
     return validate_explicit_pair(argv[1], argv[2]);
   }
-  check(argc == 1, "usage: unit_afe_mpk_v2_decoder_test [manifest elf]");
+  check(argc == 1, "usage: unit_mpk_decoder_test [manifest elf]");
   test_exact_registry();
   test_compiler_version_does_not_restrict_admission();
   test_success_and_immutable_contract();
   test_explicit_cast_input_dtype();
+  test_generic_cast_does_not_invent_image_layout();
   test_detess_byte_carrier_keeps_logical_frame();
+  test_unpack_tiled_carriers_keep_storage_geometry();
   test_dense_ifm_tail_padding();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
@@ -1558,6 +1902,6 @@ int main(const int argc, char** argv) {
   test_exact_multi_mla_evidence();
   test_direct_publication_without_passthrough();
   test_fail_closed_cases();
-  std::cout << "unit_afe_mpk_v2_decoder_test: PASS\n";
+  std::cout << "unit_mpk_decoder_test: PASS\n";
   return 0;
 }
