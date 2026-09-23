@@ -175,8 +175,9 @@ the decoder policy.
 Leave `decoder_tuning` empty to keep the plugin default. Explicit values, including
 `default` and `auto`, are forwarded to the plugin alongside `memory_opt` and buffer
 count overrides so the decoder can apply its tuning precedence.
-`throughput-low-latency` reduces decoder concurrency while preserving the
-reference pictures and display ordering required by the stream.
+`throughput-low-latency` disables decoded-picture reordering and uses command
+depth one through 720p, or two for larger frames. Use it only for
+streams encoded without B-frames; leave tuning unset for general streams.
 
 `nodes::JpegDecode()` and `pyneat.nodes.jpeg_decode()` are separate CPU/GStreamer
 JPEG decode nodes. Use them for simple CPU image pipelines. Do not use them for
