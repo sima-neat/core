@@ -459,6 +459,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          asset_env="${RUNNER_TEMP}/pciehost-unit-assets.env"
+          ./pcie_host/scripts/resolve_hardware_test_assets.sh \
+            --workspace "${GITHUB_WORKSPACE}" \
+            --cache-dir "${RUNNER_TEMP}/pciehost-unit-assets" \
+            --env-file "${asset_env}"
+          source "${asset_env}"
+          export SIMAPCIE_YOLOV8_MODEL
           ctest --test-dir pcie_host/build --output-on-failure --no-tests=error
 
       - name: Verify PCIe host Debian packages
