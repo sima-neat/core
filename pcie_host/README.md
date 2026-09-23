@@ -82,7 +82,12 @@ completion.
 `unload()` stops accepting work for one model, waits for accepted work to
 complete up to its drain timeout, and then releases that model's queue without
 closing other models. `close()` cancels remaining work, is idempotent, and
-wakes blocked `retrieve()` calls.
+wakes blocked `retrieve()` calls. If remote cleanup fails, `close()` completes
+local shutdown, immediately retries once while destroying the affected model,
+and reports the first cleanup error. If that retry also fails, the closed
+runtime retains no delayed cleanup handle and later `close()` calls are no-ops;
+restore card connectivity and recover the remote builder and queue manually
+before reuse.
 
 `Runtime` provides the behavior needed by a thin OAAX C ABI adapter. It does
 not itself export the standardized OAAX `runtime_*` C symbols.
@@ -292,6 +297,8 @@ followed by `pull()`. `run(...)`, `push(...)`, and `pull()` require a successful
 use, call `push(...)` and `pull()` directly. The host channel receives
 asynchronously from `appsink` and stores results in an internal queue.
 Drain all results submitted with `push(...)` before calling `run(...)`.
+`running()` reports only whether the model is in its successfully built
+lifecycle state. It does not probe host transport or remote pipeline health.
 
 During bring-up, `build()` keeps an internal five-second stabilization delay
 after the card status reaches `ready`, allowing the card-side pipeline to finish

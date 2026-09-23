@@ -11,7 +11,8 @@ Tensor mode is the default. The host application performs required resize, color
 normalization, and layout preparation before sending the model-ready tensor.
 `ModelInfo.dtype` preserves the MPK contract spelling, so treat `FP32` and `FLOAT32` as aliases.
 
-For C++, prefer `Tensor::from_vector()` when ownership simplicity matters:
+For simple or one-shot C++ requests, prefer `Tensor::from_vector()` when ownership simplicity
+matters. Moving the vector transfers its allocation without copying its elements:
 
 ```cpp
 const auto& spec = model.info().inputs.at(0);
@@ -24,14 +25,23 @@ pcie::Tensor input =
     pcie::Tensor::from_vector(std::move(values), spec.shape, spec.name);
 ```
 
-Use `Tensor::from_external()` only when avoiding the additional caller-side copy matters. Supply a
+For performance-sensitive pipelines whose producer already owns reusable contiguous buffers,
+prefer a bounded buffer ring and wrap each slot with `Tensor::from_external()`. This avoids copying
+the producer's data into a new tensor allocation and permits deterministic buffer reuse. Supply a
 shared owner that keeps the complete backing allocation alive until PCIe/GStreamer releases the
-tensor. The backing element count describes the full allocation, and `byte_offset` selects a view
-within it.
+tensor, and do not modify or recycle the slot until its matching result is pulled. The backing
+element count describes the full allocation, and `byte_offset` selects a view within it.
 
-For Python, `Tensor.from_numpy(array)` is zero-copy by default and requires a C-contiguous array.
-The tensor retains the NumPy owner. Use `copy=True` when the application needs an independent,
-owned input:
+This direct wrapping path avoids host staging for a contiguous single input. For multiple inputs,
+all tensors must be consecutive views into one shared packed allocation to avoid staging. A
+non-contiguous tensor or separately allocated inputs are valid but require packing. Direct wrapping
+is not end-to-end zero-copy: PCIe still copies the payload into card-owned transport memory. Use
+the packaged `028_wrap_external_tensor_memory` tutorial as the reference implementation.
+
+For Python pipelines, use a bounded ring of C-contiguous NumPy arrays and
+`Tensor.from_numpy(array, copy=False)`. The tensor retains the NumPy owner; keep the array bytes
+unchanged and recycle the slot only after its matching result is pulled. Use `copy=True` when the
+application instead needs an independent, owned input:
 
 ```python
 spec = model.info().inputs[0]

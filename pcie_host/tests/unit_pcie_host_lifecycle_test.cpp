@@ -1,12 +1,61 @@
 #include "simaai/neat/pcie/Model.h"
 
-#include <cstdlib>
-#include <filesystem>
+#include "model_archive_fixture_utils.h"
+
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
 namespace pcie = simaai::neat::pcie;
+
+namespace {
+
+sima_test::ModelArchiveFixture make_lifecycle_model() {
+  return sima_test::make_model_archive_fixture("pcie_host_lifecycle",
+                                               {{"etc/model_mpk.json", R"json({
+  "name": "pcie_host_lifecycle",
+  "model_sdk_version": "2.0.0",
+  "input_nodes": [{"name":"input","type":"buffer","size":1}],
+  "plugins": [{
+    "name": "MLA_0",
+    "sequence": 1,
+    "processor": "MLA",
+    "config_params": {
+      "desired_batch_size":1,
+      "actual_batch_size":1,
+      "input_shapes":[[1,1,1]],
+      "output_shapes":[[1,1,1]],
+      "input_dtype":"INT8",
+      "output_dtype":"INT8"
+    },
+    "input_nodes": [{"name":"input","size":1}],
+    "output_nodes": [{"name":"output","type":"buffer","size":1}],
+    "type": "sgpProcess",
+    "resources": {"executable":"placeholder.elf"}
+  }]
+})json"},
+                                                {"etc/pipeline_sequence.json", R"json({
+  "pipelines": [{"sequence": [{
+    "sequence_id": 1,
+    "name": "MLA_0",
+    "pluginId": "processmla",
+    "configPath": "0_process_mla.json",
+    "processor": "MLA",
+    "kernel": "infer",
+    "input": "input"
+  }]}]
+})json"},
+                                                {"etc/0_process_mla.json", R"json({
+  "node_name":"MLA_0",
+  "input_buffers":[{"name":"input"}],
+  "data_type":["INT8"],
+  "output_width":[1],
+  "output_height":[1],
+  "output_depth":[1]
+})json"}});
+}
+
+} // namespace
 
 int main() {
   try {
@@ -52,13 +101,8 @@ int main() {
       }
     }
 
-    const char* model_env = std::getenv("SIMAPCIE_YOLOV8_MODEL");
-    if (!model_env || !std::filesystem::is_regular_file(model_env)) {
-      std::cout << "[SKIP] SIMAPCIE_YOLOV8_MODEL is not set to a readable model\n";
-      return 0;
-    }
-
-    pcie::Model model(model_env);
+    const auto model_fixture = make_lifecycle_model();
+    pcie::Model model(model_fixture.tar_path);
     if (model.running()) {
       throw std::runtime_error("pcie::Model should not be running after construction");
     }

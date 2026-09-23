@@ -110,6 +110,7 @@ model.build(readiness_timeout_ms=180000)
 
 `input_specs()` 和 `output_specs()` 分別傳回相同的清單。
 在成功建置後，`running()` 會變成 `true`，然後在 `close()` 後會變回 `false`。
+它只會回報生命週期狀態，不會探查主機傳輸或遠端管線的健康狀態。
 
 ## 執行同步推論
 

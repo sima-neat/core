@@ -1,6 +1,7 @@
 #include "simaai/neat/pcie/Model.h"
 
 #include "HostPcieChannel.h"
+#include "ModelArchiveSnapshot.h"
 #include "ModelOptionsJsonWriter.h"
 #include "PcieModelFactsReader.h"
 #include "RemoteRuntime.h"
@@ -65,14 +66,14 @@ private:
 
 public:
   Impl(std::string model_path, ModelOptions options, ConnectionOptions connection)
-      : model_path_(std::move(model_path)), options_(std::move(options)),
-        connection_(std::move(connection)), remote_(connection_) {
+      : options_(std::move(options)), connection_(std::move(connection)), remote_(connection_) {
     validate_queue(connection_.queue);
     validate_card_id(connection_.card_id);
     validate_max_inflight(connection_.max_inflight);
     // Generate once during construction to validate the options before model loading.
     (void)internal::write_model_options_json(options_);
-    facts_ = internal::read_model_facts(model_path_, options_);
+    model_archive_ = std::make_unique<internal::ModelArchiveSnapshot>(model_path);
+    facts_ = internal::read_model_facts(model_archive_->path(), options_);
     model_info_ = internal::to_public_model_info(facts_);
   }
 
@@ -125,9 +126,10 @@ public:
     state_ = State::Starting;
     remote_started_ = false;
     remote_pid_.reset();
+    remote_pid_unclaimed_ = false;
     remote_uploads_may_be_in_use_ = false;
     try {
-      remote_model_upload_ = remote_.upload_file(model_path_);
+      remote_model_upload_ = remote_.upload_file(model_archive_->path());
 
       if (model_options.json.has_value()) {
         const std::string local_options_path = write_temp_model_options(*model_options.json);
@@ -148,6 +150,11 @@ public:
             remote_.start(connection_.queue, *remote_model_upload_, remote_options_upload_);
       } catch (const internal::RemoteStartError& e) {
         remote_uploads_may_be_in_use_ = !e.cleanup_safe();
+        if (!e.cleanup_safe() && e.launched_pid().has_value()) {
+          remote_pid_ = e.launched_pid();
+          remote_started_ = true;
+          remote_pid_unclaimed_ = true;
+        }
         throw;
       } catch (...) {
         remote_uploads_may_be_in_use_ = false;
@@ -166,10 +173,7 @@ public:
       channel_.stop();
       if (remote_started_) {
         try {
-          remote_.stop(connection_.queue, *remote_pid_);
-          remote_started_ = false;
-          remote_pid_.reset();
-          remote_uploads_may_be_in_use_ = false;
+          stop_remote_locked();
         } catch (...) {
         }
       }
@@ -378,10 +382,7 @@ private:
       std::exception_ptr remote_stop_error;
       if (remote_started_) {
         try {
-          remote_.stop(connection_.queue, *remote_pid_);
-          remote_started_ = false;
-          remote_pid_.reset();
-          remote_uploads_may_be_in_use_ = false;
+          stop_remote_locked();
         } catch (...) {
           remote_stop_error = std::current_exception();
         }
@@ -418,7 +419,25 @@ private:
     }
   }
 
-  std::string model_path_;
+  void stop_remote_locked() {
+    if (!remote_started_ || !remote_pid_.has_value()) {
+      return;
+    }
+    if (remote_pid_unclaimed_) {
+      if (!remote_model_upload_.has_value()) {
+        throw std::runtime_error("unclaimed remote builder has no associated model upload");
+      }
+      remote_.stop_process(*remote_pid_, *remote_model_upload_);
+    } else {
+      remote_.stop(connection_.queue, *remote_pid_);
+    }
+    remote_started_ = false;
+    remote_pid_.reset();
+    remote_pid_unclaimed_ = false;
+    remote_uploads_may_be_in_use_ = false;
+  }
+
+  std::unique_ptr<internal::ModelArchiveSnapshot> model_archive_;
   ModelOptions options_;
   ConnectionOptions connection_;
   internal::RemoteRuntime remote_;
@@ -433,6 +452,7 @@ private:
   bool synchronous_run_active_ = false;
   bool remote_started_ = false;
   std::optional<int> remote_pid_;
+  bool remote_pid_unclaimed_ = false;
   bool remote_uploads_may_be_in_use_ = false;
   bool timed_out_run_pending_ = false;
   std::optional<std::string> remote_model_upload_;
