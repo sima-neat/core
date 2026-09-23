@@ -170,11 +170,13 @@ Use `dec_width`, `dec_height`, and `dec_fps` only when you need to override the
 upstream dimensions or frame rate; `-1` leaves them upstream-defined. These
 options do not reserve decoder capacity. Core passes an explicit `num_buffers`
 value to the decoder, which applies its hardware pool requirements; `-1` keeps
-the element default.
+the decoder policy.
 
-Leave `decoder_tuning` empty or set it to `auto` for general streams. Use
-`throughput-low-latency` only for streams encoded without B-frames and with one
-reference picture; that mode disables decoded-picture reordering.
+Leave `decoder_tuning` empty to keep the plugin default. Explicit values, including
+`default` and `auto`, are forwarded to the plugin alongside `memory_opt` and buffer
+count overrides so the decoder can apply its tuning precedence.
+`throughput-low-latency` reduces decoder concurrency while preserving the
+reference pictures and display ordering required by the stream.
 
 `nodes::JpegDecode()` and `pyneat.nodes.jpeg_decode()` are separate CPU/GStreamer
 JPEG decode nodes. Use them for simple CPU image pipelines. Do not use them for
