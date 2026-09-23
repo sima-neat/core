@@ -273,6 +273,9 @@ void test_concurrent_close(int old_clients) {
 }
 
 void test_lifetime() {
+  // Wait for teardown before checking that dispatcher channels are released.
+  ::setenv("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0", 1);
+  ::setenv("SIMA_GST_TEARDOWN_ASYNC", "0", 1);
   ::setenv("SIMA_EVXX_DISPATCHER_WORKERS", "1", 1);
   ::setenv("SIMA_DISPATCHER_EAGER_RELEASE", "0", 1);
   ::setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "0", 1);

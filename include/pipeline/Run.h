@@ -725,9 +725,10 @@ public:
   /// Returns the most recent runtime error string (empty if no error occurred).
   std::string last_error() const;
 
-  /// Stop the pipeline immediately (transitions to NULL). After stop, the Run is no longer running.
+  /// Stop execution and initiate pipeline teardown.
+  /// Resource release may complete asynchronously after this returns.
   void stop();
-  /// Alias for `stop()`. Releases resources.
+  /// Alias for `stop()`. Resource release may complete asynchronously.
   void close();
 
 private:
