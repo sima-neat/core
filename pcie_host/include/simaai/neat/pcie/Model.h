@@ -480,6 +480,8 @@ public:
   std::vector<TensorInfo> output_specs() const;
 
   void build(int readiness_timeout_ms = 180000);
+  /// Reports whether the model is in the successfully built lifecycle state.
+  /// This does not probe host transport or remote pipeline health.
   bool running() const;
   void close();
 

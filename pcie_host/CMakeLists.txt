@@ -283,6 +283,7 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_model_archive_snapshot_test
     COMMAND unit_pcie_host_model_archive_snapshot_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
+  set_tests_properties(unit_pcie_host_lifecycle_test PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
   add_test(NAME unit_pcie_host_async_test_runner_test COMMAND unit_pcie_host_async_test_runner_test)

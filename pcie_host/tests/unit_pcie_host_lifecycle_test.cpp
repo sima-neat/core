@@ -8,6 +8,8 @@
 
 namespace pcie = simaai::neat::pcie;
 
+constexpr int kCtestSkipReturnCode = 77;
+
 int main() {
   try {
     for (const std::string invalid_user : {"", "-invalid", "user@host", "user name"}) {
@@ -55,7 +57,7 @@ int main() {
     const char* model_env = std::getenv("SIMAPCIE_YOLOV8_MODEL");
     if (!model_env || !std::filesystem::is_regular_file(model_env)) {
       std::cout << "[SKIP] SIMAPCIE_YOLOV8_MODEL is not set to a readable model\n";
-      return 0;
+      return kCtestSkipReturnCode;
     }
 
     pcie::Model model(model_env);

@@ -15,7 +15,8 @@ and `build()` have intentionally different responsibilities.
    idempotent.
 
 `run()`, `push()`, and `pull()` require a successful `build()`. `running()` reports whether the
-model is currently built and active.
+model is in its successfully built lifecycle state; it does not probe host transport or remote
+pipeline health.
 
 ## Synchronous Requests
 

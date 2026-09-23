@@ -109,6 +109,7 @@ model.build(readiness_timeout_ms=180000)
 
 `input_specs()`와 `output_specs()`는 각각 동일한 목록을 반환합니다.
 `running()`은 성공적인 빌드 후에 `true`로 변경되고, `close()` 후에 `false`로 돌아갑니다.
+이는 수명 주기 상태만 보고하며 호스트 전송 또는 원격 파이프라인 상태를 확인하지 않습니다.
 
 ## 동기 추론 실행
 

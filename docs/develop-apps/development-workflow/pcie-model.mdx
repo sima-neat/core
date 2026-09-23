@@ -123,7 +123,8 @@ model.build(readiness_timeout_ms=180000)
 
 `input_specs()` and `output_specs()` return the same lists individually.
 `running()` becomes `true` after a successful build and returns to `false`
-after `close()`.
+after `close()`. It reports lifecycle state only; it does not probe host
+transport or remote pipeline health.
 
 ## Run synchronous inference
 

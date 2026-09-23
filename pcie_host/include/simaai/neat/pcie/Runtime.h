@@ -49,6 +49,9 @@ public:
   std::optional<Completion> retrieve(int timeout_ms = -1);
 
   void unload(ModelId model_id, int drain_timeout_ms = 30000);
+  /// Closes all loaded models and rethrows the first cleanup error after local shutdown.
+  /// Model destruction immediately retries failed remote cleanup once. If that retry also fails,
+  /// later close calls do not retry and the remote queue requires manual recovery.
   void close();
 
 private:
