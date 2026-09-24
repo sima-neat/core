@@ -468,7 +468,10 @@ struct VisionLanguageModel::Impl {
     if (internal::tool_calls_enabled(request)) {
       tokens = preserved_tool_call_tokens;
     }
-    if (request.enable_thinking && reasoning_format != simaai::llima::ReasoningFormat::None) {
+    // gpt_oss emits channel markers even with thinking off; the parser needs them.
+    const bool preserve_reasoning_markers =
+        request.enable_thinking || reasoning_format == simaai::llima::ReasoningFormat::GptOss;
+    if (preserve_reasoning_markers && reasoning_format != simaai::llima::ReasoningFormat::None) {
       for (const auto marker : simaai::llima::reasoning_special_tokens(reasoning_format)) {
         try {
           tokens.emplace_back(vlm_helper->get_tokenizer()->token_to_id(std::string(marker)),
@@ -499,6 +502,7 @@ struct VisionLanguageModel::Impl {
 
     simaai::llima::Chat chat(*vlm_helper);
     chat.set_enable_thinking(request.enable_thinking);
+    chat.set_reasoning_effort(request.reasoning_effort);
     chat.set_messages(built.messages);
     if (internal::tool_calls_enabled(request)) {
       chat.set_tools(request.tools);

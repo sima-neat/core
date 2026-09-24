@@ -2135,6 +2135,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("asr_task", &simaai::neat::genai::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
       .def_rw("enable_thinking", &simaai::neat::genai::GenerationRequest::enable_thinking)
+      .def_rw("reasoning_effort", &simaai::neat::genai::GenerationRequest::reasoning_effort)
       .def_prop_rw(
           "tools",
           [](const simaai::neat::genai::GenerationRequest& request) {

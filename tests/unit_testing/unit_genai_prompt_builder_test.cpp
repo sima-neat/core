@@ -113,4 +113,31 @@ RUN_TEST(
       require_throws_contains(
           [&] { internal::validate_text_generation_request(unsupported_tool_choice); },
           "only tool_choice 'auto' or 'none'");
+
+      GenerationRequest effort_request;
+      effort_request.prompt = std::string{"hello"};
+      require(effort_request.reasoning_effort == "low", "reasoning_effort should default to low");
+      internal::validate_text_generation_request(effort_request);
+
+      for (const auto* effort : {"low", "medium", "high"}) {
+        GenerationRequest accepted = effort_request;
+        accepted.reasoning_effort = effort;
+        internal::validate_text_generation_request(accepted);
+        require(internal::valid_reasoning_effort(accepted.reasoning_effort),
+                "documented reasoning_effort value should be accepted");
+      }
+
+      GenerationRequest invalid_effort = effort_request;
+      invalid_effort.reasoning_effort = "extreme";
+      require(!internal::valid_reasoning_effort(invalid_effort.reasoning_effort),
+              "unknown reasoning_effort value should be rejected");
+      require_throws_contains(
+          [&] { internal::validate_text_generation_request(invalid_effort); },
+          "reasoning_effort must be 'low', 'medium' or 'high'");
+
+      // Effort is independent of whether reasoning is returned.
+      GenerationRequest effort_without_thinking = effort_request;
+      effort_without_thinking.reasoning_effort = "high";
+      effort_without_thinking.enable_thinking = false;
+      internal::validate_text_generation_request(effort_without_thinking);
     }));

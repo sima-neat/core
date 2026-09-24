@@ -211,6 +211,23 @@ bool request_enable_thinking(const nlohmann::json& body, bool ollama = false) {
   return enable_thinking;
 }
 
+// OpenAI exposes reasoning_effort at the top level; chat_template_kwargs wins,
+// matching how enable_thinking is read above.
+std::string request_reasoning_effort(const nlohmann::json& body,
+                                     const std::string& default_value = "low") {
+  std::string effort = default_value;
+  if (body.contains("reasoning_effort") && body.at("reasoning_effort").is_string()) {
+    effort = body.at("reasoning_effort").get<std::string>();
+  }
+  if (body.contains("chat_template_kwargs") && body.at("chat_template_kwargs").is_object()) {
+    const auto& kwargs = body.at("chat_template_kwargs");
+    if (kwargs.contains("reasoning_effort") && kwargs.at("reasoning_effort").is_string()) {
+      effort = kwargs.at("reasoning_effort").get<std::string>();
+    }
+  }
+  return effort;
+}
+
 std::string choice_finish_reason(const std::string& finish_reason) {
   return finish_reason.empty() ? "stop" : finish_reason;
 }
@@ -1013,6 +1030,15 @@ struct GenAIServer::Impl {
     return true;
   }
 
+  bool require_valid_reasoning_effort(const GenerationRequest& request,
+                                      httplib::Response& res) const {
+    if (!internal::valid_reasoning_effort(request.reasoning_effort)) {
+      set_error(res, "reasoning_effort must be 'low', 'medium' or 'high'", 400);
+      return false;
+    }
+    return true;
+  }
+
   void handle_stop(const httplib::Request& req, httplib::Response& res) {
     set_cors(res);
     try {
@@ -1130,7 +1156,11 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body);
+      request.reasoning_effort = request_reasoning_effort(body);
       if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
+      if (!require_valid_reasoning_effort(request, res)) {
         return;
       }
       request.messages = parse_chat_messages(body);
@@ -1181,7 +1211,11 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body);
+      request.reasoning_effort = request_reasoning_effort(body);
       if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
+      if (!require_valid_reasoning_effort(request, res)) {
         return;
       }
       request.prompt = completion_prompt(body);
@@ -1224,7 +1258,11 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body, true);
+      request.reasoning_effort = request_reasoning_effort(body);
       if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
+      if (!require_valid_reasoning_effort(request, res)) {
         return;
       }
       request.messages = parse_chat_messages(body);
@@ -1280,7 +1318,11 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body, true);
+      request.reasoning_effort = request_reasoning_effort(body);
       if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
+      if (!require_valid_reasoning_effort(request, res)) {
         return;
       }
       request.messages.push_back(std::move(message));

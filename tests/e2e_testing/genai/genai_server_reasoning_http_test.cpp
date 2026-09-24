@@ -26,6 +26,8 @@ constexpr const char* kQwenModelEnv = "SIMA_TEST_LLIMA_REASONING_QWEN_MODEL";
 constexpr const char* kQwenModel = "Qwen3-0.6B-Autoround-a16w4";
 constexpr const char* kGemmaModelEnv = "SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL";
 constexpr const char* kGemmaModel = "Gemma-4-E2B-it-TextOnly-GPTQ-a16w4";
+constexpr const char* kGptOssModelEnv = "SIMA_TEST_LLIMA_REASONING_GPTOSS_MODEL";
+constexpr const char* kGptOssModel = "gpt-oss-20b-Autoround-a16w4";
 constexpr const char* kQuery = "Solve x + 7 = 12. Think briefly, then give x.";
 
 int choose_free_port() {
@@ -82,8 +84,9 @@ std::string post_text(int port, const std::string& path, const Json& request) {
 }
 
 void require_no_markers(const std::string& text) {
-  for (const char* marker : {"<think>", "</think>", "<|channel>", "<channel|>", "<tool_call>",
-                             "</tool_call>", "<|tool_call>", "<tool_call|>"}) {
+  for (const char* marker : {"<think>", "</think>", "<|channel>", "<channel|>", "<|channel|>",
+                             "<|message|>", "<tool_call>", "</tool_call>", "<|tool_call>",
+                             "<tool_call|>"}) {
     require(text.find(marker) == std::string::npos,
             std::string("response leaked structural marker: ") + marker);
   }
@@ -254,6 +257,71 @@ void exercise_model(const std::filesystem::path& model_dir) {
   server.stop();
 }
 
+// gpt-oss emits harmony channel markers on every message, so its analysis must be
+// separated from the answer whether or not reasoning is returned. LLiMa has no
+// gpt-oss tool-call format, so tool calls are not exercised here.
+void exercise_gptoss_model(const std::filesystem::path& model_dir) {
+  const int port = choose_free_port();
+  simaai::neat::genai::GenAIServerOptions options;
+  options.host = "127.0.0.1";
+  options.port = port;
+  simaai::neat::genai::GenAIServer server(options);
+  server.add_model(model_dir, "reasoning");
+  server.start();
+  wait_for_server(port);
+
+  const Json base_request = {
+      {"model", "reasoning"},
+      {"messages", Json::array({{{"role", "user"}, {"content", kQuery}}})},
+      {"stream", false},
+  };
+
+  Json thinking = base_request;
+  thinking["enable_thinking"] = true;
+  const Json enabled = post_json(port, "/v1/chat/completions", thinking);
+  const auto& enabled_message = enabled.at("choices").at(0).at("message");
+  require_reasoning_answer(enabled_message.at("reasoning_content").get<std::string>(),
+                           enabled_message.at("content").get<std::string>());
+  require_openai_stream(port);
+
+  // Without the analysis markers preserved, the analysis text is returned here as
+  // the answer, so this is the case the gpt-oss carve-out exists for.
+  Json hidden = base_request;
+  hidden["enable_thinking"] = false;
+  const Json disabled = post_json(port, "/v1/chat/completions", hidden);
+  const auto& disabled_message = disabled.at("choices").at(0).at("message");
+  require(!disabled_message.contains("reasoning_content"),
+          "thinking-disabled response included reasoning_content");
+  require(disabled_message.at("content").get<std::string>().find('5') != std::string::npos,
+          "thinking-disabled final answer does not contain 5");
+  require_no_markers(disabled.dump());
+
+  for (const char* effort : {"low", "medium", "high"}) {
+    Json effort_request = thinking;
+    effort_request["reasoning_effort"] = effort;
+    const Json response = post_json(port, "/v1/chat/completions", effort_request);
+    const auto& message = response.at("choices").at(0).at("message");
+    require_reasoning_answer(message.at("reasoning_content").get<std::string>(),
+                             message.at("content").get<std::string>());
+  }
+
+  const Json ollama_chat =
+      post_json(port, "/api/chat",
+                {{"model", "reasoning"},
+                 {"messages", Json::array({{{"role", "user"}, {"content", kQuery}}})},
+                 {"think", true},
+                 {"stream", false}});
+  const auto& ollama_message = ollama_chat.at("message");
+  require_reasoning_answer(ollama_message.at("thinking").get<std::string>(),
+                           ollama_message.at("content").get<std::string>());
+  require_ollama_stream(port, "/api/chat",
+                        {{"model", "reasoning"},
+                         {"messages", Json::array({{{"role", "user"}, {"content", kQuery}}})},
+                         {"think", true}});
+
+  server.stop();
+}
+
 } // namespace
 
 int main() {
@@ -262,8 +330,11 @@ int main() {
         kQwenModelEnv, kQwenModel, "Qwen reasoning", "devkit/vlm_config.json");
     const auto gemma = simaai::neat::test::resolve_genai_model_dir(
         kGemmaModelEnv, kGemmaModel, "Gemma reasoning", "devkit/vlm_config.json");
+    const auto gptoss = simaai::neat::test::resolve_genai_model_dir(
+        kGptOssModelEnv, kGptOssModel, "gpt-oss reasoning", "devkit/vlm_config.json");
     exercise_model(qwen);
     exercise_model(gemma);
+    exercise_gptoss_model(gptoss);
     std::cout << "[OK] genai_server_reasoning_http_test passed\n";
     return 0;
   } catch (const SkipTest& e) {
