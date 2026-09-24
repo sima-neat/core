@@ -9,6 +9,10 @@ bool tool_calls_enabled(const GenerationRequest& request) {
          !(request.tool_choice.is_string() && request.tool_choice == "none");
 }
 
+bool valid_reasoning_effort(const std::string& effort) {
+  return effort == "low" || effort == "medium" || effort == "high";
+}
+
 std::vector<ChatMessage> build_text_messages(const GenerationRequest& request) {
   validate_text_generation_request(request);
 
@@ -70,6 +74,12 @@ void validate_text_generation_request(const GenerationRequest& request) {
     if (choice != "auto" && choice != "none") {
       throw std::runtime_error("GenerationRequest supports only tool_choice 'auto' or 'none'");
     }
+  }
+
+  if (!valid_reasoning_effort(request.reasoning_effort)) {
+    throw std::runtime_error(
+        "GenerationRequest::reasoning_effort must be 'low', 'medium' or 'high', got '" +
+        request.reasoning_effort + "'");
   }
 
   std::size_t cached_image_uses = request.use_cached_images ? 1U : 0U;
