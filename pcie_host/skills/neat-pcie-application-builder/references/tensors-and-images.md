@@ -11,7 +11,8 @@ Tensor mode is the default. The host application performs required resize, color
 normalization, and layout preparation before sending the model-ready tensor.
 `ModelInfo.dtype` preserves the MPK contract spelling, so treat `FP32` and `FLOAT32` as aliases.
 
-For C++, prefer `Tensor::from_vector()` when ownership simplicity matters:
+For simple or one-shot C++ requests, prefer `Tensor::from_vector()` when ownership simplicity
+matters. Moving the vector transfers its allocation without copying its elements:
 
 ```cpp
 const auto& spec = model.info().inputs.at(0);
@@ -24,14 +25,23 @@ pcie::Tensor input =
     pcie::Tensor::from_vector(std::move(values), spec.shape, spec.name);
 ```
 
-Use `Tensor::from_external()` only when avoiding the additional caller-side copy matters. Supply a
+For performance-sensitive pipelines whose producer already owns reusable contiguous buffers,
+prefer a bounded buffer ring and wrap each slot with `Tensor::from_external()`. This avoids copying
+the producer's data into a new tensor allocation and permits deterministic buffer reuse. Supply a
 shared owner that keeps the complete backing allocation alive until PCIe/GStreamer releases the
-tensor. The backing element count describes the full allocation, and `byte_offset` selects a view
-within it.
+tensor, and do not modify or recycle the slot until its matching result is pulled. The backing
+element count describes the full allocation, and `byte_offset` selects a view within it.
 
-For Python, `Tensor.from_numpy(array)` is zero-copy by default and requires a C-contiguous array.
-The tensor retains the NumPy owner. Use `copy=True` when the application needs an independent,
-owned input:
+This direct wrapping path avoids host staging for a contiguous single input. For multiple inputs,
+all tensors must be consecutive views into one shared packed allocation to avoid staging. A
+non-contiguous tensor or separately allocated inputs are valid but require packing. Direct wrapping
+is not end-to-end zero-copy: PCIe still copies the payload into card-owned transport memory. Use
+the packaged `028_wrap_external_tensor_memory` tutorial as the reference implementation.
+
+For Python pipelines, use a bounded ring of C-contiguous NumPy arrays and
+`Tensor.from_numpy(array, copy=False)`. The tensor retains the NumPy owner; keep the array bytes
+unchanged and recycle the slot only after its matching result is pulled. Use `copy=True` when the
+application instead needs an independent, owned input:
 
 ```python
 spec = model.info().inputs[0]
@@ -46,6 +56,11 @@ input_tensor = pcie.Tensor.from_numpy(
 For multi-input models, pass one tensor per logical input in the order reported by `info().inputs`
 and set each tensor's route name to the corresponding input name. Do not assume physical output
 indices or memory offsets from list position alone; output `Tensor.route` carries routing metadata.
+
+With `mla_only` enabled (see `model-options.md`), `info().inputs` is the MLA ingress contract, INT8 or BF16.
+Quantize on the host with the input's `quant.scale` and `quant.zero_point` and submit `int8` tensors of exactly `size_bytes` bytes. In Python,
+`Tensor.from_numpy(codes, copy=True, route_name=spec.name)` with an `np.int8` array is sufficient; for BF16, pass `uint16` bit patterns to
+`Tensor.from_bytes(..., pcie.TensorDType.BFloat16, ...)`.
 
 ## Image Input
 
@@ -87,3 +102,7 @@ postprocessing does not update `ModelInfo`. When boxdecode is enabled, runtime o
 `UInt8` tensor with route name `BBOX`, not application-specific detection objects. Parse that tensor
 according to the installed PCIe boxdecode tutorial rather than assuming a generic bounding-box
 layout.
+
+With `mla_only`, outputs are the raw INT8 or BF16 heads in the order and with the names of
+`info().outputs`, each dense and contiguous. Dequantize with that output's `quant`:
+`x = (q - zero_point) * scale`; BF16 heads arrive from `to_numpy()` as `uint16` bit patterns.

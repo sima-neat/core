@@ -26,6 +26,7 @@
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/GraphOptions.h"
+#include "policy/OverflowPolicy.h"
 
 #include <cstdint>
 #include <cstddef>
@@ -63,21 +64,6 @@ MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
                                        const MeasureOptions& opt);
 } // namespace run_internal
 #endif
-
-/**
- * @brief What `push()` does when the input queue is full.
- *
- * The right choice depends on the input source — file batches want lossless,
- * live cameras want freshness, network feeds with chokepoint pipelines want bounded memory.
- * @ingroup pipeline
- */
-enum class OverflowPolicy {
-  Block = 0,    ///< `push()` blocks until queue space frees up. Lossless. Use for batch processing.
-  KeepLatest,   ///< Drop the oldest queued frame to make room. Use for live cameras (freshness >
-                ///< completeness).
-  DropIncoming, ///< Drop the new frame; keep what's queued. Use when the pipeline is the
-                ///< chokepoint.
-};
 
 /**
  * @brief Convenience preset bundles for `RunOptions`.
@@ -739,9 +725,10 @@ public:
   /// Returns the most recent runtime error string (empty if no error occurred).
   std::string last_error() const;
 
-  /// Stop the pipeline immediately (transitions to NULL). After stop, the Run is no longer running.
+  /// Stop execution and initiate pipeline teardown.
+  /// Resource release may complete asynchronously after this returns.
   void stop();
-  /// Alias for `stop()`. Releases resources.
+  /// Alias for `stop()`. Resource release may complete asynchronously.
   void close();
 
 private:

@@ -123,7 +123,8 @@ model.build(readiness_timeout_ms=180000)
 
 `input_specs()` and `output_specs()` return the same lists individually.
 `running()` becomes `true` after a successful build and returns to `false`
-after `close()`.
+after `close()`. It reports lifecycle state only; it does not probe host
+transport or remote pipeline health.
 
 ## Run synchronous inference
 
@@ -305,6 +306,99 @@ Do not set `input_max_width`, `input_max_height`, or `input_max_depth` for a
 seedless model unless the application needs an explicit input limit. Neat can
 infer the model-side resize target from the model archive.
 
+## Run the MLA only
+
+By default the card converts the FP32 input to the MLA's dtype, runs the MLA,
+and converts the results back before returning them as FP32. `mla_only` moves
+that dtype-conversion boundary to the application: the card then runs nothing
+but the MLA, the host submits tensors that match each entry of `info().inputs`,
+and it receives the MLA's native outputs in their logical shapes.
+
+`info()` describes that contract. An INT8 tensor carries `quant` with one
+`scale` and one `zero_point`:
+
+```text
+x = (q - zero_point) * scale
+q = clamp(round(x / scale) + zero_point, -128, 127)
+```
+
+A BF16 tensor carries no `quant`: the host rounds FP32 to BF16 with round to
+nearest even on the way in and widens the BF16 heads on the way out. In Python,
+BF16 travels as `uint16` bit patterns through
+`Tensor.from_bytes(..., pcie.TensorDType.BFloat16, ...)` and `to_numpy()`.
+
+The example below is the INT8 case:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+pcie::Model model("model_mlatess_int8.tar.gz", options, connection);
+
+const auto& input_spec = model.info().inputs.front();
+const pcie::QuantParams& quant = *input_spec.quant;   // INT8 ingress
+
+std::vector<std::int8_t> codes(input_spec.size_bytes);
+for (std::size_t i = 0; i < codes.size(); ++i) {
+  const float x = /* value in the model's input domain, e.g. [0, 1] */;
+  const float q = std::nearbyint(x / quant.scale) + quant.zero_point;
+  codes[i] = static_cast<std::int8_t>(std::clamp(q, -128.0f, 127.0f));
+}
+
+model.build();
+pcie::TensorList outputs = model.run(
+    pcie::Tensor::from_vector(std::move(codes), input_spec.shape, input_spec.name),
+    /*timeout_ms=*/30000);
+
+const auto& head = model.info().outputs.front();
+const std::int8_t* q = reinterpret_cast<const std::int8_t*>(
+    static_cast<const std::uint8_t*>(outputs[0].data) + outputs[0].byte_offset);
+const float x0 = (q[0] - head.quant->zero_point) * head.quant->scale;
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pcie.ModelOptions()
+options.mla_only = True
+model = pcie.Model("model_mlatess_int8.tar.gz", options, connection)
+
+input_spec = model.info().inputs[0]
+scale, zero_point = input_spec.quant.scale, input_spec.quant.zero_point
+
+values = np.zeros(input_spec.shape, dtype=np.float32)  # in the model's input domain, e.g. [0, 1]
+codes = np.clip(np.rint(values / scale) + zero_point, -128, 127).astype(np.int8)
+
+model.build()
+outputs = model.run(
+    [pcie.Tensor.from_numpy(codes, copy=True, route_name=input_spec.name)],
+    timeout_ms=30000,
+)
+
+head = model.info().outputs[0]
+x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_point) * head.quant.scale
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+The route is all or nothing. Each submitted tensor must match the dtype, shape
+and byte size of the corresponding `info().inputs` entry, in that order; a
+payload of another dtype is rejected rather than converted on the card.
+`mla_only` cannot be combined with image preprocessing or box decode. The
+constructor rejects archives whose MLA stage is not compiled for direct MLA
+input and output, for example the Model Zoo `yolo_v8s` build, which tessellates
+on the CVU (`mla_only does not support stage '...' (tess)`).
+
+Tutorial [Run the MLA Only with INT8 Tensors](/tutorials/run-mla-only-int8)
+shows the INT8 variant: it quantizes an image on the host and checks the
+dequantized heads against the default route.
+
 ## Close reliably
 
 Call `close()` when the model is no longer needed and before reusing its queue.
@@ -369,6 +463,9 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
   rejected.
 - The PCIe host API supports a focused subset of Neat model preprocessing and
   object-decode options.
+- `mla_only` requires an archive compiled for direct MLA input and output; each
+  input is submitted in the dtype of its `info().inputs` entry and the heads
+  return contiguous in the MLA's dtype.
 - This co-processing API does not expose host-side `Graph`, `Node`, or `Run`
   composition. Use the regular Neat Library on a DevKit for native application
   graphs.

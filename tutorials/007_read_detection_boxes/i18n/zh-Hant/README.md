@@ -182,16 +182,17 @@ SimaBoxDecode(const Model& model,
 `BoxDecodeType` 是一種類型化的 API（`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`），並且在解碼階段應始終明確設定。以下執行階段合約來自 `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp`（`infer_num_classes`、`infer_yolo_decoupled_classes`、`infer_yolo_packed_classes`、`compute_required_output_size`）。
 
 核心張量合約規則：
-- YOLO 系列的解碼類型（`yolo`、`yolov5*`、`yolov7*`、`yolov8*`、`yolov9*`、`yolov10*`）：
+- 除了 `yolov5` 偵測以外的 YOLO 系列解碼類型（`yolo`、`yolov5-seg`、`yolov7*`、`yolov8*`、`yolov9*`、`yolov10*`）：
   - 分離式標頭：類別標頭的深度必須可重複，且為 `> 4`。
   - 封裝式標頭：每個標頭的深度都必須滿足 `depth = 3 * (num_classes + 5)`，並且在所有標頭中保持一致。
+- `yolov5` 偵測：必須正好有三個尚未解碼的 P3/P4/P5 封裝式標頭，幾何 stride 為 8/16/32，深度為 `3 * (num_classes + 5)`。
 - `yolo26`：具有 4 個通道的原始 l/t/r/b 邊界框張量和可重複的類別標頭深度的分離式分組標頭，深度為 `> 4`。
 - `detr`：類別通道是從所有標頭中的最大深度推斷得出，並且必須為 `> 4`。
 - 其他非 YOLO 解碼類型（`effdet`、`rcnn-stage1`、`centernet`）：回退類別推斷使用最大深度，並且需要 `> 4`。
 - 分段解碼標記（`*-seg`）可在 v2 中啟用類似分段的輸出大小調整（為每個檢測添加遮罩有效載荷）。
 
 | API 列舉 | 後端權杖 | 預期合約 |
-|---|---|---| `BoxDecodeType::Yolo` | `yolo` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV5` | `yolov5` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV7` | `yolov7` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV7Seg` | `yolov7-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV8` | `yolov8` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV8Seg` | `yolov8-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV8Pose` | `yolov8-pose` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV9` | `yolov9` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV9Seg` | `yolov9-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV10` | `yolov10` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV10Seg` | `yolov10-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV26` | `yolo26` | YOLO26 分組的原始長寬高/上下左右邊界框預測結果 + 類別分數預測結果 | `BoxDecodeType::Detr` | `detr` | `num_classes = max(depth)` （必須是 `> 4`) |
+|---|---|---| `BoxDecodeType::Yolo` | `yolo` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV5` | `yolov5` | 三個尚未解碼的 P3/P4/P5 封裝式標頭 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV7` | `yolov7` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV7Seg` | `yolov7-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV8` | `yolov8` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV8Seg` | `yolov8-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV8Pose` | `yolov8-pose` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV9` | `yolov9` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV9Seg` | `yolov9-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV10` | `yolov10` | YOLO 解耦或打包的深度卷積 | `BoxDecodeType::YoloV10Seg` | `yolov10-seg` | YOLO 深度卷積 + 分割路徑 | `BoxDecodeType::YoloV26` | `yolo26` | YOLO26 分組的原始長寬高/上下左右邊界框預測結果 + 類別分數預測結果 | `BoxDecodeType::Detr` | `detr` | `num_classes = max(depth)` （必須是 `> 4`) |
 | `BoxDecodeType::EffDet` | `effdet` | 備援最大深度推論`> 4`) |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | 備援最大深度推論`> 4`) |
 | `BoxDecodeType::Centernet` | `centernet` | 備援最大深度推論`> 4`) |

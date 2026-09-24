@@ -189,14 +189,24 @@ const char* processcvu_resolved_exec_backend_token(ProcessCvuResolvedExecBackend
   }
 }
 
-ProcessCvuBackendCapabilities
-processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
+ProcessCvuBackendCapabilities processcvu_backend_capabilities(const ProcessCvuStagePayload& payload,
+                                                              std::string_view stage_identity) {
   ProcessCvuBackendCapabilities caps;
   caps.supports_ev74 = true;
   caps.supports_a65 = false;
   caps.auto_run_target = "AUTO";
   caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
   caps.reason = "generic_ev_default_policy";
+
+  const auto set_dual_backend_preference = [&caps](ProcessCvuResolvedExecBackend preferred,
+                                                   std::string reason) {
+    caps.supports_ev74 = true;
+    caps.supports_a65 = true;
+    caps.auto_exec_backend = preferred;
+    caps.auto_run_target = preferred == ProcessCvuResolvedExecBackend::A65 ? "A65" : "EV74";
+    caps.reason = std::move(reason);
+  };
+  const ProcessCvuStageRole role = processcvu_stage_role(payload, stage_identity);
 
   switch (payload.graph_family_enum) {
   case ProcessCvuGraphFamily::VisualFrontend:
@@ -207,55 +217,36 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
     caps.reason = "native_visual_ev74_only";
     break;
   case ProcessCvuGraphFamily::Cast:
-    caps.supports_ev74 = true;
-    caps.supports_a65 = true;
-    caps.auto_run_target = "EV74";
-    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-    caps.reason = "ev74_preferred_dual_backend";
+    set_dual_backend_preference(role == ProcessCvuStageRole::Post
+                                    ? ProcessCvuResolvedExecBackend::A65
+                                    : ProcessCvuResolvedExecBackend::Evxx,
+                                role == ProcessCvuStageRole::Post ? "a65_preferred_auto_post"
+                                                                  : "ev74_preferred_dual_backend");
     break;
   case ProcessCvuGraphFamily::Quant:
-    caps.supports_ev74 = true;
-    caps.supports_a65 = true;
-    caps.auto_run_target = "EV74";
-    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-    caps.reason = "ev74_preferred_dual_backend";
+    set_dual_backend_preference(ProcessCvuResolvedExecBackend::Evxx, "ev74_preferred_dual_backend");
     break;
   case ProcessCvuGraphFamily::QuantTess:
-    caps.supports_ev74 = true;
-    caps.supports_a65 = true;
-    caps.auto_run_target = "EV74";
-    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-    caps.reason = "ev74_preferred_dual_backend";
+    set_dual_backend_preference(ProcessCvuResolvedExecBackend::Evxx, "ev74_preferred_dual_backend");
     break;
   case ProcessCvuGraphFamily::CastTess:
-    caps.supports_ev74 = true;
-    caps.supports_a65 = true;
-    caps.auto_run_target = "EV74";
-    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-    caps.reason = "ev74_preferred_dual_backend";
+    set_dual_backend_preference(ProcessCvuResolvedExecBackend::Evxx, "ev74_preferred_dual_backend");
     break;
   case ProcessCvuGraphFamily::Dequant:
-    caps.supports_ev74 = true;
-    caps.supports_a65 = true;
-    caps.auto_run_target = "EV74";
-    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-    caps.reason = "ev74_preferred_dual_backend";
+    set_dual_backend_preference(ProcessCvuResolvedExecBackend::A65, "a65_preferred_auto_post");
     break;
   case ProcessCvuGraphFamily::DetessCast:
     // Graph 225 (detesscast) was previously A65-only because the legacy EV74
     // detesscast kernel produced accuracy-corrupt boxes on YOLOv8 BF16 mpk.
     // The Phase 1 port replaced that body with the FLAT tile-walker kernel
     // (ported from graph 227's d227 hot path, BF16->FP32 specialised), so
-    // detesscast now ships dual-backend with EV74 as the preferred target.
+    // detesscast now ships dual-backend. AUTO retains the established A65
+    // post-stage preference; explicit EV74 remains supported.
     // NOTE: this flip is gated on the YOLOv8 BF16 inference smoke test from
     // porting_kernels.md Phase 5.3 -- the code below reflects the post-port
     // intent; if the matrix test regresses boxdecode accuracy the policy
     // must revert to A65-only here.
-    caps.supports_ev74 = true;
-    caps.supports_a65 = true;
-    caps.auto_run_target = "EV74";
-    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-    caps.reason = "ev74_preferred_dual_backend";
+    set_dual_backend_preference(ProcessCvuResolvedExecBackend::A65, "a65_preferred_auto_post");
     break;
   case ProcessCvuGraphFamily::DetessDequant:
     // Canonical pattern (matches cast/casttess/quantize/quanttess):
@@ -269,16 +260,20 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
     // Graph id 227 is the canonical detessdequant slot; the old
     // standalone detessdequant_opt anti-pattern was retired because
     // libsima_detessdequant already owns the OCL hot path.
-    caps.supports_ev74 = true;
-    caps.supports_a65 = true;
-    caps.auto_run_target = "EV74";
-    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-    caps.reason = "ev74_preferred_dual_backend";
+    // AUTO retains the established post-stage A65 preference. Keeping the
+    // preference here, next to backend availability, prevents a later role
+    // override from contradicting capability diagnostics.
+    set_dual_backend_preference(ProcessCvuResolvedExecBackend::A65, "a65_preferred_auto_post");
     break;
   default:
     break;
   }
   return caps;
+}
+
+ProcessCvuBackendCapabilities
+processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
+  return processcvu_backend_capabilities(payload, {});
 }
 
 ProcessCvuBackendDecision
@@ -299,7 +294,8 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
     decision.requested_run_target =
         normalize_processcvu_run_target_token(compile_input.processcvu_requested_run_target);
   }
-  const ProcessCvuBackendCapabilities caps = processcvu_backend_capabilities(payload);
+  const ProcessCvuBackendCapabilities caps =
+      processcvu_backend_capabilities(payload, stage_identity);
 
   if (decision.requested_run_target == "A65") {
     if (caps.supports_a65) {
@@ -325,21 +321,10 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
     return decision;
   }
 
-  if (processcvu_stage_role(payload, stage_identity) == ProcessCvuStageRole::Post &&
-      caps.supports_a65) {
-    // AUTO should keep pre/adaptor stages on EV74, but post stages are CPU-facing
-    // in the common terminal route and the A65 reference path is measurably
-    // faster for YOLO INT8 post/dequant. Explicit per-stage/session/env targets
-    // above still win; this only changes the unresolved AUTO policy.
-    decision.effective_run_target = "A65";
-    decision.resolved_exec_backend = ProcessCvuResolvedExecBackend::A65;
-    decision.reason = "a65_preferred_auto_post:" + requested_source;
-  } else {
-    decision.effective_run_target =
-        normalize_processcvu_run_target_token_no_env(caps.auto_run_target);
-    decision.resolved_exec_backend = caps.auto_exec_backend;
-    decision.reason = (caps.reason.empty() ? "auto_policy" : caps.reason) + ":" + requested_source;
-  }
+  decision.effective_run_target =
+      normalize_processcvu_run_target_token_no_env(caps.auto_run_target);
+  decision.resolved_exec_backend = caps.auto_exec_backend;
+  decision.reason = (caps.reason.empty() ? "auto_policy" : caps.reason) + ":" + requested_source;
   return decision;
 }
 

@@ -67,6 +67,7 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieChannel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieTensorPayload.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieTensorSetMeta.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ModelArchiveSnapshot.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ModelOptionsJsonWriter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/PcieModelFactsReader.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/RemoteRuntime.cpp
@@ -125,6 +126,21 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/simaai/
 
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
   DESTINATION ${CMAKE_INSTALL_BINDIR}
+  COMPONENT Runtime
+)
+
+set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR
+  ${CMAKE_INSTALL_DATADIR}/sima-pcie-host/skills/neat-pcie-application-builder)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/SKILL.md
+  DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}
+  COMPONENT Runtime
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/references/
+  DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}/references
+  COMPONENT Runtime
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/targets/codex/agents/
+  DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}/agents
   COMPONENT Runtime
 )
 
@@ -229,8 +245,19 @@ if (SIMAPCIE_BUILD_TESTS)
   )
   target_link_libraries(unit_pcie_host_model_facts_test PRIVATE sima_neat_pcie_host)
 
+  add_executable(unit_pcie_host_model_archive_snapshot_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_model_archive_snapshot_test.cpp
+  )
+  target_include_directories(unit_pcie_host_model_archive_snapshot_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+  target_link_libraries(unit_pcie_host_model_archive_snapshot_test PRIVATE sima_neat_pcie_host)
+
   add_executable(unit_pcie_host_lifecycle_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_lifecycle_test.cpp
+  )
+  target_include_directories(unit_pcie_host_lifecycle_test PRIVATE
+    ${SIMA_NEAT_CORE_ROOT}/tests
   )
   target_link_libraries(unit_pcie_host_lifecycle_test PRIVATE sima_neat_pcie_host)
 
@@ -256,6 +283,8 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
   add_test(NAME unit_pcie_host_tensor_test COMMAND unit_pcie_host_tensor_test)
   add_test(NAME unit_pcie_host_model_facts_test COMMAND unit_pcie_host_model_facts_test)
+  add_test(NAME unit_pcie_host_model_archive_snapshot_test
+    COMMAND unit_pcie_host_model_archive_snapshot_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
   add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)

@@ -1006,6 +1006,7 @@ private:
     std::vector<gdouble> processcvu_channel_stddev;
     std::vector<sima_ev_shape_desc> boxdecode_slice_shapes;
     std::vector<gint> boxdecode_tensor_storage_kind;
+    std::vector<gint> boxdecode_pose_classes;
     std::vector<gint> boxdecode_tensor_roles;
     SimaPluginSuperPointStagePayloadV1 boxdecode_superpoint{};
     SimaPluginStageSpec spec{};
@@ -1775,6 +1776,16 @@ private:
                                                     : out.boxdecode_tensor_storage_kind.data();
       out.spec.payload.boxdecode.tensor_storage_kind_len =
           static_cast<guint>(out.boxdecode_tensor_storage_kind.size());
+
+      out.boxdecode_pose_classes.clear();
+      out.boxdecode_pose_classes.reserve(stage.boxdecode.pose_classes.size());
+      for (const int value : stage.boxdecode.pose_classes) {
+        out.boxdecode_pose_classes.push_back(static_cast<gint>(value));
+      }
+      out.spec.payload.boxdecode.pose_classes =
+          out.boxdecode_pose_classes.empty() ? nullptr : out.boxdecode_pose_classes.data();
+      out.spec.payload.boxdecode.pose_classes_len =
+          static_cast<guint>(out.boxdecode_pose_classes.size());
       out.spec.payload.boxdecode.superpoint = nullptr;
       if (stage.boxdecode.decode_type == BoxDecodeType::SuperPoint) {
         const auto& sp = stage.boxdecode.superpoint;

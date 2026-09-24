@@ -822,6 +822,17 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert hasattr(pyneat.nodes, "sima_decode")
 
   _assert_not_type_error(lambda: pyneat.nodes.queue())
+  queue_options = pyneat.QueueOptions()
+  assert queue_options.max_buffers is None
+  assert queue_options.overflow_policy == pyneat.OverflowPolicy.Block
+  queue_options.max_buffers = 1
+  queue_options.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+  _assert_not_type_error(lambda: pyneat.nodes.queue(queue_options))
+
+  invalid_queue_options = pyneat.QueueOptions()
+  invalid_queue_options.max_buffers = 0
+  with pytest.raises(ValueError, match="max_buffers must be positive"):
+    pyneat.nodes.queue(invalid_queue_options)
   _assert_not_type_error(lambda: pyneat.nodes.rtsp_input("rtsp://127.0.0.1:8554/src"))
   _assert_not_type_error(
       lambda: pyneat.nodes.rtsp_input(
@@ -1490,6 +1501,8 @@ def test_runtime_overload_methods_present():
   assert hasattr(pyneat.Graph, "build")
   assert hasattr(pyneat.Graph, "run")
   assert hasattr(pyneat.ModelRunner, "push")
+  assert hasattr(pyneat.ModelRunner, "try_push_samples")
+  assert hasattr(pyneat.ModelRunner, "try_push_tensors")
   assert hasattr(pyneat.ModelRunner, "run")
   assert hasattr(pyneat.Model, "build")
   assert hasattr(pyneat.Model, "run")

@@ -4670,10 +4670,9 @@ struct Model::Impl {
     // which filesystem the automatic selection landed on, and it is not otherwise reported.
     const std::string package_root = std::filesystem::path(pack.etc_dir()).parent_path().string();
     pipeline_internal::ux::emit_line(
-        options.verbose,
-        "Model loaded: " + std::filesystem::path(package_root).filename().string() +
-            " (package storage: " + internal::modelpack_storage_label(package_root) +
-            ", runtime package path: " + package_root + ")");
+        options.verbose, "Model loaded: " + pack.logical_package_name() + " (package storage: " +
+                             internal::modelpack_storage_label(package_root) +
+                             ", runtime package path: " + package_root + ")");
     pipeline_internal::ux::ScopedVerboseContext verbose_ctx(options.verbose);
     auto verbose_guard = pipeline_internal::ux::acquire_runtime_verbosity(options.verbose);
     const auto processcvu_pre_stage_selected = [&]() -> std::optional<bool> {
@@ -6917,6 +6916,7 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["score_threshold"] = opt.score_threshold;
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
+  out["yolox_seg_pose"] = {{"pose_classes", opt.yolox_seg_pose.pose_classes}};
   out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
@@ -7534,6 +7534,14 @@ bool Model::Runner::push(const simaai::neat::TensorList& inputs) {
 
 bool Model::Runner::push(const simaai::neat::Sample& inputs) {
   return run_.push(inputs);
+}
+
+bool Model::Runner::try_push(const simaai::neat::TensorList& inputs) {
+  return run_.try_push(inputs);
+}
+
+bool Model::Runner::try_push(const simaai::neat::Sample& inputs) {
+  return run_.try_push(inputs);
 }
 
 simaai::neat::Sample Model::Runner::pull(int timeout_ms) {
@@ -8406,6 +8414,12 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
       }
     }
     apply_model_superpoint_options(&compiled->payload, opt, "Model-managed boxdecode stage");
+    if (!opt.yolox_seg_pose.pose_classes.empty()) {
+      compiled->payload.pose_classes =
+          pipeline_internal::sima::stagesemantics::normalize_boxdecode_pose_classes(
+              compiled->payload.decode_type, opt.yolox_seg_pose.pose_classes,
+              compiled->payload.num_classes, "Model-managed boxdecode stage");
+    }
     return *compiled;
   }
 
@@ -8446,6 +8460,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   contract->topk = opt.top_k;
   contract->detection_threshold = opt.score_threshold;
   contract->nms_iou_threshold = opt.nms_iou_threshold;
+  contract->pose_classes = opt.yolox_seg_pose.pose_classes;
   contract->model_owned_flags = true;
   contract->quant_contract_required = route_flags->quant_contract_required;
   contract->required_preprocess_meta_fields =

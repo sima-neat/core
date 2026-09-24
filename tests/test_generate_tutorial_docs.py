@@ -125,6 +125,38 @@ def test_generated_tutorial_links_respect_docusaurus_base_url(tmp_path: Path) ->
     )
 
 
+def test_flow_animation_labels_cpp_only_source() -> None:
+    module = tutorial_docs.TutorialModule(
+        folder="028_wrap_external_tensor_memory",
+        number=28,
+        slug="wrap_external_tensor_memory",
+        title="028 Wrap External Tensor Memory",
+        category="PCIe Co-Processing",
+        difficulty="Intermediate",
+        estimated_read_time="15 minutes",
+        labels=["PCIe"],
+        concept="Wrap external memory.",
+        process_steps=[],
+        run_section="",
+        in_practice="",
+        cpp_rel="run_external_tensor_memory.cpp",
+        cpp_rels=["run_external_tensor_memory.cpp"],
+        walkthrough_steps=[
+            tutorial_docs.WalkStep(
+                "inspect", "Inspect", "", cpp_snippet="inspect();"
+            ),
+            tutorial_docs.WalkStep(
+                "submit", "Submit", "", cpp_snippet="submit();"
+            ),
+        ],
+    )
+
+    svg = tutorial_docs.flow_animation_svg(module)
+
+    assert "run_external_tensor_memory.cpp" in svg
+    assert "0 standalone programs" not in svg
+
+
 def test_main_writes_completed_locale_manifest(tmp_path: Path, monkeypatch) -> None:
     module = _write_module(tmp_path, "001_run_a_model")
     _write_locale_support(tmp_path, [module])

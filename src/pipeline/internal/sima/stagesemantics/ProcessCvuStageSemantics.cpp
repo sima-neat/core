@@ -7898,40 +7898,6 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
       runtime.output_dtype = head.output_dtype;
       runtime.out_dtype = runtime.output_dtype;
     }
-    // Phase 3a (Option A++): build the kernel input descriptor from a
-    // per-frame shape so its rank matches `slice_shape` rank, and divide the
-    // transport size by batch so storage.nbytes is per-frame. The dispatcher
-    // sizes the input segment as storage.nbytes * runtime.batch_size, so
-    // passing a batched storage size double-counts the batch dim.
-    int per_frame_rank_local = plugin_contracts::derive_per_frame_rank_public(
-        head.slice_shape, /*peer_per_frame_shape=*/{});
-    if (head.per_head_input_shape != head.frame_shape) {
-      per_frame_rank_local = std::max(per_frame_rank_local, 3);
-    }
-    const auto frame_shape_per_frame = plugin_contracts::semantic_shape_without_batch_public(
-        head.per_head_input_shape, per_frame_rank_local);
-    const std::vector<int> input_shape_int(frame_shape_per_frame.begin(),
-                                           frame_shape_per_frame.end());
-    std::vector<int> tile_shape_int =
-        i < runtime.slice_shapes.size() ? runtime.slice_shapes[i] : std::vector<int>{};
-    tile_shape_int =
-        tensor_desc_tile_shape_from_slice_shape_processcvu_local(input_shape_int, tile_shape_int);
-    sima_ev_tensor_desc input_desc{};
-    if (tile_shape_int.empty() || !build_tensor_tiled_desc_processcvu_local(
-                                      input_shape_int, tile_shape_int, resolved_input_dtype, 0U,
-                                      head.align_c16 || head.cblock, &input_desc)) {
-      throw std::runtime_error(
-          "processcvu MPK detessdequant route could not synthesize explicit input tensor");
-    }
-    const int local_head_batch_size = plugin_contracts::inferred_batch_size_from_shape_public(
-        head.per_head_input_shape, per_frame_rank_local);
-    const std::uint64_t per_frame_transport_size =
-        local_head_batch_size > 0
-            ? head.input_transport_size_bytes / static_cast<std::uint64_t>(local_head_batch_size)
-            : head.input_transport_size_bytes;
-    input_desc.storage.nbytes = per_frame_transport_size;
-    runtime.input_tensors.push_back(input_desc);
-
     runtime.published_output_names.push_back(published_output_name);
 
     int src_physical_output_index = static_cast<int>(i);
@@ -7991,17 +7957,10 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
     canonical_output_shapes.push_back(canonical_runtime_output_shape);
     std::vector<int> output_shape_int(canonical_runtime_output_shape.begin(),
                                       canonical_runtime_output_shape.end());
-    const auto output_shape_per_frame = plugin_contracts::semantic_shape_without_batch_public(
-        canonical_runtime_output_shape, per_frame_rank_local);
-    std::vector<int> output_desc_shape_int(output_shape_per_frame.begin(),
-                                           output_shape_per_frame.end());
-    sima_ev_tensor_desc output_desc{};
-    if (!build_tensor_dense_desc_processcvu_local(output_desc_shape_int, output_dtype,
-                                                  &output_desc)) {
-      throw std::runtime_error(
-          "processcvu MPK detessdequant route could not synthesize explicit output tensor");
-    }
-    runtime.output_tensors.push_back(output_desc);
+    const auto tensor_contract = plugin_contracts::build_detessdequant_tensor_descriptor_contract(
+        head, canonical_runtime_output_shape);
+    runtime.input_tensors.push_back(tensor_contract.input);
+    runtime.output_tensors.push_back(tensor_contract.output);
     runtime.output_shapes.push_back(output_shape_int);
     runtime.runtime_output_logical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_output_slot_list.push_back(static_cast<int>(i));

@@ -22,15 +22,22 @@ struct RemoteStatus {
 
 class RemoteStartError final : public std::runtime_error {
 public:
-  RemoteStartError(std::string message, bool cleanup_safe)
-      : std::runtime_error(std::move(message)), cleanup_safe_(cleanup_safe) {}
+  RemoteStartError(std::string message, bool cleanup_safe,
+                   std::optional<int> launched_pid = std::nullopt)
+      : std::runtime_error(std::move(message)), cleanup_safe_(cleanup_safe),
+        launched_pid_(launched_pid) {}
 
   bool cleanup_safe() const noexcept {
     return cleanup_safe_;
   }
 
+  std::optional<int> launched_pid() const noexcept {
+    return launched_pid_;
+  }
+
 private:
   bool cleanup_safe_ = false;
+  std::optional<int> launched_pid_;
 };
 
 class RemoteRuntime {
@@ -42,6 +49,7 @@ public:
             const std::optional<std::string>& remote_model_options_path) const;
   RemoteStatus wait_ready(int queue, int expected_pid, int readiness_timeout_ms) const;
   void stop(int queue, int expected_pid) const;
+  void stop_process(int expected_pid, const std::string& expected_model_path) const;
   RemoteStatus read_status(int queue, std::chrono::milliseconds timeout) const;
 
   std::string endpoint() const;
@@ -52,6 +60,8 @@ public:
   static std::string unique_remote_upload_path(const std::string& local_path);
   static int parse_launched_pid(const std::string& output);
   static bool status_owner_matches(const RemoteStatus& status, int expected_pid);
+  static bool start_failure_cleanup_safe(int exit_code, bool timed_out);
+  static std::string child_cleanup_shell_function();
 
 private:
   ConnectionOptions connection_;

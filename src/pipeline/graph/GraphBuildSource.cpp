@@ -5,6 +5,7 @@
 
 #include "GraphDetail.h"
 #include "internal/GraphBuildInternal.h"
+#include "pipeline/internal/RtpJpegEndMarker.h"
 
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
@@ -856,6 +857,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   if (env_bool("SIMA_GST_ENFORCE_NAMES", false)) {
     enforce_names_contract(pipeline.get(), br);
   }
+  pipeline_internal::attach_rtp_jpeg_end_marker_probes(pipeline.get());
   attach_boundary_probes(pipeline.get(), br.diag);
   attach_stage_timing_probes(pipeline.get(), br.diag, stream_opt.enable_timings);
   attach_element_timing_probes(pipeline.get(), br.diag, stream_opt.enable_timings);
@@ -3515,6 +3517,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   if (env_bool("SIMA_GST_ENFORCE_NAMES", false)) {
     enforce_names_contract(pipeline.get(), br);
   }
+  pipeline_internal::attach_rtp_jpeg_end_marker_probes(pipeline.get());
   attach_boundary_probes(pipeline.get(), br.diag);
   attach_stage_timing_probes(pipeline.get(), br.diag, stream_opt.enable_timings);
   attach_element_timing_probes(pipeline.get(), br.diag, stream_opt.enable_timings);

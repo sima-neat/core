@@ -35,13 +35,17 @@ mdx:
 :::
 
 1. **Створіть теку для ресурсів** для моделі та вхідного зображення:
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
-    ```
+    </ShellCommand>
+
 2. **Завантажте модель:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli завантажити модель
     Якщо `sima-cli` зберігає модель в іншому місці, ніж директорія `assets`, скопіюйте цей файл до `assets/yolo_v8s_mpk.tar.gz`.
 3. **Завантажте зразок зображення** з документації та збережіть його під назвою `assets/tutorial_sample_image.png`.
@@ -355,15 +359,14 @@ if __name__ == "__main__":
 
 **Запустити:**
 
-* **Щодо DevKit**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 app.py
-  ```
-* **На хості Neat SDK**
-  ```bash
-  dk app.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 app.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk app.py
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
@@ -467,21 +470,20 @@ int main() {
 
 **Збірка:**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **Запустити:**
 
-* **Щодо DevKit**
-  ```bash
-  ./build/sima_neat_app
-  ```
-* **На хості Neat SDK**
-  ```bash
-  dk build/sima_neat_app
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_app
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_app
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

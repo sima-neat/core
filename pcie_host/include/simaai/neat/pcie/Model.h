@@ -162,6 +162,9 @@ struct ModelOptions {
   int top_k = 0;
   /// Number of model classes. Zero leaves the model/default value unchanged.
   int num_classes = 0;
+  /// Run only the MLA stage on the card. The application submits tensors matching
+  /// ModelInfo::inputs and receives the MLA's native outputs; see TensorInfo::quant.
+  bool mla_only = false;
 };
 
 enum class TensorDType {
@@ -445,11 +448,17 @@ struct Tensor {
 
 using TensorList = std::vector<Tensor>;
 
+struct QuantParams {
+  float scale = 0.0f;
+  std::int32_t zero_point = 0;
+};
+
 struct TensorInfo {
   std::string name;
   std::string dtype;
   std::vector<std::int64_t> shape;
   std::size_t size_bytes = 0;
+  std::optional<QuantParams> quant;
 };
 
 struct ModelInfo {
@@ -471,6 +480,8 @@ public:
   std::vector<TensorInfo> output_specs() const;
 
   void build(int readiness_timeout_ms = 180000);
+  /// Reports whether the model is in the successfully built lifecycle state.
+  /// This does not probe host transport or remote pipeline health.
   bool running() const;
   void close();
 

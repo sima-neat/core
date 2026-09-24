@@ -23,7 +23,7 @@ slug: /tutorials/before-you-run
 Переконайтеся, що [Neat Library встановлено.](/getting-started/neat-library/install-or-update/),
 потім виконайте ці команди з каталогу, в якому ви хочете розмістити пакет навчальних матеріалів:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core -t extras
 cd sima-neat-*-Linux-extras
 </ShellCommand>
@@ -66,7 +66,7 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 Використовуйте Model Zoo, щоб завантажити модель, назва якої вказана в інструкції. Наприклад:
 
-<ShellCommand prompt="sdk-devkit-or-pcie-host">
+<ShellCommand prompt="sdk|devkit|pcie-host">
 sima-cli modelzoo get resnet_50
 sima-cli modelzoo get yolo_v8s
 </ShellCommand>
@@ -90,7 +90,7 @@ cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
 
 Запустіть навчальні команди з кореневої директорії, куди було вилучено додаткові файли. Переконайтеся, що вона містить допоміжні інструменти для збірки, попередньо скомпільовані програми на C++ та вихідний код для навчальних матеріалів:
 
-<ShellCommand prompt="sdk-or-pcie-host">
+<ShellCommand prompt="sdk|pcie-host">
 test -x build.sh
 ls lib/*/tutorials/
 ls share/*/tutorials/

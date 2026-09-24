@@ -82,7 +82,12 @@ completion.
 `unload()` stops accepting work for one model, waits for accepted work to
 complete up to its drain timeout, and then releases that model's queue without
 closing other models. `close()` cancels remaining work, is idempotent, and
-wakes blocked `retrieve()` calls.
+wakes blocked `retrieve()` calls. If remote cleanup fails, `close()` completes
+local shutdown, immediately retries once while destroying the affected model,
+and reports the first cleanup error. If that retry also fails, the closed
+runtime retains no delayed cleanup handle and later `close()` calls are no-ops;
+restore card connectivity and recover the remote builder and queue manually
+before reuse.
 
 `Runtime` provides the behavior needed by a thin OAAX C ABI adapter. It does
 not itself export the standardized OAAX `runtime_*` C symbols.
@@ -164,11 +169,17 @@ The normal production launch path is unchanged when `card_gst_debug` is empty.
 Returned by `Model::info()`.
 
 ```cpp
+struct QuantParams {                    // per tensor: x = (q - zero_point) * scale
+  float scale;
+  std::int32_t zero_point;
+};
+
 struct TensorInfo {
   std::string name;
   std::string dtype;
   std::vector<std::int64_t> shape;
   std::size_t size_bytes = 0;
+  std::optional<QuantParams> quant;                      // mla_only only.
 };
 
 struct ModelInfo {
@@ -179,6 +190,11 @@ struct ModelInfo {
 
 `ModelInfo` reports the inference tensor contract from the model archive.
 Runtime preprocessing and postprocessing options are not included.
+
+With `ModelOptions::mla_only` the contract is the MLA's own: INT8 inputs and
+outputs with `quant` set (or BF16 without `quant`) so the application can convert with
+`x = (q - zero_point) * scale` and `q = clamp(round(x / scale) + zero_point,
+-128, 127)`.
 
 ### Payloads And Results
 
@@ -228,6 +244,22 @@ Python mirrors core: `Tensor.from_numpy(array)` defaults to zero-copy for
 C-contiguous NumPy arrays, and `Tensor.from_numpy(array, copy=True)` makes an
 owned copy when isolation is preferred.
 
+With `mla_only` the card runs only `neatprocessmla`. The host submits one dense INT8 or BF16 tensor per model input, matching `info().inputs`; any other dtype is rejected rather than quantized on the card. Results are the raw INT8 or BF16 heads in
+the model's logical shapes. Heads that are already contiguous remain views into the received
+buffer; padded or strided heads are compacted on the host into one dense block, so the MLA's
+padded layout is never visible:
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+pcie::Model model("model_mlatess_int8.tar.gz", options);
+const auto& ingress = model.info().inputs.front();   // INT8, quant set
+std::vector<std::int8_t> codes = quantize_somehow(ingress);
+model.build();
+pcie::TensorList heads = model.run(
+    pcie::Tensor::from_vector(std::move(codes), ingress.shape, ingress.name));
+```
+
 ### Model Methods
 
 ```cpp
@@ -265,6 +297,8 @@ followed by `pull()`. `run(...)`, `push(...)`, and `pull()` require a successful
 use, call `push(...)` and `pull()` directly. The host channel receives
 asynchronously from `appsink` and stores results in an internal queue.
 Drain all results submitted with `push(...)` before calling `run(...)`.
+`running()` reports only whether the model is in its successfully built
+lifecycle state. It does not probe host transport or remote pipeline health.
 
 During bring-up, `build()` keeps an internal five-second stabilization delay
 after the card status reaches `ready`, allowing the card-side pipeline to finish
@@ -415,12 +449,11 @@ dist/install_pciehost.sh
 ```
 
 The installer looks for the PCIe host debs in the same directory as the script.
-It also uses `sima-cli playbooks install` to install the
-`neat-pcie-application-builder` skill for Codex and Claude from the
-`sima-neat/core` repository. Skill installation is best-effort: a missing
-`sima-cli`, unavailable GitHub source, or playbook installation failure emits a
-warning without failing the PCIe host package installation. Set
-`SIMAPCIE_SKILL_SOURCE` to override the default GitHub source.
+The runtime deb includes the `neat-pcie-application-builder` skill. The
+installer copies that package-matched version to the Codex and Claude skill
+directories, replacing an older copy on reinstall. Set
+`SIMAPCIE_INSTALL_CODEX_SKILL=OFF` or `SIMAPCIE_INSTALL_CLAUDE_SKILL=OFF` to
+skip a target, or set `SIMAPCIE_SKILL_DIR` to use a local skill directory.
 
 It runs `pcie-setup.sh` at the end. Setup is interactive by default
 and can prompt while provisioning passwordless SSH for `Model::build()`. Pass
@@ -509,6 +542,7 @@ Implemented in the initial PCIe host package:
 - host `appsrc ! queue ! neatpciehost ! appsink` channel
 - tensor push through tensor-set/tensorbuffer caps and `GstSimaTensorSetMeta`
 - image tensor push for RGB/BGR/GRAY8/NV12/I420
+- `mla_only` INT8 and BF16 route with published quantization parameters
 
 Validated on a Modalix PCIe Card:
 
@@ -516,3 +550,4 @@ Validated on a Modalix PCIe Card:
 - packaged C++ and Python tensor, image, and boxdecode routes
 - simultaneous execution across four PCIe queues
 - YOLOv8n and EVO50 model variants
+- `mla_only` against the default route, single- and multi-input archives

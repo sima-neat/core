@@ -434,6 +434,8 @@ export SIMA_GST_DOT_DIR=/tmp     # writes .dot graphs on build/failure; default:
 | `build.pipeline_syntax` | カスタム GStreamer フラグメントに無効な構文が含まれています。 |
 | `build.parse_launch` | `gst_parse_launch` の失敗は、より詳細に分類できませんでした。|
 | `runtime.pull` | より具体的な原因や根本原因を示すコードなしに、プル操作が失敗しました。 |
-| `infra.dispatcher_unavailable` | MLA/EV74/A65ディスパッチャーの取得に失敗しました。ファームウェアがロードされていない、ライセンスが不足している、またはハードウェアに障害が発生している可能性があります。CPUによる代替処理もできません。|
+| `infra.dispatcher_unavailable` | アクセラレーターディスパッチャーを取得できませんでした。ビルド中の EV74 RPMsg チャネルの枯渇も含まれます。CPUによる代替処理もできません。|
 
 これは簡単なトラブルシューティングのガイドです。すべてのコードとC++/Pythonの定数名については、[エラーコードの完全なカタログ](/reference/error-codes)を参照してください。
+
+`EVXX/EV74 RPMsg capacity exhausted` の起動エラーが発生した場合は、使用していないグラフの実行を終了するか、競合するワークロードを停止してから再ビルドしてください。ディスパッチャーを共有するグラフは、最後のクライアントが終了するまでそのチャネルを保持します。取得は既定で最大 15 秒待機し、`SIMA_RPMSG_ACQUIRE_TIMEOUT_MS` で設定できます。廃止された `SIMA_RPCEVXX_IDLE_RELEASE_MS` 設定は警告を出すだけで効果はなく、アイドル状態のグラフは予約を保持したままです。その他の予約失敗では、検出、権限、またはトランスポートの診断情報が併せて報告されます。

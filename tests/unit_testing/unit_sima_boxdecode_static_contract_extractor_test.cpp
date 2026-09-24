@@ -772,6 +772,22 @@ RUN_TEST(
                   extracted_superpoint_hwc->tensors[1].source_size_bytes == 1228800U,
               "cblock=false SuperPoint heads must preserve physical source spans");
 
+      MpkContract routed_superpoint_hwc = superpoint_hwc_parent;
+      routed_superpoint_hwc.edges[routed_superpoint_hwc.edges.size() - 2U].dst_input_index = 1;
+      routed_superpoint_hwc.edges.back().dst_input_index = 0;
+      const auto extracted_routed_superpoint_hwc = build_boxdecode_static_contract_from_mpk(
+          routed_superpoint_hwc, make_flags(true, true), &error);
+      require(extracted_routed_superpoint_hwc.has_value(),
+              "routed shared-parent heads should preserve producer byte spans: " + error);
+      require(extracted_routed_superpoint_hwc->tensors[0].source_size_bytes == 1228800U &&
+                  extracted_routed_superpoint_hwc->tensors[0].source_byte_offset == 384000 &&
+                  extracted_routed_superpoint_hwc->tensors[1].source_size_bytes == 384000U &&
+                  extracted_routed_superpoint_hwc->tensors[1].source_byte_offset == 0,
+              "terminal input routing must not change shared-parent producer byte offsets");
+      require(extracted_routed_superpoint_hwc->physical_inputs[0].byte_offset == 384000 &&
+                  extracted_routed_superpoint_hwc->physical_inputs[1].byte_offset == 0,
+              "routed physical inputs must retain their producer byte offsets");
+
       // Stage-by-stage storage regression: direct route has full-frame detess slice but the source
       // is still packed/cblock. This is the YOLO26-pose INT8 direct failure mode.
       MpkContract direct_int8_mpk;
@@ -1198,4 +1214,106 @@ RUN_TEST(
       require(extracted_direct_dense->tensors[0].input_shape == std::vector<int>({60, 80, 65}) &&
                   extracted_direct_dense->tensors[1].input_shape == std::vector<int>({60, 80, 256}),
               "direct dense MLA outputs should preserve SuperPoint head geometry");
+
+      // A terminal MPK BoxDecode declaration must survive extraction and be normalized before
+      // subset lowering. Otherwise YoloV5 reaches the runtime as Unspecified/Auto with zero
+      // classes and cannot configure its three raw heads.
+      MpkContract yolov5_mpk;
+      MpkPluginIoContract yolov5_mla;
+      yolov5_mla.name = "MLA_0";
+      yolov5_mla.sequence = 1;
+      yolov5_mla.processor = "MLA";
+      yolov5_mla.kernel = "mla";
+      yolov5_mla.canonical_output_dtype = "BF16";
+      const std::array<std::array<int, 2>, 3> yolov5_grids = {
+          std::array<int, 2>{80, 80},
+          std::array<int, 2>{40, 40},
+          std::array<int, 2>{20, 20},
+      };
+      for (std::size_t i = 0; i < yolov5_grids.size(); ++i) {
+        const auto height = yolov5_grids[i][0];
+        const auto width = yolov5_grids[i][1];
+        const auto size = static_cast<std::size_t>(height * width * 255 * 2);
+        const auto name = i == 0U ? "class_logits_p3" : "raw_head_" + std::to_string(i);
+        yolov5_mla.output_tensors.push_back(MpkTensorContract{
+            .tensor_index = static_cast<int>(i),
+            .physical_index = static_cast<int>(i),
+            .name = name,
+            .dtype = "BF16",
+            .mpk_shape = {1, height, width, 255},
+            .shape_semantics = MpkShapeSemantics::Geometry,
+            .size_bytes = size,
+            .logical_shape = {1, height, width, 255},
+        });
+      }
+
+      MpkPluginIoContract yolov5_boxdecode;
+      yolov5_boxdecode.name = "boxdecode_yolov5";
+      yolov5_boxdecode.sequence = 2;
+      yolov5_boxdecode.kernel = "boxdecode";
+      yolov5_boxdecode.decode_type = "yolov5";
+      yolov5_boxdecode.input_tensors = yolov5_mla.output_tensors;
+      yolov5_mpk.plugins.push_back(std::move(yolov5_mla));
+      yolov5_mpk.plugins.push_back(std::move(yolov5_boxdecode));
+      for (std::size_t i = 0; i < yolov5_grids.size(); ++i) {
+        yolov5_mpk.edges.push_back(MpkContractEdge{
+            .src_plugin_index = 0U,
+            .src_output_index = static_cast<int>(i),
+            .dst_plugin_index = 1U,
+            .dst_input_index = static_cast<int>(i),
+            .src_plugin = "MLA_0",
+            .dst_plugin = "boxdecode_yolov5",
+            .tensor_name = i == 0U ? "class_logits_p3" : "raw_head_" + std::to_string(i),
+        });
+      }
+
+      error.clear();
+      const auto yolov5_subset = extract_boxdecode_contract_subset_from_mpk(
+          yolov5_mpk, make_flags(false, false), &yolov5_mpk.plugins.back(), &error);
+      require(yolov5_subset.has_value(),
+              "model-managed YOLOv5 subset should normalize terminal MPK metadata: " + error);
+      require(yolov5_subset->decode_type == simaai::neat::BoxDecodeType::YoloV5 &&
+                  yolov5_subset->decode_type_option ==
+                      simaai::neat::BoxDecodeTypeOption::PackedPerHead &&
+                  yolov5_subset->score_activation == BoxDecodeScoreActivation::Sigmoid &&
+                  yolov5_subset->num_classes == 80,
+              "model-managed YOLOv5 subset should preserve type and infer raw-head semantics");
+      const auto yolov5_compiled =
+          stagesemantics::build_boxdecode_compiled_contract_from_subset(*yolov5_subset);
+      require(yolov5_compiled.payload.decode_type == simaai::neat::BoxDecodeType::YoloV5 &&
+                  yolov5_compiled.payload.decode_type_option ==
+                      simaai::neat::BoxDecodeTypeOption::PackedPerHead &&
+                  yolov5_compiled.payload.score_activation == BoxDecodeScoreActivation::Sigmoid &&
+                  yolov5_compiled.payload.num_classes == 80,
+              "compiled model-managed YOLOv5 payload should retain normalized semantics");
+
+      MpkContract routed_yolov5_mpk = yolov5_mpk;
+      std::reverse(routed_yolov5_mpk.plugins[0].output_tensors.begin(),
+                   routed_yolov5_mpk.plugins[0].output_tensors.end());
+      routed_yolov5_mpk.edges.clear();
+      for (std::size_t i = 0; i < yolov5_grids.size(); ++i) {
+        auto& output = routed_yolov5_mpk.plugins[0].output_tensors[i];
+        output.tensor_index = static_cast<int>(i);
+        output.physical_index = static_cast<int>(i);
+        routed_yolov5_mpk.edges.push_back(MpkContractEdge{
+            .src_plugin_index = 0U,
+            .src_output_index = static_cast<int>(i),
+            .dst_plugin_index = 1U,
+            .dst_input_index = static_cast<int>(yolov5_grids.size() - 1U - i),
+            .src_plugin = "MLA_0",
+            .dst_plugin = "boxdecode_yolov5",
+            .tensor_name = output.name,
+        });
+      }
+
+      error.clear();
+      const auto routed_yolov5_subset = extract_boxdecode_contract_subset_from_mpk(
+          routed_yolov5_mpk, make_flags(false, false), &routed_yolov5_mpk.plugins.back(), &error);
+      require(routed_yolov5_subset.has_value(),
+              "model-managed YOLOv5 should honor terminal input routing: " + error);
+      require(routed_yolov5_subset->logical_inputs.size() == 3U &&
+                  routed_yolov5_subset->logical_inputs[0].logical_name == "class_logits_p3" &&
+                  routed_yolov5_subset->logical_inputs[1].logical_name == "raw_head_1" &&
+                  routed_yolov5_subset->logical_inputs[2].logical_name == "raw_head_2",
+              "model-managed YOLOv5 inputs should follow BoxDecode dst_input_index order");
     }));

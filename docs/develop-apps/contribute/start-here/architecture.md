@@ -13,6 +13,17 @@ without breaking its module and runtime contracts.
 
 ---
 
+## EV74 dispatcher ownership
+
+Graph and Model builds reserve EV74 RPMsg channels during dispatcher initialization,
+before startup returns, even with payload preflight disabled. Each worker owns a
+distinct endpoint. Graphs in the same process share the dispatcher; closing the last
+client releases its channels. Idle periods do not release them.
+
+Capacity exhaustion fails the build with `infra.dispatcher_unavailable`. A faulted
+dispatcher cannot accept new graphs; close all its clients before rebuilding.
+The implementation and channel locks belong to Neat Internals, not Core.
+
 ## Framework vs environment
 
 The word "Neat" is used for two related but separate concerns:
@@ -128,7 +139,22 @@ between implementation options.
 - **Detess logical rank and runtime geometry are separate.** Core preserves the MPK-authored
   `frame_shape` as the logical output contract and derives explicit MLA geometry when needed. A
   rank-2 shape is accepted as NC or HW only when declared byte spans identify one unique
-  interpretation; ambiguous or inconsistent contracts fail during model loading.
+  interpretation; ambiguous or inconsistent contracts fail during model loading. Fused
+  DetessDequant additionally projects both kernel descriptors through one per-frame descriptor
+  contract: tile rank determines kernel rank, leading batch dimensions remain separate, and
+  semantic axes, byte spans, byte strides, and explicit tiled-storage encoding remain
+  authoritative. Route compilation must not reinterpret those descriptors after projection. The
+  prepared-runtime bridge carries the explicit encoding through an additive, version-negotiated
+  ProcessCVU V2 request whenever it must synthesize those descriptors across the DSO boundary.
+  Its fixed-width prefix and ABI probe are validated before either DSO reads the rich C++ request;
+  the legacy request and builder remain unchanged for binary compatibility rather than acquiring
+  another ambiguous tail field. The explicit V2 CBlock16 encoding is currently valid only for
+  fused DetessDequant; V2 requests using it for other ProcessCVU families fail instead of being
+  silently treated as padded HWC until those kernels implement CBlock addressing.
+- **ProcessCVU backend policy has one authority.** A stage's capability result owns backend
+  availability and the AUTO preference used by resolution and diagnostics. Explicit stage or
+  session targets either run on the requested supported backend or fail; later role-based
+  overrides must not silently contradict the advertised AUTO decision.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
   Prefer additive changes and deprecation paths over breaking signatures.
 - **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;
@@ -231,6 +257,11 @@ Key types:
 
 ### `nodes/` -- typed pipeline building blocks
 **Purpose:** Provide ready-to-use Node implementations that emit deterministic GStreamer fragments.
+
+`VideoRate()` always emits `videorate drop-only=true`, including when inserted
+by a source group. This avoids duplicated output headers sharing pooled decoder
+memory and preserves source timestamps. The C++ `VideoRate()` and Python
+`video_rate()` factories take no arguments and do not duplicate frames.
 
 Examples:
 - `nodes/io/HttpSource`, `nodes/io/RTSPInput`, `nodes/io/StillImageInput`
@@ -371,14 +402,21 @@ otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
 `simaaiboxdecode` elements by default.
 
-##### YOLO26 BoxDecode class-count contract
+##### YOLOv5 and YOLO26 BoxDecode class-count contracts
+
+YOLOv5 detection is a fixed standard-anchor profile. Core requires exactly three raw packed
+P3/P4/P5 tensors in stride-8/16/32 order, each with logical depth
+`3 * (num_classes + 5)`. It normalizes the score domain to sigmoid and rejects contradictory
+class counts before lowering. The runtime derives the rectangular x/y strides from model and
+head geometry and applies the standard YOLOv5 anchor table. Custom AutoAnchor tables are outside
+this contract.
 
 For model-managed YOLO26 detection, pose, and segmentation routes, the MPK class-head depth is the
 authoritative class count. `Model::Options::num_classes = 0` selects that inferred value. A positive
 value must match it; a contradiction fails during contract construction and reports the configured
 value, the MPK-derived value, and the decode type. This prevents an invalid class count from being
-used to interpret the grouped raw-head layout. SSD and pre-YOLO26 non-pose YOLO families retain
-their existing explicit-override behavior, while pose and SuperPoint decoders retain their
+used to interpret the grouped raw-head layout. SSD and other pre-YOLO26 non-pose YOLO families
+retain their existing explicit-override behavior, while pose and SuperPoint decoders retain their
 family-specific rules.
 
 ##### SuperPoint BoxDecode contract
@@ -399,6 +437,26 @@ families, with these additional invariants:
 - Production output uses the `FEATURE_POINTS_V1` wire format and feature semantic metadata.
   `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
   consumers must not infer either format from buffer size.
+
+##### YOLOX segmentation + pose BoxDecode contract
+
+`yolox-seg-pose` uses the same MPK-to-static-manifest path as other BoxDecode families.
+
+- Inputs are 13 tensors: three boxes, three class heads, three mask-coefficient heads, three keypoint heads, then one mask prototype. Each group uses stride-8/16/32 order.
+- `Auto` selects `GroupedByRoleLogit`. Only `GroupedByRole` and `GroupedByRoleLogit` are accepted; scores use sigmoid.
+- The class head contains one objectness channel followed by class channels. Core derives the class count as depth minus one and rejects a conflicting explicit count.
+- Model-managed and standalone routes resolve the same layout, activation and class count.
+- Output contains boxes, masks and keypoints, each with `top_k` slots. `decode_segmentation_pose(...)` returns all three; `decode_bbox(...)` and `BoxDecodeResults(...)` read the leading boxes.
+
+The output has a 4-byte count header. Each slot uses 24 bytes for a box, `160*160` bytes for a mask and 204 bytes for 17 keypoints. The helper derives capacity from:
+
+```text
+capacity = (buffer_bytes - 4) / (24 + 160*160 + 204)
+```
+
+It rejects incompatible format tags and partial records, accepts untagged buffers only as rank-1 `UInt8`, and clamps the detection count to capacity. All three regions must use that same capacity. The legacy a65 `boxrender` assumes 20 box slots and cannot read other capacities correctly.
+
+`Model::Options::yolox_seg_pose.pose_classes` reaches the backend through the typed payload or JSON `pose_classes` field. Core validates class IDs and decoder support. The backend zeros excluded classes' keypoints, including visibility; Core copies the results unchanged. With no list configured, every class gets keypoints.
 
 ---
 
@@ -517,6 +575,10 @@ Internally:
 
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
+
+For RTP JPEG, a compatibility probe after `rtpjpegdepay` appends a missing JPEG
+end marker before parsing. Correctly terminated images pass unchanged; this
+does not repair packet loss or other malformed JPEG data.
 
 ### Decoder admission lifecycle
 
@@ -975,6 +1037,26 @@ Successful work returns a DATA response. A decoder drop, flush, restart, or
 downstream failure returns a correlated `NEAT_PCIE_FRAME_RETURN_ERROR`, which
 releases the same host credit and terminates the affected host pipeline with an
 actionable error rather than leaving it blocked.
+
+`ModelOptions::mla_only` moves the execution boundary. The card then runs the
+MLA stage alone, with no quantize before it and no dequantize after it, and the
+application owns both conversions. `Model::info()` publishes what that needs:
+for an INT8 archive every `TensorInfo` carries `quant` with one scale and one
+zero point; a BF16 archive casts at both boundaries and publishes none. The route accepts nothing but its INT8 or BF16 ingress, so an FP32
+tensor is rejected instead of being converted silently.
+
+The option reaches the card as `execution.mla_only` in the model options JSON.
+It requires `InputKind::Tensor` and rejects preprocess and box-decode options,
+which configure stages this route does not run.
+
+The MLA writes its heads tessellated and, depending on the model, padded. The
+host plugin copies the frame out of the driver buffer. Heads that are already
+contiguous in that frame are published as views into the received buffer;
+padded or strided heads are compacted into one dense allocation before
+publication. Either way a public tensor is dense INT8 or BF16 in the model's
+logical shape. Compaction sits on top of the existing `si_mla_read()` copy
+contract: the route costs at most one host copy more than the default one and
+needs no new `libsimaaipcie.so` symbols.
 
 The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
 native API. OAAX ownership rules, status codes, and last-error storage belong

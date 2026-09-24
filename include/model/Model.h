@@ -22,6 +22,7 @@
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/SuperPointTypes.h"
+#include "pipeline/YoloXSegPoseTypes.h"
 #include "pipeline/Run.h"
 #include "pipeline/TensorSpec.h"
 
@@ -270,6 +271,7 @@ public:
     /// class-head depth cannot be inferred reliably (for example single-class YOLO split heads).
     /// `0` keeps legacy inference / MPK-provided metadata.
     int num_classes = 0;
+    YoloXSegPoseOptions yolox_seg_pose; ///< YOLOX segmentation/pose-specific settings.
     /// Original-image width hint for BoxDecode coordinate inversion.
     /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
     /// transition.
@@ -524,6 +526,11 @@ public:
     bool push(const simaai::neat::TensorList& inputs);
     /// Push a list of `Sample` inputs (full Samples carry per-buffer metadata).
     bool push(const simaai::neat::Sample& inputs);
+    /// Submit without waiting for input-queue space; full queues follow
+    /// RunOptions::overflow_policy.
+    bool try_push(const simaai::neat::TensorList& inputs);
+    /// Sample-preserving nonblocking submission; returns false when input admission rejects it.
+    bool try_push(const simaai::neat::Sample& inputs);
     /**
      * @brief Pull the next produced output Sample list.
      * @param timeout_ms Maximum time to wait, in milliseconds; `-1` means wait forever; `0` is

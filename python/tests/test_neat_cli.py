@@ -41,6 +41,7 @@ def base_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
         "HOME": str(home),
         "ELXR_SDK_RELEASE_FILE": str(tmp_path / "missing-sdk-release"),
         "NEAT_BUILDINFO_FILE": str(tmp_path / "missing-buildinfo"),
+        "NEAT_PACKAGE_BUILDINFO_FILE": str(tmp_path / "missing-package-buildinfo"),
         "NEAT_ARTIFACTS_BASE_URL": "https://core.test",
         "NEAT_INSIGHT_BASE_URL": "https://insight.test",
         "NEAT_PORT_MAP_FILE": str(tmp_path / "missing-port-map.json"),
@@ -964,7 +965,25 @@ def test_update_skips_current_core_and_insight_but_updates_playbooks(tmp_path: P
 
 def test_matching_insight_sha_prefix_is_current_across_status_json_and_update(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    # Installed-extras tests run beside real package provenance. Prove the
+    # synthetic CLI environment does not inherit that unrelated Core state.
+    ambient_package_buildinfo = tmp_path / "ambient-package-buildinfo.json"
+    ambient_package_buildinfo.write_text(
+        json.dumps(
+            {
+                "vulcan": {
+                    "environment": "prod",
+                    "ref": "main",
+                    "ref_key": "main",
+                    "spec": "deadbeef1234",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEAT_PACKAGE_BUILDINFO_FILE", str(ambient_package_buildinfo))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     make_curl(

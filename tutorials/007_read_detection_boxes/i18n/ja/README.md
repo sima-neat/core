@@ -172,9 +172,10 @@ SimaBoxDecode(const Model& model,
 `BoxDecodeType` は型付き API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`) であり、デコードステージでは常に明示的に設定する必要があります。 以下のランタイムコントラクトは、`internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp` (`infer_num_classes`、`infer_yolo_decoupled_classes`、`infer_yolo_packed_classes`、`compute_required_output_size`) から派生します。
 
 主要なテンソルコントラクトルール：
-- YOLO ファミリーのデコードタイプ (`yolo`、`yolov5*`、`yolov7*`、`yolov8*`、`yolov9*`、`yolov10*`):
+- `yolov5` 検出以外の YOLO ファミリーのデコードタイプ (`yolo`、`yolov5-seg`、`yolov7*`、`yolov8*`、`yolov9*`、`yolov10*`):
   - 分離されたヘッド：クラスヘッドの深さは繰り返し可能で、`> 4` である必要があります。
   - パックされたヘッド：各ヘッドの深さは、`depth = 3 * (num_classes + 5)` を満たし、ヘッド間で一貫している必要があります。
+- `yolov5` 検出：ストライド 8/16/32 の形状と `3 * (num_classes + 5)` の深さを持つ、未デコードの P3/P4/P5 パック済みヘッドが正確に 3 つ必要です。
 - `yolo26`：4チャンネルの生の l/t/r/b バウンディングボックステンソルと、繰り返し可能なクラスヘッドの深さ `> 4` を持つ、分離されたグループ化されたヘッド。
 - `detr`：クラスチャネルは、ヘッド全体の最大深度から推測され、`> 4` である必要があります。
 - その他の非 YOLO デコードタイプ (`effdet`、`rcnn-stage1`、`centernet`): フォールバッククラス推論では、最大深度を使用し、`> 4` が必要です。
@@ -183,7 +184,7 @@ SimaBoxDecode(const Model& model,
 | API 列挙型 | バックエンド・トークン | 期待される契約 |
 |---|---|---|
 | `BoxDecodeType::Yolo` | `yolo` | YOLO 分離またはパックされた深度契約 |
-| `BoxDecodeType::YoloV5` | `yolov5` | YOLO 分離またはパックされた深度契約 |
+| `BoxDecodeType::YoloV5` | `yolov5` | 未デコードの P3/P4/P5 パック済みヘッド 3 つ |
 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLO 深度契約 + セグメンテーションパス |
 | `BoxDecodeType::YoloV7` | `yolov7` | YOLO 分離またはパックされた深度契約 |
 | `BoxDecodeType::YoloV7Seg` | `yolov7-seg` | YOLO 深度契約 + セグメンテーションパス |

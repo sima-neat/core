@@ -99,7 +99,9 @@ jobs:
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
+            tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_vulcan_ci_lightglue_path.py \
             tests/tools/test_vulcan_ci_notification.py
 
       - name: Resolve cache namespace and access
@@ -524,11 +526,18 @@ jobs:
 
           python_venv="${RUNNER_TEMP}/pyneatpcie-package-smoke"
           consumer_build="${RUNNER_TEMP}/sima-pcie-host-consumer"
+          skill_home="${RUNNER_TEMP}/sima-pcie-host-skill-smoke"
 
-          pcie_host/dist/install_pciehost.sh \
+          CODEX_HOME="${skill_home}/codex" \
+          CLAUDE_HOME="${skill_home}/claude" \
+            pcie_host/dist/install_pciehost.sh \
             --skip-setup \
             --python \
             --python-venv "${python_venv}"
+
+          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/SKILL.md"
+          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/agents/openai.yaml"
+          test -f "${skill_home}/claude/skills/neat-pcie-application-builder/SKILL.md"
 
           cmake \
             -S pcie_host/tests/package_smoke \
@@ -1097,7 +1106,7 @@ jobs:
           export LLIMA_MODELS_PATH="${LLIMA_MODELS_PATH:-/media/nvme/llima/models}"
           export SIMA_TEST_LLIMA_TEXT_MODEL="${SIMA_TEST_LLIMA_TEXT_MODEL:-Qwen2.5-0.5B-Instruct-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_VLM_MODEL="${SIMA_TEST_LLIMA_VLM_MODEL:-LFM2.5-VL-450M-Autoround-a16w4}"
-          export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8}"
+          export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8-layered-encoder}"
           export SIMA_TEST_LLIMA_REASONING_QWEN_MODEL="${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL:-Qwen3-0.6B-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL="${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL:-Gemma-4-E2B-it-TextOnly-GPTQ-a16w4}"
 
@@ -1122,6 +1131,31 @@ jobs:
             printf 'SIMA_TEST_LLIMA_REASONING_QWEN_MODEL=%s\n' "${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL}"
             printf 'SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=%s\n' "${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
           } >> "${GITHUB_ENV}"
+
+      - name: Prepare LightGlue NEAT-68 regression model
+        run: |
+          set -euo pipefail
+          # Keep the final extracted MLA executable path below the runtime's 256-byte capacity.
+          TMP_ROOT="${RUNNER_TEMP:-/tmp}"
+          MODEL_ROOT="${TMP_ROOT}/lg-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
+          # The restricted regression fixture is intentionally staging-only.
+          MODEL_VULCAN_ENV=stg
+          mkdir -p "${MODEL_ROOT}"
+          sima-cli neat install \
+            --env "${MODEL_VULCAN_ENV}" \
+            --install-dir "${MODEL_ROOT}" \
+            "${MODEL_SPEC}"
+
+          mapfile -t archives < <(find "${MODEL_ROOT}" -type f -name '*_mpk.tar.gz' | sort)
+          if [[ "${#archives[@]}" -ne 1 ]]; then
+            echo "Expected exactly one LightGlue MPK from ${MODEL_SPEC}, found ${#archives[@]}." >&2
+            find "${MODEL_ROOT}" -maxdepth 4 -type f -print >&2 || true
+            exit 1
+          fi
+          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${archives[0]}" | sha256sum --check --strict
+          echo "SIMA_TEST_LIGHTGLUE_MODEL=${archives[0]}" >> "${GITHUB_ENV}"
+          echo "Installed immutable LightGlue regression model: ${archives[0]}"
 
       - name: Build docs C++ examples from DevKit-installed package
         run: |
@@ -1302,7 +1336,7 @@ jobs:
 
       - name: Upload Modalix Performance Results
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: modalix-performance-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/perf-results/*.json
@@ -1442,6 +1476,8 @@ jobs:
           fi
 
           echo "Cleaning per-test mkdtemp roots and downloaded fixtures under ${TMP_ROOT}"
+          find "${TMP_ROOT}" -maxdepth 1 -type d -name 'lg-*' \
+            -exec rm -rf {} + 2>/dev/null || true
           rm -rf \
             "${TMP_ROOT}/sima_neat_mpk_tests" \
             "${TMP_ROOT}/sima_neat_mpk_fixtures" \
@@ -1599,7 +1635,7 @@ jobs:
 
       - name: Upload PCIe hardware test artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pciehost-hardware-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/pciehost-artifacts

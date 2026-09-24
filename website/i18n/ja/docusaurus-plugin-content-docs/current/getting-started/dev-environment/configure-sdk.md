@@ -14,7 +14,7 @@ SDK のインストールコマンドは、すでに SDK イメージをダウ�
 
 ホストからアクセスできる状態の DevKit を使用し、DevKit のペアリングを追加または更新する場合は、このコマンドを使用してください。
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -30,7 +30,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 SDKの設定を更新したいが、まだ DevKit にアクセスできない場合は、このコマンドを使用してください。
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 

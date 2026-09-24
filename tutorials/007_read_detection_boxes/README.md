@@ -218,9 +218,12 @@ Practical consequences:
 `BoxDecodeType` is a typed API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`) and should always be set explicitly for decode stages. The runtime contract below comes from `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp` (`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`).
 
 Core tensor contract rules:
-- YOLO-family decode types (`yolo`, `yolov5*`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):
+- YOLO-family decode types other than `yolov5` detection (`yolo`, `yolov5-seg`,
+  `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):
   - Decoupled heads: class-head depths must be repeatable and `> 4`.
   - Packed heads: each head depth must satisfy `depth = 3 * (num_classes + 5)` and be consistent across heads.
+- `yolov5` detection: exactly three undecoded packed P3/P4/P5 heads with
+  stride-8/16/32 geometry and depth `3 * (num_classes + 5)`.
 - `yolo26`: decoupled grouped heads with 4-channel raw l/t/r/b bbox tensors and repeatable class-head depths `> 4`.
 - `detr`: class channels are inferred from the maximum depth across heads, and must be `> 4`.
 - Other non-YOLO decode types (`effdet`, `rcnn-stage1`, `centernet`): fallback class inference uses max depth and requires `> 4`.
@@ -229,7 +232,7 @@ Core tensor contract rules:
 | API enum | Backend token | Expected contract |
 | --- | --- | --- |
 | `BoxDecodeType::Yolo` | `yolo` | YOLO decoupled or packed depth contract |
-| `BoxDecodeType::YoloV5` | `yolov5` | YOLO decoupled or packed depth contract |
+| `BoxDecodeType::YoloV5` | `yolov5` | Three undecoded packed P3/P4/P5 heads |
 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLO depth contract + segmentation path |
 | `BoxDecodeType::YoloV7` | `yolov7` | YOLO decoupled or packed depth contract |
 | `BoxDecodeType::YoloV7Seg` | `yolov7-seg` | YOLO depth contract + segmentation path |

@@ -1,4 +1,5 @@
 #include "gst/NeatCameraMemoryBridge.h"
+#include "gst/GstInit.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 
 #include <gst/app/gstappsrc.h>
@@ -182,8 +183,10 @@ void prove_fallback_pool_does_not_block_leaky_queue() {
 
   GError* error = nullptr;
   GstElement* pipeline = gst_parse_launch(description.c_str(), &error);
-  if (!pipeline) {
+  if (!pipeline || error) {
     const std::string message = error ? error->message : "unknown parse error";
+    if (pipeline)
+      gst_object_unref(pipeline);
     g_clear_error(&error);
     throw std::runtime_error("failed to build fallback queue pipeline: " + message);
   }
@@ -370,13 +373,13 @@ void prove_live_camera_negotiation(bool prove_backpressure) {
 
 } // namespace
 
-int main(int argc, char** argv) {
-  gst_init(&argc, &argv);
-  if (!gst_meta_get_info("GstSimaMeta")) {
-    static const gchar* tags[] = {GST_META_TAG_MEMORY_STR, nullptr};
-    gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr);
-  }
+int main() {
   try {
+    simaai::neat::gst_init_once();
+    if (!gst_meta_get_info("GstSimaMeta")) {
+      static const gchar* tags[] = {GST_META_TAG_MEMORY_STR, nullptr};
+      gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr);
+    }
     const bool provider_available = prove_dmabuf_pool_proposal();
     if (provider_available)
       prove_fallback_pool_does_not_block_leaky_queue();

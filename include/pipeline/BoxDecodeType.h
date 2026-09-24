@@ -26,6 +26,9 @@ namespace simaai::neat {
  * Most YOLO-family variants share the same class-inference contract in `genericboxdecode_v2`:
  * - decoupled heads: repeated class-depth tensors, class depth > 4
  * - packed heads: depth = 3 * (num_classes + 5), consistent across heads
+ * `YoloV5` detection is the standard three-head packed profile: P3/P4/P5 in
+ * stride-8/16/32 order, raw box/objectness/class logits, and the standard
+ * YOLOv5 anchors. AutoAnchor/custom anchor tables are not represented by this type.
  * `YoloV26` uses decoupled 4-channel raw l/t/r/b bbox heads paired with class heads.
  * `YoloV26Seg` uses the same raw l/t/r/b bbox heads, class-score heads,
  * 32-channel mask-coefficient heads, and a trailing mask prototype.
@@ -55,7 +58,7 @@ enum class BoxDecodeType : std::int32_t {
   Unspecified = 0, ///< Sentinel: no decode family selected (fails fast at runtime).
   // YOLO-family (generic token).
   Yolo = 1,         ///< Generic YOLO family token.
-  YoloV5 = 2,       ///< YOLOv5 detection.
+  YoloV5 = 2,       ///< Standard-anchor YOLOv5 detection with three raw packed heads.
   YoloV5Seg = 3,    ///< YOLOv5 segmentation.
   YoloV7 = 4,       ///< YOLOv7 detection.
   YoloV7Seg = 5,    ///< YOLOv7 segmentation.
@@ -76,7 +79,8 @@ enum class BoxDecodeType : std::int32_t {
   YoloV6 = 20,      ///< YOLOv6 raw l/t/r/b distance heads.
   YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
   Ssd = 22, ///< SSD family token, resolved internally to an exact supported prepared signature.
-  SuperPoint = 23, ///< SuperPoint detector-logit and descriptor-grid postprocessing.
+  SuperPoint = 23,   ///< SuperPoint detector-logit and descriptor-grid postprocessing.
+  YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
 };
 
 /**
@@ -172,6 +176,8 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "ssd";
   case BoxDecodeType::SuperPoint:
     return "superpoint";
+  case BoxDecodeType::YoloXSegPose:
+    return "yolox-seg-pose";
   case BoxDecodeType::Detr:
     return "detr";
   case BoxDecodeType::EffDet:
@@ -234,6 +240,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloV26Seg:
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
+  case BoxDecodeType::YoloXSegPose:
     return true;
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
@@ -261,6 +268,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV9Seg:
   case BoxDecodeType::YoloV10Seg:
   case BoxDecodeType::YoloV26Seg:
+  case BoxDecodeType::YoloXSegPose:
     return true;
   case BoxDecodeType::Yolo:
   case BoxDecodeType::YoloV5:
@@ -290,9 +298,12 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   switch (type) {
   case BoxDecodeType::YoloV8Pose:
   case BoxDecodeType::YoloV26Pose:
+  // First type for which box_decode_type_is_segmentation() is ALSO true. The two
+  // predicates were mutually exclusive over the previous value set; nothing in
+  // the enum ever required that, but callers may have assumed it.
+  case BoxDecodeType::YoloXSegPose:
     return true;
   case BoxDecodeType::Yolo:
-  case BoxDecodeType::YoloV5:
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7:
   case BoxDecodeType::YoloV7Seg:
@@ -322,7 +333,6 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
 constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   switch (type) {
   case BoxDecodeType::Yolo:
-  case BoxDecodeType::YoloV5:
   case BoxDecodeType::YoloV7:
   case BoxDecodeType::YoloV8:
   case BoxDecodeType::YoloV8Pose:
@@ -330,6 +340,10 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   case BoxDecodeType::YoloV10:
     return "YOLO tensor contract: decoupled class heads (>4 channels, repeated across heads) or "
            "packed heads (depth=3*(num_classes+5), consistent across heads).";
+  case BoxDecodeType::YoloV5:
+    return "YOLOv5 contract: exactly three raw packed P3/P4/P5 heads in stride-8/16/32 "
+           "order, each depth=3*(num_classes+5), using standard YOLOv5 anchors and sigmoid "
+           "box/objectness/class logits.";
   case BoxDecodeType::YoloV26:
     return "YOLO26 tensor contract: grouped raw l/t/r/b bbox heads (4 channels) paired "
            "with repeated class-score heads (>4 channels).";
@@ -357,6 +371,12 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "SuperPoint contract: one 65-channel coarse detector-logit tensor and one "
            "coarse descriptor-grid tensor at compatible spatial geometry; numerical semantics "
            "are selected by an explicit or MPK-authored SuperPoint profile.";
+  case BoxDecodeType::YoloXSegPose:
+    return "YOLOX seg+pose contract: 13 grouped-by-role tensors - three heads of "
+           "[bbox(4), class(1 objectness + N classes), mask coefficients(32), keypoints(3*K)] "
+           "plus one shared mask-prototype tensor; class scores are logits and objectness is "
+           "packed into channel 0 of the class tensor, so num_classes is the class-block width "
+           "and excludes it.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:
