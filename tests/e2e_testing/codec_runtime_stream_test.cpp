@@ -684,8 +684,6 @@ void run_decoded_source_sync(const TestCase& test_case, const std::string& url, 
   std::cout << "[OK] " << test_case.name << "-sync frames=" << callbacks << "\n";
 }
 
-
-
 std::vector<std::string> run_one_iteration(const TestCase& test_case, const std::string& url,
                                            int source_fps, const Args& args) {
   return run_source(test_case, url, source_fps, args.frames, args.timeout_ms);
