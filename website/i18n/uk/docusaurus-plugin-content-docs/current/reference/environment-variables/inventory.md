@@ -170,7 +170,7 @@ sidebar_position: 2
 
 ## Тільки для тестування / навчання / використання як інструмент (не використовується в `src/`).
 
-Кількість: 60
+Кількість: 59
 
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
@@ -182,7 +182,6 @@ sidebar_position: 2
 - `SIMA_DECODER_COMPARE_MAX_ABS`
 - `SIMA_DECODER_COMPARE_PSNR_MIN`
 - `SIMA_DECODER_MIN_FRAMES`
-- `SIMA_DEC_IPC_PROTOCOL`
 - `SIMA_DISPATCHER_AUTO_RECOVER`
 - `SIMA_DUMP_PIPELINE_ON_FAIL`
 - `SIMA_FILE_READ_TEST_ALARM_S`
