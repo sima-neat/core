@@ -3,13 +3,16 @@
 #include "nodes/groups/HttpMjpegDecodedInput.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/Run.h"
 #include "rtsp_probe_utils.h"
 #include "test_utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -17,6 +20,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -72,6 +76,7 @@ struct Args {
   int timeout_ms = kDefaultTimeoutMs;
   int repeat = 1;
   bool determinism = false;
+  bool replay_content = false;
 };
 
 std::string trim_copy(const std::string& value) {
@@ -297,7 +302,8 @@ CaseKind parse_case_kind(const std::string& value) {
 
 void print_help(const char* exe) {
   std::cout << "Usage: " << exe
-            << " [--case NAME] [--frames N] [--timeout-ms N] [--repeat N] [--determinism]\n"
+            << " [--case NAME] [--frames N] [--timeout-ms N] [--repeat N] [--determinism] "
+               "[--replay-content]\n"
             << "Cases:\n"
             << "  rtsp-h264-decoded\n"
             << "  rtsp-h265-encoded-boundary\n"
@@ -336,6 +342,9 @@ Args parse_args(int argc, char** argv) {
       args.repeat = std::stoi(require_value("--repeat"));
     } else if (arg == "--determinism") {
       args.determinism = true;
+    } else if (arg == "--replay-content") {
+      args.replay_content = true;
+      args.determinism = true;
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -349,6 +358,13 @@ Args parse_args(int argc, char** argv) {
   }
   if (args.repeat <= 0) {
     throw std::runtime_error("--repeat must be positive");
+  }
+  if (args.replay_content) {
+    require(args.repeat >= 2, "--replay-content requires --repeat >= 2");
+    require(args.has_case && args.kind != CaseKind::BadUrlDiagnostics &&
+                args.kind != CaseKind::RtspH265EncodedBoundary &&
+                args.kind != CaseKind::RtspMjpegEncodedBoundary,
+            "--replay-content requires an explicitly selected decoded case");
   }
   return args;
 }
@@ -644,7 +660,8 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample,
 }
 
 std::vector<std::string> run_source(const TestCase& test_case, const std::string& url,
-                                    int source_fps, int frames, int timeout_ms) {
+                                    int source_fps, int frames, int timeout_ms,
+                                    bool replay_content) {
   std::vector<std::string> signatures;
   Graph graph = make_source_graph(test_case, url, source_fps);
   const OutputMemory output_memory =
@@ -652,10 +669,34 @@ std::vector<std::string> run_source(const TestCase& test_case, const std::string
   Run run = graph.build(make_run_options(output_memory));
 
   int pulled = 0;
+  std::int64_t first_pts = -1;
+  std::int64_t previous_pts = -1;
   while (pulled < frames) {
     Sample sample = pull_or_throw(run, "source", timeout_ms, test_case.name + ": source pull");
     require_sample_contract(test_case, sample, source_fps);
-    signatures.push_back(sample_contract_signature(test_case, sample));
+    std::string signature = sample_contract_signature(test_case, sample);
+    if (simaai::neat::sample_payload_type(sample) == PayloadType::Image) {
+      require(sample.pts_ns >= 0, test_case.name + ": decoded frame has no PTS");
+      require(previous_pts < 0 || sample.pts_ns > previous_pts,
+              test_case.name + ": decoded PTS did not increase");
+      previous_pts = sample.pts_ns;
+      if (first_pts < 0) {
+        first_pts = sample.pts_ns;
+      }
+      if (replay_content) {
+        const auto tensors = simaai::neat::tensors_from_sample(sample, true);
+        require(tensors.front().is_nv12(), "replay content check requires NV12 output");
+        const auto bytes = tensors.front().copy_nv12_contiguous();
+        require(!bytes.empty(), test_case.name + ": decoded pixel payload is empty");
+        std::uint64_t hash = 14695981039346656037ULL;
+        for (const auto byte : bytes) {
+          hash = (hash ^ byte) * 1099511628211ULL;
+        }
+        signature += ";pixels=" + std::to_string(hash) +
+                     ";relative_pts=" + std::to_string(sample.pts_ns - first_pts);
+      }
+    }
+    signatures.push_back(std::move(signature));
     ++pulled;
   }
 
@@ -681,20 +722,9 @@ void run_decoded_source_sync(const TestCase& test_case, const std::string& url, 
   std::cout << "[OK] " << test_case.name << "-sync frames=" << callbacks << "\n";
 }
 
-int skip_missing_env(const TestCase& test_case) {
-  std::cout << "[SKIP] set " << test_case.singular_env << " or " << test_case.plural_env
-            << " to run " << test_case.name << "\n";
-  return 77;
-}
-
-int skip_missing_fps_env(const TestCase& test_case) {
-  std::cout << "[SKIP] set " << test_case.fps_env << " to run " << test_case.name << "\n";
-  return 77;
-}
-
 std::vector<std::string> run_one_iteration(const TestCase& test_case, const std::string& url,
                                            int source_fps, const Args& args) {
-  return run_source(test_case, url, source_fps, args.frames, args.timeout_ms);
+  return run_source(test_case, url, source_fps, args.frames, args.timeout_ms, args.replay_content);
 }
 
 void run_test_case(const TestCase& test_case, const std::string& url, int source_fps,
@@ -713,33 +743,83 @@ void run_test_case(const TestCase& test_case, const std::string& url, int source
   }
   if (args.determinism) {
     std::cout << "[OK] " << test_case.name << "-determinism repeat=" << args.repeat
-              << " frames=" << args.frames << "\n";
+              << " frames=" << args.frames
+              << " content=" << (args.replay_content ? "pixels-and-relative-pts" : "contract-only")
+              << "\n";
   }
 }
 
+bool is_rtsp_connection_failure(const std::string& code, std::string diagnostic) {
+  std::transform(diagnostic.begin(), diagnostic.end(), diagnostic.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  for (const auto* setup_error :
+       {"element not found", "factory is missing", "missing plugin", "missing-plugin", "no element",
+        "no such element", "could not link", "syntax error", "invalid property"}) {
+    if (diagnostic.find(setup_error) != std::string::npos) {
+      return false;
+    }
+  }
+  if (!code.empty()) {
+    return code == simaai::neat::error_codes::kRtspConnectionFailed;
+  }
+  return diagnostic.find("failed to connect") != std::string::npos ||
+         diagnostic.find("connection refused") != std::string::npos ||
+         diagnostic.find("could not connect to the rtsp source") != std::string::npos ||
+         diagnostic.find("could not open resource for reading and writing") != std::string::npos;
+}
+
+void check_bad_url_negative_controls() {
+  for (const auto* diagnostic :
+       {"Required GStreamer element not found: rtspsrc",
+        "Required NEAT factory is missing: neatdecoder",
+        "no element rtspsrc for rtsp://127.0.0.1:1/stream",
+        "could not link rtspsrc0 to rtpjpegdepay0", "rtsp graph setup failed", "timed out"}) {
+    require(!is_rtsp_connection_failure("", diagnostic),
+            "bad URL negative control accepted a setup failure");
+  }
+  require(!is_rtsp_connection_failure("pipeline.plugin_missing", "Failed to connect"),
+          "bad URL negative control ignored the structured error code");
+  require(is_rtsp_connection_failure(simaai::neat::error_codes::kRtspConnectionFailed,
+                                     "Neat could not connect to the RTSP source."),
+          "bad URL positive control rejected a connection failure");
+  require(is_rtsp_connection_failure("", "Failed to connect. (Connection refused)"),
+          "bad URL positive control rejected a legacy connection failure");
+}
+
 void run_bad_url_diagnostics(const Args& args) {
+  check_bad_url_negative_controls();
   const std::string url = "rtsp://127.0.0.1:1/simaneat-missing";
   TestCase test_case = test_case_for(CaseKind::RtspMjpegEncodedBoundary);
   test_case.name = "bad-url-diagnostics";
 
+  std::optional<PullStatus> status;
+  PullError error;
+  std::string runtime_exception;
+  std::string runtime_error_code;
   try {
     Graph graph = make_source_graph(test_case, url, 1);
     Run run = graph.build(make_run_options(OutputMemory::ZeroCopy));
     Sample sample;
-    PullError error;
-    const PullStatus status = run.pull("source", args.timeout_ms, sample, &error);
+    status = run.pull("source", args.timeout_ms, sample, &error);
     run.close();
-    require(status != PullStatus::Ok, "bad URL unexpectedly produced a sample");
-    if (status == PullStatus::Error) {
-      require(!error.message.empty(), "bad URL error should include a diagnostic message");
-    }
-    std::cout << "[OK] bad-url-diagnostics status=" << static_cast<int>(status) << "\n";
+  } catch (const simaai::neat::NeatError& e) {
+    runtime_exception = e.what();
+    runtime_error_code = e.report().error_code;
   } catch (const std::exception& e) {
-    require(std::string(e.what()).find("bad-url") == std::string::npos,
-            "bad URL failure should come from runtime, not test setup");
-    std::cout << "[OK] bad-url-diagnostics exception=" << redact_configured_stream_urls(e.what())
-              << "\n";
+    runtime_exception = e.what();
   }
+
+  // Assertions stay outside the runtime catch so their failures cannot pass the test.
+  if (status) {
+    require(*status != PullStatus::Ok, "bad URL unexpectedly produced a sample");
+  }
+  const std::string diagnostic = runtime_exception.empty() ? error.message : runtime_exception;
+  require(!diagnostic.empty(), "bad URL must report an actionable runtime diagnostic");
+  const auto& code = runtime_exception.empty() ? error.code : runtime_error_code;
+  require(is_rtsp_connection_failure(code, diagnostic),
+          "bad URL failure must identify a connection failure, not setup failure: " + diagnostic);
+  std::cout << "[OK] bad-url-diagnostics diagnostic=" << redact_configured_stream_urls(diagnostic)
+            << "\n";
 }
 
 } // namespace
@@ -758,11 +838,14 @@ int main(int argc, char** argv) {
       }
       const std::string url = first_url_from_env(test_case);
       if (url.empty()) {
-        return skip_missing_env(test_case);
+        throw std::runtime_error(test_case.name + ": selected case requires " +
+                                 test_case.singular_env + " or " + test_case.plural_env);
       }
       const int source_fps = source_fps_for_url(test_case, url);
       if (test_case.requires_source_fps && source_fps <= 0) {
-        return skip_missing_fps_env(test_case);
+        throw std::runtime_error(
+            test_case.name + ": selected case requires " +
+            (test_case.fps_env.empty() ? "source FPS from the RTSP probe" : test_case.fps_env));
       }
       run_test_case(test_case, url, source_fps, args);
       return 0;

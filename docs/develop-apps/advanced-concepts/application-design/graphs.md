@@ -769,6 +769,31 @@ app.add(yolo);
 app.add(neat::nodes::Output("detections"));
 ```
 
+The RTSP decoded group exposes the same decoder controls in C++ and Python:
+
+| `RtspDecodedInputOptions` field | Default | Purpose |
+| --- | --- | --- |
+| `decoder_input_buffers` | `-1` | Compressed-input buffer count; leave unset for the runtime default. |
+| `num_buffers` | `-1` | Decoded-output pool count; leave unset for automatic sizing. |
+| `decoder_tuning` | `""` | Optional decoder preset, such as `throughput-low-latency`. |
+| `decoder_memory_opt` | `false` | Legacy memory preset; explicit `decoder_tuning` takes precedence. |
+
+Positive count overrides remain in effect with a tuning preset. Use `-1` for
+unset counts; older nonpositive values also leave the property unset. The
+`throughput-low-latency` preset disables reordering and needs compatible streams
+without B-frame display reordering. Input counts do not set byte capacities.
+These controls already exist on `SimaDecodeOptions` as `input_buffers`,
+`num_buffers`, `decoder_tuning`, and `memory_opt`.
+
+```python
+source = neat.RtspDecodedInputOptions()
+source.url = "rtsp://camera/stream"
+source.decoder_input_buffers = 2
+source.decoder_tuning = "throughput-low-latency"
+# Leave num_buffers at -1 to use automatic output sizing.
+app.add(neat.groups.rtsp_decoded_input(source))
+```
+
 ### App input to graph-owned UDP output
 
 ```cpp

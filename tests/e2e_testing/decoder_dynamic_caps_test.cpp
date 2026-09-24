@@ -281,6 +281,8 @@ int main() {
     if (total_frames == 0) {
       throw std::runtime_error("no frames decoded");
     }
+    require(dims_seen.count({kW1, kH1}) && dims_seen.count({kW2, kH2}),
+            "Core output must include both 320x240 and 640x360 frames");
     const std::uint64_t caps_changes =
         decoder_name.empty() ? 0 : caps_changes_for(runner, decoder_name);
     for (const auto& d : dims_seen) {

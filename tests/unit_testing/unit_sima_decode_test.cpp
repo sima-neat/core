@@ -206,6 +206,18 @@ void check_explicit_tuning_and_buffer_options() {
   }
 }
 
+void check_legacy_nonpositive_buffer_options() {
+  for (const int count : {-2, -1, 0}) {
+    simaai::neat::SimaDecodeOptions opt;
+    opt.input_buffers = count;
+    opt.num_buffers = count;
+    const std::string fragment = simaai::neat::SimaDecode(opt).backend_fragment(1);
+    require_not_contains(fragment, "dec-ip-cnt=", "nonpositive input count keeps element default");
+    require_not_contains(fragment,
+                         "num-buffers=", "nonpositive output count keeps element default");
+  }
+}
+
 void check_invalid_options() {
   simaai::neat::SimaDecodeOptions invalid_codec;
   invalid_codec.type = static_cast<simaai::neat::SimaDecodeType>(999);
@@ -268,6 +280,7 @@ int main() {
     check_jpeg_raw_output_options();
     check_mjpeg_system_memory_output();
     check_explicit_tuning_and_buffer_options();
+    check_legacy_nonpositive_buffer_options();
     check_invalid_options();
     check_h264_decode_wrapper_compatibility();
 

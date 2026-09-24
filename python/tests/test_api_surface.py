@@ -1748,6 +1748,44 @@ def test_graph_error_in_python_exposes_structured_fields():
     raise AssertionError("expected NeatError for empty pipeline")
 
 
+@pytest.mark.parametrize("codec", [pyneat.RtspCodec.H264, pyneat.RtspCodec.H265,
+                                  pyneat.RtspCodec.MJPEG])
+@pytest.mark.parametrize("tuning", ["", "default", "auto", "low-memory",
+                                   "throughput-low-latency"])
+def test_rtsp_decoded_input_forwards_existing_decoder_controls(codec, tuning):
+  opt = pyneat.RtspDecodedInputOptions()
+  assert opt.decoder_input_buffers == -1
+  assert opt.decoder_tuning == ""
+  assert opt.decoder_memory_opt is False
+  assert opt.num_buffers == -1
+  opt.url = "rtsp://example.local/stream"
+  opt.codec = codec
+  opt.source_fps = 10
+  opt.h264_width = 1280
+  opt.h264_height = 720
+  opt.dec_width = 1280
+  opt.dec_height = 720
+  opt.auto_caps_from_stream = False
+  default_backend = pyneat.groups.rtsp_decoded_input(opt).describe_backend()
+  assert "dec-ip-cnt=" not in default_backend
+  assert "num-buffers=" not in default_backend
+  assert "decoder-tuning=" not in default_backend
+  assert "memory-opt=" not in default_backend
+
+  opt.decoder_input_buffers = 3
+  opt.num_buffers = 7
+  opt.decoder_tuning = tuning
+  opt.decoder_memory_opt = True
+  backend = pyneat.groups.rtsp_decoded_input(opt).describe_backend()
+  assert "dec-ip-cnt=3" in backend
+  assert "num-buffers=7" in backend
+  assert "memory-opt=true" in backend
+  if tuning:
+    assert "decoder-tuning=" + tuning in backend
+  else:
+    assert "decoder-tuning=" not in backend
+
+
 def test_low_level_runtime_graph_removed_from_python_surface():
   opt = pyneat.RtspDecodedInputOptions()
   opt.url = "rtsp://example.com/live"

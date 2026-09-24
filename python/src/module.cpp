@@ -3557,6 +3557,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("dec_height", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_height)
       .def_rw("dec_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_fps)
       .def_rw("num_buffers", &simaai::neat::nodes::groups::RtspDecodedInputOptions::num_buffers)
+      .def_rw("decoder_input_buffers",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_input_buffers)
+      .def_rw("decoder_tuning",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_tuning)
+      .def_rw("decoder_memory_opt",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_memory_opt)
       .def_rw("use_videoconvert",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videoconvert)
       .def_rw("use_videoscale",
