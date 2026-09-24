@@ -867,6 +867,35 @@ bool build_cvu_dense_desc(const ValueSpec& value, const TensorShape& fallback_sh
                                             fallback_dtype, descriptor, error);
 }
 
+bool build_cvu_scalar_quant_execution_view(const ValueSpec& value, sima_ev_tensor_desc* descriptor,
+                                           std::string* error) {
+  const int element_bytes = sima_ev_elem_size_bytes(descriptor->dtype);
+  if (element_bytes <= 0) {
+    return fail(error, "ProcessCVU scalar Quantize has an invalid element type");
+  }
+  std::uint64_t span = static_cast<std::uint64_t>(element_bytes);
+  for (std::uint32_t axis = descriptor->shape.rank; axis-- > 0U;) {
+    const auto dim = descriptor->shape.sizes[axis];
+    if (dim <= 0 ||
+        (dim > 1 &&
+         descriptor->layout.strided.strides_bytes[axis] != static_cast<std::int64_t>(span)) ||
+        static_cast<std::uint64_t>(dim) >
+            static_cast<std::uint64_t>(std::numeric_limits<int>::max()) / span) {
+      return fail(error, "ProcessCVU scalar Quantize requires contiguous logical-order storage "
+                         "within firmware limits");
+    }
+    span *= static_cast<std::uint64_t>(dim);
+  }
+  if (span != value.required_bytes || span != descriptor->storage.nbytes) {
+    return fail(error, "ProcessCVU scalar Quantize execution view must preserve exact bytes");
+  }
+  // Graph 222 needs H/W/C geometry even when the logical tensor is a vector.
+  auto view = value;
+  view.storage_binding->stride_bytes.clear();
+  return build_cvu_dense_desc_with_geometry(
+      view, {1, static_cast<std::int64_t>(span / element_bytes), 1}, "HWC", {}, descriptor, error);
+}
+
 bool build_cvu_tiled_desc(const ValueSpec& value, const TensorShape& frame_shape,
                           const TensorShape& raw_tile_shape, const std::string& frame_type,
                           const bool c16_packed, sima_ev_tensor_desc* descriptor,
@@ -1042,6 +1071,20 @@ build_dmabuf_plan_processcvu_command_contract(const ModelExecutionPlan& plan,
                                                    &output_descriptor, error)
               : build_cvu_dense_desc(*output, fallback, {}, &output_descriptor, error);
       if (!output_descriptor_built) {
+        return std::nullopt;
+      }
+    }
+    if (cohort->capability.graph_id == 222U &&
+        (sima_ev_infer_dense_tensor_format(&input_descriptor) != SIMA_EV_DENSE_FORMAT_NDHWC ||
+         sima_ev_infer_dense_tensor_format(&output_descriptor) != SIMA_EV_DENSE_FORMAT_NDHWC)) {
+      if (cohort->batch_size != 1U || !quant || quant->channel_params.size() != 1U ||
+          input->logical_shape != output->logical_shape) {
+        fail(error, "ProcessCVU generic Quantize execution view requires equal shapes, "
+                    "one batch and scalar quantization");
+        return std::nullopt;
+      }
+      if (!build_cvu_scalar_quant_execution_view(*input, &input_descriptor, error) ||
+          !build_cvu_scalar_quant_execution_view(*output, &output_descriptor, error)) {
         return std::nullopt;
       }
     }

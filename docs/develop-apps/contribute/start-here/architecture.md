@@ -1422,3 +1422,10 @@ Keep docs and code aligned:
 5. **Keep the public API stable**
 
    * internal refactors should not break user code unless intentionally versioned
+
+Standalone scalar quantization preserves the MPK logical tensor shape. For a
+batch-one contiguous tensor whose descriptor lacks the H/W/C geometry required
+by graph 222, physical projection supplies a `[1, element_count, 1]` execution
+view. This changes no addresses, byte extents, published shapes, or quantization
+parameters. Projection rejects noncontiguous or permuted logical traversal and
+retains the firmware size limits; valid existing image descriptors stay unchanged.

@@ -1610,6 +1610,85 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
         "standalone graph 222 rejects contradictory exact endpoint geometry");
 }
 
+void test_scalar_quantize_keeps_generic_logical_shapes() {
+  for (const TensorShape shape : {TensorShape{1, 7}, TensorShape{1, 2, 6}}) {
+    const auto elements = shape.size() == 3U ? 12U : 7U;
+    auto manifest = nlohmann::json::parse(standalone_quant_mla_manifest());
+    manifest["input_nodes"][0]["size"] = elements * 4U;
+    auto& quant = manifest["plugins"][0];
+    quant["input_nodes"][0]["size"] = elements * 4U;
+    quant["output_nodes"][0]["size"] = elements;
+    quant["config_params"]["params"]["input_shapes"] = nlohmann::json::array({shape});
+    quant["config_params"]["params"]["output_shapes"] = nlohmann::json::array({shape});
+    manifest["plugins"][1]["input_nodes"][0]["size"] = elements;
+    const auto decoded =
+        MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(elements, 16U));
+    check(static_cast<bool>(decoded), "generic scalar Quantize manifest decodes");
+    const auto project = [](const ModelExecutionPlan& plan, std::string* error) {
+      const auto physical = PhysicalExecutionLowerer::lower(plan, error);
+      check(physical.has_value(), "generic Quantize lowers physically");
+      const auto arena =
+          FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                      kLegacyEvoCmaRegionAlignmentBytes, error);
+      check(arena.has_value(), "generic Quantize arena compiles");
+      std::vector<PhysicalCommandId> commands;
+      for (const auto& command : physical->commands) {
+        if (command.engine == PhysicalEngine::Cvu && command.graph_id == 222U)
+          commands.push_back(command.id);
+      }
+      check(commands.size() == 1U, "generic Quantize selects graph 222");
+      return build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena,
+                                                           error);
+    };
+    std::string error;
+    const auto contract = project(*decoded.plan, &error);
+    if (!contract)
+      std::cerr << "Generic Quantize projection: " << error << "\n";
+    check(contract.has_value(), "generic Quantize physical descriptor builds");
+    const auto& payload = contract->payload;
+    check(sima_ev_infer_dense_tensor_format(&payload.input_tensors.front()) ==
+                  SIMA_EV_DENSE_FORMAT_NDHWC &&
+              sima_ev_infer_dense_tensor_format(&payload.output_tensors.front()) ==
+                  SIMA_EV_DENSE_FORMAT_NDHWC,
+          "generic Quantize uses a dense HWC execution view");
+    check(payload.input_tensors.front().storage.nbytes == elements * 4U &&
+              payload.output_tensors.front().storage.nbytes == elements &&
+              payload.q_scale == 0.25 && payload.q_zp == 0 && payload.round_off == 1,
+          "generic Quantize preserves exact bytes and arithmetic");
+    const auto& op = decoded.plan->ops().front();
+    check(decoded.plan->value(op.inputs.front())->logical_shape == shape &&
+              decoded.plan->value(op.outputs.front())->logical_shape == shape &&
+              payload.runtime_output_logical_shapes.front() ==
+                  std::vector<int>(shape.begin(), shape.end()),
+          "Quantize execution geometry must not reshape logical tensors");
+    if (shape != TensorShape({1, 2, 6}))
+      continue;
+    for (const auto strides :
+         {std::vector<std::int64_t>{56, 28, 4}, std::vector<std::int64_t>{48, 4, 8}}) {
+      const auto& original = *decoded.plan;
+      ModelExecutionPlanData data{
+          original.contract_version(), original.values(), original.carriers(),
+          original.model_inputs(),     original.ops(),    original.backend_ports(),
+          original.model_outputs()};
+      auto& input = data.values[op.inputs.front()];
+      auto& binding = *input.storage_binding;
+      binding.stride_bytes = strides;
+      binding.physical_span = strides[1] == 28 ? 52U : 48U;
+      data.carriers[binding.carrier_id].required_bytes = binding.physical_span;
+      const auto strided = ModelExecutionPlan::create(std::move(data), &error);
+      if (strides[1] == 4) {
+        check(!strided && error.find("storage strides") != std::string::npos,
+              "execution plan rejects permuted storage traversal");
+      } else {
+        check(strided.has_value(), "pitched Quantize fixture retains valid addressed storage");
+        error.clear();
+        check(!project(*strided, &error).has_value(),
+              "generic Quantize must not flatten storage holes");
+      }
+    }
+  }
+}
+
 void test_qmla_output_physical_extent_and_row_pitch() {
   const auto decoded = MpkDecoder{}.decode_json(qmla_padded_output_manifest(),
                                                 qmla_padded_topology(), "qmla-padded.json");
@@ -1898,6 +1977,7 @@ int main(const int argc, char** argv) {
   test_fused_ingress_layout_evidence_authors_exact_descriptor_axes();
   test_tessellate_keeps_yolov8_semantic_shape_separate_from_packed_carrier();
   test_standalone_quantize_authors_exact_graph222_layout();
+  test_scalar_quantize_keeps_generic_logical_shapes();
   test_qmla_output_physical_extent_and_row_pitch();
   test_exact_multi_mla_evidence();
   test_direct_publication_without_passthrough();
