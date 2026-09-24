@@ -1027,6 +1027,9 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert decoded.dec_height == -1
   assert decoded.dec_fps == -1
   assert decoded.num_buffers == -1
+  assert decoded.decoder_input_buffers == -1
+  assert decoded.decoder_tuning == ""
+  assert decoded.decoder_memory_opt is False
   assert decoded.source_fps == -1
   assert decoded.use_videorate is False
   assert decoded.video_rate_fps == -1
@@ -1042,6 +1045,22 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   h265_decoded_backend = h265_decoded_group.describe_backend().lower()
   assert "framerate=(fraction)30/1" in h265_decoded_backend
   assert "dec-fps=30" in h265_decoded_backend
+  assert "dec-ip-cnt=" not in h265_decoded_backend
+  assert "decoder-tuning=" not in h265_decoded_backend
+  decoded.decoder_input_buffers = 2
+  decoded.num_buffers = 4
+  decoded.decoder_memory_opt = True
+  for tuning in ("default", "auto", "low-memory", "throughput-low-latency"):
+    decoded.decoder_tuning = tuning
+    backend = pyneat.groups.rtsp_decoded_input(decoded).describe_backend().lower()
+    assert "dec-ip-cnt=2" in backend
+    assert "num-buffers=4" in backend
+    assert f"decoder-tuning={tuning}" in backend
+    assert "memory-opt=true" in backend
+  decoded.decoder_input_buffers = -1
+  decoded.num_buffers = -1
+  decoded.decoder_memory_opt = False
+  decoded.decoder_tuning = ""
   h265_decoded_spec = pyneat.groups.rtsp_decoded_output_spec(decoded)
   assert h265_decoded_spec.media_type == "video/x-raw"
   assert h265_decoded_spec.format == "NV12"

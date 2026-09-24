@@ -644,6 +644,11 @@ select_system_deps() {
     SELECTED_SYSTEM_DEPS_MAC=("${SYSTEM_DEPS_MAC[@]}")
   fi
 
+  # libjpeg sampling for the short decoder accuracy fixtures.
+  if [[ "${BUILD_TESTS}" == "ON" ]]; then
+    SELECTED_SYSTEM_DEPS_LINUX+=(python3-pil)
+  fi
+
   # Python runtime is required for docs helper scripts and wheel builds.
   if [[ "${BUILD_DOCS}" == "ON" || "${BUILD_PYTHON}" == "ON" ]]; then
     SELECTED_SYSTEM_DEPS_LINUX+=(python3 python3-venv)

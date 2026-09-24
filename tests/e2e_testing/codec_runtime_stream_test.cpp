@@ -590,6 +590,14 @@ Graph make_source_graph(const TestCase& test_case, const std::string& url, int s
 void require_tensor_contract(const TestCase& test_case, const Tensor& tensor) {
   require(!tensor.shape.empty(), test_case.name + ": decoded tensor shape is empty");
   require(tensor.storage != nullptr, test_case.name + ": decoded tensor missing storage");
+  require(tensor.is_nv12(), test_case.name + ": expected NV12 output");
+  const int width = tensor.width();
+  const int height = tensor.height();
+  require(width > 0 && height > 0, test_case.name + ": invalid visible dimensions");
+  const std::size_t visible_bytes =
+      static_cast<std::size_t>(width) * height + 2U * ((width + 1U) / 2U) * ((height + 1U) / 2U);
+  require(tensor.contiguous().copy_payload_bytes().size() == visible_bytes,
+          test_case.name + ": decoded payload does not cover the visible NV12 image");
 }
 
 void require_sample_contract(const TestCase& test_case, const Sample& sample,
@@ -655,9 +663,15 @@ std::vector<std::string> run_source(const TestCase& test_case, const std::string
   Run run = graph.build(make_run_options(output_memory));
 
   int pulled = 0;
+  int64_t previous_pts = -1;
   while (pulled < frames) {
     Sample sample = pull_or_throw(run, "source", timeout_ms, test_case.name + ": source pull");
     require_sample_contract(test_case, sample, source_fps);
+    if (simaai::neat::sample_payload_type(sample) == PayloadType::Image) {
+      require(sample.pts_ns >= 0 && sample.pts_ns > previous_pts,
+              test_case.name + ": decoded PTS is missing or not increasing");
+      previous_pts = sample.pts_ns;
+    }
     signatures.push_back(sample_contract_signature(test_case, sample));
     ++pulled;
   }
