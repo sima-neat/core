@@ -213,15 +213,23 @@ bool request_enable_thinking(const nlohmann::json& body, bool ollama = false) {
 
 // OpenAI exposes reasoning_effort at the top level; chat_template_kwargs wins,
 // matching how enable_thinking is read above.
-std::string request_reasoning_effort(const nlohmann::json& body,
-                                     const std::string& default_value = "low") {
+// Returns nullopt when either location holds a present but non-string value, so a
+// malformed request cannot silently run at the default effort.
+std::optional<std::string> request_reasoning_effort(const nlohmann::json& body,
+                                                    const std::string& default_value = "low") {
   std::string effort = default_value;
-  if (body.contains("reasoning_effort") && body.at("reasoning_effort").is_string()) {
+  if (body.contains("reasoning_effort")) {
+    if (!body.at("reasoning_effort").is_string()) {
+      return std::nullopt;
+    }
     effort = body.at("reasoning_effort").get<std::string>();
   }
   if (body.contains("chat_template_kwargs") && body.at("chat_template_kwargs").is_object()) {
     const auto& kwargs = body.at("chat_template_kwargs");
-    if (kwargs.contains("reasoning_effort") && kwargs.at("reasoning_effort").is_string()) {
+    if (kwargs.contains("reasoning_effort")) {
+      if (!kwargs.at("reasoning_effort").is_string()) {
+        return std::nullopt;
+      }
       effort = kwargs.at("reasoning_effort").get<std::string>();
     }
   }
@@ -1030,12 +1038,14 @@ struct GenAIServer::Impl {
     return true;
   }
 
-  bool require_valid_reasoning_effort(const GenerationRequest& request,
-                                      httplib::Response& res) const {
-    if (!internal::valid_reasoning_effort(request.reasoning_effort)) {
+  bool require_reasoning_effort(const nlohmann::json& body, GenerationRequest& request,
+                                httplib::Response& res) const {
+    const auto effort = request_reasoning_effort(body);
+    if (!effort || !internal::valid_reasoning_effort(*effort)) {
       set_error(res, "reasoning_effort must be 'low', 'medium' or 'high'", 400);
       return false;
     }
+    request.reasoning_effort = *effort;
     return true;
   }
 
@@ -1156,11 +1166,10 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body);
-      request.reasoning_effort = request_reasoning_effort(body);
       if (!require_thinking_capability(*model, request, res)) {
         return;
       }
-      if (!require_valid_reasoning_effort(request, res)) {
+      if (!require_reasoning_effort(body, request, res)) {
         return;
       }
       request.messages = parse_chat_messages(body);
@@ -1211,11 +1220,10 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body);
-      request.reasoning_effort = request_reasoning_effort(body);
       if (!require_thinking_capability(*model, request, res)) {
         return;
       }
-      if (!require_valid_reasoning_effort(request, res)) {
+      if (!require_reasoning_effort(body, request, res)) {
         return;
       }
       request.prompt = completion_prompt(body);
@@ -1258,11 +1266,10 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body, true);
-      request.reasoning_effort = request_reasoning_effort(body);
       if (!require_thinking_capability(*model, request, res)) {
         return;
       }
-      if (!require_valid_reasoning_effort(request, res)) {
+      if (!require_reasoning_effort(body, request, res)) {
         return;
       }
       request.messages = parse_chat_messages(body);
@@ -1318,11 +1325,10 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body, true);
-      request.reasoning_effort = request_reasoning_effort(body);
       if (!require_thinking_capability(*model, request, res)) {
         return;
       }
-      if (!require_valid_reasoning_effort(request, res)) {
+      if (!require_reasoning_effort(body, request, res)) {
         return;
       }
       request.messages.push_back(std::move(message));
