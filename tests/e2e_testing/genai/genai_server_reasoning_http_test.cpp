@@ -84,9 +84,9 @@ std::string post_text(int port, const std::string& path, const Json& request) {
 }
 
 void require_no_markers(const std::string& text) {
-  for (const char* marker : {"<think>", "</think>", "<|channel>", "<channel|>", "<|channel|>",
-                             "<|message|>", "<tool_call>", "</tool_call>", "<|tool_call>",
-                             "<tool_call|>"}) {
+  for (const char* marker :
+       {"<think>", "</think>", "<|channel>", "<channel|>", "<|channel|>", "<|message|>",
+        "<tool_call>", "</tool_call>", "<|tool_call>", "<tool_call|>"}) {
     require(text.find(marker) == std::string::npos,
             std::string("response leaked structural marker: ") + marker);
   }

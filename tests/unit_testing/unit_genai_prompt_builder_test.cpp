@@ -131,9 +131,8 @@ RUN_TEST(
       invalid_effort.reasoning_effort = "extreme";
       require(!internal::valid_reasoning_effort(invalid_effort.reasoning_effort),
               "unknown reasoning_effort value should be rejected");
-      require_throws_contains(
-          [&] { internal::validate_text_generation_request(invalid_effort); },
-          "reasoning_effort must be 'low', 'medium' or 'high'");
+      require_throws_contains([&] { internal::validate_text_generation_request(invalid_effort); },
+                              "reasoning_effort must be 'low', 'medium' or 'high'");
 
       // Effort is independent of whether reasoning is returned.
       GenerationRequest effort_without_thinking = effort_request;
