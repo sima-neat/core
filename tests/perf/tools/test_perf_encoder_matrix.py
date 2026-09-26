@@ -20,7 +20,9 @@ class EncoderMatrixTest(unittest.TestCase):
                          "runtime_encoder_raw_sender_h264_dma")
         self.profile = schema.PerfProfile("profile", "board", "sdk", "cc", "gst", "bundle")
         self.workload = {"warmup_frames": 200, "pattern": "static-blocks-v1",
-                         "input_fingerprint": {"sha256": "a" * 64}}
+                         "input_fingerprint": {"sha256": "a" * 64,
+                                               "layout": {"y_stride": 1280, "uv_stride": 1280,
+                                                          "y_offset": 0, "uv_offset": 921600}}}
         self.settings = {"num-output-buffers": "4"}
         original = component_baseline()
         self.baseline = replace(
@@ -93,10 +95,19 @@ class EncoderMatrixTest(unittest.TestCase):
         self.assertIn("shortfall", result.run_meta["error"])
 
     def test_mismatched_reference_does_not_become_a_regression_result(self):
-        result = self.run_case(lambda index, payload: payload.update(native_encoder_settings={"num-output-buffers": "8"}))
-        self.assertEqual(result.failure_class, schema.FailureClass.HARNESS_ERROR)
-        self.assertEqual(len(self.calls), 1)
-        self.assertIn("saved Core reference", result.run_meta["error"])
+        variants = []
+        for key, value in (("sha256", "b" * 64), ("layout", {"y_stride": 1344})):
+            workload = json.loads(json.dumps(self.workload))
+            workload["input_fingerprint"][key] = value
+            variants.append({"workload": workload})
+        variants.append({"native_encoder_settings": {"num-output-buffers": "8"}})
+        for variant in variants:
+            with self.subTest(variant=variant):
+                self.calls.clear()
+                result = self.run_case(lambda index, payload: payload.update(variant))
+                self.assertEqual(result.failure_class, schema.FailureClass.HARNESS_ERROR)
+                self.assertEqual(len(self.calls), 1)
+                self.assertIn("saved Core reference", result.run_meta["error"])
 
     def test_only_median_compares_to_saved_reference(self):
         self.baseline = replace(self.baseline, metrics_thresholds=replace(

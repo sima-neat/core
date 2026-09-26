@@ -794,12 +794,14 @@ def test_output_stage_node_and_group_factories_present_and_accept_expected_args(
 
   _assert_not_type_error(lambda: pyneat.nodes.udp_output())
   _assert_not_type_error(lambda: pyneat.nodes.udp_output(pyneat.UdpOutputOptions()))
-  _assert_not_type_error(lambda: pyneat.nodes.h264_encode_sima(1280, 720, 30))
-  _assert_not_type_error(
-      lambda: pyneat.nodes.h264_encode_sima(
-          1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
-      )
-  )
+  with pytest.warns(DeprecationWarning, match="h264_encode_sima is deprecated"):
+    _assert_not_type_error(lambda: pyneat.nodes.h264_encode_sima(1280, 720, 30))
+  with pytest.warns(DeprecationWarning, match="h264_encode_sima is deprecated"):
+    _assert_not_type_error(
+        lambda: pyneat.nodes.h264_encode_sima(
+            1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
+        )
+    )
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse())
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse(2))
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse(pyneat.H264ParseOptions()))

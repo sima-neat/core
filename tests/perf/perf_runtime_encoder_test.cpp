@@ -146,7 +146,7 @@ json input_fingerprint(const Config& c, const std::vector<neat::Sample>& samples
     g_checksum_update(sum.get(), reinterpret_cast<const guchar*>(&length), sizeof(length));
     g_checksum_update(sum.get(), static_cast<const guchar*>(data), size);
   };
-  json layouts = json::array();
+  json layout;
   for (const auto& sample : samples) {
     update(sample.caps_string.data(), sample.caps_string.size());
     if (c.passthrough()) {
@@ -155,7 +155,6 @@ json input_fingerprint(const Config& c, const std::vector<neat::Sample>& samples
       const auto bytes = tensors.front().copy_payload_bytes();
       require(!bytes.empty(), "empty encoded fingerprint input");
       update(bytes.data(), bytes.size());
-      layouts.push_back({{"bytes", bytes.size()}, {"caps", sample.caps_string}});
     } else {
       require(sample.tensor.has_value(), "missing raw fingerprint tensor");
       const auto mapped = sample.tensor->map_nv12_read();
@@ -166,18 +165,23 @@ json input_fingerprint(const Config& c, const std::vector<neat::Sample>& samples
         update(view.y + y * view.y_stride, view.width);
       for (int y = 0; y < view.height / 2; ++y)
         update(view.uv + y * view.uv_stride, view.width);
-      layouts.push_back(
-          {{"y_stride", view.y_stride},
-           {"uv_stride", view.uv_stride},
-           {"y_offset", view.y - static_cast<const uint8_t*>(mapped->mapping.data)},
-           {"uv_offset", view.uv - static_cast<const uint8_t*>(mapped->mapping.data)}});
+      const json sample_layout = {
+          {"y_stride", view.y_stride},
+          {"uv_stride", view.uv_stride},
+          {"y_offset", view.y - static_cast<const uint8_t*>(mapped->mapping.data)},
+          {"uv_offset", view.uv - static_cast<const uint8_t*>(mapped->mapping.data)}};
+      require(layout.is_null() || layout == sample_layout,
+              "prepared NV12 inputs must share the same plane layout");
+      layout = sample_layout;
     }
   }
-  return {{"format", c.passthrough() ? "sha256-length-prefixed-au-v1"
-                                     : "sha256-length-prefixed-nv12-rows-v1"},
-          {"sha256", g_checksum_get_string(sum.get())},
-          {"sequence_frames", samples.size()},
-          {"layouts", layouts}};
+  json fingerprint = {{"format", c.passthrough() ? "sha256-length-prefixed-au-v1"
+                                                 : "sha256-length-prefixed-nv12-rows-v1"},
+                      {"sha256", g_checksum_get_string(sum.get())},
+                      {"sequence_frames", samples.size()}};
+  if (!c.passthrough())
+    fingerprint["layout"] = layout;
+  return fingerprint;
 }
 
 neat::Graph graph_for(const Config& c, const neat::Sample& seed, int port) {
@@ -236,11 +240,16 @@ neat::Graph graph_for(const Config& c, const neat::Sample& seed, int port) {
   return graph;
 }
 
-json encoder_settings(GstElement* encoder) {
+json encoder_settings(GstElement* encoder, const Config& c) {
+  std::vector<const char*> properties = {"enc-type",   "enc-fmt",        "enc-width",
+                                         "enc-height", "enc-frame-rate", "num-output-buffers"};
+  if (c.codec == "mjpeg")
+    properties.push_back("enc-quality");
+  else
+    properties.insert(properties.end(), {"enc-bitrate", "enc-bitrate-mode", "enc-gop-length",
+                                         "enc-idr-interval", "enc-profile", "enc-level"});
   json result;
-  for (const char* name : {"enc-type", "enc-fmt", "enc-width", "enc-height", "enc-frame-rate",
-                           "enc-bitrate", "enc-bitrate-mode", "enc-gop-length", "enc-idr-interval",
-                           "enc-profile", "enc-level", "enc-quality", "num-output-buffers"}) {
+  for (const char* name : properties) {
     auto* spec = g_object_class_find_property(G_OBJECT_GET_CLASS(encoder), name);
     require(spec != nullptr, std::string("missing encoder property ") + name);
     GValue value = G_VALUE_INIT;
@@ -278,7 +287,7 @@ json execute(const Config& c) {
   Element encoder(c.passthrough() ? nullptr : ep::find_factory(run, "neatencoder"),
                   gst_object_unref);
   Element pay(c.sender() ? ep::find_factory(run, payloader(c)) : nullptr, gst_object_unref);
-  const auto settings = encoder ? encoder_settings(encoder.get()) : json(nullptr);
+  const auto settings = encoder ? encoder_settings(encoder.get(), c) : json(nullptr);
   ep::PadCounter completed(c.passthrough() ? pay.get() : encoder.get(),
                            c.passthrough() ? "sink" : "src", state, false);
   std::unique_ptr<ep::PadCounter> packets;
@@ -465,12 +474,7 @@ json execute(const Config& c) {
       {"input_fps", 30},
       {"warmup_frames", ep::kWarmup},
       {"input_fingerprint", fingerprint},
-      {"input_buffers", 4},
-      {"output_buffers", c.passthrough() ? json(nullptr) : json(4)},
-      {"bitrate_kbps", 4000},
-      {"gop", 30},
-      {"idr_interval", 90},
-      {"jpeg_quality", 80},
+      {"input_buffers", ep::kBuffers},
       {"pattern", c.passthrough() ? "prepared-codec-perf-fixture" : "static-blocks-v1"}};
   result["completion_semantics"] =
       c.passthrough() ? "forwarded_access_units" : "native_encoder_access_units";

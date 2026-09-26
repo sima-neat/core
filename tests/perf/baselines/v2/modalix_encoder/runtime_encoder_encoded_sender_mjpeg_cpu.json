@@ -16,25 +16,14 @@
   },
   "encoder_reference": {
     "workload": {
-      "bitrate_kbps": 4000,
-      "gop": 30,
       "height": 720,
-      "idr_interval": 90,
       "input_buffers": 4,
       "input_fingerprint": {
         "format": "sha256-length-prefixed-au-v1",
-        "layouts": [
-          {
-            "bytes": 195475,
-            "caps": "image/jpeg,width=(int)1280,height=(int)720,framerate=(fraction)30/1"
-          }
-        ],
         "sequence_frames": 1,
         "sha256": "ac3befa39a2b1f699a00e23108cbb8d9b27bb24a7f4710d0ac5c6e7d452594ce"
       },
       "input_fps": 30,
-      "jpeg_quality": 80,
-      "output_buffers": null,
       "pattern": "prepared-codec-perf-fixture",
       "warmup_frames": 200,
       "width": 1280
