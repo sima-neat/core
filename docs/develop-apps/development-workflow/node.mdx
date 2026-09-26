@@ -734,5 +734,7 @@ Native 4:2:2 and high-bit-depth encoding are not supported by this API.
 
 `H264EncodeSima` and `pyneat.nodes.h264_encode_sima` are deprecated compatibility
 entry points. Their arguments, getters and native input behavior remain supported.
+Like `H264Decode`, C++ calls warn when `SIMA_ENABLE_LEGACY_DEPRECATION` is defined
+before including the headers. Python calls emit `DeprecationWarning`.
 `H264EncodeSW` is unchanged. This release changes the C++ ABI to version 5;
 rebuild C++ consumers and use the matching rebuilt Python extension.
