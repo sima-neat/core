@@ -685,6 +685,11 @@ Use `Graph::add_output_tensor(...)` only when image or video output must be conv
 - [Plug a Model Into Your Pipeline](/tutorials/plug-model-into-pipeline)
 - [Build a Custom Data Graph](/tutorials/build-a-custom-data-graph)
 
+`UdpOutputGroupG` is deprecated and retained for source compatibility. Build an
+explicit graph from supported nodes, using `VideoSender` for video and
+`MetadataSender` for metadata as needed. The legacy group requires render and
+sample-demux plugins that are not included in every runtime package.
+
 ## Hardware encoding
 
 `SimaEncodeOptions.type` selects H.264, H.265 or MJPEG. The encoder accepts native
