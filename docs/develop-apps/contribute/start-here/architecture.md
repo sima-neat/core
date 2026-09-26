@@ -723,12 +723,6 @@ graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source));
 graph.add(simaai::neat::nodes::Output());
 ```
 
-`RtspDecodedInputOptions` forwards decoder input/output counts, tuning and the
-legacy memory option to `SimaDecode`. Python exposes the same existing C++ fields:
-`decoder_input_buffers`, `num_buffers`, `decoder_tuning` and `decoder_memory_opt`.
-Unset counts leave allocation policy with the decoder runtime. No Core byte-capacity
-or command-depth option is introduced.
-
 Internally:
 
 1. The Graph enforces one Node object per logical composition vertex. Repeated `connect()` calls

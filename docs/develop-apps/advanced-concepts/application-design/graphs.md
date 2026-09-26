@@ -786,12 +786,12 @@ These controls already exist on `SimaDecodeOptions` as `input_buffers`,
 `num_buffers`, `decoder_tuning`, and `memory_opt`.
 
 ```python
-source = neat.RtspDecodedInputOptions()
+source = pyneat.RtspDecodedInputOptions()
 source.url = "rtsp://camera/stream"
 source.decoder_input_buffers = 2
 source.decoder_tuning = "throughput-low-latency"
 # Leave num_buffers at -1 to use automatic output sizing.
-app.add(neat.groups.rtsp_decoded_input(source))
+app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
 
 ### App input to graph-owned UDP output

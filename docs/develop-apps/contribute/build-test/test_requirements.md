@@ -78,38 +78,6 @@ For docs-impacting changes, also run:
 
 See [Build](/develop-apps/contribute/build) for all supported build/test modes.
 
-## Decoder streaming qualification
-
-`codec_runtime_stream_test --case NAME` requires that case's URL and source-FPS
-fixture configuration; missing selected fixtures fail. Running without `--case`
-retains discovery of configured live streams and skips unavailable cases.
-
-Decoded cases check increasing, present PTS within each run. `--determinism`
-compares stable output contracts across reconnects, since a live camera does not
-restart at the same image. Use `--replay-content --repeat 2 --case NAME` only with
-a controlled server that restarts the same decoded sequence and relative PTS on
-each connection. This also compares visible NV12 pixel hashes and PTS relative
-to the first frame, excluding stride padding and connection start-time offsets.
-Do not report a contract-only run as pixel determinism.
-
-`codec_decode_accuracy_test` also sends 30 encoded `Input`/`Sample` frames through
-public `SimaDecode` for H.264, H.265 and MJPEG. It compares automatic allocation,
-low-latency tuning with automatic counts, explicit input/output counts, and
-low-latency tuning with explicit counts. Including each codec's Owned control,
-this covers 15 option runs and 450 submitted frames. It
-checks exact output count and PTS, visible pixels against the automatic control,
-Owned output, and output retention. Roomier configurations retain the first
-output through later frames and shutdown. Automatic low-latency configurations
-hold the first output for 250 ms, verify its pixels, release it before the next
-pull, and retain the final output through shutdown. The automatic two-output
-JPEG pool cannot sustain arbitrary downstream retention: GStreamer appsink also
-holds its most recently pulled buffer, even with `enable-last-sample=false`.
-Keeping an older sample while waiting for further output can occupy both slots;
-consumers needing that overlap must provide a larger explicit output count.
-Its generated video fixtures have no B frames; it does not qualify low-latency
-tuning on streams that require reordering. DMA and descriptor cleanup accounting
-must be collected by the board runner after retained samples are released.
-
 ## Contributor checklist
 
 Before opening or merging a PR:

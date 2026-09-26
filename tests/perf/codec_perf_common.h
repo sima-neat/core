@@ -260,8 +260,7 @@ make_sample_sequence(const std::vector<EncodedFrame>& frames, const CodecPerfCon
 inline simaai::neat::Graph make_decode_graph(const CodecPerfConfig& config,
                                              const simaai::neat::Sample& seed, int max_buffers,
                                              bool live_input = false,
-                                             bool decoder_zero_copy_output = false,
-                                             bool i420 = false) {
+                                             bool decoder_zero_copy_output = false) {
   simaai::neat::Graph graph(config.scenario_id);
 
   simaai::neat::InputOptions input;
@@ -304,8 +303,8 @@ inline simaai::neat::Graph make_decode_graph(const CodecPerfConfig& config,
   } else {
     simaai::neat::SimaDecodeOptions decode;
     decode.type = config.decode_type;
-    decode.out_format = i420 ? simaai::neat::FormatTag::I420 : simaai::neat::FormatTag::NV12;
-    decode.raw_output = i420;
+    decode.out_format = simaai::neat::FormatTag::NV12;
+    decode.raw_output = false;
     decode.dec_width = config.width;
     decode.dec_height = config.height;
     decode.dec_fps = config.fps;
@@ -561,9 +560,9 @@ inline void emit_codec_metrics_json(const CodecPerfConfig& config, int iteration
             << "  \"measure_report\": {\n"
             << "    \"schema\": \"sima.neat.codec_perf_phase_report\",\n"
             << "    \"memory_path\": {\n"
-            << "      \"encoded_input\": \"plugin_input_pool_copy\",\n"
+            << "      \"encoded_input\": \"codec_input_pool_copy\",\n"
             << "      \"core_output\": \"zero_copy_gst_sample\",\n"
-            << "      \"daemon_zero_copy_output\": true\n"
+            << "      \"decoder_zero_copy_output\": true\n"
             << "    },\n"
             << "    \"throughput\": " << throughput_report.to_json(4);
   if (latency_report != nullptr) {

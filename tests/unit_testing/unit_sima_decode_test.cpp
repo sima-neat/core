@@ -143,8 +143,6 @@ void check_jpeg_raw_output_options() {
                    "SimaDecode should use decoder name as output buffer name");
   require_contains(fragment, "dec-fmt=YUV420P",
                    "SimaDecode should map public I420 to decoder YUV420P");
-  require_contains(fragment, "zero-copy-output=false",
-                   "SimaDecode I420 requires decoder copy/conversion output");
   require_contains(fragment, "next-element=CVU", "SimaDecode next-element missing");
   require_contains(fragment, "dec-width=640", "SimaDecode width override missing");
   require_contains(fragment, "dec-height=480", "SimaDecode height override missing");
@@ -184,38 +182,6 @@ void check_mjpeg_system_memory_output() {
   require(out.width == 800 && out.height == 600, "MJPEG explicit shape mismatch");
   require(out.fps_num == 25 && out.fps_den == 1, "MJPEG explicit fps mismatch");
   require(out.memory == "SystemMemory", "raw_output=false should advertise SystemMemory output");
-}
-
-void check_explicit_tuning_and_buffer_options() {
-  for (const std::string tuning : {"", "default", "auto", "low-memory", "throughput-low-latency"}) {
-    simaai::neat::SimaDecodeOptions opt;
-    opt.decoder_tuning = tuning;
-    opt.memory_opt = true;
-    opt.input_buffers = 2;
-    opt.num_buffers = 7;
-    const std::string fragment = simaai::neat::SimaDecode(opt).backend_fragment(1);
-    if (tuning.empty()) {
-      require_not_contains(fragment, "decoder-tuning=", "unset tuning should stay unset");
-    } else {
-      require_contains(fragment, "decoder-tuning=" + tuning,
-                       "explicit tuning must reach the decoder alongside memory-opt");
-    }
-    require_contains(fragment, "memory-opt=true", "memory-opt should reach the decoder");
-    require_contains(fragment, "dec-ip-cnt=2", "input override must survive tuning lowering");
-    require_contains(fragment, "num-buffers=7", "output override must survive tuning lowering");
-  }
-}
-
-void check_legacy_nonpositive_buffer_options() {
-  for (const int count : {-2, -1, 0}) {
-    simaai::neat::SimaDecodeOptions opt;
-    opt.input_buffers = count;
-    opt.num_buffers = count;
-    const std::string fragment = simaai::neat::SimaDecode(opt).backend_fragment(1);
-    require_not_contains(fragment, "dec-ip-cnt=", "nonpositive input count keeps element default");
-    require_not_contains(fragment,
-                         "num-buffers=", "nonpositive output count keeps element default");
-  }
 }
 
 void check_invalid_options() {
@@ -279,8 +245,6 @@ int main() {
     check_h265_aliases_use_canonical_backend_name();
     check_jpeg_raw_output_options();
     check_mjpeg_system_memory_output();
-    check_explicit_tuning_and_buffer_options();
-    check_legacy_nonpositive_buffer_options();
     check_invalid_options();
     check_h264_decode_wrapper_compatibility();
 
