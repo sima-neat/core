@@ -11,6 +11,7 @@
 
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
+#include "nodes/sima/SimaEncode.h"
 
 #include <memory>
 #include <string>
@@ -20,6 +21,7 @@ namespace simaai::neat {
 
 /**
  * @brief Hardware-accelerated H.264 encoder Node.
+ * @deprecated Use SimaEncode with SimaEncodeType::H264 for new code.
  *
  * @ingroup nodes_sima
  */
@@ -56,43 +58,38 @@ public:
 
   /// Configured frame width.
   int width() const {
-    return w_;
+    return options_.width;
   }
   /// Configured frame height.
   int height() const {
-    return h_;
+    return options_.height;
   }
   /// Configured target framerate.
   int fps() const {
-    return fps_;
+    return options_.fps;
   }
   /// Configured target bitrate, kbps.
   int bitrate_kbps() const {
-    return bitrate_kbps_;
+    return *options_.bitrate_kbps;
   }
   /// Configured H.264 profile string.
   const std::string& profile() const {
-    return profile_;
+    return *options_.profile;
   }
   /// Configured H.264 level string.
   const std::string& level() const {
-    return level_;
+    return *options_.level;
   }
 
 private:
-  int w_ = 0;
-  int h_ = 0;
-  int fps_ = 30;
-
-  int bitrate_kbps_ = 4000;
-  std::string profile_ = "baseline";
-  std::string level_ = "4.0";
+  SimaEncodeOptions options_;
 };
 
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
 /// Convenience factory for a hardware `H264EncodeSima` Node.
+/// @deprecated Use SimaEncode with SimaEncodeType::H264.
 std::shared_ptr<simaai::neat::Node> H264EncodeSima(int w, int h, int fps, int bitrate_kbps = 4000,
                                                    std::string profile = "baseline",
                                                    std::string level = "4.0");

@@ -1,6 +1,7 @@
 #include "nodes/sima/H264EncodeSima.h"
 
 #include "gst/GstHelpers.h"
+#include "nodes/sima/internal/SimaEncode.h"
 
 #include <memory>
 #include <sstream>
@@ -91,26 +92,15 @@ namespace simaai::neat {
 
 H264EncodeSima::H264EncodeSima(int w, int h, int fps, int bitrate_kbps, std::string profile,
                                std::string level)
-    : w_(w), h_(h), fps_(fps), bitrate_kbps_(bitrate_kbps), profile_(std::move(profile)),
-      level_(std::move(level)) {}
+    : options_{.width = w,
+               .height = h,
+               .fps = fps,
+               .bitrate_kbps = bitrate_kbps,
+               .profile = std::move(profile),
+               .level = std::move(level)} {}
 
 std::string H264EncodeSima::backend_fragment(int node_index) const {
-  std::ostringstream ss;
-  ss << "neatencoder name=n" << node_index << "_encoder " << "enc-type=h264 "
-     << "enc-profile=" << profile_ << " " << "enc-level=" << level_ << " " << "enc-fmt=NV12 "
-     << "enc-width=" << w_ << " " << "enc-height=" << h_ << " " << "enc-frame-rate=" << fps_ << " "
-     << "enc-bitrate=" << bitrate_kbps_ << " " << "enc-ip-mode=async " << "ip-rate-ctrl=false";
-  if (const char* dump_cnt = std::getenv("SIMA_NEATENCODER_DUMP_CNT")) {
-    if (*dump_cnt) {
-      ss << " dump-cnt=" << dump_cnt;
-    }
-  }
-  if (const char* dump_path = std::getenv("SIMA_NEATENCODER_DUMP_PATH")) {
-    if (*dump_path) {
-      ss << " dump-path=" << dump_path;
-    }
-  }
-  return ss.str();
+  return internal::encoder_fragment(options_, node_index);
 }
 
 std::vector<std::string> H264EncodeSima::element_names(int node_index) const {

@@ -129,8 +129,7 @@ RUN_TEST(
         const std::string snapshot = graph_snapshot(group);
         require_contains(snapshot, "0) CustomNode",
                          "UdpOutputGroupG node[0] should be render custom node");
-        require_contains(snapshot, "1) H264EncodeSima",
-                         "UdpOutputGroupG node[1] should be H264EncodeSima");
+        require_contains(snapshot, "1) SimaEncode", "UdpOutputGroupG node[1] should be SimaEncode");
         require_contains(snapshot, "2) H264Parse", "UdpOutputGroupG node[2] should be H264Parse");
         require_contains(snapshot, "3) H264Packetize",
                          "UdpOutputGroupG node[3] should be H264Packetize");

@@ -35,6 +35,7 @@
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/VisualFrontend.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/HttpMjpegDecodedInput.h"
@@ -3831,6 +3832,26 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+  nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
+      .value("H264", simaai::neat::SimaEncodeType::H264)
+      .value("H265", simaai::neat::SimaEncodeType::H265)
+      .value("MJPEG", simaai::neat::SimaEncodeType::MJPEG);
+  m.attr("SimaEncodeType").attr("AVC") = m.attr("SimaEncodeType").attr("H264");
+  m.attr("SimaEncodeType").attr("HEVC") = m.attr("SimaEncodeType").attr("H265");
+  nb::class_<simaai::neat::SimaEncodeOptions>(m, "SimaEncodeOptions")
+      .def(nb::init<>())
+      .def_rw("type", &simaai::neat::SimaEncodeOptions::type)
+      .def_rw("width", &simaai::neat::SimaEncodeOptions::width)
+      .def_rw("height", &simaai::neat::SimaEncodeOptions::height)
+      .def_rw("fps", &simaai::neat::SimaEncodeOptions::fps)
+      .def_rw("bitrate_kbps", &simaai::neat::SimaEncodeOptions::bitrate_kbps)
+      .def_rw("rate_control", &simaai::neat::SimaEncodeOptions::rate_control)
+      .def_rw("profile", &simaai::neat::SimaEncodeOptions::profile)
+      .def_rw("level", &simaai::neat::SimaEncodeOptions::level)
+      .def_rw("gop_length", &simaai::neat::SimaEncodeOptions::gop_length)
+      .def_rw("idr_interval", &simaai::neat::SimaEncodeOptions::idr_interval)
+      .def_rw("quality", &simaai::neat::SimaEncodeOptions::quality)
+      .def_rw("num_buffers", &simaai::neat::SimaEncodeOptions::num_buffers);
   nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
       .value("H264", simaai::neat::SimaDecodeType::H264)
       .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
@@ -5001,8 +5022,19 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::QuantTessOptions{});
   nodes_mod.def("udp_output", &simaai::neat::nodes::UdpOutput,
                 "options"_a = simaai::neat::UdpOutputOptions{});
-  nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
-                "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
+  nodes_mod.def(
+      "h264_encode_sima",
+      [](int width, int height, int fps, int bitrate_kbps, std::string profile, std::string level) {
+        if (PyErr_WarnEx(PyExc_DeprecationWarning,
+                         "h264_encode_sima is deprecated; use sima_encode with SimaEncodeType.H264",
+                         1) < 0) {
+          throw nb::python_error();
+        }
+        return simaai::neat::nodes::H264EncodeSima(width, height, fps, bitrate_kbps,
+                                                   std::move(profile), std::move(level));
+      },
+      "width"_a, "height"_a, "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline",
+      "level"_a = "4.0");
   nodes_mod.def(
       "h264_decode",
       [](int sima_allocator_type, std::string out_format, std::string decoder_name, bool raw_output,
@@ -5015,6 +5047,8 @@ NB_MODULE(_pyneat_core, m) {
       "sima_allocator_type"_a = 2, "out_format"_a = "NV12", "decoder_name"_a = "",
       "raw_output"_a = false, "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1,
       "dec_fps"_a = -1, "num_buffers"_a = -1);
+  nodes_mod.def("sima_encode", &simaai::neat::nodes::SimaEncode,
+                "options"_a = simaai::neat::SimaEncodeOptions{});
   nodes_mod.def("sima_decode", &simaai::neat::nodes::SimaDecode,
                 "options"_a = simaai::neat::SimaDecodeOptions{});
   nodes_mod.def(

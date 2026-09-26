@@ -88,6 +88,7 @@ Use this map before you open the full API reference.
 | Read an RTSP stream | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, or `pyneat.groups.rtsp_decoded_input(...)` |
 | Read HTTP multipart MJPEG | `nodes::groups::HttpMjpegDecodedInput(...)`, or `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` for manual framing | `pyneat.groups.http_mjpeg_decoded_input(...)`, or `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
+| Encode raw video | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | Decode encoded video | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
 | Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Build a reusable image input path | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
@@ -683,3 +684,50 @@ Use `Graph::add_output_tensor(...)` only when image or video output must be conv
 - [Build Your First Graph](/tutorials/build-inference-pipeline)
 - [Plug a Model Into Your Pipeline](/tutorials/plug-model-into-pipeline)
 - [Build a Custom Data Graph](/tutorials/build-a-custom-data-graph)
+
+## Hardware encoding
+
+`SimaEncodeOptions.type` selects H.264, H.265 or MJPEG. The encoder accepts native
+8-bit NV12. Its input adapter retains compatible SiMaAI NV12 buffers and prepares
+supported CPU raw layouts once. Output is encoded frames; add packetization only
+when sending RTP.
+
+```cpp
+simaai::neat::SimaEncodeOptions encode;
+encode.type = simaai::neat::SimaEncodeType::H265;
+encode.width = 1280;
+encode.height = 720;
+encode.fps = 30;
+encode.bitrate_kbps = 4000;
+encode.gop_length = 30;
+encode.idr_interval = 90;
+graph.add(simaai::neat::nodes::SimaEncode(encode));
+```
+
+```python
+encode = pyneat.SimaEncodeOptions()
+encode.type = pyneat.SimaEncodeType.MJPEG
+encode.width, encode.height, encode.fps = 1280, 720, 30
+encode.quality = 80
+graph.add(pyneat.nodes.sima_encode(encode))
+```
+
+Geometry must be positive and even, within the native plugin's 3840x2160 property
+bounds. `fps` configures stream cadence and rate control; it does not pace input.
+H.264/H.265 support `bitrate_kbps` (default 4000), `rate_control` (`vbr` or `cbr`),
+`profile`, `level` (default `4.0`), `gop_length` and separate `idr_interval`.
+H.264 defaults to `baseline`; H.265 supports `main`. The runtime can increase a
+requested level when the stream requires it and reports the effective setting.
+GOP zero or unset uses FPS; IDR zero or unset uses three times FPS. GOP one is
+all-intra. B-frame encoding is not exposed.
+
+Codec-specific options start unset. MJPEG accepts `quality` from 1 to 100
+(default 80), and rejects explicitly supplied video-only settings. Conversely,
+H.264/H.265 reject `quality`. `num_buffers` selects 1 to 20 encoded-output buffers;
+`-1` preserves the native default of four. It does not size producer input storage.
+Native 4:2:2 and high-bit-depth encoding are not supported by this API.
+
+`H264EncodeSima` and `pyneat.nodes.h264_encode_sima` are deprecated compatibility
+entry points. Their arguments, getters and native input behavior remain supported.
+`H264EncodeSW` is unchanged. This release changes the C++ ABI to version 5;
+rebuild C++ consumers and use the matching rebuilt Python extension.
