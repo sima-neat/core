@@ -12,6 +12,7 @@
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
 #include "nodes/sima/SimaEncode.h"
+#include "pipeline/Deprecated.h"
 
 #include <memory>
 #include <string>
@@ -37,6 +38,7 @@ public:
    * @param profile      H.264 profile string (`"baseline"`, `"main"`, `"high"`).
    * @param level        H.264 level string (e.g. `"4.0"`).
    */
+  SIMA_DEPRECATED("Use SimaEncode with SimaEncodeType::H264")
   H264EncodeSima(int w, int h, int fps, int bitrate_kbps = 4000, std::string profile = "baseline",
                  std::string level = "4.0");
 
@@ -90,6 +92,7 @@ private:
 namespace simaai::neat::nodes {
 /// Convenience factory for a hardware `H264EncodeSima` Node.
 /// @deprecated Use SimaEncode with SimaEncodeType::H264.
+SIMA_DEPRECATED("Use SimaEncode with SimaEncodeType::H264")
 std::shared_ptr<simaai::neat::Node> H264EncodeSima(int w, int h, int fps, int bitrate_kbps = 4000,
                                                    std::string profile = "baseline",
                                                    std::string level = "4.0");
