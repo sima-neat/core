@@ -1318,6 +1318,61 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
   }
 }
 
+void author_single_input_channel_storage(ModelExecutionPlanData& data, const OpSpec& mla,
+                                         const MlaElfIoTopology& topology,
+                                         std::vector<MpkProofFact>& proof) {
+  if (!topology.monolithic_ifm || mla.inputs.size() != 1U || mla.batch_count != 1U)
+    return;
+  auto& value = data.values[mla.inputs.front()];
+  if (!value.logical_shape || value.logical_shape->size() != 4U ||
+      value.logical_shape->front() != 1 || !value.logical_dtype ||
+      value.representation != ValueRepresentation::Dense || value.read_expression ||
+      value.storage_binding)
+    return;
+  const auto logical_bytes = dense_bytes(*value.logical_shape, *value.logical_dtype);
+  const auto dense_extent = align_up_16(value.required_bytes);
+  const auto extent = topology.monolithic_ifm_extent_bytes;
+  if (!logical_bytes || *logical_bytes != value.required_bytes || !dense_extent ||
+      extent == value.required_bytes || extent == *dense_extent)
+    return;
+  const auto producer = std::find_if(data.ops.begin(), data.ops.end(), [&](const auto& op) {
+    return op.outputs == std::vector<ValueId>{value.id};
+  });
+  if (producer == data.ops.end() || producer->inputs.size() != 1U ||
+      !((producer->kind == OpKind::Cast && *value.logical_dtype == "bfloat16") ||
+        (producer->kind == OpKind::Quantize && *value.logical_dtype == "int8")) ||
+      std::find(data.model_inputs.begin(), data.model_inputs.end(), producer->inputs.front()) ==
+          data.model_inputs.end() ||
+      std::count_if(data.ops.begin(), data.ops.end(), [&](const auto& op) {
+        return std::find(op.inputs.begin(), op.inputs.end(), value.id) != op.inputs.end();
+      }) != 1)
+    return;
+
+  // Resolve normal spatial storage; custom spatial pitches require explicit metadata.
+  const auto width = *element_width(*value.logical_dtype);
+  const auto channel_alignment = static_cast<std::int64_t>(16U / width);
+  auto storage_shape = *value.logical_shape;
+  const auto channels = storage_shape.back();
+  if (channels > std::numeric_limits<std::int64_t>::max() - channel_alignment + 1)
+    return;
+  storage_shape.back() =
+      ((channels + channel_alignment - 1) / channel_alignment) * channel_alignment;
+  const auto padded_bytes = dense_bytes(storage_shape, *value.logical_dtype);
+  const auto strides = contiguous_stride_bytes(storage_shape, width);
+  if (!padded_bytes || *padded_bytes != extent || !strides)
+    return;
+  StorageBinding binding;
+  binding.carrier_id = value.id;
+  binding.physical_span = *padded_bytes;
+  binding.stride_bytes = *strides;
+  binding.channel_alignment = static_cast<std::uint32_t>(channel_alignment);
+  value.storage_binding = std::move(binding);
+  value.logical_layout = "HWC";
+  proof.push_back({"MLA.IFM[0].storage",
+                   "single converted NHWC input matches 16-byte channel storage; "
+                   "logical tensor geometry is unchanged"});
+}
+
 MpkDecodeResult decode_impl(const std::string_view text,
                             const std::span<const MlaStageExecutableEvidence> executable_evidence,
                             const std::span<const HostTvmExecutableEvidence> host_evidence,
@@ -1818,6 +1873,8 @@ MpkDecodeResult decode_impl(const std::string_view text,
                "$.plugins[" + std::to_string(mla_op_index) + "]",
                topology_error_detail(topology_validation));
       }
+
+      author_single_input_channel_storage(data, mla, topology, result.proof);
 
       result.proof.push_back(
           {"MLA[" + std::to_string(stage_index) + "].identity",

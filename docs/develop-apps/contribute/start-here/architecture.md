@@ -212,6 +212,10 @@ port spans for every MLA operation. Ambiguity, missing slots, or conflicting
 evidence is a model-load error; sidecar JSON, substring matching, environment
 state, and runtime buffers are not evidence.
 
+Single-input, batch-one models with normal spatial storage can use automatic
+input channel padding. Applications keep the model's logical tensor shape;
+custom spatial storage padding is outside this support scope.
+
 An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
 by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
 without loading it into the host process, proves its section topology, and

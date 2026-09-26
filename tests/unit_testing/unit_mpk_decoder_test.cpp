@@ -1080,7 +1080,7 @@ void test_dense_ifm_tail_padding() {
   check(c7_contract.physical_inputs.front().size_bytes == 210U &&
             c7_contract.input_bindings.front().src_physical_size_bytes == 210U,
         "C7 BF16 HWC projection retains exactly 210 bytes");
-  for (const auto bad_extent : {209U, 211U, 223U, 225U, 240U}) {
+  for (const auto bad_extent : {209U, 211U, 223U, 225U, 256U}) {
     expect_error(spatial.dump(), monolithic_topology(bad_extent, 8U),
                  MpkDecodeErrorCode::ValueSizeMismatch,
                  "monolithic transfer rejects inconsistent ELF allocation extents");
@@ -2148,7 +2148,7 @@ void test_batch_slice_transport() {
   }
 }
 
-void test_input_layout_requires_package_evidence() {
+void test_input_storage_from_executable() {
   for (const int batch : {1, 2, 4}) {
     for (const auto channels : {2, 7, 8, 16}) {
       for (const bool quantized : {false, true}) {
@@ -2199,11 +2199,82 @@ void test_input_layout_requires_package_evidence() {
                                         "data.ofm.b" + std::to_string(sample), logical / batch});
         }
         const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
-        if (padded != logical) {
+        if (padded != logical && batch > 1) {
           check(!decoded && decoded.error->code == MpkDecodeErrorCode::ValueSizeMismatch,
-                "allocation extent alone must not invent channel padding");
+                "unregistered batched channel padding remains rejected");
         } else {
-          check(static_cast<bool>(decoded), "unambiguous dense input remains supported");
+          check(static_cast<bool>(decoded),
+                "single-input storage is resolved from its exact extent");
+          if (padded != logical) {
+            const auto& plan = *decoded.plan;
+            const auto& port = plan.backend_ports().front();
+            const auto* value = plan.value(port.value_id);
+            check(value && value->storage_binding && value->logical_shape == shape &&
+                      value->required_bytes == logical &&
+                      value->storage_binding->channel_alignment == lane_channels &&
+                      value->storage_binding->physical_span == padded &&
+                      port.physical_extent_bytes == padded &&
+                      value->storage_binding->stride_bytes ==
+                          std::vector<std::int64_t>(
+                              {padded, padded / 4, padded / 16, quantized ? 1 : 2}),
+                  "channel padding preserves logical geometry and authors exact storage");
+            std::string error;
+            const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+            check(physical.has_value(), "inferred input storage lowers to existing conversions");
+            const auto arena =
+                FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                            kLegacyEvoCmaRegionAlignmentBytes, &error);
+            check(arena.has_value(), "inferred input storage allocates its physical span");
+            for (const auto& command : physical->commands) {
+              if (command.role != PhysicalCommandRole::Ingress)
+                continue;
+              const std::array<PhysicalCommandId, 1> ids{command.id};
+              const auto contract = build_dmabuf_plan_processcvu_command_contract(
+                  plan, *physical, ids, *arena, &error);
+              if (!contract)
+                std::cerr << error << '\n';
+              check(contract.has_value(), "inferred channel padding projects a runtime contract");
+              const auto& output = contract->payload.output_tensors.front();
+              const auto addressed = quantized ? padded : padded - (lane_channels - channels) * 2U;
+              check(output.storage.nbytes == addressed,
+                    "conversion descriptor covers exactly the addressed channel values");
+              if (!quantized) {
+                check(output.layout.strided.strides_bytes[2] == 16 &&
+                          output.layout.strided.strides_bytes[3] == 2,
+                      "BF16 conversion advances one padded pixel and one dense channel");
+              }
+            }
+          }
+        }
+        if (batch == 1 && padded != logical) {
+          auto indexed = topology;
+          indexed.monolithic_ifm = false;
+          indexed.ifm_symbol_names = {"data.ifm.persistent.qmla_ifm_0.b0"};
+          indexed.ifm_extent_bytes = {padded};
+          indexed.ifm_slots.front().symbol = indexed.ifm_symbol_names.front();
+          const auto unproved = MpkDecoder{}.decode_json(manifest.dump(), indexed);
+          check(!unproved && unproved.error->code == MpkDecodeErrorCode::ValueSizeMismatch,
+                "indexed input extent does not acquire an unregistered storage layout");
+          auto shared = manifest;
+          auto extra = shared["plugins"][2];
+          extra["name"] = "extra_consumer";
+          extra["input_nodes"][0]["name"] = "cast0";
+          extra["output_nodes"][0]["name"] = "extra_output";
+          extra["sequence"] = 4;
+          shared["plugins"][3]["sequence"] = 5;
+          shared["plugins"][3]["input_nodes"].push_back({{"name", "extra_output"}, {"size", fp32}});
+          shared["plugins"][3]["output_nodes"].push_back(
+              {{"name", "published_extra"}, {"size", fp32}});
+          shared["plugins"].insert(shared["plugins"].begin() + 3, extra);
+          const auto shared_result = MpkDecoder{}.decode_json(shared.dump(), topology);
+          check(!shared_result &&
+                    shared_result.error->code == MpkDecodeErrorCode::ValueSizeMismatch,
+                "storage inference cannot change another consumer's input");
+          auto dense = topology;
+          dense.monolithic_ifm_extent_bytes = logical;
+          dense.ifm_slots.front().extent_bytes = logical;
+          check(static_cast<bool>(MpkDecoder{}.decode_json(shared.dump(), dense)),
+                "shared-consumer negative fixture is valid with dense storage");
         }
         topology.monolithic_ifm_extent_bytes = logical / batch;
         for (auto& slot : topology.ifm_slots)
@@ -2296,7 +2367,7 @@ int main(const int argc, char** argv) {
   check(argc == 1, "usage: unit_mpk_decoder_test [manifest elf]");
   test_flat_unpack_compatibility();
   test_batch_slice_transport();
-  test_input_layout_requires_package_evidence();
+  test_input_storage_from_executable();
   test_pack_unpack_batch_order();
   test_exact_registry();
   test_compiler_version_does_not_restrict_admission();
