@@ -186,6 +186,26 @@ void check_mjpeg_system_memory_output() {
   require(out.memory == "SystemMemory", "raw_output=false should advertise SystemMemory output");
 }
 
+void check_explicit_tuning_and_buffer_options() {
+  for (const std::string tuning : {"", "default", "auto", "low-memory", "throughput-low-latency"}) {
+    simaai::neat::SimaDecodeOptions opt;
+    opt.decoder_tuning = tuning;
+    opt.memory_opt = true;
+    opt.input_buffers = 2;
+    opt.num_buffers = 7;
+    const std::string fragment = simaai::neat::SimaDecode(opt).backend_fragment(1);
+    if (tuning.empty()) {
+      require_not_contains(fragment, "decoder-tuning=", "unset tuning should stay unset");
+    } else {
+      require_contains(fragment, "decoder-tuning=" + tuning,
+                       "explicit tuning must reach the decoder alongside memory-opt");
+    }
+    require_contains(fragment, "memory-opt=true", "memory-opt should reach the decoder");
+    require_contains(fragment, "dec-ip-cnt=2", "input override must survive tuning lowering");
+    require_contains(fragment, "num-buffers=7", "output override must survive tuning lowering");
+  }
+}
+
 void check_invalid_options() {
   simaai::neat::SimaDecodeOptions invalid_codec;
   invalid_codec.type = static_cast<simaai::neat::SimaDecodeType>(999);
@@ -247,6 +267,7 @@ int main() {
     check_h265_aliases_use_canonical_backend_name();
     check_jpeg_raw_output_options();
     check_mjpeg_system_memory_output();
+    check_explicit_tuning_and_buffer_options();
     check_invalid_options();
     check_h264_decode_wrapper_compatibility();
 

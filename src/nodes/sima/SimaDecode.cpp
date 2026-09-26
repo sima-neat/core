@@ -78,8 +78,7 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
   if (opt.input_buffers > 0) {
     ss << " dec-ip-cnt=" << opt.input_buffers;
   }
-  if (!opt.decoder_tuning.empty() && opt.decoder_tuning != "default" &&
-      opt.decoder_tuning != "auto") {
+  if (!opt.decoder_tuning.empty()) {
     ss << " decoder-tuning=" << opt.decoder_tuning;
   }
   if (opt.memory_opt) {
