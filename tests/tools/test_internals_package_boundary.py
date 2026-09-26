@@ -105,6 +105,65 @@ preserve_internals_artifact_manifest {shlex.quote(str(artifact_dir))}
 
 
 class InternalsPackageBoundaryTest(unittest.TestCase):
+    def test_header_bootstrap_validates_package_and_cache(self) -> None:
+        headers = (
+            "simaai/gstsimaaitensorbuffer.h",
+            "gst/SimaTensorSetMetaAbi.h",
+            "gst/SimaPreparedRuntimeAbi.h",
+            "gst/SimaPluginStaticManifestAbi.h",
+            "gst/SimaCvuCapabilityAbi.h",
+            "ev/ev_tensor_abi.h",
+        )
+        cases = (
+            ("valid-cache", None, None, "selected", True, False),
+            ("refresh-cache", "gst/SimaCvuCapabilityAbi.h", None, "selected", True, True),
+            ("stale-cache", None, "gst/SimaCvuCapabilityAbi.h", "older", False, True),
+            *(("missing-" + header, header, header, "selected", False, True)
+              for header in headers),
+        )
+        for name, cache_missing, package_missing, marker, succeeds, extracts in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                cache = root / "cache"
+                payload = root / "payload"
+                package = root / "package"
+                package.mkdir()
+                (package / "neat-internals-dev_test.deb").touch()
+                (package / "internals-manifest.json").write_text("{}")
+                for target, missing in ((cache, cache_missing), (payload, package_missing)):
+                    for header in headers:
+                        if header != missing:
+                            path = target / "usr/include" / header
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_text("fixture")
+                (cache / ".internals_headers").write_text(marker)
+                extracted = root / "extracted"
+                script = f"""
+set -euo pipefail
+resolve_neat_internals_ref() {{ NEAT_INTERNALS_REQUESTED_REF=selected; }}
+function dpkg-deb {{
+  touch {shlex.quote(str(extracted))}
+  cp -R {shlex.quote(str(payload))}/. "$3/"
+}}
+{shell_function("validate_neat_internals_headers")}
+{shell_function("ensure_neat_internals_headers")}
+NEAT_DEP_HEADERS_DIR={shlex.quote(str(cache))}
+NEAT_INTERNALS_PACKAGE_DIR={shlex.quote(str(package))}
+NEAT_INTERNALS_DEB_DIR={shlex.quote(str(root / "debs"))}
+ensure_neat_internals_headers
+"""
+                result = subprocess.run(
+                    ["bash", "-c", script], text=True, capture_output=True, check=False
+                )
+                self.assertEqual(result.returncode == 0, succeeds, result.stderr)
+                self.assertEqual(extracted.exists(), extracts)
+                if succeeds:
+                    self.assertEqual((cache / ".internals_headers").read_text().strip(), "selected")
+                    self.assertTrue(all((cache / "usr/include" / h).is_file() for h in headers))
+                else:
+                    self.assertIn(f"missing {package_missing}", result.stderr)
+                    self.assertEqual((cache / ".internals_headers").read_text(), marker)
+
     def test_internals_is_located_without_a_derived_version(self) -> None:
         text = cmake()
         self.assertIn("find_package(NeatInternals CONFIG REQUIRED)", text)

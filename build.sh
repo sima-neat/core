@@ -1727,6 +1727,23 @@ copy_deb_usr_include_to_header_cache() {
   fi
 }
 
+validate_neat_internals_headers() {
+  local include_root="$1"
+  local header
+  for header in \
+    simaai/gstsimaaitensorbuffer.h \
+    gst/SimaTensorSetMetaAbi.h \
+    gst/SimaPreparedRuntimeAbi.h \
+    gst/SimaPluginStaticManifestAbi.h \
+    gst/SimaCvuCapabilityAbi.h \
+    ev/ev_tensor_abi.h; do
+    if [[ ! -f "${include_root}/${header}" ]]; then
+      echo "ERROR: selected neat-internals headers are missing ${header}" >&2
+      return 1
+    fi
+  done
+}
+
 ensure_neat_internals_headers() {
   # Header-only bootstrap for x86 analysis jobs. Do not install arm64 runtime/plugin packages.
   local internals_ref
@@ -1745,8 +1762,7 @@ ensure_neat_internals_headers() {
 
   if [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${internals_ref}" ]] &&
-     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ]] &&
-     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
+     validate_neat_internals_headers "${NEAT_DEP_HEADERS_DIR}/usr/include" 2>/dev/null; then
     echo "Using cached neat-internals headers (${internals_ref})."
     rm -rf "${tmp_dir}"
     return 0
@@ -1769,16 +1785,15 @@ ensure_neat_internals_headers() {
 
   mkdir -p "${NEAT_INTERNALS_DEB_DIR}"
   cp -f "${dev_deb}" "${NEAT_INTERNALS_DEB_DIR}/$(basename "${dev_deb}")"
-  copy_deb_usr_include_to_header_cache "${dev_deb}" "${deb_extract_dir}"
-
-  if [[ ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ||
-        ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
-    echo "ERROR: neat-internals headers are incomplete under ${NEAT_DEP_HEADERS_DIR}" >&2
+  mkdir -p "${deb_extract_dir}"
+  dpkg-deb -x "${dev_deb}" "${deb_extract_dir}"
+  if ! validate_neat_internals_headers "${deb_extract_dir}/usr/include"; then
     rm -rf "${tmp_dir}"
     exit 1
   fi
 
-  mkdir -p "${NEAT_DEP_HEADERS_DIR}"
+  mkdir -p "${NEAT_DEP_HEADERS_DIR}/usr"
+  cp -a "${deb_extract_dir}/usr/include" "${NEAT_DEP_HEADERS_DIR}/usr/"
   cp "${artifact_dir}/internals-manifest.json" "${NEAT_DEP_HEADERS_DIR}/internals-manifest.json"
   printf '%s\n' "${internals_ref}" > "${marker_file}"
   rm -rf "${tmp_dir}"

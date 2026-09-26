@@ -1,7 +1,5 @@
 {
-  "internals": {
-    "policy": "snap"
-  },
+  "internals": "release-3.0.0-prep:a2bd0eb9b800",
   "llima": {
     "policy": "snap"
   },
