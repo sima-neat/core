@@ -6,7 +6,6 @@
 #pragma once
 
 #include "nodes/io/Input.h"
-#include "model/InputStorageLayout.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/RouteGraph.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
@@ -192,7 +191,6 @@ public:
   // Resolve and validate the physical DMA-BUF execution contract. Descriptive
   // model APIs intentionally stay semantic-only until this boundary is crossed.
   void prepare_for_execution() const;
-  void set_input_storage_layouts(InputStorageLayouts layouts);
   std::string apply_name_suffix(const std::string& base) const;
   bool has_terminal_policy() const;
 
@@ -250,7 +248,6 @@ private:
     std::string name_suffix;
     InferenceTerminalPolicy terminal_policy;
     bool cleanup_extracted_model_data = true;
-    InputStorageLayouts input_storage_layouts;
   };
 
   void init(const std::string& tar_gz);

@@ -6,10 +6,7 @@
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
 
-#include "model/InputStorageLayout.h"
-
 #include <filesystem>
-#include <utility>
 #include <optional>
 #include <span>
 #include <string>
@@ -98,12 +95,7 @@ struct MpkDecodeResult {
 // A65 GraphExecutor evidence; archive names, filename suffixes, sidecar JSON,
 // environment, and runtime metadata are never semantic authority.
 class MpkDecoder final {
-  InputStorageLayouts input_layouts_;
-
 public:
-  MpkDecoder() = default;
-  explicit MpkDecoder(InputStorageLayouts layouts) : input_layouts_(std::move(layouts)) {}
-
   MpkDecodeResult decode_json(std::string_view mpk_json,
                               std::span<const MlaStageExecutableEvidence> executable_evidence,
                               std::span<const HostTvmExecutableEvidence> host_evidence,

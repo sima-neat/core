@@ -2069,7 +2069,7 @@ void test_batch_slice_transport() {
   }
 }
 
-void test_explicit_input_layout() {
+void test_input_layout_requires_package_evidence() {
   for (const int batch : {1, 2, 4}) {
     for (const auto channels : {2, 7, 8, 16}) {
       for (const bool quantized : {false, true}) {
@@ -2119,49 +2119,18 @@ void test_explicit_input_layout() {
           topology.ofm_slots.push_back({0U, static_cast<std::uint32_t>(sample),
                                         "data.ofm.b" + std::to_string(sample), logical / batch});
         }
-        const MpkDecoder decoder({{"input", simaai::neat::InputStorageLayout::HWC16}});
-        const auto decoded = decoder.decode_json(manifest.dump(), topology);
-        if (!decoded)
-          std::cerr << decoded.error->detail << '\n';
-        check(static_cast<bool>(decoded),
-              "explicit HWC16 input decodes without changing logical channels");
-        const auto& plan = *decoded.plan;
-        const auto* value = plan.value(plan.ops()[0].outputs.front());
-        check(value->required_bytes == logical && value->logical_shape == shape &&
-                  value->storage_binding->physical_span == padded &&
-                  value->storage_binding->channel_alignment == lane_channels,
-              "HWC16 storage retains exact logical bytes and allocates padded pixels");
-        std::string error;
-        const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
-        if (!physical)
-          std::cerr << error << '\n';
-        check(physical.has_value(),
-              "explicit channel padding lowers to a registered physical graph");
-        const auto arena =
-            FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                        kLegacyEvoCmaRegionAlignmentBytes, &error);
-        check(arena.has_value(), "HWC16 padded carrier allocates in frame arena");
-        const auto& first = physical->commands.front();
-        check(first.graph_id == (quantized ? 226U : 221U) &&
-                  first.members.front().pad_output_channels == quantized,
-              "Quantize uses explicit channel-padding tessellation; Cast uses strides");
-        const std::array<PhysicalCommandId, 1> ids{first.id};
-        const auto projected =
-            build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, *arena, &error);
-        if (!projected)
-          std::cerr << error << '\n';
-        check(projected.has_value(), "explicit HWC16 graph projects its registered descriptors");
-        check(projected->payload.output_tensors.size() == static_cast<std::size_t>(batch),
-              "HWC16 adaptation produces one descriptor per sample");
-        if (quantized) {
-          for (const auto& tensor : projected->payload.output_tensors) {
-            check(tensor.storage.nbytes == padded / batch,
-                  "QuantTess retains the last pixel's padded lanes in every sample");
-          }
+        const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
+        if (padded != logical) {
+          check(!decoded && decoded.error->code == MpkDecodeErrorCode::ValueSizeMismatch,
+                "allocation extent alone must not invent channel padding");
+        } else {
+          check(static_cast<bool>(decoded), "unambiguous dense input remains supported");
         }
-        const auto unknown = MpkDecoder({{"missing", simaai::neat::InputStorageLayout::HWC16}})
-                                 .decode_json(manifest.dump(), topology);
-        check(!unknown, "misspelled input override is rejected");
+        topology.monolithic_ifm_extent_bytes = logical / batch;
+        for (auto& slot : topology.ifm_slots)
+          slot.extent_bytes = logical / batch;
+        check(static_cast<bool>(MpkDecoder{}.decode_json(manifest.dump(), topology)),
+              "the same MPK admits its declared dense input without an override");
       }
     }
   }
@@ -2213,17 +2182,13 @@ void test_pack_unpack_batch_order() {
   }
 }
 
-int validate_explicit_pair(const char* manifest_path, const char* elf_path,
-                           const char* hwc16_input = nullptr) {
+int validate_explicit_pair(const char* manifest_path, const char* elf_path) {
   MlaElfIoTopology topology;
   if (!read_mla_elf_io_topology(elf_path, &topology)) {
     std::cerr << topology.error << "\n";
     return 2;
   }
-  simaai::neat::InputStorageLayouts layouts;
-  if (hwc16_input)
-    layouts.emplace(hwc16_input, simaai::neat::InputStorageLayout::HWC16);
-  const auto result = MpkDecoder{std::move(layouts)}.decode_file(manifest_path, topology);
+  const auto result = MpkDecoder{}.decode_file(manifest_path, topology);
   if (!result) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
     return 1;
@@ -2246,13 +2211,13 @@ int validate_explicit_pair(const char* manifest_path, const char* elf_path,
 } // namespace
 
 int main(const int argc, char** argv) {
-  if (argc == 3 || argc == 4) {
-    return validate_explicit_pair(argv[1], argv[2], argc == 4 ? argv[3] : nullptr);
+  if (argc == 3) {
+    return validate_explicit_pair(argv[1], argv[2]);
   }
   check(argc == 1, "usage: unit_mpk_decoder_test [manifest elf]");
   test_flat_unpack_compatibility();
   test_batch_slice_transport();
-  test_explicit_input_layout();
+  test_input_layout_requires_package_evidence();
   test_pack_unpack_batch_order();
   test_exact_registry();
   test_compiler_version_does_not_restrict_admission();

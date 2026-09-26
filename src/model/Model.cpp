@@ -4608,7 +4608,6 @@ struct Model::Impl {
              /*queue_leaky=*/{}, options.name_suffix,
              to_internal_terminal_policy(options.inference_terminal),
              options.cleanup_extracted_model_data) {
-    pack.set_input_storage_layouts(options.input_storage_layouts);
     // Names where the package was extracted. Callers debugging load time or eMMC wear need to see
     // which filesystem the automatic selection landed on, and it is not otherwise reported.
     const std::string package_root = std::filesystem::path(pack.etc_dir()).parent_path().string();
@@ -6835,10 +6834,6 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["upstream_name"] = opt.upstream_name;
   out["name_suffix"] = opt.name_suffix;
   out["cleanup_extracted_model_data"] = opt.cleanup_extracted_model_data;
-  out["input_storage_layouts"] = nlohmann::json::object();
-  for (const auto& [name, layout] : opt.input_storage_layouts) {
-    out["input_storage_layouts"][name] = layout == InputStorageLayout::HWC16 ? "HWC16" : "HWC";
-  }
   out["inference_terminal"] = std::move(terminal);
   out["processcvu"] = processcvu_options_json(opt.processcvu);
   out["processmla"] = processmla_options_json(opt.processmla);

@@ -4408,13 +4408,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("last_plugin_id", &simaai::neat::Model::InferenceTerminalPolicy::last_plugin_id)
       .def_rw("last_processor", &simaai::neat::Model::InferenceTerminalPolicy::last_processor);
 
-  nb::enum_<simaai::neat::InputStorageLayout>(m, "InputStorageLayout")
-      .value("HWC", simaai::neat::InputStorageLayout::HWC)
-      .value("HWC16", simaai::neat::InputStorageLayout::HWC16);
-
   nb::class_<simaai::neat::Model::Options>(m, "ModelOptions")
       .def(nb::init<>())
-      .def_rw("input_storage_layouts", &simaai::neat::Model::Options::input_storage_layouts)
       .def_rw("preprocess", &simaai::neat::Model::Options::preprocess)
       .def_rw("decode_type", &simaai::neat::Model::Options::decode_type)
       .def_rw("decode_type_option", &simaai::neat::Model::Options::decode_type_option)

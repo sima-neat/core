@@ -703,8 +703,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
 DmabufPlanCompileResult
 try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::vector<MlaExecutableArtifact>& mla_executables,
-                        const std::vector<HostTvmExecutableArtifact>& host_executables,
-                        const InputStorageLayouts& input_layouts) noexcept {
+                        const std::vector<HostTvmExecutableArtifact>& host_executables) noexcept {
   const auto mpk_source = basename_or_placeholder(mpk_manifest, "<mpk-manifest>");
   try {
     std::error_code ec;
@@ -815,7 +814,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
     }
     const auto artifact_digest = sha256_text(artifact_identity);
 
-    auto decoded = sc::MpkDecoder{input_layouts}.decode_file(mpk_manifest, evidence, host_evidence);
+    auto decoded = sc::MpkDecoder{}.decode_file(mpk_manifest, evidence, host_evidence);
     if (!decoded || !decoded.plan) {
       const auto code = decoded.error ? map_decode_code(decoded.error->code)
                                       : DmabufEligibilityCode::InternalError;

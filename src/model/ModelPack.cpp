@@ -463,8 +463,7 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
 }
 
 static pipeline_internal::DmabufPlanCompileResult
-compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract,
-                                   const InputStorageLayouts& input_layouts) {
+compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract) {
   if (mpk_contract.mpk_json_path.empty()) {
     return pipeline_internal::try_compile_dmabuf_plan(
         std::filesystem::path{}, std::vector<pipeline_internal::MlaExecutableArtifact>{});
@@ -506,7 +505,7 @@ compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& m
         {stage.name, stage.executable, resolved.empty() ? candidates.front() : resolved});
   }
   return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path, artifacts,
-                                                    host_artifacts, input_layouts);
+                                                    host_artifacts);
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
@@ -3955,8 +3954,7 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
     throw std::runtime_error("ModelPack: dmabuf-plan requires an exact mpk.json manifest");
   }
 
-  auto compiled =
-      compile_dmabuf_plan_execution_plan(*mpk_contract_, options_.input_storage_layouts);
+  auto compiled = compile_dmabuf_plan_execution_plan(*mpk_contract_);
   execution_admission_ = compiled.report;
   execution_plan_digest_ = compiled.plan_digest;
   if (!compiled.eligible()) {
@@ -3973,13 +3971,6 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   dmabuf_fragment_source_ = std::make_shared<const ModelFragmentPlanSource>(
       ModelFragmentPlanSource{*dmabuf_plan_execution_plan_, *dmabuf_physical_execution_plan_,
                               *dmabuf_frame_arena_plan_, mpk_contract_, execution_plan_digest_});
-}
-
-void ModelPack::set_input_storage_layouts(InputStorageLayouts layouts) {
-  if (dmabuf_plan_execution_plan_) {
-    throw std::logic_error("Input storage layouts must be set before preparing the model");
-  }
-  options_.input_storage_layouts = std::move(layouts);
 }
 
 void ModelPack::prepare_for_execution() const {

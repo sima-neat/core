@@ -29,7 +29,6 @@
 #include <array>
 #include <cstdint>
 #include <memory>
-#include "model/InputStorageLayout.h"
 
 #include <optional>
 #include <string>
@@ -323,10 +322,6 @@ public:
     /// Preferred jargon-free execution surface (folded into the legacy fields above at Graph
     /// build time). All-unset by default, so it is a no-op unless a field is set.
     AdvancedExecutionOptions advanced_execution;
-
-    /// Explicit MLA storage layout for each named public MPK input. Core adapts
-    /// its conversion output; application tensors retain their logical shape.
-    InputStorageLayouts input_storage_layouts;
   };
 
   /**

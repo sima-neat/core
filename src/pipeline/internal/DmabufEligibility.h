@@ -1,5 +1,4 @@
 #pragma once
-#include "model/InputStorageLayout.h"
 #ifndef SIMA_NEAT_INTERNAL
 #error "Internal header. Not part of the public API."
 #endif
@@ -107,8 +106,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
 DmabufPlanCompileResult
 try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::vector<MlaExecutableArtifact>& mla_executables,
-                        const std::vector<HostTvmExecutableArtifact>& host_executables,
-                        const InputStorageLayouts& input_layouts = {}) noexcept;
+                        const std::vector<HostTvmExecutableArtifact>& host_executables) noexcept;
 
 // Stable canonical rendering and SHA-256 digest of the accepted immutable plan.
 std::string canonical_dmabuf_plan_json(const sima::static_contract::ModelExecutionPlan& plan);

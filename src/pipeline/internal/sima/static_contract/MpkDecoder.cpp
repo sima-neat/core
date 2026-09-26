@@ -1318,88 +1318,10 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
   }
 }
 
-void author_input_layouts(ModelExecutionPlanData& data, const InputStorageLayouts& layouts,
-                          std::vector<MpkProofFact>& proof) {
-  for (const auto& [name, layout] : layouts) {
-    const auto source = std::find_if(data.model_inputs.begin(), data.model_inputs.end(),
-                                     [&](const auto id) { return data.values[id].name == name; });
-    if (source == data.model_inputs.end() ||
-        (layout != InputStorageLayout::HWC && layout != InputStorageLayout::HWC16)) {
-      reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.input_nodes",
-             "input storage override has an unknown input name or layout: " + name);
-    }
-    bool matched = false;
-    for (const auto& mla : data.ops) {
-      if (mla.kind != OpKind::Mla)
-        continue;
-      for (const auto id : mla.inputs) {
-        ValueId cursor = id;
-        while (cursor != *source) {
-          const auto producer = std::find_if(data.ops.begin(), data.ops.end(), [&](const auto& op) {
-            return std::find(op.outputs.begin(), op.outputs.end(), cursor) != op.outputs.end();
-          });
-          if (producer == data.ops.end() || producer->inputs.size() != 1U ||
-              producer->outputs.size() != 1U ||
-              (producer->kind != OpKind::Cast && producer->kind != OpKind::Quantize))
-            break;
-          cursor = producer->inputs.front();
-        }
-        if (cursor != *source)
-          continue;
-        auto& value = data.values[id];
-        const auto width = value.logical_dtype ? element_width(*value.logical_dtype) : std::nullopt;
-        if (!value.logical_shape || value.logical_shape->size() != 4U || !width ||
-            (*width != 1U && *width != 2U) || value.representation != ValueRepresentation::Dense ||
-            dense_bytes(*value.logical_shape, *value.logical_dtype) != value.required_bytes ||
-            value.read_expression || value.storage_binding) {
-          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.input_nodes",
-                 "input layout override requires an exact dense NHWC MLA input: " + name);
-        }
-        matched = true;
-        value.logical_layout = "HWC";
-        if (layout == InputStorageLayout::HWC)
-          continue;
-        if (id == *source) {
-          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.input_nodes",
-                 "HWC16 adaptation requires a model input conversion stage: " + name);
-        }
-        auto storage_shape = *value.logical_shape;
-        const auto channels = storage_shape.back();
-        if (channels > std::numeric_limits<std::int64_t>::max() - 15) {
-          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.input_nodes",
-                 "channel padding overflows");
-        }
-        const auto channel_alignment = static_cast<std::int64_t>(16U / *width);
-        storage_shape.back() =
-            ((channels + channel_alignment - 1) / channel_alignment) * channel_alignment;
-        const auto bytes = dense_bytes(storage_shape, *value.logical_dtype);
-        const auto strides = contiguous_stride_bytes(storage_shape, *width);
-        if (!bytes || !strides) {
-          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.input_nodes",
-                 "HWC16 storage overflows");
-        }
-        StorageBinding binding;
-        binding.carrier_id = id;
-        binding.physical_span = *bytes;
-        binding.stride_bytes = *strides;
-        binding.channel_alignment = static_cast<std::uint32_t>(channel_alignment);
-        value.storage_binding = std::move(binding);
-        proof.push_back({"input-layout[" + name + "]",
-                         "explicit HWC16 option preserves logical channels and "
-                         "pads each pixel to a multiple of 16 bytes"});
-      }
-    }
-    if (!matched) {
-      reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.input_nodes",
-             "input layout override has no unambiguous conversion path to MLA: " + name);
-    }
-  }
-}
-
 MpkDecodeResult decode_impl(const std::string_view text,
                             const std::span<const MlaStageExecutableEvidence> executable_evidence,
                             const std::span<const HostTvmExecutableEvidence> host_evidence,
-                            const std::string& source, const InputStorageLayouts& input_layouts) {
+                            const std::string& source) {
   MpkDecodeResult result;
   try {
     Json root = Json::parse(text.begin(), text.end(), nullptr, false);
@@ -1847,8 +1769,6 @@ MpkDecodeResult decode_impl(const std::string_view text,
       reject(MpkDecodeErrorCode::InvalidPublicationStage, "$.plugins",
              "PassThrough, when present, must be the unique terminal publication operation");
     }
-
-    author_input_layouts(data, input_layouts, result.proof);
 
     if (executable_evidence.size() != mla_op_indices.size()) {
       reject(executable_evidence.size() < mla_op_indices.size()
@@ -2391,7 +2311,7 @@ MpkDecodeResult MpkDecoder::decode_json(const std::string_view mpk_json,
           "single-topology compatibility overload requires exactly one MLA stage"};
       return result;
     }
-    return decode_impl(mpk_json, evidence, {}, source_label, input_layouts_);
+    return decode_impl(mpk_json, evidence, {}, source_label);
   } catch (const std::exception& failure) {
     MpkDecodeResult result;
     result.error = MpkDecodeError{MpkDecodeErrorCode::InvalidJson, std::move(source_label), "$",
@@ -2404,7 +2324,7 @@ MpkDecodeResult
 MpkDecoder::decode_json(const std::string_view mpk_json,
                         const std::span<const MlaStageExecutableEvidence> executable_evidence,
                         std::string source_label) const noexcept {
-  return decode_impl(mpk_json, executable_evidence, {}, source_label, input_layouts_);
+  return decode_impl(mpk_json, executable_evidence, {}, source_label);
 }
 
 MpkDecodeResult
@@ -2412,7 +2332,7 @@ MpkDecoder::decode_json(const std::string_view mpk_json,
                         const std::span<const MlaStageExecutableEvidence> executable_evidence,
                         const std::span<const HostTvmExecutableEvidence> host_evidence,
                         std::string source_label) const noexcept {
-  return decode_impl(mpk_json, executable_evidence, host_evidence, source_label, input_layouts_);
+  return decode_impl(mpk_json, executable_evidence, host_evidence, source_label);
 }
 
 MpkDecodeResult MpkDecoder::decode_file(const std::filesystem::path& mpk_manifest,
@@ -2461,8 +2381,7 @@ MpkDecodeResult MpkDecoder::decode_file(
                                   "cannot read MPK manifest"};
     return result;
   }
-  return decode_impl(contents.str(), executable_evidence, host_evidence, mpk_manifest.string(),
-                     input_layouts_);
+  return decode_impl(contents.str(), executable_evidence, host_evidence, mpk_manifest.string());
 }
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract
