@@ -42,6 +42,9 @@ struct PhysicalCommandMember {
   std::vector<OpId> semantic_chain;
   std::vector<ValueId> outer_inputs;
   std::vector<ValueId> outer_outputs;
+  std::uint32_t batch_index = 0U;
+  std::uint32_t batch_count = 1U;
+  bool pad_output_channels = false;
 };
 
 // One prepared backend call. A CVU command can contain several horizontally
@@ -75,7 +78,9 @@ struct PhysicalCommand {
 
 struct PhysicalExecutionPlan {
   std::vector<PhysicalCommand> commands;
+  // The singular lookup is populated only when one command owns the operation.
   std::vector<std::optional<PhysicalCommandId>> command_for_semantic_op;
+  std::vector<std::vector<PhysicalCommandId>> commands_for_semantic_op;
   std::string deterministic_digest_material;
 };
 

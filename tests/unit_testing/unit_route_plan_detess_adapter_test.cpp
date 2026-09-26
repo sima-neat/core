@@ -1,10 +1,26 @@
 #include "model/Model.h"
 #include "model/internal/RoutePlanner.h"
 #include "test_main.h"
+#include "nodes/sima/Detess.h"
+#include "pipeline/internal/sima/PluginContractSubsets.h"
 
 RUN_TEST("unit_route_plan_detess_adapter_test", ([] {
            using namespace simaai::neat;
            using namespace simaai::neat::internal;
+
+           {
+             DetessOptions options;
+             auto compiled = std::make_shared<CompiledProcessCvuContract>();
+             compiled->runtime_contract.plugin_kind = "processcvu";
+             options.compiled_contract = compiled;
+             const Detess node(options);
+             require(node.contract_definition().plugin_kind == "processcvu" &&
+                         node.backend_fragment(0).find("neatprocesscvu name=") == 0U,
+                     "model-managed Detess preserves its physical CVU renderer");
+             const Detess standalone;
+             require(standalone.contract_definition().plugin_kind == "neatdetess",
+                     "standalone Detess retains its existing renderer");
+           }
 
            {
              Model::Options options;

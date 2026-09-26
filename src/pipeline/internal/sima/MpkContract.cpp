@@ -5928,10 +5928,7 @@ void graph_mpk_creation(MpkContract* contract) {
   graph_fuser(contract);
 }
 
-namespace {
-
-bool resolve_rank2_detess_frame_shape_local(MpkPluginIoContract& stage,
-                                            std::string* error_message) {
+bool resolve_detess_runtime_frame_shape(MpkPluginIoContract& stage, std::string* error_message) {
   const auto fail = [&](std::string message) {
     if (error_message) {
       *error_message = std::move(message);
@@ -5939,6 +5936,12 @@ bool resolve_rank2_detess_frame_shape_local(MpkPluginIoContract& stage,
     return false;
   };
 
+  if (stage.frame_shape.size() != 2U) {
+    return true;
+  }
+  if (stage.batch_sz_model > 1) {
+    return fail("rank-2 detess frame_shape requires batch=1 for '" + stage.name + "'");
+  }
   if (stage.input_tensors.empty() || stage.output_tensors.empty()) {
     return fail("rank-2 detess frame_shape resolution requires input/output tensors for '" +
                 stage.name + "'");
@@ -5997,6 +6000,8 @@ bool resolve_rank2_detess_frame_shape_local(MpkPluginIoContract& stage,
               " output_bytes=" + std::to_string(output_size_bytes));
 }
 
+namespace {
+
 bool resolve_detess_frame_shapes_local(MpkContract& contract, std::string* error_message) {
   for (auto& stage : contract.plugins) {
     const std::string token =
@@ -6005,7 +6010,7 @@ bool resolve_detess_frame_shapes_local(MpkContract& contract, std::string* error
       continue;
     }
     if (stage.frame_shape.size() == 2U) {
-      if (!resolve_rank2_detess_frame_shape_local(stage, error_message)) {
+      if (!resolve_detess_runtime_frame_shape(stage, error_message)) {
         return false;
       }
       continue;

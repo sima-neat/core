@@ -4,6 +4,7 @@
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/function.h>
+#include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
@@ -105,6 +106,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+NB_MAKE_OPAQUE(simaai::neat::SampleAttributes);
 
 namespace nb = nanobind;
 using namespace nb::literals;

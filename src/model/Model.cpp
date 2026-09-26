@@ -5575,7 +5575,7 @@ DetessOptions make_detess_options_from_typed_adapter(const Model& model,
   }
   auto compiled =
       require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
-  compiled.runtime_contract.plugin_kind = "neatdetess";
+  compiled.runtime_contract.plugin_kind = "processcvu";
   opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
   lock_buffers_for_sync(&opt, sync);
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
@@ -5830,9 +5830,17 @@ std::size_t post_region_compiled_logical_output_count(const internal::ModelPack&
                                                       const internal::RouteRegion& region) {
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (region.op_kind) {
-  case GraphKind::Detess:
-    return require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess)
-        .runtime_contract.logical_outputs.size();
+  case GraphKind::Detess: {
+    (void)require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
+    std::unordered_set<pipeline_internal::sima::static_contract::OpId> origins;
+    for (const auto& stage : pack.execution_plan().post) {
+      if (stage.kind == internal::ExecutionStageKind::Detess) {
+        origins.insert(stage.execution_op_ids.begin(), stage.execution_op_ids.end());
+      }
+    }
+    // Physical batch members do not add semantic model outputs.
+    return origins.size();
+  }
   case GraphKind::DetessCast:
     return require_model_managed_postprocess_contract(pack,
                                                       internal::ExecutionStageKind::DetessCast)
@@ -8167,7 +8175,7 @@ DetessOptions ModelAccess::build_detess_stage_options(const Model& model, bool s
   }
   auto compiled =
       require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
-  compiled.runtime_contract.plugin_kind = "neatdetess";
+  compiled.runtime_contract.plugin_kind = "processcvu";
   opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
   const auto plan = pack.execution_plan();
   if (!plan.infer.empty()) {

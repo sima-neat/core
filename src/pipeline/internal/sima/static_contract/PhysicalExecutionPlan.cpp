@@ -127,6 +127,17 @@ std::optional<std::uint32_t> cvu_semantic_op(const OpKind kind) {
   return std::nullopt;
 }
 
+bool quant_requires_channel_padding(const std::vector<OpId>& chain,
+                                    const ModelExecutionPlan& plan) {
+  if (chain.size() != 1U || chain.front() >= plan.ops().size())
+    return false;
+  const auto& op = plan.ops()[chain.front()];
+  if (op.kind != OpKind::Quantize || op.outputs.size() != 1U)
+    return false;
+  const auto* output = plan.value(op.outputs.front());
+  return output && output->storage_binding && output->storage_binding->channel_alignment == 16U;
+}
+
 std::optional<SimaCvuCapabilityAbiRecord> cvu_capability(const std::vector<OpId>& chain,
                                                          const ModelExecutionPlan& plan) {
   if (chain.empty() || chain.size() > 2U) {
@@ -141,7 +152,17 @@ std::optional<SimaCvuCapabilityAbiRecord> cvu_capability(const std::vector<OpId>
   if (!first || !second) {
     return std::nullopt;
   }
+  // Batched Detess is sampled, while its final conversion publishes the complete batch.
+  if (chain.size() == 2U && plan.ops()[chain.front()].kind == OpKind::Detessellate &&
+      plan.ops()[chain.front()].batch_count > 1U) {
+    return std::nullopt;
+  }
   SimaCvuCapabilityAbiRecord record{};
+  if (quant_requires_channel_padding(chain, plan)) {
+    if (!sima_cvu_capability_abi_lookup(226U, &record))
+      return std::nullopt;
+    return record;
+  }
   if (!sima_cvu_capability_abi_lookup_semantic_pattern(static_cast<std::uint32_t>(chain.size()),
                                                        *first, *second, &record) ||
       record.maximum_members == 0U) {
@@ -199,10 +220,7 @@ PhysicalEngine engine_for(const OpSpec& op) {
 }
 
 std::int64_t batch_for(const OpSpec& op) {
-  if (op.input_shapes.empty() || op.input_shapes.front().empty()) {
-    return 1;
-  }
-  return op.input_shapes.front().front();
+  return op.batch_count;
 }
 
 std::string canonical_dtype(std::string value) {
@@ -652,6 +670,7 @@ std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& 
     ReducedMember member;
     member.physical.ordinal = lane.ordinal;
     member.physical.semantic_chain = chain;
+    member.physical.pad_output_channels = quant_requires_channel_padding(chain, plan);
     member.physical.outer_inputs = first.inputs;
     member.physical.outer_outputs = last.outputs;
     member.capability = *capability;
@@ -669,7 +688,8 @@ std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& 
   return result;
 }
 
-using CohortKey = std::tuple<std::size_t, std::uint32_t, std::int64_t, std::string, bool, bool>;
+using CohortKey =
+    std::tuple<std::size_t, std::uint32_t, std::int64_t, std::string, bool, bool, bool>;
 
 bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes,
                          const bool align_from_boundary_end, const PhysicalCommandRole role,
@@ -685,7 +705,7 @@ bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes
       auto& member = (*reduced)[index];
       const auto boundary_distance = align_from_boundary_end ? reduced->size() - index - 1U : index;
       cohorts[{boundary_distance, member.capability.graph_id, member.batch, member.processor,
-               member.align_c16, member.cblock}]
+               member.align_c16, member.cblock, member.physical.pad_output_channels}]
           .push_back(std::move(member));
     }
   }
@@ -968,44 +988,93 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
       draft.maximum_members = capability->maximum_members;
     }
     draft.members = {{0U, {op.id}, op.inputs, op.outputs}};
+    draft.members.front().pad_output_channels = quant_requires_channel_padding({op.id}, semantic);
     claimed.emplace(op.id);
     drafts.push_back(std::move(draft));
   }
 
-  std::vector<std::size_t> draft_for_op(ops.size(), drafts.size());
+  // Each CVU descriptor handles one sample; semantic values retain the complete batch.
+  std::vector<DraftCommand> expanded;
+  std::map<PhysicalCohortId, std::uint32_t> next_ordinal;
+  for (const auto& draft : drafts) {
+    const bool complete_batch_conversion =
+        draft.engine == PhysicalEngine::Cvu && draft.role == PhysicalCommandRole::Egress &&
+        std::all_of(draft.members.begin(), draft.members.end(), [&](const auto& member) {
+          if (member.semantic_chain.size() != 1U)
+            return false;
+          const auto kind = ops[member.semantic_chain.front()].kind;
+          return kind == OpKind::Cast || kind == OpKind::Dequantize;
+        });
+    if (complete_batch_conversion) {
+      auto whole_batch = draft;
+      whole_batch.batch_size = 1U;
+      expanded.push_back(std::move(whole_batch));
+      continue;
+    }
+    if (draft.engine != PhysicalEngine::Cvu || draft.batch_size == 1U) {
+      expanded.push_back(draft);
+      continue;
+    }
+    DraftCommand chunk = draft;
+    chunk.batch_size = 1U;
+    chunk.members.clear();
+    for (const auto& member : draft.members) {
+      for (std::uint32_t sample = 0; sample < draft.batch_size; ++sample) {
+        auto physical_member = member;
+        physical_member.ordinal = next_ordinal[draft.cohort_id]++;
+        physical_member.batch_index = sample;
+        physical_member.batch_count = draft.batch_size;
+        chunk.members.push_back(std::move(physical_member));
+        if (chunk.members.size() == chunk.maximum_members) {
+          expanded.push_back(chunk);
+          chunk.members.clear();
+        }
+      }
+    }
+    if (!chunk.members.empty()) {
+      expanded.push_back(std::move(chunk));
+    }
+  }
+  drafts = std::move(expanded);
+
+  std::vector<std::set<std::size_t>> drafts_for_op(ops.size());
   for (std::size_t draft_id = 0; draft_id < drafts.size(); ++draft_id) {
     for (const auto& member : drafts[draft_id].members) {
       for (const auto op_id : member.semantic_chain) {
-        if (op_id >= draft_for_op.size() || draft_for_op[op_id] != drafts.size()) {
-          record_error(error, "physical lowering assigned a semantic operation more than once");
+        if (op_id >= drafts_for_op.size()) {
+          record_error(error, "physical lowering found an invalid semantic origin");
           return std::nullopt;
         }
-        draft_for_op[op_id] = draft_id;
+        drafts_for_op[op_id].emplace(draft_id);
       }
     }
   }
 
-  std::function<void(ValueId, std::set<std::size_t>*, std::unordered_set<ValueId>*)>
+  std::function<void(ValueId, const std::vector<OpId>&, std::set<std::size_t>*,
+                     std::unordered_set<ValueId>*)>
       collect_predecessors;
-  collect_predecessors = [&](const ValueId value_id, std::set<std::size_t>* result,
-                             std::unordered_set<ValueId>* visiting) {
+  collect_predecessors = [&](const ValueId value_id, const std::vector<OpId>& internal_ops,
+                             std::set<std::size_t>* result, std::unordered_set<ValueId>* visiting) {
     if (value_id >= producers.size() || !visiting->emplace(value_id).second) {
       return;
     }
     if (producers[value_id]) {
       const auto producer_id = *producers[value_id];
-      if (draft_for_op[producer_id] != drafts.size()) {
-        result->emplace(draft_for_op[producer_id]);
+      if (std::find(internal_ops.begin(), internal_ops.end(), producer_id) != internal_ops.end()) {
+        return;
+      }
+      if (!drafts_for_op[producer_id].empty()) {
+        result->insert(drafts_for_op[producer_id].begin(), drafts_for_op[producer_id].end());
         return;
       }
       for (const auto input : ops[producer_id].inputs) {
-        collect_predecessors(input, result, visiting);
+        collect_predecessors(input, internal_ops, result, visiting);
       }
       return;
     }
     const auto* value = semantic.value(value_id);
     if (value && value->read_expression) {
-      collect_predecessors(value->read_expression->source_value_id, result, visiting);
+      collect_predecessors(value->read_expression->source_value_id, internal_ops, result, visiting);
     }
   };
 
@@ -1014,24 +1083,27 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     for (const auto& member : draft.members) {
       for (const auto input : member.outer_inputs) {
         std::unordered_set<ValueId> visiting;
-        collect_predecessors(input, &draft.predecessor_drafts, &visiting);
+        collect_predecessors(input, member.semantic_chain, &draft.predecessor_drafts, &visiting);
       }
-      // Preserve compiler-authored control dependencies in addition to value
-      // provenance. A dependency on a relation-only operation resolves through
-      // that relation's inputs to the nearest executable producer.
       for (const auto op_id : member.semantic_chain) {
         for (const auto dependency : ops[op_id].dependencies) {
           if (dependency >= ops.size()) {
             record_error(error, "physical lowering found an out-of-range semantic dependency");
             return std::nullopt;
           }
-          if (draft_for_op[dependency] != drafts.size()) {
-            draft.predecessor_drafts.emplace(draft_for_op[dependency]);
+          if (std::find(member.semantic_chain.begin(), member.semantic_chain.end(), dependency) !=
+              member.semantic_chain.end()) {
+            continue;
+          }
+          if (!drafts_for_op[dependency].empty()) {
+            draft.predecessor_drafts.insert(drafts_for_op[dependency].begin(),
+                                            drafts_for_op[dependency].end());
             continue;
           }
           for (const auto input : ops[dependency].inputs) {
             std::unordered_set<ValueId> visiting;
-            collect_predecessors(input, &draft.predecessor_drafts, &visiting);
+            collect_predecessors(input, member.semantic_chain, &draft.predecessor_drafts,
+                                 &visiting);
           }
         }
       }
@@ -1073,6 +1145,7 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
 
   PhysicalExecutionPlan result;
   result.command_for_semantic_op.resize(ops.size());
+  result.commands_for_semantic_op.resize(ops.size());
   result.commands.resize(drafts.size());
   std::vector<PhysicalCommandId> command_id_for_draft(drafts.size());
   for (std::size_t index = 0; index < topological.size(); ++index) {
@@ -1099,7 +1172,10 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
       command.outputs.insert(command.outputs.end(), member.outer_outputs.begin(),
                              member.outer_outputs.end());
       for (const auto op_id : member.semantic_chain) {
-        result.command_for_semantic_op[op_id] = command.id;
+        auto& owners = result.commands_for_semantic_op[op_id];
+        if (owners.empty() || owners.back() != command.id) {
+          owners.push_back(command.id);
+        }
       }
     }
     for (const auto predecessor : draft.predecessor_drafts) {
@@ -1115,7 +1191,8 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
            << command.batch_size << ':' << command.implementation_id << ':'
            << command.maximum_members << ':';
     for (const auto& member : command.members) {
-      digest << '[' << member.ordinal << ':';
+      digest << '[' << member.ordinal << ':' << member.batch_index << '/' << member.batch_count
+             << ':' << member.pad_output_channels << ':';
       for (const auto origin : member.semantic_chain) {
         digest << origin << ',';
       }
@@ -1134,6 +1211,12 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
       digest << predecessor << ',';
     }
     digest << ">;";
+  }
+  for (std::size_t op_id = 0; op_id < result.commands_for_semantic_op.size(); ++op_id) {
+    const auto& owners = result.commands_for_semantic_op[op_id];
+    if (owners.size() == 1U) {
+      result.command_for_semantic_op[op_id] = owners.front();
+    }
   }
   result.deterministic_digest_material = digest.str();
   if (error) {
@@ -1163,9 +1246,10 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     record_error(error, "physical execution tracker requires at least one command");
     return std::nullopt;
   }
-  using CvuCohortContract =
-      std::tuple<PhysicalCommandRole, std::uint32_t, std::uint32_t, std::string, std::uint32_t>;
+  using CvuCohortContract = std::tuple<PhysicalCommandRole, std::uint32_t, std::uint32_t,
+                                       std::string, std::uint32_t, bool>;
   std::unordered_map<PhysicalCohortId, CvuCohortContract> cvu_cohorts;
+  std::map<OpId, std::pair<std::uint32_t, std::set<std::uint32_t>>> samples_for_op;
   for (std::size_t index = 0; index < plan.commands.size(); ++index) {
     const auto& command = plan.commands[index];
     if (command.id != index || command.topological_rank != index) {
@@ -1189,8 +1273,12 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
       return std::nullopt;
     }
     if (command.engine == PhysicalEngine::Cvu) {
-      const CvuCohortContract contract{command.role, command.graph_id, command.batch_size,
-                                       command.implementation_id, command.maximum_members};
+      const CvuCohortContract contract{command.role,
+                                       command.graph_id,
+                                       command.batch_size,
+                                       command.implementation_id,
+                                       command.maximum_members,
+                                       command.members.front().pad_output_channels};
       const auto [found, inserted] = cvu_cohorts.emplace(command.cohort_id, contract);
       if (!inserted && found->second != contract) {
         record_error(error, "physical execution tracker found an inconsistent CVU cohort");
@@ -1199,20 +1287,29 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     }
     std::vector<ValueId> flattened_inputs;
     std::vector<ValueId> flattened_outputs;
-    std::unordered_set<OpId> semantic_origins;
     std::optional<std::uint32_t> previous_ordinal;
     for (const auto& member : command.members) {
-      if (member.semantic_chain.empty() ||
+      if (member.pad_output_channels != command.members.front().pad_output_channels ||
+          member.semantic_chain.empty() || member.batch_count == 0U ||
+          member.batch_index >= member.batch_count ||
+          (member.batch_count > 1U &&
+           (command.engine != PhysicalEngine::Cvu || command.batch_size != 1U)) ||
           (previous_ordinal && member.ordinal <= *previous_ordinal) ||
           (command.engine == PhysicalEngine::Cvu &&
            (member.outer_inputs.size() != 1U || member.outer_outputs.size() != 1U ||
-            member.semantic_chain.size() != capability.semantic_pattern_length))) {
+            member.semantic_chain.size() + (member.pad_output_channels ? 1U : 0U) !=
+                capability.semantic_pattern_length ||
+            (member.pad_output_channels &&
+             (command.graph_id != 226U || member.semantic_chain.size() != 1U))))) {
         record_error(error, "physical execution tracker found an invalid physical member");
         return std::nullopt;
       }
       previous_ordinal = member.ordinal;
       for (const auto op_id : member.semantic_chain) {
-        if (!semantic_origins.emplace(op_id).second) {
+        auto [found, inserted] =
+            samples_for_op.try_emplace(op_id, member.batch_count, std::set<std::uint32_t>{});
+        if (found->second.first != member.batch_count ||
+            !found->second.second.emplace(member.batch_index).second) {
           record_error(error, "physical execution tracker found duplicate semantic provenance");
           return std::nullopt;
         }
@@ -1251,6 +1348,13 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
         std::adjacent_find(command.successors.begin(), command.successors.end()) !=
             command.successors.end()) {
       record_error(error, "physical execution tracker found a duplicate dependency");
+      return std::nullopt;
+    }
+  }
+  for (const auto& [op_id, samples] : samples_for_op) {
+    (void)op_id;
+    if (samples.second.size() != samples.first) {
+      record_error(error, "physical execution tracker found incomplete batch provenance");
       return std::nullopt;
     }
   }

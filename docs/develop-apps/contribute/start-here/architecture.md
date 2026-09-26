@@ -199,7 +199,7 @@ storage. Core compiles model-load facts into one immutable internal
   authority, and access direction; and
 - public outputs contain only publication order and the value they expose.
 
-AFE v2 MPKs use `AfeMpkV2Decoder`. The optional `model_sdk_version`
+MPK manifests use `MpkDecoder`. The optional `model_sdk_version`
 string is retained as provenance and does not restrict admission. The decoder
 accepts only the exact registered `(processor, kernel)` vocabulary,
 resolves full tensor names, validates operation byte equations, and reconciles
@@ -211,6 +211,10 @@ semantic evidence. The resulting immutable plan exposes a checked
 port spans for every MLA operation. Ambiguity, missing slots, or conflicting
 evidence is a model-load error; sidecar JSON, substring matching, environment
 state, and runtime buffers are not evidence.
+
+Single-input, batch-one models with normal spatial storage can use automatic
+input channel padding. Applications keep the model's logical tensor shape;
+custom spatial storage padding is outside this support scope.
 
 An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
 by its suffix. For `processor="MLA"`, Core reads the file as an ELF container

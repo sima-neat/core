@@ -214,6 +214,37 @@ RUN_TEST(
 
       simaai::neat::gst_init_once();
 
+      for (const std::string& cvu_segment :
+           {std::string("neatprocesscvu name=standalone async=true"),
+            std::string("neatprocesscvu name=standalone async=true num-buffers=1"),
+            std::string("neatprocesscvu name=standalone async=true num-buffers=4"),
+            std::string("neatprocesscvu name=standalone async=true num-buffers=5"),
+            std::string("neatprocesscvu name=standalone async=true num-buffers=7")}) {
+        simaai::neat::session_build_enforce_mla_num_buffers(
+            "appsrc ! " + cvu_segment + " ! appsink", "standalone CVU pool");
+      }
+      simaai::neat::session_build_enforce_mla_num_buffers(
+          "appsrc ! neatprocesscvu num-buffers=4 ! neatprocessmla num-buffers=4 ! appsink",
+          "valid MLA route pool");
+      for (const std::string& invalid_route :
+           {std::string("neatprocesscvu ! neatprocessmla num-buffers=4"),
+            std::string("neatprocesscvu num-buffers=5 ! neatprocessmla num-buffers=4"),
+            std::string("neatprocesscvu num-buffers=5 ! ( neatprocessmla num-buffers=4 )"),
+            std::string("neatprocesscvu num-buffers=4 ! neatprocessmla"),
+            std::string("neatprocesscvu num-buffers=4 ! neatprocessmla num-buffers=5")}) {
+        bool rejected = false;
+        try {
+          simaai::neat::session_build_enforce_mla_num_buffers(invalid_route, "invalid MLA pool");
+        } catch (const simaai::neat::NeatError& error) {
+          require_contains(error.what(), "num-buffers must be 4",
+                           "MLA route must retain its buffer-count diagnostic");
+          rejected = true;
+        }
+        require(rejected, "MLA routes must reject absent or mismatched MLA/CVU buffer counts");
+        simaai::neat::session_build_enforce_mla_num_buffers(
+            invalid_route, "sync route retains existing bypass", true);
+      }
+
       // Fused sources keep producers in per-stream branch node lists. Ensure
       // an RTSP producer there still applies the live-source appsink policy to
       // the shared terminal consumer.
