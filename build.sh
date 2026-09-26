@@ -644,6 +644,11 @@ select_system_deps() {
     SELECTED_SYSTEM_DEPS_MAC=("${SYSTEM_DEPS_MAC[@]}")
   fi
 
+  # libjpeg sampling for the short decoder accuracy fixtures.
+  if [[ "${BUILD_TESTS}" == "ON" ]]; then
+    SELECTED_SYSTEM_DEPS_LINUX+=(python3-pil)
+  fi
+
   # Python runtime is required for docs helper scripts and wheel builds.
   if [[ "${BUILD_DOCS}" == "ON" || "${BUILD_PYTHON}" == "ON" ]]; then
     SELECTED_SYSTEM_DEPS_LINUX+=(python3 python3-venv)
@@ -2182,6 +2187,20 @@ configure_cmake() {
   cmake "${cmake_args[@]}"
 }
 
+ensure_fixture_python_dependencies() {
+  [[ "${BUILD_TESTS}" == "ON" ]] || return 0
+  local fixture_python
+  fixture_python="$(sed -n 's/^_Python3_EXECUTABLE:INTERNAL=//p' "${BUILD_DIR}/CMakeCache.txt")"
+  if [[ ! -x "${fixture_python}" ]]; then
+    echo "ERROR: Cannot find the configured fixture Python in ${BUILD_DIR}/CMakeCache.txt." >&2
+    return 1
+  fi
+  if ! "${fixture_python}" -c 'from PIL import Image' >/dev/null 2>&1; then
+    echo "Installing Pillow for fixture Python: ${fixture_python}"
+    "${fixture_python}" -m pip install 'Pillow>=10.0.0'
+  fi
+}
+
 build_docs_site() {
   # Shared docs pipeline used by both --doc and --all/--no-doc flows.
   cd "${REPO_ROOT}"
@@ -3194,6 +3213,7 @@ main() {
   write_resolved_neat_internals_manifest_if_needed
   generate_package_buildinfo_json
   configure_cmake
+  ensure_fixture_python_dependencies
   build_docs_only_if_requested
   build_targets
   copy_test_images

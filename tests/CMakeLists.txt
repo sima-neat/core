@@ -2081,7 +2081,7 @@ if (NOT decoder_multirun_admission_boundary_test IN_LIST PIPELINESESSION_TEST_BL
   set_tests_properties(decoder_multirun_admission_boundary_test PROPERTIES TIMEOUT 120)
 endif()
 
-add_pipeline_test_long(
+add_pipeline_test(
   codec_decode_accuracy_test
   e2e_testing/codec_decode_accuracy_test.cpp
 )
