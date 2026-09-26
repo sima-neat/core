@@ -152,13 +152,13 @@ The H.265 decoder requires `codec_name=hevc`, `profile=Main`, and
 
 | Value | Decoder output |
 | --- | --- |
-| `true` (default) | Native decoded buffers, NV12 by default, without a software conversion stage. |
+| `true` (default) | Decoder output buffers: native NV12 by default, or converted I420. |
 | `false` | Converted `video/x-raw(memory:SystemMemory)` output for CPU consumers. |
 
-`SimaDecode` always requests `zero-copy-output=true`: the hardware decoder writes
-into its DMA-BUF output pool, regardless of whether the next reader is the app,
-CVU, MLA, or an encoder. Setting `raw_output=false` adds an explicit software
-conversion stage; it does not change the decoder's allocation policy.
+`SimaDecode` requests zero-copy decoder output for NV12. Selecting I420 uses
+copy mode, which converts the hardware's NV12 pixels directly into the final
+I420 planes. Both modes use the decoder's DMA-BUF output pool.
+Setting `raw_output=false` adds a software adapter for system-memory output.
 `RunOptions::output_memory` separately controls whether a terminal output shares
 its backing buffer (`ZeroCopy`) or copies it into framework-owned storage (`Owned`).
 
