@@ -1297,6 +1297,23 @@ void test_registered_detess_layout_is_preserved_through_dequant() {
         "layout-preserving graph 223 retains graph 3 output axes");
   check(plan.value(plan.model_outputs().front().value_id)->logical_layout == "HWC",
         "publication retains the exact transform layout");
+
+  auto typed_manifest = nlohmann::json::parse(detess_dequant_manifest());
+  auto& mla = typed_manifest["plugins"][0]["config_params"];
+  mla["input_types"] = {{{"scalar", "int8"}, {"shape", {1, 2, 2, 4}}}};
+  mla["output_types"] = {{{"scalar", "int8"}, {"shape", {1, 2, 2, 4}}}};
+  const auto typed = MpkDecoder{}.decode_json(typed_manifest.dump(), monolithic_topology(16U, 16U));
+  check(static_cast<bool>(typed), "typed MLA frame admits a flattened detess input carrier");
+  const auto& typed_detess = typed.plan->ops().at(1);
+  check(typed.plan->value(typed_detess.inputs.front())->logical_shape ==
+                TensorShape({1, 2, 2, 4}) &&
+            typed_detess.input_shapes == std::vector<TensorShape>{{1, 16}},
+        "typed producer geometry remains separate from the detess byte carrier");
+
+  mla["output_types"][0]["shape"] = {1, 16};
+  expect_error(typed_manifest.dump(), monolithic_topology(16U, 16U),
+               MpkDecodeErrorCode::ConfigurationMismatch,
+               "typed producer shape cannot contradict the detess frame geometry");
 }
 
 void test_rank2_detess_dequant_execution_geometry() {
