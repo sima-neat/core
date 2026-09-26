@@ -87,39 +87,6 @@ Start with default `ModelOptions`. Add options only when the model contract or i
 | Stop the model route early | `inference_terminal` | Advanced route-debugging path. Do not use it for first-run code. |
 | Tune execution placement or internal queues | `processcvu`, `processmla`, `advanced_execution` | Advanced. Measure the default path before tuning. |
 
-### Explicit MLA input storage layout
-
-Leave `input_storage_layouts` empty to use the MPK contract. If the model was
-compiled with an input storage layout that the MPK does not distinguish, set the
-layout using the exact public input name from `mpk.json`:
-
-```cpp
-simaai::neat::Model::Options options;
-options.input_storage_layouts["input"] = simaai::neat::InputStorageLayout::HWC16;
-simaai::neat::Model model(model_path, options);
-```
-
-```python
-options = pyneat.ModelOptions()
-options.input_storage_layouts = {"input": pyneat.InputStorageLayout.HWC16}
-model = pyneat.Model(model_path, options)
-```
-
-`HWC` stores the logical channels consecutively. `HWC16` rounds each pixel's
-channel storage up to a multiple of 16 bytes. For seven channels, Core retains
-the logical seven-channel tensor and reserves sixteen INT8 or eight BF16 slots
-per pixel.
-This option describes the compiled MLA input. Application input tensors retain
-their logical shape; Core adapts the model's input conversion output.
-
-The adaptation requires an unambiguous Cast or Quantize path from the named
-public input to a dense NHWC MLA input. Unknown names, unsupported paths, and
-storage extents that contradict the compiled executable are rejected. Set the
-option from the model's compilation settings; buffer size alone cannot identify
-the layout.
-
-This option extends `Model::Options` in the unreleased 0.4.0 API. Rebuild C++ applications and the Python wheel together with Core; older compiled consumers have a different options layout.
-
 ### Image input with detection decode
 
 Use this pattern when the model expects image preprocessing and emits YOLO-style detections.

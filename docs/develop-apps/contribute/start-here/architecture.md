@@ -193,7 +193,7 @@ storage. Core compiles model-load facts into one immutable internal
 
 - values contain exact names, required bytes, optional logical type facts, and
   an optional root-relative read expression `{source ValueId, byte offset,
-  byte strides, optional storage shape}`;
+  byte strides}`;
 - operations contain exact ordered edges and operation-specific configuration;
 - MLA backend ports contain ELF/model order, exact required bytes, alignment
   authority, and access direction; and
@@ -211,37 +211,6 @@ semantic evidence. The resulting immutable plan exposes a checked
 port spans for every MLA operation. Ambiguity, missing slots, or conflicting
 evidence is a model-load error; sidecar JSON, substring matching, environment
 state, and runtime buffers are not evidence.
-
-Compiler ELF sections named `data.ifm.persistent.MLA_<stage>/<tensor>.b0`
-and `data.ofm.persistent.MLA_<stage>/<tensor>.b0` omit explicit port indices.
-Core preserves ELF encounter order within each direction and maps it to the
-ordered MPK MLA arguments. Tensor names and sizes do not determine port order.
-Mixed indexed/unindexed sections and duplicate native section names are rejected.
-The QMLA storage extent and existing monolithic-layout conflict checks still apply.
-For typed dense batch-one inputs, native and monolithic ELF allocations may
-reserve the MPK byte count rounded up to 16 bytes. Core preserves the MPK input
-length through arena planning and MLA submission; allocation tail alignment does
-not enlarge the transfer. Shape, dtype, port identity and exact alignment are
-still validated. This rule does not admit padding between batch rows or arbitrary
-excess storage.
-
-Detessellation takes its logical geometry and dtype from `frame_shape` and
-`frame_type`. Its `input_shapes` may name that frame or the exact `[1, byte_count]`
-carrier; a byte count must not be interpreted as a count of BF16 elements.
-Unpack retains its authored storage shape and byte strides independently from
-that logical frame. MLA publication and CVU input metadata use the carrier view;
-the detessellation descriptor uses the frame shape and dtype. Each view remains
-bounded by its packed carrier, with no copy or intermediate allocation.
-
-Cast records may additionally declare the source dtype as `in_dtype`.
-When present, it must agree with the registered FP32/BF16 transition selected
-by `out_dtype`; Core rejects a contradictory declaration.
-Cast preserves layout established by connected operations, such as tessellation
-or detessellation. Scalar conversion alone does not establish image axes; generic
-tensors retain their authored shape and strides with unknown layout.
-Model-managed image preprocessing supplies its own explicit image layout when
-the MLA target leaves axes unspecified. Its output must still match the exact
-target shape, dtype, byte extent and any layout the MPK does establish.
 
 An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
 by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
@@ -726,10 +695,6 @@ in the model archive) plus optional runtime overrides:
 
 Practical impact: more buffers and explicit routing can improve throughput, while
 caps mismatches or undersized buffers will fail fast during negotiation.
-
-MLA-specific pool validation applies only to routes containing an MLA element.
-Standalone CVU graphs retain the plugin default pool size or an explicit
-`num_buffers` setting.
 
 ---
 
@@ -1422,32 +1387,3 @@ Keep docs and code aligned:
 5. **Keep the public API stable**
 
    * internal refactors should not break user code unless intentionally versioned
-
-Standalone scalar quantization preserves the MPK logical tensor shape. For a
-batch-one contiguous tensor whose descriptor lacks the H/W/C geometry required
-by graph 222, physical projection supplies a `[1, element_count, 1]` execution
-view. This changes no addresses, byte extents, published shapes, or quantization
-parameters. Projection rejects noncontiguous or permuted logical traversal and
-retains the firmware size limits; valid existing image descriptors stay unchanged.
-
-
-### Batched model storage and physical commands
-
-The execution plan retains one logical tensor per MPK input or output, including
-its full batch dimension. MLA executable slots identify each logical port and
-batch sample explicitly. Each slot binds a checked offset and transfer extent
-inside the tensor's carrier; allocation alignment does not enlarge the payload.
-Pack and Unpack retain the MPK ordering within each sample and a common batch
-stride. Their views can share a carrier without copying.
-
-CVU transforms that require individual samples lower into physical members with
-explicit sample indices. Full-batch terminal Cast and Dequantize descriptors
-retain their full geometry. Their pipeline input metadata matches the upstream
-sample publication while the physical binding addresses the retained full-batch
-arena. Transport metadata must not change the kernel descriptor or allocation.
-
-`Model::Options::input_storage_layouts` supplies an explicit per-input storage
-contract when compilation settings distinguish layouts absent from MPK metadata.
-HWC16 retains logical channels and authors padded pixel strides. Cast uses those
-strides; INT8 Quantize uses the existing QuantTess implementation with a separate
-physical channel-padding step. The semantic MPK operation remains Quantize.
