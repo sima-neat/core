@@ -1,6 +1,7 @@
 {
   "internals": {
-    "policy": "snap"
+    "branch": "refactor/encoder",
+    "spec": "d920ceabbf43"
   },
   "llima": {
     "branch": "release-3.0.0-prep",
