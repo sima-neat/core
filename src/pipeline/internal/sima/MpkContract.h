@@ -304,6 +304,9 @@ struct MpkPluginIoContract {
   std::optional<MpkQuantContract> quant;
 };
 
+/// Resolve rank-2 detess geometry from its typed input and output byte extents.
+bool resolve_detess_runtime_frame_shape(MpkPluginIoContract& stage, std::string* error_message);
+
 /// Return the runtime detess geometry, falling back to the authored shape for
 /// canonical rank-3/rank-4 contracts and hand-built test contracts.
 const std::vector<std::int64_t>&

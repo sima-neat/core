@@ -1299,6 +1299,85 @@ void test_registered_detess_layout_is_preserved_through_dequant() {
         "publication retains the exact transform layout");
 }
 
+void test_rank2_detess_dequant_execution_geometry() {
+  for (const int channels : {7, 32}) {
+    const int packed_bytes = ((channels + 15) / 16) * 16;
+    auto manifest = nlohmann::json::parse(detess_dequant_manifest());
+    auto& plugins = manifest["plugins"];
+    plugins[0]["output_nodes"][0]["size"] = packed_bytes;
+    auto& detess = plugins[1];
+    auto& params = detess["config_params"]["params"];
+    const int tile_channels = channels > 16 ? 16 : channels;
+    params["slice_shape"] = {tile_channels};
+    params["frame_shape"] = {1, channels};
+    params["input_shapes"] = {{1, packed_bytes}};
+    params["output_shapes"] = {{1, channels}};
+    params["align_c16"] = true;
+    params["cblock"] = true;
+    detess["input_nodes"][0]["size"] = packed_bytes;
+    detess["output_nodes"][0]["size"] = channels;
+    auto& dequant = plugins[2];
+    dequant["config_params"]["params"]["input_shapes"] = {{1, channels}};
+    dequant["config_params"]["params"]["output_shapes"] = {{1, channels}};
+    dequant["input_nodes"][0]["size"] = channels;
+    dequant["output_nodes"][0]["size"] = channels * 4;
+    plugins[3]["input_nodes"][0]["size"] = channels * 4;
+    plugins[3]["output_nodes"][0]["size"] = channels * 4;
+    const auto decoded = MpkDecoder{}.decode_json(
+        manifest.dump(), monolithic_topology(16U, packed_bytes), "rank2-detess.json");
+    check(static_cast<bool>(decoded), "rank-2 detess/dequant manifest decodes");
+    const auto& plan = *decoded.plan;
+    std::string error;
+    const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+    check(physical.has_value(), "rank-2 detess/dequant lowers physically");
+    std::vector<PhysicalCommandId> commands;
+    for (const auto& command : physical->commands) {
+      if (command.graph_id == 227U)
+        commands.push_back(command.id);
+    }
+    check(commands.size() == 1U, "rank-2 detess/dequant uses one fused command");
+    const auto arena =
+        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
+    check(arena.has_value(), "rank-2 detess/dequant arena compiles");
+    const auto contract =
+        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+    if (!contract)
+      std::cerr << error << "\n";
+    check(contract.has_value(), "rank-2 detess/dequant projects runtime descriptors");
+    const auto& input = contract->payload.input_tensors.front();
+    const auto& output = contract->payload.output_tensors.front();
+    check(sima_ev_infer_dense_tensor_format(&output) == SIMA_EV_DENSE_FORMAT_NDHWC,
+          "rank-2 detess/dequant output must satisfy the backend dense format contract");
+    const std::array<int, 4> shape{1, 1, 1, channels};
+    const std::array<std::uint8_t, 4> axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
+                                           SIMA_EV_AXIS_C};
+    check(input.shape.rank == 4U && output.shape.rank == 4U,
+          "rank-2 detess/dequant supplies complete execution geometry");
+    for (std::size_t axis = 0U; axis < shape.size(); ++axis) {
+      check(input.shape.sizes[axis] == shape[axis] && output.shape.sizes[axis] == shape[axis] &&
+                input.shape.axis_semantics[axis] == axes[axis] &&
+                output.shape.axis_semantics[axis] == axes[axis],
+            "detess/dequant endpoints must agree on execution shape and axes");
+    }
+    const std::array<std::int64_t, 4> tiles{1, 1, 1, tile_channels};
+    const std::array<std::int64_t, 4> strides{channels * 4, channels * 4, channels * 4, 4};
+    for (std::size_t axis = 0U; axis < shape.size(); ++axis) {
+      check(input.layout.tiled.tile_sizes[axis] == tiles[axis] &&
+                output.layout.strided.strides_bytes[axis] == strides[axis],
+            "execution views preserve channel tiles and contiguous FP32 output strides");
+    }
+    check(input.storage.nbytes == static_cast<std::uint64_t>(packed_bytes) &&
+              output.storage.nbytes == static_cast<std::uint64_t>(channels * 4),
+          "execution geometry preserves packed input and dense output byte extents");
+    check(plan.value(plan.model_outputs().front().value_id)->logical_shape ==
+                  TensorShape({1, channels}) &&
+              contract->payload.runtime_output_logical_shapes ==
+                  std::vector<std::vector<int>>{{1, channels}},
+          "rank-2 detess/dequant preserves the public logical shape");
+  }
+}
+
 void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   const auto result =
       MpkDecoder{}.decode_json(resnet_batch_flatten_manifest(), monolithic_topology(16U, 1008U),
@@ -2230,6 +2309,7 @@ int main(const int argc, char** argv) {
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
   test_registered_detess_layout_is_preserved_through_dequant();
+  test_rank2_detess_dequant_execution_geometry();
   test_resnet_batch_flatten_is_transparent_to_fused_graph227();
   test_fused_ingress_layout_evidence_authors_exact_descriptor_axes();
   test_tessellate_keeps_yolov8_semantic_shape_separate_from_packed_carrier();

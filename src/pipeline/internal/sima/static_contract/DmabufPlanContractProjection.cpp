@@ -3,6 +3,7 @@
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
+#include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 #include "gst/SimaPluginStaticManifestAbi.h"
@@ -1180,11 +1181,34 @@ build_dmabuf_plan_processcvu_command_contract(const ModelExecutionPlan& plan,
       tess = &*channel_padding;
       tess_op = &last_op;
     }
+    TensorShape detess_frame_shape;
+    if (detess) {
+      detess_frame_shape = cvu_member_shape(detess->frame_shape, member);
+      if (cohort->capability.graph_id == 227U && detess_frame_shape.size() == 2U) {
+        MpkPluginIoContract geometry;
+        geometry.name = first_op.kernel;
+        geometry.batch_sz_model = cohort->batch_size;
+        geometry.frame_shape = detess_frame_shape;
+        geometry.frame_type = detess->frame_type;
+        geometry.has_align_c16 = geometry.has_cblock = true;
+        geometry.align_c16 = detess->align_c16;
+        geometry.cblock = detess->cblock;
+        geometry.input_tensors.resize(1U);
+        geometry.input_tensors.front().size_bytes = input->required_bytes;
+        geometry.input_tensors.front().dtype = cvu_dtype(*input, detess->frame_type);
+        geometry.output_tensors.resize(1U);
+        geometry.output_tensors.front().size_bytes = output->required_bytes;
+        geometry.output_tensors.front().dtype = cvu_dtype(*output, {});
+        if (!resolve_detess_runtime_frame_shape(geometry, error)) {
+          return std::nullopt;
+        }
+        detess_frame_shape = detess_runtime_frame_shape(geometry);
+      }
+    }
     sima_ev_tensor_desc input_descriptor{};
     sima_ev_tensor_desc output_descriptor{};
     if (detess) {
-      if (!build_cvu_tiled_desc(*input, cvu_member_shape(detess->frame_shape, member),
-                                detess->slice_shape, detess->frame_type,
+      if (!build_cvu_tiled_desc(*input, detess_frame_shape, detess->slice_shape, detess->frame_type,
                                 detess->align_c16 || detess->cblock, &input_descriptor, error)) {
         return std::nullopt;
       }
@@ -1226,9 +1250,8 @@ build_dmabuf_plan_processcvu_command_contract(const ModelExecutionPlan& plan,
           cohort->capability.graph_id == 227U && detess != nullptr && dequant != nullptr;
       const bool output_descriptor_built =
           graph227_reverse_geometry
-              ? build_cvu_dense_desc_with_geometry(*output,
-                                                   cvu_member_shape(detess->frame_shape, member),
-                                                   "HWC", {}, &output_descriptor, error)
+              ? build_cvu_dense_desc_with_geometry(*output, detess_frame_shape, "HWC", {},
+                                                   &output_descriptor, error)
               : build_cvu_dense_desc(*output, fallback, {}, &output_descriptor, error);
       if (!output_descriptor_built) {
         return std::nullopt;
