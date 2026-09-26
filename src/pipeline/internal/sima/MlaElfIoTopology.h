@@ -34,7 +34,17 @@ namespace simaai::neat::pipeline_internal::sima {
 //     data.ifm.persistent.MLA_N/<tensor>.b0 sections in ELF encounter order.
 //
 // The two strategies are mutually exclusive within a single ELF.
+struct MlaElfPhysicalSlot {
+  std::size_t logical_index = 0;
+  std::size_t batch_index = 0;
+  std::string symbol;
+  std::uint64_t extent_bytes = 0;
+};
+
 struct MlaElfIoTopology {
+  // Full physical binding order, including every sample of a batched ELF.
+  std::vector<MlaElfPhysicalSlot> ifm_slots;
+  std::vector<MlaElfPhysicalSlot> ofm_slots;
   // True when only data.ifm.b0 is present (no per-input placeholders).
   bool monolithic_ifm = false;
   // True when only data.ofm.b0 is present (no per-output placeholders).

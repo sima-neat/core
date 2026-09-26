@@ -57,7 +57,7 @@ struct Elf64SectionHeader {
 constexpr std::uint32_t kQmlaShtData = 0x71ba0002U;
 
 bool is_mla_io_section(const std::string& name) {
-  return name == "data.ifm.b0" || name == "data.ofm.b0" ||
+  return name.starts_with("data.ifm.b") || name.starts_with("data.ofm.b") ||
          name.starts_with("data.ifm.persistent.") || name.starts_with("data.ofm.persistent.");
 }
 
@@ -447,9 +447,51 @@ void test_strict_validation_and_reconciliation() {
   std::filesystem::remove(duplicate_path);
 }
 
+void test_batch_slots_preserve_physical_order() {
+  using namespace simaai::neat::pipeline_internal::sima;
+  for (const std::string prefix : {"data.ifm.persistent.MLA_0/left.b",
+                                   "data.ifm.persistent.afe_direct_input_0.b", "data.ifm.b"}) {
+    const bool monolithic = prefix == "data.ifm.b";
+    const std::string output = monolithic ? "data.ofm.b" : "data.ofm.persistent.MLA_0/out.b";
+    std::vector<std::string> names{prefix + "0", prefix + "1", output + "0", output + "1"};
+    auto path = write_minimal_elf("batch", names);
+    MlaElfIoTopology topology;
+    check(read_mla_elf_io_topology(path, &topology), "batched ELF is readable");
+    check(validate_mla_elf_io_topology_strict(topology).ok, "complete batches validate");
+    check(topology.ifm_slots.size() == 2U && topology.ofm_slots.size() == 2U &&
+              topology.ifm_slots[1].symbol == prefix + "1" &&
+              topology.ifm_slots[1].logical_index == 0U &&
+              topology.ifm_slots[1].batch_index == 1U && topology.ifm_slots[1].extent_bytes == 32U,
+          "batch sections retain their own extent and physical order");
+    std::filesystem::remove(path);
+    for (const auto& invalid : {prefix + "1", prefix + "3"}) {
+      auto bad_names = names;
+      bad_names.push_back(invalid);
+      path = write_minimal_elf("bad_batch", bad_names);
+      check(read_mla_elf_io_topology(path, &topology), "invalid batch can be diagnosed");
+      check(!validate_mla_elf_io_topology_strict(topology).ok,
+            "duplicate samples and holes are rejected");
+      std::filesystem::remove(path);
+    }
+  }
+  const std::string left = "data.ifm.persistent.MLA_0/left.b";
+  const std::string right = "data.ifm.persistent.MLA_0/right.b";
+  const auto path = write_minimal_elf(
+      "batch_multi_input", {right + "0", left + "0", left + "1", right + "1", "data.ofm.b0"});
+  MlaElfIoTopology topology;
+  check(read_mla_elf_io_topology(path, &topology) &&
+            validate_mla_elf_io_topology_strict(topology).ok,
+        "multi-input batches validate independently of encounter interleaving");
+  check(topology.ifm_slots.size() == 4U && topology.ifm_slots[2].logical_index == 1U &&
+            topology.ifm_slots[3].logical_index == 0U && topology.ifm_slots[2].batch_index == 1U,
+        "input identity and sample identity are retained separately");
+  std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main() {
+  test_batch_slots_preserve_physical_order();
   test_multi_ifm_topology();
   test_qmla_flat_topology();
   test_afe_direct_input_topology();

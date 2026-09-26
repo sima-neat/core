@@ -4608,6 +4608,7 @@ struct Model::Impl {
              /*queue_leaky=*/{}, options.name_suffix,
              to_internal_terminal_policy(options.inference_terminal),
              options.cleanup_extracted_model_data) {
+    pack.set_input_storage_layouts(options.input_storage_layouts);
     // Names where the package was extracted. Callers debugging load time or eMMC wear need to see
     // which filesystem the automatic selection landed on, and it is not otherwise reported.
     const std::string package_root = std::filesystem::path(pack.etc_dir()).parent_path().string();
@@ -5575,7 +5576,7 @@ DetessOptions make_detess_options_from_typed_adapter(const Model& model,
   }
   auto compiled =
       require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
-  compiled.runtime_contract.plugin_kind = "neatdetess";
+  compiled.runtime_contract.plugin_kind = "processcvu";
   opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
   lock_buffers_for_sync(&opt, sync);
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
@@ -5830,9 +5831,17 @@ std::size_t post_region_compiled_logical_output_count(const internal::ModelPack&
                                                       const internal::RouteRegion& region) {
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (region.op_kind) {
-  case GraphKind::Detess:
-    return require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess)
-        .runtime_contract.logical_outputs.size();
+  case GraphKind::Detess: {
+    (void)require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
+    std::unordered_set<pipeline_internal::sima::static_contract::OpId> origins;
+    for (const auto& stage : pack.execution_plan().post) {
+      if (stage.kind == internal::ExecutionStageKind::Detess) {
+        origins.insert(stage.execution_op_ids.begin(), stage.execution_op_ids.end());
+      }
+    }
+    // Physical batch members do not add semantic model outputs.
+    return origins.size();
+  }
   case GraphKind::DetessCast:
     return require_model_managed_postprocess_contract(pack,
                                                       internal::ExecutionStageKind::DetessCast)
@@ -6826,6 +6835,10 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["upstream_name"] = opt.upstream_name;
   out["name_suffix"] = opt.name_suffix;
   out["cleanup_extracted_model_data"] = opt.cleanup_extracted_model_data;
+  out["input_storage_layouts"] = nlohmann::json::object();
+  for (const auto& [name, layout] : opt.input_storage_layouts) {
+    out["input_storage_layouts"][name] = layout == InputStorageLayout::HWC16 ? "HWC16" : "HWC";
+  }
   out["inference_terminal"] = std::move(terminal);
   out["processcvu"] = processcvu_options_json(opt.processcvu);
   out["processmla"] = processmla_options_json(opt.processmla);
@@ -8167,7 +8180,7 @@ DetessOptions ModelAccess::build_detess_stage_options(const Model& model, bool s
   }
   auto compiled =
       require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
-  compiled.runtime_contract.plugin_kind = "neatdetess";
+  compiled.runtime_contract.plugin_kind = "processcvu";
   opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
   const auto plan = pack.execution_plan();
   if (!plan.infer.empty()) {

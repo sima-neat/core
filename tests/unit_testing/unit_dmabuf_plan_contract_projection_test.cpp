@@ -20,6 +20,233 @@ namespace sima = simaai::neat::pipeline_internal::sima;
 
 namespace {
 
+void test_cvu_sample_projection(bool input_tail_padding = false) {
+  sc::ModelExecutionPlanData data;
+  data.contract_version = "2.1.0";
+  data.model_inputs = {0U};
+  for (std::uint32_t id = 0U; id < 2U; ++id) {
+    sc::ValueSpec tensor;
+    tensor.id = id;
+    tensor.name = id == 0U ? "input" : "output";
+    tensor.required_bytes = id == 0U ? 56U : 28U;
+    tensor.logical_dtype = id == 0U ? "float32" : "bfloat16";
+    tensor.logical_shape = sc::TensorShape{2, 1, 1, 7};
+    tensor.logical_layout = "HWC";
+    if (id == 0U && input_tail_padding) {
+      sc::StorageBinding storage;
+      storage.kind = sc::StorageBindingKind::External;
+      storage.carrier_id = id;
+      storage.physical_span = 64U;
+      storage.access = sc::StorageAccess::ReadOnly;
+      tensor.storage_binding = storage;
+    }
+    if (id == 1U) {
+      sc::StorageBinding storage;
+      storage.carrier_id = id;
+      storage.physical_span = 30U;
+      storage.stride_bytes = {16, 14, 14, 2};
+      tensor.storage_binding = storage;
+    }
+    data.values.push_back(std::move(tensor));
+  }
+  sc::OpSpec cast;
+  cast.id = 0U;
+  cast.sequence = 1U;
+  cast.name = "cast";
+  cast.batch_count = 2U;
+  cast.kind = sc::OpKind::Cast;
+  cast.processor = "EV74";
+  cast.inputs = {0U};
+  cast.outputs = {1U};
+  cast.input_shapes = {{2, 1, 1, 7}};
+  cast.output_shapes = cast.input_shapes;
+  cast.config = sc::CastOpConfig{"bfloat16"};
+  data.ops = {cast};
+  data.model_outputs = {{0U, "output", 1U}};
+  std::string error;
+  const auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
+  require(plan.has_value(), "pitched batch fixture is valid: " + error);
+  const auto physical = sc::PhysicalExecutionLowerer::lower(*plan, &error);
+  require(physical.has_value(), "pitched batch lowers: " + error);
+  const auto arena =
+      sc::FrameSlotArenaPlan::compile(*plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+                                      sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
+  require(arena.has_value(), "pitched batch arena compiles: " + error);
+  const std::array<sc::PhysicalCommandId, 1U> commands{0U};
+  const auto contract =
+      sc::build_dmabuf_plan_processcvu_command_contract(*plan, *physical, commands, *arena, &error);
+  require(contract.has_value(), "per-sample contract compiles: " + error);
+  require(plan->model_inputs().size() == 1U && plan->model_outputs().size() == 1U &&
+              plan->value(1U)->logical_shape == sc::TensorShape({2, 1, 1, 7}),
+          "physical samples do not change public semantic tensors");
+  require(contract->payload.batch_size == 1 && contract->payload.input_tensors.size() == 2U &&
+              contract->payload.output_tensors.size() == 2U,
+          "each batch sample has one descriptor");
+  const auto& runtime = contract->runtime_contract;
+  for (std::size_t sample = 0U; sample < 2U; ++sample) {
+    require(contract->payload.input_tensors[sample].shape.sizes[0] == 1 &&
+                contract->payload.input_tensors[sample].storage.nbytes == 28U &&
+                contract->payload.output_tensors[sample].storage.nbytes == 14U &&
+                runtime.physical_inputs[sample].source_physical_index == 0 &&
+                runtime.physical_inputs[sample].source_byte_offset == sample * 28U &&
+                runtime.physical_outputs[sample].source_byte_offset ==
+                    arena->region(1U)->byte_offset + sample * 16U,
+            "descriptors address their exact sample while sharing the original source");
+  }
+  require(runtime.physical_inputs[0].segment_name != runtime.physical_inputs[1].segment_name &&
+              runtime.logical_outputs[0].logical_name != runtime.logical_outputs[1].logical_name,
+          "sample bindings have distinct internal names");
+}
+
+void test_single_child_batch_pack() {
+  for (const std::uint32_t batch : {2U, 4U}) {
+    sc::ModelExecutionPlanData data;
+    for (sc::ValueId id = 0U; id < 3U; ++id) {
+      sc::ValueSpec value;
+      value.id = id;
+      value.name = "single_pack_" + std::to_string(id);
+      value.required_bytes = batch * 16U;
+      value.logical_dtype = "float32";
+      value.logical_shape = sc::TensorShape{batch, 4};
+      value.representation =
+          id == 2U ? sc::ValueRepresentation::Packed : sc::ValueRepresentation::Dense;
+      sc::StorageBinding binding;
+      binding.kind = id == 0U ? sc::StorageBindingKind::External : sc::StorageBindingKind::Root;
+      binding.carrier_id = id == 0U ? 0U : 2U;
+      binding.physical_span = value.required_bytes;
+      binding.stride_bytes = {16, 4};
+      binding.access = id == 0U ? sc::StorageAccess::ReadOnly : sc::StorageAccess::ReadWrite;
+      value.storage_binding = binding;
+      data.values.push_back(std::move(value));
+    }
+    data.model_inputs = {0U};
+    sc::OpSpec cast;
+    cast.id = 0U;
+    cast.sequence = 1U;
+    cast.processor = "EV74";
+    cast.name = "cast";
+    cast.kind = sc::OpKind::Cast;
+    cast.inputs = {0U};
+    cast.outputs = {1U};
+    cast.config = sc::CastOpConfig{"float32"};
+    sc::OpSpec pack;
+    pack.id = 1U;
+    pack.sequence = 2U;
+    pack.processor = "EV74";
+    pack.name = "pack";
+    pack.kind = sc::OpKind::Pack;
+    pack.inputs = {1U};
+    pack.outputs = {2U};
+    pack.dependencies = {0U};
+    sc::PackOpConfig config;
+    config.batch_count = batch;
+    config.parent_required_bytes = batch * 16U;
+    for (std::uint32_t sample = 0U; sample < batch; ++sample) {
+      config.spans.push_back({1U, sample, sample * 16U, sample * 16U, 16U, 16U, "none"});
+    }
+    pack.config = config;
+    data.ops = {cast, pack};
+    data.model_outputs = {{0U, "output", 2U}};
+    std::string error;
+    const auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
+    require(plan.has_value(),
+            "single-child batched Pack preserves contiguous sample placement: " + error);
+  }
+}
+
+void test_batched_backend_ports() {
+  for (const std::uint32_t batches : {2U, 4U}) {
+    sc::ModelExecutionPlanData data;
+    data.contract_version = "2.1.0";
+    const auto span = (batches - 1U) * 4096U + 4U;
+    for (const sc::ValueId id : {0U, 1U}) {
+      sc::ValueSpec value{id, id == 0U ? "input" : "output", batches * 4U};
+      value.logical_dtype = "float32";
+      value.logical_shape = sc::TensorShape{batches, 1};
+      value.logical_layout = "normal";
+      value.storage_binding = sc::StorageBinding{
+          id == 0U ? sc::StorageBindingKind::External : sc::StorageBindingKind::Root,
+          id,
+          0U,
+          span,
+          {4096, 4},
+          id == 0U ? sc::StorageAccess::ReadOnly : sc::StorageAccess::ReadWrite,
+          std::nullopt};
+      data.values.push_back(std::move(value));
+    }
+    data.model_inputs = {0U};
+    data.model_outputs = {{0U, "output", 1U}};
+    sc::OpSpec mla;
+    mla.name = "MLA_0";
+    mla.sequence = 1U;
+    mla.kind = sc::OpKind::Mla;
+    mla.processor = "MLA";
+    mla.inputs = {0U};
+    mla.outputs = {1U};
+    sc::MlaOpConfig config{"model.elf", 4};
+    config.batch_count = batches;
+    mla.config = config;
+    data.ops.push_back(std::move(mla));
+    for (const sc::ValueId id : {0U, 1U}) {
+      for (std::uint32_t batch = 0U; batch < batches; ++batch) {
+        data.backend_ports.push_back(sc::BackendPortSpec{
+            0U, id == 0U ? sc::BackendPortDirection::Input : sc::BackendPortDirection::Output,
+            batch, std::string(id == 0U ? "data.ifm.b" : "data.ofm.b") + std::to_string(batch), id,
+            4U, 4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
+            id == 0U ? sc::BackendPortAccess::ReadOnly : sc::BackendPortAccess::WriteOnly, 0U,
+            batch, batch * 4096U});
+      }
+    }
+    std::string error;
+    const auto plan = sc::ModelExecutionPlan::create(data, &error);
+    require(plan.has_value(), "sample ports must preserve one logical batch: " + error);
+    require(plan->backend_ports(0U, sc::BackendPortDirection::Output).size() == batches &&
+                plan->model_outputs().size() == 1U && plan->carrier(1U)->required_bytes == span,
+            "physical samples share the correctly sized logical carrier");
+    const auto sources = sc::resolve_mla_input_physical_sources(*plan, {}, &error);
+    require(sources.has_value() && sources->size() == batches,
+            "direct MLA samples share their proved public carrier: " + error);
+    require(std::all_of(sources->begin(), sources->end(),
+                        [](const auto& source) { return source.source_physical_index == 0; }),
+            "direct MLA batch samples retain the public input index");
+    sima::MlaStaticContract projected;
+    sima::PhysicalBufferStaticSpec input;
+    input.physical_index = 0;
+    input.size_bytes = batches * 4U;
+    input.segment_name = "input";
+    projected.physical_inputs.push_back(input);
+    sima::PhysicalBufferStaticSpec output = input;
+    output.segment_name = "output";
+    projected.dispatcher_physical_outputs.push_back(output);
+    sima::TensorStaticSpec logical_input;
+    logical_input.tensor_index = 0;
+    projected.logical_inputs.push_back(logical_input);
+    require(sc::apply_dmabuf_plan_contract_projection(*plan, &projected, *sources, &error),
+            "direct MLA samples project complete offset bindings: " + error);
+    require(projected.input_bindings.size() == batches, "all sample bindings survive projection");
+    for (std::uint32_t sample = 0; sample < batches; ++sample) {
+      require(projected.input_bindings[sample].src_physical_output_index == 0 &&
+                  projected.input_bindings[sample].src_physical_byte_offset == sample * 4096U &&
+                  projected.input_bindings[sample].src_physical_size_bytes == 4U,
+              "sample bindings retain the proved carrier, offset and transfer extent");
+    }
+    auto invalid = data;
+    invalid.backend_ports.back().batch_index = 0U;
+    require(!sc::ModelExecutionPlan::create(invalid, &error), "duplicate samples must fail");
+    invalid = data;
+    invalid.backend_ports.back().value_byte_offset = 0U;
+    require(!sc::ModelExecutionPlan::create(invalid, &error),
+            "overlapping sample writes must fail");
+    invalid = data;
+    invalid.backend_ports.front().value_byte_offset = 4096U;
+    require(!sc::ModelExecutionPlan::create(invalid, &error),
+            "wrong sample input offset must fail");
+    invalid = data;
+    invalid.backend_ports.pop_back();
+    require(!sc::ModelExecutionPlan::create(invalid, &error), "missing samples must fail");
+  }
+}
+
 sc::ModelExecutionPlan make_plan() {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.0.0";
@@ -1768,6 +1995,10 @@ void test_cast_preproc_absorption_uses_explicit_image_layout() {
 
 RUN_TEST(
     "unit_dmabuf_plan_contract_projection_test", ([] {
+      test_cvu_sample_projection();
+      test_cvu_sample_projection(true);
+      test_single_child_batch_pack();
+      test_batched_backend_ports();
       test_cast_preproc_absorption_uses_explicit_image_layout();
       const auto plan = make_plan();
       auto contract = make_projection(plan);

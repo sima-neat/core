@@ -463,7 +463,8 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
 }
 
 static pipeline_internal::DmabufPlanCompileResult
-compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract) {
+compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract,
+                                   const InputStorageLayouts& input_layouts) {
   if (mpk_contract.mpk_json_path.empty()) {
     return pipeline_internal::try_compile_dmabuf_plan(
         std::filesystem::path{}, std::vector<pipeline_internal::MlaExecutableArtifact>{});
@@ -505,7 +506,7 @@ compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& m
         {stage.name, stage.executable, resolved.empty() ? candidates.front() : resolved});
   }
   return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path, artifacts,
-                                                    host_artifacts);
+                                                    host_artifacts, input_layouts);
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
@@ -1990,8 +1991,10 @@ static ExecutionPlan build_execution_plan_from_model_plan(
       throw std::runtime_error("ModelPack: physical command has no exact renderer identity");
     }
     for (const auto& member : cohort.members) {
-      if ((has_cvu_capability &&
-           member.semantic_chain.size() != cvu_capability.semantic_pattern_length) ||
+      if (member.pad_output_channels != first_member.pad_output_channels ||
+          (has_cvu_capability &&
+           member.semantic_chain.size() + (member.pad_output_channels ? 1U : 0U) !=
+               cvu_capability.semantic_pattern_length) ||
           (!has_cvu_capability && member.semantic_chain.size() != 1U)) {
         throw std::runtime_error(
             "ModelPack: render cohort contains incompatible semantic operations");
@@ -2003,8 +2006,12 @@ static ExecutionPlan build_execution_plan_from_model_plan(
     stage.physical_cohort_id = cohort.id;
     stage.physical_command_ids = cohort.commands;
     for (const auto& member : cohort.members) {
-      stage.execution_op_ids.insert(stage.execution_op_ids.end(), member.semantic_chain.begin(),
-                                    member.semantic_chain.end());
+      for (const auto origin : member.semantic_chain) {
+        if (std::find(stage.execution_op_ids.begin(), stage.execution_op_ids.end(), origin) ==
+            stage.execution_op_ids.end()) {
+          stage.execution_op_ids.push_back(origin);
+        }
+      }
     }
     if (cohort.members.size() == 1U && first_member.semantic_chain.size() == 1U) {
       stage.mpk_plugin_index =
@@ -2013,7 +2020,7 @@ static ExecutionPlan build_execution_plan_from_model_plan(
     } else {
       stage.stage_name = "physical_cvu_cohort_" + std::to_string(cohort.id);
     }
-    stage.kind = kind;
+    stage.kind = first_member.pad_output_channels ? model_plan_stage_kind(op) : kind;
     stage.factory_name = require_stage_factory(stage.kind, cohort.engine == PhysicalEngine::Cvu);
     stage.plugin_id = plugin_id_for_stage_kind(stage.kind);
     stage.processor = processor_for_stage_kind(stage.kind);
@@ -3948,7 +3955,8 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
     throw std::runtime_error("ModelPack: dmabuf-plan requires an exact mpk.json manifest");
   }
 
-  auto compiled = compile_dmabuf_plan_execution_plan(*mpk_contract_);
+  auto compiled =
+      compile_dmabuf_plan_execution_plan(*mpk_contract_, options_.input_storage_layouts);
   execution_admission_ = compiled.report;
   execution_plan_digest_ = compiled.plan_digest;
   if (!compiled.eligible()) {
@@ -3965,6 +3973,13 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   dmabuf_fragment_source_ = std::make_shared<const ModelFragmentPlanSource>(
       ModelFragmentPlanSource{*dmabuf_plan_execution_plan_, *dmabuf_physical_execution_plan_,
                               *dmabuf_frame_arena_plan_, mpk_contract_, execution_plan_digest_});
+}
+
+void ModelPack::set_input_storage_layouts(InputStorageLayouts layouts) {
+  if (dmabuf_plan_execution_plan_) {
+    throw std::logic_error("Input storage layouts must be set before preparing the model");
+  }
+  options_.input_storage_layouts = std::move(layouts);
 }
 
 void ModelPack::prepare_for_execution() const {

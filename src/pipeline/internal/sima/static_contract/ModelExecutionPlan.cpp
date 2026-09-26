@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -72,7 +73,9 @@ bool is_power_of_two(const std::size_t value) {
 
 std::optional<std::uint64_t> physical_span_for(const ValueSpec& value,
                                                const std::vector<std::int64_t>& strides) {
-  const auto* shape = value.read_expression && !value.read_expression->storage_shape.empty()
+  const auto* shape = value.storage_binding && !value.storage_binding->storage_shape.empty()
+                          ? &value.storage_binding->storage_shape
+                      : value.read_expression && !value.read_expression->storage_shape.empty()
                           ? &value.read_expression->storage_shape
                           : (value.logical_shape ? &*value.logical_shape : nullptr);
   if (!shape || shape->empty() || strides.size() != shape->size()) {
@@ -113,34 +116,25 @@ struct ByteInterval {
   std::uint64_t end = 0U;
 };
 
-std::optional<std::vector<ByteInterval>>
-authored_write_intervals(const ValueSpec& value, const std::uint64_t backend_write_extent = 0U) {
+std::optional<std::vector<ByteInterval>> authored_write_intervals(const ValueSpec& value) {
   if (!value.storage_binding) {
     return std::nullopt;
   }
   const auto& binding = *value.storage_binding;
   std::uint64_t contiguous_end = 0U;
-  // An MLA backend port owns its complete physical zone, including row or
-  // tail padding which is not part of the logical tensor view.
-  if (backend_write_extent != 0U) {
-    if (!checked_add(binding.byte_offset, backend_write_extent, &contiguous_end)) {
-      return std::nullopt;
-    }
-    return std::vector<ByteInterval>{{binding.byte_offset, contiguous_end}};
-  }
-  if (binding.stride_bytes.empty() || binding.physical_span == value.required_bytes) {
+  if (binding.stride_bytes.empty()) {
     if (!checked_add(binding.byte_offset, binding.physical_span, &contiguous_end)) {
       return std::nullopt;
     }
     return std::vector<ByteInterval>{{binding.byte_offset, contiguous_end}};
   }
-  if (!value.logical_shape || value.logical_shape->empty()) {
+  if (binding.storage_shape.empty() && (!value.logical_shape || value.logical_shape->empty())) {
     return std::nullopt;
   }
 
   // Preserve the existing exact disjoint footprint for direct shared-carrier
   // batch placement when its specialized form is proven.
-  const auto& shape = *value.logical_shape;
+  const auto& shape = binding.storage_shape.empty() ? *value.logical_shape : binding.storage_shape;
   const auto& strides = binding.stride_bytes;
   const auto exact_batch = [&]() -> std::optional<std::vector<ByteInterval>> {
     if (strides.size() != shape.size() || shape.front() <= 0) {
@@ -333,6 +327,7 @@ bool normalize_storage(ModelExecutionPlanData* data, std::string* error) {
         }
         binding.physical_span = *span;
         binding.stride_bytes = expression.stride_bytes;
+        binding.storage_shape = expression.storage_shape;
         binding.access = StorageAccess::ReadOnly;
         binding.source_value_id = expression.source_value_id;
       } else {
@@ -349,9 +344,9 @@ bool normalize_storage(ModelExecutionPlanData* data, std::string* error) {
       if (!value.storage_binding->source_value_id.has_value()) {
         return fail(error, "execution-plan view binding has no source value");
       }
-      value.read_expression =
-          ReadExpression{*value.storage_binding->source_value_id,
-                         value.storage_binding->byte_offset, value.storage_binding->stride_bytes};
+      value.read_expression = ReadExpression{
+          *value.storage_binding->source_value_id, value.storage_binding->byte_offset,
+          value.storage_binding->stride_bytes, value.storage_binding->storage_shape};
     }
   }
 
@@ -386,7 +381,8 @@ bool normalize_storage(ModelExecutionPlanData* data, std::string* error) {
       }
       std::uint64_t port_end = 0U;
       const auto& binding = *data->values[port.value_id].storage_binding;
-      if (!checked_add(binding.byte_offset, port.physical_extent_bytes, &port_end)) {
+      if (!checked_add(binding.byte_offset, port.value_byte_offset, &port_end) ||
+          !checked_add(port_end, port.physical_extent_bytes, &port_end)) {
         return fail(error, "execution-plan backend port carrier extent overflows");
       }
       found->second.required_bytes = std::max(found->second.required_bytes, port_end);
@@ -408,6 +404,9 @@ bool validate_read_expression(const ModelExecutionPlanData& data, const ValueSpe
     return true;
   }
   const auto& expression = *value.read_expression;
+  if (value.storage_binding && value.storage_binding->storage_shape != expression.storage_shape) {
+    return fail(error, "read expression and storage binding have conflicting geometry");
+  }
   if (expression.source_value_id >= data.values.size() || expression.source_value_id >= value.id) {
     return fail(error, "execution-plan read expression has a missing or forward carrier");
   }
@@ -471,6 +470,9 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
         !checked_add(binding.byte_offset, binding.physical_span, &binding_end) ||
         binding_end > carrier->required_bytes) {
       return fail(error, "execution-plan value binding exceeds its carrier");
+    }
+    if (!binding.storage_shape.empty() && binding.stride_bytes.empty()) {
+      return fail(error, "explicit storage geometry requires exact strides");
     }
     if (!binding.stride_bytes.empty()) {
       const auto span = physical_span_for(value, binding.stride_bytes);
@@ -570,23 +572,39 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
         const auto carrier =
             std::find_if(data.carriers.begin(), data.carriers.end(),
                          [&](const CarrierSpec& item) { return item.id == binding.carrier_id; });
-        std::uint64_t backend_write_extent = 0U;
         if (op.kind == OpKind::Mla) {
-          const auto port =
-              std::find_if(data.backend_ports.begin(), data.backend_ports.end(),
-                           [&](const BackendPortSpec& candidate) {
-                             return candidate.stage_index == mla_stages.size() &&
-                                    candidate.direction == BackendPortDirection::Output &&
-                                    candidate.value_id == id;
-                           });
-          if (port == data.backend_ports.end()) {
+          std::vector<ByteInterval> intervals;
+          for (const auto& port : data.backend_ports) {
+            if (port.stage_index != mla_stages.size() ||
+                port.direction != BackendPortDirection::Output || port.value_id != id) {
+              continue;
+            }
+            std::uint64_t begin = 0U;
+            std::uint64_t end = 0U;
+            if (!checked_add(binding.byte_offset, port.value_byte_offset, &begin) ||
+                !checked_add(begin, port.physical_extent_bytes, &end) ||
+                carrier == data.carriers.end() || end > carrier->required_bytes) {
+              return fail(error, "execution-plan MLA output span exceeds its carrier");
+            }
+            intervals.push_back({begin, end});
+          }
+          if (intervals.empty()) {
             return fail(error, "execution-plan MLA output has no exact backend write extent");
           }
-          backend_write_extent = port->physical_extent_bytes;
+          auto& writes = authored_writes[binding.carrier_id];
+          for (const auto& interval : intervals) {
+            for (const auto& previous : writes) {
+              if (interval.begin < previous.end && previous.begin < interval.end) {
+                return fail(error, "execution-plan MLA batch writes overlap");
+              }
+            }
+            writes.push_back(interval);
+          }
+          continue;
         }
         const auto intervals = carrier == data.carriers.end()
                                    ? std::optional<std::vector<ByteInterval>>{}
-                                   : authored_write_intervals(output_value, backend_write_extent);
+                                   : authored_write_intervals(output_value);
         if (!intervals) {
           return fail(error, "execution-plan command output has no exact bounded write footprint");
         }
@@ -765,17 +783,18 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
   }
 
   std::set<std::tuple<std::size_t, BackendPortDirection, std::size_t>> port_keys;
+  std::set<std::tuple<std::size_t, BackendPortDirection, std::size_t, std::uint32_t>> sample_keys;
   std::size_t expected_backend_port_count = 0U;
   for (const auto* stage : mla_stages) {
-    expected_backend_port_count += stage->inputs.size() + stage->outputs.size();
+    expected_backend_port_count += (stage->inputs.size() + stage->outputs.size()) *
+                                   std::get<MlaOpConfig>(stage->config).batch_count;
   }
   if (data.backend_ports.size() != expected_backend_port_count) {
     return fail(error, "execution-plan backend port count does not cover MLA stage arity");
   }
   for (const auto& port : data.backend_ports) {
     if (port.value_id >= data.values.size() || port.elf_symbol.empty() ||
-        port.physical_extent_bytes < data.values[port.value_id].required_bytes ||
-        port.required_alignment_bytes == 0U ||
+        port.physical_extent_bytes == 0U || port.required_alignment_bytes == 0U ||
         (port.required_alignment_bytes & (port.required_alignment_bytes - 1U)) != 0U) {
       return fail(error, "execution-plan backend port contract is invalid");
     }
@@ -785,13 +804,16 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
                      [&](const CarrierSpec& item) { return item.id == binding.carrier_id; });
     std::uint64_t port_end = 0U;
     if (carrier == data.carriers.end() ||
-        !checked_add(binding.byte_offset, port.physical_extent_bytes, &port_end) ||
+        !checked_add(binding.byte_offset, port.value_byte_offset, &port_end) ||
+        !checked_add(port_end, port.physical_extent_bytes, &port_end) ||
         port_end > carrier->required_bytes) {
       return fail(error, "execution-plan backend extent exceeds its storage carrier");
     }
     if (port.alignment_authority == BackendPortAlignmentAuthority::LegacyPolicy &&
-        port.required_alignment_bytes != kLegacyEvoCmaRegionAlignmentBytes) {
-      return fail(error, "execution-plan legacy alignment contradicts the fixed policy");
+        (port.required_alignment_bytes !=
+             std::gcd<std::uint64_t>(kLegacyEvoCmaRegionAlignmentBytes, port.value_byte_offset) ||
+         port.required_alignment_bytes < 16U)) {
+      return fail(error, "execution-plan alignment contradicts the carrier and sample offset");
     }
     if ((port.direction == BackendPortDirection::Input &&
          port.access != BackendPortAccess::ReadOnly) ||
@@ -808,8 +830,31 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
     const auto& stage_values = port.direction == BackendPortDirection::Input
                                    ? mla_stages[port.stage_index]->inputs
                                    : mla_stages[port.stage_index]->outputs;
-    if (port.port_index >= stage_values.size() || stage_values[port.port_index] != port.value_id) {
+    if (!sample_keys
+             .emplace(port.stage_index, port.direction, port.logical_index(), port.batch_index)
+             .second) {
+      return fail(error, "execution-plan backend sample identity is duplicated");
+    }
+    const auto batches = std::get<MlaOpConfig>(mla_stages[port.stage_index]->config).batch_count;
+    if (batches == 0U || port.batch_index >= batches ||
+        port.port_index >= stage_values.size() * batches ||
+        port.logical_index() >= stage_values.size() ||
+        stage_values[port.logical_index()] != port.value_id ||
+        data.values[port.value_id].required_bytes % batches != 0U ||
+        port.physical_extent_bytes < data.values[port.value_id].required_bytes / batches) {
       return fail(error, "execution-plan backend port order contradicts the MLA operation");
+    }
+    const auto& value = data.values[port.value_id];
+    const auto sample_stride = binding.stride_bytes.empty()
+                                   ? value.required_bytes / batches
+                                   : static_cast<std::uint64_t>(binding.stride_bytes.front());
+    std::uint64_t expected_offset = 0U;
+    if ((batches > 1U && (!value.logical_shape || value.logical_shape->empty() ||
+                          value.logical_shape->front() != batches)) ||
+        !checked_mul(port.batch_index, sample_stride, &expected_offset) ||
+        port.value_byte_offset != expected_offset ||
+        port.value_byte_offset % port.required_alignment_bytes != 0U) {
+      return fail(error, "execution-plan backend sample offset contradicts its storage view");
     }
   }
 

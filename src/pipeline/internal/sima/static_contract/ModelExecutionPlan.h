@@ -67,6 +67,8 @@ struct StorageBinding {
   std::vector<std::int64_t> stride_bytes;
   StorageAccess access = StorageAccess::ReadWrite;
   std::optional<ValueId> source_value_id;
+  TensorShape storage_shape = {};
+  std::uint32_t channel_alignment = 1U;
 };
 
 struct CarrierSpec {
@@ -169,6 +171,7 @@ struct MlaOpConfig {
   std::vector<HostTensorTypeSpec> output_types;
   std::uint64_t executable_bytes = 0;
   std::string executable_sha256;
+  std::uint32_t batch_count = 1;
 };
 
 struct UnpackOpConfig {
@@ -245,6 +248,7 @@ struct OpSpec {
   std::vector<TensorShape> input_shapes;
   std::vector<TensorShape> output_shapes;
   OpConfig config = PassThroughOpConfig{};
+  std::uint32_t batch_count = 1U;
 };
 
 enum class BackendPortDirection { Input, Output };
@@ -268,6 +272,13 @@ struct BackendPortSpec {
   std::size_t required_alignment_bytes = 0;
   BackendPortAlignmentAuthority alignment_authority = BackendPortAlignmentAuthority::Contract;
   BackendPortAccess access = BackendPortAccess::ReadOnly;
+  std::optional<std::size_t> logical_port_index;
+  std::uint32_t batch_index = 0;
+  std::uint64_t value_byte_offset = 0;
+
+  std::size_t logical_index() const noexcept {
+    return logical_port_index.value_or(port_index);
+  }
 };
 
 // Immutable identity of one MLA operation in the compiler-authored graph.

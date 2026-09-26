@@ -745,16 +745,18 @@ MlaStaticContract project_single_mla(const ModelExecutionPlan& plan) {
   for (const auto& port : plan.backend_ports()) {
     const auto* value = plan.value(port.value_id);
     PhysicalBufferStaticSpec physical;
-    physical.physical_index = static_cast<int>(port.port_index);
+    physical.physical_index = static_cast<int>(port.logical_index());
     physical.size_bytes = value->required_bytes;
     physical.segment_name = value->name;
     if (port.direction == BackendPortDirection::Input) {
-      contract.physical_inputs.push_back(physical);
-      TensorStaticSpec logical;
-      logical.tensor_index = static_cast<int>(port.port_index);
-      contract.logical_inputs.push_back(logical);
+      if (port.batch_index == 0U) {
+        contract.physical_inputs.push_back(physical);
+        TensorStaticSpec logical;
+        logical.tensor_index = static_cast<int>(port.logical_index());
+        contract.logical_inputs.push_back(logical);
+      }
       sources.push_back({value->id, static_cast<int>(port.port_index)});
-    } else {
+    } else if (port.batch_index == 0U) {
       contract.dispatcher_physical_outputs.push_back(physical);
     }
   }
@@ -768,50 +770,82 @@ MlaStaticContract project_single_mla(const ModelExecutionPlan& plan) {
 }
 
 void test_detess_byte_carrier_keeps_logical_frame() {
-  auto manifest = nlohmann::json::parse(detess_dequant_manifest());
-  const nlohmann::json frame = {1, 3, 5, 7};
-  auto& plugins = manifest["plugins"];
-  plugins[0]["output_nodes"][0]["size"] = 480;
-  plugins[1]["input_nodes"][0]["size"] = 480;
-  plugins[1]["output_nodes"][0]["size"] = 210;
-  auto& params = plugins[1]["config_params"]["params"];
-  params["frame_type"] = "bfloat16";
-  params["frame_shape"] = frame;
-  params["slice_shape"] = {3, 5, 7};
-  params["align_c16"] = true;
-  params["cblock"] = true;
-  params["input_shapes"] = {{1, 480}};
-  params["output_shapes"] = nlohmann::json::array({frame});
-  plugins[2]["config_params"]["kernel"] = "cast_transform";
-  plugins[2]["config_params"]["params"] = {{"in_dtype", "bfloat16"},
-                                           {"out_dtype", "float32"},
-                                           {"input_shapes", nlohmann::json::array({frame})},
-                                           {"output_shapes", nlohmann::json::array({frame})}};
-  plugins[2]["input_nodes"][0]["size"] = 210;
-  plugins[2]["output_nodes"][0]["size"] = 420;
-  plugins[3]["input_nodes"][0]["size"] = 420;
-  plugins[3]["output_nodes"][0]["size"] = 420;
-  const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 480U));
-  check(static_cast<bool>(decoded), "BF16 detess byte-carrier contract is admitted");
-  const auto& plan = *decoded.plan;
-  const auto* value = plan.value(plan.ops()[1].inputs.front());
-  check(value->logical_shape == TensorShape({1, 3, 5, 7}) && value->logical_dtype == "bfloat16" &&
-            value->required_bytes == 480U &&
-            plan.ops()[1].input_shapes == std::vector<TensorShape>{{1, 480}},
-        "detess preserves frame geometry separately from its authored 480-byte carrier");
-  const auto& cast = plan.ops()[2];
-  check(cast.kind == OpKind::Cast && plan.value(cast.inputs.front())->logical_layout == "HWC" &&
-            plan.value(cast.outputs.front())->logical_layout == "HWC" &&
-            plan.value(plan.model_outputs().front().value_id)->logical_layout == "HWC",
-        "Cast and publication preserve the exact layout established by Detess");
-  const auto contract = project_single_mla(plan);
-  check(contract.logical_outputs.front().shape == TensorShape({1, 3, 5, 7}) &&
-            contract.physical_outputs.front().size_bytes == 480U,
-        "MLA projects 210 logical BF16 bytes over the exact 480-byte tiled carrier");
-  params["input_shapes"] = {{1, 240}};
-  expect_error(manifest.dump(), monolithic_topology(16U, 480U),
-               MpkDecodeErrorCode::ConfigurationMismatch,
-               "detess cannot reinterpret a contradictory carrier shape as BF16 element counts");
+  for (const std::int64_t batch : {1, 2, 4}) {
+    auto manifest = nlohmann::json::parse(detess_dequant_manifest());
+    const nlohmann::json frame = {batch, 3, 5, 7};
+    auto& plugins = manifest["plugins"];
+    for (auto& plugin : plugins) {
+      plugin["config_params"]["actual_batch_size"] = batch;
+      plugin["config_params"]["desired_batch_size"] = batch;
+    }
+    plugins[0]["output_nodes"][0]["size"] = 480 * batch;
+    plugins[1]["input_nodes"][0]["size"] = 480 * batch;
+    plugins[1]["output_nodes"][0]["size"] = 210 * batch;
+    auto& params = plugins[1]["config_params"]["params"];
+    params["frame_type"] = "bfloat16";
+    params["frame_shape"] = frame;
+    params["slice_shape"] = {3, 5, 7};
+    params["align_c16"] = true;
+    params["cblock"] = true;
+    params["input_shapes"] = {{batch, 480}};
+    params["output_shapes"] = nlohmann::json::array({frame});
+    plugins[2]["config_params"]["kernel"] = "cast_transform";
+    plugins[2]["config_params"]["params"] = {{"in_dtype", "bfloat16"},
+                                             {"out_dtype", "float32"},
+                                             {"input_shapes", nlohmann::json::array({frame})},
+                                             {"output_shapes", nlohmann::json::array({frame})}};
+    plugins[2]["input_nodes"][0]["size"] = 210 * batch;
+    plugins[2]["output_nodes"][0]["size"] = 420 * batch;
+    plugins[3]["input_nodes"][0]["size"] = 420 * batch;
+    plugins[3]["output_nodes"][0]["size"] = 420 * batch;
+    auto ingress = nlohmann::json::parse(valid_manifest())["plugins"][0];
+    ingress["name"] = "input_cast";
+    ingress["sequence"] = 1;
+    ingress["input_nodes"] = {{{"name", "input"}, {"size", 32 * batch}}};
+    ingress["output_nodes"] = {{{"name", "input_cast"}, {"size", 16 * batch}}};
+    ingress["config_params"]["actual_batch_size"] = batch;
+    ingress["config_params"]["desired_batch_size"] = batch;
+    ingress["config_params"]["params"] = {{"in_dtype", "float32"},
+                                          {"out_dtype", "bfloat16"},
+                                          {"input_shapes", {{batch, 1, 1, 8}}},
+                                          {"output_shapes", {{batch, 1, 1, 8}}}};
+    manifest["input_nodes"][0]["size"] = 32 * batch;
+    plugins[0]["input_nodes"] = {{{"name", "input_cast"}, {"size", 16 * batch}}};
+    for (auto& plugin : plugins)
+      plugin["sequence"] = plugin["sequence"].get<std::uint64_t>() + 1U;
+    plugins.insert(plugins.begin(), ingress);
+    auto topology = monolithic_topology(16U, 480U);
+    for (std::size_t sample = 0U; sample < static_cast<std::size_t>(batch); ++sample) {
+      topology.ifm_slots.push_back({0U, sample, "data.ifm.b" + std::to_string(sample), 16U});
+      topology.ofm_slots.push_back({0U, sample, "data.ofm.b" + std::to_string(sample), 480U});
+    }
+    const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
+    if (!decoded && decoded.error)
+      std::cerr << decoded.error->detail << '\n';
+    check(static_cast<bool>(decoded), "BF16 detess byte-carrier contract is admitted");
+    const auto& plan = *decoded.plan;
+    const auto* value = plan.value(plan.ops()[2].inputs.front());
+    check(value->logical_shape == TensorShape({batch, 3, 5, 7}) &&
+              value->logical_dtype == "bfloat16" && value->required_bytes == 480U * batch &&
+              plan.ops()[2].input_shapes == std::vector<TensorShape>{{batch, 480}},
+          "detess preserves frame geometry separately from its authored 480-byte carrier");
+    const auto& cast = plan.ops()[3];
+    check(cast.kind == OpKind::Cast && plan.value(cast.inputs.front())->logical_layout == "HWC" &&
+              plan.value(cast.outputs.front())->logical_layout == "HWC" &&
+              plan.value(plan.model_outputs().front().value_id)->logical_layout == "HWC",
+          "Cast and publication preserve the exact layout established by Detess");
+    const auto contract = project_single_mla(plan);
+    check(contract.logical_outputs.size() == static_cast<std::size_t>(batch) &&
+              contract.logical_outputs.front().shape == TensorShape({1, 3, 5, 7}) &&
+              contract.physical_outputs.front().size_bytes == 480U,
+          "MLA projects 210 logical BF16 bytes over the exact 480-byte tiled carrier");
+    manifest["plugins"][2]["config_params"]["params"]["input_shapes"] = {{batch * 2, 240}};
+    expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ConfigurationMismatch,
+                 "matching carrier bytes must not hide a contradictory batch dimension");
+    manifest["plugins"][2]["config_params"]["params"]["input_shapes"] = {{batch, 240}};
+    expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ConfigurationMismatch,
+                 "detess cannot reinterpret a contradictory carrier shape as BF16 element counts");
+  }
 }
 
 void test_unpack_tiled_carriers_keep_storage_geometry() {
@@ -1055,8 +1089,8 @@ void test_dense_ifm_tail_padding() {
   auto batched = manifest;
   batched["plugins"][1]["config_params"]["actual_batch_size"] = 2;
   batched["plugins"][1]["config_params"]["desired_batch_size"] = 2;
-  expect_error(batched.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
-               "batch-row padding requires a separate contract and cannot use the batch-one rule");
+  expect_error(batched.dump(), topology, MpkDecodeErrorCode::ElfTopologyMismatch,
+               "declared batch requires executable slots for every sample");
   cast["config_params"]["params"]["input_shapes"] = {{7, 1}};
   cast["config_params"]["params"]["output_shapes"] = {{7, 1}};
   expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
@@ -1929,13 +1963,267 @@ void test_exact_multi_mla_evidence() {
         "MPK and embedded GraphExecutor ports must agree exactly");
 }
 
-int validate_explicit_pair(const char* manifest_path, const char* elf_path) {
+void test_flat_unpack_compatibility() {
+  auto manifest = nlohmann::json::parse(packed_read_manifest());
+  auto& plugins = manifest["plugins"];
+  auto& unpack = plugins[4]["config_params"]["params"];
+  unpack["input_shapes"] = {{32}};
+  unpack["tensor_shapes"] = {{16}, {16}};
+  unpack["output_shapes"] = {{16}, {16}};
+  for (const auto index : {5, 6}) {
+    auto& params = plugins[index]["config_params"]["params"];
+    params["input_shape"] = {16};
+    params["input_shapes"] = {{16}};
+    params["output_shape"] = {4};
+    params["output_shapes"] = {{4}};
+    params["begin"] = {index == 5 ? 0 : 4};
+    params["end"] = {index == 5 ? 4 : 8};
+  }
+  const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(32, 32));
+  if (!decoded)
+    std::cerr << decoded.error->detail << '\n';
+  check(static_cast<bool>(decoded), "batch-one Unpack retains flat byte-carrier support");
+}
+
+void test_batch_slice_transport() {
+  for (const int batch : {2, 4}) {
+    auto manifest = nlohmann::json::parse(valid_manifest());
+    manifest["input_nodes"][0]["size"] = batch * 28;
+    auto& plugins = manifest["plugins"];
+    for (const auto index : {0, 2}) {
+      auto& params = plugins[index]["config_params"]["params"];
+      params["input_shapes"] = {{batch, 7}};
+      params["output_shapes"] = {{batch, 7}};
+      plugins[index]["input_nodes"][0]["size"] = batch * (index == 0 ? 28 : 14);
+      plugins[index]["output_nodes"][0]["size"] = batch * (index == 0 ? 14 : 28);
+    }
+    plugins[1]["input_nodes"][0]["size"] = batch * 14;
+    plugins[1]["output_nodes"][0]["size"] = batch * 16;
+    plugins[2]["input_nodes"][0]["name"] = "sliced";
+    plugins[2]["sequence"] = 4;
+    plugins[3]["sequence"] = 5;
+    plugins[3]["input_nodes"][0]["size"] = batch * 28;
+    plugins[3]["output_nodes"][0]["size"] = batch * 28;
+    const nlohmann::json slice = {{"name", "slice"},
+                                  {"sequence", 3},
+                                  {"processor", "EV74"},
+                                  {"type", "sgpProcess"},
+                                  {"config_params",
+                                   {{"kernel", "slice_transform"},
+                                    {"params",
+                                     {{"begin", {0, 0}},
+                                      {"end", {batch, 7}},
+                                      {"input_shape", {batch, 8}},
+                                      {"output_shape", {batch, 7}},
+                                      {"input_shapes", {{batch, 8}}},
+                                      {"output_shapes", {{batch, 7}}}}}}},
+                                  {"input_nodes", {{{"name", "mla0"}, {"size", batch * 16}}}},
+                                  {"output_nodes", {{{"name", "sliced"}, {"size", batch * 14}}}}};
+    plugins.insert(plugins.begin() + 2, slice);
+    for (auto& plugin : plugins) {
+      plugin["config_params"]["actual_batch_size"] = batch;
+      plugin["config_params"]["desired_batch_size"] = batch;
+    }
+    auto topology = monolithic_topology(16U, 16U);
+    for (int sample = 0; sample < batch; ++sample) {
+      topology.ifm_slots.push_back(
+          {0U, static_cast<std::uint32_t>(sample), "data.ifm.b" + std::to_string(sample), 16U});
+      topology.ofm_slots.push_back(
+          {0U, static_cast<std::uint32_t>(sample), "data.ofm.b" + std::to_string(sample), 16U});
+    }
+    const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
+    check(static_cast<bool>(decoded), "batched slice transport fixture decodes");
+    const auto& plan = *decoded.plan;
+    std::string error;
+    const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+    check(physical.has_value(), "batched slice transport lowers");
+    const auto arena =
+        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
+    check(arena.has_value(), "batched slice transport allocates");
+    bool checked = false;
+    for (const auto& command : physical->commands) {
+      if (command.role != PhysicalCommandRole::Egress)
+        continue;
+      const std::array<PhysicalCommandId, 1> ids{command.id};
+      const auto contract =
+          build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, *arena, &error);
+      if (!contract)
+        std::cerr << error << '\n';
+      check(contract.has_value(), "batched slice transport projects");
+      const auto& input = contract->payload.input_tensors.front();
+      check(input.shape.sizes[0] == batch && input.shape.sizes[1] == 7 &&
+                input.layout.strided.strides_bytes[0] == 16 &&
+                input.storage.nbytes == static_cast<std::uint64_t>((batch - 1) * 16 + 14),
+            "conversion descriptor reads all samples through padded row strides");
+      const auto& runtime = contract->runtime_contract;
+      check(runtime.logical_inputs.front().shape == TensorShape({1, 8}) &&
+                runtime.logical_inputs.front().size_bytes == 16 &&
+                runtime.physical_inputs.front().size_bytes == input.storage.nbytes,
+            "transport matches the upstream sample while physical input retains the full batch");
+      check(runtime.logical_outputs.front().shape == TensorShape({batch, 7}),
+            "public conversion output retains full batch geometry");
+      checked = true;
+    }
+    check(checked, "batched fixture exercises terminal conversion");
+  }
+}
+
+void test_explicit_input_layout() {
+  for (const int batch : {1, 2, 4}) {
+    for (const auto channels : {2, 7, 8, 16}) {
+      for (const bool quantized : {false, true}) {
+        auto manifest = nlohmann::json::parse(valid_manifest());
+        const TensorShape shape{batch, 4, 4, channels};
+        const auto logical = batch * 16U * channels * (quantized ? 1U : 2U);
+        const auto lane_channels = quantized ? 16U : 8U;
+        const auto padded = batch * 16U * ((channels + lane_channels - 1U) / lane_channels) *
+                            lane_channels * (quantized ? 1U : 2U);
+        const auto fp32 = batch * 16U * channels * 4U;
+        manifest["input_nodes"][0]["size"] = fp32;
+        auto& plugins = manifest["plugins"];
+        for (const auto index : {0, 2}) {
+          plugins[index]["config_params"]["params"]["input_shapes"] =
+              nlohmann::json::array({shape});
+          plugins[index]["config_params"]["params"]["output_shapes"] =
+              nlohmann::json::array({shape});
+          plugins[index]["input_nodes"][0]["size"] = index == 0 ? fp32 : logical;
+          plugins[index]["output_nodes"][0]["size"] = index == 0 ? logical : fp32;
+        }
+        if (quantized) {
+          auto& quant = plugins[0]["config_params"];
+          quant["kernel"] = "quantization_transform";
+          quant["params"].erase("out_dtype");
+          quant["params"]["channel_params"] = {{0.25, 0}};
+          quant["params"]["num_bits"] = 8;
+          quant["params"]["rounding"] = "TONEAREST";
+          quant["params"]["output_data_type"] = "int8";
+          auto& dequant = plugins[2]["config_params"];
+          dequant["kernel"] = "dequantization_transform";
+          dequant["params"].erase("out_dtype");
+          dequant["params"]["channel_params"] = {{0.25, 0}};
+          dequant["params"]["input_data_type"] = "int8";
+        }
+        plugins[1]["input_nodes"][0]["size"] = logical;
+        plugins[1]["output_nodes"][0]["size"] = logical;
+        plugins[3]["input_nodes"][0]["size"] = fp32;
+        plugins[3]["output_nodes"][0]["size"] = fp32;
+        for (auto& plugin : plugins) {
+          plugin["config_params"]["actual_batch_size"] = batch;
+          plugin["config_params"]["desired_batch_size"] = batch;
+        }
+        auto topology = monolithic_topology(padded / batch, logical / batch);
+        for (int sample = 0; sample < batch; ++sample) {
+          topology.ifm_slots.push_back({0U, static_cast<std::uint32_t>(sample),
+                                        "data.ifm.b" + std::to_string(sample), padded / batch});
+          topology.ofm_slots.push_back({0U, static_cast<std::uint32_t>(sample),
+                                        "data.ofm.b" + std::to_string(sample), logical / batch});
+        }
+        const MpkDecoder decoder({{"input", simaai::neat::InputStorageLayout::HWC16}});
+        const auto decoded = decoder.decode_json(manifest.dump(), topology);
+        if (!decoded)
+          std::cerr << decoded.error->detail << '\n';
+        check(static_cast<bool>(decoded),
+              "explicit HWC16 input decodes without changing logical channels");
+        const auto& plan = *decoded.plan;
+        const auto* value = plan.value(plan.ops()[0].outputs.front());
+        check(value->required_bytes == logical && value->logical_shape == shape &&
+                  value->storage_binding->physical_span == padded &&
+                  value->storage_binding->channel_alignment == lane_channels,
+              "HWC16 storage retains exact logical bytes and allocates padded pixels");
+        std::string error;
+        const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+        if (!physical)
+          std::cerr << error << '\n';
+        check(physical.has_value(),
+              "explicit channel padding lowers to a registered physical graph");
+        const auto arena =
+            FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                        kLegacyEvoCmaRegionAlignmentBytes, &error);
+        check(arena.has_value(), "HWC16 padded carrier allocates in frame arena");
+        const auto& first = physical->commands.front();
+        check(first.graph_id == (quantized ? 226U : 221U) &&
+                  first.members.front().pad_output_channels == quantized,
+              "Quantize uses explicit channel-padding tessellation; Cast uses strides");
+        const std::array<PhysicalCommandId, 1> ids{first.id};
+        const auto projected =
+            build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, *arena, &error);
+        if (!projected)
+          std::cerr << error << '\n';
+        check(projected.has_value(), "explicit HWC16 graph projects its registered descriptors");
+        check(projected->payload.output_tensors.size() == static_cast<std::size_t>(batch),
+              "HWC16 adaptation produces one descriptor per sample");
+        if (quantized) {
+          for (const auto& tensor : projected->payload.output_tensors) {
+            check(tensor.storage.nbytes == padded / batch,
+                  "QuantTess retains the last pixel's padded lanes in every sample");
+          }
+        }
+        const auto unknown = MpkDecoder({{"missing", simaai::neat::InputStorageLayout::HWC16}})
+                                 .decode_json(manifest.dump(), topology);
+        check(!unknown, "misspelled input override is rejected");
+      }
+    }
+  }
+}
+
+void test_pack_unpack_batch_order() {
+  for (const int batch : {2, 4}) {
+    auto manifest = nlohmann::json::parse(packed_read_manifest());
+    for (auto& input : manifest["input_nodes"])
+      input["size"] = input["size"].get<int>() * batch;
+    for (auto& plugin : manifest["plugins"]) {
+      auto& config = plugin["config_params"];
+      config["actual_batch_size"] = batch;
+      config["desired_batch_size"] = batch;
+      for (const auto* nodes : {"input_nodes", "output_nodes"})
+        for (auto& node : plugin[nodes])
+          node["size"] = node["size"].get<int>() * batch;
+      if (!config.contains("params"))
+        continue;
+      auto& params = config["params"];
+      for (const auto* key : {"input_shapes", "output_shapes", "tensor_shapes"})
+        if (params.contains(key))
+          for (auto& shape : params[key])
+            shape[0] = batch;
+      for (const auto* key : {"input_shape", "output_shape", "end"})
+        if (params.contains(key))
+          params[key][0] = batch;
+    }
+    auto topology = monolithic_topology(32U, 32U);
+    for (int sample = 0; sample < batch; ++sample) {
+      topology.ifm_slots.push_back(
+          {0U, static_cast<std::uint32_t>(sample), "data.ifm.b" + std::to_string(sample), 32U});
+      topology.ofm_slots.push_back(
+          {0U, static_cast<std::uint32_t>(sample), "data.ofm.b" + std::to_string(sample), 32U});
+    }
+    const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
+    if (!decoded)
+      std::cerr << decoded.error->detail << '\n';
+    check(static_cast<bool>(decoded),
+          "batch Pack/Unpack decoder preserves interleaved sample order");
+    const auto& plan = *decoded.plan;
+    check(plan.value(2U)->storage_binding->byte_offset == 16U &&
+              plan.value(3U)->storage_binding->byte_offset == 0U &&
+              plan.value(2U)->storage_binding->stride_bytes.front() == 32 &&
+              plan.value(6U)->read_expression->byte_offset == 0U &&
+              plan.value(7U)->read_expression->byte_offset == 16U &&
+              plan.value(7U)->read_expression->stride_bytes.front() == 32,
+          "Pack and Unpack use child offsets within each sample and the common parent pitch");
+  }
+}
+
+int validate_explicit_pair(const char* manifest_path, const char* elf_path,
+                           const char* hwc16_input = nullptr) {
   MlaElfIoTopology topology;
   if (!read_mla_elf_io_topology(elf_path, &topology)) {
     std::cerr << topology.error << "\n";
     return 2;
   }
-  const auto result = MpkDecoder{}.decode_file(manifest_path, topology);
+  simaai::neat::InputStorageLayouts layouts;
+  if (hwc16_input)
+    layouts.emplace(hwc16_input, simaai::neat::InputStorageLayout::HWC16);
+  const auto result = MpkDecoder{std::move(layouts)}.decode_file(manifest_path, topology);
   if (!result) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
     return 1;
@@ -1958,10 +2246,14 @@ int validate_explicit_pair(const char* manifest_path, const char* elf_path) {
 } // namespace
 
 int main(const int argc, char** argv) {
-  if (argc == 3) {
-    return validate_explicit_pair(argv[1], argv[2]);
+  if (argc == 3 || argc == 4) {
+    return validate_explicit_pair(argv[1], argv[2], argc == 4 ? argv[3] : nullptr);
   }
   check(argc == 1, "usage: unit_mpk_decoder_test [manifest elf]");
+  test_flat_unpack_compatibility();
+  test_batch_slice_transport();
+  test_explicit_input_layout();
+  test_pack_unpack_batch_order();
   test_exact_registry();
   test_compiler_version_does_not_restrict_admission();
   test_success_and_immutable_contract();

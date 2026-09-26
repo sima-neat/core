@@ -209,6 +209,7 @@ Json op_config_json(const sc::OpConfig& config) {
                         {"executable_bytes", value.executable_bytes},
                         {"executable_sha256", value.executable_sha256},
                         {"number_of_quads", value.number_of_quads},
+                        {"batch_count", value.batch_count},
                         {"input_types", types_json(value.input_types)},
                         {"output_types", types_json(value.output_types)}};
           },
@@ -417,6 +418,8 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
                                   {"byte_offset", binding.byte_offset},
                                   {"physical_span", binding.physical_span},
                                   {"stride_bytes", binding.stride_bytes},
+                                  {"storage_shape", binding.storage_shape},
+                                  {"channel_alignment", binding.channel_alignment},
                                   {"access", access},
                                   {"source_value_id", binding.source_value_id
                                                           ? Json(*binding.source_value_id)
@@ -444,6 +447,7 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
                    {"name", op.name},
                    {"kind", op_kind_name(op.kind)},
                    {"processor", op.processor},
+                   {"batch_count", op.batch_count},
                    {"kernel", op.kernel},
                    {"implementation_id", op.implementation_id},
                    {"implementation_abi_version", op.implementation_abi_version},
@@ -475,6 +479,9 @@ std::string canonical_dmabuf_plan_json(const sc::ModelExecutionPlan& plan) {
         {{"stage_index", port.stage_index},
          {"direction", port.direction == sc::BackendPortDirection::Input ? "input" : "output"},
          {"port_index", port.port_index},
+         {"logical_port_index", port.logical_index()},
+         {"batch_index", port.batch_index},
+         {"value_byte_offset", port.value_byte_offset},
          {"elf_symbol", port.elf_symbol},
          {"value_id", port.value_id},
          {"required_bytes", port.physical_extent_bytes},
@@ -696,7 +703,8 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
 DmabufPlanCompileResult
 try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::vector<MlaExecutableArtifact>& mla_executables,
-                        const std::vector<HostTvmExecutableArtifact>& host_executables) noexcept {
+                        const std::vector<HostTvmExecutableArtifact>& host_executables,
+                        const InputStorageLayouts& input_layouts) noexcept {
   const auto mpk_source = basename_or_placeholder(mpk_manifest, "<mpk-manifest>");
   try {
     std::error_code ec;
@@ -807,7 +815,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
     }
     const auto artifact_digest = sha256_text(artifact_identity);
 
-    auto decoded = sc::MpkDecoder{}.decode_file(mpk_manifest, evidence, host_evidence);
+    auto decoded = sc::MpkDecoder{input_layouts}.decode_file(mpk_manifest, evidence, host_evidence);
     if (!decoded || !decoded.plan) {
       const auto code = decoded.error ? map_decode_code(decoded.error->code)
                                       : DmabufEligibilityCode::InternalError;

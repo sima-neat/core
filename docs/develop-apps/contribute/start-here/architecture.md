@@ -1429,3 +1429,25 @@ by graph 222, physical projection supplies a `[1, element_count, 1]` execution
 view. This changes no addresses, byte extents, published shapes, or quantization
 parameters. Projection rejects noncontiguous or permuted logical traversal and
 retains the firmware size limits; valid existing image descriptors stay unchanged.
+
+
+### Batched model storage and physical commands
+
+The execution plan retains one logical tensor per MPK input or output, including
+its full batch dimension. MLA executable slots identify each logical port and
+batch sample explicitly. Each slot binds a checked offset and transfer extent
+inside the tensor's carrier; allocation alignment does not enlarge the payload.
+Pack and Unpack retain the MPK ordering within each sample and a common batch
+stride. Their views can share a carrier without copying.
+
+CVU transforms that require individual samples lower into physical members with
+explicit sample indices. Full-batch terminal Cast and Dequantize descriptors
+retain their full geometry. Their pipeline input metadata matches the upstream
+sample publication while the physical binding addresses the retained full-batch
+arena. Transport metadata must not change the kernel descriptor or allocation.
+
+`Model::Options::input_storage_layouts` supplies an explicit per-input storage
+contract when compilation settings distinguish layouts absent from MPK metadata.
+HWC16 retains logical channels and authors padded pixel strides. Cast uses those
+strides; INT8 Quantize uses the existing QuantTess implementation with a separate
+physical channel-padding step. The semantic MPK operation remains Quantize.
