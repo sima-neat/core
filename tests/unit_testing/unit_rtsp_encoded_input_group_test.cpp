@@ -366,6 +366,47 @@ void check_no_queue_mode() {
   }
 }
 
+void check_decoded_buffer_controls() {
+  using simaai::neat::nodes::groups::RtspCodec;
+  for (const auto codec : {RtspCodec::H264, RtspCodec::H265, RtspCodec::MJPEG}) {
+    simaai::neat::nodes::groups::RtspDecodedInputOptions opt;
+    require(opt.decoder_input_buffers == -1 && opt.num_buffers == -1,
+            "decoded buffer overrides must default to unset");
+    require(opt.decoder_tuning.empty() && !opt.decoder_memory_opt,
+            "decoded tuning must default to unset");
+    opt.url = "rtsp://example.local/stream";
+    opt.codec = codec;
+    opt.auto_caps_from_stream = false;
+    opt.h264_width = 1280;
+    opt.h264_height = 720;
+    opt.dec_width = 1280;
+    opt.dec_height = 720;
+    opt.source_fps = 10;
+    const auto defaults =
+        simaai::neat::nodes::groups::RtspDecodedInput(opt).describe_backend(false);
+    require_not_contains(defaults, "dec-ip-cnt=", "default input count should remain unset");
+    require_not_contains(defaults, "num-buffers=", "default output count should remain unset");
+    for (const std::string tuning :
+         {"", "default", "auto", "low-memory", "throughput-low-latency"}) {
+      opt.decoder_input_buffers = 3;
+      opt.num_buffers = 7;
+      opt.decoder_tuning = tuning;
+      opt.decoder_memory_opt = true;
+      const auto backend =
+          simaai::neat::nodes::groups::RtspDecodedInput(opt).describe_backend(false);
+      require_contains(backend, "dec-ip-cnt=3", "input count must reach the grouped decoder");
+      require_contains(backend, "num-buffers=7", "output count must reach the grouped decoder");
+      require_contains(backend, "memory-opt=true", "memory option must reach the grouped decoder");
+      if (tuning.empty()) {
+        require_not_contains(backend, "decoder-tuning=", "unset tuning must remain unset");
+      } else {
+        require_contains(backend, "decoder-tuning=" + tuning,
+                         "explicit tuning must survive grouped memory option");
+      }
+    }
+  }
+}
+
 void check_decoded_h264_group() {
   simaai::neat::nodes::groups::RtspDecodedInputOptions opt;
   opt.url = "rtsp://example.local/h264";
@@ -845,6 +886,7 @@ int main() {
     check_mjpeg_encoded_group();
     check_source_fps_forwarding();
     check_no_queue_mode();
+    check_decoded_buffer_controls();
     check_decoded_h264_group();
     check_decoded_h265_group();
     check_decoded_mjpeg_group();
