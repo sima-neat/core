@@ -102,11 +102,15 @@ public:
     return NodeCapsBehavior::Dynamic;
   }
   std::string backend_fragment(int node_index) const override {
-    return "rtpjpegpay name=n" + std::to_string(node_index) +
-           "_jpegpay pt=" + std::to_string(payload_type_) + " timestamp-offset=0";
+    const auto name = "n" + std::to_string(node_index);
+    return "capsfilter name=" + name +
+           "_rtp_jpeg_dimensions caps=\"image/jpeg,width=(int)[8,2040,8],"
+           "height=(int)[8,2040,8]\" ! rtpjpegpay name=" +
+           name + "_jpegpay pt=" + std::to_string(payload_type_) + " timestamp-offset=0";
   }
   std::vector<std::string> element_names(int node_index) const override {
-    return {"n" + std::to_string(node_index) + "_jpegpay"};
+    const auto name = "n" + std::to_string(node_index);
+    return {name + "_rtp_jpeg_dimensions", name + "_jpegpay"};
   }
   OutputSpec output_spec(const OutputSpec& input) const override {
     OutputSpec out = input;
@@ -133,6 +137,11 @@ void require_positive(int value, const char* name) {
 
 VideoSenderOptions VideoSenderOptions::FromRaw(SimaEncodeOptions encode) {
   simaai::neat::internal::validate_encode_options(encode);
+  if (encode.type == SimaEncodeType::MJPEG &&
+      (encode.width % 8 || encode.height % 8 || encode.width > 2040 || encode.height > 2040)) {
+    throw std::invalid_argument(
+        "VideoSender: RTP/JPEG width and height must be multiples of 8 within 8..2040");
+  }
   const auto codec = encode.type == SimaEncodeType::MJPEG  ? RtspCodec::MJPEG
                      : encode.type == SimaEncodeType::H265 ? RtspCodec::H265
                                                            : RtspCodec::H264;
