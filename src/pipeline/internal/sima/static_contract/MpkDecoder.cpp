@@ -1,5 +1,5 @@
 #define SIMA_NEAT_INTERNAL 1
-#include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 
 #include "pipeline/internal/sima/static_contract/AfePublicationLedger.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
@@ -14,6 +14,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <limits>
+#include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -26,7 +27,7 @@ namespace {
 using Json = nlohmann::json;
 
 struct DecodeAbort final {
-  AfeMpkV2DecodeErrorCode code;
+  MpkDecodeErrorCode code;
   std::string path;
   std::string detail;
 };
@@ -42,13 +43,13 @@ std::string sha256_text(const std::string_view text) {
   return result;
 }
 
-[[noreturn]] void reject(const AfeMpkV2DecodeErrorCode code, std::string path, std::string detail) {
+[[noreturn]] void reject(const MpkDecodeErrorCode code, std::string path, std::string detail) {
   throw DecodeAbort{code, std::move(path), std::move(detail)};
 }
 
 const Json* required_member_ptr(const Json& object, const char* key, std::string path) {
   if (!object.is_object() || !object.contains(key)) {
-    reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + "." + key,
+    reject(MpkDecodeErrorCode::MissingRequiredField, path + "." + key,
            "required MPK member is absent");
   }
   return &object.at(key);
@@ -57,7 +58,7 @@ const Json* required_member_ptr(const Json& object, const char* key, std::string
 std::string required_string(const Json& object, const char* key, const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_string() || value.get_ref<const std::string&>().empty()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key, "expected a non-empty string");
+    reject(MpkDecodeErrorCode::InvalidField, path + "." + key, "expected a non-empty string");
   }
   return value.get<std::string>();
 }
@@ -73,14 +74,14 @@ std::uint64_t positive_u64(const Json& value, const std::string& path) {
     }
   }
   if (result == 0U) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected a positive integer");
+    reject(MpkDecodeErrorCode::InvalidField, path, "expected a positive integer");
   }
   return result;
 }
 
 std::int64_t integer(const Json& value, const std::string& path) {
   if (!value.is_number_integer()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected an integer");
+    reject(MpkDecodeErrorCode::InvalidField, path, "expected an integer");
   }
   return value.get<std::int64_t>();
 }
@@ -88,7 +89,7 @@ std::int64_t integer(const Json& value, const std::string& path) {
 bool required_bool(const Json& object, const char* key, const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_boolean()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key, "expected a boolean");
+    reject(MpkDecodeErrorCode::InvalidField, path + "." + key, "expected a boolean");
   }
   return value.get<bool>();
 }
@@ -100,13 +101,13 @@ void require_exact_keys(const Json& object, const std::initializer_list<const ch
     expected.emplace(key);
   }
   if (!object.is_object() || object.size() != expected.size()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path,
+    reject(MpkDecodeErrorCode::InvalidField, path,
            "object members do not match the exact legacy typed contract");
   }
   for (const auto& [key, value] : object.items()) {
     (void)value;
     if (!expected.contains(key)) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
+      reject(MpkDecodeErrorCode::InvalidField, path + "." + key,
              "member is not part of the exact legacy typed contract");
     }
   }
@@ -114,14 +115,14 @@ void require_exact_keys(const Json& object, const std::initializer_list<const ch
 
 TensorShape shape(const Json& value, const std::string& path, const bool allow_zero = false) {
   if (!value.is_array() || value.empty()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected a non-empty integer shape array");
+    reject(MpkDecodeErrorCode::InvalidField, path, "expected a non-empty integer shape array");
   }
   TensorShape result;
   result.reserve(value.size());
   for (std::size_t index = 0; index < value.size(); ++index) {
     const auto dimension = integer(value[index], path + "[" + std::to_string(index) + "]");
     if (dimension < 0 || (!allow_zero && dimension == 0)) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "[" + std::to_string(index) + "]",
+      reject(MpkDecodeErrorCode::InvalidField, path + "[" + std::to_string(index) + "]",
              allow_zero ? "shape element must be non-negative"
                         : "shape dimension must be positive");
     }
@@ -134,14 +135,14 @@ std::vector<TensorShape> shapes(const Json& object, const char* key, const std::
                                 const bool required) {
   if (!object.contains(key)) {
     if (required) {
-      reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + "." + key,
+      reject(MpkDecodeErrorCode::MissingRequiredField, path + "." + key,
              "required shape list is absent");
     }
     return {};
   }
   const auto& value = object.at(key);
   if (!value.is_array()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key, "expected an array of shapes");
+    reject(MpkDecodeErrorCode::InvalidField, path + "." + key, "expected an array of shapes");
   }
   std::vector<TensorShape> result;
   result.reserve(value.size());
@@ -157,7 +158,7 @@ std::vector<HostTensorTypeSpec> host_tensor_types(const Json& object, const char
                                                   const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_array() || value.empty()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
+    reject(MpkDecodeErrorCode::InvalidField, path + "." + key,
            "expected a non-empty host tensor type array");
   }
   std::vector<HostTensorTypeSpec> result;
@@ -170,7 +171,7 @@ std::vector<HostTensorTypeSpec> host_tensor_types(const Json& object, const char
         required_string(item, "scalar", item_path),
         shape(*required_member_ptr(item, "shape", item_path), item_path + ".shape")};
     if (!element_width(type.scalar).has_value()) {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, item_path + ".scalar",
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, item_path + ".scalar",
              "host tensor scalar type has no exact registered DLPack mapping");
     }
     result.push_back(std::move(type));
@@ -182,8 +183,7 @@ std::vector<std::string> non_empty_strings(const Json& object, const char* key,
                                            const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_array() || value.empty()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
-           "expected a non-empty string array");
+    reject(MpkDecodeErrorCode::InvalidField, path + "." + key, "expected a non-empty string array");
   }
   std::vector<std::string> result;
   result.reserve(value.size());
@@ -191,12 +191,11 @@ std::vector<std::string> non_empty_strings(const Json& object, const char* key,
   for (std::size_t index = 0; index < value.size(); ++index) {
     const auto item_path = path + "." + key + "[" + std::to_string(index) + "]";
     if (!value[index].is_string() || value[index].get_ref<const std::string&>().empty()) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, item_path, "expected a non-empty string");
+      reject(MpkDecodeErrorCode::InvalidField, item_path, "expected a non-empty string");
     }
     auto item = value[index].get<std::string>();
     if (!unique.emplace(item).second) {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, item_path,
-             "host input name is duplicated");
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, item_path, "host input name is duplicated");
     }
     result.push_back(std::move(item));
   }
@@ -207,7 +206,7 @@ std::vector<QuantizationSpec> quantization(const Json& object, const char* key,
                                            const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_array() || value.empty()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
+    reject(MpkDecodeErrorCode::InvalidField, path + "." + key,
            "expected a non-empty channel-parameter array");
   }
   std::vector<QuantizationSpec> result;
@@ -217,12 +216,12 @@ std::vector<QuantizationSpec> quantization(const Json& object, const char* key,
     const std::string pair_path = path + "." + key + "[" + std::to_string(index) + "]";
     if (!pair.is_array() || pair.size() != 2U || !pair[0].is_number() ||
         !pair[1].is_number_integer()) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, pair_path,
+      reject(MpkDecodeErrorCode::InvalidField, pair_path,
              "expected [positive scale, integer zero-point]");
     }
     const double scale_value = pair[0].get<double>();
     if (!std::isfinite(scale_value) || scale_value <= 0.0) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, pair_path + "[0]",
+      reject(MpkDecodeErrorCode::InvalidField, pair_path + "[0]",
              "quantization scale must be finite and positive");
     }
     result.push_back({scale_value, pair[1].get<std::int64_t>()});
@@ -238,8 +237,7 @@ struct Node {
 std::vector<Node> nodes(const Json& object, const char* key, const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_array() || value.empty()) {
-    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
-           "expected a non-empty node array");
+    reject(MpkDecodeErrorCode::InvalidField, path + "." + key, "expected a non-empty node array");
   }
   std::vector<Node> result;
   result.reserve(value.size());
@@ -247,7 +245,7 @@ std::vector<Node> nodes(const Json& object, const char* key, const std::string& 
     const auto& node = value[index];
     const std::string node_path = path + "." + key + "[" + std::to_string(index) + "]";
     if (!node.is_object()) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, node_path, "expected a node object");
+      reject(MpkDecodeErrorCode::InvalidField, node_path, "expected a node object");
     }
     result.push_back(
         {required_string(node, "name", node_path),
@@ -422,26 +420,26 @@ std::optional<std::uint64_t> affine_touched_span(const ValueSpec& value,
 void author_mla_output_storage(ModelExecutionPlanData& data, const std::size_t mla_op_index,
                                const std::size_t output_index, const std::string& symbol,
                                const std::uint64_t physical_extent,
-                               std::vector<AfeMpkV2ProofFact>* proof) {
+                               std::vector<MpkProofFact>* proof) {
   auto& value = data.values.at(data.ops.at(mla_op_index).outputs.at(output_index));
   const std::string path = "$.plugins[" + std::to_string(mla_op_index) + "].output_nodes[" +
                            std::to_string(output_index) + "]";
   if (physical_extent < value.required_bytes) {
-    reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, path + ".size",
+    reject(MpkDecodeErrorCode::ValueSizeMismatch, path + ".size",
            "QMLA OFM physical extent is smaller than its logical tensor");
   }
   if (physical_extent == value.required_bytes) {
     return;
   }
   if (!is_qmla_dense_output_symbol(symbol)) {
-    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+    reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
            "larger MLA output carrier has no registered QMLA dense layout ABI");
   }
   const auto& mla = std::get<MlaOpConfig>(data.ops.at(mla_op_index).config);
   if (output_index >= mla.output_types.size() || !value.logical_dtype || !value.logical_shape ||
       *value.logical_dtype != mla.output_types[output_index].scalar ||
       *value.logical_shape != mla.output_types[output_index].shape) {
-    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+    reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
            "larger MLA output carrier has no exact typed dense QMLA contract");
   }
   value.representation = ValueRepresentation::Dense;
@@ -453,7 +451,7 @@ void author_mla_output_storage(ModelExecutionPlanData& data, const std::size_t m
   if (const auto strides = qmla_dense_last_axis_strides(value, physical_extent)) {
     const auto touched = affine_touched_span(value, *strides);
     if (!touched || *touched > physical_extent) {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
              "QMLA row-padded output has an invalid affine span");
     }
     binding.physical_span = *touched;
@@ -463,7 +461,7 @@ void author_mla_output_storage(ModelExecutionPlanData& data, const std::size_t m
                         "QMLA SHT_DATA extent exactly proves a 16-byte dense-last-axis pitch"});
     }
   } else {
-    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+    reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
            "larger MLA output carrier does not match the exact dense-last-axis QMLA ABI");
   }
   value.storage_binding = std::move(binding);
@@ -471,7 +469,7 @@ void author_mla_output_storage(ModelExecutionPlanData& data, const std::size_t m
 
 void merge_dtype(ValueSpec& value, const std::string& dtype, const std::string& path) {
   if (value.logical_dtype.has_value() && *value.logical_dtype != dtype) {
-    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+    reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
            "conflicting exact dtype evidence for value '" + value.name + "'");
   }
   value.logical_dtype = dtype;
@@ -479,7 +477,7 @@ void merge_dtype(ValueSpec& value, const std::string& dtype, const std::string& 
 
 void merge_shape(ValueSpec& value, const TensorShape& value_shape, const std::string& path) {
   if (value.logical_shape.has_value() && *value.logical_shape != value_shape) {
-    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+    reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
            "conflicting exact shape evidence for value '" + value.name + "'");
   }
   value.logical_shape = value_shape;
@@ -487,7 +485,7 @@ void merge_shape(ValueSpec& value, const TensorShape& value_shape, const std::st
 
 void merge_layout(ValueSpec& value, const std::string& layout, const std::string& path) {
   if (value.logical_layout.has_value() && *value.logical_layout != layout) {
-    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+    reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
            "conflicting exact layout evidence for value '" + value.name + "'");
   }
   value.logical_layout = layout;
@@ -497,13 +495,12 @@ void merge_quantization(ValueSpec& value, const std::vector<QuantizationSpec>& q
                         const std::string& path) {
   if (!value.quantization.empty()) {
     if (value.quantization.size() != q.size()) {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
-             "conflicting quantization evidence");
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path, "conflicting quantization evidence");
     }
     for (std::size_t index = 0; index < q.size(); ++index) {
       if (value.quantization[index].scale != q[index].scale ||
           value.quantization[index].zero_point != q[index].zero_point) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
                "conflicting quantization evidence");
       }
     }
@@ -530,13 +527,25 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
                             const Json& config, const Json& params, const std::string& path) {
   switch (kind) {
   case OpKind::Cast: {
-    require_exact_keys(params, {"out_dtype", "input_shapes", "output_shapes"},
-                       path + ".config_params.params");
+    if (params.contains("in_dtype")) {
+      require_exact_keys(params, {"in_dtype", "out_dtype", "input_shapes", "output_shapes"},
+                         path + ".config_params.params");
+    } else {
+      require_exact_keys(params, {"out_dtype", "input_shapes", "output_shapes"},
+                         path + ".config_params.params");
+    }
     CastOpConfig result{required_string(params, "out_dtype", path + ".params")};
     if (result.output_dtype != "bfloat16" && result.output_dtype != "float32") {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-             path + ".config_params.params.out_dtype",
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params.out_dtype",
              "legacy cast has no exact registered transition for this dtype");
+    }
+    if (params.contains("in_dtype")) {
+      const auto input_dtype = required_string(params, "in_dtype", path + ".config_params.params");
+      const auto expected_input_dtype = result.output_dtype == "bfloat16" ? "float32" : "bfloat16";
+      if (input_dtype != expected_input_dtype) {
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params.in_dtype",
+               "explicit cast input dtype contradicts the registered FP32/BF16 transition");
+      }
     }
     return result;
   }
@@ -551,7 +560,7 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
                             required_string(params, "rounding", path + ".params"),
                             quantization(params, "channel_params", path + ".params")};
     if (result.output_dtype != "int8" || result.num_bits != 8 || result.rounding != "TONEAREST") {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
              "legacy quantization must be exact signed INT8/TONEAREST");
     }
     return result;
@@ -567,8 +576,7 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
                               required_bool(params, "cblock", path + ".params"),
                               required_string(params, "frame_type", path + ".params")};
     if (result.frame_type != "int8" && result.frame_type != "bfloat16") {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-             path + ".config_params.params.frame_type",
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params.frame_type",
              "legacy tessellation frame type is not registered");
     }
     return result;
@@ -579,13 +587,13 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
   case OpKind::Mla: {
     const auto& resources = *required_member_ptr(plugin, "resources", path);
     if (!resources.is_object()) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".resources", "expected an object");
+      reject(MpkDecodeErrorCode::InvalidField, path + ".resources", "expected an object");
     }
     const auto quads =
         integer(*required_member_ptr(config, "number_of_quads_to_user", path + ".config_params"),
                 path + ".config_params.number_of_quads_to_user");
     if (quads <= 0) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params.number_of_quads_to_user",
+      reject(MpkDecodeErrorCode::InvalidField, path + ".config_params.number_of_quads_to_user",
              "number of MLA quads must be positive");
     }
     MlaOpConfig result;
@@ -593,7 +601,7 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
     result.number_of_quads = quads;
     if (config.contains("input_types") || config.contains("output_types")) {
       if (!config.contains("input_types") || !config.contains("output_types")) {
-        reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + ".config_params",
+        reject(MpkDecodeErrorCode::MissingRequiredField, path + ".config_params",
                "typed MLA grammar requires both input_types and output_types");
       }
       result.input_types = host_tensor_types(config, "input_types", path + ".config_params");
@@ -606,20 +614,20 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
                        path + ".config_params.params");
     const auto& types = *required_member_ptr(params, "tensor_types", path + ".params");
     if (!types.is_array() || types.empty()) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".params.tensor_types",
+      reject(MpkDecodeErrorCode::InvalidField, path + ".params.tensor_types",
              "expected a non-empty tensor type array");
     }
     std::vector<std::string> tensor_types;
     tensor_types.reserve(types.size());
     for (std::size_t index = 0; index < types.size(); ++index) {
       if (!types[index].is_string() || types[index].get_ref<const std::string&>().empty()) {
-        reject(AfeMpkV2DecodeErrorCode::InvalidField,
+        reject(MpkDecodeErrorCode::InvalidField,
                path + ".params.tensor_types[" + std::to_string(index) + "]",
                "expected a non-empty tensor dtype");
       }
       const std::string tensor_type = types[index].get<std::string>();
       if (tensor_type != "int8" && tensor_type != "bfloat16") {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+        reject(MpkDecodeErrorCode::ConfigurationMismatch,
                path + ".params.tensor_types[" + std::to_string(index) + "]",
                "legacy unpack carrier type is not registered");
       }
@@ -643,14 +651,14 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
     if (result.begin.size() != result.end.size() ||
         result.begin.size() != result.input_shape.size() ||
         result.begin.size() != result.output_shape.size()) {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
              "slice ranks disagree");
     }
     for (std::size_t index = 0; index < result.begin.size(); ++index) {
       if (result.begin[index] > result.end[index] ||
           result.end[index] > result.input_shape[index] ||
           result.end[index] - result.begin[index] != result.output_shape[index]) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                "slice bounds do not prove output shape");
       }
     }
@@ -661,14 +669,14 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
       require_exact_keys(params, {"input_shapes", "output_shapes"}, path + ".config_params.params");
       auto output_shapes = shapes(params, "output_shapes", path + ".params", true);
       if (output_shapes.size() != 1U) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+        reject(MpkDecodeErrorCode::ConfigurationMismatch,
                path + ".config_params.params.output_shapes",
                "batch flatten requires exactly one output shape");
       }
       return ReshapeOpConfig{std::move(output_shapes.front())};
     }
     if (kernel != "reshape_transform") {
-      reject(AfeMpkV2DecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
+      reject(MpkDecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
              "reshape operation has no exact typed grammar for kernel '" + std::string(kernel) +
                  "'");
     }
@@ -690,8 +698,7 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
                                 required_bool(params, "cblock", path + ".params"),
                                 required_string(params, "frame_type", path + ".params")};
     if (result.frame_type != "int8" && result.frame_type != "bfloat16") {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-             path + ".config_params.params.frame_type",
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params.frame_type",
              "legacy detessellation frame type is not registered");
     }
     return result;
@@ -703,7 +710,7 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
     DequantizeOpConfig result{required_string(params, "input_data_type", path + ".params"),
                               quantization(params, "channel_params", path + ".params")};
     if (result.input_dtype != "int8") {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+      reject(MpkDecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.input_data_type",
              "legacy dequantization input must be exact int8");
     }
@@ -724,7 +731,7 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
     require_exact_keys(params, {}, path + ".config_params.params");
     return PassThroughOpConfig{};
   }
-  reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path, "unhandled exact operation kind");
+  reject(MpkDecodeErrorCode::ConfigurationMismatch, path, "unhandled exact operation kind");
 }
 
 void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const std::string& path) {
@@ -732,10 +739,10 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
   // component values retain the semantic shapes established by surrounding
   // transforms (for example, Tessellate keeps N/H/W/C while Pack names the
   // flattened byte carrier).
-  if (!op.input_shapes.empty() && op.kind != OpKind::Pack && op.kind != OpKind::Unpack) {
+  if (!op.input_shapes.empty() && op.kind != OpKind::Pack && op.kind != OpKind::Unpack &&
+      op.kind != OpKind::Detessellate) {
     if (op.input_shapes.size() != op.inputs.size()) {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-             path + ".config_params.params.input_shapes",
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params.input_shapes",
              "input shape count does not equal input node count");
     }
     for (std::size_t index = 0; index < op.inputs.size(); ++index) {
@@ -751,10 +758,10 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
     } else if (config.output_dtype == "float32") {
       merge_dtype(data.values[op.inputs.front()], "bfloat16", path);
     } else {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
              "legacy cast_transform has an unsupported exact dtype transition");
     }
-    merge_layout(data.values[op.inputs.front()], "HWC", path);
+    // Cast preserves proven axis order; scalar conversion does not establish image layout.
     break;
   }
   case OpKind::Mla: {
@@ -780,17 +787,45 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
     // geometry. This is target ABI evidence, not a shape/name heuristic.
     merge_layout(data.values[op.inputs.front()], "HWC", path);
     break;
-  case OpKind::Detessellate:
-    merge_dtype(data.values[op.inputs.front()],
-                std::get<DetessellateOpConfig>(op.config).frame_type, path);
-    // Graph 3 is the inverse of the same canonical HWC transform. Retain the
-    // semantic axes even though its input bytes are backend-native/tiled.
-    merge_layout(data.values[op.inputs.front()], "HWC", path);
+  case OpKind::Detessellate: {
+    const auto& config = std::get<DetessellateOpConfig>(op.config);
+    auto& input = data.values[op.inputs.front()];
+    // Byte carriers describe storage; frame_shape supplies the tensor geometry.
+    const auto& carrier = op.input_shapes.front();
+    const bool byte_carrier = carrier.size() == 2U && carrier[0] > 0 && carrier[1] > 0 &&
+                              !config.frame_shape.empty() &&
+                              (carrier[0] == 1 || carrier[0] == config.frame_shape.front()) &&
+                              input.required_bytes % static_cast<std::uint64_t>(carrier[0]) == 0U &&
+                              input.required_bytes / static_cast<std::uint64_t>(carrier[0]) ==
+                                  static_cast<std::uint64_t>(carrier[1]);
+    if (op.input_shapes != std::vector<TensorShape>{config.frame_shape} && !byte_carrier) {
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params.input_shapes",
+             "detessellation input shape is neither its exact frame nor byte carrier");
+    }
+    merge_shape(input, config.frame_shape, path);
+    merge_dtype(input, config.frame_type, path);
+    // Graph 3 is the inverse of the same canonical HWC transform.
+    merge_layout(input, "HWC", path);
     break;
+  }
   case OpKind::Dequantize: {
     const auto& config = std::get<DequantizeOpConfig>(op.config);
     merge_dtype(data.values[op.inputs.front()], config.input_dtype, path);
     merge_quantization(data.values[op.inputs.front()], config.channel_params, path);
+    break;
+  }
+  case OpKind::Unpack: {
+    if (op.input_shapes.size() != 1U || op.input_shapes.front().empty() ||
+        (op.batch_count > 1U && op.input_shapes.front().front() != op.batch_count) ||
+        dense_bytes(op.input_shapes.front(), "int8") !=
+            data.values[op.inputs.front()].required_bytes) {
+      reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
+             "Unpack parent must declare an exact byte carrier");
+    }
+    auto& input = data.values[op.inputs.front()];
+    merge_shape(input, op.input_shapes.front(), path);
+    merge_dtype(input, "int8", path);
+    input.representation = ValueRepresentation::Packed;
     break;
   }
   case OpKind::HostTvm: {
@@ -925,15 +960,13 @@ void propagate_identity_evidence(ModelExecutionPlanData& data) {
           continue;
         }
         if (*input.logical_shape != *output.logical_shape) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "shape-preserving transform '" + op.name +
                      "' has contradictory exact endpoint shapes");
         }
         if (input.logical_layout.has_value() && output.logical_layout.has_value() &&
             *input.logical_layout != *output.logical_layout) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "shape-preserving transform '" + op.name +
                      "' has contradictory exact endpoint layouts");
         }
@@ -996,64 +1029,76 @@ void validate_dense_byte_equations(const ModelExecutionPlanData& data) {
     }
     const auto expected = dense_bytes(*value.logical_shape, *value.logical_dtype);
     if (!expected.has_value()) {
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+      reject(MpkDecodeErrorCode::ConfigurationMismatch,
              "$.values[" + std::to_string(value.id) + "]",
              "unsupported or overflowing dense byte equation for value '" + value.name + "'");
     }
     if (*expected != value.required_bytes) {
-      reject(
-          AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.values[" + std::to_string(value.id) + "]",
-          "dense byte equation disagrees for value '" + value.name + "': expected " +
-              std::to_string(*expected) + ", MPK declares " + std::to_string(value.required_bytes));
+      reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.values[" + std::to_string(value.id) + "]",
+             "dense byte equation disagrees for value '" + value.name + "': expected " +
+                 std::to_string(*expected) + ", MPK declares " +
+                 std::to_string(value.required_bytes));
     }
   }
 }
 
-void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2ProofFact>* proof) {
+void lower_read_expressions(ModelExecutionPlanData& data, std::vector<MpkProofFact>* proof) {
   for (const auto& op : data.ops) {
     if (op.kind == OpKind::Unpack) {
       if (op.inputs.size() != 1U || op.outputs.empty()) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-               "$.ops[" + std::to_string(op.id) + "]",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "unpack read expression requires one carrier and at least one view");
       }
       const auto& source = data.values[op.inputs.front()];
       if (source.read_expression.has_value()) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-               "$.ops[" + std::to_string(op.id) + "]",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "unpack carrier must already be a materialized root buffer");
       }
       const auto& config = std::get<UnpackOpConfig>(op.config);
       if (config.tensor_types.size() != op.outputs.size() ||
           config.tensor_shapes.size() != op.outputs.size()) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-               "$.ops[" + std::to_string(op.id) + "]",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "unpack read-expression arity is inconsistent");
       }
 
+      if (source.required_bytes % op.batch_count != 0U) {
+        reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops",
+               "Unpack parent is not batch divisible");
+      }
+      const auto parent_sample_bytes = source.required_bytes / op.batch_count;
       std::uint64_t offset = 0U;
       for (std::size_t index = 0; index < op.outputs.size(); ++index) {
         auto& output = data.values[op.outputs[index]];
         const auto width = element_width(config.tensor_types[index]);
-        const auto strides = width.has_value()
-                                 ? contiguous_stride_bytes(config.tensor_shapes[index], *width)
-                                 : std::nullopt;
-        if (!strides.has_value() || offset > source.required_bytes ||
-            output.required_bytes > source.required_bytes - offset) {
-          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
+        auto strides = width.has_value()
+                           ? contiguous_stride_bytes(config.tensor_shapes[index], *width)
+                           : std::nullopt;
+        if (!strides || config.tensor_shapes[index].empty() ||
+            (op.batch_count > 1U && config.tensor_shapes[index].front() != op.batch_count) ||
+            output.required_bytes % op.batch_count != 0U || offset > parent_sample_bytes ||
+            output.required_bytes / op.batch_count > parent_sample_bytes - offset ||
+            parent_sample_bytes >
+                static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+          reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "unpack view does not fit its exact packed carrier");
         }
+        if (op.batch_count > 1U) {
+          strides->front() = static_cast<std::int64_t>(parent_sample_bytes);
+        }
         output.read_expression = ReadExpression{source.id, offset, *strides};
+        if (output.logical_shape != config.tensor_shapes[index]) {
+          output.read_expression->storage_shape = config.tensor_shapes[index];
+        }
         if (proof) {
           proof->push_back({"read[" + std::to_string(output.id) + "]",
                             "unpack lowers to root value '" + source.name + "' + " +
                                 std::to_string(offset) +
                                 " bytes; no runtime operation is scheduled"});
         }
-        offset += output.required_bytes;
+        offset += output.required_bytes / op.batch_count;
       }
-      if (offset != source.required_bytes) {
-        reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
+      if (offset != parent_sample_bytes) {
+        reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "unpack views do not partition the exact packed carrier");
       }
       continue;
@@ -1061,8 +1106,7 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
 
     if (op.kind == OpKind::Slice) {
       if (op.inputs.size() != 1U || op.outputs.size() != 1U) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-               "$.ops[" + std::to_string(op.id) + "]",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "slice read expression requires one input and one output");
       }
       const auto& input = data.values[op.inputs.front()];
@@ -1076,33 +1120,33 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
         root = input.read_expression->source_value_id;
         base_offset = input.read_expression->byte_offset;
         strides = input.read_expression->stride_bytes;
+      } else if (input.storage_binding && !input.storage_binding->stride_bytes.empty()) {
+        strides = input.storage_binding->stride_bytes;
       } else {
         const auto width = exact_element_width(input.required_bytes, config.input_shape);
         const auto dense_strides =
             width.has_value() ? contiguous_stride_bytes(config.input_shape, *width) : std::nullopt;
         if (!dense_strides.has_value()) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "slice input has no exact dense carrier stride");
         }
         strides = *dense_strides;
       }
       if (strides.size() != config.begin.size()) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-               "$.ops[" + std::to_string(op.id) + "]",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "slice input view rank disagrees with its byte strides");
       }
       for (std::size_t axis = 0; axis < config.begin.size(); ++axis) {
         const auto begin = static_cast<std::uint64_t>(config.begin[axis]);
         const auto stride = static_cast<std::uint64_t>(strides[axis]);
         if (begin != 0U && stride > std::numeric_limits<std::uint64_t>::max() / begin) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]", "slice read-expression offset overflows");
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
+                 "slice read-expression offset overflows");
         }
         const auto axis_offset = begin * stride;
         if (base_offset > std::numeric_limits<std::uint64_t>::max() - axis_offset) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]", "slice read-expression offset overflows");
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
+                 "slice read-expression offset overflows");
         }
         base_offset += axis_offset;
       }
@@ -1118,28 +1162,25 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
 
     if (op.kind == OpKind::Reshape) {
       if (op.inputs.size() != 1U || op.outputs.size() != 1U) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-               "$.ops[" + std::to_string(op.id) + "]",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "reshape address view requires one input and one output");
       }
       const auto& input = data.values[op.inputs.front()];
       auto& output = data.values[op.outputs.front()];
       if (input.required_bytes != output.required_bytes || !output.logical_shape.has_value()) {
-        reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
+        reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "reshape does not preserve the exact byte extent");
       }
       const auto width = exact_element_width(output.required_bytes, *output.logical_shape);
       const auto strides =
           width ? contiguous_stride_bytes(*output.logical_shape, *width) : std::nullopt;
       if (!strides) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-               "$.ops[" + std::to_string(op.id) + "]",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "reshape output has no exact contiguous byte equation");
       }
       if (input.read_expression.has_value()) {
         if (!input.logical_shape.has_value()) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "reshape input view has no exact logical shape");
         }
         const auto input_width = exact_element_width(input.required_bytes, *input.logical_shape);
@@ -1147,8 +1188,7 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
                                      ? contiguous_stride_bytes(*input.logical_shape, *input_width)
                                      : std::nullopt;
         if (!input_dense || input.read_expression->stride_bytes != *input_dense) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "reshape cannot reinterpret a non-contiguous input view");
         }
       }
@@ -1178,7 +1218,7 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
             width ? contiguous_stride_bytes(host.output_types[output_index].shape, *width)
                   : std::nullopt;
         if (!strides || input.required_bytes != output.required_bytes) {
-          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
+          reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "TVM __nop output does not preserve an exact dense byte extent");
         }
         const auto root = input.read_expression ? input.read_expression->source_value_id : input.id;
@@ -1209,14 +1249,14 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
             const auto dense =
                 width ? contiguous_stride_bytes(*input.logical_shape, *width) : std::nullopt;
             if (!dense) {
-              reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+              reject(MpkDecodeErrorCode::ConfigurationMismatch,
                      "$.ops[" + std::to_string(op.id) + "]",
                      "padded MLA publication has no exact logical stride");
             }
             strides = *dense;
           }
-          data.values[op.outputs[index]].read_expression =
-              ReadExpression{input.id, 0U, std::move(strides)};
+          data.values[op.outputs[index]].read_expression = ReadExpression{
+              input.id, 0U, std::move(strides), input.storage_binding->storage_shape};
         }
       }
     }
@@ -1229,19 +1269,39 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
       continue;
     }
     bool contiguous = false;
-    if (value.logical_shape.has_value()) {
-      const auto width = exact_element_width(value.required_bytes, *value.logical_shape);
-      const auto dense =
-          width ? contiguous_stride_bytes(*value.logical_shape, *width) : std::nullopt;
+    bool sample_contiguous = false;
+    const auto* shape = !value.read_expression->storage_shape.empty()
+                            ? &value.read_expression->storage_shape
+                            : (value.logical_shape ? &*value.logical_shape : nullptr);
+    if (shape) {
+      const auto width = exact_element_width(value.required_bytes, *shape);
+      const auto dense = width ? contiguous_stride_bytes(*shape, *width) : std::nullopt;
       contiguous = dense && value.read_expression->stride_bytes == *dense;
+      const auto& strides = value.read_expression->stride_bytes;
+      sample_contiguous = dense && !shape->empty() && shape->front() > 1 &&
+                          strides.size() == dense->size() && strides.front() >= dense->front() &&
+                          std::equal(strides.begin() + 1, strides.end(), dense->begin() + 1);
     }
-    if (contiguous) {
+    const bool explicit_storage = !value.read_expression->storage_shape.empty();
+    if (contiguous && !explicit_storage) {
       continue;
     }
     for (const auto& consumer : data.ops) {
       if (std::find(consumer.inputs.begin(), consumer.inputs.end(), value.id) ==
           consumer.inputs.end()) {
         continue;
+      }
+      // A contiguous tiled carrier is not a dense semantic tensor. Detess
+      // consumes its explicit storage using frame/tile descriptors; publication
+      // only forwards the same address relation.
+      if (explicit_storage) {
+        if ((contiguous || (sample_contiguous && consumer.batch_count == shape->front())) &&
+            (consumer.kind == OpKind::Detessellate || consumer.kind == OpKind::PassThrough)) {
+          continue;
+        }
+        reject(
+            MpkDecodeErrorCode::ConfigurationMismatch, "$.values[" + std::to_string(value.id) + "]",
+            "storage view '" + value.name + "' has incompatible consumer '" + consumer.name + "'");
       }
       // These two retained graph ABIs have exact positive-stride descriptor
       // domains. Dense-only graph 222/2, MLA ports, and GraphExecutor inputs do
@@ -1250,7 +1310,7 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
           consumer.kind == OpKind::Slice) {
         continue;
       }
-      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+      reject(MpkDecodeErrorCode::ConfigurationMismatch,
              "$.values[" + std::to_string(value.id) + "]",
              "non-contiguous view '" + value.name + "' is consumed by dense-only operation '" +
                  consumer.name + "'");
@@ -1258,24 +1318,23 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
   }
 }
 
-AfeMpkV2DecodeResult
-decode_impl(const std::string_view text,
-            const std::span<const MlaStageExecutableEvidence> executable_evidence,
-            const std::span<const HostTvmExecutableEvidence> host_evidence,
-            const std::string& source) {
-  AfeMpkV2DecodeResult result;
+MpkDecodeResult decode_impl(const std::string_view text,
+                            const std::span<const MlaStageExecutableEvidence> executable_evidence,
+                            const std::span<const HostTvmExecutableEvidence> host_evidence,
+                            const std::string& source) {
+  MpkDecodeResult result;
   try {
     Json root = Json::parse(text.begin(), text.end(), nullptr, false);
     if (root.is_discarded() || !root.is_object()) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidJson, "$", "manifest is not valid JSON object syntax");
+      reject(MpkDecodeErrorCode::InvalidJson, "$", "manifest is not valid JSON object syntax");
     }
     if (root.contains("execution_contract")) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, "$.execution_contract",
+      reject(MpkDecodeErrorCode::InvalidField, "$.execution_contract",
              "stock-AFE admission does not accept a second execution authority");
     }
     const std::string manifest_sha256 = sha256_text(text);
     if (manifest_sha256.empty()) {
-      reject(AfeMpkV2DecodeErrorCode::IoError, "$", "cannot hash the exact MPK manifest bytes");
+      reject(MpkDecodeErrorCode::IoError, "$", "cannot hash the exact MPK manifest bytes");
     }
 
     ModelExecutionPlanData data;
@@ -1286,7 +1345,7 @@ decode_impl(const std::string_view text,
 
     const auto& input_array = *required_member_ptr(root, "input_nodes", "$");
     if (!input_array.is_array() || input_array.empty()) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, "$.input_nodes",
+      reject(MpkDecodeErrorCode::InvalidField, "$.input_nodes",
              "expected at least one model input");
     }
 
@@ -1295,7 +1354,7 @@ decode_impl(const std::string_view text,
       const auto& input = input_array[index];
       const std::string path = "$.input_nodes[" + std::to_string(index) + "]";
       if (!input.is_object()) {
-        reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected a node object");
+        reject(MpkDecodeErrorCode::InvalidField, path, "expected a node object");
       }
       ValueSpec value;
       value.id = static_cast<ValueId>(data.values.size());
@@ -1303,7 +1362,7 @@ decode_impl(const std::string_view text,
       value.required_bytes =
           positive_u64(*required_member_ptr(input, "size", path), path + ".size");
       if (!value_by_name.emplace(value.name, value.id).second) {
-        reject(AfeMpkV2DecodeErrorCode::DuplicateProducer, path + ".name",
+        reject(MpkDecodeErrorCode::DuplicateProducer, path + ".name",
                "model input name has a duplicate producer");
       }
       data.model_inputs.push_back(value.id);
@@ -1315,8 +1374,7 @@ decode_impl(const std::string_view text,
 
     const auto& plugins = *required_member_ptr(root, "plugins", "$");
     if (!plugins.is_array() || plugins.empty()) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidField, "$.plugins",
-             "expected a non-empty plugin array");
+      reject(MpkDecodeErrorCode::InvalidField, "$.plugins", "expected a non-empty plugin array");
     }
     std::vector<PluginRef> ordered;
     ordered.reserve(plugins.size());
@@ -1325,12 +1383,12 @@ decode_impl(const std::string_view text,
       const auto& plugin = plugins[index];
       const std::string path = "$.plugins[" + std::to_string(index) + "]";
       if (!plugin.is_object()) {
-        reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected a plugin object");
+        reject(MpkDecodeErrorCode::InvalidField, path, "expected a plugin object");
       }
       const auto sequence =
           positive_u64(*required_member_ptr(plugin, "sequence", path), path + ".sequence");
       if (!sequences.emplace(sequence).second) {
-        reject(AfeMpkV2DecodeErrorCode::DuplicateSequence, path + ".sequence",
+        reject(MpkDecodeErrorCode::DuplicateSequence, path + ".sequence",
                "plugin sequence is duplicated");
       }
       ordered.push_back({sequence, &plugin, index});
@@ -1340,7 +1398,7 @@ decode_impl(const std::string_view text,
     });
     for (std::size_t index = 0; index < ordered.size(); ++index) {
       if (ordered[index].sequence != index + 1U) {
-        reject(AfeMpkV2DecodeErrorCode::InvalidField,
+        reject(MpkDecodeErrorCode::InvalidField,
                "$.plugins[" + std::to_string(ordered[index].manifest_index) + "].sequence",
                "plugin sequences must be contiguous starting at one");
       }
@@ -1357,18 +1415,16 @@ decode_impl(const std::string_view text,
       const std::string path = "$.plugins[" + std::to_string(ordered_plugin.manifest_index) + "]";
       const std::string name = required_string(plugin, "name", path);
       if (!operation_names.emplace(name).second) {
-        reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".name",
-               "operation name is duplicated");
+        reject(MpkDecodeErrorCode::InvalidField, path + ".name", "operation name is duplicated");
       }
       const std::string processor = required_string(plugin, "processor", path);
       if (required_string(plugin, "type", path) != "sgpProcess") {
-        reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".type",
+        reject(MpkDecodeErrorCode::InvalidField, path + ".type",
                "legacy static-plan plugin must be exactly 'sgpProcess'");
       }
       const auto& config = *required_member_ptr(plugin, "config_params", path);
       if (!config.is_object()) {
-        reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params",
-               "expected an object");
+        reject(MpkDecodeErrorCode::InvalidField, path + ".config_params", "expected an object");
       }
       if (processor == "MLA") {
         const bool typed_mla = config.contains("input_types") || config.contains("output_types");
@@ -1398,7 +1454,7 @@ decode_impl(const std::string_view text,
             positive_u64(*required_member_ptr(config, "actual_batch_size", path + ".config_params"),
                          path + ".config_params.actual_batch_size");
         if (desired_batch != actual_batch) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params",
                  "desired and actual batch sizes disagree");
         }
       }
@@ -1406,28 +1462,33 @@ decode_impl(const std::string_view text,
       std::string kernel;
       if (config.contains("kernel")) {
         if (!config.at("kernel").is_string()) {
-          reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params.kernel",
+          reject(MpkDecodeErrorCode::InvalidField, path + ".config_params.kernel",
                  "expected a string");
         }
         kernel = config.at("kernel").get<std::string>();
       } else if (processor != "MLA" && processor != "A65") {
-        reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + ".config_params.kernel",
+        reject(MpkDecodeErrorCode::MissingRequiredField, path + ".config_params.kernel",
                "non-MLA plugin has no exact kernel token");
       }
       const auto descriptor = lookup_exact_kernel(processor, kernel);
       if (!descriptor.has_value()) {
-        reject(AfeMpkV2DecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
+        reject(MpkDecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
                "no exact registry entry for ('" + processor + "', '" + kernel + "')");
       }
 
       const auto input_nodes = nodes(plugin, "input_nodes", path);
       const auto output_nodes = nodes(plugin, "output_nodes", path);
       if (!exact_kernel_arity_is_valid(*descriptor, input_nodes.size(), output_nodes.size())) {
-        reject(AfeMpkV2DecodeErrorCode::InvalidKernelArity, path,
+        reject(MpkDecodeErrorCode::InvalidKernelArity, path,
                "node arity violates the exact kernel registry entry");
       }
 
+      if (actual_batch > std::numeric_limits<std::uint32_t>::max()) {
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.actual_batch_size",
+               "batch size exceeds the runtime descriptor limit");
+      }
       OpSpec op;
+      op.batch_count = static_cast<std::uint32_t>(actual_batch);
       op.id = static_cast<OpId>(data.ops.size());
       op.sequence = ordered_plugin.sequence;
       op.name = name;
@@ -1437,12 +1498,12 @@ decode_impl(const std::string_view text,
       for (std::size_t index = 0; index < input_nodes.size(); ++index) {
         const auto found = value_by_name.find(input_nodes[index].name);
         if (found == value_by_name.end()) {
-          reject(AfeMpkV2DecodeErrorCode::MissingProducer,
+          reject(MpkDecodeErrorCode::MissingProducer,
                  path + ".input_nodes[" + std::to_string(index) + "].name",
                  "no earlier exact producer for tensor '" + input_nodes[index].name + "'");
         }
         if (data.values[found->second].required_bytes != input_nodes[index].bytes) {
-          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+          reject(MpkDecodeErrorCode::ValueSizeMismatch,
                  path + ".input_nodes[" + std::to_string(index) + "].size",
                  "consumer byte extent disagrees with exact producer for tensor '" +
                      input_nodes[index].name + "'");
@@ -1455,7 +1516,7 @@ decode_impl(const std::string_view text,
       if (op.kind != OpKind::Mla && op.kind != OpKind::HostTvm) {
         const auto& params_member = *required_member_ptr(config, "params", path + ".config_params");
         if (!params_member.is_object()) {
-          reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params.params",
+          reject(MpkDecodeErrorCode::InvalidField, path + ".config_params.params",
                  "expected an object");
         }
         params = &params_member;
@@ -1486,7 +1547,7 @@ decode_impl(const std::string_view text,
       }
       if ((!op.input_shapes.empty() && op.input_shapes.size() != input_nodes.size()) ||
           (!op.output_shapes.empty() && op.output_shapes.size() != output_nodes.size())) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+        reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                "typed shape-list arity disagrees with MPK node arity");
       }
       if (op.kind == OpKind::HostTvm) {
@@ -1494,14 +1555,14 @@ decode_impl(const std::string_view text,
         if (host.input_names.size() != input_nodes.size() ||
             host.input_types.size() != input_nodes.size() ||
             host.output_types.size() != output_nodes.size()) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params",
                  "host-module typed port arity disagrees with MPK nodes");
         }
         for (std::size_t index = 0; index < input_nodes.size(); ++index) {
           const auto bytes =
               dense_bytes(host.input_types[index].shape, host.input_types[index].scalar);
           if (!bytes || *bytes != input_nodes[index].bytes) {
-            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+            reject(MpkDecodeErrorCode::ValueSizeMismatch,
                    path + ".config_params.input_types[" + std::to_string(index) + "]",
                    "host input dense byte equation disagrees with its MPK node");
           }
@@ -1510,7 +1571,7 @@ decode_impl(const std::string_view text,
           const auto bytes =
               dense_bytes(host.output_types[index].shape, host.output_types[index].scalar);
           if (!bytes || *bytes != output_nodes[index].bytes) {
-            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+            reject(MpkDecodeErrorCode::ValueSizeMismatch,
                    path + ".config_params.output_types[" + std::to_string(index) + "]",
                    "host output dense byte equation disagrees with its MPK node");
           }
@@ -1520,14 +1581,14 @@ decode_impl(const std::string_view text,
         const auto& mla = std::get<MlaOpConfig>(op.config);
         if ((!mla.input_types.empty() && mla.input_types.size() != input_nodes.size()) ||
             (!mla.output_types.empty() && mla.output_types.size() != output_nodes.size())) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params",
                  "typed MLA port arity disagrees with MPK nodes");
         }
         for (std::size_t index = 0; index < mla.input_types.size(); ++index) {
           const auto bytes =
               dense_bytes(mla.input_types[index].shape, mla.input_types[index].scalar);
           if (!bytes || *bytes != input_nodes[index].bytes) {
-            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+            reject(MpkDecodeErrorCode::ValueSizeMismatch,
                    path + ".config_params.input_types[" + std::to_string(index) + "]",
                    "typed MLA input byte equation disagrees with its MPK node");
           }
@@ -1536,36 +1597,93 @@ decode_impl(const std::string_view text,
           const auto bytes =
               dense_bytes(mla.output_types[index].shape, mla.output_types[index].scalar);
           if (!bytes || *bytes != output_nodes[index].bytes) {
-            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+            reject(MpkDecodeErrorCode::ValueSizeMismatch,
                    path + ".config_params.output_types[" + std::to_string(index) + "]",
                    "typed MLA output byte equation disagrees with its MPK node");
           }
         }
       }
       if (op.kind == OpKind::Pack) {
-        if (actual_batch != 1U) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
-                 path + ".config_params.actual_batch_size",
-                 "legacy Pack placement is supported only for exact batch one");
-        }
         auto& pack = std::get<PackOpConfig>(op.config);
         std::uint64_t parent_offset = 0U;
         pack.components.reserve(op.inputs.size());
         for (const auto input_id : op.inputs) {
-          const auto input_bytes = data.values[input_id].required_bytes;
+          const auto full_bytes = data.values[input_id].required_bytes;
+          if (full_bytes % actual_batch != 0U) {
+            reject(MpkDecodeErrorCode::ValueSizeMismatch, path,
+                   "Pack input is not batch divisible");
+          }
+          const auto input_bytes = full_bytes / actual_batch;
           if (input_bytes > std::numeric_limits<std::uint64_t>::max() - 15U) {
-            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+            reject(MpkDecodeErrorCode::ConfigurationMismatch,
                    path + ".config_params.params.input_shapes",
                    "legacy Pack component alignment overflows");
           }
           const auto stored_bytes = (input_bytes + 15U) & ~std::uint64_t{15U};
           if (parent_offset > std::numeric_limits<std::uint64_t>::max() - stored_bytes) {
-            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+            reject(MpkDecodeErrorCode::ConfigurationMismatch,
                    path + ".config_params.params.input_shapes",
                    "legacy Pack parent placement overflows");
           }
+          if (actual_batch > 1U && stored_bytes != input_bytes) {
+            reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
+                   "Pack sample padding requires an explicit materializing operation");
+          }
           pack.components.push_back({input_id, parent_offset, stored_bytes});
           parent_offset += stored_bytes;
+        }
+        if (actual_batch > 1U) {
+          if (output_nodes.size() != 1U || output_nodes.front().bytes % actual_batch != 0U ||
+              parent_offset != output_nodes.front().bytes / actual_batch ||
+              parent_offset >
+                  static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            reject(MpkDecodeErrorCode::ValueSizeMismatch, path,
+                   "Pack samples do not partition the declared parent");
+          }
+          pack.batch_count = op.batch_count;
+          pack.parent_required_bytes = output_nodes.front().bytes;
+          const auto parent_id = static_cast<ValueId>(data.values.size());
+          for (const auto& component : pack.components) {
+            auto& child = data.values[component.value_id];
+            const auto producer =
+                std::find_if(data.ops.begin(), data.ops.end(), [&](const auto& candidate) {
+                  return std::find(candidate.outputs.begin(), candidate.outputs.end(), child.id) !=
+                         candidate.outputs.end();
+                });
+            if (component.stored_bytes >
+                    static_cast<std::uint64_t>(std::numeric_limits<int>::max()) ||
+                child.storage_binding || child.read_expression || producer == data.ops.end() ||
+                producer->processor != "EV74" || !child.logical_shape ||
+                child.logical_shape->empty() || child.logical_shape->front() != actual_batch) {
+              reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
+                     "Pack sample has no movable CVU producer");
+            }
+            StorageBinding binding;
+            binding.carrier_id = parent_id;
+            binding.byte_offset = component.parent_offset;
+            binding.physical_span = (actual_batch - 1U) * parent_offset + component.stored_bytes;
+            if (child.representation == ValueRepresentation::Dense && child.logical_dtype) {
+              const auto width = element_width(*child.logical_dtype);
+              const auto strides =
+                  width ? contiguous_stride_bytes(*child.logical_shape, *width) : std::nullopt;
+              if (!strides)
+                reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
+                       "Pack dense strides overflow");
+              binding.stride_bytes = *strides;
+              binding.stride_bytes.front() = static_cast<std::int64_t>(parent_offset);
+            } else {
+              binding.stride_bytes = {static_cast<std::int64_t>(parent_offset), 1};
+              binding.storage_shape = {static_cast<int>(actual_batch),
+                                       static_cast<int>(component.stored_bytes)};
+            }
+            child.storage_binding = std::move(binding);
+            for (std::uint32_t batch = 0; batch < op.batch_count; ++batch) {
+              pack.spans.push_back({child.id, batch, batch * component.stored_bytes,
+                                    batch * parent_offset + component.parent_offset,
+                                    component.stored_bytes, component.stored_bytes, "none"});
+            }
+          }
+          pack.components.clear();
         }
       }
       if (op.kind == OpKind::Unpack) {
@@ -1573,14 +1691,14 @@ decode_impl(const std::string_view text,
         if (unpack.tensor_types.size() != output_nodes.size() ||
             unpack.tensor_shapes.size() != output_nodes.size() ||
             unpack.tensor_shapes != op.output_shapes) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                  "unpack tensor metadata disagrees with output nodes/shapes");
         }
         for (std::size_t index = 0; index < output_nodes.size(); ++index) {
           const auto expected =
               dense_bytes(unpack.tensor_shapes[index], unpack.tensor_types[index]);
           if (!expected.has_value() || *expected != output_nodes[index].bytes) {
-            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+            reject(MpkDecodeErrorCode::ValueSizeMismatch,
                    path + ".output_nodes[" + std::to_string(index) + "].size",
                    "unpack carrier byte equation disagrees with MPK output size");
           }
@@ -1593,14 +1711,14 @@ decode_impl(const std::string_view text,
             slice_config.begin.size() != slice_config.end.size() ||
             slice_config.begin.size() != slice_config.input_shape.size() ||
             slice_config.end.size() != slice_config.output_shape.size()) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+          reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                  "slice typed fields are internally inconsistent");
         }
       }
       if (op.kind == OpKind::PassThrough) {
         for (std::size_t index = 0; index < input_nodes.size(); ++index) {
           if (input_nodes[index].bytes != output_nodes[index].bytes) {
-            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+            reject(MpkDecodeErrorCode::ValueSizeMismatch,
                    path + ".output_nodes[" + std::to_string(index) + "].size",
                    "PassThrough must preserve each exact byte extent");
           }
@@ -1613,7 +1731,7 @@ decode_impl(const std::string_view text,
         const ValueId value_id = static_cast<ValueId>(data.values.size() + index);
         if (value_by_name.contains(output_nodes[index].name) ||
             !pending_output_names.emplace(output_nodes[index].name).second) {
-          reject(AfeMpkV2DecodeErrorCode::DuplicateProducer,
+          reject(MpkDecodeErrorCode::DuplicateProducer,
                  path + ".output_nodes[" + std::to_string(index) + "].name",
                  "tensor '" + output_nodes[index].name + "' has duplicate producers");
         }
@@ -1645,18 +1763,17 @@ decode_impl(const std::string_view text,
     }
 
     if (mla_count == 0U) {
-      reject(AfeMpkV2DecodeErrorCode::MissingMlaStage, "$.plugins",
-             "no exact MLA operation exists");
+      reject(MpkDecodeErrorCode::MissingMlaStage, "$.plugins", "no exact MLA operation exists");
     }
     if (pass_count > 1U || (pass_count == 1U && pass_op_index + 1U != data.ops.size())) {
-      reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
+      reject(MpkDecodeErrorCode::InvalidPublicationStage, "$.plugins",
              "PassThrough, when present, must be the unique terminal publication operation");
     }
 
     if (executable_evidence.size() != mla_op_indices.size()) {
       reject(executable_evidence.size() < mla_op_indices.size()
-                 ? AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence
-                 : AfeMpkV2DecodeErrorCode::UnexpectedMlaExecutableEvidence,
+                 ? MpkDecodeErrorCode::MissingMlaExecutableEvidence
+                 : MpkDecodeErrorCode::UnexpectedMlaExecutableEvidence,
              "$.plugins",
              "MLA executable evidence cardinality does not equal exact MLA operation count");
     }
@@ -1673,7 +1790,7 @@ decode_impl(const std::string_view text,
           continue;
         }
         if (evidence != nullptr) {
-          reject(AfeMpkV2DecodeErrorCode::AmbiguousMlaExecutableEvidence,
+          reject(MpkDecodeErrorCode::AmbiguousMlaExecutableEvidence,
                  "$.plugins[" + std::to_string(mla_op_index) + "].resources.executable",
                  "more than one ELF evidence item matches MLA stage '" + mla.name + "'");
         }
@@ -1681,7 +1798,7 @@ decode_impl(const std::string_view text,
         evidence_index = index;
       }
       if (!evidence) {
-        reject(AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence,
+        reject(MpkDecodeErrorCode::MissingMlaExecutableEvidence,
                "$.plugins[" + std::to_string(mla_op_index) + "].resources.executable",
                "no ELF evidence matches both logical stage '" + mla.name + "' and executable '" +
                    config.executable + "'");
@@ -1696,8 +1813,8 @@ decode_impl(const std::string_view text,
         const bool mismatch =
             topology_validation.code == MlaElfIoTopologyError::IfmPortCountMismatch ||
             topology_validation.code == MlaElfIoTopologyError::OfmPortCountMismatch;
-        reject(mismatch ? AfeMpkV2DecodeErrorCode::ElfTopologyMismatch
-                        : AfeMpkV2DecodeErrorCode::ElfTopologyInvalid,
+        reject(mismatch ? MpkDecodeErrorCode::ElfTopologyMismatch
+                        : MpkDecodeErrorCode::ElfTopologyInvalid,
                "$.plugins[" + std::to_string(mla_op_index) + "]",
                topology_error_detail(topology_validation));
       }
@@ -1706,19 +1823,193 @@ decode_impl(const std::string_view text,
           {"MLA[" + std::to_string(stage_index) + "].identity",
            "MPK logical stage '" + mla.name + "' and executable '" + config.executable +
                "' exactly select one ELF topology; no filename/order inference"});
+      if (mla.batch_count > 1U) {
+        config.batch_count = mla.batch_count;
+        const auto batch = static_cast<std::uint64_t>(mla.batch_count);
+        const auto lower_ports = [&](const BackendPortDirection direction,
+                                     const std::vector<ValueId>& values,
+                                     const std::vector<MlaElfPhysicalSlot>& slots) {
+          if (values.size() > std::numeric_limits<std::size_t>::max() / batch ||
+              slots.size() != values.size() * batch) {
+            reject(MpkDecodeErrorCode::ElfTopologyMismatch,
+                   "$.plugins[" + std::to_string(mla_op_index) + "]",
+                   "ELF batch slots do not cover every MPK tensor and sample");
+          }
+          std::vector<std::uint64_t> sample_bytes(values.size());
+          std::vector<std::uint64_t> sample_strides(values.size());
+          for (std::size_t logical = 0; logical < values.size(); ++logical) {
+            auto& value = data.values[values[logical]];
+            if (!value.logical_shape || value.logical_shape->empty() ||
+                value.logical_shape->front() != mla.batch_count ||
+                value.required_bytes % batch != 0U) {
+              reject(MpkDecodeErrorCode::ConfigurationMismatch,
+                     "$.plugins[" + std::to_string(mla_op_index) + "]",
+                     "MLA tensor shape and bytes do not describe the declared full batch");
+            }
+            const auto first = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
+              return slot.logical_index == logical && slot.batch_index == 0U;
+            });
+            if (first == slots.end()) {
+              reject(MpkDecodeErrorCode::ElfTopologyMismatch, "$.plugins",
+                     "ELF has no sample-zero slot for an MPK tensor");
+            }
+            std::vector<bool> seen(mla.batch_count, false);
+            for (const auto& slot : slots) {
+              if (slot.logical_index != logical)
+                continue;
+              if (slot.batch_index >= batch || seen[slot.batch_index] ||
+                  slot.extent_bytes != first->extent_bytes) {
+                reject(MpkDecodeErrorCode::ElfTopologyMismatch, "$.plugins",
+                       "ELF tensor samples have missing, duplicated or unequal extents");
+              }
+              seen[slot.batch_index] = true;
+            }
+            if (std::find(seen.begin(), seen.end(), false) != seen.end()) {
+              reject(MpkDecodeErrorCode::ElfTopologyMismatch, "$.plugins",
+                     "ELF does not provide every declared sample");
+            }
+            const bool padded_channels =
+                value.storage_binding && value.storage_binding->channel_alignment > 1U;
+            sample_bytes[logical] = padded_channels ? value.storage_binding->physical_span / batch
+                                                    : value.required_bytes / batch;
+            if (direction == BackendPortDirection::Input) {
+              const auto logical_bytes =
+                  value.logical_dtype ? dense_bytes(*value.logical_shape, *value.logical_dtype)
+                                      : std::nullopt;
+              const auto aligned = align_up_16(sample_bytes[logical]);
+              const bool dense_tail = !padded_channels &&
+                                      value.representation == ValueRepresentation::Dense &&
+                                      !value.read_expression && logical_bytes &&
+                                      *logical_bytes == value.required_bytes && aligned &&
+                                      *aligned == first->extent_bytes;
+              if (first->extent_bytes != sample_bytes[logical] && !dense_tail) {
+                reject(
+                    MpkDecodeErrorCode::ValueSizeMismatch,
+                    "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes[" +
+                        std::to_string(logical) + "].size",
+                    "MLA sample extent is neither the MPK payload nor its dense allocation tail");
+              }
+              if (!padded_channels && dense_tail && *aligned != sample_bytes[logical]) {
+                const auto width = element_width(*value.logical_dtype);
+                auto strides =
+                    width ? contiguous_stride_bytes(*value.logical_shape, *width) : std::nullopt;
+                if (!strides || value.storage_binding ||
+                    *aligned >
+                        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+                    batch - 1U >
+                        (std::numeric_limits<std::uint64_t>::max() - sample_bytes[logical]) /
+                            *aligned) {
+                  reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.plugins",
+                         "MLA sample padding has no exact writable dense placement");
+                }
+                strides->front() = static_cast<std::int64_t>(*aligned);
+                StorageBinding binding;
+                binding.kind = std::find(data.model_inputs.begin(), data.model_inputs.end(),
+                                         value.id) != data.model_inputs.end()
+                                   ? StorageBindingKind::External
+                                   : StorageBindingKind::Root;
+                binding.carrier_id = value.id;
+                binding.physical_span = (batch - 1U) * *aligned + sample_bytes[logical];
+                binding.stride_bytes = std::move(*strides);
+                binding.access = binding.kind == StorageBindingKind::External
+                                     ? StorageAccess::ReadOnly
+                                     : StorageAccess::ReadWrite;
+                value.storage_binding = std::move(binding);
+              }
+            } else {
+              if (first->extent_bytes > std::numeric_limits<std::uint64_t>::max() / batch) {
+                reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.plugins",
+                       "MLA batch extent overflows");
+              }
+              author_mla_output_storage(data, mla_op_index, logical, first->symbol,
+                                        first->extent_bytes * batch, &result.proof);
+            }
+            const auto& binding = value.storage_binding;
+            sample_strides[logical] =
+                binding && !binding->stride_bytes.empty()
+                    ? static_cast<std::uint64_t>(binding->stride_bytes.front())
+                    : sample_bytes[logical];
+          }
+          for (std::size_t physical = 0; physical < slots.size(); ++physical) {
+            const auto& slot = slots[physical];
+            if (slot.logical_index >= values.size() || slot.batch_index >= batch) {
+              reject(MpkDecodeErrorCode::ElfTopologyMismatch, "$.plugins",
+                     "ELF sample references an unknown logical tensor");
+            }
+            const auto stride = sample_strides[slot.logical_index];
+            if (slot.batch_index > std::numeric_limits<std::uint64_t>::max() / stride) {
+              reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.plugins",
+                     "MLA sample offset overflows");
+            }
+            const auto offset = slot.batch_index * stride;
+            // Allocate carriers on the legacy boundary; sample addresses retain their proved pitch.
+            const auto alignment =
+                std::gcd<std::uint64_t>(kLegacyEvoCmaRegionAlignmentBytes, offset);
+            if (alignment < 16U) {
+              reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.plugins",
+                     "MLA sample offset is not 16-byte aligned");
+            }
+            BackendPortSpec port{
+                stage_index,
+                direction,
+                physical,
+                slot.symbol,
+                values[slot.logical_index],
+                direction == BackendPortDirection::Input ? sample_bytes[slot.logical_index]
+                                                         : slot.extent_bytes,
+                static_cast<std::size_t>(alignment),
+                BackendPortAlignmentAuthority::LegacyPolicy,
+                direction == BackendPortDirection::Input ? BackendPortAccess::ReadOnly
+                                                         : BackendPortAccess::WriteOnly};
+            port.logical_port_index = slot.logical_index;
+            port.batch_index = static_cast<std::uint32_t>(slot.batch_index);
+            port.value_byte_offset = offset;
+            data.backend_ports.push_back(std::move(port));
+          }
+        };
+        lower_ports(BackendPortDirection::Input, mla.inputs, topology.ifm_slots);
+        lower_ports(BackendPortDirection::Output, mla.outputs, topology.ofm_slots);
+        result.proof.push_back(
+            {"MLA[" + std::to_string(stage_index) + "].batch",
+             "every ELF sample binds its MPK logical tensor with an explicit byte offset"});
+        continue;
+      }
       for (std::size_t index = 0; index < mla.inputs.size(); ++index) {
         const std::string symbol =
             topology.monolithic_ifm ? "data.ifm.b0" : topology.ifm_symbol_names.at(index);
         const auto& value = data.values[mla.inputs[index]];
         const auto physical_extent = mla_elf_ifm_extent_bytes(topology, index);
-        if (physical_extent != value.required_bytes) {
-          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
-                 "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes[" +
-                     std::to_string(index) + "].size",
-                 "QMLA IFM extent does not exactly equal the logical tensor");
+        const auto transfer_bytes =
+            value.storage_binding && value.storage_binding->channel_alignment > 1U
+                ? value.storage_binding->physical_span
+                : value.required_bytes;
+        if (physical_extent != transfer_bytes) {
+          const auto logical_bytes = value.logical_shape && value.logical_dtype
+                                         ? dense_bytes(*value.logical_shape, *value.logical_dtype)
+                                         : std::nullopt;
+          const auto aligned_bytes = align_up_16(value.required_bytes);
+          // ELF allocation alignment does not enlarge the MPK input transfer.
+          const bool exact_dense_tail =
+              transfer_bytes == value.required_bytes &&
+              value.representation == ValueRepresentation::Dense && !value.read_expression &&
+              value.logical_shape && !value.logical_shape->empty() &&
+              value.logical_shape->front() == 1 &&
+              ordered[mla_op_index].plugin->at("config_params").at("actual_batch_size") == 1 &&
+              logical_bytes && *logical_bytes == value.required_bytes && aligned_bytes &&
+              *aligned_bytes == physical_extent;
+          if (!exact_dense_tail) {
+            reject(MpkDecodeErrorCode::ValueSizeMismatch,
+                   "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes[" +
+                       std::to_string(index) + "].size",
+                   "QMLA IFM extent is neither exact logical bytes nor registered batch-one dense "
+                   "tail padding");
+          }
+          result.proof.push_back({"MLA.IFM[" + std::to_string(index) + "].layout",
+                                  "typed dense logical bytes and ELF extent prove exact 16-byte "
+                                  "allocation tail padding"});
         }
         data.backend_ports.push_back({stage_index, BackendPortDirection::Input, index, symbol,
-                                      value.id, physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
+                                      value.id, transfer_bytes, kLegacyEvoCmaRegionAlignmentBytes,
                                       BackendPortAlignmentAuthority::LegacyPolicy,
                                       BackendPortAccess::ReadOnly});
         result.proof.push_back(
@@ -1742,12 +2033,12 @@ decode_impl(const std::string_view text,
       }
     }
     if (std::find(evidence_used.begin(), evidence_used.end(), false) != evidence_used.end()) {
-      reject(AfeMpkV2DecodeErrorCode::UnexpectedMlaExecutableEvidence, "$.plugins",
+      reject(MpkDecodeErrorCode::UnexpectedMlaExecutableEvidence, "$.plugins",
              "an ELF evidence item is not selected by any exact MLA stage identity");
     }
 
     if (host_evidence.size() != host_op_indices.size()) {
-      reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, "$.plugins",
+      reject(MpkDecodeErrorCode::UnsupportedHostModule, "$.plugins",
              "A65 host-module evidence cardinality does not equal exact A65 operation count");
     }
     std::vector<bool> host_evidence_used(host_evidence.size(), false);
@@ -1762,7 +2053,7 @@ decode_impl(const std::string_view text,
           continue;
         }
         if (evidence != nullptr) {
-          reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule,
+          reject(MpkDecodeErrorCode::UnsupportedHostModule,
                  "$.plugins[" + std::to_string(host_op_index) + "].resources.executable",
                  "more than one A65 module evidence item matches the exact stage");
         }
@@ -1770,7 +2061,7 @@ decode_impl(const std::string_view text,
         evidence_index = index;
       }
       if (!evidence) {
-        reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule,
+        reject(MpkDecodeErrorCode::UnsupportedHostModule,
                "$.plugins[" + std::to_string(host_op_index) + "].resources.executable",
                "no structural A65 module evidence matches logical identity and executable");
       }
@@ -1780,14 +2071,14 @@ decode_impl(const std::string_view text,
       std::vector<std::string> linked_parameter_names;
       if (!evidence->argument_names.empty()) {
         if (evidence->argument_names.size() != evidence->argument_types.size()) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+          reject(MpkDecodeErrorCode::ConfigurationMismatch,
                  "$.plugins[" + std::to_string(host_op_index) + "].config_params",
                  "embedded TVM graph argument names and types disagree in cardinality");
         }
         std::unordered_map<std::string, std::size_t> argument_by_name;
         for (std::size_t index = 0; index < evidence->argument_names.size(); ++index) {
           if (!argument_by_name.emplace(evidence->argument_names[index], index).second) {
-            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+            reject(MpkDecodeErrorCode::ConfigurationMismatch,
                    "$.plugins[" + std::to_string(host_op_index) + "].config_params",
                    "embedded TVM graph argument names are duplicated");
           }
@@ -1798,7 +2089,7 @@ decode_impl(const std::string_view text,
         for (std::size_t index = 0; index < config.input_names.size(); ++index) {
           const auto found = argument_by_name.find(config.input_names[index]);
           if (found == argument_by_name.end()) {
-            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+            reject(MpkDecodeErrorCode::ConfigurationMismatch,
                    "$.plugins[" + std::to_string(host_op_index) + "].config_params.input_names[" +
                        std::to_string(index) + "]",
                    "MPK external input is absent from the embedded TVM argument table");
@@ -1818,7 +2109,7 @@ decode_impl(const std::string_view text,
           }
           if (static_cast<std::size_t>(alias) >= external_index_by_argument.size() ||
               external_index_by_argument[static_cast<std::size_t>(alias)] < 0) {
-            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+            reject(MpkDecodeErrorCode::ConfigurationMismatch,
                    "$.plugins[" + std::to_string(host_op_index) + "].config_params",
                    "embedded TVM graph output aliases a linked parameter");
           }
@@ -1829,7 +2120,7 @@ decode_impl(const std::string_view text,
           external_input_types.size() != config.input_types.size() ||
           evidence->output_types.size() != config.output_types.size() ||
           output_alias_input.size() != config.output_types.size()) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+        reject(MpkDecodeErrorCode::ConfigurationMismatch,
                "$.plugins[" + std::to_string(host_op_index) + "].config_params",
                "embedded TVM graph port contract disagrees with the MPK host contract");
       }
@@ -1838,7 +2129,7 @@ decode_impl(const std::string_view text,
       };
       for (std::size_t index = 0; index < config.input_types.size(); ++index) {
         if (!types_equal(config.input_types[index], external_input_types[index])) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+          reject(MpkDecodeErrorCode::ConfigurationMismatch,
                  "$.plugins[" + std::to_string(host_op_index) + "].config_params.input_types[" +
                      std::to_string(index) + "]",
                  "embedded TVM graph input type disagrees with the MPK");
@@ -1846,14 +2137,14 @@ decode_impl(const std::string_view text,
       }
       for (std::size_t index = 0; index < config.output_types.size(); ++index) {
         if (!types_equal(config.output_types[index], evidence->output_types[index])) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+          reject(MpkDecodeErrorCode::ConfigurationMismatch,
                  "$.plugins[" + std::to_string(host_op_index) + "].config_params.output_types[" +
                      std::to_string(index) + "]",
                  "embedded TVM graph output type disagrees with the MPK");
         }
         const auto alias = output_alias_input[index];
         if (alias >= 0 && static_cast<std::size_t>(alias) >= config.input_types.size()) {
-          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+          reject(MpkDecodeErrorCode::ConfigurationMismatch,
                  "$.plugins[" + std::to_string(host_op_index) + "]",
                  "embedded TVM graph output alias index is out of range");
         }
@@ -1869,7 +2160,7 @@ decode_impl(const std::string_view text,
     }
     if (std::find(host_evidence_used.begin(), host_evidence_used.end(), false) !=
         host_evidence_used.end()) {
-      reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, "$.plugins",
+      reject(MpkDecodeErrorCode::UnsupportedHostModule, "$.plugins",
              "an A65 module evidence item is not selected by any exact host stage identity");
     }
 
@@ -1890,7 +2181,7 @@ decode_impl(const std::string_view text,
       // suffix and can be removed without renumbering any retained identity.
       data.ops.pop_back();
       if (publication_output_count > data.values.size()) {
-        reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
+        reject(MpkDecodeErrorCode::InvalidPublicationStage, "$.plugins",
                "terminal PassThrough output suffix is malformed");
       }
       data.values.resize(data.values.size() - publication_output_count);
@@ -1908,7 +2199,7 @@ decode_impl(const std::string_view text,
         }
       }
       if (terminal_values.empty()) {
-        reject(AfeMpkV2DecodeErrorCode::MissingPublicationStage, "$.plugins",
+        reject(MpkDecodeErrorCode::MissingPublicationStage, "$.plugins",
                "stock graph has no terminal produced value to publish");
       }
 
@@ -1921,7 +2212,7 @@ decode_impl(const std::string_view text,
       } else {
         const auto contract = lookup_afe_publication_contract(manifest_sha256);
         if (!contract) {
-          reject(AfeMpkV2DecodeErrorCode::MissingPublicationStage, "$.plugins",
+          reject(MpkDecodeErrorCode::MissingPublicationStage, "$.plugins",
                  "multiple terminal values require an exact digest-bound ordered output contract; "
                  "manifest sha256=" +
                      manifest_sha256);
@@ -1933,7 +2224,7 @@ decode_impl(const std::string_view text,
           const auto found = value_by_name.find(wanted);
           if (found == value_by_name.end() || !terminal_set.contains(found->second) ||
               !selected.emplace(found->second).second) {
-            reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
+            reject(MpkDecodeErrorCode::InvalidPublicationStage, "$.plugins",
                    "digest-bound output contract contains a missing, nonterminal, or duplicate "
                    "value '" +
                        wanted + "'");
@@ -1944,7 +2235,7 @@ decode_impl(const std::string_view text,
                                       " publishes terminal value '" + wanted + "'"});
         }
         if (selected.size() != terminal_set.size()) {
-          reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
+          reject(MpkDecodeErrorCode::InvalidPublicationStage, "$.plugins",
                  "digest-bound output contract does not enumerate every terminal value exactly "
                  "once");
         }
@@ -1961,7 +2252,7 @@ decode_impl(const std::string_view text,
     }
     for (const auto& value : data.values) {
       if (!consumed_values.contains(value.id) && !public_values.contains(value.id)) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+        reject(MpkDecodeErrorCode::ConfigurationMismatch,
                "$.values[" + std::to_string(value.id) + "]",
                "value '" + value.name + "' is neither consumed nor publicly published");
       }
@@ -1975,31 +2266,30 @@ decode_impl(const std::string_view text,
     std::string plan_error;
     result.plan = ModelExecutionPlan::create(std::move(data), &plan_error);
     if (!result.plan.has_value()) {
-      reject(AfeMpkV2DecodeErrorCode::PlanValidationFailed, "$", plan_error);
+      reject(MpkDecodeErrorCode::PlanValidationFailed, "$", plan_error);
     }
     return result;
   } catch (const DecodeAbort& failure) {
     result.plan.reset();
-    result.error = AfeMpkV2DecodeError{failure.code, source, failure.path, failure.detail};
+    result.error = MpkDecodeError{failure.code, source, failure.path, failure.detail};
     return result;
   } catch (const std::exception& failure) {
     result.plan.reset();
-    result.error =
-        AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::InvalidJson, source, "$", failure.what()};
+    result.error = MpkDecodeError{MpkDecodeErrorCode::InvalidJson, source, "$", failure.what()};
     return result;
   } catch (...) {
     result.plan.reset();
-    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::InvalidJson, source, "$",
-                                       "unknown decoder failure"};
+    result.error =
+        MpkDecodeError{MpkDecodeErrorCode::InvalidJson, source, "$", "unknown decoder failure"};
     return result;
   }
 }
 
 } // namespace
 
-AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_json(const std::string_view mpk_json,
-                                                  const MlaElfIoTopology& elf_topology,
-                                                  std::string source_label) const noexcept {
+MpkDecodeResult MpkDecoder::decode_json(const std::string_view mpk_json,
+                                        const MlaElfIoTopology& elf_topology,
+                                        std::string source_label) const noexcept {
   // Compatibility is intentionally unambiguous: discover the sole MLA identity
   // from the manifest, then route through the exact multi-evidence decoder.
   try {
@@ -2015,81 +2305,80 @@ AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_json(const std::string_view mpk_jso
                           elf_topology});
     }
     if (evidence.size() != 1U) {
-      AfeMpkV2DecodeResult result;
-      result.error = AfeMpkV2DecodeError{
-          AfeMpkV2DecodeErrorCode::MultipleMlaStages, std::move(source_label), "$.plugins",
+      MpkDecodeResult result;
+      result.error = MpkDecodeError{
+          MpkDecodeErrorCode::MultipleMlaStages, std::move(source_label), "$.plugins",
           "single-topology compatibility overload requires exactly one MLA stage"};
       return result;
     }
     return decode_impl(mpk_json, evidence, {}, source_label);
   } catch (const std::exception& failure) {
-    AfeMpkV2DecodeResult result;
-    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::InvalidJson,
-                                       std::move(source_label), "$", failure.what()};
+    MpkDecodeResult result;
+    result.error = MpkDecodeError{MpkDecodeErrorCode::InvalidJson, std::move(source_label), "$",
+                                  failure.what()};
     return result;
   }
 }
 
-AfeMpkV2DecodeResult
-AfeMpkV2Decoder::decode_json(const std::string_view mpk_json,
-                             const std::span<const MlaStageExecutableEvidence> executable_evidence,
-                             std::string source_label) const noexcept {
+MpkDecodeResult
+MpkDecoder::decode_json(const std::string_view mpk_json,
+                        const std::span<const MlaStageExecutableEvidence> executable_evidence,
+                        std::string source_label) const noexcept {
   return decode_impl(mpk_json, executable_evidence, {}, source_label);
 }
 
-AfeMpkV2DecodeResult
-AfeMpkV2Decoder::decode_json(const std::string_view mpk_json,
-                             const std::span<const MlaStageExecutableEvidence> executable_evidence,
-                             const std::span<const HostTvmExecutableEvidence> host_evidence,
-                             std::string source_label) const noexcept {
+MpkDecodeResult
+MpkDecoder::decode_json(const std::string_view mpk_json,
+                        const std::span<const MlaStageExecutableEvidence> executable_evidence,
+                        const std::span<const HostTvmExecutableEvidence> host_evidence,
+                        std::string source_label) const noexcept {
   return decode_impl(mpk_json, executable_evidence, host_evidence, source_label);
 }
 
-AfeMpkV2DecodeResult
-AfeMpkV2Decoder::decode_file(const std::filesystem::path& mpk_manifest,
-                             const MlaElfIoTopology& elf_topology) const noexcept {
+MpkDecodeResult MpkDecoder::decode_file(const std::filesystem::path& mpk_manifest,
+                                        const MlaElfIoTopology& elf_topology) const noexcept {
   std::ifstream input(mpk_manifest, std::ios::binary);
   if (!input.is_open()) {
-    AfeMpkV2DecodeResult result;
-    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::IoError, mpk_manifest.string(), "$",
-                                       "cannot open MPK manifest"};
+    MpkDecodeResult result;
+    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, mpk_manifest.string(), "$",
+                                  "cannot open MPK manifest"};
     return result;
   }
   std::ostringstream contents;
   contents << input.rdbuf();
   if (!input.good() && !input.eof()) {
-    AfeMpkV2DecodeResult result;
-    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::IoError, mpk_manifest.string(), "$",
-                                       "cannot read MPK manifest"};
+    MpkDecodeResult result;
+    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, mpk_manifest.string(), "$",
+                                  "cannot read MPK manifest"};
     return result;
   }
   return decode_json(contents.str(), elf_topology, mpk_manifest.string());
 }
 
-AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_file(
+MpkDecodeResult MpkDecoder::decode_file(
     const std::filesystem::path& mpk_manifest,
     const std::span<const MlaStageExecutableEvidence> executable_evidence) const noexcept {
   return decode_file(mpk_manifest, executable_evidence,
                      std::span<const HostTvmExecutableEvidence>{});
 }
 
-AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_file(
+MpkDecodeResult MpkDecoder::decode_file(
     const std::filesystem::path& mpk_manifest,
     const std::span<const MlaStageExecutableEvidence> executable_evidence,
     const std::span<const HostTvmExecutableEvidence> host_evidence) const noexcept {
   std::ifstream input(mpk_manifest, std::ios::binary);
   if (!input.is_open()) {
-    AfeMpkV2DecodeResult result;
-    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::IoError, mpk_manifest.string(), "$",
-                                       "cannot open MPK manifest"};
+    MpkDecodeResult result;
+    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, mpk_manifest.string(), "$",
+                                  "cannot open MPK manifest"};
     return result;
   }
   std::ostringstream contents;
   contents << input.rdbuf();
   if (!input.good() && !input.eof()) {
-    AfeMpkV2DecodeResult result;
-    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::IoError, mpk_manifest.string(), "$",
-                                       "cannot read MPK manifest"};
+    MpkDecodeResult result;
+    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, mpk_manifest.string(), "$",
+                                  "cannot read MPK manifest"};
     return result;
   }
   return decode_impl(contents.str(), executable_evidence, host_evidence, mpk_manifest.string());

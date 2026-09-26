@@ -10,6 +10,7 @@
 #include <ios>
 #include <limits>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -196,6 +197,25 @@ std::optional<std::size_t> parse_ofm_section_index(const std::string& name) {
   return std::nullopt;
 }
 
+bool is_unindexed_section(const std::string& name, const std::string& prefix) {
+  std::size_t stage_index = 0U;
+  return parse_section_index_after_prefix(name, prefix, true, &stage_index) &&
+         name.find('/') + 1U < name.size() - 3U;
+}
+
+std::optional<std::pair<std::string, std::size_t>> batch_section(const std::string& name) {
+  const auto suffix = name.rfind(".b");
+  if (suffix == std::string::npos) {
+    return std::nullopt;
+  }
+  std::size_t batch = 0U;
+  std::size_t end = 0U;
+  if (!parse_uint_at(name, suffix + 2U, &batch, &end) || end != name.size()) {
+    return std::nullopt;
+  }
+  return std::pair{name.substr(0U, suffix) + ".b0", batch};
+}
+
 // Insert `name` at slot `index` in `dst`, growing the vector as needed. If
 // `dst` already has a value at that index, prefer the existing one (keeps the
 // first-seen entry on duplicate scan; multi-section ELFs sometimes mention the
@@ -292,6 +312,8 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
 
   // Walk every section name and classify.
   std::size_t recognized = 0U;
+  std::vector<std::pair<std::string, std::uint64_t>> unindexed_ifm;
+  std::vector<std::pair<std::string, std::uint64_t>> unindexed_ofm;
   for (const auto& s : sections) {
     const std::string name = section_name_at(shstrtab, s.sh_name);
     if (name.empty()) {
@@ -299,6 +321,17 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     }
     std::uint64_t extent = 0U;
     const bool has_extent = read_qmla_data_extent(in, s, &extent);
+    if (const auto sample = batch_section(name)) {
+      const auto& base = sample->first;
+      const bool ifm = base == kMonolithicIfmName || parse_ifm_section_index(base) ||
+                       is_unindexed_section(base, "data.ifm.persistent.MLA_");
+      const bool ofm = base == kMonolithicOfmName || parse_ofm_section_index(base) ||
+                       is_unindexed_section(base, "data.ofm.persistent.MLA_");
+      if (ifm || ofm) {
+        auto& slots = ifm ? out->ifm_slots : out->ofm_slots;
+        slots.push_back({0U, sample->second, name, has_extent ? extent : 0U});
+      }
+    }
     if (name == kMonolithicIfmName) {
       out->monolithic_ifm = true;
       out->monolithic_ifm_extent_bytes = has_extent ? extent : 0U;
@@ -339,7 +372,69 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       ++recognized;
       continue;
     }
+    if (is_unindexed_section(name, "data.ifm.persistent.MLA_")) {
+      unindexed_ifm.emplace_back(name, has_extent ? extent : 0U);
+      ++recognized;
+    } else if (is_unindexed_section(name, "data.ofm.persistent.MLA_")) {
+      unindexed_ofm.emplace_back(name, has_extent ? extent : 0U);
+      ++recognized;
+    }
   }
+
+  // Native tensor names carry no port index. MLA-RT assigns their ports in
+  // ELF encounter order, matching the MPK MLA argument list. Preserve that
+  // order without interpreting placeholder names or comparing tensor sizes.
+  const auto bind_unindexed = [&](const auto& sections, auto* names, auto* extents,
+                                  const char* direction) {
+    if (sections.empty()) {
+      return true;
+    }
+    if (!names->empty()) {
+      out->error = std::string("elf-io-topology: mixed indexed and unindexed ") + direction +
+                   " sections have conflicting port orders";
+      return false;
+    }
+    for (const auto& [name, extent] : sections) {
+      if (std::find(names->begin(), names->end(), name) != names->end()) {
+        out->error = std::string("elf-io-topology: duplicate unindexed ") + direction +
+                     " section '" + name + "'";
+        return false;
+      }
+      names->push_back(name);
+      extents->push_back(extent);
+    }
+    return true;
+  };
+  if (!bind_unindexed(unindexed_ifm, &out->ifm_symbol_names, &out->ifm_extent_bytes, "IFM") ||
+      !bind_unindexed(unindexed_ofm, &out->ofm_symbol_names, &out->ofm_extent_bytes, "OFM")) {
+    return false;
+  }
+
+  const auto identify_slots = [&](auto& slots, const auto& names, const char* monolithic) {
+    for (auto& slot : slots) {
+      const auto sample = batch_section(slot.symbol);
+      if (sample->first == monolithic) {
+        slot.logical_index = 0U;
+        continue;
+      }
+      const auto indexed = parse_ifm_section_index(sample->first)
+                               ? parse_ifm_section_index(sample->first)
+                               : parse_ofm_section_index(sample->first);
+      if (indexed) {
+        slot.logical_index = *indexed;
+        continue;
+      }
+      const auto found = std::find(names.begin(), names.end(), sample->first);
+      if (found == names.end()) {
+        append_warning(&out->error, "batch section has no sample-zero identity");
+        slot.logical_index = names.size();
+        continue;
+      }
+      slot.logical_index = static_cast<std::size_t>(found - names.begin());
+    }
+  };
+  identify_slots(out->ifm_slots, out->ifm_symbol_names, kMonolithicIfmName);
+  identify_slots(out->ofm_slots, out->ofm_symbol_names, kMonolithicOfmName);
 
   if (recognized == 0U) {
     out->error = "elf-io-topology: no IFM/OFM sections recognized";
@@ -452,6 +547,30 @@ MlaElfIoTopologyValidation validate_mla_elf_io_topology_strict(const MlaElfIoTop
                          [](const auto extent) { return extent == 0U; })) {
     return topology_error(MlaElfIoTopologyError::MissingOfmExtent,
                           "ELF indexed OFM extent evidence is missing, zero, or sparse");
+  }
+
+  const auto validate_samples = [](const auto& slots, const std::size_t count) {
+    std::vector<std::set<std::size_t>> samples(count);
+    for (const auto& slot : slots) {
+      if (slot.logical_index >= count || slot.extent_bytes == 0U ||
+          !samples[slot.logical_index].emplace(slot.batch_index).second) {
+        return false;
+      }
+    }
+    for (const auto& indices : samples) {
+      std::size_t expected = 0U;
+      for (const auto index : indices) {
+        if (index != expected++) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  if (!validate_samples(topology.ifm_slots, mla_elf_ifm_port_count(topology)) ||
+      !validate_samples(topology.ofm_slots, mla_elf_ofm_port_count(topology))) {
+    return topology_error(MlaElfIoTopologyError::InvalidTopology,
+                          "ELF batch slots have missing, repeated, or invalid sample evidence");
   }
 
   MlaElfIoTopologyValidation result;

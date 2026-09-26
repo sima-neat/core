@@ -2656,13 +2656,15 @@ void enforce_mla_num_buffers(const std::string& pipeline, const char* context,
   if (allow_one) {
     return;
   }
-  const int required = 4;
   const bool has_mla = (pipeline.find("neatprocessmla") != std::string::npos);
-  const int alt = allow_one ? 1 : -1;
-  if (has_mla) {
-    dump_num_buffers_for_plugin(pipeline, "neatprocessmla", context);
-    enforce_num_buffers_for_plugin(pipeline, "neatprocessmla", required, context, alt);
+  // The four-buffer invariant belongs only to routes containing MLA.
+  if (!has_mla) {
+    return;
   }
+  const int required = 4;
+  const int alt = allow_one ? 1 : -1;
+  dump_num_buffers_for_plugin(pipeline, "neatprocessmla", context);
+  enforce_num_buffers_for_plugin(pipeline, "neatprocessmla", required, context, alt);
   dump_num_buffers_for_plugin(pipeline, "neatprocesscvu", context);
   enforce_num_buffers_for_plugin(pipeline, "neatprocesscvu", required, context, alt);
 }

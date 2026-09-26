@@ -1990,8 +1990,10 @@ static ExecutionPlan build_execution_plan_from_model_plan(
       throw std::runtime_error("ModelPack: physical command has no exact renderer identity");
     }
     for (const auto& member : cohort.members) {
-      if ((has_cvu_capability &&
-           member.semantic_chain.size() != cvu_capability.semantic_pattern_length) ||
+      if (member.pad_output_channels != first_member.pad_output_channels ||
+          (has_cvu_capability &&
+           member.semantic_chain.size() + (member.pad_output_channels ? 1U : 0U) !=
+               cvu_capability.semantic_pattern_length) ||
           (!has_cvu_capability && member.semantic_chain.size() != 1U)) {
         throw std::runtime_error(
             "ModelPack: render cohort contains incompatible semantic operations");
@@ -2003,8 +2005,12 @@ static ExecutionPlan build_execution_plan_from_model_plan(
     stage.physical_cohort_id = cohort.id;
     stage.physical_command_ids = cohort.commands;
     for (const auto& member : cohort.members) {
-      stage.execution_op_ids.insert(stage.execution_op_ids.end(), member.semantic_chain.begin(),
-                                    member.semantic_chain.end());
+      for (const auto origin : member.semantic_chain) {
+        if (std::find(stage.execution_op_ids.begin(), stage.execution_op_ids.end(), origin) ==
+            stage.execution_op_ids.end()) {
+          stage.execution_op_ids.push_back(origin);
+        }
+      }
     }
     if (cohort.members.size() == 1U && first_member.semantic_chain.size() == 1U) {
       stage.mpk_plugin_index =
@@ -2013,7 +2019,7 @@ static ExecutionPlan build_execution_plan_from_model_plan(
     } else {
       stage.stage_name = "physical_cvu_cohort_" + std::to_string(cohort.id);
     }
-    stage.kind = kind;
+    stage.kind = first_member.pad_output_channels ? model_plan_stage_kind(op) : kind;
     stage.factory_name = require_stage_factory(stage.kind, cohort.engine == PhysicalEngine::Cvu);
     stage.plugin_id = plugin_id_for_stage_kind(stage.kind);
     stage.processor = processor_for_stage_kind(stage.kind);

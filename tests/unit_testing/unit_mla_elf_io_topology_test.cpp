@@ -57,7 +57,7 @@ struct Elf64SectionHeader {
 constexpr std::uint32_t kQmlaShtData = 0x71ba0002U;
 
 bool is_mla_io_section(const std::string& name) {
-  return name == "data.ifm.b0" || name == "data.ofm.b0" ||
+  return name.starts_with("data.ifm.b") || name.starts_with("data.ofm.b") ||
          name.starts_with("data.ifm.persistent.") || name.starts_with("data.ofm.persistent.");
 }
 
@@ -277,6 +277,111 @@ void test_missing_file_fails_cleanly() {
   check(!topology.valid, "missing_file: topology.valid is false");
 }
 
+void test_unindexed_persistent_topology() {
+  using namespace simaai::neat::pipeline_internal::sima;
+  const std::string ifm = "data.ifm.persistent.MLA_0/placeholder_0_0.b0";
+  const std::string ofm = "data.ofm.persistent.MLA_0/conv2d_add_0_output.b0";
+  const auto path = write_minimal_elf("unindexed", {ofm, ifm}, {{ifm, 112U}, {ofm, 240U}});
+  MlaElfIoTopology topology;
+  check(read_mla_elf_io_topology(path, &topology), "unindexed: recognized compiler tensor names");
+  check(reconcile_mla_elf_io_topology_strict(topology, 1U, 1U).ok,
+        "unindexed: single port in each direction reconciles");
+  check(topology.ifm_symbol_names == std::vector<std::string>{ifm} &&
+            topology.ofm_symbol_names == std::vector<std::string>{ofm},
+        "unindexed: preserves exact names independent of section order");
+  check(mla_elf_ifm_extent_bytes(topology, 0U) == 112U &&
+            mla_elf_ofm_extent_bytes(topology, 0U) == 240U,
+        "unindexed: preserves compiler storage extents");
+  check(!reconcile_mla_elf_io_topology_strict(topology, 2U, 1U).ok,
+        "unindexed: cannot satisfy a multi-input MPK");
+  std::filesystem::remove(path);
+
+  for (const auto& name : {ifm, ofm}) {
+    const auto missing_path =
+        write_minimal_elf("unindexed_missing_extent", {ifm, ofm}, {{name, 0U}});
+    check(read_mla_elf_io_topology(missing_path, &topology),
+          "unindexed: missing extent retains topology evidence");
+    const auto result = validate_mla_elf_io_topology_strict(topology);
+    check(!result.ok && result.code == (name == ifm ? MlaElfIoTopologyError::MissingIfmExtent
+                                                    : MlaElfIoTopologyError::MissingOfmExtent),
+          "unindexed: non-zero QMLA extent remains required");
+    std::filesystem::remove(missing_path);
+  }
+
+  for (const auto& extra :
+       {"data.ifm.persistent.afe_direct_input_0.b0", "data.ofm.persistent.afe_mla_output_0.b0"}) {
+    const auto ambiguous_path = write_minimal_elf("unindexed_ambiguous", {ifm, ofm, extra});
+    check(!read_mla_elf_io_topology(ambiguous_path, &topology) && !topology.valid,
+          "unindexed: mixed indexed sections have conflicting port orders");
+    check(topology.error.find("mixed indexed and unindexed") != std::string::npos,
+          "unindexed: ambiguous mapping has an actionable diagnostic");
+    std::filesystem::remove(ambiguous_path);
+  }
+
+  for (const auto& extra : {"data.ifm.b0", "data.ofm.b0"}) {
+    const auto conflict_path = write_minimal_elf("unindexed_conflict", {ifm, ofm, extra});
+    check(read_mla_elf_io_topology(conflict_path, &topology),
+          "unindexed: monolithic conflict retains topology evidence");
+    const auto result = validate_mla_elf_io_topology_strict(topology);
+    check(!result.ok && result.code == (std::string(extra) == "data.ifm.b0"
+                                            ? MlaElfIoTopologyError::ConflictingIfmLayouts
+                                            : MlaElfIoTopologyError::ConflictingOfmLayouts),
+          "unindexed: monolithic layout conflict remains rejected");
+    std::filesystem::remove(conflict_path);
+  }
+}
+
+void test_native_ports_preserve_encounter_order() {
+  using namespace simaai::neat::pipeline_internal::sima;
+  const std::string ifm_first = "data.ifm.persistent.MLA_0/placeholder_20_0.b0";
+  const std::string ifm_second = "data.ifm.persistent.MLA_0/placeholder_10_0.b0";
+  const std::string ofm_first = "data.ofm.persistent.MLA_0/z_output.b0";
+  const std::string ofm_second = "data.ofm.persistent.MLA_0/a_output.b0";
+  // Interleave directions and use equal extents. Neither lexical sorting nor
+  // size matching can recover the authored port order.
+  const auto path = write_minimal_elf(
+      "native_order", {ofm_first, ifm_first, "code.r0.c0", ofm_second, ifm_second},
+      {{ifm_first, 128U}, {ifm_second, 128U}, {ofm_first, 240U}, {ofm_second, 240U}});
+  MlaElfIoTopology topology;
+  check(read_mla_elf_io_topology(path, &topology), "native order: parser succeeds");
+  check(reconcile_mla_elf_io_topology_strict(topology, 2U, 2U).ok,
+        "native order: exact MPK arity reconciles");
+  check(topology.ifm_symbol_names == std::vector<std::string>{ifm_first, ifm_second},
+        "native order: IFM encounter order survives equal sizes and nonlexical names");
+  check(topology.ofm_symbol_names == std::vector<std::string>{ofm_first, ofm_second},
+        "native order: OFM encounter order survives equal sizes and nonlexical names");
+  check(topology.ifm_extent_bytes == std::vector<std::uint64_t>{128U, 128U} &&
+            topology.ofm_extent_bytes == std::vector<std::uint64_t>{240U, 240U},
+        "native order: extents remain associated with their ports");
+  check(reconcile_mla_elf_io_topology_strict(topology, 1U, 2U).code ==
+                MlaElfIoTopologyError::IfmPortCountMismatch &&
+            reconcile_mla_elf_io_topology_strict(topology, 2U, 1U).code ==
+                MlaElfIoTopologyError::OfmPortCountMismatch,
+        "native order: both MPK port counts remain enforced");
+  std::filesystem::remove(path);
+
+  for (const auto& duplicate : {ifm_first, ofm_first}) {
+    const auto duplicate_path =
+        write_minimal_elf("native_duplicate", {ifm_first, ofm_first, duplicate});
+    check(!read_mla_elf_io_topology(duplicate_path, &topology) && !topology.valid,
+          "native duplicate: repeated section identity rejected");
+    check(topology.error.find("duplicate unindexed") != std::string::npos,
+          "native duplicate: diagnostic identifies duplicate section");
+    std::filesystem::remove(duplicate_path);
+  }
+
+  for (const auto& malformed :
+       {"data.ifm.persistent.MLA_bad/placeholder_0_0.b0", "data.ifm.persistent.MLA_0/.b0",
+        "data.ifm.persistent.MLA_0/placeholder_0_0.b1"}) {
+    const auto malformed_path = write_minimal_elf("native_malformed", {malformed, ofm_first});
+    check(read_mla_elf_io_topology(malformed_path, &topology),
+          "native malformed: parser retains the valid OFM evidence");
+    check(validate_mla_elf_io_topology_strict(topology).code == MlaElfIoTopologyError::MissingIfm,
+          "native malformed: invalid native IFM name cannot establish a port");
+    std::filesystem::remove(malformed_path);
+  }
+}
+
 void test_strict_validation_and_reconciliation() {
   using namespace simaai::neat::pipeline_internal::sima;
 
@@ -342,15 +447,59 @@ void test_strict_validation_and_reconciliation() {
   std::filesystem::remove(duplicate_path);
 }
 
+void test_batch_slots_preserve_physical_order() {
+  using namespace simaai::neat::pipeline_internal::sima;
+  for (const std::string prefix : {"data.ifm.persistent.MLA_0/left.b",
+                                   "data.ifm.persistent.afe_direct_input_0.b", "data.ifm.b"}) {
+    const bool monolithic = prefix == "data.ifm.b";
+    const std::string output = monolithic ? "data.ofm.b" : "data.ofm.persistent.MLA_0/out.b";
+    std::vector<std::string> names{prefix + "0", prefix + "1", output + "0", output + "1"};
+    auto path = write_minimal_elf("batch", names);
+    MlaElfIoTopology topology;
+    check(read_mla_elf_io_topology(path, &topology), "batched ELF is readable");
+    check(validate_mla_elf_io_topology_strict(topology).ok, "complete batches validate");
+    check(topology.ifm_slots.size() == 2U && topology.ofm_slots.size() == 2U &&
+              topology.ifm_slots[1].symbol == prefix + "1" &&
+              topology.ifm_slots[1].logical_index == 0U &&
+              topology.ifm_slots[1].batch_index == 1U && topology.ifm_slots[1].extent_bytes == 32U,
+          "batch sections retain their own extent and physical order");
+    std::filesystem::remove(path);
+    for (const auto& invalid : {prefix + "1", prefix + "3"}) {
+      auto bad_names = names;
+      bad_names.push_back(invalid);
+      path = write_minimal_elf("bad_batch", bad_names);
+      check(read_mla_elf_io_topology(path, &topology), "invalid batch can be diagnosed");
+      check(!validate_mla_elf_io_topology_strict(topology).ok,
+            "duplicate samples and holes are rejected");
+      std::filesystem::remove(path);
+    }
+  }
+  const std::string left = "data.ifm.persistent.MLA_0/left.b";
+  const std::string right = "data.ifm.persistent.MLA_0/right.b";
+  const auto path = write_minimal_elf(
+      "batch_multi_input", {right + "0", left + "0", left + "1", right + "1", "data.ofm.b0"});
+  MlaElfIoTopology topology;
+  check(read_mla_elf_io_topology(path, &topology) &&
+            validate_mla_elf_io_topology_strict(topology).ok,
+        "multi-input batches validate independently of encounter interleaving");
+  check(topology.ifm_slots.size() == 4U && topology.ifm_slots[2].logical_index == 1U &&
+            topology.ifm_slots[3].logical_index == 0U && topology.ifm_slots[2].batch_index == 1U,
+        "input identity and sample identity are retained separately");
+  std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main() {
+  test_batch_slots_preserve_physical_order();
   test_multi_ifm_topology();
   test_qmla_flat_topology();
   test_afe_direct_input_topology();
   test_monolithic_topology();
   test_unknown_topology_fails_cleanly();
   test_missing_file_fails_cleanly();
+  test_unindexed_persistent_topology();
+  test_native_ports_preserve_encounter_order();
   test_strict_validation_and_reconciliation();
   std::cout << "unit_mla_elf_io_topology_test: PASS\n";
   return 0;

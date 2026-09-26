@@ -310,6 +310,14 @@ void normalize_cast_outputs_for_distinct_mla_boundary(StageStaticSpec* producer,
     return;
   }
 
+  // The physical execution plan already reconciled this boundary. Its arena
+  // placements, alignments, and binding identities are authoritative; the
+  // legacy normalization below would replace them with incomplete buffers.
+  if (producer->payload_kind == StagePayloadKind::ProcessCvu &&
+      producer->processcvu.dmabuf_plan_contract) {
+    return;
+  }
+
   std::vector<std::size_t> logical_by_physical(consumer.physical_inputs.size(),
                                                producer->logical_outputs.size());
   std::vector<bool> used(producer->logical_outputs.size(), false);

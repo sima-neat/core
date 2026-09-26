@@ -15,11 +15,10 @@
 
 namespace simaai::neat::pipeline_internal::sima::static_contract {
 
-enum class AfeMpkV2DecodeErrorCode {
+enum class MpkDecodeErrorCode {
   InvalidJson,
   MissingRequiredField,
   InvalidField,
-  UnsupportedContractVersion,
   UnsupportedKernel,
   UnsupportedHostModule,
   InvalidKernelArity,
@@ -69,22 +68,22 @@ struct HostTvmExecutableEvidence {
   std::vector<HostTensorTypeSpec> argument_types;
 };
 
-struct AfeMpkV2DecodeError {
-  AfeMpkV2DecodeErrorCode code = AfeMpkV2DecodeErrorCode::InvalidJson;
+struct MpkDecodeError {
+  MpkDecodeErrorCode code = MpkDecodeErrorCode::InvalidJson;
   std::string source;
   std::string json_path;
   std::string detail;
 };
 
-struct AfeMpkV2ProofFact {
+struct MpkProofFact {
   std::string subject;
   std::string evidence;
 };
 
-struct AfeMpkV2DecodeResult {
+struct MpkDecodeResult {
   std::optional<ModelExecutionPlan> plan;
-  std::vector<AfeMpkV2ProofFact> proof;
-  std::optional<AfeMpkV2DecodeError> error;
+  std::vector<MpkProofFact> proof;
+  std::optional<MpkDecodeError> error;
 
   explicit operator bool() const noexcept {
     return plan.has_value() && !error.has_value();
@@ -95,31 +94,31 @@ struct AfeMpkV2DecodeResult {
 // It accepts an explicitly supplied manifest plus exact setup-time MLA ELF and
 // A65 GraphExecutor evidence; archive names, filename suffixes, sidecar JSON,
 // environment, and runtime metadata are never semantic authority.
-class AfeMpkV2Decoder final {
+class MpkDecoder final {
 public:
-  AfeMpkV2DecodeResult decode_json(std::string_view mpk_json,
-                                   std::span<const MlaStageExecutableEvidence> executable_evidence,
-                                   std::span<const HostTvmExecutableEvidence> host_evidence,
-                                   std::string source_label = "<memory>") const noexcept;
+  MpkDecodeResult decode_json(std::string_view mpk_json,
+                              std::span<const MlaStageExecutableEvidence> executable_evidence,
+                              std::span<const HostTvmExecutableEvidence> host_evidence,
+                              std::string source_label = "<memory>") const noexcept;
 
-  AfeMpkV2DecodeResult decode_json(std::string_view mpk_json,
-                                   std::span<const MlaStageExecutableEvidence> executable_evidence,
-                                   std::string source_label = "<memory>") const noexcept;
+  MpkDecodeResult decode_json(std::string_view mpk_json,
+                              std::span<const MlaStageExecutableEvidence> executable_evidence,
+                              std::string source_label = "<memory>") const noexcept;
 
-  AfeMpkV2DecodeResult decode_json(std::string_view mpk_json, const MlaElfIoTopology& elf_topology,
-                                   std::string source_label = "<memory>") const noexcept;
+  MpkDecodeResult decode_json(std::string_view mpk_json, const MlaElfIoTopology& elf_topology,
+                              std::string source_label = "<memory>") const noexcept;
 
-  AfeMpkV2DecodeResult
+  MpkDecodeResult
   decode_file(const std::filesystem::path& mpk_manifest,
               std::span<const MlaStageExecutableEvidence> executable_evidence,
               std::span<const HostTvmExecutableEvidence> host_evidence) const noexcept;
 
-  AfeMpkV2DecodeResult
+  MpkDecodeResult
   decode_file(const std::filesystem::path& mpk_manifest,
               std::span<const MlaStageExecutableEvidence> executable_evidence) const noexcept;
 
-  AfeMpkV2DecodeResult decode_file(const std::filesystem::path& mpk_manifest,
-                                   const MlaElfIoTopology& elf_topology) const noexcept;
+  MpkDecodeResult decode_file(const std::filesystem::path& mpk_manifest,
+                              const MlaElfIoTopology& elf_topology) const noexcept;
 };
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract
