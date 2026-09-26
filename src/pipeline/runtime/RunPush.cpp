@@ -303,7 +303,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
 }
 
 #if defined(SIMA_WITH_OPENCV)
-std::optional<cv::Mat> try_materialize_image_sample(const Sample& msg) {
+std::optional<Sample> try_materialize_image_sample(const Sample& msg) {
   if (!sample_has_tensor_list(msg) || msg.tensors.size() != 1U) {
     return std::nullopt;
   }
@@ -317,14 +317,22 @@ std::optional<cv::Mat> try_materialize_image_sample(const Sample& msg) {
     return std::nullopt;
   }
   const auto fmt = tensor.semantic.image->format;
+  cv::Mat pixels;
   if (auto view = tensor.map_cv_mat_view(fmt); view.has_value()) {
-    return view->mat.clone();
+    pixels = view->mat.clone();
+  } else {
+    try {
+      pixels = tensor.to_cv_mat_copy(fmt);
+    } catch (const std::exception&) {
+      return std::nullopt;
+    }
   }
-  try {
-    return tensor.to_cv_mat_copy(fmt);
-  } catch (const std::exception&) {
-    return std::nullopt;
-  }
+  Sample snapshot = msg;
+  snapshot.owned = true;
+  snapshot.tensors.front() = Tensor::from_cv_mat_view(pixels, fmt);
+  snapshot.tensors.front().semantic = tensor.semantic;
+  snapshot.tensors.front().route = tensor.route;
+  return snapshot;
 }
 #endif
 
@@ -505,8 +513,8 @@ bool push_sample_to_core(runtime::RunCore& core, const Sample& msg, bool block) 
   if (!input_prefers_device_storage(core) &&
       !input_options_expect_tensor_media(core.pipeline.tensor_input_opt_for_cv)) {
 #if defined(SIMA_WITH_OPENCV)
-    if (auto mat = try_materialize_image_sample(msg); mat.has_value()) {
-      return push_mat_to_core(core, *mat, block);
+    if (auto snapshot = try_materialize_image_sample(msg); snapshot.has_value()) {
+      return push_message_to_core(core, *snapshot, block);
     }
 #endif
   }
@@ -645,8 +653,8 @@ bool Run::push_sample_impl(const Sample& msg, bool block) {
   if (core_ && !input_prefers_device_storage(*core_) &&
       !input_options_expect_tensor_media(core_->pipeline.tensor_input_opt_for_cv)) {
 #if defined(SIMA_WITH_OPENCV)
-    if (auto mat = try_materialize_image_sample(msg); mat.has_value()) {
-      return push_impl(*mat, block);
+    if (auto snapshot = try_materialize_image_sample(msg); snapshot.has_value()) {
+      return push_message_impl(*snapshot, block);
     }
 #endif
   }
