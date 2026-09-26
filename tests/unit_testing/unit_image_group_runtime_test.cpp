@@ -21,10 +21,42 @@ int main(int argc, char** argv) {
     opt.use_videoscale = true;
     opt.output_caps.width = 64;
     opt.output_caps.height = 64;
+    const bool hardware = argc > 2 && std::string(argv[2]) == "--encoder";
+    if (hardware) {
+      opt.output_caps.width = 256;
+      opt.output_caps.height = 256;
+      opt.output_caps.format = "NV12";
+      opt.sima_decoder.enable = true;
+      opt.sima_decoder.raw_output = true;
+    }
 
     simaai::neat::Graph p;
     p.add(simaai::neat::nodes::groups::ImageInputGroup(opt));
     p.add(simaai::neat::nodes::Output());
+
+    if (hardware) {
+      auto run = p.build();
+      int count = 0;
+      for (;;) {
+        simaai::neat::Sample sample;
+        simaai::neat::PullError error;
+        const auto status = run.pull(5000, sample, &error);
+        if (status == simaai::neat::PullStatus::Closed)
+          break;
+        require(status == simaai::neat::PullStatus::Ok,
+                "image encode/decode failed: " + error.message);
+        const auto frames = simaai::neat::tensors_from_sample(sample, true);
+        require(frames.size() == 1 && frames.front().is_nv12(),
+                "image group returned wrong format");
+        require(frames.front().width() == 256 && frames.front().height() == 256,
+                "image group returned wrong geometry");
+        ++count;
+      }
+      run.stop();
+      require(count == 5, "image encode/decode lost finite-source frames");
+      std::cout << "[OK] ImageInputGroup hardware encode/decode frames=" << count << "\n";
+      return 0;
+    }
 
     bool got = false;
     p.set_tensor_callback([&](const simaai::neat::Tensor&) {

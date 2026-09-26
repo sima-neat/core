@@ -70,6 +70,18 @@ DEFAULT_EMPTY_METRICS: dict[str, float] = {
     "output_drop_count": 0.0,
 }
 
+ENCODER_CASES = tuple(
+    (path, codec, memory)
+    for path in ("legacy", "standalone", "raw-sender", "encoded-sender")
+    for codec in (("h264",) if path == "legacy" else ("h264", "h265", "mjpeg"))
+    for memory in (("cpu",) if path == "encoded-sender" else
+                   ("dma",) if path in ("raw-sender", "legacy") else ("cpu", "dma"))
+)
+ENCODER_SCENARIO_IDS = tuple(
+    f"runtime_encoder_{path.replace('-', '_')}_{codec}_{memory}"
+    for path, codec, memory in ENCODER_CASES
+)
+
 STANDARD_SCENARIO_IDS = (
     "runtime_session_sync_rgb",
     "runtime_session_async_rgb",
@@ -90,7 +102,9 @@ LONG_SCENARIO_IDS = (
 REQUIRED_SCENARIO_IDS = STANDARD_SCENARIO_IDS + LONG_SCENARIO_IDS
 
 
-def expected_result_scenario_ids(include_long: bool) -> tuple[str, ...]:
+def expected_result_scenario_ids(include_long: bool, suite: str = "core") -> tuple[str, ...]:
+    if suite == "encoder":
+        return ENCODER_SCENARIO_IDS
     return REQUIRED_SCENARIO_IDS if include_long else STANDARD_SCENARIO_IDS
 
 
@@ -160,6 +174,7 @@ class ScenarioBaseline:
     component_latency_thresholds: dict[str, ComponentLatencyThresholds] = field(
         default_factory=dict
     )
+    encoder_reference: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -352,7 +367,7 @@ def parse_scenario_baseline(
         "metrics_thresholds",
     }
     _require_keys(data, required, context)
-    allowed = required | {"component_latency_thresholds"}
+    allowed = required | {"component_latency_thresholds", "encoder_reference"}
     _reject_unknown_keys(data, allowed, context)
 
     thresholds = parse_metrics_thresholds(
@@ -370,6 +385,28 @@ def parse_scenario_baseline(
             context=f"{context}.component_latency_thresholds",
         )
 
+    encoder_reference = None
+    if "encoder_reference" in data:
+        encoder_reference = _as_dict(data["encoder_reference"], f"{context}.encoder_reference")
+        keys = {"workload", "native_encoder_settings"}
+        _require_keys(encoder_reference, keys, f"{context}.encoder_reference")
+        _reject_unknown_keys(encoder_reference, keys, f"{context}.encoder_reference")
+        _as_dict(encoder_reference["workload"], f"{context}.encoder_reference.workload")
+        if encoder_reference["native_encoder_settings"] is not None:
+            _as_dict(encoder_reference["native_encoder_settings"], f"{context}.encoder_reference.native_encoder_settings")
+    if data["scenario_id"] in ENCODER_SCENARIO_IDS:
+        if encoder_reference is None or data["run_mode"] != "unpaced" or _as_int(data["iterations"], f"{context}.iterations", minimum=1) < 1000:
+            _raise(context, "encoder baseline needs a measured unpaced reference and at least 1000 iterations")
+        fingerprint = _as_dict(encoder_reference["workload"].get("input_fingerprint"),
+                               f"{context}.encoder_reference.workload.input_fingerprint")
+        digest = fingerprint.get("sha256", "")
+        if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            _raise(context, "encoder reference requires a SHA-256 input fingerprint")
+        if thresholds.throughput_min <= 0 or not 0 <= thresholds.regression_tolerance_percent <= 10:
+            _raise(context, "encoder reference throughput must be positive with at most 10% tolerance")
+        if thresholds.input_drop_count_max != 0 or thresholds.output_drop_count_max != 0:
+            _raise(context, "encoder reference must require zero drops")
+
     return ScenarioBaseline(
         scenario_id=_as_str(data["scenario_id"], f"{context}.scenario_id"),
         model_id=_as_str(data["model_id"], f"{context}.model_id"),
@@ -378,6 +415,7 @@ def parse_scenario_baseline(
         iterations=_as_int(data["iterations"], f"{context}.iterations", minimum=1),
         metrics_thresholds=thresholds,
         component_latency_thresholds=component_thresholds,
+        encoder_reference=encoder_reference,
     )
 
 

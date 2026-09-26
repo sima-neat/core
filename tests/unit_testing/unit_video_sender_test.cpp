@@ -4,6 +4,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -147,6 +148,110 @@ RUN_TEST(
                 "VideoSender H265 must not use H264 parser");
       }
 
+      for (const auto& size : {std::pair{258, 130}, std::pair{2048, 720}, std::pair{640, 2160}}) {
+        simaai::neat::SimaEncodeOptions jpeg;
+        jpeg.type = simaai::neat::SimaEncodeType::MJPEG;
+        jpeg.width = size.first;
+        jpeg.height = size.second;
+        require_invalid_argument([&] { VideoSenderOptions::FromRaw(jpeg); },
+                                 "raw RTP/JPEG must reject dimensions it cannot transmit");
+      }
+
+      // Standalone and sender options resolve the same codec-specific settings.
+      static_assert(simaai::neat::SimaEncodeType::AVC == simaai::neat::SimaEncodeType::H264);
+      static_assert(simaai::neat::SimaEncodeType::HEVC == simaai::neat::SimaEncodeType::H265);
+      for (auto type : {simaai::neat::SimaEncodeType::H264, simaai::neat::SimaEncodeType::H265,
+                        simaai::neat::SimaEncodeType::MJPEG}) {
+        simaai::neat::SimaEncodeOptions encode;
+        encode.type = type;
+        encode.width = type == simaai::neat::SimaEncodeType::MJPEG ? 264 : 258;
+        encode.height = type == simaai::neat::SimaEncodeType::MJPEG ? 136 : 130;
+        encode.fps = 30;
+        encode.num_buffers = 4;
+        const bool jpeg = type == simaai::neat::SimaEncodeType::MJPEG;
+        if (jpeg) {
+          encode.quality = 73;
+        } else {
+          encode.rate_control = "cbr";
+          encode.bitrate_kbps = 2500;
+          encode.gop_length = 10;
+          encode.idr_interval = 30;
+        }
+        simaai::neat::SimaEncode node(encode);
+        const auto output = node.output_spec({});
+        require(output.payload_type == simaai::neat::PayloadType::Encoded &&
+                    output.width == encode.width && output.height == encode.height &&
+                    output.fps_num == 30 && output.fps_den == 1 && output.byte_size == 0,
+                "encoder output contract must describe variable-size encoded frames");
+        require(node.options().type == type, "encoder options accessor lost codec");
+        const auto fragment = node.backend_fragment(7);
+        require_contains(fragment, "num-output-buffers=4", "output count override missing");
+        const auto first_adapter = fragment.find("neatencoderinput");
+        require(first_adapter != std::string::npos &&
+                    fragment.find("neatencoderinput", first_adapter + 1) == std::string::npos,
+                "standalone encoder must prepare input exactly once");
+        if (jpeg) {
+          require(output.media_type == "image/jpeg", "JPEG output media mismatch");
+          require(fragment.find("enc-bitrate=") == std::string::npos,
+                  "JPEG must not inherit video defaults");
+          require_contains(fragment, "enc-quality=73", "JPEG quality missing");
+        } else {
+          require_contains(fragment, "enc-bitrate-mode=cbr", "rate control missing");
+          require_contains(fragment, "enc-gop-length=10", "GOP missing");
+          require_contains(fragment, "enc-idr-interval=30", "IDR must be independent of GOP");
+        }
+        const int original_width = encode.width;
+        auto sender = VideoSenderOptions::FromRaw(encode);
+        encode.width = 640;
+        require(sender.width() == original_width && sender.is_raw_input(),
+                "sender must own its options");
+        const auto sender_fragment = VideoSender(sender).describe_backend();
+        const auto sender_adapter = sender_fragment.find("neatencoderinput");
+        require(sender_adapter != std::string::npos &&
+                    sender_fragment.find("neatencoderinput", sender_adapter + 1) ==
+                        std::string::npos,
+                "sender must prepare input exactly once");
+        if (!jpeg) {
+          sender.encoder = {.bitrate_kbps = 3000, .profile = "main", .level = "4.1"};
+          const auto changed = VideoSender(sender).describe_backend();
+          require_contains(changed, "enc-bitrate=3000", "legacy bitrate override lost");
+          require_contains(changed, "enc-profile=main", "legacy profile override lost");
+          require_contains(changed, "enc-level=4.1", "legacy level override lost");
+        } else {
+          sender.encoder.bitrate_kbps = 3000;
+          require_invalid_argument([&] { (void)VideoSender(sender); },
+                                   "JPEG must reject video-only overrides");
+        }
+      }
+      {
+        simaai::neat::SimaEncodeOptions base;
+        base.width = 640;
+        base.height = 360;
+        for (int buffers : {0, -2, 21}) {
+          auto invalid = base;
+          invalid.num_buffers = buffers;
+          require_invalid_argument([&] { (void)simaai::neat::SimaEncode(invalid); },
+                                   "invalid output count accepted");
+        }
+        auto invalid = base;
+        invalid.width = 641;
+        require_invalid_argument([&] { (void)simaai::neat::SimaEncode(invalid); },
+                                 "odd NV12 width accepted");
+        invalid = base;
+        invalid.quality = 80;
+        require_invalid_argument([&] { (void)simaai::neat::SimaEncode(invalid); },
+                                 "video codec accepted JPEG quality");
+        invalid = base;
+        invalid.type = simaai::neat::SimaEncodeType::MJPEG;
+        invalid.gop_length = 0;
+        require_invalid_argument([&] { (void)VideoSenderOptions::FromRaw(invalid); },
+                                 "JPEG accepted explicitly supplied GOP zero");
+        invalid = base;
+        invalid.type = simaai::neat::SimaEncodeType::H265;
+        invalid.profile = "baseline";
+        require_invalid_argument([&] { (void)simaai::neat::SimaEncode(invalid); },
+                                 "H265 accepted H264-only profile");
+      }
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(0, 720, 30); },
                                "VideoSender should reject invalid raw width");
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(1280, 0, 30); },

@@ -610,6 +610,16 @@ add_pipeline_test(
   ARGS ${CMAKE_SOURCE_DIR}/test.jpg
 )
 
+if (NOT unit_image_group_runtime_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_test(NAME image_group_encoder_runtime_test
+    COMMAND unit_image_group_runtime_test ${CMAKE_SOURCE_DIR}/test.jpg --encoder)
+  simaneat_append_ctest_env(image_group_encoder_runtime_test)
+  set_tests_properties(image_group_encoder_runtime_test PROPERTIES
+    LABELS "strict;e2e;codec;encoder"
+    RESOURCE_LOCK "accelerator-device"
+    TIMEOUT 60)
+endif()
+
 add_pipeline_test(
   unit_pipeline_io_test
   ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_pipeline_io_test.cpp
@@ -700,6 +710,17 @@ if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLAC
   set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
     RESOURCE_LOCK "accelerator-device;udp")
   set_tests_properties(video_sender_adaptive_ingress_e2e_test PROPERTIES TIMEOUT 600)
+
+  foreach(encoder_case IN ITEMS h264 h265 mjpeg concurrent)
+    set(encoder_test_name "encoder_${encoder_case}_contract_test")
+    add_test(NAME ${encoder_test_name}
+      COMMAND video_sender_adaptive_ingress_e2e_test --scenario encoder_${encoder_case})
+    simaneat_append_ctest_env(${encoder_test_name})
+    set_tests_properties(${encoder_test_name} PROPERTIES
+      LABELS "strict;e2e;codec;encoder;video_sender"
+      RESOURCE_LOCK "accelerator-device;udp"
+      TIMEOUT 120)
+  endforeach()
 
   foreach(shape_case IN ITEMS "680;382" "672;384" "642;480")
     list(GET shape_case 0 shape_width)
@@ -944,6 +965,7 @@ endforeach()
 # Performance suites (binary metrics emitters; not default ctest)
 # ------------------------------------------------------------------------------
 set(PERF_TARGETS
+  perf_runtime_encoder_test
   perf_runtime_graph_sync_rgb_test
   perf_runtime_graph_async_rgb_test
   perf_runtime_graph_fanout_test
@@ -975,7 +997,8 @@ foreach(target ${PERF_TARGETS})
     )
   endif()
   if (target STREQUAL "perf_runtime_codec_h264_decode_test" OR
-      target STREQUAL "perf_runtime_codec_h265_decode_test")
+      target STREQUAL "perf_runtime_codec_h265_decode_test" OR
+      target STREQUAL "perf_runtime_encoder_test")
     add_dependencies(${target} prepare_perf_codec_fixtures)
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})

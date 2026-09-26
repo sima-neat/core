@@ -1829,3 +1829,52 @@ def test_measurement_bool_overload_surface():
   _assert_not_type_error(lambda: pyneat.Run().start_measurement(True))
   _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(False))
   _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(True))
+
+@pytest.mark.parametrize('codec', [
+    pyneat.SimaEncodeType.H264,
+    pyneat.SimaEncodeType.H265,
+    pyneat.SimaEncodeType.MJPEG,
+])
+def test_sima_encode_and_sender_options(codec):
+  encode = pyneat.SimaEncodeOptions()
+  encode.type = codec
+  encode.width, encode.height, encode.fps = 258, 130, 30
+  encode.num_buffers = 4
+  assert encode.bitrate_kbps is None and encode.quality is None
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.sima_encode(encode))
+  text = graph.describe_backend()
+  assert text.count('neatencoderinput') == 1
+  assert 'num-output-buffers=4' in text
+  if codec == pyneat.SimaEncodeType.MJPEG:
+    for width, height in [(258, 130), (2048, 720), (640, 2160)]:
+      encode.width, encode.height = width, height
+      with pytest.raises(ValueError, match='RTP/JPEG'):
+        pyneat.VideoSenderOptions.from_raw(encode)
+    encode.width, encode.height = 264, 136
+  original_width = encode.width
+  sender = pyneat.VideoSenderOptions.from_raw(encode)
+  encode.width = 640
+  assert sender.width == original_width and sender.is_raw_input()
+  assert not sender.is_encoded_input()
+  assert pyneat.SimaEncodeType.AVC == pyneat.SimaEncodeType.H264
+  assert pyneat.SimaEncodeType.HEVC == pyneat.SimaEncodeType.H265
+  if codec == pyneat.SimaEncodeType.MJPEG:
+    assert sender.rtp.payload_type == 26
+    assert 'enc-bitrate=' not in text
+    encode.gop_length = 0
+    with pytest.raises(ValueError, match='MJPEG'):
+      pyneat.nodes.sima_encode(encode)
+    sender.encoder.bitrate_kbps = 3000
+    with pytest.raises(ValueError, match='MJPEG'):
+      pyneat.groups.video_sender(sender)
+  else:
+    changed = pyneat.VideoSenderEncoderOptions()
+    changed.bitrate_kbps, changed.profile, changed.level = 3000, 'main', '4.1'
+    sender.encoder = changed
+    text = pyneat.groups.video_sender(sender).describe_backend()
+    assert 'enc-bitrate=3000' in text and 'enc-profile=main' in text
+    assert 'enc-level=4.1' in text and text.count('neatencoderinput') == 1
+    encode.quality = 80
+    with pytest.raises(ValueError, match='quality'):
+      pyneat.nodes.sima_encode(encode)

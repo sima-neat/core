@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
+import tempfile
 
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
@@ -25,6 +27,7 @@ class ScenarioSpec:
     scenario_id: str
     target: str
     allow_skip: bool = False
+    args: tuple[str, ...] = ()
 
 
 SKIP_RETURN_CODE = 77
@@ -39,6 +42,13 @@ STANDARD_SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_codec_h264_decode", "perf_runtime_codec_h264_decode_test"),
     ScenarioSpec("runtime_codec_h265_decode", "perf_runtime_codec_h265_decode_test"),
     ScenarioSpec("runtime_model_archive_load", "perf_runtime_model_archive_load_test"),
+)
+
+ENCODER_SCENARIOS: tuple[ScenarioSpec, ...] = tuple(
+    ScenarioSpec(scenario_id, "perf_runtime_encoder_test", args=(
+        "--path", path, "--codec", codec, "--input", memory,
+    ))
+    for scenario_id, (path, codec, memory) in zip(schema.ENCODER_SCENARIO_IDS, schema.ENCODER_CASES)
 )
 
 LONG_SCENARIOS: tuple[ScenarioSpec, ...] = (
@@ -206,6 +216,152 @@ def run_modalix_preflight(repo_root: Path, ctest_dir: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def validate_encoder_payload(
+    payload: dict[str, Any], spec: ScenarioSpec, baseline: schema.ScenarioBaseline,
+    median_fps: float | None,
+) -> dict[str, float]:
+    """Check emitter evidence before it can become a median/reference comparison."""
+    def require(ok: bool, message: str) -> None:
+        if not ok:
+            raise schema.SchemaError(f"{spec.scenario_id}: {message}")
+
+    metrics = schema.parse_metrics_payload(payload)
+    paced = median_fps is not None
+    require(payload["scenario_id"] == spec.scenario_id, "wrong scenario payload")
+    require(payload["run_mode"] == ("paced" if paced else "unpaced"), "wrong run mode")
+    require(payload["failure"] == "", "emitter reported a failure")
+    require(metrics["throughput"] > 0, "non-positive measured throughput")
+    require(metrics["input_drop_count"] == metrics["output_drop_count"] == 0, "Core dropped frames")
+    reference = {key: payload[key] for key in ("workload", "native_encoder_settings")}
+    require(reference == baseline.encoder_reference, "workload/settings differ from saved Core reference")
+    require(payload["workload"]["warmup_frames"] == 200, "warmup must be 200 frames")
+    counts = payload["counts"]
+    require(all(type(counts[key]) is int and counts[key] >= 0 for key in (
+        "attempted", "accepted", "completed", "output", "sent_frames", "sent_packets", "received_packets"
+    )), "invalid frame/packet counts")
+    require(counts["attempted"] == counts["accepted"] == counts["completed"] == counts["output"],
+            "attempted/accepted/completed/output mismatch")
+    require(payload["iterations"] == counts["output"] - 200, "measured frame count mismatch")
+    duration = payload["measured_seconds"]
+    require(math.isfinite(duration) and duration >= (60 if paced else 10), "measurement is too short")
+    require(math.isclose(metrics["throughput"], payload["iterations"] / duration, rel_tol=1e-6),
+            "throughput disagrees with frame count/duration")
+    if "--path" in spec.args and spec.args[spec.args.index("--path") + 1].endswith("sender"):
+        require(counts["sent_frames"] == counts["accepted"] and
+                counts["sent_packets"] == counts["received_packets"] >= counts["sent_frames"],
+                "sender/receiver accounting differs")
+    if paced:
+        pacing = payload["pacing"]
+        target = math.ceil(.95 * median_fps * 60)
+        require(math.isclose(pacing["target_fps"], .95 * median_fps, rel_tol=1e-6), "wrong paced rate")
+        require(pacing["target_frames"] == target == payload["iterations"] and
+                pacing["shortfall_frames"] == 0, "paced producer shortfall")
+        require(math.isfinite(pacing["producer_seconds"]) and pacing["producer_seconds"] >= 60,
+                "producer did not run for 60 seconds")
+    else:
+        require(payload["iterations"] >= 1000, "fewer than 1000 measured frames")
+    completion = payload["completion"]
+    require(all(math.isfinite(completion[key]) and completion[key] >= 0
+                for key in ("fps", "p50_ms", "p95_ms", "seconds")) and completion["fps"] > 0,
+            "invalid completion timing")
+    return metrics
+
+
+def run_encoder_scenario(
+    *, repo_root: Path, executable_dir: Path, results_dir: Path, profile: schema.PerfProfile,
+    spec: ScenarioSpec, baseline: schema.ScenarioBaseline, timeout_sec: int,
+) -> schema.PerfResult:
+    """Three exclusive max-rate runs, then one separate run paced at 95% of their median."""
+    raw_root = results_dir / "encoder"
+    raw_root.mkdir(parents=True, exist_ok=True)
+    artifacts = Path(tempfile.mkdtemp(prefix=spec.scenario_id + "-", dir=raw_root))
+    metadata: dict[str, Any] = {
+        "phase": "encoder_run", "artifacts": str(artifacts), "runs": [],
+        "reference": baseline.encoder_reference,
+        "reference_throughput": baseline.metrics_thresholds.throughput_min,
+    }
+    metrics = None
+
+    def finish(failure_class: schema.FailureClass | None = None,
+               reason: schema.ReasonCode | None = None) -> schema.PerfResult:
+        return build_result(
+            scenario_id=spec.scenario_id, modalix_profile_id=profile.modalix_profile_id,
+            status=schema.ResultStatus.FAIL if failure_class else schema.ResultStatus.PASS,
+            failure_class=failure_class, reason_code=reason, metrics=metrics, run_meta=metadata,
+        )
+
+    env = dict(os.environ)
+    env.pop("SIMA_PERF_ITERS", None)  # This emitter owns its duration and minimum count.
+    unpaced: list[dict[str, Any]] = []
+    median_fps = None
+    try:
+        for index in range(4):
+            phase = f"unpaced-{index + 1}" if index < 3 else "paced"
+            command = [str(executable_dir / spec.target), *spec.args]
+            if index == 0:
+                capture = artifacts / ("reference." + spec.args[spec.args.index("--codec") + 1])
+                command += ["--capture", str(capture)]
+                metadata["reference_capture"] = str(capture)
+            if index == 3:
+                # Keep all metrics from the actual run with median FPS, not a synthetic combination.
+                median = sorted(unpaced, key=lambda row: row["throughput"])[1]
+                median_fps = float(median["throughput"])
+                metrics = schema.parse_metrics_payload(median)
+                metadata["median_run"] = unpaced.index(median) + 1
+                metadata["median_fps"] = median_fps
+                command += ["--median-fps", repr(median_fps)]
+            record = {"phase": phase, "command": command}
+            metadata["runs"].append(record)
+            proc = run_cmd(command, cwd=repo_root, timeout_sec=max(timeout_sec, 300), env=env)
+            record["exit_code"] = proc.returncode
+            (artifacts / f"{phase}.stdout.json").write_text(proc.stdout or "", encoding="utf-8")
+            (artifacts / f"{phase}.stderr.log").write_text(proc.stderr or "", encoding="utf-8")
+            try:
+                record["payload"] = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                if proc.returncode == 0:
+                    raise
+            if proc.returncode != 0:
+                reason = schema.classify_env_failure(
+                    proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or ""), timed_out=False,
+                )
+                return finish(schema.FailureClass.ENV_BROKEN, reason)
+            payload = record["payload"]
+            if not isinstance(payload, dict):
+                raise schema.SchemaError("encoder payload must be an object")
+            validate_encoder_payload(payload, spec, baseline, median_fps)
+            if index < 3:
+                unpaced.append(payload)
+    except subprocess.TimeoutExpired as error:
+        # Preserve partial diagnostics even when the emitter cannot return JSON.
+        for suffix, value in (("stdout.json", error.stdout), ("stderr.log", error.stderr)):
+            text = value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+            (artifacts / f"{phase}.{suffix}").write_text(text, encoding="utf-8")
+        metadata["error"] = str(error)
+        return finish(schema.FailureClass.ENV_BROKEN, schema.ReasonCode.ENV_TIMEOUT)
+    except (schema.SchemaError, ValueError, KeyError, TypeError) as error:
+        metadata["error"] = str(error)
+        return finish(schema.FailureClass.HARNESS_ERROR, schema.ReasonCode.HARNESS_SCHEMA_INVALID)
+    except OSError as error:
+        metadata["error"] = str(error)
+        return finish(schema.FailureClass.ENV_BROKEN, schema.ReasonCode.ENV_RUNTIME_CRASH)
+
+    metadata["phase"] = "compare"
+    component_failures = schema.compare_component_latency(
+        schema.parse_optional_component_latency_payload(median), baseline,
+    )
+    if component_failures:
+        metadata["component_latency_failures"] = [
+            schema.component_failure_to_json_dict(failure) for failure in component_failures
+        ]
+        return finish(component_failures[0].failure_class, component_failures[0].reason_code)
+    regressions = schema.compare_metrics(metrics, baseline)
+    if regressions:
+        metadata["regression_reasons"] = [reason.value for reason in regressions]
+        return finish(schema.FailureClass.REGRESSION, regressions[0])
+    return finish()
+
+
 def run_scenario(
     *,
     repo_root: Path,
@@ -217,6 +373,11 @@ def run_scenario(
     timeout_sec: int,
     iterations_override: int | None,
 ) -> schema.PerfResult:
+    if spec.scenario_id in schema.ENCODER_SCENARIO_IDS:
+        return run_encoder_scenario(
+            repo_root=repo_root, executable_dir=executable_dir, results_dir=results_dir,
+            profile=profile, spec=spec, baseline=baseline, timeout_sec=timeout_sec,
+        )
     exe_path = executable_dir / spec.target
     if not exe_path.exists():
         return build_result(
@@ -234,7 +395,7 @@ def run_scenario(
     env["SIMA_PERF_ITERS"] = str(scenario_iters)
 
     try:
-        proc = run_cmd([str(exe_path)], cwd=repo_root, timeout_sec=timeout_sec, env=env)
+        proc = run_cmd([str(exe_path), *spec.args], cwd=repo_root, timeout_sec=timeout_sec, env=env)
     except subprocess.TimeoutExpired:
         return build_result(
             scenario_id=spec.scenario_id,
@@ -455,6 +616,7 @@ def parse_args() -> argparse.Namespace:
     repo_root_default = THIS_DIR.parents[2]
 
     parser = argparse.ArgumentParser(description="Run perf matrix against strict baselines")
+    parser.add_argument("--suite", choices=("core", "encoder"), default="core")
     parser.add_argument("--repo-root", type=Path, default=repo_root_default)
     parser.add_argument("--build-dir", type=Path, default=Path("build-perf-gate"))
     parser.add_argument(
@@ -466,7 +628,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile-dir",
         type=Path,
-        default=Path("tests/perf/baselines/v2/modalix_default"),
+        default=None,
     )
     parser.add_argument("--results-dir", type=Path, default=None)
     parser.add_argument("--scenario-timeout-sec", type=int, default=int(os.getenv("SIMA_PERF_SCENARIO_TIMEOUT_SEC", "180")))
@@ -489,8 +651,13 @@ def main() -> int:
 
     repo_root = args.repo_root.resolve()
     build_dir = (repo_root / args.build_dir).resolve() if not args.build_dir.is_absolute() else args.build_dir
-    profile_dir = (repo_root / args.profile_dir).resolve() if not args.profile_dir.is_absolute() else args.profile_dir
-    results_dir_input = args.results_dir if args.results_dir is not None else (args.build_dir / "perf_results")
+    profile_path = args.profile_dir or Path("tests/perf/baselines/v2") / (
+        "modalix_encoder" if args.suite == "encoder" else "modalix_default")
+    profile_dir = (repo_root / profile_path).resolve() if not profile_path.is_absolute() else profile_path
+    default_results = args.build_dir / "perf_results"
+    if args.suite == "encoder":
+        default_results /= "encoder"
+    results_dir_input = args.results_dir if args.results_dir is not None else default_results
     results_dir = (
         (repo_root / results_dir_input).resolve() if not results_dir_input.is_absolute() else results_dir_input
     )
@@ -499,9 +666,10 @@ def main() -> int:
     for stale in results_dir.glob("*.json"):
         stale.unlink(missing_ok=True)
 
-    selected_scenarios = SCENARIOS if args.include_long else STANDARD_SCENARIOS
+    registered_scenarios = ENCODER_SCENARIOS if args.suite == "encoder" else SCENARIOS
+    selected_scenarios = registered_scenarios if args.include_long or args.suite == "encoder" else STANDARD_SCENARIOS
     profile, baseline_map, preflight_failed = preflight_baselines(
-        profile_dir, results_dir, SCENARIOS, selected_scenarios
+        profile_dir, results_dir, registered_scenarios, selected_scenarios
     )
 
     if preflight_failed:
@@ -541,7 +709,7 @@ def main() -> int:
     else:
         build_targets = [
             "unit_modalix_contract_preflight_test",
-            *[spec.target for spec in selected_scenarios],
+            *dict.fromkeys(spec.target for spec in selected_scenarios),
         ]
         ok, build_error = configure_and_build(repo_root, build_dir, build_targets)
         if not ok:

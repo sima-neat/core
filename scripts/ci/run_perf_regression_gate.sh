@@ -26,4 +26,14 @@ python3 tests/perf/tools/validate_perf_result.py \
   --results-dir "${RESULTS_DIR}" \
   --summary
 
+ENCODER_PROFILE_DIR="${ENCODER_PROFILE_DIR:-tests/perf/baselines/v2/modalix_encoder}"
+python3 tests/perf/tools/validate_perf_baselines.py \
+  --suite encoder --profile-dir "${ENCODER_PROFILE_DIR}"
+python3 tests/perf/tools/run_perf_matrix.py \
+  --suite encoder --repo-root "${ROOT_DIR}" --build-dir "${BUILD_DIR}" \
+  --profile-dir "${ENCODER_PROFILE_DIR}" --results-dir "${RESULTS_DIR}/encoder" \
+  --scenario-timeout-sec "${SCENARIO_TIMEOUT_SEC}"
+python3 tests/perf/tools/validate_perf_result.py \
+  --suite encoder --results-dir "${RESULTS_DIR}/encoder" --summary
+
 echo "[perf-regression-gate] completed. results: ${RESULTS_DIR}"

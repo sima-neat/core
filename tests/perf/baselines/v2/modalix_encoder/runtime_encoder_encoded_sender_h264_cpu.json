@@ -1,0 +1,160 @@
+{
+  "scenario_id": "runtime_encoder_encoded_sender_h264_cpu",
+  "model_id": "synthetic_h264_1280x720",
+  "pipeline_id": "runtime_encoder_encoded_sender_h264_cpu",
+  "run_mode": "unpaced",
+  "iterations": 1000,
+  "metrics_thresholds": {
+    "throughput_min": 3696.25412601407,
+    "p50_max": 0.0,
+    "p95_max": 0.0,
+    "startup_max": 20000.0,
+    "rss_peak_kb_max": 1400000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  },
+  "encoder_reference": {
+    "workload": {
+      "bitrate_kbps": 4000,
+      "gop": 30,
+      "height": 720,
+      "idr_interval": 90,
+      "input_buffers": 4,
+      "input_fingerprint": {
+        "format": "sha256-length-prefixed-au-v1",
+        "layouts": [
+          {
+            "bytes": 16490,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1319,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1582,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 2342,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1881,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 2454,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1458,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1481,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1573,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1401,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 2626,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1616,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1666,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1514,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1473,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1438,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1472,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1524,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1471,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1519,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1513,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1424,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1551,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1520,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1430,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1424,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1505,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1451,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1463,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          },
+          {
+            "bytes": 1534,
+            "caps": "video/x-h264, pixel-aspect-ratio=(fraction)1/1, width=(int)1280, height=(int)720, framerate=(fraction)30/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true, stream-format=(string)byte-stream, alignment=(string)au, profile=(string)constrained-baseline, level=(string)3.1, lcevc=(boolean)false"
+          }
+        ],
+        "sequence_frames": 30,
+        "sha256": "3188fa5b0a0331a7d5853fec46e4ec8ff8386a98fda8b515bcf2784ebc010605"
+      },
+      "input_fps": 30,
+      "jpeg_quality": 80,
+      "output_buffers": null,
+      "pattern": "prepared-codec-perf-fixture",
+      "warmup_frames": 200,
+      "width": 1280
+    },
+    "native_encoder_settings": null
+  }
+}

@@ -1354,13 +1354,17 @@ jobs:
             --prebuilt-tests-dir "${TEST_DIR}" \
             --results-dir "${GITHUB_WORKSPACE}/_work/perf-results" \
             "${PERF_MATRIX_ARGS[@]}"
+          python3 tests/perf/tools/run_perf_matrix.py \
+            --suite encoder \
+            --prebuilt-tests-dir "${TEST_DIR}" \
+            --results-dir "${GITHUB_WORKSPACE}/_work/perf-results/encoder"
 
       - name: Upload Modalix Performance Results
         if: ${{ always() }}
         uses: actions/upload-artifact@v6
         with:
           name: modalix-performance-results-${{ github.run_id }}-${{ github.run_attempt }}
-          path: _work/perf-results/*.json
+          path: _work/perf-results/
           if-no-files-found: error
           retention-days: 30
 

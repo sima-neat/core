@@ -17,17 +17,19 @@ import perf_schema as schema
 def parse_args() -> argparse.Namespace:
     repo_root = THIS_DIR.parents[2]
     parser = argparse.ArgumentParser(description="Validate perf baseline schema")
+    parser.add_argument("--suite", choices=("core", "encoder"), default="core")
     parser.add_argument(
         "--profile-dir",
         type=Path,
-        default=repo_root / "tests" / "perf" / "baselines" / "v2" / "modalix_default",
+        default=None,
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    profile_dir = args.profile_dir.resolve()
+    profile_dir = (args.profile_dir or THIS_DIR.parents[2] / "tests/perf/baselines/v2" /
+                   ("modalix_encoder" if args.suite == "encoder" else "modalix_default")).resolve()
 
     try:
         profile, baselines = schema.validate_baseline_directory(profile_dir)
@@ -35,8 +37,9 @@ def main() -> int:
         print(f"[validate_perf_baselines] FAIL: {exc}")
         return 1
 
-    missing = sorted(set(schema.REQUIRED_SCENARIO_IDS) - set(baselines.keys()))
-    extra = sorted(set(baselines.keys()) - set(schema.REQUIRED_SCENARIO_IDS))
+    expected = set(schema.expected_result_scenario_ids(True, args.suite))
+    missing = sorted(expected - set(baselines.keys()))
+    extra = sorted(set(baselines.keys()) - expected)
     if missing:
         print(
             "[validate_perf_baselines] FAIL: missing required scenarios: "
