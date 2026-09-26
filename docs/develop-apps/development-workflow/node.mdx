@@ -731,3 +731,45 @@ Native 4:2:2 and high-bit-depth encoding are not supported by this API.
 entry points. Their arguments, getters and native input behavior remain supported.
 `H264EncodeSW` is unchanged. This release changes the C++ ABI to version 5;
 rebuild C++ consumers and use the matching rebuilt Python extension.
+
+## Selecting a VideoSender codec
+
+For raw input, pass the same encoder options to `VideoSenderOptions::FromRaw`.
+The codec selects both encoding and RTP packetization:
+
+```cpp
+auto options = simaai::neat::nodes::groups::VideoSenderOptions::FromRaw(encode);
+options.host = "127.0.0.1";
+options.video_port_base = 9000;
+auto sender = simaai::neat::nodes::groups::VideoSender(options);
+```
+
+```python
+options = pyneat.VideoSenderOptions.from_raw(encode)
+options.host = "127.0.0.1"
+sender = pyneat.groups.video_sender(options)
+```
+
+For encoded frames, use `VideoSenderOptions::Passthrough(RtspCodec::H265)` or
+`pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265)`. This path parses
+and packetizes the selected codec without encoding. Both factories also support
+H.264 and MJPEG. The factory records the input mode; graph construction selects
+the path once. `is_raw_input()` and `is_encoded_input()` expose that choice.
+
+RTP payload defaults are H.264 96, H.265 98, and MJPEG 26; `rtp.payload_type`
+can override them within 0..127. `rtp.config_interval` affects H.264/H.265 only.
+The UDP port is `video_port_base + channel`. `sync=true` waits for packet
+timestamps against the pipeline clock; `async=true` allows the sink to wait
+for its first preroll buffer during startup. Both default to false. Python uses
+`async_`, and retains the `async` alias. These controls do not select encoder
+threads or pace producer submission.
+
+The existing H.264 raw/encoded factories remain compatibility entry points.
+Use `FromRaw` for new raw senders. Sender options own a copy of the configuration;
+changing the original `encode` object has no effect. Later changes to the legacy
+`options.encoder` bitrate/profile/level fields remain authoritative for raw
+H.264/H.265. Python may also replace that whole object. MJPEG rejects nondefault
+video-only overrides. Encoded passthrough ignores encoder settings.
+
+RTP/JPEG requires a compatible receiver. This does not add MJPEG viewing to
+Insight's RTP/WebRTC viewer.

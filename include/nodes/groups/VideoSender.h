@@ -7,6 +7,7 @@
 
 #include "pipeline/Graph.h"
 #include "nodes/groups/RtspCodec.h"
+#include "nodes/sima/SimaEncode.h"
 
 #include <string>
 
@@ -25,6 +26,9 @@ struct VideoSenderEncoderOptions {
 
 class VideoSenderOptions {
 public:
+  /// Encode raw frames, then packetize the selected codec as RTP over UDP.
+  static VideoSenderOptions FromRaw(SimaEncodeOptions encode);
+  /// @deprecated Use FromRaw with SimaEncodeType::H264.
   static VideoSenderOptions H264RtpUdpFromRaw(int width, int height, int fps);
   [[deprecated("use Passthrough(RtspCodec::H264)")]] static VideoSenderOptions
   H264RtpUdpFromEncoded();
@@ -56,8 +60,8 @@ public:
   std::string host = "127.0.0.1";
   int channel = 0;
   int video_port_base = 9000;
-  bool sync = false;
-  bool async = false;
+  bool sync = false;  ///< Wait for packet timestamps against the pipeline clock.
+  bool async = false; ///< Permit the sink to wait for its first preroll buffer.
   VideoSenderRtpOptions rtp{};
   VideoSenderEncoderOptions encoder{};
 
@@ -67,12 +71,17 @@ private:
   VideoSenderOptions() = default;
 
   InputKind input_kind_ = InputKind::Encoded;
-  /// Codec of the encoded stream; meaningless when `input_kind_` is `Raw`,
-  /// which is always H.264 because that is the only encoder path.
+  /// Codec used consistently by the raw encoder and RTP packetization.
   RtspCodec codec_ = RtspCodec::H264;
   int width_ = 0;
   int height_ = 0;
   int fps_ = 0;
+
+  std::optional<std::string> rate_control_;
+  std::optional<int> gop_length_;
+  std::optional<int> idr_interval_;
+  std::optional<int> quality_;
+  int num_buffers_ = -1;
 
   friend simaai::neat::Graph VideoSender(const VideoSenderOptions& opt);
 };

@@ -3601,6 +3601,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("level", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::level);
 
   nb::class_<simaai::neat::nodes::groups::VideoSenderOptions>(m, "VideoSenderOptions")
+      .def_static("from_raw", &simaai::neat::nodes::groups::VideoSenderOptions::FromRaw, "encode"_a)
       .def_static("h264_rtp_udp_from_raw",
                   &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
                   "height"_a, "fps"_a)
