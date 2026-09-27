@@ -781,7 +781,7 @@ video-only overrides. Encoded passthrough ignores encoder settings.
 
 RTP/JPEG requires a compatible receiver, baseline JPEG with standard Huffman tables,
 and dimensions divisible by eight,
-from 8 to 2040 in each direction. Raw options reject other dimensions; encoded
-passthrough validates the parsed JPEG dimensions before packetization. Standalone
+from 8 to 2040 in each direction. Raw sending and encoded passthrough reject
+unsupported dimensions during caps negotiation before RTP packetization. Standalone
 `SimaEncode` retains its native geometry range. This does not add MJPEG viewing
 to Insight's RTP/WebRTC viewer.
