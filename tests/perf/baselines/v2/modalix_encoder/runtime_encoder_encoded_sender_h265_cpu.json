@@ -1,0 +1,33 @@
+{
+  "scenario_id": "runtime_encoder_encoded_sender_h265_cpu",
+  "model_id": "synthetic_h265_1280x720",
+  "pipeline_id": "runtime_encoder_encoded_sender_h265_cpu",
+  "run_mode": "unpaced",
+  "iterations": 1000,
+  "metrics_thresholds": {
+    "throughput_min": 2132.8996147124076,
+    "p50_max": 0.0,
+    "p95_max": 0.0,
+    "startup_max": 20000.0,
+    "rss_peak_kb_max": 1400000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  },
+  "encoder_reference": {
+    "workload": {
+      "height": 720,
+      "input_buffers": 4,
+      "input_fingerprint": {
+        "format": "sha256-length-prefixed-au-v1",
+        "sequence_frames": 30,
+        "sha256": "a4be97757237d2fa3ce87f2dcb047ce56c9deb73d9cc30495896b38acd1fc372"
+      },
+      "input_fps": 30,
+      "pattern": "prepared-codec-perf-fixture",
+      "warmup_frames": 200,
+      "width": 1280
+    },
+    "native_encoder_settings": null
+  }
+}
