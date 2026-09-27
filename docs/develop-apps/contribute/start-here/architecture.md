@@ -1387,3 +1387,12 @@ Keep docs and code aligned:
 5. **Keep the public API stable**
 
    * internal refactors should not break user code unless intentionally versioned
+
+### Hardware encoder configuration
+
+`SimaEncode` prepares raw input once and maps codec-specific options to
+`neatencoder`. Internals owns asynchronous submission, output-buffer ownership,
+cache synchronization and teardown. Core adds no encoder execution thread.
+The legacy `H264EncodeSima` preserves its adapter-free input contract while sharing
+encoder property generation. The public class layout changes require ABI 5 and
+rebuilt binary consumers; existing source entry points remain available.

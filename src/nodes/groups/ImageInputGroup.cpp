@@ -98,7 +98,8 @@ simaai::neat::Graph ImageInputGroup(const ImageInputGroupOptions& opt) {
     if (opt.sima_decoder.use_sw_encoder) {
       nodes.push_back(nodes::H264EncodeSW(opt.sima_decoder.sw_bitrate_kbps));
     } else {
-      nodes.push_back(nodes::H264EncodeSima(caps.width, caps.height, caps.fps));
+      nodes.push_back(
+          nodes::SimaEncode({.width = caps.width, .height = caps.height, .fps = caps.fps}));
     }
     nodes.push_back(nodes::H264Parse(/*config_interval=*/1));
 
