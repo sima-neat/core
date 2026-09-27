@@ -27,8 +27,6 @@ enum class SimaEncodeType {
 /// Codec-specific fields are optional; defaults are selected after `type`.
 struct SimaEncodeOptions {
   SimaEncodeType type = SimaEncodeType::H264;
-  int width = 0;                           ///< Positive even frame width.
-  int height = 0;                          ///< Positive even frame height.
   int fps = 30;                            ///< Stream cadence, not a producer submission throttle.
   std::optional<int> bitrate_kbps;         ///< H.264/H.265: positive target, default 4000.
   std::optional<std::string> rate_control; ///< H.264/H.265: vbr (default) or cbr.
@@ -49,6 +47,8 @@ struct SimaEncodeAccess;
  *
  * Compatible SiMaAI NV12 storage is retained without copying. Other supported
  * raw CPU layouts are materialized by the existing encoder input adapter.
+ * Resolution follows the initial input frames and stays fixed for a run.
+ * This node does not resize frames.
  * Output consists of encoded frames, without RTP packetization.
  * @ingroup nodes_sima
  */
@@ -59,6 +59,7 @@ public:
     return "SimaEncode";
   }
   NodeCapsBehavior caps_behavior() const override {
+    // Live size changes require draining and restarting the codec.
     return NodeCapsBehavior::Static;
   }
   MemoryContract memory_contract() const override;

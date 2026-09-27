@@ -92,15 +92,14 @@ namespace simaai::neat {
 
 H264EncodeSima::H264EncodeSima(int w, int h, int fps, int bitrate_kbps, std::string profile,
                                std::string level)
-    : options_{.width = w,
-               .height = h,
-               .fps = fps,
-               .bitrate_kbps = bitrate_kbps,
-               .profile = std::move(profile),
-               .level = std::move(level)} {}
+    : width_(w), height_(h), options_{.fps = fps,
+                                      .bitrate_kbps = bitrate_kbps,
+                                      .profile = std::move(profile),
+                                      .level = std::move(level)} {}
 
 std::string H264EncodeSima::backend_fragment(int node_index) const {
-  return internal::encoder_fragment(options_, node_index);
+  return internal::encoder_fragment(options_, node_index) + " enc-width=" + std::to_string(width_) +
+         " enc-height=" + std::to_string(height_);
 }
 
 std::vector<std::string> H264EncodeSima::element_names(int node_index) const {

@@ -28,7 +28,7 @@ def _mjpeg_encode_and_passthrough_retention():
   inputs.is_live, inputs.do_timestamp = True, False
   encode = pyneat.SimaEncodeOptions()
   encode.type = pyneat.SimaEncodeType.MJPEG
-  encode.width, encode.height, encode.num_buffers = 160, 96, 4
+  encode.num_buffers = 4
   graph = pyneat.Graph("python-encoder")
   graph.add(pyneat.nodes.input(inputs))
   graph.add(pyneat.nodes.sima_encode(encode))

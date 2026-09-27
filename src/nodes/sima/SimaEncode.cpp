@@ -35,10 +35,6 @@ void validate_encode_options(const SimaEncodeOptions& o) {
   require(o.type == SimaEncodeType::H264 || o.type == SimaEncodeType::H265 ||
               o.type == SimaEncodeType::MJPEG,
           "unsupported codec");
-  require(o.width > 0 && o.width <= 3840 && o.width % 2 == 0,
-          "width must be even and within 2..3840");
-  require(o.height > 0 && o.height <= 2160 && o.height % 2 == 0,
-          "height must be even and within 2..2160");
   require(o.fps > 0, "fps must be positive");
   require(o.num_buffers == -1 || (o.num_buffers >= 1 && o.num_buffers <= 20),
           "num_buffers must be -1 or within 1..20");
@@ -84,8 +80,7 @@ std::string encoder_fragment(const SimaEncodeOptions& o, int node_index) {
     if (o.idr_interval)
       ss << " enc-idr-interval=" << *o.idr_interval;
   }
-  ss << " enc-fmt=NV12 enc-width=" << o.width << " enc-height=" << o.height
-     << " enc-frame-rate=" << o.fps << " enc-ip-mode=async ip-rate-ctrl=false";
+  ss << " enc-fmt=NV12 enc-frame-rate=" << o.fps << " enc-ip-mode=async ip-rate-ctrl=false";
   if (o.num_buffers != -1)
     ss << " num-output-buffers=" << o.num_buffers;
   if (const char* value = std::getenv("SIMA_NEATENCODER_DUMP_CNT")) {
@@ -107,8 +102,7 @@ SimaEncode::SimaEncode(SimaEncodeOptions options, bool prepare_input)
     : options_(std::move(options)) {
   internal::validate_encode_options(options_);
   if (prepare_input) {
-    input_adapter_ = nodes::groups::internal::VideoSenderRawIngress(options_.width, options_.height,
-                                                                    options_.fps);
+    input_adapter_ = nodes::groups::internal::VideoSenderRawIngress(0, 0, options_.fps);
   }
 }
 
@@ -144,7 +138,7 @@ internal::SimaEncodeAccess::specialize_for_input(const SimaEncode& node, const O
   return selected;
 }
 
-OutputSpec SimaEncode::output_spec(const OutputSpec&) const {
+OutputSpec SimaEncode::output_spec(const OutputSpec& input) const {
   OutputSpec out;
   out.payload_type = PayloadType::Encoded;
   out.media_type = options_.type == SimaEncodeType::MJPEG  ? "image/jpeg"
@@ -153,11 +147,11 @@ OutputSpec SimaEncode::output_spec(const OutputSpec&) const {
   out.format = options_.type == SimaEncodeType::MJPEG  ? "JPEG"
                : options_.type == SimaEncodeType::H265 ? "H265"
                                                        : "H264";
-  out.width = options_.width;
-  out.height = options_.height;
+  out.width = input.width;
+  out.height = input.height;
   out.fps_num = options_.fps;
   out.fps_den = 1;
-  out.certainty = SpecCertainty::Derived;
+  out.certainty = input.certainty;
   out.note = "Encoded frames";
   return out;
 }

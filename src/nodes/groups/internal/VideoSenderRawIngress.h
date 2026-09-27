@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Private adaptive raw ingress for the H.264 VideoSender.
+ * @brief Private adaptive raw ingress for hardware encoding.
  */
 #pragma once
 
@@ -35,6 +35,7 @@ inline constexpr std::string_view kNeatEncoderInputLayoutAwareCapability =
 bool can_encode_nv12_direct(const OutputSpec& input, bool simaai_layout_aware);
 
 struct VideoSenderRawIngressConfig {
+  // Paired zero dimensions follow negotiated input geometry.
   int width;
   int height;
   int fps;

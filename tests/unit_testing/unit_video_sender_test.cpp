@@ -74,8 +74,6 @@ RUN_TEST(
         require_contains(backend,
                          "caps=\"video/x-raw,format=NV12,width=1280,height=720,framerate=30/1\"",
                          "VideoSender encoder raw caps mismatch");
-        require_contains(backend, "enc-width=1280", "VideoSender encoder width mismatch");
-        require_contains(backend, "enc-height=720", "VideoSender encoder height mismatch");
         require_contains(backend, "enc-frame-rate=30", "VideoSender encoder fps mismatch");
         require_contains(backend, "enc-bitrate=2500", "VideoSender encoder bitrate mismatch");
         require_contains(backend, "enc-profile=main", "VideoSender encoder profile mismatch");
@@ -148,14 +146,13 @@ RUN_TEST(
                 "VideoSender H265 must not use H264 parser");
       }
 
-      for (const auto& size : {std::pair{258, 130}, std::pair{2048, 720}, std::pair{640, 2160}}) {
-        simaai::neat::SimaEncodeOptions jpeg;
-        jpeg.type = simaai::neat::SimaEncodeType::MJPEG;
-        jpeg.width = size.first;
-        jpeg.height = size.second;
-        require_invalid_argument([&] { VideoSenderOptions::FromRaw(jpeg); },
-                                 "raw RTP/JPEG must reject dimensions it cannot transmit");
-      }
+      const simaai::neat::SimaEncode defaults;
+      require(defaults.options().type == simaai::neat::SimaEncodeType::H264 &&
+                  !defaults.output_spec({}).has_shape() &&
+                  defaults.caps_behavior() == simaai::neat::NodeCapsBehavior::Static,
+              "default encoder must accept input geometry at runtime");
+      require(simaai::neat::nodes::SimaEncode()->kind() == "SimaEncode",
+              "default encoder factory must be usable");
 
       // Standalone and sender options resolve the same codec-specific settings.
       static_assert(simaai::neat::SimaEncodeType::AVC == simaai::neat::SimaEncodeType::H264);
@@ -164,8 +161,6 @@ RUN_TEST(
                         simaai::neat::SimaEncodeType::MJPEG}) {
         simaai::neat::SimaEncodeOptions encode;
         encode.type = type;
-        encode.width = type == simaai::neat::SimaEncodeType::MJPEG ? 264 : 258;
-        encode.height = type == simaai::neat::SimaEncodeType::MJPEG ? 136 : 130;
         encode.fps = 30;
         encode.num_buffers = 4;
         const bool jpeg = type == simaai::neat::SimaEncodeType::MJPEG;
@@ -178,14 +173,31 @@ RUN_TEST(
           encode.idr_interval = 30;
         }
         simaai::neat::SimaEncode node(encode);
-        const auto output = node.output_spec({});
-        require(output.payload_type == simaai::neat::PayloadType::Encoded &&
-                    output.width == encode.width && output.height == encode.height &&
-                    output.fps_num == 30 && output.fps_den == 1 && output.byte_size == 0,
-                "encoder output contract must describe variable-size encoded frames");
+        simaai::neat::OutputSpec input;
+        input.certainty = simaai::neat::SpecCertainty::Derived;
+        for (const auto& size : {std::pair{258, 130}, std::pair{640, 360}}) {
+          input.width = size.first;
+          input.height = size.second;
+          input.layout = "Planar";
+          input.dtype = "UInt8";
+          input.byte_size = size.first * size.second * 3 / 2;
+          const auto output = node.output_spec(input);
+          require(output.payload_type == simaai::neat::PayloadType::Encoded &&
+                      output.width == input.width && output.height == input.height &&
+                      output.fps_num == 30 && output.fps_den == 1 && output.byte_size == 0 &&
+                      output.layout.empty() && output.dtype.empty(),
+                  "reusable encoder must follow input resolution without copying raw layout");
+        }
+        input.certainty = simaai::neat::SpecCertainty::Hint;
+        const auto output = node.output_spec(input);
+        require(output.certainty == simaai::neat::SpecCertainty::Hint,
+                "encoder must not make tentative input dimensions authoritative");
         require(node.options().type == type, "encoder options accessor lost codec");
         const auto fragment = node.backend_fragment(7);
         require_contains(fragment, "num-output-buffers=4", "output count override missing");
+        require(fragment.find("enc-width=") == std::string::npos &&
+                    fragment.find("enc-height=") == std::string::npos,
+                "encoder must negotiate resolution from the input");
         const auto first_adapter = fragment.find("neatencoderinput");
         require(first_adapter != std::string::npos &&
                     fragment.find("neatencoderinput", first_adapter + 1) == std::string::npos,
@@ -200,11 +212,11 @@ RUN_TEST(
           require_contains(fragment, "enc-gop-length=10", "GOP missing");
           require_contains(fragment, "enc-idr-interval=30", "IDR must be independent of GOP");
         }
-        const int original_width = encode.width;
         auto sender = VideoSenderOptions::FromRaw(encode);
-        encode.width = 640;
-        require(sender.width() == original_width && sender.is_raw_input(),
-                "sender must own its options");
+        encode.fps = 60;
+        require(sender.width() == 0 && sender.height() == 0 && sender.fps() == 30 &&
+                    sender.is_raw_input(),
+                "sender must own encoding options and infer input dimensions");
         const auto sender_fragment = VideoSender(sender).describe_backend();
         const auto sender_adapter = sender_fragment.find("neatencoderinput");
         require(sender_adapter != std::string::npos &&
@@ -225,8 +237,6 @@ RUN_TEST(
       }
       {
         simaai::neat::SimaEncodeOptions base;
-        base.width = 640;
-        base.height = 360;
         for (int buffers : {0, -2, 21}) {
           auto invalid = base;
           invalid.num_buffers = buffers;
@@ -234,9 +244,9 @@ RUN_TEST(
                                    "invalid output count accepted");
         }
         auto invalid = base;
-        invalid.width = 641;
+        invalid.fps = 0;
         require_invalid_argument([&] { (void)simaai::neat::SimaEncode(invalid); },
-                                 "odd NV12 width accepted");
+                                 "invalid encoder fps accepted");
         invalid = base;
         invalid.quality = 80;
         require_invalid_argument([&] { (void)simaai::neat::SimaEncode(invalid); },
@@ -251,6 +261,13 @@ RUN_TEST(
         invalid.profile = "baseline";
         require_invalid_argument([&] { (void)simaai::neat::SimaEncode(invalid); },
                                  "H265 accepted H264-only profile");
+      }
+      for (const auto& size : {std::pair{641, 360}, std::pair{3842, 720}, std::pair{640, 2162}}) {
+        require_invalid_argument(
+            [&] {
+              (void)VideoSender(VideoSenderOptions::H264RtpUdpFromRaw(size.first, size.second, 30));
+            },
+            "legacy sender must retain its fixed geometry validation");
       }
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(0, 720, 30); },
                                "VideoSender should reject invalid raw width");

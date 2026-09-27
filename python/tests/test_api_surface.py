@@ -1840,7 +1840,9 @@ def test_measurement_bool_overload_surface():
 def test_sima_encode_and_sender_options(codec):
   encode = pyneat.SimaEncodeOptions()
   encode.type = codec
-  encode.width, encode.height, encode.fps = 258, 130, 30
+  encode.fps = 30
+  assert not hasattr(encode, "width") and not hasattr(encode, "height")
+  assert pyneat.nodes.sima_encode() is not None
   encode.num_buffers = 4
   assert encode.bitrate_kbps is None and encode.quality is None
   graph = pyneat.Graph()
@@ -1848,16 +1850,11 @@ def test_sima_encode_and_sender_options(codec):
   text = graph.describe_backend()
   assert text.count('neatencoderinput') == 1
   assert 'num-output-buffers=4' in text
-  if codec == pyneat.SimaEncodeType.MJPEG:
-    for width, height in [(258, 130), (2048, 720), (640, 2160)]:
-      encode.width, encode.height = width, height
-      with pytest.raises(ValueError, match='RTP/JPEG'):
-        pyneat.VideoSenderOptions.from_raw(encode)
-    encode.width, encode.height = 264, 136
-  original_width = encode.width
+  assert 'enc-width=' not in text and 'enc-height=' not in text
   sender = pyneat.VideoSenderOptions.from_raw(encode)
-  encode.width = 640
-  assert sender.width == original_width and sender.is_raw_input()
+  encode.fps = 60
+  assert sender.width == 0 and sender.height == 0
+  assert sender.fps == 30 and sender.is_raw_input()
   assert not sender.is_encoded_input()
   assert pyneat.SimaEncodeType.AVC == pyneat.SimaEncodeType.H264
   assert pyneat.SimaEncodeType.HEVC == pyneat.SimaEncodeType.H265

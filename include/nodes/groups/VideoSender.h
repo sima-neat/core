@@ -26,7 +26,7 @@ struct VideoSenderEncoderOptions {
 
 class VideoSenderOptions {
 public:
-  /// Encode raw frames, then packetize the selected codec as RTP over UDP.
+  /// Encode raw frames at their input resolution, then send the selected codec over RTP/UDP.
   static VideoSenderOptions FromRaw(SimaEncodeOptions encode);
   /// @deprecated Use FromRaw with SimaEncodeType::H264.
   static VideoSenderOptions H264RtpUdpFromRaw(int width, int height, int fps);
@@ -44,9 +44,11 @@ public:
   bool is_encoded_input() const {
     return input_kind_ == InputKind::Encoded;
   }
+  /// Fixed legacy input width, or zero when resolution follows the input.
   int width() const {
     return width_;
   }
+  /// Fixed legacy input height, or zero when resolution follows the input.
   int height() const {
     return height_;
   }

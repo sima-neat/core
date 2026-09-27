@@ -60,11 +60,11 @@ public:
 
   /// Configured frame width.
   int width() const {
-    return options_.width;
+    return width_;
   }
   /// Configured frame height.
   int height() const {
-    return options_.height;
+    return height_;
   }
   /// Configured target framerate.
   int fps() const {
@@ -84,6 +84,8 @@ public:
   }
 
 private:
+  int width_;
+  int height_;
   SimaEncodeOptions options_;
 };
 

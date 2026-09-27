@@ -190,8 +190,6 @@ RUN_TEST(
 
       {
         simaai::neat::SimaEncodeOptions options;
-        options.width = kWidth;
-        options.height = kHeight;
         // Both public construction paths must select the same ingress policy.
         for (const auto& encoder : {simaai::neat::nodes::SimaEncode(options),
                                     std::shared_ptr<simaai::neat::Node>(
@@ -320,12 +318,13 @@ RUN_TEST(
                    .has_value(),
               "missing boolean property must not synthesize a capability");
 
-      {
+      for (bool automatic : {false, true}) {
         // A seed is one observation, not a run-wide format/layout promise. It
         // may populate diagnostics but must not freeze an optimized topology.
         const auto public_options =
-            simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(kWidth, kHeight,
-                                                                               kFps);
+            automatic ? simaai::neat::nodes::groups::VideoSenderOptions::FromRaw({.fps = kFps})
+                      : simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(
+                            kWidth, kHeight, kFps);
         auto public_sender = simaai::neat::nodes::groups::VideoSender(public_options);
         simaai::neat::Sample seed;
         seed.kind = simaai::neat::SampleKind::Tensor;
@@ -350,7 +349,7 @@ RUN_TEST(
                 "linear CPU ingress must not also retain the native DMA variant");
       }
 
-      {
+      for (bool automatic : {false, true}) {
         // Version-1 save/load must retain both the semantic adaptive Node and
         // names already transformed into the serialized backend.
         const auto path =
@@ -362,8 +361,9 @@ RUN_TEST(
         naming.element_name_prefix = "saved_";
         naming.element_name_suffix = "_instance";
         const auto public_options =
-            simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(kWidth, kHeight,
-                                                                               kFps);
+            automatic ? simaai::neat::nodes::groups::VideoSenderOptions::FromRaw({.fps = kFps})
+                      : simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(
+                            kWidth, kHeight, kFps);
         simaai::neat::Graph original("named_sender", naming);
         original.add(simaai::neat::nodes::groups::VideoSender(public_options));
         original.save(path.string());
@@ -379,8 +379,11 @@ RUN_TEST(
                          "v1 load must preserve the transformed converter name");
         require_contains(backend, "name=saved_n0_nv12_caps_instance",
                          "v1 load must preserve the transformed NV12 caps name");
-        require_contains(backend, "format=NV12,width=1280,height=720,framerate=30/1",
-                         "save/load should preserve adaptive ingress geometry");
+        require_contains(
+            backend,
+            automatic ? "format=NV12,width=(int)[2,3840,2],height=(int)[2,2160,2],framerate=30/1"
+                      : "format=NV12,width=1280,height=720,framerate=30/1",
+            "save/load must preserve automatic or fixed input geometry");
         require(count_substrings(backend, "neatencoderinput name=") == 1U,
                 "unknown loaded graph should retain one safe converter");
       }

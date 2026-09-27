@@ -65,8 +65,6 @@ const int channel = 0;
 
 simaai::neat::SimaEncodeOptions encode;
 encode.type = simaai::neat::SimaEncodeType::H265;
-encode.width = 1920;
-encode.height = 1080;
 encode.fps = 30;
 encode.bitrate_kbps = 2500;
 encode.gop_length = 30;
@@ -85,8 +83,6 @@ channel = 0
 
 encode = pyneat.SimaEncodeOptions()
 encode.type = pyneat.SimaEncodeType.H265
-encode.width = 1920
-encode.height = 1080
 encode.fps = 30
 encode.bitrate_kbps = 2500
 encode.gop_length = 30
@@ -98,6 +94,10 @@ opt.video_port_base = 9000
 graph = pyneat.Graph()
 graph.add(pyneat.groups.video_sender(opt))
 ```
+
+Raw sending detects resolution from the input frames and preserves it without resizing.
+Start a new run to send raw frames at a different resolution.
+The legacy `H264RtpUdpFromRaw(width, height, fps)` factory retains its fixed input dimensions.
 
 For MJPEG, select `SimaEncodeType::MJPEG` in C++ or `pyneat.SimaEncodeType.MJPEG` in Python and set `quality` from 1 to 100. Leave bitrate, rate control, profile, level, GOP and IDR settings unset. `FromRaw` copies the supplied options, so configure them before calling the factory.
 

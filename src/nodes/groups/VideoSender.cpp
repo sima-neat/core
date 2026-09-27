@@ -137,18 +137,11 @@ void require_positive(int value, const char* name) {
 
 VideoSenderOptions VideoSenderOptions::FromRaw(SimaEncodeOptions encode) {
   simaai::neat::internal::validate_encode_options(encode);
-  if (encode.type == SimaEncodeType::MJPEG &&
-      (encode.width % 8 || encode.height % 8 || encode.width > 2040 || encode.height > 2040)) {
-    throw std::invalid_argument(
-        "VideoSender: RTP/JPEG width and height must be multiples of 8 within 8..2040");
-  }
   const auto codec = encode.type == SimaEncodeType::MJPEG  ? RtspCodec::MJPEG
                      : encode.type == SimaEncodeType::H265 ? RtspCodec::H265
                                                            : RtspCodec::H264;
   auto opt = Passthrough(codec);
   opt.input_kind_ = InputKind::Raw;
-  opt.width_ = encode.width;
-  opt.height_ = encode.height;
   opt.fps_ = encode.fps;
   if (codec != RtspCodec::MJPEG) {
     opt.encoder.bitrate_kbps = encode.bitrate_kbps.value_or(4000);
@@ -207,8 +200,6 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
     encode.type = opt.codec_ == RtspCodec::MJPEG  ? SimaEncodeType::MJPEG
                   : opt.codec_ == RtspCodec::H265 ? SimaEncodeType::H265
                                                   : SimaEncodeType::H264;
-    encode.width = opt.width();
-    encode.height = opt.height();
     encode.fps = opt.fps();
     encode.rate_control = opt.rate_control_;
     encode.gop_length = opt.gop_length_;

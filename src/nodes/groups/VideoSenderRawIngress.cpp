@@ -28,6 +28,13 @@ public:
   explicit VideoSenderRawIngressNode(VideoSenderRawIngressConfig config,
                                      IngressVariant variant = IngressVariant::ConvertToNv12)
       : config_(std::move(config)), variant_(variant) {
+    const bool automatic = config_.width == 0 && config_.height == 0;
+    const bool fixed = config_.width > 0 && config_.width <= 3840 && config_.width % 2 == 0 &&
+                       config_.height > 0 && config_.height <= 2160 && config_.height % 2 == 0;
+    if ((!automatic && !fixed) || config_.fps <= 0) {
+      throw std::invalid_argument("Encoder input requires automatic dimensions or even dimensions "
+                                  "within 3840x2160, and positive fps");
+    }
     if (!config_.fallback_element_names.empty() && config_.fallback_element_names.size() != 3U) {
       throw std::invalid_argument(
           "VideoSenderRawIngress requires exactly three persisted fallback element names");
@@ -53,21 +60,24 @@ public:
 
   std::string backend_fragment(int node_index) const override {
     const auto names = fallback_element_names(node_index);
-    std::ostringstream caps;
-    caps << "video/x-raw,format=NV12,width=" << config_.width << ",height=" << config_.height
-         << ",framerate=" << config_.fps << "/1";
+    std::ostringstream geometry;
+    if (config_.width > 0 && config_.height > 0) {
+      geometry << ",width=" << config_.width << ",height=" << config_.height;
+    } else {
+      geometry << ",width=(int)[2,3840,2],height=(int)[2,2160,2]";
+    }
+    geometry << ",framerate=" << config_.fps << "/1";
+    const std::string caps = "video/x-raw,format=NV12" + geometry.str();
 
     if (variant_ == IngressVariant::DirectNv12) {
       return "neatencoderinput name=" + names[1] + " ! capsfilter name=" + names[2] + " caps=\"" +
-             caps.str() + "\"";
+             caps + "\"";
     }
 
-    std::ostringstream input_caps;
-    input_caps << "video/x-raw,width=" << config_.width << ",height=" << config_.height
-               << ",framerate=" << config_.fps << "/1";
-    return "capsfilter name=" + names[0] + " caps=\"" + input_caps.str() +
+    const std::string input_caps = "video/x-raw" + geometry.str();
+    return "capsfilter name=" + names[0] + " caps=\"" + input_caps +
            "\" ! neatencoderinput name=" + names[1] + " ! capsfilter name=" + names[2] +
-           " caps=\"" + caps.str() + "\"";
+           " caps=\"" + caps + "\"";
   }
 
   std::vector<std::string> element_names(int node_index) const override {
@@ -85,8 +95,11 @@ public:
     out.payload_type = PayloadType::Image;
     out.media_type = "video/x-raw";
     out.format = "NV12";
-    out.width = config_.width;
-    out.height = config_.height;
+    if (config_.width > 0 && config_.height > 0) {
+      out.width = config_.width;
+      out.height = config_.height;
+      out.certainty = SpecCertainty::Derived;
+    }
     out.fps_num = config_.fps;
     out.fps_den = 1;
     out.layout = "Planar";
@@ -94,7 +107,6 @@ public:
     out.memory = "SimaAI";
     out.depth = -1;
     out.byte_size = 0;
-    out.certainty = SpecCertainty::Derived;
     out.note = variant_ == IngressVariant::DirectNv12
                    ? "VideoSender raw ingress (direct NV12)"
                    : "VideoSender raw ingress (converted to NV12)";
