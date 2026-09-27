@@ -1,5 +1,6 @@
 #include "nodes/sima/SimaEncode.h"
 
+#include "builder/internal/InputSpecSpecialization.h"
 #include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/sima/internal/SimaEncode.h"
 
@@ -103,30 +104,44 @@ std::string encoder_fragment(const SimaEncodeOptions& o, int node_index) {
 SimaEncode::SimaEncode(SimaEncodeOptions options) : SimaEncode(std::move(options), true) {}
 
 SimaEncode::SimaEncode(SimaEncodeOptions options, bool prepare_input)
-    : options_(std::move(options)), prepare_input_(prepare_input) {
+    : options_(std::move(options)) {
   internal::validate_encode_options(options_);
+  if (prepare_input) {
+    input_adapter_ = nodes::groups::internal::VideoSenderRawIngress(options_.width, options_.height,
+                                                                    options_.fps);
+  }
+}
+
+MemoryContract SimaEncode::memory_contract() const {
+  return input_adapter_ ? input_adapter_->memory_contract() : MemoryContract::AllowEitherButReport;
 }
 
 std::string SimaEncode::backend_fragment(int node_index) const {
   auto fragment = internal::encoder_fragment(options_, node_index);
-  if (prepare_input_) {
-    fragment = nodes::groups::internal::VideoSenderRawIngress(options_.width, options_.height,
-                                                              options_.fps)
-                   ->backend_fragment(node_index) +
-               " ! " + fragment;
+  if (input_adapter_) {
+    fragment = input_adapter_->backend_fragment(node_index) + " ! " + fragment;
   }
   return fragment;
 }
 
 std::vector<std::string> SimaEncode::element_names(int node_index) const {
   std::vector<std::string> names;
-  if (prepare_input_) {
-    names = nodes::groups::internal::VideoSenderRawIngress(options_.width, options_.height,
-                                                           options_.fps)
-                ->element_names(node_index);
+  if (input_adapter_) {
+    names = input_adapter_->element_names(node_index);
   }
   names.push_back("n" + std::to_string(node_index) + "_encoder");
   return names;
+}
+
+std::shared_ptr<Node>
+internal::SimaEncodeAccess::specialize_for_input(const SimaEncode& node, const OutputSpec& input,
+                                                 const InputSpecSpecializationContext& context) {
+  auto selected = std::make_shared<SimaEncode>(node);
+  if (node.input_adapter_) {
+    auto adapter = specialize_nodes_for_input(std::span(&node.input_adapter_, 1), input, context);
+    selected->input_adapter_ = std::move(adapter.nodes.front());
+  }
+  return selected;
 }
 
 OutputSpec SimaEncode::output_spec(const OutputSpec&) const {

@@ -61,6 +61,7 @@ public:
   NodeCapsBehavior caps_behavior() const override {
     return NodeCapsBehavior::Static;
   }
+  MemoryContract memory_contract() const override;
   std::string backend_fragment(int node_index) const override;
   std::vector<std::string> element_names(int node_index) const override;
   OutputSpec output_spec(const OutputSpec& input) const override;
@@ -72,7 +73,7 @@ private:
   friend struct internal::SimaEncodeAccess;
   SimaEncode(SimaEncodeOptions options, bool prepare_input);
   SimaEncodeOptions options_;
-  bool prepare_input_;
+  std::shared_ptr<Node> input_adapter_;
 };
 
 } // namespace simaai::neat

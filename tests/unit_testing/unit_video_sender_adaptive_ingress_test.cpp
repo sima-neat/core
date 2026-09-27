@@ -13,7 +13,10 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Packetize.h"
 #include "nodes/sima/H264Parse.h"
+#include "nodes/sima/SimaEncode.h"
 #include "pipeline/Graph.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
+#include "pipeline/internal/InputSpecCapabilities.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -184,6 +187,75 @@ RUN_TEST(
 
       InputSpecSpecializationContext layout_aware_context;
       layout_aware_context.set_capability(kNeatEncoderInputLayoutAwareCapability, true);
+
+      {
+        simaai::neat::SimaEncodeOptions options;
+        options.width = kWidth;
+        options.height = kHeight;
+        // Both public construction paths must select the same ingress policy.
+        for (const auto& encoder : {simaai::neat::nodes::SimaEncode(options),
+                                    std::shared_ptr<simaai::neat::Node>(
+                                        std::make_shared<simaai::neat::SimaEncode>(options))}) {
+          struct Case {
+            FormatTag format;
+            InputMemoryPolicy requested;
+            bool layout_aware;
+            InputMemoryPolicy expected;
+          };
+          for (const auto& test :
+               {Case{FormatTag::NV12, InputMemoryPolicy::Auto, true, InputMemoryPolicy::Ev74},
+                Case{FormatTag::NV12, InputMemoryPolicy::SystemMemory, true,
+                     InputMemoryPolicy::SystemMemory},
+                Case{FormatTag::RGB, InputMemoryPolicy::Auto, true,
+                     InputMemoryPolicy::SystemMemory},
+                Case{FormatTag::NV12, InputMemoryPolicy::Auto, false,
+                     InputMemoryPolicy::SystemMemory}}) {
+            InputSpecSpecializationContext context;
+            context.set_capability(kNeatEncoderInputLayoutAwareCapability, test.layout_aware);
+            auto graph = make_explicit_push_source(test.format, test.requested);
+            graph.add(encoder);
+            const auto plan = compile_with_context(graph, context);
+            require(plan.pipeline_segments.size() == 1U,
+                    "standalone encoder must remain one pipeline");
+            require(plan.pipeline_segments.front().resolved_input_memory_policy == test.expected,
+                    "standalone encoder must resolve allocation from its selected input adapter");
+            const auto backend = plan_backend_for_kind(plan, "SimaEncode");
+            require(count_substrings(backend, "neatencoderinput name=") == 1U &&
+                        count_substrings(backend, "neatencoder name=") == 1U,
+                    "standalone encoder must prepare and encode input exactly once");
+          }
+          require(encoder->memory_contract() == simaai::neat::MemoryContract::AllowEitherButReport,
+                  "specialization must not mutate a reusable public encoder");
+
+          const std::vector<std::shared_ptr<simaai::neat::Node>> nodes{encoder};
+          const auto direct = simaai::neat::pipeline_internal::specialize_pipeline_nodes_for_input(
+              nodes, raw_spec("NV12", "SimaAI", SpecCertainty::Derived), layout_aware_context);
+          require(direct.nodes.front()->memory_contract() ==
+                      simaai::neat::MemoryContract::PreferDeviceZeroCopy,
+                  "stable native NV12 must select device input");
+          require(!simaai::neat::session_test::source_sima_meta_probe_required_for_test(
+                      *direct.nodes.front()),
+                  "native encoder output must preserve its encoded frame correlation");
+          const std::vector<std::shared_ptr<simaai::neat::Node>> raw_nodes{
+              simaai::neat::nodes::groups::internal::VideoSenderRawIngress(kWidth, kHeight, kFps)};
+          const auto raw = simaai::neat::internal::specialize_nodes_for_input(
+              raw_nodes, raw_spec("NV12", "SimaAI", SpecCertainty::Derived), layout_aware_context);
+          require(simaai::neat::session_test::source_sima_meta_probe_required_for_test(
+                      *raw.nodes.front()),
+                  "native raw ingress must retain source metadata stamping");
+          const auto unknown = simaai::neat::pipeline_internal::specialize_pipeline_nodes_for_input(
+              direct.nodes, {}, layout_aware_context);
+          require(unknown.nodes.front()->memory_contract() ==
+                      simaai::neat::MemoryContract::AllowEitherButReport,
+                  "recompiling for unknown input must restore conservative preparation");
+          require(direct.output_spec.media_type == "video/x-h264" &&
+                      direct.output_spec.width == kWidth && direct.output_spec.height == kHeight &&
+                      direct.nodes.front()->element_names(4).back() ==
+                          encoder->element_names(4).back() &&
+                      unknown.nodes.front()->element_names(4) == encoder->element_names(4),
+                  "specialization must preserve encoded output and element names");
+        }
+      }
 
       // Direct mode is intentionally narrow: a stable raw NV12 contract, a
       // known supported memory domain, and an encoder that explicitly promises

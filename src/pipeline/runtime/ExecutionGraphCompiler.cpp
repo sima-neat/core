@@ -2747,8 +2747,7 @@ bool plan_has_input_spec_specializer(const ExecutionGraphPlan& plan) {
   return std::any_of(
       plan.pipeline_segments.begin(), plan.pipeline_segments.end(), [](const auto& segment) {
         return std::any_of(segment.nodes.begin(), segment.nodes.end(), [](const auto& node) {
-          return node &&
-                 dynamic_cast<const simaai::neat::internal::InputSpecSpecializer*>(node.get());
+          return node && pipeline_internal::node_has_input_spec_specialization(*node);
         });
       });
 }
@@ -2784,8 +2783,8 @@ void specialize_pipeline_segments(
     // Linear input_spec can describe only the first build seed. Starting from
     // unknown excludes it while still allowing explicit Input/Caps Nodes in
     // the segment to establish stable facts.
-    auto specialized =
-        simaai::neat::internal::specialize_nodes_for_input(segment.nodes, stable_input, context);
+    auto specialized = pipeline_internal::specialize_pipeline_nodes_for_input(
+        segment.nodes, stable_input, context);
     segment.nodes = std::move(specialized.nodes);
     segment.output_spec = std::move(specialized.output_spec);
     segment.output_complete = output_spec_complete(segment.output_spec);
