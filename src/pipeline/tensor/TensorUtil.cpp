@@ -608,45 +608,56 @@ void set_dmabuf_map_function(const std::shared_ptr<Storage>& storage, guint memo
   struct DmaBufMapState {
     std::mutex mutex;
     std::optional<internal::dmabuf::CpuMapping> mapping;
+    MapMode mode = MapMode::Read;
+    std::size_t active_views = 0;
   };
   auto dma_state = std::make_shared<DmaBufMapState>();
   auto dma_holder = storage->holder;
   storage->map_fn = [dma_holder, dma_state, memory_index](MapMode mode) {
     std::lock_guard<std::mutex> lock(dma_state->mutex);
     if (dma_state->mapping.has_value()) {
-      return Mapping{};
-    }
-    auto* retained_sample = static_cast<GstSample*>(dma_holder.get());
-    GstBuffer* retained_buffer = retained_sample && GST_IS_SAMPLE(retained_sample)
-                                     ? gst_sample_get_buffer(retained_sample)
-                                     : nullptr;
-    if (!retained_buffer || memory_index >= gst_buffer_n_memory(retained_buffer)) {
-      return Mapping{};
-    }
+      if (mode != MapMode::Read || dma_state->mode != MapMode::Read) {
+        return Mapping{};
+      }
+    } else {
+      auto* retained_sample = static_cast<GstSample*>(dma_holder.get());
+      GstBuffer* retained_buffer = retained_sample && GST_IS_SAMPLE(retained_sample)
+                                       ? gst_sample_get_buffer(retained_sample)
+                                       : nullptr;
+      if (!retained_buffer || memory_index >= gst_buffer_n_memory(retained_buffer)) {
+        return Mapping{};
+      }
 
-    internal::dmabuf::Error error;
-    auto view = internal::dmabuf::DmaBufView::fromGstMemory(
-        gst_buffer_peek_memory(retained_buffer, memory_index), &error);
-    if (!view) {
-      return Mapping{};
+      internal::dmabuf::Error error;
+      auto view = internal::dmabuf::DmaBufView::fromGstMemory(
+          gst_buffer_peek_memory(retained_buffer, memory_index), &error);
+      if (!view) {
+        return Mapping{};
+      }
+      auto mapped = view->map(dmabuf_cpu_access(mode), &error);
+      if (!mapped) {
+        return Mapping{};
+      }
+      dma_state->mapping.emplace(std::move(*mapped));
+      dma_state->mode = mode;
     }
-    auto mapped = view->map(dmabuf_cpu_access(mode), &error);
-    if (!mapped) {
-      return Mapping{};
-    }
-    dma_state->mapping.emplace(std::move(*mapped));
 
     Mapping result;
     result.data = dma_state->mapping->data();
     result.size_bytes = dma_state->mapping->size();
     result.keepalive = dma_holder;
-    result.unmap = [dma_state]() {
+    result.unmap = [dma_state, released = false]() mutable {
       std::lock_guard<std::mutex> lock(dma_state->mutex);
-      if (dma_state->mapping.has_value()) {
+      if (released) {
+        return;
+      }
+      released = true;
+      if (--dma_state->active_views == 0) {
         (void)dma_state->mapping->finish();
         dma_state->mapping.reset();
       }
     };
+    ++dma_state->active_views;
     return result;
   };
 }
