@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include "builder/Deprecated.h"
 #include "pipeline/Graph.h"
 #include "nodes/groups/RtspCodec.h"
 #include "nodes/sima/SimaEncode.h"
@@ -29,6 +30,7 @@ public:
   /// Encode raw frames at their input resolution, then send the selected codec over RTP/UDP.
   static VideoSenderOptions FromRaw(SimaEncodeOptions encode);
   /// @deprecated Use FromRaw with SimaEncodeType::H264.
+  SIMA_DEPRECATED("Use FromRaw with SimaEncodeType::H264")
   static VideoSenderOptions H264RtpUdpFromRaw(int width, int height, int fps);
   [[deprecated("use Passthrough(RtspCodec::H264)")]] static VideoSenderOptions
   H264RtpUdpFromEncoded();

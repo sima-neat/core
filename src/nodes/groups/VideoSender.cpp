@@ -4,6 +4,7 @@
 #include "nodes/io/UdpOutput.h"
 #include "nodes/sima/internal/SimaEncode.h"
 #include "nodes/common/JpegParse.h"
+#include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Packetize.h"
 #include "nodes/sima/H264Parse.h"
 
@@ -195,7 +196,13 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
   if (opt.rtp.payload_type < 0 || opt.rtp.payload_type > 127) {
     throw std::invalid_argument("VideoSender: RTP payload_type must be within 0..127");
   }
-  if (opt.is_raw_input()) {
+  if (opt.is_raw_input() && opt.width() > 0) {
+    // Keep the fixed-resolution legacy factory's profile/level pass-through.
+    nodes.push_back(internal::VideoSenderRawIngress(opt.width(), opt.height(), opt.fps()));
+    nodes.push_back(nodes::H264EncodeSima(opt.width(), opt.height(), opt.fps(),
+                                          opt.encoder.bitrate_kbps, opt.encoder.profile,
+                                          opt.encoder.level));
+  } else if (opt.is_raw_input()) {
     SimaEncodeOptions encode;
     encode.type = opt.codec_ == RtspCodec::MJPEG  ? SimaEncodeType::MJPEG
                   : opt.codec_ == RtspCodec::H265 ? SimaEncodeType::H265

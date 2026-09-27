@@ -62,7 +62,7 @@ RUN_TEST(
 
         const auto graph = VideoSender(opt);
         require_in_order(graph.describe(),
-                         {"VideoSenderRawIngress[convert_to_nv12]", "SimaEncode", "H264Parse",
+                         {"VideoSenderRawIngress[convert_to_nv12]", "H264EncodeSima", "H264Parse",
                           "H264Packetize", "UdpOutput"},
                          "standalone VideoSender should retain its safe raw-ingress fallback");
 
@@ -85,6 +85,25 @@ RUN_TEST(
         require_contains(backend, "host=10.0.0.5", "VideoSender UDP host mismatch");
         require_contains(backend, "port=9000", "VideoSender UDP port mismatch");
         require(opt.video_port() == 9000, "VideoSender computed video port mismatch");
+      }
+
+      {
+        auto legacy = VideoSenderOptions::H264RtpUdpFromRaw(640, 360, 30);
+        legacy.encoder.profile = "MAIN";
+        legacy.encoder.level = "3.1";
+        const auto backend = VideoSender(legacy).describe_backend();
+        require_contains(backend, "enc-profile=MAIN", "legacy profile must pass through");
+        require_contains(backend, "enc-level=3.1", "legacy level must pass through");
+
+        simaai::neat::SimaEncodeOptions encode;
+        encode.level = "3.1";
+        require_invalid_argument([&] { (void)VideoSenderOptions::FromRaw(encode); },
+                                 "new sender factory must still validate encoder levels");
+        encode.level = "4.0";
+        auto sender = VideoSenderOptions::FromRaw(encode);
+        sender.encoder.level = "3.1";
+        require_invalid_argument([&] { (void)VideoSender(sender); },
+                                 "new sender must validate overrides at graph construction");
       }
 
       {
