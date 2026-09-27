@@ -6,8 +6,8 @@
   "iterations": 1000,
   "metrics_thresholds": {
     "throughput_min": 572.8022537182709,
-    "p50_max": 0.0,
-    "p95_max": 0.0,
+    "p50_max": 43.023818,
+    "p95_max": 43.52220845,
     "startup_max": 20000.0,
     "rss_peak_kb_max": 1400000.0,
     "input_drop_count_max": 0.0,

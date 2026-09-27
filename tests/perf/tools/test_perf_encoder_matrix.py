@@ -120,7 +120,8 @@ class EncoderMatrixTest(unittest.TestCase):
     def test_encoder_references_cannot_omit_identity_or_allow_zero_fps_or_loss(self):
         good = asdict(self.baseline)
         self.assertEqual(schema.parse_scenario_baseline(good), self.baseline)
-        for field, value in (("throughput_min", 0), ("regression_tolerance_percent", 11),
+        for field, value in (("throughput_min", 0), ("p50_max", 0), ("p95_max", 0),
+                             ("regression_tolerance_percent", 11),
                              ("input_drop_count_max", 1), ("output_drop_count_max", 1)):
             bad = asdict(self.baseline)
             bad["metrics_thresholds"][field] = value

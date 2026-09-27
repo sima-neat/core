@@ -404,6 +404,8 @@ def parse_scenario_baseline(
             _raise(context, "encoder reference requires a SHA-256 input fingerprint")
         if thresholds.throughput_min <= 0 or not 0 <= thresholds.regression_tolerance_percent <= 10:
             _raise(context, "encoder reference throughput must be positive with at most 10% tolerance")
+        if thresholds.p50_max <= 0 or thresholds.p95_max <= 0:
+            _raise(context, "encoder reference latency ceilings must be positive")
         if thresholds.input_drop_count_max != 0 or thresholds.output_drop_count_max != 0:
             _raise(context, "encoder reference must require zero drops")
 
