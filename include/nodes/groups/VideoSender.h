@@ -22,7 +22,7 @@ struct VideoSenderRtpOptions {
 struct VideoSenderEncoderOptions {
   int bitrate_kbps = 4000;
   std::string profile = "baseline";
-  std::string level = "4.0";
+  std::string level = "4.0"; ///< FromRaw leaves this empty unless a level is supplied.
 };
 
 class VideoSenderOptions {

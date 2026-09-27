@@ -71,8 +71,9 @@ std::string encoder_fragment(const SimaEncodeOptions& o, int node_index) {
   } else {
     ss << " enc-profile="
        << o.profile.value_or(o.type == SimaEncodeType::H265 ? "main" : "baseline")
-       << " enc-level=" << o.level.value_or("4.0")
        << " enc-bitrate=" << o.bitrate_kbps.value_or(4000);
+    if (o.level)
+      ss << " enc-level=" << *o.level;
     if (o.rate_control)
       ss << " enc-bitrate-mode=" << *o.rate_control;
     if (o.gop_length)

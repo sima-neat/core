@@ -156,3 +156,9 @@ graph.connect(encoded_source, video_sender, video_link)
 ```
 
 The sender branch stays before `SimaDecode`, so it does not re-encode video or copy decoded frames to CPU. With `RealtimeLatestByStream`, the fused sender branch keeps at most one pending encoded access unit and replaces stale data if UDP egress slows. The default edge policy remains lossless and can backpressure the shared encoded source, including its decoder branch. Use the default only when preserving every access unit is more important than keeping live inference fresh.
+
+### Encoder level
+
+Leave `SimaEncodeOptions::level` unset for normal use. Both `SimaEncode` and `VideoSenderOptions::FromRaw` then leave level selection to the backend. The current backend starts at 4.0 and raises it when the stream settings require it; it does not select the lowest possible level. This does not resize frames or change their configured cadence.
+
+An explicit level is optional and is forwarded to the backend, which may raise it if necessary. It is not a strict receiver-compatibility limit. For a sender created with `FromRaw`, an empty `options.encoder.level` retains backend selection. The deprecated fixed-resolution H.264 factory keeps its existing 4.0 default.

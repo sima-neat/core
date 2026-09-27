@@ -213,6 +213,8 @@ RUN_TEST(
                 "encoder must not make tentative input dimensions authoritative");
         require(node.options().type == type, "encoder options accessor lost codec");
         const auto fragment = node.backend_fragment(7);
+        require(fragment.find("enc-level=") == std::string::npos,
+                "unset encoder level must be left to the backend");
         require_contains(fragment, "num-output-buffers=4", "output count override missing");
         require(fragment.find("enc-width=") == std::string::npos &&
                     fragment.find("enc-height=") == std::string::npos,
@@ -237,12 +239,21 @@ RUN_TEST(
                     sender.is_raw_input(),
                 "sender must own encoding options and infer input dimensions");
         const auto sender_fragment = VideoSender(sender).describe_backend();
+        require(sender_fragment.find("enc-level=") == std::string::npos,
+                "unset sender level must be left to the backend");
         const auto sender_adapter = sender_fragment.find("neatencoderinput");
         require(sender_adapter != std::string::npos &&
                     sender_fragment.find("neatencoderinput", sender_adapter + 1) ==
                         std::string::npos,
                 "sender must prepare input exactly once");
         if (!jpeg) {
+          auto explicit_encode = encode;
+          explicit_encode.level = "4.2";
+          require_contains(simaai::neat::SimaEncode(explicit_encode).backend_fragment(0),
+                           "enc-level=4.2", "explicit encoder level missing");
+          require_contains(
+              VideoSender(VideoSenderOptions::FromRaw(explicit_encode)).describe_backend(),
+              "enc-level=4.2", "explicit sender level missing");
           sender.encoder = {.bitrate_kbps = 3000, .profile = "main", .level = "4.1"};
           const auto changed = VideoSender(sender).describe_backend();
           require_contains(changed, "enc-bitrate=3000", "legacy bitrate override lost");

@@ -31,7 +31,7 @@ struct SimaEncodeOptions {
   std::optional<int> bitrate_kbps;         ///< H.264/H.265: positive target, default 4000.
   std::optional<std::string> rate_control; ///< H.264/H.265: vbr (default) or cbr.
   std::optional<std::string> profile;      ///< H.264: baseline/main/high; H.265: main.
-  std::optional<std::string> level;        ///< H.264/H.265: default 4.0, adjusted by hardware.
+  std::optional<std::string> level;        ///< H.264/H.265: unset uses backend selection.
   std::optional<int> gop_length;           ///< H.264/H.265: 0..1000; 0 uses FPS, 1 is all-intra.
   std::optional<int> idr_interval;         ///< H.264/H.265: nonnegative; 0 uses three times FPS.
   std::optional<int> quality;              ///< MJPEG: 1..100, default 80.

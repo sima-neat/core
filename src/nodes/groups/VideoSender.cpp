@@ -147,7 +147,7 @@ VideoSenderOptions VideoSenderOptions::FromRaw(SimaEncodeOptions encode) {
   if (codec != RtspCodec::MJPEG) {
     opt.encoder.bitrate_kbps = encode.bitrate_kbps.value_or(4000);
     opt.encoder.profile = encode.profile.value_or(codec == RtspCodec::H265 ? "main" : "baseline");
-    opt.encoder.level = encode.level.value_or("4.0");
+    opt.encoder.level = encode.level.value_or("");
   }
   opt.rate_control_ = std::move(encode.rate_control);
   opt.gop_length_ = encode.gop_length;
@@ -230,7 +230,8 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
         encode.profile = "main";
       else if (*encode.profile == "HIGH")
         encode.profile = "high";
-      encode.level = opt.encoder.level;
+      if (!opt.encoder.level.empty())
+        encode.level = opt.encoder.level;
     }
     nodes.push_back(internal::VideoSenderRawIngress(opt.width(), opt.height(), opt.fps()));
     nodes.push_back(simaai::neat::internal::SimaEncodeAccess::prepared_input(std::move(encode)));
