@@ -1079,6 +1079,37 @@ bool build_cvu_tiled_desc(const ValueSpec& value, const TensorShape& frame_shape
   return descriptor->storage.nbytes != 0U;
 }
 
+void use_casttess_hwc_execution_view(sima_ev_tensor_desc& input, sima_ev_tensor_desc& output) {
+  if (input.layout_kind != SIMA_EV_LAYOUT_STRIDED || output.layout_kind != SIMA_EV_LAYOUT_TILED ||
+      input.shape.rank != 4U || output.shape.rank != 4U || input.shape.sizes[0] != 1 ||
+      output.shape.sizes[0] != 1 || output.layout.tiled.tile_sizes[0] != 1) {
+    return;
+  }
+  constexpr sima_ev_axis_semantic axes[] = {SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
+                                            SIMA_EV_AXIS_C};
+  for (std::uint32_t axis = 0U; axis < 4U; ++axis) {
+    if (input.shape.axis_semantics[axis] != axes[axis] ||
+        output.shape.axis_semantics[axis] != axes[axis] ||
+        input.shape.sizes[axis] != output.shape.sizes[axis]) {
+      return;
+    }
+  }
+  // A singleton batch axis contributes no address offset; retain the exact H/W/C storage.
+  for (std::uint32_t axis = 0U; axis < 3U; ++axis) {
+    input.shape.sizes[axis] = input.shape.sizes[axis + 1U];
+    output.shape.sizes[axis] = output.shape.sizes[axis + 1U];
+    input.shape.axis_semantics[axis] = input.shape.axis_semantics[axis + 1U];
+    output.shape.axis_semantics[axis] = output.shape.axis_semantics[axis + 1U];
+    input.layout.strided.strides_bytes[axis] = input.layout.strided.strides_bytes[axis + 1U];
+    output.layout.tiled.tile_sizes[axis] = output.layout.tiled.tile_sizes[axis + 1U];
+  }
+  input.shape.rank = output.shape.rank = 3U;
+  input.shape.sizes[3] = output.shape.sizes[3] = 0;
+  input.shape.axis_semantics[3] = output.shape.axis_semantics[3] = SIMA_EV_AXIS_UNKNOWN;
+  input.layout.strided.strides_bytes[3] = 0;
+  output.layout.tiled.tile_sizes[3] = 0;
+}
+
 std::optional<int> cvu_rounding_mode(const std::string& raw) {
   std::string token = raw;
   std::transform(token.begin(), token.end(), token.begin(),
@@ -1270,6 +1301,9 @@ build_dmabuf_plan_processcvu_command_contract(const ModelExecutionPlan& plan,
           !build_cvu_scalar_quant_execution_view(*output, &output_descriptor, error)) {
         return std::nullopt;
       }
+    }
+    if (cohort->capability.graph_id == 224U && cohort->batch_size == 1U) {
+      use_casttess_hwc_execution_view(input_descriptor, output_descriptor);
     }
     authored.input_tensors.push_back(input_descriptor);
     authored.output_tensors.push_back(output_descriptor);
