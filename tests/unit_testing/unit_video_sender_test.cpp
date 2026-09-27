@@ -61,7 +61,7 @@ RUN_TEST(
 
         const auto graph = VideoSender(opt);
         require_in_order(graph.describe(),
-                         {"VideoSenderRawIngress[convert_to_nv12]", "H264EncodeSima", "H264Parse",
+                         {"VideoSenderRawIngress[convert_to_nv12]", "SimaEncode", "H264Parse",
                           "H264Packetize", "UdpOutput"},
                          "standalone VideoSender should retain its safe raw-ingress fallback");
 
@@ -153,6 +153,7 @@ RUN_TEST(
                                "VideoSender should reject invalid raw height");
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(1280, 720, 0); },
                                "VideoSender should reject invalid raw fps");
-      require_invalid_argument([] { (void)VideoSenderOptions::Passthrough(RtspCodec::MJPEG); },
-                               "VideoSender should reject MJPEG passthrough");
+      require_invalid_argument(
+          [] { (void)VideoSenderOptions::Passthrough(static_cast<RtspCodec>(-1)); },
+          "VideoSender should reject an unsupported codec");
     }));
