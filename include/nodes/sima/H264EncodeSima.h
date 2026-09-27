@@ -12,7 +12,7 @@
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
 #include "nodes/sima/SimaEncode.h"
-#include "pipeline/Deprecated.h"
+#include "builder/Deprecated.h"
 
 #include <memory>
 #include <string>
@@ -60,11 +60,11 @@ public:
 
   /// Configured frame width.
   int width() const {
-    return options_.width;
+    return width_;
   }
   /// Configured frame height.
   int height() const {
-    return options_.height;
+    return height_;
   }
   /// Configured target framerate.
   int fps() const {
@@ -84,6 +84,8 @@ public:
   }
 
 private:
+  int width_;
+  int height_;
   SimaEncodeOptions options_;
 };
 

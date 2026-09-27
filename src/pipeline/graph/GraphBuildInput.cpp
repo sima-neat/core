@@ -2613,11 +2613,11 @@ void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Nod
   // boundary so this legacy materialization path cannot specialize from a
   // transient first sample; explicit source/caps Nodes still propagate facts.
   const bool has_specializer = std::any_of(nodes->begin(), nodes->end(), [](const auto& node) {
-    return node && dynamic_cast<const internal::InputSpecSpecializer*>(node.get());
+    return node && pipeline_internal::node_has_input_spec_specialization(*node);
   });
   if (has_specializer) {
     const auto context = pipeline_internal::discover_input_spec_specialization_context();
-    auto specialized = internal::specialize_nodes_for_input(*nodes, {}, context);
+    auto specialized = pipeline_internal::specialize_pipeline_nodes_for_input(*nodes, {}, context);
     *nodes = std::move(specialized.nodes);
   }
 }

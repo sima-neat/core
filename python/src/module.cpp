@@ -3842,8 +3842,6 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::SimaEncodeOptions>(m, "SimaEncodeOptions")
       .def(nb::init<>())
       .def_rw("type", &simaai::neat::SimaEncodeOptions::type)
-      .def_rw("width", &simaai::neat::SimaEncodeOptions::width)
-      .def_rw("height", &simaai::neat::SimaEncodeOptions::height)
       .def_rw("fps", &simaai::neat::SimaEncodeOptions::fps)
       .def_rw("bitrate_kbps", &simaai::neat::SimaEncodeOptions::bitrate_kbps)
       .def_rw("rate_control", &simaai::neat::SimaEncodeOptions::rate_control)

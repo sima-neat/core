@@ -17,6 +17,7 @@
 #include "nodes/io/Input.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/SimaEncode.h"
 
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/ErrorCodes.h"
@@ -700,6 +701,11 @@ void source_sima_meta_probe_destroy(gpointer data) {
 }
 
 bool source_sima_meta_probe_required_for_node(const Node& node) {
+  // This preference selects encoder input allocation. Encoded output already
+  // owns its frame correlation and must not receive a new source frame ID.
+  if (dynamic_cast<const SimaEncode*>(&node)) {
+    return false;
+  }
   if (node.memory_contract() == MemoryContract::PreferDeviceZeroCopy) {
     return true;
   }
@@ -3272,6 +3278,10 @@ BuildResult build_fused_realtime_source_pipeline(
 }
 
 namespace session_test {
+
+bool source_sima_meta_probe_required_for_test(const Node& node) {
+  return source_sima_meta_probe_required_for_node(node);
+}
 
 Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
                                                  const std::string& stream_id, bool copy_output) {

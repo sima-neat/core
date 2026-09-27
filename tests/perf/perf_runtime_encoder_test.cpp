@@ -207,8 +207,6 @@ neat::Graph graph_for(const Config& c, const neat::Sample& seed, int port) {
   graph.add(neat::nodes::Input(input));
   neat::SimaEncodeOptions encode;
   encode.type = encode_type(c);
-  encode.width = 1280;
-  encode.height = 720;
   encode.fps = ep::kInputFps;
   // Native output default is checked below. Legacy GOP/IDR zero sentinels
   // resolve to FPS and three times FPS, matching the explicit 30/90 preset.
@@ -287,7 +285,7 @@ json execute(const Config& c) {
   Element encoder(c.passthrough() ? nullptr : ep::find_factory(run, "neatencoder"),
                   gst_object_unref);
   Element pay(c.sender() ? ep::find_factory(run, payloader(c)) : nullptr, gst_object_unref);
-  const auto settings = encoder ? encoder_settings(encoder.get(), c) : json(nullptr);
+  json settings = nullptr;
   ep::PadCounter completed(c.passthrough() ? pay.get() : encoder.get(),
                            c.passthrough() ? "sink" : "src", state, false);
   std::unique_ptr<ep::PadCounter> packets;
@@ -329,6 +327,11 @@ json execute(const Config& c) {
           std::this_thread::sleep_for(std::chrono::milliseconds(1));
         require(state.output == ep::kWarmup && state.accepted == ep::kWarmup,
                 "same-session warmup failed");
+        if (encoder) {
+          settings = encoder_settings(encoder.get(), c);
+          require(settings.at("enc-width") == "1280" && settings.at("enc-height") == "720",
+                  "encoder did not negotiate the input resolution");
+        }
         state.start = ep::now_ns();
         std::uint64_t measured_attempts = 0;
         while (!stop && !state.failed) {

@@ -1,12 +1,12 @@
 #include "nodes/groups/UdpOutputGroupG.h"
 
 #include "nodes/io/UdpOutput.h"
-#include "nodes/sima/SimaEncode.h"
+#include "nodes/groups/internal/VideoSenderRawIngress.h"
+#include "nodes/sima/internal/SimaEncode.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
 #include "nodes/common/Caps.h"
-#include "nodes/common/Queue.h"
 
 #include <memory>
 #include <vector>
@@ -27,10 +27,9 @@ simaai::neat::Graph UdpOutputGroupG(const UdpOutputGroupGOptions& opt) {
     // Preserve this group's negotiated-geometry compatibility path.
     nodes.push_back(nodes::H264EncodeSima(opt.width, opt.height, opt.fps, opt.bitrate_kbps));
   } else {
-    nodes.push_back(nodes::SimaEncode({.width = opt.width,
-                                       .height = opt.height,
-                                       .fps = opt.fps,
-                                       .bitrate_kbps = opt.bitrate_kbps}));
+    nodes.push_back(internal::VideoSenderRawIngress(opt.width, opt.height, opt.fps));
+    nodes.push_back(simaai::neat::internal::SimaEncodeAccess::prepared_input(
+        {.fps = opt.fps, .bitrate_kbps = opt.bitrate_kbps}));
   }
   nodes.push_back(nodes::H264Parse());
   nodes.push_back(nodes::H264Packetize(opt.payload_type, opt.config_interval));

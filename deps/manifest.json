@@ -1,11 +1,11 @@
 {
   "internals": {
-    "branch": "refactor/encoder",
-    "spec": "d920ceabbf43"
+    "branch": "release-3.0.0-prep",
+    "spec": "latest"
   },
   "llima": {
     "branch": "release-3.0.0-prep",
-    "spec": "5987636c23d1"
+    "spec": "latest"
   },
   "sdk": {
     "channel": "develop"

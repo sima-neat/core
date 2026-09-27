@@ -52,7 +52,8 @@ def make_h264(path: Path, width: int, height: int, fps: int, duration_s: int) ->
             "-tune",
             "zerolatency",
             "-x264-params",
-            f"keyint={fps}:min-keyint={fps}:scenecut=0",
+            # Fix sliced-thread count so CPU availability cannot change the fixture.
+            f"keyint={fps}:min-keyint={fps}:scenecut=0:threads=8",
             "-bsf:v",
             "filter_units=remove_types=6",
             "-f",
@@ -146,7 +147,10 @@ def generate(output_dir: Path, force: bool, width: int, height: int, fps: int) -
     output_dir.mkdir(parents=True, exist_ok=True)
     h264 = output_dir / f"h264_{width}x{height}_{fps}fps_no_sei.h264"
     h265 = output_dir / f"h265_{width}x{height}_{fps}fps_no_sei.h265"
-    generate_h264 = needs_generation(h264, force)
+    h264_recipe = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    h264_stamp = h264.with_suffix(".recipe.sha256")
+    generate_h264 = (needs_generation(h264, force) or not h264_stamp.exists()
+                     or h264_stamp.read_text() != h264_recipe)
     generate_h265 = needs_generation(h265, force)
 
     if generate_h264 or generate_h265:
@@ -171,6 +175,8 @@ def generate(output_dir: Path, force: bool, width: int, height: int, fps: int) -
             run(["ffmpeg", "-y", "-v", "error", "-i", str(source),
                  "-frames:v", "12", "-pix_fmt", "nv12", "-f", "rawvideo", str(reference)])
     make_accuracy_fixtures(output_dir, force)
+    if generate_h264:
+        h264_stamp.write_text(h264_recipe)
 
 
 def make_accuracy_fixtures(output_dir: Path, force: bool) -> None:

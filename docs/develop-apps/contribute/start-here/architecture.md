@@ -872,10 +872,13 @@ from the first runtime sample. A `Derived` or `Authoritative` contract may
 select an optimized representation. `Hint`, unknown format/memory, or a missing
 backend capability selects the conservative representation.
 
-For example, raw `VideoSender` distinguishes NV12 pixel format from encoder
+For example, `SimaEncode` and raw `VideoSender` distinguish NV12 pixel format from encoder
 storage compatibility. SystemMemory is not directly importable just because its
 pixels are already NV12. The encoder-input boundary preserves a compatible
 DMA-BUF or converts/uploads into the final DMA surface before encoding.
+For explicit Auto NV12 input, a compatible encoder selects device allocation.
+Standalone `SimaEncode` specializes its embedded adapter through the private
+pipeline layer; its installed public header has no compiler hooks.
 
 Raw-video geometry and physical storage layout remain separate contracts.
 `OutputSpec` and caps describe visible width and height; Core must not round
@@ -1389,6 +1392,12 @@ Keep docs and code aligned:
    * internal refactors should not break user code unless intentionally versioned
 
 ### Hardware encoder configuration
+
+`SimaEncode` and raw `VideoSender` derive resolution from negotiated input caps.
+Resolution stays fixed within a run; changing it requires a new run.
+Their encoder options contain no width or height, and the input adapter preserves
+visible geometry without resizing. Unknown input dimensions remain unknown in the
+build-time output contract until the upstream input provides them.
 
 `SimaEncode` prepares raw input once and maps codec-specific options to
 `neatencoder`. Internals owns asynchronous submission, output-buffer ownership,

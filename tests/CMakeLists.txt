@@ -1024,6 +1024,7 @@ set(PERF_PYTHON_TESTS
   test_perf_classifier
   test_perf_comparator
   test_perf_matrix_failfast
+  test_perf_encoder_matrix
   test_graph_run_schema
   test_graph_run_visualizer
 )

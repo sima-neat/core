@@ -129,11 +129,12 @@ RUN_TEST(
         const std::string snapshot = graph_snapshot(group);
         require_contains(snapshot, "0) CustomNode",
                          "UdpOutputGroupG node[0] should be render custom node");
-        require_contains(snapshot, "1) SimaEncode", "UdpOutputGroupG node[1] should be SimaEncode");
-        require_contains(snapshot, "2) H264Parse", "UdpOutputGroupG node[2] should be H264Parse");
-        require_contains(snapshot, "3) H264Packetize",
-                         "UdpOutputGroupG node[3] should be H264Packetize");
-        require_contains(snapshot, "4) UdpOutput", "UdpOutputGroupG node[4] should be UdpOutput");
+        require_contains(snapshot, "1) VideoSenderRawIngress", "raw ingress missing");
+        require_contains(snapshot, "width=1280,height=720", "legacy geometry constraint lost");
+        require_contains(snapshot, "2) SimaEncode", "UdpOutputGroupG encoder missing");
+        require_contains(snapshot, "3) H264Parse", "UdpOutputGroupG parser missing");
+        require_contains(snapshot, "4) H264Packetize", "UdpOutputGroupG payloader missing");
+        require_contains(snapshot, "5) UdpOutput", "UdpOutputGroupG output missing");
         require_contains(snapshot, "simaai_sampledemux",
                          "UdpOutputGroupG render fragment missing sample demux");
         require_contains(snapshot, R"(config="/tmp/render_config.json")",

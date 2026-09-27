@@ -1445,8 +1445,6 @@ simaai::neat::SimaEncodeOptions encoder_options(const EncodedCodec& codec) {
   options.type = codec.format == FormatTag::ENCODED ? SimaEncodeType::MJPEG
                  : codec.format == FormatTag::H265  ? SimaEncodeType::H265
                                                     : SimaEncodeType::H264;
-  options.width = g_geometry.width;
-  options.height = g_geometry.height;
   options.fps = kFps;
   options.num_buffers = 4;
   if (codec.format != FormatTag::ENCODED) {
@@ -1537,8 +1535,10 @@ std::vector<Sample> encode_contract(const EncodedCodec& codec, const std::vector
   InputOptions input;
   input.payload_type = PayloadType::Image;
   input.format = FormatTag::NV12;
-  input.width = options.width;
-  input.height = options.height;
+  if (dma || cbr) {
+    input.width = frames.front().width;
+    input.height = frames.front().height;
+  }
   input.fps_n = kFps;
   input.fps_d = 1;
   input.is_live = true;
@@ -1606,6 +1606,13 @@ std::vector<Sample> encode_contract(const EncodedCodec& codec, const std::vector
       require(!sample.owned && tensor.storage && tensor.storage->kind == StorageKind::GstSample,
               "retention test requires an actual native encoded-output loan");
       auto* native_sample = static_cast<GstSample*>(tensor.storage->holder.get());
+      auto* caps = gst_sample_get_caps(native_sample);
+      const auto* structure = caps ? gst_caps_get_structure(caps, 0) : nullptr;
+      int width = 0, height = 0;
+      require(structure && gst_structure_get_int(structure, "width", &width) &&
+                  gst_structure_get_int(structure, "height", &height) &&
+                  width == frames.front().width && height == frames.front().height,
+              "encoded output caps do not match input resolution");
       auto* native_buffer = gst_sample_get_buffer(native_sample);
       // Mapping multiple memories can replace them with a copy, hiding lifetime bugs.
       std::vector<std::uint8_t> bytes(gst_buffer_get_size(native_buffer));
