@@ -11,7 +11,7 @@
 
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
-#include "pipeline/Deprecated.h"
+#include "builder/Deprecated.h"
 
 #include <memory>
 #include <string>
