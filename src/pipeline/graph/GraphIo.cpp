@@ -543,9 +543,12 @@ parse_video_sender_raw_ingress_json(const JsonValue::JsonObject& node, const std
       .fps = int_field(*value->obj, "fps", -1),
       .fallback_element_names = {},
   };
-  if (config.width <= 0 || config.height <= 0 || config.fps <= 0) {
+  const bool valid_geometry =
+      (config.width == 0 && config.height == 0) || (config.width > 0 && config.height > 0);
+  if (!valid_geometry || config.fps <= 0) {
     throw_io_error(error_codes::kIoParse, "Graph::load", path,
-                   "video_sender_raw_ingress dimensions/fps must be positive (node_index=" +
+                   "video_sender_raw_ingress requires paired zero or positive dimensions and "
+                   "positive fps (node_index=" +
                        std::to_string(node_index) + ")");
   }
 

@@ -28,10 +28,11 @@ jobs:
 
       - name: Run Python tests
         run: |
-          # Decoder and LightGlue checks require installed extras and Modalix.
+          # Codec and LightGlue checks require installed extras and Modalix.
           pytest -q python/tests \
             --ignore=python/tests/test_lightglue_detessdequant_model.py \
-            --ignore=python/tests/test_decoder_runtime.py
+            --ignore=python/tests/test_decoder_runtime.py \
+            --ignore=python/tests/test_encoder_runtime.py
 
       - name: Build wheel and verify import
         run: |

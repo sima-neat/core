@@ -67,6 +67,8 @@ render_fused_realtime_pipeline_for_test(const runtime::FusedRealtimeIngress& ing
                                         const std::vector<std::shared_ptr<Node>>& consumer_nodes,
                                         const GraphOptions& options);
 GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info);
+bool source_sima_meta_probe_required_for_test(const Node& node);
+
 Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
                                                  const std::string& stream_id,
                                                  bool copy_output = false);

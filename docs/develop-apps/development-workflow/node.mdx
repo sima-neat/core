@@ -88,6 +88,7 @@ Use this map before you open the full API reference.
 | Read an RTSP stream | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, or `pyneat.groups.rtsp_decoded_input(...)` |
 | Read HTTP multipart MJPEG | `nodes::groups::HttpMjpegDecodedInput(...)`, or `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` for manual framing | `pyneat.groups.http_mjpeg_decoded_input(...)`, or `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
+| Encode raw video | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | Decode encoded video | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
 | Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Build a reusable image input path | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
@@ -288,7 +289,7 @@ Use source-owned groups when the graph should read media by itself. Build those 
 | Live RTSP encoded H.264, H.265, or MJPEG stream | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, `codec` when not H.264 | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, RTP payload type |
 | Live RTSP decoded H.264, H.265, or MJPEG stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, `codec` when not H.264 | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, decoded width/height, `out_format`, `output_caps` |
 | HTTP multipart MJPEG stream | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, decoded width/height/FPS, `output_caps` |
-| Raw or encoded H.264/H.265 video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`, or `Passthrough(RtspCodec::H264 / RtspCodec::H265)` | `host`, `channel`, `video_port_base`, encoder/RTP options |
+| Raw or encoded H.264/H.265/MJPEG video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::FromRaw(encode_options)` or `Passthrough(codec)` | `host`, `channel`, `video_port_base`, encoder/RTP options |
 | RTP/H.264 over UDP output | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | destination host/port when the defaults are not right | `h264_caps`, `payload_type`, `config_interval` |
 
 A source-owned graph is a different runtime shape than an app-pushed graph:
@@ -683,3 +684,104 @@ Use `Graph::add_output_tensor(...)` only when image or video output must be conv
 - [Build Your First Graph](/tutorials/build-inference-pipeline)
 - [Plug a Model Into Your Pipeline](/tutorials/plug-model-into-pipeline)
 - [Build a Custom Data Graph](/tutorials/build-a-custom-data-graph)
+
+`UdpOutputGroupG` is deprecated and retained for source compatibility. Build an
+explicit graph from supported nodes, using `VideoSender` for video and
+`MetadataSender` for metadata as needed. The legacy group requires render and
+sample-demux plugins that are not included in every runtime package.
+
+## Hardware encoding
+
+`SimaEncodeOptions.type` selects H.264, H.265 or MJPEG. The encoder accepts native
+8-bit NV12. Its input adapter retains compatible SiMaAI NV12 buffers and prepares
+supported CPU raw layouts once. Output is encoded frames; add packetization only
+when sending RTP.
+
+```cpp
+simaai::neat::SimaEncodeOptions encode;
+encode.type = simaai::neat::SimaEncodeType::H265;
+encode.fps = 30;
+encode.bitrate_kbps = 4000;
+encode.gop_length = 30;
+encode.idr_interval = 90;
+graph.add(simaai::neat::nodes::SimaEncode(encode));
+```
+
+```python
+encode = pyneat.SimaEncodeOptions()
+encode.type = pyneat.SimaEncodeType.MJPEG
+encode.fps = 30
+encode.quality = 80
+graph.add(pyneat.nodes.sima_encode(encode))
+```
+
+Resolution is taken from the input frames when encoding starts. The encoder does
+not resize them. Start a new run to encode a different resolution.
+Input dimensions must be positive and even, up to 3840x2160.
+`nodes::SimaEncode()` and `pyneat.nodes.sima_encode()` use the default H.264 settings.
+Do not repeat input dimensions in encoder options. `fps` configures stream cadence and rate control; it does not pace input.
+H.264/H.265 support `bitrate_kbps` (default 4000), `rate_control` (`vbr` or `cbr`),
+`profile`, `level` (default `4.0`), `gop_length` and separate `idr_interval`.
+H.264 defaults to `baseline`; H.265 supports `main`. The runtime can increase a
+requested level when the stream requires it and reports the effective setting.
+GOP zero or unset uses FPS; IDR zero or unset uses three times FPS. GOP one is
+all-intra. B-frame encoding is not exposed.
+
+Codec-specific options start unset. MJPEG accepts `quality` from 1 to 100
+(default 80), and rejects explicitly supplied video-only settings. Conversely,
+H.264/H.265 reject `quality`. `num_buffers` selects 1 to 20 encoded-output buffers;
+`-1` preserves the native default of four. It does not size producer input storage.
+Native 4:2:2 and high-bit-depth encoding are not supported by this API.
+
+`H264EncodeSima` and `pyneat.nodes.h264_encode_sima` are deprecated compatibility
+entry points. Their arguments, getters and native input behavior remain supported.
+Like `H264Decode`, C++ calls warn when `SIMA_ENABLE_LEGACY_DEPRECATION` is defined
+before including the headers. Python calls emit `DeprecationWarning`.
+`H264EncodeSW` is unchanged. This release changes the C++ ABI to version 5;
+rebuild C++ consumers and use the matching rebuilt Python extension.
+
+## Selecting a VideoSender codec
+
+For raw input, pass the same encoder options to `VideoSenderOptions::FromRaw`.
+The codec selects both encoding and RTP packetization:
+
+```cpp
+auto options = simaai::neat::nodes::groups::VideoSenderOptions::FromRaw(encode);
+options.host = "127.0.0.1";
+options.video_port_base = 9000;
+auto sender = simaai::neat::nodes::groups::VideoSender(options);
+```
+
+```python
+options = pyneat.VideoSenderOptions.from_raw(encode)
+options.host = "127.0.0.1"
+sender = pyneat.groups.video_sender(options)
+```
+
+For encoded frames, use `VideoSenderOptions::Passthrough(RtspCodec::H265)` or
+`pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265)`. This path parses
+and packetizes the selected codec without encoding. Both factories also support
+H.264 and MJPEG. The factory records the input mode; graph construction selects
+the path once. `is_raw_input()` and `is_encoded_input()` expose that choice.
+
+RTP payload defaults are H.264 96, H.265 98, and MJPEG 26; `rtp.payload_type`
+can override them within 0..127. `rtp.config_interval` affects H.264/H.265 only.
+The UDP port is `video_port_base + channel`. `sync=true` waits for packet
+timestamps against the pipeline clock; `async=true` allows the sink to wait
+for its first preroll buffer during startup. Both default to false. Python uses
+`async_`, and retains the `async` alias. These controls do not select encoder
+threads or pace producer submission.
+
+The existing H.264 raw/encoded factories remain compatibility entry points.
+Use `FromRaw` for new raw senders. Sender options own a copy of the configuration;
+changing the original `encode` object has no effect. Later changes to the legacy
+`options.encoder` bitrate/profile/level fields remain authoritative for raw
+H.264/H.265. Python may also replace that whole object. MJPEG rejects nondefault
+video-only overrides. Encoded passthrough ignores encoder settings.
+
+RTP/JPEG requires a compatible receiver, baseline JPEG with standard Huffman tables,
+and dimensions divisible by eight,
+from 8 to 2040 in each direction. Raw sending and encoded passthrough reject
+unsupported dimensions during caps negotiation before RTP packetization. Standalone
+`SimaEncode` retains its native geometry range. This does not add MJPEG viewing
+to Insight's RTP/WebRTC viewer.

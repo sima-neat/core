@@ -62,4 +62,5 @@
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/SimaRender.h"

@@ -57,3 +57,5 @@ DOT_IMAGE_FORMAT       = svg
 INTERACTIVE_SVG        = YES
 # CLASS_DIAGRAMS removed — obsolete in Doxygen 1.9+; class graphs are now controlled
 # by HAVE_DOT and the per-graph toggles (CLASS_GRAPH, COLLABORATION_GRAPH, etc.).
+
+DOT_GRAPH_MAX_NODES = 64
