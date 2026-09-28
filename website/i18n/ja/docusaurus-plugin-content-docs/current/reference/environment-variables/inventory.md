@@ -234,7 +234,7 @@ sidebar_position: 2
 
 ## シェル/CI のデフォルト設定とパススルー設定
 
-件数：67
+件数：63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`

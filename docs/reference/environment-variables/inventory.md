@@ -234,7 +234,7 @@ Count: 59
 
 ## Shell / CI Defaults and Pass-through
 
-Count: 67
+Count: 63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`

@@ -234,7 +234,7 @@ sidebar_position: 2
 
 ## 셸/CI 기본 설정 및 전달 설정
 
-개수: 67
+개수: 63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`

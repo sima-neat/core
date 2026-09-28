@@ -234,7 +234,7 @@ sidebar_position: 2
 
 ## Shell/CI 預設值與參數傳遞
 
-數量：67
+數量：63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`
