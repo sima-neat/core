@@ -16,6 +16,9 @@ from test_perf_matrix_failfast import component_baseline
 
 class EncoderMatrixTest(unittest.TestCase):
     def setUp(self):
+        env = patch.dict(runner.os.environ, {"SIMA_PERF_ENCODER_QUALIFICATION": "0"})
+        env.start()
+        self.addCleanup(env.stop)
         self.spec = next(s for s in runner.ENCODER_SCENARIOS if s.scenario_id ==
                          "runtime_encoder_raw_sender_h264_dma")
         self.profile = schema.PerfProfile("profile", "board", "sdk", "cc", "gst", "bundle")
@@ -34,19 +37,21 @@ class EncoderMatrixTest(unittest.TestCase):
         self.calls = []
 
     def payload(self, fps, paced=False):
-        iterations = math.ceil(fps * 60) if paced else round(fps * 10)
+        minimum_frames, minimum_seconds, paced_seconds = runner.encoder_limits()
+        iterations = max(minimum_frames, math.ceil(fps * (paced_seconds if paced else minimum_seconds)))
+        duration = iterations / fps
         return {
             "scenario_id": self.spec.scenario_id, "run_mode": "paced" if paced else "unpaced",
-            "throughput": iterations / (60 if paced else 10), "p50": fps / 10,
+            "throughput": iterations / duration, "p50": fps / 10,
             "p95": 20, "startup": 100, "rss_peak_kb": 10000,
             "input_drop_count": 0, "output_drop_count": 0, "failure": "",
-            "iterations": iterations, "measured_seconds": 60 if paced else 10,
+            "iterations": iterations, "measured_seconds": duration,
             "workload": self.workload, "native_encoder_settings": self.settings,
             "counts": {key: iterations + 200 for key in (
                 "attempted", "accepted", "completed", "output", "sent_frames", "sent_packets", "received_packets")},
-            "completion": {"fps": fps, "p50_ms": 1, "p95_ms": 2, "seconds": 60 if paced else 10},
+            "completion": {"fps": fps, "p50_ms": 1, "p95_ms": 2, "seconds": duration},
             "pacing": {"target_fps": fps, "target_frames": iterations, "shortfall_frames": 0,
-                       "producer_seconds": 60},
+                       "producer_seconds": duration},
         }
 
     def run_case(self, alter=None):
@@ -70,12 +75,13 @@ class EncoderMatrixTest(unittest.TestCase):
     def test_median_run_metrics_and_separate_paced_json_are_retained(self):
         result = self.run_case()
         self.assertEqual(result.status, schema.ResultStatus.PASS)
-        self.assertEqual(result.metrics["throughput"], 110)
+        self.assertAlmostEqual(result.metrics["throughput"], 110)
         self.assertEqual(result.metrics["p50"], 11)
         self.assertEqual(result.run_meta["median_run"], 3)
         self.assertEqual(len(result.run_meta["runs"]), 4)
         self.assertIn("completion", result.run_meta["runs"][3]["payload"])
-        self.assertEqual(self.calls[-1][0][-2:], ["--median-fps", "110.0"])
+        self.assertEqual(self.calls[-1][0][-2], "--median-fps")
+        self.assertAlmostEqual(float(self.calls[-1][0][-1]), 110)
         self.assertEqual(self.calls[-1][1]["timeout_sec"], 300)
         self.assertNotIn("SIMA_PERF_ITERS", self.calls[0][1]["env"])
 

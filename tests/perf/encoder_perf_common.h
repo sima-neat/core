@@ -11,9 +11,12 @@
 
 namespace sima_encoder_perf {
 using sima_perf::Clock;
-constexpr std::uint64_t kWarmup = 200, kMinimumFrames = 1000, kMaximumFrames = 1000000;
+constexpr std::uint64_t kWarmup = 200, kMaximumFrames = 1000000;
+inline const bool kQualification = sima_perf::env_bool("SIMA_PERF_ENCODER_QUALIFICATION");
+inline const std::uint64_t kMinimumFrames = kQualification ? 1000 : 500;
 constexpr int kInputFps = 30, kBuffers = 4, kCaptureFrames = 64;
-constexpr double kMinimumSeconds = 10, kPacedSeconds = 60;
+inline const double kMinimumSeconds = kQualification ? 10 : 2;
+inline const double kPacedSeconds = kQualification ? 60 : 2;
 inline GstClockTime pts_for(std::uint64_t id) {
   return gst_util_uint64_scale(id, GST_SECOND, kInputFps);
 }
