@@ -186,4 +186,5 @@ For model pipelines, configure preprocessing through `Model::Options::preprocess
 | `misconfig.media_caps` / `not-negotiated` | The camera does not support the requested format, resolution, or framerate. |
 | Strict zero-copy error | `allow_cpu_fallback` is false and the camera source does not expose SiMaAI zero-copy properties. |
 | Pull timeout | The camera did not deliver frames, the graph is backpressured, or the camera stack stopped streaming. |
+| `runtime.element_failed` / `neatcamera.frame_size_mismatch` | The camera delivered frames at a different size than requested, usually because the sensor has no mode for that size. Request a size that both the sensor and the ISP support. |
 | Green, purple, or heavily tinted frames | The frame format or model preprocess color conversion is wrong, or the tint already exists in the camera ISP/libcamera output. Validate an `NV12` capture outside Neat first. |
