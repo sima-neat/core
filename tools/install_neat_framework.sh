@@ -996,26 +996,11 @@ deb_package_is_installed() {
   dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii '
 }
 
-simaai_ota_command_path() {
-  command -v simaai-ota 2>/dev/null || true
-}
-
-verify_canonical_palette_and_ota_installation() {
-  local ota_path ota_owner
+verify_canonical_palette_installation() {
   if ! deb_package_is_installed simaai-palette-modalix; then
     echo "simaai-palette-modalix is not installed after the native Modalix transaction." >&2
     return 1
   fi
-  # ota_path="$(simaai_ota_command_path)"
-  # if [[ "${ota_path}" != "/usr/bin/simaai-ota" ]]; then
-  #   echo "Canonical simaai-ota is missing after the native Modalix transaction: ${ota_path:-<missing>}." >&2
-  #   return 1
-  # fi
-  # ota_owner="$(dpkg-query -S /usr/bin/simaai-ota 2>/dev/null || true)"
-  # if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
-  #   echo "/usr/bin/simaai-ota is not owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
-  #   return 1
-  # fi
 }
 
 remove_installed_local_deb_packages() {
@@ -1563,7 +1548,7 @@ complete_board_install_after_packages() {
   fi
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
-  verify_canonical_palette_and_ota_installation
+  verify_canonical_palette_installation
   activate_board_runtime_after_install
   restart_board_codec_services
   verify_board_codec_services
