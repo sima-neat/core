@@ -59,8 +59,10 @@ Config arguments(int argc, char** argv) {
   require(c.memory == "cpu" || c.memory == "dma", "unknown input memory");
   require(c.path != "legacy" || c.memory == "dma", "legacy encoder requires --input dma");
   require(!c.passthrough() || c.memory == "cpu", "encoded sender requires --input cpu");
-  require(!c.paced() ||
-              std::ceil(.95 * c.median_fps * ep::kPacedSeconds) + ep::kWarmup < ep::kMaximumFrames,
+  require(!c.paced() || std::max<double>(ep::kMinimumFrames,
+                                         std::ceil(.95 * c.median_fps * ep::kPacedSeconds)) +
+                                ep::kWarmup <
+                            ep::kMaximumFrames,
           "paced run exceeds frame-accounting bound");
   return c;
 }
@@ -294,7 +296,11 @@ json execute(const Config& c) {
   std::atomic<bool> stop{false};
   bool eos = false;
   const double rate = .95 * c.median_fps;
-  const std::uint64_t target = c.paced() ? static_cast<std::uint64_t>(std::ceil(rate * 60)) : 0;
+  const std::uint64_t target =
+      c.paced() ? std::max(ep::kMinimumFrames,
+                           static_cast<std::uint64_t>(std::ceil(rate * ep::kPacedSeconds)))
+                : 0;
+  const double scheduled_seconds = target ? target / rate : 0;
   std::uint64_t late = 0, accepted_late = 0;
   double maximum_lateness = 0;
   const auto pause_until = [&](std::int64_t deadline) {
@@ -316,7 +322,7 @@ json execute(const Config& c) {
           sample.stream_id = "encoder_perf";
           require(run.push(sample), "Core rejected input");
           ++state.accepted;
-          if (target && state.start && ep::seconds(state.start, ep::now_ns()) >= 60)
+          if (target && state.start && ep::seconds(state.start, ep::now_ns()) >= scheduled_seconds)
             ++accepted_late;
         };
         for (unsigned i = 0; i < ep::kWarmup && !stop && !state.failed; ++i)
@@ -342,7 +348,7 @@ json execute(const Config& c) {
                 state.start + static_cast<std::int64_t>(measured_attempts / rate * 1e9);
             pause_until(deadline);
             const auto now = ep::now_ns();
-            if (stop || state.failed || ep::seconds(state.start, now) >= 60)
+            if (stop || state.failed)
               break;
             const double lateness = std::max(0.0, ep::seconds(deadline, now));
             maximum_lateness = std::max(maximum_lateness, lateness * 1000);
@@ -355,7 +361,7 @@ json execute(const Config& c) {
           ++measured_attempts;
         }
         if (target)
-          pause_until(state.start + 60000000000LL);
+          pause_until(state.start + static_cast<std::int64_t>(scheduled_seconds * 1e9));
         run.close_input();
         state.producer_end = ep::now_ns();
         state.producer_done = true;
@@ -423,7 +429,7 @@ json execute(const Config& c) {
   const auto attempts = state.attempted > ep::kWarmup ? state.attempted - ep::kWarmup : 0;
   const auto accepted = state.accepted > ep::kWarmup ? state.accepted - ep::kWarmup : 0;
   const double duration =
-      state.start ? std::max(target ? 60.0 : 0.0, ep::seconds(state.start, state.last_output)) : 0;
+      state.start ? std::max(scheduled_seconds, ep::seconds(state.start, state.last_output)) : 0;
   const double producer_seconds = state.start ? ep::seconds(state.start, state.producer_end) : 0;
   const auto drops = neat::run_internal::stats(run);
   if (!state.failed && (!state.producer_done || state.attempted != state.accepted ||
@@ -432,8 +438,13 @@ json execute(const Config& c) {
                                       state.sent_packets != state.received_packets)) ||
                         drops.inputs_dropped || drops.outputs_dropped))
     state.fail("frame accounting differs");
-  if (!state.failed && (target ? attempts != target : measured < 1000 || duration < 10))
+  if (!state.failed && (target ? attempts != target
+                               : measured < ep::kMinimumFrames || duration < ep::kMinimumSeconds))
     state.fail("measurement/producer target not satisfied");
+  // Allow bounded scheduler/drain jitter, but still reject sustained underfeeding or backlog.
+  const double paced_limit = scheduled_seconds * 1.05 + (target ? std::max(.02, 1 / rate) : 0);
+  if (!state.failed && target && (producer_seconds > paced_limit || duration > paced_limit))
+    state.fail("paced throughput below target");
   std::string scenario = c.path;
   std::replace(scenario.begin(), scenario.end(), '-', '_');
   json result = {{"scenario_id", "runtime_encoder_" + scenario + "_" + c.codec + "_" + c.memory},
@@ -457,7 +468,7 @@ json execute(const Config& c) {
                       {"sent_packets", state.sent_packets.load()},
                       {"received_packets", state.received_packets.load()}};
   const double completion_seconds =
-      state.start ? std::max(target ? 60.0 : 0.0, ep::seconds(state.start, state.last_encoder)) : 0;
+      state.start ? std::max(scheduled_seconds, ep::seconds(state.start, state.last_encoder)) : 0;
   const auto completions = state.completed > ep::kWarmup ? state.completed - ep::kWarmup : 0;
   result["completion"] = {{"fps", completion_seconds > 0 ? completions / completion_seconds : 0},
                           {"p50_ms", sima_perf::percentile(state.encoder_latency, 50)},
@@ -465,6 +476,7 @@ json execute(const Config& c) {
                           {"seconds", completion_seconds}};
   result["pacing"] = {{"target_fps", rate},
                       {"target_frames", target},
+                      {"scheduled_seconds", scheduled_seconds},
                       {"producer_seconds", producer_seconds},
                       {"producer_fps", producer_seconds > 0 ? accepted / producer_seconds : 0},
                       {"shortfall_frames", target > attempts ? target - attempts : 0},

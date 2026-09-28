@@ -216,22 +216,36 @@ def run_modalix_preflight(repo_root: Path, ctest_dir: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def encoder_limits() -> tuple[int, float, float]:
+    qualification = os.environ.get("SIMA_PERF_ENCODER_QUALIFICATION", "").lower() in ("1", "true", "yes", "on")
+    return (1000, 10.0, 60.0) if qualification else (500, 2.0, 2.0)
+
+
+class EncoderMeasurementFailure(schema.SchemaError):
+    def __init__(self, message: str, reason: schema.ReasonCode):
+        super().__init__(message)
+        self.reason = reason
+
+
 def validate_encoder_payload(
     payload: dict[str, Any], spec: ScenarioSpec, baseline: schema.ScenarioBaseline,
     median_fps: float | None,
 ) -> dict[str, float]:
     """Check emitter evidence before it can become a median/reference comparison."""
-    def require(ok: bool, message: str) -> None:
+    def require(ok: bool, message: str, reason: schema.ReasonCode | None = None) -> None:
         if not ok:
+            if reason:
+                raise EncoderMeasurementFailure(f"{spec.scenario_id}: {message}", reason)
             raise schema.SchemaError(f"{spec.scenario_id}: {message}")
 
     metrics = schema.parse_metrics_payload(payload)
     paced = median_fps is not None
+    minimum_frames, minimum_seconds, paced_seconds = encoder_limits()
+    drops = schema.ReasonCode.REGRESSION_DROPS
+    throughput = schema.ReasonCode.REGRESSION_THROUGHPUT
     require(payload["scenario_id"] == spec.scenario_id, "wrong scenario payload")
     require(payload["run_mode"] == ("paced" if paced else "unpaced"), "wrong run mode")
-    require(payload["failure"] == "", "emitter reported a failure")
-    require(metrics["throughput"] > 0, "non-positive measured throughput")
-    require(metrics["input_drop_count"] == metrics["output_drop_count"] == 0, "Core dropped frames")
+    require(metrics["input_drop_count"] == metrics["output_drop_count"] == 0, "Core dropped frames", drops)
     reference = {key: payload[key] for key in ("workload", "native_encoder_settings")}
     require(reference == baseline.encoder_reference, "workload/settings differ from saved Core reference")
     require(payload["workload"]["warmup_frames"] == 200, "warmup must be 200 frames")
@@ -240,26 +254,34 @@ def validate_encoder_payload(
         "attempted", "accepted", "completed", "output", "sent_frames", "sent_packets", "received_packets"
     )), "invalid frame/packet counts")
     require(counts["attempted"] == counts["accepted"] == counts["completed"] == counts["output"],
-            "attempted/accepted/completed/output mismatch")
+            "attempted/accepted/completed/output mismatch", drops)
     require(payload["iterations"] == counts["output"] - 200, "measured frame count mismatch")
+    require(metrics["throughput"] > 0, "non-positive measured throughput", throughput)
     duration = payload["measured_seconds"]
-    require(math.isfinite(duration) and duration >= (60 if paced else 10), "measurement is too short")
+    require(math.isfinite(duration) and duration >= (paced_seconds if paced else minimum_seconds),
+            "measurement is too short")
     require(math.isclose(metrics["throughput"], payload["iterations"] / duration, rel_tol=1e-6),
             "throughput disagrees with frame count/duration")
     if "--path" in spec.args and spec.args[spec.args.index("--path") + 1].endswith("sender"):
         require(counts["sent_frames"] == counts["accepted"] and
                 counts["sent_packets"] == counts["received_packets"] >= counts["sent_frames"],
-                "sender/receiver accounting differs")
+                "sender/receiver accounting differs", drops)
     if paced:
         pacing = payload["pacing"]
-        target = math.ceil(.95 * median_fps * 60)
+        rate = .95 * median_fps
+        target = max(minimum_frames, math.ceil(rate * paced_seconds))
+        scheduled_seconds = target / rate
         require(math.isclose(pacing["target_fps"], .95 * median_fps, rel_tol=1e-6), "wrong paced rate")
         require(pacing["target_frames"] == target == payload["iterations"] and
-                pacing["shortfall_frames"] == 0, "paced producer shortfall")
-        require(math.isfinite(pacing["producer_seconds"]) and pacing["producer_seconds"] >= 60,
-                "producer did not run for 60 seconds")
+                pacing["shortfall_frames"] == 0, "paced producer shortfall", throughput)
+        require(math.isfinite(pacing["producer_seconds"]) and
+                pacing["producer_seconds"] >= scheduled_seconds, "producer ended before its schedule")
+        limit = scheduled_seconds * 1.05 + max(.02, 1 / rate)
+        require(pacing["producer_seconds"] <= limit and duration <= limit,
+                "paced throughput below target", throughput)
     else:
-        require(payload["iterations"] >= 1000, "fewer than 1000 measured frames")
+        require(payload["iterations"] >= minimum_frames, "too few measured frames")
+    require(payload["failure"] == "", f"emitter reported a failure: {payload['failure']}")
     completion = payload["completion"]
     require(all(math.isfinite(completion[key]) and completion[key] >= 0
                 for key in ("fps", "p50_ms", "p95_ms", "seconds")) and completion["fps"] > 0,
@@ -321,15 +343,30 @@ def run_encoder_scenario(
             except json.JSONDecodeError:
                 if proc.returncode == 0:
                     raise
-            if proc.returncode != 0:
-                reason = schema.classify_env_failure(
-                    proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or ""), timed_out=False,
+            payload = record.get("payload")
+            failure = payload.get("failure", "") if isinstance(payload, dict) else ""
+            measurement_failures = (
+                "frame accounting differs", "measurement/producer target not satisfied",
+                "paced throughput below target",
+            )
+            if proc.returncode < 0 or (proc.returncode != 0 and failure not in measurement_failures):
+                metadata["error"] = failure or f"encoder exited with code {proc.returncode}"
+                timed_out = failure in (
+                    "encoder perf session exceeded 180 seconds",
+                    "accepted frames did not drain within ten seconds",
                 )
+                reason = schema.classify_env_failure(
+                    proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or ""), timed_out=timed_out,
+                )
+                if proc.returncode > 0 and reason == schema.ReasonCode.ENV_RUNTIME_CRASH:
+                    reason = schema.ReasonCode.ENV_RUNTIME_FAILURE
                 return finish(schema.FailureClass.ENV_BROKEN, reason)
             payload = record["payload"]
             if not isinstance(payload, dict):
                 raise schema.SchemaError("encoder payload must be an object")
             validate_encoder_payload(payload, spec, baseline, median_fps)
+            if proc.returncode != 0:
+                raise schema.SchemaError(f"encoder exited with code {proc.returncode} despite a successful payload")
             if index < 3:
                 unpaced.append(payload)
     except subprocess.TimeoutExpired as error:
@@ -339,6 +376,9 @@ def run_encoder_scenario(
             (artifacts / f"{phase}.{suffix}").write_text(text, encoding="utf-8")
         metadata["error"] = str(error)
         return finish(schema.FailureClass.ENV_BROKEN, schema.ReasonCode.ENV_TIMEOUT)
+    except EncoderMeasurementFailure as error:
+        metadata["error"] = str(error)
+        return finish(schema.FailureClass.REGRESSION, error.reason)
     except (schema.SchemaError, ValueError, KeyError, TypeError) as error:
         metadata["error"] = str(error)
         return finish(schema.FailureClass.HARNESS_ERROR, schema.ReasonCode.HARNESS_SCHEMA_INVALID)
