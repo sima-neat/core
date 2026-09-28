@@ -60,7 +60,7 @@ Config arguments(int argc, char** argv) {
   require(c.path != "legacy" || c.memory == "dma", "legacy encoder requires --input dma");
   require(!c.passthrough() || c.memory == "cpu", "encoded sender requires --input cpu");
   require(!c.paced() || std::max<double>(ep::kMinimumFrames,
-                                         std::ceil(.95 * c.median_fps * ep::kPacedSeconds)) +
+                                         std::ceil(.90 * c.median_fps * ep::kPacedSeconds)) +
                                 ep::kWarmup <
                             ep::kMaximumFrames,
           "paced run exceeds frame-accounting bound");
@@ -295,7 +295,7 @@ json execute(const Config& c) {
     packets = std::make_unique<ep::PadCounter>(pay.get(), "src", state, true);
   std::atomic<bool> stop{false};
   bool eos = false;
-  const double rate = .95 * c.median_fps;
+  const double rate = .90 * c.median_fps;
   const std::uint64_t target =
       c.paced() ? std::max(ep::kMinimumFrames,
                            static_cast<std::uint64_t>(std::ceil(rate * ep::kPacedSeconds)))
