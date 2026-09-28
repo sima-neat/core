@@ -1445,8 +1445,10 @@ jobs:
           genai_test_file="${PYTEST_DIR}/test_genai_bindings.py"
           test -f "${genai_test_file}"
 
+          # Temporary passwordless-sudo test exclusion (core#961); restore when DMA counters are accessible.
           "${PYTHON_BIN}" -m pytest -q \
             --ignore="${genai_test_file}" \
+            --deselect="${PYTEST_DIR}/test_encoder_runtime.py::test_mjpeg_encode_sender_retention_and_resources" \
             "${PYTEST_DIR}"
 
           mapfile -t genai_pytests < <(
