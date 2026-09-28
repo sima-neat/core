@@ -2,6 +2,7 @@
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
+#include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
@@ -740,7 +741,9 @@ void test_generic_cast_does_not_invent_image_layout() {
   }
 }
 
-MlaStaticContract project_single_mla(const ModelExecutionPlan& plan) {
+MlaStaticContract project_single_mla(const ModelExecutionPlan& plan,
+                                     const std::vector<QuantStaticSpec>& quant = {},
+                                     const bool logical_quant = true) {
   MlaStaticContract contract;
   std::vector<PhysicalPortSource> sources;
   for (const auto& port : plan.backend_ports()) {
@@ -765,6 +768,18 @@ MlaStaticContract project_single_mla(const ModelExecutionPlan& plan) {
       contract.dispatcher_physical_outputs.resize(
           std::max(contract.dispatcher_physical_outputs.size(), port.logical_index() + 1U));
       contract.dispatcher_physical_outputs[port.logical_index()] = physical;
+    }
+  }
+  contract.output_quant = quant;
+  if (!quant.empty()) {
+    for (std::size_t i = 0; i < contract.dispatcher_physical_outputs.size(); ++i) {
+      LogicalTensorStaticSpec logical;
+      logical.logical_index = logical.backend_output_index = static_cast<int>(i);
+      logical.logical_name = contract.dispatcher_physical_outputs[i].segment_name;
+      if (logical_quant) {
+        logical.quant = quant.at(quant.size() == 1U ? 0U : i);
+      }
+      contract.logical_outputs.push_back(std::move(logical));
     }
   }
   std::string error;
@@ -969,6 +984,56 @@ void test_native_port_order() {
       }
       check(!MpkDecoder{}.decode_json(manifest.dump(), topology, "synthetic.json"),
             "explicitly indexed ports never use the unindexed assignment fallback");
+    }
+  }
+}
+
+void test_native_output_quant_order() {
+  const std::vector<std::uint64_t> sizes{16U, 32U, 48U};
+  for (const std::uint32_t batch : {1U, 2U, 4U}) {
+    for (const bool reordered : {false, true}) {
+      const auto decoded = MpkDecoder{}.decode_json(
+          port_order_manifest(sizes, batch).dump(),
+          native_port_topology(sizes, reordered ? std::vector<std::uint64_t>{48U, 16U, 32U} : sizes,
+                               batch));
+      check(static_cast<bool>(decoded), "quantized output ordering fixture decodes");
+      for (const bool shared : {false, true}) {
+        std::vector<QuantStaticSpec> quant;
+        for (std::size_t i = 0; i < (shared ? 1U : sizes.size()); ++i) {
+          QuantStaticSpec q;
+          q.granularity = shared ? QuantGranularity::PerAxis : QuantGranularity::PerTensor;
+          q.axis = shared ? 1 : -1;
+          q.scales =
+              shared ? std::vector<double>{0.125, 0.25} : std::vector<double>{0.125 * (i + 1)};
+          q.zero_points = shared ? std::vector<std::int64_t>{-1, 3}
+                                 : std::vector<std::int64_t>{static_cast<std::int64_t>(i) - 1};
+          quant.push_back(q);
+        }
+        for (const bool logical_quant : {false, true}) {
+          auto contract = project_single_mla(*decoded.plan, quant, logical_quant);
+          contract.stage_id = contract.node_name = "MLA_0";
+          contract.model_path = "synthetic.elf";
+          contract.batch_size = contract.batch_sz_model = batch;
+          const auto compiled = stagesemantics::build_mla_compiled_contract(contract);
+          const auto& runtime = compiled.runtime_contract;
+          check(runtime.output_quant.size() == runtime.logical_outputs.size(),
+                "quantization table follows projected logical outputs and samples");
+          for (std::size_t i = 0; i < runtime.logical_outputs.size(); ++i) {
+            const auto& logical = runtime.logical_outputs[i];
+            const auto& port = decoded.plan->backend_ports(
+                0U, BackendPortDirection::Output)[static_cast<std::size_t>(
+                logical.backend_output_index)];
+            const auto& expected = quant[shared ? 0U : port.logical_index()];
+            const auto matches = [&](const QuantStaticSpec& actual) {
+              return actual.scales == expected.scales &&
+                     actual.zero_points == expected.zero_points && actual.axis == expected.axis &&
+                     actual.granularity == expected.granularity;
+            };
+            check(logical.quant && matches(*logical.quant) && matches(runtime.output_quant[i]),
+                  "compiled output quantization remains attached to its tensor identity");
+          }
+        }
+      }
     }
   }
 }
@@ -2643,6 +2708,7 @@ int main(const int argc, char** argv) {
   }
   check(argc == 1, "usage: unit_mpk_decoder_test [manifest elf]");
   test_native_port_order();
+  test_native_output_quant_order();
   test_reordered_command_contracts();
   test_flat_unpack_compatibility();
   test_batch_slice_transport();

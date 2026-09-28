@@ -1709,6 +1709,8 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
     return false;
   }
 
+  const auto original_logical_outputs = contract->logical_outputs;
+  const auto original_output_count = contract->dispatcher_physical_outputs.size();
   const auto reordered = [](const auto& ports) {
     return std::any_of(ports.begin(), ports.end(),
                        [](const auto& port) { return port.port_index != port.logical_index(); });
@@ -2063,6 +2065,55 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
         }
         contract->logical_outputs.push_back(std::move(logical));
       }
+    }
+  }
+
+  // Quantization belongs to logical tensors, including each sample of a batch.
+  // Packed views are not a one-to-one OFM mapping and retain their existing table.
+  std::vector<const LogicalTensorStaticSpec*> original_by_port(original_output_count, nullptr);
+  bool direct_outputs = original_logical_outputs.size() == original_output_count;
+  for (const auto& logical : original_logical_outputs) {
+    const auto index = static_cast<std::size_t>(logical.backend_output_index);
+    if (index >= original_by_port.size() || original_by_port[index]) {
+      direct_outputs = false;
+      break;
+    }
+    original_by_port[index] = &logical;
+  }
+  for (const auto& logical : contract->logical_outputs) {
+    const auto index = static_cast<std::size_t>(logical.backend_output_index);
+    if (index >= outputs.size()) {
+      direct_outputs = false;
+      break;
+    }
+    auto name = plan.value(outputs[index].value_id)->name;
+    if (batch_count > 1U) {
+      name += ".batch." + std::to_string(outputs[index].batch_index);
+    }
+    if (logical.backend_name != name) {
+      direct_outputs = false;
+      break;
+    }
+  }
+  if (direct_outputs) {
+    std::vector<QuantStaticSpec> projected_quant;
+    bool has_quant = false;
+    for (auto& logical : contract->logical_outputs) {
+      const auto& port = outputs[static_cast<std::size_t>(logical.backend_output_index)];
+      const auto* original = original_by_port[port.logical_index()];
+      const auto ordinal = static_cast<std::size_t>(original - original_logical_outputs.data());
+      logical.quant = original->quant;
+      if (!logical.quant && !contract->output_quant.empty()) {
+        const auto quant_index = contract->output_quant.size() == 1U ? 0U : ordinal;
+        if (quant_index < contract->output_quant.size()) {
+          logical.quant = contract->output_quant[quant_index];
+        }
+      }
+      has_quant = has_quant || logical.quant.has_value();
+      projected_quant.push_back(logical.quant.value_or(QuantStaticSpec{}));
+    }
+    if (has_quant) {
+      contract->output_quant = std::move(projected_quant);
     }
   }
 
