@@ -136,12 +136,6 @@ int main() {
     require_installed_packages(neat_packages);
     require_installed_packages(native_sima_packages);
 
-    // require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),
-    //         "simaai-ota command should remain available through simaai-palette-modalix");
-    // const std::string ota_owner = run_capture("dpkg-query -S /usr/bin/simaai-ota 2>/dev/null");
-    // require(ota_owner.find("simaai-palette-modalix:") != std::string::npos,
-    //         "simaai-ota should be owned by simaai-palette-modalix, got: " + ota_owner);
-
     std::cout << "[OK] unit_000_devkit_package_inventory_test passed\n";
     return 0;
   } catch (const std::exception& e) {
