@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -750,14 +751,20 @@ MlaStaticContract project_single_mla(const ModelExecutionPlan& plan) {
     physical.segment_name = value->name;
     if (port.direction == BackendPortDirection::Input) {
       if (port.batch_index == 0U) {
-        contract.physical_inputs.push_back(physical);
+        contract.physical_inputs.resize(
+            std::max(contract.physical_inputs.size(), port.logical_index() + 1U));
+        contract.physical_inputs[port.logical_index()] = physical;
         TensorStaticSpec logical;
         logical.tensor_index = static_cast<int>(port.logical_index());
-        contract.logical_inputs.push_back(logical);
+        contract.logical_inputs.resize(
+            std::max(contract.logical_inputs.size(), port.logical_index() + 1U));
+        contract.logical_inputs[port.logical_index()] = logical;
       }
-      sources.push_back({value->id, static_cast<int>(port.port_index)});
+      sources.push_back({value->id, static_cast<int>(port.logical_index())});
     } else if (port.batch_index == 0U) {
-      contract.dispatcher_physical_outputs.push_back(physical);
+      contract.dispatcher_physical_outputs.resize(
+          std::max(contract.dispatcher_physical_outputs.size(), port.logical_index() + 1U));
+      contract.dispatcher_physical_outputs[port.logical_index()] = physical;
     }
   }
   std::string error;
@@ -767,6 +774,193 @@ MlaStaticContract project_single_mla(const ModelExecutionPlan& plan) {
   }
   check(projected, "decoded exact contracts project through the frame arena");
   return contract;
+}
+
+nlohmann::json port_order_manifest(const std::vector<std::uint64_t>& sizes) {
+  auto manifest = nlohmann::json::parse(valid_manifest());
+  const auto original = manifest["plugins"];
+  manifest["input_nodes"] = nlohmann::json::array();
+  manifest["plugins"] = nlohmann::json::array();
+  auto mla = original[1];
+  mla["input_nodes"] = nlohmann::json::array();
+  mla["output_nodes"] = nlohmann::json::array();
+  auto publish = original[3];
+  publish["input_nodes"] = nlohmann::json::array();
+  publish["output_nodes"] = nlohmann::json::array();
+  for (std::size_t i = 0U; i < sizes.size(); ++i) {
+    const auto suffix = std::to_string(i);
+    const auto shape = nlohmann::json::array({1, sizes[i] / 2U});
+    manifest["input_nodes"].push_back({{"name", "input" + suffix}, {"size", 2U * sizes[i]}});
+    auto input = original[0];
+    input["name"] = "cast_in" + suffix;
+    input["input_nodes"] = {{{"name", "input" + suffix}, {"size", 2U * sizes[i]}}};
+    input["output_nodes"] = {{{"name", "cast_in" + suffix}, {"size", sizes[i]}}};
+    input["config_params"]["params"]["input_shapes"] = {shape};
+    input["config_params"]["params"]["output_shapes"] = {shape};
+    manifest["plugins"].push_back(input);
+    mla["input_nodes"].push_back({{"name", "cast_in" + suffix}, {"size", sizes[i]}});
+    mla["output_nodes"].push_back({{"name", "mla_out" + suffix}, {"size", sizes[i]}});
+  }
+  manifest["plugins"].push_back(mla);
+  for (std::size_t i = 0U; i < sizes.size(); ++i) {
+    const auto suffix = std::to_string(i);
+    const auto shape = nlohmann::json::array({1, sizes[i] / 2U});
+    auto output = original[2];
+    output["name"] = "cast_out" + suffix;
+    output["input_nodes"] = {{{"name", "mla_out" + suffix}, {"size", sizes[i]}}};
+    output["output_nodes"] = {{{"name", "result" + suffix}, {"size", 2U * sizes[i]}}};
+    output["config_params"]["params"]["input_shapes"] = {shape};
+    output["config_params"]["params"]["output_shapes"] = {shape};
+    manifest["plugins"].push_back(output);
+    publish["input_nodes"].push_back({{"name", "result" + suffix}, {"size", 2U * sizes[i]}});
+    publish["output_nodes"].push_back({{"name", "public" + suffix}, {"size", 2U * sizes[i]}});
+  }
+  manifest["plugins"].push_back(publish);
+  for (std::size_t i = 0U; i < manifest["plugins"].size(); ++i) {
+    manifest["plugins"][i]["sequence"] = i + 1U;
+  }
+  return manifest;
+}
+
+MlaElfIoTopology native_port_topology(const std::vector<std::uint64_t>& inputs,
+                                      const std::vector<std::uint64_t>& outputs) {
+  MlaElfIoTopology topology;
+  topology.valid = true;
+  for (std::size_t i = 0U; i < inputs.size(); ++i) {
+    topology.ifm_symbol_names.push_back("data.ifm.persistent.MLA_0/input" + std::to_string(i) +
+                                        ".b0");
+  }
+  for (std::size_t i = 0U; i < outputs.size(); ++i) {
+    topology.ofm_symbol_names.push_back("data.ofm.persistent.MLA_0/output" + std::to_string(i) +
+                                        ".b0");
+  }
+  topology.ifm_extent_bytes = inputs;
+  topology.ofm_extent_bytes = outputs;
+  return topology;
+}
+
+void test_native_port_order() {
+  const auto manifest = port_order_manifest({16U, 32U, 48U});
+  for (const bool reorder_input : {false, true}) {
+    for (const bool reorder_output : {false, true}) {
+      const std::vector<std::uint64_t> identity{16U, 32U, 48U};
+      const std::vector<std::uint64_t> permuted{48U, 16U, 32U};
+      const auto topology = native_port_topology(reorder_input ? permuted : identity,
+                                                 reorder_output ? permuted : identity);
+      const auto result = MpkDecoder{}.decode_json(manifest.dump(), topology, "synthetic.json");
+      if (!result && result.error) {
+        std::cerr << result.error->json_path << ": " << result.error->detail << '\n';
+      }
+      check(static_cast<bool>(result), "unique input and output assignments decode");
+      const auto contract = project_single_mla(*result.plan);
+      for (const auto& port : result.plan->backend_ports()) {
+        const bool input = port.direction == BackendPortDirection::Input;
+        const bool reordered = input ? reorder_input : reorder_output;
+        const auto logical = reordered ? (port.port_index + 2U) % 3U : port.port_index;
+        check(port.logical_index() == logical, "physical ports retain the matched logical index");
+        const auto& physical =
+            input ? contract.physical_inputs : contract.dispatcher_physical_outputs;
+        check(physical[port.port_index].segment_name == result.plan->value(port.value_id)->name &&
+                  physical[port.port_index].size_bytes == identity[logical],
+              "projection uses the matched tensor descriptor in physical order");
+        if (input) {
+          check(contract.logical_inputs[port.port_index].tensor_index ==
+                    static_cast<int>(port.port_index),
+                "input descriptors use physical executable order");
+        }
+      }
+      for (std::size_t i = 0U; i < 3U; ++i) {
+        check(result.plan->value(result.plan->model_outputs()[i].value_id)->name ==
+                  "result" + std::to_string(i),
+              "public output identity and order do not change");
+      }
+    }
+  }
+  for (const bool input : {false, true}) {
+    const std::vector<std::uint64_t> identity{16U, 16U, 32U};
+    for (const auto& changed :
+         {std::vector<std::uint64_t>{32U, 16U, 16U}, std::vector<std::uint64_t>{32U, 16U, 64U}}) {
+      const auto topology =
+          native_port_topology(input ? changed : identity, input ? identity : changed);
+      const auto result = MpkDecoder{}.decode_json(port_order_manifest(identity).dump(), topology,
+                                                   "synthetic.json");
+      check(!result && result.error.has_value(), "ambiguous and missing assignments reject");
+      check(result.error->code == (changed.back() == 16U ? MpkDecodeErrorCode::ConfigurationMismatch
+                                                         : MpkDecodeErrorCode::ValueSizeMismatch),
+            "assignment failures distinguish ambiguity from missing candidates");
+    }
+    const auto result =
+        MpkDecoder{}.decode_json(port_order_manifest(identity).dump(),
+                                 native_port_topology(identity, identity), "synthetic.json");
+    check(static_cast<bool>(result), "valid positional bindings with equal sizes remain valid");
+  }
+  for (const bool input : {false, true}) {
+    const std::vector<std::uint64_t> identity{16U, 32U, 48U};
+    const std::vector<std::uint64_t> permuted{48U, 16U, 32U};
+    auto topology = native_port_topology(input ? permuted : identity, input ? identity : permuted);
+    auto& symbols = input ? topology.ifm_symbol_names : topology.ofm_symbol_names;
+    for (std::size_t i = 0U; i < symbols.size(); ++i) {
+      symbols[i] =
+          (input ? "data.ifm.persistent.qmla_ifm_" : "data.ofm.persistent.afe_mla_output_") +
+          std::to_string(i) + ".b0";
+    }
+    check(!MpkDecoder{}.decode_json(manifest.dump(), topology, "synthetic.json"),
+          "explicitly indexed ports never use the unindexed assignment fallback");
+  }
+}
+
+void test_reordered_command_contracts() {
+  auto manifest = port_order_manifest({16U, 32U, 48U});
+  for (const auto* direction : {"input_nodes", "output_nodes"}) {
+    auto& ports = manifest["plugins"][3][direction];
+    std::rotate(ports.begin(), ports.begin() + 1, ports.end());
+  }
+  const auto result = MpkDecoder{}.decode_json(
+      manifest.dump(), native_port_topology({16U, 32U, 48U}, {16U, 32U, 48U}), "synthetic.json");
+  check(static_cast<bool>(result), "reordered manifest decodes");
+  std::string error;
+  const auto physical = PhysicalExecutionLowerer::lower(*result.plan, &error);
+  check(physical.has_value(), "reordered commands lower");
+  const auto arena =
+      FrameSlotArenaPlan::compile(*result.plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
+                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
+  check(arena.has_value(), "reordered commands arena compiles");
+  for (const auto role : {PhysicalCommandRole::Ingress, PhysicalCommandRole::Egress}) {
+    std::vector<PhysicalCommandId> commands;
+    for (const auto& command : physical->commands) {
+      if (command.engine == PhysicalEngine::Cvu && command.role == role) {
+        commands.push_back(command.id);
+      }
+    }
+    const auto contract = build_dmabuf_plan_processcvu_command_contract(*result.plan, *physical,
+                                                                        commands, *arena, &error);
+    check(contract.has_value(), "reordered command contract compiles");
+    if (role == PhysicalCommandRole::Ingress) {
+      check(contract->runtime_contract.frame_arena_role == FrameArenaRole::Allocate,
+            "the first ingress cohort allocates even when members are not in sequence order");
+      continue;
+    }
+    const auto& runtime = contract->runtime_contract.logical_outputs;
+    const auto& exposed = contract->exposed_view;
+    check(runtime.size() == 3U && exposed.exposed_logical_outputs.size() == 3U &&
+              exposed.exposed_output_order.size() == 3U,
+          "all egress members are published");
+    for (std::size_t index = 0; index < 3U; ++index) {
+      const auto& logical = exposed.exposed_logical_outputs[index];
+      const auto& route = exposed.exposed_output_order[index];
+      const auto runtime_index = static_cast<int>((index + 2U) % 3U);
+      check(logical.logical_name ==
+                    result.plan->value(result.plan->model_outputs()[index].value_id)->name &&
+                logical.output_slot == static_cast<int>(index) &&
+                route.output_slot == logical.output_slot,
+            "public outputs keep model order");
+      check(logical.logical_index == runtime_index && route.logical_output_index == runtime_index &&
+                logical.tensor_index == runtime[runtime_index].tensor_index &&
+                logical.physical_index == runtime[runtime_index].physical_index &&
+                logical.byte_offset == runtime[runtime_index].byte_offset,
+            "publication retains each output's physical binding");
+    }
+  }
 }
 
 void test_detess_byte_carrier_keeps_logical_frame() {
@@ -2382,6 +2576,8 @@ int main(const int argc, char** argv) {
     return validate_explicit_pair(argv[1], argv[2]);
   }
   check(argc == 1, "usage: unit_mpk_decoder_test [manifest elf]");
+  test_native_port_order();
+  test_reordered_command_contracts();
   test_flat_unpack_compatibility();
   test_batch_slice_transport();
   test_input_storage_from_executable();

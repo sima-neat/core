@@ -212,6 +212,9 @@ port spans for every MLA operation. Ambiguity, missing slots, or conflicting
 evidence is a model-load error; sidecar JSON, substring matching, environment
 state, and runtime buffers are not evidence.
 
+Core can reconcile different input and output buffer orderings when the mapping
+is unambiguous. Applications keep the model's public tensor names and order.
+
 Single-input, batch-one models with normal spatial storage can use automatic
 input channel padding. Applications keep the model's logical tensor shape;
 custom spatial storage padding is outside this support scope.
