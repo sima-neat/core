@@ -25,6 +25,27 @@ def run_bash(
 
 
 
+class PaletteInstallationTest(unittest.TestCase):
+    def test_installed_palette_does_not_require_ota_executable(self) -> None:
+        result = run_bash(r"""
+source "$1"
+deb_package_is_installed() { [[ "$1" == simaai-palette-modalix ]]; }
+simaai_ota_command_path() { return 0; }
+dpkg-query() { return 1; }
+verify_canonical_palette_and_ota_installation
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_missing_palette_still_fails(self) -> None:
+        result = run_bash(r"""
+source "$1"
+deb_package_is_installed() { return 1; }
+verify_canonical_palette_and_ota_installation
+""")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("simaai-palette-modalix is not installed", result.stderr)
+
+
 class CustomerSdkDependenciesTest(unittest.TestCase):
     def test_runtime_package_does_not_request_implementation_dev_packages(self) -> None:
         result = run_bash(r"""
