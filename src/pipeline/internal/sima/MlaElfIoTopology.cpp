@@ -381,9 +381,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     }
   }
 
-  // Native tensor names carry no port index. MLA-RT assigns their ports in
-  // ELF encounter order, matching the MPK MLA argument list. Preserve that
-  // order without interpreting placeholder names or comparing tensor sizes.
+  // Native tensor names carry no port index; preserve their physical ELF encounter order.
   const auto bind_unindexed = [&](const auto& sections, auto* names, auto* extents,
                                   const char* direction) {
     if (sections.empty()) {

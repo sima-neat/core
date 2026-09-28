@@ -1384,6 +1384,44 @@ build_dmabuf_plan_processcvu_command_contract(const ModelExecutionPlan& plan,
             &compiled.exposed_view, error)) {
       return std::nullopt;
     }
+    // Public output order is independent of the physical command member order.
+    const auto& public_outputs = plan.model_outputs();
+    if (cohort->batch_size == 1U && public_outputs.size() == cohort->members.size()) {
+      std::vector<LogicalTensorStaticSpec> logical_outputs;
+      std::vector<StageOutputRoute> output_order;
+      for (const auto& output : public_outputs) {
+        const auto member = std::find_if(
+            cohort->members.begin(), cohort->members.end(), [&](const auto* candidate) {
+              return candidate->outer_outputs.size() == 1U &&
+                     candidate->outer_outputs.front() == output.value_id;
+            });
+        if (member == cohort->members.end()) {
+          break;
+        }
+        const auto index = static_cast<int>(member - cohort->members.begin());
+        const auto& exposed = compiled.exposed_view;
+        const auto logical = std::find_if(
+            exposed.exposed_logical_outputs.begin(), exposed.exposed_logical_outputs.end(),
+            [&](const auto& value) { return value.logical_index == index; });
+        const auto route =
+            std::find_if(exposed.exposed_output_order.begin(), exposed.exposed_output_order.end(),
+                         [&](const auto& value) { return value.logical_output_index == index; });
+        if (logical == exposed.exposed_logical_outputs.end() ||
+            route == exposed.exposed_output_order.end()) {
+          break;
+        }
+        logical_outputs.push_back(*logical);
+        logical_outputs.back().output_slot = static_cast<int>(output_order.size());
+        output_order.push_back(*route);
+        output_order.back().output_slot = logical_outputs.back().output_slot;
+      }
+      if (!output_order.empty() && output_order.size() == public_outputs.size()) {
+        compiled.exposed_view.exposed_logical_outputs = std::move(logical_outputs);
+        compiled.exposed_view.exposed_output_order = std::move(output_order);
+        compiled.exposed_view.primary_output_name =
+            compiled.exposed_view.exposed_logical_outputs.front().logical_name;
+      }
+    }
     return compiled;
   } catch (const std::exception& ex) {
     fail(error, std::string("ProcessCVU command contract assembly failed: ") + ex.what());
@@ -1671,7 +1709,13 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
     return false;
   }
 
-  if (batch_count > 1U) {
+  const auto original_logical_outputs = contract->logical_outputs;
+  const auto original_output_count = contract->dispatcher_physical_outputs.size();
+  const auto reordered = [](const auto& ports) {
+    return std::any_of(ports.begin(), ports.end(),
+                       [](const auto& port) { return port.port_index != port.logical_index(); });
+  };
+  if (batch_count > 1U || reordered(inputs) || reordered(outputs)) {
     const auto expand_physical = [&](const auto& ports, const auto& original) {
       std::vector<PhysicalBufferStaticSpec> expanded;
       expanded.reserve(ports.size());
@@ -1679,7 +1723,9 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
         auto physical = original[port.logical_index()];
         physical.physical_index = static_cast<int>(port.port_index);
         physical.allocator_index = physical.physical_index;
-        physical.segment_name += ".batch." + std::to_string(port.batch_index);
+        if (batch_count > 1U) {
+          physical.segment_name += ".batch." + std::to_string(port.batch_index);
+        }
         expanded.push_back(std::move(physical));
       }
       return expanded;
@@ -1694,16 +1740,19 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
             return value.tensor_index == static_cast<int>(port.logical_index());
           });
       const auto* value = plan.value(port.value_id);
-      if (found == contract->logical_inputs.end() || !value || !value->logical_shape ||
+      if (found == contract->logical_inputs.end() || !value ||
+          (batch_count > 1U && !value->logical_shape) ||
           port.physical_extent_bytes >
               static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
         return fail(error, "MLA sample has no exact logical input descriptor");
       }
       auto logical = *found;
       logical.tensor_index = static_cast<int>(port.port_index);
-      logical.shape = *value->logical_shape;
-      logical.shape.front() = 1;
-      logical.max_stride = static_cast<int>(port.physical_extent_bytes);
+      if (batch_count > 1U) {
+        logical.shape = *value->logical_shape;
+        logical.shape.front() = 1;
+        logical.max_stride = static_cast<int>(port.physical_extent_bytes);
+      }
       logical_inputs.push_back(std::move(logical));
     }
     contract->logical_inputs = std::move(logical_inputs);
@@ -2019,6 +2068,55 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
     }
   }
 
+  // Quantization belongs to logical tensors, including each sample of a batch.
+  // Packed views are not a one-to-one OFM mapping and retain their existing table.
+  std::vector<const LogicalTensorStaticSpec*> original_by_port(original_output_count, nullptr);
+  bool direct_outputs = original_logical_outputs.size() == original_output_count;
+  for (const auto& logical : original_logical_outputs) {
+    const auto index = static_cast<std::size_t>(logical.backend_output_index);
+    if (index >= original_by_port.size() || original_by_port[index]) {
+      direct_outputs = false;
+      break;
+    }
+    original_by_port[index] = &logical;
+  }
+  for (const auto& logical : contract->logical_outputs) {
+    const auto index = static_cast<std::size_t>(logical.backend_output_index);
+    if (index >= outputs.size()) {
+      direct_outputs = false;
+      break;
+    }
+    auto name = plan.value(outputs[index].value_id)->name;
+    if (batch_count > 1U) {
+      name += ".batch." + std::to_string(outputs[index].batch_index);
+    }
+    if (logical.backend_name != name) {
+      direct_outputs = false;
+      break;
+    }
+  }
+  if (direct_outputs) {
+    std::vector<QuantStaticSpec> projected_quant;
+    bool has_quant = false;
+    for (auto& logical : contract->logical_outputs) {
+      const auto& port = outputs[static_cast<std::size_t>(logical.backend_output_index)];
+      const auto* original = original_by_port[port.logical_index()];
+      const auto ordinal = static_cast<std::size_t>(original - original_logical_outputs.data());
+      logical.quant = original->quant;
+      if (!logical.quant && !contract->output_quant.empty()) {
+        const auto quant_index = contract->output_quant.size() == 1U ? 0U : ordinal;
+        if (quant_index < contract->output_quant.size()) {
+          logical.quant = contract->output_quant[quant_index];
+        }
+      }
+      has_quant = has_quant || logical.quant.has_value();
+      projected_quant.push_back(logical.quant.value_or(QuantStaticSpec{}));
+    }
+    if (has_quant) {
+      contract->output_quant = std::move(projected_quant);
+    }
+  }
+
   std::vector<std::string> ifm_symbols;
   std::vector<std::string> ofm_symbols;
   ifm_symbols.reserve(inputs.size());
@@ -2240,7 +2338,10 @@ bool apply_dmabuf_plan_processcvu_command_projection(
   inputs.reserve(cohort->members.size());
   outputs.reserve(cohort->members.size());
   for (const auto* member : cohort->members) {
-    first = first ? first : &plan.ops()[member->semantic_chain.front()];
+    const auto& start = plan.ops()[member->semantic_chain.front()];
+    if (!first || start.sequence < first->sequence) {
+      first = &start;
+    }
     inputs.push_back(member->outer_inputs.front());
     outputs.push_back(member->outer_outputs.front());
   }
