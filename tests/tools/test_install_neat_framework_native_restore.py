@@ -541,19 +541,19 @@ ensure_platform_compatible
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-replacement="${tmp}/neat-common.deb"
+replacement="${tmp}/replacement-runtime.deb"
 simulation="${tmp}/simulation.log"
 touch "${replacement}"
-printf '%s\n' 'Remv simaai-common [2.1.3~pre4678]' > "${simulation}"
+printf '%s\n' 'Remv platform-runtime [2.1.3~pre4678]' > "${simulation}"
 dpkg-query() {
   printf '%s\n' '2.1.3~pre4678'
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$3" in
-    Provides) printf '%s\n' 'simaai-common (= 2.1.3~pre4678)' ;;
-    Replaces) printf '%s\n' 'simaai-common' ;;
-    Conflicts) printf '%s\n' 'simaai-common' ;;
+    Provides) printf '%s\n' 'platform-runtime (= 2.1.3~pre4678)' ;;
+    Replaces) printf '%s\n' 'platform-runtime' ;;
+    Conflicts) printf '%s\n' 'platform-runtime' ;;
     *) return 2 ;;
   esac
 }
@@ -563,7 +563,7 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Verified platform package replacements", result.stdout)
-        self.assertIn("simaai-common=2.1.3~pre4678", result.stdout)
+        self.assertIn("platform-runtime=2.1.3~pre4678", result.stdout)
 
     def test_board_transaction_rejects_non_exact_replacement(self) -> None:
         result = run_bash(
@@ -571,19 +571,19 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-replacement="${tmp}/neat-common.deb"
+replacement="${tmp}/replacement-runtime.deb"
 simulation="${tmp}/simulation.log"
 touch "${replacement}"
-printf '%s\n' 'Remv simaai-common [2.1.3~pre4678]' > "${simulation}"
+printf '%s\n' 'Remv platform-runtime [2.1.3~pre4678]' > "${simulation}"
 dpkg-query() {
   printf '%s\n' '2.1.3~pre4678'
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$3" in
-    Provides) printf '%s\n' 'simaai-common (= 2.1.3)' ;;
-    Replaces) printf '%s\n' 'simaai-common' ;;
-    Conflicts) printf '%s\n' 'simaai-common' ;;
+    Provides) printf '%s\n' 'platform-runtime (= 2.1.3)' ;;
+    Replaces) printf '%s\n' 'platform-runtime' ;;
+    Conflicts) printf '%s\n' 'platform-runtime' ;;
     *) return 2 ;;
   esac
 }
