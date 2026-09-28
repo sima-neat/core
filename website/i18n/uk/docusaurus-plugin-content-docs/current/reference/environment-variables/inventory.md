@@ -234,12 +234,8 @@ sidebar_position: 2
 
 ## Налаштування оболонки / безперервної інтеграції та передавання параметрів.
 
-Кількість: 67
+Кількість: 63
 
-- `APP_COMPLEX_PKG_ARCH`
-- `APP_COMPLEX_PKG_BUILD_ROOT`
-- `APP_COMPLEX_PKG_OUT_DIR`
-- `APP_COMPLEX_PKG_VERSION`
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`
 - `BASELINE_FILE`

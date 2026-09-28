@@ -113,8 +113,6 @@ int main() {
     };
 
     const std::vector<PackageExpectation> native_sima_packages = {
-        {"appcomplex", "native-sima"},
-        {"simaai-common", "native-sima"},
         {"simaai-palette-modalix", "native-sima"},
         {"libcamera", "native-sima"},
         {"libcamera-tools", "native-sima"},

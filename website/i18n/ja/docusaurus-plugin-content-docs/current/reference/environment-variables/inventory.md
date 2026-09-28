@@ -234,12 +234,8 @@ sidebar_position: 2
 
 ## シェル/CI のデフォルト設定とパススルー設定
 
-件数：67
+件数：63
 
-- `APP_COMPLEX_PKG_ARCH`
-- `APP_COMPLEX_PKG_BUILD_ROOT`
-- `APP_COMPLEX_PKG_OUT_DIR`
-- `APP_COMPLEX_PKG_VERSION`
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`
 - `BASELINE_FILE`
