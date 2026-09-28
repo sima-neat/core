@@ -141,6 +141,44 @@ RUN_TEST(
       }
 
       {
+        // libcamerasrc rejects a size the ISP cannot output (core #883): the diagnostic must name
+        // the camera and requested caps and point at resizing, not at "configuration syntax".
+        RawGstError raw =
+            raw_error("libcamerasrc", "gst-resource-error-quark", GST_RESOURCE_ERROR_SETTINGS,
+                      "Failed to configure camera: Invalid argument");
+        raw.debug = "gstlibcamerasrc.cpp(906): gst_libcamera_src_negotiate (): "
+                    "Camera::configure() failed with error code -22";
+        raw.details["source-identity"] = "imx477 5-001a";
+        raw.details["requested-caps"] =
+            "video/x-raw, format=(string)NV12, width=(int)1280, height=(int)720";
+        const NormalizedDiagnostic camera = classify_gst_error(std::move(raw));
+        require_code(camera, error_codes::kIoParse);
+        require(camera.diagnostic_id == "gstreamer.camera_configuration_unsupported",
+                "libcamera configure failures should use the camera configuration diagnostic");
+        const std::string text = render_diagnostic_body(camera, false);
+        require_contains(text, "Camera: imx477 5-001a", "camera diagnostic should name the camera");
+        require_contains(text, "Requested caps: video/x-raw, format=(string)NV12, width=(int)1280",
+                         "camera diagnostic should show the requested caps");
+        require_contains(text, "VideoScale", "camera diagnostic should suggest resizing");
+        require(text.find("configuration syntax") == std::string::npos,
+                "camera diagnostic must not blame configuration syntax");
+
+        // The trailing not-negotiated error from the same element must not outrank it.
+        const NormalizedDiagnostic trailing = classify_gst_error(
+            raw_error("libcamerasrc", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                      "Internal data stream error. streaming stopped, reason not-negotiated (-4)"));
+        require(diagnostic_priority(camera) > diagnostic_priority(trailing),
+                "camera configuration diagnostic should win over the trailing stream error");
+
+        // Other libcamerasrc settings errors keep the generic configuration diagnostic.
+        const NormalizedDiagnostic other =
+            classify_gst_error(raw_error("libcamerasrc", "gst-resource-error-quark",
+                                         GST_RESOURCE_ERROR_SETTINGS, "Failed to apply controls"));
+        require(other.diagnostic_id == "gstreamer.configuration_invalid",
+                "unrelated libcamerasrc settings errors should stay generic");
+      }
+
+      {
         const NormalizedDiagnostic busy =
             classify_gst_error(raw_error("neatprocesscvu", "gst-resource-error-quark",
                                          GST_RESOURCE_ERROR_BUSY, "Accelerator resource is busy"));
