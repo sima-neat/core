@@ -54,12 +54,10 @@ LLiMa artifacts packaged with Core. The package set is the compatibility unit;
 Core does not duplicate Internals runtime, kernel, or sysroot version checks.
 
 Recovery belongs to the selected platform, not to dispatcher error matching.
-`DispatcherRecovery` refuses legacy recovery in a direct-driver build. The
-installed recovery script checks image metadata before **any** mutation,
-including firmware activation and cleanup. Only an explicitly identified
-legacy Modalix 2.1.x image can enter the old recovery sequence. Unknown identity and unknown DMA
-completion never authorize AppComplex startup, MLA initialization, or remote
-processor resets.
+Core reports dispatcher errors without starting services, initializing MLA
+memory, or resetting remote processors. The legacy recovery code and script
+have been removed. Unknown DMA completion requires preserving buffer loans
+and using the platform-approved recovery procedure.
 
 ### Common workflows
 - **Decode / ingest:** file or RTSP -> depay/demux/parse -> decode -> convert/caps -> appsink -> C++ consumer

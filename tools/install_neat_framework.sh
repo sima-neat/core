@@ -1081,7 +1081,6 @@ stop_board_runtime_before_install() {
   local svc
   for svc in \
       simaai-pipeline-manager.service \
-      simaai-appcomplex.service \
       rctd.service \
       encoder.service \
       decoder.service \
@@ -1091,92 +1090,17 @@ stop_board_runtime_before_install() {
       run_sudo systemctl reset-failed "${svc}" >/dev/null 2>&1 || true
     fi
   done
-
-  if [[ -x /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex ]]; then
-    run_sudo /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex || true
-  else
-    run_sudo pkill -TERM -x mlashmcomplex >/dev/null 2>&1 || true
-    sleep 0.5
-    run_sudo pkill -KILL -x mlashmcomplex >/dev/null 2>&1 || true
-  fi
-
-  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
 }
 
 activate_board_runtime_after_install() {
-  if ! board_runtime_is_legacy; then
-    if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
-          -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
-      log "Activating staged EV74 firmware."
-      run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
-    else
-      log "EV74 firmware activation skipped."
-    fi
-    return 0
-  fi
-  if ! command -v systemctl >/dev/null 2>&1; then
-    return 0
-  fi
-
-  # These files are recreated by simaai-appcomplex.service.  Remove stale IPC
-  # before the post-install MLA init/reset path so clients cannot observe an
-  # old dispatcher lifetime after package replacement.
-  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
-  # Package configuration intentionally does not restart services.  Reload
-  # systemd here so the owned maintenance window starts services from the unit
-  # files that were just unpacked.
-  run_sudo systemctl daemon-reload || true
-
   if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
         -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
-    log "Activating staged EV74 firmware and resetting runtime state."
+    log "Activating staged EV74 firmware."
     run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
   else
-    log "EV74 firmware activation skipped; starting simaai-appcomplex.service directly."
-    if systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
-      run_sudo systemctl restart simaai-appcomplex.service || true
-    fi
+    log "EV74 firmware activation skipped."
   fi
 }
-
-verify_board_runtime_services() {
-  if ! board_runtime_is_legacy; then
-    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
-    return 0
-  fi
-  local service="simaai-appcomplex.service"
-
-  if ! command -v systemctl >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if ! systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
-    return 0
-  fi
-
-  # The Debian maintainer script is intentionally generated through debhelper,
-  # and deb-systemd-invoke treats service start failures as non-fatal so package
-  # transactions can still complete.  For this installer the runtime is not
-  # usable without the MLA shared-memory dispatcher, so make readiness explicit:
-  # try one start/restart if the unit is inactive, then fail with the unit status
-  # instead of leaving users with later "Connecting to server failed" errors.
-  if ! systemctl is-active --quiet "${service}"; then
-    log "${service} is not active after package install; attempting to start it once."
-    run_sudo systemctl start "${service}" || true
-    sleep 1
-  fi
-
-  if ! systemctl is-active --quiet "${service}"; then
-    echo "${service} is not active after NEAT package installation." >&2
-    run_sudo systemctl --no-pager --full status "${service}" >&2 || true
-    run_sudo journalctl -u "${service}" --no-pager -n 80 >&2 || true
-    run_sudo bash -c 'for f in /sys/class/remoteproc/remoteproc*/name /sys/class/remoteproc/remoteproc*/state; do [ -e "$f" ] && printf "%s: " "$f" && cat "$f"; done' >&2 || true
-    exit 1
-  fi
-
-  log "Verified ${service} is active."
-}
-
 
 restart_board_codec_services() {
   if ! board_runtime_is_legacy; then
@@ -1552,7 +1476,6 @@ complete_board_install_after_packages() {
   activate_board_runtime_after_install
   restart_board_codec_services
   verify_board_codec_services
-  verify_board_runtime_services
 }
 
 validate_ros2_sdk_native_host() {

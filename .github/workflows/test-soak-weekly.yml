@@ -66,12 +66,6 @@ jobs:
           mkdir -p _work
           printf '%s\n' "${TEST_DIR}" > _work/test_dir.txt
 
-      - name: Fix devkit runtime
-        env:
-          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
-        run: |
-          ./scripts/fix_devkit_runtime.sh
-
       - name: Run soak lane
         run: |
           TEST_DIR="$(cat _work/test_dir.txt)"

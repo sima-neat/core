@@ -1450,7 +1450,6 @@ endif()
 
 install(
   FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/fix_devkit_runtime.sh
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/neat
   DESTINATION ${CMAKE_INSTALL_BINDIR}
   PERMISSIONS

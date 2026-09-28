@@ -17,6 +17,5 @@ constexpr const char* kDispatcherUnavailableErrorLegacy =
 
 bool match_dispatcher_unavailable(const std::string& message);
 bool is_dispatcher_unavailable(const GraphReport& report);
-bool attempt_dispatcher_recovery(GraphReport* report, bool auto_recover);
 
 } // namespace simaai::neat::pipeline_internal
