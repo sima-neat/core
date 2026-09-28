@@ -776,7 +776,8 @@ MlaStaticContract project_single_mla(const ModelExecutionPlan& plan) {
   return contract;
 }
 
-nlohmann::json port_order_manifest(const std::vector<std::uint64_t>& sizes) {
+nlohmann::json port_order_manifest(const std::vector<std::uint64_t>& sizes,
+                                   const std::uint32_t batch = 1U) {
   auto manifest = nlohmann::json::parse(valid_manifest());
   const auto original = manifest["plugins"];
   manifest["input_nodes"] = nlohmann::json::array();
@@ -819,11 +820,35 @@ nlohmann::json port_order_manifest(const std::vector<std::uint64_t>& sizes) {
   for (std::size_t i = 0U; i < manifest["plugins"].size(); ++i) {
     manifest["plugins"][i]["sequence"] = i + 1U;
   }
+  for (auto& input : manifest["input_nodes"]) {
+    input["size"] = input["size"].get<std::uint64_t>() * batch;
+  }
+  for (auto& plugin : manifest["plugins"]) {
+    auto& config = plugin["config_params"];
+    config["actual_batch_size"] = batch;
+    config["desired_batch_size"] = batch;
+    for (const auto* direction : {"input_nodes", "output_nodes"}) {
+      for (auto& node : plugin[direction]) {
+        node["size"] = node["size"].get<std::uint64_t>() * batch;
+      }
+    }
+    if (config.contains("params")) {
+      for (const auto* field : {"input_shapes", "output_shapes"}) {
+        if (!config["params"].contains(field)) {
+          continue;
+        }
+        for (auto& shape : config["params"][field]) {
+          shape[0] = batch;
+        }
+      }
+    }
+  }
   return manifest;
 }
 
 MlaElfIoTopology native_port_topology(const std::vector<std::uint64_t>& inputs,
-                                      const std::vector<std::uint64_t>& outputs) {
+                                      const std::vector<std::uint64_t>& outputs,
+                                      const std::uint32_t batch = 1U) {
   MlaElfIoTopology topology;
   topology.valid = true;
   for (std::size_t i = 0U; i < inputs.size(); ++i) {
@@ -836,76 +861,115 @@ MlaElfIoTopology native_port_topology(const std::vector<std::uint64_t>& inputs,
   }
   topology.ifm_extent_bytes = inputs;
   topology.ofm_extent_bytes = outputs;
+  if (batch > 1U) {
+    const auto add_slots = [&](auto& slots, const auto& names, const auto& extents) {
+      for (std::uint32_t sample = 0U; sample < batch; ++sample) {
+        for (std::size_t i = 0U; i < names.size(); ++i) {
+          const auto group = sample % 2U == 0U ? i : names.size() - 1U - i;
+          auto symbol = names[group];
+          symbol.replace(symbol.rfind(".b0"), 3U, ".b" + std::to_string(sample));
+          slots.push_back({group, sample, std::move(symbol), extents[group]});
+        }
+      }
+    };
+    add_slots(topology.ifm_slots, topology.ifm_symbol_names, inputs);
+    add_slots(topology.ofm_slots, topology.ofm_symbol_names, outputs);
+  }
   return topology;
 }
 
 void test_native_port_order() {
-  const auto manifest = port_order_manifest({16U, 32U, 48U});
-  for (const bool reorder_input : {false, true}) {
-    for (const bool reorder_output : {false, true}) {
-      const std::vector<std::uint64_t> identity{16U, 32U, 48U};
-      const std::vector<std::uint64_t> permuted{48U, 16U, 32U};
-      const auto topology = native_port_topology(reorder_input ? permuted : identity,
-                                                 reorder_output ? permuted : identity);
-      const auto result = MpkDecoder{}.decode_json(manifest.dump(), topology, "synthetic.json");
-      if (!result && result.error) {
-        std::cerr << result.error->json_path << ": " << result.error->detail << '\n';
-      }
-      check(static_cast<bool>(result), "unique input and output assignments decode");
-      const auto contract = project_single_mla(*result.plan);
-      for (const auto& port : result.plan->backend_ports()) {
-        const bool input = port.direction == BackendPortDirection::Input;
-        const bool reordered = input ? reorder_input : reorder_output;
-        const auto logical = reordered ? (port.port_index + 2U) % 3U : port.port_index;
-        check(port.logical_index() == logical, "physical ports retain the matched logical index");
-        const auto& physical =
-            input ? contract.physical_inputs : contract.dispatcher_physical_outputs;
-        check(physical[port.port_index].segment_name == result.plan->value(port.value_id)->name &&
-                  physical[port.port_index].size_bytes == identity[logical],
-              "projection uses the matched tensor descriptor in physical order");
-        if (input) {
-          check(contract.logical_inputs[port.port_index].tensor_index ==
-                    static_cast<int>(port.port_index),
-                "input descriptors use physical executable order");
+  for (const std::uint32_t batch : {1U, 2U, 4U}) {
+    const auto manifest = port_order_manifest({16U, 32U, 48U}, batch);
+    for (const bool reorder_input : {false, true}) {
+      for (const bool reorder_output : {false, true}) {
+        const std::vector<std::uint64_t> identity{16U, 32U, 48U};
+        const std::vector<std::uint64_t> permuted{48U, 16U, 32U};
+        const auto topology = native_port_topology(reorder_input ? permuted : identity,
+                                                   reorder_output ? permuted : identity, batch);
+        const auto result = MpkDecoder{}.decode_json(manifest.dump(), topology, "synthetic.json");
+        if (!result && result.error) {
+          std::cerr << result.error->json_path << ": " << result.error->detail << '\n';
+        }
+        check(static_cast<bool>(result), "unique input and output assignments decode");
+        const auto contract = project_single_mla(*result.plan);
+        for (const auto& port : result.plan->backend_ports()) {
+          const bool input = port.direction == BackendPortDirection::Input;
+          const bool reordered = input ? reorder_input : reorder_output;
+          const auto& slots = input ? topology.ifm_slots : topology.ofm_slots;
+          const auto group = batch == 1U ? port.port_index : slots[port.port_index].logical_index;
+          const auto logical = reordered ? (group + 2U) % 3U : group;
+          check(port.logical_index() == logical, "physical ports retain the matched logical index");
+          check(result.plan->value(port.value_id)->name ==
+                    (input ? "cast_in" : "mla_out") + std::to_string(logical),
+                "each sample binds the matched tensor identity");
+          check(port.value_byte_offset == port.batch_index * identity[logical],
+                "sample offsets follow the matched tensor stride");
+          if (batch > 1U) {
+            check(port.batch_index == slots[port.port_index].batch_index &&
+                      port.elf_symbol == slots[port.port_index].symbol,
+                  "reconciliation preserves physical slot and sample order");
+            continue;
+          }
+          const auto& physical =
+              input ? contract.physical_inputs : contract.dispatcher_physical_outputs;
+          check(physical[port.port_index].segment_name == result.plan->value(port.value_id)->name &&
+                    physical[port.port_index].size_bytes == identity[logical],
+                "projection uses the matched tensor descriptor in physical order");
+          if (input) {
+            check(contract.logical_inputs[port.port_index].tensor_index ==
+                      static_cast<int>(port.port_index),
+                  "input descriptors use physical executable order");
+          }
+        }
+        for (std::size_t i = 0U; i < 3U; ++i) {
+          check(result.plan->value(result.plan->model_outputs()[i].value_id)->name ==
+                    "result" + std::to_string(i),
+                "public output identity and order do not change");
         }
       }
-      for (std::size_t i = 0U; i < 3U; ++i) {
-        check(result.plan->value(result.plan->model_outputs()[i].value_id)->name ==
-                  "result" + std::to_string(i),
-              "public output identity and order do not change");
+    }
+    for (const bool input : {false, true}) {
+      const std::vector<std::uint64_t> identity{16U, 16U, 32U};
+      for (const auto& changed :
+           {std::vector<std::uint64_t>{32U, 16U, 16U}, std::vector<std::uint64_t>{32U, 16U, 64U}}) {
+        const auto topology =
+            native_port_topology(input ? changed : identity, input ? identity : changed, batch);
+        const auto result = MpkDecoder{}.decode_json(port_order_manifest(identity, batch).dump(),
+                                                     topology, "synthetic.json");
+        check(!result && result.error.has_value(), "ambiguous and missing assignments reject");
+        check(result.error->code == (changed.back() == 16U
+                                         ? MpkDecodeErrorCode::ConfigurationMismatch
+                                         : MpkDecodeErrorCode::ValueSizeMismatch),
+              "assignment failures distinguish ambiguity from missing candidates");
       }
-    }
-  }
-  for (const bool input : {false, true}) {
-    const std::vector<std::uint64_t> identity{16U, 16U, 32U};
-    for (const auto& changed :
-         {std::vector<std::uint64_t>{32U, 16U, 16U}, std::vector<std::uint64_t>{32U, 16U, 64U}}) {
-      const auto topology =
-          native_port_topology(input ? changed : identity, input ? identity : changed);
-      const auto result = MpkDecoder{}.decode_json(port_order_manifest(identity).dump(), topology,
+      const auto result = MpkDecoder{}.decode_json(port_order_manifest(identity, batch).dump(),
+                                                   native_port_topology(identity, identity, batch),
                                                    "synthetic.json");
-      check(!result && result.error.has_value(), "ambiguous and missing assignments reject");
-      check(result.error->code == (changed.back() == 16U ? MpkDecodeErrorCode::ConfigurationMismatch
-                                                         : MpkDecodeErrorCode::ValueSizeMismatch),
-            "assignment failures distinguish ambiguity from missing candidates");
+      check(static_cast<bool>(result), "valid positional bindings with equal sizes remain valid");
     }
-    const auto result =
-        MpkDecoder{}.decode_json(port_order_manifest(identity).dump(),
-                                 native_port_topology(identity, identity), "synthetic.json");
-    check(static_cast<bool>(result), "valid positional bindings with equal sizes remain valid");
-  }
-  for (const bool input : {false, true}) {
-    const std::vector<std::uint64_t> identity{16U, 32U, 48U};
-    const std::vector<std::uint64_t> permuted{48U, 16U, 32U};
-    auto topology = native_port_topology(input ? permuted : identity, input ? identity : permuted);
-    auto& symbols = input ? topology.ifm_symbol_names : topology.ofm_symbol_names;
-    for (std::size_t i = 0U; i < symbols.size(); ++i) {
-      symbols[i] =
-          (input ? "data.ifm.persistent.qmla_ifm_" : "data.ofm.persistent.afe_mla_output_") +
-          std::to_string(i) + ".b0";
+    for (const bool input : {false, true}) {
+      const std::vector<std::uint64_t> identity{16U, 32U, 48U};
+      const std::vector<std::uint64_t> permuted{48U, 16U, 32U};
+      auto topology =
+          native_port_topology(input ? permuted : identity, input ? identity : permuted, batch);
+      auto& symbols = input ? topology.ifm_symbol_names : topology.ofm_symbol_names;
+      for (std::size_t i = 0U; i < symbols.size(); ++i) {
+        symbols[i] =
+            (input ? "data.ifm.persistent.qmla_ifm_" : "data.ofm.persistent.afe_mla_output_") +
+            std::to_string(i) + ".b0";
+      }
+      if (batch > 1U) {
+        auto& slots = input ? topology.ifm_slots : topology.ofm_slots;
+        for (auto& slot : slots) {
+          slot.symbol = symbols[slot.logical_index];
+          slot.symbol.replace(slot.symbol.rfind(".b0"), 3U,
+                              ".b" + std::to_string(slot.batch_index));
+        }
+      }
+      check(!MpkDecoder{}.decode_json(manifest.dump(), topology, "synthetic.json"),
+            "explicitly indexed ports never use the unindexed assignment fallback");
     }
-    check(!MpkDecoder{}.decode_json(manifest.dump(), topology, "synthetic.json"),
-          "explicitly indexed ports never use the unindexed assignment fallback");
   }
 }
 
