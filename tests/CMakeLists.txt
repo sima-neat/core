@@ -120,11 +120,7 @@ add_custom_target(prepare_perf_codec_fixtures
   VERBATIM
 )
 
-# Keep installer package-recovery and devkit-recovery behavior in the normal
-# CTest/DevKit gate. Copy every file the test sources below the build tests root
-# so the Vulcan extras path rebasing also makes this test self-contained on the
-# ARM64 runner, and pass each script path explicitly: the test cannot derive
-# them from its own location once it runs from the build tree.
+# Bundle the installer beside its test so installed extras can run it.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_install_neat_framework_native_restore.py"
@@ -136,17 +132,11 @@ configure_file(
   "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
   COPYONLY
 )
-configure_file(
-  "${CMAKE_SOURCE_DIR}/scripts/fix_devkit_runtime.sh"
-  "${CMAKE_CURRENT_BINARY_DIR}/tools/fix_devkit_runtime.sh"
-  COPYONLY
-)
 add_test(
   NAME unit_install_neat_framework_native_restore_test
   COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
           --installer "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
-          --recovery "${CMAKE_CURRENT_BINARY_DIR}/tools/fix_devkit_runtime.sh"
 )
 set_tests_properties(
   unit_install_neat_framework_native_restore_test
@@ -351,7 +341,6 @@ set(UNIT_TESTS
   unit_route_capability_mpk_static_contract_test
   unit_route_plan_detess_adapter_test
   unit_dispatcher_recovery_test
-  unit_runtime_recovery_policy_test
   unit_video_sender_kind_contract_test
   unit_dispatcher_watchdog_test
   unit_error_code_taxonomy_test

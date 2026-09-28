@@ -234,12 +234,8 @@ sidebar_position: 2
 
 ## 셸/CI 기본 설정 및 전달 설정
 
-개수: 67
+개수: 63
 
-- `APP_COMPLEX_PKG_ARCH`
-- `APP_COMPLEX_PKG_BUILD_ROOT`
-- `APP_COMPLEX_PKG_OUT_DIR`
-- `APP_COMPLEX_PKG_VERSION`
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`
 - `BASELINE_FILE`
