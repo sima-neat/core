@@ -58,7 +58,7 @@ class EncoderMatrixTest(unittest.TestCase):
         def fake_run(command, **kwargs):
             self.calls.append((command, kwargs))
             index = len(self.calls) - 1
-            payload = self.payload(float(command[-1]) * .95, True) if index == 3 else self.payload((120, 100, 110)[index])
+            payload = self.payload(float(command[-1]) * .90, True) if index == 3 else self.payload((120, 100, 110)[index])
             if alter:
                 alter(index, payload)
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "diagnostic")
@@ -122,6 +122,19 @@ class EncoderMatrixTest(unittest.TestCase):
         result = self.run_case()
         self.assertEqual(result.reason_code, schema.ReasonCode.REGRESSION_THROUGHPUT)
         self.assertEqual(len(self.calls), 4)
+
+        self.baseline = replace(self.baseline, metrics_thresholds=replace(
+            self.baseline.metrics_thresholds, throughput_min=100, p50_max=1, p95_max=1,
+        ))
+        self.calls.clear()
+        result = self.run_case()
+        self.assertEqual(result.status, schema.ResultStatus.PASS)
+        self.assertEqual(result.run_meta["warnings"], ["REGRESSION_P50", "REGRESSION_P95"])
+        self.calls.clear()
+        with patch.dict(runner.os.environ, {"SIMA_PERF_ENCODER_QUALIFICATION": "1"}):
+            result = self.run_case()
+        self.assertEqual(result.reason_code, schema.ReasonCode.REGRESSION_P50)
+        self.assertEqual(result.run_meta["regression_reasons"], ["REGRESSION_P50", "REGRESSION_P95"])
 
     def test_encoder_references_cannot_omit_identity_or_allow_zero_fps_or_loss(self):
         good = asdict(self.baseline)

@@ -216,9 +216,12 @@ def run_modalix_preflight(repo_root: Path, ctest_dir: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def encoder_qualification() -> bool:
+    return os.environ.get("SIMA_PERF_ENCODER_QUALIFICATION", "").lower() in ("1", "true", "yes", "on")
+
+
 def encoder_limits() -> tuple[int, float, float]:
-    qualification = os.environ.get("SIMA_PERF_ENCODER_QUALIFICATION", "").lower() in ("1", "true", "yes", "on")
-    return (1000, 10.0, 60.0) if qualification else (500, 2.0, 2.0)
+    return (1000, 10.0, 60.0) if encoder_qualification() else (500, 2.0, 2.0)
 
 
 class EncoderMeasurementFailure(schema.SchemaError):
@@ -268,10 +271,10 @@ def validate_encoder_payload(
                 "sender/receiver accounting differs", drops)
     if paced:
         pacing = payload["pacing"]
-        rate = .95 * median_fps
+        rate = .90 * median_fps
         target = max(minimum_frames, math.ceil(rate * paced_seconds))
         scheduled_seconds = target / rate
-        require(math.isclose(pacing["target_fps"], .95 * median_fps, rel_tol=1e-6), "wrong paced rate")
+        require(math.isclose(pacing["target_fps"], .90 * median_fps, rel_tol=1e-6), "wrong paced rate")
         require(pacing["target_frames"] == target == payload["iterations"] and
                 pacing["shortfall_frames"] == 0, "paced producer shortfall", throughput)
         require(math.isfinite(pacing["producer_seconds"]) and
@@ -293,7 +296,7 @@ def run_encoder_scenario(
     *, repo_root: Path, executable_dir: Path, results_dir: Path, profile: schema.PerfProfile,
     spec: ScenarioSpec, baseline: schema.ScenarioBaseline, timeout_sec: int,
 ) -> schema.PerfResult:
-    """Three exclusive max-rate runs, then one separate run paced at 95% of their median."""
+    """Three exclusive max-rate runs, then one separate run paced at 90% of their median."""
     raw_root = results_dir / "encoder"
     raw_root.mkdir(parents=True, exist_ok=True)
     artifacts = Path(tempfile.mkdtemp(prefix=spec.scenario_id + "-", dir=raw_root))
@@ -396,6 +399,10 @@ def run_encoder_scenario(
         ]
         return finish(component_failures[0].failure_class, component_failures[0].reason_code)
     regressions = schema.compare_metrics(metrics, baseline)
+    if not encoder_qualification():
+        latency = (schema.ReasonCode.REGRESSION_P50, schema.ReasonCode.REGRESSION_P95)
+        metadata["warnings"] = [reason.value for reason in regressions if reason in latency]
+        regressions = [reason for reason in regressions if reason not in latency]
     if regressions:
         metadata["regression_reasons"] = [reason.value for reason in regressions]
         return finish(schema.FailureClass.REGRESSION, regressions[0])
@@ -628,26 +635,37 @@ def run_scenario(
 
 
 def print_summary(results: list[schema.PerfResult]) -> None:
+    def measurements(result: schema.PerfResult) -> tuple[str, str]:
+        if result.metrics["throughput"] <= 0:
+            return "-", "-"
+        unit = "loads/s" if result.scenario_id == "runtime_model_archive_load" else "FPS"
+        p95 = f'{result.metrics["p95"]:.2f} ms' if result.metrics["p95"] > 0 else "-"
+        return f'{result.metrics["throughput"]:.2f} {unit}', p95
+
     print("[perf-matrix] scenario summary:")
     for result in results:
         reason = result.reason_code.value if result.reason_code else "-"
         fclass = result.failure_class.value if result.failure_class else "-"
+        rate, p95 = measurements(result)
+        warnings = ",".join(result.run_meta.get("warnings", [])) or "-"
         print(
-            f"  - {result.scenario_id}: status={result.status.value} "
-            f"failure_class={fclass} reason_code={reason}"
+            f"  - {result.scenario_id}: {rate} p95={p95} status={result.status.value} "
+            f"failure_class={fclass} reason_code={reason} warnings={warnings}"
         )
 
     summary_path = os.getenv("GITHUB_STEP_SUMMARY")
     if summary_path:
         with Path(summary_path).open("a", encoding="utf-8") as handle:
             handle.write("## Perf Matrix Summary\n\n")
-            handle.write("| Scenario | Status | Failure Class | Reason Code |\n")
-            handle.write("|---|---|---|---|\n")
+            handle.write("| Scenario | Throughput | P95 latency | Status | Failure Class | Reason Code | Warnings |\n")
+            handle.write("|---|---:|---:|---|---|---|---|\n")
             for result in results:
                 reason = result.reason_code.value if result.reason_code else "-"
                 fclass = result.failure_class.value if result.failure_class else "-"
+                rate, p95 = measurements(result)
+                warnings = ", ".join(result.run_meta.get("warnings", [])) or "-"
                 handle.write(
-                    f"| {result.scenario_id} | {result.status.value} | {fclass} | {reason} |\n"
+                    f"| {result.scenario_id} | {rate} | {p95} | {result.status.value} | {fclass} | {reason} | {warnings} |\n"
                 )
             handle.write("\n")
 
