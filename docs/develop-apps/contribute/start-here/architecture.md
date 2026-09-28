@@ -546,6 +546,10 @@ exact arena offsets preserve each view. Direct ProcessCVU output publication
 likewise uses its exact strict arena layout rather than the legacy packed
 output reconstruction heuristic.
 
+Core may simplify singleton batch dimensions in internal conversion descriptors
+when the execution view preserves the same addressed bytes. Model tensor shapes,
+batch routing, and public APIs remain unchanged.
+
 For the strict graphs currently admitted by `dmabuf-plan`, ProcessCVU submits
 the same Core-projected tensor routes and frame arena through one of two
 executors. EV74 placement submits descriptors through `/dev/cvu`. A65

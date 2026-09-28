@@ -1452,13 +1452,18 @@ sc::ModelExecutionPlan make_grouped_padded_cast_plan() {
   return std::move(*plan);
 }
 
-sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
-                                                 const sc::OpKind second_kind,
-                                                 const std::size_t members,
-                                                 const std::uint64_t input_offset = 0U) {
+sc::ModelExecutionPlan
+make_fused_transform_plan(const sc::OpKind first_kind, const sc::OpKind second_kind,
+                          const std::size_t members, const std::uint64_t input_offset = 0U,
+                          const sc::TensorShape shape = {1, 2, 2, 16},
+                          const std::string layout = "HWC", const std::uint32_t batch_count = 1U,
+                          const bool c16_packed = true) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
-  const sc::TensorShape shape{1, 2, 2, 16};
+  std::uint64_t elements = 1U;
+  for (const auto dim : shape) {
+    elements *= static_cast<std::uint64_t>(dim);
+  }
   const sc::TensorShape tile{1, 1, 1, 16};
   const auto dtype_bytes = [](const std::string& dtype) {
     return dtype == "FP32" ? 4U : dtype == "BF16" ? 2U : 1U;
@@ -1477,9 +1482,9 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
     const auto input_id = static_cast<sc::ValueId>(data.values.size());
     const auto middle_id = input_id + 1U;
     const auto output_id = input_id + 2U;
-    const auto input_bytes = 64U * dtype_bytes(input_dtype);
-    const auto middle_bytes = 64U * dtype_bytes(middle_dtype);
-    const auto output_bytes = 64U * dtype_bytes(output_dtype);
+    const auto input_bytes = elements * dtype_bytes(input_dtype);
+    const auto middle_bytes = elements * dtype_bytes(middle_dtype);
+    const auto output_bytes = elements * dtype_bytes(output_dtype);
     const auto input_carrier = static_cast<sc::CarrierId>(data.carriers.size());
     data.carriers.push_back(
         {input_carrier, input_offset + input_bytes, 64U, sc::ValueRepresentation::Dense});
@@ -1494,7 +1499,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
                                         input_bytes,
                                         input_dtype,
                                         shape,
-                                        "HWC",
+                                        layout,
                                         {},
                                         sc::ValueRepresentation::Dense,
                                         std::nullopt,
@@ -1510,7 +1515,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
                                         middle_bytes,
                                         middle_dtype,
                                         shape,
-                                        "HWC",
+                                        layout,
                                         {},
                                         sc::ValueRepresentation::Dense,
                                         std::nullopt,
@@ -1526,7 +1531,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
                                         output_bytes,
                                         output_dtype,
                                         shape,
-                                        "HWC",
+                                        layout,
                                         {},
                                         output_representation,
                                         std::nullopt,
@@ -1549,6 +1554,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
       op.name = "transform_" + std::to_string(op.id);
       op.kind = kind;
       op.processor = "EV74";
+      op.batch_count = batch_count;
       op.inputs = {input};
       op.outputs = {output};
       op.input_shapes = {shape};
@@ -1564,7 +1570,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
             : sc::OpConfig{sc::DetessellateOpConfig{tile, shape, true, true, input_dtype}};
     sc::OpConfig second_config =
         second_kind == sc::OpKind::Tessellate
-            ? sc::OpConfig{sc::TessellateOpConfig{tile, true, true, middle_dtype}}
+            ? sc::OpConfig{sc::TessellateOpConfig{tile, c16_packed, c16_packed, middle_dtype}}
         : second_kind == sc::OpKind::Dequantize
             ? sc::OpConfig{sc::DequantizeOpConfig{"INT8", {{0.25, 0}}}}
             : sc::OpConfig{sc::CastOpConfig{"FP32"}};
@@ -1584,7 +1590,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
                                         64U,
                                         "INT8",
                                         shape,
-                                        "HWC",
+                                        layout,
                                         {},
                                         sc::ValueRepresentation::BackendNative,
                                         std::nullopt,
@@ -1623,6 +1629,82 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
   auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
   require(plan.has_value(), "fused transform plan must be valid: " + error);
   return std::move(*plan);
+}
+
+void test_casttess_hwc_execution_view() {
+  struct Case {
+    sc::TensorShape shape;
+    std::string layout;
+    std::uint32_t batch;
+    std::uint32_t execution_rank;
+    bool c16_packed;
+  };
+  const std::array<Case, 5U> cases{{
+      {{1, 2, 2, 16}, "HWC", 1U, 3U, false},
+      {{1, 2, 2, 16}, "HWC", 1U, 3U, true},
+      {{2, 2, 16}, "HWC", 1U, 3U, true},
+      {{2, 2, 2, 16}, "HWC", 1U, 4U, true},
+      {{2, 2, 2, 16}, "NHWC", 2U, 3U, true},
+  }};
+  for (const auto& test : cases) {
+    const auto plan =
+        make_fused_transform_plan(sc::OpKind::Cast, sc::OpKind::Tessellate, 1U, 64U, test.shape,
+                                  test.layout, test.batch, test.c16_packed);
+    std::string error;
+    const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
+    require(physical.has_value(), "CastTess execution view lowers: " + error);
+    const auto arena =
+        sc::FrameSlotArenaPlan::compile(plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+                                        sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
+    require(arena.has_value(), "CastTess execution view arena compiles: " + error);
+    std::vector<sc::PhysicalCommandId> commands;
+    for (const auto& command : physical->commands) {
+      if (command.engine == sc::PhysicalEngine::Cvu && command.graph_id == 224U) {
+        commands.push_back(command.id);
+      }
+    }
+    const auto contract = sc::build_dmabuf_plan_processcvu_command_contract(
+        plan, *physical, commands, *arena, &error);
+    require(contract.has_value(), "CastTess execution view projects: " + error);
+    require(plan.value(0U)->logical_shape == test.shape &&
+                plan.value(2U)->logical_shape == test.shape && contract->payload.batch_size == 1 &&
+                contract->payload.input_tensors.size() == test.batch,
+            "execution views preserve logical shapes and per-sample dispatch");
+    for (std::uint32_t sample = 0U; sample < test.batch; ++sample) {
+      const auto& input = contract->payload.input_tensors[sample];
+      const auto& output = contract->payload.output_tensors[sample];
+      const auto hwc = test.execution_rank - 3U;
+      require(input.shape.rank == test.execution_rank && output.shape.rank == test.execution_rank &&
+                  input.shape.axis_semantics[hwc] == SIMA_EV_AXIS_H &&
+                  input.shape.axis_semantics[hwc + 1U] == SIMA_EV_AXIS_W &&
+                  input.shape.axis_semantics[hwc + 2U] == SIMA_EV_AXIS_C &&
+                  input.shape.sizes[hwc] == 2 && input.shape.sizes[hwc + 1U] == 2 &&
+                  input.shape.sizes[hwc + 2U] == 16 &&
+                  input.layout.strided.strides_bytes[hwc] == 128 &&
+                  input.layout.strided.strides_bytes[hwc + 1U] == 64 &&
+                  input.layout.strided.strides_bytes[hwc + 2U] == 4 &&
+                  output.layout.tiled.tile_sizes[hwc] == 1 &&
+                  output.layout.tiled.tile_sizes[hwc + 1U] == 1 &&
+                  output.layout.tiled.tile_sizes[hwc + 2U] == 16 &&
+                  output.layout.tiled.tile_align_bytes == 16U &&
+                  ((output.layout.tiled.flags & SIMA_EV_TILED_FLAG_COMPACT_CHANNELS) == 0U) ==
+                      test.c16_packed,
+              "execution geometry retains H/W/C strides, tiles and channel padding");
+      for (std::uint32_t axis = 0U; axis < input.shape.rank; ++axis) {
+        require(input.shape.sizes[axis] == output.shape.sizes[axis] &&
+                    input.shape.axis_semantics[axis] == output.shape.axis_semantics[axis],
+                "CastTess input and output execution views match");
+      }
+      const auto input_bytes = plan.value(0U)->required_bytes / test.batch;
+      const auto output_bytes = plan.value(2U)->required_bytes / test.batch;
+      require(input.storage.nbytes == input_bytes && output.storage.nbytes == output_bytes &&
+                  contract->runtime_contract.physical_inputs[sample].source_byte_offset ==
+                      sample * input_bytes &&
+                  contract->runtime_contract.physical_outputs[sample].source_byte_offset ==
+                      arena->region(2U)->byte_offset + 32U + sample * output_bytes,
+              "execution views preserve exact byte extents and batch offsets");
+    }
+  }
 }
 
 sc::ModelExecutionPlan make_model_managed_preproc_absorption_plan() {
@@ -2000,6 +2082,7 @@ RUN_TEST(
       test_single_child_batch_pack();
       test_batched_backend_ports();
       test_cast_preproc_absorption_uses_explicit_image_layout();
+      test_casttess_hwc_execution_view();
       const auto plan = make_plan();
       auto contract = make_projection(plan);
       std::string error;

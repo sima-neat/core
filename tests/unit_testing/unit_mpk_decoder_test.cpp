@@ -1634,12 +1634,14 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
           "fused ingress descriptor binds exactly one outer pair");
     const auto& input = contract->payload.input_tensors.front();
     const auto& output = contract->payload.output_tensors.front();
-    check(input.shape.rank == expected_axes.size() && output.shape.rank == expected_axes.size(),
-          "fused ingress descriptor retains semantic rank rather than flattened wire rank");
-    for (std::size_t axis = 0; axis < expected_axes.size(); ++axis) {
-      check(input.shape.axis_semantics[axis] == expected_axes[axis] &&
-                output.shape.axis_semantics[axis] == expected_axes[axis],
-            "fused ingress descriptor outer pair has identical canonical N/H/W/C axes");
+    const std::size_t first_axis = test_case.graph_id == 224U ? 1U : 0U;
+    check(input.shape.rank == expected_axes.size() - first_axis &&
+              output.shape.rank == expected_axes.size() - first_axis,
+          "fused ingress uses HWC execution for batch-one CastTess and retains QuantTess rank");
+    for (std::size_t axis = first_axis; axis < expected_axes.size(); ++axis) {
+      check(input.shape.axis_semantics[axis - first_axis] == expected_axes[axis] &&
+                output.shape.axis_semantics[axis - first_axis] == expected_axes[axis],
+            "fused ingress descriptor pair preserves spatial and channel axes");
     }
   }
 }
