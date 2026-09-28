@@ -628,12 +628,20 @@ def run_scenario(
 
 
 def print_summary(results: list[schema.PerfResult]) -> None:
+    def measurements(result: schema.PerfResult) -> tuple[str, str]:
+        if result.metrics["throughput"] <= 0:
+            return "-", "-"
+        unit = "loads/s" if result.scenario_id == "runtime_model_archive_load" else "FPS"
+        p95 = f'{result.metrics["p95"]:.2f} ms' if result.metrics["p95"] > 0 else "-"
+        return f'{result.metrics["throughput"]:.2f} {unit}', p95
+
     print("[perf-matrix] scenario summary:")
     for result in results:
         reason = result.reason_code.value if result.reason_code else "-"
         fclass = result.failure_class.value if result.failure_class else "-"
+        rate, p95 = measurements(result)
         print(
-            f"  - {result.scenario_id}: status={result.status.value} "
+            f"  - {result.scenario_id}: {rate} p95={p95} status={result.status.value} "
             f"failure_class={fclass} reason_code={reason}"
         )
 
@@ -641,13 +649,14 @@ def print_summary(results: list[schema.PerfResult]) -> None:
     if summary_path:
         with Path(summary_path).open("a", encoding="utf-8") as handle:
             handle.write("## Perf Matrix Summary\n\n")
-            handle.write("| Scenario | Status | Failure Class | Reason Code |\n")
-            handle.write("|---|---|---|---|\n")
+            handle.write("| Scenario | Throughput | P95 latency | Status | Failure Class | Reason Code |\n")
+            handle.write("|---|---:|---:|---|---|---|\n")
             for result in results:
                 reason = result.reason_code.value if result.reason_code else "-"
                 fclass = result.failure_class.value if result.failure_class else "-"
+                rate, p95 = measurements(result)
                 handle.write(
-                    f"| {result.scenario_id} | {result.status.value} | {fclass} | {reason} |\n"
+                    f"| {result.scenario_id} | {rate} | {p95} | {result.status.value} | {fclass} | {reason} |\n"
                 )
             handle.write("\n")
 
