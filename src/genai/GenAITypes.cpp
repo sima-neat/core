@@ -176,6 +176,8 @@ void GenerationStream::Producer::record_metric(const std::string& metric, double
     impl_.metrics.time_to_first_token_s = value;
   } else if (metric == "tps") {
     impl_.metrics.tokens_per_second = value;
+  } else if (metric == "dropped_events") {
+    impl_.metrics.dropped_events = static_cast<std::uint32_t>(value);
   } else if (metric == "FULL") {
     impl_.finish_reason = "cache_full";
   }
@@ -245,6 +247,10 @@ GenerationStream::GenerationStream(std::unique_ptr<Impl> impl) : impl_(std::move
 
 GenerationStream::GenerationStream(ProducerFn producer, CancelFn cancel)
     : impl_(std::make_unique<Impl>(std::move(producer), std::move(cancel))) {}
+
+GenerationStream GenerationStream::make(ProducerFn producer, CancelFn cancel) {
+  return GenerationStream(std::move(producer), std::move(cancel));
+}
 
 GenerationStream::~GenerationStream() = default;
 

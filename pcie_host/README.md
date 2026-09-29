@@ -12,6 +12,9 @@ co-processing applications:
 - logs: `/var/log/sima-neat/pcie/qN.log`
 - host plugin: `neatpciehost`
 
+To chat with a language model (text and images) on the card, see
+[HOW-TO-RUN-PCIE-GENAI.md](HOW-TO-RUN-PCIE-GENAI.md) (the `pcie-genai` CLI).
+
 ## Public API
 
 Public headers install under:

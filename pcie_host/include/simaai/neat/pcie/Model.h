@@ -41,6 +41,12 @@ struct ConnectionOptions {
   std::string card_gst_debug;
   /// Card-side GStreamer log path. Empty selects the queue-specific default when debugging.
   std::string card_gst_debug_file;
+  /// Card-side program to launch and manage over SSH. Empty selects the default
+  /// "pcie-pipeline-builder" (the tensor pipeline). GenAI overrides this with
+  /// "pcie-genai-backend". It is a program name; the launch path is
+  /// "/usr/bin/<card_program>" and the same name guards the busy/confirm/stop
+  /// checks against /proc/<pid>/cmdline. Restricted to [A-Za-z0-9._-].
+  std::string card_program;
 };
 
 enum class InputKind {

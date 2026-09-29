@@ -5,6 +5,8 @@
 #include <iostream>
 #include <stdexcept>
 
+#include <unistd.h>
+
 namespace pcie_internal = simaai::neat::pcie::internal;
 
 int main() {
@@ -25,6 +27,38 @@ int main() {
         pcie_internal::SshRunner::run_for({"/bin/sleep", "2"}, std::chrono::milliseconds(50));
     if (!timed.timed_out) {
       throw std::runtime_error("expected millisecond command timeout");
+    }
+    {
+      // Regression: the child must not inherit our stdin. Point our stdin at a
+      // pipe that stays open (like `echo prompt | pcie-genai`); a child that
+      // inherited it would block in `cat` until the timeout and eat the input.
+      int stdin_pipe[2] = {-1, -1};
+      if (::pipe(stdin_pipe) != 0) {
+        throw std::runtime_error("pipe failed");
+      }
+      const int saved_stdin = ::dup(STDIN_FILENO);
+      ::dup2(stdin_pipe[0], STDIN_FILENO);
+      const auto start = std::chrono::steady_clock::now();
+      const auto reader = pcie_internal::SshRunner::run({"/bin/sh", "-c", "cat; echo done"}, 5);
+      const auto waited = std::chrono::steady_clock::now() - start;
+      ::dup2(saved_stdin, STDIN_FILENO);
+      ::close(saved_stdin);
+      ::close(stdin_pipe[0]);
+      ::close(stdin_pipe[1]);
+      if (reader.timed_out || reader.exit_code != 0 ||
+          reader.output.find("done") == std::string::npos || waited >= std::chrono::seconds(2)) {
+        throw std::runtime_error("child must see EOF on stdin at once, not the caller's stdin");
+      }
+    }
+    {
+      // A timeout kills the whole process group: a grandchild that holds the
+      // output pipe open must not keep run_for() waiting past its timeout.
+      const auto start = std::chrono::steady_clock::now();
+      const auto group = pcie_internal::SshRunner::run_for({"/bin/sh", "-c", "sleep 5 & sleep 5"},
+                                                           std::chrono::milliseconds(100));
+      if (!group.timed_out || std::chrono::steady_clock::now() - start >= std::chrono::seconds(2)) {
+        throw std::runtime_error("timeout must kill the child's whole process group");
+      }
     }
     const std::string first =
         pcie_internal::RemoteRuntime::unique_remote_upload_path("/first/model.tar.gz");
