@@ -430,14 +430,8 @@ static void add_pending_pts_timing(pipeline_internal::ElementTimingCounters* cou
   auto [it, inserted] =
       counters->pending_pts.emplace(pts, pipeline_internal::ElementPtsTiming{timestamp_us, key});
   if (!inserted) {
-    // Repeated pending timestamps do not identify one replacement buffer.
-    for (const auto& metadata_key : {it->second.metadata_key, key}) {
-      if (!metadata_key)
-        continue;
-      auto metadata = counters->pending.find(*metadata_key);
-      if (metadata != counters->pending.end())
-        metadata->second = 0;
-    }
+    // A repeated PTS only makes the PTS fallback ambiguous. Distinct request
+    // metadata can still identify each replacement buffer exactly.
     it->second = {};
   }
 }

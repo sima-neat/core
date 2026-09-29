@@ -233,6 +233,16 @@ int main() {
     convert_request.output(request_buffer(1, 1, 10, 10));
     require(convert_request.samples() == 0, "duplicate PTS revived an ambiguous metadata request");
 
+    Fixture shared_pts("videoconvert");
+    shared_pts.input(request_buffer(7, 20, 600, 600));
+    shared_pts.input(request_buffer(8, 21, 600, 600));
+    shared_pts.output(request_buffer(8, 21, 600, 600));
+    shared_pts.output(request_buffer(7, 20, 600, 600));
+    require(shared_pts.samples() == 2 && shared_pts.timing->pending.empty(),
+            "repeated PTS discarded distinct exact request identities");
+    shared_pts.output(buffer(-1, "stream0", 600));
+    require(shared_pts.samples() == 2, "ambiguous PTS fallback became usable after exact matches");
+
     for (const char* factory : {"capsfilter", "videoconvert"}) {
       Fixture bounded(factory);
       bounded.timing->max_pending = 1;
