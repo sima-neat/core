@@ -228,7 +228,8 @@ struct MetoakDepthOptions {
   int height = 0;
   /// EV graph debug level. Current native visual graphs accept values in `[0,2]`.
   int debug = 0;
-  /// Optional processcvu queue/buffer override. `0` keeps the plugin/runtime default.
+  /// Optional processcvu buffer override. `0` resolves to the async four-buffer default.
+  /// Sync builds apply their normal pool clamp; async builds require four buffers.
   int num_buffers = 0;
   /// Optional GStreamer/processcvu element name. Empty means Neat generates a stable name.
   std::string element_name;

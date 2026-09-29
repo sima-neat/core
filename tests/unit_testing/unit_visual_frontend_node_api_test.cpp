@@ -1,5 +1,6 @@
 #include <neat.h>
 
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "test_utils.h"
 
 #include <iostream>
@@ -7,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -187,6 +189,46 @@ void test_metoak_depth_public_api() {
   require(rejected, "Metoak unsupported aliases must not silently misbind");
 }
 
+void test_metoak_depth_launch_buffer_contract() {
+  using namespace simaai::neat;
+  MetoakDepthOptions opt;
+  opt.width = 640;
+  opt.height = 360;
+  const auto launch = [&](const MetoakDepthOptions& options) {
+    const std::vector<std::shared_ptr<Node>> graph_nodes = {
+        nodes::Input(), nodes::MetoakDepth(options), nodes::Output()};
+    // This is the real launch builder and strict pre-parse gate, without
+    // parsing, setting pipeline state, allocating EV buffers or dispatching.
+    return build_pipeline_full(graph_nodes, false, "mysink", false, {}).pipeline_string;
+  };
+  const std::string automatic = launch(opt);
+  require_contains(automatic, "num-buffers=4", "Metoak auto pool must be explicit");
+  session_build_enforce_mla_num_buffers(automatic, "Metoak default async regression", false);
+  opt.num_buffers = 4;
+  session_build_enforce_mla_num_buffers(launch(opt), "Metoak explicit async regression", false);
+  opt.num_buffers = 2;
+  const std::string explicit_two = launch(opt);
+  require_contains(explicit_two, "num-buffers=2", "Metoak explicit override must remain visible");
+  bool rejected = false;
+  try {
+    session_build_enforce_mla_num_buffers(explicit_two, "Metoak invalid async regression", false);
+  } catch (const std::exception&) {
+    rejected = true;
+  }
+  require(rejected, "Metoak must not weaken the async four-buffer gate");
+  const std::string sync = session_build_clamp_sync_pipeline(automatic, 1);
+  require_contains(sync, "num-buffers=2", "Sync terminal output must retain its spare buffer");
+  session_build_enforce_mla_num_buffers(sync, "Metoak sync regression", true);
+  rejected = false;
+  try {
+    session_build_enforce_mla_num_buffers("neatprocesscvu name=missing_pool async=true",
+                                          "Metoak absent pool regression", false);
+  } catch (const std::exception&) {
+    rejected = true;
+  }
+  require(rejected, "Missing pool properties must still fail before pipeline parsing");
+}
+
 } // namespace
 
 int main() {
@@ -196,6 +238,7 @@ int main() {
     test_track_descriptor_public_api();
     test_track_klt_public_api();
     test_metoak_depth_public_api();
+    test_metoak_depth_launch_buffer_contract();
     std::cout << "[OK] unit_visual_frontend_node_api_test passed\n";
     return 0;
   } catch (const std::exception& e) {

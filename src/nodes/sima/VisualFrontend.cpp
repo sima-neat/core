@@ -1005,7 +1005,11 @@ std::string TrackKLT::backend_fragment(int node_index) const {
 }
 std::string MetoakDepth::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
+  // Async Graph::build validates an explicit four-buffer processcvu contract
+  // before parsing. Resolve the automatic default here; sync builds can still
+  // apply their normal pool clamp, and explicit overrides remain observable.
+  const int num_buffers = opt_.num_buffers > 0 ? opt_.num_buffers : 4;
+  return processcvu_backend_fragment(names.front(), num_buffers);
 }
 
 std::vector<std::string> FeatureHistogram::element_names(int node_index) const {
