@@ -1152,3 +1152,9 @@ Keep docs and code aligned:
 5. **Keep the public API stable**
 
    * internal refactors should not break user code unless intentionally versioned
+
+## Metoak depth contract
+
+`MetoakDepth` dispatches EV74 graph `simor_depth_map` (ID 20), with six inputs and three outputs, batch one. Use even input width 8–2048 and height 8–1536; keep canonical tensor names. Inputs are UInt8 Y/U/V planes, UInt16 disparity, FP32 BF and FP32 projection. Outputs are RGB UInt8, depth UInt16 in millimeters and XYZ FP32 in meters. All three remain published even though depth is the primary output. Disparity scale is fixed at 32; zero disparity yields zero depth and NaN XYZ.
+
+Native runtime contracts preserve each input's logical dtype separately from the legacy EV transport enum. Device-backed bundled inputs are copied into named segments; this path is not zero-copy. Use matching Core, Internals and graph-20 firmware, and validate numerical output and buffer lifetime before deploying a camera application.

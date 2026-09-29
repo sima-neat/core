@@ -360,7 +360,7 @@ bool processcvu_stage_is_manifest_substitution_local(const StageStaticSpec& stag
          canonical_family == "quanttess" || canonical_family == "cast" ||
          canonical_family == "casttess" || canonical_family == "feature_histogram" ||
          canonical_family == "grider_fast" || canonical_family == "track_descriptor" ||
-         canonical_family == "track_klt";
+         canonical_family == "track_klt" || canonical_family == "simor_depth_map";
 }
 
 bool stage_is_graph_owned_local(const StageStaticSpec& stage) {
@@ -2418,16 +2418,22 @@ std::string processcvu_canonical_graph_name_local(std::string graph_name) {
       graph_name == "track_klt") {
     return "track_klt";
   }
+  if (graph_name == "METOAKDEPTH" || graph_name == "SIMORDEPTHMAP" ||
+      graph_name == "SIMOR_DEPTH_MAP" || graph_name == "metoakdepth" ||
+      graph_name == "simordepthmap" || graph_name == "simor_depth_map") {
+    return "simor_depth_map";
+  }
   return graph_name;
 }
 
 bool processcvu_is_native_visual_graph_local(const std::string& graph_name, int graph_id) {
-  if (graph_id >= 235 && graph_id <= 238) {
+  if ((graph_id >= 235 && graph_id <= 238) || graph_id == 20) {
     return true;
   }
   const std::string canonical = processcvu_canonical_graph_name_local(graph_name);
   return canonical == "feature_histogram" || canonical == "grider_fast" ||
-         canonical == "track_descriptor" || canonical == "track_klt";
+         canonical == "track_descriptor" || canonical == "track_klt" ||
+         canonical == "simor_depth_map";
 }
 
 bool processcvu_graph_family_uses_packed_input_transport_local(const std::string& graph_family) {

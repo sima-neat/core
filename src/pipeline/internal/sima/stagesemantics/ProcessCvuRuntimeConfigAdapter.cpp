@@ -42,6 +42,9 @@ std::string native_visual_canonical_name_runtime(std::string name) {
   if (name == "trackklt" || name == "track_klt") {
     return "track_klt";
   }
+  if (name == "metoakdepth" || name == "simordepthmap" || name == "simor_depth_map") {
+    return "simor_depth_map";
+  }
   return name;
 }
 
@@ -55,11 +58,17 @@ int native_visual_graph_id_runtime(const std::string& name) {
     return 237;
   if (token == "track_klt")
     return 238;
+  // simor_depth_map (MetoakDepth) is not part of the 235-238 contiguous block --
+  // it predates this native-visual family and already owns graph id 20 in the
+  // firmware/cvu-sw dispatch tables (bridge/graph_handler.cc's
+  // SIMA_GRAPH_SIMOR_DEPTH_MAP), which this adapter must not renumber.
+  if (token == "simor_depth_map")
+    return 20;
   return -1;
 }
 
 bool is_native_visual_runtime_config(const CompiledProcessCvuRuntimeConfig& config) {
-  if (config.graph_id >= 235 && config.graph_id <= 238) {
+  if ((config.graph_id >= 235 && config.graph_id <= 238) || config.graph_id == 20) {
     return true;
   }
   return native_visual_graph_id_runtime(!config.graph_name.empty() ? config.graph_name
@@ -464,6 +473,31 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
     }
   }
 
+  if (config.graph_id == 20 || native_visual_graph_id_runtime(config.graph_name) == 20 ||
+      native_visual_graph_id_runtime(config.graph_family) == 20) {
+    const std::vector<std::string> inputs{"y_src",    "u_src",     "v_src",
+                                          "disp_src", "bf_mm_src", "proj_src"};
+    const std::vector<std::string> outputs{"rgb_dst", "depth_dst", "points_dst"};
+    if (config.graph_id != 20 || native_visual_graph_id_runtime(config.graph_name) != 20 ||
+        config.batch_size != 1 || config.width < 8 || config.width > 2048 || config.height < 8 ||
+        config.height > 1536 || config.width % 2 || config.height % 2 || config.debug < 0 ||
+        config.debug > 2) {
+      throw std::invalid_argument("MetoakDepth requires graph 20, even width 8..2048, height "
+                                  "8..1536, batch 1 and debug 0..2");
+    }
+    if (physical_input_names != inputs || config.runtime_input_names != inputs ||
+        physical_output_names != outputs || config.runtime_output_names != outputs ||
+        config.published_output_names != outputs || config.primary_output_name != "depth_dst" ||
+        config.input_tensors.size() != inputs.size() ||
+        config.output_tensors.size() != outputs.size() ||
+        config.runtime_input_dtype_list !=
+            std::vector<std::string>{"UINT8", "UINT8", "UINT8", "UINT16", "FP32", "FP32"} ||
+        config.runtime_output_dtype_list != std::vector<std::string>{"UINT8", "UINT16", "FP32"}) {
+      throw std::invalid_argument(
+          "MetoakDepth requires the canonical six-input/three-output typed contract");
+    }
+  }
+
   require_non_empty_unique_names(physical_input_names, "physical_input_names");
   require_non_empty_unique_names(physical_output_names, "physical_output_names");
   require_non_empty_unique_names(config.published_output_names, "published_output_names");
@@ -679,6 +713,7 @@ build_processcvu_payload_from_runtime_config_common(const CompiledProcessCvuRunt
   payload.input_img_type = config.input_img_type;
   payload.output_img_type = config.output_img_type;
   payload.input_dtype = config.input_dtype;
+  payload.runtime_input_dtype_list = config.runtime_input_dtype_list;
   payload.output_dtype = config.output_dtype;
   payload.out_dtype = config.out_dtype;
   payload.scaling_type = config.scaling_type;

@@ -174,3 +174,7 @@ For SDK setup and DevKit Sync onboarding, see
 Continue to [Install PyNeat](/getting-started/neat-library/pyneat/) for custom
 Python environments, or [Neat CLI](/getting-started/neat-library/neat-cli/) to
 inspect the installed environment.
+
+## If a locally built package set is rejected
+
+The repository installer and build staging check selected Debian packages before changing the installation or sysroot. They reject duplicate or mixed package versions, the wrong architecture, missing Neat SONAME dependencies, conflicting libraries, and build-tree RPATHs. Rebuild and stage the complete matching Internals, LLiMa, Core, and Python package set; do not mask an ABI mismatch with a library symlink or reinstall the same incompatible files. These checks do not prove that all symbols or platform dependencies are available. A successful load/import check and a controlled application smoke test on the actual target are still required.

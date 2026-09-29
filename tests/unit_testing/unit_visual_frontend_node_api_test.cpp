@@ -6,6 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -138,6 +139,54 @@ void test_track_klt_public_api() {
   require(factory && factory->kind() == "TrackKLT", "TrackKLT factory mismatch");
 }
 
+void test_metoak_depth_public_api() {
+  using namespace simaai::neat;
+  MetoakDepthOptions opt;
+  opt.width = 640;
+  opt.height = 360;
+  MetoakDepth node(opt);
+  const auto def = node.contract_definition();
+  require(def.inputs.size() == 6U && def.outputs.size() == 3U,
+          "MetoakDepth must expose all six inputs and three outputs");
+  const char* inputs[] = {"y_src", "u_src", "v_src", "disp_src", "bf_mm_src", "proj_src"};
+  const char* outputs[] = {"rgb_dst", "depth_dst", "points_dst"};
+  for (std::size_t i = 0; i < 6U; ++i)
+    require_port(def.inputs[i], inputs[i], "Metoak input");
+  for (std::size_t i = 0; i < 3U; ++i)
+    require_port(def.outputs[i], outputs[i], "Metoak output");
+  require_contains(opt.summary(), "graph_id=20", "Metoak graph identity");
+  require(nodes::MetoakDepth(opt)->kind() == "MetoakDepth", "Metoak factory");
+  require(node.backend_fragment(7) == node.backend_fragment(7), "Metoak fragment deterministic");
+  for (const auto& shape : {std::pair{8, 8}, std::pair{2048, 1536}}) {
+    opt.width = shape.first;
+    opt.height = shape.second;
+    require(MetoakDepth(opt).contract_definition().outputs.size() == 3U,
+            "Metoak supported envelope boundary");
+  }
+  for (const auto& shape : {std::pair{0, 360}, std::pair{6, 360}, std::pair{9, 360},
+                            std::pair{640, 9}, std::pair{2050, 360}, std::pair{640, 1538}}) {
+    opt.width = shape.first;
+    opt.height = shape.second;
+    bool rejected = false;
+    try {
+      (void)MetoakDepth(opt).contract_definition();
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    require(rejected, "Metoak invalid geometry must fail before dispatch");
+  }
+  opt.width = 640;
+  opt.height = 360;
+  opt.disp_name = "custom_disparity";
+  bool rejected = false;
+  try {
+    (void)MetoakDepth(opt).contract_definition();
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  require(rejected, "Metoak unsupported aliases must not silently misbind");
+}
+
 } // namespace
 
 int main() {
@@ -146,6 +195,7 @@ int main() {
     test_grider_fast_public_api();
     test_track_descriptor_public_api();
     test_track_klt_public_api();
+    test_metoak_depth_public_api();
     std::cout << "[OK] unit_visual_frontend_node_api_test passed\n";
     return 0;
   } catch (const std::exception& e) {

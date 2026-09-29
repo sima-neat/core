@@ -2,7 +2,7 @@
  * @file
  * @ingroup nodes_sima
  * @brief EV74 visual-frontend processcvu Nodes (`FeatureHistogram`, `GriderFast`,
- *        `TrackDescriptor`, `TrackKLT`).
+ *        `TrackDescriptor`, `TrackKLT`, `MetoakDepth`).
  */
 #pragma once
 
@@ -190,6 +190,72 @@ struct TrackKLTOptions {
   std::string summary() const;
 };
 
+/**
+ * @brief Metoak S315 SIMOR depth-map Node: I420->RGB + disparity->metric-depth/point-cloud,
+ *        offloaded to the native `simor_depth_map` EV74 kernel (graph id 20).
+ *
+ * Fixed six-input/three-output contract (batch 1; see the "Metoak EV74 support in Neat"
+ * migration notes for the full rationale). Unlike the other native visual graphs above, this
+ * one is not a feature/tracking kernel: `bf_mm_name`/`proj_name` are per-frame scalar
+ * calibration inputs (not batched images), and it has three heterogeneous outputs rather than
+ * one primary tensor.
+ *
+ * Tensor names currently must retain their canonical defaults; unsupported aliases fail
+ * during contract compilation, before any device access.
+ *
+ * Public ABI (fixed geometry from `width`/`height`; disparity subpixel scale 32 is baked into
+ * the kernel, not a parameter here):
+ * - inputs:
+ *   - `y_name`,      UInt8   `[height,width]`      -- I420 Y
+ *   - `u_name`,      UInt8   `[height/2,width/2]`  -- I420 U
+ *   - `v_name`,      UInt8   `[height/2,width/2]`  -- I420 V
+ *   - `disp_name`,   UInt16  `[height,width]`      -- raw disparity
+ *   - `bf_mm_name`,  Float32 `[1]`                 -- selected calibration BF (mm)
+ *   - `proj_name`,   Float32 `[3]`                 -- {fx_fy, cx, cy}
+ * - outputs:
+ *   - `rgb_output_name`,    UInt8   `[height,width,3]` -- interleaved RGB
+ *   - `depth_output_name`,  UInt16  `[height,width]`   -- millimeters, 0 = invalid (primary)
+ *   - `points_output_name`, Float32 `[height,width,3]` -- interleaved XYZ meters, NaN = invalid
+ *
+ * `depth_output_name` is the primary output for `output_spec()`'s single-boundary description
+ * only; all three outputs are always published together -- selecting one as primary must not
+ * be read as hiding the other two.
+ */
+struct MetoakDepthOptions {
+  /// Even input width in [8, 2048]; use native sensor geometry (640 for S315).
+  int width = 0;
+  /// Even input height in [8, 1536]; use native sensor geometry (360 for S315).
+  int height = 0;
+  /// EV graph debug level. Current native visual graphs accept values in `[0,2]`.
+  int debug = 0;
+  /// Optional processcvu queue/buffer override. `0` keeps the plugin/runtime default.
+  int num_buffers = 0;
+  /// Optional GStreamer/processcvu element name. Empty means Neat generates a stable name.
+  std::string element_name;
+
+  /// I420 Y input tensor name.
+  std::string y_name = "y_src";
+  /// I420 U input tensor name.
+  std::string u_name = "u_src";
+  /// I420 V input tensor name.
+  std::string v_name = "v_src";
+  /// Raw disparity input tensor name.
+  std::string disp_name = "disp_src";
+  /// Per-frame calibrated BF (base * focal length, mm) input tensor name.
+  std::string bf_mm_name = "bf_mm_src";
+  /// Per-frame projection `{fx_fy, cx, cy}` input tensor name.
+  std::string proj_name = "proj_src";
+  /// RGB output tensor name.
+  std::string rgb_output_name = "rgb_dst";
+  /// Metric depth output tensor name.
+  std::string depth_output_name = "depth_dst";
+  /// XYZ point-cloud output tensor name.
+  std::string points_output_name = "points_dst";
+
+  /// Human-readable, non-throwing summary for logs, diagnostics, and Python `repr`.
+  std::string summary() const;
+};
+
 class FeatureHistogram final : public Node,
                                public OutputSpecProvider,
                                public NodeContractProvider,
@@ -298,6 +364,33 @@ private:
   TrackKLTOptions opt_;
 };
 
+class MetoakDepth final : public Node,
+                          public OutputSpecProvider,
+                          public NodeContractProvider,
+                          public NodeContractConfigurable {
+public:
+  explicit MetoakDepth(MetoakDepthOptions opt = {});
+  std::string kind() const override {
+    return "MetoakDepth";
+  }
+  NodeCapsBehavior caps_behavior() const override {
+    return NodeCapsBehavior::Static;
+  }
+  NodeContractDefinition contract_definition() const override;
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
+                             std::string* err) const override;
+  void apply_compiled_contract(const CompiledNodeContract& contract, std::string* err) override;
+  std::string backend_fragment(int node_index) const override;
+  std::vector<std::string> element_names(int node_index) const override;
+  OutputSpec output_spec(const OutputSpec& input) const override;
+  const MetoakDepthOptions& options() const {
+    return opt_;
+  }
+
+private:
+  MetoakDepthOptions opt_;
+};
+
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
@@ -305,4 +398,5 @@ std::shared_ptr<simaai::neat::Node> FeatureHistogram(FeatureHistogramOptions opt
 std::shared_ptr<simaai::neat::Node> GriderFast(GriderFastOptions opt = {});
 std::shared_ptr<simaai::neat::Node> TrackDescriptor(TrackDescriptorOptions opt = {});
 std::shared_ptr<simaai::neat::Node> TrackKLT(TrackKLTOptions opt = {});
+std::shared_ptr<simaai::neat::Node> MetoakDepth(MetoakDepthOptions opt = {});
 } // namespace simaai::neat::nodes

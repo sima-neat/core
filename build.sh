@@ -2513,6 +2513,22 @@ stage_package_artifacts_to_dist() {
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
     chmod +x "dist/install_neat_framework.sh"
+    # A successful link against a reused SDK is not proof of bundle coherence.
+    bash -c 'source "$1"; shift; DEBS=("$@"); validate_bundle_elf_cohort' \
+      bash "${REPO_ROOT}/tools/install_neat_framework.sh" dist/*.deb
+    # Check the shipped dev export, not a build-tree CMake target or SDK cache.
+    (
+      set -e
+      export_prefix="$(mktemp -d)"
+      trap 'rm -rf -- "${export_prefix}"' EXIT
+      for deb in dist/*.deb; do
+        if [[ "$(dpkg-deb -f "${deb}" Package)" == "sima-neat-dev" ]]; then
+          dpkg-deb -x "${deb}" "${export_prefix}"
+        fi
+      done
+      python3 tests/packaging/check_cmake_export.py "${export_prefix}" \
+        --forbid-prefix "${REPO_ROOT}/"
+    )
     staged_any=ON
   fi
 

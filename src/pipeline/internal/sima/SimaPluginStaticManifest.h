@@ -269,6 +269,8 @@ struct ProcessCvuStagePayload {
   std::string scaling_type;
   std::string padding_type;
   std::string input_dtype;
+  // Explicit logical types: the legacy EV enum aliases signed/unsigned and BF16/INT16.
+  std::vector<std::string> runtime_input_dtype_list;
   std::string output_dtype;
   std::string out_dtype;
 

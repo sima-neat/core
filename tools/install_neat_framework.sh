@@ -2080,6 +2080,149 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
   log_green "Paired DevKit sync completed: ${ssh_target}"
 }
 
+# Inspect selected package bytes before Python provisioning, sysroot writes or
+# board lifecycle changes. Never use installed libraries to fill a bundle gap.
+validate_bundle_elf_cohort() {
+  local tool
+  for tool in python3 dpkg-deb readelf; do
+    command -v "${tool}" >/dev/null 2>&1 || {
+      echo "${tool} is required for NEAT bundle preflight." >&2
+      return 1
+    }
+  done
+  python3 - "${1:-}" "${DEBS[@]}" <<'PY_COHORT'
+import hashlib
+import os
+import posixpath
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+
+def run(*args):
+    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT,
+                                   env={**os.environ, "LC_ALL": "C"})
+
+
+def fail(message):
+    raise ValueError(message)
+
+
+def digest_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+packages = {}
+versions = {}
+providers = {}
+consumers = []
+files = {}
+# These dependencies must never be satisfied by leftover SDK/board libraries.
+neat_name = re.compile(
+    r"^lib(?:neat|gstneat|gstsimaai|gstsimamm|sima_neat|sima_lmm|simaneet|"
+    r"simaaineat|commonutils|processcvu_testhooks|simaai_genboxdecode)"
+)
+expected_architecture = sys.argv[1] or None
+
+try:
+    with tempfile.TemporaryDirectory(prefix="neat-cohort-") as temp:
+        for index, argument in enumerate(sys.argv[2:]):
+            deb = Path(argument).resolve(strict=True)
+            package, version, architecture = [
+                run("dpkg-deb", "-f", str(deb), field).strip()
+                for field in ("Package", "Version", "Architecture")
+            ]
+            if architecture != "all":
+                if expected_architecture is None:
+                    expected_architecture = architecture
+                elif architecture != expected_architecture:
+                    fail(f"mixed/unexpected package architecture: {package} is {architecture}, expected {expected_architecture}")
+            if package in packages:
+                fail(f"duplicate package {package}: {packages[package]} and {deb}")
+            packages[package] = str(deb)
+            group = ("internals" if package.startswith("neat-") else
+                     "llima" if package.startswith("sima-lmm-") else
+                     "core" if package in ("sima-neat", "sima-neat-dev") else None)
+            if group:
+                previous = versions.setdefault(group, version)
+                if previous != version:
+                    fail(f"mixed {group} versions: {previous} and {version} ({package})")
+            root = Path(temp) / str(index)
+            subprocess.run(["dpkg-deb", "-x", str(deb), str(root)], check=True)
+            for directory, _, names in os.walk(root, followlinks=False):
+                for name in names:
+                    path = Path(directory) / name
+                    relative = path.relative_to(root).as_posix()
+                    if path.is_symlink():
+                        identity = ("link", os.readlink(path))
+                    elif path.is_file():
+                        identity = ("file", digest_file(path))
+                    else:
+                        continue
+                    if relative in files and files[relative] != identity:
+                        fail(f"conflicting payload path {relative} ({package})")
+                    files[relative] = identity
+                    if identity[0] != "file":
+                        continue
+                    with path.open("rb") as stream:
+                        if stream.read(4) != b"\x7fELF":
+                            continue
+                    header = run("readelf", "-h", str(path))
+                    machine = re.search(r"Machine:\s*(.*)", header).group(1).strip()
+                    expected = {"arm64": "AArch64", "amd64": "Advanced Micro Devices X86-64"}.get(architecture)
+                    if expected is None or machine != expected:
+                        fail(f"ELF architecture mismatch: {package}:{relative}: {architecture} / {machine}")
+                    dynamic = run("readelf", "-d", str(path))
+                    for value in re.findall(r"\((?:RPATH|RUNPATH)\).*?\[([^]]*)\]", dynamic):
+                        for entry in value.split(":"):
+                            origin_relative = (entry in ("$ORIGIN", "${ORIGIN}") or
+                                               entry.startswith(("$ORIGIN/", "${ORIGIN}/")))
+                            if (not entry or
+                                (not entry.startswith("/") and not origin_relative) or
+                                entry.startswith(("/workspace", "/repair", "/tmp", "/home", "/opt/toolchain"))):
+                                fail(f"unsafe build/empty runtime search path in {package}:{relative}: {value}")
+                    soname = re.search(r"\(SONAME\).*?\[([^]]+)\]", dynamic)
+                    if soname:
+                        key = soname.group(1)
+                        old = providers.get(key)
+                        if old and old[0] != identity[1]:
+                            fail(f"different ELF providers for {key}: {old[1]} and {package}:{relative}")
+                        providers[key] = (identity[1], f"{package}:{relative}", relative)
+                    needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic)
+                    consumers.append((f"{package}:{relative}", needed))
+        for soname, (digest, origin, relative) in providers.items():
+            lookup = posixpath.join(posixpath.dirname(relative), soname)
+            visited = set()
+            while files.get(lookup, (None,))[0] == "link":
+                if lookup in visited:
+                    fail(f"cyclic SONAME symlink for {origin}")
+                visited.add(lookup)
+                target = files[lookup][1]
+                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else posixpath.join(posixpath.dirname(lookup), target))
+                if lookup == ".." or lookup.startswith("../"):
+                    fail(f"SONAME symlink escapes package root for {origin}")
+            if files.get(lookup) != ("file", digest):
+                fail(f"missing or wrong packaged SONAME path {soname} for {origin}")
+        families = {name.split(".so", 1)[0] for name in providers}
+        for consumer, needed in consumers:
+            for dependency in needed:
+                if (neat_name.match(dependency) or dependency.split(".so", 1)[0] in families) and dependency not in providers:
+                    fail(f"{consumer} requires {dependency}, but the selected bundle does not provide it; rebuild against the selected Internals/Core (do not add a compatibility symlink)")
+        if not packages:
+            fail("no DEB packages supplied")
+        print(f"Verified selected ELF cohort: {len(packages)} packages, {len(consumers)} ELFs, {len(providers)} SONAME providers. Platform dependencies still require target validation.")
+except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    print(f"NEAT bundle preflight failed: {error}", file=sys.stderr)
+    sys.exit(1)
+PY_COHORT
+}
+
 install_for_environment() {
   case "${ENV_MODE}" in
     elxr-sdk)
@@ -2124,4 +2267,6 @@ fi
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 ensure_platform_compatible
+validate_single_sima_neat_package_pair
+validate_bundle_elf_cohort arm64
 install_for_environment
