@@ -30,6 +30,16 @@ GstBuffer* buffer(std::int64_t id = -1, const char* stream = "stream0",
   return result;
 }
 
+GstBuffer* request_buffer(std::int64_t id, std::int64_t sequence, std::uint64_t timestamp,
+                          GstClockTime pts = GST_CLOCK_TIME_NONE) {
+  GstBuffer* result = buffer(id, "stream0", pts);
+  auto* meta = gst_buffer_get_custom_meta(result, "GstSimaMeta");
+  gst_structure_set(gst_custom_meta_get_structure(meta), "input-seq", G_TYPE_INT64,
+                    static_cast<gint64>(sequence), "timestamp", G_TYPE_UINT64,
+                    static_cast<guint64>(timestamp), nullptr);
+  return result;
+}
+
 struct Fixture {
   GstElement* pipeline = gst_pipeline_new(nullptr);
   GstPad* sink = nullptr;
@@ -167,6 +177,7 @@ int main() {
     convert.input(buffer(-1, "stream0", 30));
     convert.input(buffer(-1, "stream0", 30));
     convert.output(buffer(-1, "stream0", 30));
+    convert.input(buffer(-1, "stream0", 30));
     convert.output(buffer(-1, "stream0", 30));
     convert.input(buffer());
     convert.output(buffer());
@@ -182,6 +193,64 @@ int main() {
     convert.output(buffer(-1, "stream0", 50));
     require(convert.samples() == 3 && convert.timing->pending_pts.empty(),
             "segment change retained an earlier timing identity");
+    Fixture request;
+    request.input(request_buffer(1, 10, 100, 100));
+    request.output(request_buffer(1, 10, 100));
+    require(request.samples() == 1, "request metadata did not survive missing native PTS");
+    request.input(request_buffer(2, 11, 200, 200));
+    request.output(request_buffer(2, 11, 200, 900));
+    require(request.samples() == 2, "native PTS overrode preserved request metadata");
+
+    request.input(request_buffer(3, 12, 300, 300));
+    request.output(request_buffer(3, 13, 300, 300));
+    request.output(request_buffer(3, 12, 301, 300));
+    request.output(buffer(3, "stream0", 300));
+    require(request.samples() == 2, "conflicting or missing request metadata was correlated");
+    request.output(request_buffer(3, 12, 300));
+    require(request.samples() == 3, "matching request was lost after unrelated outputs");
+
+    request.input(request_buffer(4, 14, 400));
+    request.input(request_buffer(4, 15, 400));
+    request.output(request_buffer(4, 15, 400));
+    request.output(request_buffer(4, 14, 400));
+    require(request.samples() == 5, "reordered requests with repeated frame IDs were not matched");
+    request.input(request_buffer(5, 16, 500));
+    request.input(request_buffer(5, 16, 500));
+    request.output(request_buffer(5, 16, 500));
+    request.input(request_buffer(5, 16, 500));
+    request.output(request_buffer(5, 16, 500));
+    require(request.samples() == 5,
+            "delayed ambiguous output borrowed a newer request's start time");
+    gst_pad_send_event(request.sink, gst_event_new_segment(&segment));
+    require(request.timing->pending.empty(), "segment change retained ambiguous requests");
+    request.input(request_buffer(5, 16, 500));
+    request.output(request_buffer(5, 16, 500));
+    require(request.samples() == 6, "new segment could not reuse a prior request identity");
+    Fixture convert_request("videoconvert");
+    convert_request.input(request_buffer(1, 1, 10, 10));
+    convert_request.input(request_buffer(1, 1, 10, 10));
+    convert_request.input(request_buffer(1, 1, 10, 20));
+    convert_request.output(request_buffer(1, 1, 10, 10));
+    require(convert_request.samples() == 0, "duplicate PTS revived an ambiguous metadata request");
+
+    for (const char* factory : {"capsfilter", "videoconvert"}) {
+      Fixture bounded(factory);
+      bounded.timing->max_pending = 1;
+      const bool metadata = std::string(factory) == "capsfilter";
+      auto identity = [metadata](int id) {
+        return metadata ? request_buffer(id, id, id) : buffer(-1, "stream0", id);
+      };
+      bounded.input(identity(1));
+      bounded.input(identity(2)); // Exceeds the bounded correlation history.
+      bounded.output(identity(1));
+      bounded.input(identity(2));
+      bounded.output(identity(2));
+      require(bounded.samples() == 0, "overflow allowed a delayed output to match a newer input");
+      gst_pad_send_event(bounded.sink, gst_event_new_segment(&segment));
+      bounded.input(identity(2));
+      bounded.output(identity(2));
+      require(bounded.samples() == 1, "segment change did not recover bounded timing history");
+    }
     if (had_original)
       g_setenv("SIMA_GST_ELEMENT_TIMINGS", saved.c_str(), TRUE);
     else

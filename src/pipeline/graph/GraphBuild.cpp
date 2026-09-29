@@ -357,7 +357,14 @@ static bool extract_sima_meta_key(GstBuffer* buf, pipeline_internal::ElementTimi
   if (!gst_structure_get_int64(s, "frame-id", &frame_id))
     return false;
   out.frame_id = frame_id;
-  out.pts_ns = GST_BUFFER_PTS(buf);
+  // Async Neat plugins preserve the request metadata even when their pooled
+  // output does not carry the input's native GstBuffer timestamp.
+  guint64 timestamp = 0;
+  out.metadata_timestamp = gst_structure_get_uint64(s, "timestamp", &timestamp) == TRUE;
+  out.timestamp_ns = out.metadata_timestamp ? timestamp : GST_BUFFER_PTS(buf);
+  gint64 input_seq = -1;
+  if (gst_structure_get_int64(s, "input-seq", &input_seq) && input_seq >= 0)
+    out.input_seq = input_seq;
   const gchar* stream_id = gst_structure_get_string(s, "stream-id");
   out.stream_hash = stream_id ? std::hash<std::string>{}(stream_id) : 0U;
   return true;
@@ -385,10 +392,13 @@ static void add_pending_timing(simaai::neat::pipeline_internal::ElementTimingCou
   if (!counters)
     return;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
-  if (counters->pending.size() >= counters->max_pending) {
-    counters->pending.clear();
-  }
-  counters->pending[key] = ts_us;
+  if (counters->pending.size() >= counters->max_pending && !counters->pending.contains(key))
+    counters->pending_overflow = true;
+  if (counters->pending_overflow)
+    return;
+  auto [it, inserted] = counters->pending.emplace(key, ts_us);
+  if (!inserted)
+    it->second = 0; // An identical pending request is ambiguous, not a newer start.
 }
 
 static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
@@ -396,12 +406,14 @@ static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCou
   if (!counters)
     return false;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
-  auto it = counters->pending.find(key);
-  if (it == counters->pending.end())
+  if (counters->pending_overflow)
     return false;
+  auto it = counters->pending.find(key);
+  if (it == counters->pending.end() || it->second <= 0)
+    return false; // Keep ambiguous identities rejected until a stream discontinuity.
   ts_us = it->second;
   counters->pending.erase(it);
-  return true;
+  return ts_us > 0;
 }
 
 static void add_pending_pts_timing(pipeline_internal::ElementTimingCounters* counters,
@@ -411,18 +423,21 @@ static void add_pending_pts_timing(pipeline_internal::ElementTimingCounters* cou
   if (!counters->correlate_pts || !GST_CLOCK_TIME_IS_VALID(pts))
     return;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
-  if (counters->pending_pts.size() >= counters->max_pending) {
-    counters->pending_pts.clear();
-    counters->pending.clear();
-  }
+  if (counters->pending_pts.size() >= counters->max_pending && !counters->pending_pts.contains(pts))
+    counters->pending_overflow = true;
+  if (counters->pending_overflow)
+    return;
   auto [it, inserted] =
       counters->pending_pts.emplace(pts, pipeline_internal::ElementPtsTiming{timestamp_us, key});
   if (!inserted) {
     // Repeated pending timestamps do not identify one replacement buffer.
-    if (it->second.metadata_key)
-      counters->pending.erase(*it->second.metadata_key);
-    if (key)
-      counters->pending.erase(*key);
+    for (const auto& metadata_key : {it->second.metadata_key, key}) {
+      if (!metadata_key)
+        continue;
+      auto metadata = counters->pending.find(*metadata_key);
+      if (metadata != counters->pending.end())
+        metadata->second = 0;
+    }
     it->second = {};
   }
 }
@@ -432,12 +447,17 @@ static bool pop_pending_pts_timing(pipeline_internal::ElementTimingCounters* cou
   if (!counters->correlate_pts || !GST_CLOCK_TIME_IS_VALID(pts))
     return false;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
+  if (counters->pending_overflow)
+    return false;
   auto it = counters->pending_pts.find(pts);
-  if (it == counters->pending_pts.end())
+  if (it == counters->pending_pts.end() || it->second.timestamp_us <= 0)
     return false;
   timestamp_us = it->second.timestamp_us;
-  if (it->second.metadata_key)
-    counters->pending.erase(*it->second.metadata_key);
+  if (it->second.metadata_key) {
+    auto metadata = counters->pending.find(*it->second.metadata_key);
+    if (metadata != counters->pending.end() && metadata->second > 0)
+      counters->pending.erase(metadata);
+  }
   counters->pending_pts.erase(it);
   return timestamp_us > 0;
 }
@@ -497,6 +517,7 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
       std::lock_guard<std::mutex> lock(ctx->counters->pending_mu);
       ctx->counters->pending.clear();
       ctx->counters->pending_pts.clear();
+      ctx->counters->pending_overflow = false;
     }
   }
   if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0)

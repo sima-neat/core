@@ -1082,8 +1082,15 @@ to **all pads** (static, dynamic, and request) for each element and records
 an element, without relying on plugin instrumentation.
 
 For elements that replace buffers, the implementation falls back to `GstSimaMeta`
-correlation (frame-id/stream-id plus PTS) and records `missed_in`/`missed_out` counters.
-A changed PTS cannot reuse an earlier frame's timing merely because its ID matches.
+correlation and records `missed_in`/`missed_out` counters. The key includes
+`frame-id`, `stream-id`, `input-seq` when present, and the metadata `timestamp`.
+Async Neat plugins preserve these request fields even when their pooled output
+does not preserve native GStreamer PTS. Without a metadata timestamp, the key
+uses native PTS instead; the two timestamp sources cannot match each other.
+Conflicting fields and duplicate pending request identities remain unmatched.
+Ambiguous identities stay rejected until a stream discontinuity. If bounded
+correlation history fills up, replacement-buffer timing stops until that reset
+rather than attributing a delayed output to a newer request.
 The timestamp-preserving, one-to-one `videoconvert` element can also match a
 unique pending PTS when conversion removes memory-tagged metadata. Invalid or
 ambiguous timestamps remain unmatched; stream discontinuities clear pending matches.

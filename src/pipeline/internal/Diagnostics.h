@@ -90,7 +90,9 @@ struct ElementFlowStats {
 struct ElementTimingKey {
   int64_t frame_id = -1;
   uint32_t stream_hash = 0;
-  uint64_t pts_ns = UINT64_MAX;
+  uint64_t timestamp_ns = UINT64_MAX;
+  bool metadata_timestamp = false;
+  int64_t input_seq = -1;
 };
 
 struct ElementTimingKeyHash {
@@ -98,14 +100,20 @@ struct ElementTimingKeyHash {
     const size_t h1 = std::hash<int64_t>{}(k.frame_id);
     const size_t h2 = std::hash<uint32_t>{}(k.stream_hash);
     const size_t combined = h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
-    const size_t h3 = std::hash<uint64_t>{}(k.pts_ns);
-    return combined ^ (h3 + 0x9e3779b97f4a7c15ULL + (combined << 6) + (combined >> 2));
+    const size_t h3 = std::hash<uint64_t>{}(k.timestamp_ns);
+    const size_t timed =
+        combined ^ (h3 + 0x9e3779b97f4a7c15ULL + (combined << 6) + (combined >> 2));
+    const size_t h4 = std::hash<int64_t>{}(k.input_seq);
+    return timed ^ (h4 + 0x9e3779b97f4a7c15ULL + (timed << 6) + (timed >> 2)) ^
+           std::hash<bool>{}(k.metadata_timestamp);
   }
 };
 
 struct ElementTimingKeyEq {
   bool operator()(const ElementTimingKey& a, const ElementTimingKey& b) const {
-    return a.frame_id == b.frame_id && a.stream_hash == b.stream_hash && a.pts_ns == b.pts_ns;
+    return a.frame_id == b.frame_id && a.stream_hash == b.stream_hash &&
+           a.timestamp_ns == b.timestamp_ns && a.metadata_timestamp == b.metadata_timestamp &&
+           a.input_seq == b.input_seq;
   }
 };
 
@@ -125,6 +133,7 @@ struct ElementTimingCounters {
   std::mutex pending_mu;
   std::unordered_map<ElementTimingKey, int64_t, ElementTimingKeyHash, ElementTimingKeyEq> pending;
   bool correlate_pts = false;
+  bool pending_overflow = false;
   std::unordered_map<uint64_t, ElementPtsTiming> pending_pts;
   size_t max_pending = 1024;
 
