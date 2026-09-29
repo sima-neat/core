@@ -841,11 +841,17 @@ optional raw-frame admission limits. Latest-by-stream lowering always keeps one
 pending sample per stream.
 
 The execution-graph compiler, not the application, decides whether live
-multi-source fan-in can be fused into one GStreamer pipeline. Eligible private,
+single-source links or multi-source fan-in can be fused into one GStreamer pipeline. Eligible private,
 inputless source branches are lowered with their by-stream mux and consumer so
 decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
 latest-by-stream topology remains segmented. Nested already-fused source
 segments remain ineligible until their branches can be preserved recursively.
+
+Explicit edge policies and stream identities preserve their runtime boundary
+until policy lowering. Unlabelled default links can still merge into one
+segment. Internal output queues use blocking backpressure; the realtime run
+preset does not silently discard compressed access units at those boundaries.
+Frame replacement remains an explicit edge or public output policy.
 
 ### Internal boundary timing
 
@@ -1068,13 +1074,22 @@ This is used to generate "likely stall" summaries:
 
 ### Element timing probes
 
-When enabled (`SIMA_GST_ELEMENT_TIMINGS=1`), the runtime attaches sink+src pad probes
+Runs enable element timing by default. Set `SIMA_GST_ELEMENT_TIMINGS=0` before
+building a run to disable these probes, or `=1` to force them on.
+When enabled, the runtime attaches sink+src pad probes
 to **all pads** (static, dynamic, and request) for each element and records
-`src_ts - sink_ts` per buffer. This produces per-element compute timings without
-relying on plugin instrumentation.
+`src_ts - sink_ts` per buffer. This measures residence time, including waits inside
+an element, without relying on plugin instrumentation.
 
 For elements that replace buffers, the implementation falls back to `GstSimaMeta`
-correlation (frame-id/stream-id) and records `missed_in`/`missed_out` counters.
+correlation (frame-id/stream-id plus PTS) and records `missed_in`/`missed_out` counters.
+A changed PTS cannot reuse an earlier frame's timing merely because its ID matches.
+The timestamp-preserving, one-to-one `videoconvert` element can also match a
+unique pending PTS when conversion removes memory-tagged metadata. Invalid or
+ambiguous timestamps remain unmatched; stream discontinuities clear pending matches.
+Unmatched outputs have no latency sample. Pad counts do not establish one-to-one
+buffer flow, so packetization, frame dropping, and reordering never use FIFO
+position as evidence that an input and output belong together.
 
 ### Element flow probes
 

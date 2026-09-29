@@ -2178,7 +2178,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
   for (std::size_t target_index = 0; target_index < plan->pipeline_segments.size();
        ++target_index) {
     auto& target = plan->pipeline_segments[target_index];
-    if (target.input_edges.size() <= 1U || target.boundary.source_like ||
+    if (target.input_edges.empty() || target.boundary.source_like ||
         target.fused_realtime_ingress.has_value()) {
       continue;
     }
@@ -3093,6 +3093,12 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
         lowering.runtime_node_for_vertex, normalized, view.vertices.size());
     const auto lower_us = pipeline_internal::build_timing_us(lower_start);
 
+    for (const auto& edge : lowering.lowered_edges) {
+      if (!exact_default_link(edge.link_options) || !edge.stream_id.empty()) {
+        compile_opt.pipeline_entry_nodes.insert(edge.to);
+      }
+    }
+
     const auto compile_start = pipeline_internal::build_timing_now();
     ExecutionGraphPlan plan = compile_runtime_graph(lowering.graph, compile_opt);
     const auto compile_us = pipeline_internal::build_timing_us(compile_start);
@@ -3200,7 +3206,7 @@ ExecutionGraphPlan compile_runtime_graph(const graph::Graph& graph,
       compiler_opt.root_input_specs.emplace(id, *opt.root_input_spec);
     }
   }
-  graph::CompiledGraph compiled = compiler.compile(graph, compiler_opt);
+  graph::CompiledGraph compiled = compiler.compile(graph, compiler_opt, opt.pipeline_entry_nodes);
   return build_execution_plan_from_compiled(graph, compiled, opt);
 }
 

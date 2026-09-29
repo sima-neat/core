@@ -8,7 +8,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -91,20 +90,28 @@ struct ElementFlowStats {
 struct ElementTimingKey {
   int64_t frame_id = -1;
   uint32_t stream_hash = 0;
+  uint64_t pts_ns = UINT64_MAX;
 };
 
 struct ElementTimingKeyHash {
   size_t operator()(const ElementTimingKey& k) const {
     const size_t h1 = std::hash<int64_t>{}(k.frame_id);
     const size_t h2 = std::hash<uint32_t>{}(k.stream_hash);
-    return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+    const size_t combined = h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+    const size_t h3 = std::hash<uint64_t>{}(k.pts_ns);
+    return combined ^ (h3 + 0x9e3779b97f4a7c15ULL + (combined << 6) + (combined >> 2));
   }
 };
 
 struct ElementTimingKeyEq {
   bool operator()(const ElementTimingKey& a, const ElementTimingKey& b) const {
-    return a.frame_id == b.frame_id && a.stream_hash == b.stream_hash;
+    return a.frame_id == b.frame_id && a.stream_hash == b.stream_hash && a.pts_ns == b.pts_ns;
   }
+};
+
+struct ElementPtsTiming {
+  int64_t timestamp_us = 0;
+  std::optional<ElementTimingKey> metadata_key;
 };
 
 struct ElementTimingCounters {
@@ -117,11 +124,8 @@ struct ElementTimingCounters {
   std::atomic<uint64_t> missed_out{0};
   std::mutex pending_mu;
   std::unordered_map<ElementTimingKey, int64_t, ElementTimingKeyHash, ElementTimingKeyEq> pending;
-  // Fallback for simple 1:1 transform elements that replace GstBuffer objects or drop
-  // GstSimaMeta between sink and src.  Enabled only for elements observed with exactly one
-  // sink pad and one src pad at probe attachment time, so FIFO order is a safe approximation.
-  std::deque<int64_t> pending_fifo;
-  bool fifo_match_enabled = false;
+  bool correlate_pts = false;
+  std::unordered_map<uint64_t, ElementPtsTiming> pending_pts;
   size_t max_pending = 1024;
 
   ElementTimingStats snapshot() const {

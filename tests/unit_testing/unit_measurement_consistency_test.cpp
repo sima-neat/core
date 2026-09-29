@@ -33,6 +33,7 @@ simaai::neat::Tensor make_rgb_input(int frame) {
 simaai::neat::Sample make_keyed_sample(const simaai::neat::Tensor& input, int frame, int trial) {
   simaai::neat::Sample sample = simaai::neat::sample_from_tensors(simaai::neat::TensorList{input});
   sample.frame_id = frame;
+  sample.pts_ns = static_cast<std::uint64_t>(frame) * 1000000ULL;
   sample.stream_id = "measurement-consistency-" + std::to_string(trial);
   return sample;
 }
@@ -91,6 +92,7 @@ struct TrialStats {
   double avg_push_call_ms = 0.0;
   double avg_pull_call_ms = 0.0;
   std::size_t node_rows_with_samples = 0;
+  bool conversion_has_samples = false;
 };
 
 void run_unmeasured_samples(simaai::neat::Run& run, const simaai::neat::Tensor& input, int count,
@@ -144,6 +146,8 @@ TrialStats run_single_flight_trial(simaai::neat::Run& run, const simaai::neat::T
     if (node.latency.samples == 0 || node.latency.avg_ms <= 0.0) {
       continue;
     }
+    if (node.kind == "VideoConvert")
+      stats.conversion_has_samples = true;
     stats.node_sum_avg_ms += node.latency.avg_ms;
     ++stats.node_rows_with_samples;
   }
@@ -217,6 +221,7 @@ void require_single_flight_consistency(const TrialStats& stats, int trial) {
           prefix + "average public push call should stay small; avg_push_call_ms=" +
               std::to_string(stats.avg_push_call_ms));
 
+  require(stats.conversion_has_samples, prefix + "VideoConvert latency has no samples");
   require(stats.node_rows_with_samples > 0,
           prefix + "measured report should contain node latency rows with samples");
   require(std::isfinite(stats.node_sum_avg_ms) && stats.node_sum_avg_ms > 0.0,

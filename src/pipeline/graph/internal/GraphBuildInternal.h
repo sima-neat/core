@@ -88,9 +88,9 @@ std::string session_build_select_terminal_objectdecode_cpu_visibility(std::strin
 std::string session_build_propagate_terminal_consumer_lane_window(std::string pipeline);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
-void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
-                                                  const std::vector<std::shared_ptr<Node>>& nodes);
-void session_build_maybe_enable_rtsp_appsink_drop(
+void session_build_finalize_output_queue_policy(InputStreamOptions& stream_opt,
+                                                const std::vector<std::shared_ptr<Node>>& nodes);
+void session_build_finalize_output_queue_policy(
     InputStreamOptions& stream_opt, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
     const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes);
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector

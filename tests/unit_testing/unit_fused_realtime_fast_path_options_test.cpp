@@ -251,7 +251,7 @@ RUN_TEST(
       simaai::neat::InputStreamOptions fused_rtsp_stream_options;
       std::vector<std::vector<std::shared_ptr<simaai::neat::Node>>> fused_rtsp_branches = {
           {simaai::neat::nodes::RTSPInput("rtsp://example.test/live")}};
-      simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(
+      simaai::neat::session_build_finalize_output_queue_policy(
           fused_rtsp_stream_options, make_consumer_nodes(), fused_rtsp_branches);
       require(fused_rtsp_stream_options.appsink_drop,
               "an RTSP node in a fused source branch must make the terminal appsink drop");
@@ -261,7 +261,7 @@ RUN_TEST(
       simaai::neat::InputStreamOptions non_rtsp_stream_options;
       std::vector<std::vector<std::shared_ptr<simaai::neat::Node>>> non_rtsp_branches = {
           {simaai::neat::nodes::CameraInput(simaai::neat::CameraInputOptions{})}};
-      simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(
+      simaai::neat::session_build_finalize_output_queue_policy(
           non_rtsp_stream_options, make_consumer_nodes(), non_rtsp_branches);
       require(!non_rtsp_stream_options.appsink_drop,
               "fused non-RTSP branches must preserve the configured appsink policy");
@@ -1462,23 +1462,30 @@ RUN_TEST(
       // H.265 sender must fuse, a mismatched H.264 sender must not.
       const auto build_two_stream_h265_app =
           [&](const std::string& app_name, const std::string& prefix,
-              const simaai::neat::nodes::groups::VideoSenderOptions& sender_template) {
+              const simaai::neat::nodes::groups::VideoSenderOptions& sender_template,
+              int stream_count = 2,
+              simaai::neat::nodes::groups::RtspCodec codec =
+                  simaai::neat::nodes::groups::RtspCodec::H265) {
             simaai::neat::Graph app(app_name, outer_options);
             auto detector = make_composed_consumer_graph();
-            for (int stream = 0; stream < 2; ++stream) {
+            for (int stream = 0; stream < stream_count; ++stream) {
               simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
               source_options.url =
                   "rtsp://example.test/" + prefix + "-source" + std::to_string(stream);
-              source_options.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+              source_options.codec = codec;
               source_options.insert_queue = false;
               source_options.source_fps = 30;
               auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
 
               simaai::neat::Graph decoder(prefix + "_decoder" + std::to_string(stream));
               simaai::neat::SimaDecodeOptions decode_options;
-              decode_options.type = simaai::neat::SimaDecodeType::H265;
+              decode_options.type = codec == simaai::neat::nodes::groups::RtspCodec::H265
+                                        ? simaai::neat::SimaDecodeType::H265
+                                        : simaai::neat::SimaDecodeType::H264;
+              decode_options.raw_output = stream_count == 1;
               decoder.add(simaai::neat::nodes::SimaDecode(decode_options));
-              decoder.add(simaai::neat::nodes::Output(prefix + "_detector_frame"));
+              if (stream_count > 1)
+                decoder.add(simaai::neat::nodes::Output(prefix + "_detector_frame"));
 
               simaai::neat::GraphLinkOptions realtime;
               realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
@@ -1533,6 +1540,39 @@ RUN_TEST(
               "each fused H265 VideoSender branch must pace RTP packets");
       require(h265_video_pipeline.find("rtph265pay name=pay0") == std::string::npos,
               "fused H265 VideoSender branches must not retain the fixed pay0 name");
+
+      for (const auto codec : {simaai::neat::nodes::groups::RtspCodec::H264,
+                               simaai::neat::nodes::groups::RtspCodec::H265}) {
+        auto sender = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(codec);
+        sender.async = false;
+        const auto single_video =
+            build_two_stream_h265_app("single_encoded_video", "single_video", sender, 1, codec);
+        const auto single_plan =
+            simaai::neat::runtime::compile_public_graph(single_video, composed_run_options);
+        const auto fused = std::find_if(
+            single_plan.pipeline_segments.begin(), single_plan.pipeline_segments.end(),
+            [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); });
+        require(fused != single_plan.pipeline_segments.end() &&
+                    fused->fused_realtime_ingress->branches.size() == 1U,
+                "one encoded source with video relay must fuse");
+        const auto pipeline = simaai::neat::session_test::render_fused_realtime_pipeline_for_test(
+            *fused->fused_realtime_ingress, fused->nodes, fused->route_options);
+        require(count_occurrences(pipeline, "neatdecoder ") == 1U &&
+                    count_occurrences(pipeline, "udpsink ") == 1U,
+                "single-source fusion duplicated decoder or video sender");
+        require(single_plan.output_endpoints.size() == 1U,
+                "single-source fusion lost its terminal output");
+        sender.async = true;
+        const auto asynchronous_video =
+            build_two_stream_h265_app("single_async_video", "single_async", sender, 1, codec);
+        const auto asynchronous_plan =
+            simaai::neat::runtime::compile_public_graph(asynchronous_video, composed_run_options);
+        require(std::none_of(
+                    asynchronous_plan.pipeline_segments.begin(),
+                    asynchronous_plan.pipeline_segments.end(),
+                    [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); }),
+                "async video sink must preserve segmented preroll behavior");
+      }
 
       simaai::neat::Graph mixed_codec_app =
           build_two_stream_h265_app("mixed_codec_video_sender_fallback", "mixed_codec",
@@ -1780,7 +1820,7 @@ RUN_TEST(
                        [](const auto& edge) { return edge.consumed_by_fused_realtime_ingress; }),
           "caps fallback must not partially consume realtime edges");
 
-      simaai::neat::Graph single_source_app("single_source_not_fused", outer_options);
+      simaai::neat::Graph single_source_app("single_source_fused", outer_options);
       auto single_source = make_live_source_graph(99);
       auto single_detector = make_composed_consumer_graph();
       simaai::neat::GraphLinkOptions single_link;
@@ -1789,10 +1829,55 @@ RUN_TEST(
       single_source_app.connect(single_source, single_detector, single_link);
       const auto single_source_plan =
           simaai::neat::runtime::compile_public_graph(single_source_app, composed_run_options);
-      for (const auto& segment : single_source_plan.pipeline_segments) {
-        require(!segment.fused_realtime_ingress.has_value(),
-                "automatic fusion must leave ineligible one-source topology unchanged");
-      }
+      const auto single_fused = std::find_if(
+          single_source_plan.pipeline_segments.begin(), single_source_plan.pipeline_segments.end(),
+          [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); });
+      require(single_fused != single_source_plan.pipeline_segments.end() &&
+                  single_fused->fused_realtime_ingress->branches.size() == 1U,
+              "one explicitly realtime source must use the fused ingress");
+
+      simaai::neat::Graph lossless_single_app("single_source_lossless", outer_options);
+      lossless_single_app.connect(make_live_source_graph(100), make_composed_consumer_graph());
+      const auto lossless_single_plan =
+          simaai::neat::runtime::compile_public_graph(lossless_single_app, composed_run_options);
+      require(std::none_of(
+                  lossless_single_plan.pipeline_segments.begin(),
+                  lossless_single_plan.pipeline_segments.end(),
+                  [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); }),
+              "default lossless edge must not acquire realtime frame dropping");
+
+      require(lossless_single_plan.pipeline_segments.size() == 1U,
+              "unlabelled default edges must still merge into one pipeline");
+
+      simaai::neat::Graph identity_app("single_source_identity", outer_options);
+      simaai::neat::GraphLinkOptions identity_link;
+      identity_link.stream_id = "identity_only";
+      identity_app.connect(make_live_source_graph(101), make_composed_consumer_graph(),
+                           identity_link);
+      const auto identity_plan =
+          simaai::neat::runtime::compile_public_graph(identity_app, composed_run_options);
+      require(identity_plan.pipeline_segments.size() == 2U,
+              "explicit stream identity must preserve its runtime boundary");
+      const auto identity_edge =
+          std::find_if(identity_plan.edges.begin(), identity_plan.edges.end(),
+                       [](const auto& edge) { return edge.stream_id == "identity_only"; });
+      require(identity_edge != identity_plan.edges.end() &&
+                  identity_edge->link_options.policy == simaai::neat::GraphLinkPolicy::Default &&
+                  !identity_edge->consumed_by_fused_realtime_ingress,
+              "identity-only edges must remain lossless and routable");
+      const auto identity_index =
+          static_cast<std::size_t>(std::distance(identity_plan.edges.begin(), identity_edge));
+      const auto uses_identity = [identity_index](const auto& edges) {
+        return std::find(edges.begin(), edges.end(), identity_index) != edges.end();
+      };
+      require(
+          std::any_of(identity_plan.pipeline_segments.begin(),
+                      identity_plan.pipeline_segments.end(),
+                      [&](const auto& segment) { return uses_identity(segment.input_edges); }) &&
+              std::any_of(identity_plan.pipeline_segments.begin(),
+                          identity_plan.pipeline_segments.end(),
+                          [&](const auto& segment) { return uses_identity(segment.output_edges); }),
+          "identity stamping must survive on a cross-segment edge");
 
       simaai::neat::GraphOptions synchronous;
       synchronous.processcvu.async = false;

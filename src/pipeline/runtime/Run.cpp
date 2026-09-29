@@ -406,11 +406,14 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
         release_incoming_realtime_credits("async-output-copy");
       }
       if (max > 0) {
+        // Internal transport preserves every sample; graph edges own intentional dropping.
+        const bool internal_output = !st->pipeline.stream_opt.public_output_contract;
         OverflowPolicy output_drop =
-            explicit_output ? (st->pipeline.stream_opt.appsink_drop ? OverflowPolicy::KeepLatest
-                                                                    : OverflowPolicy::Block)
-                            : st->opt.overflow_policy;
-        if (output_drop == OverflowPolicy::Block &&
+            internal_output   ? OverflowPolicy::Block
+            : explicit_output ? (st->pipeline.stream_opt.appsink_drop ? OverflowPolicy::KeepLatest
+                                                                      : OverflowPolicy::Block)
+                              : st->opt.overflow_policy;
+        if (output_drop == OverflowPolicy::Block && !internal_output &&
             !st->pipeline.stream_opt.explicit_public_output_options && !copy_output &&
             !preserve_dmabuf && !strict_zero_copy &&
             pipeline_internal::env_bool("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY", true)) {

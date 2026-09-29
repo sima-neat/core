@@ -988,11 +988,14 @@ bool has_rtsp_input_nodes(const std::vector<std::shared_ptr<Node>>& nodes) {
   return false;
 }
 
-void maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
-                                    const std::vector<std::shared_ptr<Node>>& nodes) {
-  // An explicit public Output owns the terminal queue contract.  RTSP's
-  // anti-backpressure default is only for framework-created/internal
-  // boundaries, where no user OutputOptions would otherwise define it.
+void finalize_output_queue_policy(InputStreamOptions& stream_opt,
+                                  const std::vector<std::shared_ptr<Node>>& nodes) {
+  // Graph transport must preserve compressed access units and matching tensor sets.
+  if (!stream_opt.public_output_contract) {
+    stream_opt.appsink_drop = false;
+    return;
+  }
+  // An explicit public Output owns the terminal queue contract.
   if (graph_build_internal::explicit_public_terminal_output(stream_opt, nodes))
     return;
   if (!has_rtsp_input_nodes(nodes))
@@ -1431,7 +1434,7 @@ BuildInputContext prepare_build_input_context(const std::vector<std::shared_ptr<
   ctx.stream_opt = make_stream_options(ctx.merged_opt, ctx.mode);
   ctx.stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(ctx.stream_opt, nodes);
-  maybe_enable_rtsp_appsink_drop(ctx.stream_opt, nodes);
+  finalize_output_queue_policy(ctx.stream_opt, nodes);
   ctx.insert_queue2 = should_insert_async_queue2(ctx.mode, ctx.merged_opt);
   maybe_log_build_mode("Graph::build(input)", ctx.mode, ctx.insert_queue2);
 
@@ -2917,12 +2920,12 @@ void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOpti
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
 }
 
-void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
-                                                  const std::vector<std::shared_ptr<Node>>& nodes) {
-  maybe_enable_rtsp_appsink_drop(stream_opt, nodes);
+void session_build_finalize_output_queue_policy(InputStreamOptions& stream_opt,
+                                                const std::vector<std::shared_ptr<Node>>& nodes) {
+  finalize_output_queue_policy(stream_opt, nodes);
 }
 
-void session_build_maybe_enable_rtsp_appsink_drop(
+void session_build_finalize_output_queue_policy(
     InputStreamOptions& stream_opt, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
     const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes) {
   // A fused RTSP source lives in branch_nodes while its public Output lives in
@@ -2932,9 +2935,9 @@ void session_build_maybe_enable_rtsp_appsink_drop(
   if (graph_build_internal::explicit_public_terminal_output(stream_opt, consumer_nodes)) {
     return;
   }
-  maybe_enable_rtsp_appsink_drop(stream_opt, consumer_nodes);
+  finalize_output_queue_policy(stream_opt, consumer_nodes);
   for (const auto& nodes : branch_nodes) {
-    maybe_enable_rtsp_appsink_drop(stream_opt, nodes);
+    finalize_output_queue_policy(stream_opt, nodes);
   }
 }
 

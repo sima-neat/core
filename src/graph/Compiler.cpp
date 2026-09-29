@@ -142,6 +142,11 @@ CompiledGraph Compiler::compile(const Graph& g) const {
 }
 
 CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) const {
+  return compile(g, opt, {});
+}
+
+CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt,
+                                const std::unordered_set<NodeId>& pipeline_entry_nodes) const {
   if (!g.is_dag()) {
     throw std::runtime_error(
         "Compiler: graph must be a DAG (node_count=" + std::to_string(g.node_count()) +
@@ -204,9 +209,10 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
     }
 
     const NodeId predecessor = g.in_degree(id) == 1 ? g.edge(g.in_edges(id)[0]).from : kInvalidNode;
-    const bool start_segment = (g.in_degree(id) != 1) || pn->is_source_like() ||
-                               (g.in_degree(id) == 1 && (!is_pipeline_node(g.node(predecessor)) ||
-                                                         g.out_degree(predecessor) != 1U));
+    const bool start_segment =
+        pipeline_entry_nodes.count(id) != 0U || (g.in_degree(id) != 1) || pn->is_source_like() ||
+        (g.in_degree(id) == 1 &&
+         (!is_pipeline_node(g.node(predecessor)) || g.out_degree(predecessor) != 1U));
 
     if (!start_segment) {
       continue; // Will be claimed by a previous segment walk.
@@ -225,7 +231,7 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
       const auto& next_node = g.node(e.to);
       if (!next_node || !is_pipeline_node(next_node))
         break;
-      if (g.in_degree(e.to) != 1)
+      if (g.in_degree(e.to) != 1 || pipeline_entry_nodes.count(e.to) != 0U)
         break;
       cur = e.to;
     }

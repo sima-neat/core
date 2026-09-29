@@ -176,8 +176,8 @@ RUN_TEST(
         require(simaai::neat::graph_build_internal::apply_explicit_public_output_options(
                     stream_options, consumer),
                 "fused public Output was not recognized");
-        simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(stream_options, consumer,
-                                                                   branches);
+        simaai::neat::session_build_finalize_output_queue_policy(stream_options, consumer,
+                                                                 branches);
         require_appsink_properties(stream_options, 19, false, false,
                                    "fused RTSP EveryFrame Output");
       }
@@ -196,17 +196,17 @@ RUN_TEST(
         require(simaai::neat::graph_build_internal::apply_explicit_public_output_options(
                     stream_options, nodes),
                 "Latest public Output was not recognized");
-        simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(stream_options, nodes);
+        simaai::neat::session_build_finalize_output_queue_policy(stream_options, nodes);
         require_appsink_properties(stream_options, 1, true, false, "Latest Output");
       }
 
       // A framework-created Output at a graph-internal RTSP boundary is not a
-      // public contract.  Keep the generic bounded/drop behavior there.
+      // public contract. Preserve every sample until its graph edge accepts it.
       {
         simaai::neat::InputStreamOptions stream_options;
         stream_options.public_output_contract = false;
-        stream_options.appsink_max_buffers = 0;
-        stream_options.appsink_drop = false;
+        stream_options.appsink_max_buffers = 2;
+        stream_options.appsink_drop = true;
         stream_options.appsink_sync = true;
         const NodeList consumer = {
             simaai::neat::nodes::Output(simaai::neat::OutputOptions::EveryFrame(19))};
@@ -216,9 +216,9 @@ RUN_TEST(
         require(!simaai::neat::graph_build_internal::apply_explicit_public_output_options(
                     stream_options, consumer),
                 "internal Output was mistaken for a public contract");
-        simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(stream_options, consumer,
-                                                                   branches);
-        require_appsink_properties(stream_options, 1, true, true, "internal RTSP boundary");
+        simaai::neat::session_build_finalize_output_queue_policy(stream_options, consumer,
+                                                                 branches);
+        require_appsink_properties(stream_options, 2, false, true, "internal RTSP boundary");
       }
 
       // The same ownership rule applies to ordinary non-RTSP pipelines; this
@@ -241,7 +241,7 @@ RUN_TEST(
         require(simaai::neat::graph_build_internal::apply_explicit_public_output_options(
                     stream_options, nodes),
                 "ordinary public Output was not recognized");
-        simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(stream_options, nodes);
+        simaai::neat::session_build_finalize_output_queue_policy(stream_options, nodes);
         require_appsink_properties(stream_options, 7, false, true, "ordinary non-RTSP Output");
       }
 
@@ -454,6 +454,7 @@ RUN_TEST(
         bool explicit_output;
         simaai::neat::RunPreset preset;
         bool stop_while_full;
+        bool internal_output = false;
       };
       for (const auto test_case : {
                SaturationCase{"EveryFrame/Realtime", true, simaai::neat::RunPreset::Realtime,
@@ -461,6 +462,10 @@ RUN_TEST(
                SaturationCase{"Block/Balanced", false, simaai::neat::RunPreset::Balanced, false},
                SaturationCase{"Block/Reliable", false, simaai::neat::RunPreset::Reliable, false},
                SaturationCase{"Block/stop", false, simaai::neat::RunPreset::Balanced, true},
+               SaturationCase{"Internal/Realtime", false, simaai::neat::RunPreset::Realtime, false,
+                              true},
+               SaturationCase{"Internal/stop", false, simaai::neat::RunPreset::Realtime, true,
+                              true},
            }) {
         GError* error = nullptr;
         GstElement* pipeline =
@@ -488,16 +493,23 @@ RUN_TEST(
         simaai::neat::RunOptions run_options;
         run_options.preset = test_case.preset;
         run_options.queue_depth = 1;
-        run_options.overflow_policy = test_case.explicit_output
+        run_options.overflow_policy = (test_case.explicit_output || test_case.internal_output)
                                           ? simaai::neat::OverflowPolicy::KeepLatest
                                           : simaai::neat::OverflowPolicy::Block;
         run_options.output_memory = test_case.explicit_output ? simaai::neat::OutputMemory::ZeroCopy
                                                               : simaai::neat::OutputMemory::Auto;
         auto stream_options = simaai::neat::session_build_make_stream_options(
             run_options, simaai::neat::RunMode::Async);
+        stream_options.public_output_contract = !test_case.internal_output;
         stream_options.explicit_public_output_options = test_case.explicit_output;
         stream_options.appsink_max_buffers = test_case.explicit_output ? 2 : 1;
-        stream_options.appsink_drop = false;
+        if (test_case.internal_output) {
+          simaai::neat::session_build_finalize_output_queue_policy(
+              stream_options,
+              {simaai::neat::nodes::RTSPInput("rtsp://example.test/internal-saturation")});
+        } else {
+          stream_options.appsink_drop = false;
+        }
         stream_options.appsink_sync = false;
         stream_options.timeout_ms = 5000;
         stream_options.worker_poll_ms = 1;
