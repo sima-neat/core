@@ -17,6 +17,9 @@ reports its compiled output capacity during readiness; the host sizes the PCIe
 buffers automatically before the first input. Returned tensors view the received
 raw buffer at the runtime-provided offsets, without an extra reorder copy.
 
+To chat with a language model (text and images) on the card, see
+[HOW-TO-RUN-PCIE-GENAI.md](HOW-TO-RUN-PCIE-GENAI.md) (the `pcie-genai` CLI).
+
 ## Public API
 
 Public headers install under:

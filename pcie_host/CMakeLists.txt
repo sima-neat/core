@@ -30,10 +30,13 @@ option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware tests
 option(SIMAPCIE_BUILD_EXAMPLES "Build PCIe host C++ examples" OFF)
 option(SIMAPCIE_BUILD_PYTHON "Build PCIe host Python bindings via nanobind" OFF)
 option(SIMAPCIE_BUILD_TUTORIALS "Build installable PCIe host tutorials" ON)
+option(SIMAPCIE_BUILD_GENAI_CLI "Build the pcie-genai host CLI (needs SIMAPCIE_SVC_INCLUDE_DIR)" OFF)
 set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")
 set(SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR "" CACHE PATH
   "Include directory supplied by the neatpciehost artifact/package")
+set(SIMAPCIE_SVC_INCLUDE_DIR "" CACHE PATH
+  "Directory holding simaai_svc.h (pcie repo: swsoc-pcie-host/linux/lib/simaaipcie)")
 
 if (DEFINED COPROC_BUILD_TESTS)
   set(SIMAPCIE_BUILD_TESTS "${COPROC_BUILD_TESTS}")
@@ -74,6 +77,11 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/RemoteRuntime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunner.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIProtocol.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/HistoryPaths.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ImageStage.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/SvcTransport.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/model/ModelArchiveLoader.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MlaElfIoTopology.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MpkContract.cpp
@@ -82,6 +90,7 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/ModelExecutionPlan.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/MpkDecoder.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/TvmHostModuleGraph.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/genai/GenAITypes.cpp
 )
 
 add_library(sima_neat_pcie_host STATIC
@@ -293,6 +302,124 @@ if (SIMAPCIE_BUILD_TESTS)
   target_include_directories(unit_pcie_host_async_test_runner_test
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
+  add_executable(unit_pcie_host_remote_program_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_remote_program_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_remote_program_test PRIVATE sima_neat_pcie_host)
+  target_include_directories(unit_pcie_host_remote_program_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+  add_executable(unit_pcie_host_generation_stream_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_generation_stream_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_generation_stream_test PRIVATE sima_neat_pcie_host)
+  target_include_directories(unit_pcie_host_generation_stream_test
+    PRIVATE ${SIMA_NEAT_CORE_ROOT}/include)
+
+  add_executable(unit_pcie_host_genai_model_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_model_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_genai_model_test PRIVATE sima_neat_pcie_host)
+  target_include_directories(unit_pcie_host_genai_model_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${SIMA_NEAT_CORE_ROOT}/include)
+
+  add_executable(unit_pcie_host_genai_protocol_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_protocol_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_genai_protocol_test PRIVATE
+    sima_neat_pcie_host nlohmann_json::nlohmann_json)
+  target_include_directories(unit_pcie_host_genai_protocol_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${SIMA_NEAT_CORE_ROOT}/include)
+
+  add_executable(unit_pcie_host_genai_history_map_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_history_map_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_genai_history_map_test PRIVATE
+    sima_neat_pcie_host nlohmann_json::nlohmann_json)
+  target_include_directories(unit_pcie_host_genai_history_map_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${SIMA_NEAT_CORE_ROOT}/include)
+
+  add_executable(unit_pcie_host_svc_transport_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_svc_transport_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_svc_transport_test PRIVATE
+    sima_neat_pcie_host nlohmann_json::nlohmann_json Threads::Threads)
+  target_include_directories(unit_pcie_host_svc_transport_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${SIMA_NEAT_CORE_ROOT}/include)
+
+  add_executable(unit_pcie_host_genai_cli_args_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_cli_args_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_cli_args.cpp
+  )
+  target_include_directories(unit_pcie_host_genai_cli_args_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+  add_test(NAME unit_pcie_host_genai_cli_args_test COMMAND unit_pcie_host_genai_cli_args_test)
+
+  add_executable(unit_pcie_host_genai_models_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_models_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_models.cpp
+  )
+  target_include_directories(unit_pcie_host_genai_models_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools
+    ${SIMA_NEAT_CORE_ROOT}/include)
+  target_link_libraries(unit_pcie_host_genai_models_test PRIVATE nlohmann_json::nlohmann_json)
+  add_test(NAME unit_pcie_host_genai_models_test COMMAND unit_pcie_host_genai_models_test)
+
+  # The REPL history logic (file path, consecutive-dedup) is pure: no readline,
+  # no tty. The readline integration itself is verified by hand on a terminal.
+  add_executable(unit_pcie_host_genai_history_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_history_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_history.cpp
+  )
+  target_include_directories(unit_pcie_host_genai_history_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+  add_test(NAME unit_pcie_host_genai_history_test COMMAND unit_pcie_host_genai_history_test)
+
+  add_executable(unit_pcie_host_image_stage_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_image_stage_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ImageStage.cpp
+  )
+  target_include_directories(unit_pcie_host_image_stage_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME unit_pcie_host_image_stage_test COMMAND unit_pcie_host_image_stage_test)
+
+  add_executable(unit_pcie_host_genai_repl_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_repl_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_repl.cpp
+  )
+  target_include_directories(unit_pcie_host_genai_repl_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+  add_test(NAME unit_pcie_host_genai_repl_test COMMAND unit_pcie_host_genai_repl_test)
+
+  add_executable(unit_pcie_host_genai_cancel_watcher_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_cancel_watcher_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_cancel_watcher.cpp
+  )
+  target_include_directories(unit_pcie_host_genai_cancel_watcher_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+  target_link_libraries(unit_pcie_host_genai_cancel_watcher_test PRIVATE Threads::Threads)
+  add_test(NAME unit_pcie_host_genai_cancel_watcher_test
+    COMMAND unit_pcie_host_genai_cancel_watcher_test)
+
+  add_executable(unit_pcie_host_genai_silent_cancel_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_genai_silent_cancel_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_cancel_watcher.cpp
+  )
+  target_link_libraries(unit_pcie_host_genai_silent_cancel_test PRIVATE
+    sima_neat_pcie_host nlohmann_json::nlohmann_json Threads::Threads)
+  target_include_directories(unit_pcie_host_genai_silent_cancel_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools
+    ${SIMA_NEAT_CORE_ROOT}/include)
+  add_test(NAME unit_pcie_host_genai_silent_cancel_test
+    COMMAND unit_pcie_host_genai_silent_cancel_test)
+
   add_test(NAME unit_pcie_host_options_test COMMAND unit_pcie_host_options_test)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
   add_test(NAME unit_pcie_host_tensor_test COMMAND unit_pcie_host_tensor_test)
@@ -303,6 +430,57 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
   add_test(NAME unit_pcie_host_async_test_runner_test COMMAND unit_pcie_host_async_test_runner_test)
+  add_test(NAME unit_pcie_host_remote_program_test COMMAND unit_pcie_host_remote_program_test)
+  add_test(NAME unit_pcie_host_generation_stream_test COMMAND unit_pcie_host_generation_stream_test)
+  add_test(NAME unit_pcie_host_genai_model_test COMMAND unit_pcie_host_genai_model_test)
+  add_test(NAME unit_pcie_host_genai_protocol_test COMMAND unit_pcie_host_genai_protocol_test)
+  add_test(NAME unit_pcie_host_genai_history_map_test COMMAND unit_pcie_host_genai_history_map_test)
+  add_test(NAME unit_pcie_host_svc_transport_test COMMAND unit_pcie_host_svc_transport_test)
+endif()
+
+if (SIMAPCIE_BUILD_GENAI_CLI)
+  if (NOT EXISTS "${SIMAPCIE_SVC_INCLUDE_DIR}/simaai_svc.h")
+    message(FATAL_ERROR
+      "SIMAPCIE_BUILD_GENAI_CLI needs SIMAPCIE_SVC_INCLUDE_DIR pointing at the directory "
+      "with simaai_svc.h (got: '${SIMAPCIE_SVC_INCLUDE_DIR}')")
+  endif()
+  # Line editing + persistent history for the interactive REPL, matching the
+  # LLiMa devkit console (which also links GNU readline). Needs libreadline-dev.
+  pkg_check_modules(Readline REQUIRED IMPORTED_TARGET readline)
+  # DlSvcClient loads libsimaaipcie.so with dlopen at run time. We never link
+  # it: only the header is needed to build, and hosts without the PCIe host
+  # package still get a clear error instead of a loader failure.
+  add_executable(pcie-genai
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_cli.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_cli_args.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_cancel_watcher.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_models.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_history.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_readline.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcie_genai_repl.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/DlSvcClient.cpp
+  )
+  target_compile_definitions(pcie-genai PRIVATE SIMA_NEAT_INTERNAL=1)
+  target_include_directories(pcie-genai PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools
+    ${SIMA_NEAT_CORE_ROOT}/include
+    ${SIMAPCIE_SVC_INCLUDE_DIR})
+  target_link_libraries(pcie-genai PRIVATE
+    sima_neat_pcie_host nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS} Threads::Threads
+    PkgConfig::Readline)
+  install(TARGETS pcie-genai RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
+
+  if (SIMAPCIE_BUILD_TESTS)
+    add_executable(unit_pcie_host_dl_svc_client_test
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_dl_svc_client_test.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/DlSvcClient.cpp
+    )
+    target_include_directories(unit_pcie_host_dl_svc_client_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMAPCIE_SVC_INCLUDE_DIR})
+    target_link_libraries(unit_pcie_host_dl_svc_client_test PRIVATE ${CMAKE_DL_LIBS})
+    add_test(NAME unit_pcie_host_dl_svc_client_test COMMAND unit_pcie_host_dl_svc_client_test)
+  endif()
 endif()
 
 if (SIMAPCIE_BUILD_HARDWARE_TESTS)

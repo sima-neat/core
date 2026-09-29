@@ -27,7 +27,8 @@ constexpr int kSshPort = 22;
 constexpr int kConnectTimeoutSec = 10;
 constexpr int kCommandTimeoutSec = 30;
 constexpr const char* kRemoteModelDir = "/tmp";
-constexpr const char* kRemoteHelper = "/usr/bin/pcie-pipeline-builder";
+constexpr const char* kDefaultCardProgram = "pcie-pipeline-builder";
+constexpr const char* kRemoteBinDir = "/usr/bin/";
 constexpr const char* kDefaultIdentityFile = ".ssh/sima_neat_pcie_ed25519";
 constexpr const char* kDefaultMlashmCtrlIoTimeout = "MLASHM_CTRL_IO_TIMEOUT_MS=5000";
 
@@ -125,11 +126,27 @@ void validate_endpoint_component(const std::string& value, const char* name,
   }
 }
 
+void validate_card_program(const std::string& value) {
+  // Empty is allowed: it selects the default program. A non-empty name is placed
+  // inside a shell single-quoted grep pattern and appended to a launch path, so
+  // restrict it to a safe basename charset to keep the command injection-free.
+  if (value.empty()) {
+    return;
+  }
+  const bool safe = std::all_of(value.begin(), value.end(), [](const unsigned char ch) {
+    return std::isalnum(ch) != 0 || ch == '.' || ch == '_' || ch == '-';
+  });
+  if (!safe || value.front() == '-') {
+    throw std::invalid_argument("card_program must match [A-Za-z0-9._-] and not start with '-'");
+  }
+}
+
 } // namespace
 
 RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {
   validate_endpoint_component(connection_.user, "user", false);
   validate_endpoint_component(connection_.card_host, "card_host", true);
+  validate_card_program(connection_.card_program);
 }
 
 std::string RemoteRuntime::endpoint() const {
@@ -142,6 +159,138 @@ std::string RemoteRuntime::status_path(const int queue) const {
 
 std::string RemoteRuntime::pid_path(const int queue) const {
   return "/run/sima-neat/pcie/q" + std::to_string(queue) + ".pid";
+}
+
+std::string RemoteRuntime::card_program() const {
+  return connection_.card_program.empty() ? std::string(kDefaultCardProgram)
+                                          : connection_.card_program;
+}
+
+std::string RemoteRuntime::remote_helper_path() const {
+  return std::string(kRemoteBinDir) + card_program();
+}
+
+std::string RemoteRuntime::child_cleanup_shell_function() {
+  return "child_exited() { "
+         "! kill -0 \"$launched_pid\" >/dev/null 2>&1 || "
+         "grep -q '^State:[[:space:]]*Z' \"/proc/$launched_pid/status\" 2>/dev/null; "
+         "}; "
+         "terminate_launched() { "
+         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
+         "kill -TERM \"$launched_pid\" >/dev/null 2>&1 || true; "
+         "for i in $(seq 1 20); do "
+         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
+         "sleep 0.05; done; "
+         "kill -KILL \"$launched_pid\" >/dev/null 2>&1 || true; "
+         "for i in $(seq 1 20); do "
+         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
+         "sleep 0.05; done; "
+         "return 1; "
+         "}; ";
+}
+
+std::string RemoteRuntime::build_start_command(
+    const int queue, const std::string& remote_model_path,
+    const std::optional<std::string>& remote_model_options_path) const {
+  const std::string helper = remote_helper_path();
+  // Single-quoted grep pattern; card_program() is validated to a safe charset.
+  const std::string cmdline_match = "grep -q '" + card_program() + "'";
+  const std::string start_lock_path =
+      "/run/sima-neat/pcie/q" + std::to_string(queue) + ".start.lock";
+  std::ostringstream ss;
+  ss << child_cleanup_shell_function() << "[ -x " << SshRunner::shell_escape(helper)
+     << " ] || { echo missing_builder; exit 10; }; "
+     << "[ -d /run/sima-neat/pcie ] || { echo missing_run_dir; exit 11; }; "
+     << "[ -d /var/log/sima-neat/pcie ] || { echo missing_log_dir; exit 12; }; "
+     << "startlock=" << SshRunner::shell_escape(start_lock_path) << "; "
+     << "exec 9>\"$startlock\"; "
+     << "flock -w 30 9 || { echo start_lock_timeout; exit 14; }; "
+     << "pidfile=" << SshRunner::shell_escape(pid_path(queue)) << "; "
+     << "statusfile=" << SshRunner::shell_escape(status_path(queue)) << "; "
+     << "if [ -f \"$pidfile\" ]; then "
+     << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+     << "if [ -n \"$pid\" ] && kill -0 \"$pid\" >/dev/null 2>&1; then "
+     << "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | " << cmdline_match
+     << "; "
+        "then "
+     << "echo queue_busy; exit 9; "
+     << "fi; "
+     << "fi; "
+     << "rm -f \"$pidfile\" \"$statusfile\"; "
+     << "else "
+     << "rm -f \"$statusfile\"; "
+     << "fi; ";
+  ss << "nohup ";
+  std::vector<std::string> card_env = split_card_env(connection_.card_env);
+  if (!env_contains_name(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
+    card_env.emplace_back(kDefaultMlashmCtrlIoTimeout);
+  }
+  const bool needs_env = !card_env.empty() || !connection_.card_gst_debug.empty();
+  if (needs_env) {
+    ss << "env ";
+    for (const auto& entry : card_env) {
+      ss << SshRunner::shell_escape(entry) << " ";
+    }
+  }
+  if (!connection_.card_gst_debug.empty()) {
+    ss << "GST_DEBUG=" << SshRunner::shell_escape(connection_.card_gst_debug) << " ";
+    ss << "GST_DEBUG_NO_COLOR=1 ";
+    const std::string debug_file = connection_.card_gst_debug_file.empty()
+                                       ? default_card_gst_debug_file(queue)
+                                       : connection_.card_gst_debug_file;
+    if (!debug_file.empty()) {
+      ss << "GST_DEBUG_FILE=" << SshRunner::shell_escape(debug_file) << " ";
+    }
+  }
+  ss << SshRunner::shell_escape(helper) << " --model " << SshRunner::shell_escape(remote_model_path)
+     << " --queue " << queue;
+  if (remote_model_options_path.has_value()) {
+    ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
+  }
+  ss << " 9>&- >/dev/null 2>&1 & "
+     << "launched_pid=$!; "
+     << "echo \"launched_pid=$launched_pid\"; "
+     << "for i in $(seq 1 200); do "
+     << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then exit 0; fi; "
+     << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
+     << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | " << cmdline_match << "; then "
+     << "if terminate_launched; then echo queue_busy; exit 9; fi; "
+     << "echo queue_busy_cleanup_failed; exit 17; fi; "
+     << "if child_exited; then "
+     << "wait \"$launched_pid\"; child_rc=$?; "
+     << "echo builder_exited_before_queue_claim:$child_rc; exit 15; fi; "
+     << "sleep 0.05; "
+     << "done; "
+     << "if terminate_launched; then echo queue_claim_timeout; exit 16; fi; "
+     << "echo queue_claim_cleanup_failed; exit 18";
+  return ss.str();
+}
+
+std::string RemoteRuntime::build_stop_command(const int queue, const int expected_pid) const {
+  const std::string cmdline_match = "grep -q '" + card_program() + "'";
+  std::ostringstream ss;
+  ss << "expected_pid=" << expected_pid << "; "
+     << "pid=''; "
+     << "if [ -f " << SshRunner::shell_escape(pid_path(queue)) << " ]; then "
+     << "pid=$(cat " << SshRunner::shell_escape(pid_path(queue)) << "); "
+     << "elif [ -f " << SshRunner::shell_escape(status_path(queue)) << " ]; then "
+     << "pid=$(sed -n 's/.*\"pid\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' "
+     << SshRunner::shell_escape(status_path(queue)) << " | head -n1); "
+     << "fi; "
+     << "if [ -n \"$pid\" ] && [ \"$pid\" != \"$expected_pid\" ]; then exit 0; fi; "
+     << "if [ -n \"$pid\" ]; then "
+     << "kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f " << SshRunner::shell_escape(pid_path(queue))
+     << "; exit 0; }; "
+     << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | " << cmdline_match
+     << " || "
+        "exit 0; "
+     << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
+     << "for i in $(seq 1 20); do kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
+     << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; sleep 0.25; done; "
+     << "echo still_running_after_sigterm; exit 13; "
+     << "fi";
+  return ss.str();
 }
 
 std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_path) {
@@ -208,34 +357,6 @@ bool RemoteRuntime::start_failure_cleanup_safe(const int exit_code, const bool t
   }
 }
 
-std::string RemoteRuntime::child_cleanup_shell_function() {
-  return "child_exited() { "
-         "! kill -0 \"$launched_pid\" >/dev/null 2>&1 || "
-         "grep -q '^State:[[:space:]]*Z' \"/proc/$launched_pid/status\" 2>/dev/null; "
-         "}; "
-         "terminate_launched() { "
-         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
-         "kill -TERM \"$launched_pid\" >/dev/null 2>&1 || true; "
-         "for i in $(seq 1 20); do "
-         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
-         "sleep 0.05; done; "
-         "kill -KILL \"$launched_pid\" >/dev/null 2>&1 || true; "
-         "for i in $(seq 1 20); do "
-         "if child_exited; then wait \"$launched_pid\" >/dev/null 2>&1 || true; return 0; fi; "
-         "sleep 0.05; done; "
-         "return 1; "
-         "}; ";
-}
-
-void RemoteRuntime::remove_upload(const std::string& remote_path) const {
-  if (!is_managed_upload_path(remote_path)) {
-    throw std::invalid_argument("refusing to remove unmanaged remote upload path: " + remote_path);
-  }
-  std::vector<std::string> cmd = ssh_base();
-  cmd.push_back("rm -f -- " + SshRunner::shell_escape(remote_path));
-  run_or_throw(cmd, kCommandTimeoutSec, "remote upload cleanup");
-}
-
 std::vector<std::string> RemoteRuntime::ssh_base() const {
   std::vector<std::string> cmd;
   cmd.push_back("ssh");
@@ -243,6 +364,7 @@ std::vector<std::string> RemoteRuntime::ssh_base() const {
   if (const auto identity = default_identity_file(); identity.has_value()) {
     cmd.insert(cmd.end(), {"-i", *identity});
   }
+  cmd.insert(cmd.end(), {"-o", "BatchMode=yes"}); // fail fast, never prompt for a password
   cmd.insert(cmd.end(), {"-o", "StrictHostKeyChecking=accept-new"});
   cmd.insert(cmd.end(), {"-o", "ConnectTimeout=" + std::to_string(kConnectTimeoutSec)});
   cmd.push_back(endpoint());
@@ -256,6 +378,7 @@ std::vector<std::string> RemoteRuntime::scp_base() const {
   if (const auto identity = default_identity_file(); identity.has_value()) {
     cmd.insert(cmd.end(), {"-i", *identity});
   }
+  cmd.insert(cmd.end(), {"-o", "BatchMode=yes"}); // fail fast, never prompt for a password
   cmd.insert(cmd.end(), {"-o", "StrictHostKeyChecking=accept-new"});
   cmd.insert(cmd.end(), {"-o", "ConnectTimeout=" + std::to_string(kConnectTimeoutSec)});
   return cmd;
@@ -294,71 +417,14 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
 
 int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
                          const std::optional<std::string>& remote_model_options_path) const {
-  const std::string start_lock_path =
-      "/run/sima-neat/pcie/q" + std::to_string(queue) + ".start.lock";
-  std::ostringstream ss;
-  ss << child_cleanup_shell_function() << "[ -x " << SshRunner::shell_escape(kRemoteHelper)
-     << " ] || { echo missing_builder; exit 10; }; "
-     << "[ -d /run/sima-neat/pcie ] || { echo missing_run_dir; exit 11; }; "
-     << "[ -d /var/log/sima-neat/pcie ] || { echo missing_log_dir; exit 12; }; "
-     << "startlock=" << SshRunner::shell_escape(start_lock_path) << "; "
-     << "exec 9>\"$startlock\"; " << "flock -w 30 9 || { echo start_lock_timeout; exit 14; }; "
-     << "pidfile=" << SshRunner::shell_escape(pid_path(queue)) << "; "
-     << "statusfile=" << SshRunner::shell_escape(status_path(queue)) << "; "
-     << "if [ -f \"$pidfile\" ]; then " << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
-     << "if [ -n \"$pid\" ] && kill -0 \"$pid\" >/dev/null 2>&1; then "
-     << "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -q 'pcie-pipeline-builder'; "
-        "then "
-     << "echo queue_busy; exit 9; " << "fi; " << "fi; " << "rm -f \"$pidfile\" \"$statusfile\"; "
-     << "else " << "rm -f \"$statusfile\"; " << "fi; ";
-  ss << "nohup ";
-  std::vector<std::string> card_env = split_card_env(connection_.card_env);
-  if (!env_contains_name(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
-    card_env.emplace_back(kDefaultMlashmCtrlIoTimeout);
-  }
-  const bool needs_env = !card_env.empty() || !connection_.card_gst_debug.empty();
-  if (needs_env) {
-    ss << "env ";
-    for (const auto& entry : card_env) {
-      ss << SshRunner::shell_escape(entry) << " ";
-    }
-  }
-  if (!connection_.card_gst_debug.empty()) {
-    ss << "GST_DEBUG=" << SshRunner::shell_escape(connection_.card_gst_debug) << " ";
-    ss << "GST_DEBUG_NO_COLOR=1 ";
-    const std::string debug_file = connection_.card_gst_debug_file.empty()
-                                       ? default_card_gst_debug_file(queue)
-                                       : connection_.card_gst_debug_file;
-    if (!debug_file.empty()) {
-      ss << "GST_DEBUG_FILE=" << SshRunner::shell_escape(debug_file) << " ";
-    }
-  }
-  ss << SshRunner::shell_escape(kRemoteHelper) << " --model "
-     << SshRunner::shell_escape(remote_model_path) << " --queue " << queue;
-  if (remote_model_options_path.has_value()) {
-    ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
-  }
-  ss << " 9>&- >/dev/null 2>&1 & " << "launched_pid=$!; " << "echo \"launched_pid=$launched_pid\"; "
-     << "for i in $(seq 1 200); do " << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
-     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then exit 0; fi; "
-     << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
-     << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | "
-        "grep -q 'pcie-pipeline-builder'; then "
-     << "if terminate_launched; then echo queue_busy; exit 9; fi; "
-     << "echo queue_busy_cleanup_failed; exit 17; fi; " << "if child_exited; then "
-     << "wait \"$launched_pid\"; child_rc=$?; "
-     << "echo builder_exited_before_queue_claim:$child_rc; exit 15; fi; " << "sleep 0.05; "
-     << "done; " << "if terminate_launched; then echo queue_claim_timeout; exit 16; fi; "
-     << "echo queue_claim_cleanup_failed; exit 18";
-
+  const std::string program = card_program();
   std::vector<std::string> cmd = ssh_base();
-  cmd.push_back(ss.str());
+  cmd.push_back(build_start_command(queue, remote_model_path, remote_model_options_path));
   CommandResult result;
   try {
     result = SshRunner::run(cmd, kCommandTimeoutSec);
   } catch (const std::exception& e) {
-    throw RemoteStartError(std::string("remote pcie-pipeline-builder start failed: ") + e.what(),
-                           true);
+    throw RemoteStartError("remote " + program + " start failed: " + e.what(), true);
   }
   if (result.timed_out || result.exit_code != 0) {
     std::optional<int> launched_pid;
@@ -368,31 +434,24 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
     }
     const bool cleanup_safe = start_failure_cleanup_safe(result.exit_code, result.timed_out);
     throw RemoteStartError(
-        "remote pcie-pipeline-builder start failed (exit=" + std::to_string(result.exit_code) +
+        "remote " + program + " start failed (exit=" + std::to_string(result.exit_code) +
             ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output,
         cleanup_safe, cleanup_safe ? std::nullopt : launched_pid);
   }
   try {
     return parse_launched_pid(result.output);
   } catch (const std::exception& e) {
-    throw RemoteStartError(std::string("remote pcie-pipeline-builder start returned an invalid "
-                                       "owner PID: ") +
-                               e.what(),
-                           false);
+    throw RemoteStartError(
+        "remote " + program + " start returned an invalid owner PID: " + e.what(), false);
   }
 }
 
-RemoteStatus RemoteRuntime::read_status(const int queue,
-                                        const std::chrono::milliseconds timeout) const {
-  std::vector<std::string> cmd = ssh_base();
-  cmd.push_back("cat " + SshRunner::shell_escape(status_path(queue)) + " 2>/dev/null");
-  const CommandResult res = SshRunner::run_for(cmd, timeout);
-  if (res.timed_out || res.exit_code != 0 || res.output.empty()) {
+RemoteStatus RemoteRuntime::parse_status(const std::string& body, const int queue) {
+  if (body.empty()) {
     return {};
   }
-
   try {
-    const auto root = nlohmann::json::parse(res.output);
+    const auto root = nlohmann::json::parse(body);
     RemoteStatus out;
     out.state = json_string_or(root, "state");
     out.queue = json_int_or(root, "queue", queue);
@@ -415,19 +474,79 @@ RemoteStatus RemoteRuntime::read_status(const int queue,
   }
 }
 
+RemoteStatus RemoteRuntime::read_status(const int queue,
+                                        const std::chrono::milliseconds timeout) const {
+  std::vector<std::string> cmd = ssh_base();
+  cmd.push_back("cat " + SshRunner::shell_escape(status_path(queue)) + " 2>/dev/null");
+  const CommandResult res = SshRunner::run_for(cmd, timeout);
+  if (res.timed_out || res.exit_code != 0 || res.output.empty()) {
+    return {};
+  }
+  return parse_status(res.output, queue);
+}
+
+namespace {
+constexpr const char* kAliveMarker = "sima_neat_pid_alive=";
+} // namespace
+
+std::string RemoteRuntime::build_ready_probe_command(const int queue,
+                                                     const int expected_pid) const {
+  // Status first, liveness second: a program that wrote "failed" and exited is
+  // reported with its own error, not as "died". One ssh call per poll, as before.
+  std::ostringstream ss;
+  ss << "cat " << SshRunner::shell_escape(status_path(queue)) << " 2>/dev/null; "
+     << "if kill -0 " << expected_pid << " >/dev/null 2>&1; then alive=1; else alive=0; fi; "
+     << "echo; echo \"" << kAliveMarker << "$alive\"";
+  return ss.str();
+}
+
+ReadyProbe RemoteRuntime::parse_ready_probe(const std::string& output, const int queue) {
+  ReadyProbe probe;
+  const std::size_t marker = output.rfind(kAliveMarker);
+  if (marker == std::string::npos) {
+    return probe; // no marker (e.g. ssh noise only): status unknown, alive unknown
+  }
+  const std::size_t value = marker + std::char_traits<char>::length(kAliveMarker);
+  probe.alive = !(value < output.size() && output[value] == '0');
+  std::string body = output.substr(0, marker);
+  const auto not_space = [](const unsigned char ch) { return std::isspace(ch) == 0; };
+  body.erase(std::find_if(body.rbegin(), body.rend(), not_space).base(), body.end());
+  body.erase(body.begin(), std::find_if(body.begin(), body.end(), not_space));
+  probe.status = parse_status(body, queue);
+  return probe;
+}
+
+std::string RemoteRuntime::startup_log_path(const int queue) const {
+  return "/var/log/sima-neat/pcie/q" + std::to_string(queue) + ".log";
+}
+
 RemoteStatus RemoteRuntime::wait_ready(const int queue, const int expected_pid,
-                                       const int readiness_timeout_ms) const {
+                                       const int readiness_timeout_ms,
+                                       const std::function<bool()>& should_abort) const {
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(readiness_timeout_ms);
   RemoteStatus last;
 
   while (std::chrono::steady_clock::now() < deadline) {
+    // should_abort lets the caller (pcie-genai on Ctrl-C/SIGTERM) end a wait
+    // that can take minutes. We throw, so the caller's cleanup stops the card
+    // program. Checked before each poll and after each sleep.
+    if (should_abort && should_abort()) {
+      throw std::runtime_error("interrupted while waiting for READY");
+    }
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
         deadline - std::chrono::steady_clock::now());
     if (remaining <= std::chrono::milliseconds::zero()) {
       break;
     }
-    last = read_status(queue, remaining);
+    std::vector<std::string> cmd = ssh_base();
+    cmd.push_back(build_ready_probe_command(queue, expected_pid));
+    const CommandResult res = SshRunner::run_for(cmd, remaining);
+    ReadyProbe probe;
+    if (!res.timed_out && res.exit_code == 0) {
+      probe = parse_ready_probe(res.output, queue);
+    }
+    last = probe.status;
     if (!status_owner_matches(last, expected_pid)) {
       throw std::runtime_error("remote pipeline queue ownership changed while waiting for "
                                "readiness: expected pid=" +
@@ -441,10 +560,22 @@ RemoteStatus RemoteRuntime::wait_ready(const int queue, const int expected_pid,
       throw std::runtime_error("remote pipeline startup failed: state=" + last.state +
                                " error=" + last.error_code + " message=" + last.message);
     }
+    if (!probe.alive) {
+      // A dead program can never become ready: fail now, not at the timeout.
+      // Example: the backend crashed or was killed during the model load and
+      // had no chance to write "failed". Without this check we would wait for
+      // the full readiness timeout (up to 15 minutes for pcie-genai).
+      throw std::runtime_error("card program " + card_program() + " (pid " +
+                               std::to_string(expected_pid) + ") exited during startup; see " +
+                               startup_log_path(queue));
+    }
     const auto sleep_remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
         deadline - std::chrono::steady_clock::now());
     if (sleep_remaining > std::chrono::milliseconds::zero()) {
       std::this_thread::sleep_for(std::min(std::chrono::milliseconds(250), sleep_remaining));
+      if (should_abort && should_abort()) {
+        throw std::runtime_error("interrupted while waiting for READY");
+      }
     }
   }
 
@@ -453,26 +584,9 @@ RemoteStatus RemoteRuntime::wait_ready(const int queue, const int expected_pid,
 }
 
 void RemoteRuntime::stop(const int queue, const int expected_pid) const {
-  std::ostringstream ss;
-  ss << "expected_pid=" << expected_pid << "; " << "pid=''; " << "if [ -f "
-     << SshRunner::shell_escape(pid_path(queue)) << " ]; then " << "pid=$(cat "
-     << SshRunner::shell_escape(pid_path(queue)) << "); " << "elif [ -f "
-     << SshRunner::shell_escape(status_path(queue)) << " ]; then "
-     << "pid=$(sed -n 's/.*\"pid\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' "
-     << SshRunner::shell_escape(status_path(queue)) << " | head -n1); " << "fi; "
-     << "if [ -n \"$pid\" ] && [ \"$pid\" != \"$expected_pid\" ]; then exit 0; fi; "
-     << "if [ -n \"$pid\" ]; then " << "kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
-     << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; "
-     << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -q 'pcie-pipeline-builder' || "
-        "exit 0; "
-     << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
-     << "for i in $(seq 1 20); do kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
-     << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; sleep 0.25; done; "
-     << "echo still_running_after_sigterm; exit 13; " << "fi";
-
   std::vector<std::string> cmd = ssh_base();
-  cmd.push_back(ss.str());
-  run_or_throw(cmd, kCommandTimeoutSec + 10, "remote pcie-pipeline-builder stop");
+  cmd.push_back(build_stop_command(queue, expected_pid));
+  run_or_throw(cmd, kCommandTimeoutSec + 10, "remote " + card_program() + " stop");
 }
 
 void RemoteRuntime::stop_process(const int expected_pid,
