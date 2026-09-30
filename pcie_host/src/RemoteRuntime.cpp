@@ -297,6 +297,24 @@ std::string RemoteRuntime::build_stop_command(const int queue, const int expecte
   return ss.str();
 }
 
+std::string RemoteRuntime::build_stop_launched_pid_command(const int launched_pid) const {
+  const std::string cmdline_match = "grep -q '" + card_program() + "'";
+  std::ostringstream ss;
+  // No queue pid file to consult: this pid failed to claim a queue. Guard the
+  // kill with the same /proc/<pid>/cmdline check as build_stop_command(), so a
+  // reused pid that is now some other program is left untouched.
+  // A zombie (dead, not yet reaped) counts as gone, as in child_exited().
+  ss << "pid=" << launched_pid << "; "
+     << "gone() { ! kill -0 \"$pid\" >/dev/null 2>&1 || "
+     << "grep -q '^State:[[:space:]]*Z' \"/proc/$pid/status\" 2>/dev/null; }; "
+     << "gone && exit 0; "
+     << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | " << cmdline_match << " || exit 0; "
+     << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
+     << "for i in $(seq 1 20); do gone && exit 0; sleep 0.25; done; "
+     << "kill -KILL \"$pid\" >/dev/null 2>&1 || true; exit 0";
+  return ss.str();
+}
+
 std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_path) {
   static std::atomic<std::uint64_t> sequence{0};
   const fs::path local(local_path);
@@ -646,6 +664,15 @@ void RemoteRuntime::stop_process(const int expected_pid,
   std::vector<std::string> cmd = ssh_base();
   cmd.push_back(ss.str());
   run_or_throw(cmd, kCommandTimeoutSec + 10, "remote unclaimed pcie-pipeline-builder stop");
+}
+
+void RemoteRuntime::stop_launched_pid(const int launched_pid) const {
+  if (launched_pid <= 0) {
+    return;
+  }
+  std::vector<std::string> cmd = ssh_base();
+  cmd.push_back(build_stop_launched_pid_command(launched_pid));
+  run_or_throw(cmd, kCommandTimeoutSec + 10, "remote " + card_program() + " stop by pid");
 }
 
 } // namespace simaai::neat::pcie::internal
