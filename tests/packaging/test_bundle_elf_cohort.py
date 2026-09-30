@@ -96,6 +96,26 @@ class BundleCohortTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("unsafe build/empty runtime search path", result.stdout)
 
+    def test_rejects_normalized_runtime_path_escapes(self):
+        for rpath in ("$ORIGIN/../../../../tmp/stale",
+                      "${ORIGIN}/../../../home/stale", "/usr/lib/../../tmp/stale",
+                      "$ORIGIN/../../../opt/toolchain/lib", "$ORIGIN/../../../var/stale",
+                      "/usr/library/stale", "$ORIGIN/$UNKNOWN"):
+            with self.subTest(rpath=rpath):
+                lib = self.library("libsima_neat.so.5", "libsima_neat.so.5", "int value;", rpath=rpath)
+                result = self.check_bundle(self.package("sima-neat", payload=[lib]))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("unsafe build/empty runtime search path", result.stdout)
+
+    def test_accepts_normalized_runtime_paths(self):
+        for rpath in ("$ORIGIN", "${ORIGIN}", "$ORIGIN/../neat/runtime",
+                      "${ORIGIN}/../aarch64-linux-gnu/neat/runtime",
+                      "/usr/lib/aarch64-linux-gnu/neat/runtime", "/usr/lib/../lib"):
+            with self.subTest(rpath=rpath):
+                lib = self.library("libsima_neat.so.5", "libsima_neat.so.5", "int value;", rpath=rpath)
+                result = self.check_bundle(self.package("sima-neat", payload=[lib]))
+                self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_rejects_original_dispatcher_mismatch(self):
         result = self.check_bundle(*self.pair("1"))
         self.assertNotEqual(result.returncode, 0)

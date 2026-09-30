@@ -2183,9 +2183,29 @@ try:
                         for entry in value.split(":"):
                             origin_relative = (entry in ("$ORIGIN", "${ORIGIN}") or
                                                entry.startswith(("$ORIGIN/", "${ORIGIN}/")))
-                            if (not entry or
+                            # Resolve against the ELF's installed location, never the
+                            # extraction directory or the builder's filesystem. Checking
+                            # the literal prefix alone misses $ORIGIN/../../tmp and
+                            # /usr/lib/../../tmp. Keep sibling private runtime paths valid.
+                            origin = "/" + posixpath.dirname(relative)
+                            expanded = (origin + entry[entry.index("}") + 1:]
+                                        if entry.startswith("${ORIGIN}") else
+                                        origin + entry[len("$ORIGIN"):]
+                                        if origin_relative else entry)
+                            normalized = "/" + posixpath.normpath(expanded).lstrip("/")
+                            runtime_roots = ("/lib", "/lib64", "/usr/lib", "/usr/lib64",
+                                             "/usr/local/lib", "/usr/local/lib64")
+                            in_runtime_root = any(
+                                normalized == root or normalized.startswith(root + "/")
+                                for root in runtime_roots)
+                            # $ORIGIN also supports packaged executables with adjacent
+                            # DSOs (for example under /usr/libexec); it cannot escape
+                            # that directory unless it reaches a system runtime root.
+                            adjacent = origin_relative and (
+                                normalized == origin or normalized.startswith(origin + "/"))
+                            if (not entry or "$" in expanded or
                                 (not entry.startswith("/") and not origin_relative) or
-                                entry.startswith(("/workspace", "/repair", "/tmp", "/home", "/opt/toolchain"))):
+                                not (in_runtime_root or adjacent)):
                                 fail(f"unsafe build/empty runtime search path in {package}:{relative}: {value}")
                     soname = re.search(r"\(SONAME\).*?\[([^]]+)\]", dynamic)
                     if soname:
