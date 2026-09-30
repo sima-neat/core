@@ -253,13 +253,23 @@ int main(int argc, char** argv) {
 
     // A card backend without chat support has no genai.chat. It would answer
     // without images and without memory, and say nothing. Stop here instead.
+    // Two ways this preflight fails: the call throws (no genai.chat at all, an
+    // older backend), or it returns ok == false (a backend that answers
+    // genai.chat but refuses the operation, e.g. a compatibility mismatch).
+    pgenai::ChatReply preflight{false, ""};
     try {
-      (void)model.chat_history();
+      preflight = model.chat_history();
     } catch (const std::exception& e) {
       throw std::runtime_error(
           std::string(e.what()) + "\nThe card backend (" + args.card_program +
           ") does not support chat: it is older than this pcie-genai. Update it, "
           "or pick another card program with --card-program.");
+    }
+    if (!preflight.ok) {
+      throw std::runtime_error(
+          "The card backend (" + args.card_program +
+          ") refused the chat preflight: " + preflight.text +
+          "\nIt cannot keep the conversation (memory or images), so stopping here.");
     }
 
     ChatState chat{args.system_prompt, false};
