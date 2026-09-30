@@ -26,6 +26,9 @@ namespace {
 constexpr int kSshPort = 22;
 constexpr int kConnectTimeoutSec = 10;
 constexpr int kCommandTimeoutSec = 30;
+// Start command exit code: the card program exited before the host saw it
+// claim its queue (it failed at once; its status file may say why).
+constexpr int kExitBeforeQueueClaim = 15;
 constexpr const char* kRemoteModelDir = "/tmp";
 constexpr const char* kDefaultCardProgram = "pcie-pipeline-builder";
 constexpr const char* kRemoteBinDir = "/usr/bin/";
@@ -259,7 +262,8 @@ std::string RemoteRuntime::build_start_command(
      << "echo queue_busy_cleanup_failed; exit 17; fi; "
      << "if child_exited; then "
      << "wait \"$launched_pid\"; child_rc=$?; "
-     << "echo builder_exited_before_queue_claim:$child_rc; exit 15; fi; "
+     << "echo builder_exited_before_queue_claim:$child_rc; exit " << kExitBeforeQueueClaim
+     << "; fi; "
      << "sleep 0.05; "
      << "done; "
      << "if terminate_launched; then echo queue_claim_timeout; exit 16; fi; "
@@ -312,6 +316,26 @@ bool RemoteRuntime::is_managed_upload_path(const std::string& remote_path) {
   return path == path.lexically_normal() && path.parent_path() == kRemoteModelDir &&
          filename.rfind("sima-neat-pcie-", 0) == 0 &&
          filename.size() > std::string("sima-neat-pcie-").size();
+}
+
+std::string RemoteRuntime::start_failure_message(const std::string& program,
+                                                 const CommandResult& result,
+                                                 const RemoteStatus& status) {
+  const std::string plain =
+      "remote " + program + " start failed (exit=" + std::to_string(result.exit_code) +
+      ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output;
+  if (result.timed_out || result.exit_code != kExitBeforeQueueClaim || status.state != "failed" ||
+      status.message.empty()) {
+    return plain;
+  }
+  try {
+    if (!status_owner_matches(status, parse_launched_pid(result.output))) {
+      return plain; // a status left by another, older run
+    }
+  } catch (const std::exception&) {
+    return plain;
+  }
+  return "remote " + program + " failed at start: " + status.message;
 }
 
 int RemoteRuntime::parse_launched_pid(const std::string& output) {
@@ -418,10 +442,15 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
     throw RemoteStartError("remote " + program + " start failed: " + e.what(), true);
   }
   if (result.timed_out || result.exit_code != 0) {
-    throw RemoteStartError(
-        "remote " + program + " start failed (exit=" + std::to_string(result.exit_code) +
-            ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output,
-        !result.timed_out);
+    RemoteStatus status;
+    if (!result.timed_out && result.exit_code == kExitBeforeQueueClaim) {
+      try {
+        status = read_status(queue, std::chrono::seconds(5));
+      } catch (const std::exception&) {
+        // Keep the plain exit-code message.
+      }
+    }
+    throw RemoteStartError(start_failure_message(program, result, status), !result.timed_out);
   }
   try {
     return parse_launched_pid(result.output);
