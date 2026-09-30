@@ -74,6 +74,15 @@ int main() {
     // the svc client, so the CLI started card 0 and then failed to connect.
     require(refuses({"--model", "m", "--card-id", "-1"}), "negative card ids are refused");
     require(parse_cli_args({"--model", "m", "--card-id", "0"}).card_id == 0, "card id 0 is fine");
+    // --ready-timeout-s is multiplied by 1000 into an int: refuse 0, negative and huge values
+    // before a card program is started.
+    require(refuses({"--model", "m", "--ready-timeout-s", "0"}), "a zero READY wait is refused");
+    require(refuses({"--model", "m", "--ready-timeout-s", "-1"}),
+            "a negative READY wait is refused");
+    require(refuses({"--model", "m", "--ready-timeout-s", "2147483647"}),
+            "a READY wait that overflows in ms is refused");
+    require(parse_cli_args({"--model", "m", "--ready-timeout-s", "86400"}).ready_timeout_s == 86400,
+            "24 h is the longest READY wait");
     // --card-program picks the /usr/bin start script on the card (several can be installed).
     require(parse_cli_args({"--model", "m"}).card_program == "pcie-genai-backend",
             "default card program");
