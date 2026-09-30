@@ -170,16 +170,22 @@ bool run_prompt(pgenai::GenAIModel& model, const CliArgs& args, const ChatState&
   // prefill, or a stuck card). Declared after `stream`, so it is destroyed first.
   const pgenai::tools::CancelWatcher watcher([] { return g_interrupt.load(); },
                                              [&stream] { stream.cancel(); });
-  while (const std::optional<pgenai::TokenSample> sample = stream.next()) {
+  const auto stop_if_stdout_gone = [] {
     if (!std::cout && !g_terminate.load()) {
       // stdout is gone (SIGPIPE ignored, write failed): nobody reads the answer.
       std::cerr << "pcie-genai: stdout closed; stopping\n";
       g_terminate.store(true);
       g_interrupt.store(true); // the watcher cancels the answer
     }
+  };
+  while (const std::optional<pgenai::TokenSample> sample = stream.next()) {
+    stop_if_stdout_gone();
     if (!sample->is_final) {
       if (!g_interrupt.load()) { // after Ctrl-C, print no more answer text
         std::cout << sample->text << std::flush;
+        // Check at once: the next next() can block for a long time if the card
+        // stalls, and the watcher only cancels once g_interrupt is set.
+        stop_if_stdout_gone();
       }
       continue;
     }
