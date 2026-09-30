@@ -4,6 +4,7 @@
 #include "genai/GenAITransport.h"
 
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -21,8 +22,32 @@ public:
     return *transport_;
   }
 
+  // The transport has ONE cancel flag for whatever runs now. So only the newest
+  // stream, while it runs, may raise it: a cancel from an older stream (a
+  // drained handle the caller kept, or its destructor) would stop the next
+  // answer. A stream is made active in stream() and gives that up when its
+  // generate() returns.
+  void activate(const void* stream) {
+    std::lock_guard<std::mutex> lock(active_mutex_);
+    active_stream_ = stream;
+  }
+  void deactivate(const void* stream) {
+    std::lock_guard<std::mutex> lock(active_mutex_);
+    if (active_stream_ == stream) {
+      active_stream_ = nullptr;
+    }
+  }
+  void cancel_if_active(const void* stream) {
+    std::lock_guard<std::mutex> lock(active_mutex_);
+    if (active_stream_ == stream) {
+      transport_->cancel();
+    }
+  }
+
 private:
   std::unique_ptr<internal::Transport> transport_;
+  std::mutex active_mutex_;
+  const void* active_stream_ = nullptr;
 };
 
 namespace internal {
@@ -72,9 +97,19 @@ std::string GenAIModel::model_id() const {
 
 GenerationStream GenAIModel::stream(const GenerationRequest& request) {
   // Both callbacks share ownership of Impl, so the transport outlives the model
-  // if the caller destroys or replaces it before the stream ends.
+  // if the caller destroys or replaces it before the stream ends. `token` only
+  // names this stream for the active-stream check (see Impl::activate).
+  auto token = std::make_shared<char>();
+  impl_->activate(token.get());
   return GenerationStream::make(
-      [impl = impl_, request](GenerationStream::Producer& producer) {
+      [impl = impl_, request, token](GenerationStream::Producer& producer) {
+        struct Deactivate {
+          Impl& impl;
+          const void* stream;
+          ~Deactivate() {
+            impl.deactivate(stream);
+          }
+        } deactivate{*impl, token.get()};
         impl->transport().generate(
             request, [&producer] { return producer.cancelled(); },
             [&producer](const TokenSample& sample) {
@@ -88,7 +123,7 @@ GenerationStream GenAIModel::stream(const GenerationRequest& request) {
               producer.finish(sample.finish_reason, sample.metrics.generated_tokens);
             });
       },
-      [impl = impl_] { impl->transport().cancel(); });
+      [impl = impl_, token] { impl->cancel_if_active(token.get()); });
 }
 
 ChatReply GenAIModel::reset_chat(const std::optional<std::string>& system_prompt,

@@ -169,18 +169,22 @@ int main() {
       require(finals == 1, "stream() must deliver exactly one final sample");
     }
 
-    // cancel(): cancelling the stream signals the transport.
+    // cancel(): cancelling a running stream signals the transport. (A cancel after
+    // the run has ended is not passed on; see the stale-stream test below.)
     {
-      auto transport = std::make_unique<FakeTransport>();
-      FakeTransport* observer = transport.get();
-      pgenai::GenAIModel model = pgenai_internal::make_model_with_transport(std::move(transport));
+      auto state = std::make_shared<LifetimeState>();
+      pgenai::GenAIModel model =
+          pgenai_internal::make_model_with_transport(std::make_unique<LifetimeTransport>(state));
       pgenai::GenerationRequest request;
       request.prompt = "hi";
       pgenai::GenerationStream stream = model.stream(request);
+      while (!state->in_generate.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
       stream.cancel();
       while (stream.next()) {
       }
-      require(observer->cancel_called.load(), "stream cancel must reach the transport");
+      require(state->cancelled.load(), "stream cancel must reach the transport");
     }
 
     // The final sample keeps the transport's dropped_events. An earlier version lost it
@@ -223,6 +227,34 @@ int main() {
       require(!state->destroyed.load(), "a drained stream still owns the transport");
       stream.reset();
       require(state->destroyed.load(), "the transport is freed with the last stream");
+    }
+
+    // A cancel from an older stream must not reach the transport while a newer
+    // stream runs: the transport has ONE cancel flag, so an earlier version let
+    // a drained stream kept by the caller cancel the next answer.
+    {
+      auto state = std::make_shared<LifetimeState>();
+      pgenai::GenAIModel model =
+          pgenai_internal::make_model_with_transport(std::make_unique<LifetimeTransport>(state));
+      pgenai::GenerationRequest r;
+      r.prompt = "hi";
+      std::optional<pgenai::GenerationStream> first(model.stream(r));
+      state->release = true; // run 1 ends at once
+      while (first->next()) {
+      }
+      state->release = false;
+      state->in_generate = false;
+      pgenai::GenerationStream second = model.stream(r);
+      while (!state->in_generate.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      first->cancel(); // a stale handle
+      first.reset();   // the destructor cancels too
+      require(!state->cancelled.load(), "an old stream must not cancel the running one");
+      second.cancel();
+      require(state->cancelled.load(), "the running stream can still cancel");
+      while (second.next()) {
+      }
     }
 
     // Chat operations are forwarded to the transport.
