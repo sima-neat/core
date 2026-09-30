@@ -3,6 +3,7 @@
 
 #include "simaai/neat/pcie/Model.h"
 
+#include <csignal>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -189,6 +190,56 @@ int main() {
               "other exit codes keep the plain message");
       require(contains(RR::start_failure_message("pcie-genai-backend", early, {}), "exit=15"),
               "no status keeps the plain message");
+    }
+
+    // A failed start can leave the launched backend running. RemoteStartError
+    // carries its pid, and stop-by-pid kills it only if its cmdline is ours.
+    {
+      pcie_internal::RemoteStartError with_pid("start failed", true, 4242);
+      require(with_pid.launched_pid() == 4242, "RemoteStartError carries the launched pid");
+      pcie_internal::RemoteStartError no_pid("start failed", true);
+      require(no_pid.launched_pid() == -1, "no launched pid defaults to -1");
+
+      pcie::ConnectionOptions options;
+      options.card_program = "pcie-genai-backend";
+      const pcie_internal::RemoteRuntime runtime(options);
+      const std::string cmd = runtime.build_stop_launched_pid_command(4242);
+      require(contains(cmd, "pid=4242"), "stop-by-pid targets the launched pid");
+      require(contains(cmd, "grep -q 'pcie-genai-backend'"),
+              "stop-by-pid guards the kill with the program name");
+
+      // Run it for real on a live child that is NOT our program: it must live.
+      const pid_t other = ::fork();
+      if (other == 0) {
+        ::sleep(30);
+        _exit(0);
+      }
+      const auto kept = pcie_internal::SshRunner::run(
+          {"/bin/sh", "-c", runtime.build_stop_launched_pid_command(static_cast<int>(other))}, 10);
+      require(kept.exit_code == 0 && ::kill(other, 0) == 0,
+              "stop-by-pid must not kill a pid whose cmdline is another program");
+      ::kill(other, SIGKILL);
+      ::waitpid(other, nullptr, 0);
+
+      // A process whose cmdline IS our program is stopped. argv[0] makes
+      // /proc/<pid>/cmdline read "pcie-genai-backend 30".
+      const pid_t ours = ::fork();
+      if (ours == 0) {
+        ::execl("/bin/sleep", "pcie-genai-backend", "30", static_cast<char*>(nullptr));
+        _exit(127);
+      }
+      ::usleep(200 * 1000); // let execl() replace the cmdline
+      const auto stopped = pcie_internal::SshRunner::run(
+          {"/bin/sh", "-c", runtime.build_stop_launched_pid_command(static_cast<int>(ours))}, 10);
+      int ours_status = 0;
+      require(stopped.exit_code == 0 && ::waitpid(ours, &ours_status, WNOHANG) == ours &&
+                  WIFSIGNALED(ours_status),
+              "stop-by-pid must stop a launched backend");
+
+      // A dead pid is a no-op that succeeds.
+      const auto gone = pcie_internal::SshRunner::run(
+          {"/bin/sh", "-c", runtime.build_stop_launched_pid_command(static_cast<int>(other))}, 5);
+      require(gone.exit_code == 0, "stop-by-pid on a dead pid succeeds");
     }
 
     std::cout << "[PASS] remote card-program name generalization\n";

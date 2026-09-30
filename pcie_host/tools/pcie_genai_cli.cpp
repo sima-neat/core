@@ -412,6 +412,21 @@ int main(int argc, char** argv) {
         }
       }
     }
+  } catch (const pcie::internal::RemoteStartError& e) {
+    std::cerr << "pcie-genai: " << e.what() << "\n";
+    rc = 1;
+    // start() failed. The pid never reached the variable below, so the cleanup
+    // there is skipped; but the script may already have started the backend
+    // (nohup) before it failed. Stop that pid directly if we got one. The card
+    // guards the kill with a /proc/<pid>/cmdline check, so it is safe.
+    if (runtime && e.launched_pid() > 0) {
+      try {
+        runtime->stop_launched_pid(e.launched_pid());
+      } catch (const std::exception& stop_err) {
+        std::cerr << "pcie-genai: could not stop the backend after a failed start: "
+                  << stop_err.what() << "\n";
+      }
+    }
   } catch (const std::exception& e) {
     std::cerr << "pcie-genai: " << e.what() << "\n";
     rc = 1;

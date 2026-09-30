@@ -30,15 +30,26 @@ struct ReadyProbe {
 
 class RemoteStartError final : public std::runtime_error {
 public:
-  RemoteStartError(std::string message, bool cleanup_safe)
-      : std::runtime_error(std::move(message)), cleanup_safe_(cleanup_safe) {}
+  RemoteStartError(std::string message, bool cleanup_safe, int launched_pid = -1)
+      : std::runtime_error(std::move(message)), cleanup_safe_(cleanup_safe),
+        launched_pid_(launched_pid) {}
 
   bool cleanup_safe() const noexcept {
     return cleanup_safe_;
   }
 
+  /// The pid the start script printed (launched_pid=N) before it failed, or -1
+  /// when the output carried none. The start script starts the backend with
+  /// nohup and prints this pid before it waits for the queue claim, so a start
+  /// that fails or times out after that point can leave the backend running.
+  /// The caller uses this to stop that ambiguously started backend.
+  int launched_pid() const noexcept {
+    return launched_pid_;
+  }
+
 private:
   bool cleanup_safe_ = false;
+  int launched_pid_ = -1;
 };
 
 class RemoteRuntime {
@@ -51,6 +62,12 @@ public:
   RemoteStatus wait_ready(int queue, int expected_pid, int readiness_timeout_ms,
                           const std::function<bool()>& should_abort = {}) const;
   void stop(int queue, int expected_pid) const;
+  /// Stop a backend by the pid the start script launched, when start() failed
+  /// after that pid was printed but perhaps before it claimed a queue (so
+  /// stop() above, which keys off the queue pid file, would not find it). It is
+  /// guarded by the same /proc/<pid>/cmdline check as stop(), so it never kills
+  /// an unrelated process that reused the pid. A no-op when the pid is gone.
+  void stop_launched_pid(int launched_pid) const;
   RemoteStatus read_status(int queue, std::chrono::milliseconds timeout) const;
 
   std::string endpoint() const;
@@ -69,6 +86,10 @@ public:
                       const std::optional<std::string>& remote_model_options_path) const;
   /// Build the SSH command that stops the card program on a queue. Pure (no I/O).
   std::string build_stop_command(int queue, int expected_pid) const;
+  /// Build the SSH command that stops a backend by its launched pid, guarded by
+  /// the /proc/<pid>/cmdline check so an unrelated reused pid is left alone.
+  /// Pure (no I/O).
+  std::string build_stop_launched_pid_command(int launched_pid) const;
   /// Build the SSH command for one wait_ready poll: cat the status file, then
   /// report `kill -0 <expected_pid>` on a marker line. Pure (no I/O).
   std::string build_ready_probe_command(int queue, int expected_pid) const;
