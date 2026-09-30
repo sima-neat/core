@@ -127,9 +127,14 @@ install(TARGETS sima_neat_pcie_host
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
 )
 
+# The GenAI headers (simaai/neat/pcie/genai/) are not installed yet. They
+# include Core's genai/GenAITypes.h (and through it pipeline/Tensor*.h,
+# nlohmann/json and OpenCV), which this package does not ship. For now only the
+# in-tree pcie-genai CLI uses them.
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/simaai/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/simaai
   COMPONENT Development
+  PATTERN "genai" EXCLUDE
 )
 
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
