@@ -81,6 +81,10 @@ CliArgs parse_cli_args(const std::vector<std::string>& args) {
   if (a.card_id < 0) {
     throw std::invalid_argument("--card-id must not be negative");
   }
+  // wait_ready takes milliseconds in an int, so keep the seconds small enough.
+  if (a.ready_timeout_s < 1 || a.ready_timeout_s > 86400) {
+    throw std::invalid_argument("--ready-timeout-s must be 1..86400");
+  }
   return a;
 }
 
