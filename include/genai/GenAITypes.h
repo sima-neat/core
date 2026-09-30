@@ -109,10 +109,6 @@ struct GenerationRequest {
   bool use_cached_images = false;
   std::optional<Tensor> audio;
   std::optional<std::filesystem::path> audio_file;
-  /// Images for a VLM prompt over PCIe, in order. The host copies each file into
-  /// the daemon's data serve root and the card pulls it. Pixel `images` tensors
-  /// are not sent over PCIe (they would need host-side encoding); use these paths.
-  std::vector<std::filesystem::path> image_files;
   /// ASR source language code/name, or `auto` to detect it.
   std::string language = "auto";
   /// Whisper decoding task. Ignored by non-ASR models.
@@ -121,6 +117,11 @@ struct GenerationRequest {
   bool enable_thinking = false;
   Json tools = Json::array();
   Json tool_choice = nullptr;
+  /// Images for a VLM prompt over PCIe, in order. The host copies each file into
+  /// the daemon's data serve root and the card pulls it. Pixel `images` tensors
+  /// are not sent over PCIe (they would need host-side encoding); use these paths.
+  /// Kept last, so positional initializers written before it existed still compile.
+  std::vector<std::filesystem::path> image_files;
 };
 
 struct GenerationResult {
