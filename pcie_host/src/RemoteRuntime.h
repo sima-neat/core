@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SshRunner.h"
 #include "simaai/neat/pcie/Model.h"
 
 #include <chrono>
@@ -90,6 +91,12 @@ public:
   static int parse_launched_pid(const std::string& output);
   static bool status_owner_matches(const RemoteStatus& status, int expected_pid);
   static bool start_failure_cleanup_safe(int exit_code, bool timed_out);
+  /// The error text for a failed start() command. When the card program exited
+  /// before the host saw its queue claim (exit 15) and its status file says
+  /// "failed" for the pid we launched, that message is the real reason, so it is
+  /// shown instead of the bare exit code. Pure (no I/O).
+  static std::string start_failure_message(const std::string& program, const CommandResult& result,
+                                           const RemoteStatus& status);
   /// Emit shell helpers child_exited()/terminate_launched() used by
   /// build_start_command() to reap the launched child. Pure (no I/O).
   static std::string child_cleanup_shell_function();

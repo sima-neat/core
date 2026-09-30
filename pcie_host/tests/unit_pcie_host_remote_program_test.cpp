@@ -163,6 +163,34 @@ int main() {
               "no marker (unknown) must not be treated as dead");
     }
 
+    // A card program that fails before the host sees its queue claim (exit 15):
+    // its own "failed" status message is shown, not the bare exit code. A status
+    // of another pid, another exit code or a timeout keeps the plain message.
+    {
+      using RR = pcie_internal::RemoteRuntime;
+      pcie_internal::CommandResult early;
+      early.exit_code = 15;
+      early.output = "launched_pid=4242\nbuilder_exited_before_queue_claim:1\n";
+      pcie_internal::RemoteStatus failed;
+      failed.state = "failed";
+      failed.pid = 4242;
+      failed.message = "another pcie-genai-backend is already running on this card";
+      require(RR::start_failure_message("pcie-genai-backend", early, failed) ==
+                  "remote pcie-genai-backend failed at start: another pcie-genai-backend is "
+                  "already running on this card",
+              "an early failure shows the card's own reason");
+      pcie_internal::RemoteStatus other = failed;
+      other.pid = 7;
+      require(contains(RR::start_failure_message("pcie-genai-backend", early, other), "exit=15"),
+              "a status of another pid is not trusted");
+      pcie_internal::CommandResult busy = early;
+      busy.exit_code = 9;
+      require(contains(RR::start_failure_message("pcie-genai-backend", busy, failed), "exit=9"),
+              "other exit codes keep the plain message");
+      require(contains(RR::start_failure_message("pcie-genai-backend", early, {}), "exit=15"),
+              "no status keeps the plain message");
+    }
+
     std::cout << "[PASS] remote card-program name generalization\n";
     return 0;
   } catch (const std::exception& e) {
