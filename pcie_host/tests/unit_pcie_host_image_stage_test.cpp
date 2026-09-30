@@ -12,7 +12,8 @@ using simaai::neat::pcie::genai::internal::StagedImage;
 
 namespace {
 void require(bool c, const std::string& m) {
-  if (!c) throw std::runtime_error(m);
+  if (!c)
+    throw std::runtime_error(m);
 }
 
 fs::path make_temp_dir() {
@@ -27,7 +28,7 @@ void write_file(const fs::path& p, const std::string& text) {
   fs::create_directories(p.parent_path());
   std::ofstream(p) << text;
 }
-}  // namespace
+} // namespace
 
 int main() {
   try {
@@ -65,6 +66,22 @@ int main() {
       StagedImage s(stage, "h9-3", src);
       require(!fs::exists(stage / "old.jpg"), "old file swept");
       require(fs::exists(stage / "young.jpg"), "young file kept");
+    }
+
+    // The sweep keeps an old file whose owner process is still running: another
+    // session sharing this folder may still be using it (a long answer). A file of a
+    // process that is gone is swept as before.
+    {
+      const auto two_hours_ago = fs::file_time_type::clock::now() - std::chrono::hours(2);
+      const std::string live = "h" + std::to_string(::getpid()) + "-7-0.jpg";
+      const std::string dead = "h999999999-7-0.jpg"; // above any Linux pid_max
+      write_file(stage / live, "x");
+      write_file(stage / dead, "x");
+      fs::last_write_time(stage / live, two_hours_ago);
+      fs::last_write_time(stage / dead, two_hours_ago);
+      StagedImage s(stage, "h9-4", src);
+      require(fs::exists(stage / live), "an old file of a live process is kept");
+      require(!fs::exists(stage / dead), "an old file of a dead process is swept");
     }
 
     fs::remove_all(root);

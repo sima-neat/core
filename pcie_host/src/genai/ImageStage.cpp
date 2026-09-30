@@ -1,8 +1,13 @@
 #include "genai/ImageStage.h"
 
+#include <cerrno>
 #include <chrono>
+#include <cstdlib>
 #include <stdexcept>
+#include <string>
 #include <system_error>
+
+#include <signal.h>
 
 namespace simaai::neat::pcie::genai::internal {
 
@@ -11,25 +16,42 @@ namespace fs = std::filesystem;
 namespace {
 constexpr auto kMaxLeftoverAge = std::chrono::hours(1);
 
-// Delete regular files in `dir` older than one hour. Never throws: a leftover
-// we cannot remove is not worth failing a new request over.
+// True if `name` is a staged image ("h<pid>-...") of a process that still runs.
+// Another session sharing the stage dir may still be using such a file, even
+// if it is old (a long answer), so the sweep must keep it.
+bool owner_alive(const std::string& name) {
+  if (name.size() < 2 || name[0] != 'h')
+    return false;
+  char* end = nullptr;
+  errno = 0;
+  const long pid = std::strtol(name.c_str() + 1, &end, 10);
+  if (errno != 0 || end == name.c_str() + 1 || *end != '-' || pid <= 0)
+    return false;
+  // kill(pid, 0) sends nothing: 0 = it runs, EPERM = it runs as another user.
+  return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM;
+}
+
+// Delete regular files in `dir` older than one hour whose owner process is
+// gone. Never throws: a leftover we cannot remove is not worth failing a new
+// request over.
 void sweep_old(const fs::path& dir) {
   std::error_code ec;
   const auto now = fs::file_time_type::clock::now();
   for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-    if (!it->is_regular_file(ec)) continue;
+    if (!it->is_regular_file(ec))
+      continue;
     const auto mtime = it->last_write_time(ec);
     if (ec) {
       ec.clear();
       continue;
     }
-    if (now - mtime > kMaxLeftoverAge) {
+    if (now - mtime > kMaxLeftoverAge && !owner_alive(it->path().filename().string())) {
       std::error_code rm;
       fs::remove(it->path(), rm);
     }
   }
 }
-}  // namespace
+} // namespace
 
 StagedImage::StagedImage(const fs::path& stage_dir, const std::string& run_id,
                          const fs::path& source) {
@@ -56,4 +78,4 @@ StagedImage::~StagedImage() {
   fs::remove(staged_path_, ec);
 }
 
-}  // namespace simaai::neat::pcie::genai::internal
+} // namespace simaai::neat::pcie::genai::internal
