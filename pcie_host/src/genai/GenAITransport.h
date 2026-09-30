@@ -3,9 +3,12 @@
 #include "genai/GenAITypes.h"
 #include "simaai/neat/pcie/genai/ChatTypes.h"
 
+#include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace simaai::neat::pcie::genai::internal {
 
@@ -35,9 +38,12 @@ public:
    * Runs on the GenerationStream worker thread. Deliver each token through
    * @p emit; deliver exactly one sample with is_final=true when generation ends.
    * Stop early when @p is_cancelled returns true. Implementations must not throw
-   * across this boundary for expected end conditions.
+   * across this boundary for expected end conditions. @p image_files are the
+   * request's images (PcieRequestOptions::image_files), in order.
    */
-  virtual void generate(const GenerationRequest& request, const std::function<bool()>& is_cancelled,
+  virtual void generate(const GenerationRequest& request,
+                        const std::vector<std::filesystem::path>& image_files,
+                        const std::function<bool()>& is_cancelled,
                         const std::function<void(const TokenSample&)>& emit) = 0;
 
   /// Asynchronous cancel signal raised when the caller cancels the stream.
@@ -61,6 +67,12 @@ public:
   /// (cancel, empty answer, or an error). Read after the run has ended.
   virtual bool last_run_cleared_history() const {
     return false;
+  }
+
+  /// Token notifications lost in transit during the last generate(). Read after
+  /// the run has ended.
+  virtual std::uint32_t last_run_dropped_events() const {
+    return 0;
   }
 };
 

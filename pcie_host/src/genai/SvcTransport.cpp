@@ -94,6 +94,7 @@ void SvcTransport::drain_abandoned_run() {
 }
 
 void SvcTransport::generate(const GenerationRequest& request,
+                            const std::vector<std::filesystem::path>& image_files,
                             const std::function<bool()>& is_cancelled,
                             const std::function<void(const TokenSample&)>& emit) {
   using clock = std::chrono::steady_clock;
@@ -108,17 +109,17 @@ void SvcTransport::generate(const GenerationRequest& request,
   // return (success, error, or cancel), because generate() owns them.
   std::vector<std::unique_ptr<StagedImage>> staged;
   std::vector<std::string> image_names;
-  if (!request.image_files.empty()) {
+  if (!image_files.empty()) {
     if (options_.image_stage_dir.empty()) {
       throw std::invalid_argument(
           "this connection has no image stage dir: the daemon config has no [serve] 'data' "
           "root, so images cannot be sent");
     }
-    for (std::size_t i = 0; i < request.image_files.size(); ++i) {
-      staged.push_back(std::make_unique<StagedImage>(
-          options_.image_stage_dir, id + "-" + std::to_string(i), request.image_files[i]));
+    for (std::size_t i = 0; i < image_files.size(); ++i) {
+      staged.push_back(std::make_unique<StagedImage>(options_.image_stage_dir,
+                                                     id + "-" + std::to_string(i), image_files[i]));
       image_names.push_back(staged.back()->relative_name());
-      sent_images_[image_names.back()] = request.image_files[i].string();
+      sent_images_[image_names.back()] = image_files[i].string();
     }
   }
 
@@ -235,11 +236,6 @@ void SvcTransport::generate(const GenerationRequest& request,
       sample.metrics.time_to_first_token_s =
           final_event.ttft_s > 0.0 ? final_event.ttft_s : live_ttft_s;
       sample.metrics.tokens_per_second = final_event.tps;
-      // Only gaps revealed by a later, higher seq are counted. Token
-      // notifications dropped after the last one we received leave no gap, so
-      // trailing-token loss is not reported (like a dropped final). This is a
-      // known limitation; the fix is to send the token count in genai.final.
-      sample.metrics.dropped_events = dropped_events_;
       emit(sample);
       return;
     } else if (note.tag == kTagError) {
@@ -265,6 +261,14 @@ ChatReply SvcTransport::reset_chat(const std::optional<std::string>& system_prom
 
 ChatReply SvcTransport::chat_history() {
   return chat_op(ChatOp::Print, std::nullopt, false);
+}
+
+// Only gaps revealed by a later, higher seq are counted. Token notifications
+// dropped after the last one we received leave no gap, so trailing-token loss
+// is not reported (like a dropped final). This is a known limitation; the fix
+// is to send the token count in genai.final.
+std::uint32_t SvcTransport::last_run_dropped_events() const {
+  return dropped_events_;
 }
 
 bool SvcTransport::last_run_cleared_history() const {

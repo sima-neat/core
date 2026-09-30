@@ -153,14 +153,15 @@ std::string format_model_listing(const std::vector<ModelListing>& models,
 }
 
 std::string format_final_stats(const simaai::neat::genai::GenerationMetrics& metrics,
+                               const std::uint32_t dropped_events,
                                const std::string& finish_reason) {
   std::ostringstream out;
   out << std::fixed << std::setprecision(2);
   out << "[" << finish_reason << " | " << metrics.generated_tokens << " tokens | TTFT "
       << metrics.time_to_first_token_s << " s | " << metrics.tokens_per_second
-      << " tok/s | dropped " << metrics.dropped_events << "]";
-  if (metrics.dropped_events > 0) {
-    out << "\npcie-genai: WARNING: " << metrics.dropped_events
+      << " tok/s | dropped " << dropped_events << "]";
+  if (dropped_events > 0) {
+    out << "\npcie-genai: WARNING: " << dropped_events
         << " token event(s) were dropped in transit; the answer above is missing text.";
   }
   return out.str();

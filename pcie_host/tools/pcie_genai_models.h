@@ -54,7 +54,8 @@ std::string format_model_listing(const std::vector<ModelListing>& models,
 // The one-line run summary printed to stderr after an answer, plus a second
 // line warning the user when token notifications were dropped in transit.
 // No trailing newline; the caller adds one.
+// dropped_events comes from GenAIModel::last_run_dropped_events().
 std::string format_final_stats(const simaai::neat::genai::GenerationMetrics& metrics,
-                               const std::string& finish_reason);
+                               std::uint32_t dropped_events, const std::string& finish_reason);
 
 } // namespace simaai::neat::pcie::genai::tools

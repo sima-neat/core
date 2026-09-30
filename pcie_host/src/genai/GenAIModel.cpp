@@ -95,14 +95,16 @@ std::string GenAIModel::model_id() const {
   return impl_->transport().model_id();
 }
 
-GenerationStream GenAIModel::stream(const GenerationRequest& request) {
+GenerationStream GenAIModel::stream(const GenerationRequest& request,
+                                    const PcieRequestOptions& options) {
   // Both callbacks share ownership of Impl, so the transport outlives the model
   // if the caller destroys or replaces it before the stream ends. `token` only
   // names this stream for the active-stream check (see Impl::activate).
   auto token = std::make_shared<char>();
   impl_->activate(token.get());
   return GenerationStream::make(
-      [impl = impl_, request, token](GenerationStream::Producer& producer) {
+      [impl = impl_, request, image_files = options.image_files,
+       token](GenerationStream::Producer& producer) {
         struct Deactivate {
           Impl& impl;
           const void* stream;
@@ -111,7 +113,7 @@ GenerationStream GenAIModel::stream(const GenerationRequest& request) {
           }
         } deactivate{*impl, token.get()};
         impl->transport().generate(
-            request, [&producer] { return producer.cancelled(); },
+            request, image_files, [&producer] { return producer.cancelled(); },
             [&producer](const TokenSample& sample) {
               if (!sample.is_final) {
                 producer.push(sample);
@@ -119,7 +121,6 @@ GenerationStream GenAIModel::stream(const GenerationRequest& request) {
               }
               producer.record_metric("ttft", sample.metrics.time_to_first_token_s);
               producer.record_metric("tps", sample.metrics.tokens_per_second);
-              producer.record_metric("dropped_events", sample.metrics.dropped_events);
               producer.finish(sample.finish_reason, sample.metrics.generated_tokens);
             });
       },
@@ -139,8 +140,13 @@ bool GenAIModel::last_run_cleared_history() const {
   return impl_->transport().last_run_cleared_history();
 }
 
-GenerationResult GenAIModel::run(const GenerationRequest& request) {
-  GenerationStream token_stream = stream(request);
+std::uint32_t GenAIModel::last_run_dropped_events() const {
+  return impl_->transport().last_run_dropped_events();
+}
+
+GenerationResult GenAIModel::run(const GenerationRequest& request,
+                                 const PcieRequestOptions& options) {
+  GenerationStream token_stream = stream(request, options);
   GenerationResult result;
   while (const std::optional<TokenSample> sample = token_stream.next()) {
     if (sample->is_final) {

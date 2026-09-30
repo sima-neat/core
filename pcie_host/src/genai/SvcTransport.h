@@ -15,10 +15,12 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace simaai::neat::pcie::genai::internal {
 
@@ -52,7 +54,9 @@ public:
   SvcTransport(std::unique_ptr<SvcClient> client, SvcTransportOptions options);
 
   std::string model_id() const override;
-  void generate(const GenerationRequest& request, const std::function<bool()>& is_cancelled,
+  void generate(const GenerationRequest& request,
+                const std::vector<std::filesystem::path>& image_files,
+                const std::function<bool()>& is_cancelled,
                 const std::function<void(const TokenSample&)>& emit) override;
   /// Thread-safe: only sets a flag; generate() sends genai.cancel on its own thread.
   void cancel() override;
@@ -62,6 +66,7 @@ public:
                        bool enable_thinking) override;
   ChatReply chat_history() override;
   bool last_run_cleared_history() const override;
+  std::uint32_t last_run_dropped_events() const override;
 
 private:
   std::string next_request_id();
