@@ -198,7 +198,7 @@ int main() {
       const pcie_internal::RemoteRuntime runtime(options, "pcie-genai-backend");
       const std::string cmd = runtime.build_stop_launched_pid_command(4242);
       require(contains(cmd, "pid=4242"), "stop-by-pid targets the launched pid");
-      require(contains(cmd, "grep -q 'pcie-genai-backend'"),
+      require(contains(cmd, "grep -qF -- 'pcie-genai-backend'"),
               "stop-by-pid guards the kill with the program name");
 
       // Run it for real on a live child that is NOT our program: it must live.
@@ -228,6 +228,31 @@ int main() {
       require(stopped.exit_code == 0 && ::waitpid(ours, &ours_status, WNOHANG) == ours &&
                   WIFSIGNALED(ours_status),
               "stop-by-pid must stop a launched backend");
+
+      // The name is a fixed string, not a regex: for pcie.genai-backend the '.'
+      // must not match the 'X' of another program named pcieXgenai-backend.
+      {
+        const pcie_internal::RemoteRuntime dotted(options, "pcie.genai-backend");
+        const pid_t lookalike = ::fork();
+        if (lookalike == 0) {
+          ::execl("/bin/sleep", "pcieXgenai-backend", "30", static_cast<char*>(nullptr));
+          _exit(127);
+        }
+        ::usleep(200 * 1000); // let execl() replace the cmdline
+        const auto left = pcie_internal::SshRunner::run(
+            {"/bin/sh", "-c", dotted.build_stop_launched_pid_command(static_cast<int>(lookalike))},
+            10);
+        require(left.exit_code == 0 && ::kill(lookalike, 0) == 0,
+                "a '.' in the program name must not match another character");
+        ::kill(lookalike, SIGKILL);
+        ::waitpid(lookalike, nullptr, 0);
+        for (const std::string& cmd : {dotted.build_start_command(0, "/tmp/model", std::nullopt),
+                                       dotted.build_stop_command(0, 123)}) {
+          require(contains(cmd, "grep -qF -- 'pcie.genai-backend'") &&
+                      !contains(cmd, "grep -q 'pcie.genai-backend'"),
+                  "every cmdline guard uses a fixed-string match");
+        }
+      }
 
       // A dead pid is a no-op that succeeds.
       const auto gone = pcie_internal::SshRunner::run(

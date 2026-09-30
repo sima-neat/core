@@ -129,6 +129,14 @@ void validate_endpoint_component(const std::string& value, const char* name,
   }
 }
 
+// The /proc/<pid>/cmdline guard: does the cmdline contain the program name?
+// -F: a fixed string, not a regex, so a '.' in a name like pcie.genai-backend
+// does not match any character (pcieXgenai-backend is another program).
+// The name is already checked to be [A-Za-z0-9._-] and not to start with '-'.
+std::string cmdline_grep(const std::string& program) {
+  return "grep -qF -- '" + program + "'";
+}
+
 void validate_card_program(const std::string& value) {
   // Empty is allowed: it selects the default program. A non-empty name is placed
   // inside a shell single-quoted grep pattern and appended to a launch path, so
@@ -197,7 +205,7 @@ std::string RemoteRuntime::build_start_command(
     const std::optional<std::string>& remote_model_options_path) const {
   const std::string helper = remote_helper_path();
   // Single-quoted grep pattern; card_program() is validated to a safe charset.
-  const std::string cmdline_match = "grep -q '" + card_program() + "'";
+  const std::string cmdline_match = cmdline_grep(card_program());
   const std::string start_lock_path =
       "/run/sima-neat/pcie/q" + std::to_string(queue) + ".start.lock";
   std::ostringstream ss;
@@ -272,7 +280,7 @@ std::string RemoteRuntime::build_start_command(
 }
 
 std::string RemoteRuntime::build_stop_command(const int queue, const int expected_pid) const {
-  const std::string cmdline_match = "grep -q '" + card_program() + "'";
+  const std::string cmdline_match = cmdline_grep(card_program());
   std::ostringstream ss;
   ss << "expected_pid=" << expected_pid << "; "
      << "pid=''; "
@@ -298,7 +306,7 @@ std::string RemoteRuntime::build_stop_command(const int queue, const int expecte
 }
 
 std::string RemoteRuntime::build_stop_launched_pid_command(const int launched_pid) const {
-  const std::string cmdline_match = "grep -q '" + card_program() + "'";
+  const std::string cmdline_match = cmdline_grep(card_program());
   std::ostringstream ss;
   // No queue pid file to consult: this pid failed to claim a queue. Guard the
   // kill with the same /proc/<pid>/cmdline check as build_stop_command(), so a
