@@ -54,7 +54,14 @@ private:
 
 class RemoteRuntime {
 public:
-  explicit RemoteRuntime(ConnectionOptions connection);
+  /// card_program: the card-side program to launch and manage over SSH. Empty
+  /// selects the default "pcie-pipeline-builder" (the tensor pipeline); GenAI
+  /// passes "pcie-genai-backend". It is a program name: the launch path is
+  /// "/usr/bin/<card_program>" and the same name guards the busy/confirm/stop
+  /// checks against /proc/<pid>/cmdline. Restricted to [A-Za-z0-9._-]. It is an
+  /// argument here, not a ConnectionOptions field: that public struct keeps its
+  /// released layout (ABI).
+  explicit RemoteRuntime(ConnectionOptions connection, std::string card_program = {});
 
   std::string upload_file(const std::string& local_path) const;
   int start(int queue, const std::string& remote_model_path,
@@ -74,7 +81,7 @@ public:
   std::string status_path(int queue) const;
   std::string pid_path(int queue) const;
 
-  /// Resolved card-side program name. Empty ConnectionOptions::card_program
+  /// Resolved card-side program name. An empty card_program argument
   /// selects the default "pcie-pipeline-builder" (the tensor pipeline).
   std::string card_program() const;
   /// Absolute launch path for the card program: "/usr/bin/<card_program()>".
@@ -114,6 +121,7 @@ public:
 
 private:
   ConnectionOptions connection_;
+  std::string card_program_;
 
   std::vector<std::string> ssh_base() const;
   std::vector<std::string> scp_base() const;

@@ -146,10 +146,11 @@ void validate_card_program(const std::string& value) {
 
 } // namespace
 
-RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {
+RemoteRuntime::RemoteRuntime(ConnectionOptions connection, std::string card_program)
+    : connection_(std::move(connection)), card_program_(std::move(card_program)) {
   validate_endpoint_component(connection_.user, "user", false);
   validate_endpoint_component(connection_.card_host, "card_host", true);
-  validate_card_program(connection_.card_program);
+  validate_card_program(card_program_);
 }
 
 std::string RemoteRuntime::endpoint() const {
@@ -165,8 +166,7 @@ std::string RemoteRuntime::pid_path(const int queue) const {
 }
 
 std::string RemoteRuntime::card_program() const {
-  return connection_.card_program.empty() ? std::string(kDefaultCardProgram)
-                                          : connection_.card_program;
+  return card_program_.empty() ? std::string(kDefaultCardProgram) : card_program_;
 }
 
 std::string RemoteRuntime::remote_helper_path() const {

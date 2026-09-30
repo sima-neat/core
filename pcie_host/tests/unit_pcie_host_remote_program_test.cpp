@@ -54,8 +54,7 @@ int main() {
     // Override: GenAI selects its own program name.
     {
       pcie::ConnectionOptions options;
-      options.card_program = "pcie-genai-backend";
-      const pcie_internal::RemoteRuntime runtime(options);
+      const pcie_internal::RemoteRuntime runtime(options, "pcie-genai-backend");
       require(runtime.card_program() == "pcie-genai-backend",
               "override card program must be honoured");
       require(runtime.remote_helper_path() == "/usr/bin/pcie-genai-backend",
@@ -78,8 +77,7 @@ int main() {
     // stale default must appear NOWHERE (else the host cannot confirm or stop it).
     {
       pcie::ConnectionOptions options;
-      options.card_program = "pcie-genai-backend";
-      const pcie_internal::RemoteRuntime runtime(options);
+      const pcie_internal::RemoteRuntime runtime(options, "pcie-genai-backend");
       const std::string cmd = runtime.build_start_command(2, "/tmp/model", std::nullopt);
       require(contains(cmd, "/usr/bin/pcie-genai-backend"),
               "override start must launch the new helper path");
@@ -96,8 +94,7 @@ int main() {
               "default stop must guard the kill with the default name");
 
       pcie::ConnectionOptions options;
-      options.card_program = "pcie-genai-backend";
-      const pcie_internal::RemoteRuntime runtime_override(options);
+      const pcie_internal::RemoteRuntime runtime_override(options, "pcie-genai-backend");
       const std::string stop_cmd = runtime_override.build_stop_command(0, 123);
       require(contains(stop_cmd, "pcie-genai-backend"),
               "override stop must guard the kill with the new name");
@@ -109,10 +106,9 @@ int main() {
     {
       for (const std::string bad : {"a b", "bad;rm -rf /", "quote'name", "-leadingdash"}) {
         pcie::ConnectionOptions options;
-        options.card_program = bad;
         bool threw = false;
         try {
-          const pcie_internal::RemoteRuntime runtime(options);
+          const pcie_internal::RemoteRuntime runtime(options, bad);
         } catch (const std::invalid_argument&) {
           threw = true;
         }
@@ -120,8 +116,7 @@ int main() {
       }
       // A safe basename is accepted.
       pcie::ConnectionOptions ok;
-      ok.card_program = "pcie-genai-backend";
-      const pcie_internal::RemoteRuntime runtime(ok);
+      const pcie_internal::RemoteRuntime runtime(ok, "pcie-genai-backend");
       require(runtime.card_program() == "pcie-genai-backend", "safe card_program accepted");
     }
 
@@ -129,8 +124,7 @@ int main() {
     // so a program that dies during the load fails fast instead of at the timeout.
     {
       pcie::ConnectionOptions options;
-      options.card_program = "pcie-genai-backend";
-      const pcie_internal::RemoteRuntime runtime(options);
+      const pcie_internal::RemoteRuntime runtime(options, "pcie-genai-backend");
       const std::string cmd = runtime.build_ready_probe_command(3, 4242);
       require(contains(cmd, "/run/sima-neat/pcie/q3.status"), "probe must read the status file");
       require(contains(cmd, "kill -0 4242"), "probe must check the launched pid");
@@ -201,8 +195,7 @@ int main() {
       require(no_pid.launched_pid() == -1, "no launched pid defaults to -1");
 
       pcie::ConnectionOptions options;
-      options.card_program = "pcie-genai-backend";
-      const pcie_internal::RemoteRuntime runtime(options);
+      const pcie_internal::RemoteRuntime runtime(options, "pcie-genai-backend");
       const std::string cmd = runtime.build_stop_launched_pid_command(4242);
       require(contains(cmd, "pid=4242"), "stop-by-pid targets the launched pid");
       require(contains(cmd, "grep -q 'pcie-genai-backend'"),
