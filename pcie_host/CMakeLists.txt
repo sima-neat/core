@@ -526,6 +526,11 @@ set(CPACK_DEBIAN_RUNTIME_PACKAGE_SECTION "libs")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_DEPENDS
   "openssh-client, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0, libglib2.0-0"
 )
+# SHLIBDEPS is off, so list pcie-genai's readline by hand. Ubuntu 24's
+# libreadline8t64 provides libreadline8, so one name covers 22.04 and 24.04.
+if (SIMAPCIE_BUILD_GENAI_CLI)
+  string(APPEND CPACK_DEBIAN_RUNTIME_PACKAGE_DEPENDS ", libreadline8")
+endif()
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_RECOMMENDS "sshpass")
 set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
   "Host-side NEAT PCIe runtime, including the neatpciehost GStreamer plugin.")
