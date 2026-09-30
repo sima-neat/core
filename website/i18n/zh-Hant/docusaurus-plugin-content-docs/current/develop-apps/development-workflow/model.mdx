@@ -443,6 +443,10 @@ graph.add(pyneat.nodes.output("classes"))
 </CodeTab>
 </CodeTabs>
 
+預設的公開 `Input` 直接連接至單一模型影像入口時，會繼承該入口的影像解讀方式與格式。您仍可明確設定來源格式；圖會根據模型介面驗證該格式。來源記憶體、尺寸、時間戳記與佇列選項保持不變。若有多個使用端，或無法明確判定使用端，請明確指定輸入選項。
+
+這種解讀方式適用於 Graph 的輸入邊界。直接呼叫模型時，輸入仍須符合模型宣告的影像或張量介面。
+
 當您需要一個可重複使用的片段或明確的路由邊界時，請使用 `model.graph(...)`。
 
 路由選項控制該片段如何公開其介面：
@@ -619,6 +623,8 @@ runner.close()
 
 當每次呼叫都應該推送一個輸入並等待其輸出時，請使用 `runner.run(...)`。當您的應用程式想要讓工作持續進行時，請使用 `push(...)` / `pull(...)`。當不再有輸入時，並且您希望剩餘的工作完成時，請使用 `close_input()`。當執行器完成時，請使用 `close()`。
 
+`push` 會等待輸入佇列有可用空間。若要不等待就提交，請在 C++ 中使用 `runner.try_push` 並傳入 `Sample` 或 `TensorList`，或在 Python 中使用 `runner.try_push_samples` / `runner.try_push_tensors`。建立執行器前，請設定 `RunOptions.queue_depth` 與 `overflow_policy`。有界佇列已滿時，`KeepLatest` 會取代最舊的待處理樣本並傳回 `true`；`Block` 與 `DropIncoming` 會傳回 `false`。輸入已關閉時也會傳回 `false`。請將同一影格配對的張量放在同一個 TensorSet 樣本中。取代樣本不會取消正在執行的推論，這些轉送方法也不會額外複製酬載。
+
 ### 建立特定路由的執行器
 
 當可重複使用的執行器應該使用與預設路由不同的路由層級執行設定或路由命名時，請使用特定路由的執行器。`Model::build(...)` 會為您新增執行器的輸入和輸出邊界。
@@ -667,32 +673,65 @@ runner = model.build([tensor], route_options=route)
 
 請將「seeded build」用於驗證和及早發現問題，而不是將其視為一種習慣。如果預設建置已經證明符合規範，請保持範例的規模較小。
 
-## 測量模型執行效能
+## 測量模型執行效能 {#measure-model-execution}
 
-使用 `model.benchmark(...)` 進行快速的合成模型基準測試。它會從 `input_specs()` 產生輸入，並回傳延遲、吞吐量以及可選的功耗等指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
+### 執行基準測試
+
+`model.benchmark()` 會產生合成輸入、測量模型效能，並列印摘要。不需要影像或資料集。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::BenchmarkReport report = model.benchmark();
-
-std::cout << "latency_ms=" << report.latency_ms
-          << " fps=" << report.fps << "\n";
+simaai::neat::Model model("model.tar.gz");
+auto report = model.benchmark();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
+model = pyneat.Model("model.tar.gz")
 report = model.benchmark()
-print("latency_ms=", report.latency_ms, "fps=", report.fps)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-對於 BoxDecode 路由，請描述合成輸入的來源影像幾何資訊，以便基準測試可以將檢測結果映射回模型座標：
+使用這些結果比較同一裝置上的模型。若要測量應用程式效能，也請執行實際的輸入管線。
+
+### 閱讀結果
+
+傳回的報告包含四個欄位：
+
+| 欄位 | 測量內容 | 單位 |
+| --- | --- | --- |
+| `latency_ms` | 預熱後循序執行的平均延遲 | ms |
+| `fps` | 非同步執行的邏輯推論吞吐量 | inferences/s |
+| `avg_power_watts` | 測量吞吐量期間的平均板卡功耗 | W |
+| `energy_joules` | 測量吞吐量期間的總耗能 | J |
+
+無法取得板卡功耗遙測資料時，功耗與耗能維持為零。
+
+在 Python 中，`print(report)` 會顯示易讀的摘要及單位。由於 `model.benchmark()` 已經列印摘要，只有稍後需要再次顯示報告時才需要這樣做。
+
+### 在 Python 中儲存結果
+
+```python
+report.save_json("benchmark.json")
+```
+
+若需要 JSON 文字而非檔案，請使用 `report.to_json()`。兩個方法都接受 `indent=-1`，可產生精簡的 JSON。`save_json()` 接受字串或 `pathlib.Path`，寫入失敗時會拋出例外。
+
+JSON 包含 Core 版本與四項測量結果，每項都有數值、單位及可用狀態。無法取得的測量結果會標示為 `value: null`，並附上原因。非正值或非有限值會標示為不可用；原始報告欄位不會改變。
+
+比較不同執行結果時，請一併記錄模型封存檔與基準測試設定。報告不包含這些資訊、延遲百分位數或記憶體使用量峰值。
+
+### 設定樣本數與偵測幾何資訊
+
+使用 `model.benchmark(100)` 設定測量樣本數。增加樣本數可讓吞吐量與功耗測量更穩定。
+
+對於使用 BoxDecode 的模型，請透過 `BenchmarkOptions` 指定來源影像尺寸與縮放模式：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -723,11 +762,11 @@ report = model.benchmark(options)
 </CodeTab>
 </CodeTabs>
 
-將 `original_width` 和 `original_height` 組合在一起。基準測試仍然會產生一個模型形狀的合成張量；這些欄位提供 BoxDecode 中繼資料所需的來源幾何形狀和調整大小的轉換。如果您省略它們，基準測試將從解析後的預處理和模型輸入合約中推斷幾何形狀。這些每次執行的值優先於 `ModelOptions` 中已棄用的 BoxDecode 幾何形狀提示。現有的 `benchmark(num_samples)` 呼叫會保持相同的行為。
+請同時設定 `original_width` 與 `original_height`，或同時省略，讓系統從模型執行路徑推斷幾何資訊。這些選項描述 BoxDecode 如何將偵測結果映射回來源座標；產生的輸入張量仍使用模型的輸入形狀。每次執行所設定的幾何資訊會覆寫 `ModelOptions` 中已棄用的幾何提示。
 
-僅當板子的電源監測器產生樣本時，才讀取 `avg_power_watts` 和 `energy_joules`。如果無法取得板子或電壓軌設定的電源遙測資料，則這些欄位將保持為零。
+### 測量自己的輸入迴圈
 
-當您擁有輸入迴圈並希望測量該迴圈時，請使用執行器測量：
+若您自行控制輸入迴圈並希望測量該迴圈，請使用執行器的測量功能：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -761,7 +800,7 @@ runner.close()
 </CodeTab>
 </CodeTabs>
 
-不要將一次性的煙霧測試與經過預熱的可重複使用的執行器進行比較。這兩者回答的是不同的問題。
+不要將一次性的基本功能測試與已預熱、可重複使用的執行器相比。兩者回答的是不同問題。
 
 ## 解碼輸出
 
