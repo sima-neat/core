@@ -95,10 +95,12 @@
 #include <opencv2/core.hpp>
 #endif
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -212,6 +214,75 @@ bool checked_add(std::size_t a, std::size_t b, std::size_t* out) {
     return false;
   *out = a + b;
   return true;
+}
+
+simaai::neat::BenchmarkReport
+benchmark_with_export(simaai::neat::Model& model, const simaai::neat::BenchmarkOptions& options,
+                      const std::optional<std::filesystem::path>& output_path) {
+  simaai::neat::BenchmarkReport report;
+  {
+    nb::gil_scoped_release release;
+    report = model.benchmark(options);
+  }
+  if (!output_path) {
+    return report;
+  }
+
+  using Json = nlohmann::json;
+  const auto metric = [](double value, const char* unit) -> Json {
+    if (!std::isfinite(value) || value <= 0.0) {
+      return {{"status", "unavailable"},
+              {"value", nullptr},
+              {"unit", unit},
+              {"reason", "BenchmarkReport has no positive finite measurement"}};
+    }
+    return {{"status", "measured"}, {"value", value}, {"unit", unit}};
+  };
+  Json inputs = Json::array();
+  for (const auto& spec : model.input_specs()) {
+    inputs.push_back({{"shape", spec.shape},
+                      {"dtype", nb::cast<std::string>(nb::cast(spec.dtypes.at(0)).attr("name"))}});
+  }
+  const auto info = model.info();
+  const int batch_size = model.compiled_batch_size();
+  const double measured_inferences = static_cast<double>(options.num_samples) * batch_size;
+  const Json document = {
+      {"schema_version", 1},
+      {"tool", {{"name", "pyneat.Model.benchmark"}, {"version", sima_neat_version()}}},
+      {"configuration",
+       {{"samples", options.num_samples},
+        {"include_plugin_latency", options.include_plugin_latency},
+        {"original_width", options.original_width ? Json(*options.original_width) : Json(nullptr)},
+        {"original_height",
+         options.original_height ? Json(*options.original_height) : Json(nullptr)},
+        {"resize_mode", options.resize_mode ? Json(nb::cast<std::string>(
+                                                  nb::cast(*options.resize_mode).attr("name")))
+                                            : Json(nullptr)}}},
+      {"workload",
+       {{"kind", "model.synthetic"},
+        {"input_generation", "deterministic"},
+        {"batch_size", batch_size},
+        {"inputs", inputs},
+        {"preprocess", info.selection.preprocess_graph},
+        {"postprocess", info.selection.selected_post_kind}}},
+      {"metrics",
+       {{"latency_avg_ms", metric(report.latency_ms, "ms")},
+        {"throughput_fps", metric(report.fps, "inferences/s")},
+        {"avg_power_watts", metric(report.avg_power_watts, "W")},
+        {"energy_joules", metric(report.energy_joules, "J")},
+        {"energy_per_inference_joules",
+         metric(report.energy_joules / measured_inferences, "J/inference")}}}};
+  std::ofstream output;
+  output.exceptions(std::ios::failbit | std::ios::badbit);
+  try {
+    output.open(*output_path);
+    output << document.dump(2) << '\n';
+    output.close();
+  } catch (const std::ios_base::failure& error) {
+    throw std::runtime_error("Model.benchmark: cannot write report to " + output_path->string() +
+                             ": " + error.what());
+  }
+  return report;
 }
 
 nb::object json_to_python(const nlohmann::json& value) {
@@ -4913,15 +4984,19 @@ NB_MODULE(_pyneat_core, m) {
             return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
-      .def("benchmark",
-           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
-               &simaai::neat::Model::benchmark),
-           "num_samples"_a = 100, "include_plugin_latency"_a = false,
-           nb::call_guard<nb::gil_scoped_release>())
-      .def("benchmark",
-           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(
-               const simaai::neat::BenchmarkOptions&)>(&simaai::neat::Model::benchmark),
-           "options"_a, nb::call_guard<nb::gil_scoped_release>());
+      .def(
+          "benchmark",
+          [](simaai::neat::Model& model, int num_samples, bool include_plugin_latency,
+             const std::optional<std::filesystem::path>& output_path) {
+            simaai::neat::BenchmarkOptions options;
+            options.num_samples = num_samples;
+            options.include_plugin_latency = include_plugin_latency;
+            return benchmark_with_export(model, options, output_path);
+          },
+          "num_samples"_a = 100, "include_plugin_latency"_a = false, nb::kw_only(),
+          "output_path"_a = std::nullopt)
+      .def("benchmark", &benchmark_with_export, "options"_a, nb::kw_only(),
+           "output_path"_a = std::nullopt);
 
   // from-Model constructors for the CVU-atom options (registered here, after Model — pulls tile
   // geometry / quant params / model-managed buffer counts so the standalone nodes are actually

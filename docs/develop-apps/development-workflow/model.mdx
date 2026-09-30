@@ -744,6 +744,31 @@ hints in `ModelOptions`. Existing `benchmark(num_samples)` calls keep the same b
 
 Read `avg_power_watts` and `energy_joules` only when the board power monitor produced samples. If power telemetry is unavailable for the board or rail configuration, those fields stay zero.
 
+Python callers can write a versioned JSON report without parsing console output:
+
+```python
+model = pyneat.Model("model.tar.gz")
+report = model.benchmark(output_path="benchmark.json")
+```
+
+`output_path` is optional and keyword-only on both benchmark overloads. It accepts a string or
+`pathlib.Path`. The returned `BenchmarkReport` and the C++ API are unchanged. Export runs after
+measurement; write failures raise an exception.
+
+Schema version 1 records the Core version, requested sample count and geometry, actual input
+shapes and dtypes, compiled batch size, and resolved preprocessing/postprocessing route. Metrics
+include mean latency (`ms`), logical throughput (`inferences/s`), average board power (`W`),
+throughput-window energy (`J`), and energy per logical inference (`J/inference`). The latter divides
+the measured energy by sample count times compiled batch size. Each metric has `status`, `value`,
+and `unit`; unavailable values are `null` with a `reason`. The existing report uses zero when power
+telemetry is absent, so export treats nonpositive or nonfinite power/energy values as unavailable.
+This report does not supply percentile latency or peak allocator memory.
+
+The workload describes the model as constructed. Loading an MPK with default options can measure
+a different route from a model constructed with explicit preprocessing or BoxDecode options;
+compare results only for equivalent workloads. Artifact identity and registry publication remain
+the caller's responsibility.
+
 Use runner measurement when you own the input loop and want to measure that loop:
 
 <CodeTabs>

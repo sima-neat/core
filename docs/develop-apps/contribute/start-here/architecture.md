@@ -1415,3 +1415,11 @@ cache synchronization and teardown. Core adds no encoder execution thread.
 The legacy `H264EncodeSima` preserves its adapter-free input contract while sharing
 encoder property generation. The public class layout changes require ABI 5 and
 rebuilt binary consumers; existing source entry points remain available.
+
+### Python model benchmark reports
+
+`Model.benchmark(output_path=...)` optionally exports a versioned JSON report in the Python
+binding after the existing Core benchmark completes. Measurement remains owned by
+`Model::benchmark`; the binding records its returned metrics, requested configuration, and
+resolved model workload. This additive Python API preserves the C++ `BenchmarkReport` layout and
+existing Python return type. Registry identity and publication belong to downstream consumers.

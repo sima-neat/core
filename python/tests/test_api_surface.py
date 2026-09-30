@@ -1,5 +1,6 @@
 
 import importlib
+import json
 import warnings
 
 import numpy as np
@@ -1877,3 +1878,49 @@ def test_sima_encode_and_sender_options(codec):
     encode.quality = 80
     with pytest.raises(ValueError, match='quality'):
       pyneat.nodes.sima_encode(encode)
+
+
+@pytest.mark.parametrize("use_options", [False, True])
+def test_benchmark_json_export(tmp_path, use_options):
+  model = pyneat.Model(_strict_resnet50_model_path())
+  path = tmp_path / "benchmark.json"
+  if use_options:
+    options = pyneat.BenchmarkOptions()
+    options.num_samples = 2
+    report = model.benchmark(options, output_path=path)
+  else:
+    report = model.benchmark(num_samples=2, output_path=str(path))
+
+  data = json.loads(path.read_text())
+  assert isinstance(report, pyneat.BenchmarkReport)
+  assert data["schema_version"] == 1
+  assert data["tool"]["name"] == "pyneat.Model.benchmark"
+  assert data["tool"]["version"]
+  assert data["configuration"] == {
+      "samples": 2, "include_plugin_latency": False,
+      "original_width": None, "original_height": None, "resize_mode": None,
+  }
+  workload = data["workload"]
+  assert workload["kind"] == "model.synthetic"
+  assert workload["batch_size"] == model.compiled_batch_size()
+  assert workload["inputs"][0]["shape"] == list(model.input_specs()[0].shape)
+  assert workload["inputs"][0]["dtype"] == model.input_specs()[0].dtypes[0].name
+  metrics = data["metrics"]
+  assert metrics["latency_avg_ms"] == {
+      "status": "measured", "value": report.latency_ms, "unit": "ms",
+  }
+  assert metrics["throughput_fps"] == {
+      "status": "measured", "value": report.fps, "unit": "inferences/s",
+  }
+  for name, value in (("avg_power_watts", report.avg_power_watts),
+                      ("energy_joules", report.energy_joules)):
+    if value > 0:
+      assert metrics[name]["status"] == "measured"
+      assert metrics[name]["value"] == value
+    else:
+      assert metrics[name]["status"] == "unavailable"
+      assert metrics[name]["value"] is None
+      assert metrics[name]["reason"]
+  if report.energy_joules > 0:
+    assert metrics["energy_per_inference_joules"]["value"] == pytest.approx(
+        report.energy_joules / (2 * model.compiled_batch_size()))
