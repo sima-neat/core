@@ -29,6 +29,29 @@ int main() {
       throw std::runtime_error("expected millisecond command timeout");
     }
     {
+      // should_abort ends a long command at once (Ctrl-C during a READY probe
+      // that hangs), long before its timeout, and says aborted, not timed out.
+      const auto start = std::chrono::steady_clock::now();
+      const auto abort_at = start + std::chrono::milliseconds(300);
+      const auto aborted =
+          pcie_internal::SshRunner::run_for({"/bin/sleep", "30"}, std::chrono::seconds(30), [&] {
+            return std::chrono::steady_clock::now() >= abort_at;
+          });
+      const auto took = std::chrono::steady_clock::now() - start;
+      if (!aborted.aborted || aborted.timed_out) {
+        throw std::runtime_error("expected should_abort to end the command as aborted");
+      }
+      if (took > std::chrono::seconds(3)) {
+        throw std::runtime_error("should_abort must end the command quickly");
+      }
+      // No abort: a normal command still finishes normally.
+      const auto normal = pcie_internal::SshRunner::run_for(
+          {"/bin/sh", "-c", "echo ok"}, std::chrono::seconds(5), [] { return false; });
+      if (normal.aborted || normal.exit_code != 0) {
+        throw std::runtime_error("an unused should_abort must not change the result");
+      }
+    }
+    {
       // Regression: the child must not inherit our stdin. Point our stdin at a
       // pipe that stays open (like `echo prompt | pcie-genai`); a child that
       // inherited it would block in `cat` until the timeout and eat the input.
