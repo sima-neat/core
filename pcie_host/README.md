@@ -43,6 +43,10 @@ package; applications compiling against this API use `sima-pcie-host-dev`.
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
 
+The GenAI C++ API (`simaai/neat/pcie/genai/GenAIModel.h`) is not installed yet.
+It uses NEAT core's GenAI types, which this package does not ship, so for now
+only the in-tree `pcie-genai` CLI builds against it.
+
 ### Multi-model runtime
 
 `Runtime` is the minimal OAAX-ready native API for applications that need
