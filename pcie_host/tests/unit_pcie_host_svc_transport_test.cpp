@@ -128,6 +128,28 @@ int main() {
       require(nlohmann::json::parse(sent[0].payload)["prompt"] == "Hi", "prompt text sent");
     }
 
+    // Two transports in one process (two cards) never make the same request id:
+    // the id also names the staged image files in the shared stage folder.
+    {
+      auto fake_a = std::make_unique<FakeSvcClient>();
+      auto fake_b = std::make_unique<FakeSvcClient>();
+      FakeSvcClient* a = fake_a.get();
+      FakeSvcClient* b = fake_b.get();
+      a->on_notify = play_happy_card;
+      b->on_notify = play_happy_card;
+      pgi::SvcTransport ta(std::move(fake_a), fast_options());
+      pgi::SvcTransport tb(std::move(fake_b), fast_options());
+      require(generate(ta, request("Hi")).error.empty() &&
+                  generate(tb, request("Hi")).error.empty(),
+              "both transports run");
+      const std::string id_a = id_of(a->sent().at(0).payload);
+      const std::string id_b = id_of(b->sent().at(0).payload);
+      require(id_a != id_b, "two transports must not share a request id: " + id_a);
+      const std::string pid_prefix = "h" + std::to_string(::getpid()) + "-";
+      require(id_a.rfind(pid_prefix, 0) == 0 && id_b.rfind(pid_prefix, 0) == 0,
+              "ids keep the h<pid>-<n> form the image sweep reads");
+    }
+
     // A seq gap in the token stream is counted as dropped_events
     // on the final sample. seq jumps 0 -> 2, so exactly one token was lost.
     {

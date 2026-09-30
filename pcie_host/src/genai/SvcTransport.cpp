@@ -43,10 +43,14 @@ void SvcTransport::cancel() {
 }
 
 // "h<pid>-<n>": unique per host process and per run, so the card's final and
-// error can be matched to the run that asked for them.
+// error can be matched to the run that asked for them. <n> is one counter for
+// the whole process, not per transport: two transports (two cards) in one
+// process must not both make "h<pid>-1", because the id also names the staged
+// image files in the shared data/pcie-genai folder. The image sweep reads the
+// owner pid back from this name, so keep the format.
 std::string SvcTransport::next_request_id() {
-  return "h" + std::to_string(static_cast<long long>(::getpid())) + "-" +
-         std::to_string(++request_counter_);
+  static std::atomic<std::uint64_t> counter{0};
+  return "h" + std::to_string(static_cast<long long>(::getpid())) + "-" + std::to_string(++counter);
 }
 
 // Drop id-less tokens/metrics left over from a run that ended without receiving its final.
