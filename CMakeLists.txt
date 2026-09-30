@@ -317,7 +317,14 @@ find_path(SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
     "/usr/include/eigen3")
 if (SimaLMM_FOUND)
-  pkg_check_modules(SIMANEAT_HTTPLIB REQUIRED IMPORTED_TARGET cpp-httplib)
+  pkg_check_modules(HTTPLIB REQUIRED cpp-httplib)
+  find_library(SIMANEAT_HTTPLIB_LIBRARY
+    NAMES cpp-httplib
+    PATHS ${HTTPLIB_LIBRARY_DIRS}
+    NO_DEFAULT_PATH)
+  if (NOT SIMANEAT_HTTPLIB_LIBRARY)
+    message(FATAL_ERROR "Could not find libcpp-httplib. Install libcpp-httplib-dev.")
+  endif()
 endif()
 
 if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
@@ -977,7 +984,7 @@ if (OPENCV_FOUND)
   target_compile_options(sima_neat_objects PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
 if (SimaLMM_FOUND)
-  target_compile_options(sima_neat_objects PRIVATE ${SIMANEAT_HTTPLIB_CFLAGS_OTHER})
+  target_compile_options(sima_neat_objects PRIVATE ${HTTPLIB_CFLAGS_OTHER})
 endif()
 
 if (OPENCV_FOUND)
@@ -997,9 +1004,9 @@ if (SimaLMM_FOUND)
 endif()
 
 if (SimaLMM_FOUND)
-  target_include_directories(sima_neat_objects SYSTEM PRIVATE ${SIMANEAT_HTTPLIB_INCLUDE_DIRS})
-  target_link_libraries(sima_neat PRIVATE PkgConfig::SIMANEAT_HTTPLIB)
-  target_link_libraries(sima_neat_static PRIVATE PkgConfig::SIMANEAT_HTTPLIB)
+  target_include_directories(sima_neat_objects SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
+  target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+  target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
 # Model archives are inflated in process. No public header uses zlib, so this stays PRIVATE, but a
@@ -1502,9 +1509,7 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
 )
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
-    "sima-lmm-dev"
-    # The exported static target resolves cpp-httplib on the consuming machine.
-    "libcpp-httplib-dev")
+    "sima-lmm-dev")
 endif()
 string(JOIN ", " CPACK_DEBIAN_DEV_PACKAGE_DEPENDS ${SIMANEAT_DEV_DEBIAN_DEPENDS})
 set(CPACK_INSTALL_CMAKE_PROJECTS

@@ -859,7 +859,7 @@ if (SimaLMM_FOUND)
     SOURCES e2e_testing/genai/genai_server_http_test.cpp
     ARGS ${CMAKE_SOURCE_DIR}
   )
-  target_link_libraries(genai_server_http_test PRIVATE PkgConfig::SIMANEAT_HTTPLIB)
+  target_link_libraries(genai_server_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 
   if (NOT genai_server_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
@@ -870,7 +870,7 @@ if (SimaLMM_FOUND)
     genai_server_reasoning_http_test
     e2e_testing/genai/genai_server_reasoning_http_test.cpp
   )
-  target_link_libraries(genai_server_reasoning_http_test PRIVATE PkgConfig::SIMANEAT_HTTPLIB)
+  target_link_libraries(genai_server_reasoning_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 
   if (NOT genai_server_reasoning_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY
