@@ -228,13 +228,12 @@ int main(int argc, char** argv) {
   connection.card_id = args.card_id;
   connection.user = args.user;
   connection.queue = args.queue;
-  connection.card_program = args.card_program;
 
   int rc = 0;
   int pid = -1;
   std::optional<pcie::internal::RemoteRuntime> runtime;
   try {
-    runtime.emplace(connection);
+    runtime.emplace(connection, args.card_program);
     // Before start(): the model load can take minutes. A Ctrl-C during the
     // READY wait must end the wait (should_abort below) so the code after the
     // try block still stops the backend. Without our handler, Ctrl-C would
