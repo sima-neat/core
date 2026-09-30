@@ -87,7 +87,10 @@ void SvcTransport::drain_abandoned_run() {
           return;
         }
       } else if (note.tag == kTagError) {
-        if (parse_error(note.payload).id == old_id) {
+        // An empty id also ends it: the card sends that when it could not read
+        // the prompt's id. No new prompt is out yet, so it is the old run's.
+        const std::string error_id = parse_error(note.payload).id;
+        if (error_id.empty() || error_id == old_id) {
           abandoned_id_.clear();
           return;
         }
