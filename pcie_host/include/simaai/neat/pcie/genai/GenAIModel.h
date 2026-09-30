@@ -72,9 +72,10 @@ public:
 
 private:
   class Impl;
-  explicit GenAIModel(std::unique_ptr<Impl> impl);
+  explicit GenAIModel(std::shared_ptr<Impl> impl);
 
-  std::unique_ptr<Impl> impl_;
+  // Shared so a GenerationStream can keep the transport alive past the model.
+  std::shared_ptr<Impl> impl_;
 
   friend struct internal::GenAIModelAccess;
 };
