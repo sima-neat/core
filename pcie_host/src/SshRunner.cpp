@@ -34,7 +34,8 @@ CommandResult SshRunner::run(const std::vector<std::string>& args, const int tim
 }
 
 CommandResult SshRunner::run_for(const std::vector<std::string>& args,
-                                 const std::chrono::milliseconds timeout) {
+                                 const std::chrono::milliseconds timeout,
+                                 const std::function<bool()>& should_abort) {
   if (args.empty()) {
     throw std::invalid_argument("SshRunner::run requires a command");
   }
@@ -95,8 +96,10 @@ CommandResult SshRunner::run_for(const std::vector<std::string>& args,
 
   while (!child_done) {
     const auto now = std::chrono::steady_clock::now();
-    if (now >= deadline) {
-      result.timed_out = true;
+    const bool abort_now = should_abort && should_abort();
+    if (now >= deadline || abort_now) {
+      result.aborted = abort_now;
+      result.timed_out = !abort_now;
       // Negative pid = the whole process group: ssh and anything it started.
       // Killing only ssh could leave a child that keeps the pipe open.
       ::kill(-pid, SIGTERM);

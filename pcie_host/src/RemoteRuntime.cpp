@@ -588,7 +588,13 @@ RemoteStatus RemoteRuntime::wait_ready(const int queue, const int expected_pid,
     }
     std::vector<std::string> cmd = ssh_base();
     cmd.push_back(build_ready_probe_command(queue, expected_pid));
-    const CommandResult res = SshRunner::run_for(cmd, remaining);
+    // should_abort is passed down too: a probe that hangs (a broken link after
+    // ssh connected) would otherwise keep Ctrl-C waiting until `remaining`
+    // ran out, which can be the whole READY timeout.
+    const CommandResult res = SshRunner::run_for(cmd, remaining, should_abort);
+    if (res.aborted) {
+      throw std::runtime_error("interrupted while waiting for READY");
+    }
     ReadyProbe probe;
     if (!res.timed_out && res.exit_code == 0) {
       probe = parse_ready_probe(res.output, queue);
