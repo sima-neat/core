@@ -6,10 +6,18 @@ import re
 
 
 def check(prefix: Path, forbidden: list[str]) -> int:
-    directory = prefix / "usr/lib/cmake/SimaNeat"
-    files = sorted(directory.glob("*.cmake"))
-    if not files or not (directory / "SimaNeatTargets.cmake").is_file():
+    # Core installs to ${CMAKE_INSTALL_LIBDIR}/cmake/SimaNeat. Inspect the
+    # extracted package itself, not the builder's cache or a list of ABI tuples.
+    exports = sorted(prefix.glob("**/cmake/SimaNeat/SimaNeatTargets.cmake"))
+    if not exports:
         raise ValueError("missing installed SimaNeat CMake export")
+    if len(exports) != 1:
+        paths = ", ".join(str(path.relative_to(prefix)) for path in exports)
+        raise ValueError(f"multiple installed SimaNeat CMake exports: {paths}")
+    directory = exports[0].parent
+    if not (directory / "SimaNeatConfig.cmake").is_file():
+        raise ValueError("missing installed SimaNeatConfig.cmake beside targets")
+    files = sorted(directory.glob("*.cmake"))
     locations = 0
     for path in files:
         content = path.read_text()
