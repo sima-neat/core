@@ -31,7 +31,7 @@ namespace internal {
 // widening the public API. Only this struct is a friend of GenAIModel.
 struct GenAIModelAccess {
   static GenAIModel create(std::unique_ptr<Transport> transport) {
-    return GenAIModel(std::make_unique<GenAIModel::Impl>(std::move(transport)));
+    return GenAIModel(std::make_shared<GenAIModel::Impl>(std::move(transport)));
   }
 };
 
@@ -41,7 +41,7 @@ GenAIModel make_model_with_transport(std::unique_ptr<Transport> transport) {
 
 } // namespace internal
 
-GenAIModel::GenAIModel(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+GenAIModel::GenAIModel(std::shared_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 GenAIModel::~GenAIModel() = default;
 GenAIModel::GenAIModel(GenAIModel&&) noexcept = default;
@@ -71,12 +71,12 @@ std::string GenAIModel::model_id() const {
 }
 
 GenerationStream GenAIModel::stream(const GenerationRequest& request) {
-  internal::Transport& transport = impl_->transport();
-  GenerationRequest request_copy = request;
+  // Both callbacks share ownership of Impl, so the transport outlives the model
+  // if the caller destroys or replaces it before the stream ends.
   return GenerationStream::make(
-      [&transport, request_copy = std::move(request_copy)](GenerationStream::Producer& producer) {
-        transport.generate(
-            request_copy, [&producer] { return producer.cancelled(); },
+      [impl = impl_, request](GenerationStream::Producer& producer) {
+        impl->transport().generate(
+            request, [&producer] { return producer.cancelled(); },
             [&producer](const TokenSample& sample) {
               if (!sample.is_final) {
                 producer.push(sample);
@@ -88,7 +88,7 @@ GenerationStream GenAIModel::stream(const GenerationRequest& request) {
               producer.finish(sample.finish_reason, sample.metrics.generated_tokens);
             });
       },
-      [&transport] { transport.cancel(); });
+      [impl = impl_] { impl->transport().cancel(); });
 }
 
 ChatReply GenAIModel::reset_chat(const std::optional<std::string>& system_prompt,

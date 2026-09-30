@@ -4,12 +4,14 @@
 #include "simaai/neat/pcie/genai/GenAIModel.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace pgenai = simaai::neat::pcie::genai;
 namespace pgenai_internal = simaai::neat::pcie::genai::internal;
@@ -75,6 +77,48 @@ public:
   std::atomic<bool> cancel_called{false};
   std::string last_prompt_;
   std::uint32_t final_dropped_events = 0;
+};
+
+/// State a LifetimeTransport shares with the test. It lives outside the transport,
+/// so the test can still read it after the transport is gone.
+struct LifetimeState {
+  std::atomic<bool> destroyed{false};
+  std::atomic<bool> in_generate{false};
+  std::atomic<bool> release{false};
+  std::atomic<bool> cancelled{false};
+};
+
+/// A transport whose generate() waits until the test releases it. It records
+/// its own destruction, so the test can check how long it stays alive.
+class LifetimeTransport final : public pgenai_internal::Transport {
+public:
+  explicit LifetimeTransport(std::shared_ptr<LifetimeState> state) : state_(std::move(state)) {}
+  ~LifetimeTransport() override {
+    state_->destroyed = true;
+  }
+
+  std::string model_id() const override {
+    return "lifetime-model";
+  }
+
+  void generate(const pgenai::GenerationRequest&, const std::function<bool()>&,
+                const std::function<void(const pgenai::TokenSample&)>& emit) override {
+    state_->in_generate = true;
+    while (!state_->release.load() && !state_->cancelled.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    pgenai::TokenSample final;
+    final.is_final = true;
+    final.finish_reason = "stop";
+    emit(final);
+  }
+
+  void cancel() override {
+    state_->cancelled = true;
+  }
+
+private:
+  std::shared_ptr<LifetimeState> state_;
 };
 
 } // namespace
@@ -154,6 +198,31 @@ int main() {
       }
       require(last.has_value() && last->is_final, "the stream ends with a final");
       require(last->metrics.dropped_events == 3, "dropped_events reaches the stream's final");
+    }
+
+    // A stream keeps the transport alive after its model is gone. An earlier version
+    // held only a reference, so the worker and the cancel call used freed memory.
+    {
+      auto state = std::make_shared<LifetimeState>();
+      std::optional<pgenai::GenerationStream> stream;
+      {
+        pgenai::GenAIModel model =
+            pgenai_internal::make_model_with_transport(std::make_unique<LifetimeTransport>(state));
+        pgenai::GenerationRequest r;
+        r.prompt = "hi";
+        stream.emplace(model.stream(r));
+        while (!state->in_generate.load()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+      }
+      require(!state->destroyed.load(), "a live stream keeps the transport alive");
+      stream->cancel();
+      require(state->cancelled.load(), "cancel reaches the transport after the model is gone");
+      while (stream->next()) {
+      }
+      require(!state->destroyed.load(), "a drained stream still owns the transport");
+      stream.reset();
+      require(state->destroyed.load(), "the transport is freed with the last stream");
     }
 
     // Chat operations are forwarded to the transport.
