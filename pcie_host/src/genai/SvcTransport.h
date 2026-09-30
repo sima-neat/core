@@ -77,7 +77,6 @@ private:
   std::unique_ptr<SvcClient> client_;
   SvcTransportOptions options_;
   std::atomic<bool> cancel_requested_{false};
-  std::uint64_t request_counter_ = 0;
   std::string abandoned_id_;
   // Per-run token gap tracking. The card stamps each genai.token with a
   // sequence number; a jump means notifications were dropped in transit.
