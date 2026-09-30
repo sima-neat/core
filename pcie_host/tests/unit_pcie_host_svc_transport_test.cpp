@@ -422,7 +422,10 @@ int main() {
       require(run2.samples[2].is_final, "run 2 final");
     }
 
-    // Fix round 1: if the old final never comes, the drain gives up and run 2 still works.
+    // If the old final never comes, the next request is refused (no prompt is sent),
+    // because the old run may still be sending id-less tokens. An earlier version
+    // gave up on the drain and sent the prompt anyway, so late old tokens could
+    // show up as the new answer. Once the old final arrives, requests work again.
     {
       auto fake = std::make_unique<FakeSvcClient>();
       FakeSvcClient* f = fake.get();
@@ -438,15 +441,38 @@ int main() {
       // Run 1: abandoned (cancel timeout).
       const Run run1 = generate(t, request("Hi"), [](const Run& r) { return !r.samples.empty(); });
       require(run1.error.empty() && run1.samples.size() == 1, "run 1 abandoned");
+      const std::string run1_id = id_of(f->sent()[0].payload);
+      const std::size_t sent_after_run1 = f->sent().size();
 
-      // Run 2: the old final never arrives, so the drain times out, but run 2 still completes.
+      // Run 2: the old final never arrives, so run 2 is refused before its prompt.
       f->on_notify = play_happy_card;
       const auto start = std::chrono::steady_clock::now();
       const Run run2 = generate(t, request("Hello"));
       const auto waited = std::chrono::steady_clock::now() - start;
-      require(run2.error.empty(), "run 2 must succeed even if drain timed out: " + run2.error);
-      require(run2.samples.size() == 3, "run 2: full response");
+      require(run2.error.find("earlier run") != std::string::npos,
+              "run 2 must be refused while the old run is active: '" + run2.error + "'");
+      require(run2.samples.empty(), "a refused run emits nothing");
+      require(f->sent().size() == sent_after_run1, "a refused run sends no prompt");
       require(waited < std::chrono::milliseconds(1500), "drain timeout must be bounded");
+
+      // A chat command is refused the same way.
+      bool chat_refused = false;
+      try {
+        t.chat_history();
+      } catch (const std::exception& e) {
+        chat_refused = std::string(e.what()).find("earlier run") != std::string::npos;
+      }
+      require(chat_refused, "a chat command must be refused while the old run is active");
+      require(f->sent().size() == sent_after_run1, "a refused chat command sends nothing");
+
+      // The card finishes run 1 late. The next run drains it and works.
+      f->push(pgi::kTagToken, "stale");
+      f->push(pgi::kTagFinal, final_json(run1_id, "cancelled"));
+      const Run run3 = generate(t, request("Hello"));
+      require(run3.error.empty(), "run 3 must succeed after the old final: " + run3.error);
+      require(run3.samples.size() == 3 && run3.samples[0].text == "Hel" &&
+                  run3.samples[1].text == "lo" && run3.samples[2].is_final,
+              "run 3 must deliver only its own tokens and final");
     }
 
     // Final review: a malformed payload ends the run with an error AND marks it

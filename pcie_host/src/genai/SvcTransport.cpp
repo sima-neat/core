@@ -53,15 +53,18 @@ std::string SvcTransport::next_request_id() {
 // Why: tokens and metrics carry no id. If the old run is still sending, its
 // tokens would look like the new run's answer. So before the next prompt we
 // read and drop events until the old run's final or error arrives.
+// If it does not arrive in time, throw and keep the run marked abandoned: the
+// old run may still be sending, so no new request may start yet. The next
+// request tries the drain again.
 void SvcTransport::drain_abandoned_run() {
   using clock = std::chrono::steady_clock;
   const std::string old_id = abandoned_id_;
-  abandoned_id_.clear();
 
   const clock::time_point start = clock::now();
   for (;;) {
     if (clock::now() - start >= std::chrono::milliseconds(options_.cancel_timeout_ms)) {
-      return; // give up after the same timeout used for a live cancel
+      throw std::runtime_error("the card is still finishing an earlier run; try again, or "
+                               "restart pcie-genai if this does not go away");
     }
     SvcNote note;
     const RecvStatus status = client_->recv(note, options_.recv_timeout_ms);
@@ -76,10 +79,12 @@ void SvcTransport::drain_abandoned_run() {
     try {
       if (note.tag == kTagFinal) {
         if (parse_final(note.payload).id == old_id) {
+          abandoned_id_.clear();
           return;
         }
       } else if (note.tag == kTagError) {
         if (parse_error(note.payload).id == old_id) {
+          abandoned_id_.clear();
           return;
         }
       }
