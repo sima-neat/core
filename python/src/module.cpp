@@ -105,6 +105,7 @@
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -216,18 +217,7 @@ bool checked_add(std::size_t a, std::size_t b, std::size_t* out) {
   return true;
 }
 
-simaai::neat::BenchmarkReport
-benchmark_with_export(simaai::neat::Model& model, const simaai::neat::BenchmarkOptions& options,
-                      const std::optional<std::filesystem::path>& output_path) {
-  simaai::neat::BenchmarkReport report;
-  {
-    nb::gil_scoped_release release;
-    report = model.benchmark(options);
-  }
-  if (!output_path) {
-    return report;
-  }
-
+nlohmann::json benchmark_report_json(const simaai::neat::BenchmarkReport& report) {
   using Json = nlohmann::json;
   const auto metric = [](double value, const char* unit) -> Json {
     if (!std::isfinite(value) || value <= 0.0) {
@@ -238,51 +228,13 @@ benchmark_with_export(simaai::neat::Model& model, const simaai::neat::BenchmarkO
     }
     return {{"status", "measured"}, {"value", value}, {"unit", unit}};
   };
-  Json inputs = Json::array();
-  for (const auto& spec : model.input_specs()) {
-    inputs.push_back({{"shape", spec.shape},
-                      {"dtype", nb::cast<std::string>(nb::cast(spec.dtypes.at(0)).attr("name"))}});
-  }
-  const auto info = model.info();
-  const int batch_size = model.compiled_batch_size();
-  const double measured_inferences = static_cast<double>(options.num_samples) * batch_size;
-  const Json document = {
-      {"schema_version", 1},
-      {"tool", {{"name", "pyneat.Model.benchmark"}, {"version", sima_neat_version()}}},
-      {"configuration",
-       {{"samples", options.num_samples},
-        {"include_plugin_latency", options.include_plugin_latency},
-        {"original_width", options.original_width ? Json(*options.original_width) : Json(nullptr)},
-        {"original_height",
-         options.original_height ? Json(*options.original_height) : Json(nullptr)},
-        {"resize_mode", options.resize_mode ? Json(nb::cast<std::string>(
-                                                  nb::cast(*options.resize_mode).attr("name")))
-                                            : Json(nullptr)}}},
-      {"workload",
-       {{"kind", "model.synthetic"},
-        {"input_generation", "deterministic"},
-        {"batch_size", batch_size},
-        {"inputs", inputs},
-        {"preprocess", info.selection.preprocess_graph},
-        {"postprocess", info.selection.selected_post_kind}}},
-      {"metrics",
-       {{"latency_avg_ms", metric(report.latency_ms, "ms")},
-        {"throughput_fps", metric(report.fps, "inferences/s")},
-        {"avg_power_watts", metric(report.avg_power_watts, "W")},
-        {"energy_joules", metric(report.energy_joules, "J")},
-        {"energy_per_inference_joules",
-         metric(report.energy_joules / measured_inferences, "J/inference")}}}};
-  std::ofstream output;
-  output.exceptions(std::ios::failbit | std::ios::badbit);
-  try {
-    output.open(*output_path);
-    output << document.dump(2) << '\n';
-    output.close();
-  } catch (const std::ios_base::failure& error) {
-    throw std::runtime_error("Model.benchmark: cannot write report to " + output_path->string() +
-                             ": " + error.what());
-  }
-  return report;
+  return {{"schema_version", 1},
+          {"tool", {{"name", "pyneat.Model.benchmark"}, {"version", sima_neat_version()}}},
+          {"metrics",
+           {{"latency_avg_ms", metric(report.latency_ms, "ms")},
+            {"throughput_fps", metric(report.fps, "inferences/s")},
+            {"avg_power_watts", metric(report.avg_power_watts, "W")},
+            {"energy_joules", metric(report.energy_joules, "J")}}}};
 }
 
 nb::object json_to_python(const nlohmann::json& value) {
@@ -4634,7 +4586,49 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
       .def_rw("fps", &simaai::neat::BenchmarkReport::fps)
       .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
-      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
+      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules)
+      .def(
+          "to_json",
+          [](const simaai::neat::BenchmarkReport& report, int indent) {
+            return benchmark_report_json(report).dump(indent);
+          },
+          "indent"_a = 2)
+      .def(
+          "save_json",
+          [](const simaai::neat::BenchmarkReport& report, const std::filesystem::path& path,
+             int indent) {
+            const auto body = benchmark_report_json(report).dump(indent);
+            std::ofstream output;
+            output.exceptions(std::ios::failbit | std::ios::badbit);
+            try {
+              output.open(path);
+              output << body << '\n';
+              output.close();
+            } catch (const std::ios_base::failure& error) {
+              throw std::runtime_error("BenchmarkReport.save_json: cannot write report to " +
+                                       path.string() + ": " + error.what());
+            }
+          },
+          "path"_a, "indent"_a = 2)
+      .def("__str__", [](const simaai::neat::BenchmarkReport& report) {
+        std::ostringstream output;
+        const auto line = [&output](const char* label, double value, const char* unit) {
+          output << label << ": ";
+          if (std::isfinite(value) && value > 0.0) {
+            output << value << ' ' << unit;
+          } else {
+            output << "unavailable";
+          }
+          output << '\n';
+        };
+        line("Mean latency", report.latency_ms, "ms");
+        line("Throughput", report.fps, "inferences/s");
+        line("Average power", report.avg_power_watts, "W");
+        line("Energy", report.energy_joules, "J");
+        auto text = output.str();
+        text.pop_back();
+        return text;
+      });
 
   // ── Phase 3: model / preprocess introspection (plan slice S1/S14) ────────────────────────────
   // Tiering per S1 ("advanced = by namespace, not by docs"): the diagnostic snapshots that are the
@@ -4984,19 +4978,15 @@ NB_MODULE(_pyneat_core, m) {
             return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
-      .def(
-          "benchmark",
-          [](simaai::neat::Model& model, int num_samples, bool include_plugin_latency,
-             const std::optional<std::filesystem::path>& output_path) {
-            simaai::neat::BenchmarkOptions options;
-            options.num_samples = num_samples;
-            options.include_plugin_latency = include_plugin_latency;
-            return benchmark_with_export(model, options, output_path);
-          },
-          "num_samples"_a = 100, "include_plugin_latency"_a = false, nb::kw_only(),
-          "output_path"_a = std::nullopt)
-      .def("benchmark", &benchmark_with_export, "options"_a, nb::kw_only(),
-           "output_path"_a = std::nullopt);
+      .def("benchmark",
+           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
+               &simaai::neat::Model::benchmark),
+           "num_samples"_a = 100, "include_plugin_latency"_a = false,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("benchmark",
+           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(
+               const simaai::neat::BenchmarkOptions&)>(&simaai::neat::Model::benchmark),
+           "options"_a, nb::call_guard<nb::gil_scoped_release>());
 
   // from-Model constructors for the CVU-atom options (registered here, after Model — pulls tile
   // geometry / quant params / model-managed buffer counts so the standalone nodes are actually

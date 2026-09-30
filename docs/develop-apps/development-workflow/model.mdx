@@ -744,30 +744,30 @@ hints in `ModelOptions`. Existing `benchmark(num_samples)` calls keep the same b
 
 Read `avg_power_watts` and `energy_joules` only when the board power monitor produced samples. If power telemetry is unavailable for the board or rail configuration, those fields stay zero.
 
-Python callers can write a versioned JSON report without parsing console output:
+Python callers can save the returned report without parsing console output:
 
 ```python
 model = pyneat.Model("model.tar.gz")
-report = model.benchmark(output_path="benchmark.json")
+report = model.benchmark()
+report.save_json("benchmark.json")
 ```
 
-`output_path` is optional and keyword-only on both benchmark overloads. It accepts a string or
-`pathlib.Path`. The returned `BenchmarkReport` and the C++ API are unchanged. Export runs after
-measurement; write failures raise an exception.
+`report.to_json(indent=2)` returns JSON text. `report.save_json(path, indent=2)` writes it
+with a final newline and accepts a string or `pathlib.Path`; write failures raise an exception.
+Use `indent=-1` for compact JSON. `print(report)` displays a readable summary with units.
+`model.benchmark()` still prints its existing summary automatically, so
+`print(model.benchmark())` displays the results twice. Existing benchmark arguments and returned
+fields are unchanged.
 
-Schema version 1 records the Core version, requested sample count and geometry, actual input
-shapes and dtypes, compiled batch size, and resolved preprocessing/postprocessing route. Metrics
-include mean latency (`ms`), logical throughput (`inferences/s`), average board power (`W`),
-throughput-window energy (`J`), and energy per logical inference (`J/inference`). The latter divides
-the measured energy by sample count times compiled batch size. Each metric has `status`, `value`,
-and `unit`; unavailable values are `null` with a `reason`. The existing report uses zero when power
-telemetry is absent, so export treats nonpositive or nonfinite power/energy values as unavailable.
-This report does not supply percentile latency or peak allocator memory.
+Schema version 1 records the Core version and the report's four measurements: mean latency
+(`ms`), logical throughput (`inferences/s`), average board power (`W`), and throughput-window
+energy (`J`). Each metric has `status`, `value`, and `unit`; nonpositive or nonfinite
+measurements are unavailable, with `value: null` and a `reason`. This includes the zero values
+returned when power telemetry is absent. Serialization does not modify the report's fields.
 
-The workload describes the model as constructed. Loading an MPK with default options can measure
-a different route from a model constructed with explicit preprocessing or BoxDecode options;
-compare results only for equivalent workloads. Artifact identity and registry publication remain
-the caller's responsibility.
+The report does not retain benchmark settings or the model's preprocessing/postprocessing route.
+Callers must record that context alongside artifact identity when comparing or publishing results.
+Percentile latency and peak allocator memory are not included.
 
 Use runner measurement when you own the input loop and want to measure that loop:
 

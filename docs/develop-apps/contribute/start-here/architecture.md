@@ -1418,8 +1418,8 @@ rebuilt binary consumers; existing source entry points remain available.
 
 ### Python model benchmark reports
 
-`Model.benchmark(output_path=...)` optionally exports a versioned JSON report in the Python
-binding after the existing Core benchmark completes. Measurement remains owned by
-`Model::benchmark`; the binding records its returned metrics, requested configuration, and
-resolved model workload. This additive Python API preserves the C++ `BenchmarkReport` layout and
-existing Python return type. Registry identity and publication belong to downstream consumers.
+Python `BenchmarkReport.to_json()` and `save_json(path)` serialize the four returned measurements
+with units and availability in a versioned JSON document. `__str__()` formats a readable summary.
+`Model::benchmark` retains measurement ownership and its existing automatic console output.
+These Python report methods preserve benchmark signatures, the C++ `BenchmarkReport` layout, and
+existing field access. Workload context, artifact identity, and publication belong to callers.

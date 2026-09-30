@@ -1880,47 +1880,39 @@ def test_sima_encode_and_sender_options(codec):
       pyneat.nodes.sima_encode(encode)
 
 
-@pytest.mark.parametrize("use_options", [False, True])
-def test_benchmark_json_export(tmp_path, use_options):
-  model = pyneat.Model(_strict_resnet50_model_path())
+def test_benchmark_report_serialization(tmp_path):
+  report = pyneat.BenchmarkReport()
+  report.latency_ms, report.fps = 2.5, 400.0
+  report.avg_power_watts, report.energy_joules = 5.0, 1.25
+  document = json.loads(report.to_json())
+  assert document["schema_version"] == 1
+  assert document["tool"]["name"] == "pyneat.Model.benchmark"
+  assert document["tool"]["version"]
+  assert document["metrics"] == {
+      "latency_avg_ms": {"status": "measured", "value": 2.5, "unit": "ms"},
+      "throughput_fps": {"status": "measured", "value": 400.0, "unit": "inferences/s"},
+      "avg_power_watts": {"status": "measured", "value": 5.0, "unit": "W"},
+      "energy_joules": {"status": "measured", "value": 1.25, "unit": "J"},
+  }
   path = tmp_path / "benchmark.json"
-  if use_options:
-    options = pyneat.BenchmarkOptions()
-    options.num_samples = 2
-    report = model.benchmark(options, output_path=path)
-  else:
-    report = model.benchmark(num_samples=2, output_path=str(path))
+  report.save_json(path)
+  assert path.read_text() == report.to_json() + "\n"
+  report.save_json(str(path), indent=-1)
+  assert path.read_text() == report.to_json(indent=-1) + "\n"
+  assert "\n" not in report.to_json(indent=-1)
+  assert "\n  " in report.to_json()
+  assert str(report) == ("Mean latency: 2.5 ms\nThroughput: 400 inferences/s\n"
+                         "Average power: 5 W\nEnergy: 1.25 J")
+  with pytest.raises(RuntimeError, match="BenchmarkReport.save_json: cannot write"):
+    report.save_json(tmp_path / "missing" / "benchmark.json")
 
-  data = json.loads(path.read_text())
-  assert isinstance(report, pyneat.BenchmarkReport)
-  assert data["schema_version"] == 1
-  assert data["tool"]["name"] == "pyneat.Model.benchmark"
-  assert data["tool"]["version"]
-  assert data["configuration"] == {
-      "samples": 2, "include_plugin_latency": False,
-      "original_width": None, "original_height": None, "resize_mode": None,
-  }
-  workload = data["workload"]
-  assert workload["kind"] == "model.synthetic"
-  assert workload["batch_size"] == model.compiled_batch_size()
-  assert workload["inputs"][0]["shape"] == list(model.input_specs()[0].shape)
-  assert workload["inputs"][0]["dtype"] == model.input_specs()[0].dtypes[0].name
-  metrics = data["metrics"]
-  assert metrics["latency_avg_ms"] == {
-      "status": "measured", "value": report.latency_ms, "unit": "ms",
-  }
-  assert metrics["throughput_fps"] == {
-      "status": "measured", "value": report.fps, "unit": "inferences/s",
-  }
-  for name, value in (("avg_power_watts", report.avg_power_watts),
-                      ("energy_joules", report.energy_joules)):
-    if value > 0:
-      assert metrics[name]["status"] == "measured"
-      assert metrics[name]["value"] == value
-    else:
-      assert metrics[name]["status"] == "unavailable"
-      assert metrics[name]["value"] is None
-      assert metrics[name]["reason"]
-  if report.energy_joules > 0:
-    assert metrics["energy_per_inference_joules"]["value"] == pytest.approx(
-        report.energy_joules / (2 * model.compiled_batch_size()))
+
+def test_benchmark_report_unavailable_measurements():
+  report = pyneat.BenchmarkReport()
+  report.latency_ms, report.fps = float("nan"), float("inf")
+  report.avg_power_watts, report.energy_joules = 0.0, -1.0
+  for metric in json.loads(report.to_json())["metrics"].values():
+    assert metric["status"] == "unavailable"
+    assert metric["value"] is None
+    assert metric["reason"]
+  assert str(report).count("unavailable") == 4
