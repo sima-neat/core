@@ -499,6 +499,33 @@ int main() {
               "run 3 must deliver only its own tokens and final");
     }
 
+    // The abandoned run can also end with an error that has an empty id (the
+    // card could not read that prompt's id). The drain must accept it: no new
+    // prompt is out yet, so it can only be the old run's. An earlier version
+    // dropped it and refused every later request until the drain timed out.
+    {
+      auto fake = std::make_unique<FakeSvcClient>();
+      FakeSvcClient* f = fake.get();
+      f->on_notify = [](FakeSvcClient& c, const std::string& tag, const std::string&) {
+        if (tag == pgi::kTagPrompt) {
+          c.push(pgi::kTagToken, "old");
+        }
+      };
+      pgi::SvcTransportOptions o = fast_options();
+      o.cancel_timeout_ms = 50;
+      pgi::SvcTransport t(std::move(fake), o);
+      const Run run1 = generate(t, request("Hi"), [](const Run& r) { return !r.samples.empty(); });
+      require(run1.error.empty() && run1.samples.size() == 1, "empty-id drain: run 1 abandoned");
+
+      f->on_notify = play_happy_card;
+      f->push(pgi::kTagToken, "stale");
+      f->push(pgi::kTagError, R"({"id":"","message":"could not read the prompt"})");
+      const Run run2 = generate(t, request("Hello"));
+      require(run2.error.empty(), "an empty-id error ends the abandoned run: " + run2.error);
+      require(run2.samples.size() == 3 && run2.samples[0].text == "Hel",
+              "the next run gets only its own tokens");
+    }
+
     // Final review: a malformed payload ends the run with an error AND marks it
     // abandoned, so its leftovers are drained instead of leaking into the next run.
     {
