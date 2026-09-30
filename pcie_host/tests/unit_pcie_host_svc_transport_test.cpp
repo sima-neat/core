@@ -58,19 +58,22 @@ std::string final_json(const std::string& id, const std::string& reason) {
 struct Run {
   std::vector<pgenai::TokenSample> samples;
   std::string error;
+  std::uint32_t dropped = 0; // last_run_dropped_events() after the run
 };
 
 // Drive one generate() and collect what it emits (or the error it throws).
 Run generate(pgi::SvcTransport& t, const pgenai::GenerationRequest& r,
-             std::function<bool(const Run&)> cancel_when = nullptr) {
+             std::function<bool(const Run&)> cancel_when = nullptr,
+             const std::vector<std::filesystem::path>& image_files = {}) {
   Run run;
   try {
     t.generate(
-        r, [&] { return cancel_when && cancel_when(run); },
+        r, image_files, [&] { return cancel_when && cancel_when(run); },
         [&](const pgenai::TokenSample& s) { run.samples.push_back(s); });
   } catch (const std::exception& e) {
     run.error = e.what();
   }
+  run.dropped = t.last_run_dropped_events();
   return run;
 }
 
@@ -119,7 +122,7 @@ int main() {
       require(fin.metrics.generated_tokens == 2, "final carries generated_tokens");
       require(fin.metrics.time_to_first_token_s == 0.5, "final carries ttft");
       require(fin.metrics.tokens_per_second == 2.0, "final carries tps");
-      require(fin.metrics.dropped_events == 0, "a gap-free run drops nothing");
+      require(run.dropped == 0, "a gap-free run drops nothing");
       const auto sent = f->sent();
       require(sent.size() == 1 && sent[0].tag == pgi::kTagPrompt, "exactly one prompt sent");
       require(nlohmann::json::parse(sent[0].payload)["prompt"] == "Hi", "prompt text sent");
@@ -142,7 +145,7 @@ int main() {
       require(run.error.empty(), "a gap must not end the run: " + run.error);
       const pgenai::TokenSample& fin = run.samples.back();
       require(fin.is_final, "the run still ends on a final");
-      require(fin.metrics.dropped_events == 1, "one missing seq is one dropped event");
+      require(run.dropped == 1, "one missing seq is one dropped event");
       require(run.samples.size() == 3 && run.samples[0].text == "A" && run.samples[1].text == "C",
               "both delivered tokens still reach the caller");
     }
@@ -160,7 +163,7 @@ int main() {
       };
       pgi::SvcTransport t(std::move(fake), fast_options());
       const Run run = generate(t, request("Hi"));
-      require(run.samples.back().metrics.dropped_events == 4, "0->5 loses four tokens");
+      require(run.dropped == 4, "0->5 loses four tokens");
     }
 
     // A repeated seq is not a drop (and does not underflow the counter).
@@ -177,7 +180,7 @@ int main() {
       };
       pgi::SvcTransport t(std::move(fake), fast_options());
       const Run run = generate(t, request("Hi"));
-      require(run.samples.back().metrics.dropped_events == 0, "a duplicate seq is not a drop");
+      require(run.dropped == 0, "a duplicate seq is not a drop");
     }
 
     // An old-style stream with no seq prefix reports zero drops, never a false gap.
@@ -197,7 +200,7 @@ int main() {
       require(run.samples.size() == 3 && run.samples[0].text == "Hel" &&
                   run.samples[1].text == "lo",
               "no-seq tokens are delivered as their whole payload");
-      require(run.samples.back().metrics.dropped_events == 0, "no seq means no drop count");
+      require(run.dropped == 0, "no seq means no drop count");
     }
 
     // The drop counter resets per run: a gap in run 1 does not carry into run 2.
@@ -214,11 +217,11 @@ int main() {
       };
       pgi::SvcTransport t(std::move(fake), fast_options());
       const Run run1 = generate(t, request("Hi"));
-      require(run1.samples.back().metrics.dropped_events == 2, "run 1 counts its two drops");
+      require(run1.dropped == 2, "run 1 counts its two drops");
 
       f->on_notify = play_happy_card; // run 2 is gap-free (seq 0, 1)
       const Run run2 = generate(t, request("Hello"));
-      require(run2.samples.back().metrics.dropped_events == 0, "run 2 starts its own count");
+      require(run2.dropped == 0, "run 2 starts its own count");
     }
 
     // A drop is still counted when the missing seq is noticed after a cancel:
@@ -237,8 +240,7 @@ int main() {
       const Run run = generate(t, request("Hi"), [](const Run& r) { return !r.samples.empty(); });
       require(run.error.empty(), "cancel must not throw: " + run.error);
       require(run.samples.back().finish_reason == "cancelled", "ends on the cancelled final");
-      require(run.samples.back().metrics.dropped_events == 1,
-              "a gap seen after the cancel is still counted");
+      require(run.dropped == 1, "a gap seen after the cancel is still counted");
     }
 
     // Review focus 2: nobody listens for genai.prompt -> fail at once, clearly.
@@ -531,9 +533,7 @@ int main() {
       pgi::SvcTransportOptions o = fast_options();
       o.image_stage_dir = stage.string();
       pgi::SvcTransport t(std::move(fake), o);
-      pgenai::GenerationRequest r = request("what is on the image");
-      r.image_files = {src};
-      const Run run = generate(t, r);
+      const Run run = generate(t, request("what is on the image"), nullptr, {src});
       require(run.error.empty(), "an image request generates without error: " + run.error);
       const auto sent = f->sent();
       require(sent.size() == 1, "exactly one prompt sent for an image request");
@@ -576,9 +576,8 @@ int main() {
       pgi::SvcTransportOptions o = fast_options();
       o.image_stage_dir = stage.string();
       pgi::SvcTransport t(std::move(fake), o);
-      pgenai::GenerationRequest r = request("compare them");
-      r.image_files = {root / "a.jpg", root / "b.png"};
-      const Run run = generate(t, r);
+      const Run run =
+          generate(t, request("compare them"), nullptr, {root / "a.jpg", root / "b.png"});
       require(run.error.empty(), "a two-image request generates without error: " + run.error);
       require(names.size() == 2 && names[0] != names[1], "two distinct staged names");
       require(names[0].size() > 4 && names[0].substr(names[0].size() - 4) == ".jpg" &&
@@ -594,9 +593,7 @@ int main() {
       auto fake = std::make_unique<FakeSvcClient>();
       FakeSvcClient* f = fake.get();
       pgi::SvcTransport t(std::move(fake), fast_options()); // image_stage_dir empty
-      pgenai::GenerationRequest r = request("hi");
-      r.image_files = {"/tmp/whatever.jpg"};
-      const Run run = generate(t, r);
+      const Run run = generate(t, request("hi"), nullptr, {"/tmp/whatever.jpg"});
       require(run.error.find("image") != std::string::npos,
               "an image with no stage dir must be refused, got: " + run.error);
       require(f->sent().empty(), "nothing may be sent when the image cannot be staged");
@@ -733,9 +730,7 @@ int main() {
       pgi::SvcTransportOptions o = fast_options();
       o.image_stage_dir = (root / "pcie-genai").string();
       pgi::SvcTransport t(std::move(fake), o);
-      pgenai::GenerationRequest r = request("what");
-      r.image_files = {src};
-      require(generate(t, r).error.empty(), "image run ok");
+      require(generate(t, request("what"), nullptr, {src}).error.empty(), "image run ok");
       const pgenai::ChatReply before = t.chat_history();
       require(before.text.find(src.string()) != std::string::npos,
               "print shows the host path, got: " + before.text);

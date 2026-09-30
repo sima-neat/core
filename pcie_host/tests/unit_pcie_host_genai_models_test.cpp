@@ -103,14 +103,11 @@ int main() {
       m.generated_tokens = 293;
       m.time_to_first_token_s = 0.09;
       m.tokens_per_second = 26.73;
-      m.dropped_events = 0;
-      const std::string line = format_final_stats(m, "stop");
+      const std::string line = format_final_stats(m, 0, "stop");
       require(line == "[stop | 293 tokens | TTFT 0.09 s | 26.73 tok/s | dropped 0]",
               "clean run: one summary line, dropped 0, no warning");
 
-      GenerationMetrics d = m;
-      d.dropped_events = 2;
-      const std::string with_warn = format_final_stats(d, "stop");
+      const std::string with_warn = format_final_stats(m, 2, "stop");
       require(with_warn.find("| dropped 2]") != std::string::npos, "the count is in the summary");
       require(with_warn.find("WARNING") != std::string::npos, "a non-zero count prints a warning");
     }

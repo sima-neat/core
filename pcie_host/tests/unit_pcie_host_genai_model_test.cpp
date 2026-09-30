@@ -6,12 +6,14 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace pgenai = simaai::neat::pcie::genai;
 namespace pgenai_internal = simaai::neat::pcie::genai::internal;
@@ -32,9 +34,12 @@ public:
     return "fake-text-model";
   }
 
-  void generate(const pgenai::GenerationRequest& request, const std::function<bool()>& is_cancelled,
+  void generate(const pgenai::GenerationRequest& request,
+                const std::vector<std::filesystem::path>& image_files,
+                const std::function<bool()>& is_cancelled,
                 const std::function<void(const pgenai::TokenSample&)>& emit) override {
     last_prompt_ = request.prompt.value_or("");
+    last_image_files = image_files;
     if (is_cancelled()) {
       return;
     }
@@ -49,7 +54,6 @@ public:
     final.finish_reason = "stop";
     final.metrics.generated_tokens = 2;
     final.metrics.tokens_per_second = 12.5;
-    final.metrics.dropped_events = final_dropped_events;
     emit(final);
   }
 
@@ -69,6 +73,9 @@ public:
   bool last_run_cleared_history() const override {
     return cleared;
   }
+  std::uint32_t last_run_dropped_events() const override {
+    return final_dropped_events;
+  }
 
   std::optional<std::string> last_reset_system;
   bool last_reset_thinking = false;
@@ -76,6 +83,7 @@ public:
 
   std::atomic<bool> cancel_called{false};
   std::string last_prompt_;
+  std::vector<std::filesystem::path> last_image_files;
   std::uint32_t final_dropped_events = 0;
 };
 
@@ -101,7 +109,8 @@ public:
     return "lifetime-model";
   }
 
-  void generate(const pgenai::GenerationRequest&, const std::function<bool()>&,
+  void generate(const pgenai::GenerationRequest&, const std::vector<std::filesystem::path>&,
+                const std::function<bool()>&,
                 const std::function<void(const pgenai::TokenSample&)>& emit) override {
     state_->in_generate = true;
     while (!state_->release.load() && !state_->cancelled.load()) {
@@ -187,8 +196,8 @@ int main() {
       require(state->cancelled.load(), "stream cancel must reach the transport");
     }
 
-    // The final sample keeps the transport's dropped_events. An earlier version lost it
-    // here, so the CLI always printed "dropped 0".
+    // The transport's dropped count is read through the model. It is not in
+    // Core's GenerationMetrics: that public struct keeps its size (ABI).
     {
       auto fake = std::make_unique<FakeTransport>();
       fake->final_dropped_events = 3;
@@ -196,12 +205,29 @@ int main() {
       pgenai::GenerationRequest r;
       r.prompt = "hi";
       pgenai::GenerationStream s = model.stream(r);
-      std::optional<pgenai::TokenSample> last;
-      while (std::optional<pgenai::TokenSample> x = s.next()) {
-        last = x;
+      while (s.next()) {
       }
-      require(last.has_value() && last->is_final, "the stream ends with a final");
-      require(last->metrics.dropped_events == 3, "dropped_events reaches the stream's final");
+      require(model.last_run_dropped_events() == 3, "last_run_dropped_events forwarded");
+    }
+
+    // PcieRequestOptions::image_files reach the transport, in order, for both
+    // stream() and run(). No options means no images.
+    {
+      auto fake = std::make_unique<FakeTransport>();
+      FakeTransport* f = fake.get();
+      pgenai::GenAIModel model = pgenai_internal::make_model_with_transport(std::move(fake));
+      pgenai::GenerationRequest r;
+      r.prompt = "hi";
+      pgenai::PcieRequestOptions options;
+      options.image_files = {"/tmp/a.jpg", "/tmp/b.png"};
+      pgenai::GenerationStream s = model.stream(r, options);
+      while (s.next()) {
+      }
+      require(f->last_image_files == options.image_files, "stream() passes the image files");
+      (void)model.run(r);
+      require(f->last_image_files.empty(), "run() without options sends no images");
+      (void)model.run(r, options);
+      require(f->last_image_files == options.image_files, "run() passes the image files");
     }
 
     // A stream keeps the transport alive after its model is gone. An earlier version

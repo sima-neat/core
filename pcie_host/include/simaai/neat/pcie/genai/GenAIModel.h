@@ -12,9 +12,12 @@
 #include "genai/GenAITypes.h"
 #include "simaai/neat/pcie/genai/ChatTypes.h"
 
+#include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace simaai::neat::pcie::genai {
 
@@ -30,6 +33,16 @@ namespace internal {
 class Transport;
 struct GenAIModelAccess;
 } // namespace internal
+
+/// PCIe-only inputs for one request. They are kept out of Core's
+/// GenerationRequest so that public struct keeps its size and layout (ABI).
+struct PcieRequestOptions {
+  /// Images for a VLM prompt, in order. The host copies each file into the
+  /// daemon's data serve root and the card pulls it. Pixel `images` tensors in
+  /// GenerationRequest are not sent over PCIe (they would need host-side
+  /// encoding); use these paths.
+  std::vector<std::filesystem::path> image_files;
+};
 
 class GenAIModel {
 public:
@@ -56,10 +69,10 @@ public:
   /// call reset_chat() before each one. A request whose system_prompt or
   /// enable_thinking differs from the last one also starts a new conversation.
   /// Not thread-safe: run one request (or chat call) at a time.
-  GenerationResult run(const GenerationRequest& request);
+  GenerationResult run(const GenerationRequest& request, const PcieRequestOptions& options = {});
   /// Stream tokens as the card produces them. Cancel the stream to stop early.
   /// Keeps the conversation on the card, like run().
-  GenerationStream stream(const GenerationRequest& request);
+  GenerationStream stream(const GenerationRequest& request, const PcieRequestOptions& options = {});
 
   /// Clear the conversation on the card and set its system prompt and thinking
   /// mode. system_prompt: nullopt = the model's default, "" = no system prompt.
@@ -69,6 +82,10 @@ public:
   /// True if the card cleared the conversation during the last run/stream
   /// (Ctrl-C, empty answer, or an error). Read after the stream has ended.
   bool last_run_cleared_history() const;
+  /// Token notifications lost in transit during the last run/stream (gaps in
+  /// the card's token numbers). Not zero means the answer is missing text.
+  /// Read after the stream has ended.
+  std::uint32_t last_run_dropped_events() const;
 
 private:
   class Impl;

@@ -44,9 +44,8 @@ bool bool_or_false(const nlohmann::json& j, const char* key) {
 std::string encode_prompt(const std::string& id, const GenerationRequest& request,
                           const std::vector<std::string>& image_names) {
   if (!request.images.empty()) {
-    throw std::invalid_argument(
-        "PCIe GenAI does not send pixel images: set GenerationRequest.image_files to image "
-        "paths instead");
+    throw std::invalid_argument("PCIe GenAI does not send pixel images: pass image paths in "
+                                "PcieRequestOptions::image_files instead");
   }
   if (request.audio.has_value() || request.audio_file.has_value()) {
     throw std::invalid_argument("PCIe GenAI is text/image only: audio is not supported");

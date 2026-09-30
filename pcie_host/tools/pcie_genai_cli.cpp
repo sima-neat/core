@@ -161,10 +161,12 @@ bool run_prompt(pgenai::GenAIModel& model, const CliArgs& args, const ChatState&
   request.system_prompt = chat.system_prompt;
   request.enable_thinking = chat.enable_thinking;
   request.max_new_tokens = args.max_new_tokens;
-  request.image_files.assign(images.begin(), images.end());
+
+  pgenai::PcieRequestOptions options;
+  options.image_files.assign(images.begin(), images.end());
 
   g_interrupt.store(g_terminate.load()); // a pending SIGTERM/SIGHUP is never cleared
-  pgenai::GenerationStream stream = model.stream(request);
+  pgenai::GenerationStream stream = model.stream(request, options);
   // stream.next() blocks until the card sends something, so Ctrl-C is watched
   // on its own thread: it cancels at once, even while no token arrives (long
   // prefill, or a stuck card). Declared after `stream`, so it is destroyed first.
@@ -190,7 +192,9 @@ bool run_prompt(pgenai::GenAIModel& model, const CliArgs& args, const ChatState&
       continue;
     }
     std::cout << '\n' << std::flush;
-    std::cerr << pgenai::tools::format_final_stats(sample->metrics, sample->finish_reason) << "\n";
+    std::cerr << pgenai::tools::format_final_stats(sample->metrics, model.last_run_dropped_events(),
+                                                   sample->finish_reason)
+              << "\n";
   }
   if (watcher.fired()) {
     std::cerr << "[cancelled]\n";
