@@ -64,3 +64,58 @@ external guardian must retain the device locks until hardware quiescence is
 established, then use SIGKILL if a parked probe must be terminated. Fatal signals
 and internal runtime cleanup before an exception are not made safe by this
 caller-side guard; treat any abnormal exit as an ambiguous DMA outcome.
+
+## Qualified cohort — 2026-09-30
+
+The following exact cohort passed fresh source/package builds, offline dependency
+audits and guarded synthetic-tensor qualification on Modalix **2.1.3 B4837**:
+
+| Component | Product source commit |
+|---|---|
+| Internals host and fresh EV74 firmware/runtime | `9b86e8c500867cb0d753e7694418c93a994c735a` |
+| Core and Python wheel | `5b5152a0779c77abff8696a8ffbb6ae5199ebde7` |
+| LLiMa | `de7937e79defaf4e769c1ae2c61ecc8996704955` |
+
+- Raw firmware SHA256: `3a403a400765e6c28f1446db60323b577d299013e8101f6575a4631953154011`.
+- Complete `final-cohort-v3.tar.gz` SHA256: `53190bf92c1f5cc1ff6bae9fcb58c4fdfaea6f210da7a6a1d94b192c20c40f3e`.
+
+This is the legacy RPMsg profile with 32-bit libmetal physical-address/page-mask
+ABI, **not** the 3.0 `/dev/cvu` profile. Internals
+`0d089531ca8f5f6dad2fcb2a968d4efd0201810b` is a subsequent tests-only correction;
+it is not the firmware or package source identity above.
+
+The guarded trial recorded 15 explicit no-pending-DMA completion markers across
+baseline/restored casts, candidate productized regressions, rejected-request
+recovery, standalone graph20, production Core and the actual camera-wrapper
+processing source. Core passed A→B→A cases at 640×360, 10×14 and 8×8; the wrapper
+passed 640×360 and 10×14, including calibration-not-ready handling. Original
+firmware was restored and functionally retested; M4 was unchanged. These results
+do not qualify other firmware hashes, sustained workloads or live camera input.
+
+### Required isolation for this qualification
+
+Default system-plugin discovery blocked in a `/dev/media0`
+`MEDIA_IOC_G_TOPOLOGY` ioctl. The unit-test parent was proven to be in plugin
+initialization before dispatch and was canceled; the blocked scanner was left
+untouched. This platform media-enumeration issue remains unresolved.
+
+The passing synthetic tests used the exact candidate Neat plugin directory and a
+separate, root-owned, hash-verified standard-plugin directory containing only
+`libgstcoreelements.so` and `libgstapp.so`. Both `GST_PLUGIN_SYSTEM_PATH` and
+`GST_PLUGIN_SYSTEM_PATH_1_0` pointed exclusively to that directory. The guardian
+kept `SIMA_GST_NEAT_ONLY=1`, set `SIMA_GST_PLUGIN_DIR` to the candidate plugins,
+and used a fresh registry. `SIMA_GST_ALLOW_SYSTEM_PLUGINS=1` preserved the explicit
+curated directory instead of rebuilding the broader default filtered directory;
+it did not enable unrestricted system discovery.
+
+The default Neat plugin filter prevents namespace conflicts, not all device
+probing. Do not treat the curated profile as a general camera configuration or
+hide missing factories by reopening the full system plugin path. Reproduce it
+only through the reviewed exclusive guardian, with pinned plugin hashes and the
+existing DMA ownership/restoration safeguards.
+
+**Scope:** synthetic C++ Metoak processing and isolated Python import/ABI checks.
+Metoak has no Python binding in this cohort. These results do not establish default
+GStreamer startup, camera acquisition, ROS/robot deployment or installation
+readiness. Consult the matching acceptance receipt for subsequent ROS and
+publication status.
