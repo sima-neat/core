@@ -78,6 +78,9 @@ CliArgs parse_cli_args(const std::vector<std::string>& args) {
   if (a.queue < 0 || a.queue > 3) {
     throw std::invalid_argument("--queue must be 0..3");
   }
+  if (a.card_id < 0) {
+    throw std::invalid_argument("--card-id must not be negative");
+  }
   return a;
 }
 

@@ -70,6 +70,10 @@ int main() {
     require(refuses({"--model", "m", "--queue", "two"}), "non-numbers are refused");
     require(refuses({"--model", "m", "--max-new-tokens", "-1"}),
             "negative token counts are refused");
+    // A negative card id was clamped to card 0 for SSH but became 4294967295 for
+    // the svc client, so the CLI started card 0 and then failed to connect.
+    require(refuses({"--model", "m", "--card-id", "-1"}), "negative card ids are refused");
+    require(parse_cli_args({"--model", "m", "--card-id", "0"}).card_id == 0, "card id 0 is fine");
     // --card-program picks the /usr/bin start script on the card (several can be installed).
     require(parse_cli_args({"--model", "m"}).card_program == "pcie-genai-backend",
             "default card program");
