@@ -20,6 +20,28 @@ sidebar_position: 2
 | ROS2 SDK | 當您想要在容器的系統路徑中安裝 Neat 標頭和函式庫後，在 ARM64 上原生編譯 ROS 2 應用程式時。 |
 | DevKit | 當您想要直接在裝置上安裝或更新執行階段時。 |
 
+## C++ 開發套件
+
+最小安裝包含執行階段與 `sima-neat-dev`。預設安裝將教學與測試列為可選附加項目；`all` 則全部包含。使用共用函式庫的應用程式需要 Core 的公開標頭，以及 GStreamer、OpenCV 和 JSON 開發檔案。它們不需要 Internals、記憶體函式庫、heap 或 LLiMa 開發套件；這些元件的執行階段函式庫仍然必要。
+
+請使用已安裝的共用目標：
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
+```
+
+靜態封存仍包含在 `sima-neat-dev` 中。既有的靜態連結使用端必須新增 `COMPONENTS Static`，並安裝相容的 `neat-internals-dev`、
+`simaai-memory-lib-dev`、`zlib1g-dev`；若建置啟用 LLiMa，還須安裝
+`sima-lmm-dev` 與 `libcpp-httplib-dev` 及其相依套件：
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
+```
+
+靜態 Core 仍使用共用的實作函式庫。從原始碼建置 Core 也需要實作開發套件。
+
 ## 先決條件
 
 在您打算安裝 Neat Library 的環境中安裝 `sima-cli`。
@@ -104,6 +126,8 @@ cd /media/nvme && mkdir -p neat && cd neat
 <ShellCommand prompt="modalix">
 sima-cli neat install core@v0.2.2
 </ShellCommand>
+
+如果安裝程式將 `sima` 加入 `i2c` 群組，請在執行基準測試之前登出 DevKit 並重新連線，讓新的群組成員資格生效。
 
 </CodeTab>
 </CodeTabs>

@@ -225,8 +225,6 @@ for (const auto& name : run.output_names()) {
 }
 ```
 
-이 기능을 모델 경로 및 다중 입력/다중 출력 앱에 사용하세요. 엔드포인트 일치는 정확하게 이루어집니다.
-
 `Input("image_l")`은 `image_l`이라는 모델 입력에 바인딩될 수 있지만, `Input("my_random_name")`은 바인딩될 수 없습니다.
 
 ## 이름이 없는 편리한 API
@@ -733,6 +731,26 @@ neat::Graph app;
 app.add(neat::nodes::groups::RtspDecodedInput(source_opt));
 app.add(yolo);
 app.add(neat::nodes::Output("detections"));
+```
+
+RTSP 디코딩 그룹은 C++와 Python에서 동일한 디코더 제어 옵션을 제공합니다.
+
+| `RtspDecodedInputOptions` 필드 | 기본값 | 용도 |
+| --- | --- | --- |
+| `decoder_input_buffers` | `-1` | 압축 입력 버퍼 수입니다. 설정하지 않으면 런타임 기본값을 사용합니다. |
+| `num_buffers` | `-1` | 디코딩 출력 풀의 버퍼 수입니다. 설정하지 않으면 자동으로 크기를 정합니다. |
+| `decoder_tuning` | `""` | `throughput-low-latency`와 같은 선택적 디코더 프리셋입니다. |
+| `decoder_memory_opt` | `false` | 레거시 메모리 프리셋입니다. 명시적인 `decoder_tuning`이 우선합니다. |
+
+튜닝 프리셋을 사용해도 양수로 지정한 버퍼 수는 유지됩니다. 미설정 값으로는 `-1`을 사용합니다. 기존의 0 이하 값도 해당 속성을 설정하지 않습니다. `throughput-low-latency` 프리셋은 재정렬을 비활성화하므로 B 프레임의 표시 순서 재정렬이 없는 호환 스트림이 필요합니다. 입력 버퍼 수는 바이트 용량을 설정하지 않습니다. 이 제어 옵션은 이미 `SimaDecodeOptions`의 `input_buffers`, `num_buffers`, `decoder_tuning`, `memory_opt`로 제공됩니다.
+
+```python
+source = pyneat.RtspDecodedInputOptions()
+source.url = "rtsp://camera/stream"
+source.decoder_input_buffers = 2
+source.decoder_tuning = "throughput-low-latency"
+# Leave num_buffers at -1 to use automatic output sizing.
+app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
 
 ### 앱 입력을 그래프가 소유한 UDP 출력으로 전달
