@@ -159,6 +159,8 @@ RUN_TEST(
         require_contains(text, "Camera: imx477 5-001a", "camera diagnostic should name the camera");
         require_contains(text, "Requested caps: video/x-raw, format=(string)NV12, width=(int)1280",
                          "camera diagnostic should show the requested caps");
+        require_contains(text, "model-managed CVU preprocessing",
+                         "model camera diagnostic should keep resize in preproc");
         require_contains(text, "VideoScale", "camera diagnostic should suggest resizing");
         require(text.find("configuration syntax") == std::string::npos,
                 "camera diagnostic must not blame configuration syntax");
@@ -176,6 +178,14 @@ RUN_TEST(
                                          GST_RESOURCE_ERROR_SETTINGS, "Failed to apply controls"));
         require(other.diagnostic_id == "gstreamer.configuration_invalid",
                 "unrelated libcamerasrc settings errors should stay generic");
+
+        RawGstError busy =
+            raw_error("libcamerasrc", "gst-resource-error-quark", GST_RESOURCE_ERROR_SETTINGS,
+                      "Failed to configure camera: Device or resource busy");
+        busy.debug = "Camera::configure() failed with error code -16";
+        const NormalizedDiagnostic busy_camera = classify_gst_error(std::move(busy));
+        require(busy_camera.diagnostic_id == "gstreamer.configuration_invalid",
+                "non-EINVAL camera configure failures should stay generic");
       }
 
       {
