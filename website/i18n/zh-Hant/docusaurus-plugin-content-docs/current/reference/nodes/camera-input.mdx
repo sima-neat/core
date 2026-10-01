@@ -170,3 +170,67 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | 嚴格的零拷貝錯誤 |，`allow_cpu_fallback` 為「否」，且相機來源未公開 SiMaAI 零拷貝屬性。|
 | 讀取逾時 | 攝影機未傳輸畫面，圖的後壓過大，或攝影機堆疊已停止串流。|
 | 綠色、紫色或顏色過於鮮豔的相框。| 相框格式或模型的預處理色彩轉換可能出錯，或者相框的顏色已經存在於相機的 ISP/libcamera 輸出中。首先驗證一個 `NV12` 格式的圖像，看看是否在 Neat 之外也有同樣的問題。|
+
+## 具有獨立記憶體的 raw V4L2 擷取
+
+使用雙參數 `CameraInput` 工廠將原始傳輸位元組交給應用程式。
+此路徑與上方預設的 libcamera 路徑不同。請指定實際裝置、逐行掃描的 8 位元傳輸格式
+（`GREY`、`BA81`、`GBRG`、`GRBG` 或 `RGGB`）及傳輸尺寸；範例數值並非裝置探索結果。
+
+```cpp
+#include <neat.h>
+namespace n = simaai::neat;
+
+n::CameraInputOptions camera;
+camera.width = 1920;
+camera.height = 360;
+camera.format = "RAW8";
+
+n::CameraV4L2Options backend;
+backend.device = "/dev/video1";
+backend.fourcc = "BA81";
+backend.zero_copy = false;
+
+n::Graph capture;
+capture.add(n::nodes::CameraInput(camera, backend));
+capture.add(n::nodes::Output());
+```
+
+```python
+import pyneat as neat
+
+camera = neat.CameraInputOptions()
+camera.width, camera.height, camera.format = 1920, 360, "RAW8"
+backend = neat.CameraV4L2Options()
+backend.device, backend.fourcc = "/dev/video1", "BA81"
+backend.zero_copy = False
+
+capture = neat.Graph()
+capture.add(neat.nodes.camera_input(camera, backend))
+capture.add(neat.nodes.output())
+```
+
+`zero_copy=false` 會先將取出的 MMAP 影格複製到獨立的系統記憶體池，再將相機緩衝區重新排入佇列。
+`true` 會被拒絕；此後端不會匯出／匯入 DMA-BUF，也不會隱含退回複製。
+`camera_name` 和 `allow_cpu_fallback` 僅適用於 libcamera。後端保留裝置目前的擷取頻率，
+`framerate_num`／`framerate_den` 不會設定此後端的頻率。
+
+輸出是平坦的 UInt8 張量 `[bytesused]`，包含有效的列填補與尾端資料，而非解碼後的影像。
+可從 `Sample.caps_string` 取得協商後的 `fourcc`、`width`、`height`、`row-stride`、`sizeimage`。
+解讀裝置通訊協定之前，請勿重塑為解碼影像尺寸或捨棄尾端資料。傳送時間戳記屬於中繼資料，
+不包含在張量位元組內。
+
+`capture_buffer_count` 預設為 8（4–128）、`output_buffer_count` 為 8（2–128）、
+`frame_timeout_ms` 為 2000（1–60000）。保留的輸出會占用記憶體池槽位。池滿時須釋放輸出才能恢復擷取；
+保留的張量絕不會被覆寫。啟用佇列時，`queue_depth` 必須為正值且小於 `output_buffer_count`。
+停止時會中斷對記憶體池的等待。
+
+在驅動程式的停止／釋放契約完成驗證之前，平台擷取會在配置或排入佇列前被拒絕。
+複製模式不能繞過此核心限制。STREAMOFF 失敗時必須復原裝置，而非自動重新開啟。
+範例裝置也受這些限制約束。
+
+ROS/SIMOR 的 CPU 解包、校正與 ROS 發布仍由應用程式負責。應用程式可將原本的六個輸入
+送入另一個處理圖中的 `MetoakDepth` graph 20。此擷取 API 不加入 SIMOR 處理，
+也不需要 graph 21、新韌體或修改現有 ROS 整合。
+
+現有單參數呼叫和 `CameraInputOptions` 配置不變。C++ 程式取得多載工廠的位址時，必須指定函式指標型別，而非使用 `auto`。

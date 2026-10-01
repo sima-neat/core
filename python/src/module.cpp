@@ -3301,6 +3301,15 @@ NB_MODULE(_pyneat_core, m) {
       .def_static("every_frame", &simaai::neat::OutputOptions::EveryFrame, "max_buffers"_a = 30)
       .def_static("clocked", &simaai::neat::OutputOptions::Clocked, "max_buffers"_a = 1);
 
+  nb::class_<simaai::neat::CameraV4L2Options>(m, "CameraV4L2Options")
+      .def(nb::init<>())
+      .def_rw("device", &simaai::neat::CameraV4L2Options::device)
+      .def_rw("fourcc", &simaai::neat::CameraV4L2Options::fourcc)
+      .def_rw("zero_copy", &simaai::neat::CameraV4L2Options::zero_copy)
+      .def_rw("capture_buffer_count", &simaai::neat::CameraV4L2Options::capture_buffer_count)
+      .def_rw("output_buffer_count", &simaai::neat::CameraV4L2Options::output_buffer_count)
+      .def_rw("frame_timeout_ms", &simaai::neat::CameraV4L2Options::frame_timeout_ms);
+
   nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")
       .def(nb::init<>())
       .def_prop_rw(
@@ -4014,6 +4023,13 @@ NB_MODULE(_pyneat_core, m) {
                                                                   capture_buffer_count);
       },
       "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
+  nodes_mod.def(
+      "camera_input",
+      [](simaai::neat::CameraInputOptions options,
+         simaai::neat::CameraV4L2Options backend_options) {
+        return simaai::neat::nodes::CameraInput(std::move(options), std::move(backend_options));
+      },
+      "options"_a, "backend_options"_a);
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),

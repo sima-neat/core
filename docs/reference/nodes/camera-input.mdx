@@ -187,3 +187,73 @@ For model pipelines, configure preprocessing through `Model::Options::preprocess
 | Strict zero-copy error | `allow_cpu_fallback` is false and the camera source does not expose SiMaAI zero-copy properties. |
 | Pull timeout | The camera did not deliver frames, the graph is backpressured, or the camera stack stopped streaming. |
 | Green, purple, or heavily tinted frames | The frame format or model preprocess color conversion is wrong, or the tint already exists in the camera ISP/libcamera output. Validate an `NV12` capture outside Neat first. |
+
+## Owned raw V4L2 capture
+
+Use the two-argument `CameraInput` factory to deliver raw wire bytes to an
+application. This is separate from the default libcamera path above. Select the
+actual device, progressive eight-bit wire format (`GREY`, `BA81`, `GBRG`, `GRBG`
+or `RGGB`) and wire dimensions; the example values are not device discovery.
+
+```cpp
+#include <neat.h>
+namespace n = simaai::neat;
+
+n::CameraInputOptions camera;
+camera.width = 1920;
+camera.height = 360;
+camera.format = "RAW8";
+
+n::CameraV4L2Options backend;
+backend.device = "/dev/video1";
+backend.fourcc = "BA81";
+backend.zero_copy = false;
+
+n::Graph capture;
+capture.add(n::nodes::CameraInput(camera, backend));
+capture.add(n::nodes::Output());
+```
+
+```python
+import pyneat as neat
+
+camera = neat.CameraInputOptions()
+camera.width, camera.height, camera.format = 1920, 360, "RAW8"
+backend = neat.CameraV4L2Options()
+backend.device, backend.fourcc = "/dev/video1", "BA81"
+backend.zero_copy = False
+
+capture = neat.Graph()
+capture.add(neat.nodes.camera_input(camera, backend))
+capture.add(neat.nodes.output())
+```
+
+`zero_copy=false` copies each dequeued MMAP frame to independent pooled system
+memory **before requeueing** the camera buffer. `true` is rejected; this backend
+does not export/import DMA-BUFs or silently fall back. `camera_name` and
+`allow_cpu_fallback` are libcamera-only. The device's current cadence is retained;
+`framerate_num`/`framerate_den` do not configure this backend.
+
+The output is a flat UInt8 tensor `[bytesused]`, including valid row padding and
+trailer bytes, not a decoded image. Read negotiated `fourcc`, `width`, `height`,
+`row-stride` and `sizeimage` from `Sample.caps_string`. Do not reshape to decoded
+image dimensions or discard a trailer before interpreting the device protocol.
+Delivery timestamps remain metadata, not tensor bytes.
+
+`capture_buffer_count` defaults to 8 (range 4–128), `output_buffer_count` to 8
+(range 2–128), and `frame_timeout_ms` to 2000 (range 1–60000). Retained outputs
+consume pool slots. Release them to resume capture when the bounded pool fills;
+held tensors are never overwritten. An enabled queue must have a positive
+`queue_depth` smaller than `output_buffer_count`. Stopping interrupts pool waits.
+
+Platform capture is currently rejected **before allocation or queueing** until
+the driver's stop/release contract is qualified. Copy mode is not a workaround
+for that kernel limitation. A failed STREAMOFF requires device recovery, not an
+automatic reopen. These restrictions apply to the example device too.
+
+For ROS/SIMOR, the application still performs CPU unpacking, calibration and ROS
+publication. It may feed the six original inputs to `MetoakDepth` graph 20 in a
+separate processing graph. This capture API does not add SIMOR processing or
+require graph 21, new firmware, or changes to an existing ROS integration.
+
+Existing one-argument calls and the `CameraInputOptions` layout are unchanged. C++ code taking the overloaded factory address must specify its function-pointer type instead of using `auto`.

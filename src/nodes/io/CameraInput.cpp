@@ -145,6 +145,103 @@ std::string camera_backend_fragment(const CameraInputOptions& opt, int node_inde
   return ss.str();
 }
 
+class V4L2CameraInputNode final : public Node, public OutputSpecProvider {
+public:
+  V4L2CameraInputNode(CameraInputOptions opt, CameraV4L2Options backend)
+      : opt_(std::move(opt)), backend_(std::move(backend)) {
+    if (opt_.format != "RAW8" || opt_.width == 0 || opt_.height == 0 || opt_.width > INT32_MAX ||
+        opt_.height > INT32_MAX)
+      throw std::invalid_argument("raw CameraInput requires RAW8 and positive wire dimensions");
+    if (backend_.device.empty() || backend_.fourcc.size() != 4 ||
+        !std::all_of(backend_.fourcc.begin(), backend_.fourcc.end(),
+                     [](unsigned char c) { return c >= 32 && c <= 126; }))
+      throw std::invalid_argument(
+          "raw CameraInput requires a device and four printable fourcc bytes");
+    if (backend_.capture_buffer_count < 4 || backend_.capture_buffer_count > 128)
+      throw std::invalid_argument("raw CameraInput capture_buffer_count must be in [4,128]");
+    if (backend_.zero_copy)
+      throw std::invalid_argument("CameraInput V4L2 currently requires zero_copy=false");
+    if (opt_.allow_cpu_fallback)
+      throw std::invalid_argument(
+          "allow_cpu_fallback is libcamera-only; V4L2 uses zero_copy=false");
+    if (backend_.fourcc != "GREY" && backend_.fourcc != "BA81" && backend_.fourcc != "GBRG" &&
+        backend_.fourcc != "GRBG" && backend_.fourcc != "RGGB")
+      throw std::invalid_argument("CameraInput V4L2 requires an unpacked eight-bit wire fourcc");
+    if (backend_.output_buffer_count < 2 || backend_.output_buffer_count > 128 ||
+        backend_.frame_timeout_ms < 1 || backend_.frame_timeout_ms > 60000)
+      throw std::invalid_argument(
+          "CameraInput V4L2 output count must be in [2,128] and timeout in [1,60000] ms");
+    if (opt_.insert_queue &&
+        (opt_.queue_depth == 0 || opt_.queue_depth >= backend_.output_buffer_count))
+      throw std::invalid_argument(
+          "CameraInput V4L2 queue_depth must be positive and smaller than output_buffer_count");
+    if (opt_.camera_name.has_value())
+      throw std::invalid_argument("raw CameraInput uses backend.device, not libcamera camera_name");
+    if (opt_.buffer_name.empty())
+      throw std::invalid_argument("raw CameraInput requires a nonempty tensor buffer_name");
+  }
+  std::string kind() const override {
+    return "CameraInput";
+  }
+  std::string user_label() const override {
+    return backend_.device;
+  }
+  InputRole input_role() const override {
+    return InputRole::Source;
+  }
+  NodeCapsBehavior caps_behavior() const override {
+    return NodeCapsBehavior::Static;
+  }
+  MemoryContract memory_contract() const override {
+    return MemoryContract::RequireSystemMemoryMappable;
+  }
+  std::string buffer_name_hint(int) const override {
+    return opt_.buffer_name;
+  }
+  std::string backend_fragment(int index) const override {
+    std::ostringstream out;
+    out << "neatv4l2copysrc name=" << camera_src_name(index)
+        << " device=" << gst_quote(backend_.device) << " fourcc=" << gst_quote(backend_.fourcc)
+        << " width=" << opt_.width << " height=" << opt_.height
+        << " buffer-name=" << gst_quote(opt_.buffer_name)
+        << " capture-buffer-count=" << backend_.capture_buffer_count
+        << " output-buffer-count=" << backend_.output_buffer_count
+        << " frame-timeout-ms=" << backend_.frame_timeout_ms;
+    if (opt_.insert_queue) {
+      out << " ! queue name=" << camera_queue_name(index)
+          << " max-size-buffers=" << opt_.queue_depth << " max-size-bytes=0 max-size-time=0";
+      if (opt_.leaky_queue)
+        out << " leaky=downstream";
+    }
+    return out.str();
+  }
+  std::vector<std::string> element_names(int index) const override {
+    std::vector<std::string> result{camera_src_name(index)};
+    if (opt_.insert_queue)
+      result.push_back(camera_queue_name(index));
+    return result;
+  }
+  OutputSpec output_spec(const OutputSpec&) const override {
+    OutputSpec out;
+    out.payload_type = PayloadType::Tensor;
+    out.media_type = "application/vnd.simaai.tensor";
+    out.format = "V4L2_BYTES";
+    out.width = static_cast<int>(opt_.width);
+    out.height = static_cast<int>(opt_.height);
+    out.depth = 1;
+    out.memory = "SystemMemory";
+    out.dtype = "UInt8";
+    out.layout = "";
+    out.certainty = SpecCertainty::Hint;
+    out.note = "owned flat V4L2 bytes including padding/trailers; geometry is in negotiated caps";
+    return out;
+  }
+
+private:
+  CameraInputOptions opt_;
+  CameraV4L2Options backend_;
+};
+
 class CameraInputCaptureNode final : public Node, public OutputSpecProvider {
 public:
   CameraInputCaptureNode(CameraInputOptions opt, std::uint32_t capture_buffer_count)
@@ -259,6 +356,11 @@ OutputSpec CameraInput::output_spec(const OutputSpec& /*input*/) const {
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
+
+std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt,
+                                                simaai::neat::CameraV4L2Options backend) {
+  return std::make_shared<simaai::neat::V4L2CameraInputNode>(std::move(opt), std::move(backend));
+}
 
 std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt) {
   return std::make_shared<simaai::neat::CameraInput>(std::move(opt));

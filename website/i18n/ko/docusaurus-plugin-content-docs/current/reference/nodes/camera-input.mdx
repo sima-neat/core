@@ -169,3 +169,69 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | 풀 타임아웃 | 카메라가 프레임을 전송하지 못했거나, 그래프에 역압력이 발생했거나, 카메라 스택이 스트리밍을 중단했습니다. |
 <<번역>>
 | 녹색, 보라색 또는 색조가 강한 프레임 | 프레임 형식 또는 모델의 색상 변환 전처리 과정에 오류가 있거나, 카메라 ISP/libcamera 출력에 이미 색조가 적용되어 있습니다. 먼저 `NV12` 캡처를 Neat에서 확인하십시오. |
+
+## 소유권이 있는 raw V4L2 캡처
+
+두 인자 `CameraInput` 팩터리로 raw 전송 바이트를 애플리케이션에 전달합니다.
+위의 기본 libcamera 경로와는 별개입니다. 실제 장치, 프로그레시브 8비트 전송 형식
+(`GREY`, `BA81`, `GBRG`, `GRBG`, `RGGB`) 및 전송 크기를 지정하세요.
+아래 값은 장치 검색 결과가 아닌 설정 예시입니다.
+
+```cpp
+#include <neat.h>
+namespace n = simaai::neat;
+
+n::CameraInputOptions camera;
+camera.width = 1920;
+camera.height = 360;
+camera.format = "RAW8";
+
+n::CameraV4L2Options backend;
+backend.device = "/dev/video1";
+backend.fourcc = "BA81";
+backend.zero_copy = false;
+
+n::Graph capture;
+capture.add(n::nodes::CameraInput(camera, backend));
+capture.add(n::nodes::Output());
+```
+
+```python
+import pyneat as neat
+
+camera = neat.CameraInputOptions()
+camera.width, camera.height, camera.format = 1920, 360, "RAW8"
+backend = neat.CameraV4L2Options()
+backend.device, backend.fourcc = "/dev/video1", "BA81"
+backend.zero_copy = False
+
+capture = neat.Graph()
+capture.add(neat.nodes.camera_input(camera, backend))
+capture.add(neat.nodes.output())
+```
+
+`zero_copy=false`는 디큐한 MMAP 프레임을 독립된 풀의 시스템 메모리로 복사한 뒤
+카메라 버퍼를 다시 큐에 넣습니다. `true`는 거부됩니다. DMA-BUF 내보내기/가져오기나
+암묵적 폴백은 없습니다. `camera_name`, `allow_cpu_fallback`은 libcamera 전용입니다.
+장치의 현재 주기를 유지하며 `framerate_num`/`framerate_den`으로 주기를 설정하지 않습니다.
+
+출력은 유효한 행 패딩과 트레일러를 포함한 평탄한 UInt8 텐서 `[bytesused]`이며 디코딩된
+이미지가 아닙니다. 협상된 `fourcc`, `width`, `height`, `row-stride`, `sizeimage`는
+`Sample.caps_string`에서 읽습니다. 장치 프로토콜을 해석하기 전에 이미지 크기로 재구성하거나
+트레일러를 버리지 마세요. 전달 시각은 메타데이터이며 텐서 바이트에 포함되지 않습니다.
+
+`capture_buffer_count` 기본값은 8(4–128), `output_buffer_count`는 8(2–128),
+`frame_timeout_ms`는 2000(1–60000)입니다. 유지 중인 출력은 풀 슬롯을 점유합니다.
+풀이 가득 차면 출력을 해제해야 캡처가 재개됩니다. 유지 중인 텐서를 덮어쓰지 않습니다.
+큐를 사용하면 `queue_depth`는 양수이고 `output_buffer_count`보다 작아야 합니다.
+중지 시 풀 대기를 중단합니다.
+
+플랫폼 캡처는 드라이버 중지/해제 계약이 검증될 때까지 할당이나 큐잉 전에 거부됩니다.
+복사 모드는 이 커널 제한의 우회책이 아닙니다. STREAMOFF 실패 시 자동 재연결 대신
+장치 복구가 필요합니다. 예제 장치에도 이 제한이 적용됩니다.
+
+ROS/SIMOR의 CPU 언패킹, 보정 및 ROS 게시 작업은 애플리케이션에 남습니다.
+기존 6개 입력을 별도 처리 그래프의 `MetoakDepth` graph 20에 공급할 수 있습니다.
+이 API는 SIMOR 처리를 추가하지 않으며 graph 21, 새 펌웨어 또는 기존 ROS 통합 변경이 필요하지 않습니다.
+
+기존 단일 인자 호출과 `CameraInputOptions` 레이아웃은 변경되지 않습니다. C++에서 오버로드된 팩터리 주소를 얻을 때는 `auto` 대신 함수 포인터 타입을 지정하세요。

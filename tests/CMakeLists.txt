@@ -502,6 +502,9 @@ set(UNIT_TESTS
   unit_tensor_image_mapping_test
   unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
+  unit_v4l2_copy_capture_test
+  unit_v4l2_camera_node_test
+  unit_v4l2_copy_source_test
   unit_camera_allocation_query_test
   unit_nodes_test
   unit_visual_frontend_node_api_test
@@ -531,6 +534,10 @@ foreach(test ${UNIT_TESTS})
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
+endforeach()
+
+foreach(_camera_copy_test unit_v4l2_copy_capture_test unit_v4l2_copy_source_test)
+  target_include_directories(${_camera_copy_test} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 endforeach()
 
 if (TARGET unit_power_telemetry_test)

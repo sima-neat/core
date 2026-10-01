@@ -114,7 +114,10 @@ int main() {
 
     simaai::neat::CameraInputOptions fallback_cam_opt = cam_opt;
     fallback_cam_opt.allow_cpu_fallback = true;
-    auto camera_factory = &simaai::neat::nodes::CameraInput;
+    // Keep checking the original factory signature after adding the V4L2 overload.
+    auto camera_factory =
+        static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::CameraInputOptions)>(
+            &simaai::neat::nodes::CameraInput);
     auto cam = camera_factory(fallback_cam_opt);
     require_contains(cam->backend_fragment(0), "libcamerasrc name=n0_camera_src",
                      "CameraInput source missing");

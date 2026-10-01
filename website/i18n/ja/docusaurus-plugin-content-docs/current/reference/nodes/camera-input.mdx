@@ -167,3 +167,71 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | 厳密なゼロコピーエラーが発生しました。| `allow_cpu_fallback` は false に設定されており、カメラソースは SiMaAI ゼロコピープロパティを公開していません。|
 | プルタイムアウト | カメラからフレームが送信されなかった、グラフにバックプレッシャーがかかっている、またはカメラスタックがストリーミングを停止しました。|
 | 緑色、紫色、または色味が強いフレーム | フレーム形式またはモデルのプリプロセスにおけるカラー変換が正しくないか、すでにカメラのISP/libcamera出力に色味が適用されている可能性があります。まず、`NV12`形式でキャプチャを行い、Neatで検証してください。|
+
+## 所有権付き raw V4L2 キャプチャ
+
+2 引数の `CameraInput` ファクトリーで raw ワイヤーバイトをアプリケーションに渡せます。
+これは上記の既定の libcamera 経路とは別です。実際のデバイス、プログレッシブ 8 ビット
+ワイヤー形式（`GREY`、`BA81`、`GBRG`、`GRBG`、`RGGB`）とワイヤー寸法を指定してください。
+以下の値はデバイス検出の結果ではなく設定例です。
+
+```cpp
+#include <neat.h>
+namespace n = simaai::neat;
+
+n::CameraInputOptions camera;
+camera.width = 1920;
+camera.height = 360;
+camera.format = "RAW8";
+
+n::CameraV4L2Options backend;
+backend.device = "/dev/video1";
+backend.fourcc = "BA81";
+backend.zero_copy = false;
+
+n::Graph capture;
+capture.add(n::nodes::CameraInput(camera, backend));
+capture.add(n::nodes::Output());
+```
+
+```python
+import pyneat as neat
+
+camera = neat.CameraInputOptions()
+camera.width, camera.height, camera.format = 1920, 360, "RAW8"
+backend = neat.CameraV4L2Options()
+backend.device, backend.fourcc = "/dev/video1", "BA81"
+backend.zero_copy = False
+
+capture = neat.Graph()
+capture.add(neat.nodes.camera_input(camera, backend))
+capture.add(neat.nodes.output())
+```
+
+`zero_copy=false` は、デキューした MMAP フレームを独立したプール内のシステムメモリーに
+コピーしてからカメラバッファーを再キューします。`true` はエラーとなります。DMA-BUF の
+エクスポート／インポートや暗黙のフォールバックはありません。`camera_name` と
+`allow_cpu_fallback` は libcamera 専用です。デバイスの現在の周期を使用し、
+`framerate_num`／`framerate_den` では周期を設定しません。
+
+出力は平坦な UInt8 テンソル `[bytesused]` で、有効な行パディングとトレーラーを含みます。
+デコード済み画像ではありません。ネゴシエーションされた `fourcc`、`width`、`height`、
+`row-stride`、`sizeimage` は `Sample.caps_string` で確認してください。デバイスのプロトコルを
+解釈する前に画像寸法へ整形したりトレーラーを捨てたりしないでください。配信時刻は
+メタデータであり、テンソルのバイト列には含まれません。
+
+`capture_buffer_count` は既定 8（4–128）、`output_buffer_count` は既定 8（2–128）、
+`frame_timeout_ms` は既定 2000（1–60000）です。保持中の出力はプールのスロットを消費します。
+プールが満杯になったら出力を解放するとキャプチャが再開します。保持中のテンソルは上書きしません。
+キューを有効にする場合、`queue_depth` は正で `output_buffer_count` 未満にしてください。
+停止時にはプール待機を中断します。
+
+プラットフォームのキャプチャは、ドライバーの停止／解放契約が検証されるまで割り当てや
+キュー投入前に拒否されます。コピーモードはこのカーネル制限の回避策ではありません。
+STREAMOFF が失敗したら自動再オープンせずデバイスを復旧してください。例のデバイスにも同じ制限が適用されます。
+
+ROS/SIMOR の CPU アンパック、キャリブレーション、ROS 配信はアプリケーションが担当します。
+元の 6 入力を別の処理グラフの `MetoakDepth` graph 20 に渡せます。この API は SIMOR 処理を追加せず、
+graph 21、新しいファームウェア、既存 ROS 統合の変更を必要としません。
+
+既存の 1 引数呼び出しと `CameraInputOptions` のレイアウトは不変です。C++ でオーバーロードされたファクトリーのアドレスを取得する場合は、`auto` ではなく関数ポインター型を指定してください。
