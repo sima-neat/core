@@ -1,10 +1,11 @@
 {
   "internals": {
-    "branch": "release-3.0.0-prep",
+    "branch": "perf/a65-range-cache-sync",
     "spec": "latest"
   },
   "llima": {
-    "policy": "snap"
+    "branch": "release-3.0.0-prep",
+    "spec": "latest"
   },
   "sdk": {
     "channel": "develop"
