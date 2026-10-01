@@ -34,8 +34,7 @@ GstPadProbeReturn camera_frame_size_probe_cb(GstPad* pad, GstPadProbeInfo* info,
   GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
   if (!buffer)
     return GST_PAD_PROBE_OK;
-  // Without a GstVideoMeta the frame size is taken from the caps downstream, so there is
-  // nothing independent to compare against.
+  // Without GstVideoMeta the frame size comes from the caps: nothing to compare.
   const GstVideoMeta* meta = gst_buffer_get_video_meta(buffer);
   if (!meta)
     return GST_PAD_PROBE_REMOVE;
