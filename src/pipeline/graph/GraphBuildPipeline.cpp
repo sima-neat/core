@@ -2760,39 +2760,27 @@ void session_build_attach_rtsp_debug(GstElement* pipeline,
   attach_rtsp_debug(pipeline, nodes, name_transform, node_indices);
 }
 
-static void attach_camera_frame_size_checks(GstElement* pipeline,
-                                            const std::vector<std::shared_ptr<Node>>& nodes,
-                                            const NameTransform& name_transform,
-                                            const std::vector<int>* node_indices = nullptr) {
+void session_build_attach_camera_frame_size_checks(GstElement* pipeline,
+                                                   const std::vector<std::shared_ptr<Node>>& nodes,
+                                                   const NameTransform& name_transform,
+                                                   const std::vector<int>* node_indices) {
   if (!pipeline)
     return;
-
   for (size_t i = 0; i < nodes.size(); ++i) {
-    // Match by kind: CameraInputWithCaptureBuffers() returns a wrapper that is not a
-    // CameraInput but renders the same elements.
+    // By kind: CameraInputWithCaptureBuffers() wraps CameraInput and renders the same elements.
     if (nodes[i]->kind() != "CameraInput")
       continue;
-
-    const int rendered_index = rendered_node_index(i, node_indices);
-    const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
+    const auto names = apply_name_transform(
+        name_transform, nodes[i]->element_names(rendered_node_index(i, node_indices)));
     // CameraInput element order: libcamerasrc, capsfilter, bridge[, queue].
     if (names.size() < 2)
       continue;
-
     GstElement* caps = gst_bin_get_by_name(GST_BIN(pipeline), names[1].c_str());
     if (!caps)
       continue;
     pipeline_internal::attach_camera_frame_size_check(caps);
     gst_object_unref(caps);
   }
-}
-
-void session_build_attach_camera_frame_size_checks(GstElement* pipeline,
-                                                   const std::vector<std::shared_ptr<Node>>& nodes,
-                                                   const NameTransform& name_transform,
-                                                   const std::vector<int>* node_indices) {
-  attach_camera_frame_size_checks(pipeline, nodes, name_transform, node_indices);
 }
 
 void session_build_attach_h264_caps_fixups(GstElement* pipeline,

@@ -2,9 +2,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 
-// Regression coverage for core #881: libcamera can accept a size the sensor has no mode
-// for and deliver frames of the sensor's current size, with only GstVideoMeta telling
-// the truth. CameraInput graphs must fail loudly instead of passing those frames on.
+// Regression for core #881: CameraInput must fail when frames arrive at another size.
 
 #include "gst/GstInit.h"
 #include "nodes/io/CameraInput.h"
@@ -34,8 +32,7 @@ using pipeline_internal::kCameraFrameSizeMismatchDiagnosticId;
 constexpr int kCapsWidth = 2048;
 constexpr int kCapsHeight = 1080;
 
-// Stand-in for a CameraInput fragment: appsrc plays libcamerasrc, and the capsfilter
-// carries the name the attach helper looks up (element_names()[1]).
+// appsrc stands in for libcamerasrc; the capsfilter has CameraInput's element_names()[1].
 GstElement* make_camera_like_pipeline() {
   const std::string launch = "appsrc name=n0_camera_src format=time "
                              "caps=video/x-raw,format=NV12,width=2048,height=1080,framerate=30/1 "
@@ -62,8 +59,6 @@ struct PushResult {
   int buffers_reaching_sink = 0;
 };
 
-// Pushes `count` NV12 buffers (with a GstVideoMeta of meta_width x meta_height when
-// requested), then EOS, and returns the first bus error, if any.
 PushResult push_frames(GstElement* pipeline, int count, std::optional<int> meta_width,
                        std::optional<int> meta_height) {
   std::atomic<int> sink_buffers{0};
@@ -107,102 +102,61 @@ PushResult push_frames(GstElement* pipeline, int count, std::optional<int> meta_
   return result;
 }
 
-void attach_to_pipeline(GstElement* pipeline, const std::shared_ptr<Node>& node) {
-  const std::vector<std::shared_ptr<Node>> nodes{node};
-  session_build_attach_camera_frame_size_checks(pipeline, nodes, NameTransform{});
-}
-
-bool has_fact(const pipeline_internal::NormalizedDiagnostic& diagnostic, const std::string& label,
-              const std::string& needle) {
-  for (const auto& fact : diagnostic.facts) {
-    if (fact.label == label && fact.value.find(needle) != std::string::npos)
-      return true;
-  }
-  return false;
+PushResult run_case(const std::shared_ptr<Node>& node, int count, std::optional<int> meta_width,
+                    std::optional<int> meta_height) {
+  GstElement* pipeline = make_camera_like_pipeline();
+  session_build_attach_camera_frame_size_checks(pipeline, {node}, NameTransform{});
+  PushResult result = push_frames(pipeline, count, meta_width, meta_height);
+  gst_object_unref(pipeline);
+  return result;
 }
 
 void test_reason_formatting() {
   require(!camera_frame_size_mismatch_reason(2048, 1080, 2048, 1080).has_value(),
           "matching sizes must not report a mismatch");
-
+  require(camera_frame_size_mismatch_reason(1920, 1080, 1080, 1080).has_value(),
+          "a height-only mismatch must report a reason");
   const std::optional<std::string> reason =
       camera_frame_size_mismatch_reason(2048, 1080, 1920, 1080);
-  require(reason.has_value(), "a width mismatch must report a reason");
-  require(reason->find("1920 by 1080") != std::string::npos &&
+  require(reason && reason->find("1920 by 1080") != std::string::npos &&
               reason->find("2048 by 1080") != std::string::npos,
-          "reason must name the delivered and requested sizes: " + *reason);
+          "reason must name the delivered and requested sizes");
   // The normalizer drops reasons containing "0x" or '=' or longer than 240 characters.
   require(reason->find("0x") == std::string::npos && reason->find('=') == std::string::npos &&
               reason->size() <= 240,
           "reason must survive the diagnostic normalizer: " + *reason);
-
-  require(camera_frame_size_mismatch_reason(1920, 1080, 1080, 1080).has_value(),
-          "a height-only mismatch must report a reason");
 }
 
-void test_mismatch_fails_with_structured_diagnostic() {
+void test_mismatch_fails() {
   CameraInputOptions opt;
   opt.width = kCapsWidth;
   opt.height = kCapsHeight;
-  GstElement* pipeline = make_camera_like_pipeline();
-  attach_to_pipeline(pipeline, nodes::CameraInput(opt));
-
-  // The reporter's case: 2048x1080 requested, 1920x1080 delivered.
-  const PushResult result = push_frames(pipeline, 3, 1920, 1080);
-  gst_object_unref(pipeline);
-
-  require(result.error.has_value(), "a size mismatch must post a pipeline error");
-  const auto& diagnostic = *result.error;
-  require(diagnostic.diagnostic_id == kCameraFrameSizeMismatchDiagnosticId,
-          "unexpected diagnostic id: " + diagnostic.diagnostic_id);
-  require(diagnostic.error_code == error_codes::kRuntimeElementFailed,
-          "unexpected error code: " + diagnostic.error_code);
-  require(has_fact(diagnostic, "Reason", "1920 by 1080"),
-          "the rendered diagnostic must carry the size reason");
-  require(result.buffers_reaching_sink == 0, "mismatched frames must not reach downstream");
+  // The reporter's case (2048x1080 requested, 1920x1080 delivered), for both CameraInput kinds.
+  for (const auto& node : {nodes::CameraInput(opt), nodes::CameraInputWithCaptureBuffers(opt, 8)}) {
+    const PushResult result = run_case(node, 3, 1920, 1080);
+    require(result.error && result.error->diagnostic_id == kCameraFrameSizeMismatchDiagnosticId,
+            "a size mismatch must post the frame size diagnostic");
+    require(result.error->error_code == error_codes::kRuntimeElementFailed,
+            "unexpected error code: " + result.error->error_code);
+    bool reason_fact = false;
+    for (const auto& fact : result.error->facts)
+      reason_fact |= fact.label == "Reason" && fact.value.find("1920 by 1080") != std::string::npos;
+    require(reason_fact, "the rendered diagnostic must carry the size reason");
+    require(result.buffers_reaching_sink == 0, "mismatched frames must not reach downstream");
+  }
 }
 
-void test_capture_buffer_wrapper_is_checked() {
+void test_frames_pass_without_mismatch() {
   CameraInputOptions opt;
   opt.width = kCapsWidth;
   opt.height = kCapsHeight;
-  GstElement* pipeline = make_camera_like_pipeline();
-  attach_to_pipeline(pipeline, nodes::CameraInputWithCaptureBuffers(opt, 8));
-
-  const PushResult result = push_frames(pipeline, 1, 1920, 1080);
-  gst_object_unref(pipeline);
-
-  require(result.error.has_value() &&
-              result.error->diagnostic_id == kCameraFrameSizeMismatchDiagnosticId,
-          "CameraInputWithCaptureBuffers graphs must get the frame size check too");
-}
-
-void test_matching_frames_pass() {
-  CameraInputOptions opt;
-  opt.width = kCapsWidth;
-  opt.height = kCapsHeight;
-  GstElement* pipeline = make_camera_like_pipeline();
-  attach_to_pipeline(pipeline, nodes::CameraInput(opt));
-
-  const PushResult result = push_frames(pipeline, 3, kCapsWidth, kCapsHeight);
-  gst_object_unref(pipeline);
-
-  require(!result.error.has_value(), "matching frames must not post an error");
-  require(result.buffers_reaching_sink == 3, "matching frames must all reach downstream");
-}
-
-void test_frames_without_video_meta_pass() {
-  CameraInputOptions opt;
-  opt.width = kCapsWidth;
-  opt.height = kCapsHeight;
-  GstElement* pipeline = make_camera_like_pipeline();
-  attach_to_pipeline(pipeline, nodes::CameraInput(opt));
-
-  const PushResult result = push_frames(pipeline, 2, std::nullopt, std::nullopt);
-  gst_object_unref(pipeline);
-
-  require(!result.error.has_value(), "frames without GstVideoMeta have nothing to compare");
-  require(result.buffers_reaching_sink == 2, "frames without GstVideoMeta must pass through");
+  // Matching GstVideoMeta, and no GstVideoMeta at all (nothing to compare).
+  for (const std::optional<int> meta : {std::optional<int>(kCapsWidth), std::optional<int>()}) {
+    const std::optional<int> meta_height = meta ? std::optional<int>(kCapsHeight) : std::nullopt;
+    const PushResult result = run_case(nodes::CameraInput(opt), 3, meta, meta_height);
+    require(!result.error, "frames without a size mismatch must not post an error");
+    require(result.buffers_reaching_sink == 3, "frames without a size mismatch must all pass");
+  }
 }
 
 } // namespace
@@ -210,8 +164,6 @@ void test_frames_without_video_meta_pass() {
 RUN_TEST("unit_camera_frame_size_check_test", [] {
   simaai::neat::gst_init_once();
   test_reason_formatting();
-  test_mismatch_fails_with_structured_diagnostic();
-  test_capture_buffer_wrapper_is_checked();
-  test_matching_frames_pass();
-  test_frames_without_video_meta_pass();
+  test_mismatch_fails();
+  test_frames_pass_without_mismatch();
 })
