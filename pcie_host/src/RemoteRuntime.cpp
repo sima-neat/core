@@ -214,23 +214,16 @@ std::string RemoteRuntime::build_start_command(
      << "[ -d /run/sima-neat/pcie ] || { echo missing_run_dir; exit 11; }; "
      << "[ -d /var/log/sima-neat/pcie ] || { echo missing_log_dir; exit 12; }; "
      << "startlock=" << SshRunner::shell_escape(start_lock_path) << "; "
-     << "exec 9>\"$startlock\"; "
-     << "flock -w 30 9 || { echo start_lock_timeout; exit 14; }; "
+     << "exec 9>\"$startlock\"; " << "flock -w 30 9 || { echo start_lock_timeout; exit 14; }; "
      << "pidfile=" << SshRunner::shell_escape(pid_path(queue)) << "; "
      << "statusfile=" << SshRunner::shell_escape(status_path(queue)) << "; "
-     << "if [ -f \"$pidfile\" ]; then "
-     << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+     << "if [ -f \"$pidfile\" ]; then " << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
      << "if [ -n \"$pid\" ] && kill -0 \"$pid\" >/dev/null 2>&1; then "
      << "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | " << cmdline_match
      << "; "
         "then "
-     << "echo queue_busy; exit 9; "
-     << "fi; "
-     << "fi; "
-     << "rm -f \"$pidfile\" \"$statusfile\"; "
-     << "else "
-     << "rm -f \"$statusfile\"; "
-     << "fi; ";
+     << "echo queue_busy; exit 9; " << "fi; " << "fi; " << "rm -f \"$pidfile\" \"$statusfile\"; "
+     << "else " << "rm -f \"$statusfile\"; " << "fi; ";
   ss << "nohup ";
   std::vector<std::string> card_env = split_card_env(connection_.card_env);
   if (!env_contains_name(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
@@ -258,22 +251,16 @@ std::string RemoteRuntime::build_start_command(
   if (remote_model_options_path.has_value()) {
     ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
   }
-  ss << " 9>&- >/dev/null 2>&1 & "
-     << "launched_pid=$!; "
-     << "echo \"launched_pid=$launched_pid\"; "
-     << "for i in $(seq 1 200); do "
-     << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+  ss << " 9>&- >/dev/null 2>&1 & " << "launched_pid=$!; " << "echo \"launched_pid=$launched_pid\"; "
+     << "for i in $(seq 1 200); do " << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
      << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then exit 0; fi; "
      << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
      << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | " << cmdline_match << "; then "
      << "if terminate_launched; then echo queue_busy; exit 9; fi; "
-     << "echo queue_busy_cleanup_failed; exit 17; fi; "
-     << "if child_exited; then "
+     << "echo queue_busy_cleanup_failed; exit 17; fi; " << "if child_exited; then "
      << "wait \"$launched_pid\"; child_rc=$?; "
      << "echo builder_exited_before_queue_claim:$child_rc; exit " << kExitBeforeQueueClaim
-     << "; fi; "
-     << "sleep 0.05; "
-     << "done; "
+     << "; fi; " << "sleep 0.05; " << "done; "
      << "if terminate_launched; then echo queue_claim_timeout; exit 16; fi; "
      << "echo queue_claim_cleanup_failed; exit 18";
   return ss.str();
@@ -282,26 +269,22 @@ std::string RemoteRuntime::build_start_command(
 std::string RemoteRuntime::build_stop_command(const int queue, const int expected_pid) const {
   const std::string cmdline_match = cmdline_grep(card_program());
   std::ostringstream ss;
-  ss << "expected_pid=" << expected_pid << "; "
-     << "pid=''; "
-     << "if [ -f " << SshRunner::shell_escape(pid_path(queue)) << " ]; then "
-     << "pid=$(cat " << SshRunner::shell_escape(pid_path(queue)) << "); "
-     << "elif [ -f " << SshRunner::shell_escape(status_path(queue)) << " ]; then "
+  ss << "expected_pid=" << expected_pid << "; " << "pid=''; " << "if [ -f "
+     << SshRunner::shell_escape(pid_path(queue)) << " ]; then " << "pid=$(cat "
+     << SshRunner::shell_escape(pid_path(queue)) << "); " << "elif [ -f "
+     << SshRunner::shell_escape(status_path(queue)) << " ]; then "
      << "pid=$(sed -n 's/.*\"pid\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' "
-     << SshRunner::shell_escape(status_path(queue)) << " | head -n1); "
-     << "fi; "
+     << SshRunner::shell_escape(status_path(queue)) << " | head -n1); " << "fi; "
      << "if [ -n \"$pid\" ] && [ \"$pid\" != \"$expected_pid\" ]; then exit 0; fi; "
-     << "if [ -n \"$pid\" ]; then "
-     << "kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f " << SshRunner::shell_escape(pid_path(queue))
-     << "; exit 0; }; "
+     << "if [ -n \"$pid\" ]; then " << "kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
+     << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; "
      << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | " << cmdline_match
      << " || "
         "exit 0; "
      << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
      << "for i in $(seq 1 20); do kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
      << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; sleep 0.25; done; "
-     << "echo still_running_after_sigterm; exit 13; "
-     << "fi";
+     << "echo still_running_after_sigterm; exit 13; " << "fi";
   return ss.str();
 }
 
@@ -312,12 +295,10 @@ std::string RemoteRuntime::build_stop_launched_pid_command(const int launched_pi
   // kill with the same /proc/<pid>/cmdline check as build_stop_command(), so a
   // reused pid that is now some other program is left untouched.
   // A zombie (dead, not yet reaped) counts as gone, as in child_exited().
-  ss << "pid=" << launched_pid << "; "
-     << "gone() { ! kill -0 \"$pid\" >/dev/null 2>&1 || "
+  ss << "pid=" << launched_pid << "; " << "gone() { ! kill -0 \"$pid\" >/dev/null 2>&1 || "
      << "grep -q '^State:[[:space:]]*Z' \"/proc/$pid/status\" 2>/dev/null; }; "
-     << "gone && exit 0; "
-     << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | " << cmdline_match << " || exit 0; "
-     << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
+     << "gone && exit 0; " << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | "
+     << cmdline_match << " || exit 0; " << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
      << "for i in $(seq 1 20); do gone && exit 0; sleep 0.25; done; "
      << "kill -KILL \"$pid\" >/dev/null 2>&1 || true; exit 0";
   return ss.str();
@@ -549,9 +530,9 @@ std::string RemoteRuntime::build_ready_probe_command(const int queue,
   // Status first, liveness second: a program that wrote "failed" and exited is
   // reported with its own error, not as "died". One ssh call per poll, as before.
   std::ostringstream ss;
-  ss << "cat " << SshRunner::shell_escape(status_path(queue)) << " 2>/dev/null; "
-     << "if kill -0 " << expected_pid << " >/dev/null 2>&1; then alive=1; else alive=0; fi; "
-     << "echo; echo \"" << kAliveMarker << "$alive\"";
+  ss << "cat " << SshRunner::shell_escape(status_path(queue)) << " 2>/dev/null; " << "if kill -0 "
+     << expected_pid << " >/dev/null 2>&1; then alive=1; else alive=0; fi; " << "echo; echo \""
+     << kAliveMarker << "$alive\"";
   return ss.str();
 }
 

@@ -66,8 +66,8 @@ ReadlineSession::ReadlineSession(std::function<bool()> interrupt_pending,
   g_terminate_pending = std::move(terminate_pending);
 
   rl_readline_name = "pcie-genai";
-  rl_catch_signals = 0;    // the CLI owns SIGINT/SIGTERM/SIGHUP (it stops the card)
-  rl_catch_sigwinch = 1;   // but let readline keep track of terminal resizes
+  rl_catch_signals = 0;  // the CLI owns SIGINT/SIGTERM/SIGHUP (it stops the card)
+  rl_catch_sigwinch = 1; // but let readline keep track of terminal resizes
   rl_getc_function = genai_rl_getc;
 
   using_history();

@@ -138,9 +138,8 @@ std::string format_model_listing(const std::vector<ModelListing>& models,
     for (const ModelListing& m : models) {
       name_w = std::max(name_w, m.name.size());
     }
-    out << "  " << std::left << std::setw(static_cast<int>(name_w)) << "NAME"
-        << "  " << std::setw(14) << "TYPE"
-        << "SIZE\n";
+    out << "  " << std::left << std::setw(static_cast<int>(name_w)) << "NAME" << "  "
+        << std::setw(14) << "TYPE" << "SIZE\n";
     for (const ModelListing& m : models) {
       out << "  " << std::left << std::setw(static_cast<int>(name_w)) << m.name << "  "
           << std::setw(14) << (m.type.empty() ? "unknown" : m.type) << human_size(m.size_bytes)
