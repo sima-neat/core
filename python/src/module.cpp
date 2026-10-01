@@ -4027,7 +4027,8 @@ NB_MODULE(_pyneat_core, m) {
       "camera_input",
       [](simaai::neat::CameraInputOptions options,
          simaai::neat::CameraV4L2Options backend_options) {
-        return simaai::neat::nodes::CameraInput(std::move(options), std::move(backend_options));
+        return simaai::neat::nodes::CameraInputWithV4L2(std::move(options),
+                                                        std::move(backend_options));
       },
       "options"_a, "backend_options"_a);
   nodes_mod.def("output",

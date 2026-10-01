@@ -172,7 +172,7 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 
 ## 소유권이 있는 raw V4L2 캡처
 
-두 인자 `CameraInput` 팩터리로 raw 전송 바이트를 애플리케이션에 전달합니다.
+C++ `CameraInputWithV4L2` 팩터리(Python: `camera_input`)로 raw 전송 바이트를 애플리케이션에 전달합니다.
 위의 기본 libcamera 경로와는 별개입니다. 실제 장치, 프로그레시브 8비트 전송 형식
 (`GREY`, `BA81`, `GBRG`, `GRBG`, `RGGB`) 및 전송 크기를 지정하세요.
 아래 값은 장치 검색 결과가 아닌 설정 예시입니다.
@@ -192,7 +192,7 @@ backend.fourcc = "BA81";
 backend.zero_copy = false;
 
 n::Graph capture;
-capture.add(n::nodes::CameraInput(camera, backend));
+capture.add(n::nodes::CameraInputWithV4L2(camera, backend));
 capture.add(n::nodes::Output());
 ```
 
@@ -232,6 +232,6 @@ ROS/SIMOR의 CPU 언패킹, 보정 및 ROS 게시 작업은 애플리케이션�
 기존 6개 입력을 별도 처리 그래프의 `MetoakDepth` graph 20에 공급할 수 있습니다.
 이 API는 SIMOR 처리를 추가하지 않으며 graph 21, 새 펌웨어 또는 기존 ROS 통합 변경이 필요하지 않습니다.
 
-기존 단일 인자 호출과 `CameraInputOptions` 레이아웃은 변경되지 않습니다. C++에서 오버로드된 팩터리 주소를 얻을 때는 `auto` 대신 함수 포인터 타입을 지정하세요。
+노드는 여전히 `CameraInput`입니다. 별도의 C++ 팩터리 이름은 기존 호출, 타입을 명시하지 않는 팩터리 주소 참조, `CameraInputOptions` 레이아웃을 유지합니다.
 
 시작 시 카메라 버퍼를 큐에 넣기 전에 출력 caps와 CPU 버퍼 풀을 준비합니다. 중지 시 프레임 및 풀 대기를 중단하고 캡처를 종료한 다음 출력 풀을 해제합니다. 이미 전달된 텐서는 중지 후에도 유효합니다. 캡처 종료 오류는 GStreamer 버스에 보고되며 해당 소스의 재시작을 차단합니다. 프로세스 종료는 장치 복구를 대신하지 않습니다.

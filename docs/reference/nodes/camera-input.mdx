@@ -190,7 +190,7 @@ For model pipelines, configure preprocessing through `Model::Options::preprocess
 
 ## Owned raw V4L2 capture
 
-Use the two-argument `CameraInput` factory to deliver raw wire bytes to an
+Use the C++ `CameraInputWithV4L2` factory (Python: `camera_input`) to deliver raw wire bytes to an
 application. This is separate from the default libcamera path above. Select the
 actual device, progressive eight-bit wire format (`GREY`, `BA81`, `GBRG`, `GRBG`
 or `RGGB`) and wire dimensions; the example values are not device discovery.
@@ -210,7 +210,7 @@ backend.fourcc = "BA81";
 backend.zero_copy = false;
 
 n::Graph capture;
-capture.add(n::nodes::CameraInput(camera, backend));
+capture.add(n::nodes::CameraInputWithV4L2(camera, backend));
 capture.add(n::nodes::Output());
 ```
 
@@ -258,6 +258,6 @@ publication. It may feed the six original inputs to `MetoakDepth` graph 20 in a
 separate processing graph. This capture API does not add SIMOR processing or
 require graph 21, new firmware, or changes to an existing ROS integration.
 
-Existing one-argument calls and the `CameraInputOptions` layout are unchanged. C++ code taking the overloaded factory address must specify its function-pointer type instead of using `auto`.
+The node remains `CameraInput`. The distinct C++ factory name preserves existing calls, untyped factory address-taking, and the `CameraInputOptions` layout.
 
 Startup prepares output caps and the CPU buffer pool before queueing camera buffers. Stop interrupts frame and pool waits, retires capture, then releases the output pool. Tensors already delivered remain valid after stop. A capture-retirement error is reported on the GStreamer bus and prevents restarting that source; process exit is not a substitute for device recovery.

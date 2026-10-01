@@ -357,8 +357,8 @@ OutputSpec CameraInput::output_spec(const OutputSpec& /*input*/) const {
 
 namespace simaai::neat::nodes {
 
-std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt,
-                                                simaai::neat::CameraV4L2Options backend) {
+std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInputOptions opt,
+                                                        simaai::neat::CameraV4L2Options backend) {
   return std::make_shared<simaai::neat::V4L2CameraInputNode>(std::move(opt), std::move(backend));
 }
 

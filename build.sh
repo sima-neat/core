@@ -2514,8 +2514,16 @@ stage_package_artifacts_to_dist() {
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
     chmod +x "dist/install_neat_framework.sh"
     # A successful link against a reused SDK is not proof of bundle coherence.
-    bash -c 'source "$1"; shift; DEBS=("$@"); validate_bundle_elf_cohort' \
-      bash "${REPO_ROOT}/tools/install_neat_framework.sh" dist/*.deb
+    # macOS skips DEB packaging; never pass an unmatched glob as an artifact.
+    local -a cohort_debs=()
+    for file in dist/*.deb; do
+      [[ -f "${file}" ]] || continue
+      cohort_debs+=("${file}")
+    done
+    if [[ "${#cohort_debs[@]}" -gt 0 ]]; then
+      bash -c 'source "$1"; shift; DEBS=("$@"); validate_bundle_elf_cohort' \
+        bash "${REPO_ROOT}/tools/install_neat_framework.sh" "${cohort_debs[@]}"
+    fi
     staged_any=ON
   fi
 

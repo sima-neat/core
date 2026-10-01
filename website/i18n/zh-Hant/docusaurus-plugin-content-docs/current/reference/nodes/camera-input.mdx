@@ -173,7 +173,7 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 
 ## 具有獨立記憶體的 raw V4L2 擷取
 
-使用雙參數 `CameraInput` 工廠將原始傳輸位元組交給應用程式。
+使用C++ `CameraInputWithV4L2` 工廠（Python：`camera_input`）將原始傳輸位元組交給應用程式。
 此路徑與上方預設的 libcamera 路徑不同。請指定實際裝置、逐行掃描的 8 位元傳輸格式
 （`GREY`、`BA81`、`GBRG`、`GRBG` 或 `RGGB`）及傳輸尺寸；範例數值並非裝置探索結果。
 
@@ -192,7 +192,7 @@ backend.fourcc = "BA81";
 backend.zero_copy = false;
 
 n::Graph capture;
-capture.add(n::nodes::CameraInput(camera, backend));
+capture.add(n::nodes::CameraInputWithV4L2(camera, backend));
 capture.add(n::nodes::Output());
 ```
 
@@ -231,6 +231,6 @@ ROS/SIMOR 的 CPU 解包、校正與 ROS 發布仍由應用程式負責。應用
 送入另一個處理圖中的 `MetoakDepth` graph 20。此擷取 API 不加入 SIMOR 處理，
 也不需要 graph 21、新韌體或修改現有 ROS 整合。
 
-現有單參數呼叫和 `CameraInputOptions` 配置不變。C++ 程式取得多載工廠的位址時，必須指定函式指標型別，而非使用 `auto`。
+節點仍是 `CameraInput`。獨立的 C++ 工廠名稱保留現有呼叫、未明確指定型別的工廠位址取得方式，以及 `CameraInputOptions` 配置。
 
 啟動時會先準備輸出 caps 和 CPU 緩衝區池，再將相機緩衝區排入佇列。停止時會中斷影格與記憶體池等待，結束擷取後再釋放輸出池。已傳送的張量在停止後仍有效。擷取結束錯誤會透過 GStreamer 匯流排回報，並禁止重新啟動該來源；結束程序不能取代裝置復原。

@@ -114,8 +114,8 @@ std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions
  * Existing one-argument CameraInput behavior and options layout are unchanged.
  * SIMOR decoding, calibration and ROS publication remain application concerns.
  */
-std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt,
-                                                simaai::neat::CameraV4L2Options backend);
+std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInputOptions opt,
+                                                        simaai::neat::CameraV4L2Options backend);
 
 /**
  * @brief Create a camera input with an application-owned capture queue minimum.

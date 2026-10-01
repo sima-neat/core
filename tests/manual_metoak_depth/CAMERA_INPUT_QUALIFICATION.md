@@ -1,7 +1,7 @@
 # CameraInput copy-mode qualification
 
 This qualification is separate from the graph-20 EV74 numerical tests. It covers
-`CameraInput(camera, backend)` with `backend.zero_copy = false`, followed by
+`CameraInputWithV4L2(camera, backend)` with `backend.zero_copy = false`, followed by
 `Output`. It does not invoke an EV kernel or change the ROS application.
 
 ## Capture contract
