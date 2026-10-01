@@ -23,7 +23,7 @@ class BundleCohortTest(unittest.TestCase):
         if self.arch not in ("amd64", "arm64"):
             self.fail(f"unsupported fixture compiler architecture: {self.arch}")
 
-    def library(self, name, soname, source, dependencies=(), rpath=None):
+    def library(self, name, soname, source, dependencies=(), rpath=None, linker_flags=()):
         self.serial += 1
         directory = self.root / f"elf-{self.serial}"
         directory.mkdir()
@@ -31,12 +31,12 @@ class BundleCohortTest(unittest.TestCase):
         src = directory / "fixture.c"
         src.write_text(source)
         subprocess.run(["cc", "-shared", "-fPIC", "-nostdlib", f"-Wl,-soname,{soname}",
-                        str(src), *map(str, dependencies),
+                        str(src), *map(str, dependencies), *linker_flags,
                         *([f"-Wl,-rpath,{rpath}"] if rpath is not None else []),
                         "-o", str(path)], check=True)
         return path
 
-    def package(self, package, version="0.4.0", payload=(), architecture=None):
+    def package(self, package, version="0.4.0", payload=(), architecture=None, install_dir="usr/lib/neat-test"):
         self.serial += 1
         root = self.root / f"package-{self.serial}"
         (root / "DEBIAN").mkdir(parents=True)
@@ -44,7 +44,7 @@ class BundleCohortTest(unittest.TestCase):
             f"Package: {package}\nVersion: {version}\nArchitecture: {architecture or self.arch}\n"
             "Maintainer: Cohort test <test@example.invalid>\nDescription: Test fixture\n")
         for source in payload:
-            target = root / "usr/lib/neat-test" / source.name
+            target = root / install_dir / source.name
             target.parent.mkdir(parents=True, exist_ok=True)
             if source.is_symlink():
                 target.symlink_to(source.readlink())
@@ -68,11 +68,99 @@ class BundleCohortTest(unittest.TestCase):
             "libneatdispatchercore.so.0.4.0", "libneatdispatchercore.so.0.4.0",
             "int dispatcher(void) { return 1; }")
         consumer = self.library("libsima_lmm_runtime.so", "libsima_lmm_runtime.so",
-                                "extern int dispatcher(void); int runtime(void) { return dispatcher(); }", [old])
+                                "extern int dispatcher(void); int runtime(void) { return dispatcher(); }", [old], rpath="$ORIGIN")
         return self.package("neat-runtime", payload=[current]), self.package("sima-lmm-core", payload=[consumer])
 
     def test_matching_selected_dependencies(self):
         result = self.check_bundle(*self.pair())
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def split_pair(self, rpath=None, provider_dir="usr/lib/aarch64-linux-gnu/neat/runtime"):
+        provider = self.library("libneatdispatchercore.so.0.4.0", "libneatdispatchercore.so.0.4.0",
+                                "int dispatcher(void) { return 1; }")
+        consumer = self.library("libgstneatfixture.so", "libgstneatfixture.so",
+                                "extern int dispatcher(void); int plugin(void) { return dispatcher(); }",
+                                [provider], rpath=rpath)
+        return (self.package("neat-runtime", payload=[provider], install_dir=provider_dir),
+                self.package("neat-gst-plugins", payload=[consumer],
+                             install_dir="usr/lib/aarch64-linux-gnu/neat/gst-plugins"))
+
+    def test_rejects_unreachable_private_provider(self):
+        for rpath in (None, "$ORIGIN", "$ORIGIN/../wrong"):
+            with self.subTest(rpath=rpath):
+                result = self.check_bundle(*self.split_pair(rpath))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("not reachable", result.stdout)
+
+    def test_accepts_consumer_private_runpath(self):
+        for rpath in ("$ORIGIN/../runtime", "${ORIGIN}/../runtime",
+                      "/usr/lib/aarch64-linux-gnu/neat/runtime"):
+            with self.subTest(rpath=rpath):
+                result = self.check_bundle(*self.split_pair(rpath))
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_accepts_default_library_directory(self):
+        result = self.check_bundle(*self.split_pair(provider_dir="usr/lib"))
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_accepts_packaged_loader_configuration(self):
+        config = self.root / "sima-neat.conf"
+        config.write_text("# Private NEAT runtime roots\n"
+                          "/usr/lib/aarch64-linux-gnu/neat/runtime\n")
+        result = self.check_bundle(
+            *self.split_pair(),
+            self.package("neat-common", payload=[config], install_dir="etc/ld.so.conf.d"))
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_rejects_missing_consumer_runpath_in_transitive_chain(self):
+        leaf = self.library("libneatleaf.so.1", "libneatleaf.so.1", "int leaf(void) { return 1; }")
+        middle = self.library("libneatmiddle.so.1", "libneatmiddle.so.1",
+                              "extern int leaf(void); int middle(void) { return leaf(); }", [leaf])
+        top = self.library("libsima_neat.so.5", "libsima_neat.so.5",
+                           "extern int middle(void); int top(void) { return middle(); }",
+                           [middle], rpath="$ORIGIN/../neat-test")
+        result = self.check_bundle(
+            self.package("neat-runtime", payload=[leaf, middle]),
+            self.package("sima-neat", payload=[top], install_dir="usr/lib/top"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("not reachable", result.stdout)
+
+    def test_accepts_direct_legacy_rpath(self):
+        provider = self.library("libneatfixture.so.1", "libneatfixture.so.1", "int value;")
+        consumer = self.library("libsima_neat.so.5", "libsima_neat.so.5",
+                                "extern int value; int result(void) { return value; }",
+                                [provider], rpath="$ORIGIN", linker_flags=["-Wl,--disable-new-dtags"])
+        result = self.check_bundle(self.package("neat-runtime", payload=[provider, consumer]))
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_default_library_paths_are_architecture_specific(self):
+        native = "x86_64-linux-gnu" if self.arch == "amd64" else "aarch64-linux-gnu"
+        foreign = "aarch64-linux-gnu" if self.arch == "amd64" else "x86_64-linux-gnu"
+        for directory, accepted in ((native, True), (foreign, False)):
+            with self.subTest(directory=directory):
+                result = self.check_bundle(*self.split_pair(provider_dir=f"usr/lib/{directory}"))
+                self.assertEqual(result.returncode == 0, accepted, result.stdout)
+
+    def test_nodefaultlib_does_not_accept_default_provider(self):
+        provider = self.library("libneatfixture.so.1", "libneatfixture.so.1", "int value;")
+        for rpath, accepted in ((None, False), ("/usr/lib", True)):
+            with self.subTest(rpath=rpath):
+                consumer = self.library("libsima_neat.so.5", "libsima_neat.so.5",
+                                        "extern int value; int result(void) { return value; }",
+                                        [provider], rpath=rpath, linker_flags=["-Wl,-z,nodefaultlib"])
+                result = self.check_bundle(
+                    self.package("neat-runtime", payload=[provider], install_dir="usr/lib"),
+                    self.package("sima-neat", payload=[consumer]))
+                self.assertEqual(result.returncode == 0, accepted, result.stdout)
+
+    def test_reachable_soname_symlink(self):
+        provider = self.library("libneatfixture.so.1.2.3", "libneatfixture.so.1", "int value;")
+        link = provider.parent / "libneatfixture.so.1"
+        link.symlink_to(provider.name)
+        consumer = self.library("libsima_neat.so.5", "libsima_neat.so.5",
+                                "extern int value; int result(void) { return value; }",
+                                [provider], rpath="$ORIGIN")
+        result = self.check_bundle(self.package("neat-runtime", payload=[provider, link, consumer]))
         self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_matching_soname_symlink(self):

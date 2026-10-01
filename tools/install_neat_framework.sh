@@ -2123,6 +2123,7 @@ versions = {}
 providers = {}
 consumers = []
 files = {}
+loader_directories = []
 # These dependencies must never be satisfied by leftover SDK/board libraries.
 neat_name = re.compile(
     r"^lib(?:neat|gstneat|gstsimaai|gstsimamm|sima_neat|sima_lmm|simaneet|"
@@ -2170,6 +2171,17 @@ try:
                     files[relative] = identity
                     if identity[0] != "file":
                         continue
+                    # Debian loads these fragments through /etc/ld.so.conf.
+                    # Only package-declared directories count, never the builder's
+                    # cache or environment. Includes need a target-side audit.
+                    if re.fullmatch(r"etc/ld\.so\.conf\.d/[^/]+\.conf", relative):
+                        for line in path.read_text().splitlines():
+                            entry = line.split("#", 1)[0].strip()
+                            if not entry:
+                                continue
+                            if not entry.startswith("/") or len(entry.split()) != 1 or "$" in entry:
+                                fail(f"unsupported packaged loader configuration: {package}:{relative}: {entry}")
+                            loader_directories.append(posixpath.normpath(entry))
                     with path.open("rb") as stream:
                         if stream.read(4) != b"\x7fELF":
                             continue
@@ -2179,7 +2191,9 @@ try:
                     if expected is None or machine != expected:
                         fail(f"ELF architecture mismatch: {package}:{relative}: {architecture} / {machine}")
                     dynamic = run("readelf", "-d", str(path))
-                    for value in re.findall(r"\((?:RPATH|RUNPATH)\).*?\[([^]]*)\]", dynamic):
+                    search_paths = {}
+                    for tag, value in re.findall(r"\((RPATH|RUNPATH)\).*?\[([^]]*)\]", dynamic):
+                        search_paths[tag] = []
                         for entry in value.split(":"):
                             origin_relative = (entry in ("$ORIGIN", "${ORIGIN}") or
                                                entry.startswith(("$ORIGIN/", "${ORIGIN}/")))
@@ -2207,6 +2221,7 @@ try:
                                 (not entry.startswith("/") and not origin_relative) or
                                 not (in_runtime_root or adjacent)):
                                 fail(f"unsafe build/empty runtime search path in {package}:{relative}: {value}")
+                            search_paths[tag].append(normalized)
                     soname = re.search(r"\(SONAME\).*?\[([^]]+)\]", dynamic)
                     if soname:
                         key = soname.group(1)
@@ -2215,7 +2230,12 @@ try:
                             fail(f"different ELF providers for {key}: {old[1]} and {package}:{relative}")
                         providers[key] = (identity[1], f"{package}:{relative}", relative)
                     needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic)
-                    consumers.append((f"{package}:{relative}", needed))
+                    # RUNPATH takes precedence over RPATH. Require every DSO to
+                    # locate its own direct cohort dependencies, independently of
+                    # an application's inherited RPATH or LD_LIBRARY_PATH.
+                    search = search_paths.get("RUNPATH", search_paths.get("RPATH", []))
+                    no_defaults = bool(re.search(r"\(FLAGS_1\).*\bNODEFLIB\b", dynamic))
+                    consumers.append((f"{package}:{relative}", needed, search, no_defaults))
         for soname, (digest, origin, relative) in providers.items():
             lookup = posixpath.join(posixpath.dirname(relative), soname)
             visited = set()
@@ -2230,10 +2250,46 @@ try:
             if files.get(lookup) != ("file", digest):
                 fail(f"missing or wrong packaged SONAME path {soname} for {origin}")
         families = {name.split(".so", 1)[0] for name in providers}
-        for consumer, needed in consumers:
+        multiarch = {"arm64": "aarch64-linux-gnu", "amd64": "x86_64-linux-gnu"}.get(expected_architecture)
+        defaults = ["/lib", "/usr/lib"]
+        if multiarch:
+            defaults = [f"/lib/{multiarch}", f"/usr/lib/{multiarch}"] + defaults
+
+        def packaged_file(lookup):
+            # Follow only package-owned SONAME links, not host filesystem links.
+            lookup = lookup.lstrip("/")
+            visited = set()
+            while files.get(lookup, (None,))[0] == "link":
+                if lookup in visited:
+                    return None
+                visited.add(lookup)
+                target = files[lookup][1]
+                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else
+                                           posixpath.join(posixpath.dirname(lookup), target))
+                if lookup == ".." or lookup.startswith("../"):
+                    return None
+            return files.get(lookup)
+
+        for consumer, needed, search, no_defaults in consumers:
             for dependency in needed:
-                if (neat_name.match(dependency) or dependency.split(".so", 1)[0] in families) and dependency not in providers:
+                if not (neat_name.match(dependency) or dependency.split(".so", 1)[0] in families):
+                    continue
+                if dependency not in providers:
                     fail(f"{consumer} requires {dependency}, but the selected bundle does not provide it; rebuild against the selected Internals/Core (do not add a compatibility symlink)")
+                directories = search + [d for d in loader_directories
+                                        if not no_defaults or d not in defaults]
+                if not no_defaults:
+                    directories += defaults
+                expected = ("file", providers[dependency][0])
+                for directory in directories:
+                    candidate = packaged_file(posixpath.join(directory, dependency))
+                    if candidate is not None:
+                        if candidate != expected:
+                            fail(f"{consumer} resolves {dependency} to a different packaged payload in {directory}")
+                        break
+                else:
+                    fail(f"{consumer} requires {dependency}, but its packaged provider is not reachable through its RUNPATH/RPATH, packaged ld.so.conf.d directories or default library directories; rebuild with the matching install RUNPATH")
+
         if not packages:
             fail("no DEB packages supplied")
         print(f"Verified selected ELF cohort: {len(packages)} packages, {len(consumers)} ELFs, {len(providers)} SONAME providers. Platform dependencies still require target validation.")
