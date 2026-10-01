@@ -137,6 +137,17 @@ std::string cmdline_grep(const std::string& program) {
   return "grep -qF -- '" + program + "'";
 }
 
+// The busy check at start: is a live queue owner ANY card program, not only
+// the one we start? The queue can be owned by the tensor pipeline
+// (pcie-pipeline-builder) or GenAI (pcie-genai-backend, or a custom name that
+// contains it). A live owner of another kind must not be taken for stale: its
+// pid and status files would be erased, and its own stop() could no longer
+// find it. A live pid that is none of these is a reused pid (stale).
+std::string any_card_program_grep(const std::string& program) {
+  return "grep -qF -e '" + program + "' -e '" + std::string(kDefaultCardProgram) +
+         "' -e 'pcie-genai-backend'";
+}
+
 void validate_card_program(const std::string& value) {
   // Empty is allowed: it selects the default program. A non-empty name is placed
   // inside a shell single-quoted grep pattern and appended to a launch path, so
@@ -206,6 +217,7 @@ std::string RemoteRuntime::build_start_command(
   const std::string helper = remote_helper_path();
   // Single-quoted grep pattern; card_program() is validated to a safe charset.
   const std::string cmdline_match = cmdline_grep(card_program());
+  const std::string any_owner_match = any_card_program_grep(card_program());
   const std::string start_lock_path =
       "/run/sima-neat/pcie/q" + std::to_string(queue) + ".start.lock";
   std::ostringstream ss;
@@ -219,7 +231,7 @@ std::string RemoteRuntime::build_start_command(
      << "statusfile=" << SshRunner::shell_escape(status_path(queue)) << "; "
      << "if [ -f \"$pidfile\" ]; then " << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
      << "if [ -n \"$pid\" ] && kill -0 \"$pid\" >/dev/null 2>&1; then "
-     << "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | " << cmdline_match
+     << "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | " << any_owner_match
      << "; "
         "then "
      << "echo queue_busy; exit 9; " << "fi; " << "fi; " << "rm -f \"$pidfile\" \"$statusfile\"; "
