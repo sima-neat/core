@@ -3,6 +3,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -45,6 +46,28 @@ int main() {
       require(fs::exists(stage / "h9-1.jpg"), "copy lands in the stage dir");
     }
     require(!fs::exists(stage / "h9-1.jpg"), "copy deleted on scope exit");
+
+    // A symlink planted at the predictable staged name must not be followed:
+    // its target keeps its content, and the staged file is a new regular file.
+    {
+      const fs::path victim = root / "victim.txt";
+      write_file(victim, "KEEP");
+      fs::create_directories(stage);
+      fs::create_symlink(victim, stage / "h9-5.jpg");
+      {
+        StagedImage s(stage, "h9-5", src);
+        require(!fs::is_symlink(s.staged_path()) && fs::is_regular_file(s.staged_path()),
+                "the staged file is a regular file, not the planted symlink");
+        std::ifstream staged(s.staged_path());
+        const std::string body((std::istreambuf_iterator<char>(staged)),
+                               std::istreambuf_iterator<char>());
+        require(body == "JPEGDATA", "the staged file holds the image");
+      }
+      std::ifstream v(victim);
+      const std::string kept((std::istreambuf_iterator<char>(v)), std::istreambuf_iterator<char>());
+      require(kept == "KEEP", "the symlink target must not be overwritten");
+      fs::remove(victim);
+    }
 
     // missing source throws
     {
