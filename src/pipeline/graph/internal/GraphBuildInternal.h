@@ -122,6 +122,10 @@ void session_build_attach_encoded_caps_fixups(GstElement* pipeline,
                                               const std::vector<std::shared_ptr<Node>>& nodes,
                                               const NameTransform& name_transform,
                                               const std::vector<int>* node_indices = nullptr);
+void session_build_attach_camera_frame_size_checks(GstElement* pipeline,
+                                                   const std::vector<std::shared_ptr<Node>>& nodes,
+                                                   const NameTransform& name_transform,
+                                                   const std::vector<int>* node_indices = nullptr);
 
 void session_build_enforce_mla_num_buffers(const std::string& pipeline, const char* context,
                                            bool allow_one = false);
