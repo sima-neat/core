@@ -49,7 +49,8 @@ int main() {
       require(!should_record_history("", "anything"), "an empty line is never recorded");
       require(!should_record_history("", ""), "an empty line with no history is not recorded");
       require(should_record_history("hello", ""), "the first real line is recorded");
-      require(should_record_history("hello", "world"), "a new line after a different one is recorded");
+      require(should_record_history("hello", "world"),
+              "a new line after a different one is recorded");
       require(!should_record_history("hello", "hello"), "a line equal to the last one is skipped");
       // Only the immediately-previous line matters: an older duplicate still records.
       require(should_record_history("hello", "goodbye"), "not a consecutive duplicate: recorded");

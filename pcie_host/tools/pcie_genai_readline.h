@@ -28,12 +28,11 @@ namespace simaai::neat::pcie::genai::tools {
 // let it destruct after: the destructor writes the history back. Only one may
 // exist at a time (it drives readline's process-global state).
 class ReadlineSession {
- public:
+public:
   // `interrupt_pending` returns true when Ctrl-C was seen (cancel the current
   // line). `terminate_pending` returns true on SIGTERM/SIGHUP or a closed
   // stdout (end input so the CLI can stop the backend and exit).
-  ReadlineSession(std::function<bool()> interrupt_pending,
-                  std::function<bool()> terminate_pending);
+  ReadlineSession(std::function<bool()> interrupt_pending, std::function<bool()> terminate_pending);
   ~ReadlineSession();
 
   ReadlineSession(const ReadlineSession&) = delete;
@@ -47,7 +46,7 @@ class ReadlineSession {
   // and append it to the history file so it survives a crash.
   void record(const std::string& line);
 
- private:
+private:
   std::string history_path_;
   std::string last_recorded_;
 };
