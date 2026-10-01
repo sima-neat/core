@@ -4,7 +4,8 @@
     "spec": "latest"
   },
   "llima": {
-    "policy": "snap"
+    "branch": "release-3.0.0-prep",
+    "spec": "latest"
   },
   "sdk": {
     "channel": "develop"
