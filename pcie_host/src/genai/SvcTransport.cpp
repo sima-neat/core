@@ -164,17 +164,31 @@ void SvcTransport::generate(const GenerationRequest& request,
     }
   };
 
+  // The prompt is out, so the card's run may be going. If the svc client
+  // itself throws here (an error other than timeout or disconnect), mark the
+  // run abandoned before passing the error on: its late id-less tokens are
+  // then drained before the next prompt instead of showing up as its answer.
+  // (A genai.error from the card below is a real end, not abandoned.)
+  const auto abandon_on_throw = [&](auto&& call) {
+    try {
+      return call();
+    } catch (...) {
+      abandoned_id_ = id;
+      throw;
+    }
+  };
   for (;;) {
     // Checked once per recv() wait, so a cancel is noticed within
     // recv_timeout_ms. genai.cancel is sent only once.
     if (!cancel_sent && (cancel_requested_.load() || is_cancelled())) {
-      client_->notify(kTagCancel, encode_cancel(id));
+      abandon_on_throw([&] { return client_->notify(kTagCancel, encode_cancel(id)); });
       cancel_sent = true;
       cancel_sent_at = clock::now();
     }
 
     SvcNote note;
-    const RecvStatus status = client_->recv(note, options_.recv_timeout_ms);
+    const RecvStatus status =
+        abandon_on_throw([&] { return client_->recv(note, options_.recv_timeout_ms); });
     const clock::time_point now = clock::now();
     if (status == RecvStatus::Disconnected) {
       abandoned_id_ = id;

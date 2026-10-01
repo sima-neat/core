@@ -499,6 +499,37 @@ int main() {
               "run 3 must deliver only its own tokens and final");
     }
 
+    // The svc client throws (not a timeout or disconnect) after the prompt is
+    // out. The card's run may still be going, so it must be marked abandoned:
+    // an earlier version did not, and the next prompt showed the old run's
+    // late tokens as its own answer.
+    {
+      auto fake = std::make_unique<FakeSvcClient>();
+      FakeSvcClient* f = fake.get();
+      f->on_notify = [](FakeSvcClient& c, const std::string& tag, const std::string&) {
+        if (tag == pgi::kTagPrompt) {
+          c.throw_on_next_recv = true;
+        }
+      };
+      pgi::SvcTransport t(std::move(fake), fast_options());
+      const Run run1 = generate(t, request("Hi"));
+      require(run1.error.find("simaai_svc_recv failed") != std::string::npos,
+              "the recv error reaches the caller: " + run1.error);
+      const std::string run1_id = id_of(f->sent().at(0).payload);
+
+      // The card was still answering run 1; its leftovers arrive now.
+      f->on_notify = play_happy_card;
+      f->push(pgi::kTagToken, "1\nstale");
+      f->push(pgi::kTagFinal, final_json(run1_id, "stop"));
+      const Run run2 = generate(t, request("Hello"));
+      require(run2.error.empty(), "run 2 works after the drain: " + run2.error);
+      std::string text;
+      for (const auto& sample : run2.samples) {
+        text += sample.text;
+      }
+      require(text == "Hello", "run 2 gets only its own tokens, got: " + text);
+    }
+
     // The abandoned run can also end with an error that has an empty id (the
     // card could not read that prompt's id). The drain must accept it: no new
     // prompt is out yet, so it can only be the old run's. An earlier version
