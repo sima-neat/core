@@ -631,6 +631,7 @@ select_system_deps() {
       curl
       doxygen
       graphviz
+      nlohmann-json3-dev
     )
     SELECTED_SYSTEM_DEPS_MAC=(
       cmake
@@ -638,6 +639,7 @@ select_system_deps() {
       git
       doxygen
       graphviz
+      nlohmann-json
     )
   else
     SELECTED_SYSTEM_DEPS_LINUX=("${SYSTEM_DEPS_LINUX[@]}")
