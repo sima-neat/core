@@ -3,7 +3,8 @@
     "policy": "snap"
   },
   "llima": {
-    "policy": "snap"
+    "branch": "release-3.0.0-prep",
+    "spec": "206f1695af0c"
   },
   "sdk": {
     "channel": "develop"
