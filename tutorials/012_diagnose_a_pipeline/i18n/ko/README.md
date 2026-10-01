@@ -163,7 +163,9 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 | 증상 | 가능한 원인 | 해결 방법 |
 | --- | --- | --- |
 | `missing ... plugin` | GStreamer 플러그인을 찾을 수 없음 | 확인 `GST_PLUGIN_PATH`, 실행 `gst-inspect-1.0 <plugin>` |
-| `appsink 'mysink' not found` | 연결되지 않은 터미널 `Output()` | 확인하십시오 `Output` 실행/빌드 파이프라인의 마지막 노드입니다. `caps_override is set; renegotiation disabled` | 캡 고정 해제 | 제거 `caps_override` 또는 입력 시 대문자 설정을 고정합니다. `tensor caps change not supported` | 런타임 시 텐서 모양/데이터 유형 변경 | 텐서 모양/데이터 유형을 안정적으로 유지 (재협상 없음) |
+| `appsink 'mysink' not found` | 연결되지 않은 터미널 `Output()` | 확인하십시오 `Output` 실행/빌드 파이프라인의 마지막 노드입니다. |
+| `caps_override is set; renegotiation disabled` | 캡 고정 해제 | 제거 `caps_override` 또는 입력 시 대문자 설정을 고정합니다. |
+| `tensor caps change not supported` | 런타임 시 텐서 모양/데이터 유형 변경 | 텐서 모양/데이터 유형을 안정적으로 유지 (재협상 없음) |
 
 ### 플러그인 오류 디버깅
 

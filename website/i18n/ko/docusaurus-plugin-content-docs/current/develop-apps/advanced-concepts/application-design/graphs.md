@@ -225,6 +225,8 @@ for (const auto& name : run.output_names()) {
 }
 ```
 
+이 기능을 모델 경로 및 다중 입력/다중 출력 앱에 사용하세요. 엔드포인트 일치는 정확하게 이루어집니다.
+
 `Input("image_l")`은 `image_l`이라는 모델 입력에 바인딩될 수 있지만, `Input("my_random_name")`은 바인딩될 수 없습니다.
 
 ## 이름이 없는 편리한 API
