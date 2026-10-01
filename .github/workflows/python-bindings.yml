@@ -26,6 +26,22 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .[dev]
 
+      - name: Build C++ parity probe
+        run: |
+          cmake \
+            -S . \
+            -B build-python-parity \
+            -DSIMANEAT_BUILD_TESTS=ON \
+            -DSIMANEAT_BUILD_TUTORIALS=OFF \
+            -DSIMANEAT_BUILD_PYTHON=OFF \
+            -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
+          cmake --build build-python-parity \
+            --target peripheral_catalog_cpp_probe \
+            --parallel
+          probe="${GITHUB_WORKSPACE}/build-python-parity/tests/peripheral_catalog_cpp_probe"
+          test -x "${probe}"
+          printf 'SIMA_NEAT_PERIPHERAL_CPP_PROBE=%s\n' "${probe}" >> "${GITHUB_ENV}"
+
       - name: Run Python tests
         run: |
           # Codec and LightGlue checks require installed extras and Modalix.

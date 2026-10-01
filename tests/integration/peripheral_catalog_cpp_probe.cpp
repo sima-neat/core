@@ -1,10 +1,13 @@
 #include "neat/peripherals.h"
+#include "peripherals/internal/PeripheralClient.h"
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -81,9 +84,17 @@ nlohmann::json encode_catalog(const simaai::neat::peripherals::Catalog& catalog)
 
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+  if (argc != 1 && (argc != 3 || std::string_view(argv[1]) != "--socket")) {
+    std::cerr << "usage: peripheral_catalog_cpp_probe [--socket PATH]\n";
+    return 2;
+  }
+
   try {
-    std::cout << encode_catalog(simaai::neat::peripherals::list()).dump() << '\n';
+    const auto catalog = argc == 1 ? simaai::neat::peripherals::list()
+                                   : simaai::neat::peripherals_internal::list_from_socket(
+                                         argv[2], std::chrono::seconds(1));
+    std::cout << encode_catalog(catalog).dump() << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

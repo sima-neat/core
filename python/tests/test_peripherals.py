@@ -11,10 +11,10 @@ import pytest
 
 
 _PERIPHERAL_CPP_PROBE_ENV = "SIMA_NEAT_PERIPHERAL_CPP_PROBE"
-_SYSTEM_PERIPHERAL_CPP_PROBE = Path(
-    "/usr/lib/sima-neat/tests/peripheral_catalog_cpp_probe"
-)
 _INSTALLED_PYTHON_TEST_SUFFIX = ("share", "sima-neat", "python", "tests")
+_SOURCE_CPP_PROBE_RELATIVE_PATH = Path(
+    "build/tests/peripheral_catalog_cpp_probe"
+)
 
 
 def _catalog(**overrides):
@@ -135,29 +135,37 @@ def _list(path: Path, timeout_ms=1000):
 
 def _resolve_peripheral_cpp_probe(test_file=Path(__file__), environ=None):
   environ = os.environ if environ is None else environ
-  override = environ.get(_PERIPHERAL_CPP_PROBE_ENV)
-  if override:
-    return Path(override), True
-
   test_path = Path(test_file).resolve()
   suffix_size = len(_INSTALLED_PYTHON_TEST_SUFFIX)
-  if test_path.parent.parts[-suffix_size:] == _INSTALLED_PYTHON_TEST_SUFFIX:
+  installed = (
+      test_path.parent.parts[-suffix_size:] == _INSTALLED_PYTHON_TEST_SUFFIX
+  )
+
+  override = environ.get(_PERIPHERAL_CPP_PROBE_ENV)
+  if override:
+    return Path(override), installed
+
+  if installed:
     extras_prefix = test_path.parents[suffix_size]
     return extras_prefix / "lib/sima-neat/tests/peripheral_catalog_cpp_probe", True
 
-  return _SYSTEM_PERIPHERAL_CPP_PROBE, False
+  source_root = test_path.parents[2]
+  return source_root / _SOURCE_CPP_PROBE_RELATIVE_PATH, False
 
 
 def _require_peripheral_cpp_probe(test_file=Path(__file__), environ=None):
-  probe, required = _resolve_peripheral_cpp_probe(test_file, environ)
+  probe, installed = _resolve_peripheral_cpp_probe(test_file, environ)
   if probe.is_file() and os.access(probe, os.X_OK):
-    return probe
+    return probe, installed
 
   reason = "missing" if not probe.is_file() else "not executable"
   message = f"peripheral catalog C++ probe is {reason}: {probe}"
-  if required:
-    pytest.fail(message, pytrace=False)
-  pytest.skip(message)
+  if not installed:
+    message += (
+        f"; build the peripheral_catalog_cpp_probe target or set "
+        f"{_PERIPHERAL_CPP_PROBE_ENV}"
+    )
+  pytest.fail(message, pytrace=False)
 
 
 def _native_catalog(catalog):
@@ -322,47 +330,69 @@ def test_peripheral_catalog_errors_keep_structured_code(tmp_path):
   assert malformed.value.error_code == pyneat.ERROR_IO_PARSE
 
 
-def test_peripheral_cpp_probe_resolution_is_layout_aware(tmp_path, monkeypatch):
+def test_peripheral_cpp_probe_resolution_is_layout_aware(tmp_path):
   source_test = tmp_path / "checkout/python/tests/test_peripherals.py"
-  probe, required = _resolve_peripheral_cpp_probe(source_test, {})
-  assert probe == _SYSTEM_PERIPHERAL_CPP_PROBE
-  assert required is False
+  source_probe = tmp_path / "checkout/build/tests/peripheral_catalog_cpp_probe"
+  assert _resolve_peripheral_cpp_probe(source_test, {}) == (source_probe, False)
 
   installed_test = (
       tmp_path / "extras/share/sima-neat/python/tests/test_peripherals.py"
   )
-  probe, required = _resolve_peripheral_cpp_probe(installed_test, {})
-  assert probe == (
+  installed_probe = (
       tmp_path / "extras/lib/sima-neat/tests/peripheral_catalog_cpp_probe"
   )
-  assert required is True
+  assert _resolve_peripheral_cpp_probe(installed_test, {}) == (
+      installed_probe,
+      True,
+  )
 
   override = tmp_path / "custom-probe"
   assert _resolve_peripheral_cpp_probe(
       source_test, {_PERIPHERAL_CPP_PROBE_ENV: str(override)}
-  ) == (override, True)
+  ) == (override, False)
 
-  monkeypatch.setitem(
-      globals(), "_SYSTEM_PERIPHERAL_CPP_PROBE", tmp_path / "missing-system-probe"
-  )
-  with pytest.raises(pytest.skip.Exception, match="is missing"):
+  with pytest.raises(pytest.fail.Exception, match="build the .* target"):
     _require_peripheral_cpp_probe(source_test, {})
 
   with pytest.raises(pytest.fail.Exception, match="is missing"):
     _require_peripheral_cpp_probe(installed_test, {})
 
-  probe.parent.mkdir(parents=True)
-  probe.write_text("probe")
-  probe.chmod(0o644)
+  source_probe.parent.mkdir(parents=True)
+  source_probe.write_text("probe")
+  source_probe.chmod(0o644)
+  with pytest.raises(pytest.fail.Exception, match="not executable"):
+    _require_peripheral_cpp_probe(source_test, {})
+
+  source_probe.chmod(0o755)
+  assert _require_peripheral_cpp_probe(source_test, {}) == (source_probe, False)
+
+  installed_probe.parent.mkdir(parents=True)
+  installed_probe.write_text("probe")
+  installed_probe.chmod(0o644)
   with pytest.raises(pytest.fail.Exception, match="not executable"):
     _require_peripheral_cpp_probe(installed_test, {})
 
-  probe.chmod(0o755)
-  assert _require_peripheral_cpp_probe(installed_test, {}) == probe
+  installed_probe.chmod(0o755)
+  assert _require_peripheral_cpp_probe(installed_test, {}) == (
+      installed_probe,
+      True,
+  )
 
 
-def test_installed_cpp_and_python_peripheral_catalogs_match():
-  probe = _require_peripheral_cpp_probe()
+def test_cpp_and_python_peripheral_catalogs_match(tmp_path):
+  probe, installed = _require_peripheral_cpp_probe()
+
+  if not installed:
+    body = json.dumps(_catalog())
+    path = tmp_path / "parity.sock"
+    with _FakeServer(path, body):
+      python_catalog = _native_catalog(_list(path))
+    with _FakeServer(path, body):
+      cpp_catalog = json.loads(
+          subprocess.check_output([probe, "--socket", path], text=True)
+      )
+    assert cpp_catalog == python_catalog
+    return
 
   for _ in range(3):
     python_before = _native_catalog(pyneat.peripherals.list())
