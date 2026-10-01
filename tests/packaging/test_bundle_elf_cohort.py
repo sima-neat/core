@@ -36,7 +36,7 @@ class BundleCohortTest(unittest.TestCase):
                         "-o", str(path)], check=True)
         return path
 
-    def package(self, package, version="0.4.0", payload=(), architecture=None, install_dir="usr/lib/neat-test"):
+    def package(self, package, version="0.4.0", payload=(), architecture=None, install_dir="usr/lib/neat-test", directory_links=()):
         self.serial += 1
         root = self.root / f"package-{self.serial}"
         (root / "DEBIAN").mkdir(parents=True)
@@ -50,6 +50,10 @@ class BundleCohortTest(unittest.TestCase):
                 target.symlink_to(source.readlink())
             else:
                 shutil.copyfile(source, target)
+        for name, destination in directory_links:
+            link = root / name
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(destination)
         deb = self.root / f"fixture-{self.serial}.deb"
         subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(root), str(deb)],
                        check=True, stdout=subprocess.DEVNULL)
@@ -260,6 +264,38 @@ class BundleCohortTest(unittest.TestCase):
         result = self.check_bundle(self.package("neat-runtime", payload=[a]), self.package("neat-common", payload=[b]))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("conflicting payload", result.stdout)
+
+    def test_rejects_directory_symlink_payload_conflict(self):
+        provider = self.library("libneatfixture.so.1", "libneatfixture.so.1", "int value;")
+        linked = self.package("neat-runtime", payload=[provider],
+                              directory_links=[("usr/lib/alias", "neat-test")])
+        directory = self.package("neat-common", payload=[provider], install_dir="usr/lib/alias")
+        for packages in ((linked, directory), (directory, linked)):
+            with self.subTest(order=packages):
+                result = self.check_bundle(*packages)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("conflicting payload path usr/lib/alias", result.stdout)
+
+    def test_rejects_directory_file_payload_conflict(self):
+        file = self.root / "alias"
+        file.write_text("not a directory")
+        child = self.root / "child"
+        child.write_text("nested file")
+        directory = self.package("neat-runtime", payload=[child], install_dir="usr/lib/alias")
+        regular = self.package("neat-common", payload=[file], install_dir="usr/lib")
+        for packages in ((directory, regular), (regular, directory)):
+            with self.subTest(order=packages):
+                result = self.check_bundle(*packages)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("conflicting payload path usr/lib/alias", result.stdout)
+
+    def test_accepts_shared_directories_and_identical_directory_links(self):
+        child = self.root / "child"
+        child.write_text("shared data")
+        arguments = dict(payload=[child], directory_links=[("usr/lib/alias", "neat-test")])
+        result = self.check_bundle(self.package("neat-runtime", **arguments),
+                                   self.package("neat-common", **arguments))
+        self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_preflight_is_before_install_mutations(self):
         text = INSTALLER.read_text()

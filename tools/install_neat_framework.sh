@@ -2156,12 +2156,17 @@ try:
                     fail(f"mixed {group} versions: {previous} and {version} ({package})")
             root = Path(temp) / str(index)
             subprocess.run(["dpkg-deb", "-x", str(deb), str(root)], check=True)
-            for directory, _, names in os.walk(root, followlinks=False):
-                for name in names:
+            for directory, directories, names in os.walk(root, followlinks=False):
+                # os.walk lists directory symlinks separately from files. Record
+                # both without following links, including implicit parent dirs,
+                # so conflicting DEBs cannot redirect another package's payload.
+                for name in directories + names:
                     path = Path(directory) / name
                     relative = path.relative_to(root).as_posix()
                     if path.is_symlink():
                         identity = ("link", os.readlink(path))
+                    elif path.is_dir():
+                        identity = ("directory", "")
                     elif path.is_file():
                         identity = ("file", digest_file(path))
                     else:
