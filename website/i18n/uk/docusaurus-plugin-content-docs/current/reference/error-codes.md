@@ -54,6 +54,7 @@ Neat повідомляє про виявлені помилки за допом
 | `io.camera_not_found` | `error_codes::kCameraNotFound` | `pyneat.ERROR_CAMERA_NOT_FOUND` |
 | `io.model_not_found` | `error_codes::kModelNotFound` | `pyneat.ERROR_MODEL_NOT_FOUND` |
 | `io.source_ended` | `error_codes::kSourceEnded` | `pyneat.ERROR_SOURCE_ENDED` |
+| `io.response_too_large` | `error_codes::kResponseTooLarge` | `pyneat.ERROR_RESPONSE_TOO_LARGE` |
 | `codec.invalid_h264_stream` | `error_codes::kInvalidH264Stream` | `pyneat.ERROR_INVALID_H264_STREAM` |
 | `codec.decode_failed` | `error_codes::kDecodeFailed` | `pyneat.ERROR_DECODE_FAILED` |
 | `codec.encode_failed` | `error_codes::kEncodeFailed` | `pyneat.ERROR_ENCODE_FAILED` |
@@ -64,6 +65,9 @@ Neat повідомляє про виявлені помилки за допом
 | `resource.disk_full` | `error_codes::kDiskFull` | `pyneat.ERROR_DISK_FULL` |
 | `infra.dispatcher_unavailable` | `error_codes::kDispatcherUnavailable` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE` |
 | `infra.accelerator_execution_failed` | `error_codes::kAcceleratorExecutionFailed` | `pyneat.ERROR_ACCELERATOR_EXECUTION_FAILED` |
+| `infra.peripheral_daemon_unavailable` | `error_codes::kPeripheralDaemonUnavailable` | `pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE` |
+| `infra.peripheral_daemon_timeout` | `error_codes::kPeripheralDaemonTimeout` | `pyneat.ERROR_PERIPHERAL_DAEMON_TIMEOUT` |
+| `infra.peripheral_daemon_not_ready` | `error_codes::kPeripheralDaemonNotReady` | `pyneat.ERROR_PERIPHERAL_DAEMON_NOT_READY` |
 | `DispatcherUnavailable` (застаріла версія) | `error_codes::kDispatcherUnavailableLegacy` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE_LEGACY` |
 | `internal.plugin_failure` | `error_codes::kInternalPluginFailure` | `pyneat.ERROR_INTERNAL_PLUGIN_FAILURE` |
 
@@ -112,6 +116,7 @@ Neat повідомляє про виявлені помилки за допом
 | `io.camera_not_found` | Запитана камера недоступна. | Виберіть доступну камеру або використовуйте камеру за замовчуванням. |
 | `io.model_not_found` | Запитний архів моделі не знайдено. | Перевірте шлях до моделі та переконайтеся, що архів встановлено. |
 | `io.source_ended` | Джерело вхідних даних досягло свого звичайного кінця. | Припиніть отримувати дані з цього джерела або надайте додаткові дані, якщо застосунок вимагає більше інформації. |
+| `io.response_too_large` | Обмежена відповідь локального протоколу перевищує задокументований розмір. | Зменште каталог або встановіть сумісні версії клієнта й служби. |
 
 ## Збої під час матеріалізації конвеєра.
 
@@ -146,6 +151,9 @@ Neat повідомляє про виявлені помилки за допом
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat не може отримати доступ до середовища виконання прискорювача. | Переконайтеся у сумісності з DevKit і зупиніть робочі навантаження, які ексклюзивно використовують прискорювач. |
 | Виникла помилка під час виконання етапу моделі прискорювачем. `infra.accelerator_execution_failed` | Прискорювач не може виконати етап моделі. | Перезапустіть конвеєр і зменште кількість одночасних завдань, що виконуються прискорювачем. |
+| `infra.peripheral_daemon_unavailable` | Сокет локального демона периферії відсутній, відмовляє у з’єднанні або зайнятий. | Встановіть і запустіть `simaai-peripherals.service`, а потім перевірте журнал. |
+| `infra.peripheral_daemon_timeout` | Обмежений у часі запит каталогу периферії не завершився. | Перевірте службу демона та стан постачальників і повторіть спробу. |
+| `infra.peripheral_daemon_not_ready` | Демон ще не створив придатний початковий каталог. | Перегляньте журнал демона й виправте повідомлену проблему постачальника або пристрою. |
 
 ## Внутрішні збої.
 

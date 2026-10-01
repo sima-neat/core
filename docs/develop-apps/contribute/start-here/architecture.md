@@ -705,8 +705,11 @@ The daemon also owns Linux device notifications, debounce, the authoritative
 catalog, scan and catalog revisions, replayable events, and its versioned local
 Unix-socket protocol. Providers remain under `services/`, and the wire-contract
 constants live under private `src/` headers; neither is installed as public
-Core API. Public Core and PyNeat clients are a separate change and must consume
-the daemon API rather than call a provider directly.
+Core API. `simaai::neat::peripherals::list()` and
+`pyneat.peripherals.list()` are stateless typed clients: each performs one
+bounded `GET /v1/catalog`, validates the v1 response, and returns that snapshot.
+They never call providers, scan hardware, cache results, subscribe to events,
+or fall back when the daemon is unavailable.
 
 `CameraInput` places `neatcamerabridge` immediately after its camera caps and
 before any live queue. During negotiation the bridge answers the upstream

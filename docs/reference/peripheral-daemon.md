@@ -66,6 +66,54 @@ Requests are limited to 8 KiB, response bodies to 4 MiB, and concurrent
 connections to 64. An oversized catalog fails with `response_too_large`
 instead of sending an unbounded response.
 
+## Core and PyNeat catalog client
+
+Applications should use the typed Core/PyNeat facade instead of parsing the
+socket protocol:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+#include <iostream>
+
+const auto catalog = simaai::neat::peripherals::list();
+for (const auto& peripheral : catalog) {
+  if (peripheral.camera && peripheral.camera->camera_name)
+    std::cout << *peripheral.camera->camera_name << '\n';
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+catalog = pyneat.peripherals.list()
+for peripheral in catalog:
+  if peripheral.camera and peripheral.camera.camera_name:
+    print(peripheral.camera.camera_name)
+```
+
+</CodeTab>
+</CodeTabs>
+
+The returned catalog is iterable and retains the daemon `instance_id`,
+`revision`, event `sequence`, `scan_sequence`, state, freshness timestamps,
+structured catalog error, provider issues, and device records. Camera records
+provide an optional exact `camera_name`, optional model, backend, and typed
+discrete modes or size ranges with the daemon's support decision and reason.
+Unknown device types retain their common `id`, `type`, and `provider` identity.
+
+Every call performs one bounded `GET /v1/catalog`. The client has no hardware
+scanner, cache, event subscription, SSH transport, or fallback path. A ready
+empty catalog succeeds. A degraded last-good catalog is returned with
+`stale == true`; a daemon that has never produced a usable catalog raises
+`infra.peripheral_daemon_not_ready`.
+
 ### V1 response schema
 
 Health and catalog responses share these fields:

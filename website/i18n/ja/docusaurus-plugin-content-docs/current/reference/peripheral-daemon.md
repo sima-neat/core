@@ -62,6 +62,53 @@ systemd ユニットは非特権の `sima` ユーザーとして実行され、`
 要求は 8 KiB、応答本文は 4 MiB、同時接続は 64 に制限されます。大きすぎる
 カタログは、無制限に送信される代わりに `response_too_large` で失敗します。
 
+## Core と PyNeat のカタログクライアント
+
+アプリケーションはソケットプロトコルを直接解析せず、型付きの Core/PyNeat
+ファサードを使用してください。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+#include <iostream>
+
+const auto catalog = simaai::neat::peripherals::list();
+for (const auto& peripheral : catalog) {
+  if (peripheral.camera && peripheral.camera->camera_name)
+    std::cout << *peripheral.camera->camera_name << '\n';
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+catalog = pyneat.peripherals.list()
+for peripheral in catalog:
+  if peripheral.camera and peripheral.camera.camera_name:
+    print(peripheral.camera.camera_name)
+```
+
+</CodeTab>
+</CodeTabs>
+
+返されるカタログは反復可能で、デーモンの `instance_id`、`revision`、イベント
+`sequence`、`scan_sequence`、状態、鮮度のタイムスタンプ、構造化エラー、
+プロバイダーの問題、およびデバイスレコードを保持します。カメラレコードには、
+オプションの正確な `camera_name` とモデル、バックエンド、型付きの離散モードまたは
+サイズ範囲、デーモンのサポート判定と理由が含まれます。不明な種類も共通の `id`、
+`type`、`provider` を保持します。
+
+各呼び出しは、期限付きの `GET /v1/catalog` を 1 回だけ実行します。ハードウェア
+スキャナー、キャッシュ、イベント購読、SSH 転送、フォールバックはありません。
+準備済みの空カタログは成功し、劣化した最終正常カタログは `stale == true` で返ります。
+使用可能な初期カタログがない場合は `infra.peripheral_daemon_not_ready` が発生します。
+
 ### V1 応答スキーマ
 
 ヘルス応答とカタログ応答は、次のフィールドを共有します。

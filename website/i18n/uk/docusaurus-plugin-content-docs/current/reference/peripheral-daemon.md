@@ -64,6 +64,54 @@ HTTP/JSON доступний лише через цей Unix-сокет, без 
 Запити обмежено 8 КіБ, тіла відповідей — 4 МіБ, а кількість одночасних з’єднань — 64.
 Завеликий каталог завершується помилкою `response_too_large`, а не надсилається без обмежень.
 
+## Клієнт каталогу Core і PyNeat
+
+Застосунки мають використовувати типізований фасад Core/PyNeat замість самостійного
+розбору протоколу сокета:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+#include <iostream>
+
+const auto catalog = simaai::neat::peripherals::list();
+for (const auto& peripheral : catalog) {
+  if (peripheral.camera && peripheral.camera->camera_name)
+    std::cout << *peripheral.camera->camera_name << '\n';
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+catalog = pyneat.peripherals.list()
+for peripheral in catalog:
+  if peripheral.camera and peripheral.camera.camera_name:
+    print(peripheral.camera.camera_name)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Повернений каталог можна перебирати; він зберігає `instance_id` демона, `revision`,
+`sequence` подій, `scan_sequence`, стан, часові позначки актуальності, структуровану помилку,
+проблеми постачальників і записи пристроїв. Записи камер містять необов’язкові точні
+`camera_name` і модель, бекенд, типізовані дискретні режими або діапазони розмірів, а також
+рішення демона щодо підтримки та причину. Невідомі типи зберігають спільні `id`, `type` і
+`provider`.
+
+Кожен виклик виконує один обмежений у часі `GET /v1/catalog`. Клієнт не має сканера
+обладнання, кешу, підписки на події, SSH-транспорту чи резервного шляху. Готовий порожній
+каталог є успішним результатом. Останній добрий каталог у деградованому стані повертається з
+`stale == true`; якщо придатного початкового каталогу ще немає, виникає
+`infra.peripheral_daemon_not_ready`.
+
 ### Схема відповіді V1
 
 Відповіді стану та каталогу мають такі спільні поля:

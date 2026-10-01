@@ -549,6 +549,29 @@ if (TARGET sima_neat_peripheral_daemon_lib)
   set_property(TEST unit_peripheral_daemon_test APPEND PROPERTY LABELS "unit;peripherals")
 endif()
 
+add_pipeline_test(
+  unit_peripheral_client_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_peripheral_client_test.cpp
+)
+set_property(TEST unit_peripheral_client_test APPEND PROPERTY LABELS "unit;peripherals")
+
+# Installed-only helper used by PyNeat to verify that the public C++ and Python
+# facades map the same live daemon snapshot. It is intentionally not a CTest
+# entry because build hosts do not run the board-local peripheral daemon.
+add_executable(
+  peripheral_catalog_cpp_probe
+  ${CMAKE_CURRENT_SOURCE_DIR}/integration/peripheral_catalog_cpp_probe.cpp
+)
+target_link_libraries(peripheral_catalog_cpp_probe PRIVATE sima_neat)
+set_target_properties(peripheral_catalog_cpp_probe PROPERTIES
+  INSTALL_RPATH "$ORIGIN/../..;${CMAKE_INSTALL_RPATH}"
+)
+install(
+  TARGETS peripheral_catalog_cpp_probe
+  RUNTIME DESTINATION lib/sima-neat/tests
+  COMPONENT extras
+)
+
 if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 endif()

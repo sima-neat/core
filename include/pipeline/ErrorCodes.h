@@ -80,6 +80,8 @@ inline constexpr const char* kCameraNotFound = "io.camera_not_found";
 inline constexpr const char* kModelNotFound = "io.model_not_found";
 /// An input source ended normally and has no more data.
 inline constexpr const char* kSourceEnded = "io.source_ended";
+/// A bounded protocol response exceeded the client-side size limit.
+inline constexpr const char* kResponseTooLarge = "io.response_too_large";
 
 // ── Codec classes ─────────────────────────────────────────────────────────────────────────
 /// The input did not contain a valid H.264 access unit before EOS.
@@ -112,6 +114,12 @@ inline constexpr const char* kDiskFull = "resource.disk_full";
 inline constexpr const char* kDispatcherUnavailable = "infra.dispatcher_unavailable";
 /// The dispatcher was available, but accelerator execution failed.
 inline constexpr const char* kAcceleratorExecutionFailed = "infra.accelerator_execution_failed";
+/// The board-local peripheral daemon socket is absent or refused the connection.
+inline constexpr const char* kPeripheralDaemonUnavailable = "infra.peripheral_daemon_unavailable";
+/// The peripheral daemon did not complete the bounded catalog request in time.
+inline constexpr const char* kPeripheralDaemonTimeout = "infra.peripheral_daemon_timeout";
+/// The peripheral daemon has not produced a usable initial catalog.
+inline constexpr const char* kPeripheralDaemonNotReady = "infra.peripheral_daemon_not_ready";
 /// Legacy spelling kept for compatibility with older reports. Prefer `kDispatcherUnavailable`.
 inline constexpr const char* kDispatcherUnavailableLegacy = "DispatcherUnavailable";
 

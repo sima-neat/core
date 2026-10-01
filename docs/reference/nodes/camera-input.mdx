@@ -19,7 +19,11 @@ Before you use `CameraInput`, bring up the camera outside Neat:
 - confirm libcamera lists the camera;
 - confirm `libcamerasrc` can stream the exact `format,width,height,framerate` you plan to request.
 
-`camera_name` is the libcamera camera name. Leave it unset for the default camera, or copy the name from `cam -l` when the board exposes more than one camera.
+`camera_name` is the exact libcamera camera name. Leave it unset for the default
+camera, or read selectable names and daemon-classified modes from
+`simaai::neat::peripherals::list()` / `pyneat.peripherals.list()`. The catalog
+client fails if `simaai-peripherals.service` is unavailable; it does not run a
+backup hardware scan.
 
 ## Quick start
 
@@ -104,7 +108,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `camera_name` | unset | Optional libcamera camera name, usually copied from `cam -l`. Leave unset to let libcamera choose the default camera. |
+| `camera_name` | unset | Optional exact libcamera camera name from the `camera.camera_name` field returned by the peripheral catalog. Leave unset to let libcamera choose the default camera. |
 | `width` | `1920` | Requested frame width in pixels. Must be supported by the camera mode and overlay. |
 | `height` | `1080` | Requested frame height in pixels. |
 | `framerate_num` | `30` | Framerate numerator. |

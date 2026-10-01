@@ -60,6 +60,50 @@ systemd 單元會以非特權的 `sima` 使用者執行、為 `sima` 群組建�
 要求限制為 8 KiB、回應本文限制為 4 MiB，並行連線限制為 64。過大的目錄會以
 `response_too_large` 失敗，而不會無限制傳送。
 
+## Core 與 PyNeat 目錄用戶端
+
+應用程式應使用型別化的 Core/PyNeat 介面，而不是自行解析 socket 通訊協定：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+#include <iostream>
+
+const auto catalog = simaai::neat::peripherals::list();
+for (const auto& peripheral : catalog) {
+  if (peripheral.camera && peripheral.camera->camera_name)
+    std::cout << *peripheral.camera->camera_name << '\n';
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+catalog = pyneat.peripherals.list()
+for peripheral in catalog:
+  if peripheral.camera and peripheral.camera.camera_name:
+    print(peripheral.camera.camera_name)
+```
+
+</CodeTab>
+</CodeTabs>
+
+傳回的目錄可供迭代，並保留常駐程式的 `instance_id`、`revision`、事件 `sequence`、
+`scan_sequence`、狀態、新鮮度時間戳記、結構化目錄錯誤、提供者問題與裝置記錄。
+相機記錄提供選用的確切 `camera_name` 與型號、後端、型別化離散模式或大小範圍，
+以及常駐程式的支援判定與原因。未知裝置類型仍保留共同的 `id`、`type` 和 `provider`。
+
+每次呼叫只會執行一次有期限的 `GET /v1/catalog`。用戶端沒有硬體掃描器、快取、
+事件訂閱、SSH 傳輸或備援路徑。已就緒的空目錄會成功；降級的最後良好目錄會以
+`stale == true` 傳回。尚未產生可用初始目錄時，會引發
+`infra.peripheral_daemon_not_ready`。
+
 ### V1 回應結構
 
 健康狀態與目錄回應共用下列欄位：

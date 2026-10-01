@@ -549,9 +549,11 @@ Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行�
 
 常駐程式也擁有 Linux 裝置通知、更新合併、權威目錄、掃描序號與目錄修訂版、
 可重播事件，以及有版本的本機 Unix socket 通訊協定。提供者保留在 `services/`，
-而線路合約常數放在私有 `src/` 標頭中；兩者都不會安裝為公開 Core API。公開的
-Core 與 PyNeat 用戶端會由另一項變更加入，而且必須使用常駐程式 API，不得直接
-呼叫提供者。
+而線路合約常數放在私有 `src/` 標頭中；兩者都不會安裝為公開 Core API。
+`simaai::neat::peripherals::list()` 與 `pyneat.peripherals.list()` 是無狀態的型別化
+用戶端。每次呼叫只會執行一次有期限的 `GET /v1/catalog`、驗證 V1 回應，並傳回該
+快照。它們不會直接呼叫提供者、掃描硬體、快取結果、訂閱事件，或在常駐程式無法
+使用時採用備援路徑。
 
 `CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 在協商期間，橋接器會使用標準池來回應上游的 `GST_QUERY_ALLOCATION`，並請求 `GstVideoMeta`。 該池會分配來自一個打包的 SiMaAI 設定的已驗證平面，並為每個平面匯出一個 DMA-BUF。 一個相容的 `libcamerasrc` 會將這些 DMA-BUF 匯入到 ISP 捕獲佇列中。 然後，橋接器會解包相同的打包設定，以進行下游處理。 嚴格模式會拒絕任何不滿足該合約的緩衝區；CPU 複製仍然是一種明確的相容性後備方案。
 
