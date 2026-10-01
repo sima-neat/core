@@ -127,6 +127,7 @@ jobs:
             tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_cpp_tidy_scope.py \
             tests/tools/test_vulcan_ci_notification.py
 
       - name: Resolve cache namespace and access
@@ -218,7 +219,6 @@ jobs:
       - name: Install code hygiene tools
         run: |
           ./scripts/ci/install_code_hygiene_deps.sh
-          ./build.sh --install-deps-only
 
       - name: Verify host C++ headers for clang-tidy
         run: |
@@ -228,6 +228,7 @@ jobs:
       - name: Run changed-code hygiene
         env:
           SIMANEAT_STRICT_WARNINGS: "ON"
+          TIDY_INSTALL_DEPS: "1"
         run: |
           ./scripts/ci/run_code_hygiene.sh --changed-only --format-verbose
 
