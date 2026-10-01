@@ -8,6 +8,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,8 @@ public:
       std::function<void(FakeSvcClient&, const std::string& tag, const std::string& payload)>;
 
   OnNotify on_notify;
-  unsigned listeners = 1; ///< what notify() reports as the far-side subscriber count
+  unsigned listeners = 1;          ///< what notify() reports as the far-side subscriber count
+  bool throw_on_next_recv = false; ///< the next recv() throws (an svc error), once
 
   void subscribe(const std::string& tag) override {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -41,6 +43,10 @@ public:
 
   RecvStatus recv(SvcNote& out, int timeout_ms) override {
     std::unique_lock<std::mutex> lock(mutex_);
+    if (throw_on_next_recv) {
+      throw_on_next_recv = false;
+      throw std::runtime_error("simaai_svc_recv failed: rc=-5");
+    }
     cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                  [&] { return !incoming_.empty() || disconnected_; });
     if (!incoming_.empty()) {
