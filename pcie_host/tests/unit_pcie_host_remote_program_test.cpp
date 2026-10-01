@@ -73,6 +73,22 @@ int main() {
               "default name must appear in launch + both start-time checks");
     }
 
+    // The busy check treats ANY live pid in the queue pid file as the owner,
+    // whatever its program: a custom name we cannot know can own the queue.
+    {
+      pcie::ConnectionOptions options;
+      const pcie_internal::RemoteRuntime runtime(options, "beta-backend");
+      const std::string cmd = runtime.build_start_command(2, "/tmp/model", std::nullopt);
+      const std::size_t busy = cmd.find("queue_busy: live pid");
+      const std::size_t live = cmd.rfind("kill -0 \"$pid\"", busy);
+      require(busy != std::string::npos && live != std::string::npos,
+              "a live pid is reported as queue_busy with its pid");
+      require(cmd.substr(live, busy - live).find("grep") == std::string::npos,
+              "the busy check must not depend on the owner's program name");
+      require(contains(cmd.substr(live, busy - live), "[ -d \"/proc/$pid\" ]"),
+              "the busy check also sees a live owner of another user");
+    }
+
     // The safety interlock: an overridden name must appear in every spot and the
     // stale default must appear NOWHERE (else the host cannot confirm or stop it).
     {
@@ -83,13 +99,8 @@ int main() {
               "override start must launch the new helper path");
       require(count_occurrences(cmd, "pcie-genai-backend") >= 3,
               "override name must appear in launch + both start-time checks");
-      // The default name appears once: only in the busy check, which treats a
-      // live owner of ANY card program as busy (so a live tensor pipeline on
-      // this queue is never erased), never in the claim or kill checks.
-      require(count_occurrences(cmd, "pcie-pipeline-builder") == 1 &&
-                  contains(cmd, "grep -qF -e 'pcie-genai-backend' -e 'pcie-pipeline-builder' "
-                                "-e 'pcie-genai-backend'"),
-              "the default name is only in the any-card-program busy check");
+      require(!contains(cmd, "pcie-pipeline-builder"),
+              "override start must not carry the stale default name anywhere");
     }
 
     // The stop command guards the kill with the same cmdline check.
