@@ -169,3 +169,85 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | 풀 타임아웃 | 카메라가 프레임을 전송하지 못했거나, 그래프에 역압력이 발생했거나, 카메라 스택이 스트리밍을 중단했습니다. |
 <<번역>>
 | 녹색, 보라색 또는 색조가 강한 프레임 | 프레임 형식 또는 모델의 색상 변환 전처리 과정에 오류가 있거나, 카메라 ISP/libcamera 출력에 이미 색조가 적용되어 있습니다. 먼저 `NV12` 캡처를 Neat에서 확인하십시오. |
+
+## 명시적 raw V4L2 캡처: Metoak S315
+
+인수가 두 개인 `CameraInput` 팩토리는 libcamera 대신 raw V4L2 캡처를 선택합니다. raw 입력용 `MetoakDepth` 오버로드에 직접 연결하세요. 별도 카메라 드라이버 노드나 애플리케이션 언패킹 루프는 필요하지 않습니다. 인수가 하나인 카메라 API와 평면 깊이 API는 변경되지 않습니다.
+
+**실행 사전 조건:** raw 그래프 21 지원을 알리는 서로 일치하는 Core, Internals 및 EV74 펌웨어를 사용하세요. 그래프 20 전용 펌웨어로는 충분하지 않습니다. 현재 백엔드는 `QUERYCAP` 직후, 캡처 버퍼 할당이나 큐 등록 전에 모든 `platform:` 캡처 드라이버를 거부합니다. 실제 캡처를 활성화하려면 중지, 시작 실패 및 파일 디스크립터 해제 시 DMA 완료를 보장하는 검증된 커널 계약을 통합해야 합니다. 사용자 우회 방법은 없습니다. 아래 예제는 그래프만 구성하며 검증된 실제 카메라 세션이 아닙니다. ioctl에서 이미 차단된 카메라 드라이버를 반복해서 조사하지 마세요.
+
+S315 raw 계약은 고정되어 있습니다. `BA81` 전송, UInt8 와이어 텐서 `[360,1920]`, 디코딩된 크기 `640x360`을 사용합니다. 여기서 `BA81`은 디모자이킹할 이미지가 아니라 전송 바이트를 의미합니다. EV74가 패킹된 페이로드와 보정 헤더를 해석합니다. 기본 모드에 대해 보정한 주점 `cx,cy`를 제공하세요. 이미지 중심으로 가정하지 마세요. 보정값이 없으면 거부됩니다.
+
+다음 함수는 장치를 열지 않고 그래프를 구성합니다. 명시적 장치 경로와 보정된 주점을 전달하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace n = simaai::neat;
+
+n::Graph make_metoak_graph(const std::string& device, float cx, float cy) {
+  n::CameraInputOptions camera;
+  camera.width = 1920;
+  camera.height = 360;
+  camera.format = "RAW8";
+  camera.buffer_name = "raw_src";
+
+  n::CameraV4L2Options backend;
+  backend.device = device;
+  backend.fourcc = "BA81";
+  backend.capture_buffer_count = 8;
+
+  n::MetoakDepthOptions depth;
+  depth.width = 640;
+  depth.height = 360;
+  n::MetoakRawInputOptions raw;
+  raw.cx = cx;
+  raw.cy = cy;
+
+  n::Graph graph;
+  graph.add(n::nodes::CameraInput(camera, backend));
+  graph.add(n::nodes::MetoakDepth(depth, raw));
+  graph.add(n::nodes::Output());
+  return graph;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as n
+
+
+def make_metoak_graph(device: str, cx: float, cy: float) -> n.Graph:
+    camera = n.CameraInputOptions()
+    camera.width, camera.height = 1920, 360
+    camera.format = "RAW8"
+    camera.buffer_name = "raw_src"
+
+    backend = n.CameraV4L2Options()
+    backend.device = device
+    backend.fourcc = "BA81"
+    backend.capture_buffer_count = 8
+
+    depth = n.MetoakDepthOptions()
+    depth.width, depth.height = 640, 360
+    raw = n.MetoakRawInputOptions()
+    raw.cx, raw.cy = cx, cy
+
+    graph = n.Graph()
+    graph.add(n.nodes.camera_input(camera, backend_options=backend))
+    graph.add(n.nodes.metoak_depth(depth, raw=raw))
+    graph.add(n.nodes.output())
+    return graph
+```
+
+</CodeTab>
+</CodeTabs>
+
+검증된 커널 통합으로 플랫폼 캡처가 활성화되면 소스 소유 그래프는 대표 입력이나 공개 `Input` 노드 없이 `graph.build()`를 사용합니다. 그 전에는 그래프 구성만 하세요. 플랫폼 캡처 실행은 차단됩니다. 출력 계약은 `rgb_dst` (UInt8 RGB), `depth_dst` (UInt16 밀리미터), `points_dst` (Float32 XYZ 미터)를 제공합니다.
+
+이 백엔드에서는 `CameraInputOptions.format`을 `RAW8`로 설정하고, `camera_name`을 미설정 상태로, `allow_cpu_fallback`을 false로 유지해야 합니다. `CameraV4L2Options.capture_buffer_count`는 4–128을 허용하며 기본값은 8입니다. 캡처 주기는 libcamera 프레임레이트 필드가 아니라 설정된 장치 모드를 따릅니다. Neat는 실제 행 스트라이드, 유효 페이로드 길이, 프레임 식별자 및 시간을 보존하며 소비자가 완료될 때까지 버퍼를 유지합니다. 캡처 할당에 드라이버 트레일러가 포함될 수 있지만 이 트레일러는 텐서의 일부가 아닙니다. DMA 완료 여부가 불명확하면 리소스를 해제하거나 자동으로 재시도하지 마세요.

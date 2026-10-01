@@ -229,6 +229,48 @@ void test_metoak_depth_launch_buffer_contract() {
   require(rejected, "Missing pool properties must still fail before pipeline parsing");
 }
 
+void test_metoak_raw_public_api() {
+  using namespace simaai::neat;
+  MetoakDepthOptions options;
+  options.width = 640;
+  options.height = 360;
+  bool rejected = false;
+  try {
+    (void)nodes::MetoakDepth(options, MetoakRawInputOptions{});
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "raw principal point must be explicitly supplied");
+  auto node = nodes::MetoakDepth(options, MetoakRawInputOptions{319.5f, 179.5f});
+  auto* provider = dynamic_cast<NodeContractProvider*>(node.get());
+  require(provider != nullptr, "raw Metoak must compile a typed contract");
+  const auto definition = provider->contract_definition();
+  require(definition.inputs.size() == 1 && definition.outputs.size() == 3,
+          "raw Metoak exposes one captured tensor and all three outputs");
+  require_port(definition.inputs.front(), "raw_src", "raw Metoak input");
+  require_contains(node->backend_fragment(2), "num-buffers=4", "raw async buffer contract");
+  auto renamed_output = options;
+  renamed_output.depth_output_name = "custom_depth";
+  rejected = false;
+  try {
+    (void)nodes::MetoakDepth(renamed_output, MetoakRawInputOptions{319.5f, 179.5f});
+  } catch (const std::runtime_error& error) {
+    rejected = true;
+    require_contains(error.what(), "canonical tensor names", "raw output alias diagnostic");
+    require(std::string(error.what()).find("graph 20") == std::string::npos,
+            "raw output alias diagnostic must not identify the planar graph");
+  }
+  require(rejected, "raw customized output names must fail before runtime binding");
+  options.width = 638;
+  rejected = false;
+  try {
+    (void)nodes::MetoakDepth(options, MetoakRawInputOptions{319.5f, 179.5f});
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "raw format must not inherit arbitrary planar geometry");
+}
+
 } // namespace
 
 int main() {
@@ -239,6 +281,7 @@ int main() {
     test_track_klt_public_api();
     test_metoak_depth_public_api();
     test_metoak_depth_launch_buffer_contract();
+    test_metoak_raw_public_api();
     std::cout << "[OK] unit_visual_frontend_node_api_test passed\n";
     return 0;
   } catch (const std::exception& e) {

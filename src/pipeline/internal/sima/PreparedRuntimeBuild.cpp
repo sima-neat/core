@@ -360,7 +360,7 @@ bool processcvu_stage_is_manifest_substitution_local(const StageStaticSpec& stag
          canonical_family == "quanttess" || canonical_family == "cast" ||
          canonical_family == "casttess" || canonical_family == "feature_histogram" ||
          canonical_family == "grider_fast" || canonical_family == "track_descriptor" ||
-         canonical_family == "track_klt" || canonical_family == "simor_depth_map";
+         canonical_family == "track_klt" || canonical_family == "simor_depth_map" || canonical_family == "simor_raw_depth_map";
 }
 
 bool stage_is_graph_owned_local(const StageStaticSpec& stage) {
@@ -1681,6 +1681,9 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
   cfg.scaled_width = payload.scaled_width;
   cfg.scaled_height = payload.scaled_height;
   cfg.input_stride = payload.input_stride;
+  cfg.raw_stride = payload.raw_stride;
+  cfg.raw_cx = payload.raw_cx;
+  cfg.raw_cy = payload.raw_cy;
   cfg.output_stride = payload.output_stride;
   cfg.input_offset = payload.input_offset;
   cfg.batch_size = payload.batch_size;
@@ -2427,13 +2430,13 @@ std::string processcvu_canonical_graph_name_local(std::string graph_name) {
 }
 
 bool processcvu_is_native_visual_graph_local(const std::string& graph_name, int graph_id) {
-  if ((graph_id >= 235 && graph_id <= 238) || graph_id == 20) {
+  if ((graph_id >= 235 && graph_id <= 238) || graph_id == 20 || graph_id == 21) {
     return true;
   }
   const std::string canonical = processcvu_canonical_graph_name_local(graph_name);
   return canonical == "feature_histogram" || canonical == "grider_fast" ||
          canonical == "track_descriptor" || canonical == "track_klt" ||
-         canonical == "simor_depth_map";
+         canonical == "simor_depth_map" || canonical == "simor_raw_depth_map";
 }
 
 bool processcvu_graph_family_uses_packed_input_transport_local(const std::string& graph_family) {
@@ -3373,6 +3376,13 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
   }
 
   const auto& payload = original_stage.processcvu;
+  // The V2 MPK bridge cannot carry raw-camera calibration. The source-driven
+  // typed node uses prepared ABI v4; never silently zero calibration via V2.
+  if (payload.graph_id == 21 || payload.graph_name == "simor_raw_depth_map") {
+    if (error_message)
+      *error_message = "SIMOR raw ingress requires the typed source graph, not MPK bridge V2";
+    return false;
+  }
   simaai::neat::GraphProcessCvuStageRequestV2 request_v2;
   auto& request = request_v2.request;
   request.stage_key = stage_key;

@@ -4,6 +4,7 @@
 #include "gst/GstLatestByStreamMux.h"
 #include "gst/GstNeatMultipartJpegDemux.h"
 #include "gst/NeatCameraMemoryBridge.h"
+#include "gst/NeatRawCameraSource.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -1410,6 +1411,9 @@ void gst_init_once() {
     }
     if (!register_neat_camera_memory_bridge()) {
       throw std::runtime_error("Failed to register Neat private camera memory bridge");
+    }
+    if (!register_neat_raw_camera_source()) {
+      throw std::runtime_error("Failed to register Neat private raw camera source");
     }
     if (!register_neat_multipart_jpeg_demux()) {
       throw std::runtime_error("Failed to register Neat private multipart JPEG demuxer");

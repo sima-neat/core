@@ -27,7 +27,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)22)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)23)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -277,6 +277,10 @@ typedef struct SimaPluginProcessCvuStagePayload {
   gint detect_new_features;
   gint fast_threshold;
   gint debug;
+  /* Raw SIMOR ingress calibration; interpreted only by its versioned graph. */
+  gint raw_stride;
+  gfloat raw_cx;
+  gfloat raw_cy;
   guint32 opt_flags;
   gboolean canonical_contract;
   gboolean preproc_single_output_handoff;

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -275,7 +276,7 @@ void require_metoak_depth_envelope(const MetoakDepthOptions& opt) {
       opt.disp_name != "disp_src" || opt.bf_mm_name != "bf_mm_src" || opt.proj_name != "proj_src" ||
       opt.rgb_output_name != "rgb_dst" || opt.depth_output_name != "depth_dst" ||
       opt.points_output_name != "points_dst") {
-    throw std::runtime_error("MetoakDepth: graph 20 requires the canonical tensor names");
+    throw std::runtime_error("MetoakDepth requires canonical tensor names for its input/output contract");
   }
 
   // Fixed six-input/three-output contract (migration doc section 2); batch is always 1, so
@@ -356,7 +357,10 @@ sima_ev_tensor_desc build_contract_tensor_desc(const std::vector<int>& shape,
   // Graph 20 owns unsigned-16 arithmetic despite the legacy EV tag alias. Never
   // admit UInt16 through the generic cast/conversion helpers based on byte width.
   const std::string wire_dtype =
-      std::string(owner) == "simor_depth_map" && dtype == "UINT16" ? "INT16" : dtype;
+      (std::string(owner) == "simor_depth_map" || std::string(owner) == "simor_raw_depth_map") &&
+              dtype == "UINT16"
+          ? "INT16"
+          : dtype;
   bool ok = false;
   if (layout.empty()) {
     ok = tensorsemantics::build_generic_dense_tensor_desc(
@@ -820,6 +824,108 @@ RuntimeConfig make_runtime(const MetoakDepthOptions& opt) {
   return runtime;
 }
 
+void require_simor_raw_source(const OutputSpec& input) {
+  std::string dtype = input.dtype;
+  std::transform(dtype.begin(), dtype.end(), dtype.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  if (input.payload_type != PayloadType::Tensor ||
+      input.media_type != "application/vnd.simaai.tensor" || input.format != "RAW_CAMERA_U8" ||
+      input.width != 1920 || input.height != 360 || input.depth != 1 || input.layout != "HW" ||
+      dtype != "UINT8") {
+    throw std::invalid_argument("MetoakDepth raw mode requires an unmodified RAW_CAMERA_U8 "
+                                "1920x360 UInt8 HW source with depth 1; "
+                                "Bayer/RGB conversion is not permitted");
+  }
+}
+
+// The public factory composes capture with this private ingress specialization;
+// planar callers retain the original MetoakDepth class and options layout.
+class MetoakRawDepthNode final : public Node,
+                                 public OutputSpecProvider,
+                                 public NodeContractProvider,
+                                 public NodeContractConfigurable {
+public:
+  MetoakRawDepthNode(MetoakDepthOptions options, MetoakRawInputOptions raw)
+      : options_(std::move(options)), raw_(raw) {
+    require_metoak_depth_envelope(options_);
+    if (options_.width != 640 || options_.height != 360 || !std::isfinite(raw_.cx) ||
+        !std::isfinite(raw_.cy)) {
+      throw std::invalid_argument("MetoakDepth raw mode requires native 640x360 geometry "
+                                  "and explicit finite cx/cy calibration");
+    }
+  }
+  std::string kind() const override {
+    return "MetoakDepth";
+  }
+  NodeCapsBehavior caps_behavior() const override {
+    return NodeCapsBehavior::Static;
+  }
+  NodeContractDefinition contract_definition() const override {
+    return make_contract_definition(kind(), {"raw_src"}, {"rgb_dst", "depth_dst", "points_dst"});
+  }
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
+                             std::string* err) const override {
+    try {
+      if (!input.ingress.ingress_spec) {
+        throw std::invalid_argument("MetoakDepth raw mode requires an explicit source contract");
+      }
+      require_simor_raw_source(*input.ingress.ingress_spec);
+      if (input.immediate_upstream) {
+        throw std::invalid_argument("MetoakDepth raw input must not pass through a processing "
+                                    "stage before SIMOR decoding");
+      }
+      auto spec = spec_from_options(options_);
+      spec.graph_name = "simor_raw_depth_map";
+      spec.graph_id = 21;
+      spec.input_names = {"raw_src"};
+      spec.input_shapes = {{360, 1920}};
+      spec.transport_input_shapes = spec.input_shapes;
+      spec.input_dtypes = {"UINT8"};
+      spec.input_layouts = {"HW"};
+      auto runtime = make_runtime_base(spec);
+      runtime.width = 640;
+      runtime.height = 360;
+      runtime.debug = options_.debug;
+      // Negotiated row stride/valid span are checked and patched per captured frame.
+      runtime.raw_stride = 1920;
+      runtime.raw_cx = raw_.cx;
+      runtime.raw_cy = raw_.cy;
+      for (std::size_t i = 0; i < runtime.input_tensors.size(); ++i)
+        runtime.input_tensors[i].storage.nbytes =
+            shape_bytes(spec.input_shapes[i], spec.input_dtypes[i]);
+      for (std::size_t i = 0; i < runtime.output_tensors.size(); ++i)
+        runtime.output_tensors[i].storage.nbytes =
+            shape_bytes(spec.output_shapes[i], spec.output_dtypes[i]);
+      return compile_runtime_contract(kind(), element_names(input.node_index).front(),
+                                      contract_definition(), runtime, out, err);
+    } catch (const std::exception& error) {
+      if (err)
+        *err = error.what();
+      return false;
+    }
+  }
+  void apply_compiled_contract(const CompiledNodeContract&, std::string* err) override {
+    if (err)
+      err->clear();
+  }
+  std::vector<std::string> element_names(int index) const override {
+    return {options_.element_name.empty() ? default_element_name(index, "metoak_raw_depth")
+                                          : options_.element_name};
+  }
+  std::string backend_fragment(int index) const override {
+    return processcvu_backend_fragment(element_names(index).front(),
+                                       options_.num_buffers > 0 ? options_.num_buffers : 4);
+  }
+  OutputSpec output_spec(const OutputSpec& input) const override {
+    require_simor_raw_source(input);
+    return tensor_output_spec("METOAK_DEPTH", {360, 640}, "UINT16", input, "HW");
+  }
+
+private:
+  MetoakDepthOptions options_;
+  MetoakRawInputOptions raw_;
+};
+
 } // namespace
 
 FeatureHistogram::FeatureHistogram(FeatureHistogramOptions opt) : opt_(std::move(opt)) {}
@@ -1075,5 +1181,8 @@ std::shared_ptr<simaai::neat::Node> TrackKLT(TrackKLTOptions opt) {
 }
 std::shared_ptr<simaai::neat::Node> MetoakDepth(MetoakDepthOptions opt) {
   return std::make_shared<simaai::neat::MetoakDepth>(std::move(opt));
+}
+std::shared_ptr<simaai::neat::Node> MetoakDepth(MetoakDepthOptions opt, MetoakRawInputOptions raw) {
+  return std::make_shared<simaai::neat::MetoakRawDepthNode>(std::move(opt), raw);
 }
 } // namespace simaai::neat::nodes

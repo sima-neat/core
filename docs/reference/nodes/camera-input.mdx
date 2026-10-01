@@ -187,3 +187,85 @@ For model pipelines, configure preprocessing through `Model::Options::preprocess
 | Strict zero-copy error | `allow_cpu_fallback` is false and the camera source does not expose SiMaAI zero-copy properties. |
 | Pull timeout | The camera did not deliver frames, the graph is backpressured, or the camera stack stopped streaming. |
 | Green, purple, or heavily tinted frames | The frame format or model preprocess color conversion is wrong, or the tint already exists in the camera ISP/libcamera output. Validate an `NV12` capture outside Neat first. |
+
+## Explicit raw V4L2 capture: Metoak S315
+
+The two-argument `CameraInput` factory selects raw V4L2 capture instead of libcamera. Connect it directly to the raw-input `MetoakDepth` overload; no separate camera driver node or application unpacking loop is needed. The one-argument camera and planar depth APIs remain unchanged.
+
+**Execution prerequisite:** use matching Core, Internals and EV74 firmware advertising raw graph 21. Graph 20 firmware alone is insufficient. The current backend rejects all `platform:` capture drivers immediately after `QUERYCAP`, before allocating or queueing capture buffers. Enabling live capture requires a qualified kernel contract for DMA completion on stop, failed start and file-descriptor release; there is no user bypass. The examples below construct graphs, not a qualified live-camera session. Do not repeatedly probe a camera driver already blocked in an ioctl.
+
+The S315 raw contract is fixed: `BA81` transport, UInt8 wire tensor `[360,1920]`, and decoded geometry `640x360`. `BA81` identifies transport bytes here, not an image to demosaic. EV74 interprets the packed payload and calibration header. Supply the calibrated principal point `cx,cy` for the native mode; do not assume the image center. Missing calibration is rejected.
+
+These functions construct the graph without opening a device. Pass your explicit device path and calibrated principal point:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace n = simaai::neat;
+
+n::Graph make_metoak_graph(const std::string& device, float cx, float cy) {
+  n::CameraInputOptions camera;
+  camera.width = 1920;
+  camera.height = 360;
+  camera.format = "RAW8";
+  camera.buffer_name = "raw_src";
+
+  n::CameraV4L2Options backend;
+  backend.device = device;
+  backend.fourcc = "BA81";
+  backend.capture_buffer_count = 8;
+
+  n::MetoakDepthOptions depth;
+  depth.width = 640;
+  depth.height = 360;
+  n::MetoakRawInputOptions raw;
+  raw.cx = cx;
+  raw.cy = cy;
+
+  n::Graph graph;
+  graph.add(n::nodes::CameraInput(camera, backend));
+  graph.add(n::nodes::MetoakDepth(depth, raw));
+  graph.add(n::nodes::Output());
+  return graph;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as n
+
+
+def make_metoak_graph(device: str, cx: float, cy: float) -> n.Graph:
+    camera = n.CameraInputOptions()
+    camera.width, camera.height = 1920, 360
+    camera.format = "RAW8"
+    camera.buffer_name = "raw_src"
+
+    backend = n.CameraV4L2Options()
+    backend.device = device
+    backend.fourcc = "BA81"
+    backend.capture_buffer_count = 8
+
+    depth = n.MetoakDepthOptions()
+    depth.width, depth.height = 640, 360
+    raw = n.MetoakRawInputOptions()
+    raw.cx, raw.cy = cx, cy
+
+    graph = n.Graph()
+    graph.add(n.nodes.camera_input(camera, backend_options=backend))
+    graph.add(n.nodes.metoak_depth(depth, raw=raw))
+    graph.add(n.nodes.output())
+    return graph
+```
+
+</CodeTab>
+</CodeTabs>
+
+Once a qualified kernel integration enables platform capture, the source-owned graph uses `graph.build()` without representative inputs or a public `Input` node. Until then, construct the graph only; platform capture execution is blocked. The output contract provides `rgb_dst` (UInt8 RGB), `depth_dst` (UInt16 millimeters), and `points_dst` (Float32 XYZ meters).
+
+For this backend, `CameraInputOptions.format` must be `RAW8`, `camera_name` must be unset, and `allow_cpu_fallback` must remain false. `CameraV4L2Options.capture_buffer_count` accepts 4–128; the default is 8. Capture cadence follows the configured device mode, not the libcamera framerate fields. Neat preserves actual row strides, valid payload length, frame identity and timing while retaining buffers until their consumers finish. Capture allocation may include a driver trailer; that trailer is not part of the tensor. On ambiguous DMA completion, do not release resources or retry automatically.

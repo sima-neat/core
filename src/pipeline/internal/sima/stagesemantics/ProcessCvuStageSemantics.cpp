@@ -1002,6 +1002,8 @@ std::string payload_dbg_processcvu_local(const ProcessCvuStagePayload& payload) 
       << ",input_layout=\"" << payload_input_layout_token_local(payload) << "\""
       << ",output_layout=\"" << payload_output_layout_token_local(payload) << "\""
       << ",scaled_width=" << payload.scaled_width << ",scaled_height=" << payload.scaled_height
+      << ",raw_stride=" << payload.raw_stride << ",raw_cx=" << payload.raw_cx
+      << ",raw_cy=" << payload.raw_cy
       << ",input_stride=" << payload.input_stride << ",output_stride=" << payload.output_stride
       << ",input_offset=" << payload.input_offset << ",batch_size=" << payload.batch_size
       << ",round_off=" << payload.round_off << ",byte_align=" << payload.byte_align
@@ -2374,7 +2376,8 @@ ProcessCvuGraphFamily family_enum_from_name(const std::string& graph_family) {
     return ProcessCvuGraphFamily::DetessDequant;
   }
   if (family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
-      family == "track_klt" || family == "simor_depth_map") {
+      family == "track_klt" || family == "simor_depth_map" ||
+      family == "simor_raw_depth_map") {
     // simor_depth_map (MetoakDepth) reuses the VisualFrontend family: it's the same
     // "native, non-ML EV74 kernel dispatched through neatprocesscvu" shape as the
     // feature/tracking graphs, just with its own six-input/three-output contract and its
@@ -4288,13 +4291,13 @@ ProcessCvuCanonicalFacts build_preproc_facts_from_payload(const ProcessCvuStageP
 }
 
 bool native_visual_payload_prefers_logical_input_shapes(const ProcessCvuStagePayload& payload) {
-  if ((payload.graph_id >= 235 && payload.graph_id <= 238) || payload.graph_id == 20) {
+  if ((payload.graph_id >= 235 && payload.graph_id <= 238) || payload.graph_id == 20 || payload.graph_id == 21) {
     return true;
   }
   const std::string family = canonical_family_name(
       !payload.graph_family.empty() ? payload.graph_family : payload.graph_name);
   return family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
-         family == "track_klt" || family == "simor_depth_map";
+         family == "track_klt" || family == "simor_depth_map" || family == "simor_raw_depth_map";
 }
 
 ProcessCvuCanonicalFacts

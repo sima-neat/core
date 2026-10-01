@@ -15,7 +15,7 @@
 #include <vector>
 
 #define SIMA_PREPARED_RUNTIME_CONTEXT_TYPE "sima.model.prepared-runtime"
-#define SIMA_PREPARED_RUNTIME_ABI_VERSION ((guint)3)
+#define SIMA_PREPARED_RUNTIME_ABI_VERSION ((guint)4)
 
 #define SIMA_PREPARED_RUNTIME_KEY_SESSION_ID "session_id"
 #define SIMA_PREPARED_RUNTIME_KEY_MODEL_ID "model_id"
@@ -220,6 +220,9 @@ struct PreparedProcessCvuTypedConfig {
   int32_t detect_new_features = -1;
   int32_t fast_threshold = -1;
   int32_t debug = 0;
+  int32_t raw_stride = 0;
+  float raw_cx = 0.0f;
+  float raw_cy = 0.0f;
 
   int32_t scaled_width = -1;
   int32_t scaled_height = -1;

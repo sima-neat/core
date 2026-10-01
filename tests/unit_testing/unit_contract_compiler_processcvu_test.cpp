@@ -1,6 +1,7 @@
 #include "model/internal/ModelPack.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/CameraInput.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/VisualFrontend.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
@@ -787,6 +788,128 @@ RUN_TEST(
           rejected = true;
         }
         require(rejected, "Metoak logical type/descriptor mismatch must fail");
+      }
+
+      {
+        MetoakDepthOptions options;
+        options.width = 640;
+        options.height = 360;
+        auto node = nodes::MetoakDepth(options, MetoakRawInputOptions{319.5f, 179.5f});
+        auto* provider = dynamic_cast<NodeContractProvider*>(node.get());
+        require(provider != nullptr, "raw Metoak provider");
+        ContractCompileInput input;
+        CompiledNodeContract compiled;
+        std::string err;
+        require(!provider->compile_node_contract(input, &compiled, &err),
+                "raw input without a declared source must fail closed");
+        OutputSpec source;
+        source.payload_type = PayloadType::Tensor;
+        source.media_type = "application/vnd.simaai.tensor";
+        source.format = "RAW_CAMERA_U8";
+        source.depth = 1;
+        source.width = 1920;
+        source.height = 360;
+        source.layout = "HW";
+        source.dtype = "UINT8";
+        input.ingress.ingress_spec = source;
+        require(provider->compile_node_contract(input, &compiled, &err), err.c_str());
+        require(compiled.processcvu.has_value(), "raw Metoak compiled processcvu");
+        const auto& cvu = *compiled.processcvu;
+        require(cvu.payload.graph_id == 21 && cvu.payload.graph_name == "simor_raw_depth_map",
+                "raw graph must never reinterpret graph20");
+        require(cvu.payload.raw_cx == 319.5f && cvu.payload.raw_cy == 179.5f &&
+                    cvu.payload.raw_stride == 1920,
+                "raw calibration projection");
+        require(cvu.runtime_contract.logical_inputs.size() == 1 &&
+                    cvu.runtime_contract.physical_outputs.size() == 3,
+                "raw graph logical input/output count");
+        require(cvu.runtime_contract.logical_inputs.front().size_bytes == 691200,
+                "raw payload excludes driver trailer");
+        for (const auto* bad_format : {"RGB", "SBGGR8", "I420"}) {
+          input.ingress.ingress_spec->format = bad_format;
+          require(!provider->compile_node_contract(input, &compiled, &err),
+                  "raw graph rejects interpreted or converted images");
+        }
+        for (const auto* bad_dtype : {"INT8", "FP32", "UINT16", ""}) {
+          input.ingress.ingress_spec = source;
+          input.ingress.ingress_spec->dtype = bad_dtype;
+          require(!provider->compile_node_contract(input, &compiled, &err),
+                  "raw graph rejects non-UInt8 source descriptors");
+        }
+        for (int bad_depth : {0, 2, 3}) {
+          input.ingress.ingress_spec = source;
+          input.ingress.ingress_spec->depth = bad_depth;
+          require(!provider->compile_node_contract(input, &compiled, &err),
+                  "raw graph rejects multichannel or unspecified raw source depth");
+        }
+        input.ingress.ingress_spec = source;
+        input.ingress.ingress_spec->width = 640;
+        require(!provider->compile_node_contract(input, &compiled, &err),
+                "raw graph rejects logical width used as wire width");
+      }
+
+      {
+        // Regression for Graph::build(source)'s actual contract-compiler entry:
+        // no sample and no hand-injected ingress_spec. The real source supplies
+        // its declared raw tensor contract without opening a camera or plugin.
+        CameraInputOptions camera_options;
+        camera_options.width = 1920;
+        camera_options.height = 360;
+        camera_options.format = "RAW8";
+        camera_options.buffer_name = "raw_src";
+        CameraV4L2Options backend;
+        backend.device = "/dev/not-opened-by-contract-compilation";
+        auto camera = nodes::CameraInput(camera_options, backend);
+        MetoakDepthOptions depth_options;
+        depth_options.width = 640;
+        depth_options.height = 360;
+        auto depth = nodes::MetoakDepth(depth_options, MetoakRawInputOptions{319.5f, 179.5f});
+        const std::vector<std::shared_ptr<Node>> chain{camera, depth, nodes::Output()};
+        pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+        const auto compiled = compile_node_contracts(chain, ContractCompileInput{}, &diagnostics);
+        require(compiled.fully_renderable && diagnostics.errors.empty() &&
+                    compiled.stages.size() == 1 && compiled.stages[0].processcvu.has_value(),
+                "ordinary source-driven raw graph must derive its camera ingress contract");
+        require(compiled.stages[0].processcvu->payload.graph_id == 21,
+                "source-driven raw graph compiles graph21");
+
+        ContractCompileInput explicit_input;
+        explicit_input.ingress.ingress_spec = OutputSpec{};
+        diagnostics = {};
+        const auto rejected = compile_node_contracts(chain, explicit_input, &diagnostics);
+        require(!rejected.fully_renderable && !diagnostics.errors.empty(),
+                "explicit caller ingress must not be overwritten by source inference");
+
+        explicit_input.ingress.ingress_spec.reset();
+        explicit_input.ingress.ingress_contract = InputContract{};
+        diagnostics = {};
+        const auto explicit_contract = compile_node_contracts(chain, explicit_input, &diagnostics);
+        require(!explicit_contract.fully_renderable,
+                "explicit input contract must not be supplemented with conflicting source facts");
+
+        diagnostics = {};
+        const auto missing_source =
+            compile_node_contracts({depth}, ContractCompileInput{}, &diagnostics);
+        require(!missing_source.fully_renderable,
+                "a non-source node must not manufacture its own raw ingress");
+
+        // Existing image-camera contracts retain their declared geometry and
+        // normal native visual lowering; source inference is not raw-specific.
+        CameraInputOptions image_options;
+        image_options.width = 64;
+        image_options.height = 48;
+        image_options.format = "GRAY8";
+        FeatureHistogramOptions histogram_options;
+        histogram_options.width = 64;
+        histogram_options.height = 48;
+        auto image_camera = nodes::CameraInput(image_options);
+        diagnostics = {};
+        const auto image =
+            compile_node_contracts({image_camera, nodes::FeatureHistogram(histogram_options)},
+                                   ContractCompileInput{}, &diagnostics);
+        require(image.fully_renderable && diagnostics.errors.empty() && image.stages.size() == 1 &&
+                    image.stages[0].processcvu->payload.graph_id == 235,
+                "existing image-camera native visual graph remains renderable");
       }
 
       {

@@ -3771,6 +3771,35 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("stream_format", &simaai::neat::H264ParseOptions::stream_format)
       .def_rw("enforce_caps", &simaai::neat::H264ParseOptions::enforce_caps);
 
+  nb::class_<simaai::neat::MetoakDepthOptions>(m, "MetoakDepthOptions")
+      .def(nb::init<>())
+      .def_rw("width", &simaai::neat::MetoakDepthOptions::width)
+      .def_rw("height", &simaai::neat::MetoakDepthOptions::height)
+      .def_rw("debug", &simaai::neat::MetoakDepthOptions::debug)
+      .def_rw("num_buffers", &simaai::neat::MetoakDepthOptions::num_buffers)
+      .def_rw("element_name", &simaai::neat::MetoakDepthOptions::element_name)
+      .def_rw("y_name", &simaai::neat::MetoakDepthOptions::y_name)
+      .def_rw("u_name", &simaai::neat::MetoakDepthOptions::u_name)
+      .def_rw("v_name", &simaai::neat::MetoakDepthOptions::v_name)
+      .def_rw("disp_name", &simaai::neat::MetoakDepthOptions::disp_name)
+      .def_rw("bf_mm_name", &simaai::neat::MetoakDepthOptions::bf_mm_name)
+      .def_rw("proj_name", &simaai::neat::MetoakDepthOptions::proj_name)
+      .def_rw("rgb_output_name", &simaai::neat::MetoakDepthOptions::rgb_output_name)
+      .def_rw("depth_output_name", &simaai::neat::MetoakDepthOptions::depth_output_name)
+      .def_rw("points_output_name", &simaai::neat::MetoakDepthOptions::points_output_name)
+      .def("summary", &simaai::neat::MetoakDepthOptions::summary);
+
+  nb::class_<simaai::neat::MetoakRawInputOptions>(m, "MetoakRawInputOptions")
+      .def(nb::init<>())
+      .def_rw("cx", &simaai::neat::MetoakRawInputOptions::cx)
+      .def_rw("cy", &simaai::neat::MetoakRawInputOptions::cy);
+
+  nb::class_<simaai::neat::CameraV4L2Options>(m, "CameraV4L2Options")
+      .def(nb::init<>())
+      .def_rw("device", &simaai::neat::CameraV4L2Options::device)
+      .def_rw("fourcc", &simaai::neat::CameraV4L2Options::fourcc)
+      .def_rw("capture_buffer_count", &simaai::neat::CameraV4L2Options::capture_buffer_count);
+
   nb::class_<simaai::neat::FeatureHistogramOptions>(m, "FeatureHistogramOptions")
       .def(nb::init<>())
       .def_rw("width", &simaai::neat::FeatureHistogramOptions::width)
@@ -4014,6 +4043,25 @@ NB_MODULE(_pyneat_core, m) {
                                                                   capture_buffer_count);
       },
       "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
+  nodes_mod.def(
+      "camera_input",
+      [](simaai::neat::CameraInputOptions options,
+         simaai::neat::CameraV4L2Options backend_options) {
+        return simaai::neat::nodes::CameraInput(std::move(options), std::move(backend_options));
+      },
+      "options"_a, "backend_options"_a);
+  nodes_mod.def(
+      "metoak_depth",
+      [](simaai::neat::MetoakDepthOptions options) {
+        return simaai::neat::nodes::MetoakDepth(std::move(options));
+      },
+      "options"_a);
+  nodes_mod.def(
+      "metoak_depth",
+      [](simaai::neat::MetoakDepthOptions options, simaai::neat::MetoakRawInputOptions raw) {
+        return simaai::neat::nodes::MetoakDepth(std::move(options), raw);
+      },
+      "options"_a, "raw"_a);
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),

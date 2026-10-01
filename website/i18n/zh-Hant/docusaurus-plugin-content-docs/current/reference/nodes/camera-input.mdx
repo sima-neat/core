@@ -170,3 +170,85 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | 嚴格的零拷貝錯誤 |，`allow_cpu_fallback` 為「否」，且相機來源未公開 SiMaAI 零拷貝屬性。|
 | 讀取逾時 | 攝影機未傳輸畫面，圖的後壓過大，或攝影機堆疊已停止串流。|
 | 綠色、紫色或顏色過於鮮豔的相框。| 相框格式或模型的預處理色彩轉換可能出錯，或者相框的顏色已經存在於相機的 ISP/libcamera 輸出中。首先驗證一個 `NV12` 格式的圖像，看看是否在 Neat 之外也有同樣的問題。|
+
+## 明確指定原始 V4L2 擷取：Metoak S315
+
+雙引數的 `CameraInput` 工廠函式選擇原始 V4L2 擷取，而非 libcamera。請直接連接到原始輸入的 `MetoakDepth` 多載；不需要另一個相機驅動程式節點或應用程式解包迴圈。單引數相機 API 與平面深度 API 保持不變。
+
+**執行先決條件：** 使用版本相符且宣告支援原始圖 21 的 Core、Internals 與 EV74 韌體。僅支援圖 20 的韌體並不足夠。目前後端會在 `QUERYCAP` 後立即拒絕所有 `platform:` 擷取驅動程式，尚未配置擷取緩衝區或加入佇列。啟用實體擷取需要整合經驗證的核心契約，確保停止、啟動失敗與檔案描述元釋放時 DMA 已完成；沒有使用者繞過方式。以下範例僅建構圖，並非經驗證的實體相機工作階段。請勿反覆探查已在 ioctl 中阻塞的相機驅動程式。
+
+S315 原始契約固定使用 `BA81` 傳輸、UInt8 線路張量 `[360,1920]`，以及解碼後的尺寸 `640x360`。此處 `BA81` 代表傳輸位元組，而不是要進行去馬賽克處理的影像。EV74 會解讀封裝的酬載與校正標頭。請提供原生模式的校正主點 `cx,cy`，不要假定它位於影像中心。缺少校正值時會拒絕執行。
+
+下列函式只建立圖，不開啟裝置。請傳入明確的裝置路徑及校正主點：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace n = simaai::neat;
+
+n::Graph make_metoak_graph(const std::string& device, float cx, float cy) {
+  n::CameraInputOptions camera;
+  camera.width = 1920;
+  camera.height = 360;
+  camera.format = "RAW8";
+  camera.buffer_name = "raw_src";
+
+  n::CameraV4L2Options backend;
+  backend.device = device;
+  backend.fourcc = "BA81";
+  backend.capture_buffer_count = 8;
+
+  n::MetoakDepthOptions depth;
+  depth.width = 640;
+  depth.height = 360;
+  n::MetoakRawInputOptions raw;
+  raw.cx = cx;
+  raw.cy = cy;
+
+  n::Graph graph;
+  graph.add(n::nodes::CameraInput(camera, backend));
+  graph.add(n::nodes::MetoakDepth(depth, raw));
+  graph.add(n::nodes::Output());
+  return graph;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as n
+
+
+def make_metoak_graph(device: str, cx: float, cy: float) -> n.Graph:
+    camera = n.CameraInputOptions()
+    camera.width, camera.height = 1920, 360
+    camera.format = "RAW8"
+    camera.buffer_name = "raw_src"
+
+    backend = n.CameraV4L2Options()
+    backend.device = device
+    backend.fourcc = "BA81"
+    backend.capture_buffer_count = 8
+
+    depth = n.MetoakDepthOptions()
+    depth.width, depth.height = 640, 360
+    raw = n.MetoakRawInputOptions()
+    raw.cx, raw.cy = cx, cy
+
+    graph = n.Graph()
+    graph.add(n.nodes.camera_input(camera, backend_options=backend))
+    graph.add(n.nodes.metoak_depth(depth, raw=raw))
+    graph.add(n.nodes.output())
+    return graph
+```
+
+</CodeTab>
+</CodeTabs>
+
+經驗證的核心整合啟用平台擷取後，來源擁有的圖會使用 `graph.build()`，不需要代表性輸入或公開 `Input` 節點。在此之前，請僅建構圖；平台擷取執行仍被封鎖。輸出契約提供 `rgb_dst`（UInt8 RGB）、`depth_dst`（UInt16，公釐）與 `points_dst`（Float32 XYZ，公尺）。
+
+此後端要求 `CameraInputOptions.format` 為 `RAW8`，`camera_name` 未設定，且 `allow_cpu_fallback` 保持 false。`CameraV4L2Options.capture_buffer_count` 接受 4–128，預設為 8。擷取週期依照已設定的裝置模式，而不是 libcamera 的影格率欄位。Neat 會保留實際行步幅、有效酬載長度、影格身分與時間，並保留緩衝區直到所有使用者完成處理。擷取配置可能包含驅動程式的尾段，但尾段不是張量的一部分。若無法確定 DMA 是否完成，請勿釋放資源或自動重試。

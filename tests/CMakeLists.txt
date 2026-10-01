@@ -503,6 +503,8 @@ set(UNIT_TESTS
   unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
   unit_camera_allocation_query_test
+  unit_raw_camera_capture_test
+  unit_raw_camera_node_test
   unit_nodes_test
   unit_visual_frontend_node_api_test
   unit_plugin_failure_messages_test
@@ -532,6 +534,13 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+# Compile the injectable capture engine directly: these tests exercise no device
+# and must not depend on private helper symbol visibility in the shared library.
+if (TARGET unit_raw_camera_capture_test)
+  target_sources(unit_raw_camera_capture_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/gst/RawCameraCapture.cpp)
+endif()
 
 if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)

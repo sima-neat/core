@@ -1541,6 +1541,9 @@ private:
       out.spec.payload.processcvu.detect_new_features = stage.processcvu.detect_new_features;
       out.spec.payload.processcvu.fast_threshold = stage.processcvu.fast_threshold;
       out.spec.payload.processcvu.debug = stage.processcvu.debug;
+      out.spec.payload.processcvu.raw_stride = stage.processcvu.raw_stride;
+      out.spec.payload.processcvu.raw_cx = stage.processcvu.raw_cx;
+      out.spec.payload.processcvu.raw_cy = stage.processcvu.raw_cy;
       out.spec.payload.processcvu.opt_flags = stage.processcvu.opt_flags;
       out.spec.payload.processcvu.canonical_contract =
           stage.processcvu.canonical_contract ? TRUE : FALSE;

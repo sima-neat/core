@@ -68,6 +68,27 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
                        pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics) {
   CompiledPipelineContracts compiled;
   compiled.fully_renderable = true;
+  // Ordinary source-mode builds have no pushed sample from which to construct
+  // ingress facts. Use the source's declared output, without replacing explicit
+  // caller facts (including fused ingress) or guessing from non-source nodes.
+  ContractCompileInput resolved_input = input;
+  if (!resolved_input.ingress.ingress_spec && !resolved_input.ingress.ingress_contract &&
+      !nodes.empty() && nodes.front() && nodes.front()->input_role() == InputRole::Source) {
+    if (const auto* provider = dynamic_cast<const OutputSpecProvider*>(nodes.front().get())) {
+      const OutputSpec spec = provider->output_spec({});
+      resolved_input.ingress.ingress_spec = spec;
+      InputContract contract;
+      contract.payload_type = spec.payload_type;
+      contract.media_type = spec.media_type;
+      contract.format = spec.format;
+      contract.dtype = spec.dtype;
+      contract.layout = spec.layout;
+      contract.width = spec.width;
+      contract.height = spec.height;
+      contract.depth = spec.depth;
+      resolved_input.ingress.ingress_contract = std::move(contract);
+    }
+  }
   const CompiledNodeContract* immediate_upstream = nullptr;
   const bool use_node_indices = !input.node_indices.empty();
   if (use_node_indices && input.node_indices.size() != nodes.size()) {
@@ -94,7 +115,7 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
 
     CompiledNodeContract stage;
     stage.node_kind = node->kind();
-    ContractCompileInput stage_input = input;
+    ContractCompileInput stage_input = resolved_input;
     stage_input.node_index =
         use_node_indices ? input.node_indices[node_index] : static_cast<int>(node_index);
     stage_input.immediate_upstream = immediate_upstream;

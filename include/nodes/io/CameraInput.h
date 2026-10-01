@@ -51,6 +51,22 @@ struct CameraInputOptions {
   bool allow_cpu_fallback = false;
 };
 
+/** Explicit raw V4L2 backend. Existing one-argument CameraInput remains libcamera.
+ * CameraInputOptions must use format="RAW8" and wire (not decoded image) dimensions.
+ * The source imports SiMa-owned DMA-BUFs and never silently copies camera pixels.
+ * Capture cadence is the device's current mode; framerate fields do not configure
+ * this raw backend. Only eight-bit GREY/Bayer transport formats are supported.
+ * Platform capture is rejected before buffer allocation until its kernel DMA
+ * stop, failed-start and fd-release contract is qualified. There is no bypass.
+ * Unknown retirement elsewhere retains resources as defense in depth; it does
+ * not establish safety across process exit.
+ */
+struct CameraV4L2Options {
+  std::string device;
+  std::string fourcc = "BA81";
+  std::uint32_t capture_buffer_count = 8;
+};
+
 class CameraInput final : public Node, public OutputSpecProvider {
 public:
   explicit CameraInput(CameraInputOptions opt = {});
@@ -87,6 +103,13 @@ private:
 
 namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt = {});
+
+/** Capture opaque UInt8 wire tensors through the explicit V4L2 backend.
+ * No ISP conversion is applied. Negotiated strides and per-frame valid bytes are retained.
+ * The existing options/class layout and CameraInput({}) overload remain unchanged.
+ */
+std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt,
+                                                simaai::neat::CameraV4L2Options backend);
 
 /**
  * @brief Create a camera input with an application-owned capture queue minimum.

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 
@@ -64,11 +65,14 @@ int native_visual_graph_id_runtime(const std::string& name) {
   // SIMA_GRAPH_SIMOR_DEPTH_MAP), which this adapter must not renumber.
   if (token == "simor_depth_map")
     return 20;
+  if (token == "simor_raw_depth_map")
+    return 21;
   return -1;
 }
 
 bool is_native_visual_runtime_config(const CompiledProcessCvuRuntimeConfig& config) {
-  if ((config.graph_id >= 235 && config.graph_id <= 238) || config.graph_id == 20) {
+  if ((config.graph_id >= 235 && config.graph_id <= 238) || config.graph_id == 20 ||
+      config.graph_id == 21) {
     return true;
   }
   return native_visual_graph_id_runtime(!config.graph_name.empty() ? config.graph_name
@@ -498,6 +502,26 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
     }
   }
 
+  if (config.graph_id == 21 || native_visual_graph_id_runtime(config.graph_name) == 21 ||
+      native_visual_graph_id_runtime(config.graph_family) == 21) {
+    const std::vector<std::string> outputs{"rgb_dst", "depth_dst", "points_dst"};
+    if (config.graph_id != 21 || config.graph_name != "simor_raw_depth_map" ||
+        config.graph_family != "simor_raw_depth_map" || config.width != 640 ||
+        config.height != 360 || config.batch_size != 1 || config.raw_stride < 1920 ||
+        config.raw_stride > 65536 || !std::isfinite(config.raw_cx) ||
+        !std::isfinite(config.raw_cy) || config.debug < 0 || config.debug > 2 ||
+        physical_input_names != std::vector<std::string>{"raw_src"} ||
+        config.runtime_input_names != physical_input_names || physical_output_names != outputs ||
+        config.runtime_output_names != outputs || config.published_output_names != outputs ||
+        config.primary_output_name != "depth_dst" || config.input_tensors.size() != 1 ||
+        config.output_tensors.size() != 3 ||
+        config.runtime_input_dtype_list != std::vector<std::string>{"UINT8"} ||
+        config.runtime_output_dtype_list != std::vector<std::string>{"UINT8", "UINT16", "FP32"}) {
+      throw std::invalid_argument("MetoakDepth raw mode requires native S315 wire geometry, "
+                                  "explicit calibration and the canonical one/three contract");
+    }
+  }
+
   require_non_empty_unique_names(physical_input_names, "physical_input_names");
   require_non_empty_unique_names(physical_output_names, "physical_output_names");
   require_non_empty_unique_names(config.published_output_names, "published_output_names");
@@ -657,6 +681,9 @@ build_processcvu_payload_from_runtime_config_common(const CompiledProcessCvuRunt
   payload.detect_new_features = config.detect_new_features;
   payload.fast_threshold = config.fast_threshold;
   payload.debug = config.debug;
+  payload.raw_stride = config.raw_stride;
+  payload.raw_cx = config.raw_cx;
+  payload.raw_cy = config.raw_cy;
   payload.scaled_width = config.scaled_width;
   payload.scaled_height = config.scaled_height;
   payload.input_stride = config.input_stride;

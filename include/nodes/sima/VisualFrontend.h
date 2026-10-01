@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -257,6 +258,17 @@ struct MetoakDepthOptions {
   std::string summary() const;
 };
 
+/**
+ * Explicit S315 packed-wire ingress for MetoakDepth. Capture is UInt8 [360,1920];
+ * decoding and calibration-header interpretation run on EV74, not the host.
+ * Principal point must come from calibration for the native 640x360 camera mode.
+ * Separate options preserve the existing planar-input public ABI.
+ */
+struct MetoakRawInputOptions {
+  float cx = std::numeric_limits<float>::quiet_NaN();
+  float cy = std::numeric_limits<float>::quiet_NaN();
+};
+
 class FeatureHistogram final : public Node,
                                public OutputSpecProvider,
                                public NodeContractProvider,
@@ -400,4 +412,6 @@ std::shared_ptr<simaai::neat::Node> GriderFast(GriderFastOptions opt = {});
 std::shared_ptr<simaai::neat::Node> TrackDescriptor(TrackDescriptorOptions opt = {});
 std::shared_ptr<simaai::neat::Node> TrackKLT(TrackKLTOptions opt = {});
 std::shared_ptr<simaai::neat::Node> MetoakDepth(MetoakDepthOptions opt = {});
+/// Capture-driven raw mode; rejects ordinary images and unsupported wire profiles.
+std::shared_ptr<simaai::neat::Node> MetoakDepth(MetoakDepthOptions opt, MetoakRawInputOptions raw);
 } // namespace simaai::neat::nodes

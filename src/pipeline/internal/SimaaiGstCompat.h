@@ -60,6 +60,8 @@ void* gst_simaai_memory_get_segment(const GstMemory* memory, const gchar* name);
 #define GST_NEAT_CAMERA_MEMORY_CAP_DMABUF_EXPORT (G_GUINT64_CONSTANT(1) << 0)
 #define GST_NEAT_CAMERA_MEMORY_CAP_PACKED_LAYOUT (G_GUINT64_CONSTANT(1) << 1)
 #define GST_NEAT_CAMERA_MEMORY_CAP_DEVICE_WRITTEN (G_GUINT64_CONSTANT(1) << 2)
+/* All memory-share paths retain the immediate source view and its lifetime owners. */
+#define GST_NEAT_CAMERA_MEMORY_CAP_SHARED_OWNER_RETENTION (G_GUINT64_CONSTANT(1) << 3)
 
 typedef struct _GstNeatCameraMemoryApiV1 {
   guint32 abi_version;

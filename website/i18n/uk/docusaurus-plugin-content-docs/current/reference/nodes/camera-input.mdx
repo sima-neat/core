@@ -167,3 +167,85 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | Сувора нульова копія помилок | `allow_cpu_fallback` має значення «false», і джерело камери не надає властивості SiMaAI для нульової копії. |
 | Час очікування вичерпано. | Камера не передала кадри, на графі виникла затримка, або потік даних від камери зупинився. |
 | Зелені, фіолетові або надмірно кольорові рамки. | Формат або модель рамки неправильно обробляє перетворення кольорів, або колірне відтінення вже присутнє у вихідних даних камери ISP/libcamera. Спочатку перевірте `NV12` знімок поза Neat. |
+
+## Явне захоплення raw V4L2: Metoak S315
+
+Фабрика `CameraInput` із двома аргументами вибирає захоплення raw V4L2 замість libcamera. Під’єднайте її безпосередньо до перевантаження `MetoakDepth` для raw-входу; окремий вузол драйвера камери або цикл розпакування в застосунку не потрібні. API камери з одним аргументом і API планарної глибини залишаються незмінними.
+
+**Передумова виконання:** використовуйте узгоджені Core, Internals і прошивку EV74, яка оголошує підтримку raw-графа 21. Прошивки лише з графом 20 недостатньо. Поточний бекенд відхиляє всі драйвери захоплення `platform:` одразу після `QUERYCAP`, ще до виділення буферів чи додавання їх до черги. Увімкнення реального захоплення вимагає інтеграції перевіреного контракту ядра щодо завершення DMA під час зупинки, невдалого запуску та звільнення файлового дескриптора; користувацького обходу немає. Приклади нижче лише створюють графи, а не перевірений сеанс реальної камери. Не повторюйте зондування драйвера камери, який уже заблокований у ioctl.
+
+Raw-контракт S315 фіксований: транспорт `BA81`, передаваний тензор UInt8 `[360,1920]` і декодована геометрія `640x360`. Тут `BA81` позначає транспортні байти, а не зображення для демозаїки. EV74 інтерпретує упаковані дані та заголовок калібрування. Передайте відкалібровану головну точку `cx,cy` для власного режиму камери; не припускайте, що вона збігається з центром зображення. Відсутні значення калібрування відхиляються.
+
+Ці функції створюють граф, не відкриваючи пристрій. Передайте явний шлях до пристрою та відкалібровану головну точку:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace n = simaai::neat;
+
+n::Graph make_metoak_graph(const std::string& device, float cx, float cy) {
+  n::CameraInputOptions camera;
+  camera.width = 1920;
+  camera.height = 360;
+  camera.format = "RAW8";
+  camera.buffer_name = "raw_src";
+
+  n::CameraV4L2Options backend;
+  backend.device = device;
+  backend.fourcc = "BA81";
+  backend.capture_buffer_count = 8;
+
+  n::MetoakDepthOptions depth;
+  depth.width = 640;
+  depth.height = 360;
+  n::MetoakRawInputOptions raw;
+  raw.cx = cx;
+  raw.cy = cy;
+
+  n::Graph graph;
+  graph.add(n::nodes::CameraInput(camera, backend));
+  graph.add(n::nodes::MetoakDepth(depth, raw));
+  graph.add(n::nodes::Output());
+  return graph;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as n
+
+
+def make_metoak_graph(device: str, cx: float, cy: float) -> n.Graph:
+    camera = n.CameraInputOptions()
+    camera.width, camera.height = 1920, 360
+    camera.format = "RAW8"
+    camera.buffer_name = "raw_src"
+
+    backend = n.CameraV4L2Options()
+    backend.device = device
+    backend.fourcc = "BA81"
+    backend.capture_buffer_count = 8
+
+    depth = n.MetoakDepthOptions()
+    depth.width, depth.height = 640, 360
+    raw = n.MetoakRawInputOptions()
+    raw.cx, raw.cy = cx, cy
+
+    graph = n.Graph()
+    graph.add(n.nodes.camera_input(camera, backend_options=backend))
+    graph.add(n.nodes.metoak_depth(depth, raw=raw))
+    graph.add(n.nodes.output())
+    return graph
+```
+
+</CodeTab>
+</CodeTabs>
+
+Після інтеграції перевіреного ядра, яке дозволить платформне захоплення, граф із власним джерелом використовуватиме `graph.build()` без зразкових входів або публічного вузла `Input`. До того лише створюйте граф: виконання платформного захоплення заблоковане. Контракт виходів передбачає `rgb_dst` (UInt8 RGB), `depth_dst` (UInt16 у міліметрах) і `points_dst` (Float32 XYZ у метрах).
+
+Для цього бекенда `CameraInputOptions.format` має дорівнювати `RAW8`, `camera_name` не задається, а `allow_cpu_fallback` залишається false. `CameraV4L2Options.capture_buffer_count` приймає 4–128; типове значення — 8. Частота захоплення визначається налаштованим режимом пристрою, а не полями частоти кадрів libcamera. Neat зберігає фактичні кроки рядків, довжину дійсних даних, ідентифікатор кадру та час, утримуючи буфери до завершення роботи споживачів. Виділений буфер захоплення може містити службовий хвіст драйвера; цей хвіст не входить до тензора. Якщо завершення DMA невідоме, не звільняйте ресурси та не запускайте автоматичну повторну спробу.

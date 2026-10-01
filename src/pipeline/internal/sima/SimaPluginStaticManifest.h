@@ -300,6 +300,9 @@ struct ProcessCvuStagePayload {
   int detect_new_features = -1;
   int fast_threshold = -1;
   int debug = 0;
+  int raw_stride = 0;
+  float raw_cx = 0.0f;
+  float raw_cy = 0.0f;
   std::uint32_t opt_flags = 0;
 
   int aspect_ratio = -1;

@@ -167,3 +167,85 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | 厳密なゼロコピーエラーが発生しました。| `allow_cpu_fallback` は false に設定されており、カメラソースは SiMaAI ゼロコピープロパティを公開していません。|
 | プルタイムアウト | カメラからフレームが送信されなかった、グラフにバックプレッシャーがかかっている、またはカメラスタックがストリーミングを停止しました。|
 | 緑色、紫色、または色味が強いフレーム | フレーム形式またはモデルのプリプロセスにおけるカラー変換が正しくないか、すでにカメラのISP/libcamera出力に色味が適用されている可能性があります。まず、`NV12`形式でキャプチャを行い、Neatで検証してください。|
+
+## 明示的な raw V4L2 キャプチャ: Metoak S315
+
+2 引数の `CameraInput` ファクトリーは libcamera ではなく raw V4L2 キャプチャを選択します。raw 入力用の `MetoakDepth` オーバーロードに直接接続してください。別のカメラドライバーノードやアプリケーション側の展開ループは不要です。1 引数のカメラ API とプレーナー深度 API は変更されません。
+
+**実行の前提条件:** raw グラフ 21 の対応を通知する、整合した Core、Internals、EV74 ファームウェアを使用してください。グラフ 20 だけのファームウェアでは不十分です。現在のバックエンドは `QUERYCAP` の直後、キャプチャバッファーの割り当てやキュー登録前に、すべての `platform:` キャプチャドライバーを拒否します。実機キャプチャを有効にするには、停止、開始失敗、ファイル記述子解放時の DMA 完了を保証する検証済みカーネル契約の統合が必要です。ユーザーによる回避手段はありません。以下の例はグラフを構築するだけで、実機キャプチャの検証済みセッションではありません。ioctl ですでに停止しているカメラドライバーへのプローブを繰り返さないでください。
+
+S315 の raw 契約は固定です。`BA81` 転送、UInt8 ワイヤーテンソル `[360,1920]`、デコード後のサイズ `640x360` を使用します。ここで `BA81` は転送バイトを表し、デモザイクする画像ではありません。EV74 がパックされたペイロードとキャリブレーションヘッダーを解釈します。ネイティブモードで校正した主点 `cx,cy` を指定し、画像の中心と仮定しないでください。キャリブレーションが欠けている場合は拒否されます。
+
+次の関数はデバイスを開かずにグラフを構築します。明示的なデバイスパスと校正済み主点を渡してください。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace n = simaai::neat;
+
+n::Graph make_metoak_graph(const std::string& device, float cx, float cy) {
+  n::CameraInputOptions camera;
+  camera.width = 1920;
+  camera.height = 360;
+  camera.format = "RAW8";
+  camera.buffer_name = "raw_src";
+
+  n::CameraV4L2Options backend;
+  backend.device = device;
+  backend.fourcc = "BA81";
+  backend.capture_buffer_count = 8;
+
+  n::MetoakDepthOptions depth;
+  depth.width = 640;
+  depth.height = 360;
+  n::MetoakRawInputOptions raw;
+  raw.cx = cx;
+  raw.cy = cy;
+
+  n::Graph graph;
+  graph.add(n::nodes::CameraInput(camera, backend));
+  graph.add(n::nodes::MetoakDepth(depth, raw));
+  graph.add(n::nodes::Output());
+  return graph;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as n
+
+
+def make_metoak_graph(device: str, cx: float, cy: float) -> n.Graph:
+    camera = n.CameraInputOptions()
+    camera.width, camera.height = 1920, 360
+    camera.format = "RAW8"
+    camera.buffer_name = "raw_src"
+
+    backend = n.CameraV4L2Options()
+    backend.device = device
+    backend.fourcc = "BA81"
+    backend.capture_buffer_count = 8
+
+    depth = n.MetoakDepthOptions()
+    depth.width, depth.height = 640, 360
+    raw = n.MetoakRawInputOptions()
+    raw.cx, raw.cy = cx, cy
+
+    graph = n.Graph()
+    graph.add(n.nodes.camera_input(camera, backend_options=backend))
+    graph.add(n.nodes.metoak_depth(depth, raw=raw))
+    graph.add(n.nodes.output())
+    return graph
+```
+
+</CodeTab>
+</CodeTabs>
+
+検証済みカーネルの統合によりプラットフォームキャプチャが有効になった後、ソース所有のグラフでは代表入力や公開 `Input` ノードなしで `graph.build()` を使用します。それまではグラフの構築にとどめてください。プラットフォームキャプチャの実行はブロックされています。出力契約には `rgb_dst` (UInt8 RGB)、`depth_dst` (UInt16、ミリメートル)、`points_dst` (Float32 XYZ、メートル) が含まれます。
+
+このバックエンドでは `CameraInputOptions.format` を `RAW8` に設定し、`camera_name` を未設定、`allow_cpu_fallback` を false のままにしてください。`CameraV4L2Options.capture_buffer_count` は 4–128 を受け付け、デフォルトは 8 です。キャプチャ周期は libcamera のフレームレートフィールドではなく、設定済みのデバイスモードに従います。Neat は実際の行ストライド、有効ペイロード長、フレーム識別子、時刻を保持し、コンシューマーの完了までバッファーを保持します。キャプチャ割り当てにドライバーのトレーラーが含まれていても、そのトレーラーはテンソルに含まれません。DMA 完了が不明な場合、リソースを解放したり自動再試行したりしないでください。
