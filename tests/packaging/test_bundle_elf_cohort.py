@@ -36,13 +36,14 @@ class BundleCohortTest(unittest.TestCase):
                         "-o", str(path)], check=True)
         return path
 
-    def package(self, package, version="0.4.0", payload=(), architecture=None, install_dir="usr/lib/neat-test", directory_links=()):
+    def package(self, package, version="0.4.0", payload=(), architecture=None, install_dir="usr/lib/neat-test", directory_links=(), replaces=None):
         self.serial += 1
         root = self.root / f"package-{self.serial}"
         (root / "DEBIAN").mkdir(parents=True)
         (root / "DEBIAN/control").write_text(
             f"Package: {package}\nVersion: {version}\nArchitecture: {architecture or self.arch}\n"
-            "Maintainer: Cohort test <test@example.invalid>\nDescription: Test fixture\n")
+            "Maintainer: Cohort test <test@example.invalid>\nDescription: Test fixture\n"
+            + (f"Replaces: {replaces}\n" if replaces else ""))
         for source in payload:
             target = root / install_dir / source.name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -292,10 +293,55 @@ class BundleCohortTest(unittest.TestCase):
     def test_accepts_shared_directories_and_identical_directory_links(self):
         child = self.root / "child"
         child.write_text("shared data")
-        arguments = dict(payload=[child], directory_links=[("usr/lib/alias", "neat-test")])
-        result = self.check_bundle(self.package("neat-runtime", **arguments),
-                                   self.package("neat-common", **arguments))
+        other = self.root / "other"
+        other.write_text("other data")
+        links = [("usr/lib/alias", "neat-test")]
+        result = self.check_bundle(
+            self.package("neat-runtime", payload=[child], directory_links=links),
+            self.package("neat-common", payload=[other], directory_links=links))
         self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_rejects_identical_file_ownership(self):
+        shared = self.root / "shared"
+        shared.write_text("identical payload")
+        first = self.package("neat-runtime", payload=[shared])
+        second = self.package("neat-common", payload=[shared])
+        for packages in ((first, second), (second, first)):
+            with self.subTest(order=packages):
+                result = self.check_bundle(*packages)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("duplicate payload ownership", result.stdout)
+
+    def test_rejects_identical_file_symlink_ownership(self):
+        target = self.root / "target"
+        target.write_text("data")
+        shared = self.root / "shared"
+        shared.symlink_to("target")
+        first = self.package("neat-runtime", payload=[target, shared])
+        second = self.package("neat-common", payload=[shared])
+        for packages in ((first, second), (second, first)):
+            with self.subTest(order=packages):
+                result = self.check_bundle(*packages)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("duplicate payload ownership", result.stdout)
+
+    def test_duplicate_ownership_requires_matching_replaces(self):
+        shared = self.root / "shared"
+        shared.write_text("identical")
+        first = self.package("old-runtime", version="1:0.4.0", payload=[shared])
+        for declaration, accepted in (
+            ("old-runtime", True), ("other-runtime", False),
+            ("old-runtime (>= 1:0.4.0)", True), ("old-runtime (>> 1:0.4.0)", False),
+            ("old-runtime (<= 1:0.4.0)", True), ("old-runtime (<< 1:0.4.0)", False),
+            ("old-runtime (= 1:0.4.0)", True), ("old-runtime (= 0.4.0)", False),
+            (f"old-runtime:{self.arch}", True),
+            ("old-runtime:armhf", False), ("old-runtime:any", True),
+        ):
+            second = self.package("new-runtime", payload=[shared], replaces=declaration)
+            for packages in ((first, second), (second, first)):
+                with self.subTest(replaces=declaration, order=packages):
+                    result = self.check_bundle(*packages)
+                    self.assertEqual(result.returncode == 0, accepted, result.stdout)
 
     def test_preflight_is_before_install_mutations(self):
         text = INSTALLER.read_text()

@@ -2084,13 +2084,14 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
 # board lifecycle changes. Never use installed libraries to fill a bundle gap.
 validate_bundle_elf_cohort() {
   local tool
-  for tool in python3 dpkg-deb readelf; do
+  for tool in python3 dpkg-deb dpkg readelf; do
     command -v "${tool}" >/dev/null 2>&1 || {
       echo "${tool} is required for NEAT bundle preflight." >&2
       return 1
     }
   done
   python3 - "${1:-}" "${DEBS[@]}" <<'PY_COHORT'
+import functools
 import hashlib
 import os
 import posixpath
@@ -2123,6 +2124,10 @@ versions = {}
 providers = {}
 consumers = []
 files = {}
+owners = {}
+package_versions = {}
+package_architectures = {}
+replacements = {}
 loader_directories = []
 # These dependencies must never be satisfied by leftover SDK/board libraries.
 neat_name = re.compile(
@@ -2147,6 +2152,18 @@ try:
             if package in packages:
                 fail(f"duplicate package {package}: {packages[package]} and {deb}")
             packages[package] = str(deb)
+            package_versions[package] = version
+            package_architectures[package] = architecture
+            replacements[package] = []
+            for entry in run("dpkg-deb", "-f", str(deb), "Replaces").strip().split(","):
+                if not entry.strip():
+                    continue
+                match = re.fullmatch(
+                    r"\s*([a-z0-9][a-z0-9+.-]+)(?::([a-z0-9-]+))?\s*"
+                    r"(?:\(\s*(<<|<=|=|>=|>>)\s*([^\s()]+)\s*\))?\s*", entry)
+                if not match:
+                    fail(f"unsupported Replaces entry in {package}: {entry}")
+                replacements[package].append(match.groups())
             group = ("internals" if package.startswith("neat-") else
                      "llima" if package.startswith("sima-lmm-") else
                      "core" if package in ("sima-neat", "sima-neat-dev") else None)
@@ -2174,6 +2191,7 @@ try:
                     if relative in files and files[relative] != identity:
                         fail(f"conflicting payload path {relative} ({package})")
                     files[relative] = identity
+                    owners.setdefault(relative, set()).add(package)
                     if identity[0] != "file":
                         continue
                     # Debian loads these fragments through /etc/ld.so.conf.
@@ -2241,6 +2259,47 @@ try:
                     search = search_paths.get("RUNPATH", search_paths.get("RPATH", []))
                     no_defaults = bool(re.search(r"\(FLAGS_1\).*\bNODEFLIB\b", dynamic))
                     consumers.append((f"{package}:{relative}", needed, search, no_defaults))
+        def packaged_file(lookup):
+            # Follow only package-owned SONAME links, not host filesystem links.
+            lookup = lookup.lstrip("/")
+            visited = set()
+            while files.get(lookup, (None,))[0] == "link":
+                if lookup in visited:
+                    return None
+                visited.add(lookup)
+                target = files[lookup][1]
+                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else
+                                           posixpath.join(posixpath.dirname(lookup), target))
+                if lookup == ".." or lookup.startswith("../"):
+                    return None
+            return files.get(lookup)
+
+        @functools.lru_cache(maxsize=None)
+        def replaces(new, old):
+            for name, arch, operator, version in replacements[new]:
+                if name != old or arch not in (None, "any", package_architectures[old]):
+                    continue
+                if operator is None:
+                    return True
+                status = subprocess.run(
+                    ["dpkg", "--compare-versions", package_versions[old], operator, version],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE).returncode
+                if status not in (0, 1):
+                    fail(f"invalid Replaces version in {new}: {name} ({operator} {version})")
+                if status == 0:
+                    return True
+            return False
+
+        # Equal bytes do not grant dpkg ownership to two different packages.
+        # A selected owner must explicitly replace every other owner. Identical
+        # directory links can be shared just like real directories.
+        for relative, packages_owning_path in owners.items():
+            if len(packages_owning_path) <= 1 or packaged_file(relative) == ("directory", ""):
+                continue
+            if not any(all(other == owner or replaces(owner, other)
+                           for other in packages_owning_path) for owner in packages_owning_path):
+                fail(f"duplicate payload ownership {relative}: {', '.join(sorted(packages_owning_path))}; no matching Replaces declaration")
+
         for soname, (digest, origin, relative) in providers.items():
             lookup = posixpath.join(posixpath.dirname(relative), soname)
             visited = set()
@@ -2259,21 +2318,6 @@ try:
         defaults = ["/lib", "/usr/lib"]
         if multiarch:
             defaults = [f"/lib/{multiarch}", f"/usr/lib/{multiarch}"] + defaults
-
-        def packaged_file(lookup):
-            # Follow only package-owned SONAME links, not host filesystem links.
-            lookup = lookup.lstrip("/")
-            visited = set()
-            while files.get(lookup, (None,))[0] == "link":
-                if lookup in visited:
-                    return None
-                visited.add(lookup)
-                target = files[lookup][1]
-                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else
-                                           posixpath.join(posixpath.dirname(lookup), target))
-                if lookup == ".." or lookup.startswith("../"):
-                    return None
-            return files.get(lookup)
 
         for consumer, needed, search, no_defaults in consumers:
             for dependency in needed:
