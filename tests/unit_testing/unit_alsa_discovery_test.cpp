@@ -100,6 +100,21 @@ struct Fixture {
     fs::create_directory_symlink(device, class_card / "device");
   }
 
+  void set_usb_attributes_visible(std::string_view bus_path, bool visible) {
+    const fs::path usb = roots.sys / "devices/pci0000:00/usb1" / bus_path;
+    for (const auto* attribute : {"idVendor", "idProduct"}) {
+      const fs::path shown = usb / attribute;
+      const fs::path hidden = usb / (std::string(attribute) + ".hidden");
+      fs::rename(visible ? hidden : shown, visible ? shown : hidden);
+    }
+  }
+
+  void set_card_device_visible(unsigned card_index, bool visible) {
+    const fs::path card = roots.sys / "class/sound" / ("card" + std::to_string(card_index));
+    fs::rename(card / (visible ? "device.hidden" : "device"),
+               card / (visible ? "device" : "device.hidden"));
+  }
+
   void add_capture(unsigned card_index, unsigned device, unsigned subdevices, unsigned available,
                    std::string pcm_name, std::string stream = {}) {
     const fs::path card = roots.proc_asound / ("card" + std::to_string(card_index));
@@ -141,6 +156,15 @@ const PeripheralRecord& find_record(const std::vector<PeripheralRecord>& records
       return record;
   }
   throw std::runtime_error("missing ALSA fixture record " + std::string(stable_key));
+}
+
+const PeripheralRecord& find_capture(const std::vector<PeripheralRecord>& records,
+                                     std::string_view selector) {
+  for (const auto& record : records) {
+    if (record.details["capture_target"].value("selector", "") == selector)
+      return record;
+  }
+  throw std::runtime_error("missing ALSA fixture capture " + std::string(selector));
 }
 
 PeripheralRecord camera_record() {
@@ -216,8 +240,10 @@ RUN_TEST(
       const auto records = discover_alsa_capture_peripherals(fixture.roots);
       require(records.size() == 4, "every capture PCM and no playback-only PCM must be discovered");
 
-      const auto& first = find_record(records, "usb:1-3.2:1-3.2:1.0:pcm0c");
-      require(first.type == "microphone" && first.provider == "daemon.microphone.alsa",
+      const auto& first =
+          find_record(records, "sysfs:devices/pci0000:00/usb1/1-3.2/1-3.2:1.0:pcm0c");
+      require(first.id == "microphone:alsa:3ff3d77bf791d455" && first.type == "microphone" &&
+                  first.provider == "daemon.microphone.alsa",
               "ALSA captures must use the microphone provider envelope");
       require(
           first.details["capture_target"]["selector"] == "plughw:CARD=Nano,DEV=0" &&
@@ -246,16 +272,25 @@ RUN_TEST(
                   (*multichannel)["altset"] == 3 && (*multichannel)["interface"] == 4,
               "32-bit multichannel interfaces and altsets must remain distinct");
 
-      const auto& second_capture = find_record(records, "usb:1-3.2:1-3.2:1.0:pcm1c");
+      const auto& second_capture =
+          find_record(records, "sysfs:devices/pci0000:00/usb1/1-3.2/1-3.2:1.0:pcm1c");
       require(second_capture.id != first.id && second_capture.details["modes"].size() == 1,
               "several capture interfaces on one composite device must remain distinct");
-      const auto& identical = find_record(records, "usb:1-3.3:1-3.3:1.0:pcm0c");
+      const auto& identical =
+          find_record(records, "sysfs:devices/pci0000:00/usb1/1-3.3/1-3.3:1.0:pcm0c");
       require(identical.id != first.id && identical.details["availability"]["state"] == "in_use",
               "identical USB devices on different topology paths must not collide");
       const auto& sparse_usb = identical.details["identity"]["usb"];
       require(!sparse_usb.contains("manufacturer") && !sparse_usb.contains("product") &&
                   !sparse_usb.contains("serial"),
               "missing optional USB strings must be omitted");
+
+      fixture.set_usb_attributes_visible("1-3.2", false);
+      const auto partial_sysfs_records = discover_alsa_capture_peripherals(fixture.roots);
+      const auto& partial_sysfs = find_capture(partial_sysfs_records, "plughw:CARD=Nano,DEV=0");
+      require(partial_sysfs.id == first.id,
+              "temporary USB attribute read failures must not change stable identity");
+      fixture.set_usb_attributes_visible("1-3.2", true);
 
       const auto& platform = find_record(records, "sysfs:devices/platform/audio-codec:pcm0c");
       require(platform.details["connection"] == "platform" && platform.details["modes"].empty() &&
@@ -297,8 +332,20 @@ RUN_TEST(
           },
           0);
       manager.initial_scan();
-      require(coexistence.catalog_json()["devices"].size() == 5,
+      const auto complete_snapshot = coexistence.catalog_json();
+      require(complete_snapshot["devices"].size() == 5,
               "the ALSA provider must coexist with other provider records");
+
+      fixture.set_card_device_visible(2, false);
+      manager.initial_scan();
+      const auto removal_race_snapshot = coexistence.catalog_json();
+      require(removal_race_snapshot["state"] == "degraded" &&
+                  removal_race_snapshot["devices"] == complete_snapshot["devices"] &&
+                  removal_race_snapshot["issues"].size() == 1 &&
+                  removal_race_snapshot["issues"][0]["provider"] == "daemon.microphone.alsa" &&
+                  removal_race_snapshot["issues"][0]["retained_last_good"] == true,
+              "a partial sysfs removal race must retain the last stable microphone identities");
+      fixture.set_card_device_visible(2, true);
 
       PeripheralCatalog degraded("alsa-degraded", 8);
       PeripheralCatalogManager degraded_manager(

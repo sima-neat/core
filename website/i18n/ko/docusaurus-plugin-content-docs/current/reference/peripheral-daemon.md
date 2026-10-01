@@ -132,7 +132,7 @@ ALSA 캡처 장치는 다음 유형별 구조를 사용합니다.
 
 ```json
 {
-  "id": "microphone:alsa:6f69fe8f648be64e",
+  "id": "microphone:alsa:3ff3d77bf791d455",
   "type": "microphone",
   "provider": "daemon.microphone.alsa",
   "microphone": {
@@ -145,7 +145,7 @@ ALSA 캡처 장치는 다음 유형별 구조를 사용합니다.
       "selector": "plughw:CARD=Nano,DEV=0"
     },
     "identity": {
-      "stable_key": "usb:1-3.2:1-3.2:1.0:pcm0c",
+      "stable_key": "sysfs:devices/pci0000:00/usb1/1-3.2/1-3.2:1.0:pcm0c",
       "card_index": 2,
       "card_id": "Nano",
       "card_name": "Yeti Nano",
@@ -179,8 +179,9 @@ ALSA 캡처 장치는 다음 유형별 구조를 사용합니다.
 }
 ```
 
-`id`는 ALSA 카드 인덱스가 아니라 안정적인 sysfs 토폴로지와 캡처 PCM 장치에서
-생성됩니다. `capture_target`과 `identity.card_index`는 현재 스냅샷의 라우팅
+`id`는 ALSA 카드 인덱스나 선택적 USB 공급업체/제품 특성이 아니라 정규 sysfs 장치
+경로와 캡처 PCM 장치에서 생성됩니다. 따라서 USB 특성을 일시적으로 읽지 못해도 장치
+ID는 바뀌지 않습니다. `capture_target`과 `identity.card_index`는 현재 스냅샷의 라우팅
 데이터입니다. 마이크를 열기 전에 클라이언트는 같은 데몬 `instance_id`, 카탈로그
 `revision`, 장치 `id`를 다시 읽은 다음 반환된 선택기를 사용해야 합니다. 클라이언트는
 ID를 분석하거나 직접 생성하면 안 됩니다.

@@ -137,7 +137,7 @@ An ALSA capture device uses this type-specific shape:
 
 ```json
 {
-  "id": "microphone:alsa:6f69fe8f648be64e",
+  "id": "microphone:alsa:3ff3d77bf791d455",
   "type": "microphone",
   "provider": "daemon.microphone.alsa",
   "microphone": {
@@ -150,7 +150,7 @@ An ALSA capture device uses this type-specific shape:
       "selector": "plughw:CARD=Nano,DEV=0"
     },
     "identity": {
-      "stable_key": "usb:1-3.2:1-3.2:1.0:pcm0c",
+      "stable_key": "sysfs:devices/pci0000:00/usb1/1-3.2/1-3.2:1.0:pcm0c",
       "card_index": 2,
       "card_id": "Nano",
       "card_name": "Yeti Nano",
@@ -184,11 +184,13 @@ An ALSA capture device uses this type-specific shape:
 }
 ```
 
-`id` is derived from stable sysfs topology plus the capture PCM device, never
-from an ALSA card index. `capture_target` and `identity.card_index` are current
-snapshot routing data. Before opening a microphone, a client must re-read the
-same daemon `instance_id`, catalog `revision`, and device `id`, then use the
-returned selector; clients must not parse or synthesize IDs.
+`id` is derived from the canonical sysfs device path plus the capture PCM
+device, never from an ALSA card index or optional USB vendor/product attributes.
+Temporary USB attribute read failures therefore do not rename a device.
+`capture_target` and `identity.card_index` are current snapshot routing data.
+Before opening a microphone, a client must re-read the same daemon
+`instance_id`, catalog `revision`, and device `id`, then use the returned
+selector; clients must not parse or synthesize IDs.
 
 The provider reads `/proc/asound` and sysfs without opening a PCM or running an
 external probe. USB stream modes preserve formats, channel counts, sample bits,

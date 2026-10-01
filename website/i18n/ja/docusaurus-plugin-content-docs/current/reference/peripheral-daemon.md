@@ -133,7 +133,7 @@ ALSA キャプチャーデバイスは、次の種類固有の形式を使用し
 
 ```json
 {
-  "id": "microphone:alsa:6f69fe8f648be64e",
+  "id": "microphone:alsa:3ff3d77bf791d455",
   "type": "microphone",
   "provider": "daemon.microphone.alsa",
   "microphone": {
@@ -146,7 +146,7 @@ ALSA キャプチャーデバイスは、次の種類固有の形式を使用し
       "selector": "plughw:CARD=Nano,DEV=0"
     },
     "identity": {
-      "stable_key": "usb:1-3.2:1-3.2:1.0:pcm0c",
+      "stable_key": "sysfs:devices/pci0000:00/usb1/1-3.2/1-3.2:1.0:pcm0c",
       "card_index": 2,
       "card_id": "Nano",
       "card_name": "Yeti Nano",
@@ -180,11 +180,13 @@ ALSA キャプチャーデバイスは、次の種類固有の形式を使用し
 }
 ```
 
-`id` は安定した sysfs トポロジーとキャプチャー PCM デバイスから生成され、ALSA
-カードインデックスは使用しません。`capture_target` と `identity.card_index` は現在の
-スナップショットのルーティングデータです。マイクを開く前に、クライアントは同じ
-デーモンの `instance_id`、カタログの `revision`、デバイスの `id` を再取得してから、
-返されたセレクターを使用する必要があります。クライアントは ID を解析または生成してはいけません。
+`id` は正規化された sysfs デバイスパスとキャプチャー PCM デバイスから生成され、ALSA
+カードインデックスや任意の USB ベンダー／製品属性は使用しません。そのため、USB 属性を
+一時的に読み取れなくてもデバイス ID は変わりません。`capture_target` と
+`identity.card_index` は現在のスナップショットのルーティングデータです。マイクを開く前に、
+クライアントは同じデーモンの `instance_id`、カタログの `revision`、デバイスの `id` を
+再取得してから、返されたセレクターを使用する必要があります。クライアントは ID を解析または
+生成してはいけません。
 
 プロバイダーは PCM を開いたり外部プローブを実行したりせず、`/proc/asound` と sysfs を
 読み取ります。USB ストリームモードでは、形式、チャンネル数、サンプルビット、離散的な

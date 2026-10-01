@@ -351,20 +351,10 @@ std::string relative_sysfs_path(const fs::path& path, const fs::path& sys_root) 
   return error ? std::string{} : relative.generic_string();
 }
 
-std::string stable_key(const std::optional<fs::path>& device_path,
-                       const std::optional<UsbMetadata>& usb, const fs::path& sys_root,
-                       std::string_view card_id, unsigned pcm_device) {
+std::string stable_key(const fs::path& device_path, const fs::path& sys_root, unsigned pcm_device) {
   std::ostringstream key;
-  if (usb) {
-    key << "usb:" << usb->bus_path;
-    if (!usb->interface.empty())
-      key << ':' << usb->interface;
-  } else if (device_path) {
-    const std::string relative = relative_sysfs_path(*device_path, sys_root);
-    key << "sysfs:" << (relative.empty() ? device_path->generic_string() : relative);
-  } else {
-    key << "alsa:" << card_id;
-  }
+  const std::string relative = relative_sysfs_path(device_path, sys_root);
+  key << "sysfs:" << (relative.empty() ? device_path.generic_string() : relative);
   key << ":pcm" << pcm_device << 'c';
   return key.str();
 }
@@ -497,15 +487,14 @@ std::vector<PeripheralRecord> discover_alsa_capture_peripherals(const AlsaDiscov
     const fs::path class_card =
         roots.sys / "class" / "sound" / ("card" + std::to_string(card_index));
     const auto card_device = canonical_path(class_card / "device");
-    if (!card_device && card.id.empty()) {
-      throw_discovery_error(
-          error_codes::kIoParse,
-          "ALSA card " + std::to_string(card_index) +
-              " has neither a stable sysfs path nor a card ID. Refresh after the device "
-              "finishes initializing.");
+    if (!card_device) {
+      throw_discovery_error(error_codes::kIoOpen,
+                            "ALSA discovery could not resolve the stable sysfs path for card " +
+                                std::to_string(card_index) +
+                                ". Refresh after the device finishes initializing.");
     }
-    const auto usb = card_device ? usb_metadata(*card_device, roots.sys) : std::nullopt;
-    const std::string connection = usb ? "usb" : (card_device ? "platform" : "unknown");
+    const auto usb = usb_metadata(*card_device, roots.sys);
+    const std::string connection = usb ? "usb" : "platform";
     const std::string control = "controlC" + std::to_string(card_index);
     const auto by_path = device_link(roots.dev / "snd" / "by-path", control, "/dev/snd/by-path");
     const auto by_id = device_link(roots.dev / "snd" / "by-id", control, "/dev/snd/by-id");
@@ -531,7 +520,7 @@ std::vector<PeripheralRecord> discover_alsa_capture_peripherals(const AlsaDiscov
                   "refresh the catalog.");
       }
 
-      const std::string key = stable_key(card_device, usb, roots.sys, card.id, pcm_device);
+      const std::string key = stable_key(*card_device, roots.sys, pcm_device);
       const std::string pcm_node =
           "/dev/snd/pcmC" + std::to_string(card_index) + "D" + std::to_string(pcm_device) + "c";
       const std::string pcm_name = pcm_info.contains("name") ? pcm_info.at("name") : "";

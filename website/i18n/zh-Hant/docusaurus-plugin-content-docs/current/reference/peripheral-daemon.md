@@ -130,7 +130,7 @@ ALSA 擷取裝置使用下列類型專屬結構：
 
 ```json
 {
-  "id": "microphone:alsa:6f69fe8f648be64e",
+  "id": "microphone:alsa:3ff3d77bf791d455",
   "type": "microphone",
   "provider": "daemon.microphone.alsa",
   "microphone": {
@@ -143,7 +143,7 @@ ALSA 擷取裝置使用下列類型專屬結構：
       "selector": "plughw:CARD=Nano,DEV=0"
     },
     "identity": {
-      "stable_key": "usb:1-3.2:1-3.2:1.0:pcm0c",
+      "stable_key": "sysfs:devices/pci0000:00/usb1/1-3.2/1-3.2:1.0:pcm0c",
       "card_index": 2,
       "card_id": "Nano",
       "card_name": "Yeti Nano",
@@ -177,10 +177,11 @@ ALSA 擷取裝置使用下列類型專屬結構：
 }
 ```
 
-`id` 由穩定的 sysfs 拓撲與擷取 PCM 裝置衍生，絕不使用 ALSA 卡索引。
-`capture_target` 與 `identity.card_index` 是目前快照的路由資料。開啟麥克風前，用戶端
-必須重新讀取相同常駐程式的 `instance_id`、目錄 `revision` 與裝置 `id`，再使用傳回的
-選取器。用戶端不得剖析或自行產生 ID。
+`id` 由標準化 sysfs 裝置路徑與擷取 PCM 裝置衍生，絕不使用 ALSA 卡索引或選用的 USB
+廠商／產品屬性。因此，暫時無法讀取 USB 屬性不會改變裝置 ID。`capture_target` 與
+`identity.card_index` 是目前快照的路由資料。開啟麥克風前，用戶端必須重新讀取相同
+常駐程式的 `instance_id`、目錄 `revision` 與裝置 `id`，再使用傳回的選取器。用戶端不得
+剖析或自行產生 ID。
 
 提供者會讀取 `/proc/asound` 與 sysfs，不開啟 PCM，也不執行外部探查程式。USB 串流模式
 會保留格式、聲道數、樣本位元、離散 `rates_hz` 或連續 `rate_range_hz`、介面、替代設定
