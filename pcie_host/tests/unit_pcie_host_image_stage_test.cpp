@@ -22,6 +22,10 @@ fs::path make_temp_dir() {
                ("image_stage_test_" + std::to_string(::getpid()) + "_" +
                 std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   fs::create_directories(d);
+  // 0755 whatever the umask: the stage folder's parent must not be writable
+  // by group or others (StagedImage refuses it then).
+  fs::permissions(d, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
+                         fs::perms::others_read | fs::perms::others_exec);
   return d;
 }
 
@@ -67,6 +71,35 @@ int main() {
       const std::string kept((std::istreambuf_iterator<char>(v)), std::istreambuf_iterator<char>());
       require(kept == "KEEP", "the symlink target must not be overwritten");
       fs::remove(victim);
+    }
+
+    // The stage folder and its parent must be safe from other users: writable
+    // by others only with the sticky bit, and never a symlink.
+    {
+      const auto refused = [&](const fs::path& dir) {
+        try {
+          StagedImage s(dir, "h9-6", src);
+        } catch (const std::runtime_error&) {
+          return true;
+        }
+        return false;
+      };
+      const fs::path open_parent = root / "open";
+      fs::create_directories(open_parent);
+      fs::permissions(open_parent, fs::perms::all); // 0777, no sticky bit
+      require(refused(open_parent / "pcie-genai"), "a parent writable by others is refused");
+      fs::permissions(open_parent, fs::perms::sticky_bit, fs::perm_options::add);
+      require(!refused(open_parent / "pcie-genai"), "a sticky parent (like /tmp) is accepted");
+      require((fs::status(open_parent / "pcie-genai").permissions() & fs::perms::others_write) ==
+                  fs::perms::none,
+              "a new stage folder is not writable by others");
+      fs::permissions(open_parent / "pcie-genai", fs::perms::group_write, fs::perm_options::add);
+      require(refused(open_parent / "pcie-genai"), "a group-writable stage folder is refused");
+      const fs::path linked = root / "linked";
+      fs::create_directories(root / "elsewhere");
+      fs::create_directories(linked);
+      fs::create_directory_symlink(root / "elsewhere", linked / "pcie-genai");
+      require(refused(linked / "pcie-genai"), "a symlinked stage folder is refused");
     }
 
     // missing source throws

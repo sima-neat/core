@@ -11,6 +11,7 @@
 
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace simaai::neat::pcie::genai::internal {
@@ -33,6 +34,35 @@ bool owner_alive(const std::string& name) {
     return false;
   // kill(pid, 0) sends nothing: 0 = it runs, EPERM = it runs as another user.
   return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM;
+}
+
+// The card reads a staged file by its path, later. If another user can change
+// the stage folder or its parent (unlink our file, rename the folder away,
+// put a symlink in its place), the card could read their file instead. So
+// both folders must be real directories (not symlinks), owned by us or root,
+// and either not writable by group/others or sticky (+t, like /tmp: then
+// others cannot delete or rename our files). Throws with the chmod to run.
+void require_protected_dir(const fs::path& dir) {
+  struct stat st {};
+  if (::lstat(dir.c_str(), &st) != 0) {
+    throw std::runtime_error("cannot check image stage folder " + dir.string() + ": " +
+                             std::strerror(errno));
+  }
+  if (!S_ISDIR(st.st_mode)) {
+    throw std::runtime_error("image stage folder " + dir.string() +
+                             " is not a real directory (a symlink or a file); refusing images");
+  }
+  if (st.st_uid != ::getuid() && st.st_uid != 0) {
+    throw std::runtime_error("image stage folder " + dir.string() +
+                             " is owned by another user; refusing images");
+  }
+  if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0 && (st.st_mode & S_ISVTX) == 0) {
+    throw std::runtime_error(
+        "image stage folder " + dir.string() +
+        " can be changed by other users, so a staged image could be swapped before the card "
+        "reads it; refusing images. Fix it with: chmod +t " +
+        dir.string() + "  (or: chmod go-w " + dir.string() + ")");
+  }
 }
 
 // Delete regular files in `dir` older than one hour whose owner process is
@@ -60,11 +90,13 @@ void sweep_old(const fs::path& dir) {
 StagedImage::StagedImage(const fs::path& stage_dir, const std::string& run_id,
                          const fs::path& source) {
   std::error_code ec;
-  fs::create_directories(stage_dir, ec);
-  if (ec) {
+  require_protected_dir(stage_dir.parent_path());
+  // New folder: owner-only writable. An existing one is checked as it is.
+  if (::mkdir(stage_dir.c_str(), 0755) != 0 && errno != EEXIST) {
     throw std::runtime_error("cannot create image stage dir " + stage_dir.string() + ": " +
-                             ec.message());
+                             std::strerror(errno));
   }
+  require_protected_dir(stage_dir);
   sweep_old(stage_dir);
 
   const std::string name = run_id + source.extension().string();

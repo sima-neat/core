@@ -595,6 +595,10 @@ int main() {
       const fs::path stage = root / "pcie-genai";
       const fs::path src = root / "in.jpg";
       fs::create_directories(root);
+      // 0755 whatever the umask: StagedImage refuses a stage parent that
+      // group or others can write.
+      fs::permissions(root, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
+                                fs::perms::others_read | fs::perms::others_exec);
       std::ofstream(src) << "JPEG";
 
       auto fake = std::make_unique<FakeSvcClient>();
@@ -634,6 +638,10 @@ int main() {
       const fs::path root = fs::temp_directory_path() / ("svc_img2_" + std::to_string(::getpid()));
       const fs::path stage = root / "pcie-genai";
       fs::create_directories(root);
+      // 0755 whatever the umask: StagedImage refuses a stage parent that
+      // group or others can write.
+      fs::permissions(root, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
+                                fs::perms::others_read | fs::perms::others_exec);
       std::ofstream(root / "a.jpg") << "JPEG";
       std::ofstream(root / "b.png") << "PNG";
 
@@ -783,6 +791,10 @@ int main() {
       namespace fs = std::filesystem;
       const fs::path root = fs::temp_directory_path() / ("svc_hist_" + std::to_string(::getpid()));
       fs::create_directories(root);
+      // 0755 whatever the umask: StagedImage refuses a stage parent that
+      // group or others can write.
+      fs::permissions(root, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
+                                fs::perms::others_read | fs::perms::others_exec);
       const fs::path src = root / "cat.jpg";
       std::ofstream(src) << "JPEG";
 
