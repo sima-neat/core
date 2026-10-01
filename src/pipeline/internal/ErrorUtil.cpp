@@ -47,6 +47,7 @@ bool is_framework_error_code(std::string_view code) {
       error_codes::kCameraNotFound,
       error_codes::kModelNotFound,
       error_codes::kSourceEnded,
+      error_codes::kResponseTooLarge,
       error_codes::kInvalidH264Stream,
       error_codes::kDecodeFailed,
       error_codes::kEncodeFailed,
@@ -57,6 +58,9 @@ bool is_framework_error_code(std::string_view code) {
       error_codes::kDiskFull,
       error_codes::kDispatcherUnavailable,
       error_codes::kAcceleratorExecutionFailed,
+      error_codes::kPeripheralDaemonUnavailable,
+      error_codes::kPeripheralDaemonTimeout,
+      error_codes::kPeripheralDaemonNotReady,
       error_codes::kInternalPluginFailure,
       error_codes::kDispatcherUnavailableLegacy,
   };

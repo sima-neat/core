@@ -89,6 +89,8 @@
 #include "pipeline/FormatSpec.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "neat/version.h"
+#include "peripherals/PeripheralCatalog.h"
+#include "peripherals/internal/PeripheralClient.h"
 #include "neat/runtime.h"
 
 #if defined(SIMA_WITH_OPENCV)
@@ -3343,6 +3345,87 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
       .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
 
+  nb::module_ peripherals_mod =
+      m.def_submodule("peripherals", "Typed access to the board-local peripheral catalog.");
+  nb::class_<simaai::neat::peripherals::CatalogError>(peripherals_mod, "CatalogError")
+      .def_ro("code", &simaai::neat::peripherals::CatalogError::code)
+      .def_ro("reason", &simaai::neat::peripherals::CatalogError::reason);
+  nb::class_<simaai::neat::peripherals::ProviderIssue>(peripherals_mod, "ProviderIssue")
+      .def_ro("provider", &simaai::neat::peripherals::ProviderIssue::provider)
+      .def_ro("code", &simaai::neat::peripherals::ProviderIssue::code)
+      .def_ro("reason", &simaai::neat::peripherals::ProviderIssue::reason)
+      .def_ro("retained_last_good", &simaai::neat::peripherals::ProviderIssue::retained_last_good);
+  nb::class_<simaai::neat::peripherals::CameraSizeRange>(peripherals_mod, "CameraSizeRange")
+      .def_ro("min_width", &simaai::neat::peripherals::CameraSizeRange::min_width)
+      .def_ro("min_height", &simaai::neat::peripherals::CameraSizeRange::min_height)
+      .def_ro("max_width", &simaai::neat::peripherals::CameraSizeRange::max_width)
+      .def_ro("max_height", &simaai::neat::peripherals::CameraSizeRange::max_height)
+      .def_ro("step_width", &simaai::neat::peripherals::CameraSizeRange::step_width)
+      .def_ro("step_height", &simaai::neat::peripherals::CameraSizeRange::step_height);
+  nb::class_<simaai::neat::peripherals::CameraMode>(peripherals_mod, "CameraMode")
+      .def_ro("format", &simaai::neat::peripherals::CameraMode::format)
+      .def_ro("width", &simaai::neat::peripherals::CameraMode::width)
+      .def_ro("height", &simaai::neat::peripherals::CameraMode::height)
+      .def_ro("size_range", &simaai::neat::peripherals::CameraMode::size_range)
+      .def_ro("framerate_num", &simaai::neat::peripherals::CameraMode::framerate_num)
+      .def_ro("framerate_den", &simaai::neat::peripherals::CameraMode::framerate_den)
+      .def_ro("supported", &simaai::neat::peripherals::CameraMode::supported)
+      .def_ro("reason", &simaai::neat::peripherals::CameraMode::reason)
+      .def_prop_ro("is_range", &simaai::neat::peripherals::CameraMode::is_range);
+  nb::class_<simaai::neat::peripherals::CameraDetails>(peripherals_mod, "CameraDetails")
+      .def_ro("camera_name", &simaai::neat::peripherals::CameraDetails::camera_name)
+      .def_ro("model", &simaai::neat::peripherals::CameraDetails::model)
+      .def_ro("backend", &simaai::neat::peripherals::CameraDetails::backend)
+      .def_ro("modes", &simaai::neat::peripherals::CameraDetails::modes);
+  nb::class_<simaai::neat::peripherals::Peripheral>(peripherals_mod, "Peripheral")
+      .def_ro("id", &simaai::neat::peripherals::Peripheral::id)
+      .def_ro("type", &simaai::neat::peripherals::Peripheral::type)
+      .def_ro("provider", &simaai::neat::peripherals::Peripheral::provider)
+      .def_ro("camera", &simaai::neat::peripherals::Peripheral::camera);
+  nb::class_<simaai::neat::peripherals::Catalog>(peripherals_mod, "Catalog")
+      .def_ro("instance_id", &simaai::neat::peripherals::Catalog::instance_id)
+      .def_ro("state", &simaai::neat::peripherals::Catalog::state)
+      .def_ro("stale", &simaai::neat::peripherals::Catalog::stale)
+      .def_ro("revision", &simaai::neat::peripherals::Catalog::revision)
+      .def_ro("sequence", &simaai::neat::peripherals::Catalog::sequence)
+      .def_ro("scan_sequence", &simaai::neat::peripherals::Catalog::scan_sequence)
+      .def_ro("last_success_at", &simaai::neat::peripherals::Catalog::last_success_at)
+      .def_ro("last_attempt_at", &simaai::neat::peripherals::Catalog::last_attempt_at)
+      .def_ro("error", &simaai::neat::peripherals::Catalog::error)
+      .def_ro("issues", &simaai::neat::peripherals::Catalog::issues)
+      .def_ro("devices", &simaai::neat::peripherals::Catalog::devices)
+      .def("__len__", &simaai::neat::peripherals::Catalog::size)
+      .def("__bool__",
+           [](const simaai::neat::peripherals::Catalog& catalog) { return !catalog.empty(); })
+      .def(
+          "__getitem__",
+          [](simaai::neat::peripherals::Catalog& catalog,
+             Py_ssize_t index) -> simaai::neat::peripherals::Peripheral& {
+            const auto size = static_cast<Py_ssize_t>(catalog.size());
+            if (index < 0)
+              index += size;
+            if (index < 0 || index >= size)
+              throw nb::index_error("peripheral catalog index out of range");
+            return catalog[static_cast<std::size_t>(index)];
+          },
+          "index"_a, nb::rv_policy::reference_internal)
+      .def(
+          "__iter__",
+          [](simaai::neat::peripherals::Catalog& catalog) {
+            return nb::make_iterator(nb::type<simaai::neat::peripherals::Catalog>(),
+                                     "PeripheralCatalogIterator", catalog.begin(), catalog.end());
+          },
+          nb::keep_alive<0, 1>());
+  peripherals_mod.def("list", &simaai::neat::peripherals::list,
+                      nb::call_guard<nb::gil_scoped_release>());
+  peripherals_mod.def(
+      "_list_from_socket_for_testing",
+      [](const std::string& socket_path, std::uint64_t timeout_ms) {
+        return simaai::neat::peripherals_internal::list_from_socket(
+            socket_path, std::chrono::milliseconds(timeout_ms));
+      },
+      "socket_path"_a, "timeout_ms"_a, nb::call_guard<nb::gil_scoped_release>());
+
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
@@ -5215,6 +5298,7 @@ NB_MODULE(_pyneat_core, m) {
   m.attr("ERROR_CAMERA_NOT_FOUND") = simaai::neat::error_codes::kCameraNotFound;
   m.attr("ERROR_MODEL_NOT_FOUND") = simaai::neat::error_codes::kModelNotFound;
   m.attr("ERROR_SOURCE_ENDED") = simaai::neat::error_codes::kSourceEnded;
+  m.attr("ERROR_RESPONSE_TOO_LARGE") = simaai::neat::error_codes::kResponseTooLarge;
   m.attr("ERROR_INVALID_H264_STREAM") = simaai::neat::error_codes::kInvalidH264Stream;
   m.attr("ERROR_DECODE_FAILED") = simaai::neat::error_codes::kDecodeFailed;
   m.attr("ERROR_ENCODE_FAILED") = simaai::neat::error_codes::kEncodeFailed;
@@ -5226,6 +5310,11 @@ NB_MODULE(_pyneat_core, m) {
   m.attr("ERROR_DISPATCHER_UNAVAILABLE") = simaai::neat::error_codes::kDispatcherUnavailable;
   m.attr("ERROR_ACCELERATOR_EXECUTION_FAILED") =
       simaai::neat::error_codes::kAcceleratorExecutionFailed;
+  m.attr("ERROR_PERIPHERAL_DAEMON_UNAVAILABLE") =
+      simaai::neat::error_codes::kPeripheralDaemonUnavailable;
+  m.attr("ERROR_PERIPHERAL_DAEMON_TIMEOUT") = simaai::neat::error_codes::kPeripheralDaemonTimeout;
+  m.attr("ERROR_PERIPHERAL_DAEMON_NOT_READY") =
+      simaai::neat::error_codes::kPeripheralDaemonNotReady;
   m.attr("ERROR_DISPATCHER_UNAVAILABLE_LEGACY") =
       simaai::neat::error_codes::kDispatcherUnavailableLegacy;
   m.attr("ERROR_INTERNAL_PLUGIN_FAILURE") = simaai::neat::error_codes::kInternalPluginFailure;

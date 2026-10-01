@@ -54,6 +54,7 @@ Neat는 `NeatError` 및 `PullError`를 통해 유형 오류를 표시합니다. 
 | `io.camera_not_found` | `error_codes::kCameraNotFound` | `pyneat.ERROR_CAMERA_NOT_FOUND` |
 | `io.model_not_found` | `error_codes::kModelNotFound` | `pyneat.ERROR_MODEL_NOT_FOUND` |
 | `io.source_ended` | `error_codes::kSourceEnded` | `pyneat.ERROR_SOURCE_ENDED` |
+| `io.response_too_large` | `error_codes::kResponseTooLarge` | `pyneat.ERROR_RESPONSE_TOO_LARGE` |
 | `codec.invalid_h264_stream` | `error_codes::kInvalidH264Stream` | `pyneat.ERROR_INVALID_H264_STREAM` |
 | `codec.decode_failed` | `error_codes::kDecodeFailed` | `pyneat.ERROR_DECODE_FAILED` |
 | `codec.encode_failed` | `error_codes::kEncodeFailed` | `pyneat.ERROR_ENCODE_FAILED` |
@@ -64,6 +65,9 @@ Neat는 `NeatError` 및 `PullError`를 통해 유형 오류를 표시합니다. 
 | `resource.disk_full` | `error_codes::kDiskFull` | `pyneat.ERROR_DISK_FULL` |
 | `infra.dispatcher_unavailable` | `error_codes::kDispatcherUnavailable` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE` |
 | `infra.accelerator_execution_failed` | `error_codes::kAcceleratorExecutionFailed` | `pyneat.ERROR_ACCELERATOR_EXECUTION_FAILED` |
+| `infra.peripheral_daemon_unavailable` | `error_codes::kPeripheralDaemonUnavailable` | `pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE` |
+| `infra.peripheral_daemon_timeout` | `error_codes::kPeripheralDaemonTimeout` | `pyneat.ERROR_PERIPHERAL_DAEMON_TIMEOUT` |
+| `infra.peripheral_daemon_not_ready` | `error_codes::kPeripheralDaemonNotReady` | `pyneat.ERROR_PERIPHERAL_DAEMON_NOT_READY` |
 | `DispatcherUnavailable` (레거시) | `error_codes::kDispatcherUnavailableLegacy` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE_LEGACY` |
 | `internal.plugin_failure` | `error_codes::kInternalPluginFailure` | `pyneat.ERROR_INTERNAL_PLUGIN_FAILURE` |
 
@@ -114,6 +118,7 @@ Neat는 `NeatError` 및 `PullError`를 통해 유형 오류를 표시합니다. 
 <<번역>>
 | `io.model_not_found` | 요청하신 모델 아카이브가 존재하지 않습니다. | 모델 경로를 수정하고 해당 아카이브가 설치되었는지 확인하십시오. |
 | `io.source_ended` | 입력 소스가 정상적으로 종료되었습니다. | 해당 소스의 데이터 소비를 중단하거나, 애플리케이션에서 더 많은 데이터를 필요로 하는 경우 추가 입력을 제공하십시오. |
+| `io.response_too_large` | 제한된 로컬 프로토콜 응답이 문서화된 크기 한도를 초과했습니다. | 카탈로그 크기를 줄이거나 일치하는 클라이언트와 서비스 버전을 설치하십시오. |
 
 ## 파이프라인 실행 실패
 
@@ -148,6 +153,9 @@ Neat는 `NeatError` 및 `PullError`를 통해 유형 오류를 표시합니다. 
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat이(가) 가속기 런타임에 접근할 수 없습니다. | DevKit과의 호환성을 확인하고 가속기를 독점적으로 사용하는 워크로드를 중지하십시오. |
 | `infra.accelerator_execution_failed` | 가속기가 모델 단계를 실행할 수 없습니다. | 파이프라인을 다시 시작하고 동시에 실행되는 가속기 작업량을 줄이십시오. |
+| `infra.peripheral_daemon_unavailable` | 로컬 주변기기 데몬 소켓이 없거나 연결을 거부했거나 사용 중입니다. | `simaai-peripherals.service`를 설치하고 시작한 뒤 저널을 확인하십시오. |
+| `infra.peripheral_daemon_timeout` | 제한 시간이 있는 주변기기 카탈로그 요청이 완료되지 않았습니다. | 데몬 서비스와 공급자 상태를 확인한 뒤 다시 시도하십시오. |
+| `infra.peripheral_daemon_not_ready` | 데몬이 사용 가능한 초기 카탈로그를 아직 완료하지 않았습니다. | 데몬 저널을 읽고 보고된 공급자 또는 장치 오류를 수정하십시오. |
 
 ## 내부 오류
 

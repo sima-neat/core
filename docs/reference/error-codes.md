@@ -59,6 +59,7 @@ The same values are available in both language APIs:
 | `io.camera_not_found` | `error_codes::kCameraNotFound` | `pyneat.ERROR_CAMERA_NOT_FOUND` |
 | `io.model_not_found` | `error_codes::kModelNotFound` | `pyneat.ERROR_MODEL_NOT_FOUND` |
 | `io.source_ended` | `error_codes::kSourceEnded` | `pyneat.ERROR_SOURCE_ENDED` |
+| `io.response_too_large` | `error_codes::kResponseTooLarge` | `pyneat.ERROR_RESPONSE_TOO_LARGE` |
 | `codec.invalid_h264_stream` | `error_codes::kInvalidH264Stream` | `pyneat.ERROR_INVALID_H264_STREAM` |
 | `codec.decode_failed` | `error_codes::kDecodeFailed` | `pyneat.ERROR_DECODE_FAILED` |
 | `codec.encode_failed` | `error_codes::kEncodeFailed` | `pyneat.ERROR_ENCODE_FAILED` |
@@ -69,6 +70,9 @@ The same values are available in both language APIs:
 | `resource.disk_full` | `error_codes::kDiskFull` | `pyneat.ERROR_DISK_FULL` |
 | `infra.dispatcher_unavailable` | `error_codes::kDispatcherUnavailable` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE` |
 | `infra.accelerator_execution_failed` | `error_codes::kAcceleratorExecutionFailed` | `pyneat.ERROR_ACCELERATOR_EXECUTION_FAILED` |
+| `infra.peripheral_daemon_unavailable` | `error_codes::kPeripheralDaemonUnavailable` | `pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE` |
+| `infra.peripheral_daemon_timeout` | `error_codes::kPeripheralDaemonTimeout` | `pyneat.ERROR_PERIPHERAL_DAEMON_TIMEOUT` |
+| `infra.peripheral_daemon_not_ready` | `error_codes::kPeripheralDaemonNotReady` | `pyneat.ERROR_PERIPHERAL_DAEMON_NOT_READY` |
 | `DispatcherUnavailable` (legacy) | `error_codes::kDispatcherUnavailableLegacy` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE_LEGACY` |
 | `internal.plugin_failure` | `error_codes::kInternalPluginFailure` | `pyneat.ERROR_INTERNAL_PLUGIN_FAILURE` |
 
@@ -117,6 +121,7 @@ The same values are available in both language APIs:
 | `io.camera_not_found` | The requested camera is unavailable. | Select an available camera or use the default camera. |
 | `io.model_not_found` | The requested model archive does not exist. | Correct the model path and confirm that the archive is installed. |
 | `io.source_ended` | An input source reaches its normal end. | Stop consuming that source or provide additional input if the application expects more data. |
+| `io.response_too_large` | A bounded local protocol response exceeds its documented size limit. | Reduce the catalog size or install matching client and service versions. |
 
 ## Pipeline materialization failures
 
@@ -152,6 +157,9 @@ same code and `GraphReport` can surface when the first input materializes the se
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat cannot acquire the accelerator runtime. | Confirm DevKit compatibility and stop workloads that exclusively own the accelerator. |
 | `infra.accelerator_execution_failed` | The accelerator cannot execute a model stage. | Restart the pipeline and reduce concurrent accelerator workloads. |
+| `infra.peripheral_daemon_unavailable` | The local peripheral daemon socket is absent, refused, or busy. | Install and start `simaai-peripherals.service`, then inspect its journal. |
+| `infra.peripheral_daemon_timeout` | A bounded peripheral catalog request did not finish. | Check the daemon service and provider health, then retry. |
+| `infra.peripheral_daemon_not_ready` | The daemon has not completed a usable initial catalog. | Read the daemon journal and correct the reported provider or device failure. |
 
 ## Internal failures
 

@@ -1497,6 +1497,7 @@ def test_error_code_constants_present():
     "ERROR_CAMERA_NOT_FOUND": "io.camera_not_found",
     "ERROR_MODEL_NOT_FOUND": "io.model_not_found",
     "ERROR_SOURCE_ENDED": "io.source_ended",
+    "ERROR_RESPONSE_TOO_LARGE": "io.response_too_large",
     "ERROR_INVALID_H264_STREAM": "codec.invalid_h264_stream",
     "ERROR_DECODE_FAILED": "codec.decode_failed",
     "ERROR_ENCODE_FAILED": "codec.encode_failed",
@@ -1507,6 +1508,9 @@ def test_error_code_constants_present():
     "ERROR_DISK_FULL": "resource.disk_full",
     "ERROR_DISPATCHER_UNAVAILABLE": "infra.dispatcher_unavailable",
     "ERROR_ACCELERATOR_EXECUTION_FAILED": "infra.accelerator_execution_failed",
+    "ERROR_PERIPHERAL_DAEMON_UNAVAILABLE": "infra.peripheral_daemon_unavailable",
+    "ERROR_PERIPHERAL_DAEMON_TIMEOUT": "infra.peripheral_daemon_timeout",
+    "ERROR_PERIPHERAL_DAEMON_NOT_READY": "infra.peripheral_daemon_not_ready",
     "ERROR_DISPATCHER_UNAVAILABLE_LEGACY": "DispatcherUnavailable",
     "ERROR_INTERNAL_PLUGIN_FAILURE": "internal.plugin_failure",
   }

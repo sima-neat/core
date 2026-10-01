@@ -973,6 +973,15 @@ diagnostics you can reproduce (`describe_backend()` + report).
 
 ### Camera allocation ownership
 
+The board-local `simaai-peripherals` service shipped by Internals owns device
+discovery, Linux notifications, debounce, the authoritative catalog, revisions,
+and replayable events. Core does not link that implementation. Instead,
+`simaai::neat::peripherals::list()` and `pyneat.peripherals.list()` are thin,
+stateless clients: each performs one bounded `GET /v1/catalog` over the
+service's versioned Unix-socket API, validates the response, and returns that
+snapshot. They never scan hardware, maintain a second cache, subscribe to
+events, or fall back when the service is unavailable.
+
 `CameraInput` places `neatcamerabridge` immediately after its camera caps and
 before any live queue. During negotiation the bridge answers the upstream
 `GST_QUERY_ALLOCATION` with a standard pool and requests `GstVideoMeta`. The

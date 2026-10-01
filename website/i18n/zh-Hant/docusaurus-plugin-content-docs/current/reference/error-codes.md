@@ -54,6 +54,7 @@ Neat 透過 `NeatError` 和 `PullError` 呈現類型錯誤。 每次錯誤都會
 | `io.camera_not_found` | `error_codes::kCameraNotFound` | `pyneat.ERROR_CAMERA_NOT_FOUND` |
 | `io.model_not_found` | `error_codes::kModelNotFound` | `pyneat.ERROR_MODEL_NOT_FOUND` |
 | `io.source_ended` | `error_codes::kSourceEnded` | `pyneat.ERROR_SOURCE_ENDED` |
+| `io.response_too_large` | `error_codes::kResponseTooLarge` | `pyneat.ERROR_RESPONSE_TOO_LARGE` |
 | `codec.invalid_h264_stream` | `error_codes::kInvalidH264Stream` | `pyneat.ERROR_INVALID_H264_STREAM` |
 | `codec.decode_failed` | `error_codes::kDecodeFailed` | `pyneat.ERROR_DECODE_FAILED` |
 | `codec.encode_failed` | `error_codes::kEncodeFailed` | `pyneat.ERROR_ENCODE_FAILED` |
@@ -64,6 +65,9 @@ Neat 透過 `NeatError` 和 `PullError` 呈現類型錯誤。 每次錯誤都會
 | `resource.disk_full` | `error_codes::kDiskFull` | `pyneat.ERROR_DISK_FULL` |
 | `infra.dispatcher_unavailable` | `error_codes::kDispatcherUnavailable` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE` |
 | `infra.accelerator_execution_failed` | `error_codes::kAcceleratorExecutionFailed` | `pyneat.ERROR_ACCELERATOR_EXECUTION_FAILED` |
+| `infra.peripheral_daemon_unavailable` | `error_codes::kPeripheralDaemonUnavailable` | `pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE` |
+| `infra.peripheral_daemon_timeout` | `error_codes::kPeripheralDaemonTimeout` | `pyneat.ERROR_PERIPHERAL_DAEMON_TIMEOUT` |
+| `infra.peripheral_daemon_not_ready` | `error_codes::kPeripheralDaemonNotReady` | `pyneat.ERROR_PERIPHERAL_DAEMON_NOT_READY` |
 | `DispatcherUnavailable`（舊版）| `error_codes::kDispatcherUnavailableLegacy` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE_LEGACY` |
 | `internal.plugin_failure` | `error_codes::kInternalPluginFailure` | `pyneat.ERROR_INTERNAL_PLUGIN_FAILURE` |
 
@@ -112,6 +116,7 @@ Neat 透過 `NeatError` 和 `PullError` 呈現類型錯誤。 每次錯誤都會
 | `io.camera_not_found` | 要求的相機目前無法使用。| 請選擇可用的相機，或使用預設相機。|
 | `io.model_not_found` | 要求的模型封存檔不存在。| 請更正模型路徑，並確認已安裝該封存檔。|
 | `io.source_ended` | 一個輸入來源已達到其正常結束點。| 停止從該來源讀取資料，或者如果應用程式需要更多資料，請提供額外的輸入。|
+| `io.response_too_large` | 有界限的本機通訊協定回應超過文件所載的大小限制。 | 請縮小目錄，或安裝相符版本的用戶端與服務。 |
 
 ## 管線實體化失敗
 
@@ -146,6 +151,9 @@ Neat 透過 `NeatError` 和 `PullError` 呈現類型錯誤。 每次錯誤都會
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat 無法取得加速器的執行階段。| 請確認 DevKit 的相容性，並停止獨佔使用加速器的工作負載。|
 | `infra.accelerator_execution_failed` | 加速器無法執行模型階段。| 請重新啟動管線，並減少同時執行的加速器工作負載。|
+| `infra.peripheral_daemon_unavailable` | 本機周邊常駐程式 socket 不存在、拒絕連線或忙碌。 | 請安裝並啟動 `simaai-peripherals.service`，然後檢查其日誌。 |
+| `infra.peripheral_daemon_timeout` | 有期限的周邊目錄要求未完成。 | 請檢查常駐程式服務與提供者健康狀態，然後重試。 |
+| `infra.peripheral_daemon_not_ready` | 常駐程式尚未完成可用的初始目錄。 | 請讀取常駐程式日誌，並修正所報告的提供者或裝置問題。 |
 
 ## 內部錯誤
 

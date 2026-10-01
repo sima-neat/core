@@ -19,7 +19,7 @@ sidebar_position: 2
 - libcameraがカメラをリストに表示することを確認してください。
 - 要求する予定の正確な `format,width,height,framerate` を、`libcamerasrc` がストリーミングできることを確認してください。
 
-`camera_name` は libcamera のカメラ名です。デフォルトのカメラを使用する場合は、この変数を設定する必要はありません。ボードに複数のカメラが搭載されている場合は、`cam -l` からカメラ名を取得して設定してください。
+`camera_name` は正確な libcamera カメラ名です。デフォルトカメラを使う場合は未設定のままにするか、`simaai::neat::peripherals::list()` / `pyneat.peripherals.list()` から選択可能な名前とデーモンが分類したモードを取得してください。`simaai-peripherals.service` が利用できない場合、カタログクライアントは失敗し、代替のハードウェアスキャンは実行しません。
 
 ## クイックスタート
 
@@ -104,7 +104,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 
 | フィールド | デフォルト値 | 意味 |
 | --- | --- | --- |
-| `camera_name` | を設定解除します。| これは、オプションのlibcameraカメラ名であり、通常は`cam -l`からコピーされます。設定を解除すると、libcameraがデフォルトのカメラを選択します。|
+| `camera_name` | を設定解除します。| 周辺機器カタログの `camera.camera_name` フィールドから取得する、オプションの正確な libcamera カメラ名です。未設定の場合、libcamera がデフォルトカメラを選択します。|
 | `width` | `1920` | ピクセル単位で指定する、要求されるフレームの幅。カメラモードとオーバーレイでサポートされている必要があります。|
 | `height` | `1080` | ピクセル単位で要求されるフレームの高さ。|
 | `framerate_num` | `30` | フレームレートの分子。|

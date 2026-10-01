@@ -54,6 +54,7 @@ Neatは、`NeatError`と`PullError`を通じて、型エラーなどの問題を
 | `io.camera_not_found` | `error_codes::kCameraNotFound` | `pyneat.ERROR_CAMERA_NOT_FOUND` |
 | `io.model_not_found` | `error_codes::kModelNotFound` | `pyneat.ERROR_MODEL_NOT_FOUND` |
 | `io.source_ended` | `error_codes::kSourceEnded` | `pyneat.ERROR_SOURCE_ENDED` |
+| `io.response_too_large` | `error_codes::kResponseTooLarge` | `pyneat.ERROR_RESPONSE_TOO_LARGE` |
 | `codec.invalid_h264_stream` | `error_codes::kInvalidH264Stream` | `pyneat.ERROR_INVALID_H264_STREAM` |
 | `codec.decode_failed` | `error_codes::kDecodeFailed` | `pyneat.ERROR_DECODE_FAILED` |
 | `codec.encode_failed` | `error_codes::kEncodeFailed` | `pyneat.ERROR_ENCODE_FAILED` |
@@ -64,6 +65,9 @@ Neatは、`NeatError`と`PullError`を通じて、型エラーなどの問題を
 | `resource.disk_full` | `error_codes::kDiskFull` | `pyneat.ERROR_DISK_FULL` |
 | `infra.dispatcher_unavailable` | `error_codes::kDispatcherUnavailable` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE` |
 | `infra.accelerator_execution_failed` | `error_codes::kAcceleratorExecutionFailed` | `pyneat.ERROR_ACCELERATOR_EXECUTION_FAILED` |
+| `infra.peripheral_daemon_unavailable` | `error_codes::kPeripheralDaemonUnavailable` | `pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE` |
+| `infra.peripheral_daemon_timeout` | `error_codes::kPeripheralDaemonTimeout` | `pyneat.ERROR_PERIPHERAL_DAEMON_TIMEOUT` |
+| `infra.peripheral_daemon_not_ready` | `error_codes::kPeripheralDaemonNotReady` | `pyneat.ERROR_PERIPHERAL_DAEMON_NOT_READY` |
 | `DispatcherUnavailable`（レガシー）| `error_codes::kDispatcherUnavailableLegacy` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE_LEGACY` |
 | `internal.plugin_failure` | `error_codes::kInternalPluginFailure` | `pyneat.ERROR_INTERNAL_PLUGIN_FAILURE` |
 
@@ -112,6 +116,7 @@ Neatは、`NeatError`と`PullError`を通じて、型エラーなどの問題を
 | `io.camera_not_found` | 要求されたカメラは利用できません。| 利用可能なカメラを選択するか、デフォルトのカメラを使用してください。|
 | `io.model_not_found` | 要求されたモデルアーカイブが見つかりません。| モデルのパスを修正し、モデルアーカイブがインストールされていることを確認してください。|
 | `io.source_ended` | 入力ソースが通常終了に達しました。| そのソースの読み込みを停止するか、アプリケーションがより多くのデータを必要とする場合は、追加の入力を提供してください。|
+| `io.response_too_large` | 制限付きローカルプロトコル応答が文書化されたサイズ上限を超えました。 | カタログを減らすか、対応するクライアントとサービスのバージョンをインストールしてください。 |
 
 ## パイプラインの実行失敗
 
@@ -146,6 +151,9 @@ Neatは、`NeatError`と`PullError`を通じて、型エラーなどの問題を
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat がアクセラレータのランタイムを取得できません。| DevKit との互換性を確認し、アクセラレータを専有しているワークロードを停止してください。|
 | `infra.accelerator_execution_failed` | アクセラレータはモデルのステージを実行できません。 | パイプラインを再起動し、同時実行されるアクセラレータのワークロードを削減します。 |
+| `infra.peripheral_daemon_unavailable` | ローカル周辺機器デーモンのソケットが存在しない、接続を拒否した、またはビジーです。 | `simaai-peripherals.service` をインストールして起動し、ジャーナルを確認してください。 |
+| `infra.peripheral_daemon_timeout` | 期限付きの周辺機器カタログ要求が完了しませんでした。 | デーモンサービスとプロバイダーの状態を確認して再試行してください。 |
+| `infra.peripheral_daemon_not_ready` | デーモンが使用可能な初期カタログをまだ完了していません。 | デーモンのジャーナルを読み、報告されたプロバイダーまたはデバイスの問題を修正してください。 |
 
 ## 内部エラー
 

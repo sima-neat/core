@@ -19,7 +19,7 @@ sidebar_position: 2
 - libcamera가 카메라 목록을 제대로 표시하는지 확인합니다.
 - 요청하려는 정확한 `format,width,height,framerate`로 `libcamerasrc`가 스트리밍할 수 있는지 확인하십시오.
 
-`camera_name`은 libcamera 카메라 이름입니다. 기본 카메라를 사용하려면 이 값을 설정하지 않고, 보드가 둘 이상의 카메라를 지원하는 경우 `cam -l`에서 카메라 이름을 복사하여 설정하십시오.
+`camera_name`은 정확한 libcamera 카메라 이름입니다. 기본 카메라를 사용하려면 설정하지 않거나 `simaai::neat::peripherals::list()` / `pyneat.peripherals.list()`에서 선택 가능한 이름과 데몬이 분류한 모드를 읽으십시오. `simaai-peripherals.service`를 사용할 수 없으면 카탈로그 클라이언트가 실패하며 대체 하드웨어 스캔을 실행하지 않습니다.
 
 ## 빠른 시작
 
@@ -104,7 +104,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 
 | 필드 | 기본값 | 설명 |
 | --- | --- | --- |
-| `camera_name` | 설정 해제 | 선택 사항: libcamera 카메라 이름입니다. 일반적으로 `cam -l`에서 복사합니다. 설정 해두면 libcamera가 기본 카메라를 선택합니다. |
+| `camera_name` | 설정 해제 | 주변기기 카탈로그가 반환한 `camera.camera_name` 필드의 선택적 정확한 libcamera 카메라 이름입니다. 설정하지 않으면 libcamera가 기본 카메라를 선택합니다. |
 | `width` | `1920` | 픽셀 단위로 요청하는 프레임 너비입니다. 카메라 모드 및 오버레이에서 지원해야 합니다. |
 | `height` | `1080` | 픽셀 단위로 요청된 프레임 높이입니다. |
 | `framerate_num` | `30` | 프레임 속도 분자. |
