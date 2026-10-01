@@ -535,6 +535,13 @@ endforeach()
 
 if (TARGET sima_neat_peripheral_daemon_lib)
   add_pipeline_test(
+    unit_alsa_discovery_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_alsa_discovery_test.cpp
+  )
+  target_link_libraries(unit_alsa_discovery_test PRIVATE sima_neat_peripheral_daemon_lib)
+  set_property(TEST unit_alsa_discovery_test APPEND PROPERTY LABELS "unit;peripherals")
+
+  add_pipeline_test(
     unit_camera_discovery_test
     ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_camera_discovery_test.cpp
   )

@@ -1309,6 +1309,7 @@ if (SIMANEAT_BUILD_PERIPHERAL_DAEMON)
     services/peripherals/PeripheralCatalog.cpp
     services/peripherals/PeripheralCatalogManager.cpp
     services/peripherals/PeripheralProtocol.cpp
+    services/peripherals/providers/AlsaProvider.cpp
     services/peripherals/providers/CameraProvider.cpp
   )
   target_include_directories(sima_neat_peripheral_daemon_lib

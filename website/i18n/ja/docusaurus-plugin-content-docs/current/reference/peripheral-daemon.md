@@ -35,10 +35,10 @@ Linux/udev notification or explicit refresh
 カタログのシーケンス、再生可能なイベントを所有します。udev 通知は更新の合図にすぎず、
 プロバイダーコードがカメラを取得またはストリーミングせずに機能照会とサポート分類を行います。
 
-最初の非公開プロバイダーは MIPI/libcamera カメラを検出します。カメラがない状態は
-有効な空のカタログです。各プロバイダーは独立して実行されます。障害が発生した
+非公開プロバイダーは MIPI/libcamera カメラと Linux ALSA キャプチャーデバイスを
+検出します。カメラもマイクもない状態は有効な空のカタログです。各プロバイダーは独立して実行されます。障害が発生した
 プロバイダーは構造化された問題を追加し、自身の最後の正常なレコードだけを保持します。
-正常なプロバイダーの現在の結果は引き続き表示されるため、将来マイク、LiDAR、その他の
+正常なプロバイダーの現在の結果は引き続き表示されるため、将来 LiDAR やその他の
 プロバイダーを追加しても、1 つのバックエンド障害で無関係なデバイスは消えません。
 
 ## ローカル API
@@ -129,6 +129,72 @@ systemd ユニットは非特権の `sima` ユーザーとして実行され、`
 `width` と `height` の代わりに、`min_width`、`min_height`、`max_width`、
 `max_height`、`step_width`、`step_height` を持つ `size_range` が含まれます。
 
+ALSA キャプチャーデバイスは、次の種類固有の形式を使用します。
+
+```json
+{
+  "id": "microphone:alsa:6f69fe8f648be64e",
+  "type": "microphone",
+  "provider": "daemon.microphone.alsa",
+  "microphone": {
+    "name": "Yeti Nano",
+    "backend": "alsa",
+    "connection": "usb",
+    "capture_target": {
+      "card_id": "Nano",
+      "device": 0,
+      "selector": "plughw:CARD=Nano,DEV=0"
+    },
+    "identity": {
+      "stable_key": "usb:1-3.2:1-3.2:1.0:pcm0c",
+      "card_index": 2,
+      "card_id": "Nano",
+      "card_name": "Yeti Nano",
+      "card_driver": "USB-Audio",
+      "pcm_name": "USB Audio",
+      "pcm_node": "/dev/snd/pcmC2D0c",
+      "usb": {
+        "vendor_id": "b58e",
+        "product_id": "0005",
+        "bus_path": "1-3.2",
+        "interface": "1-3.2:1.0"
+      }
+    },
+    "modes": [
+      {
+        "interface": 3,
+        "altset": 1,
+        "format": "S24_3LE",
+        "channels": 2,
+        "sample_bits": 24,
+        "rates_hz": [32000, 44100, 48000],
+        "channel_map": ["FL", "FR"]
+      }
+    ],
+    "availability": {
+      "state": "available",
+      "subdevices": 1,
+      "subdevices_available": 1
+    }
+  }
+}
+```
+
+`id` は安定した sysfs トポロジーとキャプチャー PCM デバイスから生成され、ALSA
+カードインデックスは使用しません。`capture_target` と `identity.card_index` は現在の
+スナップショットのルーティングデータです。マイクを開く前に、クライアントは同じ
+デーモンの `instance_id`、カタログの `revision`、デバイスの `id` を再取得してから、
+返されたセレクターを使用する必要があります。クライアントは ID を解析または生成してはいけません。
+
+プロバイダーは PCM を開いたり外部プローブを実行したりせず、`/proc/asound` と sysfs を
+読み取ります。USB ストリームモードでは、形式、チャンネル数、サンプルビット、離散的な
+`rates_hz` または連続的な `rate_range_hz`、インターフェース、代替設定、チャンネルマップを
+保持します。読み取り専用機能を公開しない非 USB ドライバーも、空の `modes` 配列と
+デバイス固有の `issues` を付けて表示します。利用できない任意の識別文字列やリンクは
+省略され、再生専用デバイスは表示されません。少なくとも 1 つのキャプチャーサブデバイスが
+空いていれば `available`、すべて使用中なら `in_use`、有効な個数を取得できなければ
+`unknown` です。
+
 イベント応答には `schema_version`、`instance_id`、`revision`、最新の `sequence`、`scan_sequence`、
 `resync_required`、`shutting_down`、`events` 配列が含まれます。各イベントには
 `sequence`、`revision`、`kind` が含まれます。デバイスイベントには `device_id`、
@@ -163,6 +229,10 @@ health または catalog の `scan_sequence` がこの値以上になるまで
 カメラ ID には不安定な `/dev/videoN` ではなく、プロバイダーの正確な libcamera 名を使用します。カメラ詳細はモデル、モードまたはサイズ範囲、
 フレームレート、サポート分類、拒否理由を保持します。
 
+マイクの識別には、安定した sysfs トポロジーとキャプチャー PCM デバイスを使用します。
+ALSA カードインデックス、`/dev/snd/pcmC*`、生成されたセレクターは再起動や再接続後に
+変わる可能性があるため、カタログ ID には使用しません。
+
 ### クライアントの再同期
 
 クライアントは `instance_id` と `sequence` の両方を保持します。
@@ -179,9 +249,10 @@ health または catalog の `scan_sequence` がこの値以上になるまで
 ## 監視と更新
 
 デーモンは登録済みプロバイダーが宣言したサブシステムから udev フィルターを構築します。
-現在のカメラプロバイダーは `media` と `video4linux` を監視します。250 ms の
-デバウンス後に各非公開プロバイダーを 1 回実行します。デバイスイベントを生成しない変更には
-`POST /v1/refresh` または `systemctl reload` を使用します。
+カメラプロバイダーは `media` と `video4linux`、ALSA プロバイダーは `sound` を監視します。
+250 ms のデバウンス後に各非公開プロバイダーを 1 回実行します。デバイスイベントを生成しない
+ソフトウェア、設定、キャプチャー可用性の変更には `POST /v1/refresh` または
+`systemctl reload` を使用します。
 
 定期スキャンやアイドル時のヘルスタイマーはありません。起動後、モニター、API リスナー、
 プロセス監視は、udev 通知、明示的な更新、クライアント接続、終了シグナル、または
@@ -212,5 +283,6 @@ journalctl -u simaai-peripherals
 | ソケットがない | `systemctl status simaai-peripherals` とサービスジャーナルを確認します。 |
 | ソケットへのアクセスが拒否される | クライアントが `sima` グループに属することを確認し、セッションを再接続します。 |
 | 状態が `degraded` | `/v1/health` の `error` とプロバイダー別の `issues` を確認します。保持されたレコードは `retained_last_good` で示されます。 |
+| マイクの `modes` が空 | デバイス固有の `issues` を確認します。一部の非 USB ALSA ドライバーは PCM を開かずに機能を公開しません。 |
 | `resync_required` が true | 新しいカタログでローカル状態を置き換え、そのシーケンスから再開します。 |
 | 設定変更が検出されない | `POST /v1/refresh` を呼ぶか、サービスをリロードします。 |

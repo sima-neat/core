@@ -2,6 +2,7 @@
 #include "PeripheralCatalog.h"
 #include "PeripheralCatalogManager.h"
 #include "peripherals/internal/ProtocolContract.h"
+#include "providers/AlsaProvider.h"
 #include "providers/CameraProvider.h"
 
 #include <poll.h>
@@ -105,11 +106,15 @@ int main(int argc, char** argv) {
     const int signal_fd = create_signal_fd();
 
     peripherals::PeripheralCatalog catalog(new_instance_id(), options.event_capacity);
-    peripherals::PeripheralCatalogManager manager(catalog,
-                                                  {{"daemon.camera.libcamera",
-                                                    {"media", "video4linux"},
-                                                    peripherals::discover_camera_peripherals}},
-                                                  options.debounce_ms);
+    peripherals::PeripheralCatalogManager manager(
+        catalog,
+        {{"daemon.camera.libcamera",
+          {"media", "video4linux"},
+          peripherals::discover_camera_peripherals},
+         {"daemon.microphone.alsa",
+          {"sound"},
+          [] { return peripherals::discover_alsa_capture_peripherals(); }}},
+        options.debounce_ms);
     manager.initial_scan();
     manager.start();
 

@@ -34,10 +34,10 @@ Linux/udev notification or explicit refresh
 재생 가능한 이벤트를 소유합니다. udev 알림은 새로 고침 신호일 뿐이며 공급자 코드가
 카메라를 획득하거나 스트리밍하지 않고 기능 조회와 지원 분류를 수행합니다.
 
-첫 비공개 공급자는 MIPI/libcamera 카메라를 검색합니다. 카메라가 없는 상태는 유효한
-빈 데몬 카탈로그입니다. 공급자는 서로 독립적으로 실행됩니다. 실패한 공급자는 구조화된
+비공개 공급자는 MIPI/libcamera 카메라와 Linux ALSA 캡처 장치를 검색합니다. 카메라와
+마이크가 모두 없는 상태는 유효한 빈 데몬 카탈로그입니다. 공급자는 서로 독립적으로 실행됩니다. 실패한 공급자는 구조화된
 문제를 추가하고 자체 마지막 정상 레코드만 유지합니다. 정상 공급자의 현재 결과는 계속
-표시되므로 향후 마이크, LiDAR 또는 다른 공급자를 추가해도 하나의 백엔드 장애가 관련 없는
+표시되므로 향후 LiDAR 또는 다른 공급자를 추가해도 하나의 백엔드 장애가 관련 없는
 장치를 숨기지 않습니다.
 
 ## 로컬 API
@@ -128,6 +128,71 @@ systemd 유닛은 권한이 없는 `sima` 사용자로 실행되고 `sima` 그�
 `height` 대신 `min_width`, `min_height`, `max_width`, `max_height`, `step_width`,
 `step_height`를 포함하는 `size_range`가 있습니다.
 
+ALSA 캡처 장치는 다음 유형별 구조를 사용합니다.
+
+```json
+{
+  "id": "microphone:alsa:6f69fe8f648be64e",
+  "type": "microphone",
+  "provider": "daemon.microphone.alsa",
+  "microphone": {
+    "name": "Yeti Nano",
+    "backend": "alsa",
+    "connection": "usb",
+    "capture_target": {
+      "card_id": "Nano",
+      "device": 0,
+      "selector": "plughw:CARD=Nano,DEV=0"
+    },
+    "identity": {
+      "stable_key": "usb:1-3.2:1-3.2:1.0:pcm0c",
+      "card_index": 2,
+      "card_id": "Nano",
+      "card_name": "Yeti Nano",
+      "card_driver": "USB-Audio",
+      "pcm_name": "USB Audio",
+      "pcm_node": "/dev/snd/pcmC2D0c",
+      "usb": {
+        "vendor_id": "b58e",
+        "product_id": "0005",
+        "bus_path": "1-3.2",
+        "interface": "1-3.2:1.0"
+      }
+    },
+    "modes": [
+      {
+        "interface": 3,
+        "altset": 1,
+        "format": "S24_3LE",
+        "channels": 2,
+        "sample_bits": 24,
+        "rates_hz": [32000, 44100, 48000],
+        "channel_map": ["FL", "FR"]
+      }
+    ],
+    "availability": {
+      "state": "available",
+      "subdevices": 1,
+      "subdevices_available": 1
+    }
+  }
+}
+```
+
+`id`는 ALSA 카드 인덱스가 아니라 안정적인 sysfs 토폴로지와 캡처 PCM 장치에서
+생성됩니다. `capture_target`과 `identity.card_index`는 현재 스냅샷의 라우팅
+데이터입니다. 마이크를 열기 전에 클라이언트는 같은 데몬 `instance_id`, 카탈로그
+`revision`, 장치 `id`를 다시 읽은 다음 반환된 선택기를 사용해야 합니다. 클라이언트는
+ID를 분석하거나 직접 생성하면 안 됩니다.
+
+공급자는 PCM을 열거나 외부 프로브를 실행하지 않고 `/proc/asound`와 sysfs를 읽습니다.
+USB 스트림 모드는 형식, 채널 수, 샘플 비트, 이산 `rates_hz` 또는 연속
+`rate_range_hz`, 인터페이스, 대체 설정, 채널 맵을 보존합니다. 읽기 전용 기능을
+게시하지 않는 비 USB 드라이버도 빈 `modes` 배열과 장치별 `issues` 항목으로 표시됩니다.
+사용할 수 없는 선택적 식별 문자열과 링크는 생략되고 재생 전용 장치는 표시되지 않습니다.
+하나 이상의 캡처 하위 장치가 비어 있으면 `available`, 모두 사용 중이면 `in_use`, ALSA가
+유효한 개수를 게시하지 않으면 `unknown`입니다.
+
 이벤트 응답에는 `schema_version`, `instance_id`, `revision`, 최신 `sequence`, `scan_sequence`,
 `resync_required`, `shutting_down`, `events` 배열이 포함됩니다. 각 이벤트에는
 `sequence`, `revision`, `kind`가 포함됩니다. 장치 이벤트에는 `device_id`,
@@ -161,6 +226,10 @@ health 또는 catalog의 `scan_sequence`가 이 값 이상이 될 때까지 폴�
 카메라 식별자는 불안정한 `/dev/videoN` 대신 공급자의 정확한 libcamera 이름을 사용합니다. 카메라 세부 정보는 모델, 모드 또는 크기 범위,
 프레임레이트, 지원 분류 및 거부 이유를 보존합니다.
 
+마이크 식별자는 안정적인 sysfs 토폴로지와 캡처 PCM 장치를 사용합니다. ALSA 카드
+인덱스, `/dev/snd/pcmC*`, 생성된 선택기는 재부팅이나 다시 연결한 뒤 바뀔 수 있으므로
+카탈로그 식별자로 사용되지 않습니다.
+
 ### 클라이언트 재동기화
 
 클라이언트는 `instance_id`와 `sequence`를 모두 보관합니다.
@@ -175,10 +244,10 @@ health 또는 catalog의 `scan_sequence`가 이 값 이상이 될 때까지 폴�
 
 ## 모니터링 및 새로 고침
 
-데몬은 등록된 공급자가 선언한 하위 시스템으로 udev 필터를 구성합니다. 현재 카메라
-공급자는 `media`와 `video4linux`를 감시합니다. 250 ms 디바운스 후 각 비공개 공급자를
-한 번 실행합니다. 장치 이벤트를 만들지 않는 변경에는 `POST /v1/refresh`
-또는 `systemctl reload`를 사용합니다.
+데몬은 등록된 공급자가 선언한 하위 시스템으로 udev 필터를 구성합니다. 카메라 공급자는
+`media`와 `video4linux`, ALSA 공급자는 `sound`를 감시합니다. 250 ms 디바운스 후 각
+비공개 공급자를 한 번 실행합니다. 장치 이벤트를 만들지 않는 소프트웨어, 설정 또는 캡처
+가용성 변경에는 `POST /v1/refresh` 또는 `systemctl reload`를 사용합니다.
 
 주기적 스캔이나 유휴 상태의 상태 확인 타이머는 없습니다. 시작 후 모니터, API 리스너,
 프로세스 감독자는 udev 알림, 명시적 새로 고침, 클라이언트 연결, 종료 신호 또는 작업자
@@ -209,5 +278,6 @@ journalctl -u simaai-peripherals
 | 소켓이 없음 | `systemctl status simaai-peripherals`와 서비스 저널을 확인합니다. |
 | 소켓 접근 거부 | 클라이언트가 `sima` 그룹에 속하는지 확인하고 세션을 다시 연결합니다. |
 | 상태가 `degraded` | `/v1/health`의 `error`와 공급자별 `issues`를 확인합니다. 유지된 레코드는 `retained_last_good`로 표시됩니다. |
+| 마이크의 `modes`가 비어 있음 | 장치별 `issues`를 읽습니다. 일부 비 USB ALSA 드라이버는 PCM을 열지 않으면 기능을 게시하지 않습니다. |
 | `resync_required`가 true | 새 카탈로그로 로컬 상태를 교체하고 해당 시퀀스부터 계속합니다. |
 | 설정 변경이 감지되지 않음 | `POST /v1/refresh`를 호출하거나 서비스를 다시 로드합니다. |

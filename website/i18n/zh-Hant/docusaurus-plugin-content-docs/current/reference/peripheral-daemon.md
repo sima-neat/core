@@ -34,9 +34,9 @@ Linux/udev notification or explicit refresh
 udev 通知只表示需要重新整理；提供者程式碼會在不取得或串流相機的情況下查詢功能並
 分類支援狀態。
 
-第一個私有提供者探索 MIPI/libcamera 相機。沒有相機是有效的空白常駐程式目錄。
+私有提供者探索 MIPI/libcamera 相機與 Linux ALSA 擷取裝置。沒有相機或麥克風是有效的空白常駐程式目錄。
 各提供者會獨立執行。失敗的提供者會加入結構化問題，並只保留自己的最後良好記錄；
-健康提供者的目前結果仍會顯示。因此，未來加入麥克風、LiDAR 或其他提供者時，單一
+健康提供者的目前結果仍會顯示。因此，未來加入 LiDAR 或其他提供者時，單一
 後端失敗不會隱藏不相關的裝置。
 
 ## 本機 API
@@ -126,6 +126,69 @@ systemd 單元會以非特權的 `sima` 使用者執行、為 `sima` 群組建�
 `min_width`、`min_height`、`max_width`、`max_height`、`step_width` 與
 `step_height`，而不是離散的 `width` 與 `height`。
 
+ALSA 擷取裝置使用下列類型專屬結構：
+
+```json
+{
+  "id": "microphone:alsa:6f69fe8f648be64e",
+  "type": "microphone",
+  "provider": "daemon.microphone.alsa",
+  "microphone": {
+    "name": "Yeti Nano",
+    "backend": "alsa",
+    "connection": "usb",
+    "capture_target": {
+      "card_id": "Nano",
+      "device": 0,
+      "selector": "plughw:CARD=Nano,DEV=0"
+    },
+    "identity": {
+      "stable_key": "usb:1-3.2:1-3.2:1.0:pcm0c",
+      "card_index": 2,
+      "card_id": "Nano",
+      "card_name": "Yeti Nano",
+      "card_driver": "USB-Audio",
+      "pcm_name": "USB Audio",
+      "pcm_node": "/dev/snd/pcmC2D0c",
+      "usb": {
+        "vendor_id": "b58e",
+        "product_id": "0005",
+        "bus_path": "1-3.2",
+        "interface": "1-3.2:1.0"
+      }
+    },
+    "modes": [
+      {
+        "interface": 3,
+        "altset": 1,
+        "format": "S24_3LE",
+        "channels": 2,
+        "sample_bits": 24,
+        "rates_hz": [32000, 44100, 48000],
+        "channel_map": ["FL", "FR"]
+      }
+    ],
+    "availability": {
+      "state": "available",
+      "subdevices": 1,
+      "subdevices_available": 1
+    }
+  }
+}
+```
+
+`id` 由穩定的 sysfs 拓撲與擷取 PCM 裝置衍生，絕不使用 ALSA 卡索引。
+`capture_target` 與 `identity.card_index` 是目前快照的路由資料。開啟麥克風前，用戶端
+必須重新讀取相同常駐程式的 `instance_id`、目錄 `revision` 與裝置 `id`，再使用傳回的
+選取器。用戶端不得剖析或自行產生 ID。
+
+提供者會讀取 `/proc/asound` 與 sysfs，不開啟 PCM，也不執行外部探查程式。USB 串流模式
+會保留格式、聲道數、樣本位元、離散 `rates_hz` 或連續 `rate_range_hz`、介面、替代設定
+與聲道對應。未發佈唯讀功能的非 USB 驅動程式仍會列出，並具有空白 `modes` 陣列及
+裝置範圍的 `issues`。無法取得的選用識別字串與連結會省略，只能播放的裝置不會列出。
+只要至少一個擷取子裝置可用，狀態即為 `available`；全部使用中時為 `in_use`；ALSA
+未發佈有效數量時則為 `unknown`。
+
 事件回應包含 `schema_version`、`instance_id`、`revision`、最新 `sequence`、
 `scan_sequence`、`resync_required`、`shutting_down` 與 `events` 陣列。每個事件包含 `sequence`、
 `revision` 與 `kind`。裝置事件另有 `device_id`、`device_type` 及 `previous` 和／或
@@ -158,6 +221,9 @@ curl --unix-socket /run/simaai-peripherals/api.sock \
 `/dev/videoN` 索引。相機詳細資料保留模型、模式或明確大小範圍、幀率、支援分類與
 拒絕原因。
 
+麥克風識別使用穩定的 sysfs 拓撲與擷取 PCM 裝置。ALSA 卡索引、`/dev/snd/pcmC*` 與
+產生的選取器可能在重新啟動或重新插拔後改變，因此絕不作為目錄識別。
+
 ### 用戶端重新同步
 
 用戶端應同時保留 `instance_id` 與 `sequence`：
@@ -172,9 +238,9 @@ curl --unix-socket /run/simaai-peripherals/api.sock \
 
 ## 監控與重新整理
 
-常駐程式會依已登錄提供者宣告的子系統建立 udev 篩選器。目前的相機提供者監聽
-`media` 與 `video4linux`。它以 250 毫秒防彈跳合併一連串通知，然後執行每個私有
-提供者一次。對不會產生裝置事件的軟體或設定變更，請使用
+常駐程式會依已登錄提供者宣告的子系統建立 udev 篩選器。相機提供者監聽 `media` 與
+`video4linux`，ALSA 提供者監聽 `sound`。它以 250 毫秒防彈跳合併一連串通知，然後
+執行每個私有提供者一次。對不會產生裝置事件的軟體、設定或擷取可用性變更，請使用
 `POST /v1/refresh` 或 `systemctl reload`。
 
 系統不會進行週期掃描，也沒有閒置狀態的健康檢查計時器。啟動後，監控器、API 監聽器與
@@ -204,5 +270,6 @@ journalctl -u simaai-peripherals
 | 找不到通訊端 | 檢查 `systemctl status simaai-peripherals` 與服務日誌。 |
 | 通訊端存取遭拒 | 確認用戶端屬於 `sima` 群組並重新連線工作階段。 |
 | 狀態為 `degraded` | 讀取 `/v1/health` 中的 `error` 與各提供者的 `issues`；保留的記錄會以 `retained_last_good` 標示。 |
+| 麥克風的 `modes` 為空白 | 讀取其裝置範圍的 `issues`。部分非 USB ALSA 驅動程式不會在未開啟 PCM 時發佈功能。 |
 | `resync_required` 為 true | 讀取新目錄、取代本機狀態，並從其序號繼續。 |
 | 未偵測到設定變更 | 呼叫 `POST /v1/refresh` 或重新載入服務。 |

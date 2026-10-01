@@ -36,12 +36,12 @@ scan and catalog sequences, and replayable events. A udev notification only
 tells the daemon to refresh; provider code performs the capability query and
 support classification without acquiring or streaming from the camera.
 
-The initial private provider discovers MIPI/libcamera cameras. No connected
-camera produces a ready empty catalog. Providers run independently: a failing
-provider contributes a structured issue and retains only its own last-good
-records, while current results from healthy providers remain visible. This
-allows future microphone, LiDAR, and other providers to be added without one
-backend failure erasing unrelated devices.
+The private providers discover MIPI/libcamera cameras and Linux ALSA capture
+devices. No connected camera or microphone produces a ready empty catalog.
+Providers run independently: a failing provider contributes a structured issue
+and retains only its own last-good records, while current results from healthy
+providers remain visible. This allows future LiDAR and other providers to be
+added without one backend failure erasing unrelated devices.
 
 ## Local API
 
@@ -133,6 +133,73 @@ are nested under their device type:
 `size_range` with `min_width`, `min_height`, `max_width`, `max_height`,
 `step_width`, and `step_height` instead of discrete `width` and `height`.
 
+An ALSA capture device uses this type-specific shape:
+
+```json
+{
+  "id": "microphone:alsa:6f69fe8f648be64e",
+  "type": "microphone",
+  "provider": "daemon.microphone.alsa",
+  "microphone": {
+    "name": "Yeti Nano",
+    "backend": "alsa",
+    "connection": "usb",
+    "capture_target": {
+      "card_id": "Nano",
+      "device": 0,
+      "selector": "plughw:CARD=Nano,DEV=0"
+    },
+    "identity": {
+      "stable_key": "usb:1-3.2:1-3.2:1.0:pcm0c",
+      "card_index": 2,
+      "card_id": "Nano",
+      "card_name": "Yeti Nano",
+      "card_driver": "USB-Audio",
+      "pcm_name": "USB Audio",
+      "pcm_node": "/dev/snd/pcmC2D0c",
+      "usb": {
+        "vendor_id": "b58e",
+        "product_id": "0005",
+        "bus_path": "1-3.2",
+        "interface": "1-3.2:1.0"
+      }
+    },
+    "modes": [
+      {
+        "interface": 3,
+        "altset": 1,
+        "format": "S24_3LE",
+        "channels": 2,
+        "sample_bits": 24,
+        "rates_hz": [32000, 44100, 48000],
+        "channel_map": ["FL", "FR"]
+      }
+    ],
+    "availability": {
+      "state": "available",
+      "subdevices": 1,
+      "subdevices_available": 1
+    }
+  }
+}
+```
+
+`id` is derived from stable sysfs topology plus the capture PCM device, never
+from an ALSA card index. `capture_target` and `identity.card_index` are current
+snapshot routing data. Before opening a microphone, a client must re-read the
+same daemon `instance_id`, catalog `revision`, and device `id`, then use the
+returned selector; clients must not parse or synthesize IDs.
+
+The provider reads `/proc/asound` and sysfs without opening a PCM or running an
+external probe. USB stream modes preserve formats, channel counts, sample bits,
+discrete `rates_hz` or a continuous `rate_range_hz`, interfaces, altsets, and
+channel maps. A non-USB driver that does not publish read-only capabilities is
+still listed with an empty `modes` array and a device-scoped `issues` entry.
+Optional identity strings and links are omitted when unavailable. Playback-only
+devices are not listed. Availability is `available` when at least one capture
+subdevice is free, `in_use` when none are free, or `unknown` when ALSA does not
+publish valid counts.
+
 An events response contains `schema_version`, `instance_id`, `revision`, the
 latest `sequence`, `scan_sequence`, `resync_required`, `shutting_down`, and an
 `events` array.
@@ -174,6 +241,10 @@ the provider's exact libcamera camera name rather than an unstable `/dev/videoN`
 index. Camera details preserve its model, modes or explicit size ranges, frame
 rate, support classification, and rejection reason.
 
+Microphone identities use stable sysfs topology and the capture PCM device.
+ALSA card indexes, `/dev/snd/pcmC*`, and the generated selector may change after
+a reboot or replug and are therefore never used as catalog identity.
+
 ### Client resynchronization
 
 Clients should retain both `instance_id` and `sequence`:
@@ -192,10 +263,11 @@ or other clients.
 ## Monitoring and refresh
 
 The daemon builds its udev filter from the subsystems declared by registered
-providers. The camera provider currently watches `media` and `video4linux`.
-It combines a burst of notifications using a 250 ms debounce period and then
-runs each private provider once. `POST /v1/refresh` and `systemctl reload`
-cover software or configuration changes that do not emit a device event.
+providers. The camera provider watches `media` and `video4linux`; the ALSA
+provider watches `sound`. It combines a burst of notifications using a 250 ms
+debounce period and then runs each private provider once. `POST /v1/refresh`
+and `systemctl reload` cover software, configuration, or capture-availability
+changes that do not emit a device event.
 
 There is no interval scan or idle health timer. After startup, the monitor,
 API listener, and process supervisor sleep in blocking kernel waits until a
@@ -229,5 +301,6 @@ if an external provider does not return.
 | Socket is missing | Check `systemctl status simaai-peripherals` and the service journal. |
 | Socket access is denied | Confirm the client belongs to the `sima` group and reconnect its session. |
 | State is `degraded` | Read `error` and provider-scoped `issues` in `/v1/health`; any retained provider records are marked by `retained_last_good`. |
+| A microphone has empty `modes` | Read its device-scoped `issues`. Some non-USB ALSA drivers do not publish capabilities without opening the PCM. |
 | `resync_required` is true | Read a fresh catalog, replace local state, and continue from its sequence. |
 | A configuration change was not detected | Call `POST /v1/refresh` or reload the service. |
