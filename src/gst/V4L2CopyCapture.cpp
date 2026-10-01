@@ -84,8 +84,8 @@ void Capture::queue(std::uint32_t index) {
   queue_attempted_ = true;
   require(backend_->io(fd_, VIDIOC_QBUF, &buffer) == 0, "CameraInput V4L2 QBUF failed");
 }
-void Capture::start(const std::string& device, Format requested, std::uint32_t count) {
-  require(fd_ < 0 && !failed_stop_, "CameraInput V4L2 session already used or parked");
+void Capture::prepare(const std::string& device, Format requested, std::uint32_t count) {
+  require(state_ == State::Closed, "CameraInput V4L2 session already used or parked");
   require(count >= 4 && count <= 128, "CameraInput V4L2 capture count must be in [4,128]");
   require(requested.width && requested.height, "CameraInput V4L2 dimensions must be positive");
   const char bytes[] = {
@@ -97,12 +97,8 @@ void Capture::start(const std::string& device, Format requested, std::uint32_t c
   try {
     v4l2_capability caps{};
     require(backend_->io(fd_, VIDIOC_QUERYCAP, &caps) == 0, "CameraInput V4L2 QUERYCAP failed");
-    // Copying protects downstream owners, not a broken kernel stop/release path.
-    // Keep the existing platform qualification boundary; do not bypass it merely
-    // because this backend uses kernel-owned MMAP rather than imported DMA-BUFs.
-    require(std::memcmp(caps.bus_info, "platform:", 9) != 0,
-            "CameraInput platform capture requires kernel stop/release qualification; copy mode is "
-            "not a DMA recovery workaround");
+    // Bus topology is not a buffer-ownership capability. Platform and USB
+    // capture use the same MMAP/STREAMOFF contract; downstream owns only copies.
     const auto flags =
         (caps.capabilities & V4L2_CAP_DEVICE_CAPS) ? caps.device_caps : caps.capabilities;
     require((flags & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING)) ==
@@ -129,6 +125,7 @@ void Capture::start(const std::string& device, Format requested, std::uint32_t c
     request.count = count;
     require(backend_->io(fd_, VIDIOC_REQBUFS, &request) == 0,
             "CameraInput requires V4L2 MMAP buffers");
+    buffers_allocated_ = true;
     require(request.count >= count && request.count <= 128,
             "CameraInput V4L2 invalid buffer count");
     mappings_.reserve(request.count);
@@ -143,11 +140,20 @@ void Capture::start(const std::string& device, Format requested, std::uint32_t c
       require(address != MAP_FAILED, "CameraInput V4L2 mmap failed");
       mappings_.push_back({address, buffer.length});
     }
+    state_ = State::Prepared;
+  } catch (...) {
+    stop();
+    throw;
+  }
+}
+void Capture::start() {
+  require(state_ == State::Prepared, "CameraInput V4L2 session is not prepared");
+  try {
     for (std::uint32_t i = 0; i < mappings_.size(); ++i)
       queue(i);
     auto type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     require(backend_->io(fd_, VIDIOC_STREAMON, &type) == 0, "CameraInput V4L2 STREAMON failed");
-    streaming_ = true;
+    state_ = State::Streaming;
   } catch (...) {
     stop();
     throw;
@@ -155,7 +161,7 @@ void Capture::start(const std::string& device, Format requested, std::uint32_t c
 }
 Frame Capture::next(std::span<std::uint8_t> destination, const std::atomic<bool>& interrupted,
                     std::uint32_t timeout_ms) {
-  require(streaming_, "CameraInput V4L2 capture is not streaming");
+  require(state_ == State::Streaming, "CameraInput V4L2 capture is not streaming");
   require(destination.size() >= format_.size,
           "CameraInput copy destination smaller than sizeimage");
   require(timeout_ms > 0, "CameraInput V4L2 frame timeout must be positive");
@@ -165,6 +171,8 @@ Frame Capture::next(std::span<std::uint8_t> destination, const std::atomic<bool>
     const int ready = backend_->wait(fd_, 50);
     if (ready == 0 || (ready < 0 && errno == EINTR))
       continue;
+    if (interrupted.load())
+      return {};
     require(ready > 0, "CameraInput V4L2 poll failed");
     v4l2_buffer buffer{};
     buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -192,26 +200,40 @@ Frame Capture::next(std::span<std::uint8_t> destination, const std::atomic<bool>
   return {};
 }
 bool Capture::stop() noexcept {
-  if (failed_stop_)
+  if (state_ == State::Failed)
     return false;
   if (fd_ < 0)
     return true;
+  state_ = State::Stopping;
   if (queue_attempted_) {
     auto type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (backend_->io(fd_, VIDIOC_STREAMOFF, &type) != 0) {
       // Intentionally retain the fd and mappings. Never claim safe recovery or
       // automatically retry a device with an ambiguous driver-owned DMA queue.
-      failed_stop_ = true;
-      streaming_ = false;
+      state_ = State::Failed;
       return false;
     }
   }
   for (const auto& mapping : mappings_)
     backend_->unmap(mapping.address, mapping.size);
   mappings_.clear();
+  if (buffers_allocated_) {
+    v4l2_requestbuffers release{};
+    release.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    release.memory = V4L2_MEMORY_MMAP;
+    if (backend_->io(fd_, VIDIOC_REQBUFS, &release) != 0) {
+      // DMA has retired, but the queue was not released. Keep its owner and
+      // report failure rather than hiding it in close() or permitting restart.
+      state_ = State::Failed;
+      return false;
+    }
+    buffers_allocated_ = false;
+  }
   backend_->close(fd_);
   fd_ = -1;
-  queue_attempted_ = streaming_ = false;
+  queue_attempted_ = false;
+  state_ = State::Closed;
+  format_ = {};
   return true;
 }
 } // namespace simaai::neat::camera_copy

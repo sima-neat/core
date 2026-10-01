@@ -1,5 +1,7 @@
 # Metoak depth qualification
 
+For the separate raw camera copy route, see [CameraInput lifecycle qualification](CAMERA_INPUT_QUALIFICATION.md).
+
 This explicit hardware probe checks `Input` → `MetoakDepth` → `Output`, not the
 robot stack. Use an exclusively owned Modalix DevKit, the matching graph-20 firmware
 and host package set, and a reviewed firmware restoration/recovery procedure.

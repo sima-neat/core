@@ -57,7 +57,8 @@ struct CameraInputOptions {
  * The resulting UInt8 tensor is flat [bytesused], including row padding and
  * valid trailers. Negotiated geometry/stride/sizeimage are in Sample.caps_string.
  * Camera framerate options do not reconfigure this backend's device cadence.
- * Platform drivers require stop/release qualification before streaming.
+ * Configure the media-controller pipeline before capture. The driver must honor
+ * the V4L2 STREAMOFF contract; failed retirement disables automatic restart.
  */
 struct CameraV4L2Options {
   std::string device;

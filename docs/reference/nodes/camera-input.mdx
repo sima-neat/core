@@ -246,10 +246,12 @@ consume pool slots. Release them to resume capture when the bounded pool fills;
 held tensors are never overwritten. An enabled queue must have a positive
 `queue_depth` smaller than `output_buffer_count`. Stopping interrupts pool waits.
 
-Platform capture is currently rejected **before allocation or queueing** until
-the driver's stop/release contract is qualified. Copy mode is not a workaround
-for that kernel limitation. A failed STREAMOFF requires device recovery, not an
-automatic reopen. These restrictions apply to the example device too.
+Configure the device's media-controller links and pad formats using its BSP
+before starting capture; Neat does not rewrite the media graph. Do not run a
+competing capture client. Platform and USB devices use the same V4L2 MMAP
+lifecycle. The driver must honor the STREAMOFF contract: copy mode does not
+make faulty kernel DMA teardown safe. Failed retirement requires device recovery,
+not an automatic reopen.
 
 For ROS/SIMOR, the application still performs CPU unpacking, calibration and ROS
 publication. It may feed the six original inputs to `MetoakDepth` graph 20 in a
@@ -257,3 +259,5 @@ separate processing graph. This capture API does not add SIMOR processing or
 require graph 21, new firmware, or changes to an existing ROS integration.
 
 Existing one-argument calls and the `CameraInputOptions` layout are unchanged. C++ code taking the overloaded factory address must specify its function-pointer type instead of using `auto`.
+
+Startup prepares output caps and the CPU buffer pool before queueing camera buffers. Stop interrupts frame and pool waits, retires capture, then releases the output pool. Tensors already delivered remain valid after stop. A capture-retirement error is reported on the GStreamer bus and prevents restarting that source; process exit is not a substitute for device recovery.

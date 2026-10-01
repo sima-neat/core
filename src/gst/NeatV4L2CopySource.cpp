@@ -126,21 +126,24 @@ GstCaps* get_caps(GstBaseSrc* base, GstCaps* filter) {
   return caps;
 }
 bool retire(SourceState& state) {
-  {
-    std::lock_guard lock(state.caps_mutex);
-    gst_clear_caps(&state.negotiated_caps);
-  }
-  if (state.pool) {
+  // GstBaseSrc has quiesced create() before stop(). Flushing also wakes a
+  // blocked pool acquire; no downstream owner may delay camera retirement.
+  if (state.pool)
     gst_buffer_pool_set_flushing(state.pool, TRUE);
+  const bool safe = !state.capture || state.capture->stop();
+  // A failed retirement retains the capture owner and forbids restart. Copied
+  // output storage is independent and can retire even in that failure state.
+  if (safe)
+    state.capture.reset();
+  if (state.pool) {
     gst_buffer_pool_set_active(state.pool, FALSE);
     gst_object_unref(state.pool);
     state.pool = nullptr;
   }
-  const bool safe = !state.capture || state.capture->stop();
-  // On failure Capture deliberately retains its kernel mappings/fd; the caller
-  // reports the failure instead of offering an automatic reopen/restart.
-  if (safe)
-    state.capture.reset();
+  {
+    std::lock_guard lock(state.caps_mutex);
+    gst_clear_caps(&state.negotiated_caps);
+  }
   return safe;
 }
 gboolean start(GstBaseSrc* base) {
@@ -156,9 +159,9 @@ gboolean start(GstBaseSrc* base) {
     state.first_frame = true;
     state.capture = std::make_unique<capture::Capture>(state.backend ? state.backend
                                                                      : capture::linux_backend());
-    state.capture->start(state.device,
-                         {state.width, state.height, capture::parse_fourcc(state.fourcc), 0, 0},
-                         state.count);
+    state.capture->prepare(state.device,
+                           {state.width, state.height, capture::parse_fourcc(state.fourcc), 0, 0},
+                           state.count);
     const auto& format = state.capture->format();
     GstCaps* caps = gst_caps_new_simple(
         "application/vnd.simaai.tensor", "representation", G_TYPE_STRING, "tensor-set", "storage",
@@ -178,10 +181,16 @@ gboolean start(GstBaseSrc* base) {
     // never permission to overwrite a buffer retained by an application.
     gst_buffer_pool_config_set_params(config, caps, format.size, 0, state.pool_count);
     const bool configured = gst_buffer_pool_set_config(state.pool, config);
-    const bool accepted = configured && gst_base_src_set_caps(base, caps);
+    // set_caps() can install sticky caps even when a peer rejects its event.
+    // Check downstream acceptance explicitly before any camera queue is armed.
+    const bool accepted = configured &&
+                          gst_pad_peer_query_accept_caps(GST_BASE_SRC_PAD(base), caps) &&
+                          gst_base_src_set_caps(base, caps);
     gst_caps_unref(caps);
     if (!accepted || !gst_buffer_pool_set_active(state.pool, TRUE))
       throw std::runtime_error("CameraInput copy pool/caps negotiation failed");
+    // No QBUF/STREAMON until the output contract and storage are ready.
+    state.capture->start();
     return TRUE;
   } catch (const std::exception& error) {
     const bool safe = retire(state);
@@ -196,9 +205,13 @@ gboolean stop(GstBaseSrc* base) {
   self->state->interrupted.store(true);
   const bool safe = retire(*self->state);
   if (!safe)
-    GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("CameraInput V4L2 STREAMOFF failed"),
-                      ("Device recovery required; kernel mappings/fd retained"));
-  return safe;
+    GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("CameraInput V4L2 retirement failed"),
+                      ("Capture owner retained; automatic restart is disabled"));
+  // The streaming task is stopped even if device retirement failed. Returning
+  // FALSE leaves GstBaseSrc's pad active and can skip start() on a later state
+  // change. Report the hardware failure on the bus, complete software teardown,
+  // and let start() reject the retained capture owner on every restart attempt.
+  return TRUE;
 }
 gboolean unlock(GstBaseSrc* base) {
   auto& state = *reinterpret_cast<GstNeatV4L2CopySource*>(base)->state;

@@ -40,7 +40,9 @@ public:
   ~Capture();
   Capture(const Capture&) = delete;
   Capture& operator=(const Capture&) = delete;
-  void start(const std::string& device, Format requested, std::uint32_t count);
+  // Prepare without queueing: downstream caps and storage must be ready first.
+  void prepare(const std::string& device, Format requested, std::uint32_t count);
+  void start();
   Frame next(std::span<std::uint8_t> destination, const std::atomic<bool>& interrupted,
              std::uint32_t timeout_ms);
   bool stop() noexcept;
@@ -58,8 +60,9 @@ private:
   std::vector<Mapping> mappings_;
   Format format_;
   int fd_ = -1;
+  enum class State { Closed, Prepared, Streaming, Stopping, Failed };
+  State state_ = State::Closed;
+  bool buffers_allocated_ = false;
   bool queue_attempted_ = false;
-  bool streaming_ = false;
-  bool failed_stop_ = false;
 };
 } // namespace simaai::neat::camera_copy

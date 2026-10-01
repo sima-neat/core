@@ -4,6 +4,9 @@
 #include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <chrono>
+#include <functional>
+#include <thread>
 #include <linux/videodev2.h>
 #include <stdexcept>
 #include <sys/mman.h>
@@ -11,6 +14,13 @@
 
 class CopyCameraMock final : public simaai::neat::camera_copy::Backend {
 public:
+  // Non-ioctl sentinels make the full retirement order observable.
+  static constexpr unsigned long unmap_call = ~0UL, close_call = ~1UL, release_call = ~2UL;
+  std::function<void()> before_streamon;
+  std::atomic<bool> wait_for_cancel{false};
+  std::atomic<unsigned> waits{0};
+  unsigned maps = 0, fail_map_at = 0, queue_attempts = 0, fail_queue_at = 0, releases = 0;
+  bool release_fail = false;
   unsigned open_count = 0, close_count = 0, unmaps = 0, queues = 0, requests = 0;
   std::atomic<unsigned> dequeues{0};
   unsigned stride = 10, height = 4, width = 8, size = 48, bytes = 48, count = 4;
@@ -25,15 +35,23 @@ public:
     return 123;
   }
   void close(int) noexcept override {
+    calls.push_back(close_call);
     ++close_count;
   }
   void* map(int, std::uint32_t offset, std::uint32_t) override {
-    return map_fail ? MAP_FAILED : buffers.at(offset).data();
+    ++maps;
+    return (map_fail || maps == fail_map_at) ? MAP_FAILED : buffers.at(offset).data();
   }
   void unmap(void*, std::uint32_t) noexcept override {
+    calls.push_back(unmap_call);
     ++unmaps;
   }
   int wait(int, int) override {
+    ++waits;
+    if (wait_for_cancel.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      return 0;
+    }
     if (cancel) {
       cancel->store(true);
       return 0;
@@ -70,6 +88,16 @@ public:
       auto& b = *static_cast<v4l2_requestbuffers*>(arg);
       if (b.memory != V4L2_MEMORY_MMAP)
         throw std::runtime_error("not MMAP");
+      if (b.count == 0) {
+        calls.push_back(release_call);
+        ++releases;
+        if (release_fail) {
+          errno = EIO;
+          return -1;
+        }
+        buffers.clear();
+        break;
+      }
       b.count = count;
       ++requests;
       buffers.assign(count, std::vector<unsigned char>(size, 0xA5));
@@ -81,7 +109,15 @@ public:
       b.m.offset = b.index;
       break;
     }
+    case VIDIOC_STREAMON:
+      if (before_streamon)
+        before_streamon();
+      break;
     case VIDIOC_QBUF: {
+      if (++queue_attempts == fail_queue_at) {
+        errno = EIO;
+        return -1;
+      }
       auto& b = *static_cast<v4l2_buffer*>(arg);
       if (b.memory != V4L2_MEMORY_MMAP)
         throw std::runtime_error("not MMAP queue");
