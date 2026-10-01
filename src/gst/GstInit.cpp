@@ -1412,9 +1412,11 @@ void gst_init_once() {
     if (!register_neat_camera_memory_bridge()) {
       throw std::runtime_error("Failed to register Neat private camera memory bridge");
     }
+#if defined(__linux__)
     if (!register_neat_v4l2_copy_source()) {
       throw std::runtime_error("Failed to register Neat private V4L2 copy source");
     }
+#endif
     if (!register_neat_multipart_jpeg_demux()) {
       throw std::runtime_error("Failed to register Neat private multipart JPEG demuxer");
     }

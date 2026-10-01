@@ -13,6 +13,7 @@ void check(bool value) {
   if (!value)
     throw std::runtime_error("raw camera node check failed");
 }
+#if defined(__linux__)
 void rejects(const std::function<void()>& action) {
   bool threw = false;
   try {
@@ -22,6 +23,7 @@ void rejects(const std::function<void()>& action) {
   }
   check(threw);
 }
+#endif
 } // namespace
 int main() {
   try {
@@ -33,6 +35,18 @@ int main() {
     n::CameraV4L2Options backend;
     backend.device = "/dev/video3";
     backend.fourcc = "BA81";
+#if !defined(__linux__)
+    bool unavailable = false;
+    try {
+      n::nodes::CameraInputWithV4L2(options, backend);
+    } catch (const std::runtime_error& error) {
+      unavailable = std::string(error.what()).find("requires Linux") != std::string::npos;
+    }
+    check(unavailable);
+    auto factory = &n::nodes::CameraInput;
+    check(factory({})->kind() == "CameraInput");
+    std::cout << "PASS V4L2 unavailable without changing legacy camera API\n";
+#else
     auto camera = n::nodes::CameraInputWithV4L2(options, backend);
     check(camera->kind() == "CameraInput");
     check(camera->input_role() == n::InputRole::Source);
@@ -104,6 +118,7 @@ int main() {
     check(legacy->memory_contract() == n::MemoryContract::PreferDeviceZeroCopy);
     check(camera->memory_contract() == n::MemoryContract::RequireSystemMemoryMappable);
     std::cout << "PASS raw camera node " << checks << " checks\n";
+#endif
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
     return 1;

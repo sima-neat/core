@@ -195,6 +195,8 @@ application. This is separate from the default libcamera path above. Select the
 actual device, progressive eight-bit wire format (`GREY`, `BA81`, `GBRG`, `GRBG`
 or `RGGB`) and wire dimensions; the example values are not device discovery.
 
+This backend requires Linux; requesting it on another platform raises an explicit unsupported-platform error.
+
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;

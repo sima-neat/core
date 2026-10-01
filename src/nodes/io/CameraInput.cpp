@@ -359,7 +359,13 @@ namespace simaai::neat::nodes {
 
 std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInputOptions opt,
                                                         simaai::neat::CameraV4L2Options backend) {
+#if defined(__linux__)
   return std::make_shared<simaai::neat::V4L2CameraInputNode>(std::move(opt), std::move(backend));
+#else
+  (void)opt;
+  (void)backend;
+  throw std::runtime_error("CameraInput V4L2 backend requires Linux");
+#endif
 }
 
 std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt) {

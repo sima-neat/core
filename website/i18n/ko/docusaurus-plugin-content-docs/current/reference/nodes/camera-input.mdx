@@ -177,6 +177,8 @@ C++ `CameraInputWithV4L2` 팩터리(Python: `camera_input`)로 raw 전송 바이
 (`GREY`, `BA81`, `GBRG`, `GRBG`, `RGGB`) 및 전송 크기를 지정하세요.
 아래 값은 장치 검색 결과가 아닌 설정 예시입니다.
 
+이 백엔드는 Linux가 필요합니다. 다른 플랫폼에서 요청하면 지원하지 않는 플랫폼이라는 오류가 명시적으로 발생합니다.
+
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;

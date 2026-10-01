@@ -177,6 +177,8 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 此路徑與上方預設的 libcamera 路徑不同。請指定實際裝置、逐行掃描的 8 位元傳輸格式
 （`GREY`、`BA81`、`GBRG`、`GRBG` 或 `RGGB`）及傳輸尺寸；範例數值並非裝置探索結果。
 
+此後端需要 Linux；在其他平台要求使用時，會明確回報不支援該平台的錯誤。
+
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;

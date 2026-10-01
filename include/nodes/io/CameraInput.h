@@ -110,7 +110,8 @@ private:
 namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt = {});
 
-/** Capture owned raw byte tensors through the explicit V4L2 copy backend.
+/** Capture owned raw byte tensors through the Linux-only V4L2 copy backend.
+ * Throws std::runtime_error on other platforms.
  * Existing one-argument CameraInput behavior and options layout are unchanged.
  * SIMOR decoding, calibration and ROS publication remain application concerns.
  */

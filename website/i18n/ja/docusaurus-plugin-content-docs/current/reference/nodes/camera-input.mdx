@@ -175,6 +175,8 @@ C++ の `CameraInputWithV4L2` ファクトリー（Python: `camera_input`）で 
 ワイヤー形式（`GREY`、`BA81`、`GBRG`、`GRBG`、`RGGB`）とワイヤー寸法を指定してください。
 以下の値はデバイス検出の結果ではなく設定例です。
 
+このバックエンドは Linux が必要です。他のプラットフォームで要求すると、未対応プラットフォームのエラーが明示的に返されます。
+
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;

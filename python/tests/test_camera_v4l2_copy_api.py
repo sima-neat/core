@@ -1,4 +1,6 @@
 """Construction-only checks; never open a camera or dispatch firmware."""
+import sys
+
 import pytest
 import pyneat as neat
 
@@ -16,8 +18,12 @@ def test_owned_camera_and_legacy_api():
     assert backend.zero_copy is False
     assert backend.output_buffer_count == 8
     assert backend.frame_timeout_ms == 2000
-    assert neat.nodes.camera_input(camera, backend) is not None
     assert neat.nodes.camera_input(neat.CameraInputOptions()) is not None
+    if sys.platform == "linux":
+        assert neat.nodes.camera_input(camera, backend) is not None
+    else:
+        with pytest.raises(RuntimeError, match="requires Linux"):
+            neat.nodes.camera_input(camera, backend)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -28,5 +34,9 @@ def test_owned_camera_and_legacy_api():
 def test_invalid_camera_options(field, value):
     camera, backend = options()
     setattr(backend, field, value)
-    with pytest.raises(ValueError):
-        neat.nodes.camera_input(camera, backend)
+    if sys.platform == "linux":
+        with pytest.raises(ValueError):
+            neat.nodes.camera_input(camera, backend)
+    else:
+        with pytest.raises(RuntimeError, match="requires Linux"):
+            neat.nodes.camera_input(camera, backend)

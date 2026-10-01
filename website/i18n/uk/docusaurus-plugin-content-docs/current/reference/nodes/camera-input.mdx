@@ -175,6 +175,8 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 прогресивний 8-бітний формат (`GREY`, `BA81`, `GBRG`, `GRBG` або `RGGB`) і
 розміри передавання. Значення прикладу не є результатом виявлення пристрою.
 
+Цей бекенд потребує Linux; запит на іншій платформі спричиняє явну помилку непідтримуваної платформи.
+
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;
