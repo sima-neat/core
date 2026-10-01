@@ -22,7 +22,10 @@ On the host:
   section `[serve]`, for example `models = /scratch/simaai/models`. Copy the
   model folder there first.
 - For images, the same section also needs a `data` root, for example
-  `data = /scratch/simaai/data`.
+  `data = /scratch/simaai/data`. Other users must not be able to change it:
+  `pcie-genai` refuses images if that folder or its `pcie-genai/` subfolder
+  is writable by group or others without the sticky bit. Fix it with
+  `chmod +t <data root>` (like `/tmp`) or `chmod go-w <data root>`.
 - See the models the host serves (needs no card):
 
   ```
