@@ -1,6 +1,6 @@
 ---
 title: "ビデオを送信"
-description: "VideoSenderのH.264およびH.265 RTP/UDPワイヤフォーマット"
+description: "VideoSender の生入力エンコードと H.264、H.265、MJPEG RTP/UDP 出力"
 sidebar_position: 2
 slug: /develop-apps/advanced-concepts/video_sender
 ---
@@ -9,38 +9,53 @@ slug: /develop-apps/advanced-concepts/video_sender
 
 グラフが外部の受信側にビデオを送信する必要がある場合は、`VideoSender` を使用します。`VideoSender` は再利用可能な `Graph` の一部を返します。したがって、`Graph::add(...)` を使用して追加します。
 
-`VideoSender` は、RTP/UDP を介して H.264 または H.265 を送信します。生の入力は H.264 としてエンコードされます。エンコードされた H.264 および H.265 入力は、再エンコードせずに転送されます。H.264 はデフォルトで RTP ペイロードタイプ 96 を使用し、H.265 は 98 を使用します。デフォルトの UDP ポートルールは `video_port_base + channel` で、`video_port_base = 9000` です。受信側がコンテナポートのリマッピングの背後で実行されている場合は、マッピングされたホストと、アプリからの一致する `video_port_base` を渡します。
+`VideoSender` は RTP/UDP 経由で H.264、H.265、MJPEG を送信します。`FromRaw` は `SimaEncodeOptions.type` を使って生フレームをエンコードします。デフォルトは H.264 です。`Passthrough` は、エンコード済みのフレームを再エンコードせずに送信します。デフォルトの UDP ポートは `video_port_base + channel` で、`video_port_base = 9000` です。
+
+| コーデック | 生入力のエンコーダー型 | エンコード済み入力のパススルー型 | デフォルトの RTP ペイロードタイプ |
+| --- | --- | --- | ---: |
+| H.264 | `SimaEncodeType::H264` | `RtspCodec::H264` | 96 |
+| H.265 | `SimaEncodeType::H265` | `RtspCodec::H265` | 98 |
+| MJPEG | `SimaEncodeType::MJPEG` | `RtspCodec::MJPEG` | 26 |
+
+Insight の RTP/WebRTC ビューアーは H.264 と H.265 をサポートします。MJPEG 出力には互換性のある RTP/JPEG 受信側が必要です。このビューアーは MJPEG をサポートしません。
+
+受信側がコンテナのポート再割り当てを使用する場合は、アプリから割り当て後のホストと対応する `video_port_base` を渡してください。
 
 ## 生のフレーム
 
 `VideoSender` へのパイプライン入力が生のビデオフレームである場合は、生のパスを使用します。Neat は、安全なエンコーダーの入力ポートを自動的に選択します。
 
 ```text
-NV12 with a proven compatible boundary:
-H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
+NV12 in a compatible DMA-BUF:
+SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 
-Other or unknown raw formats:
-VideoConvert -> H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
+CPU input or raw frames requiring conversion:
+Convert/upload into encoder DMA-BUF -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 ```
 
-自動選択機能は、アプリケーションのオプションを追加したり、`H264RtpUdpFromRaw(...)` API を変更したりすることはありません。システムまたは SiMaAI メモリに格納された実績のある NV12 形式のデータは、インストールされたエンコーダーが `input-layout-aware=true` をサポートしている場合、H.264 エンコーダーに直接入力できます。RGB、BGR、グレースケール、I420、不明なメモリ/レイアウト、および信頼性の高いフォーマット契約がない入力は、NV12 への変換を 1 回だけ行います。
+コーデックの選択により、エンコーダー、パーサー、RTP ペイローダーがまとめて選択されます。非推奨の `H264RtpUdpFromRaw(...)` ファクトリーは引き続き利用でき、H.264 のデフォルトを保持します。互換性のある NV12 DMA-BUF 入力は、元の割り当てを保持します。CPU 上の NV12 はアップロードが必要です。RGB、BGR、グレースケール、I420 は変換が必要です。Neat はエンコーダー入力境界でこの処理を行い、最終的な DMA サーフェスに書き込みます。エンコーダー内部で 2 回目のコピーを行うことはありません。アプリケーションでメモリバックエンドを選択する必要はありません。
 
 ### 生のフレームのジオメトリとレイアウト
 
 `width` と `height` は、表示される画像の寸法です。これらは、8、16、または 32 の倍数である必要はありません。NV12 および I420 4:2:0 形式の場合、両方の寸法は正の値で偶数である必要があります。アクティブなコーデック、プロファイル、レベル、およびハードウェアによって、残りの最小値と最大値が定義されます。たとえば、`680x382`、`672x384`、および `642x480` は、インストールされたエンコーダーがこれらの寸法をサポートする場合に有効な形状です。
 
-ハードウェアストレージのアラインメントは、表示されるジオメトリとは異なります。Neat は、要求された寸法を caps に保存し、ハードウェアに必要なピッチとストレージ高さでエンコーダーのサーフェスに割り当てまたはステージングします。カスタムの物理レイアウトを持つ生のバッファーは、信頼できるプレーンオフセットとストライドを持つ `GstVideoMeta` を含める必要があります。このメタデータがない場合、ネゴシエートされた GStreamer レイアウトが使用されます。プロパティによって制御されるファイル入力には、バッファーごとに正確に 1 つの緊密にパックされたフレームが含まれている必要があります。無効、切り捨てられた、またはサポートされていないレイアウトは、部分的にコピーされるのではなく、同期的にエラーとなります。
+RTP/JPEG の制限はより厳密です。MJPEG の生入力送信には、各軸が 8 の倍数で、8..2040 の範囲内の寸法が必要です。エンコード済み JPEG のパススルーには、標準ハフマンテーブルを使用するベースライン JPEG と、RTP/JPEG で表現可能な寸法が必要です。単独のエンコードと RTP 転送ではサイズ制限が異なります。
+
+ハードウェアストレージのアラインメントは、表示されるジオメトリとは異なります。Neat は、要求された寸法を caps に保存し、ハードウェアに必要なピッチとストレージ高さでエンコーダーのサーフェスを生成します。カスタムの物理レイアウトを持つ生のバッファーは、信頼できるプレーンオフセットとストライドを持つ `GstVideoMeta` を含める必要があります。このメタデータがない場合、ネゴシエートされた GStreamer レイアウトが使用されます。プロパティによって制御されるファイル入力には、バッファーごとに正確に 1 つの緊密にパックされたフレームが含まれている必要があります。無効、切り捨てられた、またはサポートされていないレイアウトは、部分的にコピーされるのではなく、同期的にエラーとなります。
 
 ```cpp
 simaai::neat::Graph graph;
 const int channel = 0;
 
-auto opt = simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(
-    width, height, fps);
+simaai::neat::SimaEncodeOptions encode;
+encode.type = simaai::neat::SimaEncodeType::H265;
+encode.fps = 30;
+encode.bitrate_kbps = 2500;
+encode.gop_length = 30;
+auto opt = simaai::neat::nodes::groups::VideoSenderOptions::FromRaw(encode);
 opt.host = "127.0.0.1";
 opt.channel = channel;
 opt.video_port_base = 9000;
-opt.encoder.bitrate_kbps = 2500;
 
 graph.add(simaai::neat::nodes::groups::VideoSender(opt));
 ```
@@ -50,21 +65,27 @@ Python：
 ```python
 channel = 0
 
-opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(
-    width=1920,
-    height=1080,
-    fps=30,
-)
+encode = pyneat.SimaEncodeOptions()
+encode.type = pyneat.SimaEncodeType.H265
+encode.fps = 30
+encode.bitrate_kbps = 2500
+encode.gop_length = 30
+opt = pyneat.VideoSenderOptions.from_raw(encode)
 opt.host = "127.0.0.1"
 opt.channel = channel
 opt.video_port_base = 9000
-opt.encoder.bitrate_kbps = 2500
 
 graph = pyneat.Graph()
 graph.add(pyneat.groups.video_sender(opt))
 ```
 
-## エンコードされた H.264 または H.265
+生入力の送信は、入力フレームから解像度を検出し、リサイズせずに保持します。異なる解像度の生フレームを送信する場合は、新しい実行を開始してください。従来の `H264RtpUdpFromRaw(width, height, fps)` ファクトリーは、固定の入力寸法を保持します。
+
+MJPEG では、C++ の `SimaEncodeType::MJPEG` または Python の `pyneat.SimaEncodeType.MJPEG` を選択し、`quality` を 1 から 100 に設定します。ビットレート、レート制御、プロファイル、レベル、GOP、IDR 設定は未設定にしてください。`FromRaw` は渡されたオプションをコピーするため、ファクトリーを呼ぶ前に設定します。
+
+既存の `opt.encoder` のビットレート／プロファイル／レベルの上書きは、生入力の H.264/H.265 送信で引き続き有効です。`sync=true` はタイムスタンプに合わせて送信をスケジュールします。デフォルトの `false` はクロック待機なしで送信します。`async=true` は、UDP シンクの起動時に最初のバッファーを待てるようにします。デフォルトは `false` です。Python では `async_` として公開されています。
+
+## エンコード済みフレーム
 
 エンコードされた入力の場合、ストリームコーデックをパススルーファクトリに渡します。Neat は、ストリームを再エンコードせずに解析、パケット化、送信します。
 
@@ -72,8 +93,9 @@ graph.add(pyneat.groups.video_sender(opt))
 |---|---|---|---|
 | H.264 | `Passthrough(RtspCodec::H264)` | `passthrough(pyneat.RtspCodec.H264)` | 96 |
 | H.265 | `Passthrough(RtspCodec::H265)` | `passthrough(pyneat.RtspCodec.H265)` | 98 |
+| MJPEG | `Passthrough(RtspCodec::MJPEG)` | `passthrough(pyneat.RtspCodec.MJPEG)` | 26 |
 
-MJPEG パススルーは拒否されます：送信側には RTP/JPEG パケット化機能がありません。
+パススルーはエンコーダーを作成しません。呼び出し側のコーデック選択は、エンコード済み入力に一致する必要があります。エンコーダー設定は適用されません。
 
 H.265 の例：
 

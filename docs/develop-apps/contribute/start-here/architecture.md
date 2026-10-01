@@ -434,7 +434,7 @@ Under `src/pipeline/internal/` (internal-only):
   - `ElementFlowCounters` (atomic per-element flow stats)
 - `GstDiagnosticsUtil.h` -- helpers for formatting and collecting GStreamer diagnostics
 
-#### SIMA static manifest context contract
+#### SIMA static manifest context contract {#sima-static-manifest-context-contract}
 For model pipelines, static stage/tensor contract data is built in framework and injected as a
 pipeline-level `GstContext`:
 
@@ -448,6 +448,8 @@ pipeline-level `GstContext`:
   they need.
 - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
+
+##### Model execution and admission
 
 Model execution uses the admitted DMA-BUF path. `ModelPack` keeps MPK metadata
 inspection separate from executable-plan preparation: inspection describes the
@@ -503,6 +505,8 @@ page-alignment policy. It consumes these Core-owned facts; it must not infer mis
 or fall back to a legacy transport. Core and every plugin that consumes the static-manifest
 header must therefore be built and released together at ABI version 30.
 
+##### Tensor ownership and physical placement
+
 Public Tensor device transfers allocate standard CMA or DMS DMA-BUF memory,
 perform the required cache-synchronized host copy, and record device placement
 in Tensor storage metadata. Shared tensor-list ingress retains each DMA-backed
@@ -554,6 +558,8 @@ Core may simplify singleton batch dimensions in internal conversion descriptors
 when the execution view preserves the same addressed bytes. Model tensor shapes,
 batch routing, and public APIs remain unchanged.
 
+##### Direct runtime execution
+
 For the strict graphs currently admitted by `dmabuf-plan`, ProcessCVU submits
 the same Core-projected tensor routes and frame arena through one of two
 executors. EV74 placement submits descriptors through `/dev/cvu`. A65
@@ -569,6 +575,8 @@ dispatcher, MLASHM, segmented allocation, or M4. Legacy libraries may still
 be linked into a multi-route plugin for unmigrated graphs; link presence is not
 a fallback permission. Once a strict route is selected, any executor, mapping,
 or synchronization error is terminal.
+
+##### Configuration resolution
 
 Resolver precedence for migrated fields is deterministic:
 

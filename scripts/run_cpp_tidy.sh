@@ -45,9 +45,6 @@ require_cmd() {
   fi
 }
 
-require_cmd cmake
-require_cmd clang-tidy
-require_cmd run-clang-tidy
 require_cmd rg
 require_cmd git
 
@@ -182,8 +179,6 @@ is_tidy_scope_path() {
   esac
 }
 
-configure_tidy_build
-
 if [[ "$MODE" == "all" ]]; then
   mapfile -t all_files < <(rg --no-messages --no-config --files \
     -g '*.c' -g '*.cc' -g '*.cpp' -g '*.cxx' \
@@ -198,6 +193,19 @@ else
     all_files+=("$f")
   done
 fi
+
+if [[ ${#all_files[@]} -eq 0 ]]; then
+  echo "No C/C++ sources selected for clang-tidy (${MODE} mode)."
+  exit 0
+fi
+
+if [[ "${TIDY_INSTALL_DEPS:-0}" == "1" ]]; then
+  (cd "$root_dir" && ./build.sh --install-deps-only)
+fi
+require_cmd cmake
+require_cmd clang-tidy
+require_cmd run-clang-tidy
+configure_tidy_build
 
 declare -A gst_excluded=()
 if [ ${#all_files[@]} -gt 0 ]; then

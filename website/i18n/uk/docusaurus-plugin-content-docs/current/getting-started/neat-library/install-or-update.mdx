@@ -20,6 +20,29 @@ sidebar_position: 2
 | ROS2 SDK | Ви хочете скомпілювати програми ROS 2 безпосередньо на платформі ARM64, використовуючи заголовки та бібліотеки Neat, встановлені в системних шляхах контейнера. |
 | DevKit | Ви хочете встановити або оновити середовище виконання безпосередньо на пристрої. |
 
+## Пакети розробки C++
+
+Мінімальне встановлення містить середовище виконання та `sima-neat-dev`. Типове встановлення пропонує навчальні матеріали й тести як необов’язкові доповнення; `all` включає їх.
+Застосункам із динамічним компонуванням потрібні публічні заголовки Core і файли розробки GStreamer, OpenCV та JSON. Їм не потрібні пакети розробки Internals, бібліотеки пам’яті, heap або LLiMa. Відповідні бібліотеки середовища виконання залишаються потрібними.
+
+Використовуйте встановлену динамічну ціль:
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
+```
+
+Статичний архів залишається в `sima-neat-dev`. Наявні статичні споживачі мають додати `COMPONENTS Static` і встановити сумісні `neat-internals-dev`,
+`simaai-memory-lib-dev`, `zlib1g-dev`, а для збірок із LLiMa —
+`sima-lmm-dev` і `libcpp-httplib-dev` з їхніми залежностями:
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
+```
+
+Статичний Core і далі використовує динамічні бібліотеки реалізації. Збірка Core з вихідного коду також потребує пакетів розробки реалізації.
+
 ## Необхідні умови
 
 Встановіть `sima-cli` в середовищі, де ви плануєте встановити Neat Library.
@@ -103,6 +126,8 @@ cd /media/nvme && mkdir -p neat && cd neat
 <ShellCommand prompt="modalix">
 sima-cli neat install core@v0.2.2
 </ShellCommand>
+
+Якщо інсталятор додає `sima` до групи `i2c`, вийдіть із DevKit і підключіться знову перед запуском тестів продуктивності, щоб нове членство в групі набуло чинності.
 
 </CodeTab>
 </CodeTabs>

@@ -22,6 +22,12 @@ When behavior or public API changes:
 - Update user-facing docs for workflow/configuration changes.
 - Update examples if API usage changed.
 
+For official documentation:
+
+- Keep pages focused on the reader's task, with prerequisites, steps, and examples where useful.
+- Update translations required by `sima-i18n*.json` in the same change; refresh source hashes after verifying content alignment.
+- Pass localization checks and the relevant docs build, and report any validation still pending.
+
 ## Internals install contract
 
 When changing or rebuilding anything under `internals/` that produces NEAT runtime/plugin `.so` files:
