@@ -1,0 +1,21 @@
+[Unit]
+Description=SiMa.ai peripheral catalog service
+After=systemd-udevd.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=simple
+User=sima
+Group=sima
+RuntimeDirectory=simaai-peripherals
+RuntimeDirectoryMode=0770
+UMask=0007
+ExecStart=/usr/bin/simaai-peripherals
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

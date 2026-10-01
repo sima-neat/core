@@ -189,6 +189,7 @@ failure should surface as an actionable structured error rather than a hidden ru
 ### High-level structure
 - `include/` -- public headers (the supported API surface)
 - `src/` -- implementations
+- `services/` -- optional board-local daemons and their private providers and protocols
 - `docs/` -- documentation (this file)
 - `examples/` -- small runnable examples
 - `tests/` -- unit/integration tests
@@ -692,6 +693,20 @@ Caps negotiation is automatic; failures surface early (validate/preroll) or at r
 diagnostics you can reproduce (`describe_backend()` + report).
 
 ### Camera allocation ownership
+
+The board-local peripheral daemon owns camera discovery and monitoring. Its
+private MIPI/libcamera provider asks GStreamer's `libcameraprovider` for exact
+camera names and advertised caps without acquiring a camera, then intersects
+discrete raw-video sizes with the Modalix ISP's query-only V4L2 output-size
+enumeration. Advertised stepped ranges remain explicit and unsupported records
+retain a reason. Discovery never starts a pipeline.
+
+The daemon also owns Linux device notifications, debounce, the authoritative
+catalog, scan and catalog revisions, replayable events, and its versioned local
+Unix-socket protocol. Providers remain under `services/`, and the wire-contract
+constants live under private `src/` headers; neither is installed as public
+Core API. Public Core and PyNeat clients are a separate change and must consume
+the daemon API rather than call a provider directly.
 
 `CameraInput` places `neatcamerabridge` immediately after its camera caps and
 before any live queue. During negotiation the bridge answers the upstream

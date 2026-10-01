@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+  if [ "${1:-}" = "purge" ]; then
+    systemctl reset-failed simaai-peripherals.service >/dev/null 2>&1 || true
+  fi
+fi
+
+exit 0

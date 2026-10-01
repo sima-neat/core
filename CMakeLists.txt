@@ -62,7 +62,15 @@ option(SIMA_WITH_OPENCV "Enable OpenCV convenience APIs" ON)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
 option(SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER "Build the PCIe pipeline builder helper" ON)
+option(SIMANEAT_BUILD_PERIPHERAL_DAEMON
+  "Build the board-local peripheral catalog daemon"
+  OFF)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
+if (SKBUILD AND SIMANEAT_BUILD_PERIPHERAL_DAEMON)
+  message(FATAL_ERROR
+    "PyNeat wheels must not build or install the board peripheral daemon. "
+    "Set SIMANEAT_BUILD_PERIPHERAL_DAEMON=OFF.")
+endif()
 option(SIMANEAT_BUILD_DOCS "Configure documentation targets" OFF)
 option(SIMANEAT_DOCS_ONLY_CONFIGURE "Relax runtime dependency checks for docs-only builds" OFF)
 option(SIMANEAT_CPP_TIDY "Configure in analysis-only mode for clang-tidy" OFF)
@@ -280,6 +288,23 @@ endif()
 # Dependencies
 # ------------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
+if (SIMANEAT_BUILD_PERIPHERAL_DAEMON)
+  if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "The peripheral daemon is supported only on Linux")
+  endif()
+  if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
+    pkg_check_modules(UDEV QUIET libudev)
+    if (NOT UDEV_FOUND)
+      message(WARNING "libudev not found; peripheral daemon targets are disabled.")
+      set(SIMANEAT_BUILD_PERIPHERAL_DAEMON OFF)
+    endif()
+  else()
+    pkg_check_modules(UDEV REQUIRED libudev)
+  endif()
+  if (SIMANEAT_BUILD_PERIPHERAL_DAEMON)
+    find_package(Threads REQUIRED)
+  endif()
+endif()
 if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS)
   find_package(SimaLMM CONFIG REQUIRED)
 else()
@@ -1276,6 +1301,56 @@ target_link_libraries(sima_neat_internal INTERFACE
 )
 
 # ------------------------------------------------------------------------------
+# Board-local peripheral catalog daemon
+# ------------------------------------------------------------------------------
+if (SIMANEAT_BUILD_PERIPHERAL_DAEMON)
+  add_library(sima_neat_peripheral_daemon_lib STATIC
+    services/peripherals/PeripheralApiServer.cpp
+    services/peripherals/PeripheralCatalog.cpp
+    services/peripherals/PeripheralCatalogManager.cpp
+    services/peripherals/PeripheralProtocol.cpp
+    services/peripherals/providers/CameraProvider.cpp
+  )
+  target_include_directories(sima_neat_peripheral_daemon_lib
+    PUBLIC
+      ${CMAKE_CURRENT_SOURCE_DIR}/services/peripherals
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+  target_include_directories(sima_neat_peripheral_daemon_lib SYSTEM PRIVATE
+    ${UDEV_INCLUDE_DIRS}
+  )
+  target_compile_options(sima_neat_peripheral_daemon_lib PRIVATE ${UDEV_CFLAGS_OTHER})
+  target_link_directories(sima_neat_peripheral_daemon_lib PRIVATE ${UDEV_LIBRARY_DIRS})
+  target_link_libraries(sima_neat_peripheral_daemon_lib
+    PUBLIC
+      sima_neat
+      Threads::Threads
+    PRIVATE
+      ${UDEV_LIBRARIES}
+  )
+
+  add_executable(simaai-peripherals
+    services/peripherals/main.cpp
+  )
+  target_include_directories(simaai-peripherals PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+  target_link_libraries(simaai-peripherals PRIVATE sima_neat_peripheral_daemon_lib)
+  add_dependencies(sima_neat_libraries simaai-peripherals)
+
+  install(TARGETS simaai-peripherals
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT peripherals
+  )
+  install(
+    FILES packaging/peripherals/lib/systemd/system/simaai-peripherals.service
+    DESTINATION lib/systemd/system
+    COMPONENT peripherals
+  )
+endif()
+
+# ------------------------------------------------------------------------------
 # Card-side PCIe runtime helper
 # ------------------------------------------------------------------------------
 if (SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER)
@@ -1454,12 +1529,19 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
     "SiMa NEAT core runtime and development packages")
 
 set(CPACK_COMPONENTS_ALL core dev)
+if (TARGET simaai-peripherals)
+  list(APPEND CPACK_COMPONENTS_ALL peripherals)
+endif()
 set(CPACK_DEB_COMPONENT_INSTALL ON)
 
 set(CPACK_COMPONENT_CORE_DESCRIPTION
     "SiMa NEAT runtime library and command-line helpers")
 set(CPACK_COMPONENT_DEV_DESCRIPTION
     "SiMa NEAT C++ development headers and CMake package")
+if (TARGET simaai-peripherals)
+  set(CPACK_COMPONENT_PERIPHERALS_DESCRIPTION
+      "SiMa NEAT board-local peripheral discovery daemon")
+endif()
 
 set(CPACK_PACKAGE_VERSION "${SIMANEAT_VERSION}")
 
@@ -1471,6 +1553,9 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_DEV_PACKAGE_NAME "sima-neat-dev")
+if (TARGET simaai-peripherals)
+  set(CPACK_DEBIAN_PERIPHERALS_PACKAGE_NAME "sima-neat-peripherals")
+endif()
 
 set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libgstreamer1.0-0"
@@ -1512,6 +1597,15 @@ if (SimaLMM_FOUND)
     "sima-lmm-dev")
 endif()
 string(JOIN ", " CPACK_DEBIAN_DEV_PACKAGE_DEPENDS ${SIMANEAT_DEV_DEBIAN_DEPENDS})
+if (TARGET simaai-peripherals)
+  set(CPACK_DEBIAN_PERIPHERALS_PACKAGE_DEPENDS
+    "sima-neat (= ${CPACK_PACKAGE_VERSION}), libudev1, systemd")
+  set(CPACK_DEBIAN_PERIPHERALS_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/peripherals/DEBIAN/postinst"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/peripherals/DEBIAN/prerm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/peripherals/DEBIAN/postrm"
+  )
+endif()
 set(CPACK_INSTALL_CMAKE_PROJECTS
   "${CMAKE_BINARY_DIR};SimaNeat;ALL;/"
 )

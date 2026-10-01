@@ -30,6 +30,11 @@ INSTALL_DEPS_ONLY=OFF
 INSTALL_AFTER_BUILD=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
+if [[ "${OS_NAME}" == "Linux" ]]; then
+  BUILD_PERIPHERAL_DAEMON="${SIMANEAT_BUILD_PERIPHERAL_DAEMON:-ON}"
+else
+  BUILD_PERIPHERAL_DAEMON="${SIMANEAT_BUILD_PERIPHERAL_DAEMON:-OFF}"
+fi
 BUILD_FUZZ=OFF
 ALLOW_FUZZ_IN_NEAT_SDK="${SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK:-OFF}"
 BUILD_SANITIZER_MODE=""
@@ -97,6 +102,7 @@ SYSTEM_DEPS_LINUX=(
   doxygen
   graphviz
   ffmpeg
+  libudev-dev
   libgstreamer1.0-dev
   libgstreamer-plugins-base1.0-dev
   libgstreamer-plugins-bad1.0-dev
@@ -1891,6 +1897,7 @@ print_build_config() {
   echo "Build tutorials: ${BUILD_TUTORIALS}"
   echo "Build docs     : ${BUILD_DOCS}"
   echo "Build python   : ${BUILD_PYTHON}"
+  echo "Peripheral svc: ${BUILD_PERIPHERAL_DAEMON}"
   echo "Build all      : ${BUILD_ALL}"
   echo "Build fuzz     : ${BUILD_FUZZ}"
   echo "Sanitizer mode : ${BUILD_SANITIZER_MODE:-none}"
@@ -1932,6 +1939,7 @@ configure_cmake() {
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
+    -DSIMANEAT_BUILD_PERIPHERAL_DAEMON="${BUILD_PERIPHERAL_DAEMON}"
     -DSIMANEAT_BUILD_DOCS="${BUILD_DOCS}"
     -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}"
     -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}"

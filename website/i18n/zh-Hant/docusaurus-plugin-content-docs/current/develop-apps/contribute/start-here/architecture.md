@@ -135,6 +135,7 @@ input Sample/Tensor
 ### 高階結構
 - `include/` -- 公開標頭檔（支援的 API 介面）
 - `src/` -- 實作
+- `services/` -- 選用的開發板本機常駐程式及其私有提供者與通訊協定
 - `docs/` -- 檔案（本檔案）
 - `examples/` -- 小型可執行範例
 - `tests/` -- 單位/整合測試
@@ -539,6 +540,18 @@ graph.add(simaai::neat::nodes::Output());
 Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行階段發生，並提供您可以重現的診斷資訊（`describe_backend()` + 報告）。
 
 ### 相機設定的所有權
+
+開發板本機的周邊常駐程式擁有相機探索與監控。其私有 MIPI/libcamera 提供者會在
+不取得相機的情況下，向 GStreamer 的 `libcameraprovider` 取得確切相機名稱與
+公告的 caps，接著將離散 raw 視訊大小與 Modalix ISP 的唯讀 V4L2 輸出大小列舉
+進行交集比對。公告的步進範圍會保持明確，不支援的記錄則保留原因。探索不會啟動
+管線。
+
+常駐程式也擁有 Linux 裝置通知、更新合併、權威目錄、掃描序號與目錄修訂版、
+可重播事件，以及有版本的本機 Unix socket 通訊協定。提供者保留在 `services/`，
+而線路合約常數放在私有 `src/` 標頭中；兩者都不會安裝為公開 Core API。公開的
+Core 與 PyNeat 用戶端會由另一項變更加入，而且必須使用常駐程式 API，不得直接
+呼叫提供者。
 
 `CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 在協商期間，橋接器會使用標準池來回應上游的 `GST_QUERY_ALLOCATION`，並請求 `GstVideoMeta`。 該池會分配來自一個打包的 SiMaAI 設定的已驗證平面，並為每個平面匯出一個 DMA-BUF。 一個相容的 `libcamerasrc` 會將這些 DMA-BUF 匯入到 ISP 捕獲佇列中。 然後，橋接器會解包相同的打包設定，以進行下游處理。 嚴格模式會拒絕任何不滿足該合約的緩衝區；CPU 複製仍然是一種明確的相容性後備方案。
 

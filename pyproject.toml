@@ -56,6 +56,7 @@ sdist.include = [
 
 [tool.scikit-build.cmake.define]
 SIMANEAT_BUILD_PYTHON = "ON"
+SIMANEAT_BUILD_PERIPHERAL_DAEMON = "OFF"
 SIMANEAT_BUILD_TUTORIALS = "OFF"
 SIMANEAT_BUILD_TESTS = "OFF"
 
