@@ -83,8 +83,13 @@ int main() {
               "override start must launch the new helper path");
       require(count_occurrences(cmd, "pcie-genai-backend") >= 3,
               "override name must appear in launch + both start-time checks");
-      require(!contains(cmd, "pcie-pipeline-builder"),
-              "override start must not carry the stale default name anywhere");
+      // The default name appears once: only in the busy check, which treats a
+      // live owner of ANY card program as busy (so a live tensor pipeline on
+      // this queue is never erased), never in the claim or kill checks.
+      require(count_occurrences(cmd, "pcie-pipeline-builder") == 1 &&
+                  contains(cmd, "grep -qF -e 'pcie-genai-backend' -e 'pcie-pipeline-builder' "
+                                "-e 'pcie-genai-backend'"),
+              "the default name is only in the any-card-program busy check");
     }
 
     // The stop command guards the kill with the same cmdline check.
