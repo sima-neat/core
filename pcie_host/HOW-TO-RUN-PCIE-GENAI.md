@@ -175,5 +175,8 @@ a time.
   while a large model thinks before its first token.
 - A cancelled `--prompt` run still exits with code 0.
 - A wrong `--image` path is found only after the model has loaded.
-- Run the card program as `root` (the default `--user`). As another user, the
-  pulled images cannot be deleted on the card and stay behind.
+- Run the card program as `root` (the default `--user`). The card's PCIe
+  daemon writes every pulled file as root, so as another user the card
+  program cannot delete the pulled model files and images. They stay in the
+  card's receive folder (`/tmp/pcie-recv`), and after one such run the next
+  model load fails with "no space left" (`rc=-28`).
