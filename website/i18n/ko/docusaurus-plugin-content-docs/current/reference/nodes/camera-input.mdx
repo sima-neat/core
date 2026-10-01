@@ -165,6 +165,7 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | --- | --- |
 | `build.plugin_missing` | 런타임 플러그인 세트에서 `libcamerasrc` 또는 `neatcamerabridge`가 누락되었습니다. |
 | `misconfig.media_caps` / `not-negotiated` | 카메라가 요청된 형식, 해상도 또는 프레임 속도를 지원하지 않습니다. |
+| `io.parse` / `gstreamer.camera_configuration_unsupported` | `libcamerasrc`가 요청한 caps를 `EINVAL`로 거부했습니다. 지원되는 크기로 캡처하세요. 모델 그래프에서는 모델 전처리가 크기를 조정하도록 하고, 그 밖의 그래프에서는 `VideoScale` 다음에 `CapsRaw`를 사용하세요. |
 | 엄격한 제로 복사 오류, | `allow_cpu_fallback`은 false이고 카메라 소스에서 SiMaAI 제로 복사 속성을 제공하지 않습니다. |
 | 풀 타임아웃 | 카메라가 프레임을 전송하지 못했거나, 그래프에 역압력이 발생했거나, 카메라 스택이 스트리밍을 중단했습니다. |
 <<번역>>

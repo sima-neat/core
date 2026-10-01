@@ -920,8 +920,10 @@ NormalizedDiagnostic camera_configuration_unsupported(RawGstError raw) {
       "Request a resolution the camera pipeline supports. On Modalix the ISP accepts fewer "
       "output sizes than the sensor lists; the libcamera log line \"ISP output adjusted the "
       "sensor format from ... to ...\" shows the size it would use instead.",
-      "To get another size, capture at a supported resolution and resize in the graph with a "
-      "VideoScale Node followed by a CapsRaw caps filter.",
+      "For a camera-to-model graph, capture at a supported resolution and let model-managed CVU "
+      "preprocessing resize it for inference.",
+      "For other graphs, capture at a supported resolution and add a VideoScale Node followed by "
+      "a CapsRaw caps filter.",
   };
   return out;
 }
@@ -1315,7 +1317,11 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       contains_ci(text, "could not find a camera")) {
     return camera_not_found(std::move(raw));
   }
-  if (raw.factory_name == "libcamerasrc" && contains_ci(text, "failed to configure camera")) {
+  const bool camera_config_einval =
+      raw.factory_name == "libcamerasrc" && raw.domain_name == "gst-resource-error-quark" &&
+      raw.code == GST_RESOURCE_ERROR_SETTINGS && contains_ci(text, "failed to configure camera") &&
+      (contains_ci(text, "invalid argument") || contains_ci(text, "error code -22"));
+  if (camera_config_einval) {
     return camera_configuration_unsupported(std::move(raw));
   }
   if (raw.factory_name == "h264parse" && contains_ci(text, "no valid frames")) {
