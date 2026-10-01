@@ -69,6 +69,15 @@ void notify_eventfd(int fd) {
   }
 }
 
+void notify_eventfd_noexcept(int fd) noexcept {
+  const std::uint64_t value = 1;
+  while (::write(fd, &value, sizeof(value)) < 0) {
+    if (errno == EINTR)
+      continue;
+    return;
+  }
+}
+
 void drain_eventfd(int fd) {
   while (true) {
     std::uint64_t value = 0;
@@ -140,7 +149,8 @@ struct PeripheralCatalogManager::Impl {
        std::uint32_t debounce_value)
       : catalog(catalog_value), debounce(debounce_value),
         refresh_fd(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)),
-        stop_fd(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)) {
+        stop_fd(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)),
+        failure_signal(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)) {
     if (providers_value.empty())
       throw std::invalid_argument("at least one peripheral provider must be set");
     std::set<std::string> provider_names;
@@ -160,7 +170,7 @@ struct PeripheralCatalogManager::Impl {
     }
     if (subsystems.empty())
       throw std::invalid_argument("at least one peripheral udev subsystem must be set");
-    if (refresh_fd.value < 0 || stop_fd.value < 0)
+    if (refresh_fd.value < 0 || stop_fd.value < 0 || failure_signal.value < 0)
       throw std::runtime_error("failed to create peripheral catalog eventfd: " +
                                std::string(std::strerror(errno)));
 
@@ -375,6 +385,7 @@ struct PeripheralCatalogManager::Impl {
   std::chrono::milliseconds debounce;
   FileDescriptor refresh_fd;
   FileDescriptor stop_fd;
+  FileDescriptor failure_signal;
   std::unique_ptr<udev, UdevDeleter> context;
   std::unique_ptr<udev_monitor, UdevMonitorDeleter> monitor;
   std::thread worker;
@@ -386,13 +397,19 @@ struct PeripheralCatalogManager::Impl {
   std::exception_ptr worker_failure;
 
   void clear_failure() {
-    std::lock_guard lock(failure_mutex);
-    worker_failure = nullptr;
+    {
+      std::lock_guard lock(failure_mutex);
+      worker_failure = nullptr;
+    }
+    drain_eventfd(failure_signal.value);
   }
 
   void record_failure(std::exception_ptr failure) noexcept {
-    std::lock_guard lock(failure_mutex);
-    worker_failure = std::move(failure);
+    {
+      std::lock_guard lock(failure_mutex);
+      worker_failure = std::move(failure);
+    }
+    notify_eventfd_noexcept(failure_signal.value);
   }
 
   void throw_if_failed() const {
@@ -425,6 +442,7 @@ void PeripheralCatalogManager::initial_scan() {
 void PeripheralCatalogManager::start() {
   if (impl_->worker.joinable())
     throw std::logic_error("peripheral catalog manager is already running");
+  drain_eventfd(impl_->stop_fd.value);
   impl_->clear_failure();
   impl_->stopping = false;
   impl_->worker = std::thread([this] {
@@ -464,6 +482,10 @@ void PeripheralCatalogManager::join() {
 void PeripheralCatalogManager::stop() {
   request_stop();
   join();
+}
+
+int PeripheralCatalogManager::failure_fd() const noexcept {
+  return impl_->failure_signal.value;
 }
 
 void PeripheralCatalogManager::throw_if_failed() const {

@@ -5,12 +5,14 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/eventfd.h>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <charconv>
@@ -66,6 +68,42 @@ struct FileDescriptor {
     value = fd;
   }
 };
+
+void notify_eventfd(int fd) {
+  const std::uint64_t value = 1;
+  while (::write(fd, &value, sizeof(value)) < 0) {
+    if (errno == EINTR)
+      continue;
+    if (errno == EAGAIN)
+      return;
+    throw std::runtime_error("failed to signal peripheral API worker: " +
+                             std::string(std::strerror(errno)));
+  }
+}
+
+void notify_eventfd_noexcept(int fd) noexcept {
+  const std::uint64_t value = 1;
+  while (::write(fd, &value, sizeof(value)) < 0) {
+    if (errno == EINTR)
+      continue;
+    return;
+  }
+}
+
+void drain_eventfd(int fd) {
+  while (true) {
+    std::uint64_t value = 0;
+    const ssize_t result = ::read(fd, &value, sizeof(value));
+    if (result == sizeof(value))
+      continue;
+    if (result < 0 && errno == EINTR)
+      continue;
+    if (result < 0 && errno == EAGAIN)
+      return;
+    throw std::runtime_error("failed to drain peripheral API signal: " +
+                             std::string(std::strerror(result < 0 ? errno : EIO)));
+  }
+}
 
 std::string status_text(int status) {
   switch (status) {
@@ -236,13 +274,18 @@ struct PeripheralApiServer::Impl {
   Impl(std::string socket_path_value, PeripheralCatalog& catalog_value,
        RefreshRequest refresh_request_value, std::size_t max_clients_value)
       : socket_path(std::move(socket_path_value)), catalog(catalog_value),
-        refresh_request(std::move(refresh_request_value)), max_clients(max_clients_value) {
+        refresh_request(std::move(refresh_request_value)), max_clients(max_clients_value),
+        stop_signal(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)),
+        failure_signal(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)) {
     if (socket_path.empty())
       throw std::invalid_argument("peripheral API socket path must not be empty");
     if (!refresh_request)
       throw std::invalid_argument("peripheral API refresh callback must be set");
     if (max_clients == 0)
       throw std::invalid_argument("peripheral API max clients must be greater than zero");
+    if (stop_signal.value < 0 || failure_signal.value < 0)
+      throw std::runtime_error("failed to create peripheral API eventfd: " +
+                               std::string(std::strerror(errno)));
   }
 
   void route(int fd, const Request& request) {
@@ -327,20 +370,25 @@ struct PeripheralApiServer::Impl {
   }
 
   void accept_loop() {
-    while (!stopping.load()) {
-      pollfd descriptor{listener.value, POLLIN, 0};
-      const int result = ::poll(&descriptor, 1, 250);
+    while (true) {
+      std::array<pollfd, 2> descriptors = {
+          pollfd{listener.value, POLLIN, 0},
+          pollfd{stop_signal.value, POLLIN, 0},
+      };
+      const int result = ::poll(descriptors.data(), descriptors.size(), -1);
       if (result < 0) {
         if (errno == EINTR)
           continue;
         throw std::runtime_error("peripheral API listener poll failed: " +
                                  std::string(std::strerror(errno)));
       }
-      if (result == 0)
-        continue;
-      if (!(descriptor.revents & POLLIN)) {
-        if (stopping.load())
-          return;
+      if (descriptors[1].revents & (POLLERR | POLLHUP | POLLNVAL))
+        throw std::runtime_error("peripheral API stop signal became unavailable");
+      if (descriptors[1].revents & POLLIN) {
+        drain_eventfd(stop_signal.value);
+        return;
+      }
+      if (!(descriptors[0].revents & POLLIN)) {
         throw std::runtime_error("peripheral API listener became unavailable");
       }
       const int client = ::accept4(listener.value, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
@@ -387,6 +435,8 @@ struct PeripheralApiServer::Impl {
   void start() {
     if (worker.joinable())
       throw std::logic_error("peripheral API server is already running");
+    drain_eventfd(stop_signal.value);
+    clear_failure();
     sockaddr_un address{};
     if (socket_path.size() >= sizeof(address.sun_path))
       throw std::invalid_argument("peripheral API socket path is too long");
@@ -457,7 +507,6 @@ struct PeripheralApiServer::Impl {
       owns_socket_path = false;
       throw;
     }
-    clear_failure();
     stopping = false;
     try {
       worker = std::thread([this] {
@@ -484,7 +533,7 @@ struct PeripheralApiServer::Impl {
     }
     stopping = true;
     catalog.shutdown();
-    ::shutdown(listener.value, SHUT_RDWR);
+    notify_eventfd(stop_signal.value);
     worker.join();
     listener.reset();
     {
@@ -504,6 +553,8 @@ struct PeripheralApiServer::Impl {
   PeripheralCatalog& catalog;
   RefreshRequest refresh_request;
   std::size_t max_clients;
+  FileDescriptor stop_signal;
+  FileDescriptor failure_signal;
   FileDescriptor listener;
   FileDescriptor ownership_lock;
   dev_t socket_device = 0;
@@ -529,13 +580,19 @@ struct PeripheralApiServer::Impl {
   }
 
   void clear_failure() {
-    std::lock_guard lock(failure_mutex);
-    worker_failure = nullptr;
+    {
+      std::lock_guard lock(failure_mutex);
+      worker_failure = nullptr;
+    }
+    drain_eventfd(failure_signal.value);
   }
 
   void record_failure(std::exception_ptr failure) noexcept {
-    std::lock_guard lock(failure_mutex);
-    worker_failure = std::move(failure);
+    {
+      std::lock_guard lock(failure_mutex);
+      worker_failure = std::move(failure);
+    }
+    notify_eventfd_noexcept(failure_signal.value);
   }
 
   void throw_if_failed() const {
@@ -565,6 +622,10 @@ void PeripheralApiServer::start() {
 void PeripheralApiServer::stop() {
   if (impl_)
     impl_->stop();
+}
+
+int PeripheralApiServer::failure_fd() const noexcept {
+  return impl_->failure_signal.value;
 }
 
 void PeripheralApiServer::throw_if_failed() const {

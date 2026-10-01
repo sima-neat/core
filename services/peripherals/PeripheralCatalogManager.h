@@ -33,6 +33,7 @@ public:
   void request_stop();
   void join();
   void stop();
+  int failure_fd() const noexcept;
   void throw_if_failed() const;
 
 private:

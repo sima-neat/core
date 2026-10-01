@@ -23,6 +23,7 @@ public:
 
   void start();
   void stop();
+  int failure_fd() const noexcept;
   void throw_if_failed() const;
 
 private:

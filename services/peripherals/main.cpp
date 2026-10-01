@@ -10,6 +10,7 @@
 #include <sys/signalfd.h>
 #include <unistd.h>
 
+#include <array>
 #include <cerrno>
 #include <charconv>
 #include <cstdlib>
@@ -119,14 +120,28 @@ int main(int argc, char** argv) {
 
     bool running = true;
     while (running) {
-      pollfd descriptor{signal_fd, POLLIN, 0};
-      const int result = ::poll(&descriptor, 1, 500);
+      std::array<pollfd, 3> descriptors = {
+          pollfd{signal_fd, POLLIN, 0},
+          pollfd{manager.failure_fd(), POLLIN, 0},
+          pollfd{api.failure_fd(), POLLIN, 0},
+      };
+      const int result = ::poll(descriptors.data(), descriptors.size(), -1);
       if (result < 0) {
         if (errno == EINTR)
           continue;
         throw std::runtime_error("daemon signal poll failed: " + std::string(std::strerror(errno)));
       }
-      if (result > 0) {
+      if (descriptors[1].revents & (POLLERR | POLLHUP | POLLNVAL))
+        throw std::runtime_error("peripheral catalog failure signal became unavailable");
+      if (descriptors[2].revents & (POLLERR | POLLHUP | POLLNVAL))
+        throw std::runtime_error("peripheral API failure signal became unavailable");
+      if (descriptors[1].revents & POLLIN)
+        manager.throw_if_failed();
+      if (descriptors[2].revents & POLLIN)
+        api.throw_if_failed();
+      if (descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+        throw std::runtime_error("daemon signal fd became unavailable");
+      if (descriptors[0].revents & POLLIN) {
         signalfd_siginfo signal{};
         if (::read(signal_fd, &signal, sizeof(signal)) != sizeof(signal))
           continue;
@@ -134,10 +149,6 @@ int main(int argc, char** argv) {
           manager.request_refresh();
         else if (signal.ssi_signo == SIGINT || signal.ssi_signo == SIGTERM)
           running = false;
-      }
-      if (running) {
-        manager.throw_if_failed();
-        api.throw_if_failed();
       }
     }
 

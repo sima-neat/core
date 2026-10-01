@@ -197,6 +197,12 @@ It combines a burst of notifications using a 250 ms debounce period and then
 runs each private provider once. `POST /v1/refresh` and `systemctl reload`
 cover software or configuration changes that do not emit a device event.
 
+There is no interval scan or idle health timer. After startup, the monitor,
+API listener, and process supervisor sleep in blocking kernel waits until a
+udev notification, explicit refresh, client connection, shutdown signal, or
+worker failure arrives. The debounce timer exists only after a real udev
+notification; client I/O deadlines exist only while serving a connection.
+
 Do not physically connect or disconnect a MIPI ribbon camera while the board
 is powered. Validate add/remove behavior with peripherals that are safe to
 hot-plug.
