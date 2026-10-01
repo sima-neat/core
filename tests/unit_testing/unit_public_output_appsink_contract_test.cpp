@@ -176,8 +176,8 @@ RUN_TEST(
         require(simaai::neat::graph_build_internal::apply_explicit_public_output_options(
                     stream_options, consumer),
                 "fused public Output was not recognized");
-        simaai::neat::session_build_finalize_output_queue_policy(stream_options, consumer,
-                                                                 branches);
+        simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(stream_options, consumer,
+                                                                   branches);
         require_appsink_properties(stream_options, 19, false, false,
                                    "fused RTSP EveryFrame Output");
       }
@@ -196,17 +196,17 @@ RUN_TEST(
         require(simaai::neat::graph_build_internal::apply_explicit_public_output_options(
                     stream_options, nodes),
                 "Latest public Output was not recognized");
-        simaai::neat::session_build_finalize_output_queue_policy(stream_options, nodes);
+        simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(stream_options, nodes);
         require_appsink_properties(stream_options, 1, true, false, "Latest Output");
       }
 
       // A framework-created Output at a graph-internal RTSP boundary is not a
-      // public contract. Preserve every sample until its graph edge accepts it.
+      // public contract.  Keep the generic bounded/drop behavior there.
       {
         simaai::neat::InputStreamOptions stream_options;
         stream_options.public_output_contract = false;
-        stream_options.appsink_max_buffers = 2;
-        stream_options.appsink_drop = true;
+        stream_options.appsink_max_buffers = 0;
+        stream_options.appsink_drop = false;
         stream_options.appsink_sync = true;
         const NodeList consumer = {
             simaai::neat::nodes::Output(simaai::neat::OutputOptions::EveryFrame(19))};
@@ -216,9 +216,9 @@ RUN_TEST(
         require(!simaai::neat::graph_build_internal::apply_explicit_public_output_options(
                     stream_options, consumer),
                 "internal Output was mistaken for a public contract");
-        simaai::neat::session_build_finalize_output_queue_policy(stream_options, consumer,
-                                                                 branches);
-        require_appsink_properties(stream_options, 2, false, true, "internal RTSP boundary");
+        simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(stream_options, consumer,
+                                                                   branches);
+        require_appsink_properties(stream_options, 1, true, true, "internal RTSP boundary");
       }
 
       // The same ownership rule applies to ordinary non-RTSP pipelines; this
@@ -241,7 +241,7 @@ RUN_TEST(
         require(simaai::neat::graph_build_internal::apply_explicit_public_output_options(
                     stream_options, nodes),
                 "ordinary public Output was not recognized");
-        simaai::neat::session_build_finalize_output_queue_policy(stream_options, nodes);
+        simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(stream_options, nodes);
         require_appsink_properties(stream_options, 7, false, true, "ordinary non-RTSP Output");
       }
 
@@ -455,6 +455,7 @@ RUN_TEST(
         simaai::neat::RunPreset preset;
         bool stop_while_full;
         bool internal_output = false;
+        simaai::neat::OverflowPolicy policy = simaai::neat::OverflowPolicy::Block;
       };
       for (const auto test_case : {
                SaturationCase{"EveryFrame/Realtime", true, simaai::neat::RunPreset::Realtime,
@@ -462,9 +463,13 @@ RUN_TEST(
                SaturationCase{"Block/Balanced", false, simaai::neat::RunPreset::Balanced, false},
                SaturationCase{"Block/Reliable", false, simaai::neat::RunPreset::Reliable, false},
                SaturationCase{"Block/stop", false, simaai::neat::RunPreset::Balanced, true},
-               SaturationCase{"Internal/Realtime", false, simaai::neat::RunPreset::Realtime, false,
+               SaturationCase{"Internal/KeepLatest", false, simaai::neat::RunPreset::Realtime,
+                              false, true, simaai::neat::OverflowPolicy::KeepLatest},
+               SaturationCase{"Internal/DropIncoming", false, simaai::neat::RunPreset::Balanced,
+                              false, true, simaai::neat::OverflowPolicy::DropIncoming},
+               SaturationCase{"Internal/Block", false, simaai::neat::RunPreset::Balanced, false,
                               true},
-               SaturationCase{"Internal/stop", false, simaai::neat::RunPreset::Realtime, true,
+               SaturationCase{"Internal/stop", false, simaai::neat::RunPreset::Balanced, true,
                               true},
            }) {
         GError* error = nullptr;
@@ -493,9 +498,8 @@ RUN_TEST(
         simaai::neat::RunOptions run_options;
         run_options.preset = test_case.preset;
         run_options.queue_depth = 1;
-        run_options.overflow_policy = (test_case.explicit_output || test_case.internal_output)
-                                          ? simaai::neat::OverflowPolicy::KeepLatest
-                                          : simaai::neat::OverflowPolicy::Block;
+        run_options.overflow_policy =
+            test_case.explicit_output ? simaai::neat::OverflowPolicy::KeepLatest : test_case.policy;
         run_options.output_memory = test_case.explicit_output ? simaai::neat::OutputMemory::ZeroCopy
                                                               : simaai::neat::OutputMemory::Auto;
         auto stream_options = simaai::neat::session_build_make_stream_options(
@@ -503,13 +507,7 @@ RUN_TEST(
         stream_options.public_output_contract = !test_case.internal_output;
         stream_options.explicit_public_output_options = test_case.explicit_output;
         stream_options.appsink_max_buffers = test_case.explicit_output ? 2 : 1;
-        if (test_case.internal_output) {
-          simaai::neat::session_build_finalize_output_queue_policy(
-              stream_options,
-              {simaai::neat::nodes::RTSPInput("rtsp://example.test/internal-saturation")});
-        } else {
-          stream_options.appsink_drop = false;
-        }
+        stream_options.appsink_drop = false;
         stream_options.appsink_sync = false;
         stream_options.timeout_ms = 5000;
         stream_options.worker_poll_ms = 1;
@@ -546,22 +544,42 @@ RUN_TEST(
         const auto before = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
         require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
                 "DMA saturation pipeline did not start");
-        const auto output_capacity = static_cast<std::uint64_t>(stream_options.appsink_max_buffers);
-        require(wait_until([&] { return core->stats().outputs_ready >= output_capacity; }, 2000),
-                "DMA saturation run did not fill its output queue");
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        const auto saturated = core->stats();
-        require(saturated.outputs_ready == output_capacity && saturated.outputs_dropped == 0,
-                "DMA Block policy was silently replaced by dropping under queue pressure");
-        require(core->pipeline.copy_output_latched.load() == stream_options.copy_output,
-                "DMA queue pressure activated the Balanced copy latch");
-        {
+        const bool dropping =
+            test_case.internal_output && test_case.policy != simaai::neat::OverflowPolicy::Block;
+        const bool keep_latest = test_case.policy == simaai::neat::OverflowPolicy::KeepLatest;
+        const auto expected_ready = dropping && !keep_latest ? 1U : 8U;
+        const auto expected_pulled = dropping ? 1U : 8U;
+        const auto expected_dropped = dropping ? 7U : 0U;
+        std::int64_t retained_pts = -1;
+        if (dropping) {
+          require(wait_until([&] { return core->stats().outputs_dropped == 7; }, 2000),
+                  std::string(test_case.name) +
+                      ": configured overflow policy did not make progress");
+          std::lock_guard<std::mutex> lock(fixture.mutex);
+          require(fixture.error.empty(), "DMA producer fixture failed: " + fixture.error);
+          require(fixture.allocations.size() == 8U, "dropping blocked the finite producer");
+          for (const auto& [pts, allocation] : fixture.allocations) {
+            const auto value = static_cast<std::int64_t>(pts);
+            if (retained_pts < 0 || (keep_latest ? value > retained_pts : value < retained_pts)) {
+              retained_pts = value;
+            }
+          }
+        } else {
+          const auto capacity = static_cast<std::uint64_t>(stream_options.appsink_max_buffers);
+          require(wait_until([&] { return core->stats().outputs_ready >= capacity; }, 2000),
+                  "DMA saturation run did not fill its output queue");
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          const auto saturated = core->stats();
+          require(saturated.outputs_ready == capacity && saturated.outputs_dropped == 0,
+                  "DMA Block policy was silently replaced by dropping under queue pressure");
           std::lock_guard<std::mutex> lock(fixture.mutex);
           require(fixture.error.empty(), "DMA producer fixture failed: " + fixture.error);
           require(fixture.allocations.size() < 8U,
                   std::string(test_case.name) +
                       ": the finite producer ran through a saturated no-drop output");
         }
+        require(core->pipeline.copy_output_latched.load() == stream_options.copy_output,
+                "DMA queue pressure activated the Balanced copy latch");
 
         if (test_case.stop_while_full) {
           const auto stop_started = std::chrono::steady_clock::now();
@@ -572,23 +590,25 @@ RUN_TEST(
         }
 
         std::int64_t previous_pts = -1;
-        for (int index = 0; index < 8; ++index) {
+        for (unsigned index = 0; index < expected_pulled; ++index) {
           simaai::neat::Sample output;
           simaai::neat::PullError pull_error;
           const auto status = core->pull(2000, output, &pull_error);
           if (status != simaai::neat::PullStatus::Ok) {
             const auto stats = core->stats();
             std::lock_guard<std::mutex> lock(fixture.mutex);
-            throw std::runtime_error(std::string("DMA saturation ") + test_case.name +
-                                     " received=" + std::to_string(index) +
-                                     "/8 produced=" + std::to_string(fixture.allocations.size()) +
-                                     " ready=" + std::to_string(stats.outputs_ready) +
-                                     " dropped=" + std::to_string(stats.outputs_dropped) + ": " +
-                                     pull_error.message +
-                                     (fixture.error.empty() ? "" : "; producer: " + fixture.error));
+            throw std::runtime_error(
+                std::string("DMA saturation ") + test_case.name +
+                " received=" + std::to_string(index) + "/" + std::to_string(expected_pulled) +
+                " produced=" + std::to_string(fixture.allocations.size()) +
+                " ready=" + std::to_string(stats.outputs_ready) +
+                " dropped=" + std::to_string(stats.outputs_dropped) + ": " + pull_error.message +
+                (fixture.error.empty() ? "" : "; producer: " + fixture.error));
           }
           require(output.pts_ns > previous_pts, "DMA saturation outputs were not ordered");
           previous_pts = output.pts_ns;
+          require(!dropping || output.pts_ns == retained_pts,
+                  std::string(test_case.name) + ": overflow retained the wrong output");
           require(!output.tensors.empty() &&
                       simaai::neat::pipeline_internal::sample_has_dmabuf_memory(output),
                   "DMA output was materialized instead of retaining producer memory");
@@ -608,13 +628,15 @@ RUN_TEST(
                     after.gst_memory_map_calls == before.gst_memory_map_calls,
                 "DMA output policy introduced a hidden copy or generic CPU map");
         const simaai::neat::RunStats stats = core->stats();
-        require(stats.outputs_ready == 8 && stats.outputs_pulled == 8 && stats.outputs_dropped == 0,
-                "DMA saturation run dropped a terminal result");
+        require(stats.outputs_ready == expected_ready && stats.outputs_pulled == expected_pulled &&
+                    stats.outputs_dropped == expected_dropped,
+                std::string(test_case.name) +
+                    ": output counters disagree with the overflow policy");
         simaai::neat::Sample output;
         simaai::neat::PullError pull_error;
         const auto status = core->pull(2000, output, &pull_error);
         require(status == simaai::neat::PullStatus::Closed &&
                     pull_error.code == simaai::neat::error_codes::kSourceEnded,
-                std::string(test_case.name) + ": expected EOS after all eight outputs");
+                std::string(test_case.name) + ": expected EOS after retained outputs");
       }
     }));

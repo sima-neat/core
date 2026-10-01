@@ -251,7 +251,7 @@ RUN_TEST(
       simaai::neat::InputStreamOptions fused_rtsp_stream_options;
       std::vector<std::vector<std::shared_ptr<simaai::neat::Node>>> fused_rtsp_branches = {
           {simaai::neat::nodes::RTSPInput("rtsp://example.test/live")}};
-      simaai::neat::session_build_finalize_output_queue_policy(
+      simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(
           fused_rtsp_stream_options, make_consumer_nodes(), fused_rtsp_branches);
       require(fused_rtsp_stream_options.appsink_drop,
               "an RTSP node in a fused source branch must make the terminal appsink drop");
@@ -261,7 +261,7 @@ RUN_TEST(
       simaai::neat::InputStreamOptions non_rtsp_stream_options;
       std::vector<std::vector<std::shared_ptr<simaai::neat::Node>>> non_rtsp_branches = {
           {simaai::neat::nodes::CameraInput(simaai::neat::CameraInputOptions{})}};
-      simaai::neat::session_build_finalize_output_queue_policy(
+      simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(
           non_rtsp_stream_options, make_consumer_nodes(), non_rtsp_branches);
       require(!non_rtsp_stream_options.appsink_drop,
               "fused non-RTSP branches must preserve the configured appsink policy");

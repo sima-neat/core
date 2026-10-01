@@ -828,7 +828,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   // immediately handing them to the reaper; the legacy fallback remains
   // available if a live source cannot complete that transition in its budget.
   stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
-  session_build_finalize_output_queue_policy(stream_opt, build_nodes);
+  session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_nodes);
   const bool insert_queue2 = session_build_should_insert_async_queue2(mode, merged_opt);
 
   // --- 4. compile -------------------------------------------------------------------
@@ -3479,7 +3479,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_consumer_nodes);
   stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
-  session_build_finalize_output_queue_policy(stream_opt, build_consumer_nodes, build_branch_nodes);
+  session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes,
+                                               build_branch_nodes);
 
   const NameTransform name_transform = make_name_transform(sess_opt);
   std::vector<NameTransform> branch_name_transforms;

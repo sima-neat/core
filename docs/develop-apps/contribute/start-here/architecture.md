@@ -849,9 +849,8 @@ segments remain ineligible until their branches can be preserved recursively.
 
 Explicit edge policies and stream identities preserve their runtime boundary
 until policy lowering. Unlabelled default links can still merge into one
-segment. Internal output queues use blocking backpressure; the realtime run
-preset does not silently discard compressed access units at those boundaries.
-Frame replacement remains an explicit edge or public output policy.
+segment. Internal outputs use the existing run overflow policy and RTSP/zero-copy
+safeguards. Explicit public outputs retain their own queue contract.
 
 ### Internal boundary timing
 
