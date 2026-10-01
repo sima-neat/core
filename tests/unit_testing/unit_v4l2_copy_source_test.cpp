@@ -10,6 +10,12 @@
 #include <thread>
 
 namespace {
+// This test links libgstapp already. Instantiate its type directly so CI's
+// isolated plugin registry need not discover app/coreelements plugins.
+GstElement* make_app_sink() {
+  return GST_ELEMENT(g_object_new(GST_TYPE_APP_SINK, nullptr));
+}
+
 void verify(GstSample* sample, unsigned char expected, unsigned sequence, unsigned bytes = 48) {
   copy_check(sample != nullptr, "missing copied sample");
   auto decoded = simaai::neat::sample_from_gst_envelope(sample, "v4l2-copy-test", false, nullptr);
@@ -45,6 +51,10 @@ void verify(GstSample* sample, unsigned char expected, unsigned sequence, unsign
 } // namespace
 int main() {
   try {
+    // All exercised types are linked or provided by the fixture. Keep this
+    // hardware-isolated test independent of installed plugin discovery.
+    g_setenv("GST_PLUGIN_SYSTEM_PATH_1_0", "", TRUE);
+    g_setenv("GST_PLUGIN_PATH_1_0", "", TRUE);
     gst_init(nullptr, nullptr);
     // Graph startup registers these ABIs. This isolated source test deliberately
     // avoids the broader Neat plugin discovery (and all real camera devices).
@@ -69,7 +79,7 @@ int main() {
       copy_check(ready, "STREAMON preceded output caps negotiation");
     };
     auto* pipeline = gst_pipeline_new(nullptr);
-    auto* sink = gst_element_factory_make("appsink", nullptr);
+    auto* sink = make_app_sink();
     copy_check(sink != nullptr, "appsink unavailable");
     g_object_set(sink, "sync", FALSE, "max-buffers", 1U, "enable-last-sample", FALSE, nullptr);
     gst_bin_add_many(GST_BIN(pipeline), source, sink, nullptr);
@@ -126,7 +136,7 @@ int main() {
       g_object_set(input, "device", "/dev/mock", "width", 8U, "height", 4U, "fourcc", "BA81",
                    "capture-buffer-count", 4U, nullptr);
       auto* graph = gst_pipeline_new(nullptr);
-      auto* output = gst_element_factory_make("appsink", nullptr);
+      auto* output = make_app_sink();
       copy_check(output != nullptr, "appsink unavailable");
       g_object_set(output, "sync", FALSE, "enable-last-sample", FALSE, nullptr);
       gst_bin_add_many(GST_BIN(graph), input, output, nullptr);
@@ -176,14 +186,13 @@ int main() {
       g_object_set(input, "device", "/dev/mock", "width", 8U, "height", 4U, "fourcc", "BA81",
                    "capture-buffer-count", 4U, nullptr);
       auto* graph = gst_pipeline_new(nullptr);
-      auto* filter = gst_element_factory_make("capsfilter", nullptr);
-      auto* output = gst_element_factory_make("fakesink", nullptr);
-      copy_check(filter && output, "capsfilter/fakesink unavailable");
+      auto* output = make_app_sink();
+      copy_check(output != nullptr, "appsink unavailable");
       auto* incompatible = gst_caps_from_string("application/vnd.simaai.tensor,width=(int)9");
-      g_object_set(filter, "caps", incompatible, nullptr);
+      g_object_set(output, "caps", incompatible, "sync", FALSE, nullptr);
       gst_caps_unref(incompatible);
-      gst_bin_add_many(GST_BIN(graph), input, filter, output, nullptr);
-      copy_check(gst_element_link_many(input, filter, output, nullptr), "caps test link failed");
+      gst_bin_add_many(GST_BIN(graph), input, output, nullptr);
+      copy_check(gst_element_link(input, output), "caps test link failed");
       copy_check(gst_element_set_state(graph, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE,
                  "incompatible output caps accepted");
       gst_element_set_state(graph, GST_STATE_NULL);
