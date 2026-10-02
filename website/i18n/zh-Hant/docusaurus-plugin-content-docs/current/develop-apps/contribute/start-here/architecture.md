@@ -924,8 +924,8 @@ V4L2 複製來源將準備與串流分開：先設定輸出 caps 並啟用記憶
 
 ## 相機設定檔選擇
 
-`CameraInput` 在圖的合約傳播前，依 `CameraInputOptions.profile` 選擇內部實作。`Default` 設定檔不論像素格式，一律保留 libcamera 影像合約；只提供裝置路徑會遭拒絕，不會隱含辨識 Metoak。只有 `MetoakSimor` 選擇 Linux 獨立複製 V4L2 擷取，輸出系統記憶體中的平坦 `UInt8` 位元組張量。SIMOR 解包與校正仍由應用程式負責。
+`CameraInput` 在圖的合約傳播前，依 `CameraInputOptions.profile` 選擇內部實作。`Default` 設定檔不論像素格式，一律保留 libcamera 影像合約；只提供裝置路徑會遭拒絕。只有 `MetoakSimor` 選擇 Linux 獨立複製 V4L2 擷取，輸出系統記憶體中的平坦 `UInt8` 位元組張量。此設定檔未設定 `zero_copy` 時使用獨立複製，明確設定 true 則遭拒絕。BA81 傳輸格式由設定檔在內部決定。SIMOR 解包與校正仍由應用程式負責。
 
-明確指定 SIMOR 設定檔與裝置不需要探索。SIMOR 設定檔未指定裝置時，會從媒體拓撲辨識恰好一個端點，不開啟擷取/子裝置，也不設定驅動程式。舊的明確 V4L2 包裝仍可使用，不會引入以一般原始格式選擇後端的設定檔。這次變更沒有新增或驗證 libcamera Bayer 協商。探索在影格處理路徑之外執行，保留既有有限緩衝池與安全停止措施。
+明確指定 SIMOR 設定檔與裝置不需要探索。SIMOR 設定檔未指定裝置時，會從媒體拓撲辨識恰好一個端點，不開啟擷取/子裝置，也不設定驅動程式。公開 API 僅有 `CameraInput` 與 `CameraInputOptions`，沒有 V4L2 專用選項、包裝或 FourCC 選擇器。這次變更沒有新增或驗證 libcamera Bayer 協商。探索在影格處理路徑之外執行，保留既有有限緩衝池與安全停止措施。
 
-資訊清單與 SONAME 維持 Core ABI 5。這次整合已變更公開選項與節點的記憶體配置：請重新建置 C++ 使用端，並搭配相符的 Python wheel 一起安裝。舊工廠包裝保留原始碼用法，但不保留與舊 ABI-5 建置的二進位相容性。
+資訊清單與 SONAME 維持 Core ABI 5。這次尚未發布的整合已變更公開選項與節點的記憶體配置：請重新建置 C++ 使用端，並搭配相符的 Python wheel 一起安裝。舊 ABI-5 開發用二進位檔與新配置不相容。

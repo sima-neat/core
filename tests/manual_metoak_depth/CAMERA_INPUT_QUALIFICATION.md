@@ -1,7 +1,7 @@
 # CameraInput copy-mode qualification
 
 This qualification is separate from the graph-20 EV74 numerical tests. It covers
-`CameraInput(camera)` with `camera.zero_copy = false`, followed by
+`CameraInput(camera)` with `camera.profile = CameraProfile::MetoakSimor`, followed by
 `Output`. It does not invoke an EV kernel or change the ROS application.
 
 ## Capture contract
@@ -189,3 +189,36 @@ configuration or ROS source changed. The staged Core SHA-256 was
 `5d39576d2fdf0e08ba2ffac5c3a6d47e89df659c71eff461212567a6a56d29be`. Logs and artifact hashes are retained in the
 `camera-metoak-only` evidence directory. These short selector regressions do not
 replace the earlier sustained lifecycle evidence or its kernel-fault limits.
+
+
+## Private backend API qualification — 2026-10-02
+
+The unified public API now has only `CameraInputOptions` and `CameraInput`;
+`CameraV4L2Options`, `CameraInputWithV4L2`, the backend-options Python overload,
+and the public `fourcc` field are removed. These were unreleased additions from
+this integration, not APIs on the develop base. `MetoakSimor` owns BA81 and
+resolves unset `zero_copy` to false; explicit true still fails. Default libcamera
+policy is unchanged. Invalid configuration fails before automatic discovery.
+
+A fresh targeted ARM64 build/stage of Core, Python and four test targets passed:
+
+- Four hardware-guarded C++ tests, including 55 node checks; 20 guarded Python
+  camera/API checks; 112 tooling/package regressions.
+- Positive unified public-header compilation, negative compilation of all three
+  removed C++ API names/fields, and non-Linux conditional compilation. The latter
+  is not native macOS runtime qualification.
+- A public Metoak Graph with unset `zero_copy` delivered 668 tensors in 30 seconds.
+  All 667 post-initial frames matched SIMOR magic; stop completed in 121 ms,
+  retained bytes remained valid, the camera descriptor closed, and reopen passed.
+- Device-free profile discovery with both output slots retained delivered two
+  tensors and stopped in 71 ms. Metadata magic, retained bytes and reopen passed.
+- Postflight found no camera/EV owners, D-state tasks or kernel lifecycle failures.
+  Boot and original firmware identity were unchanged. No firmware, kernel,
+  installed package, media-controller configuration or ROS changes were made.
+  Default libcamera hardware capture and EV dispatch were not rerun.
+
+The staged Core and Python SHA-256 hashes were respectively
+`39fc3f8581eb0d25b6bd280fb4417ac30398bb0ffcfbb8e409d5aba717fe1c07` and
+`50ec423cb9184cf99be84768b5492bd7e90102e648bf50c9fa0adb5014b72d91`.
+The manifest/SONAME stay at ABI 5, the maintainer-confirmed unreleased contract;
+matching C++ consumers and Python artifacts must be rebuilt together.

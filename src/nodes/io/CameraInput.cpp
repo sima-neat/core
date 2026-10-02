@@ -148,44 +148,13 @@ std::string camera_backend_fragment(const CameraInputOptions& opt, int node_inde
 
 class V4L2CameraInputNode final : public Node, public OutputSpecProvider {
 public:
-  V4L2CameraInputNode(CameraInputOptions opt, CameraV4L2Options backend)
-      : opt_(std::move(opt)), backend_(std::move(backend)) {
-    if (opt_.format != "RAW8" || opt_.width == 0 || opt_.height == 0 || opt_.width > INT32_MAX ||
-        opt_.height > INT32_MAX)
-      throw std::invalid_argument("raw CameraInput requires RAW8 and positive wire dimensions");
-    if (backend_.device.empty() || backend_.fourcc.size() != 4 ||
-        !std::all_of(backend_.fourcc.begin(), backend_.fourcc.end(),
-                     [](unsigned char c) { return c >= 32 && c <= 126; }))
-      throw std::invalid_argument(
-          "raw CameraInput requires a device and four printable fourcc bytes");
-    if (backend_.capture_buffer_count < 4 || backend_.capture_buffer_count > 128)
-      throw std::invalid_argument("raw CameraInput capture_buffer_count must be in [4,128]");
-    if (backend_.zero_copy)
-      throw std::invalid_argument("CameraInput V4L2 currently requires zero_copy=false");
-    if (opt_.allow_cpu_fallback)
-      throw std::invalid_argument(
-          "allow_cpu_fallback is libcamera-only; V4L2 uses zero_copy=false");
-    if (backend_.fourcc != "GREY" && backend_.fourcc != "BA81" && backend_.fourcc != "GBRG" &&
-        backend_.fourcc != "GRBG" && backend_.fourcc != "RGGB")
-      throw std::invalid_argument("CameraInput V4L2 requires an unpacked eight-bit wire fourcc");
-    if (backend_.output_buffer_count < 2 || backend_.output_buffer_count > 128 ||
-        backend_.frame_timeout_ms < 1 || backend_.frame_timeout_ms > 60000)
-      throw std::invalid_argument(
-          "CameraInput V4L2 output count must be in [2,128] and timeout in [1,60000] ms");
-    if (opt_.insert_queue &&
-        (opt_.queue_depth == 0 || opt_.queue_depth >= backend_.output_buffer_count))
-      throw std::invalid_argument(
-          "CameraInput V4L2 queue_depth must be positive and smaller than output_buffer_count");
-    if (opt_.camera_name.has_value())
-      throw std::invalid_argument("raw CameraInput uses backend.device, not libcamera camera_name");
-    if (opt_.buffer_name.empty())
-      throw std::invalid_argument("raw CameraInput requires a nonempty tensor buffer_name");
-  }
+  // Only the unified resolver constructs this private node, with validated options.
+  explicit V4L2CameraInputNode(CameraInputOptions opt) : opt_(std::move(opt)) {}
   std::string kind() const override {
     return "CameraInput";
   }
   std::string user_label() const override {
-    return backend_.device;
+    return opt_.device;
   }
   InputRole input_role() const override {
     return InputRole::Source;
@@ -201,13 +170,12 @@ public:
   }
   std::string backend_fragment(int index) const override {
     std::ostringstream out;
-    out << "neatv4l2copysrc name=" << camera_src_name(index)
-        << " device=" << gst_quote(backend_.device) << " fourcc=" << gst_quote(backend_.fourcc)
-        << " width=" << opt_.width << " height=" << opt_.height
+    out << "neatv4l2copysrc name=" << camera_src_name(index) << " device=" << gst_quote(opt_.device)
+        << " fourcc=\"BA81\"" << " width=" << opt_.width << " height=" << opt_.height
         << " buffer-name=" << gst_quote(opt_.buffer_name)
-        << " capture-buffer-count=" << backend_.capture_buffer_count
-        << " output-buffer-count=" << backend_.output_buffer_count
-        << " frame-timeout-ms=" << backend_.frame_timeout_ms;
+        << " capture-buffer-count=" << opt_.capture_buffer_count
+        << " output-buffer-count=" << opt_.output_buffer_count
+        << " frame-timeout-ms=" << opt_.frame_timeout_ms;
     if (opt_.insert_queue) {
       out << " ! queue name=" << camera_queue_name(index)
           << " max-size-buffers=" << opt_.queue_depth << " max-size-bytes=0 max-size-time=0";
@@ -240,7 +208,6 @@ public:
 
 private:
   CameraInputOptions opt_;
-  CameraV4L2Options backend_;
 };
 
 CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
@@ -263,28 +230,38 @@ CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
 #else
   if (opt.camera_name.has_value())
     throw std::invalid_argument("CameraInput cannot combine camera_name with a raw device/profile");
-  if (!opt.zero_copy.has_value() || *opt.zero_copy)
-    throw std::invalid_argument("CameraInput V4L2 requires explicit zero_copy=false");
+  // The profile owns the default delivery policy. An explicit zero-copy
+  // request remains an error, never a silent fallback to owned-copy capture.
+  if (opt.zero_copy.value_or(false))
+    throw std::invalid_argument("CameraInput MetoakSimor does not support zero_copy=true");
+  opt.zero_copy = false;
   if (opt.allow_cpu_fallback)
     throw std::invalid_argument("allow_cpu_fallback is libcamera-only; V4L2 uses zero_copy=false");
-  // Explicit profiles with a device are construction-only, including in an SDK.
-  // Discovery is metadata-only and only requested when identification is needed.
-  if (opt.device.empty())
-    opt.device = camera_discovery::find_simor_device({});
-  if (opt.profile == CameraProfile::MetoakSimor) {
-    // This profile is the qualified 1920x360 SIMOR wire mode, not every Metoak
-    // product. Legacy image defaults are replaced, contradictory overrides fail.
-    if (opt.width != 1920 || (opt.height != 1080 && opt.height != 360) ||
-        (opt.format != "NV12" && opt.format != "RAW8") ||
-        (opt.fourcc != "GREY" && opt.fourcc != "BA81"))
-      throw std::invalid_argument("CameraInput MetoakSimor requires RAW8 BA81 1920x360 wire mode");
-    opt.width = 1920;
-    opt.height = 360;
-    opt.format = "RAW8";
-    opt.fourcc = "BA81";
-  }
+  // This profile is the qualified 1920x360 SIMOR wire mode, not every Metoak
+  // product. Legacy image defaults are replaced, contradictory overrides fail.
+  if (opt.width != 1920 || (opt.height != 1080 && opt.height != 360) ||
+      (opt.format != "NV12" && opt.format != "RAW8"))
+    throw std::invalid_argument("CameraInput MetoakSimor requires RAW8 BA81 1920x360 wire mode");
+  opt.width = 1920;
+  opt.height = 360;
+  opt.format = "RAW8";
   if (!opt.capture_buffer_count)
     opt.capture_buffer_count = 8;
+  if (opt.capture_buffer_count < 4 || opt.capture_buffer_count > 128)
+    throw std::invalid_argument("CameraInput MetoakSimor capture_buffer_count must be in [4,128]");
+  if (opt.output_buffer_count < 2 || opt.output_buffer_count > 128 || opt.frame_timeout_ms < 1 ||
+      opt.frame_timeout_ms > 60000)
+    throw std::invalid_argument(
+        "CameraInput MetoakSimor output count must be in [2,128] and timeout in [1,60000] ms");
+  if (opt.insert_queue && (opt.queue_depth == 0 || opt.queue_depth >= opt.output_buffer_count))
+    throw std::invalid_argument("CameraInput MetoakSimor queue_depth must be positive and smaller "
+                                "than output_buffer_count");
+  if (opt.buffer_name.empty())
+    throw std::invalid_argument("CameraInput MetoakSimor requires a nonempty tensor buffer_name");
+  // Explicit profiles with a device are construction-only, including in an SDK.
+  // Validate the complete capture contract before inspecting any media topology.
+  if (opt.device.empty())
+    opt.device = camera_discovery::find_simor_device({});
   return opt;
 #endif
 }
@@ -293,13 +270,7 @@ CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
 
 CameraInput::CameraInput(CameraInputOptions opt) : opt_(resolve_camera_options(std::move(opt))) {
   if (opt_.profile == CameraProfile::MetoakSimor) {
-    CameraV4L2Options backend;
-    backend.device = opt_.device;
-    backend.fourcc = opt_.fourcc;
-    backend.capture_buffer_count = opt_.capture_buffer_count;
-    backend.output_buffer_count = opt_.output_buffer_count;
-    backend.frame_timeout_ms = opt_.frame_timeout_ms;
-    raw_backend_ = std::make_shared<V4L2CameraInputNode>(opt_, std::move(backend));
+    raw_backend_ = std::make_shared<V4L2CameraInputNode>(opt_);
     return;
   }
   if (opt_.format.empty())
@@ -387,29 +358,6 @@ OutputSpec CameraInput::output_spec(const OutputSpec& input) const {
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
-
-std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInputOptions opt,
-                                                        simaai::neat::CameraV4L2Options backend) {
-#if defined(__linux__)
-  if (backend.capture_buffer_count < 4 || backend.capture_buffer_count > 128)
-    throw std::invalid_argument("raw CameraInput capture_buffer_count must be in [4,128]");
-  // The legacy explicit V4L2 API is not a generic "raw" camera profile.
-  // Ordinary CameraInput format requests must continue through libcamera.
-  if (opt.profile == CameraProfile::Default)
-    return std::make_shared<V4L2CameraInputNode>(std::move(opt), std::move(backend));
-  opt.device = backend.device;
-  opt.zero_copy = backend.zero_copy;
-  opt.fourcc = std::move(backend.fourcc);
-  opt.capture_buffer_count = backend.capture_buffer_count;
-  opt.output_buffer_count = backend.output_buffer_count;
-  opt.frame_timeout_ms = backend.frame_timeout_ms;
-  return CameraInput(std::move(opt));
-#else
-  (void)opt;
-  (void)backend;
-  throw std::runtime_error("CameraInput V4L2 backend requires Linux");
-#endif
-}
 
 std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt) {
   return std::make_shared<simaai::neat::CameraInput>(std::move(opt));

@@ -20,28 +20,6 @@ namespace simaai::neat {
 // Default preserves libcamera; MetoakSimor selects its owned-copy Linux path.
 enum class CameraProfile { Default, MetoakSimor };
 
-/** Explicit raw V4L2 capture backend. Use CameraInputOptions.format="RAW8"
- * and wire dimensions, not decoded image dimensions. Captures progressive,
- * single-plane GREY/BA81/GBRG/GRBG/RGGB bytes without ISP conversion.
- * The resulting UInt8 tensor is flat [bytesused], including row padding and
- * valid trailers. Negotiated geometry/stride/sizeimage are in Sample.caps_string.
- * Camera framerate options do not reconfigure this backend's device cadence.
- * Configure the media-controller pipeline before capture. The driver must honor
- * the V4L2 STREAMOFF contract; failed retirement disables automatic restart.
- */
-struct CameraV4L2Options {
-  std::string device;
-  std::string fourcc = "GREY";
-  // Only false is supported: copy before requeue, with no DMA-BUF export/import.
-  // True fails explicitly; it must never silently fall back to a copy.
-  bool zero_copy = false;
-  std::uint32_t capture_buffer_count = 8;
-  // A retained output consumes one pooled buffer. Exhaustion applies cancellable
-  // backpressure; it never overwrites tensors held by an application.
-  std::uint32_t output_buffer_count = 8;
-  std::uint32_t frame_timeout_ms = 2000;
-};
-
 /**
  * @brief Options for CameraInput, a live camera source.
  *
@@ -80,11 +58,11 @@ struct CameraInputOptions {
   // Only MetoakSimor selects V4L2 and chooses its qualified wire mode.
   std::string device;
   CameraProfile profile = CameraProfile::Default;
-  // Unset preserves the legacy policy. V4L2 requires explicit false. For
-  // libcamera, false permits the existing CPU fallback; true requires zero-copy.
+  // Unset preserves libcamera's policy and selects owned-copy for MetoakSimor.
+  // False permits libcamera's CPU fallback; true requires zero-copy and is
+  // rejected for MetoakSimor, which does not support DMA-BUF export/import.
   std::optional<bool> zero_copy;
-  // Raw capture tuning. The SIMOR profile chooses BA81 automatically.
-  std::string fourcc = "GREY";
+  // Owned-copy pool and frame-wait tuning for MetoakSimor.
   std::uint32_t output_buffer_count = 8;
   std::uint32_t frame_timeout_ms = 2000;
   // Zero keeps the backend default. Nonzero applies to either capture backend.
@@ -127,14 +105,6 @@ private:
 
 namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions opt = {});
-
-/** Capture owned raw byte tensors through the Linux-only V4L2 copy backend.
- * Throws std::runtime_error on other platforms.
- * Compatibility wrapper; prefer CameraInput with the MetoakSimor profile for SIMOR.
- * SIMOR decoding, calibration and ROS publication remain application concerns.
- */
-std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInputOptions opt,
-                                                        simaai::neat::CameraV4L2Options backend);
 
 /**
  * @brief Create a camera input with an application-owned capture queue minimum.

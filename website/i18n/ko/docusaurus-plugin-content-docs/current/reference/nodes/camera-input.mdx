@@ -183,7 +183,6 @@ namespace n = simaai::neat;
 n::CameraInputOptions camera;
 camera.device = "/dev/video1";
 camera.profile = n::CameraProfile::MetoakSimor;
-camera.zero_copy = false;
 
 n::Graph capture;
 capture.add(n::nodes::CameraInput(camera));
@@ -196,17 +195,13 @@ import pyneat as neat
 camera = neat.CameraInputOptions()
 camera.device = "/dev/video1"
 camera.profile = neat.CameraProfile.MetoakSimor
-camera.zero_copy = False
 
 capture = neat.Graph()
 capture.add(neat.nodes.camera_input(camera))
 capture.add(neat.nodes.output())
 ```
 
-`zero_copy=false`는 디큐한 MMAP 프레임을 독립된 풀의 시스템 메모리로 복사한 뒤
-카메라 버퍼를 다시 큐에 넣습니다. `true`는 거부됩니다. DMA-BUF 내보내기/가져오기나
-암묵적 폴백은 없습니다. `camera_name`, `allow_cpu_fallback`은 libcamera 전용입니다.
-장치의 현재 주기를 유지하며 `framerate_num`/`framerate_den`으로 주기를 설정하지 않습니다.
+`MetoakSimor`는 `zero_copy`가 설정되지 않으면 소유 복사 캡처를 사용합니다. 디큐된 각 MMAP 프레임은 카메라 버퍼를 **다시 큐에 넣기 전에** 독립적인 풀 시스템 메모리에 복사됩니다. 명시적 `zero_copy=false`도 같은 동작입니다. 이 프로필은 DMA-BUF 내보내기/가져오기를 지원하지 않으므로 `zero_copy=true`는 거부됩니다. 암묵적 폴백은 없습니다. `camera_name`과 `allow_cpu_fallback`은 libcamera 전용입니다. 장치 주기를 유지하며 `framerate_num`/`framerate_den`은 이 프로필을 설정하지 않습니다.
 
 출력은 유효한 행 패딩과 트레일러를 포함한 평탄한 UInt8 텐서 `[bytesused]`이며 디코딩된
 이미지가 아닙니다. 협상된 `fourcc`, `width`, `height`, `row-stride`, `sizeimage`는
@@ -233,10 +228,10 @@ ROS/SIMOR의 CPU 언패킹, 보정 및 ROS 게시 작업은 애플리케이션�
 - `profile=Default`(기본값)는 항상 libcamera를 사용하며 `camera_name` 선택을 유지합니다. `profile=MetoakSimor` 없이 `device`를 지정하면 거부되며 Metoak을 암묵적으로 선택하지 않습니다.
 - `profile=MetoakSimor`는 내부적으로 소유 복사 방식 V4L2, `RAW8`, `BA81`, 1920×360 전송 크기를 선택합니다. 기존 NV12/1080 기본값을 대체하며 다른 충돌 형식이나 크기는 거부합니다. 모든 Metoak 카메라를 나타내는 프로필은 아닙니다.
 - SIMOR 프로필에서 `device`를 생략하면 미디어 토폴로지에 일치하는 엔드포인트가 정확히 하나 있어야 합니다. 누락, 모호한 경로 또는 혼합 센서 경로는 실패합니다. 검색 중 캡처 장치를 열지 않습니다. 프로필과 장치를 명시하면 검색하지 않습니다.
-- 픽셀 형식은 백엔드를 선택하지 않습니다. 일반 원시/Bayer 요청은 libcamera 경로를 유지하며 이 변경은 Bayer caps 협상을 추가하거나 검증하지 않습니다. 명시적으로 설정한 원시 바이트 캡처를 위한 기존 V4L2 API는 계속 사용할 수 있습니다.
-- `MetoakSimor`는 명시적인 `zero_copy=false`가 필요합니다. libcamera에서 미설정은 `allow_cpu_fallback`을 유지하고 false는 기존 복사 폴백을 허용하며 true는 제로 카피를 요구합니다. 모순된 설정은 실패합니다.
+- 픽셀 형식은 백엔드 선택기가 아닙니다. 일반 원시/Bayer 요청은 libcamera 경로를 유지하며 이 변경은 Bayer caps 협상을 추가하거나 검증하지 않습니다. 프로필이 전송 FourCC를 결정하며 공개 FourCC 옵션은 없습니다.
+- `MetoakSimor`에서 설정되지 않은 `zero_copy`는 false로 해석되며 명시적 true는 거부됩니다. libcamera에서는 미설정이 `allow_cpu_fallback`을 유지하고 false는 기존 복사 폴백을 허용하며 true는 제로 카피를 요구합니다. 모순된 설정은 거부됩니다.
 - 구현은 노드 생성 시 그래프 계약 전파 전에 한 번만 선택됩니다. 공개 backend 옵션은 없으며 실패 시 다른 구현으로 전환하지 않습니다. 검색은 미디어 링크나 패드 형식을 설정하지 않습니다.
 
 `device`가 없는 `MetoakSimor` 프로필만 미디어 컨트롤러를 검색합니다. 이러한 메타데이터 조회는 동기 커널 호출이며 실행 시간 상한이 보장되지 않습니다. 컨트롤러가 응답하지 않으면 `device`와 `profile=MetoakSimor`를 모두 지정하여 검색을 건너뛰세요.
 
-`CameraInputWithV4L2`와 Python의 두 인자 형식은 소스 호환 전달 래퍼로 유지됩니다. 새 코드는 `CameraInput(options)`를 사용하세요. 매니페스트와 SONAME은 Core ABI 5를 유지합니다. 이 통합에서 공개 옵션과 노드 레이아웃이 변경되었으므로 C++ 사용 코드를 다시 빌드하고 일치하는 Python wheel과 함께 사용하세요. ABI 번호를 유지해도 이전 ABI-5 바이너리와 호환되지 않습니다. 이전 바이너리를 새 헤더나 런타임과 혼용하지 마세요.
+`CameraInput(options)`와 `CameraInputOptions`만 사용하십시오. V4L2 설정은 비공개입니다. 매니페스트와 SONAME은 Core ABI 5를 유지합니다. 이 미출시 통합에서 공개 옵션과 노드 레이아웃이 변경되었으므로 C++ 소비자를 다시 빌드하고 일치하는 Python wheel을 사용하십시오. 이전 ABI-5 바이너리를 새 헤더나 런타임과 혼합하지 마십시오.

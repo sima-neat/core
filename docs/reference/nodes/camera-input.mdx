@@ -198,7 +198,6 @@ namespace n = simaai::neat;
 n::CameraInputOptions camera;
 camera.device = "/dev/video1";
 camera.profile = n::CameraProfile::MetoakSimor;
-camera.zero_copy = false;
 
 n::Graph capture;
 capture.add(n::nodes::CameraInput(camera));
@@ -211,18 +210,13 @@ import pyneat as neat
 camera = neat.CameraInputOptions()
 camera.device = "/dev/video1"
 camera.profile = neat.CameraProfile.MetoakSimor
-camera.zero_copy = False
 
 capture = neat.Graph()
 capture.add(neat.nodes.camera_input(camera))
 capture.add(neat.nodes.output())
 ```
 
-`zero_copy=false` copies each dequeued MMAP frame to independent pooled system
-memory **before requeueing** the camera buffer. `true` is rejected; this backend
-does not export/import DMA-BUFs or silently fall back. `camera_name` and
-`allow_cpu_fallback` are libcamera-only. The device's current cadence is retained;
-`framerate_num`/`framerate_den` do not configure this backend.
+`MetoakSimor` defaults to owned-copy capture when `zero_copy` is unset. Each dequeued MMAP frame is copied to independent pooled system memory **before requeueing** the camera buffer. Explicit `zero_copy=false` is equivalent; `zero_copy=true` is rejected because this profile does not support DMA-BUF export/import. There is no silent fallback. `camera_name` and `allow_cpu_fallback` are libcamera-only. The device cadence is retained; `framerate_num`/`framerate_den` do not configure this profile.
 
 The output is a flat UInt8 tensor `[bytesused]`, including valid row padding and
 trailer bytes, not a decoded image. Read negotiated `fourcc`, `width`, `height`,
@@ -256,10 +250,10 @@ Startup prepares output caps and the CPU buffer pool before queueing camera buff
 - `profile=Default` (the default) always uses libcamera and preserves `camera_name` selection. Setting `device` without `profile=MetoakSimor` is rejected; it never implicitly selects Metoak.
 - `profile=MetoakSimor` privately selects owned-copy V4L2 with `RAW8`, `BA81`, and 1920×360 wire geometry. It replaces the legacy NV12/1080 image defaults; other conflicting format or geometry overrides are rejected. This profile does not describe every Metoak camera.
 - A SIMOR profile without `device` requires exactly one matching endpoint in the media topology. Missing, ambiguous or mixed-sensor routes fail; no capture device is opened during discovery. Explicit profile plus device avoids discovery.
-- Pixel format is not a backend selector. Generic raw/Bayer requests stay on the libcamera route; this change does not add or qualify Bayer caps negotiation. The legacy explicit V4L2 API remains available for intentionally configured raw-byte capture.
-- `MetoakSimor` requires explicit `zero_copy=false`. For libcamera, unset preserves `allow_cpu_fallback`; false permits the existing copy fallback, while true requires zero-copy. Contradictory settings fail.
+- Pixel format is not a backend selector. Generic raw/Bayer requests stay on the libcamera route; this change does not add or qualify Bayer caps negotiation. The profile owns its wire FourCC; no public FourCC option is exposed.
+- For `MetoakSimor`, unset `zero_copy` resolves to false; explicit true fails. For libcamera, unset preserves `allow_cpu_fallback`; false permits the existing copy fallback, while true requires zero-copy. Contradictory settings fail.
 - The implementation is selected once during node construction, before graph contract propagation. There is no public backend option, and a failed implementation never switches to another one. Discovery does not configure media links or pad formats.
 
 Only a `MetoakSimor` profile without `device` scans media controllers. These metadata queries are synchronous kernel calls, not deadline-bounded operations. Set both `device` and `profile=MetoakSimor` to bypass discovery when a controller is unresponsive.
 
-`CameraInputWithV4L2` and the two-argument Python form remain explicit source-compatibility wrappers. New code uses `CameraInput(options)`. The manifest and SONAME remain at Core ABI 5. The public options and node layouts have changed for this integration: rebuild C++ consumers and use the matching Python wheel together. Keeping the ABI number does not make earlier ABI-5 binaries compatible; do not mix older binaries with the new headers or runtime.
+Use only `CameraInput(options)` and `CameraInputOptions`; V4L2 configuration is private. The manifest and SONAME remain at Core ABI 5. The public options and node layouts changed for this unreleased integration: rebuild C++ consumers and use the matching Python wheel. Do not mix older ABI-5 binaries with the new headers or runtime.

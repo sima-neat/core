@@ -142,7 +142,6 @@ CAMERA_INPUT_OPTION_FIELDS = (
     "device",
     "profile",
     "zero_copy",
-    "fourcc",
     "output_buffer_count",
     "frame_timeout_ms",
     "capture_buffer_count",
@@ -552,7 +551,8 @@ def test_camera_input_surface_is_exposed():
   assert not hasattr(pyneat.CameraProfile, "Raw")
   assert opt.profile == pyneat.CameraProfile.Default
   assert opt.zero_copy is None
-  assert opt.fourcc == "GREY"
+  assert not hasattr(opt, "fourcc")
+  assert not hasattr(pyneat, "CameraV4L2Options")
   assert opt.output_buffer_count == 8
   assert opt.frame_timeout_ms == 2000
   assert opt.capture_buffer_count == 0
