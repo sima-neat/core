@@ -1608,7 +1608,8 @@ RUN_TEST(
 
       // A Default decoder link needs no realtime mux: a synchronous encoded VideoSender
       // branch is rendered behind a tee in the source/decoder pipeline (#985).
-      const auto compile_default_video_app = [&](bool video_async, bool decoder_stream_id) {
+      const auto compile_default_video_app = [&](bool video_async, bool decoder_stream_id,
+                                                 bool decoded_sender = false) {
         simaai::neat::Graph app("default_link_encoded_video_app", outer_options);
         simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
         source_options.url = "rtsp://example.test/default-link";
@@ -1621,7 +1622,15 @@ RUN_TEST(
         simaai::neat::Graph decoder("default_link_decoder");
         decoder.add(simaai::neat::nodes::SimaDecode());
         simaai::neat::Graph consumer("default_link_consumer");
-        consumer.add(simaai::neat::nodes::Output("default_link_frames"));
+        if (decoded_sender) {
+          auto raw_options =
+              simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(1280, 720, 20);
+          raw_options.host = "127.0.0.1";
+          raw_options.channel = 1;
+          consumer.add(simaai::neat::nodes::groups::VideoSender(raw_options));
+        } else {
+          consumer.add(simaai::neat::nodes::Output("default_link_frames"));
+        }
         simaai::neat::GraphLinkOptions decoder_link;
         if (decoder_stream_id) {
           decoder_link.stream_id = "default_link_stream";
@@ -1696,10 +1705,25 @@ RUN_TEST(
               "an async VideoSender must keep the Default-link FanOut");
       require(find_encoded_tee(compile_default_video_app(false, true)) == nullptr,
               "a stream id on the decoder link must keep the FanOut");
-      setenv("SIMA_GRAPH_DISABLE_ENCODED_TEE", "1", 1);
-      const bool disabled_has_tee = find_encoded_tee(compile_default_video_app(false, false));
-      unsetenv("SIMA_GRAPH_DISABLE_ENCODED_TEE");
-      require(!disabled_has_tee, "SIMA_GRAPH_DISABLE_ENCODED_TEE must restore the FanOut");
+
+      // A sender on the decoded branch joins the same pipeline, so payloader names must differ.
+      const auto decoded_sender_plan = compile_default_video_app(false, false, true);
+      std::vector<std::string> merged_names;
+      for (const auto& segment : decoded_sender_plan.pipeline_segments) {
+        if (segment.consumed_by_fused_realtime_ingress) {
+          continue;
+        }
+        for (std::size_t i = 0; i < segment.nodes.size(); ++i) {
+          const auto names = segment.nodes[i]->element_names(static_cast<int>(i));
+          merged_names.insert(merged_names.end(), names.begin(), names.end());
+        }
+      }
+      std::sort(merged_names.begin(), merged_names.end());
+      require(find_encoded_tee(decoded_sender_plan) != nullptr &&
+                  std::count(merged_names.begin(), merged_names.end(), "pay0") == 1 &&
+                  std::adjacent_find(merged_names.begin(), merged_names.end()) ==
+                      merged_names.end(),
+              "the encoded tee must not duplicate the decoded sender's payloader name");
 
       // Kind-based recognition must preserve a customer-configured parser's
       // caps/header behavior exactly.

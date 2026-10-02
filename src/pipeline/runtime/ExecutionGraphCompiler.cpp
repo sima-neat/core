@@ -2433,15 +2433,25 @@ public:
     std::string out = "tee name=" + names[0] + " " + names[0] + ". ! queue name=" + names[1] +
                       kOneBuffer + (leaky_sink_ ? " leaky=downstream" : "");
     for (std::size_t i = 0; i < sink_nodes_.size(); ++i) {
-      out += " ! " + sink_nodes_[i]->backend_fragment(sink_index(node_index, i));
+      std::string fragment = sink_nodes_[i]->backend_fragment(sink_index(node_index, i));
+      const std::string payloader = "name=pay0";
+      const auto pos = is_payloader(*sink_nodes_[i]) ? fragment.find(payloader) : std::string::npos;
+      if (pos != std::string::npos) {
+        fragment.replace(pos, payloader.size(), "name=" + payloader_name(node_index, i));
+      }
+      out += " ! " + fragment;
     }
     return out + " " + names[0] + ". ! queue name=" + names[2] + kOneBuffer;
   }
   std::vector<std::string> element_names(int node_index) const override {
     auto names = own_names(node_index);
     for (std::size_t i = 0; i < sink_nodes_.size(); ++i) {
-      const auto sink_names = sink_nodes_[i]->element_names(sink_index(node_index, i));
-      names.insert(names.end(), sink_names.begin(), sink_names.end());
+      for (auto name : sink_nodes_[i]->element_names(sink_index(node_index, i))) {
+        if (name == "pay0" && is_payloader(*sink_nodes_[i])) {
+          name = payloader_name(node_index, i);
+        }
+        names.push_back(std::move(name));
+      }
     }
     return names;
   }
@@ -2457,6 +2467,13 @@ private:
   static int sink_index(int node_index, std::size_t i) {
     return (node_index + 1) * 1000 + static_cast<int>(i);
   }
+  // Packetizers keep the RTSP-server name pay0; the decoder branch may hold another one.
+  static bool is_payloader(const simaai::neat::Node& node) {
+    return node.kind() == "H264Packetize" || node.kind() == "H265Packetize";
+  }
+  static std::string payloader_name(int node_index, std::size_t i) {
+    return "neat_encoded_tee_pay_" + std::to_string(sink_index(node_index, i));
+  }
 
   std::vector<std::shared_ptr<simaai::neat::Node>> sink_nodes_;
   bool leaky_sink_ = false;
@@ -2466,7 +2483,7 @@ private:
 // VideoSender} into one source pipeline with a tee, whatever link follows the decoder.
 // Runs after realtime fusion and only claims FanOuts that fusion left segmented.
 void fuse_encoded_video_sender_fanouts(const graph::Graph& graph, ExecutionGraphPlan* plan) {
-  if (!plan || pipeline_internal::env_bool("SIMA_GRAPH_DISABLE_ENCODED_TEE", false)) {
+  if (!plan) {
     return;
   }
   std::unordered_map<graph::NodeId, std::size_t> segment_by_node;
