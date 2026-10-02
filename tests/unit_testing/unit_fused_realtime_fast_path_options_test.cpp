@@ -1684,6 +1684,20 @@ RUN_TEST(
                   (*(tee_it + 1))->kind() == "SimaDecode" &&
                   default_merged->provenance.size() == default_merged->nodes.size(),
               "the encoded tee must sit between the RTSP source and SimaDecode");
+      // Export pairs node_ids with nodes; the prepended source must not take the decoder's id.
+      const auto rendered_for = [&](std::size_t local) {
+        return simaai::neat::runtime::rendered_node_index_for_segment_id(*default_merged, local);
+      };
+      bool ids_follow_provenance = !default_merged->node_ids.empty();
+      for (std::size_t local = 0; local < default_merged->node_ids.size(); ++local) {
+        const std::size_t rendered = rendered_for(local);
+        ids_follow_provenance =
+            ids_follow_provenance && rendered < default_merged->nodes.size() &&
+            default_merged->provenance[rendered].runtime_node == default_merged->node_ids[local];
+      }
+      require(ids_follow_provenance &&
+                  default_merged->nodes[rendered_for(0)]->kind() == "SimaDecode",
+              "fused node ids must resolve to their own rendered nodes, not the prepended source");
       const std::string tee_fragment = (*tee_it)->backend_fragment(3);
       const std::string main_queue_tail = " n3_encoded_tee. ! queue name=n3_encoded_tee_main_queue "
                                           "max-size-buffers=1 max-size-bytes=0 max-size-time=0";
