@@ -55,10 +55,12 @@ When `peripheral.type == "camera"`, `peripheral.camera` contains:
 | --- | --- |
 | `camera_name` | Optional exact libcamera name accepted by `CameraInputOptions`. It is absent for a camera that the current input API cannot select. |
 | `model` | Device model when the provider reports one. |
-| `backend` | Discovery backend, such as `libcamera` or `v4l2`. |
+| `backend` | Discovery backend, such as `mipi` or `v4l2`. |
 | `modes` | Discrete sizes or explicit size ranges, frame rate, support flag, and rejection reason. |
 
-The daemon classifies support. The client preserves that result and does not
+Sentinel classifies support by applying the rules this Core package installs at
+`/usr/share/simaai-sentinel/support/neat-core.json`, so the result matches the
+installed `CameraInput`. The client preserves that result and does not
 probe, reclassify, acquire, configure, or stream from the camera. Catalog
 support therefore does not guarantee that exclusive acquisition will succeed
 later.

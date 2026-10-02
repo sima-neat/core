@@ -50,10 +50,10 @@ for (const auto& peripheral : catalog) {
 | --- | --- |
 | `camera_name` | `CameraInputOptions` 接受的選用精確 libcamera 名稱。目前輸入 API 無法選取的相機不會有此欄位。 |
 | `model` | 提供者有回報時的裝置型號。 |
-| `backend` | 探索後端，例如 `libcamera` 或 `v4l2`。 |
+| `backend` | 探索後端，例如 `mipi` 或 `v4l2`。 |
 | `modes` | 離散尺寸或明確尺寸範圍、畫面更新率、支援旗標，以及拒絕原因。 |
 
-支援狀態由常駐程式分類。用戶端會保留該結果，不會探查、重新分類、取得、設定或串流相機。
+支援狀態由 Sentinel 套用此 Core 套件安裝於 `/usr/share/simaai-sentinel/support/neat-core.json` 的規則進行分類，因此結果會與已安裝的 `CameraInput` 一致。用戶端會保留該結果，不會探查、重新分類、取得、設定或串流相機。
 因此，目錄中的支援狀態不保證稍後的獨佔取得一定成功。
 
 未知的周邊裝置類型仍會以共用的 `id`、`type` 和 `provider` 保留在目錄中。舊版用戶端會

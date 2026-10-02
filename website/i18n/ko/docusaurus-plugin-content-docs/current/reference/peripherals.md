@@ -53,10 +53,10 @@ for (const auto& peripheral : catalog) {
 | --- | --- |
 | `camera_name` | `CameraInputOptions`에서 허용하는 정확한 libcamera 이름(선택 사항)입니다. 현재 입력 API가 선택할 수 없는 카메라에는 없습니다. |
 | `model` | 공급자가 보고한 경우의 장치 모델입니다. |
-| `backend` | `libcamera` 또는 `v4l2`와 같은 검색 백엔드입니다. |
+| `backend` | `mipi` 또는 `v4l2`와 같은 검색 백엔드입니다. |
 | `modes` | 개별 크기 또는 명시적 크기 범위, 프레임 속도, 지원 플래그 및 거부 이유입니다. |
 
-지원 여부는 데몬이 분류합니다. 클라이언트는 그 결과를 보존하며 카메라를 검사, 재분류, 획득, 구성 또는
+지원 여부는 이 Core 패키지가 `/usr/share/simaai-sentinel/support/neat-core.json`에 설치하는 규칙을 Sentinel이 적용하여 분류하므로, 결과는 설치된 `CameraInput`과 일치합니다. 클라이언트는 그 결과를 보존하며 카메라를 검사, 재분류, 획득, 구성 또는
 스트리밍하지 않습니다. 따라서 카탈로그의 지원 표시는 이후의 독점 획득 성공을 보장하지 않습니다.
 
 알 수 없는 주변 장치 형식도 공통 `id`, `type`, `provider`와 함께 카탈로그에 유지됩니다. 프로토콜 v1에
