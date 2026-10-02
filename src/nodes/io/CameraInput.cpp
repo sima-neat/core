@@ -244,12 +244,11 @@ private:
 };
 
 CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
-  if (opt.profile != CameraProfile::Default && opt.profile != CameraProfile::MetoakSimor &&
-      opt.profile != CameraProfile::Raw)
+  if (opt.profile != CameraProfile::Default && opt.profile != CameraProfile::MetoakSimor)
     throw std::invalid_argument("CameraInput invalid camera profile");
   if (opt.profile == CameraProfile::Default) {
     if (!opt.device.empty())
-      throw std::invalid_argument("CameraInput device requires an explicit raw camera profile; "
+      throw std::invalid_argument("CameraInput device requires the MetoakSimor profile; "
                                   "use camera_name with the default libcamera profile");
     validate_capture_buffer_count(opt.capture_buffer_count);
     if (opt.zero_copy.has_value()) {
@@ -268,8 +267,6 @@ CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
     throw std::invalid_argument("CameraInput V4L2 requires explicit zero_copy=false");
   if (opt.allow_cpu_fallback)
     throw std::invalid_argument("allow_cpu_fallback is libcamera-only; V4L2 uses zero_copy=false");
-  if (opt.profile == CameraProfile::Raw && opt.device.empty())
-    throw std::invalid_argument("CameraInput Raw profile requires an explicit device");
   // Explicit profiles with a device are construction-only, including in an SDK.
   // Discovery is metadata-only and only requested when identification is needed.
   if (opt.device.empty())
@@ -295,7 +292,7 @@ CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
 } // namespace
 
 CameraInput::CameraInput(CameraInputOptions opt) : opt_(resolve_camera_options(std::move(opt))) {
-  if (opt_.profile != CameraProfile::Default) {
+  if (opt_.profile == CameraProfile::MetoakSimor) {
     CameraV4L2Options backend;
     backend.device = opt_.device;
     backend.fourcc = opt_.fourcc;
@@ -396,9 +393,11 @@ std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInpu
 #if defined(__linux__)
   if (backend.capture_buffer_count < 4 || backend.capture_buffer_count > 128)
     throw std::invalid_argument("raw CameraInput capture_buffer_count must be in [4,128]");
-  opt.device = backend.device;
+  // The legacy explicit V4L2 API is not a generic "raw" camera profile.
+  // Ordinary CameraInput format requests must continue through libcamera.
   if (opt.profile == CameraProfile::Default)
-    opt.profile = CameraProfile::Raw;
+    return std::make_shared<V4L2CameraInputNode>(std::move(opt), std::move(backend));
+  opt.device = backend.device;
   opt.zero_copy = backend.zero_copy;
   opt.fourcc = std::move(backend.fourcc);
   opt.capture_buffer_count = backend.capture_buffer_count;

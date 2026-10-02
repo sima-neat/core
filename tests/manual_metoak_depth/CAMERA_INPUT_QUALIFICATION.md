@@ -114,7 +114,11 @@ These short trials qualify the unified route; they do not replace the longer
 lifecycle evidence above or prove recovery from arbitrary driver/DMA faults.
 
 
-## Profile-only CameraInput qualification (2026-10-02)
+## Earlier profile-only CameraInput qualification (2026-10-02)
+
+These trials used the now-removed experimental `Raw` profile. They predate the
+Metoak-only selector correction below; their artifact hashes and results remain
+historical evidence, not validation of a later head.
 
 The manifest, generated CMake package and shared-library SONAME now use ABI 5.
 Backend selection is private: `profile=Default` preserves libcamera;
@@ -151,3 +155,37 @@ The staged Core library SHA-256 was
 Logs and artifact hashes are retained in this investigation's `camera-profile`
 evidence directory. These short route-selection trials supplement, not replace,
 the earlier sustained lifecycle evidence or its kernel-fault limitations.
+
+
+## Metoak-only profile selection (2026-10-02)
+
+`CameraProfile` now exposes only `Default` and `MetoakSimor`. Generic pixel-format
+requests remain on libcamera; they do not select V4L2. The removed experimental
+`Raw` value is rejected, not interpreted as another implementation. The existing
+explicit V4L2 compatibility wrapper remains available without a generic
+backend-selecting profile. ABI 5 and the qualified SIMOR wire contract remain
+unchanged. This correction does not add or qualify libcamera Bayer negotiation.
+
+Four guarded ARM64 C++ tests passed, including 57 node checks. All 11 guarded
+Python camera/API checks and 103 packaging/tooling regressions passed. The
+non-Linux conditional paths compiled; this is not native macOS qualification.
+Formatting, include hygiene, source-policy and scoped localization/navigation
+checks passed. The raw-format fixture checks only construction and routing,
+not camera-format acceptance or frame delivery through libcamera.
+
+Two public Metoak Graph trials used a freshly rebuilt/staged Core/Python cohort:
+
+| Selection | Frames | Observed stop | Retention and reopen |
+| --- | ---: | ---: | --- |
+| `MetoakSimor` and `/dev/video1`, 30 seconds | 662 | 131 ms | Passed |
+| `MetoakSimor` without device, both pool slots retained | 2 | 91 ms | Passed |
+
+All 662 post-initial frames checked across both trials matched SIMOR metadata
+magic. Output remained owned `UInt8[691200]` with `BA81`, 1920×360 geometry,
+stride 1920 and allocation size 691232. Postflight found no camera/EV owners,
+D-state tasks or kernel lifecycle failures; boot and original firmware identity
+were unchanged. No installed package, kernel, firmware, media-controller
+configuration or ROS source changed. The staged Core SHA-256 was
+`5d39576d2fdf0e08ba2ffac5c3a6d47e89df659c71eff461212567a6a56d29be`. Logs and artifact hashes are retained in the
+`camera-metoak-only` evidence directory. These short selector regressions do not
+replace the earlier sustained lifecycle evidence or its kernel-fault limits.

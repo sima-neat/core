@@ -6,7 +6,7 @@ sidebar_position: 2
 
 # 相機輸入節點
 
-以下 libcamera 指南說明預設後端。Metoak SIMOR 與原始張量請參閱下方 V4L2 章節。
+以下 libcamera 指南說明預設後端。Metoak SIMOR 獨立所有的原始張量請參閱下方 V4L2 章節。
 
 `CameraInput` 是一個來源節點，用於透過 libcamera 和 GStreamer 的 `libcamerasrc` 暴露的 MIPI 攝影機。當您希望圖中的影格來自 DevKit 攝影機堆疊，而不是來自 `run.push(...)` 時，請將其用於由來源擁有的圖的開頭。
 
@@ -227,11 +227,11 @@ ROS/SIMOR 的 CPU 解包、校正與 ROS 發布仍由應用程式負責。應用
 
 ### 設定檔選擇與相容性
 
-- `profile=Default`（預設值）一律使用 libcamera，並保留 `camera_name` 選擇方式。未指定原始設定檔而設定 `device` 會遭拒絕，絕不會隱含選擇 Metoak。
+- `profile=Default`（預設）一律使用 libcamera，並保留 `camera_name` 選擇。未指定 `profile=MetoakSimor` 卻提供 `device` 會遭拒絕，不會隱含選擇 Metoak。
 - `profile=MetoakSimor` 在內部選擇具有獨立複製所有權的 V4L2、`RAW8`、`BA81` 與 1920×360 傳輸尺寸。它取代原有 NV12/1080 預設值；其他衝突格式或尺寸會遭拒絕。此設定檔不代表所有 Metoak 相機。
 - SIMOR 設定檔未指定 `device` 時，媒體拓撲中必須恰有一個符合的端點。缺少、模糊或混合感測器路徑都會失敗。探索不會開啟擷取裝置；明確指定設定檔和裝置可略過探索。
-- 其他原始相機請指定 `profile=Raw`、`device`、`format="RAW8"`、傳輸尺寸與 `fourcc`。支援 `GREY`、`BA81`、`GBRG`、`GRBG`、`RGGB`。
-- 原始設定檔必須明確設定 `zero_copy=false`。libcamera 未設定時保留 `allow_cpu_fallback`；false 允許既有複製回退，true 要求零複製。矛盾設定會失敗。
+- 像素格式不會選擇後端。一般原始/Bayer 要求仍走 libcamera 路徑；這次變更沒有新增或驗證 Bayer caps 協商。舊的明確 V4L2 API 仍可用於刻意設定的原始位元組擷取。
+- `MetoakSimor` 必須明確指定 `zero_copy=false`。libcamera 未設定時保留 `allow_cpu_fallback`；false 允許既有複製後援，true 要求零複製。互相矛盾的設定會失敗。
 - 實作只在節點建立時選擇一次，早於圖的合約傳播。沒有公開的 backend 選項；失敗時不會切換實作。探索不會設定媒體連結或接腳格式。
 
 只有未指定 `device` 的 `MetoakSimor` 設定檔會掃描媒體控制器。這些中繼資料查詢是同步核心呼叫，不保證執行時間上限。控制器沒有回應時，請同時設定 `device` 和 `profile=MetoakSimor` 以略過探索。

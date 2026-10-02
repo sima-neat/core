@@ -549,6 +549,7 @@ def test_camera_input_surface_is_exposed():
   assert opt.device == ""
   assert not hasattr(opt, "backend")
   assert not hasattr(pyneat, "CameraBackend")
+  assert not hasattr(pyneat.CameraProfile, "Raw")
   assert opt.profile == pyneat.CameraProfile.Default
   assert opt.zero_copy is None
   assert opt.fourcc == "GREY"

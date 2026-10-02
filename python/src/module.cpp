@@ -3312,7 +3312,6 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<simaai::neat::CameraProfile>(m, "CameraProfile")
       .value("Default", simaai::neat::CameraProfile::Default)
-      .value("Raw", simaai::neat::CameraProfile::Raw)
       .value("MetoakSimor", simaai::neat::CameraProfile::MetoakSimor);
 
   nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")

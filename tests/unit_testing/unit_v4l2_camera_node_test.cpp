@@ -38,6 +38,8 @@ int main() {
     rejects([&] { n::CameraInput invalid(defaults); });
     rejects([&] { n::nodes::CameraInput(defaults); });
     defaults.device.clear();
+    defaults.profile = static_cast<n::CameraProfile>(2); // Removed Raw profile.
+    rejects([&] { n::nodes::CameraInput(defaults); });
     defaults.profile = static_cast<n::CameraProfile>(999);
     rejects([&] { n::nodes::CameraInput(defaults); });
     n::CameraInputOptions options;
@@ -84,7 +86,7 @@ int main() {
     // The original factory and direct public constructor must use one resolver.
     auto unified = options;
     unified.device = backend.device;
-    unified.profile = n::CameraProfile::Raw;
+    unified.profile = n::CameraProfile::MetoakSimor;
     unified.zero_copy = false;
     unified.fourcc = backend.fourcc;
     auto standard = n::nodes::CameraInput(unified);
@@ -112,9 +114,14 @@ int main() {
     profile.profile = n::CameraProfile::MetoakSimor;
     profile.width = 640;
     rejects([&] { n::nodes::CameraInput(profile); });
-    auto no_device = unified;
-    no_device.device.clear();
-    rejects([&] { n::nodes::CameraInput(no_device); });
+    // A raw format is not a backend selector. This checks routing only, not
+    // whether the installed libcamera pipeline can negotiate this format.
+    auto generic_raw = options;
+    generic_raw.zero_copy = false;
+    n::CameraInput raw_libcamera(generic_raw);
+    check(raw_libcamera.options().profile == n::CameraProfile::Default);
+    check(raw_libcamera.backend_fragment(0).find("libcamerasrc") == 0);
+    check(raw_libcamera.output_spec({}).payload_type == n::PayloadType::Image);
     unified.capture_buffer_count = 12;
     check(n::nodes::CameraInput(unified)->backend_fragment(0).find("capture-buffer-count=12") !=
           std::string::npos);

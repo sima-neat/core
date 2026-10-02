@@ -42,22 +42,20 @@ def test_invalid_camera_options(field, value):
             neat.nodes.camera_input(camera, backend)
 
 
-def test_unified_factory_profile_and_generic_backend():
-    camera, backend = options()
-    camera.device = backend.device
-    camera.profile = neat.CameraProfile.Raw
+def test_metoak_profile_and_generic_libcamera_options():
+    camera, _ = options()
+    # A raw format alone does not select the Metoak/V4L2 profile.
     camera.zero_copy = False
-    camera.fourcc = backend.fourcc
+    assert camera.profile == neat.CameraProfile.Default
+    assert neat.nodes.camera_input(camera) is not None
     profile = neat.CameraInputOptions()
     profile.device = "/dev/video1"
     profile.profile = neat.CameraProfile.MetoakSimor
     profile.zero_copy = False
     if sys.platform != "linux":
-        for config in (camera, profile):
-            with pytest.raises(RuntimeError, match="requires Linux"):
-                neat.nodes.camera_input(config)
+        with pytest.raises(RuntimeError, match="requires Linux"):
+            neat.nodes.camera_input(profile)
         return
-    assert neat.nodes.camera_input(camera) is not None
     assert neat.nodes.camera_input(profile) is not None
     profile.capture_buffer_count = 12
     assert neat.nodes.camera_input(profile) is not None
@@ -85,6 +83,7 @@ def test_default_profile_does_not_infer_metoak_from_device():
     assert config.profile == neat.CameraProfile.Default
     assert not hasattr(config, "backend")
     assert not hasattr(neat, "CameraBackend")
+    assert not hasattr(neat.CameraProfile, "Raw")
     config.device = "/dev/not-a-camera-must-not-be-opened"
-    with pytest.raises(ValueError, match="explicit raw camera profile"):
+    with pytest.raises(ValueError, match="MetoakSimor profile"):
         neat.nodes.camera_input(config)

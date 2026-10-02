@@ -6,7 +6,7 @@ sidebar_position: 2
 
 # CameraInput Node
 
-The following libcamera guide describes the default backend. For Metoak SIMOR and raw tensors, see the raw V4L2 section below.
+The following libcamera guide describes the default backend. For Metoak SIMOR owned raw tensors, see the raw V4L2 section below.
 
 `CameraInput` is a source node for MIPI cameras exposed through libcamera and GStreamer `libcamerasrc`. Use it at the head of a source-owned graph when frames should come from the DevKit camera stack instead of from `run.push(...)`.
 
@@ -253,13 +253,13 @@ Startup prepares output caps and the CPU buffer pool before queueing camera buff
 
 ### Profile selection and compatibility
 
-- `profile=Default` (the default) always uses libcamera and preserves `camera_name` selection. Setting `device` without a raw profile is rejected; it never implicitly selects Metoak.
+- `profile=Default` (the default) always uses libcamera and preserves `camera_name` selection. Setting `device` without `profile=MetoakSimor` is rejected; it never implicitly selects Metoak.
 - `profile=MetoakSimor` privately selects owned-copy V4L2 with `RAW8`, `BA81`, and 1920×360 wire geometry. It replaces the legacy NV12/1080 image defaults; other conflicting format or geometry overrides are rejected. This profile does not describe every Metoak camera.
 - A SIMOR profile without `device` requires exactly one matching endpoint in the media topology. Missing, ambiguous or mixed-sensor routes fail; no capture device is opened during discovery. Explicit profile plus device avoids discovery.
-- For another raw camera, set `profile=Raw`, `device`, `format="RAW8"`, wire dimensions and `fourcc` explicitly. Supported fourcc values are `GREY`, `BA81`, `GBRG`, `GRBG` and `RGGB`.
-- Raw profiles require explicit `zero_copy=false`. For libcamera, unset preserves `allow_cpu_fallback`; false permits the existing copy fallback, while true requires zero-copy. Contradictory settings fail.
+- Pixel format is not a backend selector. Generic raw/Bayer requests stay on the libcamera route; this change does not add or qualify Bayer caps negotiation. The legacy explicit V4L2 API remains available for intentionally configured raw-byte capture.
+- `MetoakSimor` requires explicit `zero_copy=false`. For libcamera, unset preserves `allow_cpu_fallback`; false permits the existing copy fallback, while true requires zero-copy. Contradictory settings fail.
 - The implementation is selected once during node construction, before graph contract propagation. There is no public backend option, and a failed implementation never switches to another one. Discovery does not configure media links or pad formats.
 
 Only a `MetoakSimor` profile without `device` scans media controllers. These metadata queries are synchronous kernel calls, not deadline-bounded operations. Set both `device` and `profile=MetoakSimor` to bypass discovery when a controller is unresponsive.
 
-`CameraInputWithV4L2` and the two-argument Python form remain forwarding source-compatibility wrappers. New code uses `CameraInput(options)`. The manifest and SONAME remain at Core ABI 5. The public options and node layouts have changed for this integration: rebuild C++ consumers and use the matching Python wheel together. Keeping the ABI number does not make earlier ABI-5 binaries compatible; do not mix older binaries with the new headers or runtime.
+`CameraInputWithV4L2` and the two-argument Python form remain explicit source-compatibility wrappers. New code uses `CameraInput(options)`. The manifest and SONAME remain at Core ABI 5. The public options and node layouts have changed for this integration: rebuild C++ consumers and use the matching Python wheel together. Keeping the ABI number does not make earlier ABI-5 binaries compatible; do not mix older binaries with the new headers or runtime.
