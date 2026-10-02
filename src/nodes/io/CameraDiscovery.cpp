@@ -6,7 +6,6 @@
 #include <utility>
 
 #if defined(__linux__)
-#include <filesystem>
 #include <fstream>
 #include <fcntl.h>
 #include <linux/media.h>
@@ -17,6 +16,32 @@
 #endif
 
 namespace simaai::neat::camera_discovery {
+namespace {
+bool is_media_node_name(const std::string& name) {
+  return name.size() > 5 && name.rfind("media", 0) == 0 &&
+         std::all_of(name.begin() + 5, name.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+} // namespace
+
+std::vector<std::string> media_nodes_for_video_device(const std::filesystem::path& video_sysfs) {
+  std::error_code error;
+  const auto owner = std::filesystem::canonical(video_sysfs / "device", error);
+  if (error)
+    throw std::runtime_error("CameraInput cannot resolve the selected device's media controller; "
+                             "specify device and profile explicitly to bypass discovery");
+  std::vector<std::string> nodes;
+  for (const auto& entry : std::filesystem::directory_iterator(owner)) {
+    const auto name = entry.path().filename().string();
+    if (is_media_node_name(name) && entry.is_directory())
+      nodes.push_back("/dev/" + name);
+  }
+  if (nodes.empty())
+    throw std::runtime_error("CameraInput selected device has no discoverable media controller; "
+                             "specify device and profile explicitly to bypass discovery");
+  std::sort(nodes.begin(), nodes.end());
+  return nodes;
+}
+
 std::string select_simor_device(const std::vector<Topology>& graphs, const std::string& requested) {
   std::unordered_set<std::string> matches;
   for (const auto& graph : graphs) {
@@ -152,15 +177,31 @@ std::string find_simor_device(const std::string& requested) {
     if (error)
       throw std::runtime_error("CameraInput selected device does not exist: " + requested);
   }
+  std::vector<std::string> media_nodes;
+  if (!canonical.empty()) {
+    struct stat st {};
+    if (::stat(canonical.c_str(), &st) < 0 || !S_ISCHR(st.st_mode))
+      throw std::runtime_error("CameraInput selected device is not a character device: " +
+                               canonical);
+    const auto devno = std::to_string(major(st.st_rdev)) + ":" + std::to_string(minor(st.st_rdev));
+    // Filter before opening/querying metadata. Even G_TOPOLOGY takes the
+    // kernel's graph mutex: an unrelated wedged controller must not block
+    // selection of this device. Never fall back to a system-wide scan.
+    media_nodes = media_nodes_for_video_device(std::filesystem::path("/sys/dev/char") / devno);
+  } else {
+    // With no selected endpoint all controllers are candidates. Callers that
+    // cannot inspect system-wide metadata must supply both device and profile.
+    for (const auto& entry : std::filesystem::directory_iterator("/dev")) {
+      if (is_media_node_name(entry.path().filename().string()))
+        media_nodes.push_back(entry.path().string());
+    }
+    std::sort(media_nodes.begin(), media_nodes.end());
+  }
   std::vector<Topology> graphs;
-  for (const auto& entry : std::filesystem::directory_iterator("/dev")) {
-    const auto name = entry.path().filename().string();
-    if (name.size() <= 5 || name.rfind("media", 0) != 0 ||
-        !std::all_of(name.begin() + 5, name.end(), [](char c) { return c >= '0' && c <= '9'; }))
-      continue;
-    MediaFd fd{::open(entry.path().c_str(), O_RDONLY | O_CLOEXEC)};
+  for (const auto& media_node : media_nodes) {
+    MediaFd fd{::open(media_node.c_str(), O_RDONLY | O_CLOEXEC)};
     if (fd.value < 0)
-      throw std::runtime_error("CameraInput cannot open media metadata: " + entry.path().string());
+      throw std::runtime_error("CameraInput cannot open media metadata: " + media_node);
     graphs.push_back(read_topology(fd.value));
   }
   return select_simor_device(graphs, canonical);

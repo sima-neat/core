@@ -1,6 +1,8 @@
 #include "nodes/io/CameraDiscovery.h"
 
+#include <fstream>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 
 using namespace simaai::neat::camera_discovery;
@@ -18,9 +20,62 @@ void rejects(const std::vector<Topology>& graphs, const std::string& device = ""
   }
   check(rejected);
 }
+struct SysfsFixture {
+  std::filesystem::path root;
+  SysfsFixture() {
+    const auto base = std::filesystem::temp_directory_path();
+    for (unsigned attempt = 0; attempt < 32; ++attempt) {
+      root = base / ("neat-camera-sysfs-" + std::to_string(std::random_device{}()));
+      if (std::filesystem::create_directory(root))
+        return;
+    }
+    throw std::runtime_error("cannot create isolated sysfs fixture");
+  }
+  ~SysfsFixture() {
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+  }
+};
+
+void check_controller_isolation() {
+  SysfsFixture fixture;
+  const auto owner = fixture.root / "devices/camera";
+  const auto selected = fixture.root / "dev/char/81:7";
+  std::filesystem::create_directories(owner / "media9");
+  std::filesystem::create_directories(owner / "media2");
+  std::filesystem::create_directories(owner / "media-invalid");
+  std::filesystem::create_directories(owner / "media");
+  std::ofstream(owner / "media3"); // A regular file is not a controller.
+  std::filesystem::create_directories(fixture.root / "devices/unrelated/media0");
+  std::filesystem::create_directories(selected);
+  std::filesystem::create_directory_symlink(owner, selected / "device");
+  check(media_nodes_for_video_device(selected) ==
+        std::vector<std::string>({"/dev/media2", "/dev/media9"}));
+
+  // Missing ownership must fail closed, not scan unrelated controllers.
+  std::filesystem::remove(selected / "device");
+  bool rejected = false;
+  try {
+    media_nodes_for_video_device(selected);
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  check(rejected);
+  std::filesystem::create_directory_symlink(owner, selected / "device");
+  std::filesystem::remove(owner / "media2");
+  std::filesystem::remove(owner / "media9");
+  rejected = false;
+  try {
+    media_nodes_for_video_device(selected);
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  check(rejected);
+}
 } // namespace
 int main() {
   try {
+    check_controller_isolation();
     // Saved board topology: sensor -> CSI -> VDMA -> video. IDs and device
     // numbering intentionally differ from the board to catch hard-coded paths.
     Topology graph{{{103, "simor_metoak 9-0066", true},
@@ -59,7 +114,8 @@ int main() {
     check(select_simor_device({changed}, "") == "/dev/video7");
     changed.links.push_back({999, 42, true});
     rejects({changed});
-    std::cout << "PASS camera topology selection, ambiguity and legacy isolation\n";
+    std::cout
+        << "PASS camera topology selection, controller isolation, ambiguity and legacy isolation\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

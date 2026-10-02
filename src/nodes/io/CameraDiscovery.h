@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,9 @@ struct Topology {
   std::vector<Endpoint> endpoints;
 };
 std::string select_simor_device(const std::vector<Topology>& graphs, const std::string& requested);
+// Resolve only controllers belonging to the selected video device through sysfs.
+// Kept separate from ioctl discovery so isolation is testable without hardware.
+std::vector<std::string> media_nodes_for_video_device(const std::filesystem::path& video_sysfs);
 // Read media-controller metadata only. Never open a capture/subdevice node,
 // call libcamera, change formats/links, or allocate/queue camera buffers.
 std::string find_simor_device(const std::string& requested);

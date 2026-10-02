@@ -260,4 +260,6 @@ Startup prepares output caps and the CPU buffer pool before queueing camera buff
 - V4L2 requires explicit `zero_copy=false`. For libcamera, unset preserves `allow_cpu_fallback`; false permits the existing copy fallback, while true requires zero-copy. Contradictory settings fail.
 - Resolution happens once during node construction, before graph contract propagation. A failed backend never switches to another backend. Discovery does not configure media links or pad formats.
 
+When `device` is set, discovery queries only its owning media controller(s), not unrelated controllers. Without `device`, discovery scans all media controllers. These metadata queries are synchronous kernel calls, not deadline-bounded operations. Set both `device` and `profile=MetoakSimor` to bypass discovery when a controller is unresponsive.
+
 `CameraInputWithV4L2` and the two-argument Python form remain forwarding compatibility wrappers. New code uses `CameraInput(options)`. Extended options and node storage require Core C++ ABI 6: rebuild C++ consumers and use the matching Python wheel. ABI-5 binaries are not compatible; do not add a SONAME compatibility symlink.
