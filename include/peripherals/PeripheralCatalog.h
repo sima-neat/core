@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Typed client for the board-local peripheral catalog daemon.
+ * @brief Typed client for the board-local peripheral catalog served by SiMa Sentinel.
  */
 #pragma once
 
@@ -125,12 +125,14 @@ struct Catalog {
 };
 
 /**
- * Read and validate one snapshot from the local `simaai-peripherals` daemon.
+ * Read and validate one snapshot from the local SiMa Sentinel daemon.
  *
- * This function performs exactly one bounded `GET /v1/catalog` request. It
- * never scans hardware, caches results, connects over SSH, or falls back when
- * the daemon is unavailable. Failures throw `NeatError` with a structured
- * `GraphReport::error_code`.
+ * This function performs exactly one bounded `GET /v1/peripherals` request on
+ * `/run/simaai-sentinel/api.sock`. It never scans hardware, caches results,
+ * connects over SSH, or falls back when Sentinel is unavailable. Failures
+ * throw `NeatError` with a structured `GraphReport::error_code`; when
+ * Sentinel is not running, the message asks the user to install it with
+ * `sima-cli neat install sentinel` or start `simaai-sentinel.service`.
  */
 Catalog list();
 

@@ -65,31 +65,32 @@ private:
 }
 
 [[noreturn]] void fail_parse(std::string reason) {
-  fail(error_codes::kIoParse, "The peripheral daemon returned an invalid v1 catalog: " + reason +
-                                  ". Restart simaai-peripherals.service; if the error persists, "
-                                  "install matching Core and peripheral-daemon packages.");
+  fail(error_codes::kIoParse, "Sentinel returned an invalid v1 peripheral catalog: " + reason +
+                                  ". Restart simaai-sentinel.service; if the error persists, "
+                                  "update Sentinel with `sima-cli neat install sentinel`.");
 }
 
 [[noreturn]] void fail_timeout() {
   fail(error_codes::kPeripheralDaemonTimeout,
-       "Timed out waiting for the peripheral catalog daemon. Check "
-       "simaai-peripherals.service and its journal, then try again.");
+       "Timed out waiting for the Sentinel peripheral catalog. Check "
+       "simaai-sentinel.service and its journal, then try again.");
 }
 
 [[noreturn]] void fail_connect(int error) {
   if (error == EACCES || error == EPERM) {
     fail(error_codes::kPermissionDenied,
-         "Permission was denied opening the peripheral daemon socket. Verify membership in the "
-         "sima group and the permissions on /run/simaai-peripherals/api.sock.");
+         "Permission was denied opening the Sentinel API socket. Check the permissions on "
+         "/run/simaai-sentinel and /run/simaai-sentinel/api.sock.");
   }
   if (error == ENOENT || error == ECONNREFUSED) {
     fail(error_codes::kPeripheralDaemonUnavailable,
-         "The peripheral catalog daemon is unavailable. Install and start "
-         "simaai-peripherals.service, then try again.");
+         "The peripheral catalog is unavailable because SiMa Sentinel is not running. Install "
+         "Sentinel with `sima-cli neat install sentinel`, or start simaai-sentinel.service if "
+         "it is already installed, then try again.");
   }
   fail(error_codes::kIoOpen,
-       "Could not connect to the peripheral daemon socket: " + std::string(std::strerror(error)) +
-           ". Check simaai-peripherals.service and its journal.");
+       "Could not connect to the Sentinel API socket: " + std::string(std::strerror(error)) +
+           ". Check simaai-sentinel.service and its journal.");
 }
 
 int remaining_milliseconds(Deadline deadline) {
@@ -110,15 +111,15 @@ short wait_for(int fd, short events, Deadline deadline) {
       fail_timeout();
     if (errno != EINTR)
       fail(error_codes::kIoOpen,
-           "Peripheral daemon socket polling failed: " + std::string(std::strerror(errno)) +
-               ". Check simaai-peripherals.service and its journal.");
+           "Sentinel API socket polling failed: " + std::string(std::strerror(errno)) +
+               ". Check simaai-sentinel.service and its journal.");
   }
 }
 
 FileDescriptor connect_socket(const std::string& path, Deadline deadline) {
   sockaddr_un address{};
   if (path.empty() || path.size() >= sizeof(address.sun_path))
-    fail(error_codes::kIoOpen, "The peripheral daemon socket path is invalid.");
+    fail(error_codes::kIoOpen, "The Sentinel API socket path is invalid.");
 
   FileDescriptor socket(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
   if (socket.get() < 0)
@@ -146,8 +147,8 @@ void send_all(int fd, std::string_view data, Deadline deadline, std::size_t maxi
     const short events = wait_for(fd, POLLOUT, deadline);
     if (!(events & POLLOUT))
       fail(error_codes::kPeripheralDaemonUnavailable,
-           "The peripheral daemon closed the connection before accepting the catalog request. "
-           "Check simaai-peripherals.service and its journal.");
+           "Sentinel closed the connection before accepting the peripheral catalog request. "
+           "Check simaai-sentinel.service and its journal.");
     const ssize_t sent =
         ::send(fd, data.data(), std::min(data.size(), maximum_send_bytes), MSG_NOSIGNAL);
     if (sent > 0) {
@@ -185,8 +186,8 @@ std::size_t parse_content_length(std::string_view value) {
     fail_parse("Content-Length is not a non-negative decimal integer");
   if (result > kMaximumResponseBytes) {
     fail(error_codes::kResponseTooLarge,
-         "The peripheral daemon response exceeded the 4 MiB v1 limit. Reduce the catalog size "
-         "or update the daemon and client together.");
+         "The Sentinel peripheral catalog response exceeded the 4 MiB v1 limit. Reduce the "
+         "catalog size or update Sentinel and Core together.");
   }
   return result;
 }
@@ -257,7 +258,7 @@ std::pair<int, std::string> read_response(int fd, Deadline deadline) {
 
     const short events = wait_for(fd, POLLIN, deadline);
     if (!(events & (POLLIN | POLLHUP)))
-      fail_parse("the daemon socket failed before the catalog response completed");
+      fail_parse("the socket failed before the catalog response completed");
     char buffer[8192];
     const ssize_t received = ::recv(fd, buffer, sizeof(buffer), 0);
     if (received > 0) {
@@ -280,7 +281,7 @@ std::pair<int, std::string> read_response(int fd, Deadline deadline) {
       continue;
     if (received < 0)
       fail_parse("socket read failed: " + std::string(std::strerror(errno)));
-    fail_parse("the daemon closed the socket before the catalog response completed");
+    fail_parse("the socket closed before the catalog response completed");
   }
 }
 
@@ -452,7 +453,8 @@ peripherals::Catalog parse_catalog(const std::string& body) {
          "Peripheral catalog schema " + std::to_string(schema_version) +
              " is incompatible with this Core build, which requires schema " +
              std::to_string(kPeripheralSchemaVersion) +
-             ". Install matching Core and sima-neat-peripherals packages.");
+             ". Install matching Core and Sentinel versions; update Sentinel with "
+             "`sima-cli neat install sentinel`.");
   }
 
   peripherals::Catalog catalog;
@@ -501,12 +503,12 @@ peripherals::Catalog parse_catalog(const std::string& body) {
   if (catalog.state == "starting" && ready)
     fail_parse("state 'starting' contradicts ready=true");
   if (!ready) {
-    std::string reason = "The peripheral daemon has not produced an initial catalog";
+    std::string reason = "Sentinel has not produced an initial peripheral catalog";
     if (catalog.error)
       reason += ": " + catalog.error->reason;
     else if (!catalog.issues.empty())
       reason += ": " + catalog.issues.front().provider + ": " + catalog.issues.front().reason;
-    reason += ". Check simaai-peripherals.service and its journal, then retry.";
+    reason += ". Check simaai-sentinel.service and its journal, then retry.";
     fail(error_codes::kPeripheralDaemonNotReady, std::move(reason));
   }
   return catalog;
@@ -520,7 +522,7 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
   if (timeout.count() <= 0)
     fail_timeout();
   if (maximum_send_bytes == 0)
-    fail(error_codes::kIoOpen, "The peripheral daemon request chunk limit is invalid.");
+    fail(error_codes::kIoOpen, "The peripheral catalog request chunk limit is invalid.");
   const Deadline deadline = Clock::now() + timeout;
   FileDescriptor socket = connect_socket(socket_path, deadline);
   const std::string request = "GET " + std::string(kCatalogPath) +
@@ -533,16 +535,17 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
         const auto error = nlohmann::json::parse(body);
         if (error.is_object() && error.value("error", "") == "response_too_large") {
           fail(error_codes::kResponseTooLarge,
-               "The peripheral daemon catalog exceeded the 4 MiB v1 limit. Reduce the catalog "
-               "size or update the daemon and client together.");
+               "The Sentinel peripheral catalog exceeded the 4 MiB v1 limit. Reduce the catalog "
+               "size or update Sentinel and Core together.");
         }
       } catch (const nlohmann::json::exception&) {
       }
     }
     const char* code =
         status == 503 ? error_codes::kPeripheralDaemonUnavailable : error_codes::kIoParse;
-    fail(code, "The peripheral daemon returned unexpected HTTP status " + std::to_string(status) +
-                   ". Check simaai-peripherals.service and install matching packages.");
+    fail(code, "Sentinel returned unexpected HTTP status " + std::to_string(status) +
+                   " for the peripheral catalog. Update Sentinel with `sima-cli neat install "
+                   "sentinel` and check simaai-sentinel.service.");
   }
   return parse_catalog(body);
 }

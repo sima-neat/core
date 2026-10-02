@@ -226,8 +226,8 @@ std::string response_for(const std::string& body, int status = 200) {
 auto serve_response(const std::string& path, std::string response, std::size_t chunk_size = 1) {
   return FakeServer(path, [response = std::move(response), chunk_size](int client) {
     const std::string request = read_request_one_byte_at_a_time(client);
-    require(request.starts_with("GET /v1/catalog HTTP/1.1\r\n"),
-            "client must perform exactly GET /v1/catalog");
+    require(request.starts_with("GET /v1/peripherals HTTP/1.1\r\n"),
+            "client must perform exactly GET /v1/peripherals");
     send_in_chunks(client, response, chunk_size);
   });
 }
@@ -280,8 +280,11 @@ void test_success_and_partial_io() {
 
 void test_canonical_daemon_fixture() {
   TemporaryDirectory directory;
-  auto server =
-      serve_response(directory.socket_path(), response_for(canonical_catalog_fixture().dump()), 2);
+  const auto fixture = canonical_catalog_fixture();
+  require(fixture.contains("changes") && fixture["changes"].is_array() &&
+              !fixture["changes"].empty(),
+          "canonical fixture must carry the optional Sentinel change log");
+  auto server = serve_response(directory.socket_path(), response_for(fixture.dump()), 2);
   const auto catalog = list_from_socket(directory.socket_path(), 2s, 5);
   server.finish();
 
@@ -335,7 +338,7 @@ void test_connection_failures() {
   TemporaryDirectory directory;
   require_error([&] { (void)list_from_socket(directory.socket_path("missing.sock"), 100ms); },
                 simaai::neat::error_codes::kPeripheralDaemonUnavailable,
-                "Install and start simaai-peripherals.service");
+                "sima-cli neat install sentinel");
 
   const std::string refused_path = directory.socket_path("refused.sock");
   {
@@ -348,11 +351,11 @@ void test_connection_failures() {
             "failed to bind refused socket fixture");
   }
   require_error([&] { (void)list_from_socket(refused_path, 100ms); },
-                simaai::neat::error_codes::kPeripheralDaemonUnavailable);
+                simaai::neat::error_codes::kPeripheralDaemonUnavailable, "simaai-sentinel.service");
 
   require(::chmod(directory.path().c_str(), 0000) == 0, "failed to protect permission fixture");
   require_error([&] { (void)list_from_socket(directory.socket_path("denied.sock"), 100ms); },
-                simaai::neat::error_codes::kPermissionDenied, "sima group");
+                simaai::neat::error_codes::kPermissionDenied, "/run/simaai-sentinel/api.sock");
   require(::chmod(directory.path().c_str(), 0700) == 0, "failed to restore permission fixture");
 }
 

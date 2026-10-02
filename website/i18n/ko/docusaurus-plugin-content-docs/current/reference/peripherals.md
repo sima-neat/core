@@ -9,8 +9,9 @@ sidebar_position: 8
 로컬 DevKit에 현재 연결된 장치를 확인하려면 주변 장치 카탈로그를 사용하십시오. 이 API는 C++와
 Python에서 사용할 수 있으며 두 언어에서 동일한 형식화된 스냅샷을 반환합니다.
 
-신뢰할 수 있는 카탈로그는 Neat Internals가 별도로 제공하는 `simaai-peripherals.service`가 소유합니다.
-각 `list()` 호출은 이 서비스에 제한 시간이 있는 요청을 한 번 수행합니다. Core는 하드웨어를 스캔하거나,
+신뢰할 수 있는 카탈로그는 SiMa Sentinel(`simaai-sentinel.service`)이 소유합니다. Sentinel은 이 카탈로그를
+`GET /v1/peripherals`로 제공하는 보드 로컬 데몬입니다. 각 `list()` 호출은 Sentinel에 제한 시간이 있는
+요청을 한 번 수행합니다. Core는 하드웨어를 스캔하거나,
 두 번째 카탈로그를 캐시하거나, 다른 검색 경로로 폴백하지 않습니다.
 
 ## 주변 장치 나열
@@ -59,7 +60,8 @@ for (const auto& peripheral : catalog) {
 스트리밍하지 않습니다. 따라서 카탈로그의 지원 표시는 이후의 독점 획득 성공을 보장하지 않습니다.
 
 알 수 없는 주변 장치 형식도 공통 `id`, `type`, `provider`와 함께 카탈로그에 유지됩니다. 프로토콜 v1에
-추가된 선택 필드는 이전 클라이언트에서 무시됩니다.
+추가된 선택 필드는 이전 클라이언트에서 무시됩니다. 여기에는 Sentinel이 각 스냅샷과 함께 게시하는
+최상위 `changes` 로그도 포함됩니다. Core는 이 로그를 수락하지만 노출하지 않습니다.
 
 ## 실패 및 범위
 
@@ -67,7 +69,10 @@ for (const auto& peripheral : catalog) {
 발생하면 `list()`는 안정적인 코드가 포함된 `NeatError`를 발생시킵니다. 메시지에는 다음 운영 조치가
 포함됩니다. [오류 코드 카탈로그](./error-codes.md)를 참조하십시오.
 
-이 API는 로컬 DevKit의 `/run/simaai-peripherals/api.sock`에만 연결합니다. SSH를 사용하거나 원격 보드를
+Sentinel이 설치되어 있지 않으면 `sima-cli neat install sentinel`로 설치하십시오. 설치되어 있지만
+실행 중이 아니면 `simaai-sentinel.service`를 시작하십시오.
+
+이 API는 로컬 DevKit의 `/run/simaai-sentinel/api.sock`에만 연결합니다. SSH를 사용하거나 원격 보드를
 선택하지 않습니다. Insight와 향후 CLI 클라이언트는 Core를 통하지 않고 동급 클라이언트로 데몬에
 연결합니다.
 

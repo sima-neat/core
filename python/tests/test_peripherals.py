@@ -114,7 +114,7 @@ class _FakeServer:
           if not chunk:
             raise AssertionError("client closed before sending a complete request")
           request.extend(chunk)
-        assert request.startswith(b"GET /v1/catalog HTTP/1.1\r\n")
+        assert request.startswith(b"GET /v1/peripherals HTTP/1.1\r\n")
         if self.gate is not None:
           self.gate_observed = self.gate.wait(timeout=0.5)
         response = (
@@ -280,6 +280,14 @@ def test_peripheral_catalog_preserves_empty_and_stale_snapshots(tmp_path):
               "retained_last_good": True,
           }
       ],
+      changes=[
+          {
+              "sequence": 5,
+              "revision": 3,
+              "kind": "error",
+              "error": {"code": "io.permission_denied", "reason": "permission denied"},
+          }
+      ],
   )
   with _FakeServer(path, json.dumps(body)):
     stale = _list(path)
@@ -308,7 +316,8 @@ def test_peripheral_catalog_errors_keep_structured_code(tmp_path):
   with pytest.raises(pyneat.NeatError) as unavailable:
     _list(missing, 100)
   assert unavailable.value.error_code == pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE
-  assert "simaai-peripherals.service" in str(unavailable.value)
+  assert "sima-cli neat install sentinel" in str(unavailable.value)
+  assert "simaai-sentinel.service" in str(unavailable.value)
 
   path = tmp_path / "not-ready.sock"
   body = _catalog(

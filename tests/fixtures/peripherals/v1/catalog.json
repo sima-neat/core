@@ -21,6 +21,24 @@
       "retained_last_good": true
     }
   ],
+  "changes": [
+    {
+      "sequence": 8,
+      "revision": 4,
+      "kind": "added",
+      "device_id": "camera:v4l2:295faa7ac0d61654",
+      "device_type": "camera"
+    },
+    {
+      "sequence": 9,
+      "revision": 4,
+      "kind": "error",
+      "error": {
+        "code": "io.permission_denied",
+        "reason": "permission denied reading /dev/video97"
+      }
+    }
+  ],
   "devices": [
     {
       "id": "camera:imx477 5-001a",

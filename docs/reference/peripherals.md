@@ -10,10 +10,10 @@ Use the peripheral catalog to inspect devices currently attached to the local
 DevKit. The API is available in C++ and Python and returns the same typed
 snapshot in both languages.
 
-The authoritative catalog belongs to `simaai-peripherals.service`, which is
-shipped separately by Neat Internals. Each `list()` call performs one bounded
-request to that service. Core does not scan hardware, cache a second catalog,
-or fall back to another discovery path.
+The authoritative catalog belongs to SiMa Sentinel (`simaai-sentinel.service`),
+the board-local daemon that serves it as `GET /v1/peripherals`. Each `list()`
+call performs one bounded request to Sentinel. Core does not scan hardware,
+cache a second catalog, or fall back to another discovery path.
 
 ## List peripherals
 
@@ -65,7 +65,8 @@ later.
 
 Unknown peripheral types remain in the catalog with their common `id`, `type`,
 and `provider`. Optional fields added to protocol v1 are ignored by older
-clients.
+clients. This includes the top-level `changes` log that Sentinel publishes with
+each snapshot; Core accepts it but does not expose it.
 
 ## Failures and scope
 
@@ -74,7 +75,10 @@ permission is denied, the request times out, the daemon is not ready, or the
 response is malformed, oversized, or incompatible. The message includes the
 next operational action. See the [error code catalog](./error-codes.md).
 
-This API connects only to `/run/simaai-peripherals/api.sock` on the local
+If Sentinel is not installed, install it with `sima-cli neat install sentinel`.
+If it is installed but not running, start `simaai-sentinel.service`.
+
+This API connects only to `/run/simaai-sentinel/api.sock` on the local
 DevKit. It does not use SSH or select a remote board. Insight and future CLI
 clients connect to the daemon as sibling clients rather than through Core.
 

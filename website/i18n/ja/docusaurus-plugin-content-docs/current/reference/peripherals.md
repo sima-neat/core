@@ -9,9 +9,9 @@ sidebar_position: 8
 ローカル DevKit に現在接続されているデバイスを確認するには、ペリフェラルカタログを使用します。
 この API は C++ と Python で利用でき、どちらの言語でも同じ型付きスナップショットを返します。
 
-信頼できるカタログは、Neat Internals が別途提供する `simaai-peripherals.service` が所有します。
-各 `list()` 呼び出しは、このサービスへ境界時間付きの要求を 1 回実行します。Core はハードウェアを
-スキャンせず、2 つ目のカタログをキャッシュせず、別の検出経路へフォールバックしません。
+信頼できるカタログは、SiMa Sentinel (`simaai-sentinel.service`) が所有します。Sentinel は、
+カタログを `GET /v1/peripherals` として提供するボードローカルのデーモンです。各 `list()` 呼び出しは、
+Sentinel へ境界時間付きの要求を 1 回実行します。Core はハードウェアをスキャンせず、2 つ目のカタログをキャッシュせず、別の検出経路へフォールバックしません。
 
 ## ペリフェラルを一覧表示する
 
@@ -61,6 +61,8 @@ for (const auto& peripheral : catalog) {
 
 未知のペリフェラル型も、共通の `id`、`type`、`provider` とともにカタログに残ります。
 プロトコル v1 に追加された任意フィールドは、古いクライアントでは無視されます。
+Sentinel が各スナップショットとともに公開するトップレベルの `changes` ログもこれに含まれます。
+Core はこのログを受け入れますが、公開しません。
 
 ## 障害と適用範囲
 
@@ -68,7 +70,10 @@ for (const auto& peripheral : catalog) {
 応答が不正、過大、非互換である場合、`list()` は安定したコードを持つ `NeatError` を送出します。
 メッセージには次の運用操作が含まれます。[エラーコードカタログ](./error-codes.md)を参照してください。
 
-この API は、ローカル DevKit 上の `/run/simaai-peripherals/api.sock` のみに接続します。
+Sentinel がインストールされていない場合は、`sima-cli neat install sentinel` でインストールしてください。
+インストール済みで実行されていない場合は、`simaai-sentinel.service` を起動してください。
+
+この API は、ローカル DevKit 上の `/run/simaai-sentinel/api.sock` のみに接続します。
 SSH を使用せず、リモートボードを選択しません。Insight と将来の CLI クライアントは、Core を
 経由せず、同等のクライアントとしてデーモンに接続します。
 
