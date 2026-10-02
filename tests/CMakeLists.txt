@@ -569,6 +569,9 @@ add_pipeline_test(
   unit_peripheral_client_test
   ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_peripheral_client_test.cpp
 )
+target_compile_definitions(unit_peripheral_client_test PRIVATE
+  SIMAAI_PERIPHERAL_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/peripherals/v1"
+)
 set_property(TEST unit_peripheral_client_test APPEND PROPERTY LABELS "unit;peripherals")
 
 # Helper used by PyNeat to verify C++/Python catalog parity. Source tests pass a

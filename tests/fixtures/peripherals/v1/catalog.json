@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "instance_id": "fixture-daemon-a",
+  "state": "degraded",
+  "ready": true,
+  "stale": true,
+  "revision": 4,
+  "sequence": 9,
+  "scan_sequence": 12,
+  "last_success_at": "2026-10-01T01:02:03.004Z",
+  "last_attempt_at": "2026-10-01T01:02:08.009Z",
+  "error": {
+    "code": "peripherals.discovery_failed",
+    "reason": "one provider failed; last-good records retained"
+  },
+  "issues": [
+    {
+      "provider": "daemon.camera.v4l2",
+      "code": "io.permission_denied",
+      "reason": "permission denied reading /dev/video97",
+      "retained_last_good": true
+    }
+  ],
+  "devices": [
+    {
+      "id": "camera:imx477 5-001a",
+      "type": "camera",
+      "provider": "daemon.camera.libcamera",
+      "camera": {
+        "camera_name": "imx477 5-001a",
+        "model": "imx477",
+        "backend": "libcamera",
+        "modes": [
+          {
+            "format": "NV12",
+            "width": 1920,
+            "height": 1080,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "supported": true,
+            "reason": ""
+          },
+          {
+            "format": "NV12",
+            "size_range": {
+              "min_width": 640,
+              "min_height": 480,
+              "max_width": 1920,
+              "max_height": 1080,
+              "step_width": 16,
+              "step_height": 8
+            },
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "supported": false,
+            "reason": "The continuous size range is advisory; CameraInput support is reported only for discrete ISP output sizes."
+          }
+        ]
+      }
+    },
+    {
+      "id": "camera:v4l2:295faa7ac0d61654",
+      "type": "camera",
+      "provider": "daemon.camera.v4l2",
+      "camera": {
+        "model": "HD Pro Webcam C920",
+        "backend": "v4l2",
+        "connection": "usb",
+        "device_path": "/dev/video97",
+        "availability": {
+          "state": "unknown",
+          "reason": "V4L2 does not expose a reliable read-only ownership state; discovery does not acquire, configure, or stream from the camera."
+        },
+        "identity": {
+          "stable_key": "sysfs:devices/pci0000:00/usb1/1-2.3:interface=00:index=0",
+          "topology": "devices/pci0000:00/usb1/1-2.3",
+          "interface": "00",
+          "node_index": "0",
+          "vendor_id": "046d",
+          "product_id": "082d"
+        },
+        "modes": [
+          {
+            "format": "MJPG",
+            "width": 1920,
+            "height": 1080,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "supported": false,
+            "reason": "CameraInput currently accepts libcamera camera names only; direct V4L2 capture is not supported.",
+            "frame_intervals": [
+              {
+                "width": 1920,
+                "height": 1080,
+                "intervals": [
+                  {
+                    "type": "discrete",
+                    "numerator": 1,
+                    "denominator": 30
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

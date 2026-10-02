@@ -26,9 +26,10 @@ namespace simaai::neat {
  * GstSimaMeta. Users do not expose an OsToSima node.
  */
 struct CameraInputOptions {
-  // Optional exact libcamera camera name. Read supported names and modes from
-  // simaai::neat::peripherals::list() or pyneat.peripherals.list(). Leave
-  // unset to let libcamera select its default camera.
+  // Optional exact libcamera camera name. Read selectable names and
+  // daemon-classified modes from simaai::neat::peripherals::list() or
+  // pyneat.peripherals.list(). Leave unset to let libcamera select its default
+  // camera.
   std::optional<std::string> camera_name;
 
   std::uint32_t width = 1920;

@@ -504,6 +504,8 @@ peripherals::Catalog parse_catalog(const std::string& body) {
     std::string reason = "The peripheral daemon has not produced an initial catalog";
     if (catalog.error)
       reason += ": " + catalog.error->reason;
+    else if (!catalog.issues.empty())
+      reason += ": " + catalog.issues.front().provider + ": " + catalog.issues.front().reason;
     reason += ". Check simaai-peripherals.service and its journal, then retry.";
     fail(error_codes::kPeripheralDaemonNotReady, std::move(reason));
   }

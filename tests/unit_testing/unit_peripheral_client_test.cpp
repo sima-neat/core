@@ -19,6 +19,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <iostream>
@@ -208,6 +209,13 @@ nlohmann::json ready_catalog() {
   };
 }
 
+nlohmann::json canonical_catalog_fixture() {
+  const std::string path = std::string(SIMAAI_PERIPHERAL_FIXTURE_DIR) + "/catalog.json";
+  std::ifstream input(path);
+  require(input.good(), "could not open canonical daemon fixture " + path);
+  return nlohmann::json::parse(input);
+}
+
 std::string response_for(const std::string& body, int status = 200) {
   const std::string reason = status == 200 ? "OK" : "Service Unavailable";
   return "HTTP/1.1 " + std::to_string(status) + " " + reason +
@@ -268,6 +276,28 @@ void test_success_and_partial_io() {
   require(catalog[1].type == "lidar" && catalog[1].provider == "daemon.lidar.future" &&
               !catalog[1].camera,
           "unknown peripheral types must retain common identity without camera details");
+}
+
+void test_canonical_daemon_fixture() {
+  TemporaryDirectory directory;
+  auto server =
+      serve_response(directory.socket_path(), response_for(canonical_catalog_fixture().dump()), 2);
+  const auto catalog = list_from_socket(directory.socket_path(), 2s, 5);
+  server.finish();
+
+  require(catalog.instance_id == "fixture-daemon-a" && catalog.revision == 4 &&
+              catalog.sequence == 9 && catalog.scan_sequence == 12 && catalog.stale &&
+              catalog.error && catalog.issues.size() == 1 && catalog.size() == 2,
+          "canonical daemon metadata was not preserved");
+  require(catalog[0].camera && catalog[0].camera->camera_name == "imx477 5-001a" &&
+              catalog[0].camera->modes.size() == 2 && catalog[0].camera->modes[1].is_range(),
+          "canonical libcamera details were not preserved");
+  require(catalog[1].camera && !catalog[1].camera->camera_name &&
+              catalog[1].camera->backend == "v4l2" && !catalog[1].camera->modes[0].supported &&
+              catalog[1].camera->modes[0].reason ==
+                  "CameraInput currently accepts libcamera camera names only; direct V4L2 "
+                  "capture is not supported.",
+          "canonical USB camera details or unknown optional fields were mishandled");
 }
 
 void test_empty_and_stale_catalogs() {
@@ -367,6 +397,14 @@ void test_protocol_failures() {
     server.finish();
   }
   {
+    const std::string body = R"({"error":"response_too_large"})";
+    auto server =
+        serve_response(directory.socket_path("daemon-limit.sock"), response_for(body, 500));
+    require_error([&] { (void)list_from_socket(directory.socket_path("daemon-limit.sock"), 1s); },
+                  simaai::neat::error_codes::kResponseTooLarge, "4 MiB");
+    server.finish();
+  }
+  {
     auto schema = ready_catalog();
     schema["schema_version"] = 2;
     auto server = serve_response(directory.socket_path("schema.sock"), response_for(schema.dump()));
@@ -401,10 +439,14 @@ void test_never_ready() {
   starting["stale"] = false;
   starting["revision"] = 0;
   starting["last_success_at"] = nullptr;
+  starting["issues"] = {{{"provider", "daemon.camera.libcamera"},
+                         {"code", "io.backend_unavailable"},
+                         {"reason", "camera backend unavailable"},
+                         {"retained_last_good", false}}};
   starting["devices"] = nlohmann::json::array();
   auto server = serve_response(directory.socket_path(), response_for(starting.dump()));
   require_error([&] { (void)list_from_socket(directory.socket_path(), 1s); },
-                simaai::neat::error_codes::kPeripheralDaemonNotReady, "initial catalog");
+                simaai::neat::error_codes::kPeripheralDaemonNotReady, "camera backend unavailable");
   server.finish();
 }
 
@@ -413,6 +455,7 @@ void test_never_ready() {
 int main() {
   try {
     test_success_and_partial_io();
+    test_canonical_daemon_fixture();
     test_empty_and_stale_catalogs();
     test_connection_failures();
     test_timeout_and_incomplete_response();

@@ -784,6 +784,8 @@ Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行�
 
 ### 相機設定的所有權
 
+由 Internals 提供的開發板本機 `simaai-peripherals` 服務負責裝置探索、Linux 通知、防彈跳、權威目錄、修訂版本和可重播事件。Core 不會連結該實作。`simaai::neat::peripherals::list()` 和 `pyneat.peripherals.list()` 是精簡的無狀態用戶端：每次呼叫都會透過服務的版本化 Unix 通訊端 API 執行一次有時限的 `GET /v1/catalog`、驗證回應，並傳回該快照。它們不會掃描硬體、維護第二份快取、訂閱事件，也不會在服務無法使用時退回其他路徑。
+
 `CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 在協商期間，橋接器會使用標準池來回應上游的 `GST_QUERY_ALLOCATION`，並請求 `GstVideoMeta`。 該池會分配來自一個打包的 SiMaAI 設定的已驗證平面，並為每個平面匯出一個 DMA-BUF。 一個相容的 `libcamerasrc` 會將這些 DMA-BUF 匯入到 ISP 捕獲佇列中。 然後，橋接器會解包相同的打包設定，以進行下游處理。 嚴格模式會拒絕任何不滿足該合約的緩衝區；CPU 複製仍然是一種明確的相容性後備方案。
 
 面向應用程式的捕獲深度與核心的私有 CSI 到 ISP RAW 傳輸環以及後續的 GStreamer 佇列都是獨立的。 可選的 `capture_buffer_count` 參數，用於 `CameraInputWithCaptureBuffers`，用於控制在 ISP 輸出、libcamera 和應用程式之間保留的緩衝區。 `queue_depth` 和 `leaky_queue` 分別控制下游延遲和幀丟棄策略。 可選的相容性複製池會按需增長，並且不受該佇列深度的限制，因此，漏洩佇列可以應用其丟棄策略，而無需首先使上游橋接器停頓。
