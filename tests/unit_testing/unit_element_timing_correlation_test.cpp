@@ -44,17 +44,23 @@ struct Fixture {
   GstElement* pipeline = gst_pipeline_new(nullptr);
   GstPad* sink = nullptr;
   GstPad* src = nullptr;
+  GstPad* second_sink = nullptr;
   std::shared_ptr<simaai::neat::pipeline_internal::DiagCtx> diag =
       std::make_shared<simaai::neat::pipeline_internal::DiagCtx>();
   simaai::neat::pipeline_internal::ElementTimingCounters* timing = nullptr;
 
-  explicit Fixture(const char* factory = "capsfilter") {
+  explicit Fixture(const char* factory = "capsfilter", bool two_inputs = false) {
     auto* element = gst_element_factory_make(factory, "timed");
     auto* output = gst_element_factory_make("fakesink", "output");
     require(pipeline && element && output, "test elements unavailable");
     g_object_set(output, "sync", FALSE, "async", FALSE, nullptr);
     gst_bin_add_many(GST_BIN(pipeline), element, output, nullptr);
     require(gst_element_link(element, output), "test elements did not link");
+    if (two_inputs) {
+      second_sink = gst_pad_new("second_sink", GST_PAD_SINK);
+      require(gst_element_add_pad(element, second_sink), "second sink could not be attached");
+      gst_object_ref(second_sink);
+    }
     simaai::neat::attach_element_timing_probes(pipeline, diag, true);
     for (auto& row : diag->element_timings)
       if (row->element_name == "timed")
@@ -65,6 +71,11 @@ struct Fixture {
     gst_pad_add_probe(
         sink, GST_PAD_PROBE_TYPE_BUFFER,
         [](GstPad*, GstPadProbeInfo*, gpointer) { return GST_PAD_PROBE_DROP; }, nullptr, nullptr);
+    if (second_sink) {
+      gst_pad_add_probe(
+          second_sink, GST_PAD_PROBE_TYPE_BUFFER,
+          [](GstPad*, GstPadProbeInfo*, gpointer) { return GST_PAD_PROBE_DROP; }, nullptr, nullptr);
+    }
     require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
             "test pipeline failed to start");
     gst_pad_send_event(sink, gst_event_new_stream_start("test"));
@@ -74,6 +85,10 @@ struct Fixture {
     GstSegment segment;
     gst_segment_init(&segment, GST_FORMAT_TIME);
     gst_pad_send_event(sink, gst_event_new_segment(&segment));
+    if (second_sink) {
+      gst_pad_send_event(second_sink, gst_event_new_stream_start("second"));
+      gst_pad_send_event(second_sink, gst_event_new_segment(&segment));
+    }
   }
 
   ~Fixture() {
@@ -82,6 +97,8 @@ struct Fixture {
       gst_object_unref(sink);
     if (src)
       gst_object_unref(src);
+    if (second_sink)
+      gst_object_unref(second_sink);
     gst_object_unref(pipeline);
   }
 
@@ -193,6 +210,20 @@ int main() {
     convert.output(buffer(-1, "stream0", 50));
     require(convert.samples() == 3 && convert.timing->pending_pts.empty(),
             "segment change retained an earlier timing identity");
+    Fixture multi_input("capsfilter", true);
+    for (bool restart : {false, true}) {
+      multi_input.input(buffer(1, "a"));
+      require(gst_pad_chain(multi_input.second_sink, buffer(2, "b")) == GST_FLOW_OK,
+              "second input probe failed");
+      const auto before = multi_input.samples();
+      gst_pad_send_event(multi_input.sink, restart ? gst_event_new_stream_start("new-a")
+                                                   : gst_event_new_segment(&segment));
+      multi_input.output(buffer(1, "a"));
+      require(multi_input.samples() == before, "reset retained the affected input's identity");
+      multi_input.output(buffer(2, "b"));
+      require(multi_input.samples() == before + 1,
+              "one input's reset discarded another input's replacement-buffer timing");
+    }
     Fixture request;
     request.input(request_buffer(1, 10, 100, 100));
     request.output(request_buffer(1, 10, 100));

@@ -117,9 +117,15 @@ struct ElementTimingKeyEq {
   }
 };
 
+struct ElementPendingTiming {
+  int64_t timestamp_us = 0;
+  const void* input_pad = nullptr; // Identity only; never dereferenced.
+};
+
 struct ElementPtsTiming {
   int64_t timestamp_us = 0;
   std::optional<ElementTimingKey> metadata_key;
+  const void* input_pad = nullptr;
 };
 
 struct ElementTimingCounters {
@@ -131,7 +137,9 @@ struct ElementTimingCounters {
   std::atomic<uint64_t> missed_in{0};
   std::atomic<uint64_t> missed_out{0};
   std::mutex pending_mu;
-  std::unordered_map<ElementTimingKey, int64_t, ElementTimingKeyHash, ElementTimingKeyEq> pending;
+  std::unordered_map<ElementTimingKey, ElementPendingTiming, ElementTimingKeyHash,
+                     ElementTimingKeyEq>
+      pending;
   bool correlate_pts = false;
   bool pending_overflow = false;
   std::unordered_map<uint64_t, ElementPtsTiming> pending_pts;

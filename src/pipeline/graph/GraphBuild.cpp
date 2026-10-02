@@ -388,7 +388,8 @@ static void update_element_timing(simaai::neat::pipeline_internal::ElementTiming
 }
 
 static void add_pending_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
-                               const pipeline_internal::ElementTimingKey& key, int64_t ts_us) {
+                               const pipeline_internal::ElementTimingKey& key, int64_t ts_us,
+                               GstPad* pad) {
   if (!counters)
     return;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
@@ -396,9 +397,13 @@ static void add_pending_timing(simaai::neat::pipeline_internal::ElementTimingCou
     counters->pending_overflow = true;
   if (counters->pending_overflow)
     return;
-  auto [it, inserted] = counters->pending.emplace(key, ts_us);
-  if (!inserted)
-    it->second = 0; // An identical pending request is ambiguous, not a newer start.
+  auto [it, inserted] =
+      counters->pending.emplace(key, pipeline_internal::ElementPendingTiming{ts_us, pad});
+  if (!inserted) {
+    it->second.timestamp_us = 0; // An identical pending request is ambiguous.
+    if (it->second.input_pad != pad)
+      it->second.input_pad = nullptr;
+  }
 }
 
 static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
@@ -409,9 +414,9 @@ static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCou
   if (counters->pending_overflow)
     return false;
   auto it = counters->pending.find(key);
-  if (it == counters->pending.end() || it->second <= 0)
+  if (it == counters->pending.end() || it->second.timestamp_us <= 0)
     return false; // Keep ambiguous identities rejected until a stream discontinuity.
-  ts_us = it->second;
+  ts_us = it->second.timestamp_us;
   counters->pending.erase(it);
   return ts_us > 0;
 }
@@ -419,7 +424,7 @@ static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCou
 static void add_pending_pts_timing(pipeline_internal::ElementTimingCounters* counters,
                                    GstClockTime pts,
                                    std::optional<pipeline_internal::ElementTimingKey> key,
-                                   int64_t timestamp_us) {
+                                   int64_t timestamp_us, GstPad* pad) {
   if (!counters->correlate_pts || !GST_CLOCK_TIME_IS_VALID(pts))
     return;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
@@ -427,8 +432,8 @@ static void add_pending_pts_timing(pipeline_internal::ElementTimingCounters* cou
     counters->pending_overflow = true;
   if (counters->pending_overflow)
     return;
-  auto [it, inserted] =
-      counters->pending_pts.emplace(pts, pipeline_internal::ElementPtsTiming{timestamp_us, key});
+  auto [it, inserted] = counters->pending_pts.emplace(
+      pts, pipeline_internal::ElementPtsTiming{timestamp_us, key, pad});
   if (!inserted) {
     // A repeated PTS only makes the PTS fallback ambiguous. Distinct request
     // metadata can still identify each replacement buffer exactly.
@@ -449,7 +454,7 @@ static bool pop_pending_pts_timing(pipeline_internal::ElementTimingCounters* cou
   timestamp_us = it->second.timestamp_us;
   if (it->second.metadata_key) {
     auto metadata = counters->pending.find(*it->second.metadata_key);
-    if (metadata != counters->pending.end() && metadata->second > 0)
+    if (metadata != counters->pending.end() && metadata->second.timestamp_us > 0)
       counters->pending.erase(metadata);
   }
   counters->pending_pts.erase(it);
@@ -496,7 +501,7 @@ static GstPadProbeReturn stage_probe_cb(GstPad*, GstPadProbeInfo* info, gpointer
   return GST_PAD_PROBE_OK;
 }
 
-static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
+static GstPadProbeReturn element_timing_probe_cb(GstPad* pad, GstPadProbeInfo* info,
                                                  gpointer user_data) {
   auto* ctx = reinterpret_cast<ElementTimingProbeCtx*>(user_data);
   if (!ctx || !ctx->counters)
@@ -509,9 +514,15 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
                   GST_EVENT_TYPE(event) == GST_EVENT_FLUSH_START ||
                   GST_EVENT_TYPE(event) == GST_EVENT_FLUSH_STOP)) {
       std::lock_guard<std::mutex> lock(ctx->counters->pending_mu);
-      ctx->counters->pending.clear();
-      ctx->counters->pending_pts.clear();
-      ctx->counters->pending_overflow = false;
+      const bool flush = GST_EVENT_TYPE(event) == GST_EVENT_FLUSH_START ||
+                         GST_EVENT_TYPE(event) == GST_EVENT_FLUSH_STOP;
+      const auto affected = [pad, flush](const auto& entry) {
+        return flush || !entry.second.input_pad || entry.second.input_pad == pad;
+      };
+      std::erase_if(ctx->counters->pending, affected);
+      std::erase_if(ctx->counters->pending_pts, affected);
+      if (ctx->counters->pending.empty() && ctx->counters->pending_pts.empty())
+        ctx->counters->pending_overflow = false;
     }
   }
   if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0)
@@ -535,12 +546,12 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
     pipeline_internal::ElementTimingKey key;
     const bool has_key = extract_sima_meta_key(buf, key);
     if (has_key) {
-      add_pending_timing(ctx->counters, key, now);
+      add_pending_timing(ctx->counters, key, now, pad);
     } else if (!ctx->counters->correlate_pts || !GST_BUFFER_PTS_IS_VALID(buf)) {
       ctx->counters->missed_in.fetch_add(1, std::memory_order_relaxed);
     }
     add_pending_pts_timing(ctx->counters, GST_BUFFER_PTS(buf),
-                           has_key ? std::optional{key} : std::nullopt, now);
+                           has_key ? std::optional{key} : std::nullopt, now, pad);
     return GST_PAD_PROBE_OK;
   }
 
