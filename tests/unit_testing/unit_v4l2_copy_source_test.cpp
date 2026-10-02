@@ -10,6 +10,44 @@
 #include <thread>
 
 namespace {
+// Test-only allocator: fail deterministically before the first buffer or after
+// partial pool allocation, without inducing system-wide memory pressure.
+struct CopyFailAllocator {
+  GstAllocator parent;
+  GstAllocator* backing;
+  guint attempts, fail_after;
+};
+struct CopyFailAllocatorClass {
+  GstAllocatorClass parent_class;
+};
+G_DEFINE_TYPE(CopyFailAllocator, copy_fail_allocator, GST_TYPE_ALLOCATOR)
+GstMemory* failing_alloc(GstAllocator* allocator, gsize size, GstAllocationParams* params) {
+  auto* self = reinterpret_cast<CopyFailAllocator*>(allocator);
+  if (self->attempts++ >= self->fail_after)
+    return nullptr;
+  return gst_allocator_alloc(self->backing, size, params);
+}
+void copy_fail_allocator_class_init(CopyFailAllocatorClass* klass) {
+  GST_ALLOCATOR_CLASS(klass)->alloc = failing_alloc;
+  G_OBJECT_CLASS(klass)->finalize = [](GObject* object) {
+    gst_object_unref(reinterpret_cast<CopyFailAllocator*>(object)->backing);
+    G_OBJECT_CLASS(copy_fail_allocator_parent_class)->finalize(object);
+  };
+}
+void copy_fail_allocator_init(CopyFailAllocator* self) {
+  self->backing = gst_allocator_find(nullptr);
+  self->parent.mem_type = "CopyFailureTest";
+}
+struct DefaultAllocatorOverride {
+  GstAllocator* previous = gst_allocator_find(nullptr);
+  explicit DefaultAllocatorOverride(GstAllocator* replacement) {
+    // Both set_default() calls consume a reference; find() returns one.
+    gst_allocator_set_default(replacement);
+  }
+  ~DefaultAllocatorOverride() {
+    gst_allocator_set_default(previous);
+  }
+};
 // This test links libgstapp already. Instantiate its type directly so CI's
 // isolated plugin registry need not discover app/coreelements plugins.
 GstElement* make_app_sink() {
@@ -200,6 +238,39 @@ int main() {
                      rejected->close_count == 1,
                  "caps failure reached DMA or leaked preparation");
       gst_object_unref(graph);
+    }
+    // Pool activation must allocate every output slot before QBUF/STREAMON.
+    // Cover both immediate failure and failure after one successful allocation.
+    for (guint fail_after : {0U, 1U}) {
+      auto allocation_failure = std::make_shared<CopyCameraMock>();
+      auto* input = simaai::neat::make_v4l2_copy_source_for_test(allocation_failure);
+      g_object_set(input, "device", "/dev/mock", "width", 8U, "height", 4U, "fourcc", "BA81",
+                   "capture-buffer-count", 4U, "output-buffer-count", 2U, nullptr);
+      auto* graph = gst_pipeline_new(nullptr);
+      auto* output = make_app_sink();
+      gst_bin_add_many(GST_BIN(graph), input, output, nullptr);
+      copy_check(gst_element_link(input, output), "allocator failure test link failed");
+      auto* allocator = reinterpret_cast<CopyFailAllocator*>(
+          g_object_new(copy_fail_allocator_get_type(), nullptr));
+      allocator->fail_after = fail_after;
+      GstStateChangeReturn started;
+      guint attempts;
+      {
+        DefaultAllocatorOverride override(GST_ALLOCATOR(allocator));
+        started = gst_element_set_state(graph, GST_STATE_PLAYING);
+        gst_element_set_state(graph, GST_STATE_NULL);
+        attempts = allocator->attempts;
+      }
+      gst_object_unref(graph);
+      copy_check(started == GST_STATE_CHANGE_FAILURE && attempts == fail_after + 1,
+                 "output allocation failure was not detected synchronously during startup");
+      copy_check(allocation_failure->queue_attempts == 0 &&
+                     std::find(allocation_failure->calls.begin(), allocation_failure->calls.end(),
+                               VIDIOC_STREAMON) == allocation_failure->calls.end(),
+                 "output allocation failure armed camera DMA");
+      copy_check(allocation_failure->unmaps == 4 && allocation_failure->releases == 1 &&
+                     allocation_failure->close_count == 1,
+                 "output allocation failure leaked capture preparation");
     }
     std::cout << "PASS V4L2 copy source: real tensor metadata, bounded pool, retention and stop\n";
   } catch (const std::exception& e) {

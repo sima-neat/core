@@ -179,7 +179,10 @@ gboolean start(GstBaseSrc* base) {
     GstStructure* config = gst_buffer_pool_get_config(state.pool);
     // Bounded system-memory pool. Pool exhaustion is cancellable backpressure,
     // never permission to overwrite a buffer retained by an application.
-    gst_buffer_pool_config_set_params(config, caps, format.size, 0, state.pool_count);
+    // Preallocate all slots during activation: allocation failure must occur
+    // before camera DMA starts, not on the streaming thread.
+    gst_buffer_pool_config_set_params(config, caps, format.size, state.pool_count,
+                                      state.pool_count);
     const bool configured = gst_buffer_pool_set_config(state.pool, config);
     // set_caps() can install sticky caps even when a peer rejects its event.
     // Check downstream acceptance explicitly before any camera queue is armed.
