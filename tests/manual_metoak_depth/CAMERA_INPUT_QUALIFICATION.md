@@ -1,7 +1,7 @@
 # CameraInput copy-mode qualification
 
 This qualification is separate from the graph-20 EV74 numerical tests. It covers
-`CameraInputWithV4L2(camera, backend)` with `backend.zero_copy = false`, followed by
+`CameraInput(camera)` with `camera.zero_copy = false`, followed by
 `Output`. It does not invoke an EV kernel or change the ROS application.
 
 ## Capture contract
@@ -78,3 +78,37 @@ The final Core shared-library SHA-256 was
 Runtime binaries were staged in RAM rather than installed over the board's
 packages. Full logs, source hashes and artifact hashes are retained in the
 `camera-copy/lifecycle` evidence directory for this investigation.
+
+## Unified CameraInput qualification (2026-10-02)
+
+The same existing factory now resolves the backend through `CameraInputOptions`.
+The original no-selector libcamera behavior is retained. The compatibility
+`CameraInputWithV4L2` wrapper also routes through this factory. Core ABI 6 is
+required because the public options and node layout changed; rebuild binary
+consumers and use the matching Python wheel rather than aliasing ABI-5 libraries.
+
+Three isolated public Python Graph trials on the same B4837 board completed:
+
+| Selection | Frames | STREAMOFF/stop observation | Retention and reopen |
+| --- | ---: | ---: | --- |
+| Explicit `MetoakSimor` profile and `/dev/video1`, 30 seconds | 659 | 121 ms | Passed |
+| `/dev/video1` with automatic profile/backend, 30 seconds | 667 | 141 ms | Passed |
+| `MetoakSimor` profile without device, both pool slots retained | 2 | 91 ms | Passed |
+
+All 1325 frames checked after the initial frame of each trial contained the
+expected SIMOR metadata magic. Output remained an owned `UInt8[691200]` tensor;
+negotiated stride was 1920 and allocation size 691232. Identification returned
+`/dev/video1` both with and without a requested endpoint using only media metadata.
+Discovery does not open capture/subdevice nodes, allocate camera buffers or
+configure media links. Multiple candidates or mixed-sensor routes are rejected.
+
+Construction/lifecycle coverage: four guarded ARM64 C++ tests, nine Python API
+tests, and the native topology fixture under ASan/UBSan passed. The non-Linux
+preprocessor paths compile; this is not a native macOS runtime qualification.
+The default libcamera hardware path was not rerun because this board's attached
+camera is SIMOR. Existing libcamera defaults and source/factory compatibility
+are covered by hardware-isolated tests. No firmware, installed runtime package,
+kernel, media-controller configuration, or ROS source was changed.
+
+These short trials qualify the unified route; they do not replace the longer
+lifecycle evidence above or prove recovery from arbitrary driver/DMA faults.

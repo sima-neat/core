@@ -6,6 +6,8 @@ sidebar_position: 2
 
 # Вхідний вузол камери.
 
+Наведений нижче посібник libcamera описує типовий бекенд. Для Metoak SIMOR і сирих тензорів дивіться розділ V4L2 нижче.
+
 `CameraInput` — це вихідний вузол для MIPI-камер, доступ до яких здійснюється через libcamera та GStreamer `libcamerasrc`. Використовуйте його на початку графа, що належить джерелу, коли кадри повинні надходити зі стеку камер DevKit, а не з `run.push(...)`.
 
 Інструкції щодо виконання завдання див. у розділі [Використовуйте камеру MIPI.](/develop-apps/advanced-concepts/mipi-camera-input).
@@ -116,7 +118,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `queue_depth` | `2` | Максимальна кількість буферів у черзі, коли `insert_queue` має значення true. |
 | `allow_cpu_fallback` | `false` | Якщо `false`, вимагайте підтримку функції «нульового копіювання» для камери/пристрою. Встановіть значення `true` лише для активації приватної адаптивної інтеграції Neat із пам’яттю SiMaAI. |
 
-`capture_buffer_count` є аргументом для `CameraInputWithCaptureBuffers`, а не полем `CameraInputOptions`. За замовчуванням його значення становить `0`, що зберігає значення за замовчуванням для конвеєра камери. Конвеєр камери перевіряє це обмеження; постачальник Neat підтримує максимум `128`.
+`capture_buffer_count` тепер також є полем `CameraInputOptions`. Нуль зберігає типове значення бекенду, ненульове значення перевизначає кількість буферів захоплення. Наявна фабрика C++ та ключовий аргумент Python залишаються доступними. Межа libcamera — 128; сирому V4L2 потрібно 4–128 буферів.
 
 ## Вхідні та вихідні параметри контракту.
 
@@ -170,29 +172,19 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 
 ## Захоплення raw V4L2 із власною пам’яттю
 
-Фабрика C++ `CameraInputWithV4L2` (Python: `camera_input`) передає сирі байти пристрою застосунку.
-Це окремий шлях від типового libcamera вище. Укажіть фактичний пристрій,
-прогресивний 8-бітний формат (`GREY`, `BA81`, `GBRG`, `GRBG` або `RGGB`) і
-розміри передавання. Значення прикладу не є результатом виявлення пристрою.
-
-Цей бекенд потребує Linux; запит на іншій платформі спричиняє явну помилку непідтримуваної платформи.
+Для обох бекендів використовуйте наявну фабрику `CameraInput(options)` (Python: `camera_input`). Приклад вибирає профіль копіювання сирих даних Metoak SIMOR лише для Linux. Укажіть фактичний пристрій захоплення; `/dev/video1` — лише приклад. На інших платформах повертається помилка непідтримуваного бекенду.
 
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;
 
 n::CameraInputOptions camera;
-camera.width = 1920;
-camera.height = 360;
-camera.format = "RAW8";
-
-n::CameraV4L2Options backend;
-backend.device = "/dev/video1";
-backend.fourcc = "BA81";
-backend.zero_copy = false;
+camera.device = "/dev/video1";
+camera.profile = n::CameraProfile::MetoakSimor;
+camera.zero_copy = false;
 
 n::Graph capture;
-capture.add(n::nodes::CameraInputWithV4L2(camera, backend));
+capture.add(n::nodes::CameraInput(camera));
 capture.add(n::nodes::Output());
 ```
 
@@ -200,13 +192,12 @@ capture.add(n::nodes::Output());
 import pyneat as neat
 
 camera = neat.CameraInputOptions()
-camera.width, camera.height, camera.format = 1920, 360, "RAW8"
-backend = neat.CameraV4L2Options()
-backend.device, backend.fourcc = "/dev/video1", "BA81"
-backend.zero_copy = False
+camera.device = "/dev/video1"
+camera.profile = neat.CameraProfile.MetoakSimor
+camera.zero_copy = False
 
 capture = neat.Graph()
-capture.add(neat.nodes.camera_input(camera, backend))
+capture.add(neat.nodes.camera_input(camera))
 capture.add(neat.nodes.output())
 ```
 
@@ -235,6 +226,16 @@ CPU-розпакування SIMOR, калібрування та публіка
 графі обробки. API не додає обробку SIMOR і не потребує graph 21, нової прошивки
 чи змін наявної інтеграції ROS.
 
-Вузол залишається `CameraInput`. Окрема назва фабрики C++ зберігає наявні виклики, отримання адреси фабрики без явного типу та структуру `CameraInputOptions`.
-
 Під час запуску вихідні caps і пул буферів CPU готуються до постановки буферів камери в чергу. Зупинка перериває очікування кадру й пулу, завершує захоплення, а потім звільняє вихідний пул. Уже передані тензори залишаються дійсними після зупинки. Помилка завершення захоплення повідомляється через шину GStreamer і забороняє перезапуск цього джерела; вихід із процесу не замінює відновлення пристрою.
+
+
+### Вибір бекенду та сумісність
+
+- Без нових селекторів поведінка libcamera та вибір `camera_name` не змінюються.
+- `profile=MetoakSimor` вибирає V4L2, `RAW8`, `BA81` і транспортні розміри 1920×360. Він замінює типові NV12/1080; інші суперечливі формати й розміри відхиляються. Цей профіль не охоплює всі камери Metoak.
+- З `device`, `backend=Auto`, `profile=Auto` SIMOR визначається за медіатопологією. Профіль SIMOR без пристрою вимагає рівно однієї відповідної кінцевої точки. Відсутні, неоднозначні або змішані сенсорні маршрути спричиняють помилку. Під час виявлення пристрій захоплення не відкривається. Явні профіль і пристрій обходять виявлення.
+- Для іншої сирої камери задайте `backend=V4L2`, `device`, `format="RAW8"`, транспортні розміри та `fourcc`. Підтримуються `GREY`, `BA81`, `GBRG`, `GRBG`, `RGGB`.
+- V4L2 вимагає явного `zero_copy=false`. Для libcamera невстановлене значення зберігає `allow_cpu_fallback`; false дозволяє наявне резервне копіювання, true вимагає zero-copy. Суперечності відхиляються.
+- Вибір виконується один раз під час створення вузла, до поширення контрактів графа. Помилка не перемикає бекенд. Виявлення не налаштовує медіазв’язки чи формати площадок.
+
+`CameraInputWithV4L2` і двоаргументна форма Python залишаються обгортками переадресації. Новий код використовує `CameraInput(options)`. Розширення параметрів і пам’яті вузла вимагає Core C++ ABI 6: перебудуйте C++ споживачів і встановіть відповідний Python wheel. Бінарні файли ABI-5 несумісні; не створюйте символічного посилання сумісності SONAME.

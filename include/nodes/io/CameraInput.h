@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_io
- * @brief MIPI/libcamera camera source node wrapper.
+ * @brief Camera source with libcamera or owned raw V4L2 capture.
  */
 #pragma once
 
@@ -16,8 +16,33 @@
 
 namespace simaai::neat {
 
+enum class CameraBackend { Auto, Libcamera, V4L2 };
+enum class CameraProfile { Auto, MetoakSimor };
+
+/** Explicit raw V4L2 capture backend. Use CameraInputOptions.format="RAW8"
+ * and wire dimensions, not decoded image dimensions. Captures progressive,
+ * single-plane GREY/BA81/GBRG/GRBG/RGGB bytes without ISP conversion.
+ * The resulting UInt8 tensor is flat [bytesused], including row padding and
+ * valid trailers. Negotiated geometry/stride/sizeimage are in Sample.caps_string.
+ * Camera framerate options do not reconfigure this backend's device cadence.
+ * Configure the media-controller pipeline before capture. The driver must honor
+ * the V4L2 STREAMOFF contract; failed retirement disables automatic restart.
+ */
+struct CameraV4L2Options {
+  std::string device;
+  std::string fourcc = "GREY";
+  // Only false is supported: copy before requeue, with no DMA-BUF export/import.
+  // True fails explicitly; it must never silently fall back to a copy.
+  bool zero_copy = false;
+  std::uint32_t capture_buffer_count = 8;
+  // A retained output consumes one pooled buffer. Exhaustion applies cancellable
+  // backpressure; it never overwrites tensors held by an application.
+  std::uint32_t output_buffer_count = 8;
+  std::uint32_t frame_timeout_ms = 2000;
+};
+
 /**
- * @brief Options for CameraInput, a live libcamera/MIPI source.
+ * @brief Options for CameraInput, a live camera source.
  *
  * The public contract is deliberately camera/frame oriented. Neat's private
  * camera memory bridge negotiates its allocator with libcamerasrc and passes
@@ -49,28 +74,21 @@ struct CameraInputOptions {
   // EV74 SiMaAI memory. This is an explicit compatibility escape hatch for
   // camera stacks without DMA-BUF export support.
   bool allow_cpu_fallback = false;
-};
 
-/** Explicit raw V4L2 capture backend. Use CameraInputOptions.format="RAW8"
- * and wire dimensions, not decoded image dimensions. Captures progressive,
- * single-plane GREY/BA81/GBRG/GRBG/RGGB bytes without ISP conversion.
- * The resulting UInt8 tensor is flat [bytesused], including row padding and
- * valid trailers. Negotiated geometry/stride/sizeimage are in Sample.caps_string.
- * Camera framerate options do not reconfigure this backend's device cadence.
- * Configure the media-controller pipeline before capture. The driver must honor
- * the V4L2 STREAMOFF contract; failed retirement disables automatic restart.
- */
-struct CameraV4L2Options {
+  // No selector preserves legacy libcamera behavior. A selected raw device with
+  // Auto backend is identified through its media topology, never by video index.
   std::string device;
+  CameraBackend backend = CameraBackend::Auto;
+  CameraProfile profile = CameraProfile::Auto;
+  // Unset preserves the legacy policy. V4L2 requires explicit false. For
+  // libcamera, false permits the existing CPU fallback; true requires zero-copy.
+  std::optional<bool> zero_copy;
+  // Raw capture tuning. The SIMOR profile chooses BA81 automatically.
   std::string fourcc = "GREY";
-  // Only false is supported: copy before requeue, with no DMA-BUF export/import.
-  // True fails explicitly; it must never silently fall back to a copy.
-  bool zero_copy = false;
-  std::uint32_t capture_buffer_count = 8;
-  // A retained output consumes one pooled buffer. Exhaustion applies cancellable
-  // backpressure; it never overwrites tensors held by an application.
   std::uint32_t output_buffer_count = 8;
   std::uint32_t frame_timeout_ms = 2000;
+  // Zero keeps the backend default. Nonzero applies to either capture backend.
+  std::uint32_t capture_buffer_count = 0;
 };
 
 class CameraInput final : public Node, public OutputSpecProvider {
@@ -87,9 +105,7 @@ public:
   NodeCapsBehavior caps_behavior() const override {
     return NodeCapsBehavior::Static;
   }
-  MemoryContract memory_contract() const override {
-    return MemoryContract::PreferDeviceZeroCopy;
-  }
+  MemoryContract memory_contract() const override;
 
   std::string buffer_name_hint(int node_index) const override;
   std::string backend_fragment(int node_index) const override;
@@ -103,6 +119,8 @@ public:
 
 private:
   CameraInputOptions opt_;
+  // Resolved once, before graph contract propagation; never switch on failure.
+  std::shared_ptr<Node> raw_backend_;
 };
 
 } // namespace simaai::neat
@@ -112,7 +130,7 @@ std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions
 
 /** Capture owned raw byte tensors through the Linux-only V4L2 copy backend.
  * Throws std::runtime_error on other platforms.
- * Existing one-argument CameraInput behavior and options layout are unchanged.
+ * Compatibility wrapper; prefer CameraInput with explicit backend options.
  * SIMOR decoding, calibration and ROS publication remain application concerns.
  */
 std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInputOptions opt,

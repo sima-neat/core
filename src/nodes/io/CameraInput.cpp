@@ -1,6 +1,7 @@
 #include "nodes/io/CameraInput.h"
 
 #include "gst/GstHelpers.h"
+#include "nodes/io/CameraDiscovery.h"
 
 #include <algorithm>
 #include <cctype>
@@ -242,49 +243,77 @@ private:
   CameraV4L2Options backend_;
 };
 
-class CameraInputCaptureNode final : public Node, public OutputSpecProvider {
-public:
-  CameraInputCaptureNode(CameraInputOptions opt, std::uint32_t capture_buffer_count)
-      : base_(std::move(opt)), capture_buffer_count_(capture_buffer_count) {
-    validate_capture_buffer_count(capture_buffer_count_);
+CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
+  if (opt.backend != CameraBackend::Auto && opt.backend != CameraBackend::Libcamera &&
+      opt.backend != CameraBackend::V4L2)
+    throw std::invalid_argument("CameraInput invalid backend");
+  if (opt.profile != CameraProfile::Auto && opt.profile != CameraProfile::MetoakSimor)
+    throw std::invalid_argument("CameraInput invalid camera profile");
+  const bool raw = opt.profile == CameraProfile::MetoakSimor ||
+                   opt.backend == CameraBackend::V4L2 || !opt.device.empty();
+  if (!raw) {
+    validate_capture_buffer_count(opt.capture_buffer_count);
+    opt.backend = CameraBackend::Libcamera;
+    if (opt.zero_copy.has_value()) {
+      if (*opt.zero_copy && opt.allow_cpu_fallback)
+        throw std::invalid_argument("CameraInput zero_copy conflicts with allow_cpu_fallback");
+      opt.allow_cpu_fallback = !*opt.zero_copy;
+    }
+    return opt;
   }
-
-  std::string kind() const override {
-    return base_.kind();
+#if !defined(__linux__)
+  throw std::runtime_error("CameraInput V4L2 backend requires Linux");
+#else
+  if (opt.backend == CameraBackend::Libcamera)
+    throw std::invalid_argument("CameraInput libcamera uses camera_name, not a raw device/profile");
+  if (opt.camera_name.has_value())
+    throw std::invalid_argument("CameraInput cannot combine camera_name with a raw device/profile");
+  if (!opt.zero_copy.has_value() || *opt.zero_copy)
+    throw std::invalid_argument("CameraInput V4L2 requires explicit zero_copy=false");
+  if (opt.allow_cpu_fallback)
+    throw std::invalid_argument("allow_cpu_fallback is libcamera-only; V4L2 uses zero_copy=false");
+  if (opt.backend == CameraBackend::V4L2 && opt.profile == CameraProfile::Auto &&
+      opt.device.empty())
+    throw std::invalid_argument("CameraInput V4L2 requires a device or an explicit camera profile");
+  // Explicit profiles with a device are construction-only, including in an SDK.
+  // Discovery is metadata-only and only requested when identification is needed.
+  if (opt.device.empty() ||
+      (opt.backend == CameraBackend::Auto && opt.profile == CameraProfile::Auto)) {
+    opt.device = camera_discovery::find_simor_device(opt.device);
+    opt.profile = CameraProfile::MetoakSimor;
   }
-  std::string user_label() const override {
-    return base_.user_label();
+  if (opt.profile == CameraProfile::MetoakSimor) {
+    // This profile is the qualified 1920x360 SIMOR wire mode, not every Metoak
+    // product. Legacy image defaults are replaced, contradictory overrides fail.
+    if (opt.width != 1920 || (opt.height != 1080 && opt.height != 360) ||
+        (opt.format != "NV12" && opt.format != "RAW8") ||
+        (opt.fourcc != "GREY" && opt.fourcc != "BA81"))
+      throw std::invalid_argument("CameraInput MetoakSimor requires RAW8 BA81 1920x360 wire mode");
+    opt.width = 1920;
+    opt.height = 360;
+    opt.format = "RAW8";
+    opt.fourcc = "BA81";
   }
-  InputRole input_role() const override {
-    return base_.input_role();
-  }
-  NodeCapsBehavior caps_behavior() const override {
-    return base_.caps_behavior();
-  }
-  MemoryContract memory_contract() const override {
-    return base_.memory_contract();
-  }
-  std::string buffer_name_hint(int node_index) const override {
-    return base_.buffer_name_hint(node_index);
-  }
-  std::string backend_fragment(int node_index) const override {
-    return camera_backend_fragment(base_.options(), node_index, capture_buffer_count_);
-  }
-  std::vector<std::string> element_names(int node_index) const override {
-    return base_.element_names(node_index);
-  }
-  OutputSpec output_spec(const OutputSpec& input) const override {
-    return base_.output_spec(input);
-  }
-
-private:
-  CameraInput base_;
-  std::uint32_t capture_buffer_count_;
-};
+  opt.backend = CameraBackend::V4L2;
+  if (!opt.capture_buffer_count)
+    opt.capture_buffer_count = 8;
+  return opt;
+#endif
+}
 
 } // namespace
 
-CameraInput::CameraInput(CameraInputOptions opt) : opt_(std::move(opt)) {
+CameraInput::CameraInput(CameraInputOptions opt) : opt_(resolve_camera_options(std::move(opt))) {
+  if (opt_.backend == CameraBackend::V4L2) {
+    CameraV4L2Options backend;
+    backend.device = opt_.device;
+    backend.fourcc = opt_.fourcc;
+    backend.capture_buffer_count = opt_.capture_buffer_count;
+    backend.output_buffer_count = opt_.output_buffer_count;
+    backend.frame_timeout_ms = opt_.frame_timeout_ms;
+    raw_backend_ = std::make_shared<V4L2CameraInputNode>(opt_, std::move(backend));
+    return;
+  }
   if (opt_.format.empty())
     opt_.format = "NV12";
   if (opt_.framerate_den == 0)
@@ -293,13 +322,21 @@ CameraInput::CameraInput(CameraInputOptions opt) : opt_(std::move(opt)) {
     opt_.buffer_name = "camera";
 }
 
+MemoryContract CameraInput::memory_contract() const {
+  return raw_backend_ ? raw_backend_->memory_contract() : MemoryContract::PreferDeviceZeroCopy;
+}
+
 std::string CameraInput::user_label() const {
+  if (raw_backend_)
+    return raw_backend_->user_label();
   if (opt_.camera_name.has_value() && !opt_.camera_name->empty())
     return *opt_.camera_name;
   return opt_.buffer_name;
 }
 
 std::string CameraInput::caps_string() const {
+  if (raw_backend_)
+    return "application/vnd.simaai.tensor";
   return camera_caps_string(opt_);
 }
 
@@ -308,10 +345,14 @@ std::string CameraInput::buffer_name_hint(int /*node_index*/) const {
 }
 
 std::string CameraInput::backend_fragment(int node_index) const {
-  return camera_backend_fragment(opt_, node_index, 0);
+  if (raw_backend_)
+    return raw_backend_->backend_fragment(node_index);
+  return camera_backend_fragment(opt_, node_index, opt_.capture_buffer_count);
 }
 
 std::vector<std::string> CameraInput::element_names(int node_index) const {
+  if (raw_backend_)
+    return raw_backend_->element_names(node_index);
   std::vector<std::string> names{camera_src_name(node_index), camera_caps_name(node_index),
                                  camera_bridge_name(node_index)};
   if (opt_.insert_queue) {
@@ -320,7 +361,9 @@ std::vector<std::string> CameraInput::element_names(int node_index) const {
   return names;
 }
 
-OutputSpec CameraInput::output_spec(const OutputSpec& /*input*/) const {
+OutputSpec CameraInput::output_spec(const OutputSpec& input) const {
+  if (raw_backend_)
+    return dynamic_cast<const OutputSpecProvider&>(*raw_backend_).output_spec(input);
   OutputSpec out;
   out.payload_type = PayloadType::Image;
   out.media_type = "video/x-raw";
@@ -360,7 +403,16 @@ namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInputOptions opt,
                                                         simaai::neat::CameraV4L2Options backend) {
 #if defined(__linux__)
-  return std::make_shared<simaai::neat::V4L2CameraInputNode>(std::move(opt), std::move(backend));
+  if (backend.capture_buffer_count < 4 || backend.capture_buffer_count > 128)
+    throw std::invalid_argument("raw CameraInput capture_buffer_count must be in [4,128]");
+  opt.device = backend.device;
+  opt.backend = CameraBackend::V4L2;
+  opt.zero_copy = backend.zero_copy;
+  opt.fourcc = std::move(backend.fourcc);
+  opt.capture_buffer_count = backend.capture_buffer_count;
+  opt.output_buffer_count = backend.output_buffer_count;
+  opt.frame_timeout_ms = backend.frame_timeout_ms;
+  return CameraInput(std::move(opt));
 #else
   (void)opt;
   (void)backend;
@@ -375,7 +427,9 @@ std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions
 std::shared_ptr<simaai::neat::Node>
 CameraInputWithCaptureBuffers(simaai::neat::CameraInputOptions opt,
                               std::uint32_t capture_buffer_count) {
-  return std::make_shared<CameraInputCaptureNode>(std::move(opt), capture_buffer_count);
+  if (capture_buffer_count)
+    opt.capture_buffer_count = capture_buffer_count;
+  return CameraInput(std::move(opt));
 }
 
 } // namespace simaai::neat::nodes

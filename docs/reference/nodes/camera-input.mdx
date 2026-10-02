@@ -6,6 +6,8 @@ sidebar_position: 2
 
 # CameraInput Node
 
+The following libcamera guide describes the default backend. For Metoak SIMOR and raw tensors, see the raw V4L2 section below.
+
 `CameraInput` is a source node for MIPI cameras exposed through libcamera and GStreamer `libcamerasrc`. Use it at the head of a source-owned graph when frames should come from the DevKit camera stack instead of from `run.push(...)`.
 
 For a task guide, see [Use a MIPI Camera](/develop-apps/advanced-concepts/mipi-camera-input).
@@ -116,10 +118,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `queue_depth` | `2` | Maximum queued buffers when `insert_queue` is true. |
 | `allow_cpu_fallback` | `false` | If `false`, require camera/device zero-copy support. Set it to `true` only to opt into Neat's private adaptive bridge into SiMaAI memory. |
 
-`capture_buffer_count` is an argument to `CameraInputWithCaptureBuffers`, not a
-`CameraInputOptions` field. It defaults to `0`, which preserves the camera
-pipeline's own default. The camera pipeline validates its limit; Neat's
-provider supports at most `128`.
+`capture_buffer_count` is now also a `CameraInputOptions` field. Zero preserves the backend default; a nonzero value overrides its capture count. The existing C++ factory and Python keyword remain supported. The libcamera limit is 128; raw V4L2 requires 4–128 buffers.
 
 ## Input and output contract
 
@@ -190,29 +189,19 @@ For model pipelines, configure preprocessing through `Model::Options::preprocess
 
 ## Owned raw V4L2 capture
 
-Use the C++ `CameraInputWithV4L2` factory (Python: `camera_input`) to deliver raw wire bytes to an
-application. This is separate from the default libcamera path above. Select the
-actual device, progressive eight-bit wire format (`GREY`, `BA81`, `GBRG`, `GRBG`
-or `RGGB`) and wire dimensions; the example values are not device discovery.
-
-This backend requires Linux; requesting it on another platform raises an explicit unsupported-platform error.
+Use the existing `CameraInput(options)` factory (Python: `camera_input`) for both backends. The following example selects the Linux-only Metoak SIMOR raw-copy profile. Choose the actual capture device; `/dev/video1` is only an example. Other platforms report an unsupported-backend error.
 
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;
 
 n::CameraInputOptions camera;
-camera.width = 1920;
-camera.height = 360;
-camera.format = "RAW8";
-
-n::CameraV4L2Options backend;
-backend.device = "/dev/video1";
-backend.fourcc = "BA81";
-backend.zero_copy = false;
+camera.device = "/dev/video1";
+camera.profile = n::CameraProfile::MetoakSimor;
+camera.zero_copy = false;
 
 n::Graph capture;
-capture.add(n::nodes::CameraInputWithV4L2(camera, backend));
+capture.add(n::nodes::CameraInput(camera));
 capture.add(n::nodes::Output());
 ```
 
@@ -220,13 +209,12 @@ capture.add(n::nodes::Output());
 import pyneat as neat
 
 camera = neat.CameraInputOptions()
-camera.width, camera.height, camera.format = 1920, 360, "RAW8"
-backend = neat.CameraV4L2Options()
-backend.device, backend.fourcc = "/dev/video1", "BA81"
-backend.zero_copy = False
+camera.device = "/dev/video1"
+camera.profile = neat.CameraProfile.MetoakSimor
+camera.zero_copy = False
 
 capture = neat.Graph()
-capture.add(neat.nodes.camera_input(camera, backend))
+capture.add(neat.nodes.camera_input(camera))
 capture.add(neat.nodes.output())
 ```
 
@@ -260,6 +248,16 @@ publication. It may feed the six original inputs to `MetoakDepth` graph 20 in a
 separate processing graph. This capture API does not add SIMOR processing or
 require graph 21, new firmware, or changes to an existing ROS integration.
 
-The node remains `CameraInput`. The distinct C++ factory name preserves existing calls, untyped factory address-taking, and the `CameraInputOptions` layout.
-
 Startup prepares output caps and the CPU buffer pool before queueing camera buffers. Stop interrupts frame and pool waits, retires capture, then releases the output pool. Tensors already delivered remain valid after stop. A capture-retirement error is reported on the GStreamer bus and prevents restarting that source; process exit is not a substitute for device recovery.
+
+
+### Backend selection and compatibility
+
+- With no new selector, the existing libcamera behavior and `camera_name` selection are unchanged.
+- `profile=MetoakSimor` selects V4L2 with `RAW8`, `BA81`, and 1920×360 wire geometry. It replaces the legacy NV12/1080 image defaults; other conflicting format or geometry overrides are rejected. This profile does not describe every Metoak camera.
+- With `device` set and `backend=Auto`, `profile=Auto`, Neat identifies SIMOR through the selected device's media topology. With a SIMOR profile but no device, it requires exactly one matching endpoint. Missing, ambiguous or mixed-sensor routes fail; no capture device is opened during discovery. Explicit profile plus device avoids discovery.
+- For another raw camera, set `backend=V4L2`, `device`, `format="RAW8"`, wire dimensions and `fourcc` explicitly. Supported fourcc values are `GREY`, `BA81`, `GBRG`, `GRBG` and `RGGB`.
+- V4L2 requires explicit `zero_copy=false`. For libcamera, unset preserves `allow_cpu_fallback`; false permits the existing copy fallback, while true requires zero-copy. Contradictory settings fail.
+- Resolution happens once during node construction, before graph contract propagation. A failed backend never switches to another backend. Discovery does not configure media links or pad formats.
+
+`CameraInputWithV4L2` and the two-argument Python form remain forwarding compatibility wrappers. New code uses `CameraInput(options)`. Extended options and node storage require Core C++ ABI 6: rebuild C++ consumers and use the matching Python wheel. ABI-5 binaries are not compatible; do not add a SONAME compatibility symlink.

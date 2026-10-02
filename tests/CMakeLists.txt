@@ -502,6 +502,7 @@ set(UNIT_TESTS
   unit_tensor_image_mapping_test
   unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
+  unit_camera_discovery_test
   unit_v4l2_camera_node_test
   unit_camera_allocation_query_test
   unit_nodes_test
@@ -538,7 +539,7 @@ foreach(test ${UNIT_TESTS})
   endif()
 endforeach()
 
-foreach(_camera_copy_test unit_v4l2_copy_capture_test unit_v4l2_copy_source_test)
+foreach(_camera_copy_test unit_v4l2_copy_capture_test unit_v4l2_copy_source_test unit_camera_discovery_test)
   if (TARGET ${_camera_copy_test})
     target_include_directories(${_camera_copy_test} PRIVATE ${CMAKE_SOURCE_DIR}/src)
   endif()

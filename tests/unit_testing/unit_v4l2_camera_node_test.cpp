@@ -68,6 +68,49 @@ int main() {
     camera = n::nodes::CameraInputWithV4L2(options, backend);
     check(camera->element_names(0).size() == 1);
     check(camera->backend_fragment(0).find(" ! ") == std::string::npos);
+    // The original factory and direct public constructor must use one resolver.
+    auto unified = options;
+    unified.device = backend.device;
+    unified.backend = n::CameraBackend::V4L2;
+    unified.zero_copy = false;
+    unified.fourcc = backend.fourcc;
+    auto standard = n::nodes::CameraInput(unified);
+    n::CameraInput direct(unified);
+    check(standard->backend_fragment(0) == camera->backend_fragment(0));
+    check(direct.backend_fragment(0) == camera->backend_fragment(0));
+    check(direct.memory_contract() == n::MemoryContract::RequireSystemMemoryMappable);
+    check(direct.output_spec({}).payload_type == n::PayloadType::Tensor);
+    n::CameraInputOptions profile;
+    profile.profile = n::CameraProfile::MetoakSimor;
+    profile.device = "/dev/video3";
+    profile.zero_copy = false;
+    n::CameraInput selected(profile);
+    check(selected.options().width == 1920 && selected.options().height == 360);
+    check(selected.options().format == "RAW8" && selected.options().fourcc == "BA81");
+    check(selected.options().backend == n::CameraBackend::V4L2);
+    check(selected.backend_fragment(0).find("libcamera") == std::string::npos);
+    profile.zero_copy = true;
+    rejects([&] { n::nodes::CameraInput(profile); });
+    profile.zero_copy.reset();
+    rejects([&] { n::nodes::CameraInput(profile); });
+    profile.zero_copy = false;
+    profile.backend = n::CameraBackend::Libcamera;
+    rejects([&] { n::nodes::CameraInput(profile); });
+    profile.backend = n::CameraBackend::Auto;
+    profile.width = 640;
+    rejects([&] { n::nodes::CameraInput(profile); });
+    unified.capture_buffer_count = 12;
+    check(n::nodes::CameraInput(unified)->backend_fragment(0).find("capture-buffer-count=12") !=
+          std::string::npos);
+    check(n::nodes::CameraInputWithCaptureBuffers(unified, 10)
+              ->backend_fragment(0)
+              .find("capture-buffer-count=10") != std::string::npos);
+    n::CameraInputOptions legacy_copy;
+    legacy_copy.zero_copy = false;
+    check(n::CameraInput(legacy_copy).options().allow_cpu_fallback);
+    legacy_copy.zero_copy = true;
+    legacy_copy.allow_cpu_fallback = true;
+    rejects([&] { n::CameraInput invalid(legacy_copy); });
     auto bad = options;
     bad.format = "NV12";
     rejects([&] { n::nodes::CameraInputWithV4L2(bad, backend); });
@@ -93,6 +136,8 @@ int main() {
     bad_backend.capture_buffer_count = 129;
     rejects([&] { n::nodes::CameraInputWithV4L2(options, bad_backend); });
     bad_backend = backend;
+    bad_backend.capture_buffer_count = 0;
+    rejects([&] { n::nodes::CameraInputWithV4L2(options, bad_backend); });
     bad_backend.capture_buffer_count = 3;
     rejects([&] { n::nodes::CameraInputWithV4L2(options, bad_backend); });
     bad_backend = backend;

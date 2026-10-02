@@ -6,6 +6,8 @@ sidebar_position: 2
 
 # 相機輸入節點
 
+以下 libcamera 指南說明預設後端。Metoak SIMOR 與原始張量請參閱下方 V4L2 章節。
+
 `CameraInput` 是一個來源節點，用於透過 libcamera 和 GStreamer 的 `libcamerasrc` 暴露的 MIPI 攝影機。當您希望圖中的影格來自 DevKit 攝影機堆疊，而不是來自 `run.push(...)` 時，請將其用於由來源擁有的圖的開頭。
 
 如需任務指南，請參閱 [使用 MIPI 相機。](/develop-apps/advanced-concepts/mipi-camera-input)。
@@ -116,10 +118,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `queue_depth` | `2` | 當 `insert_queue` 為 true 時，佇列中最多可容納的緩衝區數量。|
 | `allow_cpu_fallback` | `false` | 如果設定為 `false`，則需要相機/裝置支援零拷貝功能。 僅將其設定為 `true`，才能選擇使用 Neat 的私有自適應橋接，連接到 SiMaAI 記憶體。|
 
-`capture_buffer_count` 是 `CameraInputWithCaptureBuffers` 的一個參數，而不是
-`CameraInputOptions` 欄位。其預設值為 `0`，這可保留相機
-管線本身的預設值。相機管線會驗證其限制；Neat 的
-提供者最多支援 `128`。
+`capture_buffer_count` 現在也是 `CameraInputOptions` 欄位。0 保留後端預設值，非零值覆寫擷取緩衝區數量。既有 C++ 工廠與 Python 關鍵字仍可使用。libcamera 上限為 128；原始 V4L2 需要 4–128 個緩衝區。
 
 ## 輸入與輸出合約
 
@@ -173,28 +172,19 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 
 ## 具有獨立記憶體的 raw V4L2 擷取
 
-使用C++ `CameraInputWithV4L2` 工廠（Python：`camera_input`）將原始傳輸位元組交給應用程式。
-此路徑與上方預設的 libcamera 路徑不同。請指定實際裝置、逐行掃描的 8 位元傳輸格式
-（`GREY`、`BA81`、`GBRG`、`GRBG` 或 `RGGB`）及傳輸尺寸；範例數值並非裝置探索結果。
-
-此後端需要 Linux；在其他平台要求使用時，會明確回報不支援該平台的錯誤。
+兩個後端都使用既有的 `CameraInput(options)`（Python：`camera_input`）。以下範例選擇僅適用於 Linux 的 Metoak SIMOR 原始複製設定檔。請指定實際擷取裝置；`/dev/video1` 僅為範例。其他平台會回報不支援的後端錯誤。
 
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;
 
 n::CameraInputOptions camera;
-camera.width = 1920;
-camera.height = 360;
-camera.format = "RAW8";
-
-n::CameraV4L2Options backend;
-backend.device = "/dev/video1";
-backend.fourcc = "BA81";
-backend.zero_copy = false;
+camera.device = "/dev/video1";
+camera.profile = n::CameraProfile::MetoakSimor;
+camera.zero_copy = false;
 
 n::Graph capture;
-capture.add(n::nodes::CameraInputWithV4L2(camera, backend));
+capture.add(n::nodes::CameraInput(camera));
 capture.add(n::nodes::Output());
 ```
 
@@ -202,13 +192,12 @@ capture.add(n::nodes::Output());
 import pyneat as neat
 
 camera = neat.CameraInputOptions()
-camera.width, camera.height, camera.format = 1920, 360, "RAW8"
-backend = neat.CameraV4L2Options()
-backend.device, backend.fourcc = "/dev/video1", "BA81"
-backend.zero_copy = False
+camera.device = "/dev/video1"
+camera.profile = neat.CameraProfile.MetoakSimor
+camera.zero_copy = False
 
 capture = neat.Graph()
-capture.add(neat.nodes.camera_input(camera, backend))
+capture.add(neat.nodes.camera_input(camera))
 capture.add(neat.nodes.output())
 ```
 
@@ -233,6 +222,16 @@ ROS/SIMOR 的 CPU 解包、校正與 ROS 發布仍由應用程式負責。應用
 送入另一個處理圖中的 `MetoakDepth` graph 20。此擷取 API 不加入 SIMOR 處理，
 也不需要 graph 21、新韌體或修改現有 ROS 整合。
 
-節點仍是 `CameraInput`。獨立的 C++ 工廠名稱保留現有呼叫、未明確指定型別的工廠位址取得方式，以及 `CameraInputOptions` 配置。
-
 啟動時會先準備輸出 caps 和 CPU 緩衝區池，再將相機緩衝區排入佇列。停止時會中斷影格與記憶體池等待，結束擷取後再釋放輸出池。已傳送的張量在停止後仍有效。擷取結束錯誤會透過 GStreamer 匯流排回報，並禁止重新啟動該來源；結束程序不能取代裝置復原。
+
+
+### 後端選擇與相容性
+
+- 未指定新選擇器時，保留既有 libcamera 與 `camera_name` 行為。
+- `profile=MetoakSimor` 選擇 V4L2、`RAW8`、`BA81` 與 1920×360 傳輸尺寸。它取代原有 NV12/1080 預設值；其他衝突格式或尺寸會遭拒絕。此設定檔不代表所有 Metoak 相機。
+- 指定 `device` 並使用 `backend=Auto`、`profile=Auto` 時，從媒體拓撲辨識 SIMOR。SIMOR 設定檔未指定裝置時，必須恰有一個符合的端點。缺少、模糊或混合感測器路徑都會失敗。探索不會開啟擷取裝置；明確指定設定檔和裝置可略過探索。
+- 其他原始相機請指定 `backend=V4L2`、`device`、`format="RAW8"`、傳輸尺寸與 `fourcc`。支援 `GREY`、`BA81`、`GBRG`、`GRBG`、`RGGB`。
+- V4L2 必須明確設定 `zero_copy=false`。libcamera 未設定時保留 `allow_cpu_fallback`；false 允許既有複製回退，true 要求零複製。矛盾設定會失敗。
+- 選擇只在節點建立時執行一次，早於圖的合約傳播。後端失敗時不會切換後端。探索不會設定媒體連結或接腳格式。
+
+`CameraInputWithV4L2` 與 Python 雙參數形式保留為轉送包裝。新程式碼使用 `CameraInput(options)`。擴充選項與節點儲存結構需要 Core C++ ABI 6：請重新建置 C++ 使用端並使用相符的 Python wheel。ABI-5 二進位檔不相容；不要建立 SONAME 相容符號連結。

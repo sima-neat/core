@@ -40,3 +40,41 @@ def test_invalid_camera_options(field, value):
     else:
         with pytest.raises(RuntimeError, match="requires Linux"):
             neat.nodes.camera_input(camera, backend)
+
+
+def test_unified_factory_profile_and_generic_backend():
+    camera, backend = options()
+    camera.device = backend.device
+    camera.backend = neat.CameraBackend.V4L2
+    camera.zero_copy = False
+    camera.fourcc = backend.fourcc
+    profile = neat.CameraInputOptions()
+    profile.device = "/dev/video1"
+    profile.profile = neat.CameraProfile.MetoakSimor
+    profile.zero_copy = False
+    if sys.platform != "linux":
+        for config in (camera, profile):
+            with pytest.raises(RuntimeError, match="requires Linux"):
+                neat.nodes.camera_input(config)
+        return
+    assert neat.nodes.camera_input(camera) is not None
+    assert neat.nodes.camera_input(profile) is not None
+    profile.capture_buffer_count = 12
+    assert neat.nodes.camera_input(profile) is not None
+    profile.zero_copy = True
+    with pytest.raises(ValueError, match="zero_copy=false"):
+        neat.nodes.camera_input(profile)
+    profile.zero_copy = None
+    with pytest.raises(ValueError, match="zero_copy=false"):
+        neat.nodes.camera_input(profile)
+
+
+def test_legacy_zero_copy_policy():
+    config = neat.CameraInputOptions()
+    assert config.zero_copy is None
+    config.zero_copy = False
+    assert neat.nodes.camera_input(config) is not None
+    config.zero_copy = True
+    config.allow_cpu_fallback = True
+    with pytest.raises(ValueError, match="conflicts"):
+        neat.nodes.camera_input(config)

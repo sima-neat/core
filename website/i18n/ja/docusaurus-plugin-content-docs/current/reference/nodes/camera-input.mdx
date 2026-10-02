@@ -6,6 +6,8 @@ sidebar_position: 2
 
 # カメラ入力ノード
 
+以下の libcamera ガイドはデフォルトのバックエンドを説明します。Metoak SIMOR と生テンソルについては、後述の V4L2 セクションを参照してください。
+
 `CameraInput` は、libcamera および GStreamer の `libcamerasrc` を介して公開される MIPI カメラのソースノードです。フレームを `run.push(...)` ではなく、DevKit カメラスタックから取得する必要がある場合、ソースが所有するグラフの先頭で使用します。
 
 タスクガイドについては、[MIPIカメラを使用する](/develop-apps/advanced-concepts/mipi-camera-input) を参照してください。
@@ -116,7 +118,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `queue_depth` | `2` | 。`insert_queue` が true の場合に、キューに格納できる最大バッファー数。|
 | `allow_cpu_fallback` | `false` | `false` の場合、カメラ/デバイスのゼロコピーサポートが必要です。`true` に設定するのは、Neat の SiMaAI メモリへのプライベートなアダプティブブリッジを有効にする場合のみです。|
 
-`capture_buffer_count` は、`CameraInputOptions` のフィールドではなく、`CameraInputWithCaptureBuffers` への引数です。デフォルト値は `0` であり、これによりカメラのパイプライン自身のデフォルトが維持されます。カメラのパイプラインは、その制限を検証します。Neat のプロバイダーは、最大 `128` までをサポートします。
+`capture_buffer_count` は `CameraInputOptions` のフィールドとしても使用できます。0 はバックエンドのデフォルトを維持し、非ゼロ値はキャプチャ数を上書きします。既存の C++ ファクトリーと Python キーワードも使用できます。libcamera の上限は 128、生の V4L2 は 4–128 バッファーです。
 
 ## 入力と出力の契約
 
@@ -170,29 +172,19 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 
 ## 所有権付き raw V4L2 キャプチャ
 
-C++ の `CameraInputWithV4L2` ファクトリー（Python: `camera_input`）で raw ワイヤーバイトをアプリケーションに渡せます。
-これは上記の既定の libcamera 経路とは別です。実際のデバイス、プログレッシブ 8 ビット
-ワイヤー形式（`GREY`、`BA81`、`GBRG`、`GRBG`、`RGGB`）とワイヤー寸法を指定してください。
-以下の値はデバイス検出の結果ではなく設定例です。
-
-このバックエンドは Linux が必要です。他のプラットフォームで要求すると、未対応プラットフォームのエラーが明示的に返されます。
+両方のバックエンドで既存の `CameraInput(options)`（Python: `camera_input`）を使用します。以下は Linux 専用の Metoak SIMOR 生データコピープロファイルです。実際のキャプチャデバイスを指定してください。`/dev/video1` は例です。他のプラットフォームでは未対応エラーになります。
 
 ```cpp
 #include <neat.h>
 namespace n = simaai::neat;
 
 n::CameraInputOptions camera;
-camera.width = 1920;
-camera.height = 360;
-camera.format = "RAW8";
-
-n::CameraV4L2Options backend;
-backend.device = "/dev/video1";
-backend.fourcc = "BA81";
-backend.zero_copy = false;
+camera.device = "/dev/video1";
+camera.profile = n::CameraProfile::MetoakSimor;
+camera.zero_copy = false;
 
 n::Graph capture;
-capture.add(n::nodes::CameraInputWithV4L2(camera, backend));
+capture.add(n::nodes::CameraInput(camera));
 capture.add(n::nodes::Output());
 ```
 
@@ -200,13 +192,12 @@ capture.add(n::nodes::Output());
 import pyneat as neat
 
 camera = neat.CameraInputOptions()
-camera.width, camera.height, camera.format = 1920, 360, "RAW8"
-backend = neat.CameraV4L2Options()
-backend.device, backend.fourcc = "/dev/video1", "BA81"
-backend.zero_copy = False
+camera.device = "/dev/video1"
+camera.profile = neat.CameraProfile.MetoakSimor
+camera.zero_copy = False
 
 capture = neat.Graph()
-capture.add(neat.nodes.camera_input(camera, backend))
+capture.add(neat.nodes.camera_input(camera))
 capture.add(neat.nodes.output())
 ```
 
@@ -234,6 +225,16 @@ ROS/SIMOR の CPU アンパック、キャリブレーション、ROS 配信は�
 元の 6 入力を別の処理グラフの `MetoakDepth` graph 20 に渡せます。この API は SIMOR 処理を追加せず、
 graph 21、新しいファームウェア、既存 ROS 統合の変更を必要としません。
 
-ノードは引き続き `CameraInput` です。別名の C++ ファクトリーにより、既存の呼び出し、型を明示しないファクトリーのアドレス取得、`CameraInputOptions` のレイアウトを維持します。
-
 起動時には、カメラバッファをキューに投入する前に出力 caps と CPU バッファプールを準備します。停止時にはフレームとプールの待機を中断し、キャプチャを終了してから出力プールを解放します。配信済みテンソルは停止後も有効です。キャプチャ終了時のエラーは GStreamer バスに通知され、そのソースの再起動を禁止します。プロセス終了はデバイス復旧の代わりにはなりません。
+
+
+### バックエンドの選択と互換性
+
+- 新しいセレクターを指定しなければ、従来の libcamera と `camera_name` の動作を維持します。
+- `profile=MetoakSimor` は V4L2、`RAW8`、`BA81`、1920×360 の転送形式を選択します。従来の NV12/1080 デフォルトを置き換え、矛盾する他の形式や寸法は拒否します。すべての Metoak カメラを表すプロファイルではありません。
+- `device` を指定し、`backend=Auto`、`profile=Auto` にすると、メディアトポロジーから SIMOR を識別します。SIMOR プロファイルでデバイスを省略した場合、一意のエンドポイントが必要です。不在、曖昧な経路、複数センサーの経路は失敗します。検出中にキャプチャデバイスを開きません。プロファイルとデバイスの明示指定では検出しません。
+- 他の生データカメラでは `backend=V4L2`、`device`、`format="RAW8"`、転送寸法、`fourcc` を指定します。対応値は `GREY`、`BA81`、`GBRG`、`GRBG`、`RGGB` です。
+- V4L2 では `zero_copy=false` が必須です。libcamera では未設定時に `allow_cpu_fallback` を維持し、false は既存のコピーフォールバックを許可、true はゼロコピーを必須にします。矛盾はエラーです。
+- 解決はノード構築時に一度だけ、グラフの契約伝播より前に行います。失敗時に別のバックエンドへ切り替えません。検出はメディアリンクやパッド形式を設定しません。
+
+`CameraInputWithV4L2` と Python の2引数形式は転送ラッパーとして残ります。新規コードは `CameraInput(options)` を使用します。拡張されたオプションとノード領域には Core C++ ABI 6 が必要です。C++ 利用側を再ビルドし、対応する Python wheel を使用してください。ABI-5 バイナリーは非互換です。SONAME 互換シンボリックリンクを作成しないでください。
