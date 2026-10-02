@@ -1,6 +1,6 @@
 ---
 title: "EV74 視覺前端節點"
-description: "針對「功能直方圖」、「格點快速法」、「追蹤描述子」和「追蹤 KLT」功能，提供客戶樣式的 Neat 圖表使用方式。"
+description: "FeatureHistogram、GriderFast、TrackDescriptor、TrackKLT 與 MetoakDepth 的 Neat Graph 用法"
 sidebar_position: 8
 ---
 
@@ -14,12 +14,13 @@ Neat 將 EV74 視覺前端圖表以一般方式呈現。 `Graph` 節點。請使
 | `nodes::GriderFast` / `pyneat.nodes.grider_fast` | `grider_fast` | 236 | 網格分佈的 FAST 特徵 |
 | `nodes::TrackDescriptor` / `pyneat.nodes.track_descriptor` | `track_descriptor` | 237 | 快速特徵加上描述符 |
 | `nodes::TrackKLT` / `pyneat.nodes.track_klt` | `track_klt` | 238 | 金字塔式 KLT 追蹤，可選擇性地包含偵測到的替換特徵 |
+| `nodes::MetoakDepth` | `simor_depth_map` | 20 | 將 I420 與視差轉為 RGB、公制深度及 XYZ |
 
 圖表 ID 對於診斷以及韌體/套件一致性檢查非常有用。它們並非應用程式碼中必需的。
 
 ## 張量收縮
 
-所有張量都使用**邏輯批次形狀**。如果 `batch_size == B`，則灰階影像的形狀為 `[B,H,W]`，而不是 `[B*H,W]`。執行階段會內部處理所有 EV74 傳輸封裝。
+特徵與追蹤張量使用**邏輯批次形狀**。如果 `batch_size == B`，則灰階影像的形狀為 `[B,H,W]`，而不是 `[B*H,W]`。執行階段會內部處理所有 EV74 傳輸封裝。
 
 | 節點 | 輸入 | 公開輸出 |
 | --- | --- | --- |
@@ -124,9 +125,63 @@ output_features Int32   [2,193]
 
 當 `detect_new_features == 0` 啟動時，Neat 只會發布 `output_points` 和 `output_status`；可供 EV 檢視的功能緩衝區仍為內部執行階段設定。
 
+## 六個輸入的 Metoak 深度
+
+`MetoakDepth` 是使用 `simor_depth_map`（圖 20）的 C++ 專用節點。它接收已解碼的 I420 平面、原始視差及每影格校正，而非原始 SIMOR 相機影格。應用程式或 ROS 配接器必須在此節點之前解包 SIMOR 並選擇校正資料；Neat 不會取代該配接器。
+
+使用 `[8,2048]` 內的偶數 `width` 及 `[8,1536]` 內的偶數 `height`。S315 原生深度尺寸為 `640x360`。批次固定為一，不含前導批次維度。保留以下標準路由名稱與輸入順序；別名會在合約編譯時遭拒絕。
+
+| 輸入路由 | 型別 | 形狀 | 意義 |
+| --- | --- | --- | --- |
+| `y_src` | UInt8 | `[H,W]` | I420 Y |
+| `u_src` | UInt8 | `[H/2,W/2]` | I420 U |
+| `v_src` | UInt8 | `[H/2,W/2]` | I420 V |
+| `disp_src` | UInt16 | `[H,W]` | 原始視差；固定次像素倍率 32 |
+| `bf_mm_src` | Float32 | `[1]` | 校正後基線 × 焦距，單位 mm |
+| `proj_src` | Float32 | `[3]` | 投影 `{fx_fy,cx,cy}` |
+
+| 輸出路由 | 型別 | 形狀 | 意義 |
+| --- | --- | --- | --- |
+| `rgb_dst` | UInt8 | `[H,W,3]` | 交錯 RGB |
+| `depth_dst` | UInt16 | `[H,W]` | 深度，單位 mm；0 表示無效 |
+| `points_dst` | Float32 | `[H,W,3]` | 交錯 XYZ，單位公尺；NaN 表示無效 |
+
+三個輸出一律一起發布；`depth_dst` 是主要邊界描述，而非輸出選擇器。校正 BF 與焦距必須為正的有限值，主點座標必須為有限值。
+
+使用與輸入表相符、位於 EV74 記憶體的六個具名張量建立 Graph。此範例設定節點；請從配接器提供實際解碼影格及校正張量。
+
+```cpp
+#include <neat.h>
+
+using namespace simaai::neat;
+
+// inputs contains the six named, decoded EV74 tensors from the table above.
+Run build_metoak_depth(const TensorList& inputs) {
+  Graph graph;
+  InputOptions input;
+  input.payload_type = PayloadType::Tensor;
+  input.memory_policy = InputMemoryPolicy::Ev74;
+  input.caps_override =
+      "application/vnd.simaai.tensor, representation=(string)tensor-set, storage=(string)tensorbuffer";
+  graph.add(nodes::Input(input));
+
+  MetoakDepthOptions depth;
+  depth.width = 640;
+  depth.height = 360;
+  graph.add(nodes::MetoakDepth(depth));
+  graph.add(nodes::Output());
+
+  RunOptions options;
+  options.output_memory = OutputMemory::Owned;
+  return graph.build(inputs, options);
+}
+```
+
+僅在包含圖 20 的相符 Internals 與 EV74 韌體上執行此 Graph。下方特徵/追蹤驗證命令涵蓋其他四個圖，不包含 `MetoakDepth`。
+
 ## Python 表面
 
-Python API 模仿 C++ 的選項/工廠風格，並且刻意設計成分層式：建立一個選項物件，設定公開的組態，然後將節點新增到 `Graph` 中。
+四個特徵/追蹤節點提供符合 C++ 選項/工廠風格的 Python 繫結。`MetoakDepth` 目前沒有 Python 繫結。建立選項物件、設定公開組態，並將節點加入 `Graph`。
 
 ```python
 import numpy as np
@@ -165,7 +220,7 @@ image.layout = pyneat.TensorLayout.HW
 
 ## 安全檢查
 
-這些節點會在 EV（電動車）調度之前驗證圖的邊界。它們會拒絕：
+四個特徵/追蹤節點會在 EV 分派之前驗證圖的邊界。它們會拒絕：
 
 - 非正數的尺寸或數量；
 - 不支援的批次大小；
