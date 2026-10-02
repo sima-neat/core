@@ -1,0 +1,21 @@
+{
+  "format": 1,
+  "source": "neat-core @SIMANEAT_VERSION@",
+  "camera": {
+    "backends": {
+      "accept": ["mipi"],
+      "reason": "CameraInput currently accepts MIPI cameras only; direct V4L2 capture is not supported."
+    },
+    "formats": {
+      "accept": ["NV12"],
+      "reason": "CameraInput's current camera-memory path supports NV12 output only."
+    },
+    "framerates": {
+      "accept": [{"num": 30, "den": 1}],
+      "reason": "This mode does not advertise CameraInput's 30/1 frame rate."
+    },
+    "isp_output": {
+      "reason": "This resolution is not an ISP output size on this board."
+    }
+  }
+}

@@ -1436,6 +1436,20 @@ install(
   COMPONENT dev
 )
 
+# SiMa Sentinel applies these rules to its peripheral catalog, so every
+# client sees which camera modes this Core's CameraInput accepts.
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/peripherals/sentinel-support-rules.json.in
+  ${CMAKE_CURRENT_BINARY_DIR}/sentinel-support-rules.json
+  @ONLY
+)
+install(
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/sentinel-support-rules.json
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/simaai-sentinel/support
+  RENAME neat-core.json
+  COMPONENT core
+)
+
 if (SIMANEAT_BUILDINFO_JSON)
   if (NOT EXISTS "${SIMANEAT_BUILDINFO_JSON}")
     message(FATAL_ERROR "SIMANEAT_BUILDINFO_JSON does not exist: ${SIMANEAT_BUILDINFO_JSON}")
