@@ -2321,6 +2321,11 @@ try:
 
         for consumer, needed, search, no_defaults in consumers:
             for dependency in needed:
+                # The loader treats any slash as a pathname and bypasses its
+                # library search. Reject before family filtering, including
+                # dependencies linked by filename to a DSO without a SONAME.
+                if "/" in dependency:
+                    fail(f"{consumer} has pathname-valued DT_NEEDED {dependency}; relink with a SONAME and a package-relative runtime search path")
                 if not (neat_name.match(dependency) or dependency.split(".so", 1)[0] in families):
                     continue
                 if dependency not in providers:

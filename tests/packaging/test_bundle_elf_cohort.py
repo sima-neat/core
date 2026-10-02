@@ -30,7 +30,8 @@ class BundleCohortTest(unittest.TestCase):
         path = directory / name
         src = directory / "fixture.c"
         src.write_text(source)
-        subprocess.run(["cc", "-shared", "-fPIC", "-nostdlib", f"-Wl,-soname,{soname}",
+        subprocess.run(["cc", "-shared", "-fPIC", "-nostdlib",
+                        *([f"-Wl,-soname,{soname}"] if soname is not None else []),
                         str(src), *map(str, dependencies), *linker_flags,
                         *([f"-Wl,-rpath,{rpath}"] if rpath is not None else []),
                         "-o", str(path)], check=True)
@@ -79,6 +80,32 @@ class BundleCohortTest(unittest.TestCase):
     def test_matching_selected_dependencies(self):
         result = self.check_bundle(*self.pair())
         self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_rejects_absolute_needed_without_soname(self):
+        provider = self.library("libneatabs.so", None, "int value;")
+        consumer = self.library("consumer.so", None,
+                                "extern int value; int result(void) { return value; }", [provider])
+        dynamic = subprocess.check_output(["readelf", "-d", str(consumer)], text=True)
+        self.assertIn(f"[{provider}]", dynamic)
+        result = self.check_bundle(self.package("neat-runtime", payload=[consumer]))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("pathname-valued DT_NEEDED", result.stdout)
+        self.assertIn(str(provider), result.stdout)
+
+    def test_rejects_pathname_needed_before_family_filter(self):
+        for needed in ("relative/libneatfixture.so", "$ORIGIN/libneatfixture.so",
+                       "/usr/lib/libneatfixture.so", "/tmp/libforeignfixture.so"):
+            with self.subTest(needed=needed):
+                provider = self.library("provider.so", needed, "int value;")
+                consumer = self.library("consumer.so", "consumer.so",
+                                        "extern int value; int result(void) { return value; }",
+                                        [provider])
+                dynamic = subprocess.check_output(["readelf", "-d", str(consumer)], text=True)
+                self.assertIn(f"[{needed}]", dynamic)
+                result = self.check_bundle(self.package("neat-runtime", payload=[consumer]))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("pathname-valued DT_NEEDED", result.stdout)
+                self.assertIn(needed, result.stdout)
 
     def split_pair(self, rpath=None, provider_dir="usr/lib/aarch64-linux-gnu/neat/runtime"):
         provider = self.library("libneatdispatchercore.so.0.4.0", "libneatdispatchercore.so.0.4.0",
