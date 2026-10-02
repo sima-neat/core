@@ -116,6 +116,8 @@ parses, packetizes, and sends the stream without re-encoding.
 
 Passthrough creates no encoder. The caller's codec selection must match the encoded input; encoder settings do not apply.
 
+When an RTSP source feeds both this sender and a `SimaDecode`, the default `async=false` lets Core render the sender behind a GStreamer `tee` in the source pipeline, so the source, sender, and decoder start, stop, and fail together. Set `async=true` (`async_` in Python) to keep them in separate pipelines.
+
 H.265 example:
 
 ```cpp

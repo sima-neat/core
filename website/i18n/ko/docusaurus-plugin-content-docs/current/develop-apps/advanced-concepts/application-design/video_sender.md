@@ -97,6 +97,8 @@ MJPEG를 사용하려면 C++에서는 `SimaEncodeType::MJPEG`, Python에서는 `
 
 패스스루는 인코더를 생성하지 않습니다. 호출자가 선택한 코덱은 인코딩된 입력과 일치해야 하며 인코더 설정은 적용되지 않습니다.
 
+RTSP 소스가 이 송신기와 `SimaDecode`에 모두 공급되는 경우, 기본값 `async=false`에서는 Core가 송신기를 소스 파이프라인 안의 GStreamer `tee` 뒤에 배치하므로 소스, 송신기, 디코더가 함께 시작, 중지, 실패합니다. 별도의 파이프라인으로 유지하려면 `async=true`(Python에서는 `async_`)를 설정합니다.
+
 H.265 예시:
 
 ```cpp
