@@ -64,6 +64,31 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  documentation-localization:
+    name: Validate Documentation Localization
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install pinned i18n tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://artifacts.neat.sima.ai/i18n/main/ed10d3899a75/sima-neat-i18n-0.1.0-branch.main.ed10d3899a75.tgz \
+            -o "${RUNNER_TEMP}/sima-i18n.tgz"
+          echo "ec5a0158c4187414600e49b6891737bd663dd80823a082aa01e927c0518ae602  ${RUNNER_TEMP}/sima-i18n.tgz" | sha256sum --check --strict
+          npm install --global --ignore-scripts "${RUNNER_TEMP}/sima-i18n.tgz"
+          sima-i18n --version
+
+      - name: Validate committed translations
+        run: bash scripts/ci/check_documentation_localization.sh
+
   resolve-vulcan-config:
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
@@ -102,6 +127,7 @@ jobs:
             tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_cpp_tidy_scope.py \
             tests/tools/test_vulcan_ci_notification.py
 
       - name: Resolve cache namespace and access
@@ -193,7 +219,6 @@ jobs:
       - name: Install code hygiene tools
         run: |
           ./scripts/ci/install_code_hygiene_deps.sh
-          ./build.sh --install-deps-only
 
       - name: Verify host C++ headers for clang-tidy
         run: |
@@ -203,6 +228,7 @@ jobs:
       - name: Run changed-code hygiene
         env:
           SIMANEAT_STRICT_WARNINGS: "ON"
+          TIDY_INSTALL_DEPS: "1"
         run: |
           ./scripts/ci/run_code_hygiene.sh --changed-only --format-verbose
 

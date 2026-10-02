@@ -20,6 +20,26 @@ Neat 애플리케이션을 빌드하거나 실행하는 환경에서 설치 프�
 | ROS2 SDK | 컨테이너의 시스템 경로에 설치된 Neat 헤더 및 라이브러리를 사용하여 ARM64에서 ROS 2 애플리케이션을 네이티브로 컴파일하려는 경우. |
 | DevKit | 장치에 런타임을 직접 설치하거나 업데이트하려는 경우. |
 
+## C++ 개발 패키지
+
+최소 설치에는 런타임과 `sima-neat-dev`가 포함됩니다. 기본 설치에서는 튜토리얼과 테스트를 선택적 추가 항목으로 제공하며 `all`은 이를 포함합니다. 공유 라이브러리 앱에는 Core 공개 헤더와 GStreamer, OpenCV, JSON 개발 파일이 필요합니다. Internals, memory-library, heap, LLiMa 개발 패키지는 필요하지 않지만 런타임 라이브러리는 계속 필요합니다.
+
+설치된 공유 타깃을 사용합니다.
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
+```
+
+정적 아카이브는 `sima-neat-dev`에 계속 포함됩니다. 기존 정적 소비자는 `COMPONENTS Static`을 추가하고 호환되는 `neat-internals-dev`, `simaai-memory-lib-dev`, `zlib1g-dev`를 준비해야 합니다. LLiMa를 활성화한 빌드에는 `sima-lmm-dev`, `libcpp-httplib-dev`와 해당 종속성도 필요합니다.
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
+```
+
+정적 Core도 공유 구현 라이브러리를 사용합니다. 소스에서 Core를 빌드할 때도 구현 개발 패키지가 필요합니다.
+
 ## 필수 조건
 
 Neat Library를 설치할 환경에 `sima-cli`를 설치합니다.
@@ -102,6 +122,8 @@ cd /media/nvme && mkdir -p neat && cd neat
 <ShellCommand prompt="modalix">
 sima-cli neat install core@v0.2.2
 </ShellCommand>
+
+설치 프로그램이 `sima`를 `i2c` 그룹에 추가하면 DevKit에서 로그아웃하고 다시 연결한 뒤 벤치마크를 실행해야 새 그룹 소속이 적용됩니다.
 
 </CodeTab>
 </CodeTabs>

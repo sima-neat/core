@@ -275,13 +275,21 @@ preview = run.pull("preview", timeout_ms=2000)
 | 常見應用程式服務 | `RunPreset::Balanced` | 圖正常運作後，這是一個很好的預設值。 |
 | 抖動的來源需要有界緩衝 | `queue_depth` | 僅增加到足以吸收抖動。深度佇列可能會隱藏過時的影格和延遲的反壓。 |
 | 應用程式在拉取後儲存輸出 | `OutputMemory::Owned` | 使輸出生命週期與執行階段緩衝區無關。 |
-| 應用程式立即使用輸出 | `OutputMemory::Auto` | 讓 Neat 首先選擇正確的擁有權路徑。 |
+| 應用程式使用輸出時不進行傳輸複製 | `OutputMemory::Auto` | 同步與非同步執行均保留標準 DMA-BUF 輸出；其他儲存方式依預設組態／模式原則處理。 |
 | 預設等待時間應明確 | `input_timeout_ms` | 設定用於建立/執行輸入模式路徑的預設逾時。每次呼叫的逾時仍然優先。 |
 | 啟動時的建立應該及早捕獲第一個樣本的錯誤 | `startup_preflight = true` | 使啟動時的建立保持誠實。僅在第一個樣本的失敗可以稍後通過 `pull(...)` 或 `last_error()` 顯示時才禁用。 |
 | 來源緩衝區的生命週期很短 | `advanced.copy_input = true` | 保護輸入記憶體，該記憶體可能在 `push(...)` 之後消失。 |
 | 輸入大小需要一個保護欄 | `advanced.max_input_bytes` | 在輸入進入圖之前，拒絕過大的輸入。 |
 | 您需要丟棄遙測 | `on_input_drop` | 依資料流和原因計算超載和大小保護欄的丟棄次數。 |
 | 您需要建立時的證據 | `run_export` | 在建立執行時，寫入執行快照。 |
+
+### 保留與釋放 DMA-BUF 輸出
+
+原生硬體解碼會直接寫入 DMA-BUF 集區。預設的檔案輸入路徑會保留此儲存空間：它不會暗中插入 `videoconvert` 或要求 SystemMemory。裝置使用端會匯入該配置，`Tensor::map(MapMode::Read)` 則會對映它供應用程式讀取，無需複製像素。前處理作業可能產生另一個結果配置；這是計算，而非傳輸複製。
+
+使用 `OutputMemory::Auto` 或 `ZeroCopy` 時，保留的 DMA-BUF 輸出會持有集區借用權。即使您釋放 Tensor，`Mapping` 仍會保留其借用權。讀取完成後請釋放兩者，讓生產端能重複使用緩衝區。佇列壓力不會讓 DMA-BUF 輸出改成複製，也不會暗中將 `Block` 改成丟棄；明確的最新影格／丟棄原則仍然適用。
+
+需要獨立儲存空間時，請使用 `OutputMemory::Owned` 或 `clone()`。明確的軟體轉換與 `advanced.copy_input` 仍是複製邊界。`SIMA_OUTPUT_MEMORY_DEFAULT=owned` 會刻意替 `Auto` 選擇自有輸出；它不會覆寫每次執行的明確選擇。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

@@ -21,6 +21,15 @@ def job_block(name: str) -> str:
 
 
 class VulcanCiDocsOnlyTests(unittest.TestCase):
+    def test_localization_runs_independently_of_docs_only_detection(self) -> None:
+        localization = job_block("documentation-localization")
+
+        self.assertNotIn("needs:", localization)
+        self.assertNotIn("if:", localization)
+        self.assertIn(
+            "run: bash scripts/ci/check_documentation_localization.sh", localization
+        )
+
     def test_protected_branch_pushes_are_never_docs_only(self) -> None:
         detect = job_block("detect-changes")
 

@@ -89,6 +89,26 @@ run.close();
 
 Оберіть політику, яка відповідає джерелу. Для обробки окремих файлів і пакетних завдань зазвичай потрібна політика `Block`. Для прямих трансляцій зазвичай потрібна політика, що забезпечує актуальність даних.
 
+## Вбудовані черги
+
+`RunOptions::overflow_policy` керує чергою на вході `Run`. Щоб керувати чергою між вузлами графа, додайте налаштований `Queue`:
+
+```cpp
+simaai::neat::QueueOptions queue;
+queue.max_buffers = 1;
+queue.overflow_policy = simaai::neat::OverflowPolicy::KeepLatest;
+graph.add(simaai::neat::nodes::Queue(queue));
+```
+
+```python
+queue = pyneat.QueueOptions()
+queue.max_buffers = 1
+queue.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+graph.add(pyneat.nodes.queue(queue))
+```
+
+Залиште `max_buffers` невстановленим, щоб використовувати стандартні обмеження черги. Додатне значення робить кількість буферів єдиним обмеженням місткості. `Block` очікує на вільне місце, `KeepLatest` відкидає найстаріший буфер у черзі, а `DropIncoming` відкидає новий буфер.
+
 ## Зменшити кут випередження запалювання.
 
 `Run::pull(...)` повертає наступний доступний `Sample` з вихідної межі.

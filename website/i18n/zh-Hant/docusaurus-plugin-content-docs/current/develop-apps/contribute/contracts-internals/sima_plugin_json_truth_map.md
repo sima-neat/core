@@ -11,7 +11,7 @@ _快照日期: 2026-02-17_
 
 本檔案保留 2026 年 2 月模型管線 SIMA 階段的 JSON 欄位使用調查結果。下文提及的「目前」行為均指該快照當時的狀態。
 
-> **歷史合約：** 下列外掛程式名稱與必要 JSON 欄位並非 Platform 3.0.0 的部署合約。通用 BoxDecode 目前使用 `neatobjectdecode`，透過具型別的資訊清單階段與執行階段屬性進行設定。下列舊版 `simaaiboxdecode` 要求不代表應用程式端的設定要求。現行設定與相容套件要求請參閱 [SIMA 靜態資訊清單內容合約](../start-here/architecture.md)。
+> **歷史合約：** 下列外掛程式名稱與必要 JSON 欄位並非 Platform 3.0.0 的部署合約。通用 BoxDecode 目前使用 `neatobjectdecode`，透過具型別的資訊清單階段與執行階段屬性進行設定。下列舊版 `simaaiboxdecode` 要求不代表應用程式端的設定要求。現行設定與相容套件要求請參閱 [SIMA 靜態資訊清單內容合約](../start-here/architecture.md#sima-static-manifest-context-contract)。
 
 ## 1. 確定範圍和外掛程式矩陣
 
