@@ -139,6 +139,14 @@ CAMERA_INPUT_OPTION_FIELDS = (
     "leaky_queue",
     "queue_depth",
     "allow_cpu_fallback",
+    "device",
+    "backend",
+    "profile",
+    "zero_copy",
+    "fourcc",
+    "output_buffer_count",
+    "frame_timeout_ms",
+    "capture_buffer_count",
 )
 
 
@@ -539,7 +547,14 @@ def test_camera_input_surface_is_exposed():
   opt = pyneat.CameraInputOptions()
   for field in CAMERA_INPUT_OPTION_FIELDS:
     assert hasattr(opt, field), field
-  assert not hasattr(opt, "capture_buffer_count")
+  assert opt.device == ""
+  assert opt.backend == pyneat.CameraBackend.Auto
+  assert opt.profile == pyneat.CameraProfile.Auto
+  assert opt.zero_copy is None
+  assert opt.fourcc == "GREY"
+  assert opt.output_buffer_count == 8
+  assert opt.frame_timeout_ms == 2000
+  assert opt.capture_buffer_count == 0
 
   opt.camera_name = "imx477 5-001a"
   opt.width = 1280
@@ -568,6 +583,13 @@ def test_camera_input_surface_is_exposed():
   assert node.input_role() == pyneat.InputRole.Source
   with pytest.raises(ValueError, match="128-buffer provider limit"):
     pyneat.nodes.camera_input(opt, capture_buffer_count=129)
+
+  # The shared options field and the legacy keyword use the same validation.
+  opt.capture_buffer_count = 16
+  assert isinstance(pyneat.nodes.camera_input(opt), pyneat.Node)
+  opt.capture_buffer_count = 129
+  with pytest.raises(ValueError, match="128-buffer provider limit"):
+    pyneat.nodes.camera_input(opt)
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
