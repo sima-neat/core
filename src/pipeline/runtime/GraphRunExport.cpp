@@ -20,6 +20,7 @@
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/internal/Diagnostics.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/runtime/CustomerGraphView.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/ExecutionGraphRuntime.h"
@@ -822,14 +823,18 @@ json graph_topology_to_json(const runtime::RunCore& core) {
                        std::to_string(static_cast<std::size_t>(id));
       n["backend"] = "pipeline";
       n["segment"] = segment.id;
-      n["segment_local_index"] = local;
+      std::size_t node_index = 0;
+      while (node_index < segment.nodes.size() &&
+             runtime::attributed_runtime_node_for_segment_node(segment, node_index) != id)
+        ++node_index;
+      n["segment_local_index"] = node_index;
       if (id < plan.node_labels.size()) {
         n["label"] = plan.node_labels[id];
       }
-      if (local < segment.nodes.size() && segment.nodes[local]) {
-        n["kind"] = segment.nodes[local]->kind();
-        n["user_label"] = segment.nodes[local]->user_label();
-        attach_node_identity_blocks(n, segment.nodes[local]);
+      if (node_index < segment.nodes.size() && segment.nodes[node_index]) {
+        n["kind"] = segment.nodes[node_index]->kind();
+        n["user_label"] = segment.nodes[node_index]->user_label();
+        attach_node_identity_blocks(n, segment.nodes[node_index]);
       } else {
         n["kind"] = "PipelineNode";
       }
@@ -1447,6 +1452,15 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
 }
 
 } // namespace
+
+namespace session_test {
+std::string export_graph_topology_for_test(const runtime::ExecutionGraphPlan& plan) {
+  runtime::RunCore core;
+  core.closed.store(true, std::memory_order_release);
+  core.graph_export_plan_ = std::make_unique<runtime::ExecutionGraphPlan>(plan);
+  return graph_topology_to_json(core).dump();
+}
+} // namespace session_test
 
 std::string run_to_json(const Run& run, const RunExportOptions& opt, std::string* err) {
   try {

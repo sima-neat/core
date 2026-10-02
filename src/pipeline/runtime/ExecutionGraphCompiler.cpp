@@ -2549,8 +2549,8 @@ void fuse_encoded_video_sender_fanouts(const graph::Graph& graph, ExecutionGraph
       for (std::size_t i = 0; i < segment.nodes.size(); ++i) {
         nodes.push_back(segment.nodes[i]);
         Provenance p = i < segment.provenance.size() ? segment.provenance[i] : Provenance{};
-        if (p.runtime_node == graph::kInvalidNode && i < segment.node_ids.size()) {
-          p.runtime_node = segment.node_ids[i];
+        if (p.runtime_node == graph::kInvalidNode) {
+          p.runtime_node = attributed_runtime_node_for_segment_node(segment, i);
         }
         p.segment_id = main->id;
         provenance.push_back(std::move(p));

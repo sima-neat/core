@@ -30,7 +30,10 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
+#include <set>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -1675,6 +1678,26 @@ RUN_TEST(
                   (*(tee_it + 1))->kind() == "SimaDecode" &&
                   default_merged->provenance.size() == default_merged->nodes.size(),
               "the encoded tee must sit between the RTSP source and SimaDecode");
+      const auto topology = nlohmann::json::parse(
+          simaai::neat::session_test::export_graph_topology_for_test(default_video_plan));
+      const auto decoder_index =
+          static_cast<std::size_t>(tee_it + 1 - default_merged->nodes.begin());
+      const auto decoder_id = default_merged->provenance[decoder_index].runtime_node;
+      for (const auto* view : {&topology, &topology.at("lowered_view")}) {
+        std::set<std::string> exported_ids;
+        bool found_decoder = false;
+        for (const auto& node : view->at("nodes")) {
+          require(exported_ids.insert(node.at("id").get<std::string>()).second,
+                  "encoded tee export duplicated a runtime node identity");
+          if (node.at("id") == "n" + std::to_string(decoder_id)) {
+            require(
+                node.at("kind") == "SimaDecode" && node.at("segment_local_index") == decoder_index,
+                "encoded tee export assigned the source identity to the decoder: " + node.dump());
+            found_decoder = true;
+          }
+        }
+        require(found_decoder, "encoded tee export omitted the decoder identity");
+      }
       const std::string tee_fragment = (*tee_it)->backend_fragment(3);
       const std::string main_queue_tail = " n3_encoded_tee. ! queue name=n3_encoded_tee_main_queue "
                                           "max-size-buffers=1 max-size-bytes=0 max-size-time=0";
