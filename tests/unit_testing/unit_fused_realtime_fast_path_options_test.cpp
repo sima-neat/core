@@ -1606,6 +1606,101 @@ RUN_TEST(
                   [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); }),
               "an async VideoSender UDP sink must keep realtime fan-in segmented");
 
+      // A Default decoder link needs no realtime mux: a synchronous encoded VideoSender
+      // branch is rendered behind a tee in the source/decoder pipeline (#985).
+      const auto compile_default_video_app = [&](bool video_async, bool decoder_stream_id) {
+        simaai::neat::Graph app("default_link_encoded_video_app", outer_options);
+        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+        source_options.url = "rtsp://example.test/default-link";
+        source_options.insert_queue = false;
+        source_options.auto_caps_from_stream = false;
+        source_options.h264_fps = 20;
+        source_options.h264_width = 1280;
+        source_options.h264_height = 720;
+        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+        simaai::neat::Graph decoder("default_link_decoder");
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        simaai::neat::Graph consumer("default_link_consumer");
+        consumer.add(simaai::neat::nodes::Output("default_link_frames"));
+        simaai::neat::GraphLinkOptions decoder_link;
+        if (decoder_stream_id) {
+          decoder_link.stream_id = "default_link_stream";
+        }
+        app.connect(source, decoder, decoder_link);
+        app.connect(decoder, consumer);
+        auto video_options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+            simaai::neat::nodes::groups::RtspCodec::H264);
+        video_options.host = "127.0.0.1";
+        video_options.async = video_async;
+        app.connect(source, simaai::neat::nodes::groups::VideoSender(video_options));
+        return simaai::neat::runtime::compile_public_graph(app, composed_run_options);
+      };
+      const auto find_encoded_tee = [](const auto& plan) -> const simaai::neat::Node* {
+        for (const auto& segment : plan.pipeline_segments) {
+          if (segment.consumed_by_fused_realtime_ingress) {
+            continue;
+          }
+          for (const auto& node : segment.nodes) {
+            if (node && node->kind() == "EncodedVideoSenderTee") {
+              return node.get();
+            }
+          }
+        }
+        return nullptr;
+      };
+      const auto has_open_fanout = [](const auto& plan) {
+        return std::any_of(plan.stage_nodes.begin(), plan.stage_nodes.end(), [](const auto& st) {
+          return st.node && st.node->kind() == "FanOut" && !st.consumed_by_fused_realtime_ingress;
+        });
+      };
+
+      const auto default_video_plan = compile_default_video_app(false, false);
+      std::size_t default_open_segments = 0;
+      const simaai::neat::runtime::PipelineSegmentPlan* default_merged = nullptr;
+      for (const auto& segment : default_video_plan.pipeline_segments) {
+        if (!segment.consumed_by_fused_realtime_ingress) {
+          ++default_open_segments;
+          default_merged = &segment;
+        }
+      }
+      require(default_open_segments == 1U && default_merged != nullptr &&
+                  default_merged->boundary.source_like && default_merged->input_edges.empty() &&
+                  !default_merged->fused_realtime_ingress.has_value() &&
+                  !has_open_fanout(default_video_plan),
+              "a Default-link encoded VideoSender fan-out must become one source pipeline");
+      const auto tee_it =
+          std::find_if(default_merged->nodes.begin(), default_merged->nodes.end(),
+                       [](const auto& node) { return node->kind() == "EncodedVideoSenderTee"; });
+      require(tee_it != default_merged->nodes.end() && tee_it + 1 != default_merged->nodes.end() &&
+                  (*(tee_it + 1))->kind() == "SimaDecode" &&
+                  default_merged->provenance.size() == default_merged->nodes.size(),
+              "the encoded tee must sit between the RTSP source and SimaDecode");
+      const std::string tee_fragment = (*tee_it)->backend_fragment(3);
+      const std::string main_queue_tail = " n3_encoded_tee. ! queue name=n3_encoded_tee_main_queue "
+                                          "max-size-buffers=1 max-size-bytes=0 max-size-time=0";
+      require(tee_fragment.rfind("tee name=n3_encoded_tee n3_encoded_tee. ! queue", 0) == 0 &&
+                  tee_fragment.find("h264parse") != std::string::npos &&
+                  tee_fragment.find("udpsink") != std::string::npos &&
+                  tee_fragment.find("leaky") == std::string::npos &&
+                  tee_fragment.size() > main_queue_tail.size() &&
+                  tee_fragment.compare(tee_fragment.size() - main_queue_tail.size(),
+                                       main_queue_tail.size(), main_queue_tail) == 0,
+              "the encoded tee must render a terminal sender branch and a lossless main queue");
+      const auto default_frames = default_video_plan.named_outputs.find("default_link_frames");
+      require(default_frames != default_video_plan.named_outputs.end() &&
+                  default_video_plan.output_endpoints.size() == 1U,
+              "the merged pipeline must keep only the consumer Output endpoint");
+
+      require(find_encoded_tee(compile_default_video_app(true, false)) == nullptr &&
+                  has_open_fanout(compile_default_video_app(true, false)),
+              "an async VideoSender must keep the Default-link FanOut");
+      require(find_encoded_tee(compile_default_video_app(false, true)) == nullptr,
+              "a stream id on the decoder link must keep the FanOut");
+      setenv("SIMA_GRAPH_DISABLE_ENCODED_TEE", "1", 1);
+      const bool disabled_has_tee = find_encoded_tee(compile_default_video_app(false, false));
+      unsetenv("SIMA_GRAPH_DISABLE_ENCODED_TEE");
+      require(!disabled_has_tee, "SIMA_GRAPH_DISABLE_ENCODED_TEE must restore the FanOut");
+
       // Kind-based recognition must preserve a customer-configured parser's
       // caps/header behavior exactly.
       simaai::neat::Graph custom_video_app("custom_encoded_video_fused_app", outer_options);
