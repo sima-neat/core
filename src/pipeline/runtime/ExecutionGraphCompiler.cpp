@@ -1912,6 +1912,20 @@ std::optional<SimaDecodeType> encoded_video_sender_codec(const PipelineSegmentPl
   return std::nullopt;
 }
 
+std::optional<SimaDecodeType> encoded_source_codec(const PipelineSegmentPlan& source) {
+  if (std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
+        return dynamic_cast<const simaai::neat::H264Depacketize*>(node.get()) != nullptr;
+      })) {
+    return SimaDecodeType::H264;
+  }
+  if (std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
+        return dynamic_cast<const simaai::neat::H265Depacketize*>(node.get()) != nullptr;
+      })) {
+    return SimaDecodeType::H265;
+  }
+  return std::nullopt;
+}
+
 std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
     const ExecutionGraphPlan& plan,
     const std::unordered_map<graph::NodeId, std::size_t>& segment_by_node,
@@ -2004,20 +2018,7 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
   if (!segment_is_private_live_source_for_fusion(source, source_to_fanout_edge)) {
     return std::nullopt;
   }
-  const auto source_codec = [&source]() -> std::optional<SimaDecodeType> {
-    if (std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
-          return dynamic_cast<const simaai::neat::H264Depacketize*>(node.get()) != nullptr;
-        })) {
-      return SimaDecodeType::H264;
-    }
-    if (std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
-          return dynamic_cast<const simaai::neat::H265Depacketize*>(node.get()) != nullptr;
-        })) {
-      return SimaDecodeType::H265;
-    }
-    return std::nullopt;
-  }();
-  if (source_codec != decoder_codec) {
+  if (encoded_source_codec(source) != decoder_codec) {
     return std::nullopt;
   }
 
@@ -2178,7 +2179,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
   for (std::size_t target_index = 0; target_index < plan->pipeline_segments.size();
        ++target_index) {
     auto& target = plan->pipeline_segments[target_index];
-    if (target.input_edges.empty() || target.boundary.source_like ||
+    if (target.input_edges.size() <= 1U || target.boundary.source_like ||
         target.fused_realtime_ingress.has_value()) {
       continue;
     }
@@ -2411,6 +2412,177 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
   }
 
   resolve_default_endpoints(graph, plan);
+}
+
+// Renders `tee` with a terminal encoded VideoSender branch; the next node continues from the
+// tee's lossless main queue.
+class EncodedVideoSenderTee final : public simaai::neat::Node {
+public:
+  EncodedVideoSenderTee(std::vector<std::shared_ptr<simaai::neat::Node>> sink_nodes,
+                        bool leaky_sink)
+      : sink_nodes_(std::move(sink_nodes)), leaky_sink_(leaky_sink) {}
+
+  std::string kind() const override {
+    return "EncodedVideoSenderTee";
+  }
+  NodeCapsBehavior caps_behavior() const override {
+    return NodeCapsBehavior::Dynamic;
+  }
+  std::string backend_fragment(int node_index) const override {
+    const auto names = own_names(node_index);
+    std::string out = "tee name=" + names[0] + " " + names[0] + ". ! queue name=" + names[1] +
+                      kOneBuffer + (leaky_sink_ ? " leaky=downstream" : "");
+    for (std::size_t i = 0; i < sink_nodes_.size(); ++i) {
+      out += " ! " + sink_nodes_[i]->backend_fragment(sink_index(node_index, i));
+    }
+    return out + " " + names[0] + ". ! queue name=" + names[2] + kOneBuffer;
+  }
+  std::vector<std::string> element_names(int node_index) const override {
+    auto names = own_names(node_index);
+    for (std::size_t i = 0; i < sink_nodes_.size(); ++i) {
+      const auto sink_names = sink_nodes_[i]->element_names(sink_index(node_index, i));
+      names.insert(names.end(), sink_names.begin(), sink_names.end());
+    }
+    return names;
+  }
+
+private:
+  static constexpr const char* kOneBuffer = " max-size-buffers=1 max-size-bytes=0 max-size-time=0";
+
+  static std::vector<std::string> own_names(int node_index) {
+    const std::string tee = "n" + std::to_string(node_index) + "_encoded_tee";
+    return {tee, tee + "_sink_queue", tee + "_main_queue"};
+  }
+  // Nested sink nodes need element names distinct from the segment's own node indices.
+  static int sink_index(int node_index, std::size_t i) {
+    return (node_index + 1) * 1000 + static_cast<int>(i);
+  }
+
+  std::vector<std::shared_ptr<simaai::neat::Node>> sink_nodes_;
+  bool leaky_sink_ = false;
+};
+
+// Lowers live RTSP source -> generated FanOut -> {SimaDecode chain, async=false encoded
+// VideoSender} into one source pipeline with a tee, whatever link follows the decoder.
+// Runs after realtime fusion and only claims FanOuts that fusion left segmented.
+void fuse_encoded_video_sender_fanouts(const graph::Graph& graph, ExecutionGraphPlan* plan) {
+  if (!plan || pipeline_internal::env_bool("SIMA_GRAPH_DISABLE_ENCODED_TEE", false)) {
+    return;
+  }
+  std::unordered_map<graph::NodeId, std::size_t> segment_by_node;
+  for (std::size_t i = 0; i < plan->pipeline_segments.size(); ++i) {
+    for (graph::NodeId node : plan->pipeline_segments[i].node_ids) {
+      segment_by_node[node] = i;
+    }
+  }
+  const auto open_segment = [&](graph::NodeId node) -> PipelineSegmentPlan* {
+    const auto it = segment_by_node.find(node);
+    if (it == segment_by_node.end()) {
+      return nullptr;
+    }
+    auto& segment = plan->pipeline_segments[it->second];
+    return segment.consumed_by_fused_realtime_ingress || segment.fused_realtime_ingress.has_value()
+               ? nullptr
+               : &segment;
+  };
+
+  bool fused_any = false;
+  for (auto& stage : plan->stage_nodes) {
+    if (stage.consumed_by_fused_realtime_ingress || !stage.node || stage.node->kind() != "FanOut" ||
+        !is_generated_fanout_node(*plan, stage.node_id)) {
+      continue;
+    }
+    std::vector<std::size_t> inputs;
+    std::vector<std::size_t> outputs;
+    for (std::size_t i = 0; i < plan->edges.size(); ++i) {
+      if (plan->edges[i].consumed_by_fused_realtime_ingress) {
+        continue;
+      }
+      if (plan->edges[i].to == stage.node_id) {
+        inputs.push_back(i);
+      }
+      if (plan->edges[i].from == stage.node_id) {
+        outputs.push_back(i);
+      }
+    }
+    if (inputs.size() != 1U || outputs.size() != 2U) {
+      continue;
+    }
+    PipelineSegmentPlan* source = open_segment(plan->edges[inputs.front()].from);
+    if (!source || !segment_is_private_live_source_for_fusion(*source, inputs.front())) {
+      continue;
+    }
+    const auto codec = encoded_source_codec(*source);
+    if (!codec.has_value()) {
+      continue;
+    }
+
+    PipelineSegmentPlan* video = nullptr;
+    PipelineSegmentPlan* main = nullptr;
+    std::size_t video_edge = 0;
+    for (const std::size_t edge_index : outputs) {
+      const auto& edge = plan->edges[edge_index];
+      PipelineSegmentPlan* branch = open_segment(edge.to);
+      if (!branch || branch->input_edges.size() != 1U ||
+          branch->input_edges.front() != edge_index) {
+        continue;
+      }
+      const auto* decoder =
+          branch->nodes.empty()
+              ? nullptr
+              : dynamic_cast<const simaai::neat::SimaDecode*>(branch->nodes.front().get());
+      if (!video && branch->output_edges.empty() && encoded_video_sender_codec(*branch) == codec) {
+        video = branch;
+        video_edge = edge_index;
+      } else if (!main && decoder && decoder->options().type == *codec &&
+                 exact_default_link(edge.link_options) && edge.stream_id.empty()) {
+        main = branch;
+      }
+    }
+    if (!video || !main) {
+      continue;
+    }
+
+    std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
+    std::vector<Provenance> provenance;
+    const auto append = [&](const PipelineSegmentPlan& segment) {
+      for (std::size_t i = 0; i < segment.nodes.size(); ++i) {
+        nodes.push_back(segment.nodes[i]);
+        Provenance p = i < segment.provenance.size() ? segment.provenance[i] : Provenance{};
+        if (p.runtime_node == graph::kInvalidNode && i < segment.node_ids.size()) {
+          p.runtime_node = segment.node_ids[i];
+        }
+        p.segment_id = main->id;
+        provenance.push_back(std::move(p));
+      }
+    };
+    append(*source);
+    nodes.push_back(std::make_shared<EncodedVideoSenderTee>(
+        video->nodes, realtime_latest_link(plan->edges[video_edge].link_options)));
+    Provenance tee_provenance;
+    tee_provenance.runtime_node = stage.node_id;
+    tee_provenance.segment_id = main->id;
+    provenance.push_back(std::move(tee_provenance));
+    append(*main);
+
+    main->nodes = std::move(nodes);
+    main->provenance = std::move(provenance);
+    main->input_edges.clear();
+    main->boundary.source_like = true;
+    main->boundary.needs_input = false;
+    main->boundary.direct_graph_source = false;
+    source->consumed_by_fused_realtime_ingress = true;
+    video->consumed_by_fused_realtime_ingress = true;
+    stage.consumed_by_fused_realtime_ingress = true;
+    plan->edges[inputs.front()].consumed_by_fused_realtime_ingress = true;
+    for (const std::size_t edge_index : outputs) {
+      plan->edges[edge_index].consumed_by_fused_realtime_ingress = true;
+    }
+    fused_any = true;
+  }
+  if (fused_any) {
+    resolve_default_endpoints(graph, plan);
+  }
 }
 
 void validate_routable_pcie_source_outputs(const ExecutionGraphPlan& plan) {
@@ -3093,12 +3265,6 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
         lowering.runtime_node_for_vertex, normalized, view.vertices.size());
     const auto lower_us = pipeline_internal::build_timing_us(lower_start);
 
-    for (const auto& edge : lowering.lowered_edges) {
-      if (!exact_default_link(edge.link_options) || !edge.stream_id.empty()) {
-        compile_opt.pipeline_entry_nodes.insert(edge.to);
-      }
-    }
-
     const auto compile_start = pipeline_internal::build_timing_now();
     ExecutionGraphPlan plan = compile_runtime_graph(lowering.graph, compile_opt);
     const auto compile_us = pipeline_internal::build_timing_us(compile_start);
@@ -3118,6 +3284,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     // Fusion is an execution-plan lowering, not a public build mode. Eligible live
     // fan-in is fused automatically; ineligible topology remains segmented.
     fuse_realtime_fan_in_segments(lowering.graph, &plan);
+    fuse_encoded_video_sender_fanouts(lowering.graph, &plan);
     validate_routable_pcie_source_outputs(plan);
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,
                                view.named_fragments, &plan);
@@ -3206,7 +3373,7 @@ ExecutionGraphPlan compile_runtime_graph(const graph::Graph& graph,
       compiler_opt.root_input_specs.emplace(id, *opt.root_input_spec);
     }
   }
-  graph::CompiledGraph compiled = compiler.compile(graph, compiler_opt, opt.pipeline_entry_nodes);
+  graph::CompiledGraph compiled = compiler.compile(graph, compiler_opt);
   return build_execution_plan_from_compiled(graph, compiled, opt);
 }
 

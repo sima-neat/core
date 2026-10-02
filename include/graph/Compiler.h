@@ -14,7 +14,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace simaai::neat::graph {
@@ -110,9 +109,6 @@ public:
   CompiledGraph compile(const Graph& g) const;
   /// Compile with build-local root input context.
   CompiledGraph compile(const Graph& g, const CompilerOptions& opt) const;
-  /// Preserve incoming boundaries needed by runtime edge policies.
-  CompiledGraph compile(const Graph& g, const CompilerOptions& opt,
-                        const std::unordered_set<NodeId>& pipeline_entry_nodes) const;
 
 private:
   static bool spec_complete_(const OutputSpec& spec);

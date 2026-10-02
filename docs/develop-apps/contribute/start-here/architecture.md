@@ -849,16 +849,11 @@ optional raw-frame admission limits. Latest-by-stream lowering always keeps one
 pending sample per stream.
 
 The execution-graph compiler, not the application, decides whether live
-single-source links or multi-source fan-in can be fused into one GStreamer pipeline. Eligible private,
+multi-source fan-in can be fused into one GStreamer pipeline. Eligible private,
 inputless source branches are lowered with their by-stream mux and consumer so
 decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
 latest-by-stream topology remains segmented. Nested already-fused source
 segments remain ineligible until their branches can be preserved recursively.
-
-Explicit edge policies and stream identities preserve their runtime boundary
-until policy lowering. Unlabelled default links can still merge into one
-segment. Internal outputs use the existing run overflow policy and RTSP/zero-copy
-safeguards. Explicit public outputs retain their own queue contract.
 
 ### Internal boundary timing
 

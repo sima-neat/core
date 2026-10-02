@@ -64,8 +64,10 @@ public:
   std::string host = "127.0.0.1";
   int channel = 0;
   int video_port_base = 9000;
-  bool sync = false;  ///< Wait for packet timestamps against the pipeline clock.
-  bool async = false; ///< Permit the sink to wait for its first preroll buffer.
+  bool sync = false; ///< Wait for packet timestamps against the pipeline clock.
+  /// Permit the sink to wait for its first preroll buffer. Keep `false` to let Core render an
+  /// encoded passthrough sender in its producer's pipeline behind a `tee`.
+  bool async = false;
   VideoSenderRtpOptions rtp{};
   VideoSenderEncoderOptions encoder{};
 

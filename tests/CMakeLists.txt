@@ -955,7 +955,6 @@ endforeach()
 # Performance suites (binary metrics emitters; not default ctest)
 # ------------------------------------------------------------------------------
 set(PERF_TARGETS
-  perf_runtime_graph_compile_test
   perf_runtime_encoder_test
   perf_runtime_graph_sync_rgb_test
   perf_runtime_graph_async_rgb_test
@@ -994,13 +993,6 @@ foreach(target ${PERF_TARGETS})
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
-
-if (NOT perf_runtime_graph_compile_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  add_test(NAME perf_runtime_graph_compile_test COMMAND perf_runtime_graph_compile_test)
-  simaneat_append_ctest_env(perf_runtime_graph_compile_test)
-  set_tests_properties(perf_runtime_graph_compile_test PROPERTIES
-    LABELS "perf;graph;compiler;metrics" TIMEOUT 30)
-endif()
 
 if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_test(

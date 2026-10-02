@@ -20,7 +20,6 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -383,7 +382,6 @@ struct ExecutionGraphPlan {
 };
 
 struct RuntimeCompileOptions {
-  std::unordered_set<graph::NodeId> pipeline_entry_nodes;
   RunOptions run_options{};
   std::optional<Sample> seed;
   std::optional<OutputSpec> root_input_spec;
