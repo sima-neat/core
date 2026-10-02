@@ -1684,6 +1684,19 @@ RUN_TEST(
                   (*(tee_it + 1))->kind() == "SimaDecode" &&
                   default_merged->provenance.size() == default_merged->nodes.size(),
               "the encoded tee must sit between the RTSP source and SimaDecode");
+      // Sender metrics and failures must stay attributed to the sender, not the generated FanOut.
+      const auto sender_segment =
+          std::find_if(default_video_plan.pipeline_segments.begin(),
+                       default_video_plan.pipeline_segments.end(), [](const auto& segment) {
+                         return segment.consumed_by_fused_realtime_ingress &&
+                                !segment.nodes.empty() &&
+                                segment.nodes.back()->kind() == "UdpOutput";
+                       });
+      require(sender_segment != default_video_plan.pipeline_segments.end() &&
+                  default_merged->provenance[tee_it - default_merged->nodes.begin()].runtime_node ==
+                      simaai::neat::runtime::attributed_runtime_node_for_segment_node(
+                          *sender_segment, sender_segment->nodes.size() - 1U),
+              "the encoded tee must be attributed to the VideoSender's UDP sink");
       // Export pairs node_ids with nodes; the prepended source must not take the decoder's id.
       const auto rendered_for = [&](std::size_t local) {
         return simaai::neat::runtime::rendered_node_index_for_segment_id(*default_merged, local);

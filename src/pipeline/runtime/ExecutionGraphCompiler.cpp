@@ -2576,8 +2576,14 @@ void fuse_encoded_video_sender_fanouts(const graph::Graph& graph, ExecutionGraph
     append(*source);
     nodes.push_back(std::make_shared<EncodedVideoSenderTee>(
         video->nodes, realtime_latest_link(plan->edges[video_edge].link_options)));
+    // The tee wraps the sender's elements; attribute it to the sender so its metrics and
+    // failures keep the VideoSender identity rather than the generated FanOut's.
     Provenance tee_provenance;
-    tee_provenance.runtime_node = stage.node_id;
+    tee_provenance.runtime_node =
+        attributed_runtime_node_for_segment_node(*video, video->nodes.size() - 1U);
+    if (tee_provenance.runtime_node == graph::kInvalidNode) {
+      tee_provenance.runtime_node = stage.node_id;
+    }
     tee_provenance.segment_id = main->id;
     provenance.push_back(std::move(tee_provenance));
     append(*main);
