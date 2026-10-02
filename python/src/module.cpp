@@ -3310,12 +3310,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("output_buffer_count", &simaai::neat::CameraV4L2Options::output_buffer_count)
       .def_rw("frame_timeout_ms", &simaai::neat::CameraV4L2Options::frame_timeout_ms);
 
-  nb::enum_<simaai::neat::CameraBackend>(m, "CameraBackend")
-      .value("Auto", simaai::neat::CameraBackend::Auto)
-      .value("Libcamera", simaai::neat::CameraBackend::Libcamera)
-      .value("V4L2", simaai::neat::CameraBackend::V4L2);
   nb::enum_<simaai::neat::CameraProfile>(m, "CameraProfile")
-      .value("Auto", simaai::neat::CameraProfile::Auto)
+      .value("Default", simaai::neat::CameraProfile::Default)
+      .value("Raw", simaai::neat::CameraProfile::Raw)
       .value("MetoakSimor", simaai::neat::CameraProfile::MetoakSimor);
 
   nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")
@@ -3347,7 +3344,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
       .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback)
       .def_rw("device", &simaai::neat::CameraInputOptions::device)
-      .def_rw("backend", &simaai::neat::CameraInputOptions::backend)
       .def_rw("profile", &simaai::neat::CameraInputOptions::profile)
       .def_prop_rw(
           "zero_copy",

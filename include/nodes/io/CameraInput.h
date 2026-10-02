@@ -16,8 +16,9 @@
 
 namespace simaai::neat {
 
-enum class CameraBackend { Auto, Libcamera, V4L2 };
-enum class CameraProfile { Auto, MetoakSimor };
+// Describe the camera's delivery contract, not its implementation backend.
+// Default preserves libcamera; raw profiles select owned-copy capture on Linux.
+enum class CameraProfile { Default, MetoakSimor, Raw };
 
 /** Explicit raw V4L2 capture backend. Use CameraInputOptions.format="RAW8"
  * and wire dimensions, not decoded image dimensions. Captures progressive,
@@ -75,11 +76,10 @@ struct CameraInputOptions {
   // camera stacks without DMA-BUF export support.
   bool allow_cpu_fallback = false;
 
-  // No selector preserves legacy libcamera behavior. A selected raw device with
-  // Auto backend is identified through its media topology, never by video index.
+  // Backend selection is private. A device path alone never selects raw capture.
+  // MetoakSimor chooses its qualified wire mode; Raw requires explicit geometry.
   std::string device;
-  CameraBackend backend = CameraBackend::Auto;
-  CameraProfile profile = CameraProfile::Auto;
+  CameraProfile profile = CameraProfile::Default;
   // Unset preserves the legacy policy. V4L2 requires explicit false. For
   // libcamera, false permits the existing CPU fallback; true requires zero-copy.
   std::optional<bool> zero_copy;
@@ -130,7 +130,7 @@ std::shared_ptr<simaai::neat::Node> CameraInput(simaai::neat::CameraInputOptions
 
 /** Capture owned raw byte tensors through the Linux-only V4L2 copy backend.
  * Throws std::runtime_error on other platforms.
- * Compatibility wrapper; prefer CameraInput with explicit backend options.
+ * Compatibility wrapper; prefer CameraInput with an explicit raw profile.
  * SIMOR decoding, calibration and ROS publication remain application concerns.
  */
 std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInputOptions opt,

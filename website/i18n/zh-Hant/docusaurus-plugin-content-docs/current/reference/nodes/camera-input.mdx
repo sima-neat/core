@@ -225,15 +225,15 @@ ROS/SIMOR 的 CPU 解包、校正與 ROS 發布仍由應用程式負責。應用
 啟動時會先準備輸出 caps 和 CPU 緩衝區池，再將相機緩衝區排入佇列。停止時會中斷影格與記憶體池等待，結束擷取後再釋放輸出池。已傳送的張量在停止後仍有效。擷取結束錯誤會透過 GStreamer 匯流排回報，並禁止重新啟動該來源；結束程序不能取代裝置復原。
 
 
-### 後端選擇與相容性
+### 設定檔選擇與相容性
 
-- 未指定新選擇器時，保留既有 libcamera 與 `camera_name` 行為。
-- `profile=MetoakSimor` 選擇 V4L2、`RAW8`、`BA81` 與 1920×360 傳輸尺寸。它取代原有 NV12/1080 預設值；其他衝突格式或尺寸會遭拒絕。此設定檔不代表所有 Metoak 相機。
-- 指定 `device` 並使用 `backend=Auto`、`profile=Auto` 時，從媒體拓撲辨識 SIMOR。SIMOR 設定檔未指定裝置時，必須恰有一個符合的端點。缺少、模糊或混合感測器路徑都會失敗。探索不會開啟擷取裝置；明確指定設定檔和裝置可略過探索。
-- 其他原始相機請指定 `backend=V4L2`、`device`、`format="RAW8"`、傳輸尺寸與 `fourcc`。支援 `GREY`、`BA81`、`GBRG`、`GRBG`、`RGGB`。
-- V4L2 必須明確設定 `zero_copy=false`。libcamera 未設定時保留 `allow_cpu_fallback`；false 允許既有複製回退，true 要求零複製。矛盾設定會失敗。
-- 選擇只在節點建立時執行一次，早於圖的合約傳播。後端失敗時不會切換後端。探索不會設定媒體連結或接腳格式。
+- `profile=Default`（預設值）一律使用 libcamera，並保留 `camera_name` 選擇方式。未指定原始設定檔而設定 `device` 會遭拒絕，絕不會隱含選擇 Metoak。
+- `profile=MetoakSimor` 在內部選擇具有獨立複製所有權的 V4L2、`RAW8`、`BA81` 與 1920×360 傳輸尺寸。它取代原有 NV12/1080 預設值；其他衝突格式或尺寸會遭拒絕。此設定檔不代表所有 Metoak 相機。
+- SIMOR 設定檔未指定 `device` 時，媒體拓撲中必須恰有一個符合的端點。缺少、模糊或混合感測器路徑都會失敗。探索不會開啟擷取裝置；明確指定設定檔和裝置可略過探索。
+- 其他原始相機請指定 `profile=Raw`、`device`、`format="RAW8"`、傳輸尺寸與 `fourcc`。支援 `GREY`、`BA81`、`GBRG`、`GRBG`、`RGGB`。
+- 原始設定檔必須明確設定 `zero_copy=false`。libcamera 未設定時保留 `allow_cpu_fallback`；false 允許既有複製回退，true 要求零複製。矛盾設定會失敗。
+- 實作只在節點建立時選擇一次，早於圖的合約傳播。沒有公開的 backend 選項；失敗時不會切換實作。探索不會設定媒體連結或接腳格式。
 
-設定 `device` 時，探索只會查詢擁有該裝置的媒體控制器，不會查詢無關的控制器。未設定 `device` 時，探索會掃描所有媒體控制器。這些中繼資料查詢是同步核心呼叫，不保證執行時間上限。控制器沒有回應時，請同時設定 `device` 和 `profile=MetoakSimor` 以略過探索。
+只有未指定 `device` 的 `MetoakSimor` 設定檔會掃描媒體控制器。這些中繼資料查詢是同步核心呼叫，不保證執行時間上限。控制器沒有回應時，請同時設定 `device` 和 `profile=MetoakSimor` 以略過探索。
 
-`CameraInputWithV4L2` 與 Python 雙參數形式保留為轉送包裝。新程式碼使用 `CameraInput(options)`。擴充選項與節點儲存結構需要 Core C++ ABI 6：請重新建置 C++ 使用端並使用相符的 Python wheel。ABI-5 二進位檔不相容；不要建立 SONAME 相容符號連結。
+`CameraInputWithV4L2` 與 Python 雙參數形式保留為原始碼相容的轉送包裝。新程式碼使用 `CameraInput(options)`。資訊清單與 SONAME 維持 Core ABI 5。這次整合已變更公開選項與節點的記憶體配置：請重新建置 C++ 使用端，並搭配相符的 Python wheel。維持 ABI 編號不代表與舊 ABI-5 二進位檔相容；請勿將舊二進位檔與新的標頭或執行階段混用。

@@ -1159,12 +1159,14 @@ Keep docs and code aligned:
 
 Native runtime contracts preserve each input's logical dtype separately from the legacy EV transport enum. Device-backed bundled inputs are copied into named segments; this path is not zero-copy. Use matching Core, Internals and graph-20 firmware, and validate numerical output and buffer lifetime before deploying a camera application.
 
-The explicit `CameraInput` (`backend=V4L2`) factory with `zero_copy=false` emits owned flat UInt8 wire tensors in system memory. It copies before requeue, preserves valid padding/trailers, and exposes negotiated geometry in caps. Existing libcamera behavior is unchanged. Device-specific unpacking, calibration and ROS publication stay in the application; graph 20 is unchanged. A bounded output pool applies cancellable backpressure. Copy mode does not waive platform-driver stop/release qualification.
+The explicit `CameraInput` (`profile=Raw`) factory with `zero_copy=false` emits owned flat UInt8 wire tensors in system memory. It copies before requeue, preserves valid padding/trailers, and exposes negotiated geometry in caps. Existing libcamera behavior is unchanged. Device-specific unpacking, calibration and ROS publication stay in the application; graph 20 is unchanged. A bounded output pool applies cancellable backpressure. Copy mode does not waive platform-driver stop/release qualification.
 
 The V4L2 copy source separates preparation from streaming: output caps and pool activation precede camera queueing. Shutdown quiesces the capture callback before retiring the device and then the CPU pool. Retirement failures post a bus error and retain the capture owner to prevent restart; software source deactivation does not certify hardware recovery.
 
-## Camera backend resolution
+## Camera profile resolution
 
-`CameraInput` resolves its immutable backend configuration before graph contract propagation. Default calls retain the libcamera image contract. The Linux raw backend produces owned `UInt8` byte tensors in system memory; SIMOR decoding and calibration remain application responsibilities. Explicit SIMOR profile plus device requires no discovery. Automatic identification reads media topology without opening capture/subdevice nodes or configuring the driver. Ambiguity fails rather than selecting an arbitrary sensor. Discovery is outside the frame-processing path, and capture retains the existing bounded pool and retirement safeguards.
+`CameraInput` selects its private implementation from `CameraInputOptions.profile` before graph contract propagation. The `Default` profile always preserves the libcamera image contract; a device path alone is rejected instead of identifying Metoak implicitly. `MetoakSimor` and `Raw` select Linux owned-copy capture, producing flat `UInt8` byte tensors in system memory. SIMOR unpacking and calibration remain application responsibilities.
 
-The public options/node layout extension ships as Core ABI 6. Rebuild binary consumers and install the matching Python wheel; retaining old factory wrappers preserves source usage, not ABI-5 binary compatibility.
+An explicit SIMOR profile and device require no discovery. A SIMOR profile without a device identifies exactly one endpoint from media topology, without opening capture/subdevice nodes or configuring the driver. The generic raw profile requires an explicit device. Discovery is outside the frame-processing path; capture retains the bounded pool and retirement safeguards.
+
+The manifest and SONAME remain Core ABI 5. The public options and node layouts changed for this integration: rebuild C++ consumers and install the matching Python wheel together. Existing factory wrappers preserve source usage, not binary compatibility with earlier ABI-5 builds.

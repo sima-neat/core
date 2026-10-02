@@ -13,7 +13,6 @@ void check(bool value) {
   if (!value)
     throw std::runtime_error("raw camera node check failed");
 }
-#if defined(__linux__)
 void rejects(const std::function<void()>& action) {
   bool threw = false;
   try {
@@ -23,10 +22,24 @@ void rejects(const std::function<void()>& action) {
   }
   check(threw);
 }
-#endif
 } // namespace
 int main() {
   try {
+    n::CameraInputOptions defaults;
+    check(defaults.profile == n::CameraProfile::Default);
+    n::CameraInput default_camera(defaults);
+    // Backend selection is independent of the installed libcamera plugin's
+    // optional external-buffer support. Keep its strict zero-copy guard intact.
+    auto copy_defaults = defaults;
+    copy_defaults.zero_copy = false;
+    check(n::CameraInput(copy_defaults).backend_fragment(0).find("libcamerasrc") == 0);
+    check(default_camera.output_spec({}).payload_type == n::PayloadType::Image);
+    defaults.device = "/dev/not-a-camera-must-not-be-opened";
+    rejects([&] { n::CameraInput invalid(defaults); });
+    rejects([&] { n::nodes::CameraInput(defaults); });
+    defaults.device.clear();
+    defaults.profile = static_cast<n::CameraProfile>(999);
+    rejects([&] { n::nodes::CameraInput(defaults); });
     n::CameraInputOptions options;
     options.width = 1920;
     options.height = 360;
@@ -71,7 +84,7 @@ int main() {
     // The original factory and direct public constructor must use one resolver.
     auto unified = options;
     unified.device = backend.device;
-    unified.backend = n::CameraBackend::V4L2;
+    unified.profile = n::CameraProfile::Raw;
     unified.zero_copy = false;
     unified.fourcc = backend.fourcc;
     auto standard = n::nodes::CameraInput(unified);
@@ -87,18 +100,21 @@ int main() {
     n::CameraInput selected(profile);
     check(selected.options().width == 1920 && selected.options().height == 360);
     check(selected.options().format == "RAW8" && selected.options().fourcc == "BA81");
-    check(selected.options().backend == n::CameraBackend::V4L2);
+    check(selected.options().profile == n::CameraProfile::MetoakSimor);
     check(selected.backend_fragment(0).find("libcamera") == std::string::npos);
     profile.zero_copy = true;
     rejects([&] { n::nodes::CameraInput(profile); });
     profile.zero_copy.reset();
     rejects([&] { n::nodes::CameraInput(profile); });
     profile.zero_copy = false;
-    profile.backend = n::CameraBackend::Libcamera;
+    profile.profile = n::CameraProfile::Default;
     rejects([&] { n::nodes::CameraInput(profile); });
-    profile.backend = n::CameraBackend::Auto;
+    profile.profile = n::CameraProfile::MetoakSimor;
     profile.width = 640;
     rejects([&] { n::nodes::CameraInput(profile); });
+    auto no_device = unified;
+    no_device.device.clear();
+    rejects([&] { n::nodes::CameraInput(no_device); });
     unified.capture_buffer_count = 12;
     check(n::nodes::CameraInput(unified)->backend_fragment(0).find("capture-buffer-count=12") !=
           std::string::npos);
@@ -156,7 +172,7 @@ int main() {
     bad.insert_queue = true;
     bad.queue_depth = 0;
     rejects([&] { n::nodes::CameraInputWithV4L2(bad, backend); });
-    // One-argument source keeps its existing layout/API and libcamera behavior.
+    // One-argument source keeps its existing entry point and libcamera behavior.
     // Keep untyped address-taking source-compatible with the original factory.
     auto factory = &n::nodes::CameraInput;
     auto legacy = factory({});

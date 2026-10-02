@@ -45,7 +45,7 @@ def test_invalid_camera_options(field, value):
 def test_unified_factory_profile_and_generic_backend():
     camera, backend = options()
     camera.device = backend.device
-    camera.backend = neat.CameraBackend.V4L2
+    camera.profile = neat.CameraProfile.Raw
     camera.zero_copy = False
     camera.fourcc = backend.fourcc
     profile = neat.CameraInputOptions()
@@ -77,4 +77,14 @@ def test_legacy_zero_copy_policy():
     config.zero_copy = True
     config.allow_cpu_fallback = True
     with pytest.raises(ValueError, match="conflicts"):
+        neat.nodes.camera_input(config)
+
+
+def test_default_profile_does_not_infer_metoak_from_device():
+    config = neat.CameraInputOptions()
+    assert config.profile == neat.CameraProfile.Default
+    assert not hasattr(config, "backend")
+    assert not hasattr(neat, "CameraBackend")
+    config.device = "/dev/not-a-camera-must-not-be-opened"
+    with pytest.raises(ValueError, match="explicit raw camera profile"):
         neat.nodes.camera_input(config)

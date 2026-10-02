@@ -140,7 +140,6 @@ CAMERA_INPUT_OPTION_FIELDS = (
     "queue_depth",
     "allow_cpu_fallback",
     "device",
-    "backend",
     "profile",
     "zero_copy",
     "fourcc",
@@ -548,8 +547,9 @@ def test_camera_input_surface_is_exposed():
   for field in CAMERA_INPUT_OPTION_FIELDS:
     assert hasattr(opt, field), field
   assert opt.device == ""
-  assert opt.backend == pyneat.CameraBackend.Auto
-  assert opt.profile == pyneat.CameraProfile.Auto
+  assert not hasattr(opt, "backend")
+  assert not hasattr(pyneat, "CameraBackend")
+  assert opt.profile == pyneat.CameraProfile.Default
   assert opt.zero_copy is None
   assert opt.fourcc == "GREY"
   assert opt.output_buffer_count == 8

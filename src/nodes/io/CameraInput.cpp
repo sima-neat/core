@@ -244,16 +244,14 @@ private:
 };
 
 CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
-  if (opt.backend != CameraBackend::Auto && opt.backend != CameraBackend::Libcamera &&
-      opt.backend != CameraBackend::V4L2)
-    throw std::invalid_argument("CameraInput invalid backend");
-  if (opt.profile != CameraProfile::Auto && opt.profile != CameraProfile::MetoakSimor)
+  if (opt.profile != CameraProfile::Default && opt.profile != CameraProfile::MetoakSimor &&
+      opt.profile != CameraProfile::Raw)
     throw std::invalid_argument("CameraInput invalid camera profile");
-  const bool raw = opt.profile == CameraProfile::MetoakSimor ||
-                   opt.backend == CameraBackend::V4L2 || !opt.device.empty();
-  if (!raw) {
+  if (opt.profile == CameraProfile::Default) {
+    if (!opt.device.empty())
+      throw std::invalid_argument("CameraInput device requires an explicit raw camera profile; "
+                                  "use camera_name with the default libcamera profile");
     validate_capture_buffer_count(opt.capture_buffer_count);
-    opt.backend = CameraBackend::Libcamera;
     if (opt.zero_copy.has_value()) {
       if (*opt.zero_copy && opt.allow_cpu_fallback)
         throw std::invalid_argument("CameraInput zero_copy conflicts with allow_cpu_fallback");
@@ -264,24 +262,18 @@ CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
 #if !defined(__linux__)
   throw std::runtime_error("CameraInput V4L2 backend requires Linux");
 #else
-  if (opt.backend == CameraBackend::Libcamera)
-    throw std::invalid_argument("CameraInput libcamera uses camera_name, not a raw device/profile");
   if (opt.camera_name.has_value())
     throw std::invalid_argument("CameraInput cannot combine camera_name with a raw device/profile");
   if (!opt.zero_copy.has_value() || *opt.zero_copy)
     throw std::invalid_argument("CameraInput V4L2 requires explicit zero_copy=false");
   if (opt.allow_cpu_fallback)
     throw std::invalid_argument("allow_cpu_fallback is libcamera-only; V4L2 uses zero_copy=false");
-  if (opt.backend == CameraBackend::V4L2 && opt.profile == CameraProfile::Auto &&
-      opt.device.empty())
-    throw std::invalid_argument("CameraInput V4L2 requires a device or an explicit camera profile");
+  if (opt.profile == CameraProfile::Raw && opt.device.empty())
+    throw std::invalid_argument("CameraInput Raw profile requires an explicit device");
   // Explicit profiles with a device are construction-only, including in an SDK.
   // Discovery is metadata-only and only requested when identification is needed.
-  if (opt.device.empty() ||
-      (opt.backend == CameraBackend::Auto && opt.profile == CameraProfile::Auto)) {
-    opt.device = camera_discovery::find_simor_device(opt.device);
-    opt.profile = CameraProfile::MetoakSimor;
-  }
+  if (opt.device.empty())
+    opt.device = camera_discovery::find_simor_device({});
   if (opt.profile == CameraProfile::MetoakSimor) {
     // This profile is the qualified 1920x360 SIMOR wire mode, not every Metoak
     // product. Legacy image defaults are replaced, contradictory overrides fail.
@@ -294,7 +286,6 @@ CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
     opt.format = "RAW8";
     opt.fourcc = "BA81";
   }
-  opt.backend = CameraBackend::V4L2;
   if (!opt.capture_buffer_count)
     opt.capture_buffer_count = 8;
   return opt;
@@ -304,7 +295,7 @@ CameraInputOptions resolve_camera_options(CameraInputOptions opt) {
 } // namespace
 
 CameraInput::CameraInput(CameraInputOptions opt) : opt_(resolve_camera_options(std::move(opt))) {
-  if (opt_.backend == CameraBackend::V4L2) {
+  if (opt_.profile != CameraProfile::Default) {
     CameraV4L2Options backend;
     backend.device = opt_.device;
     backend.fourcc = opt_.fourcc;
@@ -406,7 +397,8 @@ std::shared_ptr<simaai::neat::Node> CameraInputWithV4L2(simaai::neat::CameraInpu
   if (backend.capture_buffer_count < 4 || backend.capture_buffer_count > 128)
     throw std::invalid_argument("raw CameraInput capture_buffer_count must be in [4,128]");
   opt.device = backend.device;
-  opt.backend = CameraBackend::V4L2;
+  if (opt.profile == CameraProfile::Default)
+    opt.profile = CameraProfile::Raw;
   opt.zero_copy = backend.zero_copy;
   opt.fourcc = std::move(backend.fourcc);
   opt.capture_buffer_count = backend.capture_buffer_count;

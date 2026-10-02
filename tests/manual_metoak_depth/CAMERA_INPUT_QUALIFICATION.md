@@ -79,13 +79,13 @@ Runtime binaries were staged in RAM rather than installed over the board's
 packages. Full logs, source hashes and artifact hashes are retained in the
 `camera-copy/lifecycle` evidence directory for this investigation.
 
-## Unified CameraInput qualification (2026-10-02)
+## Earlier unified CameraInput qualification (2026-10-02)
 
-The same existing factory now resolves the backend through `CameraInputOptions`.
-The original no-selector libcamera behavior is retained. The compatibility
-`CameraInputWithV4L2` wrapper also routes through this factory. Core ABI 6 is
-required because the public options and node layout changed; rebuild binary
-consumers and use the matching Python wheel rather than aliasing ABI-5 libraries.
+These trials used the earlier experimental backend-selector API and an isolated
+ABI-6 test build. They predate the current profile-only API and ABI-5 packaging;
+their results are historical evidence, not qualification of a later source head.
+The current manifest remains ABI 5, but the changed public options/node layouts
+still require rebuilding consumers and the matching Python wheel together.
 
 Three isolated public Python Graph trials on the same B4837 board completed:
 
@@ -112,3 +112,42 @@ kernel, media-controller configuration, or ROS source was changed.
 
 These short trials qualify the unified route; they do not replace the longer
 lifecycle evidence above or prove recovery from arbitrary driver/DMA faults.
+
+
+## Profile-only CameraInput qualification (2026-10-02)
+
+The manifest, generated CMake package and shared-library SONAME now use ABI 5.
+Backend selection is private: `profile=Default` preserves libcamera;
+`profile=MetoakSimor` selects the qualified owned-copy SIMOR route; `profile=Raw`
+requires an explicit device and wire configuration. A device path alone is
+rejected rather than selecting Metoak. No public `backend` option remains.
+These public layout changes still require a matching rebuild of C++ consumers
+and the Python wheel, despite keeping the ABI number.
+
+The ARM64 Core library, Python extension and four focused C++ targets were
+rebuilt and staged together in RAM. Four hardware-guarded C++ tests passed
+(including 54 node checks); all 11 focused Python camera/API checks passed.
+The topology fixture passed native ASan/UBSan. Non-Linux conditional paths
+compiled; this does not establish native macOS runtime qualification. All 103
+packaging/tooling regressions and formatting, include/CMake hygiene,
+localization, navigation and source-policy checks passed.
+
+| Profile-only public Graph trial | Frames | Observed stop | Retention and reopen |
+| --- | ---: | ---: | --- |
+| `MetoakSimor` with `/dev/video1`, 30 seconds | 654 | 131 ms | Passed |
+| `MetoakSimor` without device, both output-pool slots retained | 2 | 81 ms | Passed |
+
+All 654 post-initial frames checked across the two trials matched SIMOR metadata
+magic. Output remained owned `UInt8[691200]` with `BA81`, 1920×360 wire geometry,
+stride 1920 and allocation size 691232. The default libcamera route was covered
+by construction/fragment tests, not a new live libcamera hardware trial. Its
+strict external-buffer support guard remains intact.
+
+Postflight found no camera/EV owners, D-state tasks or kernel lifecycle failures.
+Boot identity and original firmware hash were unchanged. No firmware, kernel,
+installed package, media-controller configuration or ROS source was modified.
+The staged Core library SHA-256 was
+`0d862b750b901bd121464db17d4f1ed676bc04cca71b286c792919e1609b068d`.
+Logs and artifact hashes are retained in this investigation's `camera-profile`
+evidence directory. These short route-selection trials supplement, not replace,
+the earlier sustained lifecycle evidence or its kernel-fault limitations.
