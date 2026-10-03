@@ -5,7 +5,7 @@
   },
   "llima": {
     "branch": "release-3.0.0-prep",
-    "spec": "206f1695af0c"
+    "spec": "latest"
   },
   "sdk": {
     "channel": "develop"
