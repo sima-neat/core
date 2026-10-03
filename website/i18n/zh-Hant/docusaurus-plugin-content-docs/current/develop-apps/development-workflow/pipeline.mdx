@@ -270,7 +270,7 @@ preview = run.pull("preview", timeout_ms=2000)
 | 工作負載 | 從這裡開始 | 原因 |
 |---|---|---|
 | 第一個可運作的應用程式 | 預設 `RunOptions` | 在調整之前，先驗證正確性。 |
-| 即時攝影機或 RTSP 輸入 | `RunPreset::Realtime`；`OutputOptions::Latest()`，如果輸出的新鮮度很重要 | 新的影格勝過完整的歷史記錄。即時預設設定會解析為最新影格溢出，除非您覆寫它。 |
+| 即時攝影機或 RTSP 輸入 | `RunPreset::Realtime`；`OutputOptions::Latest()`，如果輸出的新鮮度很重要 | 新的影格勝過完整的歷史記錄。即時預設設定會解析為最新影格溢出，除非您覆寫它。它也會將每個單一輸入 CVU 階段排隊的即時輸入限制為 20 毫秒，因此較慢的模型會丟棄過時的影格，而不是佔用解碼器緩衝區並拖慢來源。 |
 | 檔案或批次處理 | `RunPreset::Reliable`；`OutputOptions::EveryFrame(...)` | 保留每個輸入並公開反壓。可靠預設設定會解析為阻塞溢出，除非您覆寫它。 |
 | 常見應用程式服務 | `RunPreset::Balanced` | 圖正常運作後，這是一個很好的預設值。 |
 | 抖動的來源需要有界緩衝 | `queue_depth` | 僅增加到足以吸收抖動。深度佇列可能會隱藏過時的影格和延遲的反壓。 |

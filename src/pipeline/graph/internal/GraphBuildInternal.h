@@ -77,6 +77,9 @@ std::string session_build_async_queue2_fragment(int requested_depth = 0,
                                                 std::string_view element_name = {});
 std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
                                                               const GraphOptions* sess_opt);
+// Assembled live-source pipeline pass for RunOptions element settings; values
+// already rendered in the pipeline win.
+std::string session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOptions& opt);
 // Final assembled-pipeline pass. This is the only place allowed to select the
 // producer-owned CPU visibility boundary because adjacent stages may be
 // rendered by distinct Nodes.
