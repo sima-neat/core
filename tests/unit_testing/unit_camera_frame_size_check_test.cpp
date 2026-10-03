@@ -114,7 +114,7 @@ PushResult run_case(const std::shared_ptr<Node>& node, int count, std::optional<
 void test_reason_formatting() {
   require(!camera_frame_size_mismatch_reason(2048, 1080, 2048, 1080).has_value(),
           "matching sizes must not report a mismatch");
-  require(camera_frame_size_mismatch_reason(1920, 1080, 1080, 1080).has_value(),
+  require(camera_frame_size_mismatch_reason(1920, 1080, 1920, 720).has_value(),
           "a height-only mismatch must report a reason");
   const std::optional<std::string> reason =
       camera_frame_size_mismatch_reason(2048, 1080, 1920, 1080);
