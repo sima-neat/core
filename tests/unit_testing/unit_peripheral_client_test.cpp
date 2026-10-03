@@ -24,6 +24,9 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -171,6 +174,31 @@ void test_success() {
           "camera details_json must preserve every daemon field");
 }
 
+// Catalog is a mutable and const container over `devices`.
+void test_catalog_container_api() {
+  using simaai::neat::peripherals::Peripheral;
+  static_assert(std::is_same_v<Catalog::iterator, std::vector<Peripheral>::iterator>);
+  static_assert(std::is_same_v<Catalog::const_iterator, std::vector<Peripheral>::const_iterator>);
+  static_assert(std::is_same_v<decltype(std::declval<Catalog&>()[0]), Peripheral&>);
+  static_assert(std::is_same_v<decltype(std::declval<const Catalog&>()[0]), const Peripheral&>);
+
+  Catalog catalog;
+  require(catalog.empty() && catalog.begin() == catalog.end(), "a new catalog must be empty");
+  catalog.devices.resize(2);
+  for (Peripheral& device : catalog)
+    device.type = "camera";
+  catalog[1].id = "b";
+  Catalog::iterator first = catalog.begin();
+  first->id = "a";
+  const Catalog& view = catalog;
+  std::string ids;
+  for (Catalog::const_iterator it = catalog.cbegin(); it != catalog.cend(); ++it)
+    ids += it->id + it->type;
+  require(ids == "acamerabcamera" && view.begin() == catalog.cbegin() &&
+              view.end() == catalog.cend() && view.size() == 2 && &view[1] == &catalog.devices[1],
+          "catalog iterators and indexing must address devices");
+}
+
 void test_details_for_any_type() {
   auto body = base_catalog();
   const auto microphone = json::parse(R"({"channels": 2, "nested": {"a": [1, 2]},
@@ -231,6 +259,9 @@ void test_connection_failures() {
   require(std::chrono::steady_clock::now() - start < 120ms, "the deadline was not honored");
   ::close(silent);
 
+  require_error([&] { (void)list_from_socket(directory.socket("missing.sock"), 100ms, 0); },
+                codes::kIoOpen, "chunk limit is invalid");
+
   require(::chmod(directory.path.c_str(), 0000) == 0, "chmod failed");
   require_error([&] { (void)list_from_socket(directory.socket("denied.sock"), 100ms); },
                 codes::kPermissionDenied, "/run/simaai-sentinel/api.sock");
@@ -252,8 +283,25 @@ void test_protocol_failures() {
       {"HTTP/1.1 200 OK\r\nContent-Length: " +
            std::to_string(simaai::neat::peripherals_internal::kMaximumResponseBytes + 1) +
            "\r\n\r\n",
-       codes::kResponseTooLarge, "4 MiB"},
-      {http(R"({"error":"response_too_large"})", 500), codes::kResponseTooLarge, "4 MiB"},
+       codes::kResponseTooLarge, "catalog response exceeded the 4 MiB"},
+      {http(R"({"error":"response_too_large"})", 500), codes::kResponseTooLarge,
+       "catalog exceeded the 4 MiB"},
+      {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-length: 2\r\n\r\n{}", codes::kIoParse,
+       "duplicate Content-Length headers"},
+      {"HTTP/1.1 200 OK\r\nContent-Length: +2\r\n\r\n{}", codes::kIoParse,
+       "Content-Length is not a non-negative decimal integer"},
+      {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTRANSFER-ENCODING: chunked\r\n\r\n{}",
+       codes::kIoParse, "chunked HTTP responses"},
+      {edited([](json& body) { body["last_attempt_at"] = 1; }), codes::kIoParse,
+       "field 'last_attempt_at' must be a string or null"},
+      {edited([](json& body) { body["last_success_at"] = ""; }), codes::kIoParse,
+       "field 'last_success_at' must not be empty"},
+      {edited([](json& body) { body.erase("last_success_at"); }), codes::kIoParse,
+       "missing required field 'last_success_at'"},
+      {edited([](json& body) { body["devices"][0]["camera"]["model"] = false; }), codes::kIoParse,
+       "field 'model' must be a string when present"},
+      {edited([](json& body) { body["devices"][0]["camera"]["modes"] = json::object(); }),
+       codes::kIoParse, "camera field 'modes' must be an array"},
       {edited([](json& body) { body["schema_version"] = 2; }), codes::kRuntimeAbiMismatch,
        "matching Core"},
       {edited([](json& body) { body["devices"][0].erase("provider"); }), codes::kIoParse,
@@ -275,6 +323,13 @@ void test_protocol_failures() {
   for (const auto& test_case : cases)
     require_error([&] { (void)list_from(test_case.response, 64); }, test_case.code,
                   test_case.fragment);
+
+  // Header names compare case-insensitively.
+  const std::string body = base_catalog().dump();
+  require(list_from("HTTP/1.1 200 OK\r\nCONTENT-length: " + std::to_string(body.size()) +
+                    "\r\n\r\n" + body)
+                  .size() == 2,
+          "Content-Length must match case-insensitively");
 }
 
 // Sentinel classifies camera modes with the rules Core installs; keep them in
@@ -304,6 +359,7 @@ void test_support_rules_match_camera_input_defaults() {
 int main() {
   try {
     test_success();
+    test_catalog_container_api();
     test_details_for_any_type();
     test_stale_and_empty_catalogs();
     test_connection_failures();

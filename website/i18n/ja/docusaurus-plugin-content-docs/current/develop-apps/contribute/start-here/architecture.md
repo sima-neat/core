@@ -629,7 +629,7 @@ Capsネゴシエーションは自動的に行われ、エラーが発生した�
 
 ### カメラの割り当て権限
 
-SiMa Sentinel (`simaai-sentinel.service`) は、デバイス検出と信頼できるペリフェラルカタログを所有します。`simaai::neat::peripherals::list()` と `pyneat.peripherals.list()` はステートレスクライアントです。各呼び出しは Sentinel の Unix ソケットで境界時間付きの `GET /v1/peripherals` を 1 回実行し、検証済みのスナップショットを返します。ハードウェアのスキャン、キャッシュ、フォールバックは行いません。
+ボードローカルのデーモンである SiMa Sentinel (`simaai-sentinel.service`) は、デバイス検出、信頼できるペリフェラルカタログ、リビジョン、および上限付きの `changes` ログを所有します。Core はその実装をリンクしません。代わりに、`simaai::neat::peripherals::list()` と `pyneat.peripherals.list()` は薄いステートレスクライアントです。各呼び出しは、Sentinel のバージョン管理された Unix ソケット API を介して、境界時間付きの `GET /v1/peripherals` を 1 回実行し、応答を検証して、そのスナップショットを返します。ハードウェアのスキャン、2 つ目のキャッシュの保持、イベントの購読、または Sentinel が利用できない場合のフォールバックは行いません。
 
 `CameraInput` は、カメラのキャプチャ機能の直後に、そしてライブキューの前に `neatcamerabridge` を配置します。ネゴシエーション中に、ブリッジは標準プールで上流の `GST_QUERY_ALLOCATION` に応答し、`GstVideoMeta` を要求します。プールは、1つのパックされた SiMaAI アロケーションから検証済みのプレーンを割り当て、各プレーンに対して1つの DMA-BUF をエクスポートします。互換性のある `libcamerasrc` は、これらの DMA-BUF を ISP キャプチャキューにインポートします。次に、ブリッジは同じパックされたアロケーションをアンラップして、下流の処理に使用します。厳密モードでは、その条件を満たさないバッファーはすべて拒否されます。CPU コピーは、明示的な互換性のあるフォールバックとして残ります。
 

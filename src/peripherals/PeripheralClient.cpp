@@ -13,7 +13,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
@@ -77,10 +76,11 @@ private:
        "simaai-sentinel.service and its journal, then try again.");
 }
 
-[[noreturn]] void fail_too_large() {
-  fail(error_codes::kResponseTooLarge,
-       "The Sentinel peripheral catalog exceeded the 4 MiB v1 limit. Reduce the catalog size or "
-       "update Sentinel and Core together.");
+// `subject` is "catalog" when Sentinel refuses and "catalog response" when Core does.
+[[noreturn]] void fail_too_large(std::string_view subject) {
+  fail(error_codes::kResponseTooLarge, "The Sentinel peripheral " + std::string(subject) +
+                                           " exceeded the 4 MiB v1 limit. Reduce the catalog "
+                                           "size or update Sentinel and Core together.");
 }
 
 [[noreturn]] void fail_connect(int error) {
@@ -181,10 +181,10 @@ template <typename Integer> bool parse_decimal(std::string_view text, Integer& v
   return !text.empty() && result.ec == std::errc{} && result.ptr == text.data() + text.size();
 }
 
+// ASCII-only, so the result does not depend on the process locale.
 bool equals_ignoring_case(std::string_view value, std::string_view lowercase) {
-  return std::equal(
-      value.begin(), value.end(), lowercase.begin(), lowercase.end(),
-      [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
+  return std::equal(value.begin(), value.end(), lowercase.begin(), lowercase.end(),
+                    [](char a, char b) { return (a >= 'A' && a <= 'Z' ? a - 'A' + 'a' : a) == b; });
 }
 
 struct ResponseHead {
@@ -220,11 +220,13 @@ ResponseHead parse_response_head(std::string_view value) {
       fail_parse("an HTTP header has no separator");
     const std::string_view name = trim_ascii(line.substr(0, separator));
     if (equals_ignoring_case(name, "content-length")) {
+      if (content_length)
+        fail_parse("the HTTP response contains duplicate Content-Length headers");
       std::size_t length = 0;
-      if (content_length || !parse_decimal(trim_ascii(line.substr(separator + 1)), length))
-        fail_parse("the HTTP response has an invalid Content-Length header");
+      if (!parse_decimal(trim_ascii(line.substr(separator + 1)), length))
+        fail_parse("Content-Length is not a non-negative decimal integer");
       if (length > kMaximumResponseBytes)
-        fail_too_large();
+        fail_too_large("catalog response");
       content_length = length;
     } else if (equals_ignoring_case(name, "transfer-encoding")) {
       fail_parse("chunked HTTP responses are not part of the local v1 protocol");
@@ -328,8 +330,11 @@ std::optional<std::string> nullable_string(const nlohmann::json& object, const c
     fail_parse("missing required field '" + std::string(name) + "'");
   if (found == object.end() || found->is_null())
     return std::nullopt;
-  if (!found->is_string() || found->get_ref<const std::string&>().empty())
-    fail_parse("field '" + std::string(name) + "' must be a non-empty string or null");
+  if (!found->is_string())
+    fail_parse("field '" + std::string(name) +
+               (required ? "' must be a string or null" : "' must be a string when present"));
+  if (found->get_ref<const std::string&>().empty())
+    fail_parse("field '" + std::string(name) + "' must not be empty");
   return found->get<std::string>();
 }
 
@@ -394,7 +399,9 @@ peripherals::CameraDetails parse_camera(const nlohmann::json& value) {
   camera.camera_name = nullable_string(object, "camera_name", false);
   camera.model = nullable_string(object, "model", false);
   camera.backend = require_string(object, "backend");
-  const auto& modes = require_array(object, "modes");
+  const auto& modes = require_field(object, "modes");
+  if (!modes.is_array())
+    fail_parse("camera field 'modes' must be an array");
   camera.modes.reserve(modes.size());
   for (const auto& mode : modes)
     camera.modes.push_back(parse_mode(mode));
@@ -504,6 +511,8 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
                                       std::size_t maximum_send_bytes) {
   if (timeout.count() <= 0)
     fail_timeout();
+  if (maximum_send_bytes == 0)
+    fail(error_codes::kIoOpen, "The peripheral catalog request chunk limit is invalid.");
   const Deadline deadline = Clock::now() + timeout;
   FileDescriptor socket = connect_socket(socket_path, deadline);
   const std::string request = "GET " + std::string(kCatalogPath) +
@@ -513,7 +522,7 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
   if (status != 200) {
     const std::string sentinel_error = error_from_body(body);
     if (status == 500 && sentinel_error == "response_too_large")
-      fail_too_large();
+      fail_too_large("catalog");
     const std::string reported =
         sentinel_error.empty() ? std::string() : " Sentinel reported: " + sentinel_error + ".";
     if (status == 404) {

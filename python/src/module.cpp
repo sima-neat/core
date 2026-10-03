@@ -3384,13 +3384,18 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("camera", &simaai::neat::peripherals::Peripheral::camera,
               "Typed camera details; set only when type == 'camera'.")
       .def_ro("details_json", &simaai::neat::peripherals::Peripheral::details_json,
-              "The JSON object Sentinel publishes under the record key named by type, or '{}'.")
+              "Details for any peripheral type as compact JSON: the object Sentinel publishes "
+              "under the record key named by type, or '{}' when that key is absent, null, or "
+              "(for a type other than camera) not an object. "
+              "Unknown fields are preserved; key order and whitespace may differ from the "
+              "daemon response.")
       .def_prop_ro(
           "details",
           [](const simaai::neat::peripherals::Peripheral& peripheral) {
             return nb::module_::import_("json").attr("loads")(peripheral.details_json);
           },
-          "details_json decoded into a new dict.");
+          "details_json decoded with json.loads into a new dict. Use it to read peripheral "
+          "types that have no typed accessor; cameras also provide the typed camera field.");
   nb::class_<simaai::neat::peripherals::Catalog>(peripherals_mod, "Catalog")
       .def_ro("instance_id", &simaai::neat::peripherals::Catalog::instance_id)
       .def_ro("state", &simaai::neat::peripherals::Catalog::state)
@@ -3404,11 +3409,25 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("issues", &simaai::neat::peripherals::Catalog::issues)
       .def_ro("devices", &simaai::neat::peripherals::Catalog::devices)
       .def("__len__", &simaai::neat::peripherals::Catalog::size)
-      .def("__getitem__",
-           [](nb::handle self, nb::handle index) -> nb::object {
-             return self.attr("devices")[index];
-           })
-      .def("__iter__", [](nb::handle self) { return nb::iter(self.attr("devices")); });
+      .def(
+          "__getitem__",
+          [](simaai::neat::peripherals::Catalog& catalog,
+             Py_ssize_t index) -> simaai::neat::peripherals::Peripheral& {
+            const auto size = static_cast<Py_ssize_t>(catalog.size());
+            if (index < 0)
+              index += size;
+            if (index < 0 || index >= size)
+              throw nb::index_error("peripheral catalog index out of range");
+            return catalog[static_cast<std::size_t>(index)];
+          },
+          "index"_a, nb::rv_policy::reference_internal)
+      .def(
+          "__iter__",
+          [](simaai::neat::peripherals::Catalog& catalog) {
+            return nb::make_iterator(nb::type<simaai::neat::peripherals::Catalog>(),
+                                     "PeripheralCatalogIterator", catalog.begin(), catalog.end());
+          },
+          nb::keep_alive<0, 1>());
   peripherals_mod.def("list", &simaai::neat::peripherals::list,
                       nb::call_guard<nb::gil_scoped_release>());
   peripherals_mod.def(

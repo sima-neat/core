@@ -19,7 +19,7 @@ sidebar_position: 2
 - 確認 libcamera 是否已列出相機。
 - 確認 `libcamerasrc` 是否能夠串流您計畫要求的精確 `format,width,height,framerate`。
 
-`camera_name` 是確切的 libcamera 相機名稱。若要使用預設相機，請保持未設定；也可透過 `simaai::neat::peripherals::list()` / `pyneat.peripherals.list()` 讀取可選名稱與常駐程式分類的模式。
+`camera_name` 是確切的 libcamera 相機名稱。若要使用預設相機，請保持未設定；也可透過 `simaai::neat::peripherals::list()` / `pyneat.peripherals.list()` 讀取可選名稱與常駐程式分類的模式。若 `simaai-sentinel.service` 無法使用，目錄用戶端會明確失敗，不會執行備援硬體掃描。
 
 ## 快速入門
 

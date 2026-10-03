@@ -69,15 +69,29 @@ struct Peripheral {
   /** Typed camera details; set only when `type == "camera"`. */
   std::optional<CameraDetails> camera;
   /**
-   * The JSON object Sentinel publishes under the record key named by `type`,
-   * re-serialized with every field preserved; `"{}"` when that key is absent,
-   * null, or (for a type other than camera) not an object. Use it to read
-   * types that have no typed struct.
+   * Details for any peripheral type, as compact JSON.
+   *
+   * Holds the JSON object that Sentinel publishes under the record key named
+   * by `type` (for example `"camera"`, `"microphone"`, or `"lidar"`), or
+   * `"{}"` when that key is absent, null, or (for a type other than camera) not
+   * an object. Every field and value is preserved, including fields this Core
+   * release does not know; the text is re-serialized, so key order and
+   * whitespace may differ from the daemon response.
+   *
+   * This is the authoritative way to read peripheral types for which Core has
+   * no typed struct: a new device type is usable as soon as Sentinel reports
+   * it. Cameras carry both this field and the typed `camera` member.
    */
   std::string details_json = "{}";
 };
 
-/** One daemon catalog snapshot; iterable over `devices`. */
+/**
+ * One internally consistent daemon catalog snapshot.
+ *
+ * The object is directly iterable over `devices` while retaining the daemon
+ * identity, revision, freshness, and provider diagnostics that belong to the
+ * same snapshot.
+ */
 struct Catalog {
   std::string instance_id;
   std::string state;
@@ -91,11 +105,26 @@ struct Catalog {
   std::vector<ProviderIssue> issues;
   std::vector<Peripheral> devices;
 
-  std::vector<Peripheral>::const_iterator begin() const noexcept {
+  using iterator = std::vector<Peripheral>::iterator;
+  using const_iterator = std::vector<Peripheral>::const_iterator;
+
+  iterator begin() noexcept {
     return devices.begin();
   }
-  std::vector<Peripheral>::const_iterator end() const noexcept {
+  iterator end() noexcept {
     return devices.end();
+  }
+  const_iterator begin() const noexcept {
+    return devices.begin();
+  }
+  const_iterator end() const noexcept {
+    return devices.end();
+  }
+  const_iterator cbegin() const noexcept {
+    return devices.cbegin();
+  }
+  const_iterator cend() const noexcept {
+    return devices.cend();
   }
   std::size_t size() const noexcept {
     return devices.size();
@@ -103,15 +132,23 @@ struct Catalog {
   bool empty() const noexcept {
     return devices.empty();
   }
+  Peripheral& operator[](std::size_t index) noexcept {
+    return devices[index];
+  }
   const Peripheral& operator[](std::size_t index) const noexcept {
     return devices[index];
   }
 };
 
 /**
- * Read one snapshot with a single bounded `GET /v1/peripherals` on
- * `/run/simaai-sentinel/api.sock`. Never scans hardware or falls back; failures
- * throw `NeatError` with a structured `GraphReport::error_code`.
+ * Read and validate one snapshot from the local SiMa Sentinel daemon.
+ *
+ * This function performs exactly one bounded `GET /v1/peripherals` request on
+ * `/run/simaai-sentinel/api.sock`. It never scans hardware, caches results,
+ * connects over SSH, or falls back when Sentinel is unavailable. Failures
+ * throw `NeatError` with a structured `GraphReport::error_code`; when
+ * Sentinel is not running, the message asks the user to install it with
+ * `sima-cli neat install sentinel` or start `simaai-sentinel.service`.
  */
 Catalog list();
 

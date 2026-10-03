@@ -19,7 +19,7 @@ sidebar_position: 2
 - libcameraがカメラをリストに表示することを確認してください。
 - 要求する予定の正確な `format,width,height,framerate` を、`libcamerasrc` がストリーミングできることを確認してください。
 
-`camera_name` は正確な libcamera カメラ名です。デフォルトカメラを使う場合は未設定のままにするか、`simaai::neat::peripherals::list()` / `pyneat.peripherals.list()` から選択可能な名前とデーモンが分類したモードを取得してください。
+`camera_name` は正確な libcamera カメラ名です。デフォルトカメラを使う場合は未設定のままにするか、`simaai::neat::peripherals::list()` / `pyneat.peripherals.list()` から選択可能な名前とデーモンが分類したモードを取得してください。`simaai-sentinel.service` が利用できない場合、カタログクライアントは失敗し、代替のハードウェアスキャンは実行しません。
 
 ## クイックスタート
 

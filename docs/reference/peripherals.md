@@ -60,8 +60,10 @@ When `peripheral.type == "camera"`, `peripheral.camera` contains:
 
 Sentinel classifies support by applying the rules this Core package installs at
 `/usr/share/simaai-sentinel/support/neat-core.json`, so the result matches the
-installed `CameraInput`. Catalog support does not guarantee that exclusive
-acquisition will succeed later.
+installed `CameraInput`. The client preserves that result and does not
+probe, reclassify, acquire, configure, or stream from the camera. Catalog
+support therefore does not guarantee that exclusive acquisition will succeed
+later.
 
 ## Details for any peripheral type
 
@@ -71,19 +73,47 @@ record key named by `type` (for example `camera`, `microphone`, or `lidar`).
 When that key is absent or `null`, `details_json` is `"{}"`. Python also
 provides `details`, which decodes `details_json` into a new `dict`.
 
+`details_json` is the authoritative way to read a peripheral type for which
+Core has no typed accessor. A new device type is usable as soon as Sentinel
+reports it, without a Core update. Every field and value is preserved,
+including fields this Core release does not know; the JSON is re-serialized, so
+key order and whitespace may differ from the daemon response. Cameras carry
+both `details_json` and the typed `camera` field.
+
+Python:
+
 ```python
 for peripheral in pyneat.peripherals.list():
     if peripheral.type == "microphone":
         print(peripheral.id, peripheral.details.get("channels"))
 ```
 
-In C++, parse `details_json` with any JSON library. A new device type is
-usable as soon as Sentinel reports it, without a Core update. For a type other
-than `camera`, a details value that is not a JSON object does not make `list()`
-fail: that peripheral stays in the catalog with `details_json` set to `"{}"`.
-Invalid `camera` details make `list()` fail with a parse error.
+C++:
 
-## Failures
+```cpp
+#include <nlohmann/json.hpp>
+
+for (const auto& peripheral : simaai::neat::peripherals::list()) {
+  if (peripheral.type == "microphone") {
+    const auto details = nlohmann::json::parse(peripheral.details_json);
+    // Read details.value("channels", 0) and other provider fields.
+  }
+}
+```
+
+Any JSON library can parse `details_json`; the example uses nlohmann/json.
+
+For a type other than `camera`, a details value that is not a JSON object does
+not make `list()` fail: that peripheral stays in the catalog with
+`details_json` set to `"{}"`. Core does not otherwise validate the details of
+types it has no typed accessor for. Invalid `camera` details are a protocol
+defect and make `list()` fail with a parse error. Typed fields such as `camera`
+ignore optional protocol v1 fields they do not know; those fields remain
+available in `details_json`. Core also accepts the top-level `changes` log and
+`support` status that Sentinel publishes with each snapshot, but does not
+expose them.
+
+## Failures and scope
 
 `list()` raises `NeatError` with a stable code when the service is missing or
 too old to serve the catalog, permission is denied, the request times out, the
@@ -93,3 +123,10 @@ next operational action. See the [error code catalog](./error-codes.md).
 If Sentinel is not installed, or is too old to serve the peripheral catalog,
 install or update it with `sima-cli neat install sentinel`. If it is installed
 but not running, start `simaai-sentinel.service`.
+
+This API connects only to `/run/simaai-sentinel/api.sock` on the local
+DevKit. It does not use SSH or select a remote board. Insight and future CLI
+clients connect to the daemon as sibling clients rather than through Core.
+
+This release provides a one-shot catalog read. Event subscriptions, refresh
+requests, and daemon lifecycle control are not part of the public Core API.

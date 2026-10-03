@@ -1,6 +1,7 @@
 import json
 import socket
 import threading
+import time
 
 import pyneat
 import pytest
@@ -29,7 +30,7 @@ _CATALOG = {
 }
 
 
-def _list(tmp_path, body, status=200):
+def _list(tmp_path, body, status=200, before_reply=lambda: None):
   """Serve one HTTP response on a fake Sentinel socket and list it."""
   path = tmp_path / "api.sock"
   listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -42,6 +43,7 @@ def _list(tmp_path, body, status=200):
       request = b""
       while b"\r\n\r\n" not in request and (chunk := client.recv(4096)):
         request += chunk
+      before_reply()
       payload = body.encode()
       client.sendall(
           f"HTTP/1.1 {status} Status\r\nContent-Length: {len(payload)}\r\n\r\n".encode()
@@ -80,8 +82,34 @@ def test_catalog_binds_every_field(tmp_path):
   assert [mode.is_range for mode in catalog[0].camera.modes] == [False, True]
   assert [device.id for device in catalog] == [d["id"] for d in _CATALOG["devices"]]
   assert len(catalog) == 3 and catalog[-1].id == "lidar:1"
-  with pytest.raises(IndexError):
+  with pytest.raises(IndexError, match="peripheral catalog index out of range"):
     catalog[3]
+  assert type(iter(catalog)).__name__ == "PeripheralCatalogIterator"
+
+
+def test_stale_and_empty_snapshots(tmp_path):
+  stale = dict(
+      _CATALOG, state="degraded", stale=True,
+      error={"code": "peripherals.discovery_failed", "reason": "camera scan failed"},
+      issues=[{"provider": "daemon.camera.mipi", "code": "io.permission_denied",
+               "reason": "permission denied", "retained_last_good": True}])
+  catalog = _list(tmp_path, json.dumps(stale))
+  _assert_matches(catalog, {k: stale[k] for k in ("state", "stale", "error", "issues")})
+  assert catalog and len(catalog) == 3
+
+  (tmp_path / "api.sock").unlink()
+  empty = _list(tmp_path, json.dumps(dict(_CATALOG, devices=[])))
+  assert not empty and len(empty) == 0 and list(empty) == []
+
+
+def test_list_releases_the_gil_while_waiting(tmp_path):
+  progress = threading.Event()
+  observed = []
+  worker = threading.Thread(target=lambda: (time.sleep(0.02), progress.set()))
+  worker.start()
+  _list(tmp_path, json.dumps(_CATALOG), before_reply=lambda: observed.append(progress.wait(0.5)))
+  worker.join(timeout=1)
+  assert observed == [True]
 
 
 def test_details_cover_any_type(tmp_path):
@@ -91,6 +119,8 @@ def test_details_cover_any_type(tmp_path):
   assert microphone.camera is None
   assert microphone.details == json.loads(microphone.details_json)
   assert microphone.details == {"channels": 2, "nested": {"a": [1, 2]}}
+  microphone.details["channels"] = 1
+  assert microphone.details["channels"] == 2
   assert lidar.details_json == "{}" and lidar.details == {}
 
 
