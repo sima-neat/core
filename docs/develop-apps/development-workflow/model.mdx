@@ -679,6 +679,12 @@ runner = model.build([tensor], route_options=route)
 
 Use seeded build for evidence and early failure, not as a habit. If the default build already proves the contract, keep the example smaller.
 
+For image input, the seed supplies the current shape and pixel format; it does not
+replace `preprocess.input_max_width`, `input_max_height`, or `input_max_depth`.
+For example, a 640×640 seed with a declared 1920×1920 capacity accepts later
+800×800 and 1920×1080 frames on the same runner. Frames above the capacity are
+rejected. Omitting the limits keeps the same resolved capacity as an unseeded build.
+
 ## Measure model execution
 
 Use `model.benchmark(...)` for a quick synthetic model benchmark. It generates inputs from `input_specs()` and returns headline latency, throughput, and optional power fields. Use it to compare model/runtime changes, not to claim production application throughput.

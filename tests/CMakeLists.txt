@@ -1874,6 +1874,26 @@ if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  model_seeded_input_capacity_test
+  e2e_testing/model_seeded_input_capacity_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR} mat
+  LOCK_DISPATCHER
+)
+set_tests_properties(model_seeded_input_capacity_test PROPERTIES
+  LABELS "strict;e2e;model;preproc;regression"
+  TIMEOUT 180)
+foreach(mode tensor sample defaults unseeded oversize_width oversize_height)
+  set(test_name model_seeded_input_capacity_${mode}_test)
+  add_test(NAME ${test_name}
+    COMMAND model_seeded_input_capacity_test ${CMAKE_SOURCE_DIR} ${mode})
+  simaneat_append_ctest_env(${test_name})
+  set_tests_properties(${test_name} PROPERTIES
+    LABELS "strict;e2e;model;preproc;regression"
+    RESOURCE_LOCK "dispatcher"
+    TIMEOUT 180)
+endforeach()
+
+add_pipeline_test(
   seedless_yolov8_preproc_input_max_smoke_test
   e2e_pipelines/obj_detection/seedless_yolov8_preproc_input_max_smoke_test.cpp
   e2e_pipelines/e2e_utils.cpp
