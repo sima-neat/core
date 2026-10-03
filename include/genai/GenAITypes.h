@@ -194,8 +194,16 @@ public:
   iterator begin();
   iterator end();
 
-private:
   struct Impl;
+
+  /**
+   * @brief Producer-side handle a generator uses to emit tokens into the stream.
+   *
+   * A ProducerFn receives one of these and drives the stream: it pushes text
+   * with record_text(), reports metrics with record_metric(), and ends the
+   * stream with finish(). It must stop early when cancelled() turns true. Only
+   * Impl constructs a Producer; callers only ever receive a reference to one.
+   */
   class Producer {
   public:
     void record_metric(const std::string& metric, double value);
@@ -217,6 +225,17 @@ private:
   using ProducerFn = std::function<void(Producer&)>;
   using CancelFn = std::function<void()>;
 
+  /**
+   * @brief Build a stream driven by an arbitrary producer callback.
+   *
+   * This is the public seam that lets code outside this class (for example the
+   * PCIe host backend adapting card-side token notifications) construct a
+   * GenerationStream without being a friend. @p producer runs on a worker
+   * thread; @p cancel is invoked when cancel() is called.
+   */
+  static GenerationStream make(ProducerFn producer, CancelFn cancel);
+
+private:
   explicit GenerationStream(std::unique_ptr<Impl> impl);
   GenerationStream(ProducerFn producer, CancelFn cancel);
 

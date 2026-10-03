@@ -12,6 +12,9 @@ co-processing applications:
 - logs: `/var/log/sima-neat/pcie/qN.log`
 - host plugin: `neatpciehost`
 
+To chat with a language model (text and images) on the card, see
+[HOW-TO-RUN-PCIE-GENAI.md](HOW-TO-RUN-PCIE-GENAI.md) (the `pcie-genai` CLI).
+
 ## Public API
 
 Public headers install under:
@@ -34,6 +37,10 @@ package; applications compiling against this API use `sima-pcie-host-dev`.
 `pcie::Model` serializes only the restricted PCIe model-options schema before
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
+
+The GenAI C++ API (`simaai/neat/pcie/genai/GenAIModel.h`) is not installed yet.
+It uses NEAT core's GenAI types, which this package does not ship, so for now
+only the in-tree `pcie-genai` CLI builds against it.
 
 ### Multi-model runtime
 

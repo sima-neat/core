@@ -6,6 +6,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <fcntl.h>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
@@ -33,7 +34,8 @@ CommandResult SshRunner::run(const std::vector<std::string>& args, const int tim
 }
 
 CommandResult SshRunner::run_for(const std::vector<std::string>& args,
-                                 const std::chrono::milliseconds timeout) {
+                                 const std::chrono::milliseconds timeout,
+                                 const std::function<bool()>& should_abort) {
   if (args.empty()) {
     throw std::invalid_argument("SshRunner::run requires a command");
   }
@@ -58,6 +60,20 @@ CommandResult SshRunner::run_for(const std::vector<std::string>& args,
   }
 
   if (pid == 0) {
+    // Own process group: a terminal Ctrl-C goes to the caller only (it handles
+    // it itself), not to an in-flight ssh.
+    ::setpgid(0, 0);
+    // Never inherit the caller's stdin: ssh would read (and eat) piped input.
+    // Example: `printf 'q1\nq2\n' | pcie-genai ...` lost its prompts to an
+    // ssh call made before the first prompt. With /dev/null, ssh sees EOF
+    // at once and the prompts stay for the caller.
+    const int devnull = ::open("/dev/null", O_RDONLY);
+    if (devnull >= 0) {
+      ::dup2(devnull, STDIN_FILENO);
+      if (devnull != STDIN_FILENO) {
+        ::close(devnull);
+      }
+    }
     ::dup2(pipefd[1], STDOUT_FILENO);
     ::dup2(pipefd[1], STDERR_FILENO);
     ::close(pipefd[0]);
@@ -68,6 +84,9 @@ CommandResult SshRunner::run_for(const std::vector<std::string>& args,
   }
 
   ::close(pipefd[1]);
+  // Also set it here (no race with the child's own setpgid) so a timeout can
+  // kill the whole group, including any grandchild still holding the pipe.
+  ::setpgid(pid, pid);
 
   CommandResult result;
   const auto effective_timeout = std::max(timeout, std::chrono::milliseconds(1));
@@ -77,11 +96,15 @@ CommandResult SshRunner::run_for(const std::vector<std::string>& args,
 
   while (!child_done) {
     const auto now = std::chrono::steady_clock::now();
-    if (now >= deadline) {
-      result.timed_out = true;
-      ::kill(pid, SIGTERM);
+    const bool abort_now = should_abort && should_abort();
+    if (now >= deadline || abort_now) {
+      result.aborted = abort_now;
+      result.timed_out = !abort_now;
+      // Negative pid = the whole process group: ssh and anything it started.
+      // Killing only ssh could leave a child that keeps the pipe open.
+      ::kill(-pid, SIGTERM);
       usleep(200000);
-      ::kill(pid, SIGKILL);
+      ::kill(-pid, SIGKILL);
       break;
     }
 

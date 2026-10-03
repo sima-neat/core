@@ -246,6 +246,10 @@ GenerationStream::GenerationStream(std::unique_ptr<Impl> impl) : impl_(std::move
 GenerationStream::GenerationStream(ProducerFn producer, CancelFn cancel)
     : impl_(std::make_unique<Impl>(std::move(producer), std::move(cancel))) {}
 
+GenerationStream GenerationStream::make(ProducerFn producer, CancelFn cancel) {
+  return GenerationStream(std::move(producer), std::move(cancel));
+}
+
 GenerationStream::~GenerationStream() = default;
 
 GenerationStream::GenerationStream(GenerationStream&&) noexcept = default;
