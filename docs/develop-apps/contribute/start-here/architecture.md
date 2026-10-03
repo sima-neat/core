@@ -1029,6 +1029,7 @@ GStreamer name collisions.
 * **Capability-gated dynamic input**: runtime renegotiation is allowed only when the built graph advertises dynamic capability. `FullyDynamic` graphs can renegotiate raw-video geometry/format/fps/media caps; `IngressDynamicCvuOnly` allows geometry changes and permits format changes only when build-time downstream contract checks prove stable output behavior.
 * **Dynamic within effective bounds**: `max_*` are hard ceilings; if `max_*` is unset, `width/height/depth` act as implicit ceilings.
 * **Model vs Graph defaults**: both flows now resolve seed/max/byte-guard policy through `src/pipeline/internal/InputPolicy.*`; `Model` still applies its documented metadata-backed defaults (for example 1920x1080 ceilings) while `Graph` remains node-option driven unless configured.
+* **Seeded Model image builds**: the seed sets the current shape/format while the model's resolved `input_max_*` capacity is carried into the input node independently. OpenCV, Tensor, and Sample seeds preserve the same capacity as unseeded builds; a seed above that capacity is rejected.
 * **`caps_override` is authoritative**: when set, renegotiation is blocked and shape changes require rebuild.
 
 | Flow | Seed defaults | Max defaults | Byte-guard default |
