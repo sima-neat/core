@@ -271,7 +271,7 @@ When you combine streams, preserve the matching key that the graph expects. `Com
 | Workload | Start with | Why |
 | --- | --- | --- |
 | First working app | default `RunOptions` | Prove correctness before tuning. |
-| Live camera or RTSP input | `RunPreset::Realtime`; `OutputOptions::Latest()` where output freshness matters | Fresh frames beat complete history. The realtime preset resolves to latest-frame overflow unless you override it. |
+| Live camera or RTSP input | `RunPreset::Realtime`; `OutputOptions::Latest()` where output freshness matters | Fresh frames beat complete history. The realtime preset resolves to latest-frame overflow unless you override it. It also limits each single-input CVU stage to 20 ms of queued live input, so a slower model drops stale frames instead of holding decoder buffers and slowing the source. |
 | File or batch processing | `RunPreset::Reliable`; `OutputOptions::EveryFrame(...)` | Preserve every input and expose backpressure. The reliable preset resolves to blocking overflow unless you override it. |
 | Normal app serving | `RunPreset::Balanced` | Good default once the graph works. |
 | Jittery source needs bounded buffering | `queue_depth` | Increase only enough to absorb jitter. A deep queue can hide stale frames and delayed backpressure. |
