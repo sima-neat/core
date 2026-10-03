@@ -1532,8 +1532,8 @@ RUN_TEST(
               "each H265 branch must render a uniquely named RTP packetizer");
       require(count_occurrences(h265_video_pipeline, "pt=98") >= 2U,
               "each H265 VideoSender branch must use payload type 98");
-      require(count_occurrences(h265_video_pipeline, "sleep-time=250") == 2U,
-              "each fused H265 VideoSender branch must pace RTP packets");
+      require(h265_video_pipeline.find("sleep-time") == std::string::npos,
+              "fused H265 VideoSender branches must not throttle packets with a fixed sleep");
       require(h265_video_pipeline.find("rtph265pay name=pay0") == std::string::npos,
               "fused H265 VideoSender branches must not retain the fixed pay0 name");
 
@@ -1611,7 +1611,8 @@ RUN_TEST(
 
       // A Default decoder link needs no realtime mux: a synchronous encoded VideoSender
       // branch is rendered behind a tee in the source/decoder pipeline (#985).
-      const auto compile_default_video_app = [&](bool video_async, bool decoder_stream_id) {
+      const auto compile_default_video_app = [&](bool video_async, bool decoder_stream_id,
+                                                 bool decoded_sender = false) {
         simaai::neat::Graph app("default_link_encoded_video_app", outer_options);
         simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
         source_options.url = "rtsp://example.test/default-link";
@@ -1624,7 +1625,15 @@ RUN_TEST(
         simaai::neat::Graph decoder("default_link_decoder");
         decoder.add(simaai::neat::nodes::SimaDecode());
         simaai::neat::Graph consumer("default_link_consumer");
-        consumer.add(simaai::neat::nodes::Output("default_link_frames"));
+        if (decoded_sender) {
+          auto raw_options =
+              simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(1280, 720, 20);
+          raw_options.host = "127.0.0.1";
+          raw_options.channel = 1;
+          consumer.add(simaai::neat::nodes::groups::VideoSender(raw_options));
+        } else {
+          consumer.add(simaai::neat::nodes::Output("default_link_frames"));
+        }
         simaai::neat::GraphLinkOptions decoder_link;
         if (decoder_stream_id) {
           decoder_link.stream_id = "default_link_stream";
@@ -1678,6 +1687,33 @@ RUN_TEST(
                   (*(tee_it + 1))->kind() == "SimaDecode" &&
                   default_merged->provenance.size() == default_merged->nodes.size(),
               "the encoded tee must sit between the RTSP source and SimaDecode");
+      // Sender metrics and failures must stay attributed to the sender, not the generated FanOut.
+      const auto sender_segment =
+          std::find_if(default_video_plan.pipeline_segments.begin(),
+                       default_video_plan.pipeline_segments.end(), [](const auto& segment) {
+                         return segment.consumed_by_fused_realtime_ingress &&
+                                !segment.nodes.empty() &&
+                                segment.nodes.back()->kind() == "UdpOutput";
+                       });
+      require(sender_segment != default_video_plan.pipeline_segments.end() &&
+                  default_merged->provenance[tee_it - default_merged->nodes.begin()].runtime_node ==
+                      simaai::neat::runtime::attributed_runtime_node_for_segment_node(
+                          *sender_segment, sender_segment->nodes.size() - 1U),
+              "the encoded tee must be attributed to the VideoSender's UDP sink");
+      // Export pairs node_ids with nodes; the prepended source must not take the decoder's id.
+      const auto rendered_for = [&](std::size_t local) {
+        return simaai::neat::runtime::rendered_node_index_for_segment_id(*default_merged, local);
+      };
+      bool ids_follow_provenance = !default_merged->node_ids.empty();
+      for (std::size_t local = 0; local < default_merged->node_ids.size(); ++local) {
+        const std::size_t rendered = rendered_for(local);
+        ids_follow_provenance =
+            ids_follow_provenance && rendered < default_merged->nodes.size() &&
+            default_merged->provenance[rendered].runtime_node == default_merged->node_ids[local];
+      }
+      require(ids_follow_provenance &&
+                  default_merged->nodes[rendered_for(0)]->kind() == "SimaDecode",
+              "fused node ids must resolve to their own rendered nodes, not the prepended source");
       const auto topology = nlohmann::json::parse(
           simaai::neat::session_test::export_graph_topology_for_test(default_video_plan));
       const auto decoder_index =
@@ -1719,10 +1755,25 @@ RUN_TEST(
               "an async VideoSender must keep the Default-link FanOut");
       require(find_encoded_tee(compile_default_video_app(false, true)) == nullptr,
               "a stream id on the decoder link must keep the FanOut");
-      setenv("SIMA_GRAPH_DISABLE_ENCODED_TEE", "1", 1);
-      const bool disabled_has_tee = find_encoded_tee(compile_default_video_app(false, false));
-      unsetenv("SIMA_GRAPH_DISABLE_ENCODED_TEE");
-      require(!disabled_has_tee, "SIMA_GRAPH_DISABLE_ENCODED_TEE must restore the FanOut");
+
+      // A sender on the decoded branch joins the same pipeline, so payloader names must differ.
+      const auto decoded_sender_plan = compile_default_video_app(false, false, true);
+      std::vector<std::string> merged_names;
+      for (const auto& segment : decoded_sender_plan.pipeline_segments) {
+        if (segment.consumed_by_fused_realtime_ingress) {
+          continue;
+        }
+        for (std::size_t i = 0; i < segment.nodes.size(); ++i) {
+          const auto names = segment.nodes[i]->element_names(static_cast<int>(i));
+          merged_names.insert(merged_names.end(), names.begin(), names.end());
+        }
+      }
+      std::sort(merged_names.begin(), merged_names.end());
+      require(find_encoded_tee(decoded_sender_plan) != nullptr &&
+                  std::count(merged_names.begin(), merged_names.end(), "pay0") == 1 &&
+                  std::adjacent_find(merged_names.begin(), merged_names.end()) ==
+                      merged_names.end(),
+              "the encoded tee must not duplicate the decoded sender's payloader name");
 
       // Kind-based recognition must preserve a customer-configured parser's
       // caps/header behavior exactly.

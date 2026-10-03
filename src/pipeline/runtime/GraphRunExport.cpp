@@ -822,19 +822,16 @@ json graph_topology_to_json(const runtime::RunCore& core) {
       n["stable_id"] = "segment_" + std::to_string(segment.id) + ".n" +
                        std::to_string(static_cast<std::size_t>(id));
       n["backend"] = "pipeline";
+      const std::size_t rendered = runtime::rendered_node_index_for_segment_id(segment, local);
       n["segment"] = segment.id;
-      std::size_t node_index = 0;
-      while (node_index < segment.nodes.size() &&
-             runtime::attributed_runtime_node_for_segment_node(segment, node_index) != id)
-        ++node_index;
-      n["segment_local_index"] = node_index;
+      n["segment_local_index"] = rendered;
       if (id < plan.node_labels.size()) {
         n["label"] = plan.node_labels[id];
       }
-      if (node_index < segment.nodes.size() && segment.nodes[node_index]) {
-        n["kind"] = segment.nodes[node_index]->kind();
-        n["user_label"] = segment.nodes[node_index]->user_label();
-        attach_node_identity_blocks(n, segment.nodes[node_index]);
+      if (rendered < segment.nodes.size() && segment.nodes[rendered]) {
+        n["kind"] = segment.nodes[rendered]->kind();
+        n["user_label"] = segment.nodes[rendered]->user_label();
+        attach_node_identity_blocks(n, segment.nodes[rendered]);
       } else {
         n["kind"] = "PipelineNode";
       }

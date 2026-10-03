@@ -284,6 +284,23 @@ inline graph::NodeId attributed_runtime_node_for_segment_node(const PipelineSegm
   return graph::kInvalidNode;
 }
 
+// Index in `segment.nodes` of the node rendered for `segment.node_ids[local]`. Fusion can prepend
+// nodes owned by other segments, so provenance decides when positional pairing disagrees.
+inline std::size_t rendered_node_index_for_segment_id(const PipelineSegmentPlan& segment,
+                                                      std::size_t local) {
+  if (local >= segment.node_ids.size() || segment.provenance.size() != segment.nodes.size() ||
+      (local < segment.provenance.size() &&
+       segment.provenance[local].runtime_node == segment.node_ids[local])) {
+    return local;
+  }
+  for (std::size_t i = 0; i < segment.provenance.size(); ++i) {
+    if (segment.provenance[i].runtime_node == segment.node_ids[local]) {
+      return i;
+    }
+  }
+  return local;
+}
+
 inline std::vector<MaterializedNodeAttribution>
 make_materialized_node_attribution(const PipelineSegmentPlan& segment, bool injected_input,
                                    bool injected_output) {

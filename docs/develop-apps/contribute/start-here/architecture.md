@@ -855,6 +855,8 @@ decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
 latest-by-stream topology remains segmented. Nested already-fused source
 segments remain ineligible until their branches can be preserved recursively.
 
+The compiler also lowers an RTSP source split between a Default-linked `SimaDecode` and an encoded passthrough `VideoSender` with `async=false` into one source pipeline with a `tee`, whatever link follows the decoder; `async=true` senders keep the segmented `FanOut`.
+
 ### Internal boundary timing
 
 One logical `Graph` can lower into several GStreamer pipeline segments. Core

@@ -97,6 +97,8 @@ MJPEG では、C++ の `SimaEncodeType::MJPEG` または Python の `pyneat.Sima
 
 パススルーはエンコーダーを作成しません。呼び出し側のコーデック選択は、エンコード済み入力に一致する必要があります。エンコーダー設定は適用されません。
 
+RTSP ソースがこの送信側と `SimaDecode` の両方に供給される場合、デフォルトの `async=false` では Core が送信側をソースパイプライン内の GStreamer `tee` の後段に配置するため、ソース、送信側、デコーダーは一緒に開始、停止、失敗します。別々のパイプラインに保つには `async=true`（Python では `async_`）を設定します。
+
 H.265 の例：
 
 ```cpp
