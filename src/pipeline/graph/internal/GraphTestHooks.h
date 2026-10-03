@@ -26,10 +26,13 @@ struct InputMemoryResolution;
 } // namespace pipeline_internal
 namespace runtime {
 struct FusedRealtimeIngress;
+struct ExecutionGraphPlan;
 } // namespace runtime
 } // namespace simaai::neat
 
 namespace simaai::neat::session_test {
+
+std::string export_graph_topology_for_test(const runtime::ExecutionGraphPlan& plan);
 
 enum class CompositionFailurePoint {
   None,

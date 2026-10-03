@@ -20,6 +20,7 @@
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/internal/Diagnostics.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/runtime/CustomerGraphView.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/ExecutionGraphRuntime.h"
@@ -1448,6 +1449,15 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
 }
 
 } // namespace
+
+namespace session_test {
+std::string export_graph_topology_for_test(const runtime::ExecutionGraphPlan& plan) {
+  runtime::RunCore core;
+  core.closed.store(true, std::memory_order_release);
+  core.graph_export_plan_ = std::make_unique<runtime::ExecutionGraphPlan>(plan);
+  return graph_topology_to_json(core).dump();
+}
+} // namespace session_test
 
 std::string run_to_json(const Run& run, const RunExportOptions& opt, std::string* err) {
   try {

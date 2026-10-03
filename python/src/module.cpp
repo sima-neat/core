@@ -655,9 +655,11 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 }
 
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
-  Tensor tensor = input;
+  const Tensor source_pin = input;
+  Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
-    tensor = tensor.cpu();
+    nb::gil_scoped_release release;
+    tensor = source_pin.cpu();
   }
   if (!tensor.is_dense()) {
     throw std::runtime_error("__dlpack__ only supports dense tensors");
@@ -678,9 +680,12 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
-  auto* owner = new DlpackExportOwner();
+  auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
-  owner->mapping = owner->tensor.map_read();
+  {
+    nb::gil_scoped_release release;
+    owner->mapping = owner->tensor.map_read();
+  }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
 
@@ -699,7 +704,7 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   owner->managed.dl_tensor.strides =
       owner->strides_elems.empty() ? nullptr : owner->strides_elems.data();
   owner->managed.dl_tensor.byte_offset = 0;
-  owner->managed.manager_ctx = owner;
+  owner->managed.manager_ctx = owner.get();
   owner->managed.deleter = delete_dlpack_managed;
 
   PyObject* capsule = PyCapsule_New(&owner->managed, "dltensor", [](PyObject* capsule_obj) {
@@ -712,8 +717,8 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
       managed_ptr->deleter(managed_ptr);
     }
   });
-  if (!capsule) {
-    delete owner;
+  if (capsule) {
+    (void)owner.release();
   }
   return capsule;
 }
@@ -823,7 +828,11 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
   bool chw_to_hwc_converted = false;
   out = maybe_convert_chw_image_to_hwc(std::move(out), &chw_to_hwc_converted);
 
-  if (copy) {
+  if (memory == TensorMemory::Auto) {
+    memory = TensorMemory::EV74;
+  }
+  const bool cpu_destination = memory == TensorMemory::CPU || memory == TensorMemory::A65;
+  if (copy && cpu_destination) {
     if (chw_to_hwc_converted) {
       out.read_only = false;
     } else {
@@ -835,17 +844,17 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
     }
   }
 
-  if (memory == TensorMemory::Auto) {
-    memory = TensorMemory::EV74;
-  }
-  if (memory == TensorMemory::CPU || memory == TensorMemory::A65) {
+  if (cpu_destination) {
     return out;
   }
-  if (memory == TensorMemory::EV74) {
-    return out.cvu();
-  }
-  if (memory == TensorMemory::MLA) {
-    return out.mla(true);
+  if (memory == TensorMemory::EV74 || memory == TensorMemory::MLA) {
+    Tensor placed;
+    {
+      // Keep the DLPack owner alive until Python ownership operations are safe again.
+      nb::gil_scoped_release release;
+      placed = memory == TensorMemory::EV74 ? out.cvu() : out.mla(true);
+    }
+    return placed;
   }
   throw std::runtime_error("unsupported TensorMemory placement for Python tensor import");
 }
