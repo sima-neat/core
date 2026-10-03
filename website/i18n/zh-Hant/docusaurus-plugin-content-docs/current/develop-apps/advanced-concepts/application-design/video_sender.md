@@ -102,6 +102,8 @@ graph.add(pyneat.groups.video_sender(opt))
 
 直通不建立編碼器。呼叫端選擇的編解碼器必須符合已編碼輸入；編碼器設定不適用。
 
+當 RTSP 來源同時供應此傳送端與 `SimaDecode` 時，預設的 `async=false` 讓 Core 將傳送端放在來源管線中的 GStreamer `tee` 之後，因此來源、傳送端與解碼器會一起啟動、停止與失敗。若要保持各自獨立的管線，請設定 `async=true`（Python 中為 `async_`）。
+
 H.265 範例：
 
 ```cpp
