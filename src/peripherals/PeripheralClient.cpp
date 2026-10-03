@@ -436,6 +436,10 @@ peripherals::Peripheral parse_device(const nlohmann::json& value) {
   };
   if (device.type == "camera")
     device.camera = parse_camera(require_field(object, "camera"));
+  const auto details = object.find(device.type);
+  if (details != object.end() && !details->is_null())
+    device.details_json =
+        require_object(*details, "peripheral details '" + device.type + "'").dump();
   return device;
 }
 

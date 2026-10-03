@@ -56,9 +56,45 @@ for (const auto& peripheral : catalog) {
 支援狀態由 Sentinel 套用此 Core 套件安裝於 `/usr/share/simaai-sentinel/support/neat-core.json` 的規則進行分類，因此結果會與已安裝的 `CameraInput` 一致。用戶端會保留該結果，不會探查、重新分類、取得、設定或串流相機。
 因此，目錄中的支援狀態不保證稍後的獨佔取得一定成功。
 
-未知的周邊裝置類型仍會以共用的 `id`、`type` 和 `provider` 保留在目錄中。舊版用戶端會
-忽略新增到通訊協定 v1 的選用欄位。這也包括 Sentinel 隨每份快照發布的頂層 `changes` 記錄；
-Core 會接受它，但不會公開它。
+## 任何周邊裝置類型的詳細資料
+
+每個周邊裝置不論其 `type` 為何，都會在 `details_json` 中帶有該類型專屬的詳細資料：這是 Sentinel
+在名稱與 `type` 相同的記錄鍵（例如 `camera`、`microphone` 或 `lidar`）下發布的精簡 JSON 物件。
+若該鍵不存在或為 `null`，`details_json` 即為 `"{}"`。Python 另外提供 `details`，可將
+`details_json` 解碼為新的 `dict`。
+
+`details_json` 是讀取 Core 沒有型別化存取子之周邊裝置類型的權威方式。新的裝置類型只要 Sentinel
+回報即可立即使用，不需要更新 Core。所有欄位與值都會保留，包括此 Core 版本不認識的欄位；JSON
+會重新序列化，因此鍵的順序與空白可能與常駐程式的回應不同。相機同時具有 `details_json` 與型別化的
+`camera` 欄位。
+
+Python:
+
+```python
+for peripheral in pyneat.peripherals.list():
+    if peripheral.type == "microphone":
+        print(peripheral.id, peripheral.details.get("channels"))
+```
+
+C++:
+
+```cpp
+#include <nlohmann/json.hpp>
+
+for (const auto& peripheral : simaai::neat::peripherals::list()) {
+  if (peripheral.type == "microphone") {
+    const auto details = nlohmann::json::parse(peripheral.details_json);
+    // Read details.value("channels", 0) and other provider fields.
+  }
+}
+```
+
+任何 JSON 程式庫都能剖析 `details_json`；此範例使用 nlohmann/json。
+
+詳細資料值若存在，必須是 JSON 物件；任何其他值都會使 `list()` 因剖析錯誤而失敗。對於沒有型別化
+存取子的類型，Core 不會再做其他驗證。`camera` 等型別化欄位會忽略其不認識的通訊協定 v1 選用欄位；
+這些欄位仍可在 `details_json` 中取得。Core 也會接受 Sentinel 隨每份快照發布的頂層 `changes` 記錄，
+但不會公開它。
 
 ## 失敗與範圍
 

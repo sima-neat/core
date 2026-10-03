@@ -66,6 +66,7 @@ nlohmann::json encode_catalog(const simaai::neat::peripherals::Catalog& catalog)
         {"type", device.type},
         {"provider", device.provider},
         {"camera", nullptr},
+        {"details", nlohmann::json::parse(device.details_json)},
     };
     if (device.camera) {
       peripheral["camera"] = {

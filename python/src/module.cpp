@@ -3381,7 +3381,20 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("id", &simaai::neat::peripherals::Peripheral::id)
       .def_ro("type", &simaai::neat::peripherals::Peripheral::type)
       .def_ro("provider", &simaai::neat::peripherals::Peripheral::provider)
-      .def_ro("camera", &simaai::neat::peripherals::Peripheral::camera);
+      .def_ro("camera", &simaai::neat::peripherals::Peripheral::camera,
+              "Typed camera details; set only when type == 'camera'.")
+      .def_ro("details_json", &simaai::neat::peripherals::Peripheral::details_json,
+              "Details for any peripheral type as compact JSON: the object Sentinel publishes "
+              "under the record key named by type, or '{}' when that key is absent or null. "
+              "Unknown fields are preserved; key order and whitespace may differ from the "
+              "daemon response.")
+      .def_prop_ro(
+          "details",
+          [](const simaai::neat::peripherals::Peripheral& peripheral) {
+            return nb::module_::import_("json").attr("loads")(peripheral.details_json);
+          },
+          "details_json decoded with json.loads into a new dict. Use it to read peripheral "
+          "types that have no typed accessor; cameras also provide the typed camera field.");
   nb::class_<simaai::neat::peripherals::Catalog>(peripherals_mod, "Catalog")
       .def_ro("instance_id", &simaai::neat::peripherals::Catalog::instance_id)
       .def_ro("state", &simaai::neat::peripherals::Catalog::state)

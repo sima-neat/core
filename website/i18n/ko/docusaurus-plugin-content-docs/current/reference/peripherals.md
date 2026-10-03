@@ -59,9 +59,46 @@ for (const auto& peripheral : catalog) {
 지원 여부는 이 Core 패키지가 `/usr/share/simaai-sentinel/support/neat-core.json`에 설치하는 규칙을 Sentinel이 적용하여 분류하므로, 결과는 설치된 `CameraInput`과 일치합니다. 클라이언트는 그 결과를 보존하며 카메라를 검사, 재분류, 획득, 구성 또는
 스트리밍하지 않습니다. 따라서 카탈로그의 지원 표시는 이후의 독점 획득 성공을 보장하지 않습니다.
 
-알 수 없는 주변 장치 형식도 공통 `id`, `type`, `provider`와 함께 카탈로그에 유지됩니다. 프로토콜 v1에
-추가된 선택 필드는 이전 클라이언트에서 무시됩니다. 여기에는 Sentinel이 각 스냅샷과 함께 게시하는
-최상위 `changes` 로그도 포함됩니다. Core는 이 로그를 수락하지만 노출하지 않습니다.
+## 모든 주변 장치 형식의 세부 정보
+
+모든 주변 장치는 `type`과 관계없이 형식별 세부 정보를 `details_json`에 담습니다. 이는 Sentinel이
+`type`과 같은 이름의 레코드 키(예: `camera`, `microphone`, `lidar`) 아래에 게시하는 압축된 JSON
+객체입니다. 해당 키가 없거나 `null`이면 `details_json`은 `"{}"`입니다. Python에서는
+`details_json`을 새 `dict`로 디코딩하는 `details`도 제공합니다.
+
+`details_json`은 Core에 형식화된 접근자가 없는 주변 장치 형식을 읽는 공식적인 방법입니다. 새 장치
+형식은 Core를 업데이트하지 않아도 Sentinel이 보고하는 즉시 사용할 수 있습니다. 이 Core 릴리스가
+알지 못하는 필드를 포함하여 모든 필드와 값이 보존됩니다. JSON은 다시 직렬화되므로 키 순서와 공백은
+데몬 응답과 다를 수 있습니다. 카메라에는 `details_json`과 형식화된 `camera` 필드가 모두 있습니다.
+
+Python:
+
+```python
+for peripheral in pyneat.peripherals.list():
+    if peripheral.type == "microphone":
+        print(peripheral.id, peripheral.details.get("channels"))
+```
+
+C++:
+
+```cpp
+#include <nlohmann/json.hpp>
+
+for (const auto& peripheral : simaai::neat::peripherals::list()) {
+  if (peripheral.type == "microphone") {
+    const auto details = nlohmann::json::parse(peripheral.details_json);
+    // Read details.value("channels", 0) and other provider fields.
+  }
+}
+```
+
+`details_json`은 모든 JSON 라이브러리로 구문 분석할 수 있습니다. 이 예제에서는 nlohmann/json을 사용합니다.
+
+세부 정보 값이 있으면 JSON 객체여야 합니다. 다른 값이면 `list()`가 구문 분석 오류로 실패합니다.
+Core는 형식화된 접근자가 없는 형식의 세부 정보를 그 밖에는 검증하지 않습니다. `camera`와 같은
+형식화된 필드는 알지 못하는 프로토콜 v1 선택 필드를 무시하지만, 해당 필드는 `details_json`에서 계속
+사용할 수 있습니다. Core는 Sentinel이 각 스냅샷과 함께 게시하는 최상위 `changes` 로그도 수락하지만
+노출하지 않습니다.
 
 ## 실패 및 범위
 

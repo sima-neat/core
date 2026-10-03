@@ -65,10 +65,50 @@ probe, reclassify, acquire, configure, or stream from the camera. Catalog
 support therefore does not guarantee that exclusive acquisition will succeed
 later.
 
-Unknown peripheral types remain in the catalog with their common `id`, `type`,
-and `provider`. Optional fields added to protocol v1 are ignored by older
-clients. This includes the top-level `changes` log that Sentinel publishes with
-each snapshot; Core accepts it but does not expose it.
+## Details for any peripheral type
+
+Every peripheral, whatever its `type`, carries its type-specific details in
+`details_json`: the compact JSON object that Sentinel publishes under the
+record key named by `type` (for example `camera`, `microphone`, or `lidar`).
+When that key is absent or `null`, `details_json` is `"{}"`. Python also
+provides `details`, which decodes `details_json` into a new `dict`.
+
+`details_json` is the authoritative way to read a peripheral type for which
+Core has no typed accessor. A new device type is usable as soon as Sentinel
+reports it, without a Core update. Every field and value is preserved,
+including fields this Core release does not know; the JSON is re-serialized, so
+key order and whitespace may differ from the daemon response. Cameras carry
+both `details_json` and the typed `camera` field.
+
+Python:
+
+```python
+for peripheral in pyneat.peripherals.list():
+    if peripheral.type == "microphone":
+        print(peripheral.id, peripheral.details.get("channels"))
+```
+
+C++:
+
+```cpp
+#include <nlohmann/json.hpp>
+
+for (const auto& peripheral : simaai::neat::peripherals::list()) {
+  if (peripheral.type == "microphone") {
+    const auto details = nlohmann::json::parse(peripheral.details_json);
+    // Read details.value("channels", 0) and other provider fields.
+  }
+}
+```
+
+Any JSON library can parse `details_json`; the example uses nlohmann/json.
+
+When present, the details value must be a JSON object; any other value makes
+`list()` fail with a parse error. Core does not otherwise validate the details
+of types it has no typed accessor for. Typed fields such as `camera` ignore
+optional protocol v1 fields they do not know; those fields remain available in
+`details_json`. Core also accepts the top-level `changes` log that Sentinel
+publishes with each snapshot, but does not expose it.
 
 ## Failures and scope
 

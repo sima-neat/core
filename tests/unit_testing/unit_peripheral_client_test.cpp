@@ -301,6 +301,46 @@ void test_canonical_daemon_fixture() {
                   "CameraInput currently accepts libcamera camera names only; direct V4L2 "
                   "capture is not supported.",
           "canonical USB camera details or unknown optional fields were mishandled");
+  for (std::size_t index = 0; index < catalog.size(); ++index)
+    require(nlohmann::json::parse(catalog[index].details_json) ==
+                fixture["devices"][index]["camera"],
+            "canonical camera details_json must preserve every daemon field");
+}
+
+void test_details_for_any_type() {
+  TemporaryDirectory directory;
+  const auto microphone = nlohmann::json::parse(
+      R"({"channels": 2, "formats": ["S16_LE"], "nested": {"a": [1, 2]}, "gain_db": -3.5,
+          "label": "USB \u00e9 mic", "big": 18446744073709551615})");
+  auto body = ready_catalog();
+  body["devices"].push_back({{"id", "microphone:usb-1"},
+                             {"type", "microphone"},
+                             {"provider", "daemon.audio.alsa"},
+                             {"microphone", microphone}});
+  body["devices"].push_back(
+      {{"id", "imu:absent"}, {"type", "imu"}, {"provider", "daemon.imu.future"}});
+  body["devices"].push_back({{"id", "radar:null"},
+                             {"type", "radar"},
+                             {"provider", "daemon.radar.future"},
+                             {"radar", nullptr}});
+  auto server = serve_response(directory.socket_path(), response_for(body.dump()), 7);
+  const auto catalog = list_from_socket(directory.socket_path(), 2s);
+  server.finish();
+
+  require(catalog.size() == 5, "every peripheral type must remain in the catalog");
+  require(catalog[0].camera && catalog[0].camera->backend == "libcamera" &&
+              nlohmann::json::parse(catalog[0].details_json) == body["devices"][0]["camera"],
+          "cameras must carry typed details and the exact details_json");
+  require(nlohmann::json::parse(catalog[1].details_json) == body["devices"][1]["lidar"] &&
+              !catalog[1].camera,
+          "unknown lidar details must round-trip through details_json");
+  require(catalog[2].type == "microphone" && !catalog[2].camera &&
+              nlohmann::json::parse(catalog[2].details_json) == microphone,
+          "unknown microphone details must round-trip exactly through details_json");
+  require(catalog[3].type == "imu" && catalog[3].details_json == "{}",
+          "an absent details key must yield an empty JSON object");
+  require(catalog[4].type == "radar" && catalog[4].details_json == "{}",
+          "a null details key must yield an empty JSON object");
 }
 
 void test_empty_and_stale_catalogs() {
@@ -425,6 +465,15 @@ void test_protocol_failures() {
     server.finish();
   }
   {
+    auto malformed = ready_catalog();
+    malformed["devices"][1]["lidar"] = nlohmann::json::array({1, 2});
+    auto server =
+        serve_response(directory.socket_path("details.sock"), response_for(malformed.dump()));
+    require_error([&] { (void)list_from_socket(directory.socket_path("details.sock"), 1s); },
+                  simaai::neat::error_codes::kIoParse, "peripheral details 'lidar'");
+    server.finish();
+  }
+  {
     const std::string body = R"({"error":"too_many_clients"})";
     auto server = serve_response(directory.socket_path("busy.sock"), response_for(body, 503));
     require_error([&] { (void)list_from_socket(directory.socket_path("busy.sock"), 1s); },
@@ -459,6 +508,7 @@ int main() {
   try {
     test_success_and_partial_io();
     test_canonical_daemon_fixture();
+    test_details_for_any_type();
     test_empty_and_stale_catalogs();
     test_connection_failures();
     test_timeout_and_incomplete_response();

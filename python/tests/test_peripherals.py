@@ -80,6 +80,30 @@ def _catalog(**overrides):
   return value
 
 
+_MICROPHONE_DETAILS = {
+    "channels": 2,
+    "formats": ["S16_LE"],
+    "nested": {"a": [1, 2]},
+    "gain_db": -3.5,
+    "label": "USB \u00e9 mic",
+    "big": 18446744073709551615,
+}
+
+
+def _catalog_with_any_types():
+  catalog = _catalog()
+  catalog["devices"] += [
+      {
+          "id": "microphone:usb-1",
+          "type": "microphone",
+          "provider": "daemon.audio.alsa",
+          "microphone": _MICROPHONE_DETAILS,
+      },
+      {"id": "imu:absent", "type": "imu", "provider": "daemon.imu.future"},
+  ]
+  return catalog
+
+
 class _FakeServer:
   def __init__(self, path: Path, body: str, *, gate=None):
     self.path = path
@@ -229,6 +253,7 @@ def _native_catalog(catalog):
               "type": device.type,
               "provider": device.provider,
               "camera": camera_details(device.camera),
+              "details": json.loads(device.details_json),
           }
           for device in catalog.devices
       ],
@@ -257,6 +282,46 @@ def test_public_peripheral_catalog_maps_native_types(tmp_path):
   assert camera.modes[1].reason == "range is advisory"
   with pytest.raises(IndexError):
     _ = catalog[2]
+
+
+def test_peripheral_details_cover_any_type(tmp_path):
+  body = _catalog_with_any_types()
+  path = tmp_path / "details.sock"
+  with _FakeServer(path, json.dumps(body)):
+    catalog = _list(path)
+
+  assert [device.type for device in catalog] == [
+      "camera",
+      "lidar",
+      "microphone",
+      "imu",
+  ]
+  for device, expected in zip(catalog, body["devices"]):
+    assert isinstance(device.details_json, str)
+    assert isinstance(device.details, dict)
+    assert device.details == json.loads(device.details_json)
+    assert device.details == expected.get(device.type, {})
+
+  camera, lidar, microphone, imu = catalog
+  assert camera.camera.backend == "libcamera"
+  assert lidar.camera is None and lidar.details == {"future": True}
+  assert microphone.camera is None
+  assert microphone.details == _MICROPHONE_DETAILS
+  assert microphone.details["nested"]["a"] == [1, 2]
+  assert imu.details_json == "{}" and imu.details == {}
+  microphone.details["channels"] = 1
+  assert microphone.details["channels"] == 2
+
+
+def test_peripheral_details_must_be_an_object(tmp_path):
+  body = _catalog()
+  body["devices"][1]["lidar"] = [1, 2]
+  path = tmp_path / "bad-details.sock"
+  with _FakeServer(path, json.dumps(body)):
+    with pytest.raises(pyneat.NeatError) as malformed:
+      _list(path)
+  assert malformed.value.error_code == pyneat.ERROR_IO_PARSE
+  assert "peripheral details 'lidar'" in str(malformed.value)
 
 
 def test_peripheral_catalog_preserves_empty_and_stale_snapshots(tmp_path):
@@ -392,7 +457,7 @@ def test_cpp_and_python_peripheral_catalogs_match(tmp_path):
   probe, installed = _require_peripheral_cpp_probe()
 
   if not installed:
-    body = json.dumps(_catalog())
+    body = json.dumps(_catalog_with_any_types())
     path = tmp_path / "parity.sock"
     with _FakeServer(path, body):
       python_catalog = _native_catalog(_list(path))

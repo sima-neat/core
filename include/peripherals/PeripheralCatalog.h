@@ -61,12 +61,27 @@ struct CameraDetails {
   std::vector<CameraMode> modes;
 };
 
-/** Common identity plus optional typed details for one peripheral. */
+/** Common identity plus type-specific details for one peripheral. */
 struct Peripheral {
   std::string id;
   std::string type;
   std::string provider;
+  /** Typed camera details; set only when `type == "camera"`. */
   std::optional<CameraDetails> camera;
+  /**
+   * Details for any peripheral type, as compact JSON.
+   *
+   * Holds the JSON object that Sentinel publishes under the record key named
+   * by `type` (for example `"camera"`, `"microphone"`, or `"lidar"`), or
+   * `"{}"` when that key is absent or null. Every field and value is preserved,
+   * including fields this Core release does not know; the text is re-serialized,
+   * so key order and whitespace may differ from the daemon response.
+   *
+   * This is the authoritative way to read peripheral types for which Core has
+   * no typed struct: a new device type is usable as soon as Sentinel reports
+   * it. Cameras carry both this field and the typed `camera` member.
+   */
+  std::string details_json = "{}";
 };
 
 /**

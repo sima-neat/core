@@ -59,10 +59,48 @@ for (const auto& peripheral : catalog) {
 取得、設定、ストリーミングを行いません。そのため、カタログ上のサポートは、後で排他的取得が
 成功することを保証しません。
 
-未知のペリフェラル型も、共通の `id`、`type`、`provider` とともにカタログに残ります。
-プロトコル v1 に追加された任意フィールドは、古いクライアントでは無視されます。
-Sentinel が各スナップショットとともに公開するトップレベルの `changes` ログもこれに含まれます。
-Core はこのログを受け入れますが、公開しません。
+## あらゆるペリフェラル型の詳細
+
+すべてのペリフェラルは、`type` に関係なく、型固有の詳細を `details_json` に保持します。
+これは、Sentinel が `type` と同じ名前のレコードキー（例: `camera`、`microphone`、`lidar`）の下に
+公開するコンパクトな JSON オブジェクトです。そのキーが存在しないか `null` の場合、
+`details_json` は `"{}"` になります。Python では、`details_json` を新しい `dict` に
+デコードする `details` も利用できます。
+
+`details_json` は、Core に型付きアクセサーがないペリフェラル型を読み取るための正式な方法です。
+新しいデバイス型は、Core を更新しなくても、Sentinel が報告した時点ですぐに利用できます。
+この Core リリースが認識しないフィールドも含め、すべてのフィールドと値が保持されます。
+JSON は再シリアル化されるため、キーの順序と空白はデーモンの応答と異なる場合があります。
+カメラは `details_json` と型付きの `camera` フィールドの両方を持ちます。
+
+Python:
+
+```python
+for peripheral in pyneat.peripherals.list():
+    if peripheral.type == "microphone":
+        print(peripheral.id, peripheral.details.get("channels"))
+```
+
+C++:
+
+```cpp
+#include <nlohmann/json.hpp>
+
+for (const auto& peripheral : simaai::neat::peripherals::list()) {
+  if (peripheral.type == "microphone") {
+    const auto details = nlohmann::json::parse(peripheral.details_json);
+    // Read details.value("channels", 0) and other provider fields.
+  }
+}
+```
+
+`details_json` は任意の JSON ライブラリで解析できます。この例では nlohmann/json を使用しています。
+
+詳細の値が存在する場合、それは JSON オブジェクトでなければなりません。それ以外の値の場合、
+`list()` は解析エラーで失敗します。Core は、型付きアクセサーがない型の詳細をそれ以上検証しません。
+`camera` などの型付きフィールドは、認識しないプロトコル v1 の任意フィールドを無視しますが、
+それらのフィールドは `details_json` で引き続き利用できます。Core は、Sentinel が各スナップショットと
+ともに公開するトップレベルの `changes` ログも受け入れますが、公開しません。
 
 ## 障害と適用範囲
 
