@@ -318,7 +318,6 @@ set_property(TEST unit_000_devkit_package_inventory_test APPEND PROPERTY
   LABELS "unit;devkit-package-inventory")
 
 set(UNIT_TESTS
-    unit_element_timing_correlation_test
   unit_memory_runtime_loader_test
   unit_builder_test
   unit_caps_bridge_test

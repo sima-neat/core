@@ -302,6 +302,11 @@ struct ElementPadTimingProbeCtx {
   std::atomic<simaai::neat::pipeline_internal::ElementPadTimingCounters*> counters{nullptr};
 };
 
+struct ElementPadDirectionCounts {
+  int sink = 0;
+  int src = 0;
+};
+
 static bool should_skip_stage_element(GstElement* elem) {
   if (!elem)
     return true;
@@ -357,14 +362,6 @@ static bool extract_sima_meta_key(GstBuffer* buf, pipeline_internal::ElementTimi
   if (!gst_structure_get_int64(s, "frame-id", &frame_id))
     return false;
   out.frame_id = frame_id;
-  // Async Neat plugins preserve the request metadata even when their pooled
-  // output does not carry the input's native GstBuffer timestamp.
-  guint64 timestamp = 0;
-  out.metadata_timestamp = gst_structure_get_uint64(s, "timestamp", &timestamp) == TRUE;
-  out.timestamp_ns = out.metadata_timestamp ? timestamp : GST_BUFFER_PTS(buf);
-  gint64 input_seq = -1;
-  if (gst_structure_get_int64(s, "input-seq", &input_seq) && input_seq >= 0)
-    out.input_seq = input_seq;
   const gchar* stream_id = gst_structure_get_string(s, "stream-id");
   out.stream_hash = stream_id ? std::hash<std::string>{}(stream_id) : 0U;
   return true;
@@ -388,22 +385,26 @@ static void update_element_timing(simaai::neat::pipeline_internal::ElementTiming
 }
 
 static void add_pending_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
-                               const pipeline_internal::ElementTimingKey& key, int64_t ts_us,
-                               GstPad* pad) {
+                               const pipeline_internal::ElementTimingKey& key, int64_t ts_us) {
   if (!counters)
     return;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
-  if (counters->pending.size() >= counters->max_pending && !counters->pending.contains(key))
-    counters->pending_overflow = true;
-  if (counters->pending_overflow)
-    return;
-  auto [it, inserted] =
-      counters->pending.emplace(key, pipeline_internal::ElementPendingTiming{ts_us, pad});
-  if (!inserted) {
-    it->second.timestamp_us = 0; // An identical pending request is ambiguous.
-    if (it->second.input_pad != pad)
-      it->second.input_pad = nullptr;
+  if (counters->pending.size() >= counters->max_pending) {
+    counters->pending.clear();
   }
+  counters->pending[key] = ts_us;
+}
+
+static void
+add_pending_fifo_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
+                        int64_t ts_us) {
+  if (!counters || !counters->fifo_match_enabled)
+    return;
+  std::lock_guard<std::mutex> lock(counters->pending_mu);
+  if (counters->pending_fifo.size() >= counters->max_pending) {
+    counters->pending_fifo.clear();
+  }
+  counters->pending_fifo.push_back(ts_us);
 }
 
 static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
@@ -411,54 +412,35 @@ static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCou
   if (!counters)
     return false;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
-  if (counters->pending_overflow)
-    return false;
   auto it = counters->pending.find(key);
-  if (it == counters->pending.end() || it->second.timestamp_us <= 0)
-    return false; // Keep ambiguous identities rejected until a stream discontinuity.
-  ts_us = it->second.timestamp_us;
+  if (it == counters->pending.end())
+    return false;
+  ts_us = it->second;
   counters->pending.erase(it);
-  return ts_us > 0;
+  return true;
 }
 
-static void add_pending_pts_timing(pipeline_internal::ElementTimingCounters* counters,
-                                   GstClockTime pts,
-                                   std::optional<pipeline_internal::ElementTimingKey> key,
-                                   int64_t timestamp_us, GstPad* pad) {
-  if (!counters->correlate_pts || !GST_CLOCK_TIME_IS_VALID(pts))
-    return;
+static bool
+pop_pending_fifo_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
+                        int64_t& ts_us) {
+  if (!counters || !counters->fifo_match_enabled)
+    return false;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
-  if (counters->pending_pts.size() >= counters->max_pending && !counters->pending_pts.contains(pts))
-    counters->pending_overflow = true;
-  if (counters->pending_overflow)
-    return;
-  auto [it, inserted] = counters->pending_pts.emplace(
-      pts, pipeline_internal::ElementPtsTiming{timestamp_us, key, pad});
-  if (!inserted) {
-    // A repeated PTS only makes the PTS fallback ambiguous. Distinct request
-    // metadata can still identify each replacement buffer exactly.
-    it->second = {};
-  }
+  if (counters->pending_fifo.empty())
+    return false;
+  ts_us = counters->pending_fifo.front();
+  counters->pending_fifo.pop_front();
+  return true;
 }
 
-static bool pop_pending_pts_timing(pipeline_internal::ElementTimingCounters* counters,
-                                   GstClockTime pts, int64_t& timestamp_us) {
-  if (!counters->correlate_pts || !GST_CLOCK_TIME_IS_VALID(pts))
-    return false;
+static void
+discard_pending_fifo_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters) {
+  if (!counters || !counters->fifo_match_enabled)
+    return;
   std::lock_guard<std::mutex> lock(counters->pending_mu);
-  if (counters->pending_overflow)
-    return false;
-  auto it = counters->pending_pts.find(pts);
-  if (it == counters->pending_pts.end() || it->second.timestamp_us <= 0)
-    return false;
-  timestamp_us = it->second.timestamp_us;
-  if (it->second.metadata_key) {
-    auto metadata = counters->pending.find(*it->second.metadata_key);
-    if (metadata != counters->pending.end() && metadata->second.timestamp_us > 0)
-      counters->pending.erase(metadata);
+  if (!counters->pending_fifo.empty()) {
+    counters->pending_fifo.pop_front();
   }
-  counters->pending_pts.erase(it);
-  return timestamp_us > 0;
 }
 
 static GstPadProbeReturn stage_probe_cb(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
@@ -501,30 +483,12 @@ static GstPadProbeReturn stage_probe_cb(GstPad*, GstPadProbeInfo* info, gpointer
   return GST_PAD_PROBE_OK;
 }
 
-static GstPadProbeReturn element_timing_probe_cb(GstPad* pad, GstPadProbeInfo* info,
+static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
                                                  gpointer user_data) {
   auto* ctx = reinterpret_cast<ElementTimingProbeCtx*>(user_data);
   if (!ctx || !ctx->counters)
     return GST_PAD_PROBE_OK;
 
-  if (ctx->is_sink && (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM) != 0) {
-    GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
-    if (event && (GST_EVENT_TYPE(event) == GST_EVENT_STREAM_START ||
-                  GST_EVENT_TYPE(event) == GST_EVENT_SEGMENT ||
-                  GST_EVENT_TYPE(event) == GST_EVENT_FLUSH_START ||
-                  GST_EVENT_TYPE(event) == GST_EVENT_FLUSH_STOP)) {
-      std::lock_guard<std::mutex> lock(ctx->counters->pending_mu);
-      const bool flush = GST_EVENT_TYPE(event) == GST_EVENT_FLUSH_START ||
-                         GST_EVENT_TYPE(event) == GST_EVENT_FLUSH_STOP;
-      const auto affected = [pad, flush](const auto& entry) {
-        return flush || !entry.second.input_pad || entry.second.input_pad == pad;
-      };
-      std::erase_if(ctx->counters->pending, affected);
-      std::erase_if(ctx->counters->pending_pts, affected);
-      if (ctx->counters->pending.empty() && ctx->counters->pending_pts.empty())
-        ctx->counters->pending_overflow = false;
-    }
-  }
   if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0)
     return GST_PAD_PROBE_OK;
 
@@ -544,14 +508,17 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad* pad, GstPadProbeInfo* i
     *ts = now;
 
     pipeline_internal::ElementTimingKey key;
-    const bool has_key = extract_sima_meta_key(buf, key);
-    if (has_key) {
-      add_pending_timing(ctx->counters, key, now, pad);
-    } else if (!ctx->counters->correlate_pts || !GST_BUFFER_PTS_IS_VALID(buf)) {
+    if (extract_sima_meta_key(buf, key)) {
+      add_pending_timing(ctx->counters, key, now);
+      // Also keep a bounded FIFO timestamp for simple 1:1 transforms that replace buffers or
+      // strip metadata before the src pad.  If the normal qdata/key path succeeds on src, the
+      // FIFO entry is discarded to stay aligned.
+      add_pending_fifo_timing(ctx->counters, now);
+    } else if (ctx->counters->fifo_match_enabled) {
+      add_pending_fifo_timing(ctx->counters, now);
+    } else {
       ctx->counters->missed_in.fetch_add(1, std::memory_order_relaxed);
     }
-    add_pending_pts_timing(ctx->counters, GST_BUFFER_PTS(buf),
-                           has_key ? std::optional{key} : std::nullopt, now, pad);
     return GST_PAD_PROBE_OK;
   }
 
@@ -562,23 +529,23 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad* pad, GstPadProbeInfo* i
   if (ts && *ts > 0 && now >= *ts) {
     start = *ts;
     used = true;
-    pipeline_internal::ElementTimingKey key;
-    gint64 ignored = 0;
-    if (extract_sima_meta_key(buf, key))
-      (void)pop_pending_timing(ctx->counters, key, ignored);
+    discard_pending_fifo_timing(ctx->counters);
   } else {
     pipeline_internal::ElementTimingKey key;
     if (extract_sima_meta_key(buf, key)) {
-      used = pop_pending_timing(ctx->counters, key, start);
+      if (pop_pending_timing(ctx->counters, key, start)) {
+        used = true;
+        discard_pending_fifo_timing(ctx->counters);
+      } else if (pop_pending_fifo_timing(ctx->counters, start)) {
+        used = true;
+      } else {
+        ctx->counters->missed_out.fetch_add(1, std::memory_order_relaxed);
+      }
+    } else if (pop_pending_fifo_timing(ctx->counters, start)) {
+      used = true;
     } else {
-      used = pop_pending_pts_timing(ctx->counters, GST_BUFFER_PTS(buf), start);
+      ctx->counters->missed_out.fetch_add(1, std::memory_order_relaxed);
     }
-  }
-  if (used) {
-    gint64 ignored = 0;
-    (void)pop_pending_pts_timing(ctx->counters, GST_BUFFER_PTS(buf), ignored);
-  } else {
-    ctx->counters->missed_out.fetch_add(1, std::memory_order_relaxed);
   }
 
   if (used && start > 0 && now >= start) {
@@ -772,11 +739,7 @@ static void attach_element_probes_for_pad(GstPad* pad, ElementProbeAttachState* 
       ctx->is_sink = is_sink;
       ctx->quark = state->timing_quark;
       gst_pad_add_probe(
-          pad,
-          static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_BUFFER |
-                                       GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM |
-                                       GST_PAD_PROBE_TYPE_EVENT_FLUSH),
-          element_timing_probe_cb, ctx,
+          pad, GST_PAD_PROBE_TYPE_BUFFER, element_timing_probe_cb, ctx,
           +[](gpointer p) { delete reinterpret_cast<ElementTimingProbeCtx*>(p); });
       g_object_set_qdata(G_OBJECT(pad), timing_pad_quark, GINT_TO_POINTER(1));
     }
@@ -821,6 +784,32 @@ static void element_pad_added_cb(GstElement*, GstPad* pad, gpointer user_data) {
   if (!state)
     return;
   attach_element_probes_for_pad(pad, state);
+}
+
+static ElementPadDirectionCounts count_element_pad_directions(GstElement* elem) {
+  ElementPadDirectionCounts counts;
+  if (!elem)
+    return counts;
+  GstIterator* it = gst_element_iterate_pads(elem);
+  if (!it)
+    return counts;
+
+  GValue item = G_VALUE_INIT;
+  while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
+    GstPad* pad = GST_PAD(g_value_get_object(&item));
+    if (pad) {
+      const GstPadDirection dir = gst_pad_get_direction(pad);
+      if (dir == GST_PAD_SINK) {
+        ++counts.sink;
+      } else if (dir == GST_PAD_SRC) {
+        ++counts.src;
+      }
+    }
+    g_value_reset(&item);
+  }
+  g_value_unset(&item);
+  gst_iterator_free(it);
+  return counts;
 }
 
 static GstPadProbeReturn boundary_probe_cb(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
@@ -934,15 +923,12 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
 
     const char* name = GST_ELEMENT_NAME(elem);
     const std::string elem_name = name ? name : "unknown";
+    const ElementPadDirectionCounts pad_counts = count_element_pad_directions(elem);
 
     if (enable_timing && !skip_stage && !state->timing) {
       auto counters = std::make_unique<pipeline_internal::ElementTimingCounters>();
       counters->element_name = elem_name;
-      GstElementFactory* factory = gst_element_get_factory(elem);
-      // videoconvert preserves PTS one-to-one while dropping memory-tagged metadata.
-      counters->correlate_pts =
-          factory &&
-          g_strcmp0(gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)), "videoconvert") == 0;
+      counters->fifo_match_enabled = (pad_counts.sink == 1 && pad_counts.src == 1);
       const std::string quark_name = "sima.elem.ts." + elem_name;
       state->timing_quark = g_quark_from_string(quark_name.c_str());
       state->timing = counters.get();
@@ -996,7 +982,7 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
 
 void attach_element_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
                                   bool enable_from_options) {
-  if (!env_bool("SIMA_GST_ELEMENT_TIMINGS", enable_from_options))
+  if (!enable_from_options && !env_bool("SIMA_GST_ELEMENT_TIMINGS", false))
     return;
   attach_element_probes(pipeline, diag, true, false);
 }

@@ -1078,29 +1078,13 @@ This is used to generate "likely stall" summaries:
 
 ### Element timing probes
 
-Runs enable element timing by default. Set `SIMA_GST_ELEMENT_TIMINGS=0` before
-building a run to disable these probes, or `=1` to force them on.
-When enabled, the runtime attaches sink+src pad probes
+When enabled (`SIMA_GST_ELEMENT_TIMINGS=1`), the runtime attaches sink+src pad probes
 to **all pads** (static, dynamic, and request) for each element and records
-`src_ts - sink_ts` per buffer. This measures residence time, including waits inside
-an element, without relying on plugin instrumentation.
+`src_ts - sink_ts` per buffer. This produces per-element compute timings without
+relying on plugin instrumentation.
 
 For elements that replace buffers, the implementation falls back to `GstSimaMeta`
-correlation and records `missed_in`/`missed_out` counters. The key includes
-`frame-id`, `stream-id`, `input-seq` when present, and the metadata `timestamp`.
-Async Neat plugins preserve these request fields even when their pooled output
-does not preserve native GStreamer PTS. Without a metadata timestamp, the key
-uses native PTS instead; the two timestamp sources cannot match each other.
-Conflicting fields and duplicate pending request identities remain unmatched.
-Ambiguous identities stay rejected until a stream discontinuity. If bounded
-correlation history fills up, replacement-buffer timing stops until that reset
-rather than attributing a delayed output to a newer request.
-The timestamp-preserving, one-to-one `videoconvert` element can also match a
-unique pending PTS when conversion removes memory-tagged metadata. Invalid or
-ambiguous timestamps remain unmatched; stream discontinuities clear pending matches.
-Unmatched outputs have no latency sample. Pad counts do not establish one-to-one
-buffer flow, so packetization, frame dropping, and reordering never use FIFO
-position as evidence that an input and output belong together.
+correlation (frame-id/stream-id) and records `missed_in`/`missed_out` counters.
 
 ### Element flow probes
 
