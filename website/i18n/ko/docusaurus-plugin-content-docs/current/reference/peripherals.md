@@ -94,19 +94,21 @@ for (const auto& peripheral : simaai::neat::peripherals::list()) {
 
 `details_json`은 모든 JSON 라이브러리로 구문 분석할 수 있습니다. 이 예제에서는 nlohmann/json을 사용합니다.
 
-세부 정보 값이 있으면 JSON 객체여야 합니다. 다른 값이면 `list()`가 구문 분석 오류로 실패합니다.
-Core는 형식화된 접근자가 없는 형식의 세부 정보를 그 밖에는 검증하지 않습니다. `camera`와 같은
-형식화된 필드는 알지 못하는 프로토콜 v1 선택 필드를 무시하지만, 해당 필드는 `details_json`에서 계속
-사용할 수 있습니다. Core는 Sentinel이 각 스냅샷과 함께 게시하는 최상위 `changes` 로그도 수락하지만
-노출하지 않습니다.
+`camera` 이외의 형식에서 세부 정보 값이 JSON 객체가 아니어도 `list()`는 실패하지 않습니다. 해당
+주변 장치는 카탈로그에 남고 `details_json`은 `"{}"`가 됩니다. Core는 형식화된 접근자가 없는 형식의
+세부 정보를 그 밖에는 검증하지 않습니다. 잘못된 `camera` 세부 정보는 프로토콜 결함이므로 `list()`가
+구문 분석 오류로 실패합니다. `camera`와 같은 형식화된 필드는 알지 못하는 프로토콜 v1 선택 필드를
+무시하지만, 해당 필드는 `details_json`에서 계속 사용할 수 있습니다. Core는 Sentinel이 각 스냅샷과
+함께 게시하는 최상위 `changes` 로그와 `support` 상태도 수락하지만 노출하지 않습니다.
 
 ## 실패 및 범위
 
-서비스 누락, 권한 거부, 요청 시간 초과, 준비되지 않은 데몬, 잘못되거나 너무 크거나 호환되지 않는 응답이
+서비스 누락 또는 카탈로그를 제공하지 못하는 오래된 서비스, 권한 거부, 요청 시간 초과, 준비되지 않은 데몬, 잘못되거나 너무 크거나 호환되지 않는 응답이
 발생하면 `list()`는 안정적인 코드가 포함된 `NeatError`를 발생시킵니다. 메시지에는 다음 운영 조치가
 포함됩니다. [오류 코드 카탈로그](./error-codes.md)를 참조하십시오.
 
-Sentinel이 설치되어 있지 않으면 `sima-cli neat install sentinel`로 설치하십시오. 설치되어 있지만
+Sentinel이 설치되어 있지 않거나 주변 장치 카탈로그를 제공하지 못할 만큼 오래되었으면
+`sima-cli neat install sentinel`로 설치하거나 업데이트하십시오. 설치되어 있지만
 실행 중이 아니면 `simaai-sentinel.service`를 시작하십시오.
 
 이 API는 로컬 DevKit의 `/run/simaai-sentinel/api.sock`에만 연결합니다. SSH를 사용하거나 원격 보드를

@@ -105,9 +105,12 @@ def _catalog_with_any_types():
 
 
 class _FakeServer:
-  def __init__(self, path: Path, body: str, *, gate=None):
+  _REASONS = {200: "OK", 404: "Not Found", 503: "Service Unavailable"}
+
+  def __init__(self, path: Path, body: str, *, gate=None, status=200):
     self.path = path
     self.body = body.encode()
+    self.status = status
     self.gate = gate
     self.gate_observed = None
     self.error = None
@@ -142,7 +145,8 @@ class _FakeServer:
         if self.gate is not None:
           self.gate_observed = self.gate.wait(timeout=0.5)
         response = (
-            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+            f"HTTP/1.1 {self.status} {self._REASONS[self.status]}\r\n".encode()
+            + b"Content-Type: application/json\r\nContent-Length: "
             + str(len(self.body)).encode()
             + b"\r\nConnection: close\r\n\r\n"
             + self.body
@@ -313,15 +317,27 @@ def test_peripheral_details_cover_any_type(tmp_path):
   assert microphone.details["channels"] == 2
 
 
-def test_peripheral_details_must_be_an_object(tmp_path):
+def test_non_object_details_degrade_per_device(tmp_path):
   body = _catalog()
   body["devices"][1]["lidar"] = [1, 2]
   path = tmp_path / "bad-details.sock"
   with _FakeServer(path, json.dumps(body)):
+    catalog = _list(path)
+
+  assert [device.type for device in catalog] == ["camera", "lidar"]
+  assert catalog[0].camera.backend == "libcamera"
+  assert catalog[1].details_json == "{}" and catalog[1].details == {}
+
+
+def test_invalid_camera_details_fail_the_catalog(tmp_path):
+  body = _catalog()
+  body["devices"][0]["camera"] = [1, 2]
+  path = tmp_path / "bad-camera.sock"
+  with _FakeServer(path, json.dumps(body)):
     with pytest.raises(pyneat.NeatError) as malformed:
       _list(path)
   assert malformed.value.error_code == pyneat.ERROR_IO_PARSE
-  assert "peripheral details 'lidar'" in str(malformed.value)
+  assert "camera details must be an object" in str(malformed.value)
 
 
 def test_peripheral_catalog_preserves_empty_and_stale_snapshots(tmp_path):
@@ -402,6 +418,29 @@ def test_peripheral_catalog_errors_keep_structured_code(tmp_path):
     with pytest.raises(pyneat.NeatError) as malformed:
       _list(path)
   assert malformed.value.error_code == pyneat.ERROR_IO_PARSE
+
+
+def test_sentinel_without_peripherals_asks_for_an_update(tmp_path):
+  path = tmp_path / "old-sentinel.sock"
+  body = json.dumps({"error": "unknown Sentinel API endpoint"})
+  with _FakeServer(path, body, status=404):
+    with pytest.raises(pyneat.NeatError) as old:
+      _list(path)
+  assert old.value.error_code == pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE
+  assert "too old" in str(old.value)
+  assert "sima-cli neat install sentinel" in str(old.value)
+  assert "unknown Sentinel API endpoint" in str(old.value)
+
+
+def test_sentinel_503_reports_its_error(tmp_path):
+  path = tmp_path / "unavailable.sock"
+  reason = "peripheral discovery is not running in this Sentinel daemon"
+  with _FakeServer(path, json.dumps({"error": reason}), status=503):
+    with pytest.raises(pyneat.NeatError) as unavailable:
+      _list(path)
+  assert unavailable.value.error_code == pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE
+  assert "unexpected HTTP status 503" in str(unavailable.value)
+  assert f"Sentinel reported: {reason}." in str(unavailable.value)
 
 
 def test_peripheral_cpp_probe_resolution_is_layout_aware(tmp_path):

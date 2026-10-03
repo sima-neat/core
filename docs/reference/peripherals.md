@@ -103,22 +103,26 @@ for (const auto& peripheral : simaai::neat::peripherals::list()) {
 
 Any JSON library can parse `details_json`; the example uses nlohmann/json.
 
-When present, the details value must be a JSON object; any other value makes
-`list()` fail with a parse error. Core does not otherwise validate the details
-of types it has no typed accessor for. Typed fields such as `camera` ignore
-optional protocol v1 fields they do not know; those fields remain available in
-`details_json`. Core also accepts the top-level `changes` log that Sentinel
-publishes with each snapshot, but does not expose it.
+For a type other than `camera`, a details value that is not a JSON object does
+not make `list()` fail: that peripheral stays in the catalog with
+`details_json` set to `"{}"`. Core does not otherwise validate the details of
+types it has no typed accessor for. Invalid `camera` details are a protocol
+defect and make `list()` fail with a parse error. Typed fields such as `camera`
+ignore optional protocol v1 fields they do not know; those fields remain
+available in `details_json`. Core also accepts the top-level `changes` log and
+`support` status that Sentinel publishes with each snapshot, but does not
+expose them.
 
 ## Failures and scope
 
-`list()` raises `NeatError` with a stable code when the service is missing,
-permission is denied, the request times out, the daemon is not ready, or the
-response is malformed, oversized, or incompatible. The message includes the
+`list()` raises `NeatError` with a stable code when the service is missing or
+too old to serve the catalog, permission is denied, the request times out, the
+daemon is not ready, or the response is malformed, oversized, or incompatible. The message includes the
 next operational action. See the [error code catalog](./error-codes.md).
 
-If Sentinel is not installed, install it with `sima-cli neat install sentinel`.
-If it is installed but not running, start `simaai-sentinel.service`.
+If Sentinel is not installed, or is too old to serve the peripheral catalog,
+install or update it with `sima-cli neat install sentinel`. If it is installed
+but not running, start `simaai-sentinel.service`.
 
 This API connects only to `/run/simaai-sentinel/api.sock` on the local
 DevKit. It does not use SSH or select a remote board. Insight and future CLI

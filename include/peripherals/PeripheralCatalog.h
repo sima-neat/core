@@ -73,9 +73,10 @@ struct Peripheral {
    *
    * Holds the JSON object that Sentinel publishes under the record key named
    * by `type` (for example `"camera"`, `"microphone"`, or `"lidar"`), or
-   * `"{}"` when that key is absent or null. Every field and value is preserved,
-   * including fields this Core release does not know; the text is re-serialized,
-   * so key order and whitespace may differ from the daemon response.
+   * `"{}"` when that key is absent, null, or (for a type other than camera) not
+   * an object. Every field and value is preserved, including fields this Core
+   * release does not know; the text is re-serialized, so key order and
+   * whitespace may differ from the daemon response.
    *
    * This is the authoritative way to read peripheral types for which Core has
    * no typed struct: a new device type is usable as soon as Sentinel reports

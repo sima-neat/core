@@ -1,5 +1,6 @@
 #include "peripherals/PeripheralCatalog.h"
 
+#include "nodes/io/CameraInput.h"
 #include "peripherals/internal/PeripheralClient.h"
 #include "peripherals/internal/ProtocolContract.h"
 #include "pipeline/ErrorCodes.h"
@@ -217,7 +218,9 @@ nlohmann::json canonical_catalog_fixture() {
 }
 
 std::string response_for(const std::string& body, int status = 200) {
-  const std::string reason = status == 200 ? "OK" : "Service Unavailable";
+  const std::string reason = status == 200   ? "OK"
+                             : status == 404 ? "Not Found"
+                                             : "Service Unavailable";
   return "HTTP/1.1 " + std::to_string(status) + " " + reason +
          "\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) +
          "\r\nConnection: close\r\n\r\n" + body;
@@ -233,7 +236,8 @@ auto serve_response(const std::string& path, std::string response, std::size_t c
 }
 
 template <typename Function>
-void require_error(Function&& function, const char* code, std::string_view message_fragment = {}) {
+std::string require_error(Function&& function, const char* code,
+                          std::string_view message_fragment = {}) {
   try {
     function();
   } catch (const NeatError& error) {
@@ -242,7 +246,7 @@ void require_error(Function&& function, const char* code, std::string_view messa
     if (!message_fragment.empty())
       require(std::string(error.what()).find(message_fragment) != std::string::npos,
               "error message lacks required actionable context");
-    return;
+    return error.what();
   }
   throw std::runtime_error("expected NeatError " + std::string(code));
 }
@@ -284,6 +288,8 @@ void test_canonical_daemon_fixture() {
   require(fixture.contains("changes") && fixture["changes"].is_array() &&
               !fixture["changes"].empty(),
           "canonical fixture must carry the optional Sentinel change log");
+  require(fixture.contains("support") && fixture["support"]["state"] == "applied",
+          "canonical fixture must carry Sentinel's support status");
   auto server = serve_response(directory.socket_path(), response_for(fixture.dump()), 2);
   const auto catalog = list_from_socket(directory.socket_path(), 2s, 5);
   server.finish();
@@ -292,14 +298,22 @@ void test_canonical_daemon_fixture() {
               catalog.sequence == 9 && catalog.scan_sequence == 12 && catalog.stale &&
               catalog.error && catalog.issues.size() == 1 && catalog.size() == 2,
           "canonical daemon metadata was not preserved");
-  require(catalog[0].camera && catalog[0].camera->camera_name == "imx477 5-001a" &&
-              catalog[0].camera->modes.size() == 2 && catalog[0].camera->modes[1].is_range(),
-          "canonical libcamera details were not preserved");
+  const auto& mipi = catalog[0];
+  require(mipi.provider == "daemon.camera.mipi" && mipi.camera &&
+              mipi.camera->camera_name == "imx477 5-001a" && mipi.camera->model == "imx477" &&
+              mipi.camera->backend == "mipi" && mipi.camera->modes.size() == 9,
+          "canonical MIPI camera details were not preserved");
+  for (const auto& mode : mipi.camera->modes) {
+    require(!mode.is_range() && mode.framerate_num == 30 && mode.framerate_den == 1 &&
+                mode.supported == (mode.format == "NV12") &&
+                mode.reason.empty() == (mode.format == "NV12"),
+            "canonical MIPI modes must carry Sentinel's support verdicts");
+  }
   require(catalog[1].camera && !catalog[1].camera->camera_name &&
               catalog[1].camera->backend == "v4l2" && !catalog[1].camera->modes[0].supported &&
               catalog[1].camera->modes[0].reason ==
-                  "CameraInput currently accepts libcamera camera names only; direct V4L2 "
-                  "capture is not supported.",
+                  "CameraInput currently accepts MIPI cameras only; direct V4L2 capture is not "
+                  "supported.",
           "canonical USB camera details or unknown optional fields were mishandled");
   for (std::size_t index = 0; index < catalog.size(); ++index)
     require(nlohmann::json::parse(catalog[index].details_json) ==
@@ -466,21 +480,103 @@ void test_protocol_failures() {
   }
   {
     auto malformed = ready_catalog();
-    malformed["devices"][1]["lidar"] = nlohmann::json::array({1, 2});
+    malformed["devices"][0]["camera"] = nlohmann::json::array({1, 2});
     auto server =
-        serve_response(directory.socket_path("details.sock"), response_for(malformed.dump()));
-    require_error([&] { (void)list_from_socket(directory.socket_path("details.sock"), 1s); },
-                  simaai::neat::error_codes::kIoParse, "peripheral details 'lidar'");
+        serve_response(directory.socket_path("camera.sock"), response_for(malformed.dump()));
+    require_error([&] { (void)list_from_socket(directory.socket_path("camera.sock"), 1s); },
+                  simaai::neat::error_codes::kIoParse, "camera details must be an object");
     server.finish();
   }
   {
     const std::string body = R"({"error":"too_many_clients"})";
     auto server = serve_response(directory.socket_path("busy.sock"), response_for(body, 503));
-    require_error([&] { (void)list_from_socket(directory.socket_path("busy.sock"), 1s); },
-                  simaai::neat::error_codes::kPeripheralDaemonUnavailable,
-                  "unexpected HTTP status 503");
+    const auto message = require_error(
+        [&] { (void)list_from_socket(directory.socket_path("busy.sock"), 1s); },
+        simaai::neat::error_codes::kPeripheralDaemonUnavailable, "unexpected HTTP status 503");
+    require(message.find("Sentinel reported: too_many_clients.") != std::string::npos,
+            "a 503 must carry Sentinel's error string");
     server.finish();
   }
+  {
+    const std::string body = R"({"error":"peripheral catalog unavailable: /run/x: missing"})";
+    auto server =
+        serve_response(directory.socket_path("missing-catalog.sock"), response_for(body, 503));
+    const auto message = require_error(
+        [&] { (void)list_from_socket(directory.socket_path("missing-catalog.sock"), 1s); },
+        simaai::neat::error_codes::kPeripheralDaemonUnavailable, "simaai-sentinel.service");
+    require(message.find("peripheral catalog unavailable: /run/x: missing") != std::string::npos,
+            "a 503 must carry Sentinel's error string");
+    server.finish();
+  }
+  {
+    const std::string body = R"({"error":"unknown Sentinel API endpoint"})";
+    auto server = serve_response(directory.socket_path("old.sock"), response_for(body, 404));
+    const auto message =
+        require_error([&] { (void)list_from_socket(directory.socket_path("old.sock"), 1s); },
+                      simaai::neat::error_codes::kPeripheralDaemonUnavailable, "too old");
+    require(message.find("sima-cli neat install sentinel") != std::string::npos &&
+                message.find("unknown Sentinel API endpoint") != std::string::npos,
+            "a 404 must ask the user to update Sentinel");
+    server.finish();
+  }
+}
+
+void test_non_object_details_degrade_per_device() {
+  TemporaryDirectory directory;
+  auto body = ready_catalog();
+  body["devices"][1]["lidar"] = nlohmann::json::array({1, 2});
+  body["devices"].push_back({{"id", "imu:string"},
+                             {"type", "imu"},
+                             {"provider", "daemon.imu.future"},
+                             {"imu", "not an object"}});
+  auto server = serve_response(directory.socket_path(), response_for(body.dump()));
+  const auto catalog = list_from_socket(directory.socket_path(), 1s);
+  server.finish();
+
+  require(catalog.size() == 3 && catalog[0].camera,
+          "invalid details of one type must not hide other devices");
+  require(catalog[1].type == "lidar" && catalog[1].details_json == "{}" && !catalog[1].camera,
+          "non-object lidar details must yield an empty JSON object");
+  require(catalog[2].type == "imu" && catalog[2].details_json == "{}",
+          "non-object imu details must yield an empty JSON object");
+}
+
+// The installed rules are this template with only @SIMANEAT_VERSION@ replaced,
+// inside the "source" string, so the template itself is valid JSON.
+nlohmann::json support_rules_template() {
+  const auto path = std::filesystem::path(SIMAAI_PERIPHERAL_FIXTURE_DIR) /
+                    "../../../../src/peripherals/sentinel-support-rules.json.in";
+  std::ifstream input(path);
+  require(input.good(), "could not open Sentinel support rules template " + path.string());
+  return nlohmann::json::parse(input);
+}
+
+void test_support_rules_match_camera_input_defaults() {
+  const auto rules = support_rules_template();
+  const simaai::neat::CameraInputOptions defaults;
+  require(rules.at("format") == 1, "Sentinel support rules must use format 1");
+  require(rules.at("source") == "neat-core @SIMANEAT_VERSION@",
+          "Sentinel support rules must name their Core source");
+
+  const auto& formats = rules.at("camera").at("formats").at("accept");
+  bool format_accepted = false;
+  for (const auto& format : formats)
+    format_accepted = format_accepted || format == defaults.format;
+  require(format_accepted,
+          "support rules must accept CameraInput's default format " + defaults.format);
+
+  // Sentinel compares frame rates as ratios, so 60/2 matches 30/1.
+  const auto& framerates = rules.at("camera").at("framerates");
+  const auto& accepted = framerates.at("accept");
+  require(accepted.size() == 1, "support rules must accept exactly CameraInput's default rate");
+  const auto num = accepted[0].at("num").get<std::uint64_t>();
+  const auto den = accepted[0].at("den").get<std::uint64_t>();
+  require(den != 0 && num * defaults.framerate_den == defaults.framerate_num * den,
+          "support rules frame rate must match CameraInput's default rate");
+  const std::string rate =
+      std::to_string(defaults.framerate_num) + "/" + std::to_string(defaults.framerate_den);
+  require(framerates.at("reason").get<std::string>().find(rate) != std::string::npos,
+          "support rules frame-rate reason must name CameraInput's default rate " + rate);
 }
 
 void test_never_ready() {
@@ -513,7 +609,9 @@ int main() {
     test_connection_failures();
     test_timeout_and_incomplete_response();
     test_protocol_failures();
+    test_non_object_details_degrade_per_device();
     test_never_ready();
+    test_support_rules_match_camera_input_defaults();
     std::cout << "unit_peripheral_client_test: PASS\n";
     return 0;
   } catch (const std::exception& error) {

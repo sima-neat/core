@@ -434,12 +434,14 @@ peripherals::Peripheral parse_device(const nlohmann::json& value) {
       .provider = require_string(object, "provider"),
       .camera = std::nullopt,
   };
+  // Camera details are part of the typed v1 contract, so invalid ones fail the
+  // whole read. Core cannot judge other types' details; a non-object value
+  // leaves that one device with "{}" instead of hiding every other device.
   if (device.type == "camera")
     device.camera = parse_camera(require_field(object, "camera"));
   const auto details = object.find(device.type);
-  if (details != object.end() && !details->is_null())
-    device.details_json =
-        require_object(*details, "peripheral details '" + device.type + "'").dump();
+  if (details != object.end() && details->is_object())
+    device.details_json = details->dump();
   return device;
 }
 
@@ -518,6 +520,21 @@ peripherals::Catalog parse_catalog(const std::string& body) {
   return catalog;
 }
 
+// Sentinel answers every failed request with `{"error": "<message>"}`.
+// Returns that message, or an empty string when the body has no such field.
+std::string error_from_body(const std::string& body) {
+  try {
+    const auto value = nlohmann::json::parse(body);
+    if (value.is_object()) {
+      const auto found = value.find("error");
+      if (found != value.end() && found->is_string())
+        return found->get<std::string>();
+    }
+  } catch (const nlohmann::json::exception&) {
+  }
+  return {};
+}
+
 } // namespace
 
 peripherals::Catalog list_from_socket(const std::string& socket_path,
@@ -534,22 +551,27 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
   send_all(socket.get(), request, deadline, maximum_send_bytes);
   auto [status, body] = read_response(socket.get(), deadline);
   if (status != 200) {
-    if (status == 500) {
-      try {
-        const auto error = nlohmann::json::parse(body);
-        if (error.is_object() && error.value("error", "") == "response_too_large") {
-          fail(error_codes::kResponseTooLarge,
-               "The Sentinel peripheral catalog exceeded the 4 MiB v1 limit. Reduce the catalog "
-               "size or update Sentinel and Core together.");
-        }
-      } catch (const nlohmann::json::exception&) {
-      }
+    const std::string sentinel_error = error_from_body(body);
+    if (status == 500 && sentinel_error == "response_too_large") {
+      fail(error_codes::kResponseTooLarge,
+           "The Sentinel peripheral catalog exceeded the 4 MiB v1 limit. Reduce the catalog "
+           "size or update Sentinel and Core together.");
+    }
+    const std::string reported =
+        sentinel_error.empty() ? std::string() : " Sentinel reported: " + sentinel_error + ".";
+    if (status == 404) {
+      fail(error_codes::kPeripheralDaemonUnavailable,
+           "The installed SiMa Sentinel is too old to serve the peripheral catalog (HTTP 404 "
+           "for " +
+               std::string(kCatalogPath) + ")." + reported +
+               " Update Sentinel with `sima-cli neat install sentinel`, then try again.");
     }
     const char* code =
         status == 503 ? error_codes::kPeripheralDaemonUnavailable : error_codes::kIoParse;
     fail(code, "Sentinel returned unexpected HTTP status " + std::to_string(status) +
-                   " for the peripheral catalog. Update Sentinel with `sima-cli neat install "
-                   "sentinel` and check simaai-sentinel.service.");
+                   " for the peripheral catalog." + reported +
+                   " Update Sentinel with `sima-cli neat install sentinel` and check "
+                   "simaai-sentinel.service.");
   }
   return parse_catalog(body);
 }

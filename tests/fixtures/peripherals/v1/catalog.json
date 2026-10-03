@@ -23,6 +23,13 @@
   ],
   "changes": [
     {
+      "sequence": 7,
+      "revision": 3,
+      "kind": "added",
+      "device_id": "camera:imx477 5-001a",
+      "device_type": "camera"
+    },
+    {
       "sequence": 8,
       "revision": 4,
       "kind": "added",
@@ -39,39 +46,133 @@
       }
     }
   ],
+  "support": {
+    "state": "applied",
+    "source": "neat-core 0.4.0",
+    "path": "/usr/share/simaai-sentinel/support/neat-core.json"
+  },
   "devices": [
     {
       "id": "camera:imx477 5-001a",
       "type": "camera",
-      "provider": "daemon.camera.libcamera",
+      "provider": "daemon.camera.mipi",
       "camera": {
         "camera_name": "imx477 5-001a",
         "model": "imx477",
-        "backend": "libcamera",
+        "backend": "mipi",
+        "connection": "mipi-csi2",
+        "media_device": "/dev/media0",
+        "bus_info": "platform:csi2video@1",
+        "availability": {
+          "state": "unknown",
+          "reason": "The media controller does not expose a reliable read-only ownership state; discovery does not acquire, configure, or stream from the camera."
+        },
+        "isp": {
+          "state": "available",
+          "device_path": "/dev/video1",
+          "device_paths": [
+            "/dev/video1"
+          ]
+        },
         "modes": [
+          {
+            "format": "AR24",
+            "width": 1920,
+            "height": 1080,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
+            "supported": false,
+            "reason": "CameraInput's current camera-memory path supports NV12 output only."
+          },
+          {
+            "format": "AR24",
+            "width": 2048,
+            "height": 1080,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
+            "supported": false,
+            "reason": "CameraInput's current camera-memory path supports NV12 output only."
+          },
+          {
+            "format": "AR24",
+            "width": 2432,
+            "height": 2048,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
+            "supported": false,
+            "reason": "CameraInput's current camera-memory path supports NV12 output only."
+          },
           {
             "format": "NV12",
             "width": 1920,
             "height": 1080,
             "framerate_num": 30,
             "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
             "supported": true,
             "reason": ""
           },
           {
             "format": "NV12",
-            "size_range": {
-              "min_width": 640,
-              "min_height": 480,
-              "max_width": 1920,
-              "max_height": 1080,
-              "step_width": 16,
-              "step_height": 8
-            },
+            "width": 2048,
+            "height": 1080,
             "framerate_num": 30,
             "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
+            "supported": true,
+            "reason": ""
+          },
+          {
+            "format": "NV12",
+            "width": 2432,
+            "height": 2048,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
+            "supported": true,
+            "reason": ""
+          },
+          {
+            "format": "RGB3",
+            "width": 1920,
+            "height": 1080,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
             "supported": false,
-            "reason": "The continuous size range is advisory; CameraInput support is reported only for discrete ISP output sizes."
+            "reason": "CameraInput's current camera-memory path supports NV12 output only."
+          },
+          {
+            "format": "RGB3",
+            "width": 2048,
+            "height": 1080,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
+            "supported": false,
+            "reason": "CameraInput's current camera-memory path supports NV12 output only."
+          },
+          {
+            "format": "RGB3",
+            "width": 2432,
+            "height": 2048,
+            "framerate_num": 30,
+            "framerate_den": 1,
+            "framerate_source": "nominal",
+            "isp_output": true,
+            "supported": false,
+            "reason": "CameraInput's current camera-memory path supports NV12 output only."
           }
         ]
       }
@@ -105,7 +206,7 @@
             "framerate_num": 30,
             "framerate_den": 1,
             "supported": false,
-            "reason": "CameraInput currently accepts libcamera camera names only; direct V4L2 capture is not supported.",
+            "reason": "CameraInput currently accepts MIPI cameras only; direct V4L2 capture is not supported.",
             "frame_intervals": [
               {
                 "width": 1920,

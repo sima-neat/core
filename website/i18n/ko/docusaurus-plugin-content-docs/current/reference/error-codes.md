@@ -153,7 +153,7 @@ Neat는 `NeatError` 및 `PullError`를 통해 유형 오류를 표시합니다. 
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat이(가) 가속기 런타임에 접근할 수 없습니다. | DevKit과의 호환성을 확인하고 가속기를 독점적으로 사용하는 워크로드를 중지하십시오. |
 | `infra.accelerator_execution_failed` | 가속기가 모델 단계를 실행할 수 없습니다. | 파이프라인을 다시 시작하고 동시에 실행되는 가속기 작업량을 줄이십시오. |
-| `infra.peripheral_daemon_unavailable` | 로컬 SiMa Sentinel API 소켓이 없거나 연결을 거부했거나 사용 중입니다. | `sima-cli neat install sentinel`로 Sentinel을 설치하거나 `simaai-sentinel.service`를 시작한 뒤 저널을 확인하십시오. |
+| `infra.peripheral_daemon_unavailable` | 로컬 SiMa Sentinel API 소켓이 없거나 연결을 거부했거나 사용 중이거나, 설치된 Sentinel이 주변 장치 카탈로그를 제공하지 못할 만큼 오래되었습니다. | `sima-cli neat install sentinel`로 Sentinel을 설치 또는 업데이트하거나 `simaai-sentinel.service`를 시작한 뒤 저널을 확인하십시오. |
 | `infra.peripheral_daemon_timeout` | 제한 시간이 있는 주변기기 카탈로그 요청이 완료되지 않았습니다. | `simaai-sentinel.service`와 공급자 상태를 확인한 뒤 다시 시도하십시오. |
 | `infra.peripheral_daemon_not_ready` | Sentinel이 사용 가능한 초기 주변기기 카탈로그를 아직 완료하지 않았습니다. | `simaai-sentinel.service` 저널을 읽고 보고된 공급자 또는 장치 오류를 수정하십시오. |
 

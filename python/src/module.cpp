@@ -3385,7 +3385,8 @@ NB_MODULE(_pyneat_core, m) {
               "Typed camera details; set only when type == 'camera'.")
       .def_ro("details_json", &simaai::neat::peripherals::Peripheral::details_json,
               "Details for any peripheral type as compact JSON: the object Sentinel publishes "
-              "under the record key named by type, or '{}' when that key is absent or null. "
+              "under the record key named by type, or '{}' when that key is absent, null, or "
+              "(for a type other than camera) not an object. "
               "Unknown fields are preserved; key order and whitespace may differ from the "
               "daemon response.")
       .def_prop_ro(

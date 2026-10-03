@@ -91,18 +91,20 @@ for (const auto& peripheral : simaai::neat::peripherals::list()) {
 
 任何 JSON 程式庫都能剖析 `details_json`；此範例使用 nlohmann/json。
 
-詳細資料值若存在，必須是 JSON 物件；任何其他值都會使 `list()` 因剖析錯誤而失敗。對於沒有型別化
-存取子的類型，Core 不會再做其他驗證。`camera` 等型別化欄位會忽略其不認識的通訊協定 v1 選用欄位；
-這些欄位仍可在 `details_json` 中取得。Core 也會接受 Sentinel 隨每份快照發布的頂層 `changes` 記錄，
-但不會公開它。
+對於 `camera` 以外的類型，詳細資料值若不是 JSON 物件，並不會使 `list()` 失敗：該周邊裝置仍會
+保留在目錄中，且 `details_json` 為 `"{}"`。對於沒有型別化存取子的類型，Core 不會再做其他驗證。
+無效的 `camera` 詳細資料屬於通訊協定缺陷，會使 `list()` 因剖析錯誤而失敗。`camera` 等型別化欄位會
+忽略其不認識的通訊協定 v1 選用欄位；這些欄位仍可在 `details_json` 中取得。Core 也會接受 Sentinel
+隨每份快照發布的頂層 `changes` 記錄與 `support` 狀態，但不會公開它們。
 
 ## 失敗與範圍
 
-服務遺失、權限遭拒、要求逾時、常駐程式尚未就緒，或回應格式錯誤、過大或不相容時，
+服務遺失或版本過舊而無法提供目錄、權限遭拒、要求逾時、常駐程式尚未就緒，或回應格式錯誤、過大或不相容時，
 `list()` 會擲回具有穩定代碼的 `NeatError`。訊息會包含下一個操作步驟。請參閱
 [錯誤代碼目錄](./error-codes.md)。
 
-若尚未安裝 Sentinel，請使用 `sima-cli neat install sentinel` 安裝。若已安裝但未執行，
+若尚未安裝 Sentinel，或其版本過舊而無法提供周邊裝置目錄，請使用 `sima-cli neat install sentinel`
+安裝或更新。若已安裝但未執行，
 請啟動 `simaai-sentinel.service`。
 
 此 API 只會連接本機 DevKit 上的 `/run/simaai-sentinel/api.sock`。它不使用 SSH，也不會選取

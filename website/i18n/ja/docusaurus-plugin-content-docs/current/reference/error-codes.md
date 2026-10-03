@@ -151,7 +151,7 @@ Neatは、`NeatError`と`PullError`を通じて、型エラーなどの問題を
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat がアクセラレータのランタイムを取得できません。| DevKit との互換性を確認し、アクセラレータを専有しているワークロードを停止してください。|
 | `infra.accelerator_execution_failed` | アクセラレータはモデルのステージを実行できません。 | パイプラインを再起動し、同時実行されるアクセラレータのワークロードを削減します。 |
-| `infra.peripheral_daemon_unavailable` | ローカルの SiMa Sentinel API ソケットが存在しない、接続を拒否した、またはビジーです。 | `sima-cli neat install sentinel` で Sentinel をインストールするか、`simaai-sentinel.service` を起動してから、ジャーナルを確認してください。 |
+| `infra.peripheral_daemon_unavailable` | ローカルの SiMa Sentinel API ソケットが存在しない、接続を拒否した、またはビジーです。あるいは、インストール済みの Sentinel がペリフェラルカタログを提供できないほど古いです。 | `sima-cli neat install sentinel` で Sentinel をインストールまたは更新するか、`simaai-sentinel.service` を起動してから、ジャーナルを確認してください。 |
 | `infra.peripheral_daemon_timeout` | 期限付きの周辺機器カタログ要求が完了しませんでした。 | `simaai-sentinel.service` とプロバイダーの状態を確認して再試行してください。 |
 | `infra.peripheral_daemon_not_ready` | Sentinel が使用可能な初期周辺機器カタログをまだ完了していません。 | `simaai-sentinel.service` のジャーナルを読み、報告されたプロバイダーまたはデバイスの問題を修正してください。 |
 

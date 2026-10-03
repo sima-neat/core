@@ -151,7 +151,7 @@ Neat 透過 `NeatError` 和 `PullError` 呈現類型錯誤。 每次錯誤都會
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat 無法取得加速器的執行階段。| 請確認 DevKit 的相容性，並停止獨佔使用加速器的工作負載。|
 | `infra.accelerator_execution_failed` | 加速器無法執行模型階段。| 請重新啟動管線，並減少同時執行的加速器工作負載。|
-| `infra.peripheral_daemon_unavailable` | 本機 SiMa Sentinel API socket 不存在、拒絕連線或忙碌。 | 請使用 `sima-cli neat install sentinel` 安裝 Sentinel，或啟動 `simaai-sentinel.service`，然後檢查其日誌。 |
+| `infra.peripheral_daemon_unavailable` | 本機 SiMa Sentinel API socket 不存在、拒絕連線或忙碌，或已安裝的 Sentinel 版本過舊而無法提供周邊裝置目錄。 | 請使用 `sima-cli neat install sentinel` 安裝或更新 Sentinel，或啟動 `simaai-sentinel.service`，然後檢查其日誌。 |
 | `infra.peripheral_daemon_timeout` | 有期限的周邊目錄要求未完成。 | 請檢查 `simaai-sentinel.service` 與提供者健康狀態，然後重試。 |
 | `infra.peripheral_daemon_not_ready` | Sentinel 尚未完成可用的初始周邊目錄。 | 請讀取 `simaai-sentinel.service` 日誌，並修正所報告的提供者或裝置問題。 |
 
