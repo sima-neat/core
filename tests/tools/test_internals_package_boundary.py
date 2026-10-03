@@ -96,6 +96,45 @@ preserve_internals_artifact_manifest {shlex.quote(str(artifact_dir))}
 
 
 class InternalsPackageBoundaryTest(unittest.TestCase):
+    def test_dist_preflight_only_receives_staged_debs(self) -> None:
+        for os_name, have_deb, validator_status in (
+            ("Darwin", False, 0), ("Linux", False, 0),
+            ("Linux", True, 0), ("Linux", True, 9),
+        ):
+            with self.subTest(os=os_name, deb=have_deb, status=validator_status):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "tools").mkdir()
+                    log = root / "validated.txt"
+                    (root / "tools/install_neat_framework.sh").write_text(
+                        "validate_bundle_elf_cohort() {\n"
+                        f'  printf "%s\\n" "${{DEBS[@]}}" > {shlex.quote(str(log))}\n'
+                        f"  return {validator_status}\n"
+                        "}\n"
+                    )
+                    if have_deb:
+                        (root / "fixture with spaces.deb").write_bytes(b"fixture")
+                    script = f"""
+set -euo pipefail
+{shell_function("stage_package_artifacts_to_dist")}
+OS_NAME={os_name}
+SKIP_DIST=OFF
+BUILD_ALL=ON
+NEAT_INTERNALS_DEB_DIR=internals
+NEAT_LLIMA_DEB_DIR=llima
+NEAT_PACKAGE_INSTALL_SCRIPT=install_neat_framework.sh
+NEAT_INSTALL_MANIFEST=install-manifest.json
+REPO_ROOT={shlex.quote(str(root))}
+stage_package_artifacts_to_dist
+"""
+                    result = subprocess.run(["bash", "-c", script], cwd=root,
+                                            text=True, capture_output=True)
+                    self.assertEqual(result.returncode, validator_status, result.stderr)
+                    self.assertEqual(log.exists(), have_deb)
+                    if have_deb:
+                        self.assertEqual(log.read_text().splitlines(),
+                                         ["dist/fixture with spaces.deb"])
+
     def test_internals_is_located_without_a_derived_version(self) -> None:
         text = cmake()
         self.assertIn("find_package(NeatInternals CONFIG REQUIRED)", text)

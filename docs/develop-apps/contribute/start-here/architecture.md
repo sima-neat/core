@@ -1152,3 +1152,21 @@ Keep docs and code aligned:
 5. **Keep the public API stable**
 
    * internal refactors should not break user code unless intentionally versioned
+
+## Metoak depth contract
+
+`MetoakDepth` dispatches EV74 graph `simor_depth_map` (ID 20), with six inputs and three outputs, batch one. Use even input width 8–2048 and height 8–1536; keep canonical tensor names. Inputs are UInt8 Y/U/V planes, UInt16 disparity, FP32 BF and FP32 projection. Outputs are RGB UInt8, depth UInt16 in millimeters and XYZ FP32 in meters. All three remain published even though depth is the primary output. Disparity scale is fixed at 32; zero disparity yields zero depth and NaN XYZ.
+
+Native runtime contracts preserve each input's logical dtype separately from the legacy EV transport enum. Device-backed bundled inputs are copied into named segments; this path is not zero-copy. Use matching Core, Internals and graph-20 firmware, and validate numerical output and buffer lifetime before deploying a camera application.
+
+The explicit `CameraInput` (`profile=MetoakSimor`) factory with `zero_copy=false` emits owned flat UInt8 wire tensors in system memory. It copies before requeue, preserves valid padding/trailers, and exposes negotiated geometry in caps. Existing libcamera behavior is unchanged. Device-specific unpacking, calibration and ROS publication stay in the application; graph 20 is unchanged. A bounded output pool applies cancellable backpressure. Copy mode does not waive platform-driver stop/release qualification.
+
+The V4L2 copy source separates preparation from streaming: output caps and pool activation precede camera queueing. Shutdown quiesces the capture callback before retiring the device and then the CPU pool. Retirement failures post a bus error and retain the capture owner to prevent restart; software source deactivation does not certify hardware recovery.
+
+## Camera profile resolution
+
+`CameraInput` selects a private implementation from `CameraInputOptions.profile` before graph contract propagation. The `Default` profile always preserves the libcamera image contract regardless of pixel format; a device path alone is rejected rather than implicitly identifying Metoak. Only `MetoakSimor` selects Linux owned-copy V4L2 capture, yielding flat `UInt8` byte tensors in system memory. An unset `zero_copy` selects owned-copy for this profile; explicit true is rejected. The profile owns BA81 wire format internally. SIMOR unpacking and calibration remain application concerns.
+
+An explicit SIMOR profile plus device needs no discovery. A SIMOR profile without a device identifies exactly one endpoint from media topology without opening capture/subdevice nodes or configuring drivers. The public API is only `CameraInput` with `CameraInputOptions`; no V4L2-specific options, wrapper, or FourCC selector is exposed. This change does not add or qualify libcamera Bayer negotiation. Discovery is outside the frame-processing path; capture keeps its bounded pool and retirement safeguards.
+
+The manifest and SONAME remain Core ABI 5. The public options and node layouts changed for this unreleased integration: rebuild C++ consumers and install the matching Python wheel together. Earlier ABI-5 development binaries are not compatible with the new layout.

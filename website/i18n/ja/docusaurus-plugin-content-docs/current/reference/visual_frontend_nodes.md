@@ -1,6 +1,6 @@
 ---
 title: "EV74 ビジュアルフロントエンドノード"
-description: "機能ヒストグラム、グリダーファスト、トラック記述子、およびトラックKLTの利用状況を、顧客向け形式のNeatグラフで表示します。"
+description: "FeatureHistogram、GriderFast、TrackDescriptor、TrackKLT、MetoakDepth の Neat Graph 使用方法"
 sidebar_position: 8
 ---
 
@@ -14,12 +14,13 @@ Neat は、EV74のビジュアル・フロントエンドのグラフを通常�
 | `nodes::GriderFast` / `pyneat.nodes.grider_fast` | `grider_fast` | 236 | グリッド分布型 FAST 特徴 |
 | `nodes::TrackDescriptor` / `pyneat.nodes.track_descriptor` | `track_descriptor` | 237 | FAST特徴量と記述子 |
 | `nodes::TrackKLT` / `pyneat.nodes.track_klt` | `track_klt` | 238 | ピラミッド型KLTトラッキング。検出された代替特徴点を使用する場合あり |
+| `nodes::MetoakDepth` | `simor_depth_map` | 20 | I420 と視差から RGB、距離深度、XYZ を生成 |
 
 グラフIDは、診断やファームウェア/パッケージの整合性チェックに役立ちます。アプリケーションコードでは必須ではありません。
 
 ## テンソル縮約
 
-すべてのテンソルは、**論理的なバッチ形状**を使用します。`batch_size == B`の場合、グレースケール画像は`[B,H,W]`であり、`[B*H,W]`ではありません。ランタイムは、EV74トランスポートパッキングを内部的に処理します。
+特徴抽出と追跡のテンソルは、**論理的なバッチ形状**を使用します。`batch_size == B`の場合、グレースケール画像は`[B,H,W]`であり、`[B*H,W]`ではありません。ランタイムは、EV74トランスポートパッキングを内部的に処理します。
 
 | ノード | 入力 | 公開出力 |
 | --- | --- | --- |
@@ -124,9 +125,63 @@ output_features Int32   [2,193]
 
 `detect_new_features == 0` が実行されると、Neat は `output_points` と `output_status` のみを公開し、EV で確認可能な機能バッファーは内部ランタイム割り当てのままになります。
 
+## 6 入力の Metoak 深度
+
+`MetoakDepth` は `simor_depth_map`（グラフ 20）を使用する C++ 専用ノードです。生の SIMOR カメラフレームではなく、デコード済み I420 プレーン、生の視差、フレームごとのキャリブレーションを受け取ります。このノードの前で、アプリケーションまたは ROS アダプターが SIMOR をアンパックし、キャリブレーションを選択してください。Neat はそのアダプターを置き換えません。
+
+偶数の `width` を `[8,2048]`、偶数の `height` を `[8,1536]` に設定します。S315 のネイティブ深度解像度は `640x360` です。バッチは 1 に固定され、先頭のバッチ次元はありません。次の標準ルート名と入力順序を維持してください。別名は契約コンパイル時に拒否されます。
+
+| 入力ルート | 型 | 形状 | 意味 |
+| --- | --- | --- | --- |
+| `y_src` | UInt8 | `[H,W]` | I420 Y |
+| `u_src` | UInt8 | `[H/2,W/2]` | I420 U |
+| `v_src` | UInt8 | `[H/2,W/2]` | I420 V |
+| `disp_src` | UInt16 | `[H,W]` | 生の視差；固定サブピクセルスケール 32 |
+| `bf_mm_src` | Float32 | `[1]` | キャリブレーション済み基線長 × 焦点距離（mm） |
+| `proj_src` | Float32 | `[3]` | 投影 `{fx_fy,cx,cy}` |
+
+| 出力ルート | 型 | 形状 | 意味 |
+| --- | --- | --- | --- |
+| `rgb_dst` | UInt8 | `[H,W,3]` | インターリーブ RGB |
+| `depth_dst` | UInt16 | `[H,W]` | 深度（mm）；0 は無効 |
+| `points_dst` | Float32 | `[H,W,3]` | インターリーブ XYZ（メートル）；NaN は無効 |
+
+3 つの出力は常に一緒に公開されます。`depth_dst` は主境界の記述であり、出力セレクターではありません。キャリブレーションの BF と焦点距離は正の有限値、主点座標は有限値である必要があります。
+
+入力表に一致する名前付きテンソル 6 個を EV74 メモリに用意して Graph を構築します。この例はノードを設定します。実際のデコード済みフレームとキャリブレーションのテンソルはアダプターから提供してください。
+
+```cpp
+#include <neat.h>
+
+using namespace simaai::neat;
+
+// inputs contains the six named, decoded EV74 tensors from the table above.
+Run build_metoak_depth(const TensorList& inputs) {
+  Graph graph;
+  InputOptions input;
+  input.payload_type = PayloadType::Tensor;
+  input.memory_policy = InputMemoryPolicy::Ev74;
+  input.caps_override =
+      "application/vnd.simaai.tensor, representation=(string)tensor-set, storage=(string)tensorbuffer";
+  graph.add(nodes::Input(input));
+
+  MetoakDepthOptions depth;
+  depth.width = 640;
+  depth.height = 360;
+  graph.add(nodes::MetoakDepth(depth));
+  graph.add(nodes::Output());
+
+  RunOptions options;
+  options.output_memory = OutputMemory::Owned;
+  return graph.build(inputs, options);
+}
+```
+
+グラフ 20 を含む対応する Internals と EV74 ファームウェアでのみこの Graph を実行してください。下記の特徴抽出/追跡の検証コマンドは他の 4 グラフを対象とし、`MetoakDepth` は対象外です。
+
 ## Pythonの表面
 
-Python APIは、C++のオプション/ファクトリ形式を模倣しており、意図的に階層構造になっています。オプションオブジェクトを作成し、公開設定を行い、ノードを`Graph`に追加します。
+4 つの特徴抽出/追跡ノードには、C++ のオプション/ファクトリ形式に対応する Python バインディングがあります。`MetoakDepth` に Python バインディングはまだありません。オプションオブジェクトを作成し、公開設定を行い、ノードを `Graph` に追加してください。
 
 ```python
 import numpy as np
@@ -165,7 +220,7 @@ image.layout = pyneat.TensorLayout.HW
 
 ## 安全確認
 
-これらのノードは、EV（電気自動車）の配車前に、グラフの範囲を検証します。以下の場合は拒否します。
+4 つの特徴抽出/追跡ノードは、EV へのディスパッチ前にグラフの範囲を検証します。以下の場合は拒否します。
 
 - 0以下の次元またはカウント。
 - サポートされていないバッチサイズです。

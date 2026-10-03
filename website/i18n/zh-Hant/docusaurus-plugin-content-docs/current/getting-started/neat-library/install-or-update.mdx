@@ -135,3 +135,7 @@ source ~/pyneat/bin/activate
 ## 下一步
 
 繼續進行 [安裝 PyNeat](/getting-started/neat-library/pyneat/)，以設定自訂的 Python 環境，或使用 [Neat 指令列介面](/getting-started/neat-library/neat-cli/) 來檢查已安裝的環境。
+
+## 本機建置的套件組遭拒時
+
+儲存庫安裝程式與建置暫存流程會在修改安裝環境或 sysroot 前，檢查選取的 Debian 套件。重複或混用的套件版本、錯誤的架構、缺少的 Neat SONAME 相依項目、衝突的程式庫及指向建置樹的 RPATH 都會遭拒。請重新建置並暫存完整且相容的 Internals、LLiMa、Core 與 Python 套件組；不要使用程式庫符號連結或重新安裝相同的不相容檔案來掩蓋 ABI 不符。這些檢查不能證明所有符號或平台相依項目均可使用。仍須在實際目標上完成載入／匯入檢查，以及受控的應用程式煙霧測試。

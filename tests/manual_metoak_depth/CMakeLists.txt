@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(metoak_depth_qualification LANGUAGES CXX)
+find_package(SimaNeat CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+add_executable(metoak_depth_qualification metoak_depth_qualification.cpp)
+target_compile_features(metoak_depth_qualification PRIVATE cxx_std_20)
+target_link_libraries(metoak_depth_qualification PRIVATE SimaNeat::sima_neat Threads::Threads)

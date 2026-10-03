@@ -3301,6 +3301,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_static("every_frame", &simaai::neat::OutputOptions::EveryFrame, "max_buffers"_a = 30)
       .def_static("clocked", &simaai::neat::OutputOptions::Clocked, "max_buffers"_a = 1);
 
+  nb::enum_<simaai::neat::CameraProfile>(m, "CameraProfile")
+      .value("Default", simaai::neat::CameraProfile::Default)
+      .value("MetoakSimor", simaai::neat::CameraProfile::MetoakSimor);
+
   nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")
       .def(nb::init<>())
       .def_prop_rw(
@@ -3328,7 +3332,22 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("insert_queue", &simaai::neat::CameraInputOptions::insert_queue)
       .def_rw("leaky_queue", &simaai::neat::CameraInputOptions::leaky_queue)
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
-      .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
+      .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback)
+      .def_rw("device", &simaai::neat::CameraInputOptions::device)
+      .def_rw("profile", &simaai::neat::CameraInputOptions::profile)
+      .def_prop_rw(
+          "zero_copy",
+          [](const simaai::neat::CameraInputOptions& opt) -> nb::object {
+            return opt.zero_copy.has_value() ? nb::cast(*opt.zero_copy) : nb::none();
+          },
+          [](simaai::neat::CameraInputOptions& opt, nb::handle value) {
+            opt.zero_copy =
+                value.is_none() ? std::nullopt : std::optional<bool>(nb::cast<bool>(value));
+          },
+          nb::for_setter(nb::arg("zero_copy").none()))
+      .def_rw("output_buffer_count", &simaai::neat::CameraInputOptions::output_buffer_count)
+      .def_rw("frame_timeout_ms", &simaai::neat::CameraInputOptions::frame_timeout_ms)
+      .def_rw("capture_buffer_count", &simaai::neat::CameraInputOptions::capture_buffer_count);
 
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);

@@ -825,6 +825,12 @@ file(GLOB_RECURSE SIMANEAT_ALL_SOURCES
 # Apply blacklist
 # ------------------------------------------------------------------------------
 set(SIMANEAT_SOURCES ${SIMANEAT_ALL_SOURCES})
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # V4L2 capture depends on Linux UAPI; the public factory remains linkable.
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gst/V4L2CopyCapture.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gst/NeatV4L2CopySource.cpp")
+endif()
 if (SimaLMM_FOUND)
   list(REMOVE_ITEM SIMANEAT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIUnavailableStubs.cpp")

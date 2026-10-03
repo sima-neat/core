@@ -729,6 +729,67 @@ RUN_TEST(
       }
 
       {
+        std::uint32_t generic_dtype = 0;
+        require(
+            !pipeline_internal::sima::tensorsemantics::dtype_token_to_ev("UINT16", &generic_dtype),
+            "generic EV arithmetic must not infer unsigned-16 semantics from legacy tag");
+        MetoakDepthOptions opt;
+        opt.width = 640;
+        opt.height = 360;
+        MetoakDepth node(opt);
+        ContractCompileInput input;
+        input.node_index = 6;
+        CompiledNodeContract compiled;
+        std::string err;
+        require(node.compile_node_contract(input, &compiled, &err), err.c_str());
+        require(compiled.processcvu.has_value(), "Metoak processcvu contract missing");
+        const auto& cvu = *compiled.processcvu;
+        require(cvu.payload.graph_id == 20 && cvu.payload.graph_name == "simor_depth_map",
+                "Metoak graph identity");
+        require(cvu.payload.batch_size == 1, "Metoak batch must be one");
+        require(cvu.runtime_contract.logical_inputs.size() == 6U, "Metoak six logical inputs");
+        require(cvu.runtime_contract.physical_outputs.size() == 3U, "Metoak three outputs");
+        require(cvu.exposed_view.exposed_output_order.size() == 3U, "Metoak publish all outputs");
+        require(cvu.payload.primary_output_name == "depth_dst", "Metoak depth primary");
+        const char* dtypes[] = {"UINT8", "UINT8", "UINT8", "UINT16", "FP32", "FP32"};
+        const std::uint64_t sizes[] = {230400, 57600, 57600, 460800, 4, 12};
+        for (std::size_t i = 0; i < 6U; ++i) {
+          require(cvu.runtime_contract.logical_inputs[i].dtype == dtypes[i],
+                  "Metoak per-input logical dtype must not use scalar fallback");
+          require(cvu.runtime_contract.logical_inputs[i].size_bytes == sizes[i],
+                  "Metoak input byte contract");
+        }
+        require(cvu.payload.runtime_output_dtype_list ==
+                    std::vector<std::string>({"UINT8", "UINT16", "FP32"}),
+                "Metoak heterogeneous output types");
+        require(cvu.payload.input_shapes[4] == std::vector<int>({1}) &&
+                    cvu.payload.input_shapes[5] == std::vector<int>({3}),
+                "Metoak calibration remains rank one");
+        const std::vector<std::string> names{"y_src",    "u_src",     "v_src",
+                                             "disp_src", "bf_mm_src", "proj_src"};
+        auto broken = cvu.payload;
+        broken.runtime_input_dtype_list.pop_back();
+        bool rejected = false;
+        try {
+          (void)pipeline_internal::sima::stagesemantics::
+              build_multi_io_processcvu_facts_from_payload_internal(broken, names);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "Metoak incomplete logical types must fail");
+        broken = cvu.payload;
+        broken.runtime_input_dtype_list[3] = "FP32";
+        rejected = false;
+        try {
+          (void)pipeline_internal::sima::stagesemantics::
+              build_multi_io_processcvu_facts_from_payload_internal(broken, names);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "Metoak logical type/descriptor mismatch must fail");
+      }
+
+      {
         TrackKLTOptions klt_opt;
         klt_opt.width = 640;
         klt_opt.height = 480;

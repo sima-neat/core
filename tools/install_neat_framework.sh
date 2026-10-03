@@ -2080,6 +2080,279 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
   log_green "Paired DevKit sync completed: ${ssh_target}"
 }
 
+# Inspect selected package bytes before Python provisioning, sysroot writes or
+# board lifecycle changes. Never use installed libraries to fill a bundle gap.
+validate_bundle_elf_cohort() {
+  local tool
+  for tool in python3 dpkg-deb dpkg readelf; do
+    command -v "${tool}" >/dev/null 2>&1 || {
+      echo "${tool} is required for NEAT bundle preflight." >&2
+      return 1
+    }
+  done
+  python3 - "${1:-}" "${DEBS[@]}" <<'PY_COHORT'
+import functools
+import hashlib
+import os
+import posixpath
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+
+def run(*args):
+    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT,
+                                   env={**os.environ, "LC_ALL": "C"})
+
+
+def fail(message):
+    raise ValueError(message)
+
+
+def digest_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+packages = {}
+versions = {}
+providers = {}
+consumers = []
+files = {}
+owners = {}
+package_versions = {}
+package_architectures = {}
+replacements = {}
+loader_directories = []
+# These dependencies must never be satisfied by leftover SDK/board libraries.
+neat_name = re.compile(
+    r"^lib(?:neat|gstneat|gstsimaai|gstsimamm|sima_neat|sima_lmm|simaneet|"
+    r"simaaineat|commonutils|processcvu_testhooks|simaai_genboxdecode)"
+)
+expected_architecture = sys.argv[1] or None
+
+try:
+    with tempfile.TemporaryDirectory(prefix="neat-cohort-") as temp:
+        for index, argument in enumerate(sys.argv[2:]):
+            deb = Path(argument).resolve(strict=True)
+            package, version, architecture = [
+                run("dpkg-deb", "-f", str(deb), field).strip()
+                for field in ("Package", "Version", "Architecture")
+            ]
+            if architecture != "all":
+                if expected_architecture is None:
+                    expected_architecture = architecture
+                elif architecture != expected_architecture:
+                    fail(f"mixed/unexpected package architecture: {package} is {architecture}, expected {expected_architecture}")
+            if package in packages:
+                fail(f"duplicate package {package}: {packages[package]} and {deb}")
+            packages[package] = str(deb)
+            package_versions[package] = version
+            package_architectures[package] = architecture
+            replacements[package] = []
+            for entry in run("dpkg-deb", "-f", str(deb), "Replaces").strip().split(","):
+                if not entry.strip():
+                    continue
+                match = re.fullmatch(
+                    r"\s*([a-z0-9][a-z0-9+.-]+)(?::([a-z0-9-]+))?\s*"
+                    r"(?:\(\s*(<<|<=|=|>=|>>)\s*([^\s()]+)\s*\))?\s*", entry)
+                if not match:
+                    fail(f"unsupported Replaces entry in {package}: {entry}")
+                replacements[package].append(match.groups())
+            group = ("internals" if package.startswith("neat-") else
+                     "llima" if package.startswith("sima-lmm-") else
+                     "core" if package in ("sima-neat", "sima-neat-dev") else None)
+            if group:
+                previous = versions.setdefault(group, version)
+                if previous != version:
+                    fail(f"mixed {group} versions: {previous} and {version} ({package})")
+            root = Path(temp) / str(index)
+            subprocess.run(["dpkg-deb", "-x", str(deb), str(root)], check=True)
+            for directory, directories, names in os.walk(root, followlinks=False):
+                # os.walk lists directory symlinks separately from files. Record
+                # both without following links, including implicit parent dirs,
+                # so conflicting DEBs cannot redirect another package's payload.
+                for name in directories + names:
+                    path = Path(directory) / name
+                    relative = path.relative_to(root).as_posix()
+                    if path.is_symlink():
+                        identity = ("link", os.readlink(path))
+                    elif path.is_dir():
+                        identity = ("directory", "")
+                    elif path.is_file():
+                        identity = ("file", digest_file(path))
+                    else:
+                        continue
+                    if relative in files and files[relative] != identity:
+                        fail(f"conflicting payload path {relative} ({package})")
+                    files[relative] = identity
+                    owners.setdefault(relative, set()).add(package)
+                    if identity[0] != "file":
+                        continue
+                    # Debian loads these fragments through /etc/ld.so.conf.
+                    # Only package-declared directories count, never the builder's
+                    # cache or environment. Includes need a target-side audit.
+                    if re.fullmatch(r"etc/ld\.so\.conf\.d/[^/]+\.conf", relative):
+                        for line in path.read_text().splitlines():
+                            entry = line.split("#", 1)[0].strip()
+                            if not entry:
+                                continue
+                            if not entry.startswith("/") or len(entry.split()) != 1 or "$" in entry:
+                                fail(f"unsupported packaged loader configuration: {package}:{relative}: {entry}")
+                            loader_directories.append(posixpath.normpath(entry))
+                    with path.open("rb") as stream:
+                        if stream.read(4) != b"\x7fELF":
+                            continue
+                    header = run("readelf", "-h", str(path))
+                    machine = re.search(r"Machine:\s*(.*)", header).group(1).strip()
+                    expected = {"arm64": "AArch64", "amd64": "Advanced Micro Devices X86-64"}.get(architecture)
+                    if expected is None or machine != expected:
+                        fail(f"ELF architecture mismatch: {package}:{relative}: {architecture} / {machine}")
+                    dynamic = run("readelf", "-d", str(path))
+                    search_paths = {}
+                    for tag, value in re.findall(r"\((RPATH|RUNPATH)\).*?\[([^]]*)\]", dynamic):
+                        search_paths[tag] = []
+                        for entry in value.split(":"):
+                            origin_relative = (entry in ("$ORIGIN", "${ORIGIN}") or
+                                               entry.startswith(("$ORIGIN/", "${ORIGIN}/")))
+                            # Resolve against the ELF's installed location, never the
+                            # extraction directory or the builder's filesystem. Checking
+                            # the literal prefix alone misses $ORIGIN/../../tmp and
+                            # /usr/lib/../../tmp. Keep sibling private runtime paths valid.
+                            origin = "/" + posixpath.dirname(relative)
+                            expanded = (origin + entry[entry.index("}") + 1:]
+                                        if entry.startswith("${ORIGIN}") else
+                                        origin + entry[len("$ORIGIN"):]
+                                        if origin_relative else entry)
+                            normalized = "/" + posixpath.normpath(expanded).lstrip("/")
+                            runtime_roots = ("/lib", "/lib64", "/usr/lib", "/usr/lib64",
+                                             "/usr/local/lib", "/usr/local/lib64")
+                            in_runtime_root = any(
+                                normalized == root or normalized.startswith(root + "/")
+                                for root in runtime_roots)
+                            # $ORIGIN also supports packaged executables with adjacent
+                            # DSOs (for example under /usr/libexec); it cannot escape
+                            # that directory unless it reaches a system runtime root.
+                            adjacent = origin_relative and (
+                                normalized == origin or normalized.startswith(origin + "/"))
+                            if (not entry or "$" in expanded or
+                                (not entry.startswith("/") and not origin_relative) or
+                                not (in_runtime_root or adjacent)):
+                                fail(f"unsafe build/empty runtime search path in {package}:{relative}: {value}")
+                            search_paths[tag].append(normalized)
+                    soname = re.search(r"\(SONAME\).*?\[([^]]+)\]", dynamic)
+                    if soname:
+                        key = soname.group(1)
+                        old = providers.get(key)
+                        if old and old[0] != identity[1]:
+                            fail(f"different ELF providers for {key}: {old[1]} and {package}:{relative}")
+                        providers[key] = (identity[1], f"{package}:{relative}", relative)
+                    needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic)
+                    # RUNPATH takes precedence over RPATH. Require every DSO to
+                    # locate its own direct cohort dependencies, independently of
+                    # an application's inherited RPATH or LD_LIBRARY_PATH.
+                    search = search_paths.get("RUNPATH", search_paths.get("RPATH", []))
+                    no_defaults = bool(re.search(r"\(FLAGS_1\).*\bNODEFLIB\b", dynamic))
+                    consumers.append((f"{package}:{relative}", needed, search, no_defaults))
+        def packaged_file(lookup):
+            # Follow only package-owned SONAME links, not host filesystem links.
+            lookup = lookup.lstrip("/")
+            visited = set()
+            while files.get(lookup, (None,))[0] == "link":
+                if lookup in visited:
+                    return None
+                visited.add(lookup)
+                target = files[lookup][1]
+                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else
+                                           posixpath.join(posixpath.dirname(lookup), target))
+                if lookup == ".." or lookup.startswith("../"):
+                    return None
+            return files.get(lookup)
+
+        @functools.lru_cache(maxsize=None)
+        def replaces(new, old):
+            for name, arch, operator, version in replacements[new]:
+                if name != old or arch not in (None, "any", package_architectures[old]):
+                    continue
+                if operator is None:
+                    return True
+                status = subprocess.run(
+                    ["dpkg", "--compare-versions", package_versions[old], operator, version],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE).returncode
+                if status not in (0, 1):
+                    fail(f"invalid Replaces version in {new}: {name} ({operator} {version})")
+                if status == 0:
+                    return True
+            return False
+
+        # Equal bytes do not grant dpkg ownership to two different packages.
+        # A selected owner must explicitly replace every other owner. Identical
+        # directory links can be shared just like real directories.
+        for relative, packages_owning_path in owners.items():
+            if len(packages_owning_path) <= 1 or packaged_file(relative) == ("directory", ""):
+                continue
+            if not any(all(other == owner or replaces(owner, other)
+                           for other in packages_owning_path) for owner in packages_owning_path):
+                fail(f"duplicate payload ownership {relative}: {', '.join(sorted(packages_owning_path))}; no matching Replaces declaration")
+
+        for soname, (digest, origin, relative) in providers.items():
+            lookup = posixpath.join(posixpath.dirname(relative), soname)
+            visited = set()
+            while files.get(lookup, (None,))[0] == "link":
+                if lookup in visited:
+                    fail(f"cyclic SONAME symlink for {origin}")
+                visited.add(lookup)
+                target = files[lookup][1]
+                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else posixpath.join(posixpath.dirname(lookup), target))
+                if lookup == ".." or lookup.startswith("../"):
+                    fail(f"SONAME symlink escapes package root for {origin}")
+            if files.get(lookup) != ("file", digest):
+                fail(f"missing or wrong packaged SONAME path {soname} for {origin}")
+        families = {name.split(".so", 1)[0] for name in providers}
+        multiarch = {"arm64": "aarch64-linux-gnu", "amd64": "x86_64-linux-gnu"}.get(expected_architecture)
+        defaults = ["/lib", "/usr/lib"]
+        if multiarch:
+            defaults = [f"/lib/{multiarch}", f"/usr/lib/{multiarch}"] + defaults
+
+        for consumer, needed, search, no_defaults in consumers:
+            for dependency in needed:
+                # The loader treats any slash as a pathname and bypasses its
+                # library search. Reject before family filtering, including
+                # dependencies linked by filename to a DSO without a SONAME.
+                if "/" in dependency:
+                    fail(f"{consumer} has pathname-valued DT_NEEDED {dependency}; relink with a SONAME and a package-relative runtime search path")
+                if not (neat_name.match(dependency) or dependency.split(".so", 1)[0] in families):
+                    continue
+                if dependency not in providers:
+                    fail(f"{consumer} requires {dependency}, but the selected bundle does not provide it; rebuild against the selected Internals/Core (do not add a compatibility symlink)")
+                directories = search + [d for d in loader_directories
+                                        if not no_defaults or d not in defaults]
+                if not no_defaults:
+                    directories += defaults
+                expected = ("file", providers[dependency][0])
+                for directory in directories:
+                    candidate = packaged_file(posixpath.join(directory, dependency))
+                    if candidate is not None:
+                        if candidate != expected:
+                            fail(f"{consumer} resolves {dependency} to a different packaged payload in {directory}")
+                        break
+                else:
+                    fail(f"{consumer} requires {dependency}, but its packaged provider is not reachable through its RUNPATH/RPATH, packaged ld.so.conf.d directories or default library directories; rebuild with the matching install RUNPATH")
+
+        if not packages:
+            fail("no DEB packages supplied")
+        print(f"Verified selected ELF cohort: {len(packages)} packages, {len(consumers)} ELFs, {len(providers)} SONAME providers. Platform dependencies still require target validation.")
+except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    print(f"NEAT bundle preflight failed: {error}", file=sys.stderr)
+    sys.exit(1)
+PY_COHORT
+}
+
 install_for_environment() {
   case "${ENV_MODE}" in
     elxr-sdk)
@@ -2124,4 +2397,6 @@ fi
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 ensure_platform_compatible
+validate_single_sima_neat_package_pair
+validate_bundle_elf_cohort arm64
 install_for_environment

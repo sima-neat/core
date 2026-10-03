@@ -2334,6 +2334,10 @@ std::string canonical_family_name(std::string graph_family) {
   if (graph_family == "trackklt" || graph_family == "track_klt") {
     return "track_klt";
   }
+  if (graph_family == "metoakdepth" || graph_family == "simordepthmap" ||
+      graph_family == "simor_depth_map") {
+    return "simor_depth_map";
+  }
   return graph_family;
 }
 
@@ -2370,7 +2374,12 @@ ProcessCvuGraphFamily family_enum_from_name(const std::string& graph_family) {
     return ProcessCvuGraphFamily::DetessDequant;
   }
   if (family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
-      family == "track_klt") {
+      family == "track_klt" || family == "simor_depth_map") {
+    // simor_depth_map (MetoakDepth) reuses the VisualFrontend family: it's the same
+    // "native, non-ML EV74 kernel dispatched through neatprocesscvu" shape as the
+    // feature/tracking graphs, just with its own six-input/three-output contract and its
+    // own pre-existing graph id (20, not part of the 235-238 block). See
+    // native_visual_graph_id_runtime() in ProcessCvuRuntimeConfigAdapter.cpp.
     return ProcessCvuGraphFamily::VisualFrontend;
   }
   return ProcessCvuGraphFamily::Unknown;
@@ -4279,13 +4288,13 @@ ProcessCvuCanonicalFacts build_preproc_facts_from_payload(const ProcessCvuStageP
 }
 
 bool native_visual_payload_prefers_logical_input_shapes(const ProcessCvuStagePayload& payload) {
-  if (payload.graph_id >= 235 && payload.graph_id <= 238) {
+  if ((payload.graph_id >= 235 && payload.graph_id <= 238) || payload.graph_id == 20) {
     return true;
   }
   const std::string family = canonical_family_name(
       !payload.graph_family.empty() ? payload.graph_family : payload.graph_name);
   return family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
-         family == "track_klt";
+         family == "track_klt" || family == "simor_depth_map";
 }
 
 ProcessCvuCanonicalFacts
@@ -4427,8 +4436,28 @@ build_multi_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& paylo
       throw std::invalid_argument("multi-io processcvu payload input shape missing");
     }
     std::string input_layout = payload_input_layout_token_local(payload, i);
-    const std::string input_dtype =
+    std::string input_dtype =
         !payload.input_dtype.empty() ? payload.input_dtype : std::string("INT8");
+    // Preserve declared logical types instead of guessing signedness or BF16 from
+    // the legacy EV descriptor (which cannot distinguish those representations).
+    if (!payload.runtime_input_dtype_list.empty()) {
+      if (payload.runtime_input_dtype_list.size() != input_count ||
+          payload.runtime_input_dtype_list[i].empty()) {
+        throw std::invalid_argument("multi-io processcvu input dtype list is incomplete");
+      }
+      input_dtype = payload.runtime_input_dtype_list[i];
+      std::uint32_t declared_ev = 0U;
+      const std::string wire_dtype =
+          payload.graph_id == 20 &&
+                  canonical_family_name(payload.graph_name) == "simor_depth_map" &&
+                  input_dtype == "UINT16"
+              ? "INT16"
+              : input_dtype;
+      if (!tensorsemantics::dtype_token_to_ev(wire_dtype, &declared_ev) ||
+          (i < payload.input_tensors.size() && declared_ev != payload.input_tensors[i].dtype)) {
+        throw std::invalid_argument("multi-io processcvu input dtype disagrees with descriptor");
+      }
+    }
     facts.inputs.push_back(
         build_dense_processcvu_input_fact(static_cast<int>(i), static_cast<int>(i), input_name,
                                           input_shape, input_dtype, input_layout));

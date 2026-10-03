@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -3028,6 +3029,31 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
   // so a copy was unavoidable; the legacy branch_sessions path materialized
   // the same bytes via per-ingress casttess output buffers.
 
+  // Only graph20's canonical mixed-type input set needs padded segment spans.
+  // Keep generic MLA packed inputs byte-tight: their compiled offsets depend on it.
+  const char* depth_names[] = {"y_src", "u_src", "v_src", "disp_src", "bf_mm_src", "proj_src"};
+  const TensorDType depth_types[] = {TensorDType::UInt8,   TensorDType::UInt8,
+                                     TensorDType::UInt8,   TensorDType::UInt16,
+                                     TensorDType::Float32, TensorDType::Float32};
+  bool depth_bundle = tensors.size() == 6U;
+  for (std::size_t i = 0; depth_bundle && i < tensors.size(); ++i) {
+    depth_bundle =
+        tensors[i].route.segment_name == depth_names[i] && tensors[i].dtype == depth_types[i];
+  }
+
+  if (depth_bundle) {
+    const auto& shape = tensors[0].shape;
+    depth_bundle = shape.size() == 2U && shape[0] >= 8 && shape[0] <= 1536 && shape[1] >= 8 &&
+                   shape[1] <= 2048 && shape[0] % 2 == 0 && shape[1] % 2 == 0;
+    if (depth_bundle) {
+      const std::vector<std::int64_t> chroma{shape[0] / 2, shape[1] / 2};
+      depth_bundle = tensors[1].shape == chroma && tensors[2].shape == chroma &&
+                     tensors[3].shape == shape &&
+                     tensors[4].shape == std::vector<std::int64_t>{1} &&
+                     tensors[5].shape == std::vector<std::int64_t>{3};
+    }
+  }
+
   // 1. Describe per-tensor sizes + names for the segmented allocation.
   GstSimaaiAllocationParams params;
   gst_simaai_memory_allocation_params_init(&params);
@@ -3040,9 +3066,22 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
   gsize total_size = 0;
   for (std::size_t i = 0; i < tensors.size(); ++i) {
     const Tensor& t = tensors[i];
-    if (!t.storage || !t.storage->data) {
+    // Device-backed tensors (e.g. Tensor::from_vector(..., TensorMemory::EV74), which the
+    // InputStream requires for EV74 routes) have no CPU `data` pointer; they are staged
+    // through copy_tensor_payload_to() below. Without this they fell through to the
+    // multi-source path, whose N appended GstMemory objects processcvu can't resolve by
+    // segment name (it binds every input to memory[0]).
+    if (!t.storage) {
       if (err)
-        *err = std::string("bundled input: tensor ") + std::to_string(i) + " has no CPU data";
+        *err = std::string("bundled input: tensor ") + std::to_string(i) + " has no storage";
+      return false;
+    }
+    // Do not divert existing device-backed MLA/tessellated carriers through a
+    // tight logical copy: their transport span can exceed dense_bytes_tight().
+    // New device-source support is deliberately limited to graph20's exact set.
+    if ((!t.storage->data && !depth_bundle) || (depth_bundle && t.semantic.tess.has_value())) {
+      if (err)
+        *err = "bundled input: device/tessellated carrier requires existing materialized fallback";
       return false;
     }
     if (!t.is_dense() || !t.is_contiguous()) {
@@ -3055,6 +3094,25 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
     if (bytes == 0U) {
       if (err)
         *err = std::string("bundled input: tensor ") + std::to_string(i) + " has zero dense bytes";
+      return false;
+    }
+    if (t.byte_offset < 0 || static_cast<std::uint64_t>(t.byte_offset) > t.storage->size_bytes ||
+        bytes > t.storage->size_bytes - static_cast<std::size_t>(t.byte_offset)) {
+      if (err)
+        *err = "bundled input: tensor range exceeds backing storage at index " + std::to_string(i);
+      return false;
+    }
+    if (bytes > std::numeric_limits<gsize>::max() - 3U) {
+      if (err)
+        *err = "bundled input: segment allocation size overflow";
+      return false;
+    }
+    // With 10x14 I420, chroma spans are 35 bytes. Padding each named segment
+    // keeps disparity and calibration aligned without changing logical sizes.
+    const std::size_t allocation_bytes = depth_bundle ? ((bytes + 3U) & ~std::size_t{3U}) : bytes;
+    if (allocation_bytes > std::numeric_limits<gsize>::max() - total_size) {
+      if (err)
+        *err = "bundled input: total allocation size overflow";
       return false;
     }
     std::string seg_name = t.route.segment_name;
@@ -3070,13 +3128,13 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
     }
     segment_names.push_back(std::move(seg_name));
     segment_bytes.push_back(bytes);
-    if (!gst_simaai_memory_allocation_params_add_segment(&params, static_cast<gsize>(bytes),
-                                                         segment_names.back().c_str())) {
+    if (!gst_simaai_memory_allocation_params_add_segment(
+            &params, static_cast<gsize>(allocation_bytes), segment_names.back().c_str())) {
       if (err)
         *err = std::string("bundled input: failed to add segment ") + std::to_string(i);
       return false;
     }
-    total_size += static_cast<gsize>(bytes);
+    total_size += static_cast<gsize>(allocation_bytes);
   }
 
   // 2. Allocate ONE GstSimaaiSegmentMemory with N segments via the standard
@@ -3096,9 +3154,10 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
       *err = "bundled input: gst_buffer_new_allocate failed";
     return false;
   }
+  const auto unref_buffer = [](GstBuffer* buffer) { gst_buffer_unref(buffer); };
+  std::unique_ptr<GstBuffer, decltype(unref_buffer)> assembled_owner(assembled, unref_buffer);
   GstMemory* assembled_memory = gst_buffer_peek_memory(assembled, 0U);
   if (!assembled_memory) {
-    gst_buffer_unref(assembled);
     if (err)
       *err = "bundled input: assembled buffer missing memory";
     return false;
@@ -3119,19 +3178,36 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
   for (std::size_t i = 0; i < tensors.size(); ++i) {
     void* segment = gst_simaai_memory_get_segment(assembled_memory, segment_names[i].c_str());
     if (!segment) {
-      gst_buffer_unref(assembled);
       if (err)
         *err = std::string("bundled input: segment lookup failed for '") + segment_names[i] +
                "' at index " + std::to_string(i);
       return false;
     }
     const auto& t = tensors[i];
-    const auto* src = static_cast<const std::uint8_t*>(t.storage->data) +
-                      static_cast<std::size_t>(std::max<std::int64_t>(t.byte_offset, 0));
     std::string copy_err;
+    std::vector<std::uint8_t> staged;
+    const std::uint8_t* src = nullptr;
+    if (t.storage->data) {
+      src = static_cast<const std::uint8_t*>(t.storage->data) +
+            static_cast<std::size_t>(std::max<std::int64_t>(t.byte_offset, 0));
+    } else {
+      try {
+        staged.resize(segment_bytes[i]);
+      } catch (const std::exception& error) {
+        if (err)
+          *err = std::string("bundled input: device staging allocation failed: ") + error.what();
+        return false;
+      }
+      if (!copy_tensor_payload_to(t, staged.data(), staged.size(), &copy_err)) {
+        if (err)
+          *err = std::string("bundled input: device tensor read failed at index ") +
+                 std::to_string(i) + ": " + copy_err;
+        return false;
+      }
+      src = staged.data();
+    }
     if (!pipeline_internal::copy_into_simaai_segment_memory(segment, src, segment_bytes[i],
                                                             &copy_err)) {
-      gst_buffer_unref(assembled);
       if (err)
         *err = std::string("bundled input: segment copy failed at index ") + std::to_string(i) +
                ": " + copy_err;
@@ -3139,8 +3215,19 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
     }
   }
 
-  attach_tensor_set_meta_from_tensors_impl(assembled, tensors);
-  *out_buffer = assembled;
+  TensorBufferView destination;
+  if (!tensor_buffer_descriptor_from_tensors(tensors, &destination, err))
+    return false;
+  for (std::size_t i = 0; i < destination.tensors.size(); ++i) {
+    // Source subviews have been copied to the beginning of their new named segment.
+    // Original source offsets/memory indices must not leak into destination metadata.
+    destination.tensors[i].memory_index = 0;
+    destination.tensors[i].segment_name = segment_names[i];
+    destination.tensors[i].byte_offset = 0;
+  }
+  if (!attach_tensor_set_meta_from_descriptor_view_impl(assembled, destination, err))
+    return false;
+  *out_buffer = assembled_owner.release();
   return true;
 }
 
