@@ -56,8 +56,7 @@ for (const auto& peripheral : catalog) {
 | `backend` | `mipi` 또는 `v4l2`와 같은 검색 백엔드입니다. |
 | `modes` | 개별 크기 또는 명시적 크기 범위, 프레임 속도, 지원 플래그 및 거부 이유입니다. |
 
-지원 여부는 이 Core 패키지가 `/usr/share/simaai-sentinel/support/neat-core.json`에 설치하는 규칙을 Sentinel이 적용하여 분류하므로, 결과는 설치된 `CameraInput`과 일치합니다. 클라이언트는 그 결과를 보존하며 카메라를 검사, 재분류, 획득, 구성 또는
-스트리밍하지 않습니다. 따라서 카탈로그의 지원 표시는 이후의 독점 획득 성공을 보장하지 않습니다.
+지원 여부는 이 Core 패키지가 `/usr/share/simaai-sentinel/support/neat-core.json`에 설치하는 규칙을 Sentinel이 적용하여 분류하므로, 결과는 설치된 `CameraInput`과 일치합니다. 카탈로그의 지원 표시는 이후의 독점 획득 성공을 보장하지 않습니다.
 
 ## 모든 주변 장치 형식의 세부 정보
 
@@ -66,42 +65,18 @@ for (const auto& peripheral : catalog) {
 객체입니다. 해당 키가 없거나 `null`이면 `details_json`은 `"{}"`입니다. Python에서는
 `details_json`을 새 `dict`로 디코딩하는 `details`도 제공합니다.
 
-`details_json`은 Core에 형식화된 접근자가 없는 주변 장치 형식을 읽는 공식적인 방법입니다. 새 장치
-형식은 Core를 업데이트하지 않아도 Sentinel이 보고하는 즉시 사용할 수 있습니다. 이 Core 릴리스가
-알지 못하는 필드를 포함하여 모든 필드와 값이 보존됩니다. JSON은 다시 직렬화되므로 키 순서와 공백은
-데몬 응답과 다를 수 있습니다. 카메라에는 `details_json`과 형식화된 `camera` 필드가 모두 있습니다.
-
-Python:
-
 ```python
 for peripheral in pyneat.peripherals.list():
     if peripheral.type == "microphone":
         print(peripheral.id, peripheral.details.get("channels"))
 ```
 
-C++:
+C++에서는 모든 JSON 라이브러리로 `details_json`을 구문 분석합니다. 새 장치 형식은 Core를 업데이트하지
+않아도 Sentinel이 보고하는 즉시 사용할 수 있습니다. `camera` 이외의 형식에서 세부 정보 값이 JSON
+객체가 아니어도 `list()`는 실패하지 않습니다. 해당 주변 장치는 카탈로그에 남고 `details_json`은
+`"{}"`가 됩니다. 잘못된 `camera` 세부 정보는 `list()`를 구문 분석 오류로 실패시킵니다.
 
-```cpp
-#include <nlohmann/json.hpp>
-
-for (const auto& peripheral : simaai::neat::peripherals::list()) {
-  if (peripheral.type == "microphone") {
-    const auto details = nlohmann::json::parse(peripheral.details_json);
-    // Read details.value("channels", 0) and other provider fields.
-  }
-}
-```
-
-`details_json`은 모든 JSON 라이브러리로 구문 분석할 수 있습니다. 이 예제에서는 nlohmann/json을 사용합니다.
-
-`camera` 이외의 형식에서 세부 정보 값이 JSON 객체가 아니어도 `list()`는 실패하지 않습니다. 해당
-주변 장치는 카탈로그에 남고 `details_json`은 `"{}"`가 됩니다. Core는 형식화된 접근자가 없는 형식의
-세부 정보를 그 밖에는 검증하지 않습니다. 잘못된 `camera` 세부 정보는 프로토콜 결함이므로 `list()`가
-구문 분석 오류로 실패합니다. `camera`와 같은 형식화된 필드는 알지 못하는 프로토콜 v1 선택 필드를
-무시하지만, 해당 필드는 `details_json`에서 계속 사용할 수 있습니다. Core는 Sentinel이 각 스냅샷과
-함께 게시하는 최상위 `changes` 로그와 `support` 상태도 수락하지만 노출하지 않습니다.
-
-## 실패 및 범위
+## 실패
 
 서비스 누락 또는 카탈로그를 제공하지 못하는 오래된 서비스, 권한 거부, 요청 시간 초과, 준비되지 않은 데몬, 잘못되거나 너무 크거나 호환되지 않는 응답이
 발생하면 `list()`는 안정적인 코드가 포함된 `NeatError`를 발생시킵니다. 메시지에는 다음 운영 조치가
@@ -110,10 +85,3 @@ for (const auto& peripheral : simaai::neat::peripherals::list()) {
 Sentinel이 설치되어 있지 않거나 주변 장치 카탈로그를 제공하지 못할 만큼 오래되었으면
 `sima-cli neat install sentinel`로 설치하거나 업데이트하십시오. 설치되어 있지만
 실행 중이 아니면 `simaai-sentinel.service`를 시작하십시오.
-
-이 API는 로컬 DevKit의 `/run/simaai-sentinel/api.sock`에만 연결합니다. SSH를 사용하거나 원격 보드를
-선택하지 않습니다. Insight와 향후 CLI 클라이언트는 Core를 통하지 않고 동급 클라이언트로 데몬에
-연결합니다.
-
-이 릴리스는 일회성 카탈로그 읽기를 제공합니다. 이벤트 구독, 새로 고침 요청 및 데몬 수명 주기 제어는
-공개 Core API에 포함되지 않습니다.

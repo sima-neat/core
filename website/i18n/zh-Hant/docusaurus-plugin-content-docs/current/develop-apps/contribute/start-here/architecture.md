@@ -784,7 +784,7 @@ Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行�
 
 ### 相機設定的所有權
 
-開發板本機常駐程式 SiMa Sentinel（`simaai-sentinel.service`）負責裝置探索、權威周邊裝置目錄、修訂版本和有上限的 `changes` 記錄。Core 不會連結該實作。`simaai::neat::peripherals::list()` 和 `pyneat.peripherals.list()` 是精簡的無狀態用戶端：每次呼叫都會透過 Sentinel 的版本化 Unix 通訊端 API 執行一次有時限的 `GET /v1/peripherals`、驗證回應，並傳回該快照。它們不會掃描硬體、維護第二份快取、訂閱事件，也不會在 Sentinel 無法使用時退回其他路徑。
+SiMa Sentinel（`simaai-sentinel.service`）負責裝置探索與權威周邊裝置目錄。`simaai::neat::peripherals::list()` 和 `pyneat.peripherals.list()` 是無狀態用戶端：每次呼叫都會透過 Sentinel 的 Unix 通訊端執行一次有時限的 `GET /v1/peripherals`，並傳回已驗證的快照，不會掃描硬體、快取或退回其他路徑。
 
 `CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 在協商期間，橋接器會使用標準池來回應上游的 `GST_QUERY_ALLOCATION`，並請求 `GstVideoMeta`。 該池會分配來自一個打包的 SiMaAI 設定的已驗證平面，並為每個平面匯出一個 DMA-BUF。 一個相容的 `libcamerasrc` 會將這些 DMA-BUF 匯入到 ISP 捕獲佇列中。 然後，橋接器會解包相同的打包設定，以進行下游處理。 嚴格模式會拒絕任何不滿足該合約的緩衝區；CPU 複製仍然是一種明確的相容性後備方案。
 

@@ -569,28 +569,11 @@ add_pipeline_test(
   unit_peripheral_client_test
   ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_peripheral_client_test.cpp
 )
-target_compile_definitions(unit_peripheral_client_test PRIVATE
-  SIMAAI_PERIPHERAL_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/peripherals/v1"
-)
+# Embed the support rules so the installed test does not need the source tree.
+file(READ ${CMAKE_SOURCE_DIR}/src/peripherals/sentinel-support-rules.json.in _sentinel_rules)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/sentinel_support_rules.inc "R\"json(${_sentinel_rules})json\"\n")
+target_include_directories(unit_peripheral_client_test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 set_property(TEST unit_peripheral_client_test APPEND PROPERTY LABELS "unit;peripherals")
-
-# Helper used by PyNeat to verify C++/Python catalog parity. Source tests pass a
-# fake-daemon socket; installed tests compare the public facades against the
-# live board daemon. The Python test owns both modes, so this is not a CTest.
-add_executable(
-  peripheral_catalog_cpp_probe
-  ${CMAKE_CURRENT_SOURCE_DIR}/integration/peripheral_catalog_cpp_probe.cpp
-)
-target_link_libraries(peripheral_catalog_cpp_probe PRIVATE sima_neat)
-target_include_directories(peripheral_catalog_cpp_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
-set_target_properties(peripheral_catalog_cpp_probe PROPERTIES
-  INSTALL_RPATH "$ORIGIN/../..;${CMAKE_INSTALL_RPATH}"
-)
-install(
-  TARGETS peripheral_catalog_cpp_probe
-  RUNTIME DESTINATION lib/sima-neat/tests
-  COMPONENT extras
-)
 
 if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)

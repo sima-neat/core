@@ -19,11 +19,7 @@ Before you use `CameraInput`, bring up the camera outside Neat:
 - confirm libcamera lists the camera;
 - confirm `libcamerasrc` can stream the exact `format,width,height,framerate` you plan to request.
 
-`camera_name` is the exact libcamera camera name. Leave it unset for the default
-camera, or read selectable names and daemon-classified modes from
-`simaai::neat::peripherals::list()` / `pyneat.peripherals.list()`. The catalog
-client fails if `simaai-sentinel.service` is unavailable; it does not run a
-backup hardware scan.
+`camera_name` is the exact libcamera camera name. Leave it unset for the default camera, or read selectable names and daemon-classified modes from `simaai::neat::peripherals::list()` / `pyneat.peripherals.list()`.
 
 ## Quick start
 

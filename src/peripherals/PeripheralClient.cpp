@@ -1,7 +1,6 @@
 #include "peripherals/PeripheralCatalog.h"
 
 #include "peripherals/internal/PeripheralClient.h"
-#include "peripherals/internal/ProtocolContract.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/GraphReport.h"
 #include "pipeline/NeatError.h"
@@ -14,6 +13,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
@@ -23,7 +23,6 @@
 #include <limits>
 #include <optional>
 #include <set>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -34,6 +33,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using Deadline = Clock::time_point;
 
+constexpr std::uint64_t kSchemaVersion = 1;
+constexpr const char* kCatalogPath = "/v1/peripherals";
 constexpr std::size_t kMaximumHeaderBytes = 8192;
 
 class FileDescriptor {
@@ -74,6 +75,12 @@ private:
   fail(error_codes::kPeripheralDaemonTimeout,
        "Timed out waiting for the Sentinel peripheral catalog. Check "
        "simaai-sentinel.service and its journal, then try again.");
+}
+
+[[noreturn]] void fail_too_large() {
+  fail(error_codes::kResponseTooLarge,
+       "The Sentinel peripheral catalog exceeded the 4 MiB v1 limit. Reduce the catalog size or "
+       "update Sentinel and Core together.");
 }
 
 [[noreturn]] void fail_connect(int error) {
@@ -161,15 +168,6 @@ void send_all(int fd, std::string_view data, Deadline deadline, std::size_t maxi
   }
 }
 
-std::string lowercase_ascii(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
-    if (character >= 'A' && character <= 'Z')
-      return static_cast<char>(character - 'A' + 'a');
-    return static_cast<char>(character);
-  });
-  return value;
-}
-
 std::string_view trim_ascii(std::string_view value) {
   while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
     value.remove_prefix(1);
@@ -178,22 +176,20 @@ std::string_view trim_ascii(std::string_view value) {
   return value;
 }
 
-std::size_t parse_content_length(std::string_view value) {
-  value = trim_ascii(value);
-  std::size_t result = 0;
-  const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
-  if (value.empty() || parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
-    fail_parse("Content-Length is not a non-negative decimal integer");
-  if (result > kMaximumResponseBytes) {
-    fail(error_codes::kResponseTooLarge,
-         "The Sentinel peripheral catalog response exceeded the 4 MiB v1 limit. Reduce the "
-         "catalog size or update Sentinel and Core together.");
-  }
-  return result;
+template <typename Integer> bool parse_decimal(std::string_view text, Integer& value) {
+  const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+  return !text.empty() && result.ec == std::errc{} && result.ptr == text.data() + text.size();
+}
+
+bool equals_ignoring_case(std::string_view value, std::string_view lowercase) {
+  return std::equal(
+      value.begin(), value.end(), lowercase.begin(), lowercase.end(),
+      [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
 }
 
 struct ResponseHead {
   int status = 0;
+  std::size_t header_bytes = 0;
   std::size_t content_length = 0;
 };
 
@@ -207,10 +203,7 @@ ResponseHead parse_response_head(std::string_view value) {
       status_line[prefix.size() + 3] != ' ')
     fail_parse("the HTTP status line is invalid");
   int status = 0;
-  const auto status_result = std::from_chars(status_line.data() + prefix.size(),
-                                             status_line.data() + prefix.size() + 3, status);
-  if (status_result.ec != std::errc{} ||
-      status_result.ptr != status_line.data() + prefix.size() + 3)
+  if (!parse_decimal(status_line.substr(prefix.size(), 3), status))
     fail_parse("the HTTP status code is invalid");
 
   std::optional<std::size_t> content_length;
@@ -225,33 +218,32 @@ ResponseHead parse_response_head(std::string_view value) {
     const std::size_t separator = line.find(':');
     if (separator == std::string_view::npos)
       fail_parse("an HTTP header has no separator");
-    const std::string name = lowercase_ascii(std::string(trim_ascii(line.substr(0, separator))));
-    const std::string_view header_value = trim_ascii(line.substr(separator + 1));
-    if (name == "content-length") {
-      if (content_length)
-        fail_parse("the HTTP response contains duplicate Content-Length headers");
-      content_length = parse_content_length(header_value);
-    } else if (name == "transfer-encoding") {
+    const std::string_view name = trim_ascii(line.substr(0, separator));
+    if (equals_ignoring_case(name, "content-length")) {
+      std::size_t length = 0;
+      if (content_length || !parse_decimal(trim_ascii(line.substr(separator + 1)), length))
+        fail_parse("the HTTP response has an invalid Content-Length header");
+      if (length > kMaximumResponseBytes)
+        fail_too_large();
+      content_length = length;
+    } else if (equals_ignoring_case(name, "transfer-encoding")) {
       fail_parse("chunked HTTP responses are not part of the local v1 protocol");
     }
     position = line_end + 2;
   }
   if (!content_length)
     fail_parse("the HTTP response has no Content-Length header");
-  return {status, *content_length};
+  return {status, value.size(), *content_length};
 }
 
 std::pair<int, std::string> read_response(int fd, Deadline deadline) {
   std::string response;
-  response.reserve(4096);
-  std::optional<std::size_t> header_end;
   std::optional<ResponseHead> head;
-
   for (;;) {
-    if (header_end && head) {
-      const std::size_t body_size = response.size() - *header_end;
+    if (head) {
+      const std::size_t body_size = response.size() - head->header_bytes;
       if (body_size == head->content_length)
-        return {head->status, response.substr(*header_end)};
+        return {head->status, response.substr(head->header_bytes)};
       if (body_size > head->content_length)
         fail_parse("the HTTP body is longer than Content-Length");
     }
@@ -263,18 +255,13 @@ std::pair<int, std::string> read_response(int fd, Deadline deadline) {
     const ssize_t received = ::recv(fd, buffer, sizeof(buffer), 0);
     if (received > 0) {
       response.append(buffer, static_cast<std::size_t>(received));
-      if (!header_end) {
-        const std::size_t marker = response.find("\r\n\r\n");
-        if (marker == std::string::npos) {
-          if (response.size() > kMaximumHeaderBytes)
-            fail_parse("the HTTP headers exceed 8 KiB");
-        } else {
-          if (marker + 4 > kMaximumHeaderBytes)
-            fail_parse("the HTTP headers exceed 8 KiB");
-          header_end = marker + 4;
-          head = parse_response_head(std::string_view(response).substr(0, *header_end));
-        }
-      }
+      if (head)
+        continue;
+      const std::size_t marker = response.find("\r\n\r\n");
+      if ((marker == std::string::npos ? response.size() : marker + 4) > kMaximumHeaderBytes)
+        fail_parse("the HTTP headers exceed 8 KiB");
+      if (marker != std::string::npos)
+        head = parse_response_head(std::string_view(response).substr(0, marker + 4));
       continue;
     }
     if (received < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
@@ -285,10 +272,16 @@ std::pair<int, std::string> read_response(int fd, Deadline deadline) {
   }
 }
 
-const nlohmann::json& require_field(const nlohmann::json& object, const char* name) {
+using JsonTypeCheck = bool (nlohmann::json::*)() const noexcept;
+
+const nlohmann::json& require_field(const nlohmann::json& object, const char* name,
+                                    JsonTypeCheck has_type = nullptr,
+                                    const char* type_name = nullptr) {
   const auto found = object.find(name);
   if (found == object.end())
     fail_parse("missing required field '" + std::string(name) + "'");
+  if (has_type && !((*found).*has_type)())
+    fail_parse("field '" + std::string(name) + "' must be " + type_name);
   return *found;
 }
 
@@ -300,60 +293,44 @@ const nlohmann::json& require_object(const nlohmann::json& value, std::string_vi
 
 std::string require_string(const nlohmann::json& object, const char* name,
                            bool allow_empty = false) {
-  const auto& value = require_field(object, name);
-  if (!value.is_string())
-    fail_parse("field '" + std::string(name) + "' must be a string");
-  std::string result = value.get<std::string>();
-  if (!allow_empty && result.empty())
+  auto value =
+      require_field(object, name, &nlohmann::json::is_string, "a string").get<std::string>();
+  if (!allow_empty && value.empty())
     fail_parse("field '" + std::string(name) + "' must not be empty");
-  return result;
+  return value;
 }
 
 bool require_bool(const nlohmann::json& object, const char* name) {
-  const auto& value = require_field(object, name);
-  if (!value.is_boolean())
-    fail_parse("field '" + std::string(name) + "' must be a boolean");
-  return value.get<bool>();
+  return require_field(object, name, &nlohmann::json::is_boolean, "a boolean").get<bool>();
 }
 
 std::uint64_t require_u64(const nlohmann::json& object, const char* name) {
-  const auto& value = require_field(object, name);
-  if (!value.is_number_unsigned())
-    fail_parse("field '" + std::string(name) + "' must be an unsigned integer");
-  return value.get<std::uint64_t>();
+  return require_field(object, name, &nlohmann::json::is_number_unsigned, "an unsigned integer")
+      .get<std::uint64_t>();
 }
 
-std::uint32_t require_u32(const nlohmann::json& object, const char* name, bool positive = true) {
+std::uint32_t require_u32(const nlohmann::json& object, const char* name) {
   const std::uint64_t value = require_u64(object, name);
-  if (value > std::numeric_limits<std::uint32_t>::max() || (positive && value == 0))
+  if (value == 0 || value > std::numeric_limits<std::uint32_t>::max())
     fail_parse("field '" + std::string(name) + "' is outside its supported range");
   return static_cast<std::uint32_t>(value);
 }
 
-std::optional<std::string> require_optional_string(const nlohmann::json& object, const char* name,
-                                                   bool allow_empty = false) {
-  const auto& value = require_field(object, name);
-  if (value.is_null())
-    return std::nullopt;
-  if (!value.is_string())
-    fail_parse("field '" + std::string(name) + "' must be a string or null");
-  std::string result = value.get<std::string>();
-  if (!allow_empty && result.empty())
-    fail_parse("field '" + std::string(name) + "' must not be empty");
-  return result;
+const nlohmann::json& require_array(const nlohmann::json& object, const char* name) {
+  return require_field(object, name, &nlohmann::json::is_array, "an array");
 }
 
-std::optional<std::string> optional_string(const nlohmann::json& object, const char* name,
-                                           bool allow_empty = false) {
+// A nullable string that must be present when `required`; never empty when set.
+std::optional<std::string> nullable_string(const nlohmann::json& object, const char* name,
+                                           bool required) {
   const auto found = object.find(name);
+  if (found == object.end() && required)
+    fail_parse("missing required field '" + std::string(name) + "'");
   if (found == object.end() || found->is_null())
     return std::nullopt;
-  if (!found->is_string())
-    fail_parse("field '" + std::string(name) + "' must be a string when present");
-  std::string result = found->get<std::string>();
-  if (!allow_empty && result.empty())
-    fail_parse("field '" + std::string(name) + "' must not be empty");
-  return result;
+  if (!found->is_string() || found->get_ref<const std::string&>().empty())
+    fail_parse("field '" + std::string(name) + "' must be a non-empty string or null");
+  return found->get<std::string>();
 }
 
 peripherals::CatalogError parse_error(const nlohmann::json& value) {
@@ -414,12 +391,10 @@ peripherals::CameraMode parse_mode(const nlohmann::json& value) {
 peripherals::CameraDetails parse_camera(const nlohmann::json& value) {
   const auto& object = require_object(value, "camera details");
   peripherals::CameraDetails camera;
-  camera.camera_name = optional_string(object, "camera_name");
-  camera.model = optional_string(object, "model");
+  camera.camera_name = nullable_string(object, "camera_name", false);
+  camera.model = nullable_string(object, "model", false);
   camera.backend = require_string(object, "backend");
-  const auto& modes = require_field(object, "modes");
-  if (!modes.is_array())
-    fail_parse("camera field 'modes' must be an array");
+  const auto& modes = require_array(object, "modes");
   camera.modes.reserve(modes.size());
   for (const auto& mode : modes)
     camera.modes.push_back(parse_mode(mode));
@@ -434,9 +409,7 @@ peripherals::Peripheral parse_device(const nlohmann::json& value) {
       .provider = require_string(object, "provider"),
       .camera = std::nullopt,
   };
-  // Camera details are part of the typed v1 contract, so invalid ones fail the
-  // whole read. Core cannot judge other types' details; a non-object value
-  // leaves that one device with "{}" instead of hiding every other device.
+  // Invalid camera details fail the read; other types degrade to "{}" per device.
   if (device.type == "camera")
     device.camera = parse_camera(require_field(object, "camera"));
   const auto details = object.find(device.type);
@@ -454,11 +427,11 @@ peripherals::Catalog parse_catalog(const std::string& body) {
   }
   const auto& object = require_object(root, "catalog response");
   const std::uint64_t schema_version = require_u64(object, "schema_version");
-  if (schema_version != kPeripheralSchemaVersion) {
+  if (schema_version != kSchemaVersion) {
     fail(error_codes::kRuntimeAbiMismatch,
          "Peripheral catalog schema " + std::to_string(schema_version) +
              " is incompatible with this Core build, which requires schema " +
-             std::to_string(kPeripheralSchemaVersion) +
+             std::to_string(kSchemaVersion) +
              ". Install matching Core and Sentinel versions; update Sentinel with "
              "`sima-cli neat install sentinel`.");
   }
@@ -473,16 +446,14 @@ peripherals::Catalog parse_catalog(const std::string& body) {
   catalog.revision = require_u64(object, "revision");
   catalog.sequence = require_u64(object, "sequence");
   catalog.scan_sequence = require_u64(object, "scan_sequence");
-  catalog.last_success_at = require_optional_string(object, "last_success_at");
-  catalog.last_attempt_at = require_optional_string(object, "last_attempt_at");
+  catalog.last_success_at = nullable_string(object, "last_success_at", true);
+  catalog.last_attempt_at = nullable_string(object, "last_attempt_at", true);
 
   const auto& error = require_field(object, "error");
   if (!error.is_null())
     catalog.error = parse_error(error);
 
-  const auto& issues = require_field(object, "issues");
-  if (!issues.is_array())
-    fail_parse("field 'issues' must be an array");
+  const auto& issues = require_array(object, "issues");
   std::set<std::string> issue_providers;
   catalog.issues.reserve(issues.size());
   for (const auto& value : issues) {
@@ -492,9 +463,7 @@ peripherals::Catalog parse_catalog(const std::string& body) {
     catalog.issues.push_back(std::move(issue));
   }
 
-  const auto& devices = require_field(object, "devices");
-  if (!devices.is_array())
-    fail_parse("field 'devices' must be an array");
+  const auto& devices = require_array(object, "devices");
   std::set<std::string> device_ids;
   catalog.devices.reserve(devices.size());
   for (const auto& value : devices) {
@@ -520,18 +489,11 @@ peripherals::Catalog parse_catalog(const std::string& body) {
   return catalog;
 }
 
-// Sentinel answers every failed request with `{"error": "<message>"}`.
-// Returns that message, or an empty string when the body has no such field.
+// Sentinel answers failed requests with `{"error": "<message>"}`.
 std::string error_from_body(const std::string& body) {
-  try {
-    const auto value = nlohmann::json::parse(body);
-    if (value.is_object()) {
-      const auto found = value.find("error");
-      if (found != value.end() && found->is_string())
-        return found->get<std::string>();
-    }
-  } catch (const nlohmann::json::exception&) {
-  }
+  const auto value = nlohmann::json::parse(body, nullptr, false);
+  if (value.is_object() && value.contains("error") && value["error"].is_string())
+    return value["error"].get<std::string>();
   return {};
 }
 
@@ -542,8 +504,6 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
                                       std::size_t maximum_send_bytes) {
   if (timeout.count() <= 0)
     fail_timeout();
-  if (maximum_send_bytes == 0)
-    fail(error_codes::kIoOpen, "The peripheral catalog request chunk limit is invalid.");
   const Deadline deadline = Clock::now() + timeout;
   FileDescriptor socket = connect_socket(socket_path, deadline);
   const std::string request = "GET " + std::string(kCatalogPath) +
@@ -552,11 +512,8 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
   auto [status, body] = read_response(socket.get(), deadline);
   if (status != 200) {
     const std::string sentinel_error = error_from_body(body);
-    if (status == 500 && sentinel_error == "response_too_large") {
-      fail(error_codes::kResponseTooLarge,
-           "The Sentinel peripheral catalog exceeded the 4 MiB v1 limit. Reduce the catalog "
-           "size or update Sentinel and Core together.");
-    }
+    if (status == 500 && sentinel_error == "response_too_large")
+      fail_too_large();
     const std::string reported =
         sentinel_error.empty() ? std::string() : " Sentinel reported: " + sentinel_error + ".";
     if (status == 404) {
@@ -581,7 +538,7 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
 namespace simaai::neat::peripherals {
 
 Catalog list() {
-  return peripherals_internal::list_from_socket(peripherals_internal::kPeripheralSocketPath,
+  return peripherals_internal::list_from_socket("/run/simaai-sentinel/api.sock",
                                                 std::chrono::seconds(5));
 }
 

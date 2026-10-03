@@ -53,8 +53,7 @@ for (const auto& peripheral : catalog) {
 | `backend` | 探索後端，例如 `mipi` 或 `v4l2`。 |
 | `modes` | 離散尺寸或明確尺寸範圍、畫面更新率、支援旗標，以及拒絕原因。 |
 
-支援狀態由 Sentinel 套用此 Core 套件安裝於 `/usr/share/simaai-sentinel/support/neat-core.json` 的規則進行分類，因此結果會與已安裝的 `CameraInput` 一致。用戶端會保留該結果，不會探查、重新分類、取得、設定或串流相機。
-因此，目錄中的支援狀態不保證稍後的獨佔取得一定成功。
+支援狀態由 Sentinel 套用此 Core 套件安裝於 `/usr/share/simaai-sentinel/support/neat-core.json` 的規則進行分類，因此結果會與已安裝的 `CameraInput` 一致。目錄中的支援狀態不保證稍後的獨佔取得一定成功。
 
 ## 任何周邊裝置類型的詳細資料
 
@@ -63,41 +62,18 @@ for (const auto& peripheral : catalog) {
 若該鍵不存在或為 `null`，`details_json` 即為 `"{}"`。Python 另外提供 `details`，可將
 `details_json` 解碼為新的 `dict`。
 
-`details_json` 是讀取 Core 沒有型別化存取子之周邊裝置類型的權威方式。新的裝置類型只要 Sentinel
-回報即可立即使用，不需要更新 Core。所有欄位與值都會保留，包括此 Core 版本不認識的欄位；JSON
-會重新序列化，因此鍵的順序與空白可能與常駐程式的回應不同。相機同時具有 `details_json` 與型別化的
-`camera` 欄位。
-
-Python:
-
 ```python
 for peripheral in pyneat.peripherals.list():
     if peripheral.type == "microphone":
         print(peripheral.id, peripheral.details.get("channels"))
 ```
 
-C++:
+在 C++ 中，可使用任何 JSON 程式庫剖析 `details_json`。新的裝置類型只要 Sentinel 回報即可立即使用，
+不需要更新 Core。對於 `camera` 以外的類型，詳細資料值若不是 JSON 物件，並不會使 `list()` 失敗：
+該周邊裝置仍會保留在目錄中，且 `details_json` 為 `"{}"`。無效的 `camera` 詳細資料會使 `list()`
+因剖析錯誤而失敗。
 
-```cpp
-#include <nlohmann/json.hpp>
-
-for (const auto& peripheral : simaai::neat::peripherals::list()) {
-  if (peripheral.type == "microphone") {
-    const auto details = nlohmann::json::parse(peripheral.details_json);
-    // Read details.value("channels", 0) and other provider fields.
-  }
-}
-```
-
-任何 JSON 程式庫都能剖析 `details_json`；此範例使用 nlohmann/json。
-
-對於 `camera` 以外的類型，詳細資料值若不是 JSON 物件，並不會使 `list()` 失敗：該周邊裝置仍會
-保留在目錄中，且 `details_json` 為 `"{}"`。對於沒有型別化存取子的類型，Core 不會再做其他驗證。
-無效的 `camera` 詳細資料屬於通訊協定缺陷，會使 `list()` 因剖析錯誤而失敗。`camera` 等型別化欄位會
-忽略其不認識的通訊協定 v1 選用欄位；這些欄位仍可在 `details_json` 中取得。Core 也會接受 Sentinel
-隨每份快照發布的頂層 `changes` 記錄與 `support` 狀態，但不會公開它們。
-
-## 失敗與範圍
+## 失敗
 
 服務遺失或版本過舊而無法提供目錄、權限遭拒、要求逾時、常駐程式尚未就緒，或回應格式錯誤、過大或不相容時，
 `list()` 會擲回具有穩定代碼的 `NeatError`。訊息會包含下一個操作步驟。請參閱
@@ -106,8 +82,3 @@ for (const auto& peripheral : simaai::neat::peripherals::list()) {
 若尚未安裝 Sentinel，或其版本過舊而無法提供周邊裝置目錄，請使用 `sima-cli neat install sentinel`
 安裝或更新。若已安裝但未執行，
 請啟動 `simaai-sentinel.service`。
-
-此 API 只會連接本機 DevKit 上的 `/run/simaai-sentinel/api.sock`。它不使用 SSH，也不會選取
-遠端開發板。Insight 和未來的 CLI 用戶端會以同層用戶端身分直接連接常駐程式，而非透過 Core。
-
-此版本提供單次目錄讀取。事件訂閱、重新整理要求和常駐程式生命週期控制不屬於公開 Core API。

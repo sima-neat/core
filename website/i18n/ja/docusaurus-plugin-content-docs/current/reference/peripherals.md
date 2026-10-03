@@ -55,9 +55,7 @@ for (const auto& peripheral : catalog) {
 | `backend` | `mipi` や `v4l2` などの検出バックエンド。 |
 | `modes` | 離散サイズまたは明示的なサイズ範囲、フレームレート、サポートフラグ、および拒否理由。 |
 
-サポートの分類は、この Core パッケージが `/usr/share/simaai-sentinel/support/neat-core.json` にインストールするルールを Sentinel が適用して行うため、結果はインストール済みの `CameraInput` と一致します。クライアントはその結果を保持し、カメラのプローブ、再分類、
-取得、設定、ストリーミングを行いません。そのため、カタログ上のサポートは、後で排他的取得が
-成功することを保証しません。
+サポートの分類は、この Core パッケージが `/usr/share/simaai-sentinel/support/neat-core.json` にインストールするルールを Sentinel が適用して行うため、結果はインストール済みの `CameraInput` と一致します。カタログ上のサポートは、後で排他的取得が成功することを保証しません。
 
 ## あらゆるペリフェラル型の詳細
 
@@ -67,44 +65,18 @@ for (const auto& peripheral : catalog) {
 `details_json` は `"{}"` になります。Python では、`details_json` を新しい `dict` に
 デコードする `details` も利用できます。
 
-`details_json` は、Core に型付きアクセサーがないペリフェラル型を読み取るための正式な方法です。
-新しいデバイス型は、Core を更新しなくても、Sentinel が報告した時点ですぐに利用できます。
-この Core リリースが認識しないフィールドも含め、すべてのフィールドと値が保持されます。
-JSON は再シリアル化されるため、キーの順序と空白はデーモンの応答と異なる場合があります。
-カメラは `details_json` と型付きの `camera` フィールドの両方を持ちます。
-
-Python:
-
 ```python
 for peripheral in pyneat.peripherals.list():
     if peripheral.type == "microphone":
         print(peripheral.id, peripheral.details.get("channels"))
 ```
 
-C++:
+C++ では、任意の JSON ライブラリで `details_json` を解析します。新しいデバイス型は、Core を更新しなくても、
+Sentinel が報告した時点ですぐに利用できます。`camera` 以外の型で、詳細の値が JSON オブジェクトでない場合でも
+`list()` は失敗しません。そのペリフェラルはカタログに残り、`details_json` は `"{}"` になります。
+不正な `camera` の詳細では、`list()` は解析エラーで失敗します。
 
-```cpp
-#include <nlohmann/json.hpp>
-
-for (const auto& peripheral : simaai::neat::peripherals::list()) {
-  if (peripheral.type == "microphone") {
-    const auto details = nlohmann::json::parse(peripheral.details_json);
-    // Read details.value("channels", 0) and other provider fields.
-  }
-}
-```
-
-`details_json` は任意の JSON ライブラリで解析できます。この例では nlohmann/json を使用しています。
-
-`camera` 以外の型で、詳細の値が JSON オブジェクトでない場合でも `list()` は失敗しません。
-そのペリフェラルはカタログに残り、`details_json` は `"{}"` になります。Core は、型付きアクセサーが
-ない型の詳細をそれ以上検証しません。不正な `camera` の詳細はプロトコルの欠陥であり、`list()` は
-解析エラーで失敗します。`camera` などの型付きフィールドは、認識しないプロトコル v1 の任意フィールドを
-無視しますが、それらのフィールドは `details_json` で引き続き利用できます。Core は、Sentinel が各
-スナップショットとともに公開するトップレベルの `changes` ログと `support` ステータスも受け入れますが、
-公開しません。
-
-## 障害と適用範囲
+## 障害
 
 サービスが存在しないかカタログを提供できないほど古い、権限が拒否された、要求がタイムアウトした、
 デーモンが未準備である、または
@@ -114,10 +86,3 @@ for (const auto& peripheral : simaai::neat::peripherals::list()) {
 Sentinel がインストールされていない場合、またはペリフェラルカタログを提供できないほど古い場合は、
 `sima-cli neat install sentinel` でインストールまたは更新してください。
 インストール済みで実行されていない場合は、`simaai-sentinel.service` を起動してください。
-
-この API は、ローカル DevKit 上の `/run/simaai-sentinel/api.sock` のみに接続します。
-SSH を使用せず、リモートボードを選択しません。Insight と将来の CLI クライアントは、Core を
-経由せず、同等のクライアントとしてデーモンに接続します。
-
-このリリースで提供するのは 1 回限りのカタログ読み取りです。イベント購読、更新要求、および
-デーモンのライフサイクル制御は、公開 Core API の一部ではありません。
