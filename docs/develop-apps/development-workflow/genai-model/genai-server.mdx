@@ -222,6 +222,38 @@ Reasoning fields are omitted when empty. They are output-only: incoming
 `reasoning_content` or `thinking` fields are not replayed as conversation
 history.
 
+### Reasoning effort
+
+For gpt-oss models, `reasoning_effort` controls how much the model reasons.
+Accepted values are `low`, `medium` and `high`; the default is `low`. Any other
+value is rejected with HTTP 400. Effort is independent of `enable_thinking`,
+which only controls whether the reasoning is returned:
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "enable_thinking": true,
+    "reasoning_effort": "high",
+    "stream": false
+  }'
+```
+
+`reasoning_effort` is also accepted inside `chat_template_kwargs`, which takes
+precedence over the top-level field, as it does for `enable_thinking`:
+
+```json
+{
+  "model": "llm",
+  "messages": [{"role": "user", "content": "..."}],
+  "chat_template_kwargs": {"reasoning_effort": "medium"}
+}
+```
+
 ## Audio requests
 
 Audio endpoints accept multipart form data with a served ASR model name and an
