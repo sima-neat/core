@@ -108,3 +108,11 @@ When changing public API in `include/*`:
 ## Release Hygiene
 
 Releases must follow `docs/develop-apps/contribute/release-maintenance/release-checklist.md` and pass all required checks in `.github/workflows/release-gate.yml`, including model-archive security, install smoke, perf regression, soak, and fuzz gates.
+
+Before merging `develop` into `main`, check that production docs will build. Production docs import each sibling repository's `main`, while push-triggered staging builds import their `develop`. Run the staging-only check on the commit you will promote:
+
+```bash
+gh workflow run "Vulcan Docs" --repo sima-neat/core --ref develop -f sibling_branch=main
+```
+
+A pass predicts the production docs build when the same Core commit is promoted, no sibling `main` changes before the production deploy (compare the commits in the `[autodoc] ... using` log lines), and `git diff --stat origin/develop...origin/main` prints nothing.
