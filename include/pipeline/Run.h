@@ -74,7 +74,8 @@ MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
  * @ingroup pipeline
  */
 enum class RunPreset {
-  Realtime, ///< Low-latency; small queues; KeepLatest overflow.
+  Realtime, ///< Low-latency; small queues; KeepLatest overflow; single-input CVU stages
+            ///< queue at most 20 ms of live-source input.
   Balanced, ///< Default; moderate queues; Block overflow.
   Reliable, ///< Lossless; deeper queues; Block overflow.
 };

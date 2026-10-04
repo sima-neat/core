@@ -768,6 +768,13 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+With `RunPreset::Realtime`, live-source pipelines also bound queueing inside the
+graph: Core sets `max-input-queue-time` to 20 ms on each `neatprocesscvu` that
+does not set it already. ProcessCVU is a GStreamer aggregator, which otherwise
+queues input up to the source latency after the `KeepLatest` queue, so frames
+hold decoder buffers instead of being dropped. Internals applies the limit only
+to single-input elements and reports the unchanged latency downstream.
+
 For RTP JPEG, a compatibility probe after `rtpjpegdepay` appends a missing JPEG
 end marker before parsing. Correctly terminated images pass unchanged; this
 does not repair packet loss or other malformed JPEG data.
