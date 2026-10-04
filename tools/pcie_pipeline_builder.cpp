@@ -3,6 +3,7 @@
 #include "gst/GstInit.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/runtime/RunCore.h"
+#include "pcie_output_capacity.h"
 
 #include <gst/gst.h>
 #include <nlohmann/json.hpp>
@@ -68,6 +69,7 @@ struct ResolvedOptions {
 
 struct Status {
   int schema = 1;
+  std::uint64_t output_buffer_bytes = 0;
   std::string state;
   int queue = 0;
   pid_t pid = 0;
@@ -81,6 +83,7 @@ struct Status {
 
 struct ReadinessState {
   bool pipeline_armed = false;
+  std::uint64_t output_buffer_bytes = 0;
 
   bool ready() const {
     return pipeline_armed;
@@ -591,6 +594,7 @@ std::string now_utc_iso8601() {
 std::string status_to_json(const Status& s) {
   nlohmann::ordered_json out{
       {"schema", s.schema},
+      {"output_buffer_bytes", s.output_buffer_bytes},
       {"state", s.state},
       {"queue", s.queue},
       {"pid", static_cast<long long>(s.pid)},
@@ -886,8 +890,10 @@ public:
     }
 
     ReadinessState readiness;
+    readiness.output_buffer_bytes = simaai::neat::pcie_builder::pipeline_output_capacity(pipeline_);
     readiness.pipeline_armed = true;
-    std::cout << "PCIe readiness: pipeline_armed=1 ready=1" << std::endl;
+    std::cout << "PCIe readiness: pipeline_armed=1 ready=1 output_buffer_bytes="
+              << readiness.output_buffer_bytes << std::endl;
     return readiness;
   }
 
@@ -996,6 +1002,7 @@ int run_builder(const CliOptions& opt) {
     pipeline = std::make_unique<ManagedPipeline>(std::move(graph), std::move(model_owner));
     set_status(status_writer, status, "starting", "starting GStreamer pipeline");
     ReadinessState readiness = pipeline->start();
+    status.output_buffer_bytes = readiness.output_buffer_bytes;
     if (readiness.ready()) {
       set_status(status_writer, status, "ready", readiness.message());
     } else {

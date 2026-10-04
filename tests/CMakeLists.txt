@@ -449,6 +449,7 @@ set(UNIT_TESTS
   unit_modelpack_compact_extraction_path_test
   unit_outputspec_test
   unit_pcie_nodes_test
+  unit_pcie_output_capacity_test
   unit_jpeg_framing_nodes_test
   unit_rtp_jpeg_end_marker_test
   unit_multipart_header_capture_test

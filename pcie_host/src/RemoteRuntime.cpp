@@ -356,6 +356,12 @@ RemoteStatus RemoteRuntime::read_status(const int queue,
     out.pid = json_int_or(root, "pid", -1);
     out.message = json_string_or(root, "message");
     out.error_code = json_string_or(root, "error_code");
+    if (root.contains("output_buffer_bytes")) {
+      const auto& bytes = root.at("output_buffer_bytes");
+      if (!bytes.is_number_unsigned() || bytes.get<std::uint64_t>() > 128U * 1024U * 1024U)
+        throw std::runtime_error("invalid PCIe output_buffer_bytes in builder status");
+      out.output_buffer_bytes = bytes.get<std::size_t>();
+    }
     return out;
   } catch (const std::exception& e) {
     RemoteStatus out;

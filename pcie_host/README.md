@@ -12,6 +12,11 @@ co-processing applications:
 - logs: `/var/log/sima-neat/pcie/qN.log`
 - host plugin: `neatpciehost`
 
+The 3.0 transport requires matching card and host packages. The card builder
+reports its compiled output capacity during readiness; the host sizes the PCIe
+buffers automatically before the first input. Returned tensors view the received
+raw buffer at the runtime-provided offsets, without an extra reorder copy.
+
 ## Public API
 
 Public headers install under:

@@ -610,16 +610,22 @@ PcieModelFacts read_model_facts(const std::string& model_path, const ModelOption
   if (!contract.has_value()) {
     throw std::runtime_error("failed to read MPK contract: " + error);
   }
+  return detail::read_model_facts(*contract, options);
+}
+
+PcieModelFacts
+detail::read_model_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                         const ModelOptions& options) {
   if (options.mla_only) {
-    return detail::read_mla_only_facts(*contract);
+    return detail::read_mla_only_facts(contract);
   }
 
-  const auto public_inputs = detail::application_input_contracts(*contract);
-  const auto public_outputs = application_output_contracts(*contract);
+  const auto public_inputs = detail::application_input_contracts(contract);
+  const auto public_outputs = application_output_contracts(contract);
 
   PcieModelFacts facts;
-  facts.has_preprocess = graph_has_preprocess(*contract);
-  facts.has_boxdecode = graph_has_boxdecode(*contract);
+  facts.has_preprocess = graph_has_preprocess(contract);
+  facts.has_boxdecode = graph_has_boxdecode(contract);
 
   for (const auto& input : public_inputs) {
     detail::validate_supported_input_dtype(input);
