@@ -465,13 +465,17 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string,
   }
 
   const guint queue_depth = static_cast<guint>(max_inflight_);
+  // Bound transport storage for the default logical in-flight window.
+  // Keep the existing ring size for larger or plugin-managed in-flight windows.
+  const guint queue_size = queue_depth > 0 && queue_depth <= 10 ? 16u : 256u;
   g_object_set(G_OBJECT(appsrc_), "caps", caps, "is-live", TRUE, "do-timestamp", TRUE, "block",
                FALSE, "format", GST_FORMAT_TIME, "max-buffers", queue_depth, "max-bytes",
                static_cast<guint64>(0), "max-time", static_cast<guint64>(0), nullptr);
   gst_caps_unref(caps);
 
   g_object_set(G_OBJECT(pciehost_), "buffersize", static_cast<guint64>(transport_buffer_size_),
-               "card-number", card_id_, "queue", pcie_queue_, "queuedepth", queue_depth, nullptr);
+               "card-number", card_id_, "queue", pcie_queue_, "queuesize", queue_size, "queuedepth",
+               queue_depth, nullptr);
 
   g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
                FALSE, nullptr);

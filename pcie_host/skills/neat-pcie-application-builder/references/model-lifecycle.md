@@ -89,7 +89,7 @@ input already accepted by the card. After a timeout, either drain the outstandin
 ## Multiple Models
 
 Multiple independent `Model` objects can execute concurrently. Assign each active model a distinct
-queue from 0 through 3. Build errors should identify the model and queue, and a partially built set
+queue from 0 through 5. Build errors should identify the model and queue, and a partially built set
 must close every model that was successfully built.
 
 Do not introduce `pcie::Runtime` to coordinate these models. Separate `Model` instances and

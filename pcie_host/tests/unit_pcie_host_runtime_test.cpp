@@ -47,10 +47,18 @@ int main() {
     require_throws<std::runtime_error>([&] { (void)runtime.load("missing-model.tar.gz"); },
                                        "closed runtime must reject model loading");
 
-    pcie::ConnectionOptions invalid;
-    invalid.queue = 4;
-    require_throws<std::invalid_argument>([&] { pcie::Runtime invalid_runtime(invalid); },
-                                          "runtime must reject an invalid first queue");
+    for (const int queue : {4, 5}) {
+      pcie::ConnectionOptions valid;
+      valid.queue = queue;
+      pcie::Runtime valid_runtime(valid);
+      require(!valid_runtime.retrieve(0).has_value(), "new queues must accept an empty runtime");
+    }
+    for (const int queue : {-1, 6}) {
+      pcie::ConnectionOptions invalid;
+      invalid.queue = queue;
+      require_throws<std::invalid_argument>([&] { pcie::Runtime invalid_runtime(invalid); },
+                                            "runtime must reject an invalid first queue");
+    }
 
     std::cout << "[PASS] PCIe runtime API guards\n";
     return 0;
