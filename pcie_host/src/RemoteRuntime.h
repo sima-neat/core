@@ -1,11 +1,9 @@
 #pragma once
 
-#include "SshRunner.h"
 #include "simaai/neat/pcie/Model.h"
 
 #include <chrono>
 #include <filesystem>
-#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -21,12 +19,6 @@ struct RemoteStatus {
   std::string message;
   std::string error_code;
   std::size_t output_buffer_bytes = 0;
-};
-
-/// One wait_ready poll: the status file plus whether the launched pid still lives.
-struct ReadyProbe {
-  RemoteStatus status;
-  bool alive = true; // unknown (ssh failed, no marker) counts as alive
 };
 
 class RemoteStartError final : public std::runtime_error {
@@ -51,80 +43,32 @@ private:
 
 class RemoteRuntime {
 public:
-  /// card_program: the card-side program to launch and manage over SSH. Empty
-  /// selects the default "pcie-pipeline-builder" (the tensor pipeline); GenAI
-  /// passes "pcie-genai-backend". It is a program name: the launch path is
-  /// "/usr/bin/<card_program>" and the same name guards the busy/confirm/stop
-  /// checks against /proc/<pid>/cmdline. Restricted to [A-Za-z0-9._-]. It is an
-  /// argument here, not a ConnectionOptions field: that public struct keeps its
-  /// released layout (ABI).
-  explicit RemoteRuntime(ConnectionOptions connection, std::string card_program = {});
+  explicit RemoteRuntime(ConnectionOptions connection);
 
   std::string upload_file(const std::string& local_path) const;
   int start(int queue, const std::string& remote_model_path,
             const std::optional<std::string>& remote_model_options_path) const;
-  RemoteStatus wait_ready(int queue, int expected_pid, int readiness_timeout_ms,
-                          const std::function<bool()>& should_abort = {}) const;
+  RemoteStatus wait_ready(int queue, int expected_pid, int readiness_timeout_ms) const;
   void stop(int queue, int expected_pid) const;
   void stop_process(int expected_pid, const std::string& expected_model_path) const;
-  /// Stop a backend by the pid the start script launched, when start() failed
-  /// after that pid was printed but perhaps before it claimed a queue (so
-  /// stop() above, which keys off the queue pid file, would not find it). It is
-  /// guarded by the same /proc/<pid>/cmdline check as stop(), so it never kills
-  /// an unrelated process that reused the pid. A no-op when the pid is gone.
-  void stop_launched_pid(int launched_pid) const;
   RemoteStatus read_status(int queue, std::chrono::milliseconds timeout) const;
 
   std::string endpoint() const;
   std::string status_path(int queue) const;
   std::string pid_path(int queue) const;
-
-  /// Resolved card-side program name. An empty card_program argument
-  /// selects the default "pcie-pipeline-builder" (the tensor pipeline).
-  std::string card_program() const;
-  /// Absolute launch path for the card program: "/usr/bin/<card_program()>".
-  std::string remote_helper_path() const;
-  /// Build the SSH command that starts the card program on a queue. Pure (no I/O)
-  /// so the name/interlock wiring is unit-testable without a card.
-  std::string
-  build_start_command(int queue, const std::string& remote_model_path,
-                      const std::optional<std::string>& remote_model_options_path) const;
-  /// Build the SSH command that stops the card program on a queue. Pure (no I/O).
-  std::string build_stop_command(int queue, int expected_pid) const;
-  /// Build the SSH command that stops a backend by its launched pid, guarded by
-  /// the /proc/<pid>/cmdline check so an unrelated reused pid is left alone.
-  /// Pure (no I/O).
-  std::string build_stop_launched_pid_command(int launched_pid) const;
-  /// Build the SSH command for one wait_ready poll: cat the status file, then
-  /// report `kill -0 <expected_pid>` on a marker line. Pure (no I/O).
-  std::string build_ready_probe_command(int queue, int expected_pid) const;
-  /// Parse the output of build_ready_probe_command(). Pure (no I/O).
-  static ReadyProbe parse_ready_probe(const std::string& output, int queue);
-  /// Parse a status file body; empty body -> empty state, bad JSON -> "malformed".
-  static RemoteStatus parse_status(const std::string& body, int queue);
   void remove_upload(const std::string& remote_path) const;
   static bool is_managed_upload_path(const std::string& remote_path);
   static std::string unique_remote_upload_path(const std::string& local_path);
   static int parse_launched_pid(const std::string& output);
   static bool status_owner_matches(const RemoteStatus& status, int expected_pid);
   static bool start_failure_cleanup_safe(int exit_code, bool timed_out);
-  /// The error text for a failed start() command. When the card program exited
-  /// before the host saw its queue claim (exit 15) and its status file says
-  /// "failed" for the pid we launched, that message is the real reason, so it is
-  /// shown instead of the bare exit code. Pure (no I/O).
-  static std::string start_failure_message(const std::string& program, const CommandResult& result,
-                                           const RemoteStatus& status);
-  /// Emit shell helpers child_exited()/terminate_launched() used by
-  /// build_start_command() to reap the launched child. Pure (no I/O).
   static std::string child_cleanup_shell_function();
 
 private:
   ConnectionOptions connection_;
-  std::string card_program_;
 
   std::vector<std::string> ssh_base() const;
   std::vector<std::string> scp_base() const;
-  std::string startup_log_path(int queue) const;
   void run_or_throw(const std::vector<std::string>& args, int timeout_sec,
                     const std::string& context) const;
 };

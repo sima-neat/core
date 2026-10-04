@@ -17,8 +17,8 @@ reports its compiled output capacity during readiness; the host sizes the PCIe
 buffers automatically before the first input. Returned tensors view the received
 raw buffer at the runtime-provided offsets, without an extra reorder copy.
 
-To chat with a language model (text and images) on the card, see
-[HOW-TO-RUN-PCIE-GENAI.md](HOW-TO-RUN-PCIE-GENAI.md) (the `pcie-genai` CLI).
+For direct LLM, VLM and ASR APIs using one Core worker per model, see
+[HOW-TO-RUN-PCIE-GENAI.md](HOW-TO-RUN-PCIE-GENAI.md) (also includes the `pcie-genai` CLI).
 
 ## Public API
 
@@ -43,9 +43,13 @@ package; applications compiling against this API use `sima-pcie-host-dev`.
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
 
-The GenAI C++ API (`simaai/neat/pcie/genai/GenAIModel.h`) is not installed yet.
-It uses NEAT core's GenAI types, which this package does not ship, so for now
-only the in-tree `pcie-genai` CLI builds against it.
+The installed GenAI C++ API is `simaai/neat/pcie/genai/GenAIModel.h`; Python
+exposes `pyneatpcie.genai`. Both use the platform daemon service rather than a
+vision queue. Portable scalar result types are shared with Core, but the host
+links neither full Core nor LLiMa. Model execution and request validation happen
+in the card-side `neat-pcie-genai-worker`, which uses the existing Core direct API.
+The experimental LLiMa PCIe backend and its implicit conversation state are
+replaced; callers supply explicit history in each request.
 
 ### Multi-model runtime
 

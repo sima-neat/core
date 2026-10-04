@@ -10,17 +10,17 @@
 namespace simaai::neat::genai {
 
 struct GenAIModel::Impl {
-  explicit Impl(std::filesystem::path model_dir_in)
-      : info(internal::inspect_model_directory(std::move(model_dir_in))), model(make_model(info)) {}
+  explicit Impl(internal::ModelLoadContext context)
+      : info(context.info), model(make_model(std::move(context))) {}
 
   using ModelVariant = std::variant<VisionLanguageModel, ASRModel>;
 
-  static ModelVariant make_model(const internal::ModelDirectoryInfo& info) {
-    switch (info.task) {
+  static ModelVariant make_model(internal::ModelLoadContext context) {
+    switch (context.info.task) {
     case GenAITask::VisionLanguage:
-      return VisionLanguageModel(info.package_root);
+      return internal::ModelAccess::vision(std::move(context));
     case GenAITask::ASR:
-      return ASRModel(info.root);
+      return internal::ModelAccess::asr(std::move(context));
     }
     throw std::runtime_error("Unsupported GenAI task");
   }
@@ -30,7 +30,14 @@ struct GenAIModel::Impl {
 };
 
 GenAIModel::GenAIModel(std::filesystem::path model_dir)
-    : impl_(std::make_unique<Impl>(std::move(model_dir))) {}
+    : GenAIModel(internal::local_model_context(model_dir)) {}
+
+GenAIModel::GenAIModel(internal::ModelLoadContext context)
+    : impl_(std::make_unique<Impl>(std::move(context))) {}
+
+GenAIModel internal::ModelAccess::create(ModelLoadContext context) {
+  return GenAIModel(std::move(context));
+}
 
 GenAIModel::~GenAIModel() = default;
 

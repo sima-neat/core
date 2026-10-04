@@ -1,100 +1,136 @@
-/**
- * @file
- * @brief Host-side GenAI model handle that runs a text LLM on a Modalix card.
- *
- * This mirrors the on-card Core API simaai::neat::genai::GenAIModel, but the
- * work happens on a PCIe-attached card: the host never links the LLiMa/MLA
- * runtime. It reuses Core's GenAI value types (request/result/stream) so callers
- * write the same code whether the model runs locally or across PCIe.
- */
 #pragma once
-
-#include "genai/GenAITypes.h"
-#include "simaai/neat/pcie/genai/ChatTypes.h"
-
-#include <cstdint>
+#include "genai/GenAIValueTypes.h"
+#include "simaai/neat/pcie/Model.h"
 #include <filesystem>
 #include <memory>
-#include <optional>
-#include <string>
-#include <vector>
+#include <iterator>
 
 namespace simaai::neat::pcie::genai {
-
-// Reuse Core's GenAI vocabulary rather than redefining it.
+using simaai::neat::genai::ASRTask;
 using simaai::neat::genai::GenAITask;
 using simaai::neat::genai::GenerationMetrics;
-using simaai::neat::genai::GenerationRequest;
 using simaai::neat::genai::GenerationResult;
-using simaai::neat::genai::GenerationStream;
+using simaai::neat::genai::Json;
 using simaai::neat::genai::TokenSample;
 
-namespace internal {
-class Transport;
-struct GenAIModelAccess;
-} // namespace internal
-
-/// PCIe-only inputs for one request. They are kept out of Core's
-/// GenerationRequest so that public struct keeps its size and layout (ABI).
-struct PcieRequestOptions {
-  /// Images for a VLM prompt, in order. The host copies each file into the
-  /// daemon's data serve root and the card pulls it. Pixel `images` tensors in
-  /// GenerationRequest are not sent over PCIe (they would need host-side
-  /// encoding); use these paths.
-  std::vector<std::filesystem::path> image_files;
+/// GenAI sessions use the daemon, not a vision pipeline queue.
+struct ConnectionOptions {
+  int card_id = 0;
+  std::string card_host = "10.0.0.2";
+  std::string user = "root";
+  std::string ssh_key;
+  std::string model_serve_root = "models";
+  std::string media_serve_root = "data";
+  std::filesystem::path media_directory = "/srv/simaai/data";
+  /// Must match the card daemon\'s default receive root; this does not configure the daemon.
+  std::filesystem::path card_receive_directory = "/srv/simaai/incoming";
+  int startup_timeout_ms = 900000;
+  int request_timeout_ms = 900000;
 };
 
+struct ChatMessage {
+  std::string role;
+  std::string content;
+  std::vector<Tensor> images; ///< UInt8 HWC RGB tensors.
+  std::vector<std::filesystem::path> image_files;
+  Json tool_calls = Json::array();
+  std::optional<std::string> tool_call_id;
+  std::optional<std::string> name;
+};
+
+struct GenerationRequest {
+  std::optional<std::string> prompt;
+  std::optional<std::string> system_prompt;
+  std::vector<ChatMessage> messages;
+  std::vector<Tensor> images; ///< UInt8 HWC RGB tensors.
+  std::vector<std::filesystem::path> image_files;
+  std::optional<Tensor> audio; ///< Float32 mono samples, shape [N].
+  uint32_t sample_rate = 16000;
+  std::optional<std::filesystem::path> audio_file;
+  std::string language = "auto";
+  ASRTask asr_task = ASRTask::Transcribe;
+  uint32_t max_new_tokens = 0;
+  bool enable_thinking = false;
+  Json tools = Json::array();
+  Json tool_choice = nullptr;
+};
+
+namespace internal {
+struct StreamState;
+}
+class GenerationStream {
+public:
+  ~GenerationStream();
+  GenerationStream(GenerationStream&&) noexcept;
+  GenerationStream& operator=(GenerationStream&&) noexcept;
+  GenerationStream(const GenerationStream&) = delete;
+  GenerationStream& operator=(const GenerationStream&) = delete;
+  std::optional<TokenSample> next();
+  void cancel();
+  class iterator {
+  public:
+    explicit iterator(GenerationStream* stream = nullptr) : stream_(stream) {
+      advance();
+    }
+    const TokenSample& operator*() const {
+      return *sample_;
+    }
+    const TokenSample* operator->() const {
+      return &*sample_;
+    }
+    iterator& operator++() {
+      advance();
+      return *this;
+    }
+    void operator++(int) {
+      advance();
+    }
+    bool operator==(std::default_sentinel_t) const {
+      return !sample_;
+    }
+
+  private:
+    void advance() {
+      if (stream_)
+        sample_ = stream_->next();
+    }
+    GenerationStream* stream_;
+    std::optional<TokenSample> sample_;
+  };
+  iterator begin() {
+    return iterator(this);
+  }
+  std::default_sentinel_t end() const {
+    return {};
+  }
+
+private:
+  explicit GenerationStream(std::shared_ptr<internal::StreamState> state);
+  std::shared_ptr<internal::StreamState> state_;
+  friend class GenAIModel;
+};
+
+/// One remote Core worker per handle. Requests carry explicit conversation
+/// history; independent prompts do not inherit previous requests.
 class GenAIModel {
 public:
+  explicit GenAIModel(std::string model, ConnectionOptions connection = {});
   ~GenAIModel();
-
   GenAIModel(GenAIModel&&) noexcept;
   GenAIModel& operator=(GenAIModel&&) noexcept;
-
   GenAIModel(const GenAIModel&) = delete;
   GenAIModel& operator=(const GenAIModel&) = delete;
-
-  /// Task family. The current host slice serves text LLMs (VisionLanguage).
   GenAITask task() const;
   bool accepts_text() const;
   bool accepts_image() const;
   bool accepts_audio() const;
   std::string model_id() const;
-
-  /// Run to completion and return the full text plus final metrics.
-  ///
-  /// Unlike the on-card GenAIModel, the card keeps the conversation:
-  /// each run()/stream() adds its question and answer to a history on the card,
-  /// and later requests see it, until reset_chat(). For independent requests,
-  /// call reset_chat() before each one. A request whose system_prompt or
-  /// enable_thinking differs from the last one also starts a new conversation.
-  /// Not thread-safe: run one request (or chat call) at a time.
-  GenerationResult run(const GenerationRequest& request, const PcieRequestOptions& options = {});
-  /// Stream tokens as the card produces them. Cancel the stream to stop early.
-  /// Keeps the conversation on the card, like run().
-  GenerationStream stream(const GenerationRequest& request, const PcieRequestOptions& options = {});
-
-  /// Clear the conversation on the card and set its system prompt and thinking
-  /// mode. system_prompt: nullopt = the model's default, "" = no system prompt.
-  ChatReply reset_chat(const std::optional<std::string>& system_prompt, bool enable_thinking);
-  /// The conversation on the card as JSON, with host image paths.
-  ChatReply chat_history();
-  /// True if the card cleared the conversation during the last run/stream
-  /// (Ctrl-C, empty answer, or an error). Read after the stream has ended.
-  bool last_run_cleared_history() const;
-  /// Token notifications lost in transit during the last run/stream (gaps in
-  /// the card's token numbers). Not zero means the answer is missing text.
-  /// Read after the stream has ended.
-  std::uint32_t last_run_dropped_events() const;
+  GenerationResult run(const GenerationRequest& request);
+  GenerationStream stream(const GenerationRequest& request);
+  void close();
 
 private:
-  class Impl;
-  explicit GenAIModel(std::shared_ptr<Impl> impl);
-
-  // Shared so a GenerationStream can keep the transport alive past the model.
+  struct Impl;
   std::shared_ptr<Impl> impl_;
-
-  friend struct internal::GenAIModelAccess;
 };
-
 } // namespace simaai::neat::pcie::genai

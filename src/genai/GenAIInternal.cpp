@@ -1,6 +1,7 @@
 #include "genai/GenAIInternal.h"
 
 #include <sima_lmm/image_processor.hpp>
+#include <sima_lmm/file_provider.hpp>
 #include <sima_lmm/mla_model.hpp>
 #include <sima_lmm/setup.hpp>
 #include <sima_lmm/utils.hpp>
@@ -179,6 +180,37 @@ ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_di
   info.task = GenAITask::ASR;
   info.accepts_audio = true;
   return info;
+}
+
+ModelLoadContext local_model_context(const std::filesystem::path& root) {
+  auto info = inspect_model_directory(root);
+  auto files = std::make_shared<simaai::llima::DiskFileProvider>(info.root);
+  return {std::move(info), std::move(files)};
+}
+
+ModelLoadContext provider_model_context(const std::filesystem::path& root,
+                                        std::shared_ptr<simaai::llima::FileProvider> files) {
+  if (!files)
+    throw std::invalid_argument("GenAI asset provider is required");
+  const bool vlm = files->exists("devkit/vlm_config.json");
+  const bool asr = files->exists("devkit/whisper_config.json");
+  if (vlm == asr)
+    throw std::runtime_error(
+        "Model must contain exactly one devkit/vlm_config.json or devkit/whisper_config.json; "
+        "select the runtime model directory (speculative packages are not supported remotely)");
+  auto config = nlohmann::json::parse(
+      *files->open_stream(vlm ? "devkit/vlm_config.json" : "devkit/whisper_config.json"));
+  if (vlm && !config.value("lm_cfg", nlohmann::json::object())
+                  .value("speculative_decoding_cfg", nlohmann::json{})
+                  .is_null())
+    throw std::invalid_argument("Remote speculative-decoding packages are not supported");
+  ModelDirectoryInfo info;
+  info.package_root = info.root = root;
+  info.task = vlm ? GenAITask::VisionLanguage : GenAITask::ASR;
+  info.accepts_text = vlm;
+  info.accepts_image = vlm && has_vision_capability(config);
+  info.accepts_audio = asr;
+  return {std::move(info), std::move(files)};
 }
 
 std::string model_id_from_path(const std::filesystem::path& path) {

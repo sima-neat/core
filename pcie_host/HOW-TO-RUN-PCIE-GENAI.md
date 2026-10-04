@@ -1,185 +1,172 @@
-# Running `pcie-genai` (text and image chat over PCIe)
+# PCIe GenAI: direct LLM, VLM and ASR APIs
 
-`pcie-genai` runs a language model on the Modalix card and talks to it from
-the host over PCIe. You type a question on the host; the answer streams back
-token by token. Some models are VLMs (vision language models): they can also
-answer about images. The model remembers the conversation, like the LLiMa
-devkit CLI.
+Each `pcie::genai::GenAIModel` / `pyneatpcie.genai.GenAIModel` owns one
+`neat-pcie-genai-worker` process on the card. That worker uses Core's local
+GenAI API and LLiMa. Multiple handles have independent workers and sessions;
+there is no shared application-level model registry or implicit chat history.
 
-The host starts the card program (default `pcie-genai-backend`) on the card
-over SSH, waits until the model has loaded over PCIe (this can take a few
-minutes), then sends your questions. When the CLI exits, it stops the card
-program.
+This implementation has been compiled in the SDK. Hardware validation,
+multi-model resource limits and mixed GenAI/YOLO performance are still pending.
 
-## Before you start
+## Prerequisites
 
-On the host:
+- Matching Core worker and PCIe host packages, including the GenAI API.
+- Platform host/card drivers, service libraries and running daemons that support
+  tagged notifications, relative destination file transfers and host
+  `simaai_svc_open_card`. NEAT does not install or upgrade those daemons.
+- Passwordless SSH on port 22 to the selected card user. SSH starts/stops the
+  worker only; model assets, images, audio, prompts and results use real PCIe.
+- The model runtime directory, containing `devkit/` and `elf_files/`, under
+  a configured host daemon serve root (default root name: `models`).
+  If the package wraps this in `sima_files/`, include that suffix in the model
+  name passed to the constructor.
+- For image/audio inputs: a writable host staging directory matching the host
+  daemon's `data` serve root. Set `media_directory` to its actual path.
+  Text-only requests do not require a host media directory.
+- `card_receive_directory` must match the card daemon's configured default receive
+  root and be writable by the SSH user and daemon. The defaults are
+  `/srv/simaai/data` on the host and `/srv/simaai/incoming` on the card;
+  configure them to match your installation, not the other way around.
 
-- The SiMa PCIe host package is installed and `simaai-mla-daemon@0` is
-  running.
-- The model folder (with `devkit/` and `elf_files/`) is under the host
-  `models` serve root. That root is set in `/etc/simaai/simaai-mla-daemon.conf`,
-  section `[serve]`, for example `models = /scratch/simaai/models`. Copy the
-  model folder there first.
-- For images, the same section also needs a `data` root, for example
-  `data = /scratch/simaai/data`. Other users must not be able to change it:
-  `pcie-genai` refuses images if that folder or its `pcie-genai/` subfolder
-  is writable by group or others without the sticky bit. Fix it with
-  `chmod +t <data root>` (like `/tmp`) or `chmod go-w <data root>`.
-- See the models the host serves (needs no card):
+Each session uses private `neat-genai/<session>/` subdirectories. Do not change
+model assets while a worker is loading. Serve/receive roots must be trusted;
+session tags provide routing isolation, not authentication against a malicious
+local daemon client.
 
-  ```
-  pcie-genai --list
-  ```
+## Python
 
-On the card:
+```python
+from pyneatpcie import genai
 
-- The card program is installed (`/usr/bin/pcie-genai-backend`, a small start
-  script, runs the real program) and `simaai-pep-daemon` is running.
-- The host can SSH to the card as root (default `root@10.0.<card-id>.2`; set
-  up once with `pcie-setup.sh` from the host package).
+connection = genai.ConnectionOptions()
+connection.card_host = "10.0.0.2"
+connection.user = "sima"
+connection.media_directory = "/srv/simaai/data"
+connection.card_receive_directory = "/srv/simaai/incoming"
 
-## Ask a text question
+request = genai.GenerationRequest()
+request.prompt = "Explain PCIe in one sentence."
+request.max_new_tokens = 64
 
-One question, then exit (good for scripts; the answer goes to stdout, status
-and stats to stderr):
-
-```
-pcie-genai --model Llama-3.2-3B-Instruct-a16w4 --prompt "Why is the sky blue?"
-```
-
-Chat (a `>>> ` prompt; arrow keys edit the line, up-arrow recalls earlier
-lines; Ctrl-C stops the current answer; `quit` or Ctrl-D exits). The model
-remembers the conversation, so follow-up questions work:
-
-```
-pcie-genai --model Llama-3.2-3B-Instruct-a16w4
->>> My name is Ana.
->>> What is my name?
-Ana.
->>> clear history
-Cleared chat history.
+with genai.GenAIModel("my-llm/sima_files", connection) as model:
+    print(model.run(request).text)
+    # A new request is independent; use messages for explicit conversation history.
+    for sample in model.stream(request):
+        print(sample.text, end="", flush=True)
 ```
 
-Earlier lines are saved in `~/.pcie_genai_history` (last 1000 lines).
+For a VLM, set `request.image_files = ["image.jpg"]`, or set `request.images`
+to a list of NumPy `uint8[H,W,3]` RGB arrays / PCIe tensors. OpenCV images must
+be converted from BGR to RGB first. Request values are staged before
+`stream()` returns, so the caller may reuse its arrays afterward.
 
-## Chat commands
+For ASR, use a compatible Whisper runtime directory and set
+`request.audio_file = "speech.wav"` instead of a prompt. Alternatively:
 
-Type `help` to see them:
+```python
+import numpy as np
 
-| Command | What it does |
-|---|---|
-| `add image <path>` | Adds an image (a path on the host) to your next question (VLM models) |
-| `clear history` | Forgets the questions, answers and images; keeps the system prompt |
-| `print history` | Prints the conversation as JSON (image paths are your host paths) |
-| `set system <text>` | Sets the system prompt and clears the history |
-| `clear system` | Removes the system prompt and clears the history |
-| `enable-thinking` / `disable-thinking` | Thinking mode on/off (if the model has it); clears the history |
-| `help` | Lists the commands |
-| `quit` / `exit` | Ends the session and stops the card program |
-
-`clear image` is not a command; use `clear history`.
-
-The history is also cleared when you press Ctrl-C during an answer, when the
-model gives no answer, or when a question fails. The CLI prints a line when
-that happens. The conversation lives on the card, so it ends when the CLI
-exits; the next run starts empty.
-
-## Ask about an image (VLM models)
-
-The model must be a VLM, for example `llava-1.5-7b-hf-a16w4`. A text-only
-model refuses the image with a clear error (the conversation is kept).
-
-In a chat, `add image <path>` adds the image to your next question. It then
-stays in the conversation, so follow-up questions need no new `add image`.
-Every `add image` adds one more image. `clear history` forgets them.
-
-```
-pcie-genai --model llava-1.5-7b-hf-a16w4
->>> add image /path/to/sjc.jpg
->>> what is on the image
-...
->>> what colors are most common in it
-...
+request = genai.GenerationRequest()
+request.audio = np.zeros(16000, dtype=np.float32)  # replace with mono samples
+request.sample_rate = 16000
+request.language = "en"
+request.asr_task = genai.ASRTask.Transcribe
 ```
 
-One question (`--image` can be given more than once):
+Results preserve Core's text, reasoning, tool calls, metrics and ASR fields
+(`language`, `no_speech_prob`, `avg_logprob`). Compatibility of tools and
+media remains model-dependent and is validated by Core.
 
+## C++
+
+```cpp
+#include <simaai/neat/pcie/genai/GenAIModel.h>
+#include <iostream>
+
+int main() {
+  namespace genai = simaai::neat::pcie::genai;
+  genai::ConnectionOptions connection;
+  connection.user = "sima";
+  genai::GenAIModel model("my-llm/sima_files", connection);
+  genai::GenerationRequest request;
+  request.prompt = "Explain PCIe in one sentence.";
+  request.max_new_tokens = 64;
+  for (const auto& sample : model.stream(request))
+    std::cout << sample.text << std::flush;
+  model.close();
+}
 ```
-pcie-genai --model llava-1.5-7b-hf-a16w4 --prompt "what is on the image" --image /path/to/sjc.jpg
+
+Build with the installed `find_package(SimaPCIeHost REQUIRED)` and link
+`SimaPCIeHost::sima_neat_pcie_host`. GenAI uses C++20 and the installed
+`nlohmann-json3-dev` dependency; it needs no full Core or LLiMa library on the host.
+
+## Several models and YOLO
+
+Create one handle per LLM/VLM/ASR model. Use separate application threads for
+simultaneous generation. A handle accepts one active request; another request
+on that handle is rejected until the terminal result has arrived.
+
+Existing vision `pcie::Model` / `pcie::Runtime` APIs continue using their
+own queues 0–3. GenAI uses the daemon-managed service channels, not one of
+those queue claims. The platform daemon owns channel selection; do not
+manually open its channels. Independent workers avoid LLiMa's process-wide
+lock, but memory, MLA/EV74 capacity and platform scheduling still constrain
+the supported model combinations. No aggregate concurrency/performance
+guarantee is implied until hardware validation.
+
+## Cancellation and failure
+
+Call `stream.cancel()` to cancel a request and continue draining `next()`
+to its terminal result. Destroying a stream requests cancellation. Call
+`model.close()` explicitly, or use the Python context manager.
+
+Every event carries session, request and sequence IDs. The worker retains up
+to 32 unacknowledged events plus a terminal event, retries them, and waits at
+most 30 seconds for acknowledgement. Requests and messages are deduplicated.
+Missing events never silently become a successful truncated answer.
+
+The host's unread sample queue is bounded to 32 entries. A consumer that
+does not drain it fails the session instead of growing memory indefinitely.
+A worker without host heartbeats expires after 30 seconds; the host reports
+a worker that stops replying after 15 seconds. Startup/request timeouts default
+to 15 minutes and are configurable. Blocking driver/service calls and model
+loading are not immediately cancellable: orderly close asks the session's
+worker to stop, then escalates only for that PID/start-time/session identity.
+
+Normal completion removes owned media. Failed SSH shutdown retains host media
+for a retry of `close()`; forced termination can leave card session files.
+Worker logs and PID/start-time records remain in
+`~/.cache/neat-genai/<session>/` for diagnosis. Never sweep a shared receive
+root while another worker or file transfer may be active.
+
+LoRA and speculative-decoding packages are not supported by this remote API.
+No old `pcie-genai-backend`, `llima run --pcie`, queue status file or
+implicit conversation state is used.
+
+## CLI
+
+The CLI is a small consumer of the same public API:
+
+```bash
+pcie-genai my-llm/sima_files "Hello" --host 10.0.0.2 --user sima
+pcie-genai my-vlm/sima_files "Describe this" --user sima --image image.jpg
+pcie-genai my-whisper/sima_files "" --user sima --audio speech.wav
 ```
 
-How the image moves: the host copies it into `<data serve root>/pcie-genai/`,
-the card pulls it over PCIe **once**, and the host copy is deleted after that
-question. The card keeps its copy until the history is cleared or the card
-program stops.
+It performs one request; applications manage multi-turn history through
+`GenerationRequest.messages`.
 
-Without a `data` serve root, `add image` says
-`images need a [serve] 'data' root in <config>`.
+## Building this branch
 
-## Questions from a file or a pipe
-
-When stdin is not a terminal, each line is one question or command:
-
-```
-printf 'My name is Ana.\nWhat is my name?\n' | pcie-genai --model Llama-3.2-3B-Instruct-a16w4
-pcie-genai --model Llama-3.2-3B-Instruct-a16w4 < questions.txt
-```
-
-- There is no `>>> ` prompt and no line editing.
-- The conversation is still remembered.
-- The run **stops at the first failed line**, with exit code 1. In a terminal
-  chat, the session goes on after an error.
-
-## Options
-
-| Option | Default | What it does |
-|---|---|---|
-| `--model <name>` | (required) | Model folder under the host `models` serve root |
-| `--prompt <text>` | (none) | Ask one question, print the answer, exit |
-| `--image <path>` | (none) | With `--prompt`: attach an image; can be repeated |
-| `--system-prompt <text>` | model default | Starting system prompt |
-| `--max-new-tokens N` | model default | Longest answer, in tokens |
-| `--card-host HOST` | `10.0.<card-id>.2` | Card address for SSH |
-| `--card-id N` | `0` | Which PCIe card |
-| `--user USER` | `root` | SSH user on the card; keep `root` (see Limitations) |
-| `--queue 0..3` | `3` | Card queue; the tensor pipeline uses `0` |
-| `--card-program NAME` | `pcie-genai-backend` | Runs `/usr/bin/NAME` on the card |
-| `--ready-timeout-s N` | `900` | How long to wait for the model to load |
-| `--conf <path>` | `/etc/simaai/simaai-mla-daemon.conf` | Host daemon config: serve roots for `--list`, the model check and images |
-| `--list` | | Print the models the host serves and exit |
-| `-h`, `--help` | | Print the usage and exit |
-
-Thinking starts off; turn it on with the `enable-thinking` command.
-
-## Keep the host and the card in step
-
-The host `pcie-genai` and the card program must come from the same build. A
-mismatch never answers wrongly in silence:
-
-- **Card program too old** (no chat support): right after the model loads,
-  the CLI stops with "The card backend (...) does not support chat: it is
-  older than this pcie-genai. Update it, or pick another card program with
-  --card-program."
-- **Host too old** (sends the old single-image question): the card refuses the
-  question and says the host `pcie-genai` must be updated.
-
-Several card programs can be installed side by side, each with its own start
-script in `/usr/bin`; pick one with `--card-program <name>`. The real
-program's file name must contain that name, because the host finds the
-running card program by it. They all use the same queue, so only one runs at
-a time.
-
-## Limitations
-
-- One session at a time per card queue.
-- Loading the model takes minutes; the conversation ends when the CLI exits.
-- If the card sends nothing for 120 s, the question fails. This also applies
-  while a large model thinks before its first token.
-- A cancelled `--prompt` run still exits with code 0.
-- A wrong `--image` path is found only after the model has loaded.
-- Run the card program as `root` (the default `--user`). The card's PCIe
-  daemon writes every pulled file as root, so as another user the card
-  program cannot delete the pulled model files and images. They stay in the
-  card's receive folder (`/tmp/pcie-recv`), and after one such run the next
-  model load fails with "no space left" (`rc=-28`).
+- Build LLiMa's local core/dev DEBs first and extract them into the SDK sysroot.
+  Do not download a remote LLiMa package over that local build.
+- Core's Internals dependency is pinned to `release-3.0.0-prep`.
+- The card build installs `neat-pcie-genai-worker` with Core.
+- Host builds default `SIMAPCIE_BUILD_GENAI=ON` and require the platform
+  `simaai_svc.h` development header. Set `SIMAPCIE_SVC_INCLUDE_DIR` if it is
+  not installed in a standard include location. Package-build runners need
+  this header as well; no platform library is bundled.
+- Vision-only builds may set `SIMAPCIE_BUILD_GENAI=OFF`.
+- Hardware tests are a separate acceptance step; compiling does not establish
+  daemon compatibility, cancellation latency or multi-model correctness.

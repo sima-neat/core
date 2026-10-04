@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+namespace simaai::llima {
+class FileProvider;
+}
+
 namespace simaai::neat::genai::internal {
 
 struct ModelDirectoryInfo {
@@ -17,6 +21,20 @@ struct ModelDirectoryInfo {
   bool accepts_text = false;
   bool accepts_image = false;
   bool accepts_audio = false;
+};
+
+struct ModelLoadContext {
+  ModelDirectoryInfo info;
+  std::shared_ptr<simaai::llima::FileProvider> files;
+};
+
+ModelLoadContext local_model_context(const std::filesystem::path& root);
+ModelLoadContext provider_model_context(const std::filesystem::path& root,
+                                        std::shared_ptr<simaai::llima::FileProvider> files);
+struct ModelAccess {
+  static GenAIModel create(ModelLoadContext context);
+  static VisionLanguageModel vision(ModelLoadContext context);
+  static ASRModel asr(ModelLoadContext context);
 };
 
 ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_dir);

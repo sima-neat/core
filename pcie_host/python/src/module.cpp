@@ -6,6 +6,10 @@
 
 #include <simaai/neat/pcie/Model.h>
 #include <simaai/neat/pcie/Runtime.h>
+#if defined(SIMAPCIE_WITH_GENAI)
+#include <simaai/neat/pcie/genai/GenAIModel.h>
+#include <nanobind/stl/filesystem.h>
+#endif
 
 #include <Python.h>
 
@@ -356,6 +360,153 @@ nb::list tensors_to_numpy_list(const pcie::TensorList& tensors) {
 }
 
 } // namespace
+
+#if defined(SIMAPCIE_WITH_GENAI)
+namespace {
+nb::object genai_json(const simaai::neat::genai::Json& value) {
+  return nb::module_::import_("json").attr("loads")(value.dump());
+}
+simaai::neat::genai::Json genai_json(nb::handle value) {
+  return simaai::neat::genai::Json::parse(
+      nb::cast<std::string>(nb::module_::import_("json").attr("dumps")(value)));
+}
+void bind_genai(nb::module_& parent) {
+  namespace g = pcie::genai;
+  auto m = parent.def_submodule("genai");
+  nb::enum_<g::GenAITask>(m, "GenAITask")
+      .value("VisionLanguage", g::GenAITask::VisionLanguage)
+      .value("ASR", g::GenAITask::ASR);
+  nb::enum_<g::ASRTask>(m, "ASRTask")
+      .value("Transcribe", g::ASRTask::Transcribe)
+      .value("Translate", g::ASRTask::Translate);
+  nb::class_<g::ConnectionOptions>(m, "ConnectionOptions")
+      .def(nb::init<>())
+      .def_rw("card_id", &g::ConnectionOptions::card_id)
+      .def_rw("card_host", &g::ConnectionOptions::card_host)
+      .def_rw("user", &g::ConnectionOptions::user)
+      .def_rw("ssh_key", &g::ConnectionOptions::ssh_key)
+      .def_rw("model_serve_root", &g::ConnectionOptions::model_serve_root)
+      .def_rw("media_serve_root", &g::ConnectionOptions::media_serve_root)
+      .def_rw("media_directory", &g::ConnectionOptions::media_directory)
+      .def_rw("card_receive_directory", &g::ConnectionOptions::card_receive_directory)
+      .def_rw("startup_timeout_ms", &g::ConnectionOptions::startup_timeout_ms)
+      .def_rw("request_timeout_ms", &g::ConnectionOptions::request_timeout_ms);
+  nb::class_<g::ChatMessage>(m, "ChatMessage")
+      .def(nb::init<>())
+      .def_rw("role", &g::ChatMessage::role)
+      .def_rw("content", &g::ChatMessage::content)
+      .def_rw("image_files", &g::ChatMessage::image_files)
+      .def_prop_rw(
+          "images", [](const g::ChatMessage& r) { return r.images; },
+          [](g::ChatMessage& r, nb::object x) {
+            r.images = tensor_list_from_python(x, pcie::PixelFormat::RGB, "");
+          })
+      .def_rw("tool_call_id", &g::ChatMessage::tool_call_id)
+      .def_rw("name", &g::ChatMessage::name)
+      .def_prop_rw(
+          "tool_calls", [](const g::ChatMessage& r) { return genai_json(r.tool_calls); },
+          [](g::ChatMessage& r, nb::handle x) { r.tool_calls = genai_json(x); });
+  nb::class_<g::GenerationMetrics>(m, "GenerationMetrics")
+      .def(nb::init<>())
+      .def_rw("generated_tokens", &g::GenerationMetrics::generated_tokens)
+      .def_rw("time_to_first_token_s", &g::GenerationMetrics::time_to_first_token_s)
+      .def_rw("tokens_per_second", &g::GenerationMetrics::tokens_per_second);
+  nb::class_<g::GenerationRequest>(m, "GenerationRequest")
+      .def(nb::init<>())
+      .def_rw("prompt", &g::GenerationRequest::prompt)
+      .def_rw("system_prompt", &g::GenerationRequest::system_prompt)
+      .def_rw("messages", &g::GenerationRequest::messages)
+      .def_rw("image_files", &g::GenerationRequest::image_files)
+      .def_prop_rw(
+          "images", [](const g::GenerationRequest& r) { return r.images; },
+          [](g::GenerationRequest& r, nb::object x) {
+            r.images = tensor_list_from_python(x, pcie::PixelFormat::RGB, "");
+          })
+      .def_prop_rw(
+          "audio", [](const g::GenerationRequest& r) { return r.audio; },
+          [](g::GenerationRequest& r, nb::object x) {
+            if (x.is_none())
+              r.audio.reset();
+            else if (nb::isinstance<pcie::Tensor>(x))
+              r.audio = nb::cast<pcie::Tensor>(x);
+            else
+              r.audio = tensor_from_numpy(x, false, pcie::PixelFormat::Unknown, "");
+          })
+      .def_rw("sample_rate", &g::GenerationRequest::sample_rate)
+      .def_rw("audio_file", &g::GenerationRequest::audio_file)
+      .def_rw("language", &g::GenerationRequest::language)
+      .def_rw("asr_task", &g::GenerationRequest::asr_task)
+      .def_rw("max_new_tokens", &g::GenerationRequest::max_new_tokens)
+      .def_rw("enable_thinking", &g::GenerationRequest::enable_thinking)
+      .def_prop_rw(
+          "tools", [](const g::GenerationRequest& r) { return genai_json(r.tools); },
+          [](g::GenerationRequest& r, nb::handle x) { r.tools = genai_json(x); })
+      .def_prop_rw(
+          "tool_choice", [](const g::GenerationRequest& r) { return genai_json(r.tool_choice); },
+          [](g::GenerationRequest& r, nb::handle x) { r.tool_choice = genai_json(x); });
+  nb::class_<g::GenerationResult>(m, "GenerationResult")
+      .def(nb::init<>())
+      .def_ro("text", &g::GenerationResult::text)
+      .def_ro("reasoning", &g::GenerationResult::reasoning)
+      .def_ro("metrics", &g::GenerationResult::metrics)
+      .def_ro("finish_reason", &g::GenerationResult::finish_reason)
+      .def_ro("language", &g::GenerationResult::language)
+      .def_ro("no_speech_prob", &g::GenerationResult::no_speech_prob)
+      .def_ro("avg_logprob", &g::GenerationResult::avg_logprob)
+      .def_prop_ro("tool_calls",
+                   [](const g::GenerationResult& r) { return genai_json(r.tool_calls); });
+  nb::class_<g::TokenSample>(m, "TokenSample")
+      .def(nb::init<>())
+      .def_ro("text", &g::TokenSample::text)
+      .def_ro("reasoning", &g::TokenSample::reasoning)
+      .def_ro("metrics", &g::TokenSample::metrics)
+      .def_ro("is_final", &g::TokenSample::is_final)
+      .def_ro("finish_reason", &g::TokenSample::finish_reason)
+      .def_ro("language", &g::TokenSample::language)
+      .def_ro("no_speech_prob", &g::TokenSample::no_speech_prob)
+      .def_ro("avg_logprob", &g::TokenSample::avg_logprob)
+      .def_prop_ro("tool_calls", [](const g::TokenSample& r) { return genai_json(r.tool_calls); });
+  nb::class_<g::GenerationStream>(m, "GenerationStream")
+      .def("next", &g::GenerationStream::next, nb::call_guard<nb::gil_scoped_release>())
+      .def("cancel", &g::GenerationStream::cancel)
+      .def(
+          "__iter__", [](g::GenerationStream& s) -> g::GenerationStream& { return s; },
+          nb::rv_policy::reference_internal)
+      .def("__next__", [](g::GenerationStream& s) {
+        std::optional<g::TokenSample> sample;
+        {
+          nb::gil_scoped_release release;
+          sample = s.next();
+        }
+        if (!sample)
+          throw nb::stop_iteration();
+        return *sample;
+      });
+  nb::class_<g::GenAIModel>(m, "GenAIModel")
+      .def(nb::init<std::string, g::ConnectionOptions>(), "model"_a,
+           "connection"_a = g::ConnectionOptions{}, nb::call_guard<nb::gil_scoped_release>())
+      .def("task", &g::GenAIModel::task)
+      .def("accepts_text", &g::GenAIModel::accepts_text)
+      .def("accepts_image", &g::GenAIModel::accepts_image)
+      .def("accepts_audio", &g::GenAIModel::accepts_audio)
+      .def("model_id", &g::GenAIModel::model_id)
+      .def("run", &g::GenAIModel::run, nb::call_guard<nb::gil_scoped_release>())
+      .def("stream", &g::GenAIModel::stream, nb::call_guard<nb::gil_scoped_release>())
+      .def("close", &g::GenAIModel::close, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "__enter__", [](g::GenAIModel& m) -> g::GenAIModel& { return m; },
+          nb::rv_policy::reference_internal)
+      .def(
+          "__exit__",
+          [](g::GenAIModel& m, nb::handle, nb::handle, nb::handle) {
+            nb::gil_scoped_release release;
+            m.close();
+            return false;
+          },
+          "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none());
+}
+} // namespace
+#endif
 
 NB_MODULE(_pyneatpcie_core, m) {
   m.doc() = "Python bindings for the SiMa NEAT PCIe host co-processor API";
@@ -730,4 +881,7 @@ NB_MODULE(_pyneatpcie_core, m) {
             return false;
           },
           "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none());
+#if defined(SIMAPCIE_WITH_GENAI)
+  bind_genai(m);
+#endif
 }

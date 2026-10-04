@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+project(InstalledGenAIConsumer LANGUAGES CXX)
+find_package(SimaPCIeHost REQUIRED)
+add_executable(installed_genai_consumer main.cpp)
+target_compile_features(installed_genai_consumer PRIVATE cxx_std_20)
+target_link_libraries(installed_genai_consumer PRIVATE SimaPCIeHost::sima_neat_pcie_host)

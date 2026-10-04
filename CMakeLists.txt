@@ -1345,6 +1345,19 @@ install(
 # ------------------------------------------------------------------------------
 # Card-side PCIe runtime helper
 # ------------------------------------------------------------------------------
+if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS AND SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER)
+  find_path(SIMANEAT_SVC_INCLUDE_DIR simaai_svc.h PATH_SUFFIXES simaai REQUIRED)
+  add_executable(neat-pcie-genai-worker
+    tools/pcie_genai_worker.cpp
+    shared/pcie_genai/Service.cpp
+  )
+  target_link_libraries(neat-pcie-genai-worker PRIVATE sima_neat_internal ${CMAKE_DL_LIBS})
+  target_include_directories(neat-pcie-genai-worker PRIVATE
+    ${SIMANEAT_SVC_INCLUDE_DIR} shared/pcie_genai tools)
+  target_compile_definitions(neat-pcie-genai-worker PRIVATE SIMA_WITH_OPENCV=1)
+  add_dependencies(sima_neat_libraries neat-pcie-genai-worker)
+  install(TARGETS neat-pcie-genai-worker RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT core)
+endif()
 if (SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER)
   add_executable(pcie-pipeline-builder
     tools/pcie_pipeline_builder.cpp

@@ -1368,80 +1368,33 @@ in that adapter instead of the C++ API.
 
 ### PCIe GenAI transport contract
 
-`pcie::genai::GenAIModel` runs a LLiMa text or vision model on the card. It
-does not use the GStreamer data path above. The chain is: host
-`GenAIModel` -> `SvcTransport` -> `simaai_mla_daemon` (host) -> PCIe ->
-`simaai-pep-daemon` (card) -> `pcie-genai-backend` (LLiMa repository,
-`sima_lmm/devkit/pcie_backend`). The host never links LLiMa or MLA-RT.
-`GenAIModel` talks only to the internal `Transport` interface, so tests
-replace the card with a fake.
+Core owns `pcie::genai::GenAIModel`, its Python bindings, the shared
+`shared/pcie_genai` protocol, and one `neat-pcie-genai-worker` process per
+model. The worker invokes the existing local Core GenAI API for LLM, VLM
+and ASR; LLiMa retains only a generic asset-provider seam and local execution.
+The host links neither full Core nor LLiMa.
 
-**Lifecycle.** `RemoteRuntime` starts `pcie-genai-backend` over SSH on one
-queue, like `pcie-pipeline-builder`, and waits until
-`/run/sima-neat/pcie/q<N>.status` says `ready` for the pid it launched. The
-backend loads the model over PCIe first (the host daemon serves model files
-from its `models` root) and subscribes to its tags before it writes `ready`,
-because a notification with no listener is dropped. Only one PCIe model user
-runs per card, because all of them use the same receive folder: the backend
-and `llima run --pcie` both take an `flock` on
-`/run/sima-neat/pcie/recv-root.pid.lock`, and the queue claim is an `flock` on
-`q<N>.pid.lock`.
+SSH bootstraps and stops an identity-checked worker. Model assets, media,
+requests and results use the unchanged platform daemon's PCIe file and
+notification services. Each session has unique tags and private asset paths.
+There is no global receive-root lock, registry or shared conversation state.
+Requests carry explicit history and reuse Core's validation and output semantics.
 
-**Tags.** Messages are `simaai_svc` notifications. Both sides keep the same
-tag names and golden payloads (host `pcie_host/src/genai/GenAIProtocol.h`,
-card `pcie_backend/genai_protocol.hpp`), and tests on both sides check them.
+One request is active per worker. Events carry session/request/sequence IDs,
+are acknowledged, deduplicated and retried within a bounded window. Missing
+events fail explicitly rather than yielding a successful partial answer.
+Lease expiry, request deadlines and explicit close bound session ownership;
+blocking platform calls and model loading are not immediately cancellable.
+Normal cleanup removes only owned files; forced shutdown may leave private
+session files and diagnostic logs.
 
-| Tag | Direction | Payload |
-|---|---|---|
-| `genai.prompt` | host -> card | JSON: `id`, `prompt`, optional `system_prompt`, `max_new_tokens`, `enable_thinking`, `images` |
-| `genai.cancel` | host -> card | JSON: `id` |
-| `genai.token` | card -> host | `<seq>\n<text>`: raw text, no id |
-| `genai.metrics` | card -> host | JSON: `type` (`ttft`, `tps`), `value`; no id |
-| `genai.final` | card -> host | JSON: `id`, `finish_reason`, counts, `ttft`, `tps`, `history_cleared` |
-| `genai.error` | card -> host | JSON: `id`, `message`, `history_cleared` |
-| `genai.chat` | host -> card | JSON: `id`, `op` (`reset` or `print`), reset settings |
-| `genai.reply` | card -> host | JSON: `id`, `ok`, `text` |
-
-**Rules both sides rely on:**
-
-* One run at a time per backend. A `genai.prompt` or `genai.chat` that comes
-  while a run is active is refused (`genai.error` or `genai.reply` with
-  `ok: false`, "busy").
-* Every run ends with exactly one `genai.final` or `genai.error` that carries
-  the prompt's `id`. The host matches runs only by that id. The card refuses a
-  present `id` that is not a string. An error with an empty id (the card could
-  not read the prompt) belongs to the current prompt.
-* `genai.token` and `genai.metrics` carry no id. They belong to the run that
-  is active. `seq` starts at 0 for each run and goes up by one per token. A
-  jump in `seq` means notifications were lost in transit. The host counts the
-  lost ones and reports them through `GenAIModel::last_run_dropped_events()`.
-* Cancel: the host sends `genai.cancel` once. The card stops its active run
-  (it does not check the id) and still sends that run's `genai.final`, with
-  `finish_reason` `cancelled`. The
-  host waits for that final for at most 10 s. If it never comes, the host
-  marks the run abandoned, and before its next prompt drops every event
-  until the old run's final or error arrives.
-* Time limits: no event for 120 s ends a run with an error. A `genai.chat`
-  waits 10 s for its reply. No host wait is unbounded.
-* The card keeps the conversation (a LLiMa `Chat`, like `llima run`). A prompt
-  whose `system_prompt` or `enable_thinking` differs from the last one starts a
-  new conversation. `history_cleared: true` tells the host the card cleared
-  it (cancel, empty answer, or error).
-* Images: the host copies each file into `pcie-genai/` under its `data` serve
-  root and sends the relative names in `images`. The card pulls each one and
-  keeps it until the conversation is cleared. The host deletes its copy when
-  the run returns. Pixel tensors (`GenerationRequest::images`), audio,
-  multi-turn `messages` and tools are refused on the host before anything is
-  sent.
-* Thinking text: the card sends raw model text, so `<think>` markers stay
-  visible when thinking is on. For a model that always reasons (LFM2) with
-  thinking off, the card sends only the answer, as `llima run` shows it. The
-  history keeps only the answer in both cases.
-
-**ABI.** The PCIe-only inputs and outputs (`PcieRequestOptions::image_files`,
-`last_run_dropped_events()`, the card program name) live in the PCIe API or
-in internal classes. Core's `GenerationRequest` and `GenerationMetrics` and the
-PCIe `ConnectionOptions` keep their released layout.
+Portable result types are shared in `GenAIValueTypes.h`; host image/audio
+inputs use PCIe tensors rather than Core tensors. The platform owns service
+channel selection. Existing vision queues and their builder lifecycle are
+unchanged. Separate workers allow independent models but do not guarantee a
+particular concurrent model count or mixed-workload throughput. LoRA and
+speculative decoding are not supported by this remote API.
+See the PCIe host GenAI guide for configuration and validation requirements.
 
 ---
 

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "pipeline/Tensor.h"
+#include "genai/GenAIValueTypes.h"
 
 #include <nlohmann/json.hpp>
 
@@ -32,23 +33,6 @@ class ASRModel;
 class GenAIModel;
 class GenAIServer;
 class VisionLanguageModel;
-
-/**
- * @brief High-level task family for a deployed LLiMa model directory.
- *
- * Text-only LLMs and image-capable VLMs both use VisionLanguage; distinguish
- * them with model capability queries such as VisionLanguageModel::accepts_image().
- */
-enum class GenAITask {
-  VisionLanguage,
-  ASR,
-};
-
-/// Whisper decoding task for ASR requests.
-enum class ASRTask {
-  Transcribe,
-  Translate,
-};
 
 /**
  * @brief Ordered image inputs for GenAI requests and chat messages.
@@ -94,12 +78,6 @@ struct ChatMessage {
   std::optional<std::string> name;
 };
 
-struct GenerationMetrics {
-  std::uint32_t generated_tokens = 0;
-  double time_to_first_token_s = 0.0;
-  double tokens_per_second = 0.0;
-};
-
 struct GenerationRequest {
   std::optional<std::string> prompt;
   std::optional<std::string> system_prompt;
@@ -116,37 +94,6 @@ struct GenerationRequest {
   bool enable_thinking = false;
   Json tools = Json::array();
   Json tool_choice = nullptr;
-};
-
-struct GenerationResult {
-  std::string text;
-  GenerationMetrics metrics;
-  std::string finish_reason;
-  /// Detected or explicitly selected ASR source language.
-  std::string language;
-  /// Probability that the ASR input contains no speech.
-  std::optional<float> no_speech_prob;
-  /// Mean log probability over generated ASR tokens.
-  std::optional<float> avg_logprob;
-  Json tool_calls = Json::array();
-  /// Model reasoning, when thinking was enabled and the model emitted it.
-  std::string reasoning;
-};
-
-struct TokenSample {
-  std::string text;
-  GenerationMetrics metrics;
-  bool is_final = false;
-  std::string finish_reason;
-  /// Detected or explicitly selected ASR source language on the final sample.
-  std::string language;
-  /// Probability that the ASR input contains no speech, set on the final sample.
-  std::optional<float> no_speech_prob;
-  /// Mean log probability over generated ASR tokens, set on the final sample.
-  std::optional<float> avg_logprob;
-  Json tool_calls = Json::array();
-  /// Reasoning fragment; mutually exclusive with text for generated samples.
-  std::string reasoning;
 };
 
 class GenerationStream {
@@ -194,16 +141,8 @@ public:
   iterator begin();
   iterator end();
 
+private:
   struct Impl;
-
-  /**
-   * @brief Producer-side handle a generator uses to emit tokens into the stream.
-   *
-   * A ProducerFn receives one of these and drives the stream: it pushes text
-   * with record_text(), reports metrics with record_metric(), and ends the
-   * stream with finish(). It must stop early when cancelled() turns true. Only
-   * Impl constructs a Producer; callers only ever receive a reference to one.
-   */
   class Producer {
   public:
     void record_metric(const std::string& metric, double value);
@@ -225,17 +164,6 @@ public:
   using ProducerFn = std::function<void(Producer&)>;
   using CancelFn = std::function<void()>;
 
-  /**
-   * @brief Build a stream driven by an arbitrary producer callback.
-   *
-   * This is the public seam that lets code outside this class (for example the
-   * PCIe host backend adapting card-side token notifications) construct a
-   * GenerationStream without being a friend. @p producer runs on a worker
-   * thread; @p cancel is invoked when cancel() is called.
-   */
-  static GenerationStream make(ProducerFn producer, CancelFn cancel);
-
-private:
   explicit GenerationStream(std::unique_ptr<Impl> impl);
   GenerationStream(ProducerFn producer, CancelFn cancel);
 

@@ -63,5 +63,9 @@ from ._pyneatpcie_core import *
 
 __version__ = _core.__version__
 
+if hasattr(_core, "genai"):
+  genai = _core.genai
+  _sys.modules[__name__ + ".genai"] = genai
+
 del _configure_runtime_environment
 del _prepend_env_path
