@@ -394,54 +394,14 @@ static std::optional<MlaRuntimeProperties> read_mla_runtime_properties_from_mpk_
     return std::nullopt;
   }
 
-  auto resolve_package_relative_path = [&](const std::string& raw_path,
-                                           bool prefer_share_dir) -> std::string {
-    if (raw_path.empty()) {
-      return {};
-    }
-    const fs::path raw(raw_path);
-    if (raw.is_absolute()) {
-      return raw.string();
-    }
-
-    fs::path package_root;
-    if (!mpk_contract->mpk_json_path.empty()) {
-      package_root = fs::path(mpk_contract->mpk_json_path).parent_path();
-      if (package_root.filename() == "etc") {
-        package_root = package_root.parent_path();
-      }
-    }
-
-    std::vector<fs::path> candidates;
-    if (!package_root.empty()) {
-      if (prefer_share_dir) {
-        candidates.push_back(package_root / "share" / raw);
-      }
-      candidates.push_back(package_root / raw);
-      if (!prefer_share_dir) {
-        candidates.push_back(package_root / "share" / raw);
-      }
-    }
-    candidates.push_back(raw);
-
-    for (const auto& candidate : candidates) {
-      std::error_code ec;
-      if (candidate.empty()) {
-        continue;
-      }
-      if (fs::exists(candidate, ec) && fs::is_regular_file(candidate, ec)) {
-        return candidate.string();
-      }
-    }
-    return candidates.empty() ? raw.string() : candidates.front().string();
-  };
-
   MlaRuntimeProperties props;
   const auto* mla_stage = exact_mla_stage != nullptr
                               ? exact_mla_stage
                               : pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
   if (mla_stage && !mla_stage->executable.empty()) {
-    props.model_path = resolve_package_relative_path(mla_stage->executable, true);
+    props.model_path = pipeline_internal::sima::static_contract::resolve_mla_executable(
+                           mpk_contract->mpk_json_path, mla_stage->executable)
+                           .string();
     props.batch_size = mla_stage->batch_size;
     props.batch_sz_model = mla_stage->batch_sz_model;
   }
@@ -460,52 +420,6 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
   contract->model_path = props.model_path;
   contract->batch_size = props.batch_size;
   contract->batch_sz_model = props.batch_sz_model;
-}
-
-static pipeline_internal::DmabufPlanCompileResult
-compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract) {
-  if (mpk_contract.mpk_json_path.empty()) {
-    return pipeline_internal::try_compile_dmabuf_plan(
-        std::filesystem::path{}, std::vector<pipeline_internal::MlaExecutableArtifact>{});
-  }
-  const auto stages = pipeline_internal::sima::get_mla_stage_io_contracts(mpk_contract);
-  std::vector<pipeline_internal::MlaExecutableArtifact> artifacts;
-  artifacts.reserve(stages.size());
-  for (const auto* stage : stages) {
-    const auto runtime = read_mla_runtime_properties_from_mpk_contract(mpk_contract, stage);
-    if (!runtime.has_value() || runtime->model_path.empty()) {
-      return pipeline_internal::try_compile_dmabuf_plan(
-          mpk_contract.mpk_json_path, std::vector<pipeline_internal::MlaExecutableArtifact>{});
-    }
-    artifacts.push_back({stage->name, stage->executable, runtime->model_path});
-  }
-  std::vector<pipeline_internal::HostTvmExecutableArtifact> host_artifacts;
-  fs::path package_root = fs::path(mpk_contract.mpk_json_path).parent_path();
-  if (package_root.filename() == "etc") {
-    package_root = package_root.parent_path();
-  }
-  for (const auto& stage : mpk_contract.plugins) {
-    if (to_upper(stage.processor) != "A65") {
-      continue;
-    }
-    fs::path resolved;
-    const fs::path raw(stage.executable);
-    const std::array<fs::path, 4> candidates = {
-        raw.is_absolute() ? raw : package_root / "lib" / raw,
-        raw.is_absolute() ? raw : package_root / raw,
-        raw.is_absolute() ? raw : package_root / "share" / raw, raw};
-    for (const auto& candidate : candidates) {
-      std::error_code ec;
-      if (!candidate.empty() && fs::is_regular_file(candidate, ec) && !ec) {
-        resolved = candidate;
-        break;
-      }
-    }
-    host_artifacts.push_back(
-        {stage.name, stage.executable, resolved.empty() ? candidates.front() : resolved});
-  }
-  return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path, artifacts,
-                                                    host_artifacts);
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
@@ -2093,24 +2007,10 @@ static std::string encode_direct_tvm_contract(
                              "' is not an exact materializing boundary");
   }
 
-  fs::path package_root = fs::path(packaging_contract.mpk_json_path).parent_path();
-  if (package_root.filename() == "etc") {
-    package_root = package_root.parent_path();
-  }
-  const fs::path raw(host->executable);
-  const std::array<fs::path, 4> candidates = {
-      raw.is_absolute() ? raw : package_root / "lib" / raw,
-      raw.is_absolute() ? raw : package_root / raw,
-      raw.is_absolute() ? raw : package_root / "share" / raw, raw};
-  fs::path resolved;
-  for (const auto& candidate : candidates) {
-    std::error_code ec;
-    if (!candidate.empty() && fs::is_regular_file(candidate, ec) && !ec) {
-      resolved = candidate;
-      break;
-    }
-  }
-  if (resolved.empty()) {
+  const fs::path resolved = pipeline_internal::sima::static_contract::resolve_host_executable(
+      packaging_contract.mpk_json_path, host->executable);
+  std::error_code resolved_ec;
+  if (!fs::is_regular_file(resolved, resolved_ec) || resolved_ec) {
     throw std::runtime_error("ModelFragment: A65 target artifact for '" + op.name +
                              "' is not present in the extracted package");
   }
@@ -3798,6 +3698,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   execution_admission_ = {};
   execution_plan_digest_.clear();
   mpk_contract_.reset();
+  mpk_package_.reset();
   dmabuf_fragment_source_.reset();
   dmabuf_plan_execution_plan_.reset();
   dmabuf_frame_arena_plan_.reset();
@@ -3831,8 +3732,11 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   etc_dir_ = (fs::path(extracted) / kDirConf).string();
   {
     std::string contract_error;
-    mpk_contract_ =
-        pipeline_internal::sima::load_mpk_contract_from_pack_root(extracted, &contract_error);
+    if (auto loaded = pipeline_internal::sima::static_contract::MpkDecoder::load_package_root(
+            extracted, &contract_error)) {
+      mpk_package_ = std::move(loaded->package);
+      mpk_contract_ = std::move(loaded->contract);
+    }
     if (mpk_contract_.has_value() && env_truthy_local("SIMA_MPK_CONTRACT_DEBUG")) {
       const auto ordered =
           simaai::neat::pipeline_internal::sima::plugins_in_execution_order(*mpk_contract_);
@@ -3950,11 +3854,11 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   if (dmabuf_frame_arena_plan_.has_value() || dmabuf_physical_execution_plan_.has_value()) {
     throw std::runtime_error("ModelPack: partial dmabuf-plan admission state is invalid");
   }
-  if (!mpk_contract_.has_value()) {
+  if (!mpk_contract_.has_value() || !mpk_package_.has_value()) {
     throw std::runtime_error("ModelPack: dmabuf-plan requires an exact mpk.json manifest");
   }
 
-  auto compiled = compile_dmabuf_plan_execution_plan(*mpk_contract_);
+  auto compiled = pipeline_internal::try_compile_dmabuf_plan(*mpk_package_);
   execution_admission_ = compiled.report;
   execution_plan_digest_ = compiled.plan_digest;
   if (!compiled.eligible()) {

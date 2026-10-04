@@ -6,17 +6,16 @@
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
-#include "pipeline/internal/sima/static_contract/TvmHostModuleGraph.h"
 
 #include <glib.h>
 #include <nlohmann/json.hpp>
 
-#include <array>
 #include <cstdint>
 #include <exception>
 #include <fstream>
 #include <limits>
 #include <span>
+#include <sstream>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -43,33 +42,7 @@ std::string sha256_text(const std::string_view text) {
   return result;
 }
 
-std::optional<std::string> sha256_file(const std::filesystem::path& path) {
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    return std::nullopt;
-  }
-  GChecksum* checksum = g_checksum_new(G_CHECKSUM_SHA256);
-  if (!checksum) {
-    return std::nullopt;
-  }
-  std::array<char, 64U * 1024U> buffer{};
-  while (input) {
-    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    const auto count = input.gcount();
-    if (count > 0) {
-      g_checksum_update(checksum, reinterpret_cast<const guchar*>(buffer.data()),
-                        static_cast<gsize>(count));
-    }
-  }
-  if (!input.eof()) {
-    g_checksum_free(checksum);
-    return std::nullopt;
-  }
-  const gchar* digest = g_checksum_get_string(checksum);
-  std::string result = digest ? digest : "";
-  g_checksum_free(checksum);
-  return result.empty() ? std::nullopt : std::optional<std::string>(std::move(result));
-}
+using sc::sha256_file;
 
 std::string basename_or_placeholder(const std::filesystem::path& path, const char* placeholder) {
   const auto name = path.filename().string();
@@ -706,115 +679,70 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::vector<HostTvmExecutableArtifact>& host_executables) noexcept {
   const auto mpk_source = basename_or_placeholder(mpk_manifest, "<mpk-manifest>");
   try {
+    std::ifstream input(mpk_manifest, std::ios::binary);
+    std::error_code ec;
+    if (!input.is_open() && std::filesystem::is_regular_file(mpk_manifest, ec) && !ec &&
+        !mla_executables.empty()) {
+      return rejected(DmabufEligibilityCode::IoError, mpk_source, "$",
+                      "failed to hash the explicitly supplied MPK manifest");
+    }
+    std::ostringstream contents;
+    if (input.is_open()) {
+      contents << input.rdbuf();
+    }
+    return try_compile_dmabuf_plan(
+        sc::MpkPackage{mpk_manifest, contents.str(), mla_executables, host_executables});
+  } catch (const std::exception& error) {
+    return rejected(DmabufEligibilityCode::InternalError, mpk_source, "$", error.what());
+  }
+}
+
+DmabufPlanCompileResult try_compile_dmabuf_plan(const sc::MpkPackage& package) noexcept {
+  const auto& mpk_manifest = package.manifest_path;
+  const auto mpk_source = basename_or_placeholder(mpk_manifest, "<mpk-manifest>");
+  try {
     std::error_code ec;
     if (mpk_manifest.empty() || !std::filesystem::is_regular_file(mpk_manifest, ec) || ec) {
       return rejected(DmabufEligibilityCode::MissingMpkManifest, mpk_source, "$",
                       "exact MPK manifest is missing or unreadable");
     }
-    if (mla_executables.empty()) {
+    if (package.mla_executables.empty()) {
       return rejected(DmabufEligibilityCode::MissingMlaExecutableEvidence, mpk_source,
                       "$.plugins[processor=MLA].resources.executable",
                       "no exact MLA executable evidence was supplied");
     }
 
-    const auto mpk_digest = sha256_file(mpk_manifest);
-    if (!mpk_digest) {
-      return rejected(DmabufEligibilityCode::IoError, mpk_source, "$",
-                      "failed to hash the explicitly supplied MPK manifest");
-    }
-
-    std::vector<sc::MlaStageExecutableEvidence> evidence;
-    evidence.reserve(mla_executables.size());
-    std::string artifact_identity = "mpk=" + *mpk_digest;
-    for (std::size_t index = 0; index < mla_executables.size(); ++index) {
-      const auto& artifact = mla_executables[index];
-      if (artifact.logical_stage_id.empty() || artifact.manifest_executable.empty()) {
-        return rejected(DmabufEligibilityCode::MissingMlaExecutableEvidence, mpk_source,
-                        "$.plugins[processor=MLA].resources.executable",
-                        "MLA evidence has an empty logical stage or manifest executable identity");
+    auto evidence = sc::MpkDecoder::read_executable_evidence(package);
+    if (const auto& error = evidence.error) {
+      using Kind = sc::MpkEvidenceError::Kind;
+      if (error->host_module) {
+        return rejected(error->kind == Kind::DigestFailed
+                            ? DmabufEligibilityCode::IoError
+                            : DmabufEligibilityCode::UnsupportedKernel,
+                        mpk_source, "$.plugins[processor=A65].resources.executable", error->detail);
       }
-      ec.clear();
-      if (artifact.resolved_path.empty() ||
-          !std::filesystem::is_regular_file(artifact.resolved_path, ec) || ec) {
-        return rejected(DmabufEligibilityCode::MissingMlaExecutable, mpk_source,
-                        "$.plugins[processor=MLA].resources.executable",
-                        "exact MLA executable for stage '" + artifact.logical_stage_id +
-                            "' is missing or unreadable");
-      }
-      const auto digest = sha256_file(artifact.resolved_path);
-      if (!digest) {
-        return rejected(DmabufEligibilityCode::IoError, mpk_source,
-                        "$.plugins[processor=MLA].resources.executable",
-                        "failed to hash exact MLA executable for stage '" +
-                            artifact.logical_stage_id + "'");
-      }
-      sima::MlaElfIoTopology topology;
-      if (!sima::read_mla_elf_io_topology(artifact.resolved_path, &topology)) {
-        auto result =
-            rejected(DmabufEligibilityCode::ElfTopologyUnreadable, mpk_source,
-                     "$.plugins[processor=MLA].resources.executable",
-                     sanitize_detail(topology.error.empty() ? "failed to read MLA ELF topology"
-                                                            : topology.error,
-                                     mpk_manifest, artifact.resolved_path));
-        result.report.artifact_digest = sha256_text(artifact_identity + ";elf=" + *digest);
+      const auto location = "$.plugins[processor=MLA].resources.executable";
+      switch (error->kind) {
+      case Kind::MissingIdentity:
+        return rejected(DmabufEligibilityCode::MissingMlaExecutableEvidence, mpk_source, location,
+                        error->detail);
+      case Kind::MissingFile:
+        return rejected(DmabufEligibilityCode::MissingMlaExecutable, mpk_source, location,
+                        error->detail);
+      case Kind::DigestFailed:
+        return rejected(DmabufEligibilityCode::IoError, mpk_source, location, error->detail);
+      case Kind::UnreadableStructure: {
+        auto result = rejected(DmabufEligibilityCode::ElfTopologyUnreadable, mpk_source, location,
+                               sanitize_detail(error->detail, mpk_manifest, error->resolved_path));
+        result.report.artifact_digest = sha256_text(error->artifact_identity);
         return result;
       }
-      artifact_identity += ";stage=" + artifact.logical_stage_id +
-                           ";executable=" + artifact.manifest_executable + ";elf=" + *digest;
-      evidence.push_back(
-          {artifact.logical_stage_id, artifact.manifest_executable, std::move(topology),
-           static_cast<std::uint64_t>(std::filesystem::file_size(artifact.resolved_path)),
-           *digest});
+      }
     }
-    std::vector<sc::HostTvmExecutableEvidence> host_evidence;
-    host_evidence.reserve(host_executables.size());
-    for (const auto& artifact : host_executables) {
-      if (artifact.logical_stage_id.empty() || artifact.manifest_executable.empty()) {
-        return rejected(DmabufEligibilityCode::UnsupportedKernel, mpk_source,
-                        "$.plugins[processor=A65].resources.executable",
-                        "A65 evidence has an empty logical stage or executable identity");
-      }
-      ec.clear();
-      if (artifact.resolved_path.empty() ||
-          !std::filesystem::is_regular_file(artifact.resolved_path, ec) || ec) {
-        return rejected(DmabufEligibilityCode::UnsupportedKernel, mpk_source,
-                        "$.plugins[processor=A65].resources.executable",
-                        "exact A65 host module for stage '" + artifact.logical_stage_id +
-                            "' is missing or unreadable");
-      }
-      const auto digest = sha256_file(artifact.resolved_path);
-      if (!digest) {
-        return rejected(DmabufEligibilityCode::IoError, mpk_source,
-                        "$.plugins[processor=A65].resources.executable",
-                        "failed to hash exact A65 host module for stage '" +
-                            artifact.logical_stage_id + "'");
-      }
-      std::string graph_error;
-      auto graph = sc::read_tvm_host_module_graph(artifact.resolved_path, &graph_error);
-      if (!graph) {
-        return rejected(DmabufEligibilityCode::UnsupportedKernel, mpk_source,
-                        "$.plugins[processor=A65].resources.executable",
-                        graph_error.empty() ? "A65 host module has no valid GraphExecutor contract"
-                                            : graph_error);
-      }
-      artifact_identity += ";host-stage=" + artifact.logical_stage_id +
-                           ";executable=" + artifact.manifest_executable + ";so=" + *digest;
-      sc::HostTvmExecutableEvidence item{
-          artifact.logical_stage_id,
-          artifact.manifest_executable,
-          graph->input_names,
-          graph->input_types,
-          std::move(graph->output_types),
-          std::move(graph->output_alias_input),
-          static_cast<std::uint64_t>(std::filesystem::file_size(artifact.resolved_path)),
-          *digest};
-      item.argument_names = std::move(graph->input_names);
-      item.argument_types = std::move(graph->input_types);
-      host_evidence.push_back(std::move(item));
-    }
-    const auto artifact_digest = sha256_text(artifact_identity);
+    const auto artifact_digest = sha256_text(evidence.artifact_identity);
 
-    auto decoded = sc::MpkDecoder{}.decode_file(mpk_manifest, evidence, host_evidence);
+    auto decoded = sc::MpkDecoder{}.decode_json(package.manifest_bytes, evidence.mla, evidence.host,
+                                                mpk_manifest.string());
     if (!decoded || !decoded.plan) {
       const auto code = decoded.error ? map_decode_code(decoded.error->code)
                                       : DmabufEligibilityCode::InternalError;

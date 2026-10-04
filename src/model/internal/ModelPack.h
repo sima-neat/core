@@ -12,6 +12,7 @@
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "pipeline/internal/DmabufEligibility.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
@@ -263,6 +264,7 @@ private:
   Config options_;
   PipelineType pipeline_type_ = PipelineType::Preproc;
   std::optional<simaai::neat::pipeline_internal::sima::MpkContract> mpk_contract_;
+  std::optional<simaai::neat::pipeline_internal::sima::static_contract::MpkPackage> mpk_package_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan>
       dmabuf_plan_execution_plan_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::static_contract::FrameSlotArenaPlan>

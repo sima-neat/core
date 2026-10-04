@@ -3,6 +3,7 @@
 
 #include "model/internal/ModelArchiveLoader.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 
 #include <algorithm>
 #include <cctype>
@@ -604,13 +605,13 @@ PcieModelFacts read_model_facts(const std::string& model_path, const ModelOption
   const auto extracted =
       simaai::neat::internal::ModelArchiveLoader::extract(model_path, temp.path(), loader_options);
 
+  namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
   std::string error;
-  auto contract = simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root(
-      extracted.package_root, &error);
-  if (!contract.has_value()) {
+  const auto loaded = sc::MpkDecoder::load_package_root(extracted.package_root, &error);
+  if (!loaded.has_value()) {
     throw std::runtime_error("failed to read MPK contract: " + error);
   }
-  return detail::read_model_facts(*contract, options);
+  return detail::read_model_facts(loaded->contract, options);
 }
 
 PcieModelFacts

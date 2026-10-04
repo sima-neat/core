@@ -5,6 +5,7 @@
 
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
 #include <filesystem>
@@ -79,17 +80,8 @@ struct DmabufPlanCompileResult {
   }
 };
 
-struct MlaExecutableArtifact {
-  std::string logical_stage_id;
-  std::string manifest_executable;
-  std::filesystem::path resolved_path;
-};
-
-struct HostTvmExecutableArtifact {
-  std::string logical_stage_id;
-  std::string manifest_executable;
-  std::filesystem::path resolved_path;
-};
+using MlaExecutableArtifact = sima::static_contract::MpkExecutableArtifact;
+using HostTvmExecutableArtifact = sima::static_contract::MpkExecutableArtifact;
 
 // Pure structural admission. It reads only explicitly supplied MPK, MLA ELF,
 // and (for the typed overload) A65 object-file metadata. It loads no model
@@ -107,6 +99,10 @@ DmabufPlanCompileResult
 try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::vector<MlaExecutableArtifact>& mla_executables,
                         const std::vector<HostTvmExecutableArtifact>& host_executables) noexcept;
+
+// Admits a package loaded by MpkDecoder::load, decoding the manifest bytes it read.
+DmabufPlanCompileResult
+try_compile_dmabuf_plan(const sima::static_contract::MpkPackage& package) noexcept;
 
 // Stable canonical rendering and SHA-256 digest of the accepted immutable plan.
 std::string canonical_dmabuf_plan_json(const sima::static_contract::ModelExecutionPlan& plan);

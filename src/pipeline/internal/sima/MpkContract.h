@@ -23,8 +23,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "pipeline/internal/sima/DTypeSource.h"
@@ -120,13 +122,6 @@ enum class MpkGraphNodeKind {
   FusedDetessDequant, ///< Fused detess+dequantize group.
 };
 
-/// Kind of edge in the fused MPK graph.
-enum class MpkGraphEdgeKind {
-  Unknown = 0,
-  CandidateTensorMatch, ///< Tentative edge based on tensor-name matching.
-  FusedRoute,           ///< Confirmed routing edge after fusion.
-};
-
 /// Origin (in MPK terms) of a kernel-contract field.
 enum class MpkGraphKernelFieldKind {
   Unknown = 0,
@@ -191,7 +186,7 @@ struct MpkGraphMlaMetadata {
   MpkGraphMlaUnpackMetadata unpack;                ///< Unpack metadata.
 };
 
-/// One node in the fused MPK graph (after `graph_mpk_creation` / `graph_fuser`).
+/// One node in the MPK graph, before or after fusion.
 struct MpkGraphNode {
   std::string node_id;
   std::string label;
@@ -201,7 +196,6 @@ struct MpkGraphNode {
   std::string kernel;
   std::string canonical_op;
   MpkGraphKernelContract kernel_contract;
-  std::string tensor_kind;
   std::string dtype;
   std::vector<std::int64_t> mpk_shape;
   std::vector<std::string> input_tensor_names;
@@ -212,19 +206,16 @@ struct MpkGraphNode {
   std::size_t plugin_index = static_cast<std::size_t>(-1);
   int tensor_index = -1;
   int sequence = -1;
-  int branch_count = 0;
   std::size_t size_bytes = 0U;
-  bool synthetic = false;
   MpkGraphMlaMetadata mla_metadata;
 };
 
 /// One edge in the fused MPK graph.
 struct MpkGraphEdge {
-  std::string edge_id;                               ///< Stable edge identifier.
-  std::string src_node_id;                           ///< Source node id.
-  std::string dst_node_id;                           ///< Destination node id.
-  std::string tensor_name;                           ///< Tensor flowing along the edge.
-  MpkGraphEdgeKind kind = MpkGraphEdgeKind::Unknown; ///< Candidate match vs. confirmed routing.
+  std::string edge_id;     ///< Stable edge identifier.
+  std::string src_node_id; ///< Source node id.
+  std::string dst_node_id; ///< Destination node id.
+  std::string tensor_name; ///< Tensor flowing along the edge.
   std::size_t src_plugin_index =
       static_cast<std::size_t>(-1); ///< Source plugin index (when present).
   std::size_t dst_plugin_index = static_cast<std::size_t>(-1); ///< Destination plugin index.
@@ -234,9 +225,6 @@ struct MpkGraphEdge {
 
 /// Full graph view of an MPK: raw plugin/tensor nodes plus the fused, route-ready view.
 struct MpkGraph {
-  std::string mpk_json_path;           ///< Path the MPK was loaded from.
-  std::string model_name;              ///< Model name from the manifest.
-  std::string model_path;              ///< Model artifact path.
   std::vector<MpkGraphNode> raw_nodes; ///< Pre-fusion node list.
   std::vector<MpkGraphEdge> raw_edges; ///< Pre-fusion edge list (candidate matches).
   std::vector<MpkGraphNode> nodes;     ///< Post-fusion node list.
@@ -326,35 +314,28 @@ struct MpkContract {
   std::vector<MpkTensorContract> ingress_tensors; ///< External input tensors.
   std::vector<MpkPluginIoContract> plugins;       ///< Plugin chain.
   std::vector<MpkContractEdge> edges;             ///< Raw producer-consumer edges.
-  MpkGraph graph;                       ///< Fused graph (filled by `fill_graph_from_mpk`).
-  std::vector<MpkContractError> errors; ///< Errors collected during load.
+  MpkGraph graph;                                 ///< Raw and fused graph views.
+  std::vector<MpkContractError> errors;           ///< Errors collected during load.
 };
 
+/// Finds `mpk.json` or `*_mpk.json` at most two levels below a model-pack root; the
+/// lexicographically first match wins.
+std::optional<std::filesystem::path> find_mpk_manifest(const std::filesystem::path& package_root);
+
 /**
- * @brief Load and validate an MPK contract from a model-pack root directory.
+ * @brief Build and validate an MPK contract from manifest bytes.
  *
- * Reads the MPK manifest JSON only (per project policy), validates the plugin chain, fills
- * tensor contracts, and returns the parsed `MpkContract`.
+ * Use `static_contract::MpkDecoder::load`, which reads the manifest once and builds this
+ * contract from the same bytes it decodes.
  *
- * @param package_root   Path to the model-pack root.
+ * @param mpk_json       Manifest bytes.
+ * @param mpk_json_path  Path the bytes were read from; recorded in the contract.
  * @param error_message  Optional out-parameter populated on failure.
  * @return Parsed contract on success; `std::nullopt` on failure (see `error_message`).
  */
-std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& package_root,
-                                                            std::string* error_message = nullptr);
-
-/// Initial pass: build the raw graph view from the parsed plugin/tensor list.
-void graph_mpk_creation(MpkContract* contract);
-
-/// Second pass: fuse adjacent plugin nodes into composite stages (preproc / quanttess / etc.).
-void graph_fuser(MpkContract* contract);
-
-/// Convenience: run both `graph_mpk_creation` and `graph_fuser`.
-void fill_graph_from_mpk(MpkContract* contract);
-
-/// Render an `MpkGraph` as a Markdown report (for diagnostics).
-std::string render_mpk_graph_markdown(const MpkGraph& graph,
-                                      const std::string& title = "MPK Graph");
+std::optional<MpkContract> load_mpk_contract_from_json(std::string_view mpk_json,
+                                                       const std::string& mpk_json_path,
+                                                       std::string* error_message = nullptr);
 
 /// Look up a plugin's I/O contract by name or id; returns null if not found.
 const MpkPluginIoContract* get_stage_io_contract(const MpkContract& contract,
@@ -384,9 +365,6 @@ const MpkPluginIoContract* get_mla_unpack_stage_io_contract(const MpkContract& c
 // producer (already in the right shape for collapse).
 bool mla_consumer_keeps_distinct_physical_inputs(const MpkContract& contract);
 
-/// Returns a pointer to the MLA stage's input tensor contracts, or null if no MLA stage.
-const std::vector<MpkTensorContract>* get_mla_input_contract(const MpkContract& contract);
-
 /// Returns the logical-input contracts at the MLA boundary (post-pre-stage rewrites).
 std::vector<MpkTensorContract>
 get_mla_boundary_logical_inputs_contract(const MpkContract& contract);
@@ -394,9 +372,6 @@ get_mla_boundary_logical_inputs_contract(const MpkContract& contract);
 /// Returns the physical-input contracts at the MLA boundary.
 std::vector<MpkTensorContract>
 get_mla_boundary_physical_inputs_contract(const MpkContract& contract);
-
-/// Returns a pointer to the MLA stage's output tensor contracts, or null if no MLA stage.
-const std::vector<MpkTensorContract>* get_mla_outputs_contract(const MpkContract& contract);
 
 /// Returns the physical-output contracts at the MLA boundary.
 std::vector<MpkTensorContract>
@@ -407,10 +382,6 @@ std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContr
 
 /// Returns the logical-output contracts at the MLA boundary.
 std::vector<MpkTensorContract> get_mla_logical_outputs_contract(const MpkContract& contract);
-
-/// Returns the quant params for a named plugin if present.
-std::optional<MpkQuantContract> get_quant_params_contract(const MpkContract& contract,
-                                                          const std::string& plugin_name_or_id);
 
 /// Find a plugin's index by name or id.
 std::optional<std::size_t> find_plugin_index_by_name_or_id(const MpkContract& contract,

@@ -3,12 +3,14 @@
 
 #include "pipeline/internal/sima/static_contract/AfePublicationLedger.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
+#include "pipeline/internal/sima/static_contract/TvmHostModuleGraph.h"
 
 #include <glib.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -41,6 +43,31 @@ std::string sha256_text(const std::string_view text) {
   std::string result(digest);
   g_free(digest);
   return result;
+}
+
+std::filesystem::path mpk_package_root(const std::filesystem::path& mpk_manifest) {
+  auto root = mpk_manifest.parent_path();
+  if (root.filename() == "etc") {
+    root = root.parent_path();
+  }
+  return root;
+}
+
+std::filesystem::path first_existing(const std::vector<std::filesystem::path>& candidates) {
+  for (const auto& candidate : candidates) {
+    std::error_code ec;
+    if (!candidate.empty() && std::filesystem::is_regular_file(candidate, ec) && !ec) {
+      return candidate;
+    }
+  }
+  return candidates.front();
+}
+
+bool is_processor(const MpkPluginIoContract& stage, const std::string_view processor) {
+  return std::equal(stage.processor.begin(), stage.processor.end(), processor.begin(),
+                    processor.end(), [](const char lhs, const char rhs) {
+                      return std::toupper(static_cast<unsigned char>(lhs)) == rhs;
+                    });
 }
 
 [[noreturn]] void reject(const MpkDecodeErrorCode code, std::string path, std::string detail) {
@@ -2577,6 +2604,238 @@ MpkDecodeResult MpkDecoder::decode_file(
     return result;
   }
   return decode_impl(contents.str(), executable_evidence, host_evidence, mpk_manifest.string());
+}
+
+std::optional<std::string> sha256_file(const std::filesystem::path& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return std::nullopt;
+  }
+  GChecksum* checksum = g_checksum_new(G_CHECKSUM_SHA256);
+  if (!checksum) {
+    return std::nullopt;
+  }
+  std::array<char, 64U * 1024U> buffer{};
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const auto count = input.gcount();
+    if (count > 0) {
+      g_checksum_update(checksum, reinterpret_cast<const guchar*>(buffer.data()),
+                        static_cast<gsize>(count));
+    }
+  }
+  if (!input.eof()) {
+    g_checksum_free(checksum);
+    return std::nullopt;
+  }
+  const gchar* digest = g_checksum_get_string(checksum);
+  std::string result = digest ? digest : "";
+  g_checksum_free(checksum);
+  return result.empty() ? std::nullopt : std::optional<std::string>(std::move(result));
+}
+
+std::filesystem::path resolve_mla_executable(const std::filesystem::path& mpk_manifest,
+                                             const std::string& executable) {
+  if (executable.empty()) {
+    return {};
+  }
+  const std::filesystem::path raw(executable);
+  if (raw.is_absolute()) {
+    return raw;
+  }
+  const auto root = mpk_package_root(mpk_manifest);
+  if (root.empty()) {
+    return raw;
+  }
+  return first_existing({root / "share" / raw, root / raw, raw});
+}
+
+std::filesystem::path resolve_host_executable(const std::filesystem::path& mpk_manifest,
+                                              const std::string& executable) {
+  const std::filesystem::path raw(executable);
+  if (raw.is_absolute()) {
+    return raw;
+  }
+  const auto root = mpk_package_root(mpk_manifest);
+  return first_existing({root / "lib" / raw, root / raw, root / "share" / raw, raw});
+}
+
+std::optional<LoadedMpk> MpkDecoder::load(const std::filesystem::path& mpk_manifest,
+                                          std::string* error) {
+  const auto fail = [&](std::string detail) -> std::optional<LoadedMpk> {
+    if (error) {
+      *error = std::move(detail);
+    }
+    return std::nullopt;
+  };
+  if (error) {
+    error->clear();
+  }
+  std::ifstream input(mpk_manifest, std::ios::binary);
+  if (!input.is_open()) {
+    return fail("cannot open MPK manifest");
+  }
+  std::ostringstream contents;
+  contents << input.rdbuf();
+
+  LoadedMpk loaded;
+  loaded.package.manifest_path = mpk_manifest;
+  loaded.package.manifest_bytes = contents.str();
+  std::string contract_error;
+  auto contract = load_mpk_contract_from_json(loaded.package.manifest_bytes, mpk_manifest.string(),
+                                              &contract_error);
+  if (!contract) {
+    return fail(std::move(contract_error));
+  }
+  loaded.contract = std::move(*contract);
+
+  for (const auto* stage : get_mla_stage_io_contracts(loaded.contract)) {
+    if (stage->executable.empty()) {
+      // Without every MLA executable there is no evidence set; admission rejects the package.
+      loaded.package.mla_executables.clear();
+      return loaded;
+    }
+    loaded.package.mla_executables.push_back(
+        {stage->name, stage->executable, resolve_mla_executable(mpk_manifest, stage->executable)});
+  }
+  for (const auto& stage : loaded.contract.plugins) {
+    if (is_processor(stage, "A65")) {
+      loaded.package.host_executables.push_back(
+          {stage.name, stage.executable, resolve_host_executable(mpk_manifest, stage.executable)});
+    }
+  }
+  return loaded;
+}
+
+std::optional<LoadedMpk> MpkDecoder::load_package_root(const std::filesystem::path& package_root,
+                                                       std::string* error) {
+  std::error_code ec;
+  if (package_root.empty() || !std::filesystem::is_directory(package_root, ec) || ec) {
+    if (error) {
+      *error = "invalid package root";
+    }
+    return std::nullopt;
+  }
+  const auto manifest = find_mpk_manifest(package_root);
+  if (!manifest) {
+    if (error) {
+      *error = "no *_mpk.json found";
+    }
+    return std::nullopt;
+  }
+  return load(*manifest, error);
+}
+
+MpkExecutableEvidence MpkDecoder::read_executable_evidence(const MpkPackage& package) {
+  using Kind = MpkEvidenceError::Kind;
+  MpkExecutableEvidence out;
+  out.artifact_identity = "mpk=" + sha256_text(package.manifest_bytes);
+  const auto fail = [&](const Kind kind, const bool host_module,
+                        const MpkExecutableArtifact& artifact, std::string detail,
+                        std::string identity = {}) {
+    out.error = MpkEvidenceError{kind, host_module, artifact.resolved_path, std::move(detail),
+                                 std::move(identity)};
+    return out;
+  };
+  const auto readable = [](const std::filesystem::path& path) {
+    std::error_code ec;
+    return !path.empty() && std::filesystem::is_regular_file(path, ec) && !ec;
+  };
+
+  for (const auto& artifact : package.mla_executables) {
+    const auto& stage = artifact.logical_stage_id;
+    if (stage.empty() || artifact.manifest_executable.empty()) {
+      return fail(Kind::MissingIdentity, false, artifact,
+                  "MLA evidence has an empty logical stage or manifest executable identity");
+    }
+    if (!readable(artifact.resolved_path)) {
+      return fail(Kind::MissingFile, false, artifact,
+                  "exact MLA executable for stage '" + stage + "' is missing or unreadable");
+    }
+    const auto digest = sha256_file(artifact.resolved_path);
+    if (!digest) {
+      return fail(Kind::DigestFailed, false, artifact,
+                  "failed to hash exact MLA executable for stage '" + stage + "'");
+    }
+    MlaElfIoTopology topology;
+    if (!read_mla_elf_io_topology(artifact.resolved_path, &topology)) {
+      return fail(Kind::UnreadableStructure, false, artifact,
+                  topology.error.empty() ? "failed to read MLA ELF topology" : topology.error,
+                  out.artifact_identity + ";elf=" + *digest);
+    }
+    out.artifact_identity +=
+        ";stage=" + stage + ";executable=" + artifact.manifest_executable + ";elf=" + *digest;
+    out.mla.push_back(
+        {stage, artifact.manifest_executable, std::move(topology),
+         static_cast<std::uint64_t>(std::filesystem::file_size(artifact.resolved_path)), *digest});
+  }
+
+  for (const auto& artifact : package.host_executables) {
+    const auto& stage = artifact.logical_stage_id;
+    if (stage.empty() || artifact.manifest_executable.empty()) {
+      return fail(Kind::MissingIdentity, true, artifact,
+                  "A65 evidence has an empty logical stage or executable identity");
+    }
+    if (!readable(artifact.resolved_path)) {
+      return fail(Kind::MissingFile, true, artifact,
+                  "exact A65 host module for stage '" + stage + "' is missing or unreadable");
+    }
+    const auto digest = sha256_file(artifact.resolved_path);
+    if (!digest) {
+      return fail(Kind::DigestFailed, true, artifact,
+                  "failed to hash exact A65 host module for stage '" + stage + "'");
+    }
+    std::string graph_error;
+    auto graph = read_tvm_host_module_graph(artifact.resolved_path, &graph_error);
+    if (!graph) {
+      return fail(Kind::UnreadableStructure, true, artifact,
+                  graph_error.empty() ? "A65 host module has no valid GraphExecutor contract"
+                                      : graph_error);
+    }
+    out.artifact_identity +=
+        ";host-stage=" + stage + ";executable=" + artifact.manifest_executable + ";so=" + *digest;
+    HostTvmExecutableEvidence item{
+        stage,
+        artifact.manifest_executable,
+        graph->input_names,
+        graph->input_types,
+        std::move(graph->output_types),
+        std::move(graph->output_alias_input),
+        static_cast<std::uint64_t>(std::filesystem::file_size(artifact.resolved_path)),
+        *digest};
+    item.argument_names = std::move(graph->input_names);
+    item.argument_types = std::move(graph->input_types);
+    out.host.push_back(std::move(item));
+  }
+  return out;
+}
+
+MpkDecodeResult MpkDecoder::decode(const MpkPackage& package) const noexcept {
+  const auto failed = [&](const MpkDecodeErrorCode code, std::string path, std::string detail) {
+    MpkDecodeResult result;
+    result.error =
+        MpkDecodeError{code, package.manifest_path.string(), std::move(path), std::move(detail)};
+    return result;
+  };
+  try {
+    auto evidence = read_executable_evidence(package);
+    if (const auto& error = evidence.error) {
+      using Kind = MpkEvidenceError::Kind;
+      const auto code = error->kind == Kind::DigestFailed ? MpkDecodeErrorCode::IoError
+                        : error->host_module ? MpkDecodeErrorCode::UnsupportedHostModule
+                        : error->kind == Kind::UnreadableStructure
+                            ? MpkDecodeErrorCode::ElfTopologyInvalid
+                            : MpkDecodeErrorCode::MissingMlaExecutableEvidence;
+      return failed(code,
+                    error->host_module ? "$.plugins[processor=A65].resources.executable"
+                                       : "$.plugins[processor=MLA].resources.executable",
+                    error->detail);
+    }
+    return decode_json(package.manifest_bytes, evidence.mla, evidence.host,
+                       package.manifest_path.string());
+  } catch (const std::exception& error) {
+    return failed(MpkDecodeErrorCode::IoError, "$", error.what());
+  }
 }
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract

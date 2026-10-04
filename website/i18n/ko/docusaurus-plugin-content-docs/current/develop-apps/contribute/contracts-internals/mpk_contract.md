@@ -17,6 +17,7 @@ slug: /develop-apps/contribute/mpk_contract
 - `src/model/ModelArchiveLoader.cpp`
 - `src/model/internal/ModelArchiveLoader.h`
 - `src/pipeline/internal/sima/MpkContract.cpp`
+- `src/pipeline/internal/sima/static_contract/MpkDecoder.cpp`
 
 ## 허용되는 아카이브 형식
 
@@ -44,6 +45,10 @@ slug: /develop-apps/contribute/mpk_contract
 - MPK 추론 계약(`mpk.json` 또는 `*_mpk.json`)
 - 런타임에서 필요한 로더 측 스테이지/구성 JSON
 - 최소 하나의 모델 바이너리 아티팩트(`*.elf` 또는 `*.so`)
+
+## MPK 매니페스트 로드
+
+모델 로드, 준비된 런타임 빌드, PCIe 호스트는 `MpkDecoder::load`를 통해 `mpk.json`을 읽습니다. 매니페스트를 한 번 읽고, 그 바이트로 의미 기반 `MpkContract`를 만들며, 각 단계의 실행 파일을 패키지 안에서 해석합니다. MLA 실행 파일은 `share/`, 그다음 패키지 루트에서 찾고, A65 모듈은 `lib/`, 패키지 루트, 그다음 `share/`에서 찾습니다. 실행 허용 판정과 PCIe 호스트는 실행 파일의 ELF 및 GraphExecutor 증거로 같은 바이트를 디코딩하므로, 계획과 계약은 같은 바이트에서 만들어집니다.
 
 ## 추출 안전 규칙
 

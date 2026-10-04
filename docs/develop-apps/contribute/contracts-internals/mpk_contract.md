@@ -17,6 +17,7 @@ The contract applies to:
 - `src/model/ModelArchiveLoader.cpp`
 - `src/model/internal/ModelArchiveLoader.h`
 - `src/pipeline/internal/sima/MpkContract.cpp`
+- `src/pipeline/internal/sima/static_contract/MpkDecoder.cpp`
 
 ## Accepted Archive Format
 
@@ -44,6 +45,15 @@ Required package content:
 - The MPK inference contract (`mpk.json` or `*_mpk.json`)
 - Loader-side stage/config JSON needed by the runtime
 - At least one model binary artifact (`*.elf` or `*.so`)
+
+## MPK Manifest Loading
+
+Model loading, prepared-runtime builds, and the PCIe host read `mpk.json` through
+`MpkDecoder::load`. It reads the manifest once, builds the semantic `MpkContract` from those bytes,
+and resolves each stage executable inside the package: MLA executables from `share/`, then the
+package root; A65 modules from `lib/`, the package root, then `share/`. Execution admission and the
+PCIe host decode the same bytes with the executables' ELF and GraphExecutor evidence, so the plan
+and the contract come from the same bytes.
 
 ## Extraction Safety Rules
 

@@ -145,7 +145,7 @@ Core 將模型載入時的事實編譯成單一、不可變的內部 `ModelExecu
 - MLA 後端連接埠包含 ELF／模型順序、精確的所需位元組數、對齊權威與存取方向；以及
 - 公開輸出只包含發布順序及其提供的值。
 
-MPK 資訊清單使用 `MpkDecoder`。可選的 `model_sdk_version` 字串會保留為來源資訊，不限制接納。
+MPK 資訊清單使用 `MpkDecoder`。`MpkDecoder::load` 是唯一的資訊清單入口：模型載入、預備執行階段建置與 PCIe 主機都透過它只讀取一次 `mpk.json`，並以接納流程解碼的同一份位元組建立語意 `MpkContract`。可選的 `model_sdk_version` 字串會保留為來源資訊，不限制接納。
 解碼器只接受精確註冊的 `(processor, kernel)` 詞彙，解析完整張量名稱、
 驗證作業位元組方程式，並逐一將每個 MPK MLA 階段與其精確的 ELF IFM/OFM 拓撲核對。
 解碼器以編譯器定義的邏輯階段 ID 與資訊清單可執行檔 token 共同關聯可執行證據；

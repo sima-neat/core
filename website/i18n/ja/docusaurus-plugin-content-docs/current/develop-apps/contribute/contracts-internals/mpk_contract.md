@@ -17,6 +17,7 @@ slug: /develop-apps/contribute/mpk_contract
 - `src/model/ModelArchiveLoader.cpp`
 - `src/model/internal/ModelArchiveLoader.h`
 - `src/pipeline/internal/sima/MpkContract.cpp`
+- `src/pipeline/internal/sima/static_contract/MpkDecoder.cpp`
 
 ## 許容されるアーカイブ形式
 
@@ -44,6 +45,10 @@ slug: /develop-apps/contribute/mpk_contract
 - MPK推論契約（`mpk.json`または`*_mpk.json`）
 - ランタイムに必要なローダー側のステージ/設定JSON
 - 少なくとも1つのモデルバイナリアーティファクト（`*.elf`または`*.so`）
+
+## MPK マニフェストの読み込み
+
+モデルの読み込み、準備済みランタイムの構築、PCIe ホストは、`MpkDecoder::load` を通じて `mpk.json` を読み込みます。マニフェストを一度だけ読み込み、そのバイト列から意味的な `MpkContract` を構築し、各ステージの実行ファイルをパッケージ内で解決します。MLA の実行ファイルは `share/`、次にパッケージのルートから、A65 モジュールは `lib/`、パッケージのルート、次に `share/` から解決します。実行の受け入れ判定と PCIe ホストは、実行ファイルの ELF と GraphExecutor の根拠を使って同じバイト列をデコードするため、プランと契約は同じバイト列から作られます。
 
 ## 抽出の安全規則
 

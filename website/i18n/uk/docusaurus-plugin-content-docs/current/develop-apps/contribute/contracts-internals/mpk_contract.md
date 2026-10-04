@@ -17,6 +17,7 @@ slug: /develop-apps/contribute/mpk_contract
 - `src/model/ModelArchiveLoader.cpp`
 - `src/model/internal/ModelArchiveLoader.h`
 - `src/pipeline/internal/sima/MpkContract.cpp`
+- `src/pipeline/internal/sima/static_contract/MpkDecoder.cpp`
 
 ## Підтримуваний формат архіву.
 
@@ -44,6 +45,10 @@ slug: /develop-apps/contribute/mpk_contract
 - Контракт для виконання висновків MPK (`mpk.json` або `*_mpk.json`).
 - JSON-файл зі стадією/конфігурацією для завантажувача, необхідний для середовища виконання.
 - Принаймні один бінарний артефакт моделі (`*.elf` або `*.so`).
+
+## Завантаження маніфесту MPK
+
+Завантаження моделі, побудова підготовленого середовища виконання та хост PCIe читають `mpk.json` через `MpkDecoder::load`. Вона один раз читає маніфест, будує з цих байтів семантичний `MpkContract` і знаходить виконувані файли кожного етапу всередині пакета: виконувані файли MLA — у `share/`, потім у корені пакета; модулі A65 — у `lib/`, у корені пакета, потім у `share/`. Допуск до виконання та хост PCIe декодують ті самі байти з доказами ELF і GraphExecutor виконуваних файлів, тому план і контракт будуються з тих самих байтів.
 
 ## Правила безпеки під час видобувних робіт
 

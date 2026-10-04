@@ -5,6 +5,7 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/sima/MpkContract.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
 #include "gst/SimaPreparedRuntimeAbi.h"
@@ -5005,12 +5006,12 @@ load_graph_contract_from_manifest_local(const SimaPluginStaticManifest& manifest
       continue;
     }
     std::string load_error;
-    auto contract = load_mpk_contract_from_pack_root(pack_root->string(), &load_error);
-    if (contract.has_value()) {
+    auto loaded = static_contract::MpkDecoder::load_package_root(*pack_root, &load_error);
+    if (loaded.has_value()) {
       if (pack_root_out) {
         *pack_root_out = *pack_root;
       }
-      return contract;
+      return std::move(loaded->contract);
     }
     prepared_runtime_debug_log_local("graph overlay pack_root load failed root=%s error=%s",
                                      pack_root->string().c_str(), load_error.c_str());
@@ -5050,12 +5051,12 @@ std::optional<MpkContract> load_graph_contract_from_pipeline_elements_local(
       continue;
     }
     std::string load_error;
-    auto contract = load_mpk_contract_from_pack_root(pack_root->string(), &load_error);
-    if (contract.has_value()) {
+    auto loaded = static_contract::MpkDecoder::load_package_root(*pack_root, &load_error);
+    if (loaded.has_value()) {
       if (pack_root_out) {
         *pack_root_out = *pack_root;
       }
-      return contract;
+      return std::move(loaded->contract);
     }
     prepared_runtime_debug_log_local(
         "graph overlay pipeline pack_root load failed root=%s error=%s",
@@ -5122,8 +5123,7 @@ bool prepared_runtime_graph_dump_enabled_local() {
     return raw && *raw && std::strcmp(raw, "0") != 0;
   };
   const char* explicit_path = std::getenv("SIMA_PREPARED_RUNTIME_GRAPH_OUTPUT_PATH");
-  return (explicit_path && *explicit_path) || enabled("SIMA_PREPARED_RUNTIME_GRAPH_DUMP") ||
-         enabled("SIMA_MPK_GRAPH_DUMP");
+  return (explicit_path && *explicit_path) || enabled("SIMA_PREPARED_RUNTIME_GRAPH_DUMP");
 }
 
 std::string runtime_graph_token_local(std::string raw) {
@@ -5147,16 +5147,6 @@ prepared_runtime_graph_output_path_local(const std::filesystem::path& pack_root,
                                          const MpkContract& contract) {
   if (const char* raw = std::getenv("SIMA_PREPARED_RUNTIME_GRAPH_OUTPUT_PATH"); raw && *raw) {
     return std::filesystem::path(raw);
-  }
-  if (const char* raw = std::getenv("SIMA_MPK_GRAPH_OUTPUT_PATH"); raw && *raw) {
-    std::filesystem::path graph_path(raw);
-    const std::string stem = graph_path.stem().string();
-    std::string runtime_stem = stem;
-    if (runtime_stem.size() > 6U && runtime_stem.rfind("_graph") == runtime_stem.size() - 6U) {
-      runtime_stem.erase(runtime_stem.size() - 6U);
-    }
-    runtime_stem += "_runtime_graph";
-    return graph_path.parent_path() / (runtime_stem + graph_path.extension().string());
   }
   std::string base_name;
   if (!contract.model_name.empty()) {
