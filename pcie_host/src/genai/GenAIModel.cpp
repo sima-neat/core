@@ -229,7 +229,8 @@ struct GenAIModel::Impl {
           std::lock_guard state_lock(active->mutex);
           if (active->samples.size() >= wire::event_window && !active->cancelled)
             throw std::runtime_error("GenAI stream consumer too slow; session stopped");
-          if (!active->cancelled)
+          // Cancellation drops token deltas, not the terminal result needed by drainers.
+          if (!active->cancelled || final)
             active->samples.push_back(std::move(sample));
           active->done = final;
           active->changed.notify_all();

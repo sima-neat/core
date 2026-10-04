@@ -129,10 +129,8 @@ int main(int argc, char** argv) {
                   return stop || cancel || events.size() < wire::event_window;
                 }))
               throw std::runtime_error("Host did not acknowledge GenAI events");
-            if (stop)
+            if (stop || cancel)
               return;
-            if (events.size() >= wire::event_window)
-              throw std::runtime_error("Cancelled with an unacknowledged event window");
             event["sequence"] = next_sequence + 1;
             if (event.dump().size() > wire::max_message_bytes)
               throw std::length_error("Generated event too large");
