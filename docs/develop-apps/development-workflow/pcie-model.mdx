@@ -48,7 +48,7 @@ results use the PCIe data transport.
 | `card_host` | empty | Explicit SSH/SCP address. When empty, card `N` uses `10.0.N.2`. |
 | `card_id` | `0` | Card number passed to the host PCIe plugin. |
 | `user` | `sima` | User for card-side SSH and SCP. |
-| `queue` | `0` | Co-processing queue, from `0` through `3`. |
+| `queue` | `0` | Co-processing queue, from `0` through `5`. |
 | `max_inflight` | `10` | Maximum accepted inputs waiting for results. |
 
 Use the defaults for one card at `10.0.0.2` on queue 0. Set `card_host`
@@ -452,8 +452,8 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 
 ## Current scope and limits
 
-- One `pcie::Model` owns one PCIe queue. Queues range from `0` through `3`.
-- The Modalix EV74 supports at most four concurrent co-processing pipelines.
+- One `pcie::Model` owns one PCIe data queue. Queues range from `0` through `5`.
+- Concurrent pipelines share card compute and memory; queue availability alone does not guarantee sufficient resources.
 - Do not assign two active models to the same queue.
 - The host package and the Neat Library installed on the card must be from
   compatible releases.

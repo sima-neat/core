@@ -154,10 +154,14 @@ public:
         throw;
       }
       remote_started_ = true;
-      (void)remote_.wait_ready(connection_.queue, *remote_pid_, readiness_timeout_ms);
+      const auto status = remote_.wait_ready(connection_.queue, *remote_pid_, readiness_timeout_ms);
+      if (!status.output_buffer_bytes)
+        throw std::runtime_error(
+            "card builder did not report output_buffer_bytes; install matching Core packages");
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
       channel_.configure(facts_, connection_.queue, connection_.card_id, connection_.max_inflight,
-                         model_options.has_boxdecode || facts_.has_boxdecode);
+                         model_options.has_boxdecode || facts_.has_boxdecode,
+                         status.output_buffer_bytes);
       reset_submission_state_locked();
       state_ = State::Ready;
     } catch (...) {
@@ -282,8 +286,8 @@ public:
 
 private:
   static void validate_queue(const int queue) {
-    if (queue < 0 || queue > 3) {
-      throw std::invalid_argument("queue must be in range 0..3");
+    if (queue < 0 || queue > 5) {
+      throw std::invalid_argument("queue must be in range 0..5");
     }
   }
 

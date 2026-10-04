@@ -1276,7 +1276,7 @@ The runtime exposes logical model IDs, caller-provided request IDs, nonblocking
 enqueue, retrieve-from-any-model, batch load, independent unload, and
 idempotent cleanup. Hardware queue IDs remain an implementation detail. The
 current Modalix implementation assigns exactly one loaded model to each of the
-four PCIe queues and continues to transfer model archives over the virtual
+six PCIe data queues (0–5) and continues to transfer model archives over the virtual
 Ethernet SSH/SCP control path.
 
 Inference request correlation uses the signed 32-bit OAAX request ID encoded
@@ -1286,15 +1286,32 @@ owns the model-to-queue registry and aggregates each queue's results; the
 card-side `pcie-pipeline-builder` remains one process and one model graph per
 queue.
 
-The card transport carries a separate private request token in the legacy-named
-`GstSimaMeta.pcie-buffer-id` field. It identifies the exact driver request and inflight credit;
-ordinary plugins may forward it unchanged but must not inspect or manufacture
-it. `stream-id` remains the output-routing key, while `frame-id` remains the
-application correlation key. Only `neatpciesink` resolves the request token.
-Successful work returns a DATA response. A decoder drop, flush, restart, or
-downstream failure returns a correlated `NEAT_PCIE_FRAME_RETURN_ERROR`, which
-releases the same host credit and terminates the affected host pipeline with an
-actionable error rather than leaving it blocked.
+The card transport carries an opaque logical correlation token in the
+legacy-named `GstSimaMeta.pcie-buffer-id` field. It encodes the unsigned 32-bit
+request ID plus one, preserving ID zero; it is not an address or a held driver
+request. Ordinary plugins must forward it unchanged. `neatpciesink` decodes it
+to correlate an independent return DATA message. `stream-id` selects the output
+stream, and `frame-id` carries frame correlation. Input transfer completion is
+separate from inference completion: the driver request is not held while the
+card processes the input.
+
+Output transport preserves the physical buffer layout, including padding and
+gaps. Before the first return DATA message, `neatpciesink` sends a versioned
+return CAPS envelope describing the raw byte extent and ordered physical output
+regions. The host plugin performs the existing `si_mla_read()` copy into a
+GStreamer receive buffer and exposes that layout in CAPS. `HostPcieChannel`
+validates the regions and payload extent, then creates tensor views at the
+correct offsets in public model-output order. No extra reorder copy is needed.
+
+Receive capacity must be configured before the host opens its PCIe queue.
+After building the card graph, `pcie-pipeline-builder` reads the compiled
+manifest for the producer feeding `neatpciesink` and reports a conservative
+`output_buffer_bytes` bound in its readiness status over SSH. The bound covers
+the planned frame arena and physical output spans; BoxDecode uses its output
+record format and `topk`. On the first input, the host selects the maximum of
+512 KiB, packed model input/output sizes, the submitted payload size, and this
+bound. Return metadata is validated against the configured capacity, not used
+to resize an active queue. Matching host and card packages are required.
 
 `ModelOptions::mla_only` moves the execution boundary. The card then runs the
 MLA stage alone, with no quantize before it and no dequantize after it, and the
@@ -1307,14 +1324,13 @@ The option reaches the card as `execution.mla_only` in the model options JSON.
 It requires `InputKind::Tensor` and rejects preprocess and box-decode options,
 which configure stages this route does not run.
 
-The MLA writes its heads tessellated and, depending on the model, padded. The
-host plugin copies the frame out of the driver buffer. Heads that are already
-contiguous in that frame are published as views into the received buffer;
-padded or strided heads are compacted into one dense allocation before
-publication. Either way a public tensor is dense INT8 or BF16 in the model's
-logical shape. Compaction sits on top of the existing `si_mla_read()` copy
-contract: the route costs at most one host copy more than the default one and
-needs no new `libsimaaipcie.so` symbols.
+For supported MLA-only archives, output heads may include channel padding or
+non-contiguous strides. If all heads are contiguous, the host publishes views
+into the received buffer. If any head requires compaction, the host copies the
+logical elements of all heads into one dense allocation before publication,
+removing padding. Public tensors retain their logical shapes and INT8 or BF16
+dtype. This adds at most one host copy beyond the existing `si_mla_read()` receive
+copy and requires no new `libsimaaipcie.so` symbols.
 
 The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
 native API. OAAX ownership rules, status codes, and last-error storage belong
