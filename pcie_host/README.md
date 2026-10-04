@@ -12,6 +12,11 @@ co-processing applications:
 - logs: `/var/log/sima-neat/pcie/qN.log`
 - host plugin: `neatpciehost`
 
+The 3.0 transport requires matching card and host packages. The card builder
+reports its compiled output capacity during readiness; the host sizes the PCIe
+buffers automatically before the first input. Returned tensors view the received
+raw buffer at the runtime-provided offsets, without an extra reorder copy.
+
 ## Public API
 
 Public headers install under:
@@ -62,8 +67,12 @@ runtime.unload(model_id);
 A runtime represents one Modalix PCIe Card. Each loaded model still owns one
 physical PCIe queue; the runtime assigns queues automatically, beginning with
 the preferred `ConnectionOptions::queue`, and exposes only logical `ModelId`
-values. The Modalix EV74 supports at most four concurrent co-processing
-pipelines, using queues 0 through 3.
+values. Queues 0 through 5 are available. Concurrent pipelines share card
+compute and memory; available queues do not guarantee sufficient resources.
+
+For `max_inflight` values from 1 through 10, the host uses a 16-entry transport
+ring per queue. Larger values and plugin-managed depth (`0`) retain 256 entries.
+Transport entries also carry metadata and are distinct from logical in-flight requests.
 
 `load_models()` reserves all required queues and has batch semantics: if any
 model fails to load, every model created by that call is closed and its queue
@@ -134,7 +143,7 @@ struct ConnectionOptions {
   std::string card_host;      // Optional explicit card IP/host for SSH/SCP.
   int card_id = 0;            // PCIe card/plugin index; default host is 10.0.<card_id>.2.
   std::string user = "sima";
-  int queue = 0;              // Supported co-processing queue, 0..3.
+  int queue = 0;              // Supported co-processing queue, 0..5.
   int max_inflight = 10;
   std::string card_env;
   std::string card_gst_debug; // Optional card-side GST_DEBUG spec for pcie-pipeline-builder.
@@ -542,6 +551,6 @@ Validated on a Modalix PCIe Card:
 
 - tensor-set metadata attachment and transport
 - packaged C++ and Python tensor, image, and boxdecode routes
-- simultaneous execution across four PCIe queues
+- simultaneous execution across six PCIe queues (0–5)
 - YOLOv8n and EVO50 model variants
 - `mla_only` against the default route, single- and multi-input archives

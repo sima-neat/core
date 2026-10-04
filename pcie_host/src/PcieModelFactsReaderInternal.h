@@ -15,4 +15,8 @@ void validate_supported_input_dtype(const pipeline_internal::sima::MpkTensorCont
 
 PcieModelFacts read_mla_only_facts(const pipeline_internal::sima::MpkContract& contract);
 
+// Manifest-only contract derivation; archive loading remains the public entry path.
+PcieModelFacts read_model_facts(const pipeline_internal::sima::MpkContract& contract,
+                                const ModelOptions& options = {});
+
 } // namespace simaai::neat::pcie::internal::detail
