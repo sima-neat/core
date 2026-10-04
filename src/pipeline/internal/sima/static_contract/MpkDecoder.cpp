@@ -2647,7 +2647,7 @@ std::filesystem::path resolve_mla_executable(const std::filesystem::path& mpk_ma
   if (root.empty()) {
     return raw;
   }
-  return first_existing({root / "share" / raw, root / raw, raw});
+  return first_existing({root / "share" / raw, root / "lib" / raw, root / raw, raw});
 }
 
 std::filesystem::path resolve_host_executable(const std::filesystem::path& mpk_manifest,

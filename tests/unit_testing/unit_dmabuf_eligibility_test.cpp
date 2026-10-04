@@ -362,6 +362,7 @@ void test_mpk_decoder_entry_admits_the_bytes_it_loaded() {
   std::error_code ec;
   std::filesystem::remove_all(root, ec);
   std::filesystem::create_directories(root / "etc", ec);
+  std::filesystem::create_directories(root / "lib", ec);
   std::filesystem::create_directories(root / "share", ec);
   CHECK(!ec);
   const auto mpk = root / "etc" / "model_mpk.json";
@@ -369,7 +370,8 @@ void test_mpk_decoder_entry_admits_the_bytes_it_loaded() {
     std::ofstream output(mpk);
     output << two_mla_manifest();
   }
-  write_monolithic_topology_elf(root / "share" / "encoder.so");
+  // Archive extraction places `.so` files under lib/ and `.elf` files under share/.
+  write_monolithic_topology_elf(root / "lib" / "encoder.so");
   write_monolithic_topology_elf(root / "share" / "decoder.elf");
 
   std::string error;
@@ -383,7 +385,7 @@ void test_mpk_decoder_entry_admits_the_bytes_it_loaded() {
   CHECK(loaded->package.manifest_bytes == std::string(two_mla_manifest()));
   CHECK(loaded->contract.plugins.size() == 3U);
   CHECK(loaded->package.mla_executables.size() == 2U);
-  CHECK(loaded->package.mla_executables.at(0).resolved_path == root / "share" / "encoder.so");
+  CHECK(loaded->package.mla_executables.at(0).resolved_path == root / "lib" / "encoder.so");
   CHECK(loaded->package.mla_executables.at(1).resolved_path == root / "share" / "decoder.elf");
   CHECK(loaded->package.host_executables.empty());
 

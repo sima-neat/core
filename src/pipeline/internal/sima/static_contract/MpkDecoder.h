@@ -117,8 +117,9 @@ struct LoadedMpk {
 std::optional<std::string> sha256_file(const std::filesystem::path& path);
 
 // Resolves an MLA executable named by the manifest. Candidates are
-// <package>/share/<name>, <package>/<name>, then <name>; the first existing file
-// wins, otherwise the first candidate. An empty name resolves to an empty path.
+// <package>/share/<name>, <package>/lib/<name> (where archive extraction places
+// `.so` files), <package>/<name>, then <name>; the first existing file wins,
+// otherwise the first candidate. An empty name resolves to an empty path.
 std::filesystem::path resolve_mla_executable(const std::filesystem::path& mpk_manifest,
                                              const std::string& executable);
 

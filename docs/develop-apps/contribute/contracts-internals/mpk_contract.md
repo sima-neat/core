@@ -50,10 +50,10 @@ Required package content:
 
 Model loading, prepared-runtime builds, and the PCIe host read `mpk.json` through
 `MpkDecoder::load`. It reads the manifest once, builds the semantic `MpkContract` from those bytes,
-and resolves each stage executable inside the package: MLA executables from `share/`, then the
-package root; A65 modules from `lib/`, the package root, then `share/`. Execution admission and the
-PCIe host decode the same bytes with the executables' ELF and GraphExecutor evidence, so the plan
-and the contract come from the same bytes.
+and resolves each stage executable inside the package: MLA executables from `share/`, `lib/`,
+then the package root; A65 modules from `lib/`, the package root, then `share/`. Execution
+admission and the PCIe host decode the same bytes with the executables' ELF and GraphExecutor
+evidence, so the plan and the contract come from the same bytes.
 
 ## Extraction Safety Rules
 

@@ -48,7 +48,7 @@ slug: /develop-apps/contribute/mpk_contract
 
 ## MPK 資訊清單載入
 
-模型載入、預備執行階段建置與 PCIe 主機都透過 `MpkDecoder::load` 讀取 `mpk.json`。它只讀取一次資訊清單，以這些位元組建立語意 `MpkContract`，並在套件內解析每個階段的執行檔：MLA 執行檔依序從 `share/`、套件根目錄尋找；A65 模組依序從 `lib/`、套件根目錄、`share/` 尋找。執行接納流程與 PCIe 主機會以執行檔的 ELF 與 GraphExecutor 證據解碼同一份位元組，因此計畫與合約來自同一份位元組。
+模型載入、預備執行階段建置與 PCIe 主機都透過 `MpkDecoder::load` 讀取 `mpk.json`。它只讀取一次資訊清單，以這些位元組建立語意 `MpkContract`，並在套件內解析每個階段的執行檔：MLA 執行檔依序從 `share/`、`lib/`、套件根目錄尋找；A65 模組依序從 `lib/`、套件根目錄、`share/` 尋找。執行接納流程與 PCIe 主機會以執行檔的 ELF 與 GraphExecutor 證據解碼同一份位元組，因此計畫與合約來自同一份位元組。
 
 ## 解壓縮安全規則
 
