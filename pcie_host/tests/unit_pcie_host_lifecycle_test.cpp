@@ -52,10 +52,33 @@ int main() {
       }
     }
 
+    for (const int queue : {-1, 6}) {
+      pcie::ConnectionOptions connection;
+      connection.queue = queue;
+      bool threw = false;
+      try {
+        (void)pcie::Model("unused-model.tar.gz", {}, connection);
+      } catch (const std::invalid_argument& error) {
+        threw = std::string(error.what()) == "queue must be in range 0..5";
+      }
+      if (!threw) {
+        throw std::runtime_error("invalid PCIe queue must be rejected");
+      }
+    }
+
     const char* model_env = std::getenv("SIMAPCIE_YOLOV8_MODEL");
     if (!model_env || !std::filesystem::is_regular_file(model_env)) {
       std::cout << "[SKIP] SIMAPCIE_YOLOV8_MODEL is not set to a readable model\n";
       return 0;
+    }
+
+    for (const int queue : {4, 5}) {
+      pcie::ConnectionOptions connection;
+      connection.queue = queue;
+      pcie::Model model(model_env, {}, connection);
+      if (model.info().inputs.empty()) {
+        throw std::runtime_error("new PCIe queues must accept model construction");
+      }
     }
 
     pcie::Model model(model_env);
