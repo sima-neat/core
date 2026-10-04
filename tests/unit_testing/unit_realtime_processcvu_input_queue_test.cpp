@@ -15,10 +15,10 @@ const std::string kPipeline = "rtspsrc latency=100 ! neatdecoder ! queue leaky=d
                               "neatprocesscvu name=preproc async=true ! neatprocessmla name=mla ! "
                               "neatprocesscvu name=post max-input-queue-time=5000000 ! appsink";
 
-std::string apply_preset(simaai::neat::RunPreset preset) {
+std::string apply_preset(simaai::neat::RunPreset preset, const std::string& pipeline = kPipeline) {
   simaai::neat::RunOptions opt;
   opt.preset = preset;
-  return simaai::neat::session_build_apply_run_preset_to_pipeline(kPipeline, opt);
+  return simaai::neat::session_build_apply_run_preset_to_pipeline(pipeline, opt);
 }
 
 } // namespace
@@ -35,6 +35,11 @@ RUN_TEST("unit_realtime_processcvu_input_queue_test", [] {
                    "an explicitly rendered value must win over the preset");
   require(realtime.find("neatprocessmla name=mla max-input-queue-time") == std::string::npos,
           "only ProcessCVU stages receive the limit");
+
+  const std::string spaced = "appsrc ! neatprocesscvu name=post max-input-queue-time = 5000000 ! "
+                             "appsink";
+  require(apply_preset(RunPreset::Realtime, spaced) == spaced,
+          "an explicit value with spaces around '=' must win over the preset");
 
   require(apply_preset(RunPreset::Balanced) == kPipeline, "Balanced must leave queues unchanged");
   require(apply_preset(RunPreset::Reliable) == kPipeline, "Reliable must leave queues unchanged");

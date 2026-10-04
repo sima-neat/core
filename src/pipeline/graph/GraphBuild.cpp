@@ -1841,8 +1841,16 @@ static void set_fragment_segment_property(std::string* segment, std::string_view
     return;
   }
   const std::string key = std::string(property) + "=";
+  if (!replace_existing) {
+    // Launch syntax allows spaces around '=', which a literal key search misses.
+    for (const auto& assignment : gst::launch::analyze(*segment).assignments) {
+      if (assignment.key == property) {
+        return;
+      }
+    }
+  }
   std::size_t search = 0;
-  while (search < segment->size()) {
+  while (replace_existing && search < segment->size()) {
     const std::size_t pos = segment->find(key, search);
     if (pos == std::string::npos) {
       break;
@@ -1852,9 +1860,6 @@ static void set_fragment_segment_property(std::string* segment, std::string_view
     if (!token_start) {
       search = pos + key.size();
       continue;
-    }
-    if (!replace_existing) {
-      return;
     }
     const std::size_t value_start = pos + key.size();
     std::size_t value_end = value_start;
