@@ -1,6 +1,6 @@
 name: Vulcan Docs
 
-run-name: vulcan-docs (${{ github.event_name == 'push' && 'stg' || inputs.deploy_environment || 'stg' }}${{ inputs.sibling_branch && format(', siblings@{0}', inputs.sibling_branch) || '' }})
+run-name: vulcan-docs (${{ github.event_name == 'push' && 'stg' || inputs.deploy_environment || 'stg' }})
 
 on:
   push:
