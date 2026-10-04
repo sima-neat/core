@@ -17,8 +17,8 @@ reports its compiled output capacity during readiness; the host sizes the PCIe
 buffers automatically before the first input. Returned tensors view the received
 raw buffer at the runtime-provided offsets, without an extra reorder copy.
 
-For direct LLM, VLM and ASR APIs using one Core worker per model, see
-[HOW-TO-RUN-PCIE-GENAI.md](HOW-TO-RUN-PCIE-GENAI.md) (also includes the `pcie-genai` CLI).
+Direct LLM, VLM and ASR APIs use one Core worker per model; the `pcie-genai`
+CLI uses the same APIs.
 
 ## Public API
 

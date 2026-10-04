@@ -692,6 +692,18 @@ fi
 GENAI_CMAKE_ARGS=()
 if [[ -n "${SIMAPCIE_SVC_INCLUDE_DIR:-}" ]]; then
   GENAI_CMAKE_ARGS+=("-DSIMAPCIE_SVC_INCLUDE_DIR=${SIMAPCIE_SVC_INCLUDE_DIR}")
+elif [[ "${SIMAPCIE_BUILD_GENAI:-ON}" != "OFF" ]]; then
+  for header in simaai_svc.h simaai_svc_proto.h; do
+    source_header="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/include/simaai/${header}"
+    if [[ ! -f "${source_header}" ]]; then
+      echo "ERROR: PCIe host artifact lacks GenAI service header: ${source_header}" >&2
+      echo "       Update the Internals PCIe host artifact to a matching GenAI build." >&2
+      exit 1
+    fi
+    mkdir -p "${INCLUDE_STAGE_DIR}/simaai"
+    cp -f "${source_header}" "${INCLUDE_STAGE_DIR}/simaai/${header}"
+  done
+  GENAI_CMAKE_ARGS+=("-DSIMAPCIE_SVC_INCLUDE_DIR=${INCLUDE_STAGE_DIR}/simaai")
 fi
 cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \

@@ -1103,7 +1103,7 @@ SSH 僅用於啟動及停止已驗證身分的工作程序。模型資源、媒�
 可攜式結果型別共用於 `GenAIValueTypes.h`；主機的影像與音訊輸入使用 PCIe 張量，而非 Core 張量。
 服務通道由平台選擇，現有視覺佇列與其建構程序生命週期不變。
 獨立工作程序允許各模型分開執行，但不保證特定的同時模型數量或混合工作負載吞吐量。
-此遠端 API 不支援 LoRA 和 speculative decoding。設定與驗證需求請參閱 PCIe 主機 GenAI 指南。
+此遠端 API 不支援 LoRA 和 speculative decoding。
 
 ## 如何擴展程式庫
 

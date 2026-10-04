@@ -1394,7 +1394,6 @@ channel selection. Existing vision queues and their builder lifecycle are
 unchanged. Separate workers allow independent models but do not guarantee a
 particular concurrent model count or mixed-workload throughput. LoRA and
 speculative decoding are not supported by this remote API.
-See the PCIe host GenAI guide for configuration and validation requirements.
 
 ---
 
