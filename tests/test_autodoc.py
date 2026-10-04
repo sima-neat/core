@@ -1,6 +1,8 @@
 import hashlib
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -695,6 +697,56 @@ class NestedSourceMountTests(unittest.TestCase):
             "compile-a-model/quantization-aware-training",
         )
         self.assertTrue(sources[model_sdk_index + 1]["localization"])
+
+
+class BranchResolutionTests(unittest.TestCase):
+    LLIMA = {
+        "key": "llima",
+        "branch": "develop",
+        "branch_policy": "snap",
+        "fallback_branch": "develop",
+    }
+    SIMA_CLI = {"key": "sima-cli", "branch": "main", "branch_policy": "snap"}
+
+    def candidates(self, source, **env):
+        refs = {"AUTODOC_SNAP_BRANCH": "", "GITHUB_HEAD_REF": "", "GITHUB_REF_NAME": ""}
+        refs.update(env)
+        with mock.patch.dict(os.environ, refs):
+            return MODULE.resolve_branch_candidates(source, ROOT)
+
+    def test_snap_branch_override_takes_precedence_over_github_refs(self):
+        refs = {
+            "AUTODOC_SNAP_BRANCH": "main",
+            "GITHUB_HEAD_REF": "develop",
+            "GITHUB_REF_NAME": "develop",
+        }
+
+        self.assertEqual(self.candidates(self.LLIMA, **refs), (["main", "develop"], "main"))
+        self.assertEqual(self.candidates(self.SIMA_CLI, **refs), (["main"], "main"))
+
+    def test_empty_snap_branch_override_keeps_ref_resolution(self):
+        self.assertEqual(
+            self.candidates(self.LLIMA, GITHUB_REF_NAME="develop"),
+            (["develop"], "develop"),
+        )
+        self.assertEqual(
+            self.candidates(self.SIMA_CLI, GITHUB_REF_NAME="develop"),
+            (["develop", "main"], "develop"),
+        )
+
+    def test_source_commit_reports_checked_out_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staging = Path(directory)
+            self.assertEqual(MODULE.source_commit(staging / "missing"), "unknown")
+
+            git = ["git", "-C", str(staging), "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run([*git, "init", "-q"], check=True)
+            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "seed"], check=True)
+            head = subprocess.run(
+                [*git, "rev-parse", "HEAD"], check=True, stdout=subprocess.PIPE, text=True,
+            ).stdout.strip()
+
+            self.assertEqual(MODULE.source_commit(staging), head)
 
 
 class AutodocMainTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 name: Vulcan Docs
 
-run-name: vulcan-docs (${{ github.event_name == 'push' && 'stg' || inputs.deploy_environment || 'stg' }})
+run-name: vulcan-docs (${{ github.event_name == 'push' && 'stg' || inputs.deploy_environment || 'stg' }}${{ inputs.sibling_branch && format(', siblings@{0}', inputs.sibling_branch) || '' }})
 
 on:
   push:
@@ -10,6 +10,10 @@ on:
     inputs:
       deploy_environment:
         description: "Optional Vulcan docs environment override: stg/staging or prod/production. Defaults to stg."
+        required: false
+        type: string
+      sibling_branch:
+        description: "Optional staging-only release check: import every sibling repo's docs from this branch (e.g. main) instead of the branch matching this run."
         required: false
         type: string
 
@@ -33,6 +37,8 @@ jobs:
       - name: Resolve deployment target
         id: target
         shell: bash
+        env:
+          SIBLING_BRANCH: ${{ inputs.sibling_branch }}
         run: |
           set -euo pipefail
 
@@ -62,6 +68,10 @@ jobs:
               ;;
             prod|production)
               deploy_environment="prod"
+              if [[ -n "${SIBLING_BRANCH}" ]]; then
+                echo "sibling_branch is a staging-only release check; production docs import sibling branches matching this ref." >&2
+                exit 1
+              fi
               if [[ "${GITHUB_REF}" != "refs/heads/main" && ! "${GITHUB_REF}" =~ ^refs/heads/v[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
                 echo "Production docs deploy is only allowed from refs/heads/main or vX.Y.Z release branches. Current ref: ${GITHUB_REF}" >&2
                 exit 1
@@ -88,6 +98,7 @@ jobs:
       DOCS_BASE_URL: /software/
       DOCS_DEVELOPER_CENTER_SHELL_BASE: /
       AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
+      AUTODOC_SNAP_BRANCH: ${{ inputs.sibling_branch }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
