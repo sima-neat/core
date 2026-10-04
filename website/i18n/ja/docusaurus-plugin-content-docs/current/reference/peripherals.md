@@ -55,9 +55,11 @@ for (const auto& peripheral : catalog) {
 | `backend` | `mipi` や `v4l2` などの検出バックエンド。 |
 | `modes` | 離散サイズまたは明示的なサイズ範囲、フレームレート、サポートフラグ、および拒否理由。 |
 
-サポートの分類は、この Core パッケージが `/usr/share/simaai-sentinel/support/neat-core.json` にインストールするルールを Sentinel が適用して行うため、結果はインストール済みの `CameraInput` と一致します。クライアントはその結果を保持し、カメラのプローブ、再分類、
+サポートの分類は、この Core パッケージが `/usr/share/simaai-sentinel/support/neat-core.json` にインストールするルールを Sentinel が適用して行うため、結果はインストール済みの `CameraInput` のデフォルト libcamera プロファイル（`camera_name` でカメラを選択する `profile=Default`）と一致します。クライアントはその結果を保持し、カメラのプローブ、再分類、
 取得、設定、ストリーミングを行いません。そのため、カタログ上のサポートは、後で排他的取得が
 成功することを保証しません。
+
+このルールは Metoak SIMOR の raw V4L2 プロファイル（`CameraProfile::MetoakSimor`、RAW8 1920×360、`profile` と任意の `device` で選択）を分類しません。ルールにはセンサーごとの条件がないため、Sentinel が `mipi` カメラとして列挙した SIMOR センサー（名前が `simor_metoak` で始まるもの）は、他の MIPI センサーと同じ ISP モード分類になります。このカメラでの `supported: true` は、モードがデフォルトプロファイルのバックエンド、形式、フレームレート、ISP 出力サイズに一致することだけを意味し、libcamera がそのセンサーに対応済みであることは意味しません。SIMOR カメラは、カタログの `camera_name` ではなく、[`CameraInput`](/reference/nodes/camera-input) で説明する `profile=MetoakSimor` で選択してください。
 
 ## あらゆるペリフェラル型の詳細
 

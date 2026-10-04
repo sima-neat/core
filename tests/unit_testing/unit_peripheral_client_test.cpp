@@ -333,7 +333,7 @@ void test_protocol_failures() {
 }
 
 // Sentinel classifies camera modes with the rules Core installs; keep them in
-// step with CameraInput's defaults.
+// step with CameraInput's defaults and scoped to its default profile.
 void test_support_rules_match_camera_input_defaults() {
   const auto rules = json::parse(
 #include "sentinel_support_rules.inc"
@@ -352,6 +352,24 @@ void test_support_rules_match_camera_input_defaults() {
                   defaults.framerate_num * rate[0].at("den").get<std::uint64_t>() &&
               framerates.at("reason").get<std::string>().find(default_rate) != std::string::npos,
           "Sentinel support rules drifted from CameraInput's defaults");
+
+  // The rules classify only the default libcamera profile. Format 1 cannot
+  // express a second profile, so every reason names that scope and the backend
+  // reason says the MetoakSimor raw V4L2 profile is not classified.
+  const auto& camera = rules.at("camera");
+  require(defaults.profile == simaai::neat::CameraProfile::Default &&
+              camera.at("backends").at("accept") == json::array({"mipi"}) &&
+              camera.at("formats").at("accept") == json::array({"NV12"}),
+          "Sentinel support rules must describe only the default libcamera profile");
+  for (const auto* rule : {"backends", "formats", "framerates", "isp_output"}) {
+    require(camera.at(rule).at("reason").get<std::string>().find("default libcamera profile") !=
+                std::string::npos,
+            std::string("support rule reason must name the default profile: ") + rule);
+  }
+  const auto backend = camera.at("backends").at("reason").get<std::string>();
+  require(backend.find("MetoakSimor") != std::string::npos &&
+              backend.find("do not classify") != std::string::npos,
+          "backend reason must say raw V4L2 profiles are not classified");
 }
 
 } // namespace

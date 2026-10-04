@@ -53,8 +53,10 @@ for (const auto& peripheral : catalog) {
 | `backend` | 探索後端，例如 `mipi` 或 `v4l2`。 |
 | `modes` | 離散尺寸或明確尺寸範圍、畫面更新率、支援旗標，以及拒絕原因。 |
 
-支援狀態由 Sentinel 套用此 Core 套件安裝於 `/usr/share/simaai-sentinel/support/neat-core.json` 的規則進行分類，因此結果會與已安裝的 `CameraInput` 一致。用戶端會保留該結果，不會探查、重新分類、取得、設定或串流相機。
+支援狀態由 Sentinel 套用此 Core 套件安裝於 `/usr/share/simaai-sentinel/support/neat-core.json` 的規則進行分類，因此結果會與已安裝 `CameraInput` 的預設 libcamera 設定檔（以 `camera_name` 選取相機的 `profile=Default`）一致。用戶端會保留該結果，不會探查、重新分類、取得、設定或串流相機。
 因此，目錄中的支援狀態不保證稍後的獨佔取得一定成功。
+
+這些規則不會分類 Metoak SIMOR raw V4L2 設定檔（`CameraProfile::MetoakSimor`，RAW8 1920×360，以 `profile` 及選用的 `device` 選取）。規則沒有個別感測器的條件，因此 Sentinel 列為 `mipi` 相機的 SIMOR 感測器（名稱以 `simor_metoak` 開頭）會得到與其他 MIPI 感測器相同的 ISP 模式分類。對此相機而言，`supported: true` 只表示該模式符合預設設定檔的後端、格式、畫面更新率與 ISP 輸出尺寸，並不表示 libcamera 已針對該感測器驗證。請依 [`CameraInput`](/reference/nodes/camera-input) 的說明以 `profile=MetoakSimor` 選取 SIMOR 相機，而不是使用其目錄中的 `camera_name`。
 
 ## 任何周邊裝置類型的詳細資料
 
