@@ -1836,13 +1836,21 @@ static bool fragment_segment_uses_factory(std::string_view segment, std::string_
 }
 
 static void set_fragment_segment_property(std::string* segment, std::string_view property,
-                                          std::string_view value) {
+                                          std::string_view value, bool replace_existing = true) {
   if (!segment) {
     return;
   }
   const std::string key = std::string(property) + "=";
+  if (!replace_existing) {
+    // Launch syntax allows spaces around '=', which a literal key search misses.
+    for (const auto& assignment : gst::launch::analyze(*segment).assignments) {
+      if (assignment.key == property) {
+        return;
+      }
+    }
+  }
   std::size_t search = 0;
-  while (search < segment->size()) {
+  while (replace_existing && search < segment->size()) {
     const std::size_t pos = segment->find(key, search);
     if (pos == std::string::npos) {
       break;
@@ -1873,14 +1881,15 @@ static void set_fragment_segment_property(std::string* segment, std::string_view
 
 static std::string set_property_for_factory_segments(std::string fragment, std::string_view factory,
                                                      std::string_view property,
-                                                     std::string_view value) {
+                                                     std::string_view value,
+                                                     bool replace_existing = true) {
   std::size_t segment_start = 0;
   while (segment_start <= fragment.size()) {
     const std::size_t separator = fragment.find('!', segment_start);
     const std::size_t segment_end = separator == std::string::npos ? fragment.size() : separator;
     std::string segment = fragment.substr(segment_start, segment_end - segment_start);
     if (fragment_segment_uses_factory(segment, factory)) {
-      set_fragment_segment_property(&segment, property, value);
+      set_fragment_segment_property(&segment, property, value, replace_existing);
       fragment.replace(segment_start, segment_end - segment_start, segment);
       if (separator != std::string::npos) {
         segment_start += segment.size() + 1U;
@@ -2213,6 +2222,21 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
       std::move(fragment), "neatprocessmla", "defer-output-invalidate",
       sess_opt->processmla.defer_output_invalidate ? "true" : "false");
   return fragment;
+}
+
+std::string session_build_apply_run_preset_to_pipeline(std::string pipeline,
+                                                       const RunOptions& opt) {
+  if (opt.preset != RunPreset::Realtime) {
+    return pipeline;
+  }
+  // A live source's latency (e.g. a 100 ms RTSP jitter buffer) otherwise sizes
+  // each ProcessCVU input queue, and every queued frame keeps its decoder
+  // buffer, so the decoder stalls before the KeepLatest queue can drop.
+  constexpr std::uint64_t kRealtimeMaxInputQueueTimeNs = 20'000'000;
+  return set_property_for_factory_segments(std::move(pipeline), "neatprocesscvu",
+                                           "max-input-queue-time",
+                                           std::to_string(kRealtimeMaxInputQueueTimeNs),
+                                           /*replace_existing=*/false);
 }
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b);
 

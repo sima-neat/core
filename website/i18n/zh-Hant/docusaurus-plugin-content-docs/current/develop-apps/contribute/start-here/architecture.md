@@ -626,6 +626,8 @@ graph.add(simaai::neat::nodes::Output());
 
 這支援完全非同步的管線（生產者/消費者分離），以及單次流程（`Graph::run(...)`）。
 
+使用 `RunPreset::Realtime` 時，即時來源管線也會限制圖內部的佇列：Core 會在每個尚未設定此值的 `neatprocesscvu` 上將 `max-input-queue-time` 設為 20 毫秒。ProcessCVU 是 GStreamer 聚合器，否則會在 `KeepLatest` 佇列之後將輸入排隊到來源延遲的長度，使影格佔用解碼器緩衝區而不是被丟棄。Internals 只對單一輸入的元素套用此限制，並向下游回報未變更的延遲。
+
 對於 RTP JPEG，`rtpjpegdepay` 之後的相容性探測會在解析之前補上缺少的 JPEG 結束標記。正確結束的影像會原樣通過；這並不會修復封包遺失或其他格式錯誤的 JPEG 資料。
 
 應用程式輸入配置與既有緩衝區所有權是不同合約。
