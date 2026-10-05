@@ -1,0 +1,99 @@
+---
+title: PCIe GenAI APIs
+description: Run LLM, VLM, and ASR models on a Modalix PCIe Card from a host application
+sidebar_position: 4
+slug: /develop-apps/development-workflow/genai-model/pcie-api
+---
+
+# PCIe GenAI APIs
+
+Use `simaai::neat::pcie::genai` in C++ or `pyneatpcie.genai` in Python to run
+LLM, VLM, and ASR models from a host machine on a connected Modalix PCIe Card.
+
+The API follows the [Direct GenAI APIs](/develop-apps/development-workflow/genai-model/direct-api)
+request and streaming pattern. Model files, inputs, and results travel over PCIe.
+Unlike [vision co-processing](/develop-apps/development-workflow/pcie-model),
+GenAI does not take a vision queue number or require `build()`.
+
+## Before you start
+
+- Follow [Install PCIe Host](/getting-started/neat-library/pcie-host/), with
+  matching host and card packages that support GenAI.
+- Ensure the connected card is configured as described during installation.
+- Prepare a LLiMa model directory on the host. Pass an absolute path or a path
+  relative to your application's current working directory, not a card-local path.
+  Keep the model files readable and unchanged while the model is open.
+
+## Run a text request
+
+This example assumes `Qwen3-0.6B-Autoround-a16w4` is in `./models/` beneath
+your application's current working directory.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <simaai/neat/pcie/genai/GenAIModel.h>
+#include <iostream>
+
+int main() {
+  namespace genai = simaai::neat::pcie::genai;
+  genai::ConnectionOptions connection;
+  connection.card_id = 0;
+
+  genai::GenAIModel model("./models/Qwen3-0.6B-Autoround-a16w4", connection);
+  genai::GenerationRequest request;
+  request.prompt = "Explain PCIe in one sentence.";
+  request.max_new_tokens = 64;
+
+  std::cout << model.run(request).text << '\n';
+  model.close();
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+from pyneatpcie import genai
+
+connection = genai.ConnectionOptions()
+connection.card_id = 0
+
+with genai.GenAIModel("./models/Qwen3-0.6B-Autoround-a16w4", connection) as model:
+    request = genai.GenerationRequest()
+    request.prompt = "Explain PCIe in one sentence."
+    request.max_new_tokens = 64
+    print(model.run(request).text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+The constructor loads the remote model. `run()` returns the complete result;
+`close()` releases the model resources. The Python context manager closes it on exit,
+including when an exception occurs. Link C++ applications with the installed
+`SimaPCIeHost::sima_neat_pcie_host` CMake target.
+
+`connection.card_id` selects the card and its default address: `0` uses
+`10.0.0.2`, `1` uses `10.0.1.2`, and so on. Set `connection.card_host` only
+when your card uses a different address.
+
+## Streaming, media, and multiple models
+
+- Use `model.stream(request)` and iterate over `TokenSample` values to stream
+  output. Call `cancel()` and consume the terminal sample before reusing the
+  model. Only one request may be active per model.
+- For VLMs, use `request.image_files` or `request.images` (UInt8 HWC RGB PCIe
+  tensors; Python also accepts NumPy arrays). For ASR, use `request.audio_file`
+  or `request.audio` (Float32 mono samples) with `request.sample_rate`.
+- Supply conversation history through `request.messages`; separate requests
+  do not inherit earlier history.
+- Create separate handles for independent models. GenAI models can coexist
+  with vision models, subject to card resources; throughput is workload-dependent.
+
+See the [Direct GenAI APIs](/develop-apps/development-workflow/genai-model/direct-api)
+for shared request, result, and streaming concepts. Use PCIe request/tensor
+types instead of local Core types. LoRA switching, cached-image reuse,
+speculative decoding, and GenAI graph composition are not exposed by this
+remote API.

@@ -1,0 +1,76 @@
+---
+title: PCIe GenAI API
+description: ホストアプリケーションから Modalix PCIe カード上の LLM、VLM、ASR モデルを実行する
+sidebar_position: 4
+slug: /develop-apps/development-workflow/genai-model/pcie-api
+---
+
+# PCIe GenAI API
+
+C++ では `simaai::neat::pcie::genai`、Python では `pyneatpcie.genai` を使用して、ホストマシンから接続された Modalix PCIe カード上で LLM、VLM、ASR モデルを実行します。
+
+リクエストとストリーミングの使い方は、[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api) と同様です。モデルファイル、入力、結果は PCIe 経由で転送します。[ビジョンのコプロセッシング](/develop-apps/development-workflow/pcie-model) とは異なり、GenAI ではビジョンキュー番号の指定や `build()` は不要です。
+
+## 開始前の準備
+
+- [PCIe ホストのインストール](/getting-started/neat-library/pcie-host/) に従い、GenAI をサポートするホストとカードの対応するパッケージを使用してください。
+- 接続されたカードが、インストール手順に従って設定されていることを確認してください。
+- ホスト上に LLiMa モデルディレクトリを準備してください。カード上のローカルパスではなく、絶対パスまたはアプリケーションの現在の作業ディレクトリからの相対パスを渡します。モデルを開いている間は、ファイルを読み取り可能な状態に保ち、変更しないでください。
+
+## テキストリクエストを実行する
+
+この例では、アプリケーションの現在の作業ディレクトリ配下の `./models/` に `Qwen3-0.6B-Autoround-a16w4` が配置されていることを前提とします。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <simaai/neat/pcie/genai/GenAIModel.h>
+#include <iostream>
+
+int main() {
+  namespace genai = simaai::neat::pcie::genai;
+  genai::ConnectionOptions connection;
+  connection.card_id = 0;
+
+  genai::GenAIModel model("./models/Qwen3-0.6B-Autoround-a16w4", connection);
+  genai::GenerationRequest request;
+  request.prompt = "Explain PCIe in one sentence.";
+  request.max_new_tokens = 64;
+
+  std::cout << model.run(request).text << '\n';
+  model.close();
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+from pyneatpcie import genai
+
+connection = genai.ConnectionOptions()
+connection.card_id = 0
+
+with genai.GenAIModel("./models/Qwen3-0.6B-Autoround-a16w4", connection) as model:
+    request = genai.GenerationRequest()
+    request.prompt = "Explain PCIe in one sentence."
+    request.max_new_tokens = 64
+    print(model.run(request).text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+コンストラクタはリモートモデルをロードします。`run()` は完全な結果を返し、`close()` はモデルのリソースを解放します。Python のコンテキストマネージャーは、例外が発生した場合も含め、終了時にモデルを閉じます。C++ アプリケーションは、インストールされた CMake ターゲット `SimaPCIeHost::sima_neat_pcie_host` にリンクしてください。
+
+`connection.card_id` はカードとその既定のアドレスを選択します。`0` は `10.0.0.2`、`1` は `10.0.1.2` を使用し、以降も同様です。カードが別のアドレスを使用する場合にのみ `connection.card_host` を設定してください。
+
+## ストリーミング、メディア、複数モデル
+
+- `model.stream(request)` を使用し、`TokenSample` を反復処理して出力をストリーミングします。モデルを再利用する前に、`cancel()` を呼び出して終端サンプルを読み取ってください。各モデルで同時に実行できるリクエストは 1 つです。
+- VLM では `request.image_files` または `request.images`（UInt8 HWC RGB の PCIe テンソル。Python では NumPy 配列も使用可能）を使用します。ASR では `request.audio_file` または `request.audio`（Float32 のモノラルサンプル）と `request.sample_rate` を使用します。
+- 会話履歴は `request.messages` で渡してください。個別のリクエストは以前の履歴を引き継ぎません。
+- 独立したモデルごとにハンドルを作成してください。カードのリソースの範囲内で GenAI モデルとビジョンモデルを併用できます。スループットはワークロードに依存します。
+
+共通のリクエスト、結果、ストリーミングの概念については、[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api) を参照してください。ローカル Core の型ではなく PCIe のリクエスト型とテンソル型を使用します。このリモート API は、LoRA の切り替え、キャッシュ済み画像の再利用、投機的デコーディング、GenAI グラフの構成を公開していません。

@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <dlfcn.h>
 #include <stdexcept>
+#include <sys/socket.h>
 #include <vector>
 
 namespace simaai::neat::pcie::genai::wire {
@@ -21,6 +22,8 @@ struct Service::Impl {
   decltype(&simaai_svc_notify) notify = nullptr;
   decltype(&simaai_svc_recv) recv = nullptr;
   decltype(&simaai_svc_get_file) fetch = nullptr;
+  decltype(&simaai_svc_put_file) put = nullptr;
+  decltype(&simaai_svc_fd) fd = nullptr;
   std::vector<char> buffer = std::vector<char>(SIMAAI_SVC_PAYLOAD_MAX);
   template <class T> T symbol(const char* name) {
     auto fn = reinterpret_cast<T>(dlsym(library, name));
@@ -45,6 +48,8 @@ Service::Service(int card, bool endpoint) : impl_(std::make_unique<Impl>()) {
   impl_->notify = impl_->symbol<decltype(impl_->notify)>("simaai_svc_notify");
   impl_->recv = impl_->symbol<decltype(impl_->recv)>("simaai_svc_recv");
   impl_->fetch = impl_->symbol<decltype(impl_->fetch)>("simaai_svc_get_file");
+  impl_->put = impl_->symbol<decltype(impl_->put)>("simaai_svc_put_file");
+  impl_->fd = impl_->symbol<decltype(impl_->fd)>("simaai_svc_fd");
   if (endpoint) {
     auto open = impl_->symbol<int (*)(const char*, simaai_svc**)>("simaai_svc_open");
     check(open(nullptr, &impl_->handle), "open endpoint");
@@ -56,6 +61,9 @@ Service::Service(int card, bool endpoint) : impl_(std::make_unique<Impl>()) {
   }
 }
 Service::~Service() = default;
+void Service::interrupt() noexcept {
+  shutdown(impl_->fd(impl_->handle), SHUT_RDWR);
+}
 void Service::subscribe(const std::string& tag) {
   check(impl_->subscribe(impl_->handle, tag.c_str()), "subscribe");
 }
@@ -90,5 +98,13 @@ bool Service::fetch(const std::string& root, const std::string& source,
     return false;
   check(rc, "fetch");
   return true;
+}
+void Service::put(const std::string& source, const std::string& destination) {
+  simaai_svc_xfer_opts opts{};
+  opts.flags = SIMAAI_SVC_XF_OVERWRITE;
+  simaai_svc_xfer stats{};
+  // A null destination selects the card daemon's default receive root.
+  check(impl_->put(impl_->handle, source.c_str(), nullptr, destination.c_str(), &opts, &stats),
+        "put model asset");
 }
 } // namespace simaai::neat::pcie::genai::wire

@@ -1,0 +1,126 @@
+// Local-only daemon substitute. Never opens a PCIe device or connects to SSH.
+#include <simaai_svc.h>
+#include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <cstring>
+#include <deque>
+#include <filesystem>
+#include <mutex>
+#include <poll.h>
+#include <string>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <vector>
+
+struct simaai_svc {
+  int sockets[2];
+  std::string tag;
+  std::deque<std::string> messages;
+};
+namespace {
+std::mutex mutex;
+std::vector<simaai_svc*> clients;
+std::filesystem::path receive_root;
+std::atomic<int> copies{0}, put_error{0};
+std::atomic<bool> block_put{false};
+bool disconnected(simaai_svc* client, int timeout) {
+  pollfd fd{client->sockets[0], POLLIN, 0};
+  return poll(&fd, 1, timeout) > 0 && (fd.revents & (POLLHUP | POLLERR));
+}
+} // namespace
+extern "C" {
+void test_genai_receive_root(const char* root) {
+  receive_root = root;
+}
+int test_genai_copies() {
+  return copies;
+}
+void test_genai_put_error(int error) {
+  put_error = error;
+}
+void test_genai_block_put(bool block) {
+  block_put = block;
+}
+int simaai_svc_open_card(uint32_t, simaai_svc** out) {
+  auto* client = new simaai_svc;
+  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, client->sockets) != 0) {
+    delete client;
+    return -errno;
+  }
+  std::lock_guard lock(mutex);
+  clients.push_back(client);
+  *out = client;
+  return 0;
+}
+int simaai_svc_open(const char*, simaai_svc** out) {
+  return simaai_svc_open_card(0, out);
+}
+void simaai_svc_close(simaai_svc* client) {
+  std::lock_guard lock(mutex);
+  clients.erase(std::find(clients.begin(), clients.end(), client));
+  close(client->sockets[0]);
+  close(client->sockets[1]);
+  delete client;
+}
+int simaai_svc_fd(const simaai_svc* client) {
+  return client->sockets[0];
+}
+int simaai_svc_subscribe(simaai_svc* client, const char* tag) {
+  std::lock_guard lock(mutex);
+  client->tag = tag;
+  return 0;
+}
+int simaai_svc_notify(simaai_svc* sender, const simaai_svc_note* note, unsigned int*) {
+  if (disconnected(sender, 0))
+    return -ECONNRESET;
+  std::lock_guard lock(mutex);
+  for (auto* client : clients) {
+    if (client->tag == note->tag) {
+      client->messages.emplace_back(static_cast<const char*>(note->payload), note->payload_len);
+      if (send(client->sockets[1], "x", 1, MSG_NOSIGNAL) != 1)
+        return -ECONNRESET;
+    }
+  }
+  return 0;
+}
+int simaai_svc_recv(simaai_svc* client, simaai_svc_note* note, void* buffer, size_t capacity,
+                    int timeout) {
+  pollfd fd{client->sockets[0], POLLIN, 0};
+  if (poll(&fd, 1, timeout) <= 0)
+    return -EAGAIN;
+  char byte;
+  if (read(fd.fd, &byte, 1) != 1)
+    return -ECONNRESET;
+  std::lock_guard lock(mutex);
+  if (client->messages.empty())
+    return -EAGAIN;
+  auto message = std::move(client->messages.front());
+  client->messages.pop_front();
+  if (message.size() > capacity)
+    return -EMSGSIZE;
+  std::memcpy(buffer, message.data(), message.size());
+  note->payload = buffer;
+  note->payload_len = message.size();
+  return 0;
+}
+int simaai_svc_get_file(simaai_svc*, const char*, const char*, const char*,
+                        const simaai_svc_xfer_opts*, simaai_svc_xfer*) {
+  return -ENOSYS;
+}
+int simaai_svc_put_file(simaai_svc* client, const char* source, const char* root,
+                        const char* destination, const simaai_svc_xfer_opts*, simaai_svc_xfer*) {
+  ++copies;
+  while (block_put)
+    if (disconnected(client, 10))
+      return -ECONNRESET;
+  if (put_error)
+    return put_error;
+  if (root != nullptr || !std::filesystem::path(source).is_absolute())
+    return -EINVAL;
+  const auto target = receive_root / destination;
+  std::filesystem::create_directories(target.parent_path());
+  std::filesystem::copy_file(source, target, std::filesystem::copy_options::overwrite_existing);
+  return 0;
+}
+}

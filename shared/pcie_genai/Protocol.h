@@ -5,7 +5,7 @@
 
 namespace simaai::neat::pcie::genai::wire {
 using Json = simaai::neat::genai::Json;
-inline constexpr int version = 1;
+inline constexpr int version = 2;
 inline constexpr std::size_t event_window = 32;
 inline constexpr std::size_t max_message_bytes = 256 * 1024;
 inline std::string relative_name(const std::string& name) {
@@ -25,6 +25,10 @@ inline void validate_session(const std::string& session) {
 inline std::string tag(const std::string& session, bool reply) {
   validate_session(session);
   return "ng." + session + (reply ? ".r" : ".c");
+}
+inline std::string asset_tag(const std::string& session, bool reply) {
+  validate_session(session);
+  return "ng." + session + (reply ? ".f" : ".a");
 }
 inline Json envelope(const std::string& session, uint64_t request, const char* kind) {
   return {{"v", version}, {"session", session}, {"request", request}, {"kind", kind}};

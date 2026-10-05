@@ -43,13 +43,13 @@ package; applications compiling against this API use `sima-pcie-host-dev`.
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
 
-The installed GenAI C++ API is `simaai/neat/pcie/genai/GenAIModel.h`; Python
-exposes `pyneatpcie.genai`. Both use the platform daemon service rather than a
-vision queue. Portable scalar result types are shared with Core, but the host
-links neither full Core nor LLiMa. Model execution and request validation happen
-in the card-side `neat-pcie-genai-worker`, which uses the existing Core direct API.
-The experimental LLiMa PCIe backend and its implicit conversation state are
-replaced; callers supply explicit history in each request.
+The GenAI C++ API is `simaai/neat/pcie/genai/GenAIModel.h`; Python exposes
+`pyneatpcie.genai`. Pass a host model directory: absolute, or relative to the
+application's current working directory. Model files load as needed over PCIe;
+keep them readable and unchanged while the model is open. Use matching host/card
+GenAI packages. Callers supply explicit conversation history in each request.
+Set `connection.card_id` to select the card; its default address is
+`10.0.<card_id>.2`. Set `connection.card_host` to override that address.
 
 ### Multi-model runtime
 

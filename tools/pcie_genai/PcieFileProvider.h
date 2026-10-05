@@ -2,7 +2,9 @@
 #include <sima_lmm/file_provider.hpp>
 #include "Service.h"
 #include "Protocol.h"
+#include "AssetTransfer.h"
 #include <fstream>
+#include <functional>
 #include <set>
 #include <sys/stat.h>
 
@@ -11,12 +13,15 @@ namespace simaai::neat::pcie::genai::wire {
 // session; the daemon's receive root is never swept or removed.
 class PcieFileProvider final : public simaai::llima::FileProvider {
 public:
-  PcieFileProvider(std::filesystem::path recv, std::string session, std::string serve,
-                   std::string model)
+  PcieFileProvider(std::filesystem::path recv, std::string session, int timeout_ms,
+                   std::function<bool()> cancelled)
       : service_(0, true), recv_(std::filesystem::canonical(recv)),
-        prefix_("neat-genai/" + session), serve_(relative_name(serve)),
-        model_(relative_name(model)) {
-    validate_session(session);
+        prefix_("neat-genai/" + session), session_(std::move(session)), timeout_ms_(timeout_ms),
+        cancelled_(std::move(cancelled)) {
+    validate_session(session_);
+    if (timeout_ms_ <= 0)
+      throw std::invalid_argument("Model asset timeout must be positive");
+    service_.subscribe(asset_tag(session_, true));
     root_ = recv_ / prefix_;
     std::filesystem::create_directories(root_.parent_path());
     if (std::filesystem::canonical(root_.parent_path()) != root_.parent_path())
@@ -46,7 +51,7 @@ public:
     if (present_.contains(path))
       return true;
     prepare(path);
-    if (!service_.fetch(serve_, model_ + "/" + rel, prefix_ + "/model/" + rel, true))
+    if (!fetch_model(rel, path))
       return false;
     present_.insert(path);
     return true;
@@ -68,7 +73,8 @@ public:
     if (present_.contains(p))
       return;
     prepare(p);
-    service_.fetch(serve_, model_ + "/" + rel, prefix_ + "/model/" + rel);
+    if (!fetch_model(rel, p))
+      throw std::runtime_error("Model asset does not exist on host: " + rel);
     present_.insert(p);
   }
   void evict(const std::filesystem::path& path) override {
@@ -92,6 +98,19 @@ public:
   }
 
 private:
+  bool fetch_model(const std::string& name, const std::filesystem::path& path) {
+    if (asset_id_ == UINT64_MAX)
+      throw std::overflow_error("Model asset IDs exhausted");
+    const auto bytes = request_asset(
+        session_, ++asset_id_, name, timeout_ms_,
+        [&](const std::string& text) { service_.send(asset_tag(session_, false), text); },
+        [&](int timeout) { return service_.receive(timeout); }, cancelled_);
+    if (!bytes)
+      return false;
+    if (!std::filesystem::is_regular_file(path) || std::filesystem::file_size(path) != *bytes)
+      throw std::runtime_error("Model asset transfer size mismatch: " + name);
+    return true;
+  }
   void prepare(const std::filesystem::path& path) {
     std::filesystem::create_directories(path.parent_path());
     if (std::filesystem::weakly_canonical(path).lexically_relative(root_).empty() ||
@@ -103,7 +122,10 @@ private:
   }
   Service service_;
   std::filesystem::path recv_, root_;
-  std::string prefix_, serve_, model_;
+  std::string prefix_, session_;
+  int timeout_ms_;
+  std::function<bool()> cancelled_;
+  uint64_t asset_id_ = 0;
   std::set<std::filesystem::path> present_;
 };
 } // namespace simaai::neat::pcie::genai::wire

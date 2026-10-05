@@ -1,6 +1,6 @@
 #include "genai/RemoteSession.h"
 #include "SshRunner.h"
-#include "Protocol.h"
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -8,8 +8,9 @@
 
 namespace simaai::neat::pcie::genai::internal {
 using Runner = simaai::neat::pcie::internal::SshRunner;
-RemoteSession::RemoteSession(std::string model, ConnectionOptions options)
-    : model_(wire::relative_name(model)), options_(std::move(options)) {
+RemoteSession::RemoteSession(ConnectionOptions options) : options_(std::move(options)) {
+  if (options_.card_host.empty())
+    options_.card_host = "10.0." + std::to_string(options_.card_id) + ".2";
   auto endpoint_ok = [](const std::string& s) {
     return !s.empty() && s.front() != '-' && s.find_first_of(" \t\r\n@") == std::string::npos &&
            s.find('\0') == std::string::npos;
@@ -55,34 +56,42 @@ void RemoteSession::start() {
   const auto q = Runner::shell_escape;
   // Session-specific directory is also the ownership record if SSH disconnects
   // before returning the PID. No tensor qN.pid files are used.
-  std::string script = "set -eu; umask 077; d=\"$HOME/.cache/neat-genai/" + id_ +
-                       "\"; mkdir -p \"$HOME/.cache/neat-genai\"; mkdir \"$d\"; "
-                       "nohup /usr/bin/neat-pcie-genai-worker " +
-                       q(id_) + " " + q(options_.model_serve_root) + " " + q(model_) + " " +
-                       q(options_.card_receive_directory.string()) +
-                       " >\"$d/worker.log\" 2>&1 </dev/null & p=$!; echo \"$p\" >\"$d/pid\"; "
-                       "awk '{print $22}' /proc/$p/stat >\"$d/start\"; echo launched";
+  std::string script =
+      "set -eu; umask 077; d=\"$HOME/.cache/neat-genai/" + id_ +
+      "\"; mkdir -p \"$HOME/.cache/neat-genai\"; mkdir \"$d\"; "
+      "nohup /usr/bin/neat-pcie-genai-worker " +
+      q(id_) + " " + q(options_.card_receive_directory.string()) + " " +
+      q(std::to_string(std::max(options_.startup_timeout_ms, options_.request_timeout_ms))) +
+      " >\"$d/worker.log\" 2>&1 </dev/null & p=$!; echo \"$p\" >\"$d/pid\"; "
+      "awk '{print $22}' /proc/$p/stat >\"$d/start\"; echo launched";
   launched_ = true;
   const auto result = Runner::run(ssh(script), 15);
   if (result.exit_code || result.timed_out)
     throw std::runtime_error("Could not launch GenAI worker: " + result.output);
 }
+std::string RemoteSession::stop_script(const std::string& session_id) {
+  // The PCIe close message may make the worker exit between owned() and kill.
+  // Only tolerate a failed kill when the session no longer owns that process.
+  return "set -eu; d=\"$HOME/.cache/neat-genai/" + session_id +
+         "\"; test -f \"$d/pid\" || exit 0; p=$(cat \"$d/pid\"); "
+         "case $p in ''|*[!0-9]*) exit 1;; esac; "
+         "owned() { test -r /proc/$p/stat && test -f \"$d/start\" && "
+         "test \"$(awk '{print $22}' /proc/$p/stat)\" = \"$(cat \"$d/start\")\" && "
+         "tr '\\0' '\\n' </proc/$p/cmdline | grep -Fxq " +
+         Runner::shell_escape(session_id) +
+         "; }; if owned; then kill -TERM \"$p\" || { if owned; then exit 1; fi; }; "
+         "i=0; while owned && test $i -lt 50; do sleep 0.1; i=$((i+1)); done; "
+         "if owned; then kill -KILL \"$p\" || { if owned; then exit 1; fi; }; fi; fi";
+}
 void RemoteSession::stop() {
   if (!launched_)
     return;
-  std::string script = "set -eu; d=\"$HOME/.cache/neat-genai/" + id_ +
-                       "\"; test -f \"$d/pid\" || exit 0; p=$(cat \"$d/pid\"); "
-                       "case $p in ''|*[!0-9]*) exit 1;; esac; "
-                       "owned() { test -r /proc/$p/stat && test -f \"$d/start\" && "
-                       "test \"$(awk '{print $22}' /proc/$p/stat)\" = \"$(cat \"$d/start\")\" && "
-                       "tr '\\0' '\\n' </proc/$p/cmdline | grep -Fxq " +
-                       Runner::shell_escape(id_) +
-                       "; }; if owned; then kill -TERM \"$p\"; "
-                       "i=0; while owned && test $i -lt 50; do sleep 0.1; i=$((i+1)); done; "
-                       "if owned; then kill -KILL \"$p\"; fi; fi";
+  const auto script = stop_script(id_);
   const auto result = Runner::run(ssh(script), 15);
   if (result.exit_code || result.timed_out)
-    throw std::runtime_error("GenAI worker shutdown could not be confirmed");
+    throw std::runtime_error(
+        "GenAI worker shutdown could not be confirmed (exit=" + std::to_string(result.exit_code) +
+        ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output);
   launched_ = false;
 }
 } // namespace simaai::neat::pcie::genai::internal

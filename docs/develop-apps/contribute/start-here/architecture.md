@@ -1377,6 +1377,14 @@ The host links neither full Core nor LLiMa.
 SSH bootstraps and stops an identity-checked worker. Model assets, media,
 requests and results use the unchanged platform daemon's PCIe file and
 notification services. Each session has unique tags and private asset paths.
+The constructor resolves host model paths against the application's working
+directory. The worker requests individual assets on a separate session channel;
+the host validates model-relative names and uploads each file into the worker's
+private receive directory using the existing daemon service. Host model serving
+roots and staging copies are unnecessary. Asset replies are retried without
+re-uploading consumed files; host waits are bounded and interrupted on shutdown.
+Matching host/card GenAI protocol versions are required. Media still uses the
+host daemon's configured serving root.
 There is no global receive-root lock, registry or shared conversation state.
 Requests carry explicit history and reuse Core's validation and output semantics.
 

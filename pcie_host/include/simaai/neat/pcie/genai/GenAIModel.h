@@ -13,16 +13,16 @@ using simaai::neat::genai::GenerationResult;
 using simaai::neat::genai::Json;
 using simaai::neat::genai::TokenSample;
 
-/// GenAI sessions use the daemon, not a vision pipeline queue.
+/// GenAI sessions are independent of vision pipeline queues.
 struct ConnectionOptions {
   int card_id = 0;
-  std::string card_host = "10.0.0.2";
+  /// Optional address override; when empty, card N uses 10.0.N.2.
+  std::string card_host;
   std::string user = "root";
   std::string ssh_key;
-  std::string model_serve_root = "models";
   std::string media_serve_root = "data";
   std::filesystem::path media_directory = "/srv/simaai/data";
-  /// Must match the card daemon\'s default receive root; this does not configure the daemon.
+  /// Card-side temporary asset directory; must match the platform receive location.
   std::filesystem::path card_receive_directory = "/srv/simaai/incoming";
   int startup_timeout_ms = 900000;
   int request_timeout_ms = 900000;
@@ -114,6 +114,8 @@ private:
 /// history; independent prompts do not inherit previous requests.
 class GenAIModel {
 public:
+  /// Accepts a host model directory, absolute or relative to the current working
+  /// directory. Model assets load on demand over PCIe.
   explicit GenAIModel(std::string model, ConnectionOptions connection = {});
   ~GenAIModel();
   GenAIModel(GenAIModel&&) noexcept;

@@ -77,8 +77,8 @@ local::GenerationRequest request_from_json(const wire::Json& j, wire::PcieFilePr
 
 int main(int argc, char** argv) {
   // Arguments are passed by the host as separate, shell-quoted values.
-  if (argc != 5) {
-    std::cerr << "usage: neat-pcie-genai-worker SESSION SERVE_ROOT MODEL RECV_ROOT\n";
+  if (argc != 4) {
+    std::cerr << "usage: neat-pcie-genai-worker SESSION RECV_ROOT ASSET_TIMEOUT_MS\n";
     return 2;
   }
   const std::string session = argv[1];
@@ -101,7 +101,8 @@ int main(int argc, char** argv) {
 
     std::thread executor([&] {
       try {
-        auto files = std::make_shared<wire::PcieFileProvider>(argv[4], session, argv[2], argv[3]);
+        auto files = std::make_shared<wire::PcieFileProvider>(argv[2], session, std::stoi(argv[3]),
+                                                              [&] { return stop || interrupted; });
         auto model = local::internal::ModelAccess::create(
             local::internal::provider_model_context(files->model_root(), files));
         {

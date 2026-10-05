@@ -1,7 +1,12 @@
 #include "Protocol.h"
 #include "genai/MediaStage.h"
+#include "genai/RemoteSession.h"
+#include "genai/ModelAssets.h"
+#include "AssetTransfer.h"
+#include "SshRunner.h"
 
 #include <filesystem>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -38,9 +43,30 @@ struct Directory {
     std::filesystem::remove_all(path, ec);
   }
 };
+struct SearchPath {
+  std::optional<std::string> previous;
+  explicit SearchPath(const std::filesystem::path& directory) {
+    if (const auto* value = std::getenv("PATH"))
+      previous = value;
+    const auto path = directory.string() + ":" + previous.value_or("/usr/bin:/bin");
+    if (setenv("PATH", path.c_str(), 1) != 0)
+      throw std::runtime_error("Cannot set test executable search path");
+  }
+  ~SearchPath() {
+    if (previous)
+      setenv("PATH", previous->c_str(), 1);
+    else
+      unsetenv("PATH");
+  }
+};
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--shutdown-worker") {
+    alarm(5); // Bound the helper lifetime even if its parent fails.
+    for (;;)
+      pause();
+  }
   try {
     const std::string session(24, 'a');
     require(wire::tag(session, true).size() < 32, "Platform tag limit");
@@ -75,6 +101,153 @@ int main() {
             "Result parity");
 
     Directory directory;
+    using Runner = simaai::neat::pcie::internal::SshRunner;
+    const auto ssh_arguments = directory.path / "ssh-arguments";
+    const auto fake_ssh = directory.path / "ssh";
+    std::ofstream(fake_ssh) << "#!/bin/sh\nprintf '%s\\n' \"$@\" > "
+                            << Runner::shell_escape(ssh_arguments.string()) << '\n';
+    std::filesystem::permissions(fake_ssh, std::filesystem::perms::owner_all);
+    {
+      // Verify the actual launch destination without SSH or board access.
+      SearchPath search(directory.path);
+      for (const auto card : {0, 1, 2}) {
+        for (const bool override_address : {false, true}) {
+          g::ConnectionOptions connection;
+          connection.card_id = card;
+          connection.user = "sima";
+          connection.ssh_key = "test-key";
+          if (override_address)
+            connection.card_host = "192.168.1.42";
+          g::internal::RemoteSession remote(connection);
+          remote.start();
+          std::ifstream arguments(ssh_arguments);
+          const std::string contents((std::istreambuf_iterator<char>(arguments)), {});
+          const auto expected =
+              override_address ? "192.168.1.42" : "10.0." + std::to_string(card) + ".2";
+          require(contents.find("\nsima@" + expected + "\n") != std::string::npos,
+                  "Card-specific address or explicit override reaches SSH");
+        }
+      }
+    }
+    g::ConnectionOptions invalid_connection;
+    invalid_connection.card_id = -1;
+    rejects([&] { g::internal::RemoteSession remote(invalid_connection); });
+    const auto model_root = directory.path / "models";
+    const auto model_path = model_root / "nested/model with spaces";
+    std::filesystem::create_directories(model_path);
+    require(g::internal::host_model_path(model_path) == model_path, "Absolute host model path");
+    const auto relative_model =
+        std::filesystem::relative(model_path, std::filesystem::current_path());
+    require(g::internal::host_model_path(relative_model) == model_path,
+            "Relative model path uses application cwd");
+    require(g::internal::host_model_path(model_path.string() + "/") == model_path,
+            "Trailing separators");
+    rejects([&] { g::internal::host_model_path(model_root / "missing"); });
+    rejects([&] { g::internal::host_model_path(""); });
+    const auto asset = model_path / "layer 1.bin";
+    std::ofstream(asset) << "weights";
+    require(g::internal::model_asset_path(model_path, "layer 1.bin") == asset,
+            "Host asset paths preserve spaces");
+    require(!g::internal::model_asset_path(model_path, "missing.bin"), "Optional missing asset");
+    const auto model_link = model_root / "link";
+    std::filesystem::create_directory_symlink(model_path, model_link);
+    require(g::internal::host_model_path(model_link) == model_path, "Canonical model directory");
+    const auto inside_link = model_path / "inside.bin";
+    std::filesystem::create_symlink(asset, inside_link);
+    require(g::internal::model_asset_path(model_path, "inside.bin") == asset,
+            "In-directory asset symlinks resolve safely");
+    const auto outside = directory.path / "outside.bin";
+    std::ofstream(outside) << "outside";
+    std::filesystem::create_symlink(outside, model_path / "escape.bin");
+    rejects([&] { g::internal::model_asset_path(model_path, "escape.bin"); });
+    for (const auto* name : {"../outside.bin", "/etc/passwd", ".", "a/../layer 1.bin", "a\\b"})
+      rejects([&] { g::internal::model_asset_path(model_path, name); });
+    std::filesystem::create_directory(model_path / "directory");
+    rejects([&] { g::internal::model_asset_path(model_path, "directory"); });
+    rejects([&] { g::internal::host_model_path(asset); });
+    require(wire::asset_tag(session, false) != wire::tag(session, false) &&
+                wire::asset_tag(session, true).size() < 32,
+            "Isolated asset channel tags");
+    auto reply = wire::envelope(session, 1, "asset");
+    reply["found"] = true;
+    reply["bytes"] = 7;
+    int sends = 0;
+    auto send_asset = [&](const std::string& text) {
+      const auto request = wire::parse(text, session);
+      require(request.at("name") == "layer 1.bin", "Only model-relative names cross PCIe");
+      ++sends;
+    };
+    auto exchange = [&](auto receive, auto cancelled, int timeout = 1500) {
+      return wire::request_asset(session, 1, "layer 1.bin", timeout, send_asset, receive,
+                                 cancelled);
+    };
+    require(exchange([&](int) { return std::optional(reply.dump()); }, [] { return false; }) == 7,
+            "Successful asset response");
+    sends = 0;
+    require(exchange(
+                [&](int ms) -> std::optional<std::string> {
+                  if (sends < 2) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+                    return std::nullopt;
+                  }
+                  return reply.dump();
+                },
+                [] { return false; }) == 7 &&
+                sends == 2,
+            "Retry after a lost reply");
+    reply["found"] = false;
+    require(!exchange([&](int) { return std::optional(reply.dump()); }, [] { return false; }),
+            "Optional missing-file response");
+    reply["error"] = "permission denied";
+    rejects(
+        [&] { exchange([&](int) { return std::optional(reply.dump()); }, [] { return false; }); });
+    reply.erase("error");
+    reply["request"] = 2;
+    rejects(
+        [&] { exchange([&](int) { return std::optional(reply.dump()); }, [] { return false; }); });
+    rejects([&] {
+      exchange([](int) -> std::optional<std::string> { return std::nullopt; }, [] { return true; });
+    });
+    rejects([&] {
+      exchange(
+          [](int ms) -> std::optional<std::string> {
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            return std::nullopt;
+          },
+          [] { return false; }, 10);
+    });
+    // Exercise the actual shutdown script locally, including exit between
+    // its ownership check and kill. No SSH server or model fixture is needed.
+    namespace remote = g::internal;
+    const auto executable = Runner::shell_escape(std::filesystem::read_symlink("/proc/self/exe"));
+    const auto session_directory =
+        Runner::shell_escape((directory.path / ".cache/neat-genai" / session).string());
+    auto stop_script = remote::RemoteSession::stop_script(session);
+    // Redirect only the test's session directory; leave the real HOME unchanged.
+    stop_script.replace(stop_script.find("$HOME"), 5, directory.path.string());
+    const std::string launch =
+        "set -eu; d=" + session_directory + "; mkdir -p \"$d\"; " + executable +
+        " --shutdown-worker " + session +
+        " & p=$!; trap 'command kill -KILL \"$p\" 2>/dev/null || :; wait \"$p\" 2>/dev/null || :' "
+        "EXIT; "
+        "echo \"$p\" >\"$d/pid\"; awk '{print $22}' /proc/$p/stat >\"$d/start\"; "
+        "while ! tr '\\0' '\\n' </proc/$p/cmdline | grep -Fxq " +
+        session + "; do sleep 0.01; done; ";
+    const auto normal_stop = Runner::run({"/bin/sh", "-c", launch + stop_script}, 3);
+    require(normal_stop.exit_code == 0 && !normal_stop.timed_out, "Normal worker shutdown");
+    const auto raced_stop =
+        Runner::run({"/bin/sh", "-c",
+                     launch +
+                         "kill() { command kill \"$@\"; wait \"$p\" 2>/dev/null || :; "
+                         "command kill \"$@\"; }; " +
+                         stop_script},
+                    3);
+    require(raced_stop.exit_code == 0 && !raced_stop.timed_out,
+            "Worker exiting between ownership check and kill must be successful");
+    const auto denied_stop =
+        Runner::run({"/bin/sh", "-c", launch + "kill() { return 1; }; " + stop_script}, 3);
+    require(denied_stop.exit_code != 0 && !denied_stop.timed_out,
+            "A failed kill of a still-owned worker must not be suppressed");
     g::ConnectionOptions options;
     options.media_directory = directory.path / "does-not-exist";
     g::GenerationRequest request;

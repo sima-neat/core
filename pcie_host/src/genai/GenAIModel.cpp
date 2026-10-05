@@ -1,6 +1,7 @@
 #include "simaai/neat/pcie/genai/GenAIModel.h"
 #include "genai/RemoteSession.h"
 #include "genai/MediaStage.h"
+#include "genai/ModelAssets.h"
 #include "Protocol.h"
 #include "Service.h"
 #include <atomic>
@@ -63,6 +64,7 @@ struct GenAIModel::Impl {
   std::string model;
   internal::RemoteSession remote;
   wire::Service service;
+  internal::ModelAssets assets;
   Json capabilities;
   std::mutex mutex, close_mutex;
   std::thread receiver;
@@ -75,13 +77,14 @@ struct GenAIModel::Impl {
   Clock::time_point deadline;
 
   Impl(std::string name, ConnectionOptions connection)
-      : options(std::move(connection)), model(std::move(name)), remote(model, options),
-        service(options.card_id) {
+      : options(std::move(connection)), model(internal::host_model_path(name).string()),
+        remote(options), service(options.card_id), assets(model, remote.id(), options.card_id) {
     service.subscribe(wire::tag(remote.id(), true));
     remote.start();
     const auto until = Clock::now() + std::chrono::milliseconds(options.startup_timeout_ms);
     auto sent = Clock::time_point{};
     while (Clock::now() < until) {
+      assets.check();
       if (Clock::now() - sent >= std::chrono::seconds(1)) {
         send(wire::envelope(remote.id(), 0, "hello"));
         sent = Clock::now();
@@ -119,6 +122,7 @@ struct GenAIModel::Impl {
     stop = true;
     if (receiver.joinable())
       receiver.join();
+    assets.close();
     remote.stop();
     std::lock_guard lock(mutex);
     if (active)
@@ -158,6 +162,7 @@ struct GenAIModel::Impl {
     auto heartbeat = Clock::time_point{}, retry = Clock::time_point{}, last_reply = Clock::now();
     try {
       while (!stop) {
+        assets.check();
         const auto now = Clock::now();
         if (now - heartbeat >= std::chrono::seconds(1)) {
           // hello doubles as a lease renewal with a reply, including during long prefill.
