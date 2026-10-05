@@ -1810,9 +1810,7 @@ bool attach_tensor_set_meta_from_packed_tensors(GstBuffer* buffer, const TensorL
   return attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, err);
 }
 
-// A packed parent keeps the same layout on every push of a given input set, so it is drawn
-// from the shared segment pool rather than allocated per push. Flags 0 (generic, uncached)
-// match what build_packed_parent_by_copy() allocates.
+// Flags 0 match the allocation in build_packed_parent_by_copy().
 GstBuffer* acquire_pooled_packed_parent(const TensorList& tensors,
                                         const std::string& parent_segment_name,
                                         const std::vector<std::size_t>& tensor_transport_bytes,

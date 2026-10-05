@@ -192,9 +192,7 @@ void test_bundled_input_rejects_invalid_backing_before_allocation() {
   require(output == nullptr, "failure must preserve null output");
 }
 
-// Regression: the packed parent used to be a fresh contiguous device allocation on every
-// push, which fails under CMA pressure even when the pipeline is otherwise steady. Repeated
-// pushes of one layout must draw from a single cached segment pool and carry each push's bytes.
+// Regression: repeated pushes of one layout must reuse one pooled packed parent.
 void test_packed_parent_reuses_pooled_buffer() {
   ensure_gst_ready();
 
