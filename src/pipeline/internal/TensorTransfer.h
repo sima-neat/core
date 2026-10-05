@@ -22,9 +22,6 @@ struct TransferPoolStats {
 
 TransferPoolStats tensor_transfer_pool_stats();
 
-/// Acquire a writable buffer from the shared segment pool cache for this layout.
-/// Returns nullptr (and sets `err`) when pooling is unavailable or the pool cannot supply one.
-/// GStreamer must already be initialized; unlike transfer_to_device() this does not initialize it.
 GstBuffer* acquire_segment_pool_buffer(std::uint64_t target_flags, std::uint64_t mem_flags,
                                        const std::vector<simaai::neat::Segment>& segments,
                                        std::string* err);
