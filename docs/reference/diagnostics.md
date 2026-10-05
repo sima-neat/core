@@ -51,6 +51,7 @@ Framework errors use stable code families:
 | `io.camera_not_found` | Requested camera is unavailable | Select a reported camera or use the default |
 | `io.model_not_found` | Requested model archive does not exist | Correct the model path and confirm it is installed |
 | `io.source_ended` | Input source reached its normal end | Stop consuming it or provide more input |
+| `io.response_too_large` | A bounded local protocol response exceeded its size limit | Install matching client and service versions |
 | `codec.invalid_h264_stream` | Input has no valid H.264 frames | Supply a complete H.264 stream or correct the codec |
 | `codec.decode_failed` | Decoder failed after accepting the stream | Verify the codec and input integrity |
 | `codec.encode_failed` | Encoder could not encode the supplied frames | Verify input format, resolution, and encoder settings |
@@ -61,6 +62,8 @@ Framework errors use stable code families:
 | `resource.disk_full` | A write failed because storage is full | Free space or choose another destination |
 | `infra.dispatcher_unavailable` | Accelerator runtime cannot be acquired | Stop competing workloads and verify DevKit compatibility |
 | `infra.accelerator_execution_failed` | Accelerator could not execute a model stage | Restart the pipeline and reduce concurrent accelerator work |
+| `infra.peripheral_daemon_unavailable` | SiMa Sentinel cannot serve the peripheral catalog | Install or update Sentinel with `sima-cli neat install sentinel`, or start `simaai-sentinel.service` |
+| `infra.peripheral_daemon_timeout` | The peripheral catalog request did not finish in time | Check `simaai-sentinel.service` and its journal, then retry |
 | `DispatcherUnavailable` | Legacy spelling of `infra.dispatcher_unavailable` | Migrate handlers to the canonical infrastructure code |
 | `internal.plugin_failure` | A plugin failed without a user-actionable classification | Capture the report and contact support |
 

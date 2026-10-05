@@ -114,7 +114,9 @@ inline constexpr const char* kDiskFull = "resource.disk_full";
 inline constexpr const char* kDispatcherUnavailable = "infra.dispatcher_unavailable";
 /// The dispatcher was available, but accelerator execution failed.
 inline constexpr const char* kAcceleratorExecutionFailed = "infra.accelerator_execution_failed";
-/// The board-local peripheral daemon socket is absent or refused the connection.
+/// SiMa Sentinel cannot serve the peripheral catalog: its socket is absent or refused the
+/// connection, it is too old (HTTP 404), its discovery is off (HTTP 503), or it returned
+/// another unexpected HTTP status.
 inline constexpr const char* kPeripheralDaemonUnavailable = "infra.peripheral_daemon_unavailable";
 /// The peripheral daemon did not complete the bounded catalog request in time.
 inline constexpr const char* kPeripheralDaemonTimeout = "infra.peripheral_daemon_timeout";

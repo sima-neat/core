@@ -67,6 +67,11 @@ frame intervals Sentinel lists for the mode, or `0/1` when it lists none. The
 DevKit's ISP lists none for MIPI modes; `CameraInput` sets the rate through
 caps.
 
+Core skips an interval entry whose `type` it does not know, or a stepwise or
+continuous range whose maximum is shorter than its minimum. A skipped entry
+neither sets the rate nor covers the default rate, but the mode still counts as
+listing intervals.
+
 Core classifies each mode for the `CameraInput` default libcamera profile
 (`profile=Default`, which selects cameras by `camera_name`). A mode is
 supported when all of these hold, checked in this order; `reason` gives the
@@ -76,7 +81,9 @@ first one that fails:
 2. The format is `CameraInputOptions`' default format (`NV12`).
 3. If the mode lists frame intervals, one of them covers the default frame rate
    (`30/1`): a discrete interval of 1/30 s, or a stepwise or continuous range
-   that contains it. A mode that lists no intervals is not rejected on rate.
+   that contains it. A mode that lists no intervals is not rejected on rate and
+   has rate `0/1`. A mode whose listed intervals are all skipped is rejected on
+   rate and also has rate `0/1`.
 4. The mode is an ISP output size (`isp_output` is true).
 
 Core does not probe, acquire, configure, or stream from the camera. Catalog
@@ -131,9 +138,12 @@ for (const auto& peripheral : simaai::neat::peripherals::list()) {
 
 Any JSON library can parse `details_json`; the example uses nlohmann/json.
 
-Core validates only the fields it reads: the catalog fields, each device's
-`id` and `type`, and the camera fields above. Invalid values there are a
-protocol defect and make `list()` fail with a parse error.
+Core validates only the fields it reads. Invalid catalog fields (`revision`,
+`observed_at`, `errors`, `devices`) or a device without a valid `id` and `type`
+make `list()` fail with a parse error. A camera record whose camera fields Core
+cannot read, for example one from a newer Sentinel, does not: that device keeps
+its `id`, `type` and `details_json`, its `camera` is left unset, and every
+other device is returned as usual.
 
 ## Failures and scope
 

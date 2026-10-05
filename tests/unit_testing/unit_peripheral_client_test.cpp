@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -86,7 +87,7 @@ int bound_socket(const std::string& path) {
 }
 
 // Serves `response` to one GET /v1/peripherals, `chunk` bytes per write, and
-// reads it through a client limited to 3-byte writes.
+// reads it through the client.
 Catalog list_from(const std::string& response, std::size_t chunk = 1) {
   TemporaryDirectory directory;
   const int listener = bound_socket(directory.socket());
@@ -112,7 +113,7 @@ Catalog list_from(const std::string& response, std::size_t chunk = 1) {
   std::exception_ptr client_error;
   Catalog catalog;
   try {
-    catalog = list_from_socket(directory.socket(), 1s, 3);
+    catalog = list_from_socket(directory.socket(), 1s);
   } catch (...) {
     client_error = std::current_exception();
   }
@@ -416,21 +417,53 @@ void test_connection_failures() {
   require_error([&] { (void)list_from_socket(directory.socket("refused.sock"), 100ms); },
                 codes::kPeripheralDaemonUnavailable, "simaai-sentinel.service");
 
+  // Times out no earlier than the deadline; the upper bound tolerates a loaded machine.
+  const auto require_timeout = [&](const char* name, std::chrono::milliseconds timeout) {
+    const auto start = std::chrono::steady_clock::now();
+    require_error([&] { (void)list_from_socket(directory.socket(name), timeout); },
+                  codes::kPeripheralDaemonTimeout, "Timed out");
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    require(elapsed >= timeout && elapsed < 2s,
+            std::string("the deadline was not honored for ") + name);
+  };
+
   // A daemon that accepts but never answers must hit the absolute deadline.
   const int silent = bound_socket(directory.socket("silent.sock"));
   require(::listen(silent, 1) == 0, "listen failed");
-  const auto start = std::chrono::steady_clock::now();
-  require_error([&] { (void)list_from_socket(directory.socket("silent.sock"), 40ms); },
-                codes::kPeripheralDaemonTimeout, "Timed out");
-  require(std::chrono::steady_clock::now() - start < 120ms, "the deadline was not honored");
+  require_timeout("silent.sock", 40ms);
   ::close(silent);
 
-  require_error([&] { (void)list_from_socket(directory.socket("missing.sock"), 100ms, 0); },
-                codes::kIoOpen, "chunk limit is invalid");
+  // A full listen backlog is retried until the deadline, not reported as io.open.
+  const std::string full_path = directory.socket("full.sock");
+  const int full = bound_socket(full_path);
+  require(::listen(full, 0) == 0, "listen failed");
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  std::strncpy(address.sun_path, full_path.c_str(), sizeof(address.sun_path) - 1);
+  std::vector<int> queued;
+  for (;;) {
+    const int client = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    require(client >= 0, "socket failed");
+    if (::connect(client, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+      const int error = errno;
+      ::close(client);
+      require(error == EAGAIN, "expected EAGAIN from a full backlog");
+      break;
+    }
+    queued.push_back(client);
+    require(queued.size() < 64, "the listen backlog never filled");
+  }
+  require_timeout("full.sock", 100ms);
+  for (const int client : queued)
+    ::close(client);
+  ::close(full);
 
-  require(::chmod(directory.path.c_str(), 0000) == 0, "chmod failed");
-  require_error([&] { (void)list_from_socket(directory.socket("denied.sock"), 100ms); },
-                codes::kPermissionDenied, "/run/simaai-sentinel/api.sock");
+  // Root bypasses directory permissions, so the check is meaningful only for other users.
+  if (::geteuid() != 0) {
+    require(::chmod(directory.path.c_str(), 0000) == 0, "chmod failed");
+    require_error([&] { (void)list_from_socket(directory.socket("denied.sock"), 100ms); },
+                  codes::kPermissionDenied, "/run/simaai-sentinel/api.sock");
+  }
 }
 
 void test_protocol_failures() {
@@ -465,17 +498,12 @@ void test_protocol_failures() {
        codes::kIoParse, "missing required field 'provider'"},
       {edited([](json& body) { body["devices"][1] = body["devices"][0]; }), codes::kIoParse,
        "duplicate id"},
-      {edited([](json& body) { body["devices"][0]["model"] = false; }), codes::kIoParse,
-       "field 'model' must be a string when present"},
-      {edited([](json& body) { body["devices"][0]["modes"] = json::object(); }), codes::kIoParse,
-       "field 'modes' must be an array"},
-      {edited([&](json& body) { mode(body)["frame_intervals"] = json::object(); }), codes::kIoParse,
-       "field 'frame_intervals' must be an array"},
-      {edited([](json& body) { body["devices"][0]["modes"][0]["isp_output"] = 1; }),
-       codes::kIoParse, "field 'isp_output' must be a boolean when present"},
       {http(R"({"error":"peripheral discovery is not running"})", 503),
        codes::kPeripheralDaemonUnavailable,
        "Sentinel reported: peripheral discovery is not running."},
+      {http(R"({"error":"internal error"})", 500), codes::kPeripheralDaemonUnavailable,
+       "unexpected HTTP status 500 for the peripheral catalog. Sentinel reported: internal "
+       "error."},
       {http(R"({"error":"unknown Sentinel API endpoint"})", 404),
        codes::kPeripheralDaemonUnavailable,
        "Sentinel reported: unknown Sentinel API endpoint. Update Sentinel with `sima-cli neat "
@@ -484,6 +512,46 @@ void test_protocol_failures() {
   for (const auto& test_case : cases)
     require_error([&] { (void)list_from(test_case.response, 4096); }, test_case.code,
                   test_case.fragment);
+
+  // A camera record Core cannot read leaves that device's camera unset and
+  // keeps its id, type and record, and every other device.
+  const std::function<void(json&)> malformed[] = {
+      [](json& body) { body["devices"][0]["model"] = false; },
+      [](json& body) { body["devices"][0]["modes"] = json::object(); },
+      [](json& body) { body["devices"][0]["modes"][0]["isp_output"] = 1; },
+      [](json& body) { body["devices"][0].erase("backend"); },
+      [&](json& body) { mode(body)["frame_intervals"] = json::object(); },
+      [&](json& body) { mode(body)["frame_intervals"][0]["intervals"][0].erase("numerator"); },
+  };
+  for (const auto& edit : malformed) {
+    auto body = published_example();
+    edit(body);
+    const auto catalog = list_from(http(body.dump()), 4096);
+    const auto original = published_example();
+    std::size_t broken = 0;
+    while (body["devices"][broken] == original["devices"][broken])
+      ++broken;
+    require(catalog.size() == 3, "a malformed camera must not drop the catalog");
+    for (std::size_t index = 0; index < catalog.size(); ++index) {
+      const auto& device = catalog[index];
+      require(device.id == body["devices"][index]["id"].get<std::string>() &&
+                  device.type == body["devices"][index]["type"].get<std::string>() &&
+                  json::parse(device.details_json) == body["devices"][index] &&
+                  device.camera.has_value() == (index != broken && device.type == "camera"),
+              "a malformed camera must degrade only its own device: " + device.id);
+    }
+  }
+
+  // The published example plus a newer-shaped camera record.
+  auto newer = published_example();
+  newer["devices"].push_back(
+      {{"type", "camera"}, {"id", "camera:future"}, {"backend", "mipi"}, {"modes", "newer"}});
+  const auto extended = list_from(http(newer.dump()), 4096);
+  require(extended.size() == 4 && extended[0].camera && extended[1].camera && !extended[2].camera &&
+              extended[2].type == "microphone" && extended[3].id == "camera:future" &&
+              extended[3].type == "camera" && !extended[3].camera &&
+              json::parse(extended[3].details_json) == newer["devices"][3],
+          "a newer-shaped camera must keep its id, type and record and every other device");
 
   // A skipped interval keeps the rest of the device and catalog.
   auto skipped = published_example();

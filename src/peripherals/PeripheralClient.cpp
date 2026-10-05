@@ -66,8 +66,8 @@ private:
 
 [[noreturn]] void fail_parse(std::string reason) {
   fail(error_codes::kIoParse, "Sentinel returned an invalid v1 peripheral catalog: " + reason +
-                                  ". Restart simaai-sentinel.service; if the error persists, "
-                                  "update Sentinel with `sima-cli neat install sentinel`.");
+                                  ". Install matching Sentinel and Core versions; update "
+                                  "Sentinel with `sima-cli neat install sentinel`.");
 }
 
 [[noreturn]] void fail_timeout() {
@@ -127,37 +127,33 @@ FileDescriptor connect_socket(const std::string& path, Deadline deadline) {
 
   address.sun_family = AF_UNIX;
   std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
-  if (::connect(socket.get(), reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0)
-    return socket;
-  if (errno != EINPROGRESS && errno != EAGAIN && errno != EWOULDBLOCK)
-    fail_connect(errno);
-
-  (void)wait_for(socket.get(), POLLOUT, deadline);
-  int socket_error = 0;
-  socklen_t length = sizeof(socket_error);
-  if (::getsockopt(socket.get(), SOL_SOCKET, SO_ERROR, &socket_error, &length) < 0)
-    fail_connect(errno);
-  if (socket_error != 0)
-    fail_connect(socket_error);
+  // A nonblocking AF_UNIX connect completes at once or fails; EAGAIN means the
+  // listen backlog is full and the socket is not connected, so retry.
+  while (::connect(socket.get(), reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    if (errno != EAGAIN && errno != EINTR)
+      fail_connect(errno);
+    (void)::poll(nullptr, 0, std::min(remaining_milliseconds(deadline), 10));
+  }
   return socket;
 }
 
-void send_all(int fd, std::string_view data, Deadline deadline, std::size_t maximum_send_bytes) {
+void send_all(int fd, std::string_view data, Deadline deadline) {
   while (!data.empty()) {
     const short events = wait_for(fd, POLLOUT, deadline);
     if (!(events & POLLOUT))
       fail(error_codes::kPeripheralDaemonUnavailable,
            "Sentinel closed the connection before accepting the peripheral catalog request. "
            "Check simaai-sentinel.service and its journal.");
-    const ssize_t sent =
-        ::send(fd, data.data(), std::min(data.size(), maximum_send_bytes), MSG_NOSIGNAL);
+    const ssize_t sent = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
     if (sent > 0) {
       data.remove_prefix(static_cast<std::size_t>(sent));
       continue;
     }
     if (sent < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
       continue;
-    fail_connect(sent < 0 ? errno : ECONNRESET);
+    fail(error_codes::kIoOpen, "Could not send the peripheral catalog request to Sentinel: " +
+                                   std::string(std::strerror(sent < 0 ? errno : ECONNRESET)) +
+                                   ". Check simaai-sentinel.service and its journal.");
   }
 }
 
@@ -478,8 +474,14 @@ peripherals::Peripheral parse_device(const nlohmann::json& value) {
       .camera = std::nullopt,
       .details_json = object.dump(),
   };
-  if (device.type == "camera")
-    device.camera = parse_camera(object);
+  // A camera record Core cannot read leaves `camera` unset for that device only;
+  // its id, type and full record stay available.
+  if (device.type == "camera") {
+    try {
+      device.camera = parse_camera(object);
+    } catch (const NeatError&) {
+    }
+  }
   return device;
 }
 
@@ -524,17 +526,14 @@ std::string error_from_body(const std::string& body) {
 } // namespace
 
 peripherals::Catalog list_from_socket(const std::string& socket_path,
-                                      std::chrono::milliseconds timeout,
-                                      std::size_t maximum_send_bytes) {
+                                      std::chrono::milliseconds timeout) {
   if (timeout.count() <= 0)
     fail_timeout();
-  if (maximum_send_bytes == 0)
-    fail(error_codes::kIoOpen, "The peripheral catalog request chunk limit is invalid.");
   const Deadline deadline = Clock::now() + timeout;
   FileDescriptor socket = connect_socket(socket_path, deadline);
   const std::string request = "GET " + std::string(kCatalogPath) +
                               " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-  send_all(socket.get(), request, deadline, maximum_send_bytes);
+  send_all(socket.get(), request, deadline);
   auto [status, body] = read_response(socket.get(), deadline);
   if (status != 200) {
     const std::string sentinel_error = error_from_body(body);
@@ -552,7 +551,7 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
            "SiMa Sentinel's peripheral discovery is not running." + reported +
                " Check simaai-sentinel.service and its journal.");
     }
-    fail(error_codes::kIoParse,
+    fail(error_codes::kPeripheralDaemonUnavailable,
          "Sentinel returned unexpected HTTP status " + std::to_string(status) +
              " for the peripheral catalog." + reported +
              " Update Sentinel with `sima-cli neat install sentinel` and check "

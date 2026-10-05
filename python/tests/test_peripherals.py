@@ -150,6 +150,17 @@ def test_details_cover_any_type(tmp_path):
   assert microphone.details["name"] == _MIC["name"]
 
 
+def test_unreadable_camera_degrades_only_that_device(tmp_path):
+  future = {"type": "camera", "id": "camera:future", "backend": "mipi", "modes": "newer"}
+  catalog = _list(tmp_path, json.dumps(dict(_CATALOG, devices=[*_CATALOG["devices"], future])))
+
+  assert [device.id for device in catalog] == [*(d["id"] for d in _CATALOG["devices"]),
+                                               "camera:future"]
+  assert catalog[0].camera is not None and catalog[1].camera is not None
+  assert catalog[3].type == "camera" and catalog[3].camera is None
+  assert catalog[3].details == future
+
+
 @pytest.mark.parametrize(
     ("status", "body", "code", "fragment"),
     [

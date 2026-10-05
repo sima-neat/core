@@ -156,7 +156,7 @@ same code and `GraphReport` can surface when the first input materializes the se
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat cannot acquire the accelerator runtime. | Confirm DevKit compatibility and stop workloads that exclusively own the accelerator. |
 | `infra.accelerator_execution_failed` | The accelerator cannot execute a model stage. | Restart the pipeline and reduce concurrent accelerator workloads. |
-| `infra.peripheral_daemon_unavailable` | The local SiMa Sentinel API socket is absent or refused, Sentinel's peripheral discovery is disabled or stopped, or the installed Sentinel is too old to serve the peripheral catalog. | Install or update Sentinel with `sima-cli neat install sentinel` or start `simaai-sentinel.service`, then inspect its journal. |
+| `infra.peripheral_daemon_unavailable` | The local SiMa Sentinel API socket is absent or refused, Sentinel's peripheral discovery is disabled or stopped, the installed Sentinel is too old to serve the peripheral catalog, or Sentinel returned another unexpected HTTP status. | Install or update Sentinel with `sima-cli neat install sentinel` or start `simaai-sentinel.service`, then inspect its journal. |
 | `infra.peripheral_daemon_timeout` | A bounded peripheral catalog request did not finish. | Check `simaai-sentinel.service` and provider health, then retry. |
 
 ## Internal failures
