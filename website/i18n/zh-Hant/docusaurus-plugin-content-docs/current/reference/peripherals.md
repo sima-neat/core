@@ -67,6 +67,11 @@ for (const auto& peripheral : catalog) {
 DevKit 的 ISP 不會為 MIPI 模式列出任何間隔；`CameraInput` 會透過
 caps 設定速率。
 
+Core 會略過其 `type` 無法辨識的間隔項目，以及最大值小於最小值的逐步或
+連續範圍。被略過的項目
+既不會設定速率，也不會涵蓋預設速率，但該模式仍算是
+有列出間隔。
+
 Core 會依 `CameraInput` 的預設 libcamera 設定檔
 （`profile=Default`，以 `camera_name` 選取相機）分類每個模式。當下列條件全部成立時，
 該模式即受支援；條件依此順序檢查，`reason` 會指出
@@ -76,7 +81,9 @@ Core 會依 `CameraInput` 的預設 libcamera 設定檔
 2. 格式為 `CameraInputOptions` 的預設格式（`NV12`）。
 3. 若該模式列出了影格間隔，其中之一涵蓋預設影格率
    （`30/1`）：可以是 1/30 秒的離散間隔，或是
-   包含該速率的逐步或連續範圍。未列出任何間隔的模式不會因速率而遭拒。
+   包含該速率的逐步或連續範圍。未列出任何間隔的模式不會因速率而遭拒，
+   其速率為 `0/1`。列出的間隔全部被略過的模式會因速率而遭拒，
+   其速率同樣為 `0/1`。
 4. 該模式是 ISP 輸出尺寸（`isp_output` 為 true）。
 
 Core 不會探查、取得、設定相機，也不會從相機串流。因此，目錄中的
@@ -131,9 +138,12 @@ for (const auto& peripheral : simaai::neat::peripherals::list()) {
 
 任何 JSON 程式庫都能剖析 `details_json`；此範例使用 nlohmann/json。
 
-Core 只驗證它會讀取的欄位：目錄欄位、每個裝置的
-`id` 與 `type`，以及上述相機欄位。這些欄位中的無效值屬於
-通訊協定缺陷，會使 `list()` 因剖析錯誤而失敗。
+Core 只驗證它會讀取的欄位。無效的目錄欄位（`revision`、
+`observed_at`、`errors`、`devices`），或缺少有效 `id` 與 `type` 的裝置，
+會使 `list()` 因剖析錯誤而失敗。若相機記錄中有 Core
+無法讀取的相機欄位（例如來自較新版 Sentinel 的記錄），則不會如此：該裝置仍保留
+其 `id`、`type` 與 `details_json`，其 `camera` 維持未設定，而其他
+每個裝置都會照常傳回。
 
 ## 失敗與範圍
 
