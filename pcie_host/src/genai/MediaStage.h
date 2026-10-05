@@ -12,7 +12,7 @@ private:
   Json file(const std::filesystem::path& source);
   Json tensor(const Tensor& tensor, bool audio, uint32_t rate);
   Json descriptor(const std::filesystem::path& path);
-  Json images(const std::vector<Tensor>& tensors, const std::vector<std::filesystem::path>& paths);
+  Json images(const std::vector<Tensor>& tensors);
   std::filesystem::path root_, directory_;
   std::string serve_;
   bool prepared_ = false;

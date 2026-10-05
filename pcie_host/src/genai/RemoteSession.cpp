@@ -1,5 +1,6 @@
 #include "genai/RemoteSession.h"
 #include "SshRunner.h"
+#include "Protocol.h"
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
@@ -52,7 +53,11 @@ std::vector<std::string> RemoteSession::ssh(const std::string& script) const {
   args.push_back("sh -c " + Runner::shell_escape(script));
   return args;
 }
-void RemoteSession::start() {
+void RemoteSession::start(const std::string& target_directory, const std::string& draft_directory) {
+  if (!target_directory.empty())
+    wire::relative_name(target_directory);
+  if (!draft_directory.empty())
+    wire::relative_name(draft_directory);
   const auto q = Runner::shell_escape;
   // Session-specific directory is also the ownership record if SSH disconnects
   // before returning the PID. No tensor qN.pid files are used.
@@ -61,7 +66,8 @@ void RemoteSession::start() {
       "\"; mkdir -p \"$HOME/.cache/neat-genai\"; mkdir \"$d\"; "
       "nohup /usr/bin/neat-pcie-genai-worker " +
       q(id_) + " " + q(options_.card_receive_directory.string()) + " " +
-      q(std::to_string(std::max(options_.startup_timeout_ms, options_.request_timeout_ms))) +
+      q(std::to_string(std::max(options_.startup_timeout_ms, options_.request_timeout_ms))) + " " +
+      q(target_directory) + " " + q(draft_directory) +
       " >\"$d/worker.log\" 2>&1 </dev/null & p=$!; echo \"$p\" >\"$d/pid\"; "
       "awk '{print $22}' /proc/$p/stat >\"$d/start\"; echo launched";
   launched_ = true;

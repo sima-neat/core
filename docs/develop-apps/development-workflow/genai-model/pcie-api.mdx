@@ -79,13 +79,20 @@ including when an exception occurs. Link C++ applications with the installed
 `10.0.0.2`, `1` uses `10.0.1.2`, and so on. Set `connection.card_host` only
 when your card uses a different address.
 
+For speculative decoding, pass the parent directory of a prepared target/draft
+pair—for example, `./models/speculative-pair`, containing `target/` and `draft/`.
+Their compiled configurations identify the target and draft roles. Both models
+load in the same card session; no extra request option is needed. Allow card
+memory for both models.
+
 ## Streaming, media, and multiple models
 
 - Use `model.stream(request)` and iterate over `TokenSample` values to stream
   output. Call `cancel()` and consume the terminal sample before reusing the
   model. Only one request may be active per model.
-- For VLMs, use `request.image_files` or `request.images` (UInt8 HWC RGB PCIe
-  tensors; Python also accepts NumPy arrays). For ASR, use `request.audio_file`
+- For VLMs, use `request.images` (UInt8 HWC RGB PCIe tensors; Python also accepts
+  NumPy arrays). Load image files in your application and convert to RGB before
+  assigning them. For ASR, use `request.audio_file`
   or `request.audio` (Float32 mono samples) with `request.sample_rate`.
 - Supply conversation history through `request.messages`; separate requests
   do not inherit earlier history.
@@ -95,5 +102,5 @@ when your card uses a different address.
 See the [Direct GenAI APIs](/develop-apps/development-workflow/genai-model/direct-api)
 for shared request, result, and streaming concepts. Use PCIe request/tensor
 types instead of local Core types. LoRA switching, cached-image reuse,
-speculative decoding, and GenAI graph composition are not exposed by this
+and GenAI graph composition are not exposed by this
 remote API.

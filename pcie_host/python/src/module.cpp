@@ -394,7 +394,6 @@ void bind_genai(nb::module_& parent) {
       .def(nb::init<>())
       .def_rw("role", &g::ChatMessage::role)
       .def_rw("content", &g::ChatMessage::content)
-      .def_rw("image_files", &g::ChatMessage::image_files)
       .def_prop_rw(
           "images", [](const g::ChatMessage& r) { return r.images; },
           [](g::ChatMessage& r, nb::object x) {
@@ -415,7 +414,6 @@ void bind_genai(nb::module_& parent) {
       .def_rw("prompt", &g::GenerationRequest::prompt)
       .def_rw("system_prompt", &g::GenerationRequest::system_prompt)
       .def_rw("messages", &g::GenerationRequest::messages)
-      .def_rw("image_files", &g::GenerationRequest::image_files)
       .def_prop_rw(
           "images", [](const g::GenerationRequest& r) { return r.images; },
           [](g::GenerationRequest& r, nb::object x) {

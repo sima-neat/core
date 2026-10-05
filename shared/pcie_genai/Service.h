@@ -17,8 +17,7 @@ public:
   void subscribe(const std::string& tag);
   void send(const std::string& tag, const std::string& payload);
   std::optional<std::string> receive(int timeout_ms);
-  bool fetch(const std::string& root, const std::string& source, const std::string& destination,
-             bool optional = false);
+  void fetch(const std::string& root, const std::string& source, const std::string& destination);
   void put(const std::string& source, const std::string& destination);
 
 private:

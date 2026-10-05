@@ -2,7 +2,7 @@
 #include "genai/MediaStage.h"
 #include "genai/RemoteSession.h"
 #include "genai/ModelAssets.h"
-#include "AssetTransfer.h"
+#include "genai/ModelDirectory.h"
 #include "SshRunner.h"
 
 #include <filesystem>
@@ -15,6 +15,11 @@
 namespace g = simaai::neat::pcie::genai;
 namespace wire = simaai::neat::pcie::genai::wire;
 namespace pcie = simaai::neat::pcie;
+
+namespace simaai::neat::pcie::genai::internal {
+// Test the production aggregation without exposing it in an installed header.
+void append_sample(GenerationResult& result, const TokenSample& sample);
+} // namespace simaai::neat::pcie::genai::internal
 
 namespace {
 void require(bool value, const char* message) {
@@ -100,6 +105,41 @@ int main(int argc, char** argv) {
     require(wire::encode(wire::decode(wire::encode(sample))) == wire::encode(sample),
             "Result parity");
 
+    auto collect = [](const std::vector<g::TokenSample>& samples) {
+      g::GenerationResult result;
+      for (const auto& sample : samples) {
+        // Exercise the same decoded samples received through PCIe.
+        g::internal::append_sample(result, wire::decode(wire::encode(sample)));
+      }
+      return result;
+    };
+    g::TokenSample first;
+    first.text = "hello";
+    first.reasoning = "think";
+    first.tool_calls = g::Json::array({{{"id", "call-1"}}, {{"id", "call-2"}}});
+    g::TokenSample second;
+    second.text = " world";
+    second.reasoning = " more";
+    second.tool_calls = g::Json::array({{{"id", "call-3"}}});
+    auto terminal = sample;
+    terminal.text.clear();
+    terminal.reasoning.clear();
+    terminal.tool_calls = g::Json::array();
+    terminal.finish_reason = "tool_calls";
+    const auto collected = collect({first, second, terminal});
+    require(collected.tool_calls ==
+                g::Json::array({{{"id", "call-1"}}, {{"id", "call-2"}}, {{"id", "call-3"}}}),
+            "Synchronous result preserves non-final tool calls in order");
+    require(collected.text == "hello world" && collected.reasoning == "think more" &&
+                collected.finish_reason == "tool_calls" &&
+                collected.metrics.generated_tokens == 7 && collected.language == "en" &&
+                collected.no_speech_prob == terminal.no_speech_prob &&
+                collected.avg_logprob == terminal.avg_logprob,
+            "Text, reasoning, and terminal metadata remain unchanged");
+    require(collect({sample}).tool_calls == sample.tool_calls,
+            "Tool calls carried by a final sample remain supported");
+    require(collect({terminal}).tool_calls.empty(), "Plain results do not acquire tool calls");
+
     Directory directory;
     using Runner = simaai::neat::pcie::internal::SshRunner;
     const auto ssh_arguments = directory.path / "ssh-arguments";
@@ -126,6 +166,14 @@ int main(int argc, char** argv) {
               override_address ? "192.168.1.42" : "10.0." + std::to_string(card) + ".2";
           require(contents.find("\nsima@" + expected + "\n") != std::string::npos,
                   "Card-specific address or explicit override reaches SSH");
+          remote.stop();
+          remote.start("target model", "draft model");
+          std::ifstream pair_arguments(ssh_arguments);
+          const std::string paired((std::istreambuf_iterator<char>(pair_arguments)), {});
+          require(paired.find("target model") != std::string::npos &&
+                      paired.find("draft model") != std::string::npos,
+                  "Both model prefixes reach the same worker launch");
+          rejects([&] { remote.start("../outside", "draft"); });
         }
       }
     }
@@ -135,6 +183,22 @@ int main(int argc, char** argv) {
     const auto model_root = directory.path / "models";
     const auto model_path = model_root / "nested/model with spaces";
     std::filesystem::create_directories(model_path);
+    auto write_model = [](const std::filesystem::path& path, std::optional<bool> draft) {
+      std::filesystem::create_directories(path / "devkit");
+      std::filesystem::create_directories(path / "elf_files");
+      g::Json config = {{"lm_cfg", g::Json::object()}};
+      if (draft)
+        config["lm_cfg"]["speculative_decoding_cfg"] = {{"is_draft", *draft}};
+      std::ofstream(path / "devkit/vlm_config.json") << config.dump();
+    };
+    const auto pair_root = directory.path / "speculative pair";
+    write_model(pair_root / "target model", false);
+    write_model(pair_root / "draft model", true);
+    const auto layout = simaai::neat::genai::internal::inspect_model_directory(pair_root);
+    require(layout.root == pair_root / "target model" &&
+                layout.draft_root == pair_root / "draft model",
+            "Host uses Core's target/draft discovery");
+    rejects([&] { simaai::neat::genai::internal::inspect_model_directory(*layout.draft_root); });
     require(g::internal::host_model_path(model_path) == model_path, "Absolute host model path");
     const auto relative_model =
         std::filesystem::relative(model_path, std::filesystem::current_path());
@@ -289,6 +353,26 @@ int main(int argc, char** argv) {
       g::internal::MediaStage stage(options, session, 4);
       stage.encode(request);
     });
+    request.prompt.reset();
+    request.messages.front().role = "user";
+    request.messages.front().content = "Describe this image";
+    image.image_format = pcie::PixelFormat::RGB;
+    request.messages.front().images = {image};
+    {
+      g::internal::MediaStage stage(options, session, 5);
+      const auto encoded = stage.encode(request);
+      require(encoded.at("images").empty() && encoded.at("messages").at(0).at("images").size() == 1,
+              "Chat messages accept in-memory images");
+    }
+    request.messages.clear();
+    const auto audio_file = directory.path / "input.wav";
+    std::ofstream(audio_file, std::ios::binary) << "audio";
+    request.audio_file = audio_file;
+    {
+      g::internal::MediaStage stage(options, session, 6);
+      require(stage.encode(request).at("audio_file").at("bytes") == 5,
+              "ASR audio-file staging remains supported");
+    }
     return 0;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

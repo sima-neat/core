@@ -66,11 +66,13 @@ with genai.GenAIModel("./models/Qwen3-0.6B-Autoround-a16w4", connection) as mode
 
 `connection.card_id` 選擇卡及其預設位址：`0` 使用 `10.0.0.2`，`1` 使用 `10.0.1.2`，依此類推。只有在卡使用不同位址時，才需設定 `connection.card_host`。
 
+若要使用推測解碼，請傳入已準備好的目標／草稿模型配對的父目錄，例如包含 `target/` 和 `draft/` 的 `./models/speculative-pair`。編譯後的設定會識別目標和草稿角色。兩個模型會在同一卡端工作階段中載入，不需要額外的請求選項。請預留足夠的卡端記憶體以容納兩個模型。
+
 ## 串流、媒體與多個模型
 
 - 使用 `model.stream(request)` 並逐一讀取 `TokenSample` 值來串流輸出。在重複使用模型之前，呼叫 `cancel()` 並讀取終止樣本。每個模型同時只能有一個作用中的請求。
-- VLM 使用 `request.image_files` 或 `request.images`（UInt8 HWC RGB PCIe 張量；Python 也接受 NumPy 陣列）。ASR 使用 `request.audio_file` 或 `request.audio`（Float32 單聲道取樣值）搭配 `request.sample_rate`。
+- VLM 使用 `request.images`（UInt8 HWC RGB PCIe 張量；Python 也接受 NumPy 陣列）。請在應用程式中讀取影像檔案，並在指派前轉換為 RGB。ASR 使用 `request.audio_file` 或 `request.audio`（Float32 單聲道取樣值）搭配 `request.sample_rate`。
 - 透過 `request.messages` 傳入對話歷史；獨立請求不會繼承先前的歷史。
 - 為獨立模型建立各自的控制代碼。GenAI 模型可與視覺模型共存，但受限於卡端資源；吞吐量取決於工作負載。
 
-共通的請求、結果與串流概念請參閱[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api)。請使用 PCIe 請求／張量型別，而非本機 Core 型別。此遠端 API 不提供 LoRA 切換、快取影像重複使用、推測解碼或 GenAI 圖組合。
+共通的請求、結果與串流概念請參閱[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api)。請使用 PCIe 請求／張量型別，而非本機 Core 型別。此遠端 API 不提供 LoRA 切換、快取影像重複使用或 GenAI 圖組合。

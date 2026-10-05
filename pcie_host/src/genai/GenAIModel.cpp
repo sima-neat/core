@@ -2,6 +2,7 @@
 #include "genai/RemoteSession.h"
 #include "genai/MediaStage.h"
 #include "genai/ModelAssets.h"
+#include "genai/ModelDirectory.h"
 #include "Protocol.h"
 #include "Service.h"
 #include <atomic>
@@ -13,6 +14,21 @@
 namespace simaai::neat::pcie::genai {
 using Clock = std::chrono::steady_clock;
 namespace internal {
+// Keep synchronous results equivalent to consuming every streaming sample.
+void append_sample(GenerationResult& result, const TokenSample& sample) {
+  result.text += sample.text;
+  result.reasoning += sample.reasoning;
+  for (const auto& call : sample.tool_calls)
+    result.tool_calls.push_back(call);
+  if (sample.is_final) {
+    result.metrics = sample.metrics;
+    result.finish_reason = sample.finish_reason;
+    result.language = sample.language;
+    result.no_speech_prob = sample.no_speech_prob;
+    result.avg_logprob = sample.avg_logprob;
+  }
+}
+
 struct StreamState {
   std::mutex mutex;
   std::condition_variable changed;
@@ -62,6 +78,7 @@ std::optional<TokenSample> GenerationStream::next() {
 struct GenAIModel::Impl {
   ConnectionOptions options;
   std::string model;
+  simaai::neat::genai::internal::ModelDirectoryInfo model_layout;
   internal::RemoteSession remote;
   wire::Service service;
   internal::ModelAssets assets;
@@ -78,9 +95,14 @@ struct GenAIModel::Impl {
 
   Impl(std::string name, ConnectionOptions connection)
       : options(std::move(connection)), model(internal::host_model_path(name).string()),
+        model_layout(simaai::neat::genai::internal::inspect_model_directory(model)),
         remote(options), service(options.card_id), assets(model, remote.id(), options.card_id) {
     service.subscribe(wire::tag(remote.id(), true));
-    remote.start();
+    const auto target = model_layout.root.lexically_relative(model);
+    remote.start(target == "." ? "" : target.generic_string(),
+                 model_layout.draft_root
+                     ? model_layout.draft_root->lexically_relative(model).generic_string()
+                     : "");
     const auto until = Clock::now() + std::chrono::milliseconds(options.startup_timeout_ms);
     auto sent = Clock::time_point{};
     while (Clock::now() < until) {
@@ -305,18 +327,8 @@ void GenAIModel::close() {
 GenerationResult GenAIModel::run(const GenerationRequest& request) {
   auto output = stream(request);
   GenerationResult result;
-  while (auto sample = output.next()) {
-    result.text += sample->text;
-    result.reasoning += sample->reasoning;
-    if (sample->is_final) {
-      result.metrics = sample->metrics;
-      result.finish_reason = sample->finish_reason;
-      result.language = sample->language;
-      result.no_speech_prob = sample->no_speech_prob;
-      result.avg_logprob = sample->avg_logprob;
-      result.tool_calls = sample->tool_calls;
-    }
-  }
+  while (auto sample = output.next())
+    internal::append_sample(result, *sample);
   return result;
 }
 } // namespace simaai::neat::pcie::genai

@@ -17,8 +17,7 @@ reports its compiled output capacity during readiness; the host sizes the PCIe
 buffers automatically before the first input. Returned tensors view the received
 raw buffer at the runtime-provided offsets, without an extra reorder copy.
 
-Direct LLM, VLM and ASR APIs use one Core worker per model; the `pcie-genai`
-CLI uses the same APIs.
+Direct LLM, VLM and ASR APIs use one Core worker per model.
 
 ## Public API
 
@@ -48,8 +47,11 @@ The GenAI C++ API is `simaai/neat/pcie/genai/GenAIModel.h`; Python exposes
 application's current working directory. Model files load as needed over PCIe;
 keep them readable and unchanged while the model is open. Use matching host/card
 GenAI packages. Callers supply explicit conversation history in each request.
+VLM requests accept in-memory RGB images; applications load image files themselves.
 Set `connection.card_id` to select the card; its default address is
 `10.0.<card_id>.2`. Set `connection.card_host` to override that address.
+For speculative decoding, pass the parent directory of a prepared target/draft
+pair. Both models load in one card session using their compiled configuration.
 
 ### Multi-model runtime
 

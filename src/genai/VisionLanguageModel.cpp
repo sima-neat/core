@@ -350,7 +350,8 @@ struct VisionLanguageModel::Impl {
   };
 
   explicit Impl(internal::ModelLoadContext context)
-      : info(std::move(context.info)), files(std::move(context.files)) {
+      : info(std::move(context.info)), files(std::move(context.files)),
+        draft_files(std::move(context.draft_files)) {
     if (info.task != GenAITask::VisionLanguage) {
       throw std::runtime_error("GenAI model directory is not a vision-language model: " +
                                info.root.string());
@@ -382,16 +383,16 @@ struct VisionLanguageModel::Impl {
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
         vlm_helper->get_pad_token_id(), *text_streamer, files);
     if (info.draft_root.has_value()) {
-      draft_cfg = load_vlm_config(*info.draft_root);
-      draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(
-          draft_cfg, *info.draft_root / "devkit", std::nullopt, std::nullopt);
+      draft_cfg = load_vlm_config(*info.draft_root, draft_files.get());
+      draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(draft_cfg, *draft_files,
+                                                                    std::nullopt, std::nullopt);
       draft_text_streamer = std::make_unique<simaai::llima::TextStreamer>(
           draft_vlm_helper->get_tokenizer(), std::nullopt, std::nullopt);
       draft_text_streamer->set_performance_summary_enabled(false);
       draft_language_model = std::make_unique<simaai::llima::LanguageModel>(
           *info.draft_root, draft_vlm_helper->get_stop_token_ids(),
           draft_vlm_helper->get_image_token_id(), draft_vlm_helper->get_pad_token_id(),
-          *draft_text_streamer);
+          *draft_text_streamer, draft_files);
     }
     if (info.accepts_image) {
       image_processor = make_image_processor(cfg, *files);
@@ -696,6 +697,7 @@ struct VisionLanguageModel::Impl {
 
   internal::ModelDirectoryInfo info;
   std::shared_ptr<simaai::llima::FileProvider> files;
+  std::shared_ptr<simaai::llima::FileProvider> draft_files;
   simaai::llima::VlmConfig cfg;
   std::string bos_token;
   std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;

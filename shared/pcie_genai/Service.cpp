@@ -87,17 +87,14 @@ std::optional<std::string> Service::receive(int timeout_ms) {
   check(rc, "receive");
   return std::string(static_cast<const char*>(note.payload), note.payload_len);
 }
-bool Service::fetch(const std::string& root, const std::string& source,
-                    const std::string& destination, bool optional) {
+void Service::fetch(const std::string& root, const std::string& source,
+                    const std::string& destination) {
   simaai_svc_xfer_opts opts{};
   opts.flags = SIMAAI_SVC_XF_OVERWRITE;
   simaai_svc_xfer stats{};
   const int rc =
       impl_->fetch(impl_->handle, root.c_str(), source.c_str(), destination.c_str(), &opts, &stats);
-  if (optional && rc == -ENOENT)
-    return false;
   check(rc, "fetch");
-  return true;
 }
 void Service::put(const std::string& source, const std::string& destination) {
   simaai_svc_xfer_opts opts{};

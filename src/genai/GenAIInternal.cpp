@@ -8,209 +8,49 @@
 
 #include <spdlog/spdlog.h>
 
-#include <fstream>
 #include <mutex>
-#include <nlohmann/json.hpp>
-#include <optional>
-#include <stdexcept>
 
 namespace simaai::neat::genai::internal {
-namespace {
-
-bool is_existing_directory(const std::filesystem::path& path) {
-  std::error_code ec;
-  return std::filesystem::is_directory(path, ec);
-}
-
-bool is_existing_regular_file(const std::filesystem::path& path) {
-  std::error_code ec;
-  return std::filesystem::is_regular_file(path, ec);
-}
-
-bool has_vision_model_name(const nlohmann::json& config) {
-  const auto it = config.find("vision_model_name");
-  if (it == config.end()) {
-    return false;
-  }
-  if (it->is_string()) {
-    return !it->get<std::string>().empty();
-  }
-  return it->is_array() && !it->empty();
-}
-
-bool has_vision_capability(const nlohmann::json& config) {
-  return config.contains("vm_cfg") && !config.at("vm_cfg").is_null() && config.contains("mm_cfg") &&
-         !config.at("mm_cfg").is_null() && has_vision_model_name(config);
-}
-
-nlohmann::json parse_json_file(const std::filesystem::path& path) {
-  std::ifstream in(path);
-  if (!in) {
-    throw std::runtime_error("Unable to open GenAI model config: " + path.string());
-  }
-  try {
-    return nlohmann::json::parse(in);
-  } catch (const nlohmann::json::exception& e) {
-    throw std::runtime_error("Malformed GenAI model config " + path.string() + ": " + e.what());
-  }
-}
-
-std::optional<bool> speculative_role(const std::filesystem::path& config_path) {
-  const auto config = parse_json_file(config_path);
-  const auto spec = config.value("lm_cfg", nlohmann::json::object())
-                        .value("speculative_decoding_cfg", nlohmann::json{});
-  if (spec.is_null()) {
-    return std::nullopt;
-  }
-  return spec.value("is_draft", false);
-}
-
-std::optional<std::filesystem::path> resolve_draft_model(std::filesystem::path& model_root) {
-  for (const auto& runtime_root : {model_root, model_root / "sima_files"}) {
-    const auto config_path = runtime_root / "devkit" / "vlm_config.json";
-    if (!is_existing_regular_file(config_path)) {
-      continue;
-    }
-    if (speculative_role(config_path).has_value()) {
-      throw std::runtime_error(
-          model_root.string() +
-          " is part of a speculative-decoding pair; pass its parent directory so both the "
-          "target and draft models are loaded together");
-    }
-    model_root = runtime_root;
-    return std::nullopt;
-  }
-
-  std::optional<std::filesystem::path> target;
-  std::optional<std::filesystem::path> draft;
-  bool target_is_speculative = false;
-  for (const auto& entry : std::filesystem::directory_iterator(model_root)) {
-    if (!entry.is_directory()) {
-      continue;
-    }
-    const auto runtime_root = entry.path();
-    const auto config_path = runtime_root / "devkit" / "vlm_config.json";
-    if (!is_existing_regular_file(config_path)) {
-      continue;
-    }
-
-    const auto role = speculative_role(config_path);
-    const bool is_draft = role.value_or(false);
-    auto& path = is_draft ? draft : target;
-    if (path.has_value()) {
-      throw std::runtime_error(std::string("Multiple ") + (is_draft ? "draft" : "target") +
-                               " models found under " + model_root.string());
-    }
-    path = runtime_root;
-    if (!is_draft) {
-      target_is_speculative = role.has_value();
-    }
-  }
-
-  if (!target.has_value() && !draft.has_value()) {
-    return std::nullopt;
-  }
-  if (!target.has_value()) {
-    throw std::runtime_error("Speculative-decoding package missing target model: " +
-                             model_root.string());
-  }
-  if (target_is_speculative != draft.has_value()) {
-    throw std::runtime_error("Speculative-decoding package must contain one target and one draft "
-                             "model: " +
-                             model_root.string());
-  }
-  model_root = *target;
-  return draft;
-}
-
-} // namespace
-
-ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_dir) {
-  std::error_code ec;
-  const std::filesystem::path canonical = std::filesystem::weakly_canonical(model_dir, ec);
-  const std::filesystem::path package_root = ec ? std::filesystem::absolute(model_dir) : canonical;
-
-  if (!is_existing_directory(package_root)) {
-    throw std::runtime_error("GenAI model directory does not exist: " + package_root.string());
-  }
-
-  auto normalized = package_root;
-  const auto draft_root = resolve_draft_model(normalized);
-
-  const auto devkit_dir = normalized / "devkit";
-  if (!is_existing_directory(devkit_dir)) {
-    throw std::runtime_error("GenAI model directory missing devkit/: " + normalized.string());
-  }
-
-  const auto elf_dir = normalized / "elf_files";
-  if (!is_existing_directory(elf_dir)) {
-    throw std::runtime_error("GenAI model directory missing elf_files/: " + normalized.string());
-  }
-
-  const auto vlm_config = devkit_dir / "vlm_config.json";
-  const auto whisper_config = devkit_dir / "whisper_config.json";
-  const bool has_vlm_config = is_existing_regular_file(vlm_config);
-  const bool has_whisper_config = is_existing_regular_file(whisper_config);
-
-  if (has_vlm_config == has_whisper_config) {
-    throw std::runtime_error(
-        has_vlm_config
-            ? "GenAI model directory has both vlm_config.json and whisper_config.json: " +
-                  normalized.string()
-            : "GenAI model directory missing vlm_config.json or whisper_config.json: " +
-                  normalized.string());
-  }
-
-  if (has_vlm_config) {
-    const nlohmann::json config = parse_json_file(vlm_config);
-    ModelDirectoryInfo info;
-    info.package_root = package_root;
-    info.root = normalized;
-    info.draft_root = draft_root;
-    info.task = GenAITask::VisionLanguage;
-    info.accepts_text = true;
-    info.accepts_image = has_vision_capability(config);
-    return info;
-  }
-
-  (void)parse_json_file(whisper_config);
-  ModelDirectoryInfo info;
-  info.package_root = package_root;
-  info.root = normalized;
-  info.task = GenAITask::ASR;
-  info.accepts_audio = true;
-  return info;
-}
-
-ModelLoadContext local_model_context(const std::filesystem::path& root) {
-  auto info = inspect_model_directory(root);
-  auto files = std::make_shared<simaai::llima::DiskFileProvider>(info.root);
-  return {std::move(info), std::move(files)};
-}
-
 ModelLoadContext provider_model_context(const std::filesystem::path& root,
-                                        std::shared_ptr<simaai::llima::FileProvider> files) {
+                                        std::shared_ptr<simaai::llima::FileProvider> files,
+                                        std::shared_ptr<simaai::llima::FileProvider> draft_files) {
   if (!files)
     throw std::invalid_argument("GenAI asset provider is required");
   const bool vlm = files->exists("devkit/vlm_config.json");
   const bool asr = files->exists("devkit/whisper_config.json");
   if (vlm == asr)
     throw std::runtime_error(
-        "Model must contain exactly one devkit/vlm_config.json or devkit/whisper_config.json; "
-        "select the runtime model directory (speculative packages are not supported remotely)");
-  auto config = nlohmann::json::parse(
+        "Model must contain exactly one devkit/vlm_config.json or devkit/whisper_config.json");
+  const auto config = nlohmann::json::parse(
       *files->open_stream(vlm ? "devkit/vlm_config.json" : "devkit/whisper_config.json"));
-  if (vlm && !config.value("lm_cfg", nlohmann::json::object())
-                  .value("speculative_decoding_cfg", nlohmann::json{})
-                  .is_null())
-    throw std::invalid_argument("Remote speculative-decoding packages are not supported");
+  const auto role = vlm ? speculative_role(config) : std::nullopt;
+  if (role.has_value() != bool(draft_files) || role.value_or(false))
+    throw std::invalid_argument(
+        "Speculative-decoding package must contain one target and one draft model");
   ModelDirectoryInfo info;
   info.package_root = info.root = root;
+  if (draft_files) {
+    if (!draft_files->exists("devkit/vlm_config.json") ||
+        draft_files->exists("devkit/whisper_config.json") ||
+        speculative_role(nlohmann::json::parse(
+            *draft_files->open_stream("devkit/vlm_config.json"))) != std::optional<bool>(true))
+      throw std::invalid_argument("Speculative-decoding draft must declare is_draft=true");
+    info.draft_root = draft_files->reserve("devkit/vlm_config.json").parent_path().parent_path();
+  }
   info.task = vlm ? GenAITask::VisionLanguage : GenAITask::ASR;
   info.accepts_text = vlm;
   info.accepts_image = vlm && has_vision_capability(config);
   info.accepts_audio = asr;
-  return {std::move(info), std::move(files)};
+  return {std::move(info), std::move(files), std::move(draft_files)};
+}
+
+ModelLoadContext local_model_context(const std::filesystem::path& root) {
+  auto info = inspect_model_directory(root);
+  auto files = std::make_shared<simaai::llima::DiskFileProvider>(info.root);
+  auto draft_files = info.draft_root
+                         ? std::make_shared<simaai::llima::DiskFileProvider>(*info.draft_root)
+                         : nullptr;
+  return {std::move(info), std::move(files), std::move(draft_files)};
 }
 
 std::string model_id_from_path(const std::filesystem::path& path) {

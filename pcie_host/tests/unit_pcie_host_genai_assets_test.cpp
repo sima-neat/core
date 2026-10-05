@@ -1,5 +1,4 @@
 #include "genai/ModelAssets.h"
-#include "AssetTransfer.h"
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -40,6 +39,10 @@ int main() {
     const auto model = directory.path / "ordinary host directory";
     std::filesystem::create_directory(model);
     std::ofstream(model / "layer.bin") << "weights";
+    std::filesystem::create_directories(model / "target/elf_files");
+    std::filesystem::create_directories(model / "draft/elf_files");
+    std::ofstream(model / "target/elf_files/model.elf") << "target";
+    std::ofstream(model / "draft/elf_files/model.elf") << "draft";
     const auto recv = directory.path / "received";
     test_genai_receive_root(recv.c_str());
     const std::string session(24, 'b');
@@ -65,33 +68,43 @@ int main() {
             "Retry replays response without restoring evicted file");
     require(!request(2, "missing.bin") && test_genai_copies() == 1, "Optional asset not found");
     require(request(3, "layer.bin") == 7 && test_genai_copies() == 2, "Fetch again after eviction");
+    require(request(4, "target/elf_files/model.elf") == 6 &&
+                request(5, "draft/elf_files/model.elf") == 5 && test_genai_copies() == 4,
+            "Target and draft share one sequential transfer channel");
+    auto read_asset = [&](const std::string& name) {
+      std::ifstream stream(recv / "neat-genai" / session / "model" / name);
+      return std::string((std::istreambuf_iterator<char>(stream)), {});
+    };
+    require(read_asset("target/elf_files/model.elf") == "target" &&
+                read_asset("draft/elf_files/model.elf") == "draft",
+            "Identically named target/draft files retain distinct contents");
     std::filesystem::create_symlink(directory.path, model / "escape");
     bool rejected = false;
     try {
-      request(4, "escape/unavailable");
+      request(6, "escape/unavailable");
     } catch (const std::invalid_argument&) {
       rejected = true;
     } catch (const std::runtime_error&) {
       rejected = true;
     }
-    require(rejected && test_genai_copies() == 2, "Reject symlink escape before upload");
+    require(rejected && test_genai_copies() == 4, "Reject symlink escape before upload");
     test_genai_put_error(-EACCES);
     rejected = false;
     try {
-      request(5, "layer.bin");
+      request(7, "layer.bin");
     } catch (const std::runtime_error&) {
       rejected = true;
     }
     require(rejected, "Propagate daemon transfer failure");
     test_genai_put_error(0);
     test_genai_block_put(true);
-    auto blocked = wire::envelope(session, 6, "asset");
+    auto blocked = wire::envelope(session, 8, "asset");
     blocked["name"] = "layer.bin";
     worker.send(wire::asset_tag(session, false), blocked.dump());
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (test_genai_copies() != 4 && std::chrono::steady_clock::now() < deadline)
+    while (test_genai_copies() != 6 && std::chrono::steady_clock::now() < deadline)
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    require(test_genai_copies() == 4, "Reach blocked transfer");
+    require(test_genai_copies() == 6, "Reach blocked transfer");
     const auto started = std::chrono::steady_clock::now();
     assets.close();
     require(std::chrono::steady_clock::now() - started < std::chrono::seconds(1),

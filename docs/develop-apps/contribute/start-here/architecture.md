@@ -1388,6 +1388,11 @@ host daemon's configured serving root.
 There is no global receive-root lock, registry or shared conversation state.
 Requests carry explicit history and reuse Core's validation and output semantics.
 
+The host reuses Core's model-directory inspection to identify the target and
+optional draft. Scoped file providers prefix each model's asset requests while
+sharing the session's transfer channel. Both models live in one worker and reuse
+local speculative decoding and cancellation.
+
 One request is active per worker. Events carry session/request/sequence IDs,
 are acknowledged, deduplicated and retried within a bounded window. Missing
 events fail explicitly rather than yielding a successful partial answer.
@@ -1397,11 +1402,12 @@ Normal cleanup removes only owned files; forced shutdown may leave private
 session files and diagnostic logs.
 
 Portable result types are shared in `GenAIValueTypes.h`; host image/audio
-inputs use PCIe tensors rather than Core tensors. The platform owns service
-channel selection. Existing vision queues and their builder lifecycle are
+inputs use PCIe tensors rather than Core tensors. VLM images are supplied in
+memory and staged internally for transfer; image-file loading belongs to the
+application. The platform owns service channel selection. Existing vision queues and their builder lifecycle are
 unchanged. Separate workers allow independent models but do not guarantee a
-particular concurrent model count or mixed-workload throughput. LoRA and
-speculative decoding are not supported by this remote API.
+particular concurrent model count or mixed-workload throughput. LoRA switching
+is not supported by this remote API.
 
 ---
 

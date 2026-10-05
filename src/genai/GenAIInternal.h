@@ -1,6 +1,7 @@
 #pragma once
 
 #include "genai/GenAITypes.h"
+#include "genai/ModelDirectory.h"
 
 #include <filesystem>
 #include <optional>
@@ -13,31 +14,23 @@ class FileProvider;
 
 namespace simaai::neat::genai::internal {
 
-struct ModelDirectoryInfo {
-  std::filesystem::path package_root;
-  std::filesystem::path root;
-  std::optional<std::filesystem::path> draft_root;
-  GenAITask task = GenAITask::VisionLanguage;
-  bool accepts_text = false;
-  bool accepts_image = false;
-  bool accepts_audio = false;
-};
-
 struct ModelLoadContext {
   ModelDirectoryInfo info;
   std::shared_ptr<simaai::llima::FileProvider> files;
+  std::shared_ptr<simaai::llima::FileProvider> draft_files;
 };
 
 ModelLoadContext local_model_context(const std::filesystem::path& root);
-ModelLoadContext provider_model_context(const std::filesystem::path& root,
-                                        std::shared_ptr<simaai::llima::FileProvider> files);
+ModelLoadContext
+provider_model_context(const std::filesystem::path& root,
+                       std::shared_ptr<simaai::llima::FileProvider> files,
+                       std::shared_ptr<simaai::llima::FileProvider> draft_files = {});
 struct ModelAccess {
   static GenAIModel create(ModelLoadContext context);
   static VisionLanguageModel vision(ModelLoadContext context);
   static ASRModel asr(ModelLoadContext context);
 };
 
-ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_dir);
 std::string model_id_from_path(const std::filesystem::path& path);
 std::vector<ChatMessage> build_text_messages(const GenerationRequest& request);
 void validate_text_generation_request(const GenerationRequest& request);

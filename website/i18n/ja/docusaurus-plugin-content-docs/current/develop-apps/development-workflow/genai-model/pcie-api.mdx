@@ -66,11 +66,13 @@ with genai.GenAIModel("./models/Qwen3-0.6B-Autoround-a16w4", connection) as mode
 
 `connection.card_id` はカードとその既定のアドレスを選択します。`0` は `10.0.0.2`、`1` は `10.0.1.2` を使用し、以降も同様です。カードが別のアドレスを使用する場合にのみ `connection.card_host` を設定してください。
 
+投機的デコーディングを使用するには、準備済みのターゲット／ドラフトのペアの親ディレクトリを渡します。たとえば、`target/` と `draft/` を含む `./models/speculative-pair` です。コンパイル済みの設定がターゲットとドラフトの役割を識別します。両方のモデルは同じカードセッションでロードされ、追加のリクエストオプションは不要です。両モデル分のカードメモリを確保してください。
+
 ## ストリーミング、メディア、複数モデル
 
 - `model.stream(request)` を使用し、`TokenSample` を反復処理して出力をストリーミングします。モデルを再利用する前に、`cancel()` を呼び出して終端サンプルを読み取ってください。各モデルで同時に実行できるリクエストは 1 つです。
-- VLM では `request.image_files` または `request.images`（UInt8 HWC RGB の PCIe テンソル。Python では NumPy 配列も使用可能）を使用します。ASR では `request.audio_file` または `request.audio`（Float32 のモノラルサンプル）と `request.sample_rate` を使用します。
+- VLM では `request.images`（UInt8 HWC RGB の PCIe テンソル。Python では NumPy 配列も使用可能）を使用します。画像ファイルはアプリケーションで読み込み、RGB に変換してから設定します。ASR では `request.audio_file` または `request.audio`（Float32 のモノラルサンプル）と `request.sample_rate` を使用します。
 - 会話履歴は `request.messages` で渡してください。個別のリクエストは以前の履歴を引き継ぎません。
 - 独立したモデルごとにハンドルを作成してください。カードのリソースの範囲内で GenAI モデルとビジョンモデルを併用できます。スループットはワークロードに依存します。
 
-共通のリクエスト、結果、ストリーミングの概念については、[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api) を参照してください。ローカル Core の型ではなく PCIe のリクエスト型とテンソル型を使用します。このリモート API は、LoRA の切り替え、キャッシュ済み画像の再利用、投機的デコーディング、GenAI グラフの構成を公開していません。
+共通のリクエスト、結果、ストリーミングの概念については、[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api) を参照してください。ローカル Core の型ではなく PCIe のリクエスト型とテンソル型を使用します。このリモート API は、LoRA の切り替え、キャッシュ済み画像の再利用、GenAI グラフの構成を公開していません。

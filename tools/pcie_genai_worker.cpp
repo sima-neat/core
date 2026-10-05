@@ -1,5 +1,6 @@
 #include "genai/GenAIModel.h"
 #include "genai/GenAIInternal.h"
+#include "genai/ScopedFileProvider.h"
 #include "pcie_genai/PcieFileProvider.h"
 #include "Protocol.h"
 #include "Service.h"
@@ -77,8 +78,9 @@ local::GenerationRequest request_from_json(const wire::Json& j, wire::PcieFilePr
 
 int main(int argc, char** argv) {
   // Arguments are passed by the host as separate, shell-quoted values.
-  if (argc != 4) {
-    std::cerr << "usage: neat-pcie-genai-worker SESSION RECV_ROOT ASSET_TIMEOUT_MS\n";
+  if (argc != 6) {
+    std::cerr << "usage: neat-pcie-genai-worker SESSION RECV_ROOT ASSET_TIMEOUT_MS TARGET_DIR "
+                 "DRAFT_DIR\n";
     return 2;
   }
   const std::string session = argv[1];
@@ -103,8 +105,18 @@ int main(int argc, char** argv) {
       try {
         auto files = std::make_shared<wire::PcieFileProvider>(argv[2], session, std::stoi(argv[3]),
                                                               [&] { return stop || interrupted; });
+        std::shared_ptr<simaai::llima::FileProvider> target_files = files, draft_files;
+        std::filesystem::path target_root = files->model_root();
+        if (argv[4][0]) {
+          const auto target = wire::relative_name(argv[4]);
+          target_files = std::make_shared<local::internal::ScopedFileProvider>(files, target);
+          target_root /= target;
+        }
+        if (argv[5][0])
+          draft_files = std::make_shared<local::internal::ScopedFileProvider>(
+              files, wire::relative_name(argv[5]));
         auto model = local::internal::ModelAccess::create(
-            local::internal::provider_model_context(files->model_root(), files));
+            local::internal::provider_model_context(target_root, target_files, draft_files));
         {
           std::lock_guard lock(mutex);
           capabilities = {{"task", model.accepts_audio() ? "asr" : "vision_language"},

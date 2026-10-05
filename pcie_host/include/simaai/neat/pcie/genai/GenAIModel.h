@@ -32,7 +32,6 @@ struct ChatMessage {
   std::string role;
   std::string content;
   std::vector<Tensor> images; ///< UInt8 HWC RGB tensors.
-  std::vector<std::filesystem::path> image_files;
   Json tool_calls = Json::array();
   std::optional<std::string> tool_call_id;
   std::optional<std::string> name;
@@ -42,8 +41,7 @@ struct GenerationRequest {
   std::optional<std::string> prompt;
   std::optional<std::string> system_prompt;
   std::vector<ChatMessage> messages;
-  std::vector<Tensor> images; ///< UInt8 HWC RGB tensors.
-  std::vector<std::filesystem::path> image_files;
+  std::vector<Tensor> images;  ///< UInt8 HWC RGB tensors.
   std::optional<Tensor> audio; ///< Float32 mono samples, shape [N].
   uint32_t sample_rate = 16000;
   std::optional<std::filesystem::path> audio_file;

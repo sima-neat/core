@@ -5,7 +5,7 @@ class RemoteSession {
 public:
   explicit RemoteSession(ConnectionOptions options);
   ~RemoteSession();
-  void start();
+  void start(const std::string& target_directory = "", const std::string& draft_directory = "");
   void stop();
   static std::string stop_script(const std::string& session_id);
   const std::string& id() const {

@@ -2,7 +2,6 @@
 #include <sima_lmm/file_provider.hpp>
 #include "Service.h"
 #include "Protocol.h"
-#include "AssetTransfer.h"
 #include <fstream>
 #include <functional>
 #include <set>
@@ -69,13 +68,8 @@ public:
   }
   void fetch(const std::filesystem::path& path) override {
     auto rel = relative_name(path.lexically_relative(model_root()).generic_string());
-    auto p = reserve(rel);
-    if (present_.contains(p))
-      return;
-    prepare(p);
-    if (!fetch_model(rel, p))
+    if (!exists(rel))
       throw std::runtime_error("Model asset does not exist on host: " + rel);
-    present_.insert(p);
   }
   void evict(const std::filesystem::path& path) override {
     auto p = reserve(relative_name(path.lexically_relative(model_root()).generic_string()));
@@ -113,11 +107,8 @@ private:
   }
   void prepare(const std::filesystem::path& path) {
     std::filesystem::create_directories(path.parent_path());
-    if (std::filesystem::weakly_canonical(path).lexically_relative(root_).empty() ||
-        std::filesystem::weakly_canonical(path)
-            .lexically_relative(root_)
-            .generic_string()
-            .starts_with(".."))
+    const auto relative = std::filesystem::weakly_canonical(path).lexically_relative(root_);
+    if (relative.empty() || relative.generic_string().starts_with(".."))
       throw std::runtime_error("Asset destination escapes session directory");
   }
   Service service_;

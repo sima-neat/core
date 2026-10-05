@@ -103,13 +103,10 @@ Json MediaStage::tensor(const Tensor& t, bool audio, uint32_t rate) {
   out.close();
   return descriptor(path);
 }
-Json MediaStage::images(const std::vector<Tensor>& tensors,
-                        const std::vector<std::filesystem::path>& paths) {
+Json MediaStage::images(const std::vector<Tensor>& tensors) {
   Json result = Json::array();
   for (const auto& t : tensors)
     result.push_back(tensor(t, false, 0));
-  for (const auto& p : paths)
-    result.push_back(file(p));
   return result;
 }
 Json MediaStage::encode(const GenerationRequest& r) {
@@ -117,7 +114,7 @@ Json MediaStage::encode(const GenerationRequest& r) {
     throw std::invalid_argument("Use either audio or audio_file");
   if (r.prompt && !r.messages.empty())
     throw std::invalid_argument("Use either prompt or messages");
-  Json j = {{"images", images(r.images, r.image_files)},
+  Json j = {{"images", images(r.images)},
             {"messages", Json::array()},
             {"max_new_tokens", r.max_new_tokens},
             {"enable_thinking", r.enable_thinking},
@@ -136,7 +133,7 @@ Json MediaStage::encode(const GenerationRequest& r) {
   for (const auto& m : r.messages) {
     Json message = {{"role", m.role},
                     {"content", m.content},
-                    {"images", images(m.images, m.image_files)},
+                    {"images", images(m.images)},
                     {"tool_calls", m.tool_calls}};
     if (m.name)
       message["name"] = *m.name;
