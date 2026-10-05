@@ -23,13 +23,13 @@ SiMa.ai package services.
 For `amd64` hosts:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
+sima-cli neat install sdk@v2.1.3.1 -t offline-amd64
 </ShellCommand>
 
 For `arm64` hosts:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
+sima-cli neat install sdk@v2.1.3.1 -t offline-arm64
 </ShellCommand>
 
 Copy the downloaded directory to the target host. From that directory, run:
@@ -48,16 +48,16 @@ Download the Model Compiler package that matches the target environment and SDK
 compatibility requirements. For compatibility details, see
 [Compatibility](/getting-started/compatibility/#model-compiler).
 
-For Model Compiler 2.1.3 on `amd64` hosts:
+For Model Compiler 2.1.3.1 on `amd64` hosts:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
+sima-cli neat install model-compiler/amd64@v2.1.3.1 -t offline
 </ShellCommand>
 
-For Model Compiler 2.1.3 on `arm64` hosts:
+For Model Compiler 2.1.3.1 on `arm64` hosts:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
+sima-cli neat install model-compiler/arm64@v2.1.3.1 -t offline
 </ShellCommand>
 
 :::note
