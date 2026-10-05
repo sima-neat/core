@@ -107,7 +107,7 @@ CATEGORY_TUTORIAL_ORDER = {
     "Graphs & Pipelines": [4, 8, 13, 14, 15, 12, 16, 17],
     "Cameras & Streaming": [18, 23],
     "GenAI": [21, 19, 20, 22],
-    "PCIe Co-Processing": [24, 25, 26],
+    "PCIe Co-Processing": [24, 25, 26, 27, 28],
 }
 
 
@@ -907,10 +907,15 @@ def flow_animation_svg(module: TutorialModule) -> str:
     title = re.sub(r"\s+", " ", module.display_title).strip()
     subtitle = _first_sentence(module.concept or module.walkthrough_lead)
     py_sources = module.py_rels or ([module.py_rel] if module.py_rel else [])
+    sources = (
+        py_sources
+        or module.cpp_rels
+        or ([module.cpp_rel] if module.cpp_rel else [])
+    )
     source_label = (
-        pathlib.Path(py_sources[0]).name
-        if len(py_sources) == 1
-        else f"{len(py_sources)} standalone programs"
+        pathlib.Path(sources[0]).name
+        if len(sources) == 1
+        else f"{len(sources)} standalone programs"
     )
     return stepper_animation_svg(
         title, subtitle, source_label, data, interactive=True, anchors=anchors

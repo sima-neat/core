@@ -23,7 +23,7 @@ slug: /reference/tutorial-assets
 
 튜토리얼 명령어는 여전히 명시적인 플래그를 허용합니다. 단일 실행의 경우 `--model <path>`를 사용하는 것이 좋으며, 여러 명령어가 동일한 아티팩트를 공유해야 하는 경우 환경 변수를 사용하십시오.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
@@ -57,7 +57,7 @@ Neat은 실행하기 전에 모델 아카이브를 추출합니다. 이러한 �
 일부 소스 트리 테스트는 COCO 샘플 이미지를 사용하며, 이미지가 없는 경우 다운로드합니다.
 환경에 로컬 미러가 필요한 경우 URL을 재정의하십시오.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_COCO_URL=https://example.com/path/to/coco_sample.jpg
 </ShellCommand>
 

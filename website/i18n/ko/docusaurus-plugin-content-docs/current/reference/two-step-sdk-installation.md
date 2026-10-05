@@ -17,7 +17,7 @@ sidebar_position: 20
 
 SDK 2.0.0의 경우:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli install ghcr:sima-neat/sdk:v2.0.0
 </ShellCommand>
 
@@ -29,13 +29,13 @@ SDK 2.1.2 또는 2.1.2.1을 사용하는 경우 해당 릴리스와 함께 제�
 
 DevKit이 호스트에서 접근 가능한 경우, 설정 중에 페어링하세요.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 DevKit에 아직 연결할 수 없는 경우, 페어링하지 않고 SDK 작업 공간을 설정하세요.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
@@ -45,7 +45,7 @@ sima-cli sdk setup
 
 설치가 완료되면 SDK 셸을 엽니다.
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk neat
 </ShellCommand>
 

@@ -543,7 +543,7 @@ C++와 Python 모두 `GraphLinkOptions`에서 이러한 필드를 노출하며, 
 
 :::caution 미리 보기 애플리케이션을 업그레이드하고 저장된 그래프를 업데이트합니다.
 
-이번 버전에서는 `GraphLinkOptions`에 허용 필드를 추가합니다. 현재 Neat Library C++ ABI 및 공유 라이브러리 SONAME은 4입니다. 해당 Core 패키지에 맞춰 C++ 애플리케이션과 플러그인을 다시 빌드하십시오. 이전 `libsima_neat` SONAME으로 빌드된 바이너리와 `libsima_neat.so.4`를 혼합하지 마십시오.
+`GraphLinkOptions`에 허용 설정이 추가됩니다. Core ABI 5, `libsima_neat.so.5`에 맞춰 C++ 애플리케이션과 플러그인을 다시 빌드하십시오. 일치하는 헤더와 런타임 패키지를 사용하십시오.
 
 다음과 같이 미리보기 소스 코드를 마이그레이션하십시오.
 

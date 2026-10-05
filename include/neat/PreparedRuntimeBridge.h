@@ -134,6 +134,47 @@ struct GraphProcessCvuStageRequest {
   bool c16_packed_io = false;
 };
 
+inline constexpr std::uint32_t GRAPH_PROCESSCVU_PREPARED_BRIDGE_ABI_VERSION_V2 = 2U;
+
+enum class GraphProcessCvuTiledChannelEncoding : std::uint32_t {
+  CompactPixelMajor = 1U,
+  PaddedHwcC16 = 2U,
+  CBlock16 = 3U,
+};
+
+// Versioned request for callers that need unambiguous tiled channel
+// addressing. The fixed-width prefix must be validated before reading the
+// rich C++ request member across a DSO boundary.
+struct GraphProcessCvuStageRequestV2 {
+  std::uint32_t abi_version = GRAPH_PROCESSCVU_PREPARED_BRIDGE_ABI_VERSION_V2;
+  std::uint32_t struct_size = 0U;
+  GraphProcessCvuStageRequest request;
+  GraphProcessCvuTiledChannelEncoding tiled_channel_encoding =
+      GraphProcessCvuTiledChannelEncoding::CompactPixelMajor;
+
+  GraphProcessCvuStageRequestV2()
+      : struct_size(static_cast<std::uint32_t>(sizeof(GraphProcessCvuStageRequestV2))) {}
+};
+
+struct GraphProcessCvuPreparedBridgeAbiV2 {
+  std::uint32_t abi_version = GRAPH_PROCESSCVU_PREPARED_BRIDGE_ABI_VERSION_V2;
+  std::uint32_t struct_size = 0U;
+  std::uint32_t tiled_channel_encoding_size = 0U;
+  std::uint32_t reserved = 0U;
+  std::uint64_t graph_processcvu_stage_request_size = 0U;
+  std::uint64_t graph_processcvu_stage_request_v2_size = 0U;
+  std::uint64_t processcvu_prepared_stage_size = 0U;
+  std::uint64_t prepared_processcvu_typed_config_size = 0U;
+};
+
+extern "C" const GraphProcessCvuPreparedBridgeAbiV2*
+sima_neat_graph_processcvu_prepared_bridge_abi_v2();
+
+extern "C" bool
+sima_neat_build_graph_processcvu_prepared_stage_v2(const GraphProcessCvuStageRequestV2* request,
+                                                   simaai::gst::ProcessCvuPreparedStage* out,
+                                                   std::string* error_message = nullptr);
+
 bool prepare_processmla_runtime_config(ProcessMlaRuntimeConfig* runtime_cfg,
                                        std::string* error_message = nullptr);
 

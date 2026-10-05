@@ -28,7 +28,29 @@ same queue to two active models.
 ## Tensor Mode
 
 `ModelOptions` defaults to tensor transport. Keep this mode when the host prepares model-ready
-input. Do not enable image preprocessing merely because the source began as an image.
+input. Do not enable image preprocessing merely because the source began as an image. The card
+still runs the model's own quantize and dequantize stages, so the reported contract is commonly
+FP32.
+
+## MLA-Only Mode
+
+Set `mla_only = true` to move the model's dtype-conversion boundary to the application. The card
+then runs only the MLA: the host submits tensors that match each `info().inputs` entry and receives
+the MLA's native heads, dense and contiguous, in the order of `info().outputs`. INT8 tensors carry
+`quant` (one scale and one zero point per tensor); BF16 tensors carry no `quant`.
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+```
+
+The mode is all or nothing: each submitted tensor must match the dtype, shape and byte size of its
+`TensorInfo`, a payload of another dtype is rejected, and `mla_only` cannot be combined with
+`InputKind::Image` or box decode. The archive must be compiled for direct MLA input and output; the
+constructor rejects one that tessellates on the EV74 with
+`mla_only does not support stage '...' (tess)`. For INT8, quantize and dequantize with
+`x = (q - zero_point) * scale` and `q = clamp(round(x / scale) + zero_point, -128, 127)`, reading
+the parameters from `info()` and never from another build of the model.
 
 ## Image Preprocessing
 

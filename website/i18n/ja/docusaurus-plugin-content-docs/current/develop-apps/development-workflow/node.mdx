@@ -221,7 +221,7 @@ graph.add(pyneat.nodes.output("frames"))
 </CodeTab>
 </CodeTabs>
 
-H.265の場合、`RtspDecodedInput(...)`は、解析されたcapsとデコーダーの`dec-fps`の両方に対して`source_fps`を使用します。RTSP capsに有効なフレームレートが含まれていない場合は、これを設定してください。どちらの値も設定されていない場合、デコーダーの起動に失敗します。Neatは、この値を調べるためにRTSP URLをプローブしません。ソースのフレームレートを宣言し、レート変換を要求しません。出力フレームレートを変更するには、`use_videorate`を有効にし、`video_rate_fps`を設定します。
+H.265の場合、`RtspDecodedInput(...)`は、解析されたcapsとデコーダーの`dec-fps`の両方に対して`source_fps`を使用します。RTSP capsに有効なフレームレートが含まれていない場合は、これを設定してください。どちらの値も設定されていない場合、デコーダーの起動に失敗します。Neatは、この値を調べるためにRTSP URLをプローブしません。ソースのフレームレートを宣言し、レート変換を要求しません。出力フレームレートを変更するには、`use_videorate`を有効にし、`video_rate_fps`を設定します。 レート変換は余分なフレームを破棄し、ソースのタイムスタンプを保持します。`nodes::VideoRate()` および `pyneat.nodes.video_rate()` ファクトリーは引数を取らず、ソースグループによって挿入された場合も含めて、常に `drop-only=true` を使用します。出力レートを上げるためにフレームを複製することはありません。
 
 HTTP multipart MJPEGの場合は、`HttpMjpegDecodedInput(...)`を使用します。HTTP multipart MJPEGはRTPではないため、RTSPデパケタイズではなく、`HttpSource -> MultipartJpegDemux -> JpegParse ->
 SimaDecode(MJPEG)`を使用します。

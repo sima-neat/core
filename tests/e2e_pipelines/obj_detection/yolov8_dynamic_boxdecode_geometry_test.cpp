@@ -251,6 +251,28 @@ RunResult run_async_dynamic_geometry(const simaai::neat::Model& model,
   push_pull_frame(original, "original");
   push_pull_frame(half, "half");
   push_pull_frame(original, "original-again");
+  // Empty detections are successful outputs, not a reason to stop the async Run.
+  const cv::Mat black = cv::Mat::zeros(original.size(), original.type());
+  const auto empty_input = make_bgr_ev74_sample(black);
+  for (int frame = 0; frame < 32; ++frame) {
+    const std::string label = "async-empty-" + std::to_string(frame);
+    require(run.push(empty_input), label + ": push failed");
+    simaai::neat::Sample output;
+    simaai::neat::PullError error;
+    const auto status = run.pull(3000, output, &error);
+    require(status == simaai::neat::PullStatus::Ok,
+            label + ": expected successful empty result: " + error.message);
+    std::vector<uint8_t> payload;
+    std::string detail;
+    require(objdet::extract_bbox_payload(output, result.outputs, payload, detail), detail);
+    require(payload.size() >= sizeof(uint32_t), label + ": missing bbox count");
+    uint32_t count = 0;
+    std::memcpy(&count, payload.data(), sizeof(count));
+    require(count == 0, label + ": fixture must produce zero detections");
+    ++result.outputs;
+  }
+  push_pull_frame(original, "recovery-after-empty");
+  require(run.last_error().empty(), "async empty/recovery sequence must remain error-free");
   result.pipeline = graph.last_pipeline();
   run.close_input();
   run.close();

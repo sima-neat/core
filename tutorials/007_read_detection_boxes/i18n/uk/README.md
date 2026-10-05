@@ -196,9 +196,10 @@ SimaBoxDecode(const Model& model,
 `BoxDecodeType` — це типізований API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`), і його завжди слід явно встановлювати для етапів декодування. Наведений нижче контракт середовища виконання походить від `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp` (`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`).
 
 Основні правила для тензорних операцій:
-- Типи декодування сімейства YOLO (`yolo`, `yolov5*`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):
+- Типи декодування сімейства YOLO, крім детекції `yolov5` (`yolo`, `yolov5-seg`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):
   - Роз’єднані голови: глибина класів-голів має бути повторюваною і дорівнювати `> 4`.
   - Згруповані голови: глибина кожної голови повинна відповідати вимогам `depth = 3 * (num_classes + 5)` і бути узгодженою між головами.
+- Детекція `yolov5`: рівно три недекодовані об’єднані голови P3/P4/P5 із геометрією stride 8/16/32 і глибиною `3 * (num_classes + 5)`.
 - `yolo26`: роз’єднані згруповані голови з 4-канальними тензорами необроблених координат обмежувальних рамок (l/t/r/b) і повторюваною глибиною класів-голів `> 4`.
 - `detr`: канали класів визначаються на основі максимальної глибини між головами і повинні бути `> 4`.
 - Інші типи декодування, відмінні від YOLO (`effdet`, `rcnn-stage1`, `centernet`): резервний метод визначення класу використовує максимальну глибину і вимагає `> 4`.
@@ -207,7 +208,7 @@ SimaBoxDecode(const Model& model,
 | Перелік API | Токен бекенду | Очікуваний контракт |
 |---|---|---|
 | `BoxDecodeType::Yolo` | `yolo` | Розділений або об’єднаний контракт глибини YOLO |
-| `BoxDecodeType::YoloV5` | `yolov5` | Розділений або об’єднаний контракт глибини YOLO |
+| `BoxDecodeType::YoloV5` | `yolov5` | Три недекодовані об’єднані голови P3/P4/P5 |
 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | Контракт глибини YOLO + шлях сегментації |
 | `BoxDecodeType::YoloV7` | `yolov7` | Розділений або об’єднаний контракт глибини YOLO |
 | `BoxDecodeType::YoloV7Seg` | `yolov7-seg` | Контракт глибини YOLO + шлях сегментації |

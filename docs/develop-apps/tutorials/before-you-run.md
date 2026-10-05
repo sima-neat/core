@@ -26,7 +26,7 @@ the card.
 Make sure the [Neat Library is installed](/getting-started/neat-library/install-or-update/),
 then run these commands from the directory where you want the tutorial bundle:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core -t extras
 cd sima-neat-*-Linux-extras
 </ShellCommand>
@@ -70,7 +70,7 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 Use Model Zoo to download the model named by the tutorial. For example:
 
-<ShellCommand prompt="sdk-devkit-or-pcie-host">
+<ShellCommand prompt="sdk|devkit|pcie-host">
 sima-cli modelzoo get resnet_50
 sima-cli modelzoo get yolo_v8s
 </ShellCommand>
@@ -97,7 +97,7 @@ cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
 Run tutorial commands from the extracted extras root. Confirm that it contains
 the build helper, prebuilt C++ programs, and tutorial source:
 
-<ShellCommand prompt="sdk-or-pcie-host">
+<ShellCommand prompt="sdk|pcie-host">
 test -x build.sh
 ls lib/*/tutorials/
 ls share/*/tutorials/

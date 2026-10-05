@@ -11,7 +11,7 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### 破壞性變更
 
-- Neat Library 的 C++ ABI 現在為 4，共享函式庫的 SONAME 為 `libsima_neat.so.4`。張量現在帶有特徵擷取器的語義中繼資料；公開的 GenAI 請求/結果類型帶有 ASR 工作、語言和探測中繼資料；`GraphLinkOptions` 則包含即時准入限制。請重新建置 C++ 應用程式和外掛程式，並安裝相符的 Core 執行階段與開發套件。
+- Core 使用 C++ ABI 5、`libsima_neat.so.5`。公開的張量、GenAI、圖連接及 YOLOX 分割／姿態選項的物件佈局已變更。請使用相符的 Core 標頭與執行階段套件，重新建置 C++ 應用程式、外掛程式及 Python 繫結。
 - 即時圖組合現在使用 `GraphLinkOptions`、`Graph::connect()` 和 `Graph::build()`。預覽版 API `RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()` / `build_fused_realtime_source()` 和 `RealtimeEveryFrameByStream` 已移除。包含 `realtime_every_frame_by_stream` 的已儲存圖必須使用受支援的原則重新建立；請參閱[連接即時片段](/develop-apps/development-workflow/graph/#connect-live-fragments)。
 
 ### 執行階段變更

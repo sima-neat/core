@@ -10,11 +10,24 @@
 #pragma once
 
 #include "builder/Node.h"
+#include "policy/OverflowPolicy.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace simaai::neat {
+
+/**
+ * @brief Optional limits and overflow behavior for a Queue node.
+ *
+ * Leaving `max_buffers` unset preserves GStreamer's default queue limits.
+ * When set, the buffer count is the only active capacity limit.
+ */
+struct QueueOptions {
+  std::optional<int> max_buffers;
+  OverflowPolicy overflow_policy = OverflowPolicy::Block;
+};
 
 /**
  * @brief Wraps GStreamer's `queue` element — inserts a thread/buffer boundary.
@@ -26,7 +39,7 @@ namespace simaai::neat {
  *
  * @ingroup nodes_common
  */
-class Queue final : public Node {
+class Queue : public Node {
 public:
   /// Type label for this Node kind.
   std::string kind() const override {
@@ -47,4 +60,6 @@ public:
 namespace simaai::neat::nodes {
 /// Convenience factory for a `Queue` Node.
 std::shared_ptr<simaai::neat::Node> Queue();
+/// Create a configured `Queue` Node.
+std::shared_ptr<simaai::neat::Node> Queue(simaai::neat::QueueOptions options);
 } // namespace simaai::neat::nodes

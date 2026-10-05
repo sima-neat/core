@@ -270,6 +270,35 @@ RUN_TEST(
                              "application-driven EOS must not use the source-ended code"));
       }
 
+      // An asynchronous stage error must reach the caller even if no later input is pushed.
+      {
+        Run run = make_async_rgb_run_with_copy_input(seed);
+        require(run.push(TensorList{seed}),
+                run_api_case("async_error_seed_push", "initial input should be accepted"));
+        Sample output;
+        PullError err;
+        require(run.pull(1000, output, &err) == PullStatus::Ok,
+                run_api_case("async_error_seed_pull", "initial output should be delivered"));
+
+        const auto core = run_internal::core(run);
+        GstElement* pipeline = core ? core->pipeline.stream.pipeline_handle() : nullptr;
+        require(pipeline != nullptr,
+                run_api_case("async_error_pipeline", "missing running pipeline"));
+        GError* failure = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+                                              "Asynchronous stage failed");
+        GstMessage* message =
+            gst_message_new_error(GST_OBJECT(pipeline), failure, "final completion failed");
+        g_error_free(failure);
+        require(gst_element_post_message(pipeline, message),
+                run_api_case("async_error_post", "failed to post asynchronous error"));
+
+        require(run.pull(1000, output, &err) == PullStatus::Error,
+                run_api_case("async_error_without_next_input",
+                             "stage failure must return Error, not keep timing out"));
+        require(!err.code.empty() && !err.message.empty() && !run.last_error().empty(),
+                run_api_case("async_error_details", "stage failure needs caller-visible details"));
+      }
+
       // Active async matrix.
       {
         Run run = sima_test::make_async_rgb_run(seed, 32, 32);

@@ -18,7 +18,7 @@
 // model.
 // Model fixture:
 //   export LLIMA_MODELS_PATH=/media/nvme/llima/models
-//   export SIMA_TEST_LLIMA_ASR_MODEL=whisper-small-a16w8
+//   export SIMA_TEST_LLIMA_ASR_MODEL=whisper-small-a16w8-layered-encoder
 //   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 

@@ -21,14 +21,18 @@ sidebar_position: 2
 ## 取得模型和範例圖片
 
 1. **建立一個「assets」目錄**，我們將在其中儲存模型和輸入圖片：
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
     cd assets
-    ```
+    </ShellCommand>
+
 2. **下載模型：**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli 模型下載
     如果 `sima-cli` 將模型寫入的目錄與 `assets` 目錄不同，請將該檔案複製到 `assets/yolo_v8s_mpk.tar.gz`。
     :::
@@ -36,9 +40,11 @@ sidebar_position: 2
 
     [開啟或下載範例圖片](../../images/tutorial_sample_image.png)。
 4. **傳回您的專案目錄：**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     cd ..
-    ```
+    </ShellCommand>
+
 
 ## 逐步說明
 
@@ -306,25 +312,36 @@ if __name__ == "__main__":
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
-使用與「Hello Neat!」相同的指令重新建置，然後執行二進位檔：
+使用與「Hello Neat!」相同的指令重新建置：
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/sima_neat_hello      # on the DevKit
-dk build/sima_neat_hello     # from the Palette SDK host
-```
+</ShellCommand>
+
+然後執行二進位檔：
+
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 執行腳本：
 
-```bash
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
-python3 hello_neat.py        # on the DevKit
-dk hello_neat.py             # from the Palette SDK host
-```
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

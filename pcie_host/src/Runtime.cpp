@@ -248,6 +248,8 @@ public:
     }
     join_collectors(entries);
 
+    // Keep entries alive through the explicit close attempts. Destroying them on return or unwind
+    // gives each Model one immediate best-effort retry through its noexcept destructor.
     {
       std::lock_guard<std::mutex> lock(completion_mutex_);
       completions_.clear();

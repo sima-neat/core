@@ -23,6 +23,7 @@
 #include "graphs/Fragments.h"
 #include "model/Model.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/groups/UdpH264OutputGroup.h"
 #include "nodes/groups/VideoSender.h"
@@ -1446,6 +1447,11 @@ NB_MODULE(_pyneat_core, m) {
       .value("KeepLatest", simaai::neat::OverflowPolicy::KeepLatest)
       .value("DropIncoming", simaai::neat::OverflowPolicy::DropIncoming);
 
+  nb::class_<simaai::neat::QueueOptions>(m, "QueueOptions")
+      .def(nb::init<>())
+      .def_rw("max_buffers", &simaai::neat::QueueOptions::max_buffers)
+      .def_rw("overflow_policy", &simaai::neat::QueueOptions::overflow_policy);
+
   nb::enum_<RunPreset>(m, "RunPreset")
       .value("Realtime", RunPreset::Realtime)
       .value("Balanced", RunPreset::Balanced)
@@ -1994,6 +2000,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("boxes", &simaai::neat::SegmentationDecodeTensors::boxes)
       .def_rw("masks", &simaai::neat::SegmentationDecodeTensors::masks);
 
+  nb::class_<simaai::neat::SegmentationPoseDecodeTensors>(m, "SegmentationPoseDecodeTensors")
+      .def(nb::init<>())
+      .def_rw("boxes", &simaai::neat::SegmentationPoseDecodeTensors::boxes)
+      .def_rw("masks", &simaai::neat::SegmentationPoseDecodeTensors::masks)
+      .def_rw("keypoints", &simaai::neat::SegmentationPoseDecodeTensors::keypoints);
+
   m.def(
       "decode_pose",
       [](const TensorList& pose_tensors, std::optional<std::pair<int, int>> clamp_to,
@@ -2059,6 +2071,45 @@ NB_MODULE(_pyneat_core, m) {
       "  TypeError: an input tensor is not segmentation/BBOX-compatible.\n"
       "  RuntimeError: strict=True and a payload is malformed.",
       "segmentation_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
+      "strict"_a = false);
+
+  m.def(
+      "decode_segmentation_pose",
+      [](const TensorList& tensors, std::optional<std::pair<int, int>> clamp_to,
+         std::optional<int> top_k, bool strict) {
+        const int w = clamp_to ? clamp_to->first : 0;
+        const int h = clamp_to ? clamp_to->second : 0;
+        const int k = top_k.value_or(0);
+        try {
+          return simaai::neat::decode_segmentation_pose(tensors, w, h, k, strict);
+        } catch (const std::runtime_error& e) {
+          const std::string msg = e.what();
+          if (detection_decode_type_error_message(msg)) {
+            throw nb::type_error(e.what());
+          }
+          throw;
+        }
+      },
+      "Decode combined BoxDecode segmentation+pose tensors, positional 1:1.\n\n"
+      "Each result has `boxes` [N, 6] float32, `masks` [N, 160, 160] uint8, and\n"
+      "`keypoints` [N, 17, 3] float32 with columns (x, y, visibility). All three are\n"
+      "parallel: row i of each describes the same detection.\n\n"
+      "Keypoint rows are copied through verbatim; zeroing is the backend's, driven by\n"
+      "the `pose_classes` gate. Set `ModelOptions.yolox_seg_pose.pose_classes` on a model whose\n"
+      "classes are mixed and a detection whose class carries no keypoints arrives\n"
+      "all-zero, visibility included, so you can gate on visibility rather than\n"
+      "needing the class list. Leaving it empty treats every class as pose-bearing.\n\n"
+      "Args:\n"
+      "  tensors:  list[Tensor] of BoxDecode segmentation+pose format tensors.\n"
+      "  clamp_to: Optional (width, height) - clamp box coordinates to that rectangle.\n"
+      "  top_k:    Optional cap on detections per tensor.\n"
+      "  strict:   When True, raise on malformed buffers instead of best-effort.\n\n"
+      "Returns:\n"
+      "  list[SegmentationPoseDecodeTensors] - one result per input tensor.\n\n"
+      "Raises:\n"
+      "  TypeError: an input tensor is not segmentation-pose/BBOX-compatible.\n"
+      "  RuntimeError: strict=True and a payload is malformed.",
+      "tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
       "strict"_a = false);
 
   nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
@@ -2675,9 +2726,15 @@ NB_MODULE(_pyneat_core, m) {
       .def("input_names", &Run::input_names)
       .def("output_names", &Run::output_names)
       .def("push_tensors", static_cast<bool (Run::*)(const simaai::neat::TensorList&)>(&Run::push),
-           "inputs"_a)
-      .def("push_samples", static_cast<bool (Run::*)(const simaai::neat::Sample&)>(&Run::push),
-           "inputs"_a)
+           "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "push_samples",
+          [](Run& run, const simaai::neat::Sample& inputs) {
+            auto snapshot = inputs;
+            nb::gil_scoped_release release;
+            return run.push(snapshot);
+          },
+          "inputs"_a)
       .def("try_push_tensors",
            static_cast<bool (Run::*)(const simaai::neat::TensorList&)>(&Run::try_push), "inputs"_a)
       .def("try_push_samples",
@@ -2689,10 +2746,13 @@ NB_MODULE(_pyneat_core, m) {
              std::optional<ImageSpec::PixelFormat> image_format) {
             reject_single_tensor_or_sample(input, "Run.push(name)");
             if (python_sequence_all_samples(input)) {
-              return run.push(name, sample_batch_from_python_input(input));
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return run.push(name, samples);
             }
-            return run.push(name,
-                            tensor_batch_from_python_input(input, copy, layout, image_format));
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            nb::gil_scoped_release release;
+            return run.push(name, tensors);
           },
           "name"_a, "input"_a, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
@@ -2702,9 +2762,13 @@ NB_MODULE(_pyneat_core, m) {
              std::optional<ImageSpec::PixelFormat> image_format) {
             reject_single_tensor_or_sample(input, "Run.push");
             if (python_sequence_all_samples(input)) {
-              return run.push(sample_batch_from_python_input(input));
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return run.push(samples);
             }
-            return run.push(tensor_batch_from_python_input(input, copy, layout, image_format));
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            nb::gil_scoped_release release;
+            return run.push(tensors);
           },
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
       .def(
@@ -3237,6 +3301,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_static("every_frame", &simaai::neat::OutputOptions::EveryFrame, "max_buffers"_a = 30)
       .def_static("clocked", &simaai::neat::OutputOptions::Clocked, "max_buffers"_a = 1);
 
+  nb::enum_<simaai::neat::CameraProfile>(m, "CameraProfile")
+      .value("Default", simaai::neat::CameraProfile::Default)
+      .value("MetoakSimor", simaai::neat::CameraProfile::MetoakSimor);
+
   nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")
       .def(nb::init<>())
       .def_prop_rw(
@@ -3264,7 +3332,22 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("insert_queue", &simaai::neat::CameraInputOptions::insert_queue)
       .def_rw("leaky_queue", &simaai::neat::CameraInputOptions::leaky_queue)
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
-      .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
+      .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback)
+      .def_rw("device", &simaai::neat::CameraInputOptions::device)
+      .def_rw("profile", &simaai::neat::CameraInputOptions::profile)
+      .def_prop_rw(
+          "zero_copy",
+          [](const simaai::neat::CameraInputOptions& opt) -> nb::object {
+            return opt.zero_copy.has_value() ? nb::cast(*opt.zero_copy) : nb::none();
+          },
+          [](simaai::neat::CameraInputOptions& opt, nb::handle value) {
+            opt.zero_copy =
+                value.is_none() ? std::nullopt : std::optional<bool>(nb::cast<bool>(value));
+          },
+          nb::for_setter(nb::arg("zero_copy").none()))
+      .def_rw("output_buffer_count", &simaai::neat::CameraInputOptions::output_buffer_count)
+      .def_rw("frame_timeout_ms", &simaai::neat::CameraInputOptions::frame_timeout_ms)
+      .def_rw("capture_buffer_count", &simaai::neat::CameraInputOptions::capture_buffer_count);
 
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
@@ -3921,7 +4004,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit_kpi", &simaai::neat::PCIeSinkOptions::transmit_kpi);
 
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
-  nodes_mod.def("queue", &simaai::neat::nodes::Queue);
+  nodes_mod.def(
+      "queue", static_cast<std::shared_ptr<simaai::neat::Node> (*)()>(&simaai::neat::nodes::Queue));
+  nodes_mod.def("queue",
+                static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::QueueOptions)>(
+                    &simaai::neat::nodes::Queue),
+                "options"_a);
   nodes_mod.def("rtsp_input", &simaai::neat::nodes::RTSPInput, "url"_a, "latency_ms"_a = 200,
                 "tcp"_a = true, "drop_on_latency"_a = false, "buffer_mode"_a = "");
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
@@ -4102,6 +4190,8 @@ NB_MODULE(_pyneat_core, m) {
   detections_mod.def("read_detection_format", &simaai::neat::read_detection_format, "tensor"_a);
   detections_mod.def("format_is_bbox", &simaai::neat::detection_format_is_bbox, "format"_a);
   detections_mod.def("format_is_pose", &simaai::neat::detection_format_is_pose, "format"_a);
+  detections_mod.def("format_is_segmentation_pose",
+                     &simaai::neat::detection_format_is_segmentation_pose, "format"_a);
   detections_mod.def("format_is_segmentation", &simaai::neat::detection_format_is_segmentation,
                      "format"_a);
   detections_mod.def("format_is_bbox_family", &simaai::neat::detection_format_is_bbox_family,
@@ -4227,7 +4317,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
-      .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint);
+      .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint)
+      .value("YoloXSegPose", simaai::neat::BoxDecodeType::YoloXSegPose);
 
   nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
       .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
@@ -4263,13 +4354,18 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("descriptor_output_dtype", &simaai::neat::SuperPointOptions::descriptor_output_dtype)
       .def_rw("output_format", &simaai::neat::SuperPointOptions::output_format);
 
+  nb::class_<simaai::neat::YoloXSegPoseOptions>(m, "YoloXSegPoseOptions")
+      .def(nb::init<>())
+      .def_rw("pose_classes", &simaai::neat::YoloXSegPoseOptions::pose_classes);
+
   nb::class_<simaai::neat::BoxDecodeOptions>(m, "BoxDecodeOptions")
       .def(nb::init<simaai::neat::BoxDecodeType>(), "decode_type"_a)
       .def_rw("decode_type", &simaai::neat::BoxDecodeOptions::decode_type)
       .def_rw("detection_threshold", &simaai::neat::BoxDecodeOptions::detection_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::BoxDecodeOptions::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::BoxDecodeOptions::top_k)
-      .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint);
+      .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint)
+      .def_rw("yolox_seg_pose", &simaai::neat::BoxDecodeOptions::yolox_seg_pose);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
       .value("Quiet", simaai::neat::VerbosityLevel::Quiet)
@@ -4391,6 +4487,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
       .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
+      .def_rw("yolox_seg_pose", &simaai::neat::Model::Options::yolox_seg_pose)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
@@ -4423,14 +4520,26 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::Model::Runner>(m, "ModelRunner")
       .def(nb::init<>())
       .def("__bool__", [](const simaai::neat::Model::Runner& r) { return static_cast<bool>(r); })
+      .def("try_push_tensors",
+           static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::TensorList&)>(
+               &simaai::neat::Model::Runner::try_push),
+           "inputs"_a)
+      .def("try_push_samples",
+           static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::Sample&)>(
+               &simaai::neat::Model::Runner::try_push),
+           "inputs"_a)
       .def("push_tensors",
            static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::TensorList&)>(
                &simaai::neat::Model::Runner::push),
-           "inputs"_a)
-      .def("push_samples",
-           static_cast<bool (simaai::neat::Model::Runner::*)(const simaai::neat::Sample&)>(
-               &simaai::neat::Model::Runner::push),
-           "inputs"_a)
+           "inputs"_a, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "push_samples",
+          [](simaai::neat::Model::Runner& runner, const simaai::neat::Sample& inputs) {
+            auto snapshot = inputs;
+            nb::gil_scoped_release release;
+            return runner.push(snapshot);
+          },
+          "inputs"_a)
       .def(
           "push",
           [](simaai::neat::Model::Runner& runner, nb::object input, bool copy,
@@ -4438,9 +4547,13 @@ NB_MODULE(_pyneat_core, m) {
              std::optional<ImageSpec::PixelFormat> image_format) {
             reject_single_tensor_or_sample(input, "ModelRunner.push");
             if (python_sequence_all_samples(input)) {
-              return runner.push(sample_batch_from_python_input(input));
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return runner.push(samples);
             }
-            return runner.push(tensor_batch_from_python_input(input, copy, layout, image_format));
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            nb::gil_scoped_release release;
+            return runner.push(tensors);
           },
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
       .def("pull", &simaai::neat::Model::Runner::pull, "timeout_ms"_a = -1,

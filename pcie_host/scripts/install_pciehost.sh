@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PCIE_APPLICATION_SKILL_SOURCE="${SIMAPCIE_SKILL_SOURCE:-gh:sima-neat/core/pcie_host/skills/neat-pcie-application-builder}"
+PCIE_APPLICATION_SKILL_SOURCE="${SIMAPCIE_SKILL_DIR:-/usr/share/sima-pcie-host/skills/neat-pcie-application-builder}"
 
 usage() {
   cat <<'EOF'
@@ -39,7 +39,9 @@ Environment:
   SIMAPCIE_SKIP_SETUP=1         Same as --skip-setup
   SIMAPCIE_SETUP_ARGS="..."     Same as --setup-args
   SIMAPCIE_SETUP_BEST_EFFORT=1  Same as --setup-best-effort
-  SIMAPCIE_SKILL_SOURCE=<source> Override the PCIe application skill source
+  SIMAPCIE_SKILL_DIR=<path>      Override the packaged PCIe application skill directory
+  SIMAPCIE_INSTALL_CODEX_SKILL=ON/OFF   Install the Codex skill (default: ON)
+  SIMAPCIE_INSTALL_CLAUDE_SKILL=ON/OFF  Install the Claude skill (default: ON)
   SUDO_PASSWORD=<password>       sudo password for non-interactive installs
   DEVKIT_PASSWORD=<password>     fallback sudo password for CI/devkit hosts
                                   If neither is set, sudo may prompt interactively.
@@ -240,18 +242,33 @@ run_sudo() {
   printf '%s\n' "${pw}" | sudo -S -p '' "$@"
 }
 
-install_pcie_application_skill() {
-  if ! command -v sima-cli >/dev/null 2>&1; then
-    echo "WARN: sima-cli was not found; skipping Neat PCIe application skill installation." >&2
-    echo "      Retry later with: sima-cli playbooks install ${PCIE_APPLICATION_SKILL_SOURCE}" >&2
+install_skill_for_agent() {
+  local agent_name="$1"
+  local agent_home="$2"
+  local target_dir="${agent_home}/skills/neat-pcie-application-builder"
+
+  mkdir -p "$(dirname "${target_dir}")"
+  rm -rf -- "${target_dir}"
+  cp -a "${PCIE_APPLICATION_SKILL_SOURCE}" "${target_dir}"
+  echo "Installed ${agent_name} skill to: ${target_dir}"
+}
+
+install_pcie_application_skills() {
+  if [[ ! -d "${PCIE_APPLICATION_SKILL_SOURCE}" ]]; then
+    echo "WARN: packaged Neat PCIe application skill was not found: ${PCIE_APPLICATION_SKILL_SOURCE}" >&2
     return 0
   fi
 
-  echo "Installing Neat PCIe application skill from ${PCIE_APPLICATION_SKILL_SOURCE}"
-  if ! SIMA_CLI_CHECK_FOR_UPDATE=0 \
-      sima-cli playbooks install "${PCIE_APPLICATION_SKILL_SOURCE}"; then
-    echo "WARN: Neat PCIe application skill installation failed; PCIe host package installation will continue." >&2
-    echo "      Retry later with: sima-cli playbooks install ${PCIE_APPLICATION_SKILL_SOURCE}" >&2
+  if env_truthy "${SIMAPCIE_INSTALL_CODEX_SKILL:-ON}"; then
+    install_skill_for_agent "Codex" "${CODEX_HOME:-${HOME}/.codex}"
+  else
+    echo "SIMAPCIE_INSTALL_CODEX_SKILL=${SIMAPCIE_INSTALL_CODEX_SKILL:-OFF}; skipping Codex skill installation."
+  fi
+
+  if env_truthy "${SIMAPCIE_INSTALL_CLAUDE_SKILL:-ON}"; then
+    install_skill_for_agent "Claude" "${CLAUDE_HOME:-${HOME}/.claude}"
+  else
+    echo "SIMAPCIE_INSTALL_CLAUDE_SKILL=${SIMAPCIE_INSTALL_CLAUDE_SKILL:-OFF}; skipping Claude skill installation."
   fi
 }
 
@@ -349,7 +366,7 @@ if command -v gst-inspect-1.0 >/dev/null 2>&1; then
   gst-inspect-1.0 neatpciehost >/dev/null 2>&1 || true
 fi
 
-install_pcie_application_skill
+install_pcie_application_skills
 
 if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
   echo "Installing ${PYTHON_WHEEL_PATH} into ${PYTHON_VENV}"

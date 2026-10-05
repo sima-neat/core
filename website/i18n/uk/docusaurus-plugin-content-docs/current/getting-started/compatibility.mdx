@@ -40,7 +40,7 @@ Palette Neat містить кілька компонентів, для яких
 
 Після отримання доступу до командного рядка DevKit, перевірте встановлену версію програмного забезпечення. Ви можете відкрити командний рядок через SSH, коли DevKit доступний у мережі, або через послідовну консоль. Інструкції щодо послідовного доступу див. у розділі [Налаштуйте послідовний доступ.](https://developer.sima.ai/hardware/getting-started/setup-serial).
 
-<ShellCommand prompt="modalix">
+<ShellCommand prompt="devkit">
 cat /etc/buildinfo
 </ShellCommand>
 
@@ -60,7 +60,7 @@ cat /etc/buildinfo
 
 Встановіть поточну версію Neat SDK, завантаживши її з хосту:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
@@ -88,13 +88,13 @@ Neat SDK та на вашому DevKit.
 
 Для Neat Library 0.4.0:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.4.0
 </ShellCommand>
 
 Для Neat Library 0.1.0:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.1.0
 </ShellCommand>
 
@@ -109,7 +109,7 @@ sima-cli neat install core@v0.1.0
 
 Встановіть Apps 0.5.0 із сумісного Neat SDK або DevKit:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install apps@v0.5.0
 </ShellCommand>
 
@@ -142,7 +142,7 @@ Model Compiler можна встановити двома способами:
 
 Усередині Neat SDK або на DevKit виконайте команду:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 

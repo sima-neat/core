@@ -143,6 +143,24 @@ std::vector<std::int64_t> tensor_desc_tile_shape_for_test(const sima_ev_tensor_d
   return out;
 }
 
+std::vector<std::uint8_t> tensor_desc_axes_for_test(const sima_ev_tensor_desc& desc) {
+  const auto rank = std::min<std::uint32_t>(desc.shape.rank, SIMA_EV_MAX_RANK);
+  return {desc.shape.axis_semantics, desc.shape.axis_semantics + rank};
+}
+
+std::vector<std::int64_t> tensor_desc_strides_for_test(const sima_ev_tensor_desc& desc) {
+  std::vector<std::int64_t> out;
+  if (desc.layout_kind != SIMA_EV_LAYOUT_STRIDED) {
+    return out;
+  }
+  const auto rank = std::min<std::uint32_t>(desc.shape.rank, SIMA_EV_MAX_RANK);
+  out.reserve(rank);
+  for (std::uint32_t i = 0; i < rank; ++i) {
+    out.push_back(desc.layout.strided.strides_bytes[i]);
+  }
+  return out;
+}
+
 std::vector<std::int64_t>
 detess_transport_shape_for_frame(const std::vector<std::int64_t>& frame_shape) {
   require(frame_shape.size() >= 3U, "detess test frame_shape must include HWC geometry");
@@ -633,6 +651,53 @@ RUN_TEST(
         require(
             a65_decision.effective_run_target == "A65",
             "strict placement must preserve explicit targets for genuinely dual-backend stages");
+
+        pipeline_internal::sima::ProcessCvuStagePayload detessdequant;
+        detessdequant.graph_family_enum =
+            pipeline_internal::sima::ProcessCvuGraphFamily::DetessDequant;
+        const auto detessdequant_caps = pipeline_internal::sima::processcvu_backend_capabilities(
+            detessdequant, "post_detessdequant");
+        require(detessdequant_caps.supports_ev74 && detessdequant_caps.supports_a65,
+                "detessdequant policy should advertise both available backends");
+        require(detessdequant_caps.auto_run_target == "A65" &&
+                    detessdequant_caps.auto_exec_backend ==
+                        pipeline_internal::sima::ProcessCvuResolvedExecBackend::A65 &&
+                    detessdequant_caps.reason == "a65_preferred_auto_post",
+                "detessdequant capability diagnostics should authoritatively advertise AUTO A65");
+
+        const ContractCompileInput automatic;
+        const auto automatic_post = pipeline_internal::sima::resolve_processcvu_backend_decision(
+            detessdequant, automatic, "post_detessdequant");
+        require(automatic_post.requested_run_target == "AUTO" &&
+                    automatic_post.effective_run_target == detessdequant_caps.auto_run_target &&
+                    automatic_post.resolved_exec_backend == detessdequant_caps.auto_exec_backend &&
+                    automatic_post.reason == "a65_preferred_auto_post:legacy_or_env",
+                "AUTO detessdequant resolution must agree with its advertised capability policy");
+
+        ContractCompileInput explicit_ev74;
+        explicit_ev74.processcvu.post_run_target = "EV74";
+        const auto explicit_post = pipeline_internal::sima::resolve_processcvu_backend_decision(
+            detessdequant, explicit_ev74, "post_detessdequant");
+        require(explicit_post.effective_run_target == "EV74" &&
+                    explicit_post.resolved_exec_backend ==
+                        pipeline_internal::sima::ProcessCvuResolvedExecBackend::Evxx &&
+                    explicit_post.reason == "requested_ev74_supported:processcvu_post",
+                "an explicit EV74 post target must override the AUTO A65 preference");
+
+        const auto quant_caps =
+            pipeline_internal::sima::processcvu_backend_capabilities(dual_backend, "pre_quant");
+        require(quant_caps.auto_run_target == "EV74" &&
+                    quant_caps.auto_exec_backend ==
+                        pipeline_internal::sima::ProcessCvuResolvedExecBackend::Evxx,
+                "AUTO quant should preserve its EV74 pre-stage preference");
+
+        pipeline_internal::sima::ProcessCvuStagePayload cast;
+        cast.graph_family_enum = pipeline_internal::sima::ProcessCvuGraphFamily::Cast;
+        require(pipeline_internal::sima::processcvu_backend_capabilities(cast, "pre_cast")
+                            .auto_run_target == "EV74" &&
+                    pipeline_internal::sima::processcvu_backend_capabilities(cast, "post_cast")
+                            .auto_run_target == "A65",
+                "AUTO cast preference should be role-aware at the capability authority");
       }
 
       {
@@ -661,6 +726,67 @@ RUN_TEST(
                 "GriderFast should expose one runtime input");
         require(compiled.processcvu->runtime_contract.physical_outputs.size() == 1U,
                 "GriderFast should expose one runtime output");
+      }
+
+      {
+        std::uint32_t generic_dtype = 0;
+        require(
+            !pipeline_internal::sima::tensorsemantics::dtype_token_to_ev("UINT16", &generic_dtype),
+            "generic EV arithmetic must not infer unsigned-16 semantics from legacy tag");
+        MetoakDepthOptions opt;
+        opt.width = 640;
+        opt.height = 360;
+        MetoakDepth node(opt);
+        ContractCompileInput input;
+        input.node_index = 6;
+        CompiledNodeContract compiled;
+        std::string err;
+        require(node.compile_node_contract(input, &compiled, &err), err.c_str());
+        require(compiled.processcvu.has_value(), "Metoak processcvu contract missing");
+        const auto& cvu = *compiled.processcvu;
+        require(cvu.payload.graph_id == 20 && cvu.payload.graph_name == "simor_depth_map",
+                "Metoak graph identity");
+        require(cvu.payload.batch_size == 1, "Metoak batch must be one");
+        require(cvu.runtime_contract.logical_inputs.size() == 6U, "Metoak six logical inputs");
+        require(cvu.runtime_contract.physical_outputs.size() == 3U, "Metoak three outputs");
+        require(cvu.exposed_view.exposed_output_order.size() == 3U, "Metoak publish all outputs");
+        require(cvu.payload.primary_output_name == "depth_dst", "Metoak depth primary");
+        const char* dtypes[] = {"UINT8", "UINT8", "UINT8", "UINT16", "FP32", "FP32"};
+        const std::uint64_t sizes[] = {230400, 57600, 57600, 460800, 4, 12};
+        for (std::size_t i = 0; i < 6U; ++i) {
+          require(cvu.runtime_contract.logical_inputs[i].dtype == dtypes[i],
+                  "Metoak per-input logical dtype must not use scalar fallback");
+          require(cvu.runtime_contract.logical_inputs[i].size_bytes == sizes[i],
+                  "Metoak input byte contract");
+        }
+        require(cvu.payload.runtime_output_dtype_list ==
+                    std::vector<std::string>({"UINT8", "UINT16", "FP32"}),
+                "Metoak heterogeneous output types");
+        require(cvu.payload.input_shapes[4] == std::vector<int>({1}) &&
+                    cvu.payload.input_shapes[5] == std::vector<int>({3}),
+                "Metoak calibration remains rank one");
+        const std::vector<std::string> names{"y_src",    "u_src",     "v_src",
+                                             "disp_src", "bf_mm_src", "proj_src"};
+        auto broken = cvu.payload;
+        broken.runtime_input_dtype_list.pop_back();
+        bool rejected = false;
+        try {
+          (void)pipeline_internal::sima::stagesemantics::
+              build_multi_io_processcvu_facts_from_payload_internal(broken, names);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "Metoak incomplete logical types must fail");
+        broken = cvu.payload;
+        broken.runtime_input_dtype_list[3] = "FP32";
+        rejected = false;
+        try {
+          (void)pipeline_internal::sima::stagesemantics::
+              build_multi_io_processcvu_facts_from_payload_internal(broken, names);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "Metoak logical type/descriptor mismatch must fail");
       }
 
       {
@@ -1351,6 +1477,62 @@ RUN_TEST(
                 "ResNet detessdequant public output should preserve the full unsqueezed shape");
         require(resnet_compiled.runtime_contract.logical_outputs.front().size_bytes == 4000U,
                 "ResNet detessdequant public output should preserve FP32 byte size");
+      }
+
+      {
+        constexpr std::uint64_t kPackedInputBytes = 365408U;
+        constexpr std::uint64_t kPublishedOutputBytes = 601U * 601U * sizeof(float);
+        auto lightglue_contract =
+            make_rank_aware_detessdequant_contract({1, 601, 601}, "INT8", "FP32");
+        auto& detess = lightglue_contract.plugins[2];
+        detess.slice_shape = {67, 601};
+        detess.has_align_c16 = true;
+        detess.align_c16 = true;
+        detess.has_cblock = true;
+        detess.cblock = true;
+
+        const auto compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
+            lightglue_contract, simaai::neat::internal::ExecutionStageKind::DetessDequant);
+        require(compiled.payload.input_tensors.size() == 1U &&
+                    compiled.payload.output_tensors.size() == 1U,
+                "rank-2 WC detessdequant regression should compile one descriptor pair");
+        const auto& input = compiled.payload.input_tensors.front();
+        const auto& output = compiled.payload.output_tensors.front();
+        require(tensor_desc_shape_for_test(input) == std::vector<std::int64_t>({601, 601}) &&
+                    tensor_desc_shape_for_test(output) == std::vector<std::int64_t>({601, 601}),
+                "[N,W,C] with [tile_W,C] must remain an explicit rank-2 WC kernel contract");
+        require(tensor_desc_axes_for_test(input) ==
+                        std::vector<std::uint8_t>({SIMA_EV_AXIS_W, SIMA_EV_AXIS_C}) &&
+                    tensor_desc_axes_for_test(output) ==
+                        std::vector<std::uint8_t>({SIMA_EV_AXIS_W, SIMA_EV_AXIS_C}),
+                "rank-2 detessdequant descriptors must retain explicit W,C axis semantics");
+        require(tensor_desc_tile_shape_for_test(input) == std::vector<std::int64_t>({67, 601}),
+                "rank-2 detessdequant input must preserve the authored W,C tile geometry");
+        require(input.storage.nbytes == kPackedInputBytes &&
+                    output.storage.nbytes == kPublishedOutputBytes &&
+                    !sima_ev_tiled_uses_compact_channels(&input) &&
+                    input.layout.tiled.flags == SIMA_EV_TILED_FLAG_CBLOCK16,
+                "kernel descriptors must preserve their per-frame byte spans and CBlock16 flag");
+        require(tensor_desc_strides_for_test(output) ==
+                    std::vector<std::int64_t>({601 * sizeof(float), sizeof(float)}),
+                "rank-2 WC output must carry authoritative contiguous byte strides");
+        require(compiled.payload.output_shapes == std::vector<std::vector<int>>({{1, 601, 601}}),
+                "runtime geometry must retain the authored leading batch dimension");
+        require(compiled.runtime_contract.logical_outputs.size() == 1U &&
+                    compiled.runtime_contract.logical_outputs.front().shape ==
+                        std::vector<std::int64_t>({1, 601, 601}) &&
+                    compiled.runtime_contract.logical_outputs.front().size_bytes ==
+                        kPublishedOutputBytes,
+                "published LightGlue output must retain [1,601,601] and its FP32 byte span");
+
+        auto padded_hwc_contract = lightglue_contract;
+        auto& padded_hwc_detess = padded_hwc_contract.plugins[2];
+        padded_hwc_detess.cblock = false;
+        const auto padded_hwc_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
+            padded_hwc_contract, simaai::neat::internal::ExecutionStageKind::DetessDequant);
+        require(padded_hwc_compiled.payload.input_tensors.front().layout.tiled.flags ==
+                    SIMA_EV_TILED_FLAG_PADDED_HWC_C16,
+                "align_c16 without cblock must carry an explicit padded-HWC encoding");
       }
 
       {

@@ -18,25 +18,25 @@ SDK 설정 중에 Model Compiler를 건너뛰었다면, 나중에 Neat SDK 내�
 
 `amd64` Neat SDK 컨테이너의 경우:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
 `arm64` Neat SDK 컨테이너의 경우:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 설치 후에는 Neat SDK 셸 내에서 컴파일러 환경을 활성화합니다.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 activate-model-compiler
 </ShellCommand>
 
 기본 Neat SDK 셸로 돌아가려면 다음 명령을 실행하세요.
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 deactivate-model-compiler
 </ShellCommand>
 
@@ -46,19 +46,19 @@ deactivate-model-compiler
 
 `amd64` 호스트에서 Model Compiler 2.1.3을 사용하는 경우:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
 `arm64` 호스트에서 Model Compiler 2.1.3을 사용하는 경우:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 `amd64` 호스트에서 Model Compiler 2.0.0을 사용하는 경우:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli install -v 2.0.0 tools/model-compiler/amd64
 </ShellCommand>
 

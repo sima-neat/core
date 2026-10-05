@@ -269,6 +269,8 @@ struct ProcessCvuStagePayload {
   std::string scaling_type;
   std::string padding_type;
   std::string input_dtype;
+  // Explicit logical types: the legacy EV enum aliases signed/unsigned and BF16/INT16.
+  std::vector<std::string> runtime_input_dtype_list;
   std::string output_dtype;
   std::string out_dtype;
 
@@ -391,7 +393,8 @@ struct BoxDecodeStagePayload {
   double detection_threshold = 0.0;
   double nms_iou_threshold = 0.0;
   int topk = 0;
-  int num_classes = 0; ///< Legacy runtime value; SSD uses selected_count.
+  int num_classes = 0;           ///< Legacy runtime value; SSD uses selected_count.
+  std::vector<int> pose_classes; ///< Class indices carrying keypoints; empty means all classes.
   std::vector<sima_ev_shape_desc> slice_shapes;
   std::vector<int> tensor_storage_kind;
   SuperPointStaticContract superpoint;

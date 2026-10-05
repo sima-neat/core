@@ -18,7 +18,7 @@ DevKit Sync 將 Neat 開發環境（以下簡稱 Neat SDK）與同一個網路�
 
 如果您在安裝過程中跳過了 DevKit 配對步驟，或者之後需要更改配對設定，請從主機執行此設定指令：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
@@ -47,7 +47,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 從 SDK 殼層內部，使用 `dk status` 來確認已配對的 DevKit，以及目前使用的工作區同步方法：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk status
 </ShellCommand>
 
@@ -57,7 +57,7 @@ dk status
 
 從 Neat SDK 容器內部執行：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 source devkit.sh {devkit-ip}
 </ShellCommand>
 
@@ -65,7 +65,7 @@ source devkit.sh {devkit-ip}
 
 範例：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 source devkit.sh 192.168.91.221
 </ShellCommand>
 
@@ -73,7 +73,7 @@ source devkit.sh 192.168.91.221
 
 如果無法從 Neat SDK 主機存取 DevKit，您仍然可以設定 SDK 工作區，而無需進行配對：
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
@@ -116,25 +116,25 @@ DevKit Sync 將三個環境連接起來：
 
 檢查目前的配對方式和同步方法：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk status
 </ShellCommand>
 
 手動同步目前的工作區範圍：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync
 </ShellCommand>
 
 同步特定檔案或資料夾：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync /workspace/apps
 </ShellCommand>
 
 同步整個工作區：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk sync --all
 </ShellCommand>
 
@@ -147,19 +147,19 @@ SDK 包含 `dk` 輔助工具，也稱為 `devkit-run`，用於在 SDK 殼層內�
 
 當您執行 `dk` 時，SDK 會在配對的 DevKit 上執行該指令，並轉換路徑，以便從容器傳遞的檔案參數能在 DevKit 上正確解析。
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk <file> [args...]
 </ShellCommand>
 
 在 SDK 工作區中編譯完 C++ 應用程式後，請在 DevKit 上執行產生的 ARM64 可執行檔：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk build/sima_neat_hello
 </ShellCommand>
 
 在將 Python 腳本建立或複製到 SDK 工作區後，請在配對的 DevKit 上執行它：
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 dk hello_neat.py
 </ShellCommand>
 

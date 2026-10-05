@@ -221,7 +221,7 @@ graph.add(pyneat.nodes.output("frames"))
 </CodeTab>
 </CodeTabs>
 
-H.265의 경우, `RtspDecodedInput(...)`은 파싱된 캡과 디코더 `dec-fps` 모두에 대해 `source_fps`를 사용합니다. RTSP 캡에 유효한 프레임 속도가 포함되어 있지 않은 경우 이를 설정하십시오. 두 값 중 하나가 없으면 디코더 시작에 실패합니다. Neat는 이 값을 위해 RTSP URL을 확인하지 않습니다. 소스 캐던스를 선언하고 속도 변환을 요청하지 않습니다. 출력 캐던스를 변경하려면 `use_videorate`를 활성화하고 `video_rate_fps`를 설정하십시오.
+H.265의 경우, `RtspDecodedInput(...)`은 파싱된 캡과 디코더 `dec-fps` 모두에 대해 `source_fps`를 사용합니다. RTSP 캡에 유효한 프레임 속도가 포함되어 있지 않은 경우 이를 설정하십시오. 두 값 중 하나가 없으면 디코더 시작에 실패합니다. Neat는 이 값을 위해 RTSP URL을 확인하지 않습니다. 소스 캐던스를 선언하고 속도 변환을 요청하지 않습니다. 출력 캐던스를 변경하려면 `use_videorate`를 활성화하고 `video_rate_fps`를 설정하십시오. 레이트 변환은 초과 프레임을 버리고 소스 타임스탬프를 유지합니다. `nodes::VideoRate()` 및 `pyneat.nodes.video_rate()` 팩토리는 인수를 받지 않으며, 소스 그룹에 의해 삽입된 경우를 포함해 항상 `drop-only=true`를 사용합니다. 출력 레이트를 높이기 위해 프레임을 복제하지는 않습니다.
 
 HTTP 멀티파트 MJPEG의 경우, `HttpMjpegDecodedInput(...)`을 사용하십시오. HTTP 멀티파트 MJPEG는 RTP가 아니므로 RTSP 디패킷화 대신 `HttpSource -> MultipartJpegDemux -> JpegParse ->
 SimaDecode(MJPEG)`를 사용합니다.

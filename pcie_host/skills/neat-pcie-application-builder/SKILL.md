@@ -1,6 +1,6 @@
 ---
 name: neat-pcie-application-builder
-description: Use when building host-side C++ or Python applications that run compiled Neat models on a connected Modalix PCIe Card through simaai::neat::pcie::Model or pyneatpcie.Model. Do not use for pcie::Runtime, DevKit-local Neat applications, model compilation, or PCIe package maintenance.
+description: Build host-side C++ or Python applications that run compiled Neat models on a connected Modalix PCIe Card with pcie::Model or pyneatpcie.Model. Use for application code, not pcie::Runtime, DevKit-local APIs, model compilation, or PCIe package maintenance.
 ---
 
 # Neat PCIe Application Builder
@@ -11,18 +11,22 @@ Build native host applications against the installed Neat PCIe `Model` API. Trea
 PCIe header, Python module, and packaged tutorials as the source of truth. This is a separate API
 from the Neat Library used inside the SDK or directly on a DevKit.
 
-## Workflow
+The expected input is an already compiled Neat model archive and the requested C++ or Python host
+application behavior. Follow explicit user requirements when they are compatible with the installed
+public API; treat the defaults below as guidance.
 
-1. Confirm that the application runs on an Ubuntu host connected to a Modalix PCIe Card.
-2. Establish the installed API surface by reading `references/source-of-truth.md`.
-3. Read `references/model-lifecycle.md` for every application. Choose synchronous `run()` or
-   pipelined `push()`/`pull()` and preserve the required build and close lifecycle.
-4. Read `references/tensors-and-images.md` when constructing inputs, consuming outputs, handling
-   multiple inputs, or choosing tensor mode versus image mode.
-5. Read `references/model-options.md` when configuring a card, queue, preprocessing, or object
-   decode behavior.
-6. Before claiming success, read `references/build-and-validation.md` and run the checks possible
-   on the current host. Distinguish compile/import validation from connected-card validation.
+## Choose References
+
+- Read `references/source-of-truth.md` when generating or reviewing API use, inspecting an
+  installed release, or resolving version differences.
+- Read `references/model-lifecycle.md` when implementing build, inference, pipelining, cleanup, or
+  multiple-model behavior.
+- Read `references/tensors-and-images.md` when constructing inputs, consuming outputs, handling
+  multiple inputs, or choosing tensor mode versus image mode.
+- Read `references/model-options.md` when configuring a card, queue, preprocessing, MLA-only mode,
+  or object decode behavior.
+- Read `references/build-and-validation.md` when building, testing, or reporting validation. Do not
+  claim connected-card execution from compile or import checks alone.
 
 ## Defaults
 
@@ -32,11 +36,23 @@ from the Neat Library used inside the SDK or directly on a DevKit.
 - In tensor mode, inspect `model.info()` before allocating or naming model-ready inputs. In image
   mode, treat that information as the card-side preprocessing output contract, not the submitted
   image contract.
+- Enable `mla_only` only when the application owns the model's dtype conversion; then
+  `model.info()` is the MLA's own contract and, for INT8 tensors, its `quant` parameters are the
+  only valid source for the conversion.
 - Use `run()` for ordinary request/response inference. Use `push()` and `pull()` only when the
   application benefits from bounded pipelining.
+- For performance-sensitive tensor pipelines, prefer a bounded ring of reusable contiguous input
+  buffers. Wrap C++ storage with `Tensor::from_external()` or Python arrays with
+  `Tensor.from_numpy(..., copy=False)`, and recycle a buffer only after its matching result is
+  pulled. Use simpler owning or copying constructors when reuse and staging overhead do not matter.
 - Use finite build and inference timeouts in applications that must fail predictably.
 - Close every successfully built model on normal and error paths. Prefer a Python context manager.
-- Keep generated applications runnable with explicit dependency, build, and run commands.
+
+## Completion
+
+For implementation requests, provide runnable source, required dependency and build commands, a
+concrete run command, and the validation level reached. State clearly when connected-card behavior
+was not exercised.
 
 ## Boundaries
 
@@ -52,11 +68,3 @@ from the Neat Library used inside the SDK or directly on a DevKit.
   archive.
 - Verify behavior against the installed release instead of guessing from memory or another Neat
   environment.
-
-## References
-
-- `references/source-of-truth.md`
-- `references/model-lifecycle.md`
-- `references/tensors-and-images.md`
-- `references/model-options.md`
-- `references/build-and-validation.md`

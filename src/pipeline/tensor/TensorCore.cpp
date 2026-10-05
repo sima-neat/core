@@ -717,8 +717,19 @@ bool Tensor::copy_dense_bytes_tight_to(uint8_t* dst, std::size_t dst_size) const
 
 std::vector<uint8_t> Tensor::copy_dense_bytes_tight() const {
   const std::size_t bytes = dense_bytes_tight();
-  if (bytes == 0)
+
+  if (bytes == 0) {
+    const bool valid_empty =
+        is_dense() && dtype_bytes(dtype) != 0 && !shape.empty() &&
+        std::all_of(shape.begin(), shape.end(), [](int64_t dim) { return dim >= 0; }) &&
+        std::any_of(shape.begin(), shape.end(), [](int64_t dim) { return dim == 0; });
+
+    if (valid_empty)
+      return {};
+
     throw std::runtime_error("copy_dense_bytes_tight: unknown dense size");
+  }
+
   std::vector<uint8_t> out(bytes);
   if (!copy_dense_bytes_tight_to(out.data(), out.size())) {
     throw std::runtime_error("copy_dense_bytes_tight: copy failed");

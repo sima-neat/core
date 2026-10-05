@@ -110,6 +110,7 @@ model.build(readiness_timeout_ms=180000)
 
 `input_specs()` 和 `output_specs()` 分別傳回相同的清單。
 在成功建置後，`running()` 會變成 `true`，然後在 `close()` 後會變回 `false`。
+它只會回報生命週期狀態，不會探查主機傳輸或遠端管線的健康狀態。
 
 ## 執行同步推論
 
@@ -275,6 +276,83 @@ detector.close()
 
 請勿為無種子的模型設定 `input_max_width`、`input_max_height` 或 `input_max_depth`，除非應用程式需要明確的輸入限制。Neat 可以從模型封存檔推斷出模型端調整大小的目標。
 
+## 僅執行 MLA
+
+預設情況下，卡會將 FP32 輸入轉換為 MLA 的 dtype、執行 MLA，並在以 FP32 傳回結果前將其轉換回來。`mla_only` 會把這個 dtype 轉換邊界移到應用程式：此時卡只執行 MLA，主機提交符合 `info().inputs` 各項目的張量，並以邏輯形狀取得 MLA 原生的輸出。
+
+`info()` 描述該合約。INT8 張量帶有 `quant`，其中有一個 `scale` 與一個 `zero_point`：
+
+```text
+x = (q - zero_point) * scale
+q = clamp(round(x / scale) + zero_point, -128, 127)
+```
+
+BF16 張量不帶 `quant`：主機在輸入時以四捨五入至最接近偶數的方式將 FP32 捨入為 BF16，並在輸出時將 BF16 輸出頭擴展回來。在 Python 中，BF16 以 `uint16` 位元模式透過 `Tensor.from_bytes(..., pcie.TensorDType.BFloat16, ...)` 與 `to_numpy()` 傳遞。
+
+以下範例為 INT8 的情況：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::ModelOptions options;
+options.mla_only = true;
+pcie::Model model("model_mlatess_int8.tar.gz", options, connection);
+
+const auto& input_spec = model.info().inputs.front();
+const pcie::QuantParams& quant = *input_spec.quant;   // INT8 ingress
+
+std::vector<std::int8_t> codes(input_spec.size_bytes);
+for (std::size_t i = 0; i < codes.size(); ++i) {
+  const float x = /* value in the model's input domain, e.g. [0, 1] */;
+  const float q = std::nearbyint(x / quant.scale) + quant.zero_point;
+  codes[i] = static_cast<std::int8_t>(std::clamp(q, -128.0f, 127.0f));
+}
+
+model.build();
+pcie::TensorList outputs = model.run(
+    pcie::Tensor::from_vector(std::move(codes), input_spec.shape, input_spec.name),
+    /*timeout_ms=*/30000);
+
+const auto& head = model.info().outputs.front();
+const std::int8_t* q = reinterpret_cast<const std::int8_t*>(
+    static_cast<const std::uint8_t*>(outputs[0].data) + outputs[0].byte_offset);
+const float x0 = (q[0] - head.quant->zero_point) * head.quant->scale;
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pcie.ModelOptions()
+options.mla_only = True
+model = pcie.Model("model_mlatess_int8.tar.gz", options, connection)
+
+input_spec = model.info().inputs[0]
+scale, zero_point = input_spec.quant.scale, input_spec.quant.zero_point
+
+values = np.zeros(input_spec.shape, dtype=np.float32)  # in the model's input domain, e.g. [0, 1]
+codes = np.clip(np.rint(values / scale) + zero_point, -128, 127).astype(np.int8)
+
+model.build()
+outputs = model.run(
+    [pcie.Tensor.from_numpy(codes, copy=True, route_name=input_spec.name)],
+    timeout_ms=30000,
+)
+
+head = model.info().outputs[0]
+x = (outputs[0].to_numpy().astype(np.int32) - head.quant.zero_point) * head.quant.scale
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+此路徑是全有或全無。每個提交的張量都必須依序符合對應 `info().inputs` 項目的 dtype、形狀與位元組大小；其他 dtype 的有效負載會被拒絕，而不會在卡上被轉換。`mla_only` 無法與影像前處理或方框解碼併用。建構函式會拒絕 MLA 階段未針對直接 MLA 輸入輸出編譯的封存檔，例如在 CVU 上進行鑲嵌的 Model Zoo `yolo_v8s` 建置（`mla_only does not support stage '...' (tess)`）。
+
+教學[以 INT8 張量僅執行 MLA](/tutorials/run-mla-only-int8)展示 INT8 的情況：它會在主機上量化影像，並將反量化後的輸出頭與預設路徑進行比對。
+
 ## 可靠地關閉
 
 當模型不再需要，且在重新使用其佇列之前，請呼叫 `close()`。多次呼叫是安全的：
@@ -331,6 +409,7 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 - 主機封裝和安裝在卡上的 Neat Library 必須來自相容的版本。
 - 在提交第一個有效負載之後，請保持輸入媒體類型和幾何形狀的穩定。後續的有效負載如果大於作用中的傳輸容量，則會被拒絕。
 - PCIe 主機 API 支援 Neat 模型預處理和物件解碼選項的精簡子集。
+- `mla_only` 需要為直接 MLA 輸入輸出而編譯的封存檔；每個輸入以其 `info().inputs` 項目的 dtype 提交，輸出頭則以 MLA 的 dtype 連續傳回。
 - 此協同處理 API 不會公開主機端的 `Graph`、`Node` 或 `Run` 組成。對於原生應用程式圖，請在 DevKit 上使用標準的 Neat Library。
 
 如需安裝和連線檢查，請傳回

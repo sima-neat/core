@@ -2334,6 +2334,10 @@ std::string canonical_family_name(std::string graph_family) {
   if (graph_family == "trackklt" || graph_family == "track_klt") {
     return "track_klt";
   }
+  if (graph_family == "metoakdepth" || graph_family == "simordepthmap" ||
+      graph_family == "simor_depth_map") {
+    return "simor_depth_map";
+  }
   return graph_family;
 }
 
@@ -2370,7 +2374,12 @@ ProcessCvuGraphFamily family_enum_from_name(const std::string& graph_family) {
     return ProcessCvuGraphFamily::DetessDequant;
   }
   if (family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
-      family == "track_klt") {
+      family == "track_klt" || family == "simor_depth_map") {
+    // simor_depth_map (MetoakDepth) reuses the VisualFrontend family: it's the same
+    // "native, non-ML EV74 kernel dispatched through neatprocesscvu" shape as the
+    // feature/tracking graphs, just with its own six-input/three-output contract and its
+    // own pre-existing graph id (20, not part of the 235-238 block). See
+    // native_visual_graph_id_runtime() in ProcessCvuRuntimeConfigAdapter.cpp.
     return ProcessCvuGraphFamily::VisualFrontend;
   }
   return ProcessCvuGraphFamily::Unknown;
@@ -4279,13 +4288,13 @@ ProcessCvuCanonicalFacts build_preproc_facts_from_payload(const ProcessCvuStageP
 }
 
 bool native_visual_payload_prefers_logical_input_shapes(const ProcessCvuStagePayload& payload) {
-  if (payload.graph_id >= 235 && payload.graph_id <= 238) {
+  if ((payload.graph_id >= 235 && payload.graph_id <= 238) || payload.graph_id == 20) {
     return true;
   }
   const std::string family = canonical_family_name(
       !payload.graph_family.empty() ? payload.graph_family : payload.graph_name);
   return family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
-         family == "track_klt";
+         family == "track_klt" || family == "simor_depth_map";
 }
 
 ProcessCvuCanonicalFacts
@@ -4427,8 +4436,28 @@ build_multi_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& paylo
       throw std::invalid_argument("multi-io processcvu payload input shape missing");
     }
     std::string input_layout = payload_input_layout_token_local(payload, i);
-    const std::string input_dtype =
+    std::string input_dtype =
         !payload.input_dtype.empty() ? payload.input_dtype : std::string("INT8");
+    // Preserve declared logical types instead of guessing signedness or BF16 from
+    // the legacy EV descriptor (which cannot distinguish those representations).
+    if (!payload.runtime_input_dtype_list.empty()) {
+      if (payload.runtime_input_dtype_list.size() != input_count ||
+          payload.runtime_input_dtype_list[i].empty()) {
+        throw std::invalid_argument("multi-io processcvu input dtype list is incomplete");
+      }
+      input_dtype = payload.runtime_input_dtype_list[i];
+      std::uint32_t declared_ev = 0U;
+      const std::string wire_dtype =
+          payload.graph_id == 20 &&
+                  canonical_family_name(payload.graph_name) == "simor_depth_map" &&
+                  input_dtype == "UINT16"
+              ? "INT16"
+              : input_dtype;
+      if (!tensorsemantics::dtype_token_to_ev(wire_dtype, &declared_ev) ||
+          (i < payload.input_tensors.size() && declared_ev != payload.input_tensors[i].dtype)) {
+        throw std::invalid_argument("multi-io processcvu input dtype disagrees with descriptor");
+      }
+    }
     facts.inputs.push_back(
         build_dense_processcvu_input_fact(static_cast<int>(i), static_cast<int>(i), input_name,
                                           input_shape, input_dtype, input_layout));
@@ -7898,40 +7927,6 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
       runtime.output_dtype = head.output_dtype;
       runtime.out_dtype = runtime.output_dtype;
     }
-    // Phase 3a (Option A++): build the kernel input descriptor from a
-    // per-frame shape so its rank matches `slice_shape` rank, and divide the
-    // transport size by batch so storage.nbytes is per-frame. The dispatcher
-    // sizes the input segment as storage.nbytes * runtime.batch_size, so
-    // passing a batched storage size double-counts the batch dim.
-    int per_frame_rank_local = plugin_contracts::derive_per_frame_rank_public(
-        head.slice_shape, /*peer_per_frame_shape=*/{});
-    if (head.per_head_input_shape != head.frame_shape) {
-      per_frame_rank_local = std::max(per_frame_rank_local, 3);
-    }
-    const auto frame_shape_per_frame = plugin_contracts::semantic_shape_without_batch_public(
-        head.per_head_input_shape, per_frame_rank_local);
-    const std::vector<int> input_shape_int(frame_shape_per_frame.begin(),
-                                           frame_shape_per_frame.end());
-    std::vector<int> tile_shape_int =
-        i < runtime.slice_shapes.size() ? runtime.slice_shapes[i] : std::vector<int>{};
-    tile_shape_int =
-        tensor_desc_tile_shape_from_slice_shape_processcvu_local(input_shape_int, tile_shape_int);
-    sima_ev_tensor_desc input_desc{};
-    if (tile_shape_int.empty() || !build_tensor_tiled_desc_processcvu_local(
-                                      input_shape_int, tile_shape_int, resolved_input_dtype, 0U,
-                                      head.align_c16 || head.cblock, &input_desc)) {
-      throw std::runtime_error(
-          "processcvu MPK detessdequant route could not synthesize explicit input tensor");
-    }
-    const int local_head_batch_size = plugin_contracts::inferred_batch_size_from_shape_public(
-        head.per_head_input_shape, per_frame_rank_local);
-    const std::uint64_t per_frame_transport_size =
-        local_head_batch_size > 0
-            ? head.input_transport_size_bytes / static_cast<std::uint64_t>(local_head_batch_size)
-            : head.input_transport_size_bytes;
-    input_desc.storage.nbytes = per_frame_transport_size;
-    runtime.input_tensors.push_back(input_desc);
-
     runtime.published_output_names.push_back(published_output_name);
 
     int src_physical_output_index = static_cast<int>(i);
@@ -7991,17 +7986,10 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
     canonical_output_shapes.push_back(canonical_runtime_output_shape);
     std::vector<int> output_shape_int(canonical_runtime_output_shape.begin(),
                                       canonical_runtime_output_shape.end());
-    const auto output_shape_per_frame = plugin_contracts::semantic_shape_without_batch_public(
-        canonical_runtime_output_shape, per_frame_rank_local);
-    std::vector<int> output_desc_shape_int(output_shape_per_frame.begin(),
-                                           output_shape_per_frame.end());
-    sima_ev_tensor_desc output_desc{};
-    if (!build_tensor_dense_desc_processcvu_local(output_desc_shape_int, output_dtype,
-                                                  &output_desc)) {
-      throw std::runtime_error(
-          "processcvu MPK detessdequant route could not synthesize explicit output tensor");
-    }
-    runtime.output_tensors.push_back(output_desc);
+    const auto tensor_contract = plugin_contracts::build_detessdequant_tensor_descriptor_contract(
+        head, canonical_runtime_output_shape);
+    runtime.input_tensors.push_back(tensor_contract.input);
+    runtime.output_tensors.push_back(tensor_contract.output);
     runtime.output_shapes.push_back(output_shape_int);
     runtime.runtime_output_logical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_output_slot_list.push_back(static_cast<int>(i));

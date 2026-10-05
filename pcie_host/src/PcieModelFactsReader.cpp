@@ -2,6 +2,7 @@
 #include "PcieModelFactsReaderInternal.h"
 
 #include "model/internal/ModelArchiveLoader.h"
+#include "pipeline/internal/TensorMath.h"
 
 #include <algorithm>
 #include <cctype>
@@ -178,6 +179,199 @@ bool input_has_internal_producer(
   return false;
 }
 
+// The manifest stores the reciprocal scale; the public contract is per-tensor only.
+std::optional<QuantParams>
+quant_from_mpk(const std::optional<simaai::neat::pipeline_internal::sima::MpkQuantContract>& quant,
+               const std::string& name) {
+  if (!quant.has_value()) {
+    return std::nullopt;
+  }
+  if (quant->scales.size() != 1U || quant->zero_points.size() != 1U) {
+    throw std::runtime_error("mla_only tensor '" + name +
+                             "' has per-channel quantization parameters; only one scale and zero "
+                             "point per tensor is supported");
+  }
+  return QuantParams{.scale = 1.0f / static_cast<float>(quant->scales.front()),
+                     .zero_point = static_cast<std::int32_t>(quant->zero_points.front())};
+}
+
+const simaai::neat::pipeline_internal::sima::MpkPluginIoContract&
+public_consumer_for_head(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                         const std::string& head_name) {
+  for (const auto& edge : contract.edges) {
+    if (edge.tensor_name != head_name || edge.dst_plugin_index >= contract.plugins.size()) {
+      continue;
+    }
+    const auto& stage = contract.plugins[edge.dst_plugin_index];
+    const std::string kernel = canonical_token(stage.kernel);
+    if ((kernel.find("dequant") != std::string::npos || kernel.find("cast") != std::string::npos) &&
+        !stage.output_tensors.empty()) {
+      return stage;
+    }
+  }
+  throw std::runtime_error("mla_only output '" + head_name +
+                           "' has no dequantize or cast consumer");
+}
+
+// Element size of the activation dtypes the route publishes; 0 for anything else.
+std::size_t mla_only_dtype_bytes(const std::string& dtype) {
+  const std::string token = canonical_token(dtype);
+  return token == "int8" ? 1U : (token == "bf16" || token == "bfloat16") ? 2U : 0U;
+}
+
+std::size_t dense_element_count(const std::vector<std::int64_t>& shape) {
+  std::size_t elements = shape.empty() ? 0U : 1U;
+  for (const auto dim : shape) {
+    if (dim <= 0 || !simaai::neat::pipeline_internal::safe_mul(
+                        elements, static_cast<std::size_t>(dim), &elements)) {
+      return 0U;
+    }
+  }
+  return elements;
+}
+
+std::vector<PcieTensorFact>
+mla_only_input_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                     const simaai::neat::pipeline_internal::sima::MpkPluginIoContract& mla,
+                     bool* packed) {
+  const auto public_inputs = detail::application_input_contracts(contract);
+  const auto boundary =
+      simaai::neat::pipeline_internal::sima::get_mla_boundary_logical_inputs_contract(contract);
+  if (boundary.size() != public_inputs.size()) {
+    throw std::runtime_error("mla_only requires every model input to reach the MLA through its own "
+                             "quantize stage: the model has " +
+                             std::to_string(public_inputs.size()) + " input(s) but " +
+                             std::to_string(boundary.size()) +
+                             " quantize stage(s); hybrid host/card quantization is out of scope");
+  }
+  *packed = boundary.size() != 1U || mla.input_tensors.size() != 1U ||
+            mla.input_tensors.front().name != boundary.front().name;
+
+  std::vector<PcieTensorFact> facts;
+  for (const auto& tensor : boundary) {
+    const auto producer =
+        std::find_if(contract.plugins.begin(), contract.plugins.end(), [&](const auto& stage) {
+          return std::any_of(stage.output_tensors.begin(), stage.output_tensors.end(),
+                             [&](const auto& output) { return output.name == tensor.name; });
+        });
+    if (producer == contract.plugins.end()) {
+      throw std::runtime_error("mla_only input '" + tensor.name + "' has no producing stage");
+    }
+    const std::string kernel = canonical_token(producer->kernel);
+    if (kernel.find("quant") == std::string::npos && kernel.find("cast") == std::string::npos) {
+      throw std::runtime_error(
+          "mla_only input '" + tensor.name + "' is produced by stage '" + producer->name +
+          "', not a quantize or cast stage; hybrid host/card quantization is out of scope");
+    }
+    const auto ingress =
+        std::find_if(public_inputs.begin(), public_inputs.end(), [&](const auto& input) {
+          return std::any_of(producer->input_tensors.begin(), producer->input_tensors.end(),
+                             [&](const auto& candidate) { return candidate.name == input.name; });
+        });
+    if (ingress == public_inputs.end()) {
+      throw std::runtime_error("mla_only quantize stage '" + producer->name +
+                               "' is not fed by a model input; hybrid host/card quantization is "
+                               "out of scope");
+    }
+
+    auto input = tensor;
+    input.name = ingress->name;
+    const std::string dtype = best_dtype(input);
+    const std::size_t elem = mla_only_dtype_bytes(dtype);
+    if (elem == 0U) {
+      throw std::runtime_error("mla_only input '" + input.name + "' must be INT8 or BF16, got '" +
+                               dtype + "'");
+    }
+    if (elem == 1U && !producer->quant.has_value()) {
+      throw std::runtime_error("mla_only INT8 input '" + input.name +
+                               "' has no quantization parameters");
+    }
+    const std::size_t elements = dense_element_count(best_shape(input));
+    if (elements == 0U || elements * elem != input.size_bytes) {
+      throw std::runtime_error("mla_only input '" + input.name + "' is not a dense " + dtype +
+                               " tensor: shape does not cover " + std::to_string(input.size_bytes) +
+                               " bytes");
+    }
+    facts.push_back(convert_tensor(input));
+    facts.back().quant = quant_from_mpk(producer->quant, input.name);
+  }
+  return facts;
+}
+
+std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>
+application_output_contracts(const simaai::neat::pipeline_internal::sima::MpkContract& contract);
+
+void add_mla_only_outputs(const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+                          PcieModelFacts* facts) {
+  using simaai::neat::pipeline_internal::sima::MpkTensorMaterializationKind;
+  const auto carrier =
+      simaai::neat::pipeline_internal::sima::get_mla_boundary_physical_outputs_contract(contract);
+  if (carrier.size() != 1U) {
+    throw std::runtime_error("mla_only supports exactly one MLA output carrier");
+  }
+  const auto logical =
+      simaai::neat::pipeline_internal::sima::get_mla_logical_outputs_contract(contract);
+  const auto published =
+      simaai::neat::pipeline_internal::sima::get_mla_published_outputs_contract(contract);
+  if (logical.size() != published.size()) {
+    throw std::runtime_error("MPK contract does not expose consistent MLA output heads");
+  }
+
+  bool padded = false;
+  for (std::size_t i = 0; i < logical.size(); ++i) {
+    const auto& head = logical[i];
+    auto fact = convert_tensor(head);
+    if (published[i].materialization_kind == MpkTensorMaterializationKind::Bf16LaneSplitRepack) {
+      throw std::runtime_error("mla_only output '" + fact.name +
+                               "' needs a lane-split repack the host does not perform");
+    }
+    const std::size_t elem = mla_only_dtype_bytes(fact.dtype);
+    if (elem == 0U) {
+      throw std::runtime_error("mla_only output '" + fact.name + "' must be INT8 or BF16, got '" +
+                               fact.dtype + "'");
+    }
+    const std::size_t elements = dense_element_count(fact.shape);
+    if (elements == 0U || elements * elem != fact.size_bytes ||
+        head.stride_bytes.size() != fact.shape.size() || head.source_byte_offset < 0) {
+      throw std::runtime_error("mla_only output '" + fact.name + "' has no usable geometry");
+    }
+    fact.transport_strides_bytes = head.stride_bytes;
+    fact.payload_offset = static_cast<std::size_t>(head.source_byte_offset);
+    padded =
+        padded || head.stride_bytes !=
+                      simaai::neat::pipeline_internal::contiguous_strides_bytes(fact.shape, elem);
+    const auto& consumer = public_consumer_for_head(contract, head.name);
+    fact.name = strip_public_route_wrapper_prefix(consumer.output_tensors.front().name);
+    if (elem == 1U && !consumer.quant.has_value()) {
+      throw std::runtime_error("mla_only INT8 output '" + fact.name +
+                               "' has no quantization parameters");
+    }
+    fact.quant = quant_from_mpk(consumer.quant, fact.name);
+    fact.dense_offset = facts->dense_output_bytes;
+    if (!simaai::neat::pipeline_internal::safe_add(facts->dense_output_bytes, fact.size_bytes,
+                                                   &facts->dense_output_bytes)) {
+      throw std::runtime_error("mla_only dense output size overflows");
+    }
+    facts->outputs.push_back(std::move(fact));
+  }
+
+  std::vector<PcieTensorFact> ordered;
+  for (const auto& output : application_output_contracts(contract)) {
+    const std::string name = strip_public_route_wrapper_prefix(output.name);
+    const auto it = std::find_if(facts->outputs.begin(), facts->outputs.end(),
+                                 [&](const PcieTensorFact& fact) { return fact.name == name; });
+    if (it == facts->outputs.end()) {
+      throw std::runtime_error("mla_only has no head for model output '" + name + "'");
+    }
+    ordered.push_back(std::move(*it));
+  }
+  facts->outputs = std::move(ordered);
+  if (!padded) {
+    facts->dense_output_bytes = 0;
+  }
+  facts->packed_output_bytes = carrier.front().size_bytes;
+}
+
 } // namespace
 
 namespace detail {
@@ -230,6 +424,46 @@ void validate_supported_input_dtype(
                              "'; supported input dtypes are UINT8, INT8, INT16, INT32, BF16, "
                              "and FP32");
   }
+}
+
+PcieModelFacts
+read_mla_only_facts(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
+  const auto* mla = simaai::neat::pipeline_internal::sima::get_mla_stage_io_contract(contract);
+  if (mla == nullptr) {
+    throw std::runtime_error("mla_only requires exactly one MLA stage in the MPK contract");
+  }
+  for (const auto& stage : contract.plugins) {
+    const std::string kernel = canonical_token(stage.kernel);
+    const bool supported =
+        &stage == mla || is_pass_through_stage(stage) || kernel.find("pack") != std::string::npos ||
+        kernel.find("slice") != std::string::npos || kernel.find("dequant") != std::string::npos ||
+        ((kernel.find("quant") != std::string::npos || kernel.find("cast") != std::string::npos) &&
+         kernel.find("tess") == std::string::npos);
+    if (!supported) {
+      throw std::runtime_error("mla_only does not support stage '" + stage.name + "' (" +
+                               stage.kernel + ")");
+    }
+  }
+
+  PcieModelFacts facts;
+  bool packed = false;
+  for (auto& input : mla_only_input_facts(contract, *mla, &packed)) {
+    facts.packed_input_bytes += input.size_bytes;
+    facts.inputs.push_back(std::move(input));
+  }
+  if (packed) {
+    if (mla->input_tensors.size() != 1U ||
+        mla->input_tensors.front().size_bytes < facts.packed_input_bytes) {
+      throw std::runtime_error("mla_only inputs do not fit the MLA packed ingress");
+    }
+    facts.packed_input = convert_tensor(mla->input_tensors.front());
+    facts.packed_input->size_bytes = facts.packed_input_bytes;
+    facts.packed_input->shape = {
+        1, static_cast<std::int64_t>(facts.packed_input_bytes /
+                                     mla_only_dtype_bytes(facts.inputs.front().dtype))};
+  }
+  add_mla_only_outputs(contract, &facts);
+  return facts;
 }
 
 } // namespace detail
@@ -358,7 +592,7 @@ bool graph_has_boxdecode(const simaai::neat::pipeline_internal::sima::MpkContrac
 
 } // namespace
 
-PcieModelFacts read_model_facts(const std::string& model_path) {
+PcieModelFacts read_model_facts(const std::string& model_path, const ModelOptions& options) {
   TempDir temp;
 
   simaai::neat::internal::ModelArchiveLoaderOptions loader_options;
@@ -375,6 +609,9 @@ PcieModelFacts read_model_facts(const std::string& model_path) {
       extracted.package_root, &error);
   if (!contract.has_value()) {
     throw std::runtime_error("failed to read MPK contract: " + error);
+  }
+  if (options.mla_only) {
+    return detail::read_mla_only_facts(*contract);
   }
 
   const auto public_inputs = detail::application_input_contracts(*contract);
@@ -413,13 +650,15 @@ ModelInfo to_public_model_info(const PcieModelFacts& facts) {
     out.inputs.push_back(TensorInfo{.name = input.name,
                                     .dtype = input.dtype,
                                     .shape = input.shape,
-                                    .size_bytes = input.size_bytes});
+                                    .size_bytes = input.size_bytes,
+                                    .quant = input.quant});
   }
   for (const auto& output : facts.outputs) {
     out.outputs.push_back(TensorInfo{.name = output.name,
                                      .dtype = output.dtype,
                                      .shape = output.shape,
-                                     .size_bytes = output.size_bytes});
+                                     .size_bytes = output.size_bytes,
+                                     .quant = output.quant});
   }
   return out;
 }

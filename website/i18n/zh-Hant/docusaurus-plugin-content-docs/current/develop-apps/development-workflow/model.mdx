@@ -619,6 +619,8 @@ runner.close()
 
 當每次呼叫都應該推送一個輸入並等待其輸出時，請使用 `runner.run(...)`。當您的應用程式想要讓工作持續進行時，請使用 `push(...)` / `pull(...)`。當不再有輸入時，並且您希望剩餘的工作完成時，請使用 `close_input()`。當執行器完成時，請使用 `close()`。
 
+`push` 會等待輸入佇列出現空間。若要在不等待的情況下送出，請在 C++ 中搭配 `Sample` 或 `TensorList` 使用 `runner.try_push`，或在 Python 中使用 `runner.try_push_samples` / `runner.try_push_tensors`。請在建置執行器之前設定 `RunOptions.queue_depth` 與 `overflow_policy`。當有界佇列已滿時，`KeepLatest` 會取代最舊的待處理樣本並傳回 `true`；`Block` 與 `DropIncoming` 則傳回 `false`。輸入已關閉時同樣傳回 `false`。請將同一幀的成對張量放在同一個 TensorSet 樣本中。取代不會取消進行中的推論，而這些轉送方法也不會增加酬載複製。
+
 ### 建立特定路由的執行器
 
 當可重複使用的執行器應該使用與預設路由不同的路由層級執行設定或路由命名時，請使用特定路由的執行器。`Model::build(...)` 會為您新增執行器的輸入和輸出邊界。

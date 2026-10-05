@@ -22,6 +22,13 @@ When behavior or public API changes:
 - Update user-facing docs for workflow/configuration changes.
 - Update examples if API usage changed.
 
+When English documentation changes:
+
+- Check `sima-i18n*.json` for translation scope and configured locales, including tutorial translations where applicable.
+- Update affected translations in the same PR. Preserve code examples, API names, links, and Markdown/MDX structure; refresh source hashes only after the translations match the updated source.
+- Run the applicable localization checks with `--require-complete` and the website catalog/navigation checks before publishing. Report any checks that could not run.
+- The Docs workflow validates committed translations; it does not regenerate them. A passing Core build does not establish that documentation will publish.
+
 ## Internals install contract
 
 When changing or rebuilding anything under `internals/` that produces NEAT runtime/plugin `.so` files:

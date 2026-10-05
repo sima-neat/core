@@ -1050,7 +1050,11 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
       << "\"border_margin\":" << opt.superpoint.border_margin << ","
       << "\"descriptor_output_dtype\":" << enum_int(opt.superpoint.descriptor_output_dtype)
       << ",\"output_format\":" << enum_int(opt.superpoint.output_format) << "},"
-      << "\"boxdecode_original_width\":" << opt.boxdecode_original_width << ","
+      << "\"yolox_seg_pose\":{\"pose_classes\":[";
+  for (std::size_t i = 0; i < opt.yolox_seg_pose.pose_classes.size(); ++i) {
+    oss << (i == 0 ? "" : ",") << opt.yolox_seg_pose.pose_classes[i];
+  }
+  oss << "]}," << "\"boxdecode_original_width\":" << opt.boxdecode_original_width << ","
       << "\"boxdecode_original_height\":" << opt.boxdecode_original_height << ","
       << "\"boxdecode_resize_mode\":";
   if (opt.boxdecode_resize_mode.has_value()) {
@@ -1116,6 +1120,20 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
         *v->obj, "descriptor_output_dtype", enum_int(opt.superpoint.descriptor_output_dtype)));
     opt.superpoint.output_format = static_cast<SuperPointOutputFormat>(
         int_field(*v->obj, "output_format", enum_int(opt.superpoint.output_format)));
+  }
+  const JsonValue* pose_classes = object_field(obj, "pose_classes");
+  if (const JsonValue* nested = object_field(obj, "yolox_seg_pose");
+      nested && nested->type == JsonValue::Type::Object && nested->obj) {
+    pose_classes = object_field(*nested->obj, "pose_classes");
+  }
+  if (const JsonValue* v = pose_classes; v && v->type == JsonValue::Type::Array && v->arr) {
+    opt.yolox_seg_pose.pose_classes.clear();
+    opt.yolox_seg_pose.pose_classes.reserve(v->arr->size());
+    for (const JsonValue& entry : *v->arr) {
+      if (entry.type == JsonValue::Type::Number) {
+        opt.yolox_seg_pose.pose_classes.push_back(static_cast<int>(entry.num));
+      }
+    }
   }
   opt.boxdecode_original_width =
       int_field(obj, "boxdecode_original_width", opt.boxdecode_original_width);

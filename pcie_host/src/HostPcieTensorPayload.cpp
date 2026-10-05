@@ -41,6 +41,8 @@ std::size_t dense_size_bytes(const Tensor& tensor) {
   return bytes;
 }
 
+} // namespace
+
 bool copy_dense_rows(const std::uint8_t* src, const std::size_t src_size,
                      const std::vector<std::int64_t>& shape,
                      const std::vector<std::int64_t>& strides, const std::size_t elem_size,
@@ -49,6 +51,15 @@ bool copy_dense_rows(const std::uint8_t* src, const std::size_t src_size,
     const auto elements = static_cast<std::size_t>(shape[dim]);
     if (strides[dim] < static_cast<std::int64_t>(elem_size)) {
       return false;
+    }
+    if (strides[dim] == static_cast<std::int64_t>(elem_size)) {
+      const std::size_t bytes = elements * elem_size;
+      if (bytes > src_size) {
+        return false;
+      }
+      std::memcpy(*dst, src, bytes);
+      *dst += bytes;
+      return true;
     }
     for (std::size_t i = 0; i < elements; ++i) {
       const auto src_offset = static_cast<std::size_t>(static_cast<std::int64_t>(i) * strides[dim]);
@@ -74,6 +85,8 @@ bool copy_dense_rows(const std::uint8_t* src, const std::size_t src_size,
   }
   return true;
 }
+
+namespace {
 
 std::vector<std::uint8_t> copy_dense_tensor_payload(const Tensor& tensor) {
   const std::size_t elem = tensor_dtype_bytes(tensor.dtype);

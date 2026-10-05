@@ -15,7 +15,8 @@ and `build()` have intentionally different responsibilities.
    idempotent.
 
 `run()`, `push()`, and `pull()` require a successful `build()`. `running()` reports whether the
-model is currently built and active.
+model is in its successfully built lifecycle state; it does not probe host transport or remote
+pipeline health.
 
 ## Synchronous Requests
 
@@ -81,6 +82,13 @@ backpressure when that window is full, so continue pulling rather than submittin
 Maintain an application-side count or FIFO so every accepted push has exactly one pull. Results
 for one `Model` arrive in submission order. Drain all pushed work before calling `run()` on the same
 model.
+
+For a performance-sensitive tensor pipeline, keep a bounded ring of reusable contiguous input
+buffers, normally sized to the intended in-flight window. Wrap each slot with
+`Tensor::from_external()` in C++ or `Tensor.from_numpy(..., copy=False)` in Python. Move a slot to
+the in-flight FIFO only after `push()` accepts it, leave its bytes unchanged while in flight, and
+recycle it only after the corresponding ordered result is pulled. The packaged
+`028_wrap_external_tensor_memory` tutorial is the reference C++ implementation.
 
 A timeout from `run()` or an empty result from timed `pull()` stops waiting; it does not cancel an
 input already accepted by the card. After a timeout, either drain the outstanding result with

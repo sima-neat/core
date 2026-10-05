@@ -58,6 +58,7 @@ opt.top_k = 100;
 | Detection | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
 | Pose | `decode_pose(...)` | `pyneat.decode_pose(...)` | boxes `[N, 6]` and keypoints `[N, 17, 3]` float32: `x, y, visibility` |
 | Segmentation | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | boxes `[N, 6]` float32 and masks `[N, 160, 160]` uint8 |
+| Segmentation + pose | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | boxes `[N, 6]` float32, masks `[N, 160, 160]` uint8, keypoints `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | keypoints `[N,2]`, scores `[N]`, descriptors `[N,D]` |
 
 Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
@@ -177,6 +178,39 @@ Coordinates are in original-image pixels when upstream preprocessing metadata is
 present. They are not normalized to `[0, 1]` and are not expressed in the
 model's internal letterboxed input space.
 
+### Combined segmentation + pose payload
+
+`yolox-seg-pose` emits a single buffer carrying three regions. Every region is
+strided by the same slot count, `top_k`:
+
+| Region | Offset | Stride | Contents |
+| --- | --- | --- | --- |
+| header | `0` | 4 | `int32` detection count |
+| boxes | `4` | 24 | `BoundingBoxOut` records, as above |
+| masks | `4 + 24*top_k` | `mask_w * mask_h` | `uint8`, one plane per slot |
+| poses | `4 + (24 + mask_w*mask_h)*top_k` | 204 | 17 x `{uint32 x, uint32 y, float32 visibility}` |
+
+Use `decode_segmentation_pose(...)` to get boxes, masks and keypoints. Row `i` in each tensor describes the same detection. Use `decode_bbox(...)` or `BoxDecodeResults(...)` if you only need boxes.
+
+There are 17 keypoint slots per detection. The backend zeros unused slots and keypoints for classes excluded by `pose_classes`. The helper copies those values unchanged.
+
+Core derives `num_classes` from the class-head depth minus one, because channel 0 holds objectness. For example, 30 channels means 29 classes. An explicit `num_classes` must match.
+
+### Keypoint classes
+
+Set the class IDs that have keypoints:
+
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.YoloXSegPose)
+options.yolox_seg_pose.pose_classes = [0, 5]
+```
+
+`ModelOptions.yolox_seg_pose` accepts the same setting.
+
+- Classes outside the list get zero keypoint coordinates and visibility.
+- An empty `BoxDecodeOptions` list inherits the model's settings. With no list configured, every class gets keypoints.
+- IDs must be unique and in `[0, num_classes)`. This option is only supported for `YoloXSegPose`.
+
 ## When `model.run` returns raw heads
 
 Some model routes return raw feature-map heads from `model.run(...)` instead of
@@ -211,10 +245,17 @@ non-empty or positive value.
 | `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
 | `top_k` | `0` | Preserve packaged top-K. |
 | `top_k` | `> 0` | Override the maximum kept detections. |
-| `num_classes` | `0` | Use the class-head depth inferred from the MPK. |
-| `num_classes` | positive integer matching the MPK | Use the explicit class count. This is required when the MPK cannot infer a split single-class head reliably. |
-| `num_classes` | positive integer contradicting a YOLO26 MPK | Fail before pipeline construction and report both values. YOLO26 derives its grouped raw-head layout from the class depth, so this mismatch is a model contract error. |
-| `num_classes` | positive integer for SSD or a pre-YOLO26 non-pose YOLO family | Preserve the existing explicit-override behavior. Pose decoders and SuperPoint retain their family-specific rules. |
+
+`num_classes` compares the value configured by the caller with the class count
+derived from the MPK tensor contract:
+
+| Model family | Configured `num_classes` | MPK-derived `num_classes` | Behavior |
+| --- | --- | --- | --- |
+| Any supported model | `0` | positive, inferable value | Use the MPK-derived class count. |
+| Any supported model | positive integer | same value | Use the configured class count. |
+| Model with an ambiguous class split | positive integer | unavailable | Use the configured class count. This is required when a split single-class head cannot be inferred reliably. |
+| YOLOv5 or YOLO26 | positive integer | different value | Fail before pipeline construction and report both values. These raw-head layouts derive their class count from tensor depth. |
+| SSD or another pre-YOLO26 non-pose YOLO family | positive integer | different value | Apply the existing family-specific explicit-override behavior. Pose decoders and SuperPoint retain their family-specific rules. |
 
 `detection_threshold` is the name used by the BoxDecode node/stage
 constructors. `ModelOptions.score_threshold` is the model-route option that
@@ -241,6 +282,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
+| `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | YOLOX packed export carrying box, mask and keypoint heads together |
 | `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300, SSD-Mobile-300, SSD-Mobile-320, or SSDlite-Mobile-320 contract, selected from ordered head geometry |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
@@ -270,11 +312,18 @@ For model-pack flows this is handled by the packaged contract. For manually wire
 
 Advanced tensor-contract rules:
 
-- YOLO-family decode types (`Yolo`, `YoloV5`, `YoloV7`, `YoloV8`, `YoloV9`,
-  `YoloV10`, and segmentation/pose variants) expect either decoupled heads or
-  packed heads that match the model family.
+- YOLO-family decode types other than `YoloV5` detection (`Yolo`, `YoloV7`,
+  `YoloV8`, `YoloV9`, `YoloV10`, and segmentation/pose variants) expect either
+  decoupled heads or packed heads that match the model family.
 - Packed YOLO heads must keep class count and head depth consistent across
   feature levels.
+- `YoloV5` detection accepts exactly three undecoded packed heads ordered
+  P3/P4/P5. Their grids must have stride-8/16/32 geometry and each logical
+  depth must be `3 * (num_classes + 5)`. BoxDecode applies sigmoid, the grid
+  and stride transform, and the standard YOLOv5 anchors
+  (`{10,13},{16,30},{33,23}`; `{30,61},{62,45},{59,119}`;
+  `{116,90},{156,198},{373,326}`). Custom AutoAnchor tables and decoded
+  six-tensor box/class exports must use another contract.
 - `YoloV26` uses grouped raw l/t/r/b bbox heads plus class-score heads.
 - `Ssd` is **not** a generic SSD decoder. It resolves exactly **four prepared profiles**
   from the complete ordered loc/conf H/W/C signature at compile time. Any other
@@ -356,3 +405,9 @@ seg = pyneat.decode_segmentation(outputs)[0]
 seg_boxes = seg.boxes.to_numpy()
 masks = seg.masks.to_numpy()
 ```
+
+## Upgrading
+
+Replace the preview API's top-level `pose_classes` with `yolox_seg_pose.pose_classes`.
+
+The new options change C++ object layouts. Core uses ABI 5, `libsima_neat.so.5`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 4 binaries to ABI 5 through a compatibility symlink.

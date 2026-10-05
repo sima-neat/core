@@ -77,6 +77,9 @@ struct BoxDecodeOptionsInternal;
  * `decode_bbox()`, or `stages::BoxDecodeResults()` when you only need boxes. For task-specific
  * payloads, use `decode_pose()` to get boxes plus `[N, 17, 3]` keypoints, or
  * `decode_segmentation()` to get boxes plus `[N, 160, 160]` masks.
+ * `BoxDecodeType::YoloXSegPose` carries masks and keypoints in one payload; consume it with
+ * `decode_segmentation_pose()` to get all three tensors at once. `decode_bbox()` still works on
+ * it if you only need boxes, since the payload is box-leading.
  * `BoxDecodeType::SuperPoint` instead emits a type-honest `FEATURE_POINTS_V1` payload; consume it
  * with `decode_superpoint()` or `stages::SuperPointResults()`. Use `SimaRender` downstream when
  * you want an annotated video/image stream.
@@ -99,6 +102,8 @@ struct BoxDecodeOptionsInternal;
  * format. Do not infer correctness from tensor rank alone: sliced, padded, packed, and
  * dense outputs can have the same logical shape while requiring different handling. The
  * model-aware path handles these details for supported model packs.
+ * `BoxDecodeType::YoloV5` specifically consumes three undecoded packed heads in P3/P4/P5
+ * order and uses the standard YOLOv5 anchor table; custom AutoAnchor tables are not supported.
  *
  * @see pipeline/BoxDecodeType.h
  * @see pipeline/DetectionTypes.h

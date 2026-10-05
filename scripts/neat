@@ -673,7 +673,13 @@ discover_model_compiler_from_extension_dir() {
     return 1
   fi
   version="$(model_compiler_version_from_venv "${python_bin}")"
-  [[ -z "${version}" ]] && version="installed"
+  if [[ -z "${version}" ]]; then
+    # The extension directory can exist as a bare venv (python + pip only) when
+    # the Model Compiler was never installed, or when an install was interrupted.
+    # Without one of the Model Compiler distributions present it is not usable,
+    # so report it as missing instead of claiming it is installed.
+    return 1
+  fi
 
   MODEL_COMPILER_VERSION="${version}"
   MODEL_COMPILER_AVAILABLE=1

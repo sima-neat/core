@@ -209,7 +209,8 @@ RUN_TEST(
           model_fixture.tar_path +
           "\",\"stage_role\":\"route\",\"model_options\":{"
           "\"superpoint\":{\"profile\":2,\"nms_radius\":7,\"border_margin\":3,"
-          "\"descriptor_output_dtype\":5,\"output_format\":2}}}]\n";
+          "\"descriptor_output_dtype\":5,\"output_format\":2},"
+          "\"yolox_seg_pose\":{\"pose_classes\":[0,5]}}}]\n";
       superpoint_options_json.insert(root_end, model_fragment);
       const std::string superpoint_options_path = tmp_json_path("graph_io_superpoint_options.json");
       write_text(superpoint_options_path, superpoint_options_json);
@@ -220,6 +221,9 @@ RUN_TEST(
       loaded_superpoint_model_graph.save(superpoint_options_roundtrip_path);
       const std::string superpoint_options_roundtrip_json =
           read_text(superpoint_options_roundtrip_path);
+      require_contains(superpoint_options_roundtrip_json,
+                       "\"yolox_seg_pose\":{\"pose_classes\":[0,5]}",
+                       "nested YOLOX segmentation/pose settings must survive save/load");
       require_contains(
           superpoint_options_roundtrip_json, "\"superpoint\":{\"profile\":2",
           io_case("superpoint_profile_roundtrip", "SuperPoint profile should survive save/load"));

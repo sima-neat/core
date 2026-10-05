@@ -6,6 +6,8 @@ sidebar_position: 2
 
 # 相機輸入節點
 
+以下 libcamera 指南說明預設後端。Metoak SIMOR 獨立所有的原始張量請參閱下方 V4L2 章節。
+
 `CameraInput` 是一個來源節點，用於透過 libcamera 和 GStreamer 的 `libcamerasrc` 暴露的 MIPI 攝影機。當您希望圖中的影格來自 DevKit 攝影機堆疊，而不是來自 `run.push(...)` 時，請將其用於由來源擁有的圖的開頭。
 
 如需任務指南，請參閱 [使用 MIPI 相機。](/develop-apps/advanced-concepts/mipi-camera-input)。
@@ -116,10 +118,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `queue_depth` | `2` | 當 `insert_queue` 為 true 時，佇列中最多可容納的緩衝區數量。|
 | `allow_cpu_fallback` | `false` | 如果設定為 `false`，則需要相機/裝置支援零拷貝功能。 僅將其設定為 `true`，才能選擇使用 Neat 的私有自適應橋接，連接到 SiMaAI 記憶體。|
 
-`capture_buffer_count` 是 `CameraInputWithCaptureBuffers` 的一個參數，而不是
-`CameraInputOptions` 欄位。其預設值為 `0`，這可保留相機
-管線本身的預設值。相機管線會驗證其限制；Neat 的
-提供者最多支援 `128`。
+`capture_buffer_count` 現在也是 `CameraInputOptions` 欄位。0 保留後端預設值，非零值覆寫擷取緩衝區數量。既有 C++ 工廠與 Python 關鍵字仍可使用。libcamera 上限為 128；原始 V4L2 需要 4–128 個緩衝區。
 
 ## 輸入與輸出合約
 
@@ -170,3 +169,66 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | 嚴格的零拷貝錯誤 |，`allow_cpu_fallback` 為「否」，且相機來源未公開 SiMaAI 零拷貝屬性。|
 | 讀取逾時 | 攝影機未傳輸畫面，圖的後壓過大，或攝影機堆疊已停止串流。|
 | 綠色、紫色或顏色過於鮮豔的相框。| 相框格式或模型的預處理色彩轉換可能出錯，或者相框的顏色已經存在於相機的 ISP/libcamera 輸出中。首先驗證一個 `NV12` 格式的圖像，看看是否在 Neat 之外也有同樣的問題。|
+
+## 具有獨立記憶體的 raw V4L2 擷取
+
+兩個後端都使用既有的 `CameraInput(options)`（Python：`camera_input`）。以下範例選擇僅適用於 Linux 的 Metoak SIMOR 原始複製設定檔。請指定實際擷取裝置；`/dev/video1` 僅為範例。其他平台會回報不支援的後端錯誤。
+
+```cpp
+#include <neat.h>
+namespace n = simaai::neat;
+
+n::CameraInputOptions camera;
+camera.device = "/dev/video1";
+camera.profile = n::CameraProfile::MetoakSimor;
+
+n::Graph capture;
+capture.add(n::nodes::CameraInput(camera));
+capture.add(n::nodes::Output());
+```
+
+```python
+import pyneat as neat
+
+camera = neat.CameraInputOptions()
+camera.device = "/dev/video1"
+camera.profile = neat.CameraProfile.MetoakSimor
+
+capture = neat.Graph()
+capture.add(neat.nodes.camera_input(camera))
+capture.add(neat.nodes.output())
+```
+
+`MetoakSimor` 在未設定 `zero_copy` 時預設使用獨立複製擷取。每個出列的 MMAP 影格都會在相機緩衝區**重新入列前**複製到獨立的池化系統記憶體。明確設定 `zero_copy=false` 的行為相同；此設定檔不支援 DMA-BUF 匯出/匯入，因此 `zero_copy=true` 會遭拒絕，不會隱含回退。`camera_name` 與 `allow_cpu_fallback` 僅供 libcamera 使用。保留裝置既有頻率；`framerate_num`/`framerate_den` 不會設定此設定檔。
+
+輸出是平坦的 UInt8 張量 `[bytesused]`，包含有效的列填補與尾端資料，而非解碼後的影像。
+可從 `Sample.caps_string` 取得協商後的 `fourcc`、`width`、`height`、`row-stride`、`sizeimage`。
+解讀裝置通訊協定之前，請勿重塑為解碼影像尺寸或捨棄尾端資料。傳送時間戳記屬於中繼資料，
+不包含在張量位元組內。
+
+`capture_buffer_count` 預設為 8（4–128）、`output_buffer_count` 為 8（2–128）、
+`frame_timeout_ms` 為 2000（1–60000）。保留的輸出會占用記憶體池槽位。池滿時須釋放輸出才能恢復擷取；
+保留的張量絕不會被覆寫。啟用佇列時，`queue_depth` 必須為正值且小於 `output_buffer_count`。
+停止時會中斷對記憶體池的等待。
+
+開始擷取前，請依 BSP 設定裝置的媒體控制器連結與 pad 格式；Neat 不會改寫媒體圖。請勿同時執行其他擷取用戶端。平台與 USB 裝置使用相同的 V4L2 MMAP 生命週期。驅動程式必須遵守 STREAMOFF 契約：複製模式無法讓有缺陷的核心 DMA 結束處理變安全。結束失敗時必須復原裝置，而非自動重新開啟。
+
+ROS/SIMOR 的 CPU 解包、校正與 ROS 發布仍由應用程式負責。應用程式可將原本的六個輸入
+送入另一個處理圖中的 `MetoakDepth` graph 20。此擷取 API 不加入 SIMOR 處理，
+也不需要 graph 21、新韌體或修改現有 ROS 整合。
+
+啟動時會先準備輸出 caps 和 CPU 緩衝區池，再將相機緩衝區排入佇列。停止時會中斷影格與記憶體池等待，結束擷取後再釋放輸出池。已傳送的張量在停止後仍有效。擷取結束錯誤會透過 GStreamer 匯流排回報，並禁止重新啟動該來源；結束程序不能取代裝置復原。
+
+
+### 設定檔選擇與相容性
+
+- `profile=Default`（預設）一律使用 libcamera，並保留 `camera_name` 選擇。未指定 `profile=MetoakSimor` 卻提供 `device` 會遭拒絕，不會隱含選擇 Metoak。
+- `profile=MetoakSimor` 在內部選擇具有獨立複製所有權的 V4L2、`RAW8`、`BA81` 與 1920×360 傳輸尺寸。它取代原有 NV12/1080 預設值；其他衝突格式或尺寸會遭拒絕。此設定檔不代表所有 Metoak 相機。
+- SIMOR 設定檔未指定 `device` 時，媒體拓撲中必須恰有一個符合的端點。缺少、模糊或混合感測器路徑都會失敗。探索不會開啟擷取裝置；明確指定設定檔和裝置可略過探索。
+- 像素格式不是後端選擇器。一般原始/Bayer 請求仍使用 libcamera 路徑；此變更沒有新增或驗證 Bayer caps 協商。設定檔決定傳輸 FourCC，沒有公開的 FourCC 選項。
+- 對 `MetoakSimor`，未設定的 `zero_copy` 會解析為 false，明確設定 true 則遭拒絕。對 libcamera，未設定會保留 `allow_cpu_fallback`；false 允許既有複製回退，true 要求零複製。矛盾的設定會遭拒絕。
+- 實作只在節點建立時選擇一次，早於圖的合約傳播。沒有公開的 backend 選項；失敗時不會切換實作。探索不會設定媒體連結或接腳格式。
+
+只有未指定 `device` 的 `MetoakSimor` 設定檔會掃描媒體控制器。這些中繼資料查詢是同步核心呼叫，不保證執行時間上限。控制器沒有回應時，請同時設定 `device` 和 `profile=MetoakSimor` 以略過探索。
+
+僅使用 `CameraInput(options)` 與 `CameraInputOptions`；V4L2 設定為內部實作。manifest 與 SONAME 維持 Core ABI 5。這次尚未發布的整合已改變公開選項與節點配置：請重新建置 C++ 使用端並搭配相符的 Python wheel。不要將舊 ABI-5 二進位檔與新標頭或執行階段混用。

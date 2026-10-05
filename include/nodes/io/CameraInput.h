@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_io
- * @brief MIPI/libcamera camera source node wrapper.
+ * @brief Camera source with libcamera or owned raw V4L2 capture.
  */
 #pragma once
 
@@ -16,8 +16,12 @@
 
 namespace simaai::neat {
 
+// Describe the camera's delivery contract, not its implementation backend.
+// Default preserves libcamera; MetoakSimor selects its owned-copy Linux path.
+enum class CameraProfile { Default, MetoakSimor };
+
 /**
- * @brief Options for CameraInput, a live libcamera/MIPI source.
+ * @brief Options for CameraInput, a live camera source.
  *
  * The public contract is deliberately camera/frame oriented. Neat's private
  * camera memory bridge negotiates its allocator with libcamerasrc and passes
@@ -49,6 +53,20 @@ struct CameraInputOptions {
   // EV74 SiMaAI memory. This is an explicit compatibility escape hatch for
   // camera stacks without DMA-BUF export support.
   bool allow_cpu_fallback = false;
+
+  // Backend selection is private. A device path alone never selects raw capture.
+  // Only MetoakSimor selects V4L2 and chooses its qualified wire mode.
+  std::string device;
+  CameraProfile profile = CameraProfile::Default;
+  // Unset preserves libcamera's policy and selects owned-copy for MetoakSimor.
+  // False permits libcamera's CPU fallback; true requires zero-copy and is
+  // rejected for MetoakSimor, which does not support DMA-BUF export/import.
+  std::optional<bool> zero_copy;
+  // Owned-copy pool and frame-wait tuning for MetoakSimor.
+  std::uint32_t output_buffer_count = 8;
+  std::uint32_t frame_timeout_ms = 2000;
+  // Zero keeps the backend default. Nonzero applies to either capture backend.
+  std::uint32_t capture_buffer_count = 0;
 };
 
 class CameraInput final : public Node, public OutputSpecProvider {
@@ -65,9 +83,7 @@ public:
   NodeCapsBehavior caps_behavior() const override {
     return NodeCapsBehavior::Static;
   }
-  MemoryContract memory_contract() const override {
-    return MemoryContract::PreferDeviceZeroCopy;
-  }
+  MemoryContract memory_contract() const override;
 
   std::string buffer_name_hint(int node_index) const override;
   std::string backend_fragment(int node_index) const override;
@@ -81,6 +97,8 @@ public:
 
 private:
   CameraInputOptions opt_;
+  // Resolved once, before graph contract propagation; never switch on failure.
+  std::shared_ptr<Node> raw_backend_;
 };
 
 } // namespace simaai::neat

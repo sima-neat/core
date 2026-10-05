@@ -21,23 +21,29 @@ sidebar_position: 2
 ## Отримайте модель і зразок зображення.
 
 1. **Створіть теку для ресурсів**, у якій ми зберігатимемо модель і вхідне зображення:
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
     cd assets
-    ```
+    </ShellCommand>
+
 2. **Завантажте модель:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli завантажити модель
     Якщо `sima-cli` зберігає модель в іншому місці, ніж директорія `assets`, скопіюйте цей файл до `assets/yolo_v8s_mpk.tar.gz`.
 3. **Завантажте зразок зображення** з документації та збережіть його під назвою `tutorial_sample_image.png` у каталозі `assets`.
 
     [Open or download the sample image](../../images/tutorial_sample_image.png).
 4. **Поверніться до каталогу вашого проєкту:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     cd ..
-    ```
+    </ShellCommand>
+
 
 ## Покрокова інструкція
 
@@ -305,25 +311,36 @@ if __name__ == "__main__":
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
-Відновіть проєкт, використовуючи ті самі команди, що й для Hello Neat!, а потім запустіть виконуваний файл:
+Відновіть проєкт, використовуючи ті самі команди, що й для Hello Neat!:
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/sima_neat_hello      # on the DevKit
-dk build/sima_neat_hello     # from the Palette SDK host
-```
+</ShellCommand>
+
+Потім запустіть виконуваний файл:
+
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 Запустіть скрипт:
 
-```bash
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
-python3 hello_neat.py        # on the DevKit
-dk hello_neat.py             # from the Palette SDK host
-```
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>
