@@ -604,7 +604,6 @@ GstBuffer* acquire_segment_pool_buffer(std::uint64_t target_flags, std::uint64_t
   }
   return nullptr;
 #else
-  simaai::neat::gst_init_once();
   std::shared_ptr<GstBufferPool> pool = get_pool(target_flags, mem_flags, segments);
   if (!pool) {
     if (err) {
