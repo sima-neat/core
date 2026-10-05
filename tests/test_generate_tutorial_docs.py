@@ -174,6 +174,31 @@ def test_main_writes_completed_locale_manifest(tmp_path: Path, monkeypatch) -> N
     assert manifest == {"locales": ["ja"]}
 
 
+def test_cross_listed_tutorial_has_one_page_and_two_category_cards(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    module = _write_module(tmp_path, "029_run_genai_over_pcie")
+    for readme in (module / "README.md", module / "i18n/ja/README.md"):
+        text = readme.read_text(encoding="utf-8")
+        readme.write_text(text.replace("Models & Inference", "PCIe Co-Processing"), encoding="utf-8")
+    _write_locale_support(tmp_path, [module])
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["generate_tutorial_docs.py", "--repo-root", str(tmp_path)])
+
+    assert tutorial_docs.main() == 0
+    for root in (
+        tmp_path / "docs/develop-apps/tutorials",
+        tmp_path / "website/i18n/ja/docusaurus-plugin-content-docs/current/develop-apps/tutorials",
+    ):
+        pages = list(root.rglob("tutorial_029_run_genai_over_pcie.mdx"))
+        assert len(pages) == 1
+        assert pages[0].parent.name == "pcie"
+        for category in ("pcie", "genai"):
+            landing = (root / category / "index.md").read_text(encoding="utf-8")
+            assert 'href="/tutorials/run-genai-over-pcie"' in landing
+            assert landing.count('class="tutorial-card tutorial-difficulty-') == 1
+
+
 def test_rejects_partially_translated_locale(tmp_path: Path) -> None:
     first = _write_module(tmp_path, "001_run_a_model")
     second = _write_module(tmp_path, "002_run_another_model", localized=False)

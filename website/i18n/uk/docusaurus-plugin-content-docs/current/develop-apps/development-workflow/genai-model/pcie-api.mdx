@@ -7,6 +7,8 @@ slug: /develop-apps/development-workflow/genai-model/pcie-api
 
 # GenAI API через PCIe
 
+Готові до запуску приклади C++ та Python наведено в [Запуску моделей GenAI через PCIe](/tutorials/run-genai-over-pcie).
+
 Використовуйте `simaai::neat::pcie::genai` у C++ або `pyneatpcie.genai` у Python для запуску моделей LLM, VLM та ASR із хоста на підключеній Modalix PCIe Card.
 
 API використовує той самий підхід до запитів і потокового виводу, що й [прямі GenAI API](/develop-apps/development-workflow/genai-model/direct-api). Файли моделі, вхідні дані й результати передаються через PCIe. На відміну від [співобробки моделей комп’ютерного зору](/develop-apps/development-workflow/pcie-model), GenAI не потребує номера черги для моделей комп’ютерного зору чи виклику `build()`.

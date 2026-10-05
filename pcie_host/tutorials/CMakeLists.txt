@@ -51,6 +51,15 @@ simapcie_add_tutorial(tutorial_027_run_mla_only_int8
 simapcie_add_tutorial(tutorial_028_wrap_external_tensor_memory
   028_wrap_external_tensor_memory/run_external_tensor_memory.cpp)
 
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR OR SIMAPCIE_BUILD_GENAI)
+  simapcie_add_tutorial(tutorial_029_run_llm
+    029_run_genai_over_pcie/run_llm.cpp)
+  simapcie_add_tutorial(tutorial_029_run_vlm
+    029_run_genai_over_pcie/run_vlm.cpp)
+  simapcie_add_tutorial(tutorial_029_run_whisper
+    029_run_genai_over_pcie/run_whisper.cpp)
+endif()
+
 if (SIMAPCIE_TUTORIAL_TARGETS)
   install(
     TARGETS ${SIMAPCIE_TUTORIAL_TARGETS}

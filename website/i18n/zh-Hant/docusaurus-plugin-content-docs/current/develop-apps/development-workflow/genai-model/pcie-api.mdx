@@ -7,6 +7,8 @@ slug: /develop-apps/development-workflow/genai-model/pcie-api
 
 # PCIe GenAI API
 
+可執行的 C++ 與 Python 範例請參閱[透過 PCIe 執行 GenAI 模型](/tutorials/run-genai-over-pcie)。
+
 在 C++ 中使用 `simaai::neat::pcie::genai`，或在 Python 中使用 `pyneatpcie.genai`，即可從主機在連接的 Modalix PCIe Card 上執行 LLM、VLM 與 ASR 模型。
 
 此 API 採用與[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api)相同的請求與串流模式。模型檔案、輸入與結果透過 PCIe 傳輸。與[視覺模型協同處理](/develop-apps/development-workflow/pcie-model)不同，GenAI 不需要視覺模型佇列編號，也不需要呼叫 `build()`。
