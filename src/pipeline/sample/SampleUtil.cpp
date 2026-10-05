@@ -10,6 +10,7 @@
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include <gst/gst.h>
@@ -1809,6 +1810,100 @@ bool attach_tensor_set_meta_from_packed_tensors(GstBuffer* buffer, const TensorL
   return attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, err);
 }
 
+// A packed parent keeps the same layout on every push of a given input set, so it is drawn
+// from the shared segment pool rather than allocated per push. Flags 0 (generic, uncached)
+// match what build_packed_parent_by_copy() allocates.
+GstBuffer* acquire_pooled_packed_parent(const TensorList& tensors,
+                                        const std::string& parent_segment_name,
+                                        const std::vector<std::size_t>& tensor_transport_bytes,
+                                        std::size_t total_bytes) {
+  GstBuffer* buffer = acquire_segment_pool_buffer(
+      0U, 0U, {simaai::neat::Segment{parent_segment_name, total_bytes}}, nullptr);
+  if (!buffer) {
+    return nullptr;
+  }
+  GstMapInfo map{};
+  if (!gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
+    gst_buffer_unref(buffer);
+    return nullptr;
+  }
+  bool ok = map.size >= total_bytes;
+  std::size_t running_offset = 0U;
+  for (std::size_t i = 0; ok && i < tensors.size(); ++i) {
+    std::string copy_err;
+    ok = copy_tensor_transport_payload_to(tensors[i],
+                                          static_cast<std::uint8_t*>(map.data) + running_offset,
+                                          tensor_transport_bytes[i], &copy_err);
+    running_offset += tensor_transport_bytes[i];
+  }
+  gst_buffer_unmap(buffer, &map);
+  if (!ok) {
+    gst_buffer_unref(buffer);
+    return nullptr;
+  }
+  return buffer;
+}
+
+GstBuffer* build_packed_parent_by_copy(const TensorList& tensors,
+                                       const std::string& parent_segment_name,
+                                       const std::vector<std::size_t>& tensor_transport_bytes,
+                                       std::size_t total_bytes, std::string* err) {
+  GstBuffer* source_buffer =
+      gst_buffer_new_allocate(nullptr, static_cast<gsize>(total_bytes), nullptr);
+  if (!source_buffer) {
+    if (err) {
+      *err = "tensor-set packed backing allocation failed";
+    }
+    return nullptr;
+  }
+
+  GstMapInfo map{};
+  if (!gst_buffer_map(source_buffer, &map, GST_MAP_WRITE)) {
+    gst_buffer_unref(source_buffer);
+    if (err) {
+      *err = "tensor-set packed backing map failed";
+    }
+    return nullptr;
+  }
+
+  std::size_t running_offset = 0U;
+  for (std::size_t i = 0; i < tensors.size(); ++i) {
+    std::string copy_err;
+    if (!copy_tensor_transport_payload_to(tensors[i],
+                                          static_cast<std::uint8_t*>(map.data) + running_offset,
+                                          tensor_transport_bytes[i], &copy_err)) {
+      gst_buffer_unmap(source_buffer, &map);
+      gst_buffer_unref(source_buffer);
+      if (err) {
+        *err = copy_err.empty() ? "tensor-set packed backing tensor copy failed" : copy_err;
+      }
+      return nullptr;
+    }
+    running_offset += tensor_transport_bytes[i];
+  }
+  gst_buffer_unmap(source_buffer, &map);
+
+  simaai::gst::SimaTensorBufferBuildSegmentV1 segment{};
+  segment.name = parent_segment_name.c_str();
+  segment.source_buffer = source_buffer;
+  segment.copy_bytes = static_cast<gsize>(total_bytes);
+
+  GstBuffer* segmented = nullptr;
+  char* c_err = nullptr;
+  const gboolean ok =
+      simaai::gst::sima_tensor_buffer_build_segmented_buffer(&segment, 1U, &segmented, &c_err);
+  gst_buffer_unref(source_buffer);
+  if (!ok || !segmented) {
+    if (err) {
+      *err = c_err ? c_err : "tensor-set packed segmented backing allocation failed";
+    }
+    g_free(c_err);
+    return nullptr;
+  }
+  g_free(c_err);
+  return segmented;
+}
+
 bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& parent_segment_name,
                                      GstBuffer** out_buffer, GstCaps** out_caps, std::string* err) {
   if (!out_buffer || !out_caps) {
@@ -1862,75 +1957,19 @@ bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& pa
     total_bytes += bytes;
   }
 
-  GstBuffer* source_buffer =
-      gst_buffer_new_allocate(nullptr, static_cast<gsize>(total_bytes), nullptr);
-  if (!source_buffer) {
+  GstBuffer* segmented = acquire_pooled_packed_parent(bundle.tensors, parent_segment_name,
+                                                      tensor_transport_bytes, total_bytes);
+  if (!segmented) {
+    segmented = build_packed_parent_by_copy(bundle.tensors, parent_segment_name,
+                                            tensor_transport_bytes, total_bytes, err);
+  }
+  if (!segmented) {
     if (*out_caps) {
       gst_caps_unref(*out_caps);
       *out_caps = nullptr;
     }
-    if (err) {
-      *err = "tensor-set packed backing allocation failed";
-    }
     return false;
   }
-
-  GstMapInfo map{};
-  if (!gst_buffer_map(source_buffer, &map, GST_MAP_WRITE)) {
-    gst_buffer_unref(source_buffer);
-    if (*out_caps) {
-      gst_caps_unref(*out_caps);
-      *out_caps = nullptr;
-    }
-    if (err) {
-      *err = "tensor-set packed backing map failed";
-    }
-    return false;
-  }
-
-  std::size_t running_offset = 0U;
-  for (std::size_t i = 0; i < bundle.tensors.size(); ++i) {
-    std::string copy_err;
-    if (!copy_tensor_transport_payload_to(bundle.tensors[i],
-                                          static_cast<std::uint8_t*>(map.data) + running_offset,
-                                          tensor_transport_bytes[i], &copy_err)) {
-      gst_buffer_unmap(source_buffer, &map);
-      gst_buffer_unref(source_buffer);
-      if (*out_caps) {
-        gst_caps_unref(*out_caps);
-        *out_caps = nullptr;
-      }
-      if (err) {
-        *err = copy_err.empty() ? "tensor-set packed backing tensor copy failed" : copy_err;
-      }
-      return false;
-    }
-    running_offset += tensor_transport_bytes[i];
-  }
-  gst_buffer_unmap(source_buffer, &map);
-
-  simaai::gst::SimaTensorBufferBuildSegmentV1 segment{};
-  segment.name = parent_segment_name.c_str();
-  segment.source_buffer = source_buffer;
-  segment.copy_bytes = static_cast<gsize>(total_bytes);
-
-  GstBuffer* segmented = nullptr;
-  char* c_err = nullptr;
-  const gboolean ok =
-      simaai::gst::sima_tensor_buffer_build_segmented_buffer(&segment, 1U, &segmented, &c_err);
-  gst_buffer_unref(source_buffer);
-  if (!ok || !segmented) {
-    if (*out_caps) {
-      gst_caps_unref(*out_caps);
-      *out_caps = nullptr;
-    }
-    if (err) {
-      *err = c_err ? c_err : "tensor-set packed segmented backing allocation failed";
-    }
-    g_free(c_err);
-    return false;
-  }
-  g_free(c_err);
 
   std::string preprocess_err;
   if (!copy_bundle_tensor_preprocess_meta(segmented, bundle.tensors, &preprocess_err)) {

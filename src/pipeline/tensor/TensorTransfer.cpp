@@ -593,6 +593,36 @@ TransferPoolStats tensor_transfer_pool_stats() {
   return stats;
 }
 
+GstBuffer* acquire_segment_pool_buffer(std::uint64_t target_flags, std::uint64_t mem_flags,
+                                       const std::vector<Segment>& segments, std::string* err) {
+#if !SIMA_HAS_SIMAAI_POOL
+  (void)target_flags;
+  (void)mem_flags;
+  (void)segments;
+  if (err) {
+    *err = "segment pool: simaai buffer pool unavailable";
+  }
+  return nullptr;
+#else
+  simaai::neat::gst_init_once();
+  std::shared_ptr<GstBufferPool> pool = get_pool(target_flags, mem_flags, segments);
+  if (!pool) {
+    if (err) {
+      *err = "segment pool: pool creation failed";
+    }
+    return nullptr;
+  }
+  GstBuffer* buffer = nullptr;
+  if (gst_buffer_pool_acquire_buffer(pool.get(), &buffer, nullptr) != GST_FLOW_OK || !buffer) {
+    if (err) {
+      *err = "segment pool: acquire failed";
+    }
+    return nullptr;
+  }
+  return buffer;
+#endif
+}
+
 Tensor transfer_to_device(const Tensor& src, const Device& target,
                           const std::vector<Segment>* required_segments,
                           const std::vector<std::string>* required_segment_names) {
