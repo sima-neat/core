@@ -613,7 +613,15 @@ DMA-BUF를 유지하는 출력은 중복 제거된 보유 크레딧을 소비합
 
 ### 카메라 할당 소유권
 
-보드 로컬 데몬인 SiMa Sentinel(`simaai-sentinel.service`)은 장치 검색, 신뢰할 수 있는 주변 장치 카탈로그, 리비전 및 크기가 제한된 `changes` 로그를 소유합니다. Core는 해당 구현을 링크하지 않습니다. 대신 `simaai::neat::peripherals::list()`와 `pyneat.peripherals.list()`는 얇은 상태 비저장 클라이언트입니다. 각 호출은 Sentinel의 버전이 지정된 Unix 소켓 API를 통해 제한 시간이 있는 `GET /v1/peripherals` 요청을 한 번 수행하고, 응답을 검증한 후 해당 스냅샷을 반환합니다. 하드웨어를 스캔하거나 두 번째 캐시를 유지하거나 이벤트를 구독하거나 Sentinel을 사용할 수 없을 때 폴백하지 않습니다.
+SiMa Sentinel(`simaai-sentinel.service`)는 보드 로컬 데몬으로서 장치
+검색과 주변 장치 카탈로그를 소유하며, 하드웨어 사실만 보고합니다. Core는
+그 구현을 링크하지 않습니다. 대신
+`simaai::neat::peripherals::list()`와 `pyneat.peripherals.list()`는 얇고
+상태가 없는 클라이언트입니다. 각각 Sentinel의 버전이 지정된 Unix 소켓 API를 통해
+제한된 `GET /v1/peripherals` 요청을 한 번 수행하고, 응답을 검증한 다음, 그
+스냅샷을 반환합니다. `CameraInput`이 지원하는 카메라 모드는 Core가 직접 판단합니다.
+클라이언트는 하드웨어를 스캔하거나, 두 번째 캐시를 유지하거나, 이벤트를 구독하거나,
+Sentinel을 사용할 수 없을 때 폴백하지 않습니다.
 
 `CameraInput`은 카메라 캡 바로 뒤에 `neatcamerabridge`를 배치하고, 라이브 큐 앞에 배치합니다. 협상 중에 브리지는 표준 풀을 사용하여 상위 `GST_QUERY_ALLOCATION`에 응답하고 `GstVideoMeta`를 요청합니다. 풀은 검증된 평면을 하나의 패킹된 SiMaAI 할당에서 할당하고, 평면당 하나의 DMA-BUF를 내보냅니다. 호환되는 `libcamerasrc`는 해당 DMA-BUF를 ISP 캡처 큐로 가져옵니다. 그런 다음 브리지는 동일한 패킹된 할당을 풀링하여 다운스트림 처리에 사용합니다. 엄격 모드에서는 해당 계약을 충족하지 않는 모든 버퍼를 거부합니다. CPU 복사는 명시적인 호환성 폴백으로 남습니다.
 

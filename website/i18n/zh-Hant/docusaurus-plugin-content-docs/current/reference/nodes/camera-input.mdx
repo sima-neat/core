@@ -19,7 +19,11 @@ sidebar_position: 2
 - 確認 libcamera 是否已列出相機。
 - 確認 `libcamerasrc` 是否能夠串流您計畫要求的精確 `format,width,height,framerate`。
 
-`camera_name` 是確切的 libcamera 相機名稱。若要使用預設相機，請保持未設定；也可透過 `simaai::neat::peripherals::list()` / `pyneat.peripherals.list()` 讀取可選名稱與常駐程式分類的模式。若 `simaai-sentinel.service` 無法使用，目錄用戶端會明確失敗，不會執行備援硬體掃描。
+`camera_name` 是確切的 libcamera 相機名稱。若要使用預設
+相機，請保持未設定；或從
+`simaai::neat::peripherals::list()` / `pyneat.peripherals.list()` 讀取可選取的名稱與支援的模式。目錄
+客戶端在 `simaai-sentinel.service` 無法使用時會失敗；它不會執行
+備援的硬體掃描。
 
 ## 快速入門
 
@@ -104,7 +108,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 
 | 欄位 | 預設值 | 意義 |
 | --- | --- | --- |
-| `camera_name` | 未設定 | 周邊目錄傳回之 `camera.camera_name` 欄位中的選用確切 libcamera 相機名稱。未設定時，libcamera 會選擇預設相機。|
+| `camera_name` | 未設定 | 選用的確切 libcamera 相機名稱，取自周邊裝置目錄所傳回的 `camera.camera_name` 欄位。保持未設定，即可讓 libcamera 選擇預設相機。 |
 | `width` | `1920` | 以像素為單位，指定所需的畫面寬度。必須受到相機模式和疊加層的支援。|
 | `height` | `1080` | 以像素為單位，指定要求的影格高度。|
 | `framerate_num` | `30` | 幀率分子。|
