@@ -171,22 +171,24 @@ void test_example_fields_preserved() {
   for (std::size_t index = 0; index < catalog.size(); ++index) {
     const auto& record = body["devices"][index];
     const auto& device = catalog[index];
-    require(device.id == record["id"] && device.type == record["type"] &&
+    require(device.id == record["id"].get<std::string>() &&
+                device.type == record["type"].get<std::string>() &&
                 json::parse(device.details_json) == record &&
-                device.camera.has_value() == (record["type"] == "camera"),
+                device.camera.has_value() == (record["type"].get<std::string>() == "camera"),
             "device fields were lost: " + device.id);
     if (!device.camera)
       continue;
     const auto& camera = *device.camera;
     require(camera.camera_name == optional_string(record, "camera_name") &&
                 camera.model == optional_string(record, "model") &&
-                camera.backend == record["backend"] &&
+                camera.backend == record["backend"].get<std::string>() &&
                 camera.modes.size() == record["modes"].size(),
             "camera fields were lost: " + device.id);
     for (std::size_t m = 0; m < camera.modes.size(); ++m) {
       const auto& expected = record["modes"][m];
       const auto& mode = camera.modes[m];
-      require(mode.format == expected["format"] && mode.width == expected.value("width", 0U) &&
+      require(mode.format == expected["format"].get<std::string>() &&
+                  mode.width == expected.value("width", 0U) &&
                   mode.height == expected.value("height", 0U) &&
                   mode.is_range() == expected.contains("size_range"),
               "mode fields were lost: " + device.id + " " + mode.format);
