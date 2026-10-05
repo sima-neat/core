@@ -1,3 +1,4 @@
+#include "mpk_contract_test_utils.h"
 #include "model_archive_test_utils.h"
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/MpkContract.h"
@@ -157,7 +158,6 @@ __PACK_INPUT_NODES__
 auto build_quanttess_contract_from_root(const std::filesystem::path& root,
                                         const std::string& label) {
   namespace fs = std::filesystem;
-  using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
   using simaai::neat::pipeline_internal::sima::stagesemantics::
       build_processcvu_mpk_compiled_contract_for_stage_kind;
   using ExecutionStageKind = ::simaai::neat::internal::ExecutionStageKind;
@@ -165,7 +165,7 @@ auto build_quanttess_contract_from_root(const std::filesystem::path& root,
   require(fs::exists(root), label + ": pack root does not exist: " + root.string());
 
   std::string error;
-  const auto contract = load_mpk_contract_from_pack_root(root.string(), &error);
+  const auto contract = load_test_mpk_contract(root.string(), &error);
   require(contract.has_value(), label + ": failed to load mpk contract: " + error);
 
   return build_processcvu_mpk_compiled_contract_for_stage_kind(*contract,

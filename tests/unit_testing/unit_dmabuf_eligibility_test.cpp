@@ -356,6 +356,68 @@ void test_exact_multi_stage_artifact_admission() {
   std::filesystem::remove_all(root, ec);
 }
 
+void test_mpk_decoder_entry_admits_the_bytes_it_loaded() {
+  using namespace simaai::neat::pipeline_internal;
+  const auto root = std::filesystem::temp_directory_path() / "neat-mpk-decoder-entry-unit";
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+  std::filesystem::create_directories(root / "etc", ec);
+  std::filesystem::create_directories(root / "lib", ec);
+  std::filesystem::create_directories(root / "share", ec);
+  CHECK(!ec);
+  const auto mpk = root / "etc" / "model_mpk.json";
+  {
+    std::ofstream output(mpk);
+    output << two_mla_manifest();
+  }
+  // Archive extraction places `.so` files under lib/ and `.elf` files under share/.
+  write_monolithic_topology_elf(root / "lib" / "encoder.so");
+  write_monolithic_topology_elf(root / "share" / "decoder.elf");
+
+  std::string error;
+  const auto loaded = sc::MpkDecoder::load_package_root(root, &error);
+  CHECK(loaded.has_value());
+  if (!loaded) {
+    std::cerr << "MpkDecoder::load_package_root failed: " << error << '\n';
+    return;
+  }
+  CHECK(loaded->contract.mpk_json_path == mpk.string());
+  CHECK(loaded->package.manifest_bytes == std::string(two_mla_manifest()));
+  CHECK(loaded->contract.plugins.size() == 3U);
+  CHECK(loaded->package.mla_executables.size() == 2U);
+  CHECK(loaded->package.mla_executables.at(0).resolved_path == root / "lib" / "encoder.so");
+  CHECK(loaded->package.mla_executables.at(1).resolved_path == root / "share" / "decoder.elf");
+  CHECK(loaded->package.host_executables.empty());
+
+  const auto from_path = try_compile_dmabuf_plan(mpk, loaded->package.mla_executables);
+  CHECK(from_path.eligible());
+
+  // Admission and decoding consume the loaded bytes, not the file on disk.
+  {
+    std::ofstream output(mpk, std::ios::trunc);
+    output << "{}";
+  }
+  const auto admitted = try_compile_dmabuf_plan(loaded->package);
+  CHECK(admitted.eligible());
+  CHECK(admitted.plan_digest == from_path.plan_digest);
+  CHECK(admitted.report.artifact_digest == from_path.report.artifact_digest);
+  const auto decoded = sc::MpkDecoder{}.decode(loaded->package);
+  CHECK(static_cast<bool>(decoded));
+  CHECK(decoded && from_path.plan &&
+        dmabuf_plan_digest(*decoded.plan) == dmabuf_plan_digest(*from_path.plan));
+
+  std::filesystem::remove(root / "share" / "decoder.elf", ec);
+  const auto evidence = sc::MpkDecoder::read_executable_evidence(loaded->package);
+  CHECK(evidence.error && evidence.error->kind == sc::MpkEvidenceError::Kind::MissingFile &&
+        !evidence.error->host_module);
+  CHECK(try_compile_dmabuf_plan(loaded->package).report.code ==
+        DmabufEligibilityCode::MissingMlaExecutable);
+  const auto undecodable = sc::MpkDecoder{}.decode(loaded->package);
+  CHECK(!undecodable && undecodable.error &&
+        undecodable.error->code == sc::MpkDecodeErrorCode::MissingMlaExecutableEvidence);
+  std::filesystem::remove_all(root, ec);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -441,6 +503,7 @@ int main(int argc, char** argv) {
   test_canonical_digest();
   test_structured_rejections_and_sanitized_json();
   test_exact_multi_stage_artifact_admission();
+  test_mpk_decoder_entry_admits_the_bytes_it_loaded();
   if (failures != 0) {
     std::cerr << failures << " DMA-BUF eligibility checks failed\n";
     return 1;

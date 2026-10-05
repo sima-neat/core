@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <initializer_list>
 #include <limits>
 #include <set>
@@ -55,26 +54,6 @@ bool mpk_contract_compare_enabled() {
     return cached == 1;
   }
   const char* raw = std::getenv("SIMA_MPK_CONTRACT_COMPARE");
-  cached = (raw && *raw && std::strcmp(raw, "0") != 0) ? 1 : 0;
-  return cached == 1;
-}
-
-bool mpk_graph_dump_enabled() {
-  static int cached = -1;
-  if (cached >= 0) {
-    return cached == 1;
-  }
-  const char* raw = std::getenv("SIMA_MPK_GRAPH_DUMP");
-  cached = (raw && *raw && std::strcmp(raw, "0") != 0) ? 1 : 0;
-  return cached == 1;
-}
-
-bool mpk_graph_exit_after_dump_enabled() {
-  static int cached = -1;
-  if (cached >= 0) {
-    return cached == 1;
-  }
-  const char* raw = std::getenv("SIMA_MPK_GRAPH_EXIT_AFTER_DUMP");
   cached = (raw && *raw && std::strcmp(raw, "0") != 0) ? 1 : 0;
   return cached == 1;
 }
@@ -352,14 +331,11 @@ bool ends_with_local(const std::string& s, const std::string& suffix) {
   return std::equal(suffix.rbegin(), suffix.rend(), s.rbegin());
 }
 
-bool read_json_file_local(const fs::path& path, json* out) {
-  if (!out || path.empty()) {
+bool parse_json_object_local(std::string_view text, json* out) {
+  if (!out) {
     return false;
   }
-  std::ifstream in(path, std::ios::in | std::ios::binary);
-  if (!in.is_open()) {
-    return false;
-  }
+  std::istringstream in{std::string(text)};
   try {
     in >> *out;
   } catch (const std::exception&) {
@@ -1631,34 +1607,6 @@ void derive_mla_output_quant_from_downstream(MpkContract* contract) {
   }
 }
 
-std::optional<fs::path> find_mpk_contract_path(const fs::path& package_root) {
-  if (package_root.empty()) {
-    return std::nullopt;
-  }
-  std::vector<fs::path> candidates;
-  std::error_code ec;
-  fs::recursive_directory_iterator it(package_root, ec), end;
-  for (; !ec && it != end; it.increment(ec)) {
-    if (it.depth() > 2) {
-      it.disable_recursion_pending();
-      continue;
-    }
-    if (!it->is_regular_file()) {
-      continue;
-    }
-    const std::string filename = it->path().filename().string();
-    if (filename == "mpk.json" || ends_with_local(filename, "_mpk.json")) {
-      candidates.push_back(it->path());
-    }
-  }
-  if (candidates.empty()) {
-    return std::nullopt;
-  }
-  std::sort(candidates.begin(), candidates.end(),
-            [](const fs::path& a, const fs::path& b) { return a.string() < b.string(); });
-  return candidates.front();
-}
-
 std::size_t plugin_order_key(const MpkPluginIoContract& stage, std::size_t idx) {
   if (stage.sequence >= 0) {
     return static_cast<std::size_t>(stage.sequence);
@@ -2403,38 +2351,6 @@ void dump_mpk_contract_compare_local(const MpkContract& contract, const json& ro
                  edge.dst_input_index, edge.src_plugin.c_str(), edge.dst_plugin.c_str(),
                  edge.tensor_name.c_str());
   }
-}
-
-const char* mpk_graph_node_kind_name_local(const MpkGraphNodeKind kind) {
-  switch (kind) {
-  case MpkGraphNodeKind::Unknown:
-    return "unknown";
-  case MpkGraphNodeKind::IngressTensor:
-    return "ingress_tensor";
-  case MpkGraphNodeKind::Plugin:
-    return "plugin";
-  case MpkGraphNodeKind::FusedPreproc:
-    return "fused_preproc";
-  case MpkGraphNodeKind::FusedBoxDecode:
-    return "fused_boxdecode";
-  case MpkGraphNodeKind::FusedQuantTess:
-    return "fused_quanttess";
-  case MpkGraphNodeKind::FusedDetessDequant:
-    return "fused_detessdequant";
-  }
-  return "unknown";
-}
-
-const char* mpk_graph_edge_kind_name_local(const MpkGraphEdgeKind kind) {
-  switch (kind) {
-  case MpkGraphEdgeKind::Unknown:
-    return "unknown";
-  case MpkGraphEdgeKind::CandidateTensorMatch:
-    return "candidate_tensor_match";
-  case MpkGraphEdgeKind::FusedRoute:
-    return "fused_route";
-  }
-  return "unknown";
 }
 
 std::string canonical_mpk_graph_op_local(const std::string& raw_kernel, const std::string& raw_name,
@@ -3459,7 +3375,6 @@ void fill_cast_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node) {
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(output_shape));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = output_shape;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -3520,7 +3435,6 @@ void fill_quant_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node) {
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(output_shape));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : stage.out_shape_raw;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -3573,7 +3487,6 @@ void fill_tess_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node) {
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(output_shape));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : stage.out_shape_raw;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -3623,7 +3536,6 @@ void fill_quanttess_node_from_mpk_local(MpkContract* contract, MpkGraphNode* nod
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(output_shape));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : stage.out_shape_raw;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -3672,7 +3584,6 @@ void fill_detess_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node) 
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(frame_shape));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : frame_shape;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -3733,7 +3644,6 @@ void fill_dequantize_node_from_mpk_local(MpkContract* contract, MpkGraphNode* no
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(output_shape));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : stage.out_shape_raw;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -3794,7 +3704,6 @@ void fill_detessdequant_node_from_mpk_local(MpkContract* contract, MpkGraphNode*
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(frame_shape));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : frame_shape;
   node->dtype = !out.dtype.empty() ? out.dtype : data_type;
@@ -3838,7 +3747,6 @@ void fill_preproc_plugin_node_from_mpk_local(MpkContract* contract, MpkGraphNode
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shapes", nested_shapes_dbg_local(output_shapes));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = output_shape;
   node->dtype = stage.canonical_output_dtype;
@@ -4080,7 +3988,6 @@ void fill_mla_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node) {
   }
 
   const auto& out = stage.output_tensors.front();
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : stage.out_shape_raw;
   node->dtype = kMlaTransportByteDtypeLocal;
@@ -4131,7 +4038,6 @@ void fill_pack_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node) {
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(output_shape));
 
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = output_shape;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -4180,7 +4086,6 @@ void fill_unpack_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node) 
       }() + "]");
 
   const auto& out = require_first_output_tensor_local(contract, *node, stage);
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : stage.out_shape_raw;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -4215,7 +4120,6 @@ void fill_slice_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node) {
                                "slice_shape", ints_dbg_local(stage.slice_shape));
 
   const auto& out = require_first_output_tensor_local(contract, *node, stage);
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : stage.out_shape_raw;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -4256,7 +4160,6 @@ void fill_pass_through_node_from_mpk_local(MpkContract* contract, MpkGraphNode* 
                                "output_names", strings_dbg_local(outputs));
 
   const auto& out = stage.output_tensors.front();
-  node->tensor_kind = out.kind;
   node->size_bytes = out.size_bytes;
   node->mpk_shape = !out.mpk_shape.empty() ? out.mpk_shape : stage.out_shape_raw;
   node->dtype = !out.dtype.empty() ? out.dtype : stage.canonical_output_dtype;
@@ -4421,7 +4324,6 @@ void fill_preproc_node_from_mpk_local(MpkContract* contract, MpkGraphNode* node)
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shapes", nested_shapes_dbg_local(output_shapes));
 
-  node->tensor_kind = output_tensor.kind;
   node->size_bytes = output_tensor.size_bytes;
   node->mpk_shape =
       !output_tensor.mpk_shape.empty() ? output_tensor.mpk_shape : output_stage->out_shape_raw;
@@ -4544,7 +4446,6 @@ void fill_boxdecode_node_from_mpk_local(MpkContract* contract, MpkGraphNode* nod
 
   if (pass_through_stage && !pass_through_stage->output_tensors.empty()) {
     const auto& out = pass_through_stage->output_tensors.front();
-    node->tensor_kind = out.kind;
     node->size_bytes = out.size_bytes;
     node->mpk_shape = out.mpk_shape;
     node->dtype = !out.dtype.empty() ? out.dtype : pass_through_stage->canonical_output_dtype;
@@ -4594,7 +4495,6 @@ void fill_quanttess_fused_node_from_mpk_local(MpkContract* contract, MpkGraphNod
   set_kernel_field_value_local(&node->kernel_contract, MpkGraphKernelFieldKind::Parameter,
                                "output_shape", ints_dbg_local(output_shape));
 
-  node->tensor_kind = tess_out.kind;
   node->size_bytes = tess_out.size_bytes;
   node->mpk_shape = !tess_out.mpk_shape.empty() ? tess_out.mpk_shape : tess_stage.out_shape_raw;
   node->dtype = !tess_out.dtype.empty() ? tess_out.dtype : tess_stage.canonical_output_dtype;
@@ -4650,7 +4550,6 @@ void fill_detessdequant_fused_node_from_mpk_local(MpkContract* contract, MpkGrap
       &node->kernel_contract, MpkGraphKernelFieldKind::Parameter, "output_shape",
       ints_dbg_local(require_primary_output_shape_for_fill_local(contract, *node, dequant_stage)));
 
-  node->tensor_kind = dequant_out.kind;
   node->size_bytes = dequant_out.size_bytes;
   node->mpk_shape =
       !dequant_out.mpk_shape.empty() ? dequant_out.mpk_shape : dequant_stage.out_shape_raw;
@@ -4749,373 +4648,11 @@ void mark_requirement_for_op_local(const std::string& canonical_op,
   }
 }
 
-std::string requirements_summary_local(const MpkGraphFusionRequirements& requirements) {
-  std::vector<std::string> tokens;
-  if (requirements.preproc) {
-    tokens.emplace_back("preproc");
-  }
-  if (requirements.boxdecode) {
-    tokens.emplace_back("boxdecode");
-  }
-  if (requirements.quantization) {
-    tokens.emplace_back("quantization");
-  }
-  if (requirements.tessellation) {
-    tokens.emplace_back("tessellation");
-  }
-  if (requirements.detessellation) {
-    tokens.emplace_back("detessellation");
-  }
-  if (requirements.dequantization) {
-    tokens.emplace_back("dequantization");
-  }
-  if (requirements.cast) {
-    tokens.emplace_back("cast");
-  }
-  if (tokens.empty()) {
-    return "none";
-  }
-  std::ostringstream oss;
-  for (std::size_t i = 0; i < tokens.size(); ++i) {
-    if (i > 0U) {
-      oss << ",";
-    }
-    oss << tokens[i];
-  }
-  return oss.str();
-}
-
-std::string mermaid_escape_local(const std::string& raw) {
-  std::string out;
-  out.reserve(raw.size());
-  for (const char c : raw) {
-    switch (c) {
-    case '&':
-      out += "&amp;";
-      break;
-    case '"':
-      out += "&quot;";
-      break;
-    case '\n':
-      out += "<br/>";
-      break;
-    case '<':
-      out += "&lt;";
-      break;
-    case '>':
-      out += "&gt;";
-      break;
-    default:
-      out.push_back(c);
-      break;
-    }
-  }
-  return out;
-}
-
-std::string mermaid_label_lines_local(const std::vector<std::string>& parts) {
-  std::string out;
-  bool first = true;
-  for (const auto& part : parts) {
-    if (part.empty()) {
-      continue;
-    }
-    if (!first) {
-      out += "<br/>";
-    }
-    out += mermaid_escape_local(part);
-    first = false;
-  }
-  return out;
-}
-
-std::string mermaid_label_lines_local(std::initializer_list<std::string> parts) {
-  return mermaid_label_lines_local(std::vector<std::string>(parts));
-}
-
-void append_kernel_contract_label_parts_local(const MpkGraphKernelContract& kernel_contract,
-                                              std::vector<std::string>* parts) {
-  if (!parts || kernel_contract.kernel_name.empty()) {
-    return;
-  }
-  parts->push_back("kernel=" + kernel_contract.kernel_name);
-  if (!kernel_contract.contract_type.empty()) {
-    parts->push_back("contract=" + kernel_contract.contract_type);
-  }
-
-  auto append_group = [&](const char* prefix, const MpkGraphKernelFieldKind kind) {
-    std::vector<std::string> entries;
-    for (const auto& field : kernel_contract.fields) {
-      if (field.kind != kind || field.name.empty()) {
-        continue;
-      }
-      entries.push_back(field.name + "=" + (field.value.empty() ? "unknown" : field.value));
-    }
-    if (entries.empty()) {
-      return;
-    }
-    constexpr std::size_t kChunkSize = 4U;
-    for (std::size_t i = 0; i < entries.size(); i += kChunkSize) {
-      std::ostringstream oss;
-      oss << prefix << "=";
-      for (std::size_t j = i; j < std::min(entries.size(), i + kChunkSize); ++j) {
-        if (j > i) {
-          oss << ",";
-        }
-        oss << entries[j];
-      }
-      parts->push_back(oss.str());
-    }
-  };
-
-  append_group("args", MpkGraphKernelFieldKind::Argument);
-  append_group("values", MpkGraphKernelFieldKind::Value);
-  append_group("params", MpkGraphKernelFieldKind::Parameter);
-}
-
-void append_mla_metadata_label_parts_local(const MpkGraphNode& node,
-                                           std::vector<std::string>* parts) {
-  if (!parts || !node.mla_metadata.present) {
-    return;
-  }
-
-  const auto& mla = node.mla_metadata;
-  const auto& unpack = mla.unpack;
-  parts->push_back("mla.input_transport_dtype=" + (mla.input_transport_dtype.empty()
-                                                       ? std::string("unknown")
-                                                       : mla.input_transport_dtype));
-  parts->push_back("mla.output_transport_dtype=" + (mla.output_transport_dtype.empty()
-                                                        ? std::string("unknown")
-                                                        : mla.output_transport_dtype));
-  parts->push_back("mla.pack.present=" + bool_dbg_local(mla.pack.present));
-  if (!mla.input_semantic_dtypes.empty()) {
-    parts->push_back("mla.input_semantic_dtypes=" + strings_dbg_local(mla.input_semantic_dtypes));
-  }
-  if (!mla.input_sizes.empty()) {
-    parts->push_back("mla.input_sizes=" + sizes_dbg_local(mla.input_sizes));
-  }
-  if (!mla.output_semantic_dtypes.empty()) {
-    parts->push_back("mla.output_semantic_dtypes=" + strings_dbg_local(mla.output_semantic_dtypes));
-  }
-  parts->push_back("mla.unpack.present=" + bool_dbg_local(unpack.present));
-  if (unpack.present) {
-    parts->push_back("mla.unpack.explicit_from_mpk=" + bool_dbg_local(unpack.explicit_from_mpk));
-    if (!unpack.source_stage.empty()) {
-      parts->push_back("mla.unpack.source_stage=" + unpack.source_stage);
-    }
-    if (!unpack.input_shape.empty()) {
-      parts->push_back("mla.unpack.input_shape=" + ints_dbg_local(unpack.input_shape));
-    }
-    if (!unpack.output_names.empty()) {
-      parts->push_back("mla.unpack.output_names=" + strings_dbg_local(unpack.output_names));
-    }
-    if (!unpack.output_shapes.empty()) {
-      parts->push_back("mla.unpack.output_shapes=" + nested_shapes_dbg_local(unpack.output_shapes));
-    }
-    if (std::any_of(unpack.output_slice_begins.begin(), unpack.output_slice_begins.end(),
-                    [](const std::vector<std::int64_t>& begin) { return !begin.empty(); })) {
-      parts->push_back("mla.unpack.output_slice_begins=" +
-                       nested_shapes_dbg_local(unpack.output_slice_begins));
-    }
-    if (!unpack.output_sizes.empty()) {
-      parts->push_back("mla.unpack.output_sizes=" + sizes_dbg_local(unpack.output_sizes));
-    }
-    parts->push_back("mla.unpack.output_count=" + std::to_string(unpack.output_count));
-  }
-}
-
-std::string mermaid_class_for_node_local(const MpkGraphNode& node) {
-  switch (node.kind) {
-  case MpkGraphNodeKind::IngressTensor:
-    return "ingress";
-  case MpkGraphNodeKind::FusedPreproc:
-    return "fusedPreproc";
-  case MpkGraphNodeKind::FusedBoxDecode:
-    return "fusedBox";
-  case MpkGraphNodeKind::FusedQuantTess:
-    return "fusedPair";
-  case MpkGraphNodeKind::FusedDetessDequant:
-    return "fusedPair";
-  case MpkGraphNodeKind::Plugin:
-  case MpkGraphNodeKind::Unknown:
-    return "plugin";
-  }
-  return "plugin";
-}
-
-std::string mermaid_node_definition_local(const std::string& mermaid_id, const MpkGraphNode& node) {
-  const std::string requirements = requirements_summary_local(node.requirements);
-  std::string label;
-  if (node.kind == MpkGraphNodeKind::IngressTensor) {
-    label = mermaid_label_lines_local(
-        {"INGRESS", node.label,
-         node.tensor_kind.empty() ? std::string() : "kind=" + node.tensor_kind,
-         node.dtype.empty() ? std::string() : "dtype=" + node.dtype,
-         node.size_bytes == 0U ? std::string() : "size=" + std::to_string(node.size_bytes)});
-    return "  " + mermaid_id + "([\"" + label + "\"])\n";
-  }
-
-  std::vector<std::string> label_parts = {
-      node.label,
-      node.synthetic ? "synthetic=true" : std::string(),
-      node.canonical_op.empty() ? std::string() : "op=" + node.canonical_op,
-      requirements == "none" ? std::string() : "requires=" + requirements,
-      node.branch_count > 1 ? "branches=" + std::to_string(node.branch_count) : std::string(),
-      !node.member_node_ids.empty() ? "members=" + std::to_string(node.member_node_ids.size())
-                                    : std::string(),
-      node.sequence >= 0 ? "sequence=" + std::to_string(node.sequence) : std::string(),
-  };
-  append_kernel_contract_label_parts_local(node.kernel_contract, &label_parts);
-  append_mla_metadata_label_parts_local(node, &label_parts);
-  label = mermaid_label_lines_local(label_parts);
-  return "  " + mermaid_id + "[\"" + label + "\"]\n";
-}
-
-std::string render_mermaid_graph_section_local(const std::string& title,
-                                               const std::vector<MpkGraphNode>& nodes,
-                                               const std::vector<MpkGraphEdge>& edges) {
-  std::ostringstream oss;
-  oss << "## " << title << "\n\n";
-  oss << "```mermaid\n";
-  oss << "flowchart LR\n";
-  oss << "  classDef ingress fill:#dbeafe,stroke:#2563eb,color:#111827;\n";
-  oss << "  classDef plugin fill:#f3f4f6,stroke:#6b7280,color:#111827;\n";
-  oss << "  classDef fusedPreproc fill:#dcfce7,stroke:#16a34a,color:#111827;\n";
-  oss << "  classDef fusedBox fill:#fef3c7,stroke:#d97706,color:#111827;\n";
-  oss << "  classDef fusedPair fill:#ede9fe,stroke:#7c3aed,color:#111827;\n";
-
-  std::unordered_map<std::string, std::string> mermaid_id_by_node;
-  mermaid_id_by_node.reserve(nodes.size());
-  for (std::size_t i = 0; i < nodes.size(); ++i) {
-    mermaid_id_by_node.emplace(nodes[i].node_id, "n" + std::to_string(i));
-  }
-
-  for (const auto& node : nodes) {
-    const auto id_it = mermaid_id_by_node.find(node.node_id);
-    if (id_it == mermaid_id_by_node.end()) {
-      continue;
-    }
-    oss << mermaid_node_definition_local(id_it->second, node);
-    oss << "  class " << id_it->second << " " << mermaid_class_for_node_local(node) << ";\n";
-  }
-
-  oss << "\n";
-  for (const auto& edge : edges) {
-    const auto src_it = mermaid_id_by_node.find(edge.src_node_id);
-    const auto dst_it = mermaid_id_by_node.find(edge.dst_node_id);
-    if (src_it == mermaid_id_by_node.end() || dst_it == mermaid_id_by_node.end()) {
-      continue;
-    }
-    const std::string label = mermaid_label_lines_local(
-        {edge.tensor_name, "kind=" + std::string(mpk_graph_edge_kind_name_local(edge.kind))});
-    oss << "  " << src_it->second << " -->|\"" << label << "\"| " << dst_it->second << "\n";
-  }
-  oss << "```\n\n";
-  return oss.str();
-}
-
-std::string render_synthetic_node_details_local(const std::vector<MpkGraphNode>& nodes) {
-  std::ostringstream oss;
-  oss << "## Fusion Details\n\n";
-  bool wrote_any = false;
-  for (const auto& node : nodes) {
-    if (!node.synthetic) {
-      continue;
-    }
-    wrote_any = true;
-    oss << "- `" << node.label << "` kind=`" << mpk_graph_node_kind_name_local(node.kind)
-        << "` requires=`" << requirements_summary_local(node.requirements) << "`";
-    if (!node.member_node_ids.empty()) {
-      oss << " members=`";
-      for (std::size_t i = 0; i < node.member_node_ids.size(); ++i) {
-        if (i > 0U) {
-          oss << ", ";
-        }
-        oss << node.member_node_ids[i];
-      }
-      oss << "`";
-    }
-    oss << "\n";
-  }
-  if (!wrote_any) {
-    oss << "- none\n";
-  }
-  oss << "\n";
-  return oss.str();
-}
-
-std::string render_mpk_graph_markdown_local(const MpkGraph& graph, const std::string& title) {
-  std::ostringstream oss;
-  oss << "# " << (title.empty() ? std::string("MPK Graph") : title) << "\n\n";
-  oss << "Model: `" << (graph.model_name.empty() ? std::string("mpk_graph") : graph.model_name)
-      << "`  \n";
-  oss << "MPK JSON: `" << graph.mpk_json_path << "`\n\n";
-  if (!graph.raw_nodes.empty()) {
-    oss << render_mermaid_graph_section_local("Raw Graph", graph.raw_nodes, graph.raw_edges);
-  }
-  if (!graph.nodes.empty()) {
-    oss << render_mermaid_graph_section_local("Graph", graph.nodes, graph.edges);
-    oss << render_synthetic_node_details_local(graph.nodes);
-  }
-  return oss.str();
-}
-
-bool write_mpk_graph_dump_local(const MpkGraph& graph, const fs::path& output_path,
-                                std::string* error_message) {
-  if (error_message) {
-    error_message->clear();
-  }
-  if (output_path.empty()) {
-    if (error_message) {
-      *error_message = "empty output path";
-    }
-    return false;
-  }
-  std::error_code ec;
-  if (!output_path.parent_path().empty()) {
-    fs::create_directories(output_path.parent_path(), ec);
-    if (ec) {
-      if (error_message) {
-        *error_message = "failed to create graph dump directory: " + ec.message();
-      }
-      return false;
-    }
-  }
-  std::ofstream out(output_path, std::ios::out | std::ios::binary | std::ios::trunc);
-  if (!out.is_open()) {
-    if (error_message) {
-      *error_message = "failed to open graph dump path";
-    }
-    return false;
-  }
-  out << render_mpk_graph_markdown_local(graph, "MPK Graph");
-  return out.good();
-}
-
-fs::path mpk_graph_output_path_local(const fs::path& package_root, const MpkContract& contract) {
-  if (const char* raw = std::getenv("SIMA_MPK_GRAPH_OUTPUT_PATH"); raw && *raw) {
-    return fs::path(raw);
-  }
-  std::string base_name;
-  if (!contract.model_name.empty()) {
-    base_name = graph_id_token_local(contract.model_name);
-  } else if (!contract.mpk_json_path.empty()) {
-    base_name = graph_id_token_local(fs::path(contract.mpk_json_path).stem().string());
-  } else {
-    base_name = "mpk";
-  }
-  return package_root / (base_name + "_graph.md");
-}
-
 } // namespace
 
 const std::vector<std::int64_t>&
 detess_runtime_frame_shape(const MpkPluginIoContract& stage) noexcept {
   return stage.runtime_frame_shape.empty() ? stage.frame_shape : stage.runtime_frame_shape;
-}
-
-std::string render_mpk_graph_markdown(const MpkGraph& graph, const std::string& title) {
-  return render_mpk_graph_markdown_local(graph, title);
 }
 
 namespace {
@@ -5184,8 +4721,7 @@ void mark_incident_edges_removed_local(WorkingGraph* graph, const std::string& n
 }
 
 void add_working_edge_local(WorkingGraph* graph, const std::string& src_node_id,
-                            const std::string& dst_node_id, const std::string& tensor_name,
-                            const MpkGraphEdgeKind kind) {
+                            const std::string& dst_node_id, const std::string& tensor_name) {
   if (!graph) {
     return;
   }
@@ -5194,7 +4730,6 @@ void add_working_edge_local(WorkingGraph* graph, const std::string& src_node_id,
   edge.src_node_id = src_node_id;
   edge.dst_node_id = dst_node_id;
   edge.tensor_name = tensor_name;
-  edge.kind = kind;
   graph->edges.push_back(WorkingGraphEdge{std::move(edge), false});
 }
 
@@ -5238,18 +4773,15 @@ void append_readable_member_labels_local(const MpkGraphNode& node, std::vector<s
 
 MpkGraphNode make_fused_graph_node_local(WorkingGraph* graph, const MpkGraphNodeKind kind,
                                          const std::string& label, const std::string& canonical_op,
-                                         const std::vector<std::size_t>& member_indices,
-                                         const int branch_count) {
+                                         const std::vector<std::size_t>& member_indices) {
   MpkGraphNode node;
   node.kind = kind;
-  node.synthetic = true;
   node.label = label;
   node.canonical_op = canonical_op;
   node.kernel = canonical_op;
   node.kernel_contract = kernel_contract_template_local(node.kernel, node.canonical_op);
   node.node_id =
       "fused:" + canonical_op + ":" + std::to_string(graph ? graph->next_synthetic_node++ : 0U);
-  node.branch_count = branch_count;
   node.plugin_index = static_cast<std::size_t>(-1);
   node.tensor_index = -1;
   node.sequence = -1;
@@ -5342,8 +4874,8 @@ bool fuse_linear_pair_pattern_local(WorkingGraph* graph, const std::string& lhs_
       const auto incoming_lhs = working_incoming_edges_local(*graph, graph->nodes[i].node.node_id);
       const auto outgoing_rhs =
           working_outgoing_edges_local(*graph, graph->nodes[*dst_index].node.node_id);
-      MpkGraphNode fused_node = make_fused_graph_node_local(
-          graph, fused_kind, fused_label, fused_canonical_op, {i, *dst_index}, /*branch_count=*/0);
+      MpkGraphNode fused_node = make_fused_graph_node_local(graph, fused_kind, fused_label,
+                                                            fused_canonical_op, {i, *dst_index});
       const std::string fused_node_id = fused_node.node_id;
       graph->nodes.push_back(WorkingGraphNode{std::move(fused_node), false});
       for (const auto incoming_edge_index : incoming_lhs) {
@@ -5353,7 +4885,7 @@ bool fuse_linear_pair_pattern_local(WorkingGraph* graph, const std::string& lhs_
         }
         const auto& incoming_edge = graph->edges[incoming_edge_index].edge;
         add_working_edge_local(graph, incoming_edge.src_node_id, fused_node_id,
-                               incoming_edge.tensor_name, MpkGraphEdgeKind::FusedRoute);
+                               incoming_edge.tensor_name);
       }
       for (const auto outgoing_edge_index : outgoing_rhs) {
         if (outgoing_edge_index >= graph->edges.size() ||
@@ -5362,7 +4894,7 @@ bool fuse_linear_pair_pattern_local(WorkingGraph* graph, const std::string& lhs_
         }
         const auto& outgoing_edge = graph->edges[outgoing_edge_index].edge;
         add_working_edge_local(graph, fused_node_id, outgoing_edge.dst_node_id,
-                               outgoing_edge.tensor_name, MpkGraphEdgeKind::FusedRoute);
+                               outgoing_edge.tensor_name);
       }
 
       mark_incident_edges_removed_local(graph, graph->nodes[i].node.node_id);
@@ -5422,8 +4954,7 @@ bool fold_post_mla_slice_views_local(WorkingGraph* graph) {
           continue;
         }
         const auto& edge = graph->edges[edge_index].edge;
-        add_working_edge_local(graph, producer_node.node_id, edge.dst_node_id, edge.tensor_name,
-                               MpkGraphEdgeKind::FusedRoute);
+        add_working_edge_local(graph, producer_node.node_id, edge.dst_node_id, edge.tensor_name);
       }
 
       mark_incident_edges_removed_local(graph, graph->nodes[i].node.node_id);
@@ -5474,7 +5005,7 @@ bool fold_pre_mla_pack_views_local(WorkingGraph* graph) {
         const auto& incoming_edge = graph->edges[incoming_edge_index].edge;
         mla_node.input_tensor_names.push_back(incoming_edge.tensor_name);
         add_working_edge_local(graph, incoming_edge.src_node_id, mla_node.node_id,
-                               incoming_edge.tensor_name, MpkGraphEdgeKind::FusedRoute);
+                               incoming_edge.tensor_name);
       }
 
       mark_incident_edges_removed_local(graph, graph->nodes[i].node.node_id);
@@ -5542,16 +5073,14 @@ bool fuse_preproc_paths_local(WorkingGraph* graph) {
       continue;
     }
 
-    MpkGraphNode fused_node =
-        make_fused_graph_node_local(graph, MpkGraphNodeKind::FusedPreproc, "Preproc", "preproc",
-                                    path_nodes, /*branch_count=*/1);
+    MpkGraphNode fused_node = make_fused_graph_node_local(graph, MpkGraphNodeKind::FusedPreproc,
+                                                          "Preproc", "preproc", path_nodes);
     std::string fused_node_id = fused_node.node_id;
     graph->nodes.push_back(WorkingGraphNode{std::move(fused_node), false});
     add_working_edge_local(graph, graph->nodes[i].node.node_id, fused_node_id,
-                           first_edge.tensor_name, MpkGraphEdgeKind::FusedRoute);
+                           first_edge.tensor_name);
     if (!boundary_target.empty()) {
-      add_working_edge_local(graph, fused_node_id, boundary_target, boundary_tensor,
-                             MpkGraphEdgeKind::FusedRoute);
+      add_working_edge_local(graph, fused_node_id, boundary_target, boundary_tensor);
     }
     for (const auto path_index : path_nodes) {
       if (path_index >= graph->nodes.size() || graph->nodes[path_index].removed) {
@@ -5668,8 +5197,7 @@ bool fuse_boxdecode_paths_local(WorkingGraph* graph) {
     std::vector<std::size_t> fused_members = absorbed_indices;
     fused_members.push_back(sink_index);
     MpkGraphNode fused_node = make_fused_graph_node_local(graph, MpkGraphNodeKind::FusedBoxDecode,
-                                                          "BoxDecode", "boxdecode", fused_members,
-                                                          static_cast<int>(branch_inputs.size()));
+                                                          "BoxDecode", "boxdecode", fused_members);
     {
       std::unordered_set<std::string> visited;
       for (const auto& branch_input : branch_inputs) {
@@ -5689,7 +5217,7 @@ bool fuse_boxdecode_paths_local(WorkingGraph* graph) {
     graph->nodes.push_back(WorkingGraphNode{std::move(fused_node), false});
     for (const auto& branch_input : branch_inputs) {
       add_working_edge_local(graph, branch_input.src_node_id, fused_node_id,
-                             branch_input.tensor_name, MpkGraphEdgeKind::FusedRoute);
+                             branch_input.tensor_name);
     }
     for (const auto outgoing_edge_index : outgoing_sink) {
       if (outgoing_edge_index >= graph->edges.size() || graph->edges[outgoing_edge_index].removed) {
@@ -5697,7 +5225,7 @@ bool fuse_boxdecode_paths_local(WorkingGraph* graph) {
       }
       const auto& outgoing_edge = graph->edges[outgoing_edge_index].edge;
       add_working_edge_local(graph, fused_node_id, outgoing_edge.dst_node_id,
-                             outgoing_edge.tensor_name, MpkGraphEdgeKind::FusedRoute);
+                             outgoing_edge.tensor_name);
     }
 
     for (const auto absorbed_index : absorbed_indices) {
@@ -5747,8 +5275,6 @@ void export_working_graph_local(const WorkingGraph& working, MpkGraph* graph) {
   }
 }
 
-} // namespace
-
 void graph_fuser(MpkContract* contract) {
   if (!contract) {
     return;
@@ -5788,9 +5314,6 @@ void graph_mpk_creation(MpkContract* contract) {
   }
 
   MpkGraph graph;
-  graph.mpk_json_path = contract->mpk_json_path;
-  graph.model_name = contract->model_name;
-  graph.model_path = contract->model_path;
   graph.nodes.reserve(contract->ingress_tensors.size() + contract->plugins.size());
   const MpkPluginIoContract* mla_unpack_stage = get_mla_unpack_stage_io_contract(*contract);
   const auto mla_unpack_plugin_index =
@@ -5816,7 +5339,6 @@ void graph_mpk_creation(MpkContract* contract) {
     node.node_id = "ingress:" + std::to_string(i) + ":" + graph_id_token_local(ingress.name);
     node.label = ingress.name.empty() ? ("ingress_" + std::to_string(i)) : ingress.name;
     node.name = ingress.name;
-    node.tensor_kind = ingress.kind;
     node.dtype = ingress.dtype;
     node.mpk_shape = ingress.mpk_shape;
     node.tensor_index = ingress.tensor_index;
@@ -5896,7 +5418,6 @@ void graph_mpk_creation(MpkContract* contract) {
           edge.src_node_id = ingress.node_id;
           edge.dst_node_id = plugin_node_id;
           edge.tensor_name = input.name;
-          edge.kind = MpkGraphEdgeKind::CandidateTensorMatch;
           edge.src_tensor_index = ingress.tensor_index;
           edge.dst_plugin_index = pi;
           edge.dst_tensor_index = input.tensor_index;
@@ -5911,7 +5432,6 @@ void graph_mpk_creation(MpkContract* contract) {
           edge.src_node_id = producer.node_id;
           edge.dst_node_id = plugin_node_id;
           edge.tensor_name = input.name;
-          edge.kind = MpkGraphEdgeKind::CandidateTensorMatch;
           edge.src_plugin_index = producer.plugin_index;
           edge.dst_plugin_index = pi;
           edge.src_tensor_index = producer.tensor_index;
@@ -5927,6 +5447,8 @@ void graph_mpk_creation(MpkContract* contract) {
   contract->graph = std::move(graph);
   graph_fuser(contract);
 }
+
+} // namespace
 
 bool resolve_detess_runtime_frame_shape(MpkPluginIoContract& stage, std::string* error_message) {
   const auto fail = [&](std::string message) {
@@ -6021,29 +5543,42 @@ bool resolve_detess_frame_shapes_local(MpkContract& contract, std::string* error
 
 } // namespace
 
-std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& package_root,
-                                                            std::string* error_message) {
+std::optional<fs::path> find_mpk_manifest(const fs::path& package_root) {
+  if (package_root.empty()) {
+    return std::nullopt;
+  }
+  std::vector<fs::path> candidates;
+  std::error_code ec;
+  fs::recursive_directory_iterator it(package_root, ec), end;
+  for (; !ec && it != end; it.increment(ec)) {
+    if (it.depth() > 2) {
+      it.disable_recursion_pending();
+      continue;
+    }
+    if (!it->is_regular_file()) {
+      continue;
+    }
+    const std::string filename = it->path().filename().string();
+    if (filename == "mpk.json" || ends_with_local(filename, "_mpk.json")) {
+      candidates.push_back(it->path());
+    }
+  }
+  if (candidates.empty()) {
+    return std::nullopt;
+  }
+  std::sort(candidates.begin(), candidates.end(),
+            [](const fs::path& a, const fs::path& b) { return a.string() < b.string(); });
+  return candidates.front();
+}
+
+std::optional<MpkContract> load_mpk_contract_from_json(std::string_view mpk_json,
+                                                       const std::string& mpk_json_path,
+                                                       std::string* error_message) {
   if (error_message) {
     error_message->clear();
   }
-  const fs::path root(package_root);
-  if (package_root.empty() || !fs::exists(root) || !fs::is_directory(root)) {
-    if (error_message) {
-      *error_message = "invalid package root";
-    }
-    return std::nullopt;
-  }
-
-  const auto mpk_path = find_mpk_contract_path(root);
-  if (!mpk_path.has_value()) {
-    if (error_message) {
-      *error_message = "no *_mpk.json found";
-    }
-    return std::nullopt;
-  }
-
   json root_json;
-  if (!read_json_file_local(*mpk_path, &root_json)) {
+  if (!parse_json_object_local(mpk_json, &root_json)) {
     if (error_message) {
       *error_message = "failed to parse mpk json";
     }
@@ -6057,7 +5592,7 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
   }
 
   MpkContract contract;
-  contract.mpk_json_path = mpk_path->string();
+  contract.mpk_json_path = mpk_json_path;
   if (root_json.contains("name") && root_json["name"].is_string()) {
     contract.model_name = root_json["name"].get<std::string>();
   }
@@ -6386,29 +5921,6 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
   derive_logical_output_contracts(&contract);
   derive_logical_input_contracts(&contract);
   fill_graph_from_mpk(&contract);
-  if (mpk_graph_dump_enabled() || mpk_graph_exit_after_dump_enabled()) {
-    const fs::path graph_output_path = mpk_graph_output_path_local(root, contract);
-    std::string graph_dump_error;
-    if (!write_mpk_graph_dump_local(contract.graph, graph_output_path, &graph_dump_error)) {
-      if (error_message) {
-        *error_message = graph_dump_error.empty() ? std::string("failed to write mpk graph dump")
-                                                  : graph_dump_error;
-      }
-      return std::nullopt;
-    }
-    std::fprintf(stderr,
-                 "[mpk-graph] package_root=%s mpk_json_path=%s output=%s model_name=\"%s\" "
-                 "ingress_nodes=%zu plugin_nodes=%zu edges=%zu\n",
-                 package_root.c_str(), contract.mpk_json_path.c_str(),
-                 graph_output_path.string().c_str(), contract.model_name.c_str(),
-                 contract.ingress_tensors.size(), contract.plugins.size(),
-                 contract.graph.edges.size());
-    if (mpk_graph_exit_after_dump_enabled()) {
-      std::fprintf(stderr, "[mpk-graph] exit_after_dump=1\n");
-      std::fflush(stderr);
-      std::exit(0);
-    }
-  }
   if (mpk_contract_compare_enabled()) {
     dump_mpk_contract_compare_local(contract, root_json);
   }
@@ -7174,30 +6686,14 @@ resolve_mla_boundary_tensor_views_local(const MpkContract& contract,
   return out;
 }
 
-const std::vector<MpkTensorContract>* get_mla_input_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* stage = get_first_mla_stage_io_contract(contract);
-  if (!stage) {
-    return nullptr;
-  }
-  return &stage->input_tensors;
-}
-
-const std::vector<MpkTensorContract>* get_mla_outputs_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* stage = get_last_mla_stage_io_contract(contract);
-  if (!stage) {
-    return nullptr;
-  }
-  return &stage->output_tensors;
-}
-
 std::vector<MpkTensorContract>
 get_mla_boundary_physical_outputs_contract(const MpkContract& contract) {
   if (const MpkPluginIoContract* unpack = get_mla_unpack_stage_io_contract(contract);
       unpack && !unpack->input_tensors.empty()) {
     return unpack->input_tensors;
   }
-  if (const auto* outputs = get_mla_outputs_contract(contract); outputs != nullptr) {
-    return *outputs;
+  if (const auto* mla = get_last_mla_stage_io_contract(contract); mla != nullptr) {
+    return mla->output_tensors;
   }
   return {};
 }
@@ -7797,15 +7293,6 @@ std::vector<MpkTensorContract> get_mla_logical_outputs_contract(const MpkContrac
   };
 
   return build_outputs(false);
-}
-
-std::optional<MpkQuantContract> get_quant_params_contract(const MpkContract& contract,
-                                                          const std::string& plugin_name_or_id) {
-  const MpkPluginIoContract* stage = get_stage_io_contract(contract, plugin_name_or_id);
-  if (!stage || !stage->quant.has_value()) {
-    return std::nullopt;
-  }
-  return stage->quant;
 }
 
 std::optional<std::size_t> find_plugin_index_by_name_or_id(const MpkContract& contract,

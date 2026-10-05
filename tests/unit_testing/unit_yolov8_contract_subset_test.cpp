@@ -1,3 +1,4 @@
+#include "mpk_contract_test_utils.h"
 #include "asset_utils.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
@@ -130,16 +131,14 @@ std::string yolov8_bf16_unpack_root() {
 
 simaai::neat::pipeline_internal::sima::MpkContract load_yolov8_int8_contract() {
   std::string error;
-  const auto contract = simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root(
-      yolov8_int8_unpack_root(), &error);
+  const auto contract = load_test_mpk_contract(yolov8_int8_unpack_root(), &error);
   require(contract.has_value(), "expected YOLOv8 INT8 MPK contract: " + error);
   return *contract;
 }
 
 simaai::neat::pipeline_internal::sima::MpkContract load_yolov8_bf16_contract() {
   std::string error;
-  const auto contract = simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root(
-      yolov8_bf16_unpack_root(), &error);
+  const auto contract = load_test_mpk_contract(yolov8_bf16_unpack_root(), &error);
   require(contract.has_value(), "expected YOLOv8 BF16 MPK contract: " + error);
   return *contract;
 }

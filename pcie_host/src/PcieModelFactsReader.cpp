@@ -3,6 +3,7 @@
 
 #include "model/internal/ModelArchiveLoader.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 
 #include <algorithm>
 #include <cctype>
@@ -604,13 +605,91 @@ PcieModelFacts read_model_facts(const std::string& model_path, const ModelOption
   const auto extracted =
       simaai::neat::internal::ModelArchiveLoader::extract(model_path, temp.path(), loader_options);
 
+  namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
   std::string error;
-  auto contract = simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root(
-      extracted.package_root, &error);
-  if (!contract.has_value()) {
+  const auto loaded = sc::MpkDecoder::load_package_root(extracted.package_root, &error);
+  if (!loaded.has_value()) {
     throw std::runtime_error("failed to read MPK contract: " + error);
   }
-  return detail::read_model_facts(*contract, options);
+  // The card admits only packages the strict decoder accepts.
+  const auto decoded = sc::MpkDecoder{}.decode(loaded->package);
+  if (!decoded) {
+    throw std::runtime_error(
+        "MPK is not admissible for execution: " +
+        (decoded.error ? decoded.error->detail : std::string("strict decoder returned no plan")));
+  }
+  auto facts = detail::read_model_facts(loaded->contract, options);
+  if (!options.mla_only) {
+    detail::apply_execution_plan(*decoded.plan, &facts);
+  }
+  return facts;
+}
+
+void detail::apply_execution_plan(
+    const simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan& plan,
+    PcieModelFacts* facts) {
+  namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
+  // Public tensors must be the plan's tensors, in the plan's order.
+  const auto require_plan_tensors = [&](const char* direction,
+                                        const std::vector<PcieTensorFact>& tensors,
+                                        const std::vector<sc::ValueId>& values, const bool output) {
+    if (tensors.size() != values.size()) {
+      throw std::runtime_error(
+          std::string("PCIe ") + direction + " count " + std::to_string(tensors.size()) +
+          " differs from the strict execution plan's " + std::to_string(values.size()));
+    }
+    for (std::size_t i = 0; i < tensors.size(); ++i) {
+      const auto* value = plan.value(values[i]);
+      const auto name = !value   ? std::string()
+                        : output ? strip_public_route_wrapper_prefix(value->name)
+                                 : value->name;
+      if (!value || name != tensors[i].name) {
+        throw std::runtime_error(std::string("PCIe ") + direction + " " + std::to_string(i) +
+                                 " is '" + tensors[i].name +
+                                 "' but the strict execution plan has '" + name + "'");
+      }
+      if (value->required_bytes != tensors[i].size_bytes) {
+        throw std::runtime_error(std::string("PCIe ") + direction + " '" + tensors[i].name +
+                                 "' differs in size from the strict execution plan");
+      }
+    }
+  };
+  std::vector<sc::ValueId> outputs;
+  for (const auto& output : plan.model_outputs()) {
+    outputs.push_back(output.value_id);
+  }
+  require_plan_tensors("input", facts->inputs, plan.model_inputs(), false);
+  require_plan_tensors("output", facts->outputs, outputs, true);
+
+  const auto only_output_port = [&](const sc::ValueId value) -> const sc::BackendPortSpec* {
+    const sc::BackendPortSpec* found = nullptr;
+    for (const auto& port : plan.backend_ports()) {
+      if (port.direction == sc::BackendPortDirection::Output && port.value_id == value) {
+        if (found) {
+          return nullptr;
+        }
+        found = &port;
+      }
+    }
+    return found;
+  };
+  std::vector<const sc::BackendPortSpec*> ports;
+  for (std::size_t i = 0; i < outputs.size(); ++i) {
+    const auto* port = only_output_port(outputs[i]);
+    if (!port || facts->outputs[i].byte_offset != 0 ||
+        (!ports.empty() && port->stage_index != ports.front()->stage_index)) {
+      return;
+    }
+    ports.push_back(port);
+  }
+  const auto* stage = ports.empty() ? nullptr : plan.mla_stage(ports.front()->stage_index);
+  if (!stage || stage->output_port_count != ports.size()) {
+    return;
+  }
+  for (std::size_t i = 0; i < ports.size(); ++i) {
+    facts->outputs[i].physical_index = static_cast<int>(ports[i]->port_index);
+  }
+  finalize_output_layout(facts);
 }
 
 PcieModelFacts
