@@ -3,6 +3,7 @@
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
+#include "pipeline/internal/TensorTransfer.h"
 #include <simaai/simaai_memory.h>
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "test_main.h"
@@ -191,6 +192,58 @@ void test_bundled_input_rejects_invalid_backing_before_allocation() {
   require(output == nullptr, "failure must preserve null output");
 }
 
+// Regression: repeated pushes of one layout must reuse one pooled packed parent.
+void test_packed_parent_reuses_pooled_buffer() {
+  ensure_gst_ready();
+
+  GstBufferPool* first_pool = nullptr;
+  std::size_t misses_after_first = 0U;
+  for (int push = 0; push < 9; ++push) {
+    const auto base = static_cast<std::uint8_t>(push * 16);
+    std::vector<std::uint8_t> head_bytes(12);
+    std::vector<std::uint8_t> tail_bytes(20);
+    for (std::size_t i = 0; i < head_bytes.size(); ++i)
+      head_bytes[i] = static_cast<std::uint8_t>(base + i);
+    for (std::size_t i = 0; i < tail_bytes.size(); ++i)
+      tail_bytes[i] = static_cast<std::uint8_t>(base + 100 + i);
+    Tensor head = make_strided_uint8_tensor(head_bytes, {3, 4}, {4, 1});
+    Tensor tail = make_strided_uint8_tensor(tail_bytes, {4, 5}, {5, 1});
+    const Sample sample = sample_from_tensors(TensorList{head, tail});
+
+    std::string err;
+    auto holder = pipeline_internal::make_sample_holder_from_bundle(sample, &err,
+                                                                    /*allow_zero_copy=*/false);
+    require(holder != nullptr, std::string("failed to materialize tensor-set holder: ") + err);
+    {
+      pipeline_internal::TensorBufferView view;
+      require(pipeline_internal::tensor_buffer_descriptor_from_sample(
+                  static_cast<GstSample*>(holder.get()), &view, &err),
+              std::string("failed to extract tensorbuffer descriptor: ") + err);
+      require(view.tensors.size() == 2U && view.tensors[0].memory_index == 0 &&
+                  view.tensors[1].memory_index == 0,
+              "pool regression must exercise the packed-parent path");
+      require(view.buffer != nullptr && view.buffer->pool != nullptr,
+              "packed parent must be acquired from the segment pool");
+      if (push == 0) {
+        first_pool = view.buffer->pool;
+        misses_after_first = pipeline_internal::tensor_transfer_pool_stats().misses;
+      }
+      require(view.buffer->pool == first_pool,
+              "every push of one layout must reuse the same segment pool");
+
+      std::vector<std::uint8_t> expected = head_bytes;
+      expected.insert(expected.end(), tail_bytes.begin(), tail_bytes.end());
+      const std::vector<std::uint8_t> payload = read_gst_buffer_bytes(view.buffer);
+      require(payload.size() >= expected.size() &&
+                  std::equal(expected.begin(), expected.end(), payload.begin()),
+              "pooled packed parent must carry this push's bytes, not a previous push's");
+    }
+    holder.reset();
+  }
+  require(pipeline_internal::tensor_transfer_pool_stats().misses == misses_after_first,
+          "repeated pushes of one layout must not create additional segment pools");
+}
+
 // Explicit target-only gate. No CVU dispatch, but real EV74-addressable allocation
 // is mandatory: unavailable allocator/device fails rather than silently skipping.
 void test_device_bundle_subviews() {
@@ -309,5 +362,7 @@ int main(int argc, char** argv) {
   failures += sima_test::run_test("unit_bundled_input_invalid_backing_test", [] {
     test_bundled_input_rejects_invalid_backing_before_allocation();
   });
+  failures += sima_test::run_test("unit_sample_packed_parent_pooled_reuse_test",
+                                  [] { test_packed_parent_reuses_pooled_buffer(); });
   return failures == 0 ? 0 : 1;
 }

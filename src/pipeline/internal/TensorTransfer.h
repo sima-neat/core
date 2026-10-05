@@ -6,8 +6,11 @@
 #include "pipeline/TensorCore.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
+
+typedef struct _GstBuffer GstBuffer;
 
 namespace simaai::neat::pipeline_internal {
 
@@ -18,6 +21,10 @@ struct TransferPoolStats {
 };
 
 TransferPoolStats tensor_transfer_pool_stats();
+
+GstBuffer* acquire_segment_pool_buffer(std::uint64_t target_flags, std::uint64_t mem_flags,
+                                       const std::vector<simaai::neat::Segment>& segments,
+                                       std::string* err);
 
 simaai::neat::Tensor transfer_to_device(const simaai::neat::Tensor& src,
                                         const simaai::neat::Device& target,
