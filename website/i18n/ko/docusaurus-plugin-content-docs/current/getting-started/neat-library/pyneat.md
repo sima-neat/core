@@ -27,7 +27,7 @@ sima-cli neat install core -t pyneat
 특정 버전을 설치하려면:
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.4.0 -t pyneat
+sima-cli neat install core@v0.5.0 -t pyneat
 </ShellCommand>
 
 ## 파이썬 환경을 설정합니다.

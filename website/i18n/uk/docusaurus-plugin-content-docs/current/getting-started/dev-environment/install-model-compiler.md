@@ -20,13 +20,13 @@ Neat SDK. Запустіть команду, яка відповідає арх�
 Для контейнерів `amd64` Neat SDK:
 
 <ShellCommand prompt="sdk">
-sima-cli neat install model-compiler/amd64@v2.1.3
+sima-cli neat install model-compiler/amd64@v2.1.3.1
 </ShellCommand>
 
 Для контейнерів `arm64`, що використовують Neat SDK:
 
 <ShellCommand prompt="sdk">
-sima-cli neat install model-compiler/arm64@v2.1.3
+sima-cli neat install model-compiler/arm64@v2.1.3.1
 </ShellCommand>
 
 Після встановлення активуйте середовище компілятора в командному рядку Neat SDK:
@@ -45,16 +45,16 @@ deactivate-model-compiler
 
 Автономна інсталяція підтримується лише на хост-середовищах, перелічених у [Сумісність](/getting-started/compatibility/#model-compiler). Запустіть відповідну команду `sima-cli neat install` із підтримуваного хост-середовища. Щоб перевірити архітектуру хоста, запустіть `uname -m`: `x86_64` використовує команду `amd64`, а `aarch64` використовує команду `arm64`.
 
-Для Model Compiler 2.1.3 на хостах `amd64`:
+Для Model Compiler 2.1.3.1 на хостах `amd64`:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3
+sima-cli neat install model-compiler/amd64@v2.1.3.1
 </ShellCommand>
 
-Для Model Compiler версії 2.1.3 на хостах `arm64`:
+Для Model Compiler версії 2.1.3.1 на хостах `arm64`:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3
+sima-cli neat install model-compiler/arm64@v2.1.3.1
 </ShellCommand>
 
 Для Model Compiler 2.0.0 на хостах `amd64`:
