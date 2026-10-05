@@ -1,51 +1,29 @@
+import copy
 import json
 import socket
 import threading
 import time
+from pathlib import Path
 
 import pyneat
 import pytest
 
 
-# Trimmed from tests/assets/peripherals/devkit-capture-2026-10-05.json, a real
-# Sentinel response from a DevKit with an IMX477 and a Logitech C920.
-_MIPI = {
-    "type": "camera", "id": "camera:imx477 5-001a", "backend": "mipi",
-    "camera_name": "imx477 5-001a", "model": "imx477", "media_device": "/dev/media0",
-    "availability": {"state": "unknown", "reason": "no read-only ownership state"},
-    "modes": [
-        {"format": "NV12", "width": 1920, "height": 1080, "isp_output": True},
-        {"format": "AR24", "width": 1920, "height": 1080, "isp_output": True},
-    ],
-}
-_USB = {
-    "type": "camera", "id": "camera:v4l2:421bbe426738013b", "backend": "v4l2",
-    "model": "HD Pro Webcam C920", "device_path": "/dev/video1",
-    "modes": [
-        {"format": "MJPG", "width": 1920, "height": 1080, "frame_intervals": [
-            {"width": 1920, "height": 1080, "intervals": [
-                {"type": "discrete", "numerator": 1, "denominator": 30},
-                {"type": "discrete", "numerator": 1, "denominator": 5}]}]},
-        {"format": "YUYV", "frame_intervals": [
-            {"width": 640, "height": 480, "intervals": [
-                {"type": "stepwise", "minimum": {"numerator": 1, "denominator": 60},
-                 "maximum": {"numerator": 1, "denominator": 5},
-                 "step": {"numerator": 1, "denominator": 1000}}]}],
-         "size_range": {"type": "stepwise", "min_width": 640, "min_height": 480,
-                        "max_width": 1920, "max_height": 1080, "step_width": 16,
-                        "step_height": 8}},
-    ],
-}
-_MIC = {
-    "type": "microphone", "id": "microphone:alsa:329f324bddfdde7b",
-    "name": "HD Pro Webcam C920", "backend": "alsa",
-    "capture_target": {"card_id": "C920", "device": 0, "selector": "plughw:CARD=C920,DEV=0"},
-    "modes": [{"format": "S16_LE", "channels": 2, "rates_hz": [16000]}],
-}
-_CATALOG = {
-    "revision": 1791164913635, "observed_at": "2026-10-05T01:48:33.635147447Z",
-    "devices": [_MIPI, _USB, _MIC], "errors": [],
-}
+# Sentinel's published contract fixture, docs/peripherals/catalog-example.json at
+# sima-neat/sentinel commit 7efb980: a DevKit capture (IMX477, Logitech C920 camera and
+# microphone) with the USB camera trimmed to one mode per format. The byte-for-byte
+# copy lives in tests/assets/peripherals and is installed next to this file.
+def _load_example():
+  here = Path(__file__).resolve()
+  for path in (here.with_name("catalog-example.json"),
+               here.parents[2] / "tests" / "assets" / "peripherals" / "catalog-example.json"):
+    if path.is_file():
+      return json.loads(path.read_text())
+  raise FileNotFoundError("catalog-example.json")
+
+
+_CATALOG = _load_example()
+_MIPI, _USB, _MIC = _CATALOG["devices"]
 _USB_REASON = (
     "CameraInput's default libcamera profile accepts MIPI cameras only. These rules do not "
     "classify raw V4L2 profiles such as MetoakSimor (RAW8 1920x360, selected with "
@@ -99,19 +77,41 @@ def test_catalog_binds_every_field(tmp_path):
   mipi, usb = catalog[0].camera, catalog[1].camera
   assert (mipi.camera_name, mipi.model, mipi.backend) == ("imx477 5-001a", "imx477", "mipi")
   assert (usb.camera_name, usb.model, usb.backend) == (None, "HD Pro Webcam C920", "v4l2")
-  modes = [
+  format_reason = "CameraInput's default libcamera profile supports NV12 output only."
+  assert [
       (m.format, m.width, m.height, m.is_range, m.framerate_num, m.framerate_den, m.supported,
        m.reason)
-      for m in mipi.modes + usb.modes
+      for m in mipi.modes
+  ] == [
+      (mode["format"], mode["width"], mode["height"], False, 0, 1, mode["format"] == "NV12",
+       "" if mode["format"] == "NV12" else format_reason)
+      for mode in _MIPI["modes"]
   ]
-  assert modes == [
-      ("NV12", 1920, 1080, False, 0, 1, True, ""),
-      ("AR24", 1920, 1080, False, 0, 1, False,
-       "CameraInput's default libcamera profile supports NV12 output only."),
+  assert [
+      (m.format, m.width, m.height, m.is_range, m.framerate_num, m.framerate_den, m.supported,
+       m.reason)
+      for m in usb.modes
+  ] == [
       ("MJPG", 1920, 1080, False, 30, 1, False, _USB_REASON),
-      ("YUYV", 0, 0, True, 60, 1, False, _USB_REASON),
+      ("YUYV", 2560, 1472, False, 2, 1, False, _USB_REASON),
   ]
-  size_range = usb.modes[1].size_range
+
+
+def test_size_range_and_interval_range(tmp_path):
+  catalog = copy.deepcopy(_CATALOG)
+  mode = catalog["devices"][1]["modes"][1]
+  del mode["width"], mode["height"]
+  mode["size_range"] = {"type": "stepwise", "min_width": 640, "min_height": 480,
+                        "max_width": 1920, "max_height": 1080, "step_width": 16,
+                        "step_height": 8}
+  mode["frame_intervals"] = [{"width": 640, "height": 480, "intervals": [
+      {"type": "stepwise", "minimum": {"numerator": 1, "denominator": 60},
+       "maximum": {"numerator": 1, "denominator": 5},
+       "step": {"numerator": 1, "denominator": 1000}}]}]
+  ranged = _list(tmp_path, json.dumps(catalog))[1].camera.modes[1]
+  assert ranged.is_range and (ranged.width, ranged.height) == (0, 0)
+  assert (ranged.framerate_num, ranged.framerate_den) == (60, 1)
+  size_range = ranged.size_range
   assert (size_range.min_width, size_range.min_height, size_range.max_width,
           size_range.max_height, size_range.step_width, size_range.step_height) == (
               640, 480, 1920, 1080, 16, 8)

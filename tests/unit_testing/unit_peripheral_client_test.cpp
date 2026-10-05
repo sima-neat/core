@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -143,24 +144,60 @@ void require_error(Function&& function, const char* code, std::string_view fragm
   throw std::runtime_error("expected NeatError " + std::string(code));
 }
 
-// A real Sentinel response from a Modalix DevKit with an IMX477 MIPI camera
-// and a Logitech C920 (camera and microphone), captured 2026-10-05.
-json devkit_capture() {
+// Sentinel's published contract fixture: docs/peripherals/catalog-example.json
+// at sima-neat/sentinel commit 7efb980, a DevKit capture (IMX477 MIPI camera,
+// Logitech C920 camera and microphone) with the USB camera trimmed to one mode
+// per format. tests/assets/peripherals/catalog-example.json is a byte-for-byte
+// copy.
+json published_example() {
   return json::parse(
-#include "sentinel_devkit_capture.inc"
+#include "sentinel_catalog_example.inc"
   );
 }
 
-void test_devkit_capture() {
-  const auto body = devkit_capture();
+std::optional<std::string> optional_string(const json& object, const char* name) {
+  return object.contains(name) ? std::optional(object[name].get<std::string>()) : std::nullopt;
+}
+
+// Every field Core reads from the example reaches the typed catalog unchanged.
+void test_example_fields_preserved() {
+  const auto body = published_example();
   const auto catalog = list_from(http(body.dump()), 4096);
-  require(catalog.revision == 1791164913635 &&
-              catalog.observed_at == "2026-10-05T01:48:33.635147447Z" && catalog.errors.empty() &&
-              catalog.size() == 3,
-          "catalog metadata was not preserved");
-  for (std::size_t index = 0; index < catalog.size(); ++index)
-    require(json::parse(catalog[index].details_json) == body["devices"][index],
-            "details_json must preserve the whole record of " + catalog[index].id);
+  require(catalog.revision == body["revision"].get<std::uint64_t>() &&
+              catalog.observed_at == body["observed_at"].get<std::string>() &&
+              catalog.errors.size() == body["errors"].size() &&
+              catalog.size() == body["devices"].size(),
+          "catalog fields were lost");
+  for (std::size_t index = 0; index < catalog.size(); ++index) {
+    const auto& record = body["devices"][index];
+    const auto& device = catalog[index];
+    require(device.id == record["id"] && device.type == record["type"] &&
+                json::parse(device.details_json) == record &&
+                device.camera.has_value() == (record["type"] == "camera"),
+            "device fields were lost: " + device.id);
+    if (!device.camera)
+      continue;
+    const auto& camera = *device.camera;
+    require(camera.camera_name == optional_string(record, "camera_name") &&
+                camera.model == optional_string(record, "model") &&
+                camera.backend == record["backend"] &&
+                camera.modes.size() == record["modes"].size(),
+            "camera fields were lost: " + device.id);
+    for (std::size_t m = 0; m < camera.modes.size(); ++m) {
+      const auto& expected = record["modes"][m];
+      const auto& mode = camera.modes[m];
+      require(mode.format == expected["format"] && mode.width == expected.value("width", 0U) &&
+                  mode.height == expected.value("height", 0U) &&
+                  mode.is_range() == expected.contains("size_range"),
+              "mode fields were lost: " + device.id + " " + mode.format);
+    }
+  }
+}
+
+// Core's classification and frame rates for the example's devices.
+void test_published_example() {
+  const auto catalog = list_from(http(published_example().dump()), 4096);
+  require(catalog.errors.empty() && catalog.size() == 3, "the example has three devices");
 
   // MIPI: the NV12 ISP sizes are supported; the ISP lists no frame intervals.
   const auto& mipi = *catalog[0].camera;
@@ -177,7 +214,7 @@ void test_devkit_capture() {
   // USB: never supported by the default profile; the rate is the fastest interval.
   const auto& usb = *catalog[1].camera;
   require(!usb.camera_name && usb.model == "HD Pro Webcam C920" && usb.backend == "v4l2" &&
-              usb.modes.size() == 35,
+              usb.modes.size() == 2,
           "USB camera fields were not mapped");
   for (const auto& mode : usb.modes)
     require(!mode.supported && mode.reason == kBackendReason, "a USB mode was supported");
@@ -188,8 +225,7 @@ void test_devkit_capture() {
     require(mode != usb.modes.end(), "missing USB mode");
     return std::to_string(mode->framerate_num) + "/" + std::to_string(mode->framerate_den);
   };
-  require(rate("MJPG", 1920, 1080) == "30/1" && rate("YUYV", 1600, 896) == "15/2" &&
-              rate("YUYV", 2560, 1472) == "2/1",
+  require(rate("MJPG", 1920, 1080) == "30/1" && rate("YUYV", 2560, 1472) == "2/1",
           "USB frame rates must be the fastest advertised interval");
 
   require(catalog[2].type == "microphone" && !catalog[2].camera,
@@ -353,7 +389,7 @@ void test_catalog_container_api() {
 }
 
 void test_errors_and_first_scan() {
-  auto failed = devkit_capture();
+  auto failed = published_example();
   failed["errors"] = json::array({{{"provider", "camera.v4l2"},
                                    {"code", "io.permission_denied"},
                                    {"reason", "permission denied"}}});
@@ -397,7 +433,7 @@ void test_connection_failures() {
 
 void test_protocol_failures() {
   const auto edited = [](auto edit) {
-    auto body = devkit_capture();
+    auto body = published_example();
     edit(body);
     return http(body.dump());
   };
@@ -448,17 +484,17 @@ void test_protocol_failures() {
                   test_case.fragment);
 
   // A skipped interval keeps the rest of the device and catalog.
-  auto skipped = devkit_capture();
+  auto skipped = published_example();
   mode(skipped)["frame_intervals"][0]["intervals"][0]["type"] = "future";
   mode(skipped)["frame_intervals"][0]["intervals"].push_back(range("stepwise", {1, 5}, {1, 30}));
   const auto kept = list_from(http(skipped.dump()), 4096);
-  require(kept.size() == 3 && kept[1].camera->modes.size() == 35 &&
+  require(kept.size() == 3 && kept[1].camera->modes.size() == 2 &&
               kept[1].camera->modes[0].framerate_num == 24 &&
               json::parse(kept[1].details_json) == skipped["devices"][1],
           "a skipped frame interval must not drop the device or catalog");
 
   // Header names compare case-insensitively.
-  const std::string body = devkit_capture().dump();
+  const std::string body = published_example().dump();
   require(list_from("HTTP/1.1 200 OK\r\nCONTENT-length: " + std::to_string(body.size()) +
                         "\r\n\r\n" + body,
                     4096)
@@ -470,7 +506,8 @@ void test_protocol_failures() {
 
 int main() {
   try {
-    test_devkit_capture();
+    test_example_fields_preserved();
+    test_published_example();
     test_classification_rules();
     test_catalog_container_api();
     test_errors_and_first_scan();

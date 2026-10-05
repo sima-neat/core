@@ -107,6 +107,13 @@ install(
   PATTERN "*.py"
 )
 
+# test_peripherals.py reads Sentinel's published catalog example next to itself.
+install(
+  FILES ${PROJECT_SOURCE_DIR}/tests/assets/peripherals/catalog-example.json
+  DESTINATION share/sima-neat/python/tests
+  COMPONENT extras
+)
+
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests_long/
   DESTINATION share/sima-neat/python/tests_long

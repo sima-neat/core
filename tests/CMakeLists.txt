@@ -569,12 +569,14 @@ add_pipeline_test(
   unit_peripheral_client_test
   ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_peripheral_client_test.cpp
 )
-# Embed the real DevKit capture so the installed test does not need the source tree.
-set(_devkit_capture ${CMAKE_CURRENT_SOURCE_DIR}/assets/peripherals/devkit-capture-2026-10-05.json)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_devkit_capture})
-file(READ ${_devkit_capture} _devkit_capture_json)
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/sentinel_devkit_capture.inc
-  "R\"json(${_devkit_capture_json})json\"\n")
+# Sentinel's published contract fixture, docs/peripherals/catalog-example.json
+# at sima-neat/sentinel commit 7efb980, copied byte-for-byte. Embed it so the
+# installed test does not need the source tree.
+set(_catalog_example ${CMAKE_CURRENT_SOURCE_DIR}/assets/peripherals/catalog-example.json)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_catalog_example})
+file(READ ${_catalog_example} _catalog_example_json)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/sentinel_catalog_example.inc
+  "R\"json(${_catalog_example_json})json\"\n")
 target_include_directories(unit_peripheral_client_test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 set_property(TEST unit_peripheral_client_test APPEND PROPERTY LABELS "unit;peripherals")
 

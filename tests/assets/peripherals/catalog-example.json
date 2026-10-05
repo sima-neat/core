@@ -1,0 +1,279 @@
+{
+  "devices": [
+    {
+      "availability": {
+        "reason": "The media controller does not expose a reliable read-only ownership state; discovery does not acquire, configure, or stream from the camera.",
+        "state": "unknown"
+      },
+      "backend": "mipi",
+      "bus_info": "platform:csi2video@1",
+      "camera_name": "imx477 5-001a",
+      "csi_receiver": "csidev-40c3000.csi",
+      "id": "camera:imx477 5-001a",
+      "isp": {
+        "device_path": "/dev/video0out",
+        "device_paths": [
+          "/dev/video0out",
+          "/dev/video10out",
+          "/dev/video11out",
+          "/dev/video12out",
+          "/dev/video13out",
+          "/dev/video14out",
+          "/dev/video15out",
+          "/dev/video1out",
+          "/dev/video2out",
+          "/dev/video3out",
+          "/dev/video4out",
+          "/dev/video5out",
+          "/dev/video6out",
+          "/dev/video7out",
+          "/dev/video8out",
+          "/dev/video9out"
+        ],
+        "state": "available"
+      },
+      "max_fps": 66.18,
+      "media_device": "/dev/media0",
+      "model": "imx477",
+      "modes": [
+        {
+          "format": "AR24",
+          "height": 1080,
+          "isp_output": true,
+          "width": 1920
+        },
+        {
+          "format": "AR24",
+          "height": 1080,
+          "isp_output": true,
+          "width": 2048
+        },
+        {
+          "format": "AR24",
+          "height": 2048,
+          "isp_output": true,
+          "width": 2432
+        },
+        {
+          "format": "NV12",
+          "height": 1080,
+          "isp_output": true,
+          "width": 1920
+        },
+        {
+          "format": "NV12",
+          "height": 1080,
+          "isp_output": true,
+          "width": 2048
+        },
+        {
+          "format": "NV12",
+          "height": 2048,
+          "isp_output": true,
+          "width": 2432
+        },
+        {
+          "format": "RGB3",
+          "height": 1080,
+          "isp_output": true,
+          "width": 1920
+        },
+        {
+          "format": "RGB3",
+          "height": 1080,
+          "isp_output": true,
+          "width": 2048
+        },
+        {
+          "format": "RGB3",
+          "height": 2048,
+          "isp_output": true,
+          "width": 2432
+        }
+      ],
+      "sensor_timing": {
+        "hblank_min": 9332,
+        "height": 1080,
+        "pixel_rate": 840000000,
+        "vblank_min": 48,
+        "width": 1920
+      },
+      "type": "camera"
+    },
+    {
+      "availability": {
+        "reason": "V4L2 does not expose a reliable read-only ownership state; discovery does not acquire, configure, or stream from the camera.",
+        "state": "unknown"
+      },
+      "backend": "v4l2",
+      "by_id_path": "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_BE998CAF-video-index0",
+      "device_path": "/dev/video1",
+      "id": "camera:v4l2:421bbe426738013b",
+      "identity": {
+        "interface": "00",
+        "node_index": "0",
+        "product_id": "08e5",
+        "serial": "BE998CAF",
+        "speed": "480",
+        "stable_key": "sysfs:devices/platform/7ff0000000.pci/pci0003:00/0003:00:00.0/0003:01:00.0/usb1/1-3/1-3.1:interface=00:index=0",
+        "topology": "devices/platform/7ff0000000.pci/pci0003:00/0003:00:00.0/0003:01:00.0/usb1/1-3/1-3.1",
+        "vendor_id": "046d"
+      },
+      "model": "HD Pro Webcam C920",
+      "modes": [
+        {
+          "format": "MJPG",
+          "format_description": "Motion-JPEG",
+          "frame_intervals": [
+            {
+              "height": 1080,
+              "intervals": [
+                {
+                  "denominator": 30,
+                  "numerator": 1,
+                  "type": "discrete"
+                },
+                {
+                  "denominator": 24,
+                  "numerator": 1,
+                  "type": "discrete"
+                },
+                {
+                  "denominator": 20,
+                  "numerator": 1,
+                  "type": "discrete"
+                },
+                {
+                  "denominator": 15,
+                  "numerator": 1,
+                  "type": "discrete"
+                },
+                {
+                  "denominator": 10,
+                  "numerator": 1,
+                  "type": "discrete"
+                },
+                {
+                  "denominator": 15,
+                  "numerator": 2,
+                  "type": "discrete"
+                },
+                {
+                  "denominator": 5,
+                  "numerator": 1,
+                  "type": "discrete"
+                }
+              ],
+              "width": 1920
+            }
+          ],
+          "height": 1080,
+          "width": 1920
+        },
+        {
+          "format": "YUYV",
+          "format_description": "YUYV 4:2:2",
+          "frame_intervals": [
+            {
+              "height": 1472,
+              "intervals": [
+                {
+                  "denominator": 2,
+                  "numerator": 1,
+                  "type": "discrete"
+                }
+              ],
+              "width": 2560
+            }
+          ],
+          "height": 1472,
+          "width": 2560
+        }
+      ],
+      "type": "camera"
+    },
+    {
+      "availability": {
+        "state": "available",
+        "subdevices": 1,
+        "subdevices_available": 1
+      },
+      "backend": "alsa",
+      "capture_target": {
+        "card_id": "C920",
+        "device": 0,
+        "selector": "plughw:CARD=C920,DEV=0"
+      },
+      "connection": "usb",
+      "id": "microphone:alsa:329f324bddfdde7b",
+      "identity": {
+        "by_id": "/dev/snd/by-id/usb-046d_HD_Pro_Webcam_C920_BE998CAF-02",
+        "by_path": "/dev/snd/by-path/platform-7ff0000000.pci-pci-0003:01:00.0-usb-0:3.1:1.2",
+        "card_driver": "USB-Audio",
+        "card_id": "C920",
+        "card_index": 0,
+        "card_name": "HD Pro Webcam C920",
+        "pcm_name": "USB Audio",
+        "pcm_node": "/dev/snd/pcmC0D0c",
+        "stable_key": "sysfs:devices/platform/7ff0000000.pci/pci0003:00/0003:00:00.0/0003:01:00.0/usb1/1-3/1-3.1/1-3.1:1.2:pcm0c",
+        "usb": {
+          "bus_path": "1-3.1",
+          "interface": "1-3.1:1.2",
+          "product": "HD Pro Webcam C920",
+          "product_id": "08e5",
+          "serial": "BE998CAF",
+          "vendor_id": "046d"
+        }
+      },
+      "modes": [
+        {
+          "altset": 1,
+          "channel_map": [
+            "FL",
+            "FR"
+          ],
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 3,
+          "rates_hz": [
+            16000
+          ],
+          "sample_bits": 16
+        },
+        {
+          "altset": 2,
+          "channel_map": [
+            "FL",
+            "FR"
+          ],
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 3,
+          "rates_hz": [
+            24000
+          ],
+          "sample_bits": 16
+        },
+        {
+          "altset": 3,
+          "channel_map": [
+            "FL",
+            "FR"
+          ],
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 3,
+          "rates_hz": [
+            32000
+          ],
+          "sample_bits": 16
+        }
+      ],
+      "name": "HD Pro Webcam C920",
+      "type": "microphone"
+    }
+  ],
+  "errors": [],
+  "observed_at": "2026-10-05T05:12:25.107161417Z",
+  "revision": 1791177145107
+}
