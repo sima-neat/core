@@ -27,7 +27,7 @@ namespace simaai::neat {
  */
 struct CameraInputOptions {
   // Optional exact libcamera camera name. Read selectable names and
-  // daemon-classified modes from simaai::neat::peripherals::list() or
+  // supported modes from simaai::neat::peripherals::list() or
   // pyneat.peripherals.list(). Leave unset to let libcamera select its default
   // camera.
   std::optional<std::string> camera_name;

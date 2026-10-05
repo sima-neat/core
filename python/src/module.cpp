@@ -3348,13 +3348,9 @@ NB_MODULE(_pyneat_core, m) {
   nb::module_ peripherals_mod =
       m.def_submodule("peripherals", "Typed access to the board-local peripheral catalog.");
   nb::class_<simaai::neat::peripherals::CatalogError>(peripherals_mod, "CatalogError")
+      .def_ro("provider", &simaai::neat::peripherals::CatalogError::provider)
       .def_ro("code", &simaai::neat::peripherals::CatalogError::code)
       .def_ro("reason", &simaai::neat::peripherals::CatalogError::reason);
-  nb::class_<simaai::neat::peripherals::ProviderIssue>(peripherals_mod, "ProviderIssue")
-      .def_ro("provider", &simaai::neat::peripherals::ProviderIssue::provider)
-      .def_ro("code", &simaai::neat::peripherals::ProviderIssue::code)
-      .def_ro("reason", &simaai::neat::peripherals::ProviderIssue::reason)
-      .def_ro("retained_last_good", &simaai::neat::peripherals::ProviderIssue::retained_last_good);
   nb::class_<simaai::neat::peripherals::CameraSizeRange>(peripherals_mod, "CameraSizeRange")
       .def_ro("min_width", &simaai::neat::peripherals::CameraSizeRange::min_width)
       .def_ro("min_height", &simaai::neat::peripherals::CameraSizeRange::min_height)
@@ -3380,33 +3376,22 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::peripherals::Peripheral>(peripherals_mod, "Peripheral")
       .def_ro("id", &simaai::neat::peripherals::Peripheral::id)
       .def_ro("type", &simaai::neat::peripherals::Peripheral::type)
-      .def_ro("provider", &simaai::neat::peripherals::Peripheral::provider)
       .def_ro("camera", &simaai::neat::peripherals::Peripheral::camera,
               "Typed camera details; set only when type == 'camera'.")
       .def_ro("details_json", &simaai::neat::peripherals::Peripheral::details_json,
-              "Details for any peripheral type as compact JSON: the object Sentinel publishes "
-              "under the record key named by type, or '{}' when that key is absent, null, or "
-              "(for a type other than camera) not an object. "
-              "Unknown fields are preserved; key order and whitespace may differ from the "
-              "daemon response.")
+              "The whole device record Sentinel published, as compact JSON. Unknown fields are "
+              "preserved; key order and whitespace may differ from the daemon response.")
       .def_prop_ro(
           "details",
           [](const simaai::neat::peripherals::Peripheral& peripheral) {
             return nb::module_::import_("json").attr("loads")(peripheral.details_json);
           },
           "details_json decoded with json.loads into a new dict. Use it to read peripheral "
-          "types that have no typed accessor; cameras also provide the typed camera field.");
+          "types that have no typed accessor, such as microphones.");
   nb::class_<simaai::neat::peripherals::Catalog>(peripherals_mod, "Catalog")
-      .def_ro("instance_id", &simaai::neat::peripherals::Catalog::instance_id)
-      .def_ro("state", &simaai::neat::peripherals::Catalog::state)
-      .def_ro("stale", &simaai::neat::peripherals::Catalog::stale)
       .def_ro("revision", &simaai::neat::peripherals::Catalog::revision)
-      .def_ro("sequence", &simaai::neat::peripherals::Catalog::sequence)
-      .def_ro("scan_sequence", &simaai::neat::peripherals::Catalog::scan_sequence)
-      .def_ro("last_success_at", &simaai::neat::peripherals::Catalog::last_success_at)
-      .def_ro("last_attempt_at", &simaai::neat::peripherals::Catalog::last_attempt_at)
-      .def_ro("error", &simaai::neat::peripherals::Catalog::error)
-      .def_ro("issues", &simaai::neat::peripherals::Catalog::issues)
+      .def_ro("observed_at", &simaai::neat::peripherals::Catalog::observed_at)
+      .def_ro("errors", &simaai::neat::peripherals::Catalog::errors)
       .def_ro("devices", &simaai::neat::peripherals::Catalog::devices)
       .def("__len__", &simaai::neat::peripherals::Catalog::size)
       .def(
@@ -5325,8 +5310,6 @@ NB_MODULE(_pyneat_core, m) {
   m.attr("ERROR_PERIPHERAL_DAEMON_UNAVAILABLE") =
       simaai::neat::error_codes::kPeripheralDaemonUnavailable;
   m.attr("ERROR_PERIPHERAL_DAEMON_TIMEOUT") = simaai::neat::error_codes::kPeripheralDaemonTimeout;
-  m.attr("ERROR_PERIPHERAL_DAEMON_NOT_READY") =
-      simaai::neat::error_codes::kPeripheralDaemonNotReady;
   m.attr("ERROR_DISPATCHER_UNAVAILABLE_LEGACY") =
       simaai::neat::error_codes::kDispatcherUnavailableLegacy;
   m.attr("ERROR_INTERNAL_PLUGIN_FAILURE") = simaai::neat::error_codes::kInternalPluginFailure;

@@ -7,27 +7,50 @@ import pyneat
 import pytest
 
 
-_CATALOG = {
-    "schema_version": 1, "instance_id": "daemon-a", "state": "ready", "ready": True,
-    "stale": False, "revision": 3, "sequence": 5, "scan_sequence": 8,
-    "last_success_at": "2026-10-01T01:02:03Z", "last_attempt_at": "2026-10-01T01:02:04Z",
-    "error": None, "issues": [],
-    "devices": [
-        {"id": "camera:imx477 5-001a", "type": "camera", "provider": "daemon.camera.mipi",
-         "camera": {"camera_name": "imx477 5-001a", "model": "imx477", "backend": "mipi",
-                    "modes": [
-                        {"format": "NV12", "width": 1920, "height": 1080, "framerate_num": 30,
-                         "framerate_den": 1, "supported": True, "reason": ""},
-                        {"format": "NV12", "framerate_num": 30, "framerate_den": 1,
-                         "supported": False, "reason": "range is advisory",
-                         "size_range": {"min_width": 640, "min_height": 480, "max_width": 1920,
-                                        "max_height": 1080, "step_width": 16, "step_height": 8}},
-                    ]}},
-        {"id": "mic:1", "type": "microphone", "provider": "daemon.audio.alsa",
-         "microphone": {"channels": 2, "nested": {"a": [1, 2]}}},
-        {"id": "lidar:1", "type": "lidar", "provider": "lidar", "lidar": [1]},
+# Trimmed from tests/assets/peripherals/devkit-capture-2026-10-05.json, a real
+# Sentinel response from a DevKit with an IMX477 and a Logitech C920.
+_MIPI = {
+    "type": "camera", "id": "camera:imx477 5-001a", "backend": "mipi",
+    "camera_name": "imx477 5-001a", "model": "imx477", "media_device": "/dev/media0",
+    "availability": {"state": "unknown", "reason": "no read-only ownership state"},
+    "modes": [
+        {"format": "NV12", "width": 1920, "height": 1080, "isp_output": True},
+        {"format": "AR24", "width": 1920, "height": 1080, "isp_output": True},
     ],
 }
+_USB = {
+    "type": "camera", "id": "camera:v4l2:421bbe426738013b", "backend": "v4l2",
+    "model": "HD Pro Webcam C920", "device_path": "/dev/video1",
+    "modes": [
+        {"format": "MJPG", "width": 1920, "height": 1080, "frame_intervals": [
+            {"width": 1920, "height": 1080, "intervals": [
+                {"type": "discrete", "numerator": 1, "denominator": 30},
+                {"type": "discrete", "numerator": 1, "denominator": 5}]}]},
+        {"format": "YUYV", "frame_intervals": [
+            {"width": 640, "height": 480, "intervals": [
+                {"type": "stepwise", "minimum": {"numerator": 1, "denominator": 60},
+                 "maximum": {"numerator": 1, "denominator": 5},
+                 "step": {"numerator": 1, "denominator": 1000}}]}],
+         "size_range": {"type": "stepwise", "min_width": 640, "min_height": 480,
+                        "max_width": 1920, "max_height": 1080, "step_width": 16,
+                        "step_height": 8}},
+    ],
+}
+_MIC = {
+    "type": "microphone", "id": "microphone:alsa:329f324bddfdde7b",
+    "name": "HD Pro Webcam C920", "backend": "alsa",
+    "capture_target": {"card_id": "C920", "device": 0, "selector": "plughw:CARD=C920,DEV=0"},
+    "modes": [{"format": "S16_LE", "channels": 2, "rates_hz": [16000]}],
+}
+_CATALOG = {
+    "revision": 1791164913635, "observed_at": "2026-10-05T01:48:33.635147447Z",
+    "devices": [_MIPI, _USB, _MIC], "errors": [],
+}
+_USB_REASON = (
+    "CameraInput's default libcamera profile accepts MIPI cameras only. These rules do not "
+    "classify raw V4L2 profiles such as MetoakSimor (RAW8 1920x360, selected with "
+    "CameraInputOptions.profile and device)."
+)
 
 
 def _list(tmp_path, body, status=200, before_reply=lambda: None):
@@ -59,47 +82,52 @@ def _list(tmp_path, body, status=200, before_reply=lambda: None):
     listener.close()
 
 
-def _assert_matches(native, expected):
-  """Every field of the daemon document is bound under the same name."""
-  if isinstance(expected, dict):
-    for key, value in expected.items():
-      _assert_matches(getattr(native, key), value)
-  elif isinstance(expected, list):
-    assert len(native) == len(expected)
-    for item, value in zip(native, expected):
-      _assert_matches(item, value)
-  else:
-    assert native == expected
-
-
 def test_catalog_binds_every_field(tmp_path):
   catalog = _list(tmp_path, json.dumps(_CATALOG))
 
   assert callable(pyneat.peripherals.list)
-  root = {k: v for k, v in _CATALOG.items() if k not in ("schema_version", "ready", "devices")}
-  _assert_matches(catalog, root)
-  _assert_matches(catalog[0].camera, _CATALOG["devices"][0]["camera"])
-  assert [mode.is_range for mode in catalog[0].camera.modes] == [False, True]
+  assert catalog.revision == _CATALOG["revision"]
+  assert catalog.observed_at == _CATALOG["observed_at"]
+  assert catalog.errors == []
   assert [device.id for device in catalog] == [d["id"] for d in _CATALOG["devices"]]
-  assert len(catalog) == 3 and catalog[-1].id == "lidar:1"
+  assert [device.type for device in catalog.devices] == ["camera", "camera", "microphone"]
+  assert len(catalog) == 3 and catalog[-1].id == _MIC["id"]
   with pytest.raises(IndexError, match="peripheral catalog index out of range"):
     catalog[3]
   assert type(iter(catalog)).__name__ == "PeripheralCatalogIterator"
 
+  mipi, usb = catalog[0].camera, catalog[1].camera
+  assert (mipi.camera_name, mipi.model, mipi.backend) == ("imx477 5-001a", "imx477", "mipi")
+  assert (usb.camera_name, usb.model, usb.backend) == (None, "HD Pro Webcam C920", "v4l2")
+  modes = [
+      (m.format, m.width, m.height, m.is_range, m.framerate_num, m.framerate_den, m.supported,
+       m.reason)
+      for m in mipi.modes + usb.modes
+  ]
+  assert modes == [
+      ("NV12", 1920, 1080, False, 0, 1, True, ""),
+      ("AR24", 1920, 1080, False, 0, 1, False,
+       "CameraInput's default libcamera profile supports NV12 output only."),
+      ("MJPG", 1920, 1080, False, 30, 1, False, _USB_REASON),
+      ("YUYV", 0, 0, True, 60, 1, False, _USB_REASON),
+  ]
+  size_range = usb.modes[1].size_range
+  assert (size_range.min_width, size_range.min_height, size_range.max_width,
+          size_range.max_height, size_range.step_width, size_range.step_height) == (
+              640, 480, 1920, 1080, 16, 8)
 
-def test_stale_and_empty_snapshots(tmp_path):
-  stale = dict(
-      _CATALOG, state="degraded", stale=True,
-      error={"code": "peripherals.discovery_failed", "reason": "camera scan failed"},
-      issues=[{"provider": "daemon.camera.mipi", "code": "io.permission_denied",
-               "reason": "permission denied", "retained_last_good": True}])
-  catalog = _list(tmp_path, json.dumps(stale))
-  _assert_matches(catalog, {k: stale[k] for k in ("state", "stale", "error", "issues")})
-  assert catalog and len(catalog) == 3
+
+def test_provider_errors_and_first_scan(tmp_path):
+  error = {"provider": "camera.v4l2", "code": "io.permission_denied",
+           "reason": "permission denied"}
+  catalog = _list(tmp_path, json.dumps(dict(_CATALOG, errors=[error])))
+  assert [(e.provider, e.code, e.reason) for e in catalog.errors] == [tuple(error.values())]
+  assert len(catalog) == 3
 
   (tmp_path / "api.sock").unlink()
-  empty = _list(tmp_path, json.dumps(dict(_CATALOG, devices=[])))
-  assert not empty and len(empty) == 0 and list(empty) == []
+  first = _list(tmp_path, json.dumps(dict(_CATALOG, observed_at=None, devices=[])))
+  assert first.observed_at is None
+  assert not first and len(first) == 0 and list(first) == []
 
 
 def test_list_releases_the_gil_while_waiting(tmp_path):
@@ -113,15 +141,13 @@ def test_list_releases_the_gil_while_waiting(tmp_path):
 
 
 def test_details_cover_any_type(tmp_path):
-  camera, microphone, lidar = _list(tmp_path, json.dumps(_CATALOG))
+  mipi, _, microphone = _list(tmp_path, json.dumps(_CATALOG))
 
-  assert camera.details == _CATALOG["devices"][0]["camera"]
+  assert mipi.details == _MIPI
   assert microphone.camera is None
-  assert microphone.details == json.loads(microphone.details_json)
-  assert microphone.details == {"channels": 2, "nested": {"a": [1, 2]}}
-  microphone.details["channels"] = 1
-  assert microphone.details["channels"] == 2
-  assert lidar.details_json == "{}" and lidar.details == {}
+  assert microphone.details == json.loads(microphone.details_json) == _MIC
+  microphone.details["name"] = "changed"
+  assert microphone.details["name"] == _MIC["name"]
 
 
 @pytest.mark.parametrize(
@@ -129,22 +155,16 @@ def test_details_cover_any_type(tmp_path):
     [
         (200, "{", "ERROR_IO_PARSE", "JSON parsing failed"),
         (
-            200,
-            json.dumps(dict(_CATALOG, state="starting", ready=False, devices=[])),
-            "ERROR_PERIPHERAL_DAEMON_NOT_READY",
-            "simaai-sentinel.service",
-        ),
-        (
             404,
-            json.dumps({"error": "unknown endpoint"}),
+            json.dumps({"error": "unknown Sentinel API endpoint"}),
             "ERROR_PERIPHERAL_DAEMON_UNAVAILABLE",
             "sima-cli neat install sentinel",
         ),
         (
             503,
-            json.dumps({"error": "too_many_clients"}),
+            json.dumps({"error": "peripheral discovery is not running"}),
             "ERROR_PERIPHERAL_DAEMON_UNAVAILABLE",
-            "Sentinel reported: too_many_clients.",
+            "Sentinel reported: peripheral discovery is not running.",
         ),
     ],
 )

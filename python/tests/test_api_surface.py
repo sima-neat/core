@@ -1510,7 +1510,6 @@ def test_error_code_constants_present():
     "ERROR_ACCELERATOR_EXECUTION_FAILED": "infra.accelerator_execution_failed",
     "ERROR_PERIPHERAL_DAEMON_UNAVAILABLE": "infra.peripheral_daemon_unavailable",
     "ERROR_PERIPHERAL_DAEMON_TIMEOUT": "infra.peripheral_daemon_timeout",
-    "ERROR_PERIPHERAL_DAEMON_NOT_READY": "infra.peripheral_daemon_not_ready",
     "ERROR_DISPATCHER_UNAVAILABLE_LEGACY": "DispatcherUnavailable",
     "ERROR_INTERNAL_PLUGIN_FAILURE": "internal.plugin_failure",
   }

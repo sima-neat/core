@@ -569,9 +569,12 @@ add_pipeline_test(
   unit_peripheral_client_test
   ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_peripheral_client_test.cpp
 )
-# Embed the support rules so the installed test does not need the source tree.
-file(READ ${CMAKE_SOURCE_DIR}/src/peripherals/sentinel-support-rules.json.in _sentinel_rules)
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/sentinel_support_rules.inc "R\"json(${_sentinel_rules})json\"\n")
+# Embed the real DevKit capture so the installed test does not need the source tree.
+set(_devkit_capture ${CMAKE_CURRENT_SOURCE_DIR}/assets/peripherals/devkit-capture-2026-10-05.json)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_devkit_capture})
+file(READ ${_devkit_capture} _devkit_capture_json)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/sentinel_devkit_capture.inc
+  "R\"json(${_devkit_capture_json})json\"\n")
 target_include_directories(unit_peripheral_client_test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 set_property(TEST unit_peripheral_client_test APPEND PROPERTY LABELS "unit;peripherals")
 

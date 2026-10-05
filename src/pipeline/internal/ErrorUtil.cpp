@@ -60,7 +60,6 @@ bool is_framework_error_code(std::string_view code) {
       error_codes::kAcceleratorExecutionFailed,
       error_codes::kPeripheralDaemonUnavailable,
       error_codes::kPeripheralDaemonTimeout,
-      error_codes::kPeripheralDaemonNotReady,
       error_codes::kInternalPluginFailure,
       error_codes::kDispatcherUnavailableLegacy,
   };

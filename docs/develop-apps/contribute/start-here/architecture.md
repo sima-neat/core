@@ -974,13 +974,14 @@ diagnostics you can reproduce (`describe_backend()` + report).
 ### Camera allocation ownership
 
 SiMa Sentinel (`simaai-sentinel.service`), the board-local daemon, owns device
-discovery, the authoritative peripheral catalog, revisions, and the bounded
-`changes` log. Core does not link that implementation. Instead,
+discovery and the peripheral catalog, and reports hardware facts only. Core
+does not link that implementation. Instead,
 `simaai::neat::peripherals::list()` and `pyneat.peripherals.list()` are thin,
 stateless clients: each performs one bounded `GET /v1/peripherals` over
 Sentinel's versioned Unix-socket API, validates the response, and returns that
-snapshot. They never scan hardware, maintain a second cache, subscribe to
-events, or fall back when Sentinel is unavailable.
+snapshot. Core itself decides which camera modes `CameraInput` supports. The
+clients never scan hardware, maintain a second cache, subscribe to events, or
+fall back when Sentinel is unavailable.
 
 `CameraInput` places `neatcamerabridge` immediately after its camera caps and
 before any live queue. During negotiation the bridge answers the upstream

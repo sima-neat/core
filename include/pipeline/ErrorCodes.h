@@ -118,8 +118,6 @@ inline constexpr const char* kAcceleratorExecutionFailed = "infra.accelerator_ex
 inline constexpr const char* kPeripheralDaemonUnavailable = "infra.peripheral_daemon_unavailable";
 /// The peripheral daemon did not complete the bounded catalog request in time.
 inline constexpr const char* kPeripheralDaemonTimeout = "infra.peripheral_daemon_timeout";
-/// The peripheral daemon has not produced a usable initial catalog.
-inline constexpr const char* kPeripheralDaemonNotReady = "infra.peripheral_daemon_not_ready";
 /// Legacy spelling kept for compatibility with older reports. Prefer `kDispatcherUnavailable`.
 inline constexpr const char* kDispatcherUnavailableLegacy = "DispatcherUnavailable";
 

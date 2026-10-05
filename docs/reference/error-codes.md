@@ -72,7 +72,6 @@ The same values are available in both language APIs:
 | `infra.accelerator_execution_failed` | `error_codes::kAcceleratorExecutionFailed` | `pyneat.ERROR_ACCELERATOR_EXECUTION_FAILED` |
 | `infra.peripheral_daemon_unavailable` | `error_codes::kPeripheralDaemonUnavailable` | `pyneat.ERROR_PERIPHERAL_DAEMON_UNAVAILABLE` |
 | `infra.peripheral_daemon_timeout` | `error_codes::kPeripheralDaemonTimeout` | `pyneat.ERROR_PERIPHERAL_DAEMON_TIMEOUT` |
-| `infra.peripheral_daemon_not_ready` | `error_codes::kPeripheralDaemonNotReady` | `pyneat.ERROR_PERIPHERAL_DAEMON_NOT_READY` |
 | `DispatcherUnavailable` (legacy) | `error_codes::kDispatcherUnavailableLegacy` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE_LEGACY` |
 | `internal.plugin_failure` | `error_codes::kInternalPluginFailure` | `pyneat.ERROR_INTERNAL_PLUGIN_FAILURE` |
 
@@ -157,9 +156,8 @@ same code and `GraphReport` can surface when the first input materializes the se
 | --- | --- | --- |
 | `infra.dispatcher_unavailable` | Neat cannot acquire the accelerator runtime. | Confirm DevKit compatibility and stop workloads that exclusively own the accelerator. |
 | `infra.accelerator_execution_failed` | The accelerator cannot execute a model stage. | Restart the pipeline and reduce concurrent accelerator workloads. |
-| `infra.peripheral_daemon_unavailable` | The local SiMa Sentinel API socket is absent, refused, or busy, or the installed Sentinel is too old to serve the peripheral catalog. | Install or update Sentinel with `sima-cli neat install sentinel` or start `simaai-sentinel.service`, then inspect its journal. |
+| `infra.peripheral_daemon_unavailable` | The local SiMa Sentinel API socket is absent or refused, Sentinel's peripheral discovery is disabled or stopped, or the installed Sentinel is too old to serve the peripheral catalog. | Install or update Sentinel with `sima-cli neat install sentinel` or start `simaai-sentinel.service`, then inspect its journal. |
 | `infra.peripheral_daemon_timeout` | A bounded peripheral catalog request did not finish. | Check `simaai-sentinel.service` and provider health, then retry. |
-| `infra.peripheral_daemon_not_ready` | Sentinel has not completed a usable initial peripheral catalog. | Read the `simaai-sentinel.service` journal and correct the reported provider or device failure. |
 
 ## Internal failures
 

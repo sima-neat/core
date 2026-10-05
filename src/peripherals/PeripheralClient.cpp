@@ -1,5 +1,6 @@
 #include "peripherals/PeripheralCatalog.h"
 
+#include "nodes/io/CameraInput.h"
 #include "peripherals/internal/PeripheralClient.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/GraphReport.h"
@@ -32,7 +33,6 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using Deadline = Clock::time_point;
 
-constexpr std::uint64_t kSchemaVersion = 1;
 constexpr const char* kCatalogPath = "/v1/peripherals";
 constexpr std::size_t kMaximumHeaderBytes = 8192;
 
@@ -74,13 +74,6 @@ private:
   fail(error_codes::kPeripheralDaemonTimeout,
        "Timed out waiting for the Sentinel peripheral catalog. Check "
        "simaai-sentinel.service and its journal, then try again.");
-}
-
-// `subject` is "catalog" when Sentinel refuses and "catalog response" when Core does.
-[[noreturn]] void fail_too_large(std::string_view subject) {
-  fail(error_codes::kResponseTooLarge, "The Sentinel peripheral " + std::string(subject) +
-                                           " exceeded the 4 MiB v1 limit. Reduce the catalog "
-                                           "size or update Sentinel and Core together.");
 }
 
 [[noreturn]] void fail_connect(int error) {
@@ -226,7 +219,9 @@ ResponseHead parse_response_head(std::string_view value) {
       if (!parse_decimal(trim_ascii(line.substr(separator + 1)), length))
         fail_parse("Content-Length is not a non-negative decimal integer");
       if (length > kMaximumResponseBytes)
-        fail_too_large("catalog response");
+        fail(error_codes::kResponseTooLarge,
+             "The Sentinel peripheral catalog response exceeded the 4 MiB v1 limit. Reduce the "
+             "catalog size or update Sentinel and Core together.");
       content_length = length;
     } else if (equals_ignoring_case(name, "transfer-encoding")) {
       fail_parse("chunked HTTP responses are not part of the local v1 protocol");
@@ -293,17 +288,12 @@ const nlohmann::json& require_object(const nlohmann::json& value, std::string_vi
   return value;
 }
 
-std::string require_string(const nlohmann::json& object, const char* name,
-                           bool allow_empty = false) {
+std::string require_string(const nlohmann::json& object, const char* name) {
   auto value =
       require_field(object, name, &nlohmann::json::is_string, "a string").get<std::string>();
-  if (!allow_empty && value.empty())
+  if (value.empty())
     fail_parse("field '" + std::string(name) + "' must not be empty");
   return value;
-}
-
-bool require_bool(const nlohmann::json& object, const char* name) {
-  return require_field(object, name, &nlohmann::json::is_boolean, "a boolean").get<bool>();
 }
 
 std::uint64_t require_u64(const nlohmann::json& object, const char* name) {
@@ -340,17 +330,8 @@ std::optional<std::string> nullable_string(const nlohmann::json& object, const c
 
 peripherals::CatalogError parse_error(const nlohmann::json& value) {
   const auto& object = require_object(value, "catalog error");
-  return {require_string(object, "code"), require_string(object, "reason")};
-}
-
-peripherals::ProviderIssue parse_issue(const nlohmann::json& value) {
-  const auto& object = require_object(value, "provider issue");
-  return {
-      .provider = require_string(object, "provider"),
-      .code = require_string(object, "code"),
-      .reason = require_string(object, "reason"),
-      .retained_last_good = require_bool(object, "retained_last_good"),
-  };
+  return {require_string(object, "provider"), require_string(object, "code"),
+          require_string(object, "reason")};
 }
 
 peripherals::CameraSizeRange parse_size_range(const nlohmann::json& value) {
@@ -368,14 +349,65 @@ peripherals::CameraSizeRange parse_size_range(const nlohmann::json& value) {
   return range;
 }
 
-peripherals::CameraMode parse_mode(const nlohmann::json& value) {
+// A frame interval in seconds per frame.
+struct Interval {
+  std::uint64_t numerator = 0;
+  std::uint64_t denominator = 1;
+};
+
+bool shorter(Interval a, Interval b) {
+  return a.numerator * b.denominator < b.numerator * a.denominator;
+}
+
+Interval parse_fraction(const nlohmann::json& value) {
+  const auto& object = require_object(value, "frame interval");
+  return {require_u32(object, "numerator"), require_u32(object, "denominator")};
+}
+
+// The shortest and longest interval one V4L2 frame-interval entry covers, or
+// nothing for an unknown type or an inverted range, which the caller skips.
+std::optional<std::pair<Interval, Interval>> parse_interval(const nlohmann::json& value) {
+  const auto& object = require_object(value, "frame interval");
+  const std::string type = require_string(object, "type");
+  if (type == "discrete") {
+    const Interval interval = parse_fraction(object);
+    return std::pair{interval, interval};
+  }
+  if (type != "stepwise" && type != "continuous")
+    return std::nullopt;
+  const Interval minimum = parse_fraction(require_field(object, "minimum"));
+  const Interval maximum = parse_fraction(require_field(object, "maximum"));
+  if (shorter(maximum, minimum))
+    return std::nullopt;
+  return std::pair{minimum, maximum};
+}
+
+// Why CameraInput's default libcamera profile rejects a mode, or "" when it
+// accepts it. Rules are checked in order; the first failure is the reason.
+std::string rejection(const std::string& backend, const std::string& format, bool isp_output,
+                      bool lists_intervals, bool covers_default_rate) {
+  const CameraInputOptions defaults;
+  if (backend != "mipi")
+    return "CameraInput's default libcamera profile accepts MIPI cameras only. These rules do "
+           "not classify raw V4L2 profiles such as MetoakSimor (RAW8 1920x360, selected with "
+           "CameraInputOptions.profile and device).";
+  if (format != defaults.format)
+    return "CameraInput's default libcamera profile supports " + defaults.format + " output only.";
+  // A mode without intervals is not rejected: CameraInput sets the rate through caps.
+  if (lists_intervals && !covers_default_rate)
+    return "This mode does not advertise the " + std::to_string(defaults.framerate_num) + "/" +
+           std::to_string(defaults.framerate_den) +
+           " frame rate of CameraInput's default libcamera profile.";
+  if (!isp_output)
+    return "CameraInput's default libcamera profile requires an ISP output size; this resolution "
+           "is not one on this board.";
+  return {};
+}
+
+peripherals::CameraMode parse_mode(const nlohmann::json& value, const std::string& backend) {
   const auto& object = require_object(value, "camera mode");
   peripherals::CameraMode mode;
   mode.format = require_string(object, "format");
-  mode.framerate_num = require_u32(object, "framerate_num");
-  mode.framerate_den = require_u32(object, "framerate_den");
-  mode.supported = require_bool(object, "supported");
-  mode.reason = require_string(object, "reason", true);
 
   const bool has_width = object.contains("width");
   const bool has_height = object.contains("height");
@@ -388,23 +420,53 @@ peripherals::CameraMode parse_mode(const nlohmann::json& value) {
     mode.width = require_u32(object, "width");
     mode.height = require_u32(object, "height");
   }
-  if (!mode.supported && mode.reason.empty())
-    fail_parse("an unsupported camera mode must include a reason");
+
+  const auto isp_output = object.find("isp_output");
+  if (isp_output != object.end() && !isp_output->is_boolean())
+    fail_parse("field 'isp_output' must be a boolean when present");
+
+  const CameraInputOptions defaults;
+  const Interval default_interval{defaults.framerate_den, defaults.framerate_num};
+  std::optional<Interval> fastest;
+  bool lists_intervals = false;
+  bool covers_default_rate = false;
+  if (object.contains("frame_intervals")) {
+    for (const auto& size : require_array(object, "frame_intervals")) {
+      for (const auto& entry :
+           require_array(require_object(size, "frame interval size"), "intervals")) {
+        lists_intervals = true;
+        const auto interval = parse_interval(entry);
+        if (!interval)
+          continue;
+        const auto [shortest, longest] = *interval;
+        covers_default_rate = covers_default_rate || (!shorter(default_interval, shortest) &&
+                                                      !shorter(longest, default_interval));
+        if (!fastest || shorter(shortest, *fastest))
+          fastest = shortest;
+      }
+    }
+  }
+  if (fastest) {
+    mode.framerate_num = static_cast<std::uint32_t>(fastest->denominator);
+    mode.framerate_den = static_cast<std::uint32_t>(fastest->numerator);
+  }
+
+  mode.reason =
+      rejection(backend, mode.format, isp_output != object.end() && isp_output->get<bool>(),
+                lists_intervals, covers_default_rate);
+  mode.supported = mode.reason.empty();
   return mode;
 }
 
-peripherals::CameraDetails parse_camera(const nlohmann::json& value) {
-  const auto& object = require_object(value, "camera details");
+peripherals::CameraDetails parse_camera(const nlohmann::json& object) {
   peripherals::CameraDetails camera;
   camera.camera_name = nullable_string(object, "camera_name", false);
   camera.model = nullable_string(object, "model", false);
   camera.backend = require_string(object, "backend");
-  const auto& modes = require_field(object, "modes");
-  if (!modes.is_array())
-    fail_parse("camera field 'modes' must be an array");
+  const auto& modes = require_array(object, "modes");
   camera.modes.reserve(modes.size());
   for (const auto& mode : modes)
-    camera.modes.push_back(parse_mode(mode));
+    camera.modes.push_back(parse_mode(mode, camera.backend));
   return camera;
 }
 
@@ -413,15 +475,11 @@ peripherals::Peripheral parse_device(const nlohmann::json& value) {
   peripherals::Peripheral device{
       .id = require_string(object, "id"),
       .type = require_string(object, "type"),
-      .provider = require_string(object, "provider"),
       .camera = std::nullopt,
+      .details_json = object.dump(),
   };
-  // Invalid camera details fail the read; other types degrade to "{}" per device.
   if (device.type == "camera")
-    device.camera = parse_camera(require_field(object, "camera"));
-  const auto details = object.find(device.type);
-  if (details != object.end() && details->is_object())
-    device.details_json = details->dump();
+    device.camera = parse_camera(object);
   return device;
 }
 
@@ -433,42 +491,15 @@ peripherals::Catalog parse_catalog(const std::string& body) {
     fail_parse("JSON parsing failed: " + std::string(error.what()));
   }
   const auto& object = require_object(root, "catalog response");
-  const std::uint64_t schema_version = require_u64(object, "schema_version");
-  if (schema_version != kSchemaVersion) {
-    fail(error_codes::kRuntimeAbiMismatch,
-         "Peripheral catalog schema " + std::to_string(schema_version) +
-             " is incompatible with this Core build, which requires schema " +
-             std::to_string(kSchemaVersion) +
-             ". Install matching Core and Sentinel versions; update Sentinel with "
-             "`sima-cli neat install sentinel`.");
-  }
 
   peripherals::Catalog catalog;
-  catalog.instance_id = require_string(object, "instance_id");
-  catalog.state = require_string(object, "state");
-  if (catalog.state != "starting" && catalog.state != "ready" && catalog.state != "degraded")
-    fail_parse("field 'state' contains an unknown v1 value");
-  const bool ready = require_bool(object, "ready");
-  catalog.stale = require_bool(object, "stale");
   catalog.revision = require_u64(object, "revision");
-  catalog.sequence = require_u64(object, "sequence");
-  catalog.scan_sequence = require_u64(object, "scan_sequence");
-  catalog.last_success_at = nullable_string(object, "last_success_at", true);
-  catalog.last_attempt_at = nullable_string(object, "last_attempt_at", true);
+  catalog.observed_at = nullable_string(object, "observed_at", true);
 
-  const auto& error = require_field(object, "error");
-  if (!error.is_null())
-    catalog.error = parse_error(error);
-
-  const auto& issues = require_array(object, "issues");
-  std::set<std::string> issue_providers;
-  catalog.issues.reserve(issues.size());
-  for (const auto& value : issues) {
-    auto issue = parse_issue(value);
-    if (!issue_providers.insert(issue.provider).second)
-      fail_parse("provider issues contain a duplicate provider");
-    catalog.issues.push_back(std::move(issue));
-  }
+  const auto& errors = require_array(object, "errors");
+  catalog.errors.reserve(errors.size());
+  for (const auto& value : errors)
+    catalog.errors.push_back(parse_error(value));
 
   const auto& devices = require_array(object, "devices");
   std::set<std::string> device_ids;
@@ -478,20 +509,6 @@ peripherals::Catalog parse_catalog(const std::string& body) {
     if (!device_ids.insert(device.id).second)
       fail_parse("peripheral records contain a duplicate id");
     catalog.devices.push_back(std::move(device));
-  }
-
-  if (catalog.state == "ready" && !ready)
-    fail_parse("state 'ready' contradicts ready=false");
-  if (catalog.state == "starting" && ready)
-    fail_parse("state 'starting' contradicts ready=true");
-  if (!ready) {
-    std::string reason = "Sentinel has not produced an initial peripheral catalog";
-    if (catalog.error)
-      reason += ": " + catalog.error->reason;
-    else if (!catalog.issues.empty())
-      reason += ": " + catalog.issues.front().provider + ": " + catalog.issues.front().reason;
-    reason += ". Check simaai-sentinel.service and its journal, then retry.";
-    fail(error_codes::kPeripheralDaemonNotReady, std::move(reason));
   }
   return catalog;
 }
@@ -521,8 +538,6 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
   auto [status, body] = read_response(socket.get(), deadline);
   if (status != 200) {
     const std::string sentinel_error = error_from_body(body);
-    if (status == 500 && sentinel_error == "response_too_large")
-      fail_too_large("catalog");
     const std::string reported =
         sentinel_error.empty() ? std::string() : " Sentinel reported: " + sentinel_error + ".";
     if (status == 404) {
@@ -532,12 +547,16 @@ peripherals::Catalog list_from_socket(const std::string& socket_path,
                std::string(kCatalogPath) + ")." + reported +
                " Update Sentinel with `sima-cli neat install sentinel`, then try again.");
     }
-    const char* code =
-        status == 503 ? error_codes::kPeripheralDaemonUnavailable : error_codes::kIoParse;
-    fail(code, "Sentinel returned unexpected HTTP status " + std::to_string(status) +
-                   " for the peripheral catalog." + reported +
-                   " Update Sentinel with `sima-cli neat install sentinel` and check "
-                   "simaai-sentinel.service.");
+    if (status == 503) {
+      fail(error_codes::kPeripheralDaemonUnavailable,
+           "SiMa Sentinel's peripheral discovery is not running." + reported +
+               " Check simaai-sentinel.service and its journal.");
+    }
+    fail(error_codes::kIoParse,
+         "Sentinel returned unexpected HTTP status " + std::to_string(status) +
+             " for the peripheral catalog." + reported +
+             " Update Sentinel with `sima-cli neat install sentinel` and check "
+             "simaai-sentinel.service.");
   }
   return parse_catalog(body);
 }

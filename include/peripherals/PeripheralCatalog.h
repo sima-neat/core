@@ -12,18 +12,11 @@
 
 namespace simaai::neat::peripherals {
 
-/** A structured daemon or provider failure. */
+/** A provider that failed in Sentinel's latest scan. */
 struct CatalogError {
-  std::string code;
-  std::string reason;
-};
-
-/** A provider-scoped refresh problem reported by the daemon. */
-struct ProviderIssue {
   std::string provider;
   std::string code;
   std::string reason;
-  bool retained_last_good = false;
 };
 
 /** A range of image sizes advertised by a camera backend. */
@@ -36,15 +29,18 @@ struct CameraSizeRange {
   std::uint32_t step_height = 1;
 };
 
-/** One daemon-classified camera mode. */
+/** One camera mode, classified by Core for CameraInput's default profile. */
 struct CameraMode {
   std::string format;
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   std::optional<CameraSizeRange> size_range;
+  /** Fastest rate in the mode's frame intervals; 0/1 when it lists none. */
   std::uint32_t framerate_num = 0;
   std::uint32_t framerate_den = 1;
+  /** Whether CameraInput's default libcamera profile accepts this mode. */
   bool supported = false;
+  /** Why the mode is not supported; empty when it is. */
   std::string reason;
 
   bool is_range() const noexcept {
@@ -52,7 +48,7 @@ struct CameraMode {
   }
 };
 
-/** Camera-specific details nested under a peripheral record. */
+/** Camera fields of a peripheral record. */
 struct CameraDetails {
   /** Exact value accepted by CameraInputOptions when the backend is selectable. */
   std::optional<std::string> camera_name;
@@ -65,44 +61,31 @@ struct CameraDetails {
 struct Peripheral {
   std::string id;
   std::string type;
-  std::string provider;
   /** Typed camera details; set only when `type == "camera"`. */
   std::optional<CameraDetails> camera;
   /**
-   * Details for any peripheral type, as compact JSON.
+   * The whole device record Sentinel published, as compact JSON.
    *
-   * Holds the JSON object that Sentinel publishes under the record key named
-   * by `type` (for example `"camera"`, `"microphone"`, or `"lidar"`), or
-   * `"{}"` when that key is absent, null, or (for a type other than camera) not
-   * an object. Every field and value is preserved, including fields this Core
-   * release does not know; the text is re-serialized, so key order and
-   * whitespace may differ from the daemon response.
-   *
-   * This is the authoritative way to read peripheral types for which Core has
-   * no typed struct: a new device type is usable as soon as Sentinel reports
-   * it. Cameras carry both this field and the typed `camera` member.
+   * Every field and value is preserved, including fields this Core release
+   * does not know; the text is re-serialized, so key order and whitespace may
+   * differ from the daemon response. This is the way to read peripheral types
+   * for which Core has no typed struct, such as microphones: a new device type
+   * is usable as soon as Sentinel reports it.
    */
   std::string details_json = "{}";
 };
 
 /**
- * One internally consistent daemon catalog snapshot.
+ * One Sentinel catalog snapshot.
  *
- * The object is directly iterable over `devices` while retaining the daemon
- * identity, revision, freshness, and provider diagnostics that belong to the
- * same snapshot.
+ * The object is directly iterable over `devices`.
  */
 struct Catalog {
-  std::string instance_id;
-  std::string state;
-  bool stale = false;
+  /** Changes whenever `devices` or `errors` change; compare for equality only. */
   std::uint64_t revision = 0;
-  std::uint64_t sequence = 0;
-  std::uint64_t scan_sequence = 0;
-  std::optional<std::string> last_success_at;
-  std::optional<std::string> last_attempt_at;
-  std::optional<CatalogError> error;
-  std::vector<ProviderIssue> issues;
+  /** When the scan behind this snapshot started; unset until the first scan completes. */
+  std::optional<std::string> observed_at;
+  std::vector<CatalogError> errors;
   std::vector<Peripheral> devices;
 
   using iterator = std::vector<Peripheral>::iterator;
@@ -141,14 +124,15 @@ struct Catalog {
 };
 
 /**
- * Read and validate one snapshot from the local SiMa Sentinel daemon.
+ * Read one snapshot from the local SiMa Sentinel daemon.
  *
  * This function performs exactly one bounded `GET /v1/peripherals` request on
- * `/run/simaai-sentinel/api.sock`. It never scans hardware, caches results,
- * connects over SSH, or falls back when Sentinel is unavailable. Failures
- * throw `NeatError` with a structured `GraphReport::error_code`; when
- * Sentinel is not running, the message asks the user to install it with
- * `sima-cli neat install sentinel` or start `simaai-sentinel.service`.
+ * `/run/simaai-sentinel/api.sock` and classifies each camera mode for
+ * CameraInput. It never scans hardware, caches results, connects over SSH, or
+ * falls back when Sentinel is unavailable. Failures throw `NeatError` with a
+ * structured `GraphReport::error_code`; when Sentinel is not running, the
+ * message asks the user to install it with `sima-cli neat install sentinel`
+ * or start `simaai-sentinel.service`.
  */
 Catalog list();
 

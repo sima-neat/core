@@ -1,6 +1,5 @@
 #include "peripherals/PeripheralCatalog.h"
 
-#include "nodes/io/CameraInput.h"
 #include "peripherals/internal/PeripheralClient.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
@@ -19,6 +18,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -32,9 +32,22 @@ namespace {
 
 using namespace std::chrono_literals;
 using json = nlohmann::json;
+using simaai::neat::peripherals::CameraMode;
 using simaai::neat::peripherals::Catalog;
 using simaai::neat::peripherals_internal::list_from_socket;
 namespace codes = simaai::neat::error_codes;
+
+// The reasons Core gives for CameraInput's default libcamera profile.
+constexpr const char* kBackendReason =
+    "CameraInput's default libcamera profile accepts MIPI cameras only. These rules do not "
+    "classify raw V4L2 profiles such as MetoakSimor (RAW8 1920x360, selected with "
+    "CameraInputOptions.profile and device).";
+constexpr const char* kFormatReason =
+    "CameraInput's default libcamera profile supports NV12 output only.";
+constexpr const char* kFramerateReason =
+    "This mode does not advertise the 30/1 frame rate of CameraInput's default libcamera profile.";
+constexpr const char* kIspReason = "CameraInput's default libcamera profile requires an ISP output "
+                                   "size; this resolution is not one on this board.";
 
 void require(bool condition, const std::string& message) {
   if (!condition)
@@ -130,48 +143,188 @@ void require_error(Function&& function, const char* code, std::string_view fragm
   throw std::runtime_error("expected NeatError " + std::string(code));
 }
 
-// Sentinel's `changes`, `support`, and provider fields such as `connection`
-// are not part of the typed v1 contract and must be tolerated.
-json base_catalog() {
-  return json::parse(R"({
-    "schema_version": 1, "instance_id": "daemon-a", "state": "ready", "ready": true,
-    "stale": false, "revision": 7, "sequence": 11, "scan_sequence": 13,
-    "last_success_at": "2026-10-01T01:02:03Z", "last_attempt_at": "2026-10-01T01:02:04Z",
-    "error": null, "issues": [], "changes": [], "support": {"state": "applied"},
-    "devices": [
-      {"id": "camera:imx477 5-001a", "type": "camera", "provider": "daemon.camera.mipi",
-       "camera": {"camera_name": "imx477 5-001a", "model": "imx477", "backend": "mipi",
-                  "connection": "mipi-csi2", "modes": [
-         {"format": "NV12", "width": 1920, "height": 1080, "framerate_num": 30,
-          "framerate_den": 1, "supported": true, "reason": "", "isp_output": true},
-         {"format": "NV12", "size_range": {"min_width": 640, "min_height": 480,
-          "max_width": 1920, "max_height": 1080, "step_width": 16, "step_height": 8},
-          "framerate_num": 30, "framerate_den": 1, "supported": false,
-          "reason": "range is advisory"}]}},
-      {"id": "lidar:1", "type": "lidar", "provider": "daemon.lidar", "lidar": {"points": 42}}]
-  })");
+// A real Sentinel response from a Modalix DevKit with an IMX477 MIPI camera
+// and a Logitech C920 (camera and microphone), captured 2026-10-05.
+json devkit_capture() {
+  return json::parse(
+#include "sentinel_devkit_capture.inc"
+  );
 }
 
-void test_success() {
-  const auto body = base_catalog();
-  const auto catalog = list_from(http(body.dump()));
-  require(catalog.instance_id == "daemon-a" && catalog.state == "ready" && !catalog.stale &&
-              catalog.revision == 7 && catalog.sequence == 11 && catalog.scan_sequence == 13 &&
-              catalog.last_attempt_at == "2026-10-01T01:02:04Z" && !catalog.error &&
-              catalog.issues.empty() && catalog.size() == 2 && catalog.begin()->id == catalog[0].id,
+void test_devkit_capture() {
+  const auto body = devkit_capture();
+  const auto catalog = list_from(http(body.dump()), 4096);
+  require(catalog.revision == 1791164913635 &&
+              catalog.observed_at == "2026-10-05T01:48:33.635147447Z" && catalog.errors.empty() &&
+              catalog.size() == 3,
           "catalog metadata was not preserved");
-  const auto& camera = *catalog[0].camera;
-  const auto& range = *camera.modes[1].size_range;
-  require(camera.camera_name == "imx477 5-001a" && camera.model == "imx477" &&
-              camera.backend == "mipi" && camera.modes.size() == 2 &&
-              camera.modes[0].width == 1920 && camera.modes[0].height == 1080 &&
-              camera.modes[0].framerate_num == 30 && camera.modes[0].supported &&
-              camera.modes[1].is_range() && range.min_width == 640 && range.max_height == 1080 &&
-              range.step_width == 16 && range.step_height == 8 && !camera.modes[1].supported &&
-              camera.modes[1].reason == "range is advisory",
-          "camera details were not mapped exactly");
-  require(json::parse(catalog[0].details_json) == body["devices"][0]["camera"],
-          "camera details_json must preserve every daemon field");
+  for (std::size_t index = 0; index < catalog.size(); ++index)
+    require(json::parse(catalog[index].details_json) == body["devices"][index],
+            "details_json must preserve the whole record of " + catalog[index].id);
+
+  // MIPI: the NV12 ISP sizes are supported; the ISP lists no frame intervals.
+  const auto& mipi = *catalog[0].camera;
+  require(mipi.camera_name == "imx477 5-001a" && mipi.model == "imx477" && mipi.backend == "mipi" &&
+              mipi.modes.size() == 9,
+          "MIPI camera fields were not mapped");
+  for (const auto& mode : mipi.modes) {
+    const bool nv12 = mode.format == "NV12";
+    require(mode.supported == nv12 && mode.reason == (nv12 ? "" : kFormatReason) &&
+                mode.framerate_num == 0 && mode.framerate_den == 1 && !mode.is_range(),
+            "MIPI mode " + mode.format + " was misclassified");
+  }
+
+  // USB: never supported by the default profile; the rate is the fastest interval.
+  const auto& usb = *catalog[1].camera;
+  require(!usb.camera_name && usb.model == "HD Pro Webcam C920" && usb.backend == "v4l2" &&
+              usb.modes.size() == 35,
+          "USB camera fields were not mapped");
+  for (const auto& mode : usb.modes)
+    require(!mode.supported && mode.reason == kBackendReason, "a USB mode was supported");
+  const auto rate = [&](std::string_view format, std::uint32_t width, std::uint32_t height) {
+    const auto mode = std::find_if(usb.modes.begin(), usb.modes.end(), [&](const CameraMode& m) {
+      return m.format == format && m.width == width && m.height == height;
+    });
+    require(mode != usb.modes.end(), "missing USB mode");
+    return std::to_string(mode->framerate_num) + "/" + std::to_string(mode->framerate_den);
+  };
+  require(rate("MJPG", 1920, 1080) == "30/1" && rate("YUYV", 1600, 896) == "15/2" &&
+              rate("YUYV", 2560, 1472) == "2/1",
+          "USB frame rates must be the fastest advertised interval");
+
+  require(catalog[2].type == "microphone" && !catalog[2].camera,
+          "a microphone must have no camera details");
+}
+
+// One MIPI camera with one mode; `edit` changes the camera record.
+CameraMode classify(const std::function<void(json&)>& edit) {
+  json camera = {
+      {"type", "camera"},
+      {"id", "camera:imx477 5-001a"},
+      {"backend", "mipi"},
+      {"camera_name", "imx477 5-001a"},
+      {"modes",
+       json::array(
+           {{{"format", "NV12"}, {"width", 1920}, {"height", 1080}, {"isp_output", true}}})}};
+  edit(camera);
+  const json body = {{"revision", 1},
+                     {"observed_at", "2026-10-05T00:00:00Z"},
+                     {"devices", json::array({camera})},
+                     {"errors", json::array()}};
+  return list_from(http(body.dump()), 4096)[0].camera->modes.at(0);
+}
+
+json intervals(json list) {
+  return json::array({{{"width", 1920}, {"height", 1080}, {"intervals", std::move(list)}}});
+}
+
+json discrete(int numerator, int denominator) {
+  return {{"type", "discrete"}, {"numerator", numerator}, {"denominator", denominator}};
+}
+
+json range(const char* type, std::pair<int, int> minimum, std::pair<int, int> maximum) {
+  const auto fraction = [](std::pair<int, int> value) {
+    return json{{"numerator", value.first}, {"denominator", value.second}};
+  };
+  return {{"type", type},
+          {"minimum", fraction(minimum)},
+          {"maximum", fraction(maximum)},
+          {"step", fraction({1, 1000})}};
+}
+
+void test_classification_rules() {
+  const struct {
+    const char* name;
+    std::function<void(json&)> edit;
+    const char* reason;
+    std::uint32_t num;
+    std::uint32_t den;
+  } cases[] = {
+      {"no intervals", [](json&) {}, "", 0, 1},
+      {"v4l2 backend", [](json& c) { c["backend"] = "v4l2"; }, kBackendReason, 0, 1},
+      {"backend before format",
+       [](json& c) {
+         c["backend"] = "v4l2";
+         c["modes"][0]["format"] = "YUYV";
+       },
+       kBackendReason, 0, 1},
+      {"format", [](json& c) { c["modes"][0]["format"] = "AR24"; }, kFormatReason, 0, 1},
+      {"discrete 30",
+       [](json& c) { c["modes"][0]["frame_intervals"] = intervals({discrete(1, 30)}); }, "", 30, 1},
+      {"discrete 2/60",
+       [](json& c) { c["modes"][0]["frame_intervals"] = intervals({discrete(2, 60)}); }, "", 60, 2},
+      {"discrete without 30",
+       [](json& c) {
+         c["modes"][0]["frame_intervals"] = intervals({discrete(1, 15), discrete(1, 60)});
+       },
+       kFramerateReason, 60, 1},
+      {"stepwise containing 30",
+       [](json& c) {
+         c["modes"][0]["frame_intervals"] = intervals({range("stepwise", {1, 60}, {1, 15})});
+       },
+       "", 60, 1},
+      {"continuous at its bound",
+       [](json& c) {
+         c["modes"][0]["frame_intervals"] = intervals({range("continuous", {1, 30}, {1, 5})});
+       },
+       "", 30, 1},
+      {"continuous without 30",
+       [](json& c) {
+         c["modes"][0]["frame_intervals"] = intervals({range("continuous", {1, 120}, {1, 60})});
+       },
+       kFramerateReason, 120, 1},
+      {"rate before ISP",
+       [](json& c) {
+         c["modes"][0]["frame_intervals"] = intervals({discrete(1, 15)});
+         c["modes"][0].erase("isp_output");
+       },
+       kFramerateReason, 15, 1},
+      // Unknown types and inverted ranges are skipped: they neither cover 30/1
+      // nor set the rate, but the mode still lists intervals.
+      {"unknown interval type skipped",
+       [](json& c) {
+         json unknown = discrete(1, 30);
+         unknown["type"] = "future";
+         c["modes"][0]["frame_intervals"] = intervals({unknown, discrete(1, 15)});
+       },
+       kFramerateReason, 15, 1},
+      {"inverted range skipped",
+       [](json& c) {
+         c["modes"][0]["frame_intervals"] =
+             intervals({range("stepwise", {1, 15}, {1, 60}), discrete(1, 10)});
+       },
+       kFramerateReason, 10, 1},
+      {"only skipped intervals",
+       [](json& c) {
+         c["modes"][0]["frame_intervals"] = intervals({range("continuous", {1, 15}, {1, 60})});
+       },
+       kFramerateReason, 0, 1},
+      {"no ISP output", [](json& c) { c["modes"][0].erase("isp_output"); }, kIspReason, 0, 1},
+      {"ISP output false", [](json& c) { c["modes"][0]["isp_output"] = false; }, kIspReason, 0, 1},
+  };
+  for (const auto& test_case : cases) {
+    const auto mode = classify(test_case.edit);
+    require(mode.supported == (std::string_view(test_case.reason).empty()) &&
+                mode.reason == test_case.reason && mode.framerate_num == test_case.num &&
+                mode.framerate_den == test_case.den,
+            std::string("classification case failed: ") + test_case.name + " (got '" + mode.reason +
+                "', " + std::to_string(mode.framerate_num) + "/" +
+                std::to_string(mode.framerate_den) + ")");
+  }
+
+  // Size ranges are parsed for any backend.
+  const auto ranged = classify([](json& c) {
+    c["backend"] = "v4l2";
+    c["modes"][0].erase("width");
+    c["modes"][0].erase("height");
+    c["modes"][0]["size_range"] = {{"type", "stepwise"}, {"min_width", 640},   {"min_height", 480},
+                                   {"max_width", 1920},  {"max_height", 1080}, {"step_width", 16},
+                                   {"step_height", 8}};
+  });
+  require(ranged.is_range() && ranged.size_range->min_width == 640 &&
+              ranged.size_range->max_height == 1080 && ranged.size_range->step_width == 16 &&
+              ranged.size_range->step_height == 8 && ranged.reason == kBackendReason,
+          "size ranges were not mapped");
 }
 
 // Catalog is a mutable and const container over `devices`.
@@ -199,46 +352,21 @@ void test_catalog_container_api() {
           "catalog iterators and indexing must address devices");
 }
 
-void test_details_for_any_type() {
-  auto body = base_catalog();
-  const auto microphone = json::parse(R"({"channels": 2, "nested": {"a": [1, 2]},
-                                          "gain_db": -3.5, "big": 18446744073709551615})");
-  body["devices"][1]["lidar"] = json::array({1, 2});
-  body["devices"].push_back(
-      {{"id", "mic:1"}, {"type", "microphone"}, {"provider", "alsa"}, {"microphone", microphone}});
-  body["devices"].push_back({{"id", "imu:1"}, {"type", "imu"}, {"provider", "imu"}});
-  body["devices"].push_back(
-      {{"id", "radar:1"}, {"type", "radar"}, {"provider", "radar"}, {"radar", nullptr}});
-  const auto catalog = list_from(http(body.dump()), 64);
+void test_errors_and_first_scan() {
+  auto failed = devkit_capture();
+  failed["errors"] = json::array({{{"provider", "camera.v4l2"},
+                                   {"code", "io.permission_denied"},
+                                   {"reason", "permission denied"}}});
+  const auto catalog = list_from(http(failed.dump()), 4096);
+  require(catalog.errors.size() == 1 && catalog.errors[0].provider == "camera.v4l2" &&
+              catalog.errors[0].code == "io.permission_denied" &&
+              catalog.errors[0].reason == "permission denied" && catalog.size() == 3,
+          "provider errors and retained devices must be returned together");
 
-  // Non-object, absent, and null details degrade to "{}" for that device only.
-  const json expected[] = {body["devices"][0]["camera"], json::object(), microphone, json::object(),
-                           json::object()};
-  require(catalog.size() == 5, "every peripheral type must remain in the catalog");
-  for (std::size_t index = 0; index < catalog.size(); ++index)
-    require(json::parse(catalog[index].details_json) == expected[index] &&
-                catalog[index].camera.has_value() == (index == 0),
-            "details_json mismatch for " + catalog[index].id);
-}
-
-void test_stale_and_empty_catalogs() {
-  auto stale = base_catalog();
-  stale["state"] = "degraded";
-  stale["stale"] = true;
-  stale["error"] = {{"code", "peripherals.discovery_failed"}, {"reason", "camera scan failed"}};
-  stale["issues"] = json::array({{{"provider", "daemon.camera.mipi"},
-                                  {"code", "io.permission_denied"},
-                                  {"reason", "permission denied"},
-                                  {"retained_last_good", true}}});
-  const auto catalog = list_from(http(stale.dump()), 64);
-  require(catalog.stale && catalog.error->code == "peripherals.discovery_failed" &&
-              catalog.issues.size() == 1 && catalog.issues[0].retained_last_good &&
-              catalog.size() == 2,
-          "stale last-good data and diagnostics must be returned together");
-
-  auto empty = base_catalog();
-  empty["devices"] = json::array();
-  require(list_from(http(empty.dump()), 64).empty(), "a ready empty catalog must succeed");
+  const auto first = list_from(
+      http(R"({"revision": 1791164913635, "observed_at": null, "devices": [], "errors": []})"));
+  require(first.empty() && !first.observed_at && first.revision == 1791164913635,
+          "a catalog before the first scan must succeed with observed_at unset");
 }
 
 void test_connection_failures() {
@@ -269,10 +397,11 @@ void test_connection_failures() {
 
 void test_protocol_failures() {
   const auto edited = [](auto edit) {
-    auto body = base_catalog();
+    auto body = devkit_capture();
     edit(body);
     return http(body.dump());
   };
+  const auto mode = [](json& body) -> json& { return body["devices"][1]["modes"][0]; };
   const struct {
     std::string response;
     const char* code;
@@ -284,105 +413,69 @@ void test_protocol_failures() {
            std::to_string(simaai::neat::peripherals_internal::kMaximumResponseBytes + 1) +
            "\r\n\r\n",
        codes::kResponseTooLarge, "catalog response exceeded the 4 MiB"},
-      {http(R"({"error":"response_too_large"})", 500), codes::kResponseTooLarge,
-       "catalog exceeded the 4 MiB"},
       {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-length: 2\r\n\r\n{}", codes::kIoParse,
        "duplicate Content-Length headers"},
       {"HTTP/1.1 200 OK\r\nContent-Length: +2\r\n\r\n{}", codes::kIoParse,
        "Content-Length is not a non-negative decimal integer"},
       {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTRANSFER-ENCODING: chunked\r\n\r\n{}",
        codes::kIoParse, "chunked HTTP responses"},
-      {edited([](json& body) { body["last_attempt_at"] = 1; }), codes::kIoParse,
-       "field 'last_attempt_at' must be a string or null"},
-      {edited([](json& body) { body["last_success_at"] = ""; }), codes::kIoParse,
-       "field 'last_success_at' must not be empty"},
-      {edited([](json& body) { body.erase("last_success_at"); }), codes::kIoParse,
-       "missing required field 'last_success_at'"},
-      {edited([](json& body) { body["devices"][0]["camera"]["model"] = false; }), codes::kIoParse,
+      {edited([](json& body) { body["observed_at"] = 1; }), codes::kIoParse,
+       "field 'observed_at' must be a string or null"},
+      {edited([](json& body) { body.erase("observed_at"); }), codes::kIoParse,
+       "missing required field 'observed_at'"},
+      {edited([](json& body) { body["errors"] = json::array({{{"code", "x"}, {"reason", "y"}}}); }),
+       codes::kIoParse, "missing required field 'provider'"},
+      {edited([](json& body) { body["devices"][1] = body["devices"][0]; }), codes::kIoParse,
+       "duplicate id"},
+      {edited([](json& body) { body["devices"][0]["model"] = false; }), codes::kIoParse,
        "field 'model' must be a string when present"},
-      {edited([](json& body) { body["devices"][0]["camera"]["modes"] = json::object(); }),
-       codes::kIoParse, "camera field 'modes' must be an array"},
-      {edited([](json& body) { body["schema_version"] = 2; }), codes::kRuntimeAbiMismatch,
-       "matching Core"},
-      {edited([](json& body) { body["devices"][0].erase("provider"); }), codes::kIoParse,
-       "'provider'"},
-      {edited([](json& body) { body["devices"][0]["camera"] = json::array(); }), codes::kIoParse,
-       "camera details must be an object"},
-      {edited([](json& body) {
-         body["state"] = "starting";
-         body["ready"] = false;
-         body["error"] = {{"code", "io.backend_unavailable"}, {"reason", "no camera backend"}};
-       }),
-       codes::kPeripheralDaemonNotReady, "no camera backend"},
-      {http(R"({"error":"too_many_clients"})", 503), codes::kPeripheralDaemonUnavailable,
-       "Sentinel reported: too_many_clients."},
-      {http(R"({"error":"unknown endpoint"})", 404), codes::kPeripheralDaemonUnavailable,
-       "Sentinel reported: unknown endpoint. Update Sentinel with `sima-cli neat install "
-       "sentinel`"},
+      {edited([](json& body) { body["devices"][0]["modes"] = json::object(); }), codes::kIoParse,
+       "field 'modes' must be an array"},
+      {edited([&](json& body) { mode(body)["frame_intervals"] = json::object(); }), codes::kIoParse,
+       "field 'frame_intervals' must be an array"},
+      {edited([](json& body) { body["devices"][0]["modes"][0]["isp_output"] = 1; }),
+       codes::kIoParse, "field 'isp_output' must be a boolean when present"},
+      {http(R"({"error":"peripheral discovery is not running"})", 503),
+       codes::kPeripheralDaemonUnavailable,
+       "Sentinel reported: peripheral discovery is not running."},
+      {http(R"({"error":"unknown Sentinel API endpoint"})", 404),
+       codes::kPeripheralDaemonUnavailable,
+       "Sentinel reported: unknown Sentinel API endpoint. Update Sentinel with `sima-cli neat "
+       "install sentinel`"},
   };
   for (const auto& test_case : cases)
-    require_error([&] { (void)list_from(test_case.response, 64); }, test_case.code,
+    require_error([&] { (void)list_from(test_case.response, 4096); }, test_case.code,
                   test_case.fragment);
 
+  // A skipped interval keeps the rest of the device and catalog.
+  auto skipped = devkit_capture();
+  mode(skipped)["frame_intervals"][0]["intervals"][0]["type"] = "future";
+  mode(skipped)["frame_intervals"][0]["intervals"].push_back(range("stepwise", {1, 5}, {1, 30}));
+  const auto kept = list_from(http(skipped.dump()), 4096);
+  require(kept.size() == 3 && kept[1].camera->modes.size() == 35 &&
+              kept[1].camera->modes[0].framerate_num == 24 &&
+              json::parse(kept[1].details_json) == skipped["devices"][1],
+          "a skipped frame interval must not drop the device or catalog");
+
   // Header names compare case-insensitively.
-  const std::string body = base_catalog().dump();
+  const std::string body = devkit_capture().dump();
   require(list_from("HTTP/1.1 200 OK\r\nCONTENT-length: " + std::to_string(body.size()) +
-                    "\r\n\r\n" + body)
-                  .size() == 2,
+                        "\r\n\r\n" + body,
+                    4096)
+                  .size() == 3,
           "Content-Length must match case-insensitively");
-}
-
-// Sentinel classifies camera modes with the rules Core installs; keep them in
-// step with CameraInput's defaults and scoped to its default profile.
-void test_support_rules_match_camera_input_defaults() {
-  const auto rules = json::parse(
-#include "sentinel_support_rules.inc"
-  );
-  const auto& accepted_formats = rules.at("camera").at("formats").at("accept");
-  const auto& framerates = rules.at("camera").at("framerates");
-  const auto& rate = framerates.at("accept");
-  const simaai::neat::CameraInputOptions defaults;
-  const std::string default_rate =
-      std::to_string(defaults.framerate_num) + "/" + std::to_string(defaults.framerate_den);
-  require(rules.at("format") == 1 && rules.at("source") == "neat-core @SIMANEAT_VERSION@" &&
-              std::find(accepted_formats.begin(), accepted_formats.end(), defaults.format) !=
-                  accepted_formats.end() &&
-              rate.size() == 1 &&
-              rate[0].at("num").get<std::uint64_t>() * defaults.framerate_den ==
-                  defaults.framerate_num * rate[0].at("den").get<std::uint64_t>() &&
-              framerates.at("reason").get<std::string>().find(default_rate) != std::string::npos,
-          "Sentinel support rules drifted from CameraInput's defaults");
-
-  // The rules classify only the default libcamera profile. Format 1 cannot
-  // express a second profile, so every reason names that scope and the backend
-  // reason says the MetoakSimor raw V4L2 profile is not classified.
-  const auto& camera = rules.at("camera");
-  require(defaults.profile == simaai::neat::CameraProfile::Default &&
-              camera.at("backends").at("accept") == json::array({"mipi"}) &&
-              camera.at("formats").at("accept") == json::array({"NV12"}),
-          "Sentinel support rules must describe only the default libcamera profile");
-  for (const auto* rule : {"backends", "formats", "framerates", "isp_output"}) {
-    require(camera.at(rule).at("reason").get<std::string>().find("default libcamera profile") !=
-                std::string::npos,
-            std::string("support rule reason must name the default profile: ") + rule);
-  }
-  const auto backend = camera.at("backends").at("reason").get<std::string>();
-  require(backend.find("MetoakSimor") != std::string::npos &&
-              backend.find("do not classify") != std::string::npos,
-          "backend reason must say raw V4L2 profiles are not classified");
 }
 
 } // namespace
 
 int main() {
   try {
-    test_success();
+    test_devkit_capture();
+    test_classification_rules();
     test_catalog_container_api();
-    test_details_for_any_type();
-    test_stale_and_empty_catalogs();
+    test_errors_and_first_scan();
     test_connection_failures();
     test_protocol_failures();
-    test_support_rules_match_camera_input_defaults();
     std::cout << "unit_peripheral_client_test: PASS\n";
     return 0;
   } catch (const std::exception& error) {
