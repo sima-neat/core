@@ -1,4 +1,5 @@
 #include "PcieModelFactsReaderInternal.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 
 #include <cstdint>
 #include <iostream>
@@ -9,6 +10,7 @@
 
 namespace pcie_internal = simaai::neat::pcie::internal;
 namespace mpk = simaai::neat::pipeline_internal::sima;
+namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 
 namespace {
 
@@ -158,6 +160,7 @@ mpk::MpkContract mla_only_contract(const std::size_t input_count = 1, const bool
   }
   const std::size_t mla = contract.plugins.size();
   contract.plugins.push_back(stage("MLA_0", "mla", {pack ? packed : quantized[0]}, {carrier}));
+  contract.plugins[mla].processor = "MLA";
   contract.plugins.push_back(
       stage("MLA_0_ofm_unpack_transform", "unpack_transform", {carrier}, {unpack_0, unpack_1}));
   contract.plugins.push_back(stage(slice_0.name, "slice_transform", {unpack_0}, {slice_0}));
@@ -401,6 +404,98 @@ void test_mla_only_rejects_unusable_output_geometry() {
                    "a head without a dequantize stage must be rejected");
 }
 
+// One cast feeds an MLA whose two outputs are published directly. The MPK
+// lists them as 16 then 32 bytes; ofm_extents gives the executable port order.
+sc::MpkDecodeResult decode_terminal_mla(const std::string& manifest,
+                                        const std::vector<std::uint64_t>& ofm_extents) {
+  mpk::MlaElfIoTopology topology;
+  topology.valid = true;
+  topology.ifm_symbol_names = {"data.ifm.persistent.MLA_0/input0.b0"};
+  topology.ifm_extent_bytes = {8U};
+  for (std::size_t i = 0; i < ofm_extents.size(); ++i) {
+    topology.ofm_symbol_names.push_back("data.ofm.persistent.MLA_0/output" + std::to_string(i) +
+                                        ".b0");
+  }
+  topology.ofm_extent_bytes = ofm_extents;
+  return sc::MpkDecoder{}.decode_json(manifest, topology, "synthetic_mpk.json");
+}
+
+void test_terminal_mla_outputs_follow_executable_port_order() {
+  const std::string manifest = R"json({
+    "name":"terminal-mla","model_sdk_version":"3.0.0",
+    "input_nodes":[{"name":"input","size":16}],
+    "plugins":[
+      {"name":"cast0","sequence":1,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+         "kernel":"cast_transform","params":{"out_dtype":"bfloat16",
+           "input_shapes":[[1,4]],"output_shapes":[[1,4]]}},
+       "input_nodes":[{"name":"input","size":16}],
+       "output_nodes":[{"name":"cast0","size":8}]},
+      {"name":"MLA_0","sequence":2,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+         "number_of_quads_to_user":4},
+       "input_nodes":[{"name":"cast0","size":8}],
+       "output_nodes":[{"name":"head_a","size":16},{"name":"head_b","size":32}],
+       "resources":{"executable":"synthetic_mla.elf"}},
+      {"name":"publish","sequence":3,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+         "kernel":"pass_through","params":{}},
+       "input_nodes":[{"name":"head_a","size":16},{"name":"head_b","size":32}],
+       "output_nodes":[{"name":"pass_through_out_0","size":16},
+                       {"name":"pass_through_out_1","size":32}]}
+    ]
+  })json";
+  std::string error;
+  const auto contract =
+      mpk::load_mpk_contract_from_json(manifest, "synthetic/etc/synthetic_mpk.json", &error);
+  require(contract.has_value(), "terminal MLA contract must load: " + error);
+
+  const auto natural = decode_terminal_mla(manifest, {16U, 32U});
+  require(static_cast<bool>(natural), "terminal MLA in MPK port order must decode");
+  auto facts = pcie_internal::detail::read_model_facts(*contract);
+  pcie_internal::detail::apply_execution_plan(*natural.plan, &facts);
+  require(facts.outputs.size() == 2U && facts.outputs[0].physical_index == 0 &&
+              facts.outputs[0].payload_offset == 0U && facts.outputs[1].payload_offset == 16U,
+          "outputs already in executable port order keep their packed layout");
+
+  const auto reordered = decode_terminal_mla(manifest, {32U, 16U});
+  require(static_cast<bool>(reordered), "terminal MLA with reordered ports must decode");
+  facts = pcie_internal::detail::read_model_facts(*contract);
+  require(facts.outputs[0].physical_index == 0 && facts.outputs[1].physical_index == 1,
+          "the MPK contract alone numbers outputs in list order");
+  pcie_internal::detail::apply_execution_plan(*reordered.plan, &facts);
+  require(facts.outputs[0].name == "head_a" && facts.outputs[0].physical_index == 1 &&
+              facts.outputs[0].payload_offset == 32U,
+          "head_a must take its executable port and follow head_b");
+  require(facts.outputs[1].name == "head_b" && facts.outputs[1].physical_index == 0 &&
+              facts.outputs[1].payload_offset == 0U,
+          "head_b must take executable port 0");
+  require(facts.packed_output_bytes == 48U, "port order must not change the packed extent");
+
+  facts = pcie_internal::detail::read_model_facts(*contract);
+  facts.outputs[1].size_bytes = 24U;
+  require_rejected([&] { pcie_internal::detail::apply_execution_plan(*reordered.plan, &facts); },
+                   "differs in size from the strict execution plan",
+                   "a contract output that disagrees with the plan must be rejected");
+
+  facts = pcie_internal::detail::read_model_facts(*contract);
+  std::swap(facts.outputs[0], facts.outputs[1]);
+  require_rejected([&] { pcie_internal::detail::apply_execution_plan(*reordered.plan, &facts); },
+                   "but the strict execution plan has 'head_a'",
+                   "public outputs out of plan order must be rejected");
+
+  facts = pcie_internal::detail::read_model_facts(*contract);
+  facts.inputs[0].name = "renamed";
+  require_rejected([&] { pcie_internal::detail::apply_execution_plan(*reordered.plan, &facts); },
+                   "PCIe input 0 is 'renamed'", "a public input the plan lacks must be rejected");
+
+  facts = pcie_internal::detail::read_model_facts(*contract);
+  facts.outputs[0].byte_offset = 4;
+  pcie_internal::detail::apply_execution_plan(*reordered.plan, &facts);
+  require(facts.outputs[0].physical_index == 0 && facts.outputs[1].physical_index == 1,
+          "outputs inside a shared carrier keep the contract layout");
+}
+
 } // namespace
 
 int main() {
@@ -417,6 +512,7 @@ int main() {
     test_mla_only_skips_compaction_for_dense_heads();
     test_mla_only_supports_bf16_cast_boundaries();
     test_mla_only_rejects_unusable_output_geometry();
+    test_terminal_mla_outputs_follow_executable_port_order();
     std::cout << "[PASS] model facts\n";
     return 0;
   } catch (const std::exception& error) {

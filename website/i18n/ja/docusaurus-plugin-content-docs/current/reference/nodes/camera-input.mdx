@@ -6,8 +6,6 @@ sidebar_position: 2
 
 # カメラ入力ノード
 
-以下の libcamera ガイドはデフォルトのバックエンドを説明します。Metoak SIMOR の所有権付き生テンソルについては、後述の V4L2 セクションを参照してください。
-
 `CameraInput` は、libcamera および GStreamer の `libcamerasrc` を介して公開される MIPI カメラのソースノードです。フレームを `run.push(...)` ではなく、DevKit カメラスタックから取得する必要がある場合、ソースが所有するグラフの先頭で使用します。
 
 タスクガイドについては、[MIPIカメラを使用する](/develop-apps/advanced-concepts/mipi-camera-input) を参照してください。
@@ -118,7 +116,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `queue_depth` | `2` | 。`insert_queue` が true の場合に、キューに格納できる最大バッファー数。|
 | `allow_cpu_fallback` | `false` | `false` の場合、カメラ/デバイスのゼロコピーサポートが必要です。`true` に設定するのは、Neat の SiMaAI メモリへのプライベートなアダプティブブリッジを有効にする場合のみです。|
 
-`capture_buffer_count` は `CameraInputOptions` のフィールドとしても使用できます。0 はバックエンドのデフォルトを維持し、非ゼロ値はキャプチャ数を上書きします。既存の C++ ファクトリーと Python キーワードも使用できます。libcamera の上限は 128、生の V4L2 は 4–128 バッファーです。
+`capture_buffer_count` は、`CameraInputOptions` のフィールドではなく、`CameraInputWithCaptureBuffers` への引数です。デフォルト値は `0` であり、これによりカメラのパイプライン自身のデフォルトが維持されます。カメラのパイプラインは、その制限を検証します。Neat のプロバイダーは、最大 `128` までをサポートします。
 
 ## 入力と出力の契約
 
@@ -169,68 +167,3 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | 厳密なゼロコピーエラーが発生しました。| `allow_cpu_fallback` は false に設定されており、カメラソースは SiMaAI ゼロコピープロパティを公開していません。|
 | プルタイムアウト | カメラからフレームが送信されなかった、グラフにバックプレッシャーがかかっている、またはカメラスタックがストリーミングを停止しました。|
 | 緑色、紫色、または色味が強いフレーム | フレーム形式またはモデルのプリプロセスにおけるカラー変換が正しくないか、すでにカメラのISP/libcamera出力に色味が適用されている可能性があります。まず、`NV12`形式でキャプチャを行い、Neatで検証してください。|
-
-## 所有権付き raw V4L2 キャプチャ
-
-両方のバックエンドで既存の `CameraInput(options)`（Python: `camera_input`）を使用します。以下は Linux 専用の Metoak SIMOR 生データコピープロファイルです。実際のキャプチャデバイスを指定してください。`/dev/video1` は例です。他のプラットフォームでは未対応エラーになります。
-
-```cpp
-#include <neat.h>
-namespace n = simaai::neat;
-
-n::CameraInputOptions camera;
-camera.device = "/dev/video1";
-camera.profile = n::CameraProfile::MetoakSimor;
-
-n::Graph capture;
-capture.add(n::nodes::CameraInput(camera));
-capture.add(n::nodes::Output());
-```
-
-```python
-import pyneat as neat
-
-camera = neat.CameraInputOptions()
-camera.device = "/dev/video1"
-camera.profile = neat.CameraProfile.MetoakSimor
-
-capture = neat.Graph()
-capture.add(neat.nodes.camera_input(camera))
-capture.add(neat.nodes.output())
-```
-
-`MetoakSimor` は `zero_copy` が未設定の場合、所有コピー方式のキャプチャを使用します。デキューした各 MMAP フレームを、カメラバッファーを**再キューする前に**独立したプール内のシステムメモリへコピーします。明示的な `zero_copy=false` は同じ動作です。このプロファイルは DMA-BUF のエクスポート/インポートをサポートしないため、`zero_copy=true` は拒否されます。暗黙的なフォールバックはありません。`camera_name` と `allow_cpu_fallback` は libcamera 専用です。デバイスの周期を維持し、`framerate_num`/`framerate_den` はこのプロファイルを設定しません。
-
-出力は平坦な UInt8 テンソル `[bytesused]` で、有効な行パディングとトレーラーを含みます。
-デコード済み画像ではありません。ネゴシエーションされた `fourcc`、`width`、`height`、
-`row-stride`、`sizeimage` は `Sample.caps_string` で確認してください。デバイスのプロトコルを
-解釈する前に画像寸法へ整形したりトレーラーを捨てたりしないでください。配信時刻は
-メタデータであり、テンソルのバイト列には含まれません。
-
-`capture_buffer_count` は既定 8（4–128）、`output_buffer_count` は既定 8（2–128）、
-`frame_timeout_ms` は既定 2000（1–60000）です。保持中の出力はプールのスロットを消費します。
-プールが満杯になったら出力を解放するとキャプチャが再開します。保持中のテンソルは上書きしません。
-キューを有効にする場合、`queue_depth` は正で `output_buffer_count` 未満にしてください。
-停止時にはプール待機を中断します。
-
-キャプチャ開始前に、BSP の手順でデバイスのメディアコントローラーのリンクとパッド形式を設定してください。Neat はメディアグラフを書き換えません。他のキャプチャクライアントを同時に実行しないでください。プラットフォームと USB デバイスは同じ V4L2 MMAP ライフサイクルを使用します。ドライバーは STREAMOFF 契約を守る必要があります。コピーモードでも不正なカーネル DMA 終了処理は安全になりません。終了処理に失敗したら自動再オープンせずデバイスを復旧してください。
-
-ROS/SIMOR の CPU アンパック、キャリブレーション、ROS 配信はアプリケーションが担当します。
-元の 6 入力を別の処理グラフの `MetoakDepth` graph 20 に渡せます。この API は SIMOR 処理を追加せず、
-graph 21、新しいファームウェア、既存 ROS 統合の変更を必要としません。
-
-起動時には、カメラバッファをキューに投入する前に出力 caps と CPU バッファプールを準備します。停止時にはフレームとプールの待機を中断し、キャプチャを終了してから出力プールを解放します。配信済みテンソルは停止後も有効です。キャプチャ終了時のエラーは GStreamer バスに通知され、そのソースの再起動を禁止します。プロセス終了はデバイス復旧の代わりにはなりません。
-
-
-### プロファイルの選択と互換性
-
-- `profile=Default`（デフォルト）は常に libcamera を使用し、`camera_name` による選択を維持します。`profile=MetoakSimor` なしの `device` 指定は拒否され、暗黙的に Metoak を選択しません。
-- `profile=MetoakSimor` は内部で所有コピー方式の V4L2、`RAW8`、`BA81`、1920×360 の転送形式を選択します。従来の NV12/1080 デフォルトを置き換え、矛盾する他の形式や寸法は拒否します。すべての Metoak カメラを表すプロファイルではありません。
-- SIMOR プロファイルで `device` を省略した場合、メディアトポロジー内に一意のエンドポイントが必要です。不在、曖昧な経路、複数センサーの経路は失敗します。検出中にキャプチャデバイスを開きません。プロファイルとデバイスの明示指定では検出しません。
-- ピクセル形式はバックエンドの選択条件ではありません。汎用の生/Bayer 形式の要求は libcamera 経路を維持し、この変更は Bayer caps のネゴシエーションを追加または検証しません。プロファイルがワイヤー FourCC を決定し、公開 FourCC オプションはありません。
-- `MetoakSimor` では未設定の `zero_copy` は false に解決され、明示的な true は拒否されます。libcamera では未設定が `allow_cpu_fallback` を維持し、false は既存のコピーフォールバックを許可し、true はゼロコピーを要求します。矛盾する設定は拒否されます。
-- 実装の選択はノード構築時に一度だけ、グラフの契約伝播より前に行います。公開バックエンドオプションはなく、失敗時に別の実装へ切り替えません。検出はメディアリンクやパッド形式を設定しません。
-
-`device` を省略した `MetoakSimor` プロファイルのみがメディアコントローラーを走査します。メタデータの照会は同期カーネル呼び出しであり、処理時間の上限は保証されません。コントローラーが応答しない場合は、`device` と `profile=MetoakSimor` の両方を指定して検出を省略してください。
-
-`CameraInput(options)` と `CameraInputOptions` のみを使用してください。V4L2 設定は非公開です。マニフェストと SONAME は Core ABI 5 を維持します。この未リリースの統合で公開オプションとノードのレイアウトが変更されたため、C++ 利用側を再ビルドし、対応する Python wheel を使用してください。古い ABI-5 バイナリを新しいヘッダーやランタイムと混在させないでください。

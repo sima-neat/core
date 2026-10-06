@@ -21,6 +21,34 @@ Run the installer from the environment where you build or run Neat applications:
 | ROS2 SDK | You want to compile ROS 2 applications natively on ARM64 with Neat headers and libraries installed in the container's system paths. |
 | DevKit | You want to install or update the runtime directly on the device. |
 
+## C++ development packages
+
+The minimal installation includes the runtime and `sima-neat-dev`. The default
+installation offers tutorials and tests as optional extras; `all` includes them.
+Shared-library applications need Core's public headers and GStreamer, OpenCV,
+and JSON development files. They do not need Internals, memory-library, heap,
+or LLiMa development packages. Their runtime libraries remain required.
+
+Use the installed shared target:
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
+```
+
+The static archive remains in `sima-neat-dev`. Existing static consumers must add
+`COMPONENTS Static` and provision compatible `neat-internals-dev`,
+`simaai-memory-lib-dev`, `zlib1g-dev`, and, for LLiMa-enabled builds,
+`sima-lmm-dev` and `libcpp-httplib-dev` with their dependencies:
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
+```
+
+Static Core still uses shared implementation libraries. Building Core from source
+also requires implementation development packages.
+
 ## Prerequisites
 
 Install `sima-cli` in the environment where you plan to install the Neat Library.
@@ -85,7 +113,7 @@ optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
 <ShellCommand prompt="sdk">
-sima-cli neat install core@v0.5.0
+sima-cli neat install core@v0.4.0
 </ShellCommand>
 
 </CodeTab>
@@ -174,7 +202,3 @@ For SDK setup and DevKit Sync onboarding, see
 Continue to [Install PyNeat](/getting-started/neat-library/pyneat/) for custom
 Python environments, or [Neat CLI](/getting-started/neat-library/neat-cli/) to
 inspect the installed environment.
-
-## If a locally built package set is rejected
-
-The repository installer and build staging check selected Debian packages before changing the installation or sysroot. They reject duplicate or mixed package versions, the wrong architecture, missing Neat SONAME dependencies, conflicting libraries, and build-tree RPATHs. Rebuild and stage the complete matching Internals, LLiMa, Core, and Python package set; do not mask an ABI mismatch with a library symlink or reinstall the same incompatible files. These checks do not prove that all symbols or platform dependencies are available. A successful load/import check and a controlled application smoke test on the actual target are still required.

@@ -65,6 +65,7 @@ pkg_check_modules(GST REQUIRED IMPORTED_TARGET
 set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Model.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieChannel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieOutputLayout.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieTensorPayload.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieTensorSetMeta.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ModelArchiveSnapshot.cpp
@@ -74,7 +75,13 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunner.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/model/ModelArchiveLoader.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MlaElfIoTopology.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MpkContract.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/AfePublicationLedger.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/KernelRegistry.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/ModelExecutionPlan.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/MpkDecoder.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/TvmHostModuleGraph.cpp
 )
 
 add_library(sima_neat_pcie_host STATIC
@@ -244,6 +251,13 @@ if (SIMAPCIE_BUILD_TESTS)
     ${SIMA_NEAT_CORE_ROOT}/src
   )
   target_link_libraries(unit_pcie_host_model_facts_test PRIVATE sima_neat_pcie_host)
+
+  add_executable(unit_pcie_host_output_layout_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_output_layout_test.cpp
+  )
+  target_include_directories(unit_pcie_host_output_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(unit_pcie_host_output_layout_test PRIVATE sima_neat_pcie_host PkgConfig::GST)
+  add_test(NAME unit_pcie_host_output_layout_test COMMAND unit_pcie_host_output_layout_test)
 
   add_executable(unit_pcie_host_model_archive_snapshot_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_model_archive_snapshot_test.cpp

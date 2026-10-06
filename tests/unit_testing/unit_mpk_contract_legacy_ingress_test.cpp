@@ -1,3 +1,4 @@
+#include "mpk_contract_test_utils.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "test_main.h"
 
@@ -20,7 +21,6 @@ std::filesystem::path make_temp_pack_root(const std::string& name) {
 
 RUN_TEST("unit_mpk_contract_legacy_ingress_test", ([] {
            namespace fs = std::filesystem;
-           using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
 
            const fs::path root = make_temp_pack_root("image_uv");
            const fs::path json_path = root / "legacy_mpk.json";
@@ -89,7 +89,7 @@ RUN_TEST("unit_mpk_contract_legacy_ingress_test", ([] {
            out.close();
 
            std::string error;
-           const auto contract = load_mpk_contract_from_pack_root(root.string(), &error);
+           const auto contract = load_test_mpk_contract(root.string(), &error);
            require(contract.has_value(),
                    "legacy multi-ingress mpk should parse successfully: " + error);
            require(contract->ingress_tensors.size() == 2U,

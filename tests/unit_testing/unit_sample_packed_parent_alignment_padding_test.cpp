@@ -1,9 +1,6 @@
 #include "pipeline/Tensor.h"
-#include "gst/GstInit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
-#include "pipeline/internal/SimaaiGstCompat.h"
-#include <simaai/simaai_memory.h>
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "test_main.h"
 
@@ -167,147 +164,13 @@ void test_strided_dense_payload_compaction() {
           "packed parent must compact dense strided input bytes before appending the next tensor");
 }
 
-void test_bundled_input_rejects_invalid_backing_before_allocation() {
-  ensure_gst_ready();
-  Tensor tensor = make_padded_tensor(0, 16U, 16U, "y_src");
-  GstBuffer* output = nullptr;
-  std::string error;
-  tensor.byte_offset = -1;
-  require(!pipeline_internal::build_bundled_input_gst_buffer({tensor}, &output, &error),
-          "negative input byte offset must be rejected");
-  require(output == nullptr, "rejected input must not return an allocated buffer");
-  tensor.byte_offset = 2;
-  require(!pipeline_internal::build_bundled_input_gst_buffer({tensor}, &output, &error),
-          "input range beyond backing must be rejected");
-  tensor.byte_offset = 0;
-  tensor.storage->data = nullptr;
-  require(!pipeline_internal::build_bundled_input_gst_buffer({tensor}, &output, &error),
-          "non-Metoak device carrier must keep its existing materialized path");
-  require(error.find("materialized fallback") != std::string::npos,
-          "generic device rejection must occur before allocation");
-  tensor.storage.reset();
-  require(!pipeline_internal::build_bundled_input_gst_buffer({tensor}, &output, &error),
-          "missing input storage must be rejected");
-  require(output == nullptr, "failure must preserve null output");
-}
-
-// Explicit target-only gate. No CVU dispatch, but real EV74-addressable allocation
-// is mandatory: unavailable allocator/device fails rather than silently skipping.
-void test_device_bundle_subviews() {
-  simaai::neat::gst_init_once();
-  ensure_gst_ready();
-  gst_simaai_segment_memory_init_once();
-  const char* names[] = {"y_src", "u_src", "v_src", "disp_src", "bf_mm_src", "proj_src"};
-  const TensorDType types[] = {TensorDType::UInt8,  TensorDType::UInt8,   TensorDType::UInt8,
-                               TensorDType::UInt16, TensorDType::Float32, TensorDType::Float32};
-  const std::size_t sizes[] = {140, 35, 35, 280, 4, 12};
-  const std::vector<std::int64_t> shapes[] = {{14, 10}, {7, 5}, {7, 5}, {14, 10}, {1}, {3}};
-  TensorList tensors;
-  std::vector<std::vector<std::uint8_t>> expected;
-  for (std::size_t i = 0; i < 6; ++i) {
-    std::vector<std::uint8_t> data(sizes[i] + 4, 0xee);
-    for (std::size_t j = 0; j < sizes[i]; ++j)
-      data.at(j + 4) = static_cast<std::uint8_t>((i * 37 + j) & 255);
-    expected.emplace_back(data.begin() + 4, data.end());
-    Tensor tensor =
-        Tensor::from_vector(data, {static_cast<std::int64_t>(data.size())}, TensorMemory::EV74);
-    require(tensor.storage && !tensor.storage->data, "must exercise device-backed read path");
-    tensor.dtype = types[i];
-    tensor.shape = shapes[i];
-    tensor.strides_bytes.clear();
-    tensor.byte_offset = 4;
-    tensor.layout = i < 4 ? TensorLayout::HW : TensorLayout::Unknown;
-    tensor.route.name = tensor.route.backend_name = tensor.route.segment_name = names[i];
-    tensor.route.logical_index = tensor.route.physical_index = static_cast<int>(i);
-    tensor.route.memory_index = 0;
-    tensors.push_back(std::move(tensor));
-  }
-  GstBuffer* output = nullptr;
-  std::string error;
-  require(pipeline_internal::build_bundled_input_gst_buffer(tensors, &output, &error),
-          "device bundle: " + error);
-  std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> owned(output, &gst_buffer_unref);
-  require(gst_buffer_n_memory(output) == 1, "bundle must use one named-segment carrier");
-  auto* memory = gst_buffer_peek_memory(output, 0);
-  for (std::size_t i = 0; i < 6; ++i) {
-    auto* segment = static_cast<simaai_memory_t*>(gst_simaai_memory_get_segment(memory, names[i]));
-    require(segment != nullptr, "missing named segment");
-    require(simaai_memory_get_bus(segment) % 4 == 0, "mixed input segment is not 4-byte aligned");
-    require(simaai_memory_get_size(segment) >= sizes[i], "segment too small");
-    auto* mapped = static_cast<std::uint8_t*>(simaai_memory_map(segment));
-    require(mapped != nullptr, "cannot map bundle segment");
-    simaai_memory_invalidate_cache(segment);
-    bool equal = std::equal(expected[i].begin(), expected[i].end(), mapped);
-    simaai_memory_unmap(segment);
-    require(equal, "nonzero source offset copy mismatch");
-  }
-  GstSample* sample = gst_sample_new(output, nullptr, nullptr, nullptr);
-  pipeline_internal::TensorBufferView view;
-  const bool described =
-      pipeline_internal::tensor_buffer_descriptor_from_sample(sample, &view, &error);
-  gst_sample_unref(sample);
-  require(described && view.tensors.size() == 6, "missing copied descriptor: " + error);
-  for (std::size_t i = 0; i < 6; ++i) {
-    // The Internals view normalizes memory_index to the named segment-table
-    // index, not GstBuffer memory[0]. Validate the effective bus span instead
-    // of assuming one representation for that normalized view.
-    const auto& descriptor = view.tensors[i];
-    auto* resolved = static_cast<simaai_memory_t*>(
-        gst_simaai_memory_get_segment(memory, descriptor.segment_name.c_str()));
-    auto* canonical =
-        static_cast<simaai_memory_t*>(gst_simaai_memory_get_segment(memory, names[i]));
-    require(resolved && canonical && descriptor.byte_offset >= 0, "invalid resolved named span");
-    const auto offset = static_cast<std::uint64_t>(descriptor.byte_offset);
-    require(offset <= simaai_memory_get_size(resolved) &&
-                sizes[i] <= simaai_memory_get_size(resolved) - offset,
-            "resolved metadata exceeds segment backing");
-    require(simaai_memory_get_bus(resolved) + offset == simaai_memory_get_bus(canonical),
-            "source offset or tight-layout padding leaked into resolved metadata address");
-    require(descriptor.size_bytes == sizes[i], "padding leaked into logical size");
-  }
-  owned.reset();
-  // Force source map failure after destination allocation. The original input
-  // remains alive, while each failed call must leave no output ownership behind.
-  TensorList failed = tensors;
-  failed[3].storage = std::make_shared<TensorBuffer>(*tensors[3].storage);
-  failed[3].storage->kind = StorageKind::DeviceHandle;
-  failed[3].storage->data = nullptr;
-  int attempts = 0;
-  failed[3].storage->map_fn = [&](MapMode) {
-    ++attempts;
-    return Mapping{};
-  };
-  for (int repetition = 0; repetition < 8; ++repetition) {
-    output = nullptr;
-    error.clear();
-    require(!pipeline_internal::build_bundled_input_gst_buffer(failed, &output, &error),
-            "forced read failure succeeded");
-    require(output == nullptr && error.find("device tensor read failed") != std::string::npos,
-            "failure must return null with read error");
-  }
-  require(attempts == 8, "failure injection did not exercise source mapper");
-  output = nullptr;
-  error.clear();
-  require(pipeline_internal::build_bundled_input_gst_buffer(tensors, &output, &error),
-          "bundle did not recover after read failure: " + error);
-  gst_buffer_unref(output);
-}
-
 } // namespace
 
-int main(int argc, char** argv) {
-  if (argc == 2 && std::string(argv[1]) == "--device-bundle")
-    return sima_test::run_test("device_bundle_subviews_alignment_and_read_failure",
-                               test_device_bundle_subviews) == 0
-               ? 0
-               : 1;
+int main() {
   int failures = 0;
   failures += sima_test::run_test("unit_sample_packed_parent_alignment_padding_test",
                                   [] { test_alignment_padding_offsets(); });
   failures += sima_test::run_test("unit_sample_packed_parent_strided_dense_payload_test",
                                   [] { test_strided_dense_payload_compaction(); });
-  failures += sima_test::run_test("unit_bundled_input_invalid_backing_test", [] {
-    test_bundled_input_rejects_invalid_backing_before_allocation();
-  });
   return failures == 0 ? 0 : 1;
 }

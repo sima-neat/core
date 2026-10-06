@@ -13,10 +13,13 @@
 
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
+#include "simaai/neat/internal/dmabuf/DmaBufVideo.h"
+
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -488,17 +491,28 @@ RawFrame convert_frame(const RawFrame& input, FormatTag output_format) {
   return tight_frame_from_sample(sample.get(), output_format, context);
 }
 
-Tensor tensor_from_frame(const RawFrame& frame, int row_padding,
-                         GstAllocator* allocator = nullptr) {
+Tensor tensor_from_frame(const RawFrame& frame, int row_padding, bool use_dmabuf = false) {
   const MappedPlaneLayout source_layout = tight_layout(frame.format, frame.width, frame.height);
   const MappedPlaneLayout destination_layout =
       tight_layout(frame.format, frame.width, frame.height, row_padding);
 
-  GstBuffer* buffer = gst_buffer_new_allocate(
-      allocator, static_cast<gsize>(destination_layout.total_bytes), nullptr);
+  namespace dma = simaai::neat::internal::dmabuf;
+  GstBuffer* buffer =
+      use_dmabuf ? dma::allocateDmaBufBuffer(dma::HeapKind::Cma, destination_layout.total_bytes)
+                 : gst_buffer_new_allocate(nullptr, destination_layout.total_bytes, nullptr);
   require(buffer != nullptr, "failed to allocate real-frame GstBuffer");
   GstMapInfo map{};
-  require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "failed to map real-frame GstBuffer");
+  dma::Error error;
+  std::optional<dma::CpuMapping> write;
+  if (use_dmabuf) {
+    auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(buffer, 0), &error);
+    write = view ? view->map(dma::CpuAccess::Write, &error) : std::nullopt;
+    require(write.has_value(), "cannot write DMA fixture: " + error.message());
+    map.data = static_cast<guint8*>(write->data());
+    map.size = write->size();
+  } else {
+    require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "cannot map CPU fixture");
+  }
   std::memset(map.data, kPaddingSentinel, map.size);
   for (guint plane = 0; plane < destination_layout.plane_count; ++plane) {
     for (int row = 0; row < destination_layout.rows[plane]; ++row) {
@@ -509,7 +523,10 @@ Tensor tensor_from_frame(const RawFrame& frame, int row_padding,
                   static_cast<std::size_t>(destination_layout.row_bytes[plane]));
     }
   }
-  gst_buffer_unmap(buffer, &map);
+  if (write)
+    require(write->finish(&error), "cannot finish DMA fixture WRITE: " + error.message());
+  else
+    gst_buffer_unmap(buffer, &map);
 
   add_video_meta(buffer, frame.format, frame.width, frame.height, destination_layout,
                  "real-frame buffer");
@@ -602,6 +619,18 @@ constexpr EncodedCodec kH265{
     .payload_type = 98,
 };
 
+constexpr EncodedCodec kMjpeg{
+    .name = "MJPEG",
+    .media_type = "image/jpeg",
+    .rtp_encoding_name = "JPEG",
+    .parser = "jpegparse",
+    .depayloader = "rtpjpegdepay",
+    .format = FormatTag::ENCODED,
+    .sender_codec = simaai::neat::nodes::groups::RtspCodec::MJPEG,
+    .decoder_type = simaai::neat::SimaDecodeType::MJPEG,
+    .payload_type = 26,
+};
+
 std::string first_available_element(std::initializer_list<const char*> candidates) {
   for (const char* candidate : candidates) {
     if (simaai::neat::element_exists(candidate)) {
@@ -612,6 +641,8 @@ std::string first_available_element(std::initializer_list<const char*> candidate
 }
 
 std::string software_decoder(const EncodedCodec& codec) {
+  if (codec.format == FormatTag::ENCODED)
+    return first_available_element({"jpegdec"});
   if (codec.format == FormatTag::H264) {
     return first_available_element({"avdec_h264", "openh264dec"});
   }
@@ -634,39 +665,77 @@ std::string software_encoder(const EncodedCodec& codec) {
 }
 
 std::string encoded_caps(const EncodedCodec& codec) {
+  if (codec.format == FormatTag::ENCODED)
+    return "image/jpeg,parsed=(boolean)true";
   return std::string(codec.media_type) +
          ",parsed=(boolean)true,stream-format=(string)byte-stream,alignment=(string)au";
 }
 
 class RtpReceiver {
 public:
-  RtpReceiver(int port, const EncodedCodec& codec)
-      : context_(codec.name + std::string(" RTP receiver")) {
+  RtpReceiver(int port, const EncodedCodec& codec, FormatTag format = FormatTag::RGB)
+      : context_(codec.name + std::string(" RTP receiver")), format_(format) {
     const std::string decoder = software_decoder(codec);
     require(!decoder.empty(), context_ + ": no software decoder is installed");
     pipeline_ = parse_pipeline(
-        "udpsrc port=" + std::to_string(port) +
+        "udpsrc name=rtp_source port=" + std::to_string(port) +
             " caps=\"application/x-rtp,media=(string)video,encoding-name=(string)" +
             codec.rtp_encoding_name + ",payload=(int)" + std::to_string(codec.payload_type) +
-            ",clock-rate=(int)90000\" ! rtpjitterbuffer latency=25 ! " + codec.depayloader + " ! " +
-            codec.parser + " ! " + decoder +
+            ",clock-rate=(int)90000\" ! rtpjitterbuffer mode=none latency=25 ! " +
+            codec.depayloader + " ! " + codec.parser + " ! " + decoder +
             " ! videoconvert ! "
-            "video/x-raw,format=RGB,width=" +
-            std::to_string(g_geometry.width) + ",height=" + std::to_string(g_geometry.height) +
+            "video/x-raw,format=" +
+            gst_format(format_) + ",width=" + std::to_string(g_geometry.width) +
+            ",height=" + std::to_string(g_geometry.height) +
             " ! appsink name=sink sync=false max-buffers=32 drop=false",
         context_);
     sink_.reset(required_element(pipeline_.get(), "sink", context_));
+    GstObjectPtr<GstElement> source(required_element(pipeline_.get(), "rtp_source", context_));
+    GstObjectPtr<GstPad> pad(gst_element_get_static_pad(source.get(), "src"));
+    gst_pad_add_probe(
+        pad.get(), GST_PAD_PROBE_TYPE_BUFFER,
+        [](GstPad*, GstPadProbeInfo* info, gpointer data) {
+          guint8 header[2]{};
+          auto* self = static_cast<RtpReceiver*>(data);
+          auto* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+          if (gst_buffer_extract(buffer, 0, header, sizeof(header)) == sizeof(header) &&
+              (header[1] & 0x80)) {
+            const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+            if (self->received_frames_ == 0)
+              self->first_packet_ns_ = now;
+            self->last_packet_ns_ = now;
+            ++self->received_frames_;
+          }
+          return GST_PAD_PROBE_OK;
+        },
+        this, nullptr);
     start_pipeline(pipeline_.get(), context_);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 
-  std::vector<RawFrame> pull_frames(int maximum) {
+  std::vector<RawFrame> pull_frames(int maximum, bool exact = false,
+                                    double* receive_span = nullptr) {
     std::vector<RawFrame> frames;
+    bool drained = false;
+    std::optional<std::chrono::steady_clock::time_point> final_packet;
     std::optional<GstClockTime> previous_pts;
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(kReceiverTimeoutMs);
-    while (static_cast<int>(frames.size()) < maximum &&
+    while ((static_cast<int>(frames.size()) < maximum || (exact && !drained)) &&
            std::chrono::steady_clock::now() < deadline) {
+      require(!exact || received_frames_ <= maximum, context_ + ": duplicate RTP frame");
+      if (exact && !final_packet && received_frames_ == maximum)
+        final_packet = std::chrono::steady_clock::now();
+      if (exact && !drained && final_packet &&
+          std::chrono::steady_clock::now() - *final_packet >= std::chrono::milliseconds(250)) {
+        // Check a live quiet tail before draining the software decoder; UDP has no EOS.
+        GstObjectPtr<GstElement> source(required_element(pipeline_.get(), "rtp_source", context_));
+        require(gst_element_send_event(source.get(), gst_event_new_eos()),
+                context_ + ": cannot drain receiver");
+        drained = true;
+      }
       GstSamplePtr sample(
           gst_app_sink_try_pull_sample(GST_APP_SINK(sink_.get()), 250 * GST_MSECOND));
       if (!sample) {
@@ -679,20 +748,36 @@ public:
       GstBuffer* buffer = gst_sample_get_buffer(sample.get());
       require(buffer != nullptr, context_ + ": sample has no buffer");
       const GstClockTime pts = GST_BUFFER_PTS(buffer);
-      require(pts != GST_CLOCK_TIME_NONE, context_ + ": decoded frame has no PTS");
+      require(pts != GST_CLOCK_TIME_NONE,
+              context_ + ": decoded frame " + std::to_string(frames.size()) + " has no PTS");
       require(!previous_pts.has_value() || pts > *previous_pts,
               context_ + ": decoded frame PTS is not strictly increasing");
       previous_pts = pts;
-      frames.push_back(tight_frame_from_sample(sample.get(), FormatTag::RGB, context_));
-      if (frames.size() >= static_cast<std::size_t>(std::min(maximum, kMinimumDecodedFrames))) {
+      frames.push_back(tight_frame_from_sample(sample.get(), format_, context_));
+      if (!exact &&
+          frames.size() >= static_cast<std::size_t>(std::min(maximum, kMinimumDecodedFrames))) {
         break;
       }
     }
+    if (exact) {
+      require(frames.size() == static_cast<std::size_t>(maximum),
+              context_ + ": received " + std::to_string(received_frames_.load()) +
+                  " RTP frames but decoded " + std::to_string(frames.size()) + "/" +
+                  std::to_string(maximum));
+      GstSamplePtr extra(
+          gst_app_sink_try_pull_sample(GST_APP_SINK(sink_.get()), 250 * GST_MSECOND));
+      require(!extra, context_ + ": unexpected duplicate output");
+    }
+    if (receive_span)
+      *receive_span = (last_packet_ns_.load() - first_packet_ns_.load()) / 1e9;
     return frames;
   }
 
 private:
   std::string context_;
+  FormatTag format_;
+  std::atomic<int> received_frames_{0};
+  std::atomic<std::int64_t> first_packet_ns_{0}, last_packet_ns_{0};
   GstElementPtr pipeline_;
   GstObjectPtr<GstElement> sink_;
 };
@@ -959,7 +1044,7 @@ MappedPlaneLayout decoder_padded_layout(FormatTag format, int width, int height)
   throw std::invalid_argument("decoder padding is only defined for NV12 and I420");
 }
 
-GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, GstAllocator* allocator) {
+GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, bool use_dmabuf) {
   const MappedPlaneLayout source = tight_layout(frame.format, frame.width, frame.height);
   const MappedPlaneLayout destination =
       decoder_padded_layout(frame.format, frame.width, frame.height);
@@ -974,12 +1059,24 @@ GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, GstAllocator* alloc
     require(plane_end(destination, plane) <= destination.total_bytes,
             "decoder-style destination plane exceeds its allocation");
   }
-  GstBuffer* buffer =
-      gst_buffer_new_allocate(allocator, static_cast<gsize>(destination.total_bytes), nullptr);
+  namespace dma = simaai::neat::internal::dmabuf;
+  GstBuffer* buffer = use_dmabuf
+                          ? dma::allocateDmaBufBuffer(dma::HeapKind::Cma, destination.total_bytes)
+                          : gst_buffer_new_allocate(nullptr, destination.total_bytes, nullptr);
   require(buffer != nullptr, "failed to allocate decoder-style padded input");
 
   GstMapInfo map{};
-  require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "failed to map decoder-style padded input");
+  dma::Error error;
+  std::optional<dma::CpuMapping> write;
+  if (use_dmabuf) {
+    auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(buffer, 0), &error);
+    write = view ? view->map(dma::CpuAccess::Write, &error) : std::nullopt;
+    require(write.has_value(), "cannot write DMA fixture: " + error.message());
+    map.data = static_cast<guint8*>(write->data());
+    map.size = write->size();
+  } else {
+    require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "cannot map CPU fixture");
+  }
   std::memset(map.data, kPaddingSentinel, map.size);
   for (guint plane = 0; plane < destination.plane_count; ++plane) {
     for (int row = 0; row < destination.rows[plane]; ++row) {
@@ -990,7 +1087,10 @@ GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, GstAllocator* alloc
                   static_cast<std::size_t>(destination.row_bytes[plane]));
     }
   }
-  gst_buffer_unmap(buffer, &map);
+  if (write)
+    require(write->finish(&error), "cannot finish DMA fixture WRITE: " + error.message());
+  else
+    gst_buffer_unmap(buffer, &map);
 
   gsize offsets[GST_VIDEO_MAX_PLANES] = {};
   gint strides[GST_VIDEO_MAX_PLANES] = {};
@@ -1010,21 +1110,19 @@ void run_plugin_padded_scenario(const std::string& name, const RawFrame& input,
                                 const RawFrame& expected_rgb, bool use_sima_memory) {
   const int port = choose_udp_port();
   RtpReceiver receiver(port, kH264);
-  const std::string encoder_format = input.format == FormatTag::NV12 ? "NV12" : "YUV420P";
+  const std::string encoder_format = "NV12";
   const std::string context = name + " plugin pipeline";
   auto pipeline = parse_pipeline(
       "appsrc name=source is-live=false format=time block=true caps=\"" + raw_caps(input.format) +
-          "\" ! neatencoder enc-width=" + std::to_string(g_geometry.width) + " enc-height=" +
-          std::to_string(g_geometry.height) + " enc-frame-rate=" + std::to_string(kFps) +
-          " enc-bitrate=4000 enc-fmt=" + encoder_format +
+          "\" ! neatencoderinput ! neatencoder enc-width=" + std::to_string(g_geometry.width) +
+          " enc-height=" + std::to_string(g_geometry.height) + " enc-frame-rate=" +
+          std::to_string(kFps) + " enc-bitrate=4000 enc-fmt=" + encoder_format +
           " enc-ip-mode=async ! h264parse config-interval=1 ! "
           "rtph264pay pt=96 config-interval=1 timestamp-offset=0 ! "
           "udpsink host=127.0.0.1 port=" +
           std::to_string(port) + " sync=false async=false",
       context);
   GstElement* source = required_element(pipeline.get(), "source", context);
-  GstAllocator* allocator = use_sima_memory ? gst_allocator_find("NeatSimaaiMemory") : nullptr;
-  require(!use_sima_memory || allocator != nullptr, name + ": SiMa input allocator is unavailable");
   start_pipeline(pipeline.get(), context);
 
   std::vector<GstBuffer*> retained;
@@ -1032,7 +1130,7 @@ void run_plugin_padded_scenario(const std::string& name, const RawFrame& input,
   retained.reserve(kFramesPerScenario);
   hashes.reserve(kFramesPerScenario);
   for (int frame_index = 0; frame_index < kFramesPerScenario; ++frame_index) {
-    GstBuffer* buffer = make_decoder_padded_buffer(input, allocator);
+    GstBuffer* buffer = make_decoder_padded_buffer(input, use_sima_memory);
     GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(frame_index) * GST_SECOND / kFps;
     GST_BUFFER_DTS(buffer) = GST_BUFFER_PTS(buffer);
     GST_BUFFER_DURATION(buffer) = GST_SECOND / kFps;
@@ -1073,9 +1171,6 @@ void run_plugin_padded_scenario(const std::string& name, const RawFrame& input,
   for (std::size_t index = 0; index < retained.size(); ++index) {
     require(fnv1a(retained[index]) == hashes[index], name + ": encoder modified a source buffer");
     gst_buffer_unref(retained[index]);
-  }
-  if (allocator) {
-    gst_object_unref(allocator);
   }
   gst_object_unref(source);
   std::cout << "[PASS] " << name << " decoded=" << decoded.size() << " min_psnr_db=" << quality
@@ -1150,18 +1245,120 @@ void require_selected_path(const simaai::neat::Graph& graph, const RawScenario& 
           std::string(scenario.name) + ": selected the wrong adaptive ingress variant\n" + backend);
 }
 
+void verify_dma_ingress_boundary() {
+  namespace dma = simaai::neat::internal::dmabuf;
+  const std::string context = "encoder ingress ownership";
+  GstVideoInfo visible, storage;
+  gst_video_info_init(&visible);
+  require(gst_video_info_set_format(&visible, GST_VIDEO_FORMAT_NV12, 64, 8), context);
+  dma::Error error;
+  require(dma::encoderInputInfo(visible, &storage, &error), error.message());
+  GstObjectPtr<GstBufferPool> pool(dma::createEncoderInputPool(storage, 1, 1, &error));
+  require(pool != nullptr, error.message());
+  GstBuffer* owned = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool.get(), &owned, nullptr) == GST_FLOW_OK, context);
+  std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> input(owned, gst_buffer_unref);
+  auto pipeline = parse_pipeline(
+      "appsrc name=source is-live=true format=time "
+      "caps=\"video/x-raw,format=NV12,width=64,height=8,framerate=0/1\" "
+      "! neatencoderinput ! appsink name=sink sync=false async=false enable-last-sample=false",
+      context);
+  GstObjectPtr<GstElement> source(required_element(pipeline.get(), "source", context));
+  GstObjectPtr<GstElement> sink(required_element(pipeline.get(), "sink", context));
+  start_pipeline(pipeline.get(), context);
+  GstMemory* memory = gst_buffer_peek_memory(input.get(), 0);
+  const GstVideoMeta* metadata = gst_buffer_get_video_meta(input.get());
+  GST_BUFFER_PTS(input.get()) = 123456;
+  require(gst_app_src_push_buffer(GST_APP_SRC(source.get()), gst_buffer_ref(input.get())) ==
+              GST_FLOW_OK,
+          context + ": push failed");
+  GstSamplePtr sample(gst_app_sink_try_pull_sample(GST_APP_SINK(sink.get()), 3 * GST_SECOND));
+  require(sample != nullptr, context + ": no output: " + bus_error(pipeline.get()));
+  GstBuffer* result = gst_sample_get_buffer(sample.get());
+  const GstVideoMeta* result_metadata = gst_buffer_get_video_meta(result);
+  // appsrc may make a writable metadata-only envelope (for example, to mark
+  // DISCONT). Zero-copy requires the allocation and authored layout, not the
+  // GstBuffer/GstVideoMeta header addresses, to survive this whole pipeline.
+  const bool same_memory = gst_buffer_n_memory(result) == 1 &&
+                           gst_buffer_peek_memory(result, 0) == memory &&
+                           gst_buffer_get_size(result) == gst_buffer_get_size(input.get());
+  bool same_layout = metadata && result_metadata && metadata->format == result_metadata->format &&
+                     metadata->width == result_metadata->width &&
+                     metadata->height == result_metadata->height &&
+                     metadata->n_planes == result_metadata->n_planes;
+  std::ostringstream identity;
+  identity << "input_buffer=" << input.get() << " output_buffer=" << result
+           << " input_memory=" << memory << " output_memory=" << gst_buffer_peek_memory(result, 0)
+           << " input_meta=" << metadata << " output_meta=" << result_metadata;
+  if (metadata && result_metadata) {
+    identity << " input_layout=" << metadata->format << ':' << metadata->width << 'x'
+             << metadata->height << '/' << metadata->n_planes
+             << " output_layout=" << result_metadata->format << ':' << result_metadata->width << 'x'
+             << result_metadata->height << '/' << result_metadata->n_planes;
+    for (guint plane = 0; plane < std::min(metadata->n_planes, result_metadata->n_planes);
+         ++plane) {
+      same_layout = same_layout && metadata->offset[plane] == result_metadata->offset[plane] &&
+                    metadata->stride[plane] == result_metadata->stride[plane];
+      identity << " plane" << plane << '=' << metadata->offset[plane] << ':'
+               << metadata->stride[plane] << "->" << result_metadata->offset[plane] << ':'
+               << result_metadata->stride[plane];
+    }
+  }
+  require(same_memory && same_layout,
+          context +
+              ": compatible DMA allocation or authored layout was replaced: " + identity.str());
+  std::cout << "[INFO] " << context << ": " << identity.str() << '\n';
+  require(GST_BUFFER_PTS(result) == 123456, context + ": timestamp changed");
+  sample.reset();
+  GstBuffer* cpu = gst_buffer_new_allocate(nullptr, visible.size, nullptr);
+  require(cpu != nullptr, context + ": CPU fixture allocation failed");
+  gst_buffer_memset(cpu, 0, 83, visible.size);
+  GstCaps* clock = gst_caps_from_string("timestamp/x-unix");
+  require(gst_buffer_add_reference_timestamp_meta(cpu, clock, 987654, 123) != nullptr, context);
+  gst_caps_unref(clock);
+  require(gst_app_src_push_buffer(GST_APP_SRC(source.get()), cpu) == GST_FLOW_OK,
+          context + ": CPU push failed");
+  sample.reset(gst_app_sink_try_pull_sample(GST_APP_SINK(sink.get()), 3 * GST_SECOND));
+  require(sample != nullptr, context + ": no converted CPU output: " + bus_error(pipeline.get()));
+  result = gst_sample_get_buffer(sample.get());
+  require(dma::isEncoderInputBuffer(result, visible), context + ": CPU output is not final DMA");
+  const auto* timestamp = gst_buffer_get_reference_timestamp_meta(result, nullptr);
+  require(timestamp && timestamp->timestamp == 987654 && timestamp->duration == 123,
+          context + ": conversion lost independent frame metadata");
+  auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(result, 0), &error);
+  auto read = view ? view->map(dma::CpuAccess::Read, &error) : std::nullopt;
+  require(read.has_value(), context + ": output READ failed: " + error.message());
+  const auto* pixels = static_cast<const std::uint8_t*>(read->data());
+  require(pixels[0] == 83 && pixels[storage.offset[1]] == 83,
+          context + ": NV12 upload changed visible pixels");
+  require(read->finish(&error), context + ": output READ completion failed: " + error.message());
+  require(gst_element_set_state(pipeline.get(), GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
+          context);
+  sample.reset();
+  input.reset();
+  // The producer pool has exactly one slot. A stray passthrough reference
+  // would still hold it after all input, output and pipeline owners are gone.
+  GstBufferPoolAcquireParams acquire{};
+  acquire.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+  GstBuffer* recycled = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool.get(), &recycled, &acquire) == GST_FLOW_OK,
+          context + ": passthrough retained the producer pool slot after teardown");
+  std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> returned(recycled, gst_buffer_unref);
+  require(gst_buffer_peek_memory(returned.get(), 0) == memory,
+          context + ": producer pool replaced the passthrough allocation");
+  returned.reset();
+  require(gst_buffer_pool_set_active(pool.get(), FALSE), context + ": pool did not close");
+}
+
 void run_raw_scenario(const RawScenario& scenario, const RawFrame& input,
                       const RawFrame& expected_rgb) {
+  if (std::string_view(scenario.name) == "system_nv12_tight") {
+    verify_dma_ingress_boundary();
+  }
   const int port = choose_udp_port();
   RtpReceiver receiver(port, kH264);
   simaai::neat::Graph graph = scenario_graph(scenario, port);
   require_selected_path(graph, scenario);
-  GstObjectPtr<GstAllocator> input_allocator;
-  if (scenario.memory == InputMemoryPolicy::Ev74) {
-    input_allocator.reset(gst_allocator_find("NeatSimaaiMemory"));
-    require(input_allocator != nullptr,
-            std::string(scenario.name) + ": EV74 input allocator is unavailable");
-  }
 
   if (scenario.save_load) {
     const std::filesystem::path saved_path =
@@ -1175,7 +1372,8 @@ void run_raw_scenario(const RawScenario& scenario, const RawFrame& input,
     require_selected_path(graph, scenario);
   }
 
-  Tensor seed = tensor_from_frame(input, scenario.row_padding, input_allocator.get());
+  Tensor seed =
+      tensor_from_frame(input, scenario.row_padding, scenario.memory == InputMemoryPolicy::Ev74);
   const std::uint64_t seed_hash = fnv1a(seed);
   Sample seed_sample = simaai::neat::sample_from_tensors(simaai::neat::TensorList{seed});
   seed_sample.frame_id = 0;
@@ -1196,7 +1394,8 @@ void run_raw_scenario(const RawScenario& scenario, const RawFrame& input,
   // Graph::build uses the seed for contract discovery; submit every frame
   // explicitly through the public streaming API.
   for (int frame_index = 0; frame_index < kFramesPerScenario; ++frame_index) {
-    inputs.push_back(tensor_from_frame(input, scenario.row_padding, input_allocator.get()));
+    inputs.push_back(
+        tensor_from_frame(input, scenario.row_padding, scenario.memory == InputMemoryPolicy::Ev74));
     input_hashes.push_back(fnv1a(inputs.back()));
     const std::int64_t pts_ns = static_cast<std::int64_t>(frame_index) * 1000000000LL / kFps;
     // sample_from_tensors keeps a GstSample-backed tensor as the transport
@@ -1238,6 +1437,405 @@ void run_raw_scenario(const RawScenario& scenario, const RawFrame& input,
 
   std::cout << "[PASS] " << scenario.name << " decoded=" << decoded.size()
             << " min_psnr_db=" << quality << "\n";
+}
+
+simaai::neat::SimaEncodeOptions encoder_options(const EncodedCodec& codec) {
+  using namespace simaai::neat;
+  SimaEncodeOptions options;
+  options.type = codec.format == FormatTag::ENCODED ? SimaEncodeType::MJPEG
+                 : codec.format == FormatTag::H265  ? SimaEncodeType::H265
+                                                    : SimaEncodeType::H264;
+  options.fps = kFps;
+  options.num_buffers = 4;
+  if (codec.format != FormatTag::ENCODED) {
+    options.bitrate_kbps = 20000;
+    options.gop_length = 10;
+    options.idr_interval = 30;
+  }
+  return options;
+}
+
+std::vector<RawFrame> patterned_frames(int count) {
+  std::vector<RawFrame> frames;
+  for (int phase = 0; phase < count; ++phase) {
+    RawFrame frame{FormatTag::NV12, g_geometry.width, g_geometry.height, {}};
+    frame.bytes.resize(frame.width * frame.height * 3 / 2);
+    for (int y = 0; y < frame.height; ++y)
+      for (int x = 0; x < frame.width; ++x)
+        frame.bytes[y * frame.width + x] = 16 + (x / 8 * 11 + y / 8 * 7 + phase * 17) % 220;
+    for (int y = 0; y < frame.height / 2; ++y)
+      for (int x = 0; x < frame.width / 2; ++x) {
+        const auto offset = frame.width * frame.height + y * frame.width + 2 * x;
+        frame.bytes[offset] = 64 + ((x / 8 + y + phase) % 2) * 112;
+        frame.bytes[offset + 1] = 72 + ((x / 8 + y + phase + 1) % 2) * 104;
+      }
+    frames.push_back(std::move(frame));
+  }
+  return frames;
+}
+
+std::vector<RawFrame> decode_units(const EncodedCodec& codec, const std::vector<Sample>& units) {
+  auto pipeline = parse_pipeline("appsrc name=source format=time caps=\"" + encoded_caps(codec) +
+                                     "\" ! " + codec.parser + " ! " + software_decoder(codec) +
+                                     " ! videoconvert ! video/x-raw,format=NV12 ! "
+                                     "appsink name=sink sync=false",
+                                 "independent software decode");
+  GstObjectPtr<GstElement> source(required_element(pipeline.get(), "source", "decode"));
+  GstObjectPtr<GstElement> sink(required_element(pipeline.get(), "sink", "decode"));
+  start_pipeline(pipeline.get(), "decode");
+  for (const auto& unit : units) {
+    const auto bytes = simaai::neat::tensors_from_sample(unit, true).front().copy_payload_bytes();
+    auto* buffer = gst_buffer_new_allocate(nullptr, bytes.size(), nullptr);
+    require(buffer != nullptr, "cannot allocate compressed software reference");
+    gst_buffer_fill(buffer, 0, bytes.data(), bytes.size());
+    GST_BUFFER_PTS(buffer) = unit.pts_ns;
+    GST_BUFFER_DTS(buffer) = unit.dts_ns;
+    require(gst_app_src_push_buffer(GST_APP_SRC(source.get()), buffer) == GST_FLOW_OK,
+            "software decoder rejected encoded frame");
+  }
+  require(gst_app_src_end_of_stream(GST_APP_SRC(source.get())) == GST_FLOW_OK, "decode EOS failed");
+  std::vector<RawFrame> decoded;
+  for (;;) {
+    GstSamplePtr out(gst_app_sink_try_pull_sample(GST_APP_SINK(sink.get()), 5 * GST_SECOND));
+    if (!out) {
+      require(gst_app_sink_is_eos(GST_APP_SINK(sink.get())),
+              "software decode timed out: " + bus_error(pipeline.get()));
+      break;
+    }
+    require(decoded.size() < units.size(), "decoder produced duplicate output");
+    require(GST_BUFFER_PTS(gst_sample_get_buffer(out.get())) == units[decoded.size()].pts_ns,
+            "decoded timestamp differs from encoded timestamp");
+    decoded.push_back(tight_frame_from_sample(out.get(), FormatTag::NV12, "decoded output"));
+  }
+  require(decoded.size() == units.size(), "software decode lost accepted frames");
+  return decoded;
+}
+
+std::vector<Sample> encode_contract(const EncodedCodec& codec, const std::vector<RawFrame>& frames,
+                                    bool dma, int padding, bool cancel = false, bool cbr = false,
+                                    bool intra = false) {
+  using namespace simaai::neat;
+  auto options = encoder_options(codec);
+  if (codec.format == FormatTag::ENCODED)
+    options.quality = intra ? 50 : 80;
+  else {
+    options.rate_control = cbr ? "cbr" : "vbr";
+    if (intra) {
+      options.gop_length = 1;
+      options.idr_interval = 1;
+    }
+  }
+  std::vector<Tensor> tensors;
+  std::vector<std::uint64_t> hashes;
+  for (const auto& frame : frames) {
+    tensors.push_back(tensor_from_frame(frame, padding, dma));
+    hashes.push_back(fnv1a(tensors.back()));
+  }
+  auto seed = sample_from_tensors(TensorList{tensors.front()});
+  InputOptions input;
+  input.payload_type = PayloadType::Image;
+  input.format = FormatTag::NV12;
+  if (dma || cbr) {
+    input.width = frames.front().width;
+    input.height = frames.front().height;
+  }
+  input.fps_n = kFps;
+  input.fps_d = 1;
+  input.is_live = true;
+  input.do_timestamp = false;
+  input.block = true;
+  input.memory_policy = dma ? InputMemoryPolicy::Auto : InputMemoryPolicy::SystemMemory;
+  Graph graph("encoder-contract");
+  graph.add(nodes::SimaEncode(options));
+  RunOptions run_options;
+  run_options.startup_preflight = false;
+  run_options.queue_depth = 4;
+  run_options.overflow_policy = OverflowPolicy::Block;
+  run_options.output_memory = OutputMemory::ZeroCopy;
+  const auto saved =
+      std::filesystem::temp_directory_path() /
+      (std::string("encoder-contract-") + codec.name + "-" + std::to_string(::getpid()) + ".json");
+  ScopedFileRemoval cleanup(saved);
+  graph.save(saved.string());
+  auto loaded = Graph::load(saved.string());
+  require(loaded.describe_backend(false) == graph.describe_backend(false),
+          "encoder graph roundtrip changed backend");
+  Graph execution;
+  execution.add(nodes::Input(input));
+  execution.add(cbr ? loaded : graph);
+  execution.add(nodes::Output(OutputOptions::EveryFrame(4)));
+  auto run = execution.build(seed, run_options);
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::atomic<bool> stopping{false};
+  std::exception_ptr producer_error;
+  int accepted = 0;
+  std::thread producer([&] {
+    try {
+      for (std::size_t i = 0; i < frames.size() && !stopping; ++i) {
+        auto sample = sample_from_tensors(TensorList{tensors[i]});
+        sample.pts_ns = i * 1000000000LL / kFps;
+        sample.dts_ns = sample.pts_ns;
+        sample.duration_ns = 1000000000LL / kFps;
+        sample.frame_id = i;
+        if (!run.push(std::move(sample))) {
+          require(stopping, "Core rejected an input before cancellation");
+          break;
+        }
+        ++accepted;
+      }
+      if (!stopping)
+        run.close_input();
+    } catch (...) {
+      producer_error = std::current_exception();
+    }
+  });
+  std::vector<Sample> units, retained;
+  std::vector<std::vector<std::uint8_t>> retained_bytes;
+  try {
+    for (;;) {
+      Sample sample;
+      PullError error;
+      const auto status = run.pull(5000, sample, &error);
+      if (status == PullStatus::Closed)
+        break;
+      require(status == PullStatus::Ok, "Core encode failed: " + error.message);
+      require(sample_payload_type(sample) == PayloadType::Encoded, "encoder returned raw output");
+      require(sample.pts_ns == static_cast<std::int64_t>(units.size()) * 1000000000LL / kFps,
+              "encoder lost, duplicated or reordered input timestamps");
+      const auto tensor = tensors_from_sample(sample, true).front();
+      require(!sample.owned && tensor.storage && tensor.storage->kind == StorageKind::GstSample,
+              "retention test requires an actual native encoded-output loan");
+      auto* native_sample = static_cast<GstSample*>(tensor.storage->holder.get());
+      auto* caps = gst_sample_get_caps(native_sample);
+      const auto* structure = caps ? gst_caps_get_structure(caps, 0) : nullptr;
+      int width = 0, height = 0;
+      require(structure && gst_structure_get_int(structure, "width", &width) &&
+                  gst_structure_get_int(structure, "height", &height) &&
+                  width == frames.front().width && height == frames.front().height,
+              "encoded output caps do not match input resolution");
+      auto* native_buffer = gst_sample_get_buffer(native_sample);
+      // Mapping multiple memories can replace them with a copy, hiding lifetime bugs.
+      std::vector<std::uint8_t> bytes(gst_buffer_get_size(native_buffer));
+      require(!bytes.empty() &&
+                  gst_buffer_extract(native_buffer, 0, bytes.data(), bytes.size()) == bytes.size(),
+              "encoder returned empty or unreadable output");
+      const bool is_intra =
+          !GST_BUFFER_FLAG_IS_SET(gst_sample_get_buffer(native_sample), GST_BUFFER_FLAG_DELTA_UNIT);
+      require(is_intra == (codec.format == FormatTag::ENCODED || intra || units.size() % 10 == 0),
+              "encoded I/P cadence differs from the configured GOP");
+      if (codec.format != FormatTag::ENCODED) {
+        bool idr = false;
+        for (std::size_t n = 0; n + 3 < bytes.size(); ++n) {
+          if (bytes[n] != 0 || bytes[n + 1] != 0 || bytes[n + 2] != 1)
+            continue;
+          const int type =
+              codec.format == FormatTag::H264 ? bytes[n + 3] & 31 : (bytes[n + 3] >> 1) & 63;
+          idr |= codec.format == FormatTag::H264 ? type == 5 : type == 19 || type == 20;
+        }
+        require(idr == (intra || units.size() % 30 == 0),
+                "encoded IDR cadence differs from configured interval");
+      }
+      if (retained.size() < 2) {
+        auto held = sample;
+        if (dma) {
+          // RTP payloaders retain descendant memory after discarding the source buffer.
+          auto* parent = gst_sample_get_buffer(native_sample);
+          auto* view = gst_buffer_copy_region(parent, GST_BUFFER_COPY_MEMORY, 0, -1);
+          require(view != nullptr, "cannot share encoded output");
+          auto* descendant = gst_buffer_copy_region(view, GST_BUFFER_COPY_MEMORY, 0, -1);
+          gst_buffer_unref(view);
+          require(descendant != nullptr, "cannot reshare encoded output");
+          GstSamplePtr fragment(
+              gst_sample_new(descendant, gst_sample_get_caps(native_sample), nullptr, nullptr));
+          gst_buffer_unref(descendant);
+          require(fragment != nullptr, "cannot retain encoded fragment");
+          held = sample_from_tensors(TensorList{from_gst_sample(fragment.get())});
+        }
+        retained.push_back(std::move(held));
+        retained_bytes.push_back(bytes);
+      }
+      units.push_back(make_encoded_sample(std::move(bytes), encoded_caps(codec), sample.pts_ns,
+                                          sample.dts_ns, sample.duration_ns));
+      if (cancel && units.size() == 4) {
+        stopping = true;
+        run.stop();
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+  } catch (...) {
+    stopping = true;
+    run.stop();
+    producer.join();
+    throw;
+  }
+  producer.join();
+  run.stop();
+  if (producer_error)
+    std::rethrow_exception(producer_error);
+  require(cancel ? units.size() == 4
+                 : units.size() == frames.size() && accepted == static_cast<int>(frames.size()),
+          "Core encoder did not complete the requested lifecycle");
+  for (std::size_t i = 0; i < retained.size(); ++i)
+    require(tensors_from_sample(retained[i], true).front().copy_payload_bytes() ==
+                retained_bytes[i],
+            "retained encoded output changed after teardown");
+  for (std::size_t i = 0; i < tensors.size(); ++i)
+    require(fnv1a(tensors[i]) == hashes[i], "encoder changed input pixels or padding");
+  std::cout << "[PASS] " << codec.name << " accepted=" << accepted << " completed=" << units.size()
+            << " cancel=" << cancel << " dma=" << dma << " padding=" << padding << "\n";
+  return units;
+}
+
+void require_pattern_quality(const std::vector<RawFrame>& expected,
+                             const std::vector<RawFrame>& decoded) {
+  require(decoded.size() == expected.size(), "patterned frame count differs");
+  std::array<double, 3> minimum{100, 100, 100};
+  for (std::size_t i = 0; i < decoded.size(); ++i) {
+    const auto& want = expected[i];
+    const auto& got = decoded[i];
+    require(want.format == FormatTag::NV12 && got.format == FormatTag::NV12 &&
+                want.width == got.width && want.height == got.height &&
+                want.bytes.size() == got.bytes.size(),
+            "patterned output layout differs");
+    // Compare native Y/U/V values without adding RGB chroma interpolation or range conversion.
+    for (int plane = 0; plane < 3; ++plane) {
+      const int width = plane ? want.width / 2 : want.width;
+      const int height = plane ? want.height / 2 : want.height;
+      double squared_error = 0;
+      for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+          const auto offset =
+              plane ? want.width * want.height + row * want.width + 2 * col + plane - 1
+                    : row * want.width + col;
+          const int difference = static_cast<int>(want.bytes[offset]) - got.bytes[offset];
+          squared_error += difference * difference;
+        }
+      const double mse = squared_error / (width * height);
+      const double quality = mse == 0 ? 100 : 10 * std::log10(255.0 * 255.0 / mse);
+      require(quality >= 25, "patterned frame " + std::to_string(i) + " plane " +
+                                 std::to_string(plane) +
+                                 " PSNR below 25 dB: " + std::to_string(quality));
+      minimum[plane] = std::min(minimum[plane], quality);
+    }
+  }
+  std::cout << "[PASS] independent Y/U/V minimum PSNR=" << minimum[0] << "/" << minimum[1] << "/"
+            << minimum[2] << " dB\n";
+}
+
+void sender_contract(const EncodedCodec& codec, const std::vector<RawFrame>& frames,
+                     const std::vector<Sample>& units, bool raw, bool sync) {
+  using namespace simaai::neat;
+  const int port = choose_udp_port();
+  RtpReceiver receiver(port, codec, FormatTag::NV12);
+  auto options = raw ? nodes::groups::VideoSenderOptions::FromRaw(encoder_options(codec))
+                     : nodes::groups::VideoSenderOptions::Passthrough(codec.sender_codec);
+  options.video_port_base = port;
+  options.sync = sync;
+  options.async = sync;
+  InputOptions input;
+  input.is_live = true;
+  input.do_timestamp = false;
+  input.block = true;
+  input.payload_type = raw ? PayloadType::Image : PayloadType::Encoded;
+  input.format = raw ? FormatTag::NV12 : codec.format;
+  if (!raw)
+    input.caps_override = encoded_caps(codec);
+  input.width = g_geometry.width;
+  input.height = g_geometry.height;
+  input.fps_n = kFps;
+  input.fps_d = 1;
+  input.memory_policy = InputMemoryPolicy::SystemMemory;
+  std::vector<Sample> samples;
+  if (raw) {
+    for (std::size_t i = 0; i < frames.size(); ++i) {
+      auto sample = sample_from_tensors(TensorList{tensor_from_frame(frames[i], 64)});
+      sample.pts_ns = i * 1000000000LL / kFps;
+      sample.dts_ns = sample.pts_ns;
+      sample.duration_ns = 1000000000LL / kFps;
+      samples.push_back(std::move(sample));
+    }
+  } else
+    samples = units;
+  Graph graph("encoder-sender-contract");
+  graph.add(nodes::Input(input));
+  graph.add(nodes::groups::VideoSender(options));
+  RunOptions run_options;
+  run_options.startup_preflight = false;
+  auto run = graph.build(samples.front(), run_options);
+  double receive_span = 0;
+  std::exception_ptr producer_error;
+  std::thread producer([&] {
+    try {
+      for (const auto& sample : samples)
+        require(run.push(Sample{sample}), "sender rejected input");
+      run.close_input();
+    } catch (...) {
+      producer_error = std::current_exception();
+    }
+  });
+  std::vector<RawFrame> decoded;
+  try {
+    decoded = receiver.pull_frames(static_cast<int>(frames.size()), true, &receive_span);
+  } catch (...) {
+    run.stop();
+    producer.join();
+    throw;
+  }
+  producer.join();
+  run.stop();
+  if (producer_error)
+    std::rethrow_exception(producer_error);
+  if (sync) {
+    require(receive_span >= 0.8 * (frames.size() - 1) / kFps,
+            "synchronized sender ignored timestamps");
+  }
+  require_pattern_quality(frames, decoded);
+  std::cout << "[PASS] " << codec.name << " sender raw=" << raw << " sync=" << sync
+            << " accepted=" << samples.size() << " received=" << decoded.size() << "\n";
+}
+
+void reject_unrepresentable_jpeg_dimensions() {
+  using namespace simaai::neat::nodes::groups;
+  require(simaai::neat::element_exists("jpegenc"), "JPEG geometry test requires jpegenc");
+  for (const auto& size : {std::pair{258, 130}, std::pair{2048, 720}, std::pair{640, 2160}}) {
+    auto sender = VideoSenderOptions::Passthrough(RtspCodec::MJPEG);
+    sender.video_port_base = choose_udp_port();
+    auto pipeline = parse_pipeline(
+        "videotestsrc num-buffers=1 ! video/x-raw,format=I420,width=" + std::to_string(size.first) +
+            ",height=" + std::to_string(size.second) + " ! jpegenc ! " +
+            VideoSender(sender).describe_backend(),
+        "unsupported RTP/JPEG geometry");
+    gst_element_set_state(pipeline.get(), GST_STATE_PLAYING);
+    GstObjectPtr<GstBus> bus(gst_element_get_bus(pipeline.get()));
+    GstMessage* message = gst_bus_timed_pop_filtered(
+        bus.get(), 5 * GST_SECOND,
+        static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+    require(message != nullptr, "unsupported JPEG geometry timed out without an error");
+    const bool failed = GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR;
+    gst_message_unref(message);
+    require(failed, "JPEG sender silently accepted unrepresentable dimensions");
+  }
+  std::cout << "[PASS] encoded JPEG rejects unsupported RTP dimensions\n";
+}
+
+void run_encoder_contract(const EncodedCodec& codec) {
+  if (codec.format == FormatTag::ENCODED)
+    reject_unrepresentable_jpeg_dimensions();
+  const auto frames = patterned_frames(32);
+  const auto first = encode_contract(codec, frames, false, 64);
+  const auto decoded = decode_units(codec, first);
+  require_pattern_quality(frames, decoded);
+  const auto second = decode_units(codec, encode_contract(codec, frames, true, 0));
+  require_pattern_quality(frames, second);
+  for (std::size_t i = 0; i < decoded.size(); ++i)
+    require(decoded[i].bytes == second[i].bytes,
+            "decoded encoder output is not deterministic across sessions");
+  require_pattern_quality(
+      frames, decode_units(codec, encode_contract(codec, frames, false, 0, false, true, true)));
+  (void)encode_contract(codec, frames, false, 0, true);
+  sender_contract(codec, frames, first, true, false);
+  sender_contract(codec, frames, first, false, true);
 }
 
 std::string image_path_from_args(int argc, char** argv) {
@@ -1393,6 +1991,41 @@ int main(int argc, char** argv) {
   }
   try {
     simaai::neat::gst_init_once();
+    const auto encoder_scenario = scenario_filter_from_args(argc, argv);
+    for (const auto& codec : {kH264, kH265, kMjpeg}) {
+      const std::string suffix = codec.format == FormatTag::H264   ? "h264"
+                                 : codec.format == FormatTag::H265 ? "h265"
+                                                                   : "mjpeg";
+      if (encoder_scenario == "encoder_" + suffix) {
+        run_encoder_contract(codec);
+        return 0;
+      }
+    }
+    if (encoder_scenario == "encoder_concurrent") {
+      const auto frames = patterned_frames(16);
+      std::exception_ptr first_error, second_error;
+      std::thread first([&] {
+        try {
+          (void)encode_contract(kH264, frames, false, 0);
+        } catch (...) {
+          first_error = std::current_exception();
+        }
+      });
+      std::thread second([&] {
+        try {
+          (void)encode_contract(kH265, frames, false, 0);
+        } catch (...) {
+          second_error = std::current_exception();
+        }
+      });
+      first.join();
+      second.join();
+      if (first_error)
+        std::rethrow_exception(first_error);
+      if (second_error)
+        std::rethrow_exception(second_error);
+      return 0;
+    }
     const bool layout_aware = encoder_supports_layout_aware_input();
     const std::string image_path = image_path_from_args(argc, argv);
     const std::string scenario_filter = scenario_filter_from_args(argc, argv);
@@ -1418,9 +2051,9 @@ int main(int argc, char** argv) {
     };
 
     const std::array<RawScenario, 9> scenarios{{
-        {"system_nv12_tight", FormatTag::NV12, InputMemoryPolicy::SystemMemory, 0, true,
+        {"system_nv12_tight", FormatTag::NV12, InputMemoryPolicy::SystemMemory, 0, false,
          Topology::Connected, true},
-        {"system_nv12_padded", FormatTag::NV12, InputMemoryPolicy::SystemMemory, 128, true,
+        {"system_nv12_padded", FormatTag::NV12, InputMemoryPolicy::SystemMemory, 128, false,
          Topology::Connected, false},
         {"auto_nv12", FormatTag::NV12, InputMemoryPolicy::Auto, 0, true, Topology::Fanout, false},
         {"ev74_nv12", FormatTag::NV12, InputMemoryPolicy::Ev74, 0, true, Topology::Linear, false},

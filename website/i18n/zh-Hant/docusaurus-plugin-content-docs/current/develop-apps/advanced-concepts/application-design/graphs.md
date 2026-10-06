@@ -737,6 +737,28 @@ app.add(yolo);
 app.add(neat::nodes::Output("detections"));
 ```
 
+RTSP 解碼群組在 C++ 與 Python 中提供相同的解碼器控制選項：
+
+| `RtspDecodedInputOptions` 欄位 | 預設值 | 用途 |
+| --- | --- | --- |
+| `decoder_input_buffers` | `-1` | 壓縮輸入緩衝區數量；不設定時採用執行階段預設值。 |
+| `num_buffers` | `-1` | 解碼輸出集區數量；不設定時自動決定大小。 |
+| `decoder_tuning` | `""` | 選用的解碼器預設組態，例如 `throughput-low-latency`。 |
+| `decoder_memory_opt` | `false` | 舊版記憶體預設組態；明確設定的 `decoder_tuning` 優先。 |
+
+即使使用調校預設組態，正值的數量覆寫仍然有效。使用 `-1` 表示未設定數量；舊版的非正值也會讓屬性維持未設定。`throughput-low-latency` 預設組態會停用重新排序，因此串流必須相容，且不能需要 B 影格顯示順序重排。輸入數量不會設定位元組容量。
+這些控制項已存在於 `SimaDecodeOptions` 中，名稱為 `input_buffers`、
+`num_buffers`、`decoder_tuning` 和 `memory_opt`。
+
+```python
+source = pyneat.RtspDecodedInputOptions()
+source.url = "rtsp://camera/stream"
+source.decoder_input_buffers = 2
+source.decoder_tuning = "throughput-low-latency"
+# Leave num_buffers at -1 to use automatic output sizing.
+app.add(pyneat.groups.rtsp_decoded_input(source))
+```
+
 ### 應用程式輸入至由圖所擁有的 UDP 輸出
 
 ```cpp

@@ -9,7 +9,7 @@
  * (H264CapsFixup, H264Depacketize, RTPJpegDepacketize), and the SiMa-specific MLA-bearing nodes
  * (Cast, CastTess, Dequant, Detess, DetessCast, DetessDequant, H264DecodeSima,
  * FeatureHistogram, GriderFast, H264EncodeSima, H264Packetize, H264Parse, SimaDecode,
- * PCIeSink/Src, Preproc, QuantTess, TrackDescriptor, TrackKLT, MetoakDepth, SimaArgMax,
+ * PCIeSink/Src, Preproc, QuantTess, TrackDescriptor, TrackKLT, SimaArgMax,
  * SimaBoxDecode, SimaRender).
  *
  * Include this instead of cherry-picking individual node headers.
@@ -59,8 +59,8 @@
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/TrackDescriptor.h"
 #include "nodes/sima/TrackKLT.h"
-#include "nodes/sima/MetoakDepth.h"
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/SimaRender.h"

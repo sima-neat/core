@@ -17,6 +17,7 @@
 #include "nodes/io/Input.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/SimaEncode.h"
 
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/ErrorCodes.h"
@@ -700,6 +701,11 @@ void source_sima_meta_probe_destroy(gpointer data) {
 }
 
 bool source_sima_meta_probe_required_for_node(const Node& node) {
+  // This preference selects encoder input allocation. Encoded output already
+  // owns its frame correlation and must not receive a new source frame ID.
+  if (dynamic_cast<const SimaEncode*>(&node)) {
+    return false;
+  }
   if (node.memory_contract() == MemoryContract::PreferDeviceZeroCopy) {
     return true;
   }
@@ -818,10 +824,10 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_nodes);
   // Source-mode pipelines own live/producers such as MIPI/libcamera, RTSP, and
-  // other self-driven sources.  They must reach NULL before Run::close() returns;
-  // otherwise deferred no-flush teardown can race process/plugin destruction
-  // after the application has already observed successful outputs.
-  stream_opt.prefer_synchronous_teardown = true;
+  // other self-driven sources. Prefer a bounded transition to NULL rather than
+  // immediately handing them to the reaper; the legacy fallback remains
+  // available if a live source cannot complete that transition in its budget.
+  stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_nodes);
   const bool insert_queue2 = session_build_should_insert_async_queue2(mode, merged_opt);
 
@@ -845,6 +851,11 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  br.pipeline_string =
+      session_build_apply_run_preset_to_pipeline(std::move(br.pipeline_string), merged_opt);
+  if (br.diag) {
+    br.diag->pipeline_string = br.pipeline_string;
+  }
   last_pipeline = br.pipeline_string;
   session_build_enforce_mla_num_buffers(last_pipeline, where);
   session_build_maybe_dump_pipeline_string(last_pipeline, where);
@@ -2736,7 +2747,7 @@ std::string fused_consumer_segment_factory(const std::string& segment) {
 
 bool is_fused_consumer_stage_factory(const std::string& factory) {
   return factory == "neatprocesscvu" || factory == "neatprocessmla" ||
-         factory == "neatobjectdecode" || factory == "neatboxdecode";
+         factory == "neatobjectdecode";
 }
 
 bool fused_consumer_fragment_replaces_buffers(const std::string& fragment) {
@@ -3265,12 +3276,17 @@ BuildResult build_fused_realtime_source_pipeline(
     ss << " ! " << mux_name << ".sink_" << branch_index;
   }
 
-  br.diag->pipeline_string = ss.str();
+  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(
+      session_build_select_terminal_objectdecode_cpu_visibility(ss.str()));
   br.pipeline_string = br.diag->pipeline_string;
   return br;
 }
 
 namespace session_test {
+
+bool source_sima_meta_probe_required_for_test(const Node& node) {
+  return source_sima_meta_probe_required_for_node(node);
+}
 
 Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
                                                  const std::string& stream_id, bool copy_output) {
@@ -3467,7 +3483,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_consumer_nodes);
-  stream_opt.prefer_synchronous_teardown = true;
+  stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes,
                                                build_branch_nodes);
 
@@ -3508,6 +3524,11 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  br.pipeline_string =
+      session_build_apply_run_preset_to_pipeline(std::move(br.pipeline_string), merged_opt);
+  if (br.diag) {
+    br.diag->pipeline_string = br.pipeline_string;
+  }
   last_pipeline = br.pipeline_string;
   session_build_enforce_mla_num_buffers(last_pipeline, where);
   session_build_maybe_dump_pipeline_string(last_pipeline, where);

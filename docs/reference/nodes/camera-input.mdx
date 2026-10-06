@@ -6,8 +6,6 @@ sidebar_position: 2
 
 # CameraInput Node
 
-The following libcamera guide describes the default backend. For Metoak SIMOR owned raw tensors, see the raw V4L2 section below.
-
 `CameraInput` is a source node for MIPI cameras exposed through libcamera and GStreamer `libcamerasrc`. Use it at the head of a source-owned graph when frames should come from the DevKit camera stack instead of from `run.push(...)`.
 
 For a task guide, see [Use a MIPI Camera](/develop-apps/advanced-concepts/mipi-camera-input).
@@ -118,7 +116,10 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `queue_depth` | `2` | Maximum queued buffers when `insert_queue` is true. |
 | `allow_cpu_fallback` | `false` | If `false`, require camera/device zero-copy support. Set it to `true` only to opt into Neat's private adaptive bridge into SiMaAI memory. |
 
-`capture_buffer_count` is now also a `CameraInputOptions` field. Zero preserves the backend default; a nonzero value overrides its capture count. The existing C++ factory and Python keyword remain supported. The libcamera limit is 128; raw V4L2 requires 4–128 buffers.
+`capture_buffer_count` is an argument to `CameraInputWithCaptureBuffers`, not a
+`CameraInputOptions` field. It defaults to `0`, which preserves the camera
+pipeline's own default. The camera pipeline validates its limit; Neat's
+provider supports at most `128`.
 
 ## Input and output contract
 
@@ -186,74 +187,3 @@ For model pipelines, configure preprocessing through `Model::Options::preprocess
 | Strict zero-copy error | `allow_cpu_fallback` is false and the camera source does not expose SiMaAI zero-copy properties. |
 | Pull timeout | The camera did not deliver frames, the graph is backpressured, or the camera stack stopped streaming. |
 | Green, purple, or heavily tinted frames | The frame format or model preprocess color conversion is wrong, or the tint already exists in the camera ISP/libcamera output. Validate an `NV12` capture outside Neat first. |
-
-## Owned raw V4L2 capture
-
-Use the existing `CameraInput(options)` factory (Python: `camera_input`) for both backends. The following example selects the Linux-only Metoak SIMOR raw-copy profile. Choose the actual capture device; `/dev/video1` is only an example. Other platforms report an unsupported-backend error.
-
-```cpp
-#include <neat.h>
-namespace n = simaai::neat;
-
-n::CameraInputOptions camera;
-camera.device = "/dev/video1";
-camera.profile = n::CameraProfile::MetoakSimor;
-
-n::Graph capture;
-capture.add(n::nodes::CameraInput(camera));
-capture.add(n::nodes::Output());
-```
-
-```python
-import pyneat as neat
-
-camera = neat.CameraInputOptions()
-camera.device = "/dev/video1"
-camera.profile = neat.CameraProfile.MetoakSimor
-
-capture = neat.Graph()
-capture.add(neat.nodes.camera_input(camera))
-capture.add(neat.nodes.output())
-```
-
-`MetoakSimor` defaults to owned-copy capture when `zero_copy` is unset. Each dequeued MMAP frame is copied to independent pooled system memory **before requeueing** the camera buffer. Explicit `zero_copy=false` is equivalent; `zero_copy=true` is rejected because this profile does not support DMA-BUF export/import. There is no silent fallback. `camera_name` and `allow_cpu_fallback` are libcamera-only. The device cadence is retained; `framerate_num`/`framerate_den` do not configure this profile.
-
-The output is a flat UInt8 tensor `[bytesused]`, including valid row padding and
-trailer bytes, not a decoded image. Read negotiated `fourcc`, `width`, `height`,
-`row-stride` and `sizeimage` from `Sample.caps_string`. Do not reshape to decoded
-image dimensions or discard a trailer before interpreting the device protocol.
-Delivery timestamps remain metadata, not tensor bytes.
-
-`capture_buffer_count` defaults to 8 (range 4–128), `output_buffer_count` to 8
-(range 2–128), and `frame_timeout_ms` to 2000 (range 1–60000). Retained outputs
-consume pool slots. Release them to resume capture when the bounded pool fills;
-held tensors are never overwritten. An enabled queue must have a positive
-`queue_depth` smaller than `output_buffer_count`. Stopping interrupts pool waits.
-
-Configure the device's media-controller links and pad formats using its BSP
-before starting capture; Neat does not rewrite the media graph. Do not run a
-competing capture client. Platform and USB devices use the same V4L2 MMAP
-lifecycle. The driver must honor the STREAMOFF contract: copy mode does not
-make faulty kernel DMA teardown safe. Failed retirement requires device recovery,
-not an automatic reopen.
-
-For ROS/SIMOR, the application still performs CPU unpacking, calibration and ROS
-publication. It may feed the six original inputs to `MetoakDepth` graph 20 in a
-separate processing graph. This capture API does not add SIMOR processing or
-require graph 21, new firmware, or changes to an existing ROS integration.
-
-Startup prepares output caps and the CPU buffer pool before queueing camera buffers. Stop interrupts frame and pool waits, retires capture, then releases the output pool. Tensors already delivered remain valid after stop. A capture-retirement error is reported on the GStreamer bus and prevents restarting that source; process exit is not a substitute for device recovery.
-
-
-### Profile selection and compatibility
-
-- `profile=Default` (the default) always uses libcamera and preserves `camera_name` selection. Setting `device` without `profile=MetoakSimor` is rejected; it never implicitly selects Metoak.
-- `profile=MetoakSimor` privately selects owned-copy V4L2 with `RAW8`, `BA81`, and 1920×360 wire geometry. It replaces the legacy NV12/1080 image defaults; other conflicting format or geometry overrides are rejected. This profile does not describe every Metoak camera.
-- A SIMOR profile without `device` requires exactly one matching endpoint in the media topology. Missing, ambiguous or mixed-sensor routes fail; no capture device is opened during discovery. Explicit profile plus device avoids discovery.
-- Pixel format is not a backend selector. Generic raw/Bayer requests stay on the libcamera route; this change does not add or qualify Bayer caps negotiation. The profile owns its wire FourCC; no public FourCC option is exposed.
-- For `MetoakSimor`, unset `zero_copy` resolves to false; explicit true fails. For libcamera, unset preserves `allow_cpu_fallback`; false permits the existing copy fallback, while true requires zero-copy. Contradictory settings fail.
-- The implementation is selected once during node construction, before graph contract propagation. There is no public backend option, and a failed implementation never switches to another one. Discovery does not configure media links or pad formats.
-
-Only a `MetoakSimor` profile without `device` scans media controllers. These metadata queries are synchronous kernel calls, not deadline-bounded operations. Set both `device` and `profile=MetoakSimor` to bypass discovery when a controller is unresponsive.
-
-Use only `CameraInput(options)` and `CameraInputOptions`; V4L2 configuration is private. The manifest and SONAME remain at Core ABI 5. The public options and node layouts changed for this unreleased integration: rebuild C++ consumers and use the matching Python wheel. Do not mix older ABI-5 binaries with the new headers or runtime.

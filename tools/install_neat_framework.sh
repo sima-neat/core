@@ -61,7 +61,7 @@ set -euo pipefail
 #   board installer refreshes APT metadata before installing local DEBs. AUTO
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
-#   staged EV74 firmware and reset runtime state after board package replacement.
+#   staged EV74 firmware after board package replacement.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -195,7 +195,7 @@ verify_simulated_package_removals() {
   for package in "${removed_packages[@]}"; do
     package_name="${package%%:*}"
     case "${package_name}" in
-      sima-neat | sima-neat-dev)
+      sima-neat | sima-neat-dev | neat-internals-dev | sima-lmm-dev)
         continue
         ;;
       neat-libcamera | neat-libcamera-dev | neat-libcamera-tools)
@@ -782,104 +782,50 @@ sysroot_neat_install_packages_dir() {
   printf '%s\n' "$(sysroot_path)/neat-install-packages"
 }
 
-has_sima_lmm_sysroot_deps() {
-  local sysroot="$1"
-  [[ -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
-     -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
-     -f "${sysroot}/usr/include/fmt/core.h" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" &&
-     -f "${sysroot}/usr/include/spdlog/spdlog.h" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" &&
-     -f "${sysroot}/usr/include/nlohmann/json.hpp" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" &&
-     -f "${sysroot}/usr/include/httplib.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]
-}
-
 ensure_sima_lmm_sysroot_deps() {
   local sysroot="$1"
-
-  if ! compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
-    return 0
+  local -a dependencies=("usr/include/nlohmann/json.hpp:nlohmann-json3-dev")
+  if compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
+    dependencies+=(
+      "usr/lib/aarch64-linux-gnu/libfmt.so.10:libfmt10:arm64"
+      "usr/lib/aarch64-linux-gnu/libspdlog.so.1.15:libspdlog1.15:arm64"
+      "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
+      "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
+      "usr/lib/aarch64-linux-gnu/libfftw3.so.3:libfftw3-double3:arm64"
+      "usr/lib/aarch64-linux-gnu/libavcodec.so.61:libavcodec61:arm64"
+      "usr/lib/aarch64-linux-gnu/libavformat.so.61:libavformat61:arm64"
+      "usr/lib/aarch64-linux-gnu/libavutil.so.59:libavutil59:arm64"
+      "usr/lib/aarch64-linux-gnu/libswresample.so.5:libswresample5:arm64"
+    )
   fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "apt-get is required to install SimaLMM SDK/sysroot dependencies." >&2
-    exit 1
-  fi
-
+  local dependency
   local -a missing_packages=()
-  if [[ ! -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
-        ! -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
-    missing_packages+=("libeigen3-dev")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/fmt/core.h" ]]; then
-    missing_packages+=("libfmt-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
-    missing_packages+=("libfmt9:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/spdlog/spdlog.h" ]]; then
-    missing_packages+=("libspdlog-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
-    missing_packages+=("libspdlog1.10:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/nlohmann/json.hpp" ]]; then
-    missing_packages+=("nlohmann-json3-dev")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" ||
-        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" ||
-        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
-    missing_packages+=("libbrotli-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/httplib.h" ]]; then
-    missing_packages+=("libcpp-httplib-dev:arm64")
-  fi
-  if [[ ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
-    missing_packages+=("libcpp-httplib0.11:arm64")
-  fi
-
-  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
-    return 0
-  fi
+  for dependency in "${dependencies[@]}"; do
+    [[ -e "${sysroot}/${dependency%%:*}" ]] || missing_packages+=("${dependency#*:}")
+  done
+  [[ "${#missing_packages[@]}" -gt 0 ]] || return 0
 
   local tmp_dir
-  tmp_dir="$(mktemp -d /tmp/sima-lmm-sysroot-deps-XXXXXX)"
-
-  log "Installing SimaLMM SDK/sysroot dependencies:"
-  printf '  %s\n' "${missing_packages[@]}"
-  if ! (
-    cd "${tmp_dir}"
-    apt-get download "${missing_packages[@]}"
-  ); then
+  tmp_dir="$(mktemp -d /tmp/neat-sysroot-deps-XXXXXX)"
+  log "Installing customer SDK dependencies: ${missing_packages[*]}"
+  if ! (cd "${tmp_dir}" && apt-get download "${missing_packages[@]}"); then
     rm -rf "${tmp_dir}"
-    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    echo "Failed to download customer SDK dependencies." >&2
     exit 1
   fi
-
-  local -a downloaded_debs=()
-  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
-  if [[ "${#downloaded_debs[@]}" -lt 1 ]]; then
-    rm -rf "${tmp_dir}"
-    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
-    exit 1
-  fi
-
   local dep_deb
-  for dep_deb in "${downloaded_debs[@]}"; do
-    log "Extracting $(basename "${dep_deb}") into ${sysroot}"
+  for dep_deb in "${tmp_dir}"/*.deb; do
     if ! dpkg-deb -x "${dep_deb}" "${sysroot}" 2>/dev/null; then
       run_sudo dpkg-deb -x "${dep_deb}" "${sysroot}"
     fi
   done
   rm -rf "${tmp_dir}"
-
-  if ! has_sima_lmm_sysroot_deps "${sysroot}"; then
-    echo "SimaLMM SDK/sysroot dependencies are still incomplete after install." >&2
-    exit 1
-  fi
+  for dependency in "${dependencies[@]}"; do
+    if [[ ! -e "${sysroot}/${dependency%%:*}" ]]; then
+      echo "Missing customer SDK dependency after install: ${dependency#*:}" >&2
+      exit 1
+    fi
+  done
 }
 
 ensure_sdk_neat_cli_symlink() {
@@ -1050,24 +996,9 @@ deb_package_is_installed() {
   dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii '
 }
 
-simaai_ota_command_path() {
-  command -v simaai-ota 2>/dev/null || true
-}
-
-verify_canonical_palette_and_ota_installation() {
-  local ota_path ota_owner
+verify_canonical_palette_installation() {
   if ! deb_package_is_installed simaai-palette-modalix; then
     echo "simaai-palette-modalix is not installed after the native Modalix transaction." >&2
-    return 1
-  fi
-  ota_path="$(simaai_ota_command_path)"
-  if [[ "${ota_path}" != "/usr/bin/simaai-ota" ]]; then
-    echo "Canonical simaai-ota is missing after the native Modalix transaction: ${ota_path:-<missing>}." >&2
-    return 1
-  fi
-  ota_owner="$(dpkg-query -S /usr/bin/simaai-ota 2>/dev/null || true)"
-  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "/usr/bin/simaai-ota is not owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
     return 1
   fi
 }
@@ -1108,7 +1039,40 @@ remove_installed_local_deb_packages() {
   run_sudo dpkg --remove --force-depends "${packages[@]}"
 }
 
+board_runtime_is_legacy() {
+  python3 - "$(resolve_package_manifest_path)" "${NEAT_BUILDINFO_FILE}" <<'PYPROFILE'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if not re.fullmatch(r"2[.]1[.][0-9]+", str(manifest.get("platform-version", ""))):
+        raise SystemExit(1)
+    fields = {}
+    for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
+        if len(line) > 4096:
+            raise SystemExit(1)
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if separator and key in ("MACHINE", "DISTRO_VERSION"):
+            if key in fields:
+                raise SystemExit(1)
+            fields[key] = value.strip()
+    raise SystemExit(0 if fields.get("MACHINE") == "modalix" and re.fullmatch(
+        r"2[.]1[.][0-9]+([.~+_-][A-Za-z0-9_.+~-]+)?", fields.get("DISTRO_VERSION", "")
+    ) else 1)
+except (OSError, ValueError, AttributeError, TypeError):
+    raise SystemExit(1)
+PYPROFILE
+}
+
 stop_board_runtime_before_install() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1117,7 +1081,6 @@ stop_board_runtime_before_install() {
   local svc
   for svc in \
       simaai-pipeline-manager.service \
-      simaai-appcomplex.service \
       rctd.service \
       encoder.service \
       decoder.service \
@@ -1127,80 +1090,23 @@ stop_board_runtime_before_install() {
       run_sudo systemctl reset-failed "${svc}" >/dev/null 2>&1 || true
     fi
   done
-
-  if [[ -x /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex ]]; then
-    run_sudo /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex || true
-  else
-    run_sudo pkill -TERM -x mlashmcomplex >/dev/null 2>&1 || true
-    sleep 0.5
-    run_sudo pkill -KILL -x mlashmcomplex >/dev/null 2>&1 || true
-  fi
-
-  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
 }
 
 activate_board_runtime_after_install() {
-  if ! command -v systemctl >/dev/null 2>&1; then
-    return 0
-  fi
-
-  # These files are recreated by simaai-appcomplex.service.  Remove stale IPC
-  # before the post-install MLA init/reset path so clients cannot observe an
-  # old dispatcher lifetime after package replacement.
-  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
-  # Package configuration intentionally does not restart services.  Reload
-  # systemd here so the owned maintenance window starts services from the unit
-  # files that were just unpacked.
-  run_sudo systemctl daemon-reload || true
-
   if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
         -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
-    log "Activating staged EV74 firmware and resetting runtime state."
+    log "Activating staged EV74 firmware."
     run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
   else
-    log "EV74 firmware activation skipped; starting simaai-appcomplex.service directly."
-    if systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
-      run_sudo systemctl restart simaai-appcomplex.service || true
-    fi
+    log "EV74 firmware activation skipped."
   fi
 }
-
-verify_board_runtime_services() {
-  local service="simaai-appcomplex.service"
-
-  if ! command -v systemctl >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if ! systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
-    return 0
-  fi
-
-  # The Debian maintainer script is intentionally generated through debhelper,
-  # and deb-systemd-invoke treats service start failures as non-fatal so package
-  # transactions can still complete.  For this installer the runtime is not
-  # usable without the MLA shared-memory dispatcher, so make readiness explicit:
-  # try one start/restart if the unit is inactive, then fail with the unit status
-  # instead of leaving users with later "Connecting to server failed" errors.
-  if ! systemctl is-active --quiet "${service}"; then
-    log "${service} is not active after package install; attempting to start it once."
-    run_sudo systemctl start "${service}" || true
-    sleep 1
-  fi
-
-  if ! systemctl is-active --quiet "${service}"; then
-    echo "${service} is not active after NEAT package installation." >&2
-    run_sudo systemctl --no-pager --full status "${service}" >&2 || true
-    run_sudo journalctl -u "${service}" --no-pager -n 80 >&2 || true
-    run_sudo bash -c 'for f in /sys/class/remoteproc/remoteproc*/name /sys/class/remoteproc/remoteproc*/state; do [ -e "$f" ] && printf "%s: " "$f" && cat "$f"; done' >&2 || true
-    exit 1
-  fi
-
-  log "Verified ${service} is active."
-}
-
 
 restart_board_codec_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1229,6 +1135,10 @@ restart_board_codec_services() {
 }
 
 verify_board_codec_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1556,15 +1466,16 @@ verify_global_sima_neat_lib_links() {
 }
 
 complete_board_install_after_packages() {
-  migrate_stale_global_dispatcher_libs
-  verify_private_dispatcher_runtime
+  if board_runtime_is_legacy; then
+    migrate_stale_global_dispatcher_libs
+    verify_private_dispatcher_runtime
+  fi
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
-  verify_canonical_palette_and_ota_installation
+  verify_canonical_palette_installation
   activate_board_runtime_after_install
   restart_board_codec_services
   verify_board_codec_services
-  verify_board_runtime_services
 }
 
 validate_ros2_sdk_native_host() {
@@ -2080,279 +1991,6 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
   log_green "Paired DevKit sync completed: ${ssh_target}"
 }
 
-# Inspect selected package bytes before Python provisioning, sysroot writes or
-# board lifecycle changes. Never use installed libraries to fill a bundle gap.
-validate_bundle_elf_cohort() {
-  local tool
-  for tool in python3 dpkg-deb dpkg readelf; do
-    command -v "${tool}" >/dev/null 2>&1 || {
-      echo "${tool} is required for NEAT bundle preflight." >&2
-      return 1
-    }
-  done
-  python3 - "${1:-}" "${DEBS[@]}" <<'PY_COHORT'
-import functools
-import hashlib
-import os
-import posixpath
-from pathlib import Path
-import re
-import subprocess
-import sys
-import tempfile
-
-
-def run(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT,
-                                   env={**os.environ, "LC_ALL": "C"})
-
-
-def fail(message):
-    raise ValueError(message)
-
-
-def digest_file(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-packages = {}
-versions = {}
-providers = {}
-consumers = []
-files = {}
-owners = {}
-package_versions = {}
-package_architectures = {}
-replacements = {}
-loader_directories = []
-# These dependencies must never be satisfied by leftover SDK/board libraries.
-neat_name = re.compile(
-    r"^lib(?:neat|gstneat|gstsimaai|gstsimamm|sima_neat|sima_lmm|simaneet|"
-    r"simaaineat|commonutils|processcvu_testhooks|simaai_genboxdecode)"
-)
-expected_architecture = sys.argv[1] or None
-
-try:
-    with tempfile.TemporaryDirectory(prefix="neat-cohort-") as temp:
-        for index, argument in enumerate(sys.argv[2:]):
-            deb = Path(argument).resolve(strict=True)
-            package, version, architecture = [
-                run("dpkg-deb", "-f", str(deb), field).strip()
-                for field in ("Package", "Version", "Architecture")
-            ]
-            if architecture != "all":
-                if expected_architecture is None:
-                    expected_architecture = architecture
-                elif architecture != expected_architecture:
-                    fail(f"mixed/unexpected package architecture: {package} is {architecture}, expected {expected_architecture}")
-            if package in packages:
-                fail(f"duplicate package {package}: {packages[package]} and {deb}")
-            packages[package] = str(deb)
-            package_versions[package] = version
-            package_architectures[package] = architecture
-            replacements[package] = []
-            for entry in run("dpkg-deb", "-f", str(deb), "Replaces").strip().split(","):
-                if not entry.strip():
-                    continue
-                match = re.fullmatch(
-                    r"\s*([a-z0-9][a-z0-9+.-]+)(?::([a-z0-9-]+))?\s*"
-                    r"(?:\(\s*(<<|<=|=|>=|>>)\s*([^\s()]+)\s*\))?\s*", entry)
-                if not match:
-                    fail(f"unsupported Replaces entry in {package}: {entry}")
-                replacements[package].append(match.groups())
-            group = ("internals" if package.startswith("neat-") else
-                     "llima" if package.startswith("sima-lmm-") else
-                     "core" if package in ("sima-neat", "sima-neat-dev") else None)
-            if group:
-                previous = versions.setdefault(group, version)
-                if previous != version:
-                    fail(f"mixed {group} versions: {previous} and {version} ({package})")
-            root = Path(temp) / str(index)
-            subprocess.run(["dpkg-deb", "-x", str(deb), str(root)], check=True)
-            for directory, directories, names in os.walk(root, followlinks=False):
-                # os.walk lists directory symlinks separately from files. Record
-                # both without following links, including implicit parent dirs,
-                # so conflicting DEBs cannot redirect another package's payload.
-                for name in directories + names:
-                    path = Path(directory) / name
-                    relative = path.relative_to(root).as_posix()
-                    if path.is_symlink():
-                        identity = ("link", os.readlink(path))
-                    elif path.is_dir():
-                        identity = ("directory", "")
-                    elif path.is_file():
-                        identity = ("file", digest_file(path))
-                    else:
-                        continue
-                    if relative in files and files[relative] != identity:
-                        fail(f"conflicting payload path {relative} ({package})")
-                    files[relative] = identity
-                    owners.setdefault(relative, set()).add(package)
-                    if identity[0] != "file":
-                        continue
-                    # Debian loads these fragments through /etc/ld.so.conf.
-                    # Only package-declared directories count, never the builder's
-                    # cache or environment. Includes need a target-side audit.
-                    if re.fullmatch(r"etc/ld\.so\.conf\.d/[^/]+\.conf", relative):
-                        for line in path.read_text().splitlines():
-                            entry = line.split("#", 1)[0].strip()
-                            if not entry:
-                                continue
-                            if not entry.startswith("/") or len(entry.split()) != 1 or "$" in entry:
-                                fail(f"unsupported packaged loader configuration: {package}:{relative}: {entry}")
-                            loader_directories.append(posixpath.normpath(entry))
-                    with path.open("rb") as stream:
-                        if stream.read(4) != b"\x7fELF":
-                            continue
-                    header = run("readelf", "-h", str(path))
-                    machine = re.search(r"Machine:\s*(.*)", header).group(1).strip()
-                    expected = {"arm64": "AArch64", "amd64": "Advanced Micro Devices X86-64"}.get(architecture)
-                    if expected is None or machine != expected:
-                        fail(f"ELF architecture mismatch: {package}:{relative}: {architecture} / {machine}")
-                    dynamic = run("readelf", "-d", str(path))
-                    search_paths = {}
-                    for tag, value in re.findall(r"\((RPATH|RUNPATH)\).*?\[([^]]*)\]", dynamic):
-                        search_paths[tag] = []
-                        for entry in value.split(":"):
-                            origin_relative = (entry in ("$ORIGIN", "${ORIGIN}") or
-                                               entry.startswith(("$ORIGIN/", "${ORIGIN}/")))
-                            # Resolve against the ELF's installed location, never the
-                            # extraction directory or the builder's filesystem. Checking
-                            # the literal prefix alone misses $ORIGIN/../../tmp and
-                            # /usr/lib/../../tmp. Keep sibling private runtime paths valid.
-                            origin = "/" + posixpath.dirname(relative)
-                            expanded = (origin + entry[entry.index("}") + 1:]
-                                        if entry.startswith("${ORIGIN}") else
-                                        origin + entry[len("$ORIGIN"):]
-                                        if origin_relative else entry)
-                            normalized = "/" + posixpath.normpath(expanded).lstrip("/")
-                            runtime_roots = ("/lib", "/lib64", "/usr/lib", "/usr/lib64",
-                                             "/usr/local/lib", "/usr/local/lib64")
-                            in_runtime_root = any(
-                                normalized == root or normalized.startswith(root + "/")
-                                for root in runtime_roots)
-                            # $ORIGIN also supports packaged executables with adjacent
-                            # DSOs (for example under /usr/libexec); it cannot escape
-                            # that directory unless it reaches a system runtime root.
-                            adjacent = origin_relative and (
-                                normalized == origin or normalized.startswith(origin + "/"))
-                            if (not entry or "$" in expanded or
-                                (not entry.startswith("/") and not origin_relative) or
-                                not (in_runtime_root or adjacent)):
-                                fail(f"unsafe build/empty runtime search path in {package}:{relative}: {value}")
-                            search_paths[tag].append(normalized)
-                    soname = re.search(r"\(SONAME\).*?\[([^]]+)\]", dynamic)
-                    if soname:
-                        key = soname.group(1)
-                        old = providers.get(key)
-                        if old and old[0] != identity[1]:
-                            fail(f"different ELF providers for {key}: {old[1]} and {package}:{relative}")
-                        providers[key] = (identity[1], f"{package}:{relative}", relative)
-                    needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic)
-                    # RUNPATH takes precedence over RPATH. Require every DSO to
-                    # locate its own direct cohort dependencies, independently of
-                    # an application's inherited RPATH or LD_LIBRARY_PATH.
-                    search = search_paths.get("RUNPATH", search_paths.get("RPATH", []))
-                    no_defaults = bool(re.search(r"\(FLAGS_1\).*\bNODEFLIB\b", dynamic))
-                    consumers.append((f"{package}:{relative}", needed, search, no_defaults))
-        def packaged_file(lookup):
-            # Follow only package-owned SONAME links, not host filesystem links.
-            lookup = lookup.lstrip("/")
-            visited = set()
-            while files.get(lookup, (None,))[0] == "link":
-                if lookup in visited:
-                    return None
-                visited.add(lookup)
-                target = files[lookup][1]
-                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else
-                                           posixpath.join(posixpath.dirname(lookup), target))
-                if lookup == ".." or lookup.startswith("../"):
-                    return None
-            return files.get(lookup)
-
-        @functools.lru_cache(maxsize=None)
-        def replaces(new, old):
-            for name, arch, operator, version in replacements[new]:
-                if name != old or arch not in (None, "any", package_architectures[old]):
-                    continue
-                if operator is None:
-                    return True
-                status = subprocess.run(
-                    ["dpkg", "--compare-versions", package_versions[old], operator, version],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE).returncode
-                if status not in (0, 1):
-                    fail(f"invalid Replaces version in {new}: {name} ({operator} {version})")
-                if status == 0:
-                    return True
-            return False
-
-        # Equal bytes do not grant dpkg ownership to two different packages.
-        # A selected owner must explicitly replace every other owner. Identical
-        # directory links can be shared just like real directories.
-        for relative, packages_owning_path in owners.items():
-            if len(packages_owning_path) <= 1 or packaged_file(relative) == ("directory", ""):
-                continue
-            if not any(all(other == owner or replaces(owner, other)
-                           for other in packages_owning_path) for owner in packages_owning_path):
-                fail(f"duplicate payload ownership {relative}: {', '.join(sorted(packages_owning_path))}; no matching Replaces declaration")
-
-        for soname, (digest, origin, relative) in providers.items():
-            lookup = posixpath.join(posixpath.dirname(relative), soname)
-            visited = set()
-            while files.get(lookup, (None,))[0] == "link":
-                if lookup in visited:
-                    fail(f"cyclic SONAME symlink for {origin}")
-                visited.add(lookup)
-                target = files[lookup][1]
-                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else posixpath.join(posixpath.dirname(lookup), target))
-                if lookup == ".." or lookup.startswith("../"):
-                    fail(f"SONAME symlink escapes package root for {origin}")
-            if files.get(lookup) != ("file", digest):
-                fail(f"missing or wrong packaged SONAME path {soname} for {origin}")
-        families = {name.split(".so", 1)[0] for name in providers}
-        multiarch = {"arm64": "aarch64-linux-gnu", "amd64": "x86_64-linux-gnu"}.get(expected_architecture)
-        defaults = ["/lib", "/usr/lib"]
-        if multiarch:
-            defaults = [f"/lib/{multiarch}", f"/usr/lib/{multiarch}"] + defaults
-
-        for consumer, needed, search, no_defaults in consumers:
-            for dependency in needed:
-                # The loader treats any slash as a pathname and bypasses its
-                # library search. Reject before family filtering, including
-                # dependencies linked by filename to a DSO without a SONAME.
-                if "/" in dependency:
-                    fail(f"{consumer} has pathname-valued DT_NEEDED {dependency}; relink with a SONAME and a package-relative runtime search path")
-                if not (neat_name.match(dependency) or dependency.split(".so", 1)[0] in families):
-                    continue
-                if dependency not in providers:
-                    fail(f"{consumer} requires {dependency}, but the selected bundle does not provide it; rebuild against the selected Internals/Core (do not add a compatibility symlink)")
-                directories = search + [d for d in loader_directories
-                                        if not no_defaults or d not in defaults]
-                if not no_defaults:
-                    directories += defaults
-                expected = ("file", providers[dependency][0])
-                for directory in directories:
-                    candidate = packaged_file(posixpath.join(directory, dependency))
-                    if candidate is not None:
-                        if candidate != expected:
-                            fail(f"{consumer} resolves {dependency} to a different packaged payload in {directory}")
-                        break
-                else:
-                    fail(f"{consumer} requires {dependency}, but its packaged provider is not reachable through its RUNPATH/RPATH, packaged ld.so.conf.d directories or default library directories; rebuild with the matching install RUNPATH")
-
-        if not packages:
-            fail("no DEB packages supplied")
-        print(f"Verified selected ELF cohort: {len(packages)} packages, {len(consumers)} ELFs, {len(providers)} SONAME providers. Platform dependencies still require target validation.")
-except (OSError, ValueError, subprocess.CalledProcessError) as error:
-    print(f"NEAT bundle preflight failed: {error}", file=sys.stderr)
-    sys.exit(1)
-PY_COHORT
-}
-
 install_for_environment() {
   case "${ENV_MODE}" in
     elxr-sdk)
@@ -2397,6 +2035,4 @@ fi
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 ensure_platform_compatible
-validate_single_sima_neat_package_pair
-validate_bundle_elf_cohort arm64
 install_for_environment

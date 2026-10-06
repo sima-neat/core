@@ -500,7 +500,7 @@ int main(int argc, char** argv) {
     PluginFactories factories;
     factories.processcvu = require_factory_or_throw("neatprocesscvu", "processcvu");
     factories.processmla = require_factory_or_throw("neatprocessmla", "processmla");
-    factories.boxdecode = require_factory_or_throw("neatboxdecode", "boxdecode");
+    factories.boxdecode = require_factory_or_throw("neatobjectdecode", "boxdecode");
 
     const std::string tar_gz = resolve_yolov11_pose_bf16_tar_or_skip(root);
     cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);

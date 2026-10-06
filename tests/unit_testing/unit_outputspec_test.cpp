@@ -180,6 +180,30 @@ int main() {
     require(rtsp_encoded_spec.fps_num == 120,
             "RTSP encoded source_fps should advertise encoded FPS");
 
+    simaai::neat::nodes::groups::VideoInputGroupOptions video;
+    auto video_spec = simaai::neat::nodes::groups::VideoInputGroupOutputSpec(video);
+    require(video_spec.memory == "SimaAI" && video_spec.format == "NV12",
+            "native file input must preserve the decoder output contract");
+    video.output_caps.width = 640;
+    video.output_caps.height = 360;
+    video.output_caps.fps = 30;
+    video_spec = simaai::neat::nodes::groups::VideoInputGroupOutputSpec(video);
+    require(video_spec.memory == "SimaAI" && video_spec.width == 640 && video_spec.height == 360,
+            "file input tail caps must preserve native memory unless explicitly constrained");
+    video.output_caps.memory = simaai::neat::CapsMemory::SystemMemory;
+    video_spec = simaai::neat::nodes::groups::VideoInputGroupOutputSpec(video);
+    require(video_spec.memory == "SystemMemory",
+            "explicit SystemMemory tail caps must remain an intentional compatibility boundary");
+    video = {};
+    video.use_videoconvert = true;
+    video_spec = simaai::neat::nodes::groups::VideoInputGroupOutputSpec(video);
+    require(video_spec.memory == "Any", "explicit conversion must not promise native storage");
+    video = {};
+    video.out_format = simaai::neat::FormatTag::RGB;
+    video_spec = simaai::neat::nodes::groups::VideoInputGroupOutputSpec(video);
+    require(video_spec.memory == "SystemMemory" && video_spec.format == "RGB",
+            "explicit non-native file output format must retain its adapter contract");
+
     simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_decoded;
     rtsp_decoded.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
     rtsp_decoded.dec_width = 1280;

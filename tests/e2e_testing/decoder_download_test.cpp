@@ -1,4 +1,5 @@
 #include "asset_utils.h"
+#include "dmabuf_test_utils.h"
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
 #include "test_utils.h"
@@ -6,15 +7,20 @@
 #include <gst/app/gstappsink.h>
 #include <gst/gst.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -59,6 +65,42 @@ std::string env_or(const char* name, const char* def_value) {
   return std::string(def_value ? def_value : "");
 }
 
+struct DecoderDmaEvidence {
+  std::mutex mutex;
+  std::vector<sima_test::DmaBufSpan> published;
+  std::vector<sima_test::DmaBufBackingIdentity> held;
+  std::size_t publications_while_held = 0;
+  std::atomic<bool> failed{false};
+};
+
+GstPadProbeReturn record_decoder_dma(GstPad*, GstPadProbeInfo* info, gpointer data) noexcept {
+  auto& evidence = *static_cast<DecoderDmaEvidence*>(data);
+  try {
+    const auto span = sima_test::dmabuf_span(gst_pad_probe_info_get_buffer(info));
+    std::lock_guard<std::mutex> lock(evidence.mutex);
+    if (std::find(evidence.held.begin(), evidence.held.end(), span.backing) !=
+        evidence.held.end()) {
+      evidence.failed.store(true);
+    }
+    if (!evidence.held.empty()) {
+      ++evidence.publications_while_held;
+    }
+    evidence.published.push_back(span);
+  } catch (...) {
+    evidence.failed.store(true);
+  }
+  return GST_PAD_PROBE_OK;
+}
+
+void stop_pipeline(GstElement* pipeline) {
+  if (pipeline) {
+    gst_element_set_state(pipeline, GST_STATE_NULL);
+    gst_object_unref(pipeline);
+  }
+}
+
+using SampleRef = std::shared_ptr<GstSample>;
+
 } // namespace
 
 int main() {
@@ -90,9 +132,10 @@ int main() {
         "! video/x-h264,parsed=true,stream-format=(string)byte-stream,alignment=(string)au "
         "! " +
         decoder_element +
-        " sima-allocator-type=2 "
+        " name=decoder sima-allocator-type=2 "
         "! appsink name=mysink emit-signals=false sync=false max-buffers=0 drop=false";
 
+    DecoderDmaEvidence evidence;
     GError* err = nullptr;
     GstElement* pipeline = gst_parse_launch(pipeline_desc.c_str(), &err);
     if (!pipeline) {
@@ -104,11 +147,32 @@ int main() {
       throw std::runtime_error(msg);
     }
 
+    std::unique_ptr<GstElement, decltype(&stop_pipeline)> pipeline_guard(pipeline, stop_pipeline);
+    if (err) {
+      const std::string detail = err->message ? err->message : "partial pipeline";
+      g_error_free(err);
+      throw std::runtime_error("pipeline parse failed: " + detail);
+    }
+    GstElement* decoder = gst_bin_get_by_name(GST_BIN(pipeline), "decoder");
+    require(decoder != nullptr, "decoder not found");
+    std::shared_ptr<GstElement> decoder_guard(decoder, [](GstElement* p) { gst_object_unref(p); });
+    gboolean direct = FALSE;
+    g_object_get(decoder, "zero-copy-output", &direct, nullptr);
+    require(direct == TRUE, "decoder default must use direct DMA-BUF output");
+    GstPad* decoder_src = gst_element_get_static_pad(decoder, "src");
+    require(decoder_src != nullptr, "decoder source pad not found");
+    std::shared_ptr<GstPad> pad_guard(decoder_src, [](GstPad* p) { gst_object_unref(p); });
+    const gulong probe = gst_pad_add_probe(decoder_src, GST_PAD_PROBE_TYPE_BUFFER,
+                                           record_decoder_dma, &evidence, nullptr);
+    require(probe != 0, "decoder DMA identity probe was not installed");
+
     GstElement* appsink = gst_bin_get_by_name(GST_BIN(pipeline), "mysink");
     require(appsink != nullptr, "appsink not found");
+    std::shared_ptr<GstElement> sink_guard(appsink, [](GstElement* p) { gst_object_unref(p); });
 
     GstBus* bus = gst_element_get_bus(pipeline);
     require(bus != nullptr, "pipeline bus not found");
+    std::shared_ptr<GstBus> bus_guard(bus, [](GstBus* p) { gst_object_unref(p); });
 
     gst_element_set_state(pipeline, GST_STATE_PLAYING);
 
@@ -119,11 +183,50 @@ int main() {
     bool timed_out = false;
     bool checked_caps = false;
     std::string bus_error;
+    std::vector<SampleRef> held_samples;
+    std::vector<sima_test::DmaBufBackingIdentity> unique_backings;
+    std::vector<sima_test::DmaBufBackingIdentity> released_backings;
+    bool observed_reuse = false;
+    bool observed_released_reuse = false;
+
+    const auto inspect_sample = [&](GstSample* sample) {
+      const auto span = sima_test::dmabuf_span(gst_sample_get_buffer(sample));
+      {
+        std::lock_guard<std::mutex> lock(evidence.mutex);
+        require(static_cast<std::size_t>(frames) < evidence.published.size(),
+                "appsink received an unobserved decoder frame");
+        require(evidence.published[frames] == span,
+                "decoder publication and appsink changed DMA-BUF identity or span");
+        if (frames < 2) {
+          held_samples.emplace_back(gst_sample_ref(sample), gst_sample_unref);
+          evidence.held.push_back(span.backing);
+        }
+        if (frames == 64) {
+          released_backings = evidence.held;
+          evidence.held.clear();
+        }
+      }
+      if (frames == 64) {
+        held_samples.clear();
+      }
+      if (std::find(unique_backings.begin(), unique_backings.end(), span.backing) ==
+          unique_backings.end()) {
+        unique_backings.push_back(span.backing);
+      } else {
+        observed_reuse = true;
+      }
+      if (std::find(released_backings.begin(), released_backings.end(), span.backing) !=
+          released_backings.end()) {
+        observed_released_reuse = true;
+      }
+      ++frames;
+    };
 
     while (!eos) {
       GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(appsink), 200 * GST_MSECOND);
       if (sample) {
-        frames++;
+        SampleRef sample_guard(sample, gst_sample_unref);
+        inspect_sample(sample);
         if (!checked_caps) {
           GstCaps* caps = gst_sample_get_caps(sample);
           require(caps != nullptr, "appsink sample missing caps");
@@ -132,19 +235,16 @@ int main() {
           int out_h = 0;
           if (!gst_structure_get_int(s, "width", &out_w) ||
               !gst_structure_get_int(s, "height", &out_h)) {
-            gst_sample_unref(sample);
             throw std::runtime_error("appsink caps missing width/height");
           }
           if (out_w != kExpectedWidth || out_h != kExpectedHeight) {
             std::ostringstream oss;
             oss << "decoded caps mismatch: got " << out_w << "x" << out_h << " expected "
                 << kExpectedWidth << "x" << kExpectedHeight;
-            gst_sample_unref(sample);
             throw std::runtime_error(oss.str());
           }
           checked_caps = true;
         }
-        gst_sample_unref(sample);
       }
 
       if (!sample && gst_app_sink_is_eos(GST_APP_SINK(appsink))) {
@@ -185,15 +285,16 @@ int main() {
 
     if (bus_error.empty()) {
       while (GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(appsink), 0)) {
-        frames++;
-        gst_sample_unref(sample);
+        SampleRef sample_guard(sample, gst_sample_unref);
+        inspect_sample(sample);
       }
     }
 
+    held_samples.clear();
     gst_element_set_state(pipeline, GST_STATE_NULL);
-    gst_object_unref(bus);
-    gst_object_unref(appsink);
-    gst_object_unref(pipeline);
+    gst_pad_remove_probe(decoder_src, probe);
+    gint pool_buffers = 0;
+    g_object_get(decoder, "num-buffers", &pool_buffers, nullptr);
 
     if (!bus_error.empty()) {
       throw std::runtime_error("GStreamer error: " + bus_error);
@@ -202,6 +303,14 @@ int main() {
       throw std::runtime_error("Timeout waiting for EOS");
     }
 
+    require(!evidence.failed.load(),
+            "decoder DMA probe failed or reissued a still-held allocation");
+    require(evidence.publications_while_held > 0,
+            "decoder did not progress while the app retained earlier DMA-BUF frames");
+    require(observed_reuse && observed_released_reuse,
+            "decoder did not recycle its existing DMA-BUF allocations after reader release");
+    require(pool_buffers > 0 && unique_backings.size() <= static_cast<std::size_t>(pool_buffers),
+            "decoder output allocation identities exceeded its fixed pool budget");
     require(frames > 0, "No frames decoded");
     int64_t min_frames = kDefaultMinDecodedFrames;
     if (const char* env = std::getenv("SIMA_DECODER_MIN_FRAMES")) {
@@ -214,7 +323,9 @@ int main() {
     require(frames >= min_frames, "Decoded frame count mismatch: got " + std::to_string(frames) +
                                       " expected >= " + std::to_string(min_frames));
 
-    std::cout << "[OK] decoder_download_test passed (" << frames << " frames)\n";
+    std::cout << "[OK] decoder_download_test passed (" << frames << " frames, "
+              << unique_backings.size()
+              << " DMA-BUF allocations, retained-reader reuse verified)\n";
     return 0;
   } catch (const std::runtime_error& e) {
     return fail_test(e.what());

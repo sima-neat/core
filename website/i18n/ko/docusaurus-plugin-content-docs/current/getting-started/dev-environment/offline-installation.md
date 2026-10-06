@@ -17,13 +17,13 @@ SiMa.ai 패키지 서비스를 사용할 수 있는 시스템에서 대상 호�
 `amd64` 호스트의 경우:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.1 -t offline-amd64
+sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
 </ShellCommand>
 
 `arm64` 호스트의 경우:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.1 -t offline-arm64
+sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 </ShellCommand>
 
 다운로드한 디렉토리를 대상 호스트에 복사합니다. 해당 디렉토리에서 다음 명령을 실행합니다.
@@ -40,16 +40,16 @@ SDK 버전 2.1.3.0 이상에서는 SDK 오프라인 패키지를 지원합니다
 
 대상 환경 및 SDK 호환성 요구 사항에 맞는 Model Compiler 패키지를 다운로드합니다. 호환성에 대한 자세한 내용은 [호환성](/getting-started/compatibility/#model-compiler)를 참조하십시오.
 
-`amd64` 호스트에서 Model Compiler 2.1.3.1을 사용하는 경우:
+`amd64` 호스트에서 Model Compiler 2.1.3을 사용하는 경우:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3.1 -t offline
+sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
 </ShellCommand>
 
-`arm64` 호스트에서 Model Compiler 2.1.3.1을 사용하는 경우:
+`arm64` 호스트에서 Model Compiler 2.1.3을 사용하는 경우:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3.1 -t offline
+sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 </ShellCommand>
 
 :::note

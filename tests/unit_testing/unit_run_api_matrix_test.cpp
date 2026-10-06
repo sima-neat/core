@@ -379,6 +379,32 @@ RUN_TEST(
                 run_api_case("active_try_push_sample_copy_attributes",
                              "CPU-copy input must preserve Sample attributes"));
 
+        Sample image_msg = copy_msg;
+        image_msg.kind = SampleKind::TensorSet;
+        image_msg.tensor.reset();
+        image_msg.tensors = {make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x37)};
+        image_msg.pts_ns = 123456789;
+        image_msg.dts_ns = 123450000;
+        image_msg.duration_ns = 33333333;
+        require(run.push(image_msg), "CPU image Sample push failed");
+        {
+          auto input = image_msg.tensors.front().storage->map(MapMode::Write);
+          std::memset(input.data, 0x91, input.size_bytes);
+        }
+        auto image_out = run.pull(1000);
+        require(image_out.has_value(), "CPU image Sample output missing");
+        require(image_out->pts_ns == image_msg.pts_ns && image_out->dts_ns == image_msg.dts_ns &&
+                    image_out->duration_ns == image_msg.duration_ns,
+                "CPU image snapshot must preserve Sample timing");
+        require(image_out->attributes == image_msg.attributes,
+                "CPU image snapshot must preserve Sample attributes");
+        const auto image_tensors = tensors_from_sample(*image_out, true);
+        require(image_tensors.size() == 1, "CPU image snapshot output missing tensor");
+        const auto pixels = image_tensors.front().to_cv_mat_copy(ImageSpec::PixelFormat::RGB);
+        require(cv::norm(pixels, cv::Mat(pixels.size(), pixels.type(), cv::Scalar::all(0x37)),
+                         cv::NORM_INF) == 0,
+                "CPU image snapshot must remain independent of subsequent input writes");
+
         const auto fill = sima_test::fill_try_push_queue_non_blocking(run, seed, 4096);
         require(fill.saw_backpressure,
                 run_api_case("active_backpressure_signal",

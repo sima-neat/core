@@ -239,3 +239,39 @@ def test_rejects_translation_that_changes_protected_structure(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="changed link targets"):
         tutorial_docs._validate_localized_readme(source, localized)
+
+
+@pytest.mark.parametrize(
+    "translated_rows",
+    [
+        "| --- | --- | `A` | 一 | `B` | 二 |\n",
+        "| --- | --- |\n| `A` | 一 | 追加 |\n| `B` | 二 |\n",
+    ],
+)
+def test_rejects_changed_translation_table_shape(
+    tmp_path: Path, translated_rows: str,
+) -> None:
+    source = tmp_path / "README.md"
+    localized = tmp_path / "ja.md"
+    source.write_text(
+        "| Code | Meaning |\n| --- | --- |\n| `A` | First |\n| `B` | Second |\n",
+        encoding="utf-8",
+    )
+    localized.write_text("| コード | 意味 |\n" + translated_rows, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="changed table shapes"):
+        tutorial_docs._validate_localized_readme(source, localized)
+
+
+def test_accepts_translated_table_with_escaped_pipe(tmp_path: Path) -> None:
+    source = tmp_path / "README.md"
+    localized = tmp_path / "ja.md"
+    source.write_text(
+        "| Code | Meaning |\n| --- | --- |\n| `A` | First \\| alternative |\n",
+        encoding="utf-8",
+    )
+    localized.write_text(
+        "| コード | 意味 |\n| --- | --- |\n| `A` | 一 \\| 代替 |\n",
+        encoding="utf-8",
+    )
+    tutorial_docs._validate_localized_readme(source, localized)

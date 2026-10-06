@@ -101,7 +101,30 @@ int main() {
       }
     }
 
+    for (const int queue : {-1, 6}) {
+      pcie::ConnectionOptions connection;
+      connection.queue = queue;
+      bool threw = false;
+      try {
+        (void)pcie::Model("unused-model.tar.gz", {}, connection);
+      } catch (const std::invalid_argument& error) {
+        threw = std::string(error.what()) == "queue must be in range 0..5";
+      }
+      if (!threw) {
+        throw std::runtime_error("invalid PCIe queue must be rejected");
+      }
+    }
+
     const auto model_fixture = make_lifecycle_model();
+    for (const int queue : {4, 5}) {
+      pcie::ConnectionOptions connection;
+      connection.queue = queue;
+      pcie::Model model(model_fixture.tar_path, {}, connection);
+      if (model.info().inputs.empty()) {
+        throw std::runtime_error("new PCIe queues must accept model construction");
+      }
+    }
+
     pcie::Model model(model_fixture.tar_path);
     if (model.running()) {
       throw std::runtime_error("pcie::Model should not be running after construction");

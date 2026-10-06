@@ -19,7 +19,7 @@ SimaPluginStaticManifest make_model_managed_boxdecode_manifest() {
   StageStaticSpec stage;
   stage.element_name = "boxdecode_model_managed";
   stage.logical_stage_id = "stage_boxdecode_model_managed";
-  stage.plugin_kind = "neatboxdecode";
+  stage.plugin_kind = "neatobjectdecode";
   stage.kernel_kind = "boxdecode";
   stage.payload_kind = StagePayloadKind::BoxDecode;
   stage.boxdecode = BoxDecodeStagePayload{
@@ -40,14 +40,14 @@ SimaPluginStaticManifest make_model_managed_boxdecode_manifest() {
 } // namespace
 
 RUN_TEST("unit_agg_model_managed_no_standalone_json_test", ([] {
-           sima_test::require_plugin_or_skip("neatboxdecode");
+           sima_test::require_plugin_or_skip("neatobjectdecode");
 
            const auto manifest = make_model_managed_boxdecode_manifest();
-           // neatboxdecode still exposes a legacy config property, so it is a good
+           // neatobjectdecode still exposes a legacy config property, so it is a good
            // regression target for "stage contract present means no standalone config read".
            const auto result = sima_test::run_raw_gst_pipeline(
                "agg_model_managed_no_standalone_json",
-               "fakesrc num-buffers=1 ! neatboxdecode name=boxdecode_model_managed "
+               "fakesrc num-buffers=1 ! neatobjectdecode name=boxdecode_model_managed "
                "stage-id=stage_boxdecode_model_managed config=/tmp/does_not_exist_boxdecode.json "
                "silent=true ! fakesink",
                &manifest, GST_STATE_READY);

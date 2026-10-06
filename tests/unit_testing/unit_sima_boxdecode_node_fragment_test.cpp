@@ -1,6 +1,7 @@
 #include "asset_utils.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
+#include "model/internal/ModelPack.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "model_archive_fixture_utils.h"
 #include "test_main.h"
@@ -91,7 +92,7 @@ sima_test::ModelArchiveFixture make_fixture() {
   "dq_zp": [1]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg", true);
 }
 
 sima_test::ModelArchiveFixture make_quanttess_boxdecode_fixture() {
@@ -171,13 +172,46 @@ sima_test::ModelArchiveFixture make_quanttess_boxdecode_fixture() {
   "dq_zp": [1]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg", true);
 }
 
 } // namespace
 
 RUN_TEST(
     "unit_sima_boxdecode_node_fragment_test", ([] {
+      const auto poisoned_payload =
+          sima_test::make_model_archive_fixture("poisoned_six_head_yolo_cache_payload",
+                                                {{"etc/poisoned_six_head_mpk.json",
+                                                  R"json({
+  "name": "yolo_v9c_seg",
+  "plugins": [{
+    "name": "MLA_0_ofm_unpack_transform",
+    "output_nodes": [
+      {"name":"out_0"}, {"name":"out_1"}, {"name":"out_2"},
+      {"name":"out_3"}, {"name":"out_4"}, {"name":"out_5"}
+    ]
+  }]
+})json"}},
+                                                false);
+      const std::filesystem::path poison_root =
+          sima_test::make_fixture_temp_dir("poisoned_yolo_v9c_seg_cache");
+      std::filesystem::create_directories(poison_root / "tmp");
+      std::filesystem::copy_file(poisoned_payload.tar_path,
+                                 poison_root / "tmp" / "yolo_v9c_seg_mpk.tar.gz");
+      const auto original_cwd = std::filesystem::current_path();
+      std::pair<std::string, std::string> isolated_seed;
+      try {
+        std::filesystem::current_path(poison_root);
+        isolated_seed = sima_test::strict_contract_json_entry_from_modelzoo("yolo_v9c_seg");
+        std::filesystem::current_path(original_cwd);
+      } catch (...) {
+        std::filesystem::current_path(original_cwd);
+        throw;
+      }
+      require(isolated_seed.second.size() == 47224U &&
+                  isolated_seed.second.find("dequantize_11/mask") != std::string::npos,
+              "strict fixture authority must ignore a poisoned six-head modelzoo cache");
+
       const auto fixture = make_fixture();
       const std::string tar_path = fixture.tar_path;
 
@@ -187,14 +221,15 @@ RUN_TEST(
       model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
 
       simaai::neat::Model default_model(tar_path, model_opt);
+      sima_test::require_exact_yolo_v9c_seg_parsed_contract(
+          simaai::neat::internal::ModelAccess::pack(default_model));
       require(!simaai::neat::internal::ModelAccess::has_model_managed_stage(
                   default_model, simaai::neat::internal::StageNodeKind::BoxDecode),
               "default Model route must not auto-select BoxDecode from inferred MPK "
               "topology");
 
       // YOLO defines the established preprocessing-metadata contract. SSD and
-      // SuperPoint must consume geometry through the same neatobjectdecode path rather
-      // than inventing family-specific width/height sources.
+      // SuperPoint consume geometry through the same neatobjectdecode path.
       auto metadata_yolo = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8,
                                                               0.25, 0.45, 100, "metadata_yolo");
       auto metadata_ssd = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::Ssd, 0.30,
@@ -260,6 +295,102 @@ RUN_TEST(
       simaai::neat::Model::Options managed_opt = model_opt;
       managed_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8Seg;
       simaai::neat::Model managed_model(tar_path, managed_opt);
+      const auto managed_async_contract =
+          simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(managed_model, false);
+      const auto managed_sync_contract =
+          simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(managed_model, true);
+      require(managed_async_contract.payload.decode_type ==
+                      simaai::neat::BoxDecodeType::YoloV8Seg &&
+                  managed_sync_contract.payload.decode_type ==
+                      managed_async_contract.payload.decode_type,
+              "ModelAccess must derive identical external true-leaf contracts for "
+              "synthetic sync and async BoxDecode routes");
+      require(managed_async_contract.runtime_contract.logical_inputs.size() == 10U &&
+                  managed_sync_contract.runtime_contract.logical_inputs.size() == 10U &&
+                  managed_async_contract.runtime_contract.input_bindings.size() == 10U &&
+                  managed_sync_contract.runtime_contract.input_bindings.size() == 10U,
+              "synthetic sync and async BoxDecode contracts must preserve all ten "
+              "segmentation heads and bindings");
+      for (std::size_t index = 0; index < 10U; ++index) {
+        const auto& async_logical = managed_async_contract.runtime_contract.logical_inputs[index];
+        const auto& sync_logical = managed_sync_contract.runtime_contract.logical_inputs[index];
+        const auto& async_binding = managed_async_contract.runtime_contract.input_bindings[index];
+        const auto& sync_binding = managed_sync_contract.runtime_contract.input_bindings[index];
+        const std::string prefix = "segmentation head " + std::to_string(index) + ": ";
+        require(async_logical.logical_index == static_cast<int>(index) &&
+                    sync_logical.logical_index == static_cast<int>(index),
+                prefix +
+                    "logical_index mismatch async=" + std::to_string(async_logical.logical_index) +
+                    " sync=" + std::to_string(sync_logical.logical_index) +
+                    " expected=" + std::to_string(index));
+        require(async_logical.backend_input_index == static_cast<int>(index) &&
+                    sync_logical.backend_input_index == static_cast<int>(index),
+                prefix + "backend_input_index mismatch async=" +
+                    std::to_string(async_logical.backend_input_index) +
+                    " sync=" + std::to_string(sync_logical.backend_input_index) +
+                    " expected=" + std::to_string(index));
+        require(async_logical.logical_name == sync_logical.logical_name &&
+                    async_logical.backend_name == sync_logical.backend_name,
+                prefix + "logical/backend name parity mismatch async_logical='" +
+                    async_logical.logical_name + "' sync_logical='" + sync_logical.logical_name +
+                    "' async_backend='" + async_logical.backend_name + "' sync_backend='" +
+                    sync_logical.backend_name + "'");
+        require(async_logical.physical_index == sync_logical.physical_index &&
+                    async_logical.segment_name == sync_logical.segment_name &&
+                    async_logical.byte_offset == sync_logical.byte_offset &&
+                    async_logical.size_bytes == sync_logical.size_bytes,
+                prefix + "logical source parity mismatch async_phys=" +
+                    std::to_string(async_logical.physical_index) + " sync_phys=" +
+                    std::to_string(sync_logical.physical_index) + " async_segment='" +
+                    async_logical.segment_name + "' sync_segment='" + sync_logical.segment_name +
+                    "' async_offset=" + std::to_string(async_logical.byte_offset) +
+                    " sync_offset=" + std::to_string(sync_logical.byte_offset) +
+                    " async_span=" + std::to_string(async_logical.size_bytes) +
+                    " sync_span=" + std::to_string(sync_logical.size_bytes));
+        // BoxDecode receives one grouped TensorBuffer/TensorList carrier on
+        // consumer sink pad 0. Member identity is expressed by the exact
+        // local logical index and producer logical output/slot below, not by
+        // N separate GStreamer sink pads.
+        require(async_binding.sink_pad_index == 0 && sync_binding.sink_pad_index == 0,
+                prefix + "sink_pad_index mismatch async=" +
+                    std::to_string(async_binding.sink_pad_index) +
+                    " sync=" + std::to_string(sync_binding.sink_pad_index) + " expected=0");
+        require(async_binding.local_logical_input_index == static_cast<int>(index) &&
+                    sync_binding.local_logical_input_index == static_cast<int>(index),
+                prefix + "local_logical_input_index mismatch async=" +
+                    std::to_string(async_binding.local_logical_input_index) +
+                    " sync=" + std::to_string(sync_binding.local_logical_input_index) +
+                    " expected=" + std::to_string(index));
+        require(async_binding.src_logical_output_index == static_cast<int>(index) &&
+                    sync_binding.src_logical_output_index == static_cast<int>(index),
+                prefix + "src_logical_output_index mismatch async=" +
+                    std::to_string(async_binding.src_logical_output_index) +
+                    " sync=" + std::to_string(sync_binding.src_logical_output_index) +
+                    " expected=" + std::to_string(index));
+        require(async_binding.src_output_slot == static_cast<int>(index) &&
+                    sync_binding.src_output_slot == static_cast<int>(index),
+                prefix + "src_output_slot mismatch async=" +
+                    std::to_string(async_binding.src_output_slot) +
+                    " sync=" + std::to_string(sync_binding.src_output_slot) +
+                    " expected=" + std::to_string(index));
+        require(async_binding.src_physical_output_index == sync_binding.src_physical_output_index &&
+                    async_binding.src_physical_byte_offset ==
+                        sync_binding.src_physical_byte_offset &&
+                    async_binding.src_physical_size_bytes == sync_binding.src_physical_size_bytes,
+                prefix + "physical source parity mismatch async_phys=" +
+                    std::to_string(async_binding.src_physical_output_index) +
+                    " sync_phys=" + std::to_string(sync_binding.src_physical_output_index) +
+                    " async_offset=" + std::to_string(async_binding.src_physical_byte_offset) +
+                    " sync_offset=" + std::to_string(sync_binding.src_physical_byte_offset) +
+                    " async_span=" + std::to_string(async_binding.src_physical_size_bytes) +
+                    " sync_span=" + std::to_string(sync_binding.src_physical_size_bytes));
+        require(async_binding.cm_input_name == sync_binding.cm_input_name &&
+                    async_binding.source_segment_name == sync_binding.source_segment_name,
+                prefix + "binding name/segment parity mismatch async_input='" +
+                    async_binding.cm_input_name + "' sync_input='" + sync_binding.cm_input_name +
+                    "' async_segment='" + async_binding.source_segment_name + "' sync_segment='" +
+                    sync_binding.source_segment_name + "'");
+      }
       auto managed_node = simaai::neat::nodes::SimaBoxDecode(
           managed_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100);
       const auto* managed_box =
@@ -267,31 +398,12 @@ RUN_TEST(
       require(managed_box != nullptr,
               "model-managed boxdecode factory should return a concrete SimaBoxDecode node");
       const std::string managed_fragment = managed_box->backend_fragment(0);
+      require_contains(managed_fragment, "num-buffers=4",
+                       "model-managed terminal must use the model-authored MLA lane window");
       require(managed_fragment.find("original-width=") == std::string::npos,
               "model-managed boxdecode should let metadata drive original width");
       require(managed_fragment.find("original-height=") == std::string::npos,
               "model-managed boxdecode should let metadata drive original height");
-
-      // A resize assertion may fill in missing external provenance, but it must not relabel
-      // an active model transform. Otherwise the decoder would invert the wrong geometry.
-      simaai::neat::Model::Options letterbox_opt = managed_opt;
-      letterbox_opt.preprocess.resize.enable = simaai::neat::AutoFlag::On;
-      letterbox_opt.preprocess.resize.mode = simaai::neat::ResizeMode::Letterbox;
-      letterbox_opt.preprocess.resize.width = 640;
-      letterbox_opt.preprocess.resize.height = 640;
-      simaai::neat::Model letterbox_model(tar_path, letterbox_opt);
-      bool conflicting_resize_override_rejected = false;
-      try {
-        (void)simaai::neat::nodes::SimaBoxDecode(
-            letterbox_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "",
-            std::nullopt, std::nullopt, 0, 0, 0, 0, simaai::neat::ResizeMode::Stretch);
-      } catch (const std::exception& e) {
-        conflicting_resize_override_rejected = true;
-        require_contains(e.what(), "conflicts with the active preprocess resize mode",
-                         "resize-plan conflict should have an actionable diagnostic");
-      }
-      require(conflicting_resize_override_rejected,
-              "an explicit Stretch override must not mask an active Letterbox resize");
 
       auto standalone_node =
           simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45, 100,
@@ -307,6 +419,8 @@ RUN_TEST(
                        "boxdecode node fragment should emit explicit model-width");
       require_contains(standalone_box->backend_fragment(0), "model-height=640",
                        "boxdecode node fragment should emit explicit model-height");
+      require_contains(standalone_box->backend_fragment(0), "num-buffers=2",
+                       "standalone terminal must declare its bounded compatibility window");
       require(std::find(standalone_req->required_fields.begin(),
                         standalone_req->required_fields.end(),
                         "preproc_original_width") == standalone_req->required_fields.end(),
@@ -329,63 +443,6 @@ RUN_TEST(
                         standalone_req->required_fields.end(),
                         "preproc_resize_mode") != standalone_req->required_fields.end(),
               "manual boxdecode should preserve non-geometry preprocess requirements");
-
-      // A raw SSD node must not manufacture preprocessing evidence. Without an explicit
-      // assertion it consumes resize mode from upstream metadata.
-      auto ssd_node = simaai::neat::nodes::SimaBoxDecode(
-          simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_manual", 1280, 720, 300, 300);
-      const auto* ssd_box = dynamic_cast<const simaai::neat::SimaBoxDecode*>(ssd_node.get());
-      require(ssd_box != nullptr, "raw SSD boxdecode factory should return a concrete node");
-      require(ssd_box->backend_fragment(0).find("resize-mode=") == std::string::npos,
-              "raw SSD boxdecode must not invent a resize-mode override");
-      const auto ssd_req = ssd_box->preprocess_meta_requirement();
-      require(ssd_req.has_value() &&
-                  std::find(ssd_req->required_fields.begin(), ssd_req->required_fields.end(),
-                            "preproc_resize_mode") != ssd_req->required_fields.end(),
-              "raw SSD boxdecode must require upstream resize-mode metadata");
-
-      // External preprocessing may be asserted explicitly, but SSD accepts only Stretch.
-      auto asserted_ssd_node = simaai::neat::nodes::SimaBoxDecode(
-          simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_manual_asserted", 1280, 720, 300,
-          300, simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt, std::nullopt,
-          simaai::neat::ResizeMode::Stretch);
-      const auto* asserted_ssd_box =
-          dynamic_cast<const simaai::neat::SimaBoxDecode*>(asserted_ssd_node.get());
-      require(asserted_ssd_box != nullptr, "asserted raw SSD node must be concrete");
-      require_contains(asserted_ssd_box->backend_fragment(0), "resize-mode=stretch",
-                       "explicit SSD Stretch assertion must reach the backend fragment");
-      const auto asserted_ssd_req = asserted_ssd_box->preprocess_meta_requirement();
-      require(asserted_ssd_req.has_value(),
-              "an SSD geometry assertion must preserve unrelated preprocess requirements");
-      require(std::find(asserted_ssd_req->required_fields.begin(),
-                        asserted_ssd_req->required_fields.end(),
-                        "preproc_resize_mode") == asserted_ssd_req->required_fields.end(),
-              "the explicit SSD Stretch assertion should discharge resize-mode metadata");
-      require(std::find(asserted_ssd_req->required_fields.begin(),
-                        asserted_ssd_req->required_fields.end(),
-                        "preproc_color_in") != asserted_ssd_req->required_fields.end(),
-              "a resize assertion must not discharge color metadata");
-      require(std::find(asserted_ssd_req->required_fields.begin(),
-                        asserted_ssd_req->required_fields.end(),
-                        "preproc_normalize") != asserted_ssd_req->required_fields.end(),
-              "a resize assertion must not discharge normalization metadata");
-      require(std::find(asserted_ssd_req->required_fields.begin(),
-                        asserted_ssd_req->required_fields.end(),
-                        "preproc_quantize") != asserted_ssd_req->required_fields.end(),
-              "a resize assertion must not discharge quantization metadata");
-
-      bool rejected_letterbox = false;
-      try {
-        (void)simaai::neat::nodes::SimaBoxDecode(
-            simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_manual_letterbox", 1280, 720,
-            300, 300, simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt,
-            std::nullopt, simaai::neat::ResizeMode::Letterbox);
-      } catch (const std::exception& e) {
-        rejected_letterbox = true;
-        require_contains(e.what(), "requires a stretch",
-                         "raw SSD letterbox rejection should explain the requirement");
-      }
-      require(rejected_letterbox, "raw SSD must reject an explicit Letterbox assertion");
 
       bool threw_partial_model_dims = false;
       try {

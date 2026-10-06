@@ -89,6 +89,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | HTTPマルチパートMJPEGを読み取る | `nodes::groups::HttpMjpegDecodedInput(...)`、または`nodes::HttpSource(...)`、`MultipartJpegDemux()`、`JpegParse()`（手動でのフレーム処理） | `pyneat.groups.http_mjpeg_decoded_input(...)`、または`pyneat.nodes.http_source(...)`、`pyneat.nodes.multipart_jpeg_demux()`、`pyneat.nodes.jpeg_parse()` |
 | 画像をデコードする | `nodes::ImageDecode()`または`nodes::JpegDecode()` | `pyneat.nodes.image_decode()`または`pyneat.nodes.jpeg_decode()` |
 | エンコードされたビデオをデコードする | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| 生ビデオのエンコード | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | ビデオのスケールまたはレート制限を行う | `nodes::VideoScale()`、`VideoRate()`、`ImageFreeze()` | `pyneat.nodes.video_scale()`、`video_rate()`、`image_freeze()` |
 | 再利用可能な画像入力パスを構築する | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | 再利用可能なビデオ入力パスを構築する | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -138,14 +139,16 @@ H.265 デコーダーには、`codec_name=hevc`、`profile=Main`、および `pi
 
 | 値 | デコーダー出力 |
 |---|---|
-| `true` (デフォルト) | SiMaAI メモリ内のネイティブ NV12 または I420。デコーダーのゼロコピー出力には NV12 を使用します。 |
+| `true` (デフォルト) | デコーダーの出力バッファー。デフォルトはネイティブ NV12。変換済み I420 も使用できます。 |
 | `false` | CPU コンシューマー用の変換された `video/x-raw(memory:SystemMemory)` 出力。 |
 
-`raw_output` は、デコーダーの `zero-copy-output` とは別です。コアは、グラフがデコーダーのネイティブ NV12 バッファーを転送できる場合に、デコーダーの受け入れ時に `zero-copy-output` を有効にします。下流のいずれかのブランチが、ネイティブのプレーンレイアウトを読み取れないエンコーダー入力を使用する場合、コアはゼロコピー出力なしでデコーダーを受け入れ、すべてのブランチがパックされたフレームを受信するようにします。`RunOptions::output_memory` は、ターミナル出力がそのバックアップバッファーを共有するか (`ZeroCopy`)、フレームワークが所有するストレージにコピーされるかを個別に制御します (`Owned`)。
+`SimaDecode` は NV12 に対してデコーダーのゼロコピー出力を要求します。I420 を選択するとコピーモードを使用し、ハードウェアの NV12 画素を最終的な I420 プレーンに直接変換します。どちらのモードもデコーダーの DMA-BUF 出力プールを使用します。`raw_output=false` は、システムメモリ出力用のソフトウェアアダプターを追加します。`RunOptions::output_memory` は、最終出力が元のバッファーを共有するか（`ZeroCopy`）、フレームワークが所有するストレージにコピーするか（`Owned`）を別に制御します。
 
-H.264/H.265 の自動受け入れには、デコーダーの幅、高さ、およびフレームレートを把握する必要があります。`dec_width`、`dec_height`、および `dec_fps` を直接設定するか、`source_fps` を持つ `RtspEncodedInput` などの型付きソースを通じて提供します。コアは、ソースレートが不明な場合に 30 FPS を前提としません。受け入れ時に、リース安全性の下限を下回る場合、明示的な `num_buffers` 値が設定されます。`num_buffers` を設定しない場合、デコーダー要素のデフォルトが保持されます。
+デコーダープラグインがハードウェアセッションを所有します。Core は受け入れデーモンによる容量予約やデコーダーリースの保持を行いません。起動時の失敗は、通常のパイプラインエラー経路で報告されます。
 
-一般的なストリームの場合は、`decoder_tuning` を空のままにするか、`auto` に設定します。`throughput-low-latency` は、B フレームなしで、1 つの参照画像でエンコードされたストリームでのみ使用してください。このモードでは、デコードされた画像の再配置が無効になります。
+上流の寸法やフレームレートを上書きする必要がある場合だけ、`dec_width`、`dec_height`、`dec_fps` を使用してください。`-1` では上流で定義された値を使用します。これらのオプションはデコーダーの容量を予約しません。Core は明示的な `num_buffers` をデコーダーに渡し、デコーダーがハードウェアプールの要件を適用します。`-1` はデコーダーのポリシーを維持します。
+
+プラグインのデフォルトを使用する場合は、`decoder_tuning` を空のままにします。`default` と `auto` を含む明示的な値は、`memory_opt` とバッファー数の上書きとともにプラグインへ転送され、デコーダーがチューニングの優先順位を適用します。`throughput-low-latency` はデコードされた画像の並べ替えを無効にし、720p まではコマンド深度 1、それより大きいフレームでは 2 を使用します。B フレームなしでエンコードされたストリームにだけ使用してください。一般的なストリームではチューニングを未設定にします。
 
 `nodes::JpegDecode()` と `pyneat.nodes.jpeg_decode()` は、CPU/ GStreamer JPEG デコードノードです。これらは、単純な CPU イメージパイプラインに使用します。モデルの前処理の前に、ネイティブ MJPEG ビデオのデコードには使用しないでください。
 
@@ -238,7 +241,7 @@ SimaDecode(MJPEG)`を使用します。
 | ライブRTSPエンコードされたH.264、H.265、またはMJPEGストリーム | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`、H.264でない場合は`codec` | `source_fps`、`latency_ms`、`tcp`、`drop_on_latency`、`buffer_mode`、RTPペイロードタイプ |
 | ライブRTSPデコードされたH.264、H.265、またはMJPEGストリーム | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`、H.264でない場合は`codec` | `source_fps`、`latency_ms`、`tcp`、`drop_on_latency`、`buffer_mode`、デコードされた幅/高さ、`out_format`、`output_caps` |
 | HTTP multipart MJPEGストリーム | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`、`decoder_next_element`、デコードされた幅/高さ/FPS、`output_caps` |
-| 生またはエンコードされたH.264/H.265ビデオ出力 | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`、または`Passthrough(RtspCodec::H264 / RtspCodec::H265)` | `host`、`channel`、`video_port_base`、エンコーダー/RTPオプション |
+| 生入力またはエンコード済みの H.264/H.265/MJPEG ビデオ出力 | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::FromRaw(encode_options)` または `Passthrough(codec)` | `host`、`channel`、`video_port_base`、エンコーダー／RTP オプション |
 | RTP/H.264 over UDP出力 | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | デフォルトが適切でない場合の宛先ホスト/ポート | `h264_caps`、`payload_type`、`config_interval` |
 
 ソースが所有するグラフは、アプリケーションがプッシュするグラフとは異なるランタイム構造を持ちます。
@@ -630,3 +633,58 @@ run = graph.build()
 - [最初のグラフを構築する](/tutorials/build-inference-pipeline)
 - [モデルをパイプラインに組み込む](/tutorials/plug-model-into-pipeline)
 - [カスタムデータグラフを構築する](/tutorials/build-a-custom-data-graph)
+
+`UdpOutputGroupG` は非推奨ですが、ソース互換性のため保持されています。サポートされるノードから明示的なグラフを構成し、必要に応じてビデオには `VideoSender`、メタデータには `MetadataSender` を使用してください。従来のグループには、すべてのランタイムパッケージに含まれているとは限らないレンダリングおよびサンプル分離のプラグインが必要です。
+
+## ハードウェアエンコード
+
+`SimaEncodeOptions.type` で H.264、H.265、MJPEG を選択します。エンコーダーはネイティブの 8 ビット NV12 を受け付けます。入力アダプターは互換性のある SiMaAI NV12 バッファーを保持し、サポートされる CPU の生レイアウトを一度だけ準備します。出力はエンコード済みフレームです。RTP 送信時だけパケット化を追加してください。
+
+```cpp
+simaai::neat::SimaEncodeOptions encode;
+encode.type = simaai::neat::SimaEncodeType::H265;
+encode.fps = 30;
+encode.bitrate_kbps = 4000;
+encode.gop_length = 30;
+encode.idr_interval = 90;
+graph.add(simaai::neat::nodes::SimaEncode(encode));
+```
+
+```python
+encode = pyneat.SimaEncodeOptions()
+encode.type = pyneat.SimaEncodeType.MJPEG
+encode.fps = 30
+encode.quality = 80
+graph.add(pyneat.nodes.sima_encode(encode))
+```
+
+エンコードの開始時に、入力フレームから解像度を取得します。エンコーダーはリサイズしません。解像度を変更する場合は、新しい実行を開始してください。入力寸法は正の偶数で、最大 3840x2160 です。`nodes::SimaEncode()` と `pyneat.nodes.sima_encode()` は、デフォルトの H.264 設定を使用します。エンコーダーオプションに入力寸法を重複して設定する必要はありません。`fps` はストリームの周期とレート制御を設定しますが、入力の速度は制御しません。H.264/H.265 は `bitrate_kbps`（デフォルト 4000）、`rate_control`（`vbr` または `cbr`）、`profile`、`level`（デフォルト `4.0`）、`gop_length`、個別の `idr_interval` をサポートします。H.264 のデフォルトは `baseline`、H.265 は `main` をサポートします。ランタイムはストリームに応じて指定レベルを引き上げ、有効な設定を報告することがあります。GOP が 0 または未設定なら FPS を、IDR が 0 または未設定なら FPS の 3 倍を使用します。GOP が 1 なら全フレームがイントラフレームです。B フレームのエンコードは公開されていません。
+
+コーデック固有のオプションは初期状態では未設定です。MJPEG は 1 から 100 の `quality`（デフォルト 80）を受け付けますが、明示的に指定されたビデオ専用設定を拒否します。一方、H.264/H.265 は `quality` を拒否します。`num_buffers` はエンコード出力バッファーを 1 から 20 個に設定し、`-1` はネイティブのデフォルト 4 個を保持します。生成側の入力ストレージのサイズは設定しません。この API は、ネイティブの 4:2:2 と高ビット深度のエンコードをサポートしません。
+
+`H264EncodeSima` と `pyneat.nodes.h264_encode_sima` は、非推奨の互換エントリーポイントです。引数、getter、ネイティブ入力の動作は引き続きサポートされます。`H264Decode` と同様に、ヘッダーをインクルードする前に `SIMA_ENABLE_LEGACY_DEPRECATION` を定義すると、C++ の呼び出しで警告します。Python の呼び出しは `DeprecationWarning` を出します。`H264EncodeSW` は変更されません。このリリースは C++ ABI をバージョン 5 に変更します。C++ の利用側を再ビルドし、対応する再ビルド済みの Python 拡張を使用してください。
+
+## VideoSender のコーデックを選択する
+
+生入力では、同じエンコーダーオプションを `VideoSenderOptions::FromRaw` に渡します。コーデックの選択によって、エンコードと RTP パケット化の両方を選択します。
+
+```cpp
+auto options = simaai::neat::nodes::groups::VideoSenderOptions::FromRaw(encode);
+options.host = "127.0.0.1";
+options.video_port_base = 9000;
+auto sender = simaai::neat::nodes::groups::VideoSender(options);
+```
+
+```python
+options = pyneat.VideoSenderOptions.from_raw(encode)
+options.host = "127.0.0.1"
+sender = pyneat.groups.video_sender(options)
+```
+
+エンコード済みフレームには、`VideoSenderOptions::Passthrough(RtspCodec::H265)` または `pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265)` を使用します。この経路は、選択したコーデックを解析してパケット化し、エンコードは行いません。両方のファクトリーは H.264 と MJPEG もサポートします。ファクトリーが入力モードを記録し、グラフ構築時に経路を一度だけ選択します。`is_raw_input()` と `is_encoded_input()` でその選択を確認できます。
+
+RTP ペイロードのデフォルトは H.264 が 96、H.265 が 98、MJPEG が 26 です。`rtp.payload_type` で 0..127 の範囲に上書きできます。`rtp.config_interval` は H.264/H.265 にのみ作用します。UDP ポートは `video_port_base + channel` です。`sync=true` は、パイプラインクロックに対してパケットのタイムスタンプまで待機します。`async=true` は、起動時に最初のプレロールバッファーをシンクが待てるようにします。どちらもデフォルトは false です。Python では `async_` を使用し、`async` エイリアスも保持しています。これらの制御はエンコーダースレッドを選択せず、生成側の投入速度も制御しません。
+
+既存の H.264 生入力／エンコード済み入力ファクトリーは、互換エントリーポイントとして残ります。新しい生入力送信には `FromRaw` を使用してください。送信オプションは設定のコピーを所有するため、元の `encode` オブジェクトを変更しても影響しません。従来の `options.encoder` のビットレート／プロファイル／レベルフィールドを後から変更すると、生入力の H.264/H.265 ではその値が優先されます。Python ではオブジェクト全体の置き換えも可能です。MJPEG はデフォルト以外のビデオ専用上書きを拒否します。エンコード済み入力のパススルーは、エンコーダー設定を無視します。
+
+RTP/JPEG には、互換性のある受信側、標準ハフマンテーブルを使用するベースライン JPEG、各方向が 8 の倍数で 8 から 2040 の寸法が必要です。生入力送信とエンコード済み入力のパススルーは、RTP パケット化の前、caps ネゴシエーション時に非対応の寸法を拒否します。単独の `SimaEncode` はネイティブのジオメトリ範囲を保持します。Insight の RTP/WebRTC ビューアーに MJPEG 表示が追加されるわけではありません。

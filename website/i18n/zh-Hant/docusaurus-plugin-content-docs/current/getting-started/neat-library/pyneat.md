@@ -27,7 +27,7 @@ sima-cli neat install core -t pyneat
 若要安裝特定版本：
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.5.0 -t pyneat
+sima-cli neat install core@v0.4.0 -t pyneat
 </ShellCommand>
 
 ## 建立一個 Python 環境

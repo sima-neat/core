@@ -1,6 +1,6 @@
 ---
 title: EV74 Visual Frontend Nodes
-description: "Neat Graph usage for FeatureHistogram, GriderFast, TrackDescriptor, TrackKLT, and MetoakDepth"
+description: Customer-style Neat Graph usage for FeatureHistogram, GriderFast, TrackDescriptor, and TrackKLT
 sidebar_position: 8
 ---
 
@@ -16,14 +16,13 @@ or dispatcher APIs directly from application code.
 | `nodes::GriderFast` / `pyneat.nodes.grider_fast` | `grider_fast` | 236 | Grid-distributed FAST features |
 | `nodes::TrackDescriptor` / `pyneat.nodes.track_descriptor` | `track_descriptor` | 237 | FAST features plus descriptors |
 | `nodes::TrackKLT` / `pyneat.nodes.track_klt` | `track_klt` | 238 | Pyramidal KLT tracking, optionally with detected replacement features |
-| `nodes::MetoakDepth` | `simor_depth_map` | 20 | I420 and disparity to RGB, metric depth, and XYZ |
 
 Graph IDs are useful for diagnostics and firmware/package parity checks.  They
 are not required in application code.
 
 ## Tensor contract
 
-Feature and tracking tensors use **logical batch shapes**.  If `batch_size == B`, a grayscale
+All tensors use **logical batch shapes**.  If `batch_size == B`, a grayscale
 image is `[B,H,W]`, not `[B*H,W]`.  The runtime handles any EV74 transport packing
 internally.
 
@@ -134,63 +133,11 @@ When `detect_new_features == 0`, Neat publishes only `output_points` and
 `output_status`; the EV-visible features buffer remains an internal runtime
 allocation.
 
-## Metoak depth with six inputs
-
-`MetoakDepth` is a C++-only Node using `simor_depth_map` (graph 20). It consumes decoded I420 planes, raw disparity, and per-frame calibration—not a raw SIMOR camera frame. Your application or ROS adapter must unpack SIMOR and select calibration before this Node; Neat does not replace that adapter.
-
-Use even `width` in `[8,2048]` and even `height` in `[8,1536]`. S315 native depth geometry is `640x360`. Batch is fixed at one, with no leading batch dimension. Keep the following canonical route names and input order; aliases are rejected during contract compilation.
-
-| Input route | Type | Shape | Meaning |
-| --- | --- | --- | --- |
-| `y_src` | UInt8 | `[H,W]` | I420 Y |
-| `u_src` | UInt8 | `[H/2,W/2]` | I420 U |
-| `v_src` | UInt8 | `[H/2,W/2]` | I420 V |
-| `disp_src` | UInt16 | `[H,W]` | Raw disparity; fixed subpixel scale 32 |
-| `bf_mm_src` | Float32 | `[1]` | Calibrated baseline × focal length, in mm |
-| `proj_src` | Float32 | `[3]` | Projection `{fx_fy,cx,cy}` |
-
-| Output route | Type | Shape | Meaning |
-| --- | --- | --- | --- |
-| `rgb_dst` | UInt8 | `[H,W,3]` | Interleaved RGB |
-| `depth_dst` | UInt16 | `[H,W]` | Depth in mm; 0 means invalid |
-| `points_dst` | Float32 | `[H,W,3]` | Interleaved XYZ in meters; NaN means invalid |
-
-All three outputs are published together; `depth_dst` is the primary boundary description, not an output selector. Calibration BF and focal length must be positive and finite, and principal-point coordinates must be finite.
-
-Build the Graph using six named tensors in EV74 memory matching the input table. This example configures the Node; supply actual decoded frame and calibration tensors from your adapter.
-
-```cpp
-#include <neat.h>
-
-using namespace simaai::neat;
-
-// inputs contains the six named, decoded EV74 tensors from the table above.
-Run build_metoak_depth(const TensorList& inputs) {
-  Graph graph;
-  InputOptions input;
-  input.payload_type = PayloadType::Tensor;
-  input.memory_policy = InputMemoryPolicy::Ev74;
-  input.caps_override =
-      "application/vnd.simaai.tensor, representation=(string)tensor-set, storage=(string)tensorbuffer";
-  graph.add(nodes::Input(input));
-
-  MetoakDepthOptions depth;
-  depth.width = 640;
-  depth.height = 360;
-  graph.add(nodes::MetoakDepth(depth));
-  graph.add(nodes::Output());
-
-  RunOptions options;
-  options.output_memory = OutputMemory::Owned;
-  return graph.build(inputs, options);
-}
-```
-
-Run this Graph only with matching Internals and EV74 firmware containing graph 20. The feature/tracking validation command below covers the other four graphs, not `MetoakDepth`.
-
 ## Python surface
 
-The four feature/tracking Nodes have Python bindings that mirror the C++ options/factory style. `MetoakDepth` currently has no Python binding. Create an options object, set public configuration, and add the Node to a `Graph`.
+The Python API mirrors the C++ options/factory style and is intentionally
+layer-like: create an options object, set public configuration, and add the Node
+to a `Graph`.
 
 ```python
 import numpy as np
@@ -229,7 +176,7 @@ image.layout = pyneat.TensorLayout.HW
 
 ## Safety checks
 
-The four feature/tracking Nodes validate graph envelopes before EV dispatch. They reject:
+These Nodes validate graph envelopes before EV dispatch.  They reject:
 
 - non-positive dimensions or counts;
 - unsupported batch sizes;

@@ -179,3 +179,34 @@ power-number validation.
 
 For structured plugin errors and actionable hints, see
 [Troubleshooting](/reference/troubleshooting).
+
+## Platform runtime recovery
+
+On Platform 3.0.0, an unavailable dispatcher is an error to investigate, not a
+request to start legacy services. Core does not initialize MLA memory or reset
+remote processors in response to a dispatcher error. The legacy recovery code
+and script have been removed; use the platform-approved recovery procedure.
+
+If a driver reports unknown completion, keep its DMA buffers and original pool
+loans retained. Closing a file descriptor, stopping the application, or restarting
+a service does not prove that hardware stopped accessing memory. Collect the
+failure report and use the platform-approved recovery procedure before retrying.
+
+### Keep Core and Internals paired
+
+Build and install Core with the matching B1157 Internals packages. Core checks
+the runtime profile, kernel source revision, and SDK sysroot receipt separately
+from the public C++ ABI version. An older package with the same public ABI is
+not a compatible substitute.
+
+The installer checks the bundled `neat-runtime` profile and matching
+`neat-gst-plugins` version before changing packages. The platform-check override
+does not bypass runtime pairing. If a check fails, obtain a matching bundle;
+do not replace its receipt or force an older runtime into the installation.
+
+Before a board installation, stop applications using CVU or the hardware codec.
+The full installer activates the staged EV74 firmware after installing all
+packages and refuses to reset EV74 while those devices are open. Set
+`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` to leave the firmware staged for
+later activation with
+`sudo /usr/libexec/sima-neat-firmware/install.sh --activate`.

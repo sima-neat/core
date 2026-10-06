@@ -51,7 +51,6 @@ cd website && yarn start           # preview the site
 | `route_refactor_validation.sh` | これは、特定のルートプランナーに対する回帰テストであり（CIによって実行されます）、検証を行います。|
 | `install_neat_plugins.sh` | フレームワークの GStreamer プラグインを、システムのプラグインディレクトリにインストールします。|
 | `install_codex_skill.sh` | Codex CLIのNEATスキルをインストールします（開発者の利便性のため）。|
-| `fix_devkit_runtime.sh` | 新しい開発キットのランタイムライブラリとパスを修正し、コプロセッサを再起動します。`simaai-appcomplex.service`が実行されている間は、M4のみが起動します。|
 | `sync_neatdecoder.sh` / `use_neatdecoder.sh` | 組み込み版と外部版のデコーダービルドを切り替えます。|
 
 ### `core/scripts/ci/`, `core/scripts/dev/`, `core/scripts/release/`

@@ -13,17 +13,6 @@ without breaking its module and runtime contracts.
 
 ---
 
-## EV74 dispatcher ownership
-
-Graph and Model builds reserve EV74 RPMsg channels during dispatcher initialization,
-before startup returns, even with payload preflight disabled. Each worker owns a
-distinct endpoint. Graphs in the same process share the dispatcher; closing the last
-client releases its channels. Idle periods do not release them.
-
-Capacity exhaustion fails the build with `infra.dispatcher_unavailable`. A faulted
-dispatcher cannot accept new graphs; close all its clients before rebuilding.
-The implementation and channel locks belong to Neat Internals, not Core.
-
 ## Framework vs environment
 
 The word "Neat" is used for two related but separate concerns:
@@ -57,6 +46,18 @@ Internals Debian packages installed together. Core consumes and forwards that
 artifact closure without choosing or rewriting dependency versions. Packages
 outside the artifact remain platform-owned; an incompatible platform must be
 updated rather than repaired by Core or LLiMa.
+
+### Direct-driver recovery
+
+For the direct-driver platform, `deps/manifest.json` selects the Internals and
+LLiMa artifacts packaged with Core. The package set is the compatibility unit;
+Core does not duplicate Internals runtime, kernel, or sysroot version checks.
+
+Recovery belongs to the selected platform, not to dispatcher error matching.
+Core reports dispatcher errors without starting services, initializing MLA
+memory, or resetting remote processors. The legacy recovery code and script
+have been removed. Unknown DMA completion requires preserving buffer loans
+and using the platform-approved recovery procedure.
 
 ### Common workflows
 - **Decode / ingest:** file or RTSP -> depay/demux/parse -> decode -> convert/caps -> appsink -> C++ consumer
@@ -179,8 +180,75 @@ MLA may require INT8/BF16 and tessellated layouts, while user code generally wor
 and normal tensor layouts. The framework bridges that gap with manifest-driven adapter stages.
 
 Preprocessing and postprocessing are explicit framework stages/options. A format mismatch, missing
-required preprocessing metadata, unavailable MLA dispatcher, invalid model archive or MPK contract, or caps negotiation
+required preprocessing metadata, unavailable selected hardware transport, invalid model archive or MPK contract, or caps negotiation
 failure should surface as an actionable structured error rather than a hidden runtime correction.
+
+### Compiled model execution contract
+
+The DMA-BUF driver migration keeps model semantics separate from per-frame
+storage. Core compiles model-load facts into one immutable internal
+`ModelExecutionPlan`:
+
+- values contain exact names, required bytes, optional logical type facts, and
+  an optional root-relative read expression `{source ValueId, byte offset,
+  byte strides}`;
+- operations contain exact ordered edges and operation-specific configuration;
+- MLA backend ports contain ELF/model order, exact required bytes, alignment
+  authority, and access direction; and
+- public outputs contain only publication order and the value they expose.
+
+MPK manifests use `MpkDecoder`. `MpkDecoder::load` is the single manifest
+entry point: model loading, prepared-runtime builds, and the PCIe host read
+`mpk.json` through it once, and it builds the semantic `MpkContract` from the
+same bytes that admission decodes. The optional `model_sdk_version`
+string is retained as provenance and does not restrict admission. The decoder
+accepts only the exact registered `(processor, kernel)` vocabulary,
+resolves full tensor names, validates operation byte equations, and reconciles
+each MPK MLA stage independently with its exact ELF IFM/OFM topology. The
+decoder joins executable evidence by both compiler-authored logical stage ID
+and the manifest executable token; archive order and filename suffixes are not
+semantic evidence. The resulting immutable plan exposes a checked
+`{stage index, op ID, logical stage ID, executable}` key and pre-indexed ordered
+port spans for every MLA operation. Ambiguity, missing slots, or conflicting
+evidence is a model-load error; sidecar JSON, substring matching, environment
+state, and runtime buffers are not evidence.
+
+Core can reconcile different input and output buffer orderings when the mapping
+is unambiguous, including batched inputs and outputs. Applications keep the
+model's public tensor names, order, and sample order.
+
+Single-input, batch-one models with normal spatial storage can use automatic
+input channel padding. Applications keep the model's logical tensor shape;
+custom spatial storage padding is outside this support scope.
+
+An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
+by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
+without loading it into the host process, proves its section topology, and
+passes the exact artifact to MLArt. For `processor="A65"` with the
+compiler-authored `input_names`, `input_types`, and `output_types` contract, it
+is a host TVM module and is not an MLA executable.
+The strict DMA-BUF route rejects that stage until a typed direct host-module
+ABI is available; it never calls `dlopen`, silently skips the stage, or routes
+through the dispatcher-based ProcessTVM compatibility element.
+The legacy EVO alignment is an explicit 4096-byte migration policy with
+`LegacyPolicy` provenance, not a fact inferred from its MPK or ELF. New typed
+contracts must declare their own alignment.
+
+Runtime frames do not copy the static plan. The direct path carries standard
+DMA-BUF ownership plus checked absolute `{fd, offset, length}` views and a
+bounded frame-slot lifetime. Unpack and Slice are consumer read expressions,
+not runtime operations: the decoder composes them to one materialized root
+carrier only after proving their exact offsets, byte strides, and physical
+spans. Pack, tessellation, and precision conversion remain producer/compute
+semantics unless a lowering pass proves exact backend production or equivalent
+fusion. This prevents storage placement from silently changing MLA port arity
+or model behavior.
+
+All MLA stages in one accepted graph project through the same retained
+`FrameSlotArenaPlan`. The first materializing strict stage allocates the arena;
+later MLA stages use `ReuseInput` and submit exact root-relative IFM/OFM views
+over that same DMA-BUF. Stage-less projection helpers remain available only
+for an unambiguous one-MLA graph and fail closed for multi-stage plans.
 
 ---
 
@@ -216,6 +284,12 @@ Applications, examples, and public docs should use the single public `simaai::ne
 Public headers under `include/` are installed and treated as stable API.
 Internal headers under `src/**/internal` are not installed; examples/tutorials
 should use only public API.
+
+The shared Core CMake target exports C++20 and its public GStreamer, OpenCV,
+and JSON requirements. Internals, memory-library, and LLiMa development files
+belong to Core's build, while their shared libraries remain runtime dependencies.
+Static consumers explicitly request the Static component and provision its
+implementation link dependencies.
 
 Runtime environment notes:
 
@@ -363,7 +437,7 @@ Under `src/pipeline/internal/` (internal-only):
   - `ElementFlowCounters` (atomic per-element flow stats)
 - `GstDiagnosticsUtil.h` -- helpers for formatting and collecting GStreamer diagnostics
 
-#### SIMA static manifest context contract
+#### SIMA static manifest context contract {#sima-static-manifest-context-contract}
 For model pipelines, static stage/tensor contract data is built in framework and injected as a
 pipeline-level `GstContext`:
 
@@ -377,6 +451,135 @@ pipeline-level `GstContext`:
   they need.
 - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
+
+##### Model execution and admission
+
+Model execution uses the admitted DMA-BUF path. `ModelPack` keeps MPK metadata
+inspection separate from executable-plan preparation: inspection describes the
+model without opening devices or requiring its executable artifacts; execution
+requires an admitted semantic-command, physical-command and frame-arena plan.
+The prepared plan is cached and reused by graph and synchronous-runner clones.
+Routing preserves the compiler's pre/inference/post partition and does not
+change when the executable cache becomes ready.
+
+A public model-fragment entry compiles ownership for its selected commands with
+the same frame-arena planner. Application inputs retain their physical bindings
+and DMA-BUF storage; they are not treated as a full-model arena. Participating
+model fragments and typed model-owned CVU stages share one build-local placement
+plan, preserving command and value identities. The cached full-model plan stays
+immutable. A real model-owned preprocessing producer retains its admitted shared
+arena for downstream stages.
+
+Device transfers and InputStream allocation use standard DMA-BUF memory and
+resolved CMA/DMS placement. Shared TensorSet envelopes retain each source
+memory, its parent buffer and existing loan credit, including when a CPU sibling
+requires packing. Explicit CPU memory and Owned outputs remain supported;
+required device allocations fail rather than silently falling back to CPU
+memory. Applications do not select a memory backend or initialize GStreamer.
+
+Input allocation preference and runtime admission are separate decisions. Core
+resolves both from the declared `Input` and its executable downstream route at
+build time; it does not rewrite `Auto` into an explicit device requirement.
+`PreferDeviceZeroCopy` favors device allocation without rejecting an existing
+CPU-backed input. Explicit EV74/DMS0 policies and device-only routes retain their
+device-visible input checks. Device-preferred routes forward caller-owned
+`Tensor` and `Sample` storage without a CPU image round trip. Compatible DMA-BUF
+input remains zero-copy; CPU input may still require materialization at an
+existing device-ingress boundary such as `neatencoderinput`.
+
+Execution preparation invokes the same side-effect-free
+`try_compile_dmabuf_plan()` operation used by the offline
+`neat-dmabuf-plan-audit` tool. Pass `--mpk <mpk.json>` and one repeatable
+`--mla-artifact <stage-id> <manifest-executable> <resolved-file>` triple per
+MLA stage. The one-stage `--elf` spelling remains an unambiguous compatibility
+form. Admission requires an exact MPK manifest and exact identity for every
+MLA ELF, a successful strict reverse-AFE decode, and an accepted immutable
+frame-arena plan. The audit emits a versioned JSON record
+with stable reason codes, contract locations, content digests, and basenames;
+it does not allocate accelerator memory, open a device, or expose customer
+filesystem paths. Execution preparation records the same canonical plan digest and
+fails rather than constructing or retrying a legacy executor after rejection.
+
+Only after admission does Core set `processmla.dmabuf_plan_contract` in static
+manifest ABI version 30. Core also projects each backend port's `required_alignment_bytes`
+and the immutable frame-arena placement plan into its physical buffer record;
+ProcessMLA consumes that value rather than duplicating the legacy
+page-alignment policy. It consumes these Core-owned facts; it must not infer missing ports
+or fall back to a legacy transport. Core and every plugin that consumes the static-manifest
+header must therefore be built and released together at ABI version 30.
+
+##### Tensor ownership and physical placement
+
+Public Tensor device transfers allocate standard CMA or DMS DMA-BUF memory,
+perform the required cache-synchronized host copy, and record device placement
+in Tensor storage metadata. Shared tensor-list ingress retains each DMA-backed
+field's existing memory and producer lifetime. CPU fields can share storage or
+pack independently; packing a CPU field never copies its DMA-backed siblings.
+Public input positions identify logical views, not concatenated allocations.
+Each frame's compact physical-binding table identifies the memory slot, offset
+and extent of each requested view, including reordered or subset views of one
+shared sample. ProcessCVU resolves application bindings separately from direct
+memory inputs and compiler-owned frame-arena spans. Only a frame-arena input
+can establish ownership of a reused output arena.
+
+A non-materializing, component-form Pack establishes producer placement before
+carrier allocation. Writable producer outputs occupy their final component
+ranges in the shared parent; allocation, lifetime analysis and device commands
+use that single storage relationship. Parent base alignment does not impose
+page alignment on every interior component. This placement does not combine
+externally owned allocations or insert a runtime copy.
+
+Invalid DMA views fail rather than falling back to segmented allocation or
+whole-envelope materialization. Explicit Owned output and CPU/device transfers
+remain intentional copy operations.
+
+At strict stage boundaries, logical payload size and physical address span are
+different facts. The MPK-derived typed operation owns shape/layout and the
+required address span; TensorBuffer metadata owns the checked DMA-BUF memory,
+offset and available physical span. For example, a C16-strided 12-byte logical
+value may touch offsets through byte 176 in a 192-byte MLA OFM. ProcessMLA's
+direct binding therefore remains the ordered IFM/OFM mirror
+`{tensor_slot, parent_carrier}`. The one boolean identifies a zero-offset
+logical anchor for a larger physical port; it does not duplicate layout.
+ProcessMLA must not add redundant `padded`, `strided`, or `contiguous` flags.
+
+For a packed one-IFM/one-OFM model, Core proves the upstream logical outputs
+are the ordered children of one complete IFM carrier. Downstream Unpack/Slice
+values are published as logical reads of the one OFM carrier. ProcessMLA still
+submits exactly one physical port in each direction; the consuming CVU kernel
+uses the compiled offset/stride expressions directly, without an unpack job or
+intermediate copy.
+
+Multiple direct MLA OFMs can be logical views of one physical arena. In that
+case every descriptor with the same memory index publishes the same parent
+physical segment name, while logical/backend names preserve OFM identity and
+exact arena offsets preserve each view. Direct ProcessCVU output publication
+likewise uses its exact strict arena layout rather than the legacy packed
+output reconstruction heuristic.
+
+Core may simplify singleton batch dimensions in internal conversion descriptors
+when the execution view preserves the same addressed bytes. Model tensor shapes,
+batch routing, and public APIs remain unchanged.
+
+##### Direct runtime execution
+
+For the strict graphs currently admitted by `dmabuf-plan`, ProcessCVU submits
+the same Core-projected tensor routes and frame arena through one of two
+executors. EV74 placement submits descriptors through `/dev/cvu`. A65
+placement maps each unique standard DMA-BUF parent once with the matching
+read/write `DMA_BUF_IOCTL_SYNC` boundary, patches a frame-owned typed EV ABI
+configuration with host virtual addresses, and executes the in-process A65
+kernel. A `ReuseInput` post stage maps its shared MLA arena once as read/write;
+it does not copy or reconstruct individual outputs. Both executors keep
+ConfigManager and dispatcher execution disabled.
+
+ProcessMLA submits through kernel-driver MLArt on `/dev/mla` without the MLA
+dispatcher, MLASHM, segmented allocation, or M4. Legacy libraries may still
+be linked into a multi-route plugin for unmigrated graphs; link presence is not
+a fallback permission. Once a strict route is selected, any executor, mapping,
+or synchronization error is terminal.
+
+##### Configuration resolution
 
 Resolver precedence for migrated fields is deterministic:
 
@@ -400,7 +603,12 @@ is used for deterministic multi-input mapping; legacy input-buffer names remain 
 `logical_stage_id` is resolved from `stage-id`/`stage_id` pipeline properties when provided,
 otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
-`simaaiboxdecode` elements by default.
+`neatobjectdecode` elements by default.
+
+Generic BoxDecode uses `neatobjectdecode` for startup validation, model fragments,
+and public `SimaBoxDecode` nodes. Deploy matching runtime packages and rebuild
+Core when upgrading the decoder backend; C++ and Python application APIs are
+unchanged.
 
 ##### YOLOv5 and YOLO26 BoxDecode class-count contracts
 
@@ -431,32 +639,12 @@ families, with these additional invariants:
   representations, applies explicit `Model::Options::superpoint` overrides, and resolves only
   omitted profile defaults. Changing a profile recomputes its derived defaults while preserving
   controls explicitly authored by the MPK or API.
-- The versioned static-manifest ABI carries the resolved contract to `simaaiboxdecode`. Plugins
+- The versioned static-manifest ABI carries the resolved contract to `neatobjectdecode`. Plugins
   borrow manifest pointers only during configuration and must copy any state needed at runtime;
   Core retains manifest ownership for the pipeline lifetime.
 - Production output uses the `FEATURE_POINTS_V1` wire format and feature semantic metadata.
   `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
   consumers must not infer either format from buffer size.
-
-##### YOLOX segmentation + pose BoxDecode contract
-
-`yolox-seg-pose` uses the same MPK-to-static-manifest path as other BoxDecode families.
-
-- Inputs are 13 tensors: three boxes, three class heads, three mask-coefficient heads, three keypoint heads, then one mask prototype. Each group uses stride-8/16/32 order.
-- `Auto` selects `GroupedByRoleLogit`. Only `GroupedByRole` and `GroupedByRoleLogit` are accepted; scores use sigmoid.
-- The class head contains one objectness channel followed by class channels. Core derives the class count as depth minus one and rejects a conflicting explicit count.
-- Model-managed and standalone routes resolve the same layout, activation and class count.
-- Output contains boxes, masks and keypoints, each with `top_k` slots. `decode_segmentation_pose(...)` returns all three; `decode_bbox(...)` and `BoxDecodeResults(...)` read the leading boxes.
-
-The output has a 4-byte count header. Each slot uses 24 bytes for a box, `160*160` bytes for a mask and 204 bytes for 17 keypoints. The helper derives capacity from:
-
-```text
-capacity = (buffer_bytes - 4) / (24 + 160*160 + 204)
-```
-
-It rejects incompatible format tags and partial records, accepts untagged buffers only as rank-1 `UInt8`, and clamps the detection count to capacity. All three regions must use that same capacity. The legacy a65 `boxrender` assumes 20 box slots and cannot read other capacities correctly.
-
-`Model::Options::yolox_seg_pose.pose_classes` reaches the backend through the typed payload or JSON `pose_classes` field. Core validates class IDs and decoder support. The backend zeros excluded classes' keypoints, including visibility; Core copies the results unchanged. With no list configured, every class gets keypoints.
 
 ---
 
@@ -507,6 +695,13 @@ Key APIs:
 
 This is used for hybrid flows where preproc is done once and MLA/BoxDecode are run
 in a separate graph or thread.
+
+Frame-arena planning joins consecutive regions of one model invocation, including
+model-owned postprocess nodes. A full route or a restart of preprocessing/inference
+begins a separate invocation, even when the model source is shared. Split stages
+within one invocation retain one placement authority; repeated invocations keep
+separate command selections and arena ownership. This is a build-time distinction
+and does not copy tensor payloads or change asynchronous execution.
 
 ---
 
@@ -576,24 +771,84 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+With `RunPreset::Realtime`, live-source pipelines also bound queueing inside the
+graph: Core sets `max-input-queue-time` to 20 ms on each `neatprocesscvu` that
+does not set it already. ProcessCVU is a GStreamer aggregator, which otherwise
+queues input up to the source latency after the `KeepLatest` queue, so frames
+hold decoder buffers instead of being dropped. Internals applies the limit only
+to single-input elements and reports the unchanged latency downstream.
+
 For RTP JPEG, a compatibility probe after `rtpjpegdepay` appends a missing JPEG
 end marker before parsing. Correctly terminated images pass unchanged; this
 does not repair packet loss or other malformed JPEG data.
 
-### Decoder admission lifecycle
+Application input allocation and existing-buffer ownership are separate contracts.
+An input memory policy selects storage for new allocations; it does not implicitly
+materialize an already DMA-BUF-backed image for a CPU-capable consumer. Such images
+use the existing Sample holder path in synchronous and asynchronous runs. Explicit
+input copying and incompatible format/caps requests retain their own contracts.
+CPU-only TensorSets retain the existing packed/materialized fallback when a
+zero-copy envelope cannot represent them. If any selected tensor is DMA-backed,
+implicit packing remains forbidden; ordinary successful zero-copy paths are unchanged.
 
-Before choosing the single-pipeline or connected-graph runtime, Core scans the
-compiled execution plan for typed H.264/H.265 `SimaDecode` nodes. All eligible
-decoders are admitted as one group, and the resulting reservation is owned by
-the top-level `Run` until its pipeline workers have stopped. This applies
-equally to linear `Graph::add(...)` pipelines, ordinary connected segments, and
-fused realtime branches.
+On CPU-admissible ingress, `advanced.copy_input=true` takes its protective copy at
+queue admission, even when new allocations prefer device memory. A strict
+device-visible ingress requirement is distinct from this allocation preference.
 
-Admission requires a known decoder width, height, and frame rate. Core never
-invents a frame rate. An incomplete contract or unavailable optional admission
-endpoint produces a warning and leaves the plan unchanged; with
-`SIMA_DECODER_ADMISSION_REQUIRE=1`, either condition fails before decoder
-hardware starts. Capacity rejection and malformed lease responses always fail.
+### DMA-BUF output ownership
+
+Hardware decode allocates decoded frames directly in a fixed standard DMA-BUF
+pool. Native `VideoInputGroup` file output preserves producer memory and defaults
+its optional tail-caps memory constraint to `Any`. Explicit format conversion or
+SystemMemory requests remain compatibility operations, not native zero-copy paths.
+
+At public outputs, `OutputMemory::Auto` retains actual standard DMA-BUF payloads
+in sync and async modes. Non-DMA payloads keep the preset/mode policy; explicit
+`Owned` and the Auto-only owned environment override keep their copy semantics.
+Mixed output envelopes resolve this policy per selected payload, not from another
+field's memory type. Recognition uses `GstDmaBufMemory`, without inventing legacy
+device flags or changing tensor placement metadata.
+
+Transport boundaries preserve backing allocation identity, checked offsets and
+lengths, and original pool-buffer ownership. Metadata-only envelopes share memory
+and retain the pool parent. A Tensor mapping retains both its map guard and the
+current storage/loan; CPU cache synchronization ends before those owners release.
+EV/CVU and MLA imports retain the producer until completion. Unknown completion
+must not recycle potentially active storage.
+
+DMA-BUF-preserving outputs consume deduplicated holder credits. Queue/credit
+pressure cannot activate a payload-copy fallback or silently change `Block` into
+a drop policy. Explicit `ZeroCopy` also disables pressure-copy fallbacks. Explicit
+drop policies remain observable; stop wakes blocked operations. Intentional
+`Owned`, `clone()`, input copying and software transforms are separate boundaries.
+Compute stages may allocate their results in different DMA-BUFs without copying
+their inputs merely for transport.
+
+In a synchronous route, appsink can retain its previous sample while waiting for
+the next frame. The retention allowance belongs to the stage that actually
+allocates that sample's storage. Core follows typed `ReuseInput` bindings to
+that allocator and adjusts its output pool independently of execution lanes,
+sync prefill and application loan credits. Retaining additional application
+outputs still consumes the configured bounded capacity.
+
+Standalone ROI preprocessing specializes a copy of the admitted contract for
+source-image count and ROI-output capacity separately. The model's contract
+remains immutable. Each returned ROI is a one-member view at its exact slot
+offset; allocation padding is not part of the slot stride. Logical tensor names
+identify outputs, while segment names identify physical backing storage.
+
+### Direct decoder lifecycle
+
+The decoder plugin opens and owns the hardware codec session. Core does not
+reserve capacity through a decoder daemon or hold a separate admission lease.
+Session startup reports hardware errors through the existing pipeline error
+path, and teardown releases the session and its output pool.
+
+Decoder allocation policy does not depend on whether the next reader is the app,
+CVU or MLA. Typed hardware decode requests direct DMA-BUF output consistently;
+an explicit software-adapter tail advertises its own exposed memory contract
+instead. Explicit pool and tuning options pass through to the decoder, which
+applies its hardware pool requirements.
 
 ### Realtime fan-in lowering
 
@@ -609,6 +864,8 @@ inputless source branches are lowered with their by-stream mux and consumer so
 decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
 latest-by-stream topology remains segmented. Nested already-fused source
 segments remain ineligible until their branches can be preserved recursively.
+
+The compiler also lowers an RTSP source split between a Default-linked `SimaDecode` and an encoded passthrough `VideoSender` with `async=false` into one source pipeline with a `tee`, whatever link follows the decoder; `async=true` senders keep the segmented `FanOut`.
 
 ### Internal boundary timing
 
@@ -645,21 +902,24 @@ from the first runtime sample. A `Derived` or `Authoritative` contract may
 select an optimized representation. `Hint`, unknown format/memory, or a missing
 backend capability selects the conservative representation.
 
-For example, raw `VideoSender` omits its NV12 conversion only for a stable NV12
-contract in system or SiMaAI memory and when `neatencoder` advertises its
-read-only `input-layout-aware=true` capability. `OutputSpec` does not currently
-carry plane strides and offsets, so no memory domain bypasses that capability
-gate. An absent or false capability is treated as unsupported so Core remains
-safe with older Internals packages.
+For example, `SimaEncode` and raw `VideoSender` distinguish NV12 pixel format from encoder
+storage compatibility. SystemMemory is not directly importable just because its
+pixels are already NV12. The encoder-input boundary preserves a compatible
+DMA-BUF or converts/uploads into the final DMA surface before encoding.
+For explicit Auto NV12 input, a compatible encoder selects device allocation.
+Standalone `SimaEncode` specializes its embedded adapter through the private
+pipeline layer; its installed public header has no compiler hooks.
 
 Raw-video geometry and physical storage layout remain separate contracts.
 `OutputSpec` and caps describe visible width and height; Core must not round
 those values to codec block, DMA pitch, or surface-height alignment. The
-layout-aware plugin derives physical plane offsets and strides from
-`GstVideoMeta` or `GstVideoInfo`, repacks when the physical contract is not
-compatible, and leaves codec/hardware admission to the encoder service. This
-preserves exact decoded geometry while keeping device-specific alignment out of
-the public graph API.
+encoder-input boundary derives physical plane offsets and strides from
+`GstVideoMeta` or `GstVideoInfo`. Shared video-layout helpers define the final
+surface pitch, storage height and extent. CPU conversion writes directly into
+that surface within a checked DMA-BUF WRITE epoch. The encoder imports only
+compatible DMA-BUF views and retains them until completion; it does not perform
+a hidden upload or repack. Visible geometry and the public graph API remain
+independent of device-specific storage alignment.
 
 ### Parsing & launch
 
@@ -724,6 +984,10 @@ The common pattern is:
 * unref objects
 * apply a timeout safeguard (leak instead of hanging if necessary)
 
+Push/appsrc pipelines normally use deferred teardown. Pipelines containing
+driver-backed CVU or MLA stages use the bounded synchronous `NULL` transition
+so accepted asynchronous submissions are reaped before `Run::close()` returns.
+
 ---
 
 ## SimaAI concurrency
@@ -739,6 +1003,9 @@ GStreamer name collisions.
 
 * **Input formats must match caps**: `InputOptions` and model configs must agree on format/width/height.
   Mismatches fail fast during negotiation or when pushing inputs.
+  An unspecified image `Input` directly connected to a model adopts its ingress format before
+  wrapping either `cv::Mat` or tensor seeds. This labels the supplied storage; it does not
+  convert pixel data. Explicit input formats remain authoritative.
 * **Capability-gated dynamic input**: runtime renegotiation is allowed only when the built graph advertises dynamic capability. `FullyDynamic` graphs can renegotiate raw-video geometry/format/fps/media caps; `IngressDynamicCvuOnly` allows geometry changes and permits format changes only when build-time downstream contract checks prove stable output behavior.
 * **Dynamic within effective bounds**: `max_*` are hard ceilings; if `max_*` is unset, `width/height/depth` act as implicit ceilings.
 * **Model vs Graph defaults**: both flows now resolve seed/max/byte-guard policy through `src/pipeline/internal/InputPolicy.*`; `Model` still applies its documented metadata-backed defaults (for example 1920x1080 ceilings) while `Graph` remains node-option driven unless configured.
@@ -757,10 +1024,11 @@ GStreamer name collisions.
 
 Sources attach `Sample::attributes` as a nested structure in `GstSimaMeta`. Elements that
 preserve a buffer carry the metadata naturally; Core boundaries that allocate or reuse a
-buffer deep-copy the attributes and clear stale values. `neatdecoder` snapshots the same
-frame context before decode and restores it by a daemon-provided correlation ID, so reordered
-or dropped frames cannot shift attributes onto another output. A negotiated decoder/daemon
-protocol owns that correlation contract; the legacy decoder protocol remains FIFO-only.
+buffer deep-copy the attributes and clear stale values. `neatdecoder` snapshots each input's frame context before submission and
+restores it using the frame identity returned by the in-process codec. Dropped
+identities are retired, and completions from an earlier session generation are
+rejected, so reordered or recycled buffers cannot inherit another frame's
+attributes.
 
 The supported user-facing paths and limits are documented in
 [Per-frame attributes](../../advanced-concepts/data-model-contracts/frame_attributes.md).
@@ -1018,7 +1286,7 @@ The runtime exposes logical model IDs, caller-provided request IDs, nonblocking
 enqueue, retrieve-from-any-model, batch load, independent unload, and
 idempotent cleanup. Hardware queue IDs remain an implementation detail. The
 current Modalix implementation assigns exactly one loaded model to each of the
-four PCIe queues and continues to transfer model archives over the virtual
+six PCIe data queues (0–5) and continues to transfer model archives over the virtual
 Ethernet SSH/SCP control path.
 
 Inference request correlation uses the signed 32-bit OAAX request ID encoded
@@ -1028,15 +1296,32 @@ owns the model-to-queue registry and aggregates each queue's results; the
 card-side `pcie-pipeline-builder` remains one process and one model graph per
 queue.
 
-The card transport carries a separate private request token in the legacy-named
-`GstSimaMeta.pcie-buffer-id` field. It identifies the exact driver request and inflight credit;
-ordinary plugins may forward it unchanged but must not inspect or manufacture
-it. `stream-id` remains the output-routing key, while `frame-id` remains the
-application correlation key. Only `neatpciesink` resolves the request token.
-Successful work returns a DATA response. A decoder drop, flush, restart, or
-downstream failure returns a correlated `NEAT_PCIE_FRAME_RETURN_ERROR`, which
-releases the same host credit and terminates the affected host pipeline with an
-actionable error rather than leaving it blocked.
+The card transport carries an opaque logical correlation token in the
+legacy-named `GstSimaMeta.pcie-buffer-id` field. It encodes the unsigned 32-bit
+request ID plus one, preserving ID zero; it is not an address or a held driver
+request. Ordinary plugins must forward it unchanged. `neatpciesink` decodes it
+to correlate an independent return DATA message. `stream-id` selects the output
+stream, and `frame-id` carries frame correlation. Input transfer completion is
+separate from inference completion: the driver request is not held while the
+card processes the input.
+
+Output transport preserves the physical buffer layout, including padding and
+gaps. Before the first return DATA message, `neatpciesink` sends a versioned
+return CAPS envelope describing the raw byte extent and ordered physical output
+regions. The host plugin performs the existing `si_mla_read()` copy into a
+GStreamer receive buffer and exposes that layout in CAPS. `HostPcieChannel`
+validates the regions and payload extent, then creates tensor views at the
+correct offsets in public model-output order. No extra reorder copy is needed.
+
+Receive capacity must be configured before the host opens its PCIe queue.
+After building the card graph, `pcie-pipeline-builder` reads the compiled
+manifest for the producer feeding `neatpciesink` and reports a conservative
+`output_buffer_bytes` bound in its readiness status over SSH. The bound covers
+the planned frame arena and physical output spans; BoxDecode uses its output
+record format and `topk`. On the first input, the host selects the maximum of
+512 KiB, packed model input/output sizes, the submitted payload size, and this
+bound. Return metadata is validated against the configured capacity, not used
+to resize an active queue. Matching host and card packages are required.
 
 `ModelOptions::mla_only` moves the execution boundary. The card then runs the
 MLA stage alone, with no quantize before it and no dequantize after it, and the
@@ -1049,14 +1334,13 @@ The option reaches the card as `execution.mla_only` in the model options JSON.
 It requires `InputKind::Tensor` and rejects preprocess and box-decode options,
 which configure stages this route does not run.
 
-The MLA writes its heads tessellated and, depending on the model, padded. The
-host plugin copies the frame out of the driver buffer. Heads that are already
-contiguous in that frame are published as views into the received buffer;
-padded or strided heads are compacted into one dense allocation before
-publication. Either way a public tensor is dense INT8 or BF16 in the model's
-logical shape. Compaction sits on top of the existing `si_mla_read()` copy
-contract: the route costs at most one host copy more than the default one and
-needs no new `libsimaaipcie.so` symbols.
+For supported MLA-only archives, output heads may include channel padding or
+non-contiguous strides. If all heads are contiguous, the host publishes views
+into the received buffer. If any head requires compaction, the host copies the
+logical elements of all heads into one dense allocation before publication,
+removing padding. Public tensors retain their logical shapes and INT8 or BF16
+dtype. This adds at most one host copy beyond the existing `si_mla_read()` receive
+copy and requires no new `libsimaaipcie.so` symbols.
 
 The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
 native API. OAAX ownership rules, status codes, and last-error storage belong
@@ -1153,20 +1437,17 @@ Keep docs and code aligned:
 
    * internal refactors should not break user code unless intentionally versioned
 
-## Metoak depth contract
+### Hardware encoder configuration
 
-`MetoakDepth` dispatches EV74 graph `simor_depth_map` (ID 20), with six inputs and three outputs, batch one. Use even input width 8–2048 and height 8–1536; keep canonical tensor names. Inputs are UInt8 Y/U/V planes, UInt16 disparity, FP32 BF and FP32 projection. Outputs are RGB UInt8, depth UInt16 in millimeters and XYZ FP32 in meters. All three remain published even though depth is the primary output. Disparity scale is fixed at 32; zero disparity yields zero depth and NaN XYZ.
+`SimaEncode` and raw `VideoSender` derive resolution from negotiated input caps.
+Resolution stays fixed within a run; changing it requires a new run.
+Their encoder options contain no width or height, and the input adapter preserves
+visible geometry without resizing. Unknown input dimensions remain unknown in the
+build-time output contract until the upstream input provides them.
 
-Native runtime contracts preserve each input's logical dtype separately from the legacy EV transport enum. Device-backed bundled inputs are copied into named segments; this path is not zero-copy. Use matching Core, Internals and graph-20 firmware, and validate numerical output and buffer lifetime before deploying a camera application.
-
-The explicit `CameraInput` (`profile=MetoakSimor`) factory with `zero_copy=false` emits owned flat UInt8 wire tensors in system memory. It copies before requeue, preserves valid padding/trailers, and exposes negotiated geometry in caps. Existing libcamera behavior is unchanged. Device-specific unpacking, calibration and ROS publication stay in the application; graph 20 is unchanged. A bounded output pool applies cancellable backpressure. Copy mode does not waive platform-driver stop/release qualification.
-
-The V4L2 copy source separates preparation from streaming: output caps and pool activation precede camera queueing. Shutdown quiesces the capture callback before retiring the device and then the CPU pool. Retirement failures post a bus error and retain the capture owner to prevent restart; software source deactivation does not certify hardware recovery.
-
-## Camera profile resolution
-
-`CameraInput` selects a private implementation from `CameraInputOptions.profile` before graph contract propagation. The `Default` profile always preserves the libcamera image contract regardless of pixel format; a device path alone is rejected rather than implicitly identifying Metoak. Only `MetoakSimor` selects Linux owned-copy V4L2 capture, yielding flat `UInt8` byte tensors in system memory. An unset `zero_copy` selects owned-copy for this profile; explicit true is rejected. The profile owns BA81 wire format internally. SIMOR unpacking and calibration remain application concerns.
-
-An explicit SIMOR profile plus device needs no discovery. A SIMOR profile without a device identifies exactly one endpoint from media topology without opening capture/subdevice nodes or configuring drivers. The public API is only `CameraInput` with `CameraInputOptions`; no V4L2-specific options, wrapper, or FourCC selector is exposed. This change does not add or qualify libcamera Bayer negotiation. Discovery is outside the frame-processing path; capture keeps its bounded pool and retirement safeguards.
-
-The manifest and SONAME remain Core ABI 5. The public options and node layouts changed for this unreleased integration: rebuild C++ consumers and install the matching Python wheel together. Earlier ABI-5 development binaries are not compatible with the new layout.
+`SimaEncode` prepares raw input once and maps codec-specific options to
+`neatencoder`. Internals owns asynchronous submission, output-buffer ownership,
+cache synchronization and teardown. Core adds no encoder execution thread.
+The legacy `H264EncodeSima` preserves its adapter-free input contract while sharing
+encoder property generation. The public class layout changes require ABI 5 and
+rebuilt binary consumers; existing source entry points remain available.

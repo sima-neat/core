@@ -22,7 +22,6 @@
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/SuperPointTypes.h"
-#include "pipeline/YoloXSegPoseTypes.h"
 #include "pipeline/Run.h"
 #include "pipeline/TensorSpec.h"
 
@@ -30,6 +29,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -271,7 +271,6 @@ public:
     /// class-head depth cannot be inferred reliably (for example single-class YOLO split heads).
     /// `0` keeps legacy inference / MPK-provided metadata.
     int num_classes = 0;
-    YoloXSegPoseOptions yolox_seg_pose; ///< YOLOX segmentation/pose-specific settings.
     /// Original-image width hint for BoxDecode coordinate inversion.
     /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
     /// transition.

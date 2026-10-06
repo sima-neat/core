@@ -24,7 +24,7 @@ RUN_TEST("unit_sima_plugin_context_late_child_injection_test", ([] {
            StageStaticSpec stage_a;
            stage_a.element_name = "stage_a";
            stage_a.logical_stage_id = "stage_a_id";
-           stage_a.plugin_kind = "neatboxdecode";
+           stage_a.plugin_kind = "neatobjectdecode";
            stage_a.kernel_kind = "boxdecode";
            stage_a.payload_kind = StagePayloadKind::BoxDecode;
            stage_a.boxdecode.decode_type = simaai::neat::BoxDecodeType::YoloV8;
@@ -34,7 +34,7 @@ RUN_TEST("unit_sima_plugin_context_late_child_injection_test", ([] {
            StageStaticSpec late_stage;
            late_stage.element_name = "late_stage";
            late_stage.logical_stage_id = "late_stage_id";
-           late_stage.plugin_kind = "neatboxdecode";
+           late_stage.plugin_kind = "neatobjectdecode";
            late_stage.kernel_kind = "boxdecode";
            late_stage.payload_kind = StagePayloadKind::BoxDecode;
            late_stage.boxdecode.decode_type = simaai::neat::BoxDecodeType::YoloV8;

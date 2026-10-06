@@ -193,7 +193,7 @@ SimaBoxDecode(const Model& model,
 
 ### Типи декодування та контракти тензорів
 
-`BoxDecodeType` — це типізований API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`), і його завжди слід явно встановлювати для етапів декодування. Наведений нижче контракт середовища виконання походить від `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp` (`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`).
+`BoxDecodeType` — це типізований API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`), і його завжди слід явно встановлювати для етапів декодування. Наведений нижче контракт середовища виконання походить від `internals/gst_plugins/neatobjectdecode/gstneatboxdecode.cpp` (`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`).
 
 Основні правила для тензорних операцій:
 - Типи декодування сімейства YOLO, крім детекції `yolov5` (`yolo`, `yolov5-seg`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):

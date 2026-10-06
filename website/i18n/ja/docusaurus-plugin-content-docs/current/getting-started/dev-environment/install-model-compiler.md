@@ -19,13 +19,13 @@ SDKのセットアップ中にModel Compilerをスキップした場合、後で
 `amd64` Neat SDK コンテナの場合：
 
 <ShellCommand prompt="sdk">
-sima-cli neat install model-compiler/amd64@v2.1.3.1
+sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
 `arm64` Neat SDK コンテナの場合：
 
 <ShellCommand prompt="sdk">
-sima-cli neat install model-compiler/arm64@v2.1.3.1
+sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 インストール後、Neat SDK のシェルからコンパイラ環境を起動してください。
@@ -44,16 +44,16 @@ deactivate-model-compiler
 
 スタンドアロンでのインストールは、[互換性](/getting-started/compatibility/#model-compiler) に記載されているホスト環境でのみサポートされます。サポートされているホスト環境から、対応する `sima-cli neat install` コマンドを実行してください。ホストのアーキテクチャを確認するには、`uname -m` を実行します。`x86_64` は `amd64` コマンドを使用し、`aarch64` は `arm64` コマンドを使用します。
 
-`amd64` のホスト上で動作する Model Compiler 2.1.3.1 について：
+`amd64` のホスト上で動作する Model Compiler 2.1.3 について：
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3.1
+sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
-`arm64` のホスト上で動作する Model Compiler 2.1.3.1 について：
+`arm64` のホスト上で動作する Model Compiler 2.1.3 について：
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3.1
+sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 `amd64` のホスト上で動作する Model Compiler 2.0.0 について：

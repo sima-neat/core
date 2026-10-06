@@ -91,7 +91,7 @@ run.close();
 
 ## 인라인 큐
 
-`RunOptions::overflow_policy`는 `Run` 입력의 큐를 제어합니다. 그래프 노드 사이의 큐를 제어하려면 구성된 `Queue`를 추가합니다.
+`RunOptions::overflow_policy`는 `Run` 입력 큐를 제어합니다. 그래프 노드 사이의 큐를 제어하려면 설정된 `Queue`를 추가합니다.
 
 ```cpp
 simaai::neat::QueueOptions queue;
@@ -107,7 +107,7 @@ queue.overflow_policy = pyneat.OverflowPolicy.KeepLatest
 graph.add(pyneat.nodes.queue(queue))
 ```
 
-`max_buffers`를 설정하지 않으면 기본 큐 제한이 사용됩니다. 양수 값으로 설정하면 버퍼 수가 유일한 용량 제한이 됩니다. `Block`은 공간이 생길 때까지 대기하고, `KeepLatest`는 대기 중인 가장 오래된 버퍼를 버리며, `DropIncoming`은 새 버퍼를 버립니다.
+`max_buffers`를 설정하지 않으면 기본 큐 제한을 사용합니다. 양수로 설정하면 버퍼 수가 유일한 용량 제한이 됩니다. `Block`은 빈 공간을 기다리고, `KeepLatest`는 대기 중인 가장 오래된 버퍼를 버리며, `DropIncoming`은 새 버퍼를 버립니다.
 
 ## 풀 타이밍
 

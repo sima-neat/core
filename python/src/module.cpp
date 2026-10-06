@@ -4,6 +4,7 @@
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/function.h>
+#include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
@@ -35,6 +36,7 @@
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/VisualFrontend.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/HttpMjpegDecodedInput.h"
@@ -105,6 +107,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+NB_MAKE_OPAQUE(simaai::neat::SampleAttributes);
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -651,9 +655,11 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 }
 
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
-  Tensor tensor = input;
+  const Tensor source_pin = input;
+  Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
-    tensor = tensor.cpu();
+    nb::gil_scoped_release release;
+    tensor = source_pin.cpu();
   }
   if (!tensor.is_dense()) {
     throw std::runtime_error("__dlpack__ only supports dense tensors");
@@ -674,9 +680,12 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
-  auto* owner = new DlpackExportOwner();
+  auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
-  owner->mapping = owner->tensor.map_read();
+  {
+    nb::gil_scoped_release release;
+    owner->mapping = owner->tensor.map_read();
+  }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
 
@@ -695,7 +704,7 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   owner->managed.dl_tensor.strides =
       owner->strides_elems.empty() ? nullptr : owner->strides_elems.data();
   owner->managed.dl_tensor.byte_offset = 0;
-  owner->managed.manager_ctx = owner;
+  owner->managed.manager_ctx = owner.get();
   owner->managed.deleter = delete_dlpack_managed;
 
   PyObject* capsule = PyCapsule_New(&owner->managed, "dltensor", [](PyObject* capsule_obj) {
@@ -708,8 +717,8 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
       managed_ptr->deleter(managed_ptr);
     }
   });
-  if (!capsule) {
-    delete owner;
+  if (capsule) {
+    (void)owner.release();
   }
   return capsule;
 }
@@ -819,7 +828,11 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
   bool chw_to_hwc_converted = false;
   out = maybe_convert_chw_image_to_hwc(std::move(out), &chw_to_hwc_converted);
 
-  if (copy) {
+  if (memory == TensorMemory::Auto) {
+    memory = TensorMemory::EV74;
+  }
+  const bool cpu_destination = memory == TensorMemory::CPU || memory == TensorMemory::A65;
+  if (copy && cpu_destination) {
     if (chw_to_hwc_converted) {
       out.read_only = false;
     } else {
@@ -831,17 +844,17 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
     }
   }
 
-  if (memory == TensorMemory::Auto) {
-    memory = TensorMemory::EV74;
-  }
-  if (memory == TensorMemory::CPU || memory == TensorMemory::A65) {
+  if (cpu_destination) {
     return out;
   }
-  if (memory == TensorMemory::EV74) {
-    return out.cvu();
-  }
-  if (memory == TensorMemory::MLA) {
-    return out.mla(true);
+  if (memory == TensorMemory::EV74 || memory == TensorMemory::MLA) {
+    Tensor placed;
+    {
+      // Keep the DLPack owner alive until Python ownership operations are safe again.
+      nb::gil_scoped_release release;
+      placed = memory == TensorMemory::EV74 ? out.cvu() : out.mla(true);
+    }
+    return placed;
   }
   throw std::runtime_error("unsupported TensorMemory placement for Python tensor import");
 }
@@ -2000,12 +2013,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("boxes", &simaai::neat::SegmentationDecodeTensors::boxes)
       .def_rw("masks", &simaai::neat::SegmentationDecodeTensors::masks);
 
-  nb::class_<simaai::neat::SegmentationPoseDecodeTensors>(m, "SegmentationPoseDecodeTensors")
-      .def(nb::init<>())
-      .def_rw("boxes", &simaai::neat::SegmentationPoseDecodeTensors::boxes)
-      .def_rw("masks", &simaai::neat::SegmentationPoseDecodeTensors::masks)
-      .def_rw("keypoints", &simaai::neat::SegmentationPoseDecodeTensors::keypoints);
-
   m.def(
       "decode_pose",
       [](const TensorList& pose_tensors, std::optional<std::pair<int, int>> clamp_to,
@@ -2071,45 +2078,6 @@ NB_MODULE(_pyneat_core, m) {
       "  TypeError: an input tensor is not segmentation/BBOX-compatible.\n"
       "  RuntimeError: strict=True and a payload is malformed.",
       "segmentation_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
-      "strict"_a = false);
-
-  m.def(
-      "decode_segmentation_pose",
-      [](const TensorList& tensors, std::optional<std::pair<int, int>> clamp_to,
-         std::optional<int> top_k, bool strict) {
-        const int w = clamp_to ? clamp_to->first : 0;
-        const int h = clamp_to ? clamp_to->second : 0;
-        const int k = top_k.value_or(0);
-        try {
-          return simaai::neat::decode_segmentation_pose(tensors, w, h, k, strict);
-        } catch (const std::runtime_error& e) {
-          const std::string msg = e.what();
-          if (detection_decode_type_error_message(msg)) {
-            throw nb::type_error(e.what());
-          }
-          throw;
-        }
-      },
-      "Decode combined BoxDecode segmentation+pose tensors, positional 1:1.\n\n"
-      "Each result has `boxes` [N, 6] float32, `masks` [N, 160, 160] uint8, and\n"
-      "`keypoints` [N, 17, 3] float32 with columns (x, y, visibility). All three are\n"
-      "parallel: row i of each describes the same detection.\n\n"
-      "Keypoint rows are copied through verbatim; zeroing is the backend's, driven by\n"
-      "the `pose_classes` gate. Set `ModelOptions.yolox_seg_pose.pose_classes` on a model whose\n"
-      "classes are mixed and a detection whose class carries no keypoints arrives\n"
-      "all-zero, visibility included, so you can gate on visibility rather than\n"
-      "needing the class list. Leaving it empty treats every class as pose-bearing.\n\n"
-      "Args:\n"
-      "  tensors:  list[Tensor] of BoxDecode segmentation+pose format tensors.\n"
-      "  clamp_to: Optional (width, height) - clamp box coordinates to that rectangle.\n"
-      "  top_k:    Optional cap on detections per tensor.\n"
-      "  strict:   When True, raise on malformed buffers instead of best-effort.\n\n"
-      "Returns:\n"
-      "  list[SegmentationPoseDecodeTensors] - one result per input tensor.\n\n"
-      "Raises:\n"
-      "  TypeError: an input tensor is not segmentation-pose/BBOX-compatible.\n"
-      "  RuntimeError: strict=True and a payload is malformed.",
-      "tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
       "strict"_a = false);
 
   nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
@@ -3301,10 +3269,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_static("every_frame", &simaai::neat::OutputOptions::EveryFrame, "max_buffers"_a = 30)
       .def_static("clocked", &simaai::neat::OutputOptions::Clocked, "max_buffers"_a = 1);
 
-  nb::enum_<simaai::neat::CameraProfile>(m, "CameraProfile")
-      .value("Default", simaai::neat::CameraProfile::Default)
-      .value("MetoakSimor", simaai::neat::CameraProfile::MetoakSimor);
-
   nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")
       .def(nb::init<>())
       .def_prop_rw(
@@ -3332,22 +3296,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("insert_queue", &simaai::neat::CameraInputOptions::insert_queue)
       .def_rw("leaky_queue", &simaai::neat::CameraInputOptions::leaky_queue)
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
-      .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback)
-      .def_rw("device", &simaai::neat::CameraInputOptions::device)
-      .def_rw("profile", &simaai::neat::CameraInputOptions::profile)
-      .def_prop_rw(
-          "zero_copy",
-          [](const simaai::neat::CameraInputOptions& opt) -> nb::object {
-            return opt.zero_copy.has_value() ? nb::cast(*opt.zero_copy) : nb::none();
-          },
-          [](simaai::neat::CameraInputOptions& opt, nb::handle value) {
-            opt.zero_copy =
-                value.is_none() ? std::nullopt : std::optional<bool>(nb::cast<bool>(value));
-          },
-          nb::for_setter(nb::arg("zero_copy").none()))
-      .def_rw("output_buffer_count", &simaai::neat::CameraInputOptions::output_buffer_count)
-      .def_rw("frame_timeout_ms", &simaai::neat::CameraInputOptions::frame_timeout_ms)
-      .def_rw("capture_buffer_count", &simaai::neat::CameraInputOptions::capture_buffer_count);
+      .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
 
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
@@ -3621,6 +3570,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("dec_height", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_height)
       .def_rw("dec_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_fps)
       .def_rw("num_buffers", &simaai::neat::nodes::groups::RtspDecodedInputOptions::num_buffers)
+      .def_rw("decoder_input_buffers",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_input_buffers)
+      .def_rw("decoder_tuning",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_tuning)
+      .def_rw("decoder_memory_opt",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_memory_opt)
       .def_rw("use_videoconvert",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videoconvert)
       .def_rw("use_videoscale",
@@ -3658,6 +3613,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("level", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::level);
 
   nb::class_<simaai::neat::nodes::groups::VideoSenderOptions>(m, "VideoSenderOptions")
+      .def_static("from_raw", &simaai::neat::nodes::groups::VideoSenderOptions::FromRaw, "encode"_a)
       .def_static("h264_rtp_udp_from_raw",
                   &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
                   "height"_a, "fps"_a)
@@ -3889,6 +3845,24 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+  nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
+      .value("H264", simaai::neat::SimaEncodeType::H264)
+      .value("H265", simaai::neat::SimaEncodeType::H265)
+      .value("MJPEG", simaai::neat::SimaEncodeType::MJPEG);
+  m.attr("SimaEncodeType").attr("AVC") = m.attr("SimaEncodeType").attr("H264");
+  m.attr("SimaEncodeType").attr("HEVC") = m.attr("SimaEncodeType").attr("H265");
+  nb::class_<simaai::neat::SimaEncodeOptions>(m, "SimaEncodeOptions")
+      .def(nb::init<>())
+      .def_rw("type", &simaai::neat::SimaEncodeOptions::type)
+      .def_rw("fps", &simaai::neat::SimaEncodeOptions::fps)
+      .def_rw("bitrate_kbps", &simaai::neat::SimaEncodeOptions::bitrate_kbps)
+      .def_rw("rate_control", &simaai::neat::SimaEncodeOptions::rate_control)
+      .def_rw("profile", &simaai::neat::SimaEncodeOptions::profile)
+      .def_rw("level", &simaai::neat::SimaEncodeOptions::level)
+      .def_rw("gop_length", &simaai::neat::SimaEncodeOptions::gop_length)
+      .def_rw("idr_interval", &simaai::neat::SimaEncodeOptions::idr_interval)
+      .def_rw("quality", &simaai::neat::SimaEncodeOptions::quality)
+      .def_rw("num_buffers", &simaai::neat::SimaEncodeOptions::num_buffers);
   nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
       .value("H264", simaai::neat::SimaDecodeType::H264)
       .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
@@ -4190,8 +4164,6 @@ NB_MODULE(_pyneat_core, m) {
   detections_mod.def("read_detection_format", &simaai::neat::read_detection_format, "tensor"_a);
   detections_mod.def("format_is_bbox", &simaai::neat::detection_format_is_bbox, "format"_a);
   detections_mod.def("format_is_pose", &simaai::neat::detection_format_is_pose, "format"_a);
-  detections_mod.def("format_is_segmentation_pose",
-                     &simaai::neat::detection_format_is_segmentation_pose, "format"_a);
   detections_mod.def("format_is_segmentation", &simaai::neat::detection_format_is_segmentation,
                      "format"_a);
   detections_mod.def("format_is_bbox_family", &simaai::neat::detection_format_is_bbox_family,
@@ -4317,8 +4289,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
-      .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint)
-      .value("YoloXSegPose", simaai::neat::BoxDecodeType::YoloXSegPose);
+      .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint);
 
   nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
       .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
@@ -4354,18 +4325,13 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("descriptor_output_dtype", &simaai::neat::SuperPointOptions::descriptor_output_dtype)
       .def_rw("output_format", &simaai::neat::SuperPointOptions::output_format);
 
-  nb::class_<simaai::neat::YoloXSegPoseOptions>(m, "YoloXSegPoseOptions")
-      .def(nb::init<>())
-      .def_rw("pose_classes", &simaai::neat::YoloXSegPoseOptions::pose_classes);
-
   nb::class_<simaai::neat::BoxDecodeOptions>(m, "BoxDecodeOptions")
       .def(nb::init<simaai::neat::BoxDecodeType>(), "decode_type"_a)
       .def_rw("decode_type", &simaai::neat::BoxDecodeOptions::decode_type)
       .def_rw("detection_threshold", &simaai::neat::BoxDecodeOptions::detection_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::BoxDecodeOptions::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::BoxDecodeOptions::top_k)
-      .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint)
-      .def_rw("yolox_seg_pose", &simaai::neat::BoxDecodeOptions::yolox_seg_pose);
+      .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
       .value("Quiet", simaai::neat::VerbosityLevel::Quiet)
@@ -4487,7 +4453,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
       .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
-      .def_rw("yolox_seg_pose", &simaai::neat::Model::Options::yolox_seg_pose)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
@@ -5068,8 +5033,19 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::QuantTessOptions{});
   nodes_mod.def("udp_output", &simaai::neat::nodes::UdpOutput,
                 "options"_a = simaai::neat::UdpOutputOptions{});
-  nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
-                "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
+  nodes_mod.def(
+      "h264_encode_sima",
+      [](int width, int height, int fps, int bitrate_kbps, std::string profile, std::string level) {
+        if (PyErr_WarnEx(PyExc_DeprecationWarning,
+                         "h264_encode_sima is deprecated; use sima_encode with SimaEncodeType.H264",
+                         1) < 0) {
+          throw nb::python_error();
+        }
+        return simaai::neat::nodes::H264EncodeSima(width, height, fps, bitrate_kbps,
+                                                   std::move(profile), std::move(level));
+      },
+      "width"_a, "height"_a, "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline",
+      "level"_a = "4.0");
   nodes_mod.def(
       "h264_decode",
       [](int sima_allocator_type, std::string out_format, std::string decoder_name, bool raw_output,
@@ -5082,6 +5058,8 @@ NB_MODULE(_pyneat_core, m) {
       "sima_allocator_type"_a = 2, "out_format"_a = "NV12", "decoder_name"_a = "",
       "raw_output"_a = false, "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1,
       "dec_fps"_a = -1, "num_buffers"_a = -1);
+  nodes_mod.def("sima_encode", &simaai::neat::nodes::SimaEncode,
+                "options"_a = simaai::neat::SimaEncodeOptions{});
   nodes_mod.def("sima_decode", &simaai::neat::nodes::SimaDecode,
                 "options"_a = simaai::neat::SimaDecodeOptions{});
   nodes_mod.def(

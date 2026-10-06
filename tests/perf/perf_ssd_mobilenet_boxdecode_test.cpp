@@ -28,28 +28,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-class RedirectStdoutToStderr {
-public:
-  RedirectStdoutToStderr() : original_(std::cout.rdbuf(std::cerr.rdbuf())) {}
-
-  RedirectStdoutToStderr(const RedirectStdoutToStderr&) = delete;
-  RedirectStdoutToStderr& operator=(const RedirectStdoutToStderr&) = delete;
-
-  ~RedirectStdoutToStderr() {
-    restore();
-  }
-
-  void restore() {
-    if (original_ != nullptr) {
-      std::cout.rdbuf(original_);
-      original_ = nullptr;
-    }
-  }
-
-private:
-  std::streambuf* original_;
-};
-
 struct ComponentIdentity {
   const char* component_id;
   const char* backend;
@@ -114,7 +92,7 @@ int main(int argc, char** argv) {
 
     // The performance harness parses stdout as one JSON document. Route graph/runtime progress
     // messages to stderr until all measurements and validations are complete.
-    RedirectStdoutToStderr progress_output;
+    sima_perf::ScopedStdoutToStderr progress_output;
 
     const fs::path root = (argc > 1) ? fs::path(argv[1]) : fs::current_path();
     const int warmup = sima_perf::env_int("SIMA_SSD_PERF_WARMUP", 25);

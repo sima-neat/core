@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RunCore.h"
+#include "pipeline/internal/SampleUtil.h"
 
 namespace simaai::neat {
 
@@ -119,7 +120,7 @@ inline bool sample_has_zero_copy_tensor(const Sample& sample) {
 
 inline void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,
                                               bool debug_enabled) {
-  if (!sample_has_zero_copy_tensor(sample))
+  if (!sample_has_zero_copy_tensor(sample) || pipeline_internal::sample_has_dmabuf_memory(sample))
     return;
   const int cap = zero_copy_backpressure_cap();
   if (cap <= 0 || qsize < static_cast<std::size_t>(cap))
@@ -134,7 +135,7 @@ inline void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize,
 
 inline void maybe_force_copy_for_backpressure(simaai::neat::Tensor& tensor, std::size_t qsize,
                                               const char* where, bool debug_enabled) {
-  if (!tensor_is_zero_copy(tensor))
+  if (!tensor_is_zero_copy(tensor) || pipeline_internal::tensor_has_dmabuf_memory(tensor))
     return;
   const int cap = zero_copy_backpressure_cap();
   if (cap <= 0 || qsize < static_cast<std::size_t>(cap))

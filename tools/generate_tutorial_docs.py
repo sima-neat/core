@@ -1660,6 +1660,11 @@ def _validate_localized_readme(source_path: pathlib.Path, localized_path: pathli
         "list markers": lambda text: re.findall(
             r"^[ \t]*(?:[-+*]|\d+[.)])[ \t]+", text, flags=re.M
         ),
+        "table shapes": lambda text: [
+            len(re.findall(r"(?<!\\)\|", line))
+            for line in text.splitlines()
+            if re.match(r"^\s*\|.*\|\s*$", line)
+        ],
     }
     for label, extract in checks.items():
         if extract(source) != extract(localized):
