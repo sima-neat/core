@@ -224,10 +224,9 @@ history.
 
 ### Reasoning effort
 
-For gpt-oss models, `reasoning_effort` controls how much the model reasons.
-Accepted values are `low`, `medium` and `high`; the default is `low`. Any other
-value is rejected with HTTP 400. Effort is independent of `enable_thinking`,
-which only controls whether the reasoning is returned:
+For GPT-OSS, set `reasoning_effort` to `low` (default), `medium` or `high`;
+other values return HTTP 400. `enable_thinking` controls whether reasoning is
+returned:
 
 ```bash
 curl http://<modalix-ip>:9998/v1/chat/completions \

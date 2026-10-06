@@ -186,6 +186,34 @@ curl http://<modalix-ip>:9998/api/chat \
 
 推論フィールドは、空の場合には省略されます。これらは出力専用であり、受信した `reasoning_content` または `thinking` フィールドは、会話履歴として再利用されません。
 
+### 推論の労力
+
+GPT-OSS では、`reasoning_effort` に `low`（デフォルト）、`medium` または `high` を指定します。それ以外の値は HTTP 400 を返します。`enable_thinking` は推論内容を返すかどうかを制御します：
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "enable_thinking": true,
+    "reasoning_effort": "high",
+    "stream": false
+  }'
+```
+
+`reasoning_effort` は `chat_template_kwargs` 内でも指定できます。`enable_thinking` と同様に、入れ子の値がトップレベルのフィールドより優先されます：
+
+```json
+{
+  "model": "llm",
+  "messages": [{"role": "user", "content": "..."}],
+  "chat_template_kwargs": {"reasoning_effort": "medium"}
+}
+```
+
 ## オーディオリクエスト
 
 オーディオエンドポイントは、提供される ASR モデル名とオーディオファイルを含む、multipart フォームデータを受け付けます。`language` はデフォルトで `auto` に、`stream` はデフォルトで `false` に設定されます。
