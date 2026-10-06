@@ -148,12 +148,19 @@ RouteGraph build_route_graph(const MpkContract& contract) {
     }
   }
 
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
-  if (mla_stage) {
-    const auto mla_idx = find_plugin_index_by_name_or_id(
-        contract, !mla_stage->name.empty() ? mla_stage->name : mla_stage->plugin_id);
-    if (mla_idx.has_value()) {
-      out.mla_plugin_index = static_cast<int>(*mla_idx);
+  const auto mla_stages = get_mla_stage_io_contracts(contract);
+  if (!mla_stages.empty()) {
+    const auto first_mla_idx = find_plugin_index_by_name_or_id(
+        contract, !mla_stages.front()->name.empty() ? mla_stages.front()->name
+                                                    : mla_stages.front()->plugin_id);
+    if (first_mla_idx.has_value()) {
+      out.mla_plugin_index = static_cast<int>(*first_mla_idx);
+    }
+    const auto last_mla_idx = find_plugin_index_by_name_or_id(
+        contract,
+        !mla_stages.back()->name.empty() ? mla_stages.back()->name : mla_stages.back()->plugin_id);
+    if (last_mla_idx.has_value()) {
+      out.last_mla_plugin_index = static_cast<int>(*last_mla_idx);
     }
   }
 
@@ -167,6 +174,12 @@ RouteGraph build_route_graph(const MpkContract& contract) {
                                : rank_by_index.end();
   const std::size_t mla_rank =
       mla_rank_it == rank_by_index.end() ? out.execution_order.size() : mla_rank_it->second;
+  const auto last_mla_rank_it =
+      out.last_mla_plugin_index >= 0
+          ? rank_by_index.find(static_cast<std::size_t>(out.last_mla_plugin_index))
+          : rank_by_index.end();
+  const std::size_t last_mla_rank =
+      last_mla_rank_it == rank_by_index.end() ? mla_rank : last_mla_rank_it->second;
 
   out.nodes.reserve(contract.plugins.size());
   for (std::size_t plugin_idx = 0; plugin_idx < contract.plugins.size(); ++plugin_idx) {
@@ -192,7 +205,7 @@ RouteGraph build_route_graph(const MpkContract& contract) {
     }
     node.sequence = plugin.sequence;
     node.before_mla = rank < mla_rank;
-    node.after_mla = rank > mla_rank;
+    node.after_mla = rank > last_mla_rank;
     out.nodes.push_back(std::move(node));
   }
 

@@ -794,12 +794,14 @@ def test_output_stage_node_and_group_factories_present_and_accept_expected_args(
 
   _assert_not_type_error(lambda: pyneat.nodes.udp_output())
   _assert_not_type_error(lambda: pyneat.nodes.udp_output(pyneat.UdpOutputOptions()))
-  _assert_not_type_error(lambda: pyneat.nodes.h264_encode_sima(1280, 720, 30))
-  _assert_not_type_error(
-      lambda: pyneat.nodes.h264_encode_sima(
-          1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
-      )
-  )
+  with pytest.warns(DeprecationWarning, match="h264_encode_sima is deprecated"):
+    _assert_not_type_error(lambda: pyneat.nodes.h264_encode_sima(1280, 720, 30))
+  with pytest.warns(DeprecationWarning, match="h264_encode_sima is deprecated"):
+    _assert_not_type_error(
+        lambda: pyneat.nodes.h264_encode_sima(
+            1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
+        )
+    )
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse())
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse(2))
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse(pyneat.H264ParseOptions()))
@@ -1027,6 +1029,9 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert decoded.dec_height == -1
   assert decoded.dec_fps == -1
   assert decoded.num_buffers == -1
+  assert decoded.decoder_input_buffers == -1
+  assert decoded.decoder_tuning == ""
+  assert decoded.decoder_memory_opt is False
   assert decoded.source_fps == -1
   assert decoded.use_videorate is False
   assert decoded.video_rate_fps == -1
@@ -1042,6 +1047,22 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   h265_decoded_backend = h265_decoded_group.describe_backend().lower()
   assert "framerate=(fraction)30/1" in h265_decoded_backend
   assert "dec-fps=30" in h265_decoded_backend
+  assert "dec-ip-cnt=" not in h265_decoded_backend
+  assert "decoder-tuning=" not in h265_decoded_backend
+  decoded.decoder_input_buffers = 2
+  decoded.num_buffers = 4
+  decoded.decoder_memory_opt = True
+  for tuning in ("default", "auto", "low-memory", "throughput-low-latency"):
+    decoded.decoder_tuning = tuning
+    backend = pyneat.groups.rtsp_decoded_input(decoded).describe_backend().lower()
+    assert "dec-ip-cnt=2" in backend
+    assert "num-buffers=4" in backend
+    assert f"decoder-tuning={tuning}" in backend
+    assert "memory-opt=true" in backend
+  decoded.decoder_input_buffers = -1
+  decoded.num_buffers = -1
+  decoded.decoder_memory_opt = False
+  decoded.decoder_tuning = ""
   h265_decoded_spec = pyneat.groups.rtsp_decoded_output_spec(decoded)
   assert h265_decoded_spec.media_type == "video/x-raw"
   assert h265_decoded_spec.format == "NV12"
@@ -1237,8 +1258,12 @@ def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
   graph.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
   graph.add(pyneat.nodes.output())
 
-  text = graph.describe_backend().lower()
-  assert "detessdequant" in text
+  # A fused physical cohort need not use the logical operation as its element name.
+  assert "detessdequant" in graph.describe().lower()
+  info = model.info()
+  assert info.capabilities.has_post_detessellation
+  assert info.capabilities.has_post_dequantization
+  assert "neatprocesscvu" in graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_sima_box_decode_stage(tmp_path):
@@ -1806,3 +1831,49 @@ def test_measurement_bool_overload_surface():
   _assert_not_type_error(lambda: pyneat.Run().start_measurement(True))
   _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(False))
   _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(True))
+
+@pytest.mark.parametrize('codec', [
+    pyneat.SimaEncodeType.H264,
+    pyneat.SimaEncodeType.H265,
+    pyneat.SimaEncodeType.MJPEG,
+])
+def test_sima_encode_and_sender_options(codec):
+  encode = pyneat.SimaEncodeOptions()
+  encode.type = codec
+  encode.fps = 30
+  assert not hasattr(encode, "width") and not hasattr(encode, "height")
+  assert pyneat.nodes.sima_encode() is not None
+  encode.num_buffers = 4
+  assert encode.bitrate_kbps is None and encode.quality is None
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.sima_encode(encode))
+  text = graph.describe_backend()
+  assert text.count('neatencoderinput') == 1
+  assert 'num-output-buffers=4' in text
+  assert 'enc-width=' not in text and 'enc-height=' not in text
+  sender = pyneat.VideoSenderOptions.from_raw(encode)
+  encode.fps = 60
+  assert sender.width == 0 and sender.height == 0
+  assert sender.fps == 30 and sender.is_raw_input()
+  assert not sender.is_encoded_input()
+  assert pyneat.SimaEncodeType.AVC == pyneat.SimaEncodeType.H264
+  assert pyneat.SimaEncodeType.HEVC == pyneat.SimaEncodeType.H265
+  if codec == pyneat.SimaEncodeType.MJPEG:
+    assert sender.rtp.payload_type == 26
+    assert 'enc-bitrate=' not in text
+    encode.gop_length = 0
+    with pytest.raises(ValueError, match='MJPEG'):
+      pyneat.nodes.sima_encode(encode)
+    sender.encoder.bitrate_kbps = 3000
+    with pytest.raises(ValueError, match='MJPEG'):
+      pyneat.groups.video_sender(sender)
+  else:
+    changed = pyneat.VideoSenderEncoderOptions()
+    changed.bitrate_kbps, changed.profile, changed.level = 3000, 'main', '4.1'
+    sender.encoder = changed
+    text = pyneat.groups.video_sender(sender).describe_backend()
+    assert 'enc-bitrate=3000' in text and 'enc-profile=main' in text
+    assert 'enc-level=4.1' in text and text.count('neatencoderinput') == 1
+    encode.quality = 80
+    with pytest.raises(ValueError, match='quality'):
+      pyneat.nodes.sima_encode(encode)

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 520" role="img" aria-labelledby="ftl ftd">
 <title id="ftl">Run Multiple Models</title>
-<desc id="ftd">A Modalix PCIe Card exposes queues 0 through 3.</desc>
+<desc id="ftd">A Modalix PCIe Card exposes co-processing queues 0 through 5.</desc>
 <defs>
 <linearGradient id="fbg" x1="80" y1="40" x2="1240" y2="500" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F8F6"/></linearGradient>
 <linearGradient id="fgreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>
@@ -12,7 +12,7 @@
 <circle cx="1188" cy="82" r="58" fill="#C0E8DB" opacity="0.5"/>
 <circle cx="112" cy="432" r="50" fill="#BFE0CF" opacity="0.45"/>
 <text x="54" y="68" class="fsans fttl">Run Multiple Models</text>
-<text x="54" y="96" class="fsans fsub">A Modalix PCIe Card exposes queues 0 through 3.</text>
+<text x="54" y="96" class="fsans fsub">A Modalix PCIe Card exposes co-processing queues 0 through 5.</text>
 <g filter="url(#fsh)">
 <rect x="54" y="132" width="470" height="316" rx="26" fill="#1F232A"/>
 <rect x="54" y="132" width="470" height="46" rx="26" fill="#181C22"/>

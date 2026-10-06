@@ -215,7 +215,7 @@ Practical consequences:
 
 ### Decode types and tensor contracts
 
-`BoxDecodeType` is a typed API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`) and should always be set explicitly for decode stages. The runtime contract below comes from `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp` (`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`).
+`BoxDecodeType` is a typed API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`) and should always be set explicitly for decode stages. The runtime contract below comes from `internals/gst_plugins/neatobjectdecode/gstneatboxdecode.cpp` (`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`).
 
 Core tensor contract rules:
 - YOLO-family decode types other than `yolov5` detection (`yolo`, `yolov5-seg`,

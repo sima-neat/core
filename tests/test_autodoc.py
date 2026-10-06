@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -695,6 +696,21 @@ class NestedSourceMountTests(unittest.TestCase):
             "compile-a-model/quantization-aware-training",
         )
         self.assertTrue(sources[model_sdk_index + 1]["localization"])
+
+
+class SnapBranchOverrideTests(unittest.TestCase):
+    LLIMA = {"branch": "develop", "branch_policy": "snap", "fallback_branch": "develop"}
+
+    def candidates(self, override):
+        refs = {"AUTODOC_SNAP_BRANCH": override, "GITHUB_HEAD_REF": "develop"}
+        with mock.patch.dict(os.environ, refs):
+            return MODULE.resolve_branch_candidates(self.LLIMA, ROOT)
+
+    def test_override_takes_precedence_over_github_refs(self):
+        self.assertEqual(self.candidates("main"), (["main", "develop"], "main"))
+
+    def test_empty_override_keeps_github_ref_resolution(self):
+        self.assertEqual(self.candidates(""), (["develop"], "develop"))
 
 
 class AutodocMainTests(unittest.TestCase):

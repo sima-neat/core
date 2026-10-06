@@ -74,7 +74,8 @@ MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
  * @ingroup pipeline
  */
 enum class RunPreset {
-  Realtime, ///< Low-latency; small queues; KeepLatest overflow.
+  Realtime, ///< Low-latency; small queues; KeepLatest overflow; single-input CVU stages
+            ///< queue at most 20 ms of live-source input.
   Balanced, ///< Default; moderate queues; Block overflow.
   Reliable, ///< Lossless; deeper queues; Block overflow.
 };
@@ -82,9 +83,13 @@ enum class RunPreset {
 /**
  * @brief How output `Tensor`s relate to the underlying GStreamer buffers.
  *
- * `Auto` lets the framework pick based on platform and pipeline shape. `ZeroCopy` shares
- * storage with GStreamer (faster but lifetime-coupled to the Run). `Owned` copies into a
- * framework-owned buffer (safer, slightly slower).
+ * `Auto` retains standard DMA-BUF output storage in both sync and async runs;
+ * other storage follows the preset/mode policy. `ZeroCopy` explicitly shares
+ * producer storage. Neither path copies DMA payloads to relieve queue pressure.
+ * Retained tensors and their mappings hold producer-buffer loans; release them
+ * to allow the pool to progress. `Owned` explicitly copies into independent
+ * framework-owned storage. An explicit owned environment override also applies
+ * to `Auto`, but never overrides an explicit per-run choice.
  * @ingroup pipeline
  */
 enum class OutputMemory {

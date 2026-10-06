@@ -20,6 +20,26 @@ Neatアプリケーションをビルドまたは実行する環境から、イ�
 | ROS2 SDK | コンテナのシステムパスにインストールされた Neat ヘッダーとライブラリを使用して、ARM64 上で ROS 2 アプリケーションをネイティブにコンパイルしたい場合。 |
 | DevKit | デバイスにランタイムを直接インストールまたは更新したい場合。 |
 
+## C++ 開発パッケージ
+
+最小インストールには、ランタイムと `sima-neat-dev` が含まれます。デフォルトのインストールでは、チュートリアルとテストを追加できます。`all` は両方を含みます。共有ライブラリを使用するアプリケーションには、Core の公開ヘッダーと GStreamer、OpenCV、JSON の開発ファイルが必要です。Internals、memory-library、heap、LLiMa の開発パッケージは不要ですが、それらのランタイムライブラリは引き続き必要です。
+
+インストール済みの共有ターゲットを使用します。
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
+```
+
+静的アーカイブは引き続き `sima-neat-dev` に含まれます。既存の静的リンクを使用する側は、`COMPONENTS Static` を追加し、互換性のある `neat-internals-dev`、`simaai-memory-lib-dev`、`zlib1g-dev` を用意する必要があります。LLiMa を有効にしたビルドでは、`sima-lmm-dev` と `libcpp-httplib-dev` およびそれらの依存関係も必要です。
+
+```cmake
+find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
+```
+
+静的な Core も、実装の共有ライブラリを使用します。Core をソースからビルドする場合にも、実装の開発パッケージが必要です。
+
 ## 前提条件
 
 Neat Library をインストールする予定の環境に、`sima-cli` をインストールしてください。

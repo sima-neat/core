@@ -49,6 +49,8 @@ void require_raw_output_format_supported(const SimaDecodeOptions& opt) {
 }
 
 void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& opt) {
+  // I420 requires conversion into the final output planes.
+  ss << " zero-copy-output=" << (public_output_format(opt.out_format) == "I420" ? "false" : "true");
   ss << " sima-allocator-type=" << opt.sima_allocator_type;
   ss << " dec-type=" << decoder_type_name(opt.type);
   if (!opt.decoder_name.empty()) {
@@ -76,8 +78,7 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
   if (opt.input_buffers > 0) {
     ss << " dec-ip-cnt=" << opt.input_buffers;
   }
-  if (!opt.decoder_tuning.empty() && opt.decoder_tuning != "default" &&
-      opt.decoder_tuning != "auto") {
+  if (!opt.decoder_tuning.empty()) {
     ss << " decoder-tuning=" << opt.decoder_tuning;
   }
   if (opt.memory_opt) {

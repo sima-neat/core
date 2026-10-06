@@ -4,6 +4,7 @@
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/function.h>
+#include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
@@ -35,6 +36,7 @@
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/VisualFrontend.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/HttpMjpegDecodedInput.h"
@@ -105,6 +107,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+NB_MAKE_OPAQUE(simaai::neat::SampleAttributes);
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -651,9 +655,11 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 }
 
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
-  Tensor tensor = input;
+  const Tensor source_pin = input;
+  Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
-    tensor = tensor.cpu();
+    nb::gil_scoped_release release;
+    tensor = source_pin.cpu();
   }
   if (!tensor.is_dense()) {
     throw std::runtime_error("__dlpack__ only supports dense tensors");
@@ -674,9 +680,12 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
-  auto* owner = new DlpackExportOwner();
+  auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
-  owner->mapping = owner->tensor.map_read();
+  {
+    nb::gil_scoped_release release;
+    owner->mapping = owner->tensor.map_read();
+  }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
 
@@ -695,7 +704,7 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   owner->managed.dl_tensor.strides =
       owner->strides_elems.empty() ? nullptr : owner->strides_elems.data();
   owner->managed.dl_tensor.byte_offset = 0;
-  owner->managed.manager_ctx = owner;
+  owner->managed.manager_ctx = owner.get();
   owner->managed.deleter = delete_dlpack_managed;
 
   PyObject* capsule = PyCapsule_New(&owner->managed, "dltensor", [](PyObject* capsule_obj) {
@@ -708,8 +717,8 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
       managed_ptr->deleter(managed_ptr);
     }
   });
-  if (!capsule) {
-    delete owner;
+  if (capsule) {
+    (void)owner.release();
   }
   return capsule;
 }
@@ -819,7 +828,11 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
   bool chw_to_hwc_converted = false;
   out = maybe_convert_chw_image_to_hwc(std::move(out), &chw_to_hwc_converted);
 
-  if (copy) {
+  if (memory == TensorMemory::Auto) {
+    memory = TensorMemory::EV74;
+  }
+  const bool cpu_destination = memory == TensorMemory::CPU || memory == TensorMemory::A65;
+  if (copy && cpu_destination) {
     if (chw_to_hwc_converted) {
       out.read_only = false;
     } else {
@@ -831,17 +844,17 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
     }
   }
 
-  if (memory == TensorMemory::Auto) {
-    memory = TensorMemory::EV74;
-  }
-  if (memory == TensorMemory::CPU || memory == TensorMemory::A65) {
+  if (cpu_destination) {
     return out;
   }
-  if (memory == TensorMemory::EV74) {
-    return out.cvu();
-  }
-  if (memory == TensorMemory::MLA) {
-    return out.mla(true);
+  if (memory == TensorMemory::EV74 || memory == TensorMemory::MLA) {
+    Tensor placed;
+    {
+      // Keep the DLPack owner alive until Python ownership operations are safe again.
+      nb::gil_scoped_release release;
+      placed = memory == TensorMemory::EV74 ? out.cvu() : out.mla(true);
+    }
+    return placed;
   }
   throw std::runtime_error("unsupported TensorMemory placement for Python tensor import");
 }
@@ -3603,6 +3616,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("dec_height", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_height)
       .def_rw("dec_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_fps)
       .def_rw("num_buffers", &simaai::neat::nodes::groups::RtspDecodedInputOptions::num_buffers)
+      .def_rw("decoder_input_buffers",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_input_buffers)
+      .def_rw("decoder_tuning",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_tuning)
+      .def_rw("decoder_memory_opt",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_memory_opt)
       .def_rw("use_videoconvert",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videoconvert)
       .def_rw("use_videoscale",
@@ -3640,6 +3659,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("level", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::level);
 
   nb::class_<simaai::neat::nodes::groups::VideoSenderOptions>(m, "VideoSenderOptions")
+      .def_static("from_raw", &simaai::neat::nodes::groups::VideoSenderOptions::FromRaw, "encode"_a)
       .def_static("h264_rtp_udp_from_raw",
                   &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
                   "height"_a, "fps"_a)
@@ -3871,6 +3891,24 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+  nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
+      .value("H264", simaai::neat::SimaEncodeType::H264)
+      .value("H265", simaai::neat::SimaEncodeType::H265)
+      .value("MJPEG", simaai::neat::SimaEncodeType::MJPEG);
+  m.attr("SimaEncodeType").attr("AVC") = m.attr("SimaEncodeType").attr("H264");
+  m.attr("SimaEncodeType").attr("HEVC") = m.attr("SimaEncodeType").attr("H265");
+  nb::class_<simaai::neat::SimaEncodeOptions>(m, "SimaEncodeOptions")
+      .def(nb::init<>())
+      .def_rw("type", &simaai::neat::SimaEncodeOptions::type)
+      .def_rw("fps", &simaai::neat::SimaEncodeOptions::fps)
+      .def_rw("bitrate_kbps", &simaai::neat::SimaEncodeOptions::bitrate_kbps)
+      .def_rw("rate_control", &simaai::neat::SimaEncodeOptions::rate_control)
+      .def_rw("profile", &simaai::neat::SimaEncodeOptions::profile)
+      .def_rw("level", &simaai::neat::SimaEncodeOptions::level)
+      .def_rw("gop_length", &simaai::neat::SimaEncodeOptions::gop_length)
+      .def_rw("idr_interval", &simaai::neat::SimaEncodeOptions::idr_interval)
+      .def_rw("quality", &simaai::neat::SimaEncodeOptions::quality)
+      .def_rw("num_buffers", &simaai::neat::SimaEncodeOptions::num_buffers);
   nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
       .value("H264", simaai::neat::SimaDecodeType::H264)
       .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
@@ -5050,8 +5088,19 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::QuantTessOptions{});
   nodes_mod.def("udp_output", &simaai::neat::nodes::UdpOutput,
                 "options"_a = simaai::neat::UdpOutputOptions{});
-  nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
-                "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
+  nodes_mod.def(
+      "h264_encode_sima",
+      [](int width, int height, int fps, int bitrate_kbps, std::string profile, std::string level) {
+        if (PyErr_WarnEx(PyExc_DeprecationWarning,
+                         "h264_encode_sima is deprecated; use sima_encode with SimaEncodeType.H264",
+                         1) < 0) {
+          throw nb::python_error();
+        }
+        return simaai::neat::nodes::H264EncodeSima(width, height, fps, bitrate_kbps,
+                                                   std::move(profile), std::move(level));
+      },
+      "width"_a, "height"_a, "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline",
+      "level"_a = "4.0");
   nodes_mod.def(
       "h264_decode",
       [](int sima_allocator_type, std::string out_format, std::string decoder_name, bool raw_output,
@@ -5064,6 +5113,8 @@ NB_MODULE(_pyneat_core, m) {
       "sima_allocator_type"_a = 2, "out_format"_a = "NV12", "decoder_name"_a = "",
       "raw_output"_a = false, "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1,
       "dec_fps"_a = -1, "num_buffers"_a = -1);
+  nodes_mod.def("sima_encode", &simaai::neat::nodes::SimaEncode,
+                "options"_a = simaai::neat::SimaEncodeOptions{});
   nodes_mod.def("sima_decode", &simaai::neat::nodes::SimaDecode,
                 "options"_a = simaai::neat::SimaDecodeOptions{});
   nodes_mod.def(

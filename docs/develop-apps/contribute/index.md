@@ -58,7 +58,6 @@ structured diagnostics, strict validation, and stable public contracts.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/contribute/mpk_contract/"><strong>MPK Contract</strong><span>Understand model archive ingestion, validation, and security rules.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>Plugin JSON Truth Map</strong><span>Review the frozen SIMA plugin JSON contract map.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/appcomplex_workspace_packaging/"><strong>AppComplex Packaging</strong><span>Build and install the gated appcomplex workspace service package.</span></a></li>
     </ul>
   </section>
 

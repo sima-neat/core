@@ -35,6 +35,8 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 
+#include "simaai/neat/internal/dmabuf/DmaBufVideo.h"
+
 #include <gst/gst.h>
 #include <gst/gstdebugutils.h>
 #include <gst/app/gstappsink.h>
@@ -109,6 +111,22 @@ struct PushCtx {
   guint64 frame_duration_ns = 0;
 
   std::shared_ptr<std::vector<uint8_t>> nv12;
+  GstVideoInfo source_info{};
+  GstVideoInfo surface_info{};
+  GstVideoConverter* converter = nullptr;
+  GstBufferPool* surface_pool = nullptr;
+  GstBuffer* source_buffer = nullptr;
+
+  ~PushCtx() {
+    gst_clear_buffer(&source_buffer);
+    if (converter)
+      gst_video_converter_free(converter);
+    if (surface_pool) {
+      gst_buffer_pool_set_flushing(surface_pool, TRUE);
+      gst_buffer_pool_set_active(surface_pool, FALSE);
+      gst_object_unref(surface_pool);
+    }
+  }
   std::atomic<bool> stopped{false};
   std::atomic<bool> need_data{true};
   std::atomic<int> refs{1};
@@ -252,30 +270,35 @@ static gboolean push_frame_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
 
-  GstBuffer* buf = gst_buffer_new_allocate(nullptr, total, nullptr);
-  if (!buf) {
+  // This GLib callback must never block teardown waiting for a codec slot.
+  // If every surface is retained, retry this same still-image frame next tick.
+  GstBufferPoolAcquireParams acquire{};
+  acquire.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+  GstBuffer* buf = nullptr;
+  const GstFlowReturn acquired = gst_buffer_pool_acquire_buffer(pc->surface_pool, &buf, &acquire);
+  if (acquired == GST_FLOW_EOS) {
+    gst_object_unref(appsrc);
+    push_ctx_unref(pc);
+    return G_SOURCE_CONTINUE;
+  }
+  internal::dmabuf::Error error;
+  if (acquired != GST_FLOW_OK || !buf ||
+      !internal::dmabuf::convertEncoderInput(pc->converter, pc->source_info, pc->source_buffer,
+                                             pc->surface_info, buf, &error)) {
+    if (acquired != GST_FLOW_FLUSHING) {
+      GST_ELEMENT_ERROR(appsrc, RESOURCE, WRITE, ("Cannot prepare RTSP encoder DMA input"),
+                        ("%s", error.message().c_str()));
+    }
+    gst_clear_buffer(&buf);
     pc->timer_id = 0;
     gst_object_unref(appsrc);
     push_ctx_unref(pc);
     return G_SOURCE_REMOVE;
   }
-
   const guint64 pts = pc->frame_count * pc->frame_duration_ns;
   GST_BUFFER_PTS(buf) = pts;
   GST_BUFFER_DTS(buf) = pts;
   GST_BUFFER_DURATION(buf) = pc->frame_duration_ns;
-
-  GstMapInfo map{};
-  if (!gst_buffer_map(buf, &map, GST_MAP_WRITE)) {
-    gst_buffer_unref(buf);
-    pc->timer_id = 0;
-    gst_object_unref(appsrc);
-    push_ctx_unref(pc);
-    return G_SOURCE_REMOVE;
-  }
-
-  std::memcpy(map.data, pc->nv12->data(), total);
-  gst_buffer_unmap(buf, &map);
 
   GstFlowReturn fr = gst_app_src_push_buffer(GST_APP_SRC(appsrc), buf);
   gst_object_unref(appsrc);
@@ -528,52 +551,85 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
       }
     }
 
-    g_signal_connect(factory, "media-configure",
-                     G_CALLBACK(+[](GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer user_data) {
-                       auto* impl = reinterpret_cast<RtspServerImpl*>(user_data);
-                       if (!impl)
-                         return;
+    g_signal_connect(
+        factory, "media-configure",
+        G_CALLBACK(+[](GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer user_data) {
+          auto* impl = reinterpret_cast<RtspServerImpl*>(user_data);
+          if (!impl)
+            return;
 
-                       GstElement* top = gst_rtsp_media_get_element(media);
-                       if (!top)
-                         return;
+          GstElement* top = gst_rtsp_media_get_element(media);
+          if (!top)
+            return;
 
-                       GstElement* src =
-                           gst_bin_get_by_name_recurse_up(GST_BIN(top), impl->appsrc_name.c_str());
-                       if (!src) {
-                         gst_object_unref(top);
-                         return;
-                       }
+          GstElement* src = gst_bin_get_by_name_recurse_up(GST_BIN(top), impl->appsrc_name.c_str());
+          if (!src) {
+            gst_object_unref(top);
+            return;
+          }
 
-                       GstCaps* caps = gst_caps_new_simple(
-                           "video/x-raw", "format", G_TYPE_STRING, "NV12", "width", G_TYPE_INT,
-                           impl->enc_w, "height", G_TYPE_INT, impl->enc_h, "framerate",
-                           GST_TYPE_FRACTION, impl->fps, 1, nullptr);
-                       gst_app_src_set_caps(GST_APP_SRC(src), caps);
-                       gst_caps_unref(caps);
+          GstCaps* caps =
+              gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width",
+                                  G_TYPE_INT, impl->enc_w, "height", G_TYPE_INT, impl->enc_h,
+                                  "framerate", GST_TYPE_FRACTION, impl->fps, 1, nullptr);
+          gst_app_src_set_caps(GST_APP_SRC(src), caps);
+          gst_caps_unref(caps);
 
-                       g_object_set(G_OBJECT(src), "is-live", TRUE, "format", GST_FORMAT_TIME,
-                                    "do-timestamp", FALSE, "block", FALSE, nullptr);
+          g_object_set(G_OBJECT(src), "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp",
+                       FALSE, "block", FALSE, nullptr);
 
-                       auto* pc = new PushCtx();
-                       pc->appsrc = (GstElement*)gst_object_ref(src);
-                       pc->w = impl->enc_w;
-                       pc->h = impl->enc_h;
-                       pc->fps = impl->fps;
-                       pc->nv12 = impl->nv12_enc;
-                       pc->frame_duration_ns = gst_util_uint64_scale_int(GST_SECOND, 1, pc->fps);
+          auto* pc = new PushCtx();
+          pc->appsrc = (GstElement*)gst_object_ref(src);
+          pc->w = impl->enc_w;
+          pc->h = impl->enc_h;
+          pc->fps = impl->fps;
+          pc->nv12 = impl->nv12_enc;
+          pc->frame_duration_ns = gst_util_uint64_scale_int(GST_SECOND, 1, pc->fps);
+          internal::dmabuf::Error error;
+          gst_video_info_init(&pc->source_info);
+          const bool valid_surface =
+              gst_video_info_set_format(&pc->source_info, GST_VIDEO_FORMAT_NV12, pc->w, pc->h) &&
+              internal::dmabuf::encoderInputInfo(pc->source_info, &pc->surface_info, &error);
+          if (valid_surface) {
+            // StillImageInput owns tight NV12, independent of GstVideoInfo's
+            // generic four-byte row rounding for arbitrary even widths.
+            pc->source_info.stride[0] = pc->w;
+            pc->source_info.stride[1] = pc->w;
+            pc->source_info.offset[1] = static_cast<gsize>(pc->w) * pc->h;
+            pc->source_info.size = pc->source_info.offset[1] * 3 / 2;
+            pc->converter = gst_video_converter_new(&pc->source_info, &pc->surface_info, nullptr);
+            pc->surface_pool =
+                internal::dmabuf::createEncoderInputPool(pc->surface_info, 2, 30, &error);
+            if (pc->nv12) {
+              // The shared image vector owns these immutable source bytes.
+              // Only final DMA surfaces are ever submitted to appsrc.
+              pc->source_buffer = gst_buffer_new_wrapped_full(GST_MEMORY_FLAG_READONLY,
+                                                              pc->nv12->data(), pc->nv12->size(), 0,
+                                                              pc->nv12->size(), nullptr, nullptr);
+            }
+          }
+          if (!pc->converter || !pc->surface_pool || !pc->source_buffer) {
+            GST_ELEMENT_ERROR(src, RESOURCE, OPEN_WRITE,
+                              ("Cannot initialize RTSP encoder DMA surfaces"),
+                              ("%s", error.message().c_str()));
+            gst_object_unref(push_ctx_take_appsrc(pc));
+            delete pc;
+            gst_object_unref(src);
+            gst_object_unref(top);
+            return;
+          }
 
-                       g_signal_connect(src, "need-data", G_CALLBACK(appsrc_need_data), pc);
-                       g_signal_connect(src, "enough-data", G_CALLBACK(appsrc_enough_data), pc);
+          g_signal_connect(src, "need-data", G_CALLBACK(appsrc_need_data), pc);
+          g_signal_connect(src, "enough-data", G_CALLBACK(appsrc_enough_data), pc);
 
-                       const int period_ms = std::max(1, 1000 / pc->fps);
-                       g_signal_connect(media, "unprepared", G_CALLBACK(media_unprepared_cb), pc);
-                       pc->timer_id = g_timeout_add(period_ms, push_frame_cb, pc);
+          const int period_ms = std::max(1, 1000 / pc->fps);
+          g_signal_connect(media, "unprepared", G_CALLBACK(media_unprepared_cb), pc);
+          pc->timer_id = g_timeout_add(period_ms, push_frame_cb, pc);
 
-                       gst_object_unref(src);
-                       gst_object_unref(top);
-                     }),
-                     impl);
+          gst_object_unref(src);
+          gst_object_unref(top);
+        }),
+        impl);
 
     gst_rtsp_mount_points_add_factory(mounts, impl->mount_path.c_str(), factory);
     g_object_unref(mounts);

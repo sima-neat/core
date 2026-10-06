@@ -226,6 +226,8 @@ void free_wrapped_payload(gpointer user_data) {
   delete holder;
 }
 
+} // namespace
+
 TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owner,
                                        const PcieModelFacts& facts) {
   TensorList out;
@@ -276,6 +278,8 @@ TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owne
   }
   return out;
 }
+
+namespace {
 
 bool sample_has_bbox_caps(GstSample* sample) {
   GstCaps* caps = gst_sample_get_caps(sample);
@@ -337,7 +341,8 @@ HostPcieChannel::~HostPcieChannel() {
 }
 
 void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue, const int card_id,
-                                const int max_inflight, const bool expects_bbox_output) {
+                                const int max_inflight, const bool expects_bbox_output,
+                                const std::size_t output_buffer_bytes) {
   std::lock_guard<std::mutex> lock(send_mutex_);
   if (running_.load()) {
     throw std::runtime_error("cannot configure HostPcieChannel while running");
@@ -350,6 +355,7 @@ void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue, co
   card_id_ = card_id;
   max_inflight_ = max_inflight;
   expects_bbox_output_ = expects_bbox_output;
+  output_buffer_bytes_ = output_buffer_bytes;
   stop_requested_.store(false);
   configured_ = true;
   {
@@ -372,12 +378,12 @@ void HostPcieChannel::validate_output_payload_size(const std::size_t received_by
   }
 }
 
-std::size_t
-HostPcieChannel::required_transport_buffer_size(const std::size_t packed_input_bytes,
-                                                const std::size_t packed_output_bytes,
-                                                const std::size_t submitted_payload_bytes) {
-  const std::size_t required = std::max({kMinimumTransportBufferSize, packed_input_bytes,
-                                         packed_output_bytes, submitted_payload_bytes});
+std::size_t HostPcieChannel::required_transport_buffer_size(
+    const std::size_t packed_input_bytes, const std::size_t packed_output_bytes,
+    const std::size_t submitted_payload_bytes, const std::size_t output_buffer_bytes) {
+  const std::size_t required =
+      std::max({kMinimumTransportBufferSize, packed_input_bytes, packed_output_bytes,
+                submitted_payload_bytes, output_buffer_bytes});
   if (required > kMaximumTransportBufferSize) {
     throw std::runtime_error("PCIe transport payload exceeds the 128 MiB buffer limit: " +
                              std::to_string(required) + " bytes required");
@@ -437,8 +443,9 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string,
     return;
   }
 
-  transport_buffer_size_ = required_transport_buffer_size(
-      facts_.packed_input_bytes, facts_.packed_output_bytes, submitted_payload_bytes);
+  transport_buffer_size_ =
+      required_transport_buffer_size(facts_.packed_input_bytes, facts_.packed_output_bytes,
+                                     submitted_payload_bytes, output_buffer_bytes_);
   caps_ = caps_string;
   pipeline_ = gst_pipeline_new("sima_neat_pcie_host");
   appsrc_ = gst_element_factory_make("appsrc", "src");
@@ -458,13 +465,17 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string,
   }
 
   const guint queue_depth = static_cast<guint>(max_inflight_);
+  // Bound transport storage for the default logical in-flight window.
+  // Keep the existing ring size for larger or plugin-managed in-flight windows.
+  const guint queue_size = queue_depth > 0 && queue_depth <= 10 ? 16u : 256u;
   g_object_set(G_OBJECT(appsrc_), "caps", caps, "is-live", TRUE, "do-timestamp", TRUE, "block",
                FALSE, "format", GST_FORMAT_TIME, "max-buffers", queue_depth, "max-bytes",
                static_cast<guint64>(0), "max-time", static_cast<guint64>(0), nullptr);
   gst_caps_unref(caps);
 
   g_object_set(G_OBJECT(pciehost_), "buffersize", static_cast<guint64>(transport_buffer_size_),
-               "card-number", card_id_, "queue", pcie_queue_, "queuedepth", queue_depth, nullptr);
+               "card-number", card_id_, "queue", pcie_queue_, "queuesize", queue_size, "queuedepth",
+               queue_depth, nullptr);
 
   g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
                FALSE, nullptr);
@@ -585,6 +596,7 @@ void HostPcieChannel::stop_locked() {
     std::lock_guard<std::mutex> lock(receive_mutex_);
     received_results_.clear();
     receive_error_.reset();
+    output_layout_.reset();
   }
   receive_cv_.notify_all();
 }
@@ -884,9 +896,18 @@ GstFlowReturn HostPcieChannel::on_new_sample(GstElement* sink) {
     owner->map = map;
     owner->mapped = true;
 
+    if (!expects_bbox_output_ && !sample_has_bbox_caps(sample)) {
+      if (!output_layout_) {
+        output_layout_ = resolve_output_layout(facts_, gst_sample_get_caps(sample));
+      }
+      if (output_layout_->raw_bytes && owner->map.size != output_layout_->raw_bytes) {
+        throw std::runtime_error("PCIe raw output extent differs from the negotiated layout");
+      }
+    }
     RuntimeInferenceResult result{
         .request_id = *request_id,
-        .outputs = tensors_from_output_sample(owner, facts_, expects_bbox_output_),
+        .outputs = tensors_from_output_sample(
+            owner, output_layout_ ? output_layout_->facts : facts_, expects_bbox_output_),
     };
 
     {

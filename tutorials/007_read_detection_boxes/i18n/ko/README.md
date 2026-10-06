@@ -169,7 +169,7 @@ SimaBoxDecode(const Model& model,
 
 ### 디코딩 유형 및 텐서 계약
 
-`BoxDecodeType`은 타입이 지정된 API(`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`)이며, 디코딩 단계에서는 항상 명시적으로 설정해야 합니다. 아래 런타임 계약은 `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp`(`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`)에서 제공됩니다.
+`BoxDecodeType`은 타입이 지정된 API(`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`)이며, 디코딩 단계에서는 항상 명시적으로 설정해야 합니다. 아래 런타임 계약은 `internals/gst_plugins/neatobjectdecode/gstneatboxdecode.cpp`(`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`)에서 제공됩니다.
 
 핵심 텐서 계약 규칙:
 - `yolov5` 감지를 제외한 YOLO 계열 디코딩 타입(`yolo`, `yolov5-seg`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):

@@ -12,8 +12,9 @@ echo "[install-smoke] configuring project..."
 cmake -S . -B "${BUILD_DIR}"
 
 echo "[install-smoke] validating development package dependencies..."
-if ! grep -q "simaai-memory-lib-dev" "${BUILD_DIR}/CPackConfig.cmake"; then
-  echo "sima-neat-dev must depend on simaai-memory-lib-dev so downstream C++ apps can link SimaNeat::sima_neat on a DevKit." >&2
+if grep 'CPACK_DEBIAN_DEV_PACKAGE_DEPENDS' "${BUILD_DIR}/CPackConfig.cmake" |
+    grep -Eq 'neat-internals-dev|simaai-memory-lib-dev|sima-lmm-dev|simaai-heap-dev'; then
+  echo "Shared customers must not require implementation development packages." >&2
   exit 1
 fi
 
@@ -43,7 +44,8 @@ fi
 echo "[install-smoke] configuring downstream consumer..."
 cmake -S tests/install_smoke -B "${CONSUMER_BUILD_DIR}" \
   -DCMAKE_PREFIX_PATH="${INSTALL_PREFIX}" \
-  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_BUILD_TYPE=Release \
+  -DSIMANEAT_SMOKE_STATIC=ON
 
 echo "[install-smoke] building downstream consumer..."
 cmake --build "${CONSUMER_BUILD_DIR}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
@@ -54,13 +56,10 @@ echo "[install-smoke] running downstream consumer..."
 echo "[install-smoke] running statically linked downstream consumer..."
 "${CONSUMER_BUILD_DIR}/install_smoke_static_app"
 
-# A baked-in build-host path still links on the build host, so only an explicit check catches it.
-# Scoped to zlib: SIMANEAT_HTTPLIB_LIBRARY comes from find_library and exports an absolute path the
-# same way, which predates this check and needs its own imported target to fix.
-echo "[install-smoke] checking zlib is exported relocatably..."
-if grep -nE '"[^"]*libz\.(so|a)[^"]*"' \
-    "${INSTALL_PREFIX}/lib/cmake/SimaNeat/SimaNeatTargets.cmake"; then
-  echo "[install-smoke] exported targets carry an absolute zlib path; link ZLIB::ZLIB and resolve it with find_dependency(ZLIB) instead." >&2
+echo "[install-smoke] checking static dependency paths..."
+if grep -nE '/[^";> ]*lib(z|cpp-httplib|simaaimem)\.(so|a)' \
+    "${INSTALL_PREFIX}/lib/cmake/SimaNeat/SimaNeatStaticTargets.cmake"; then
+  echo "Static targets contain a build-host dependency path." >&2
   exit 1
 fi
 

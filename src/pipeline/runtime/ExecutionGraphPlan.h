@@ -198,6 +198,8 @@ struct PipelineSegmentPlan {
   std::vector<std::size_t> output_edges;
 
   BoundaryPolicy boundary;
+  // Allocation decision, separate from the declarative Input memory contract.
+  InputMemoryPolicy resolved_input_memory_policy = InputMemoryPolicy::Auto;
   OutputSpec input_spec;
   bool input_complete = false;
   OutputSpec output_spec;
@@ -212,6 +214,48 @@ struct PipelineSegmentPlan {
   std::vector<Provenance> provenance;
   std::vector<MaterializedNodeAttribution> materialized_node_attribution;
 };
+
+// Source allocation is independent of media inference. Complete execution copies
+// without changing declarations or projecting a segment policy onto per-port hints.
+inline std::optional<InputOptions>
+pipeline_segment_ingress_input(const PipelineSegmentPlan& segment, std::size_t index = 0) {
+  const auto* input =
+      segment.nodes.empty() ? nullptr : dynamic_cast<const Input*>(segment.nodes.front().get());
+  const InputOptions* source = input && segment.input_edges.empty() ? &input->options() : nullptr;
+  const auto complete_allocation = [&](InputOptions options, bool complete_auto) {
+    if (source && source->memory_policy != InputMemoryPolicy::Auto) {
+      options.memory_policy = source->memory_policy;
+    } else if (source && !source->use_simaai_pool) {
+      options.memory_policy = InputMemoryPolicy::SystemMemory;
+    } else if (complete_auto && options.memory_policy == InputMemoryPolicy::Auto) {
+      options.memory_policy = segment.resolved_input_memory_policy;
+    }
+    return options;
+  };
+  if (input && (!resolve_input_media_type(input->options()).empty() ||
+                !input->options().caps_override.empty())) {
+    return complete_allocation(input->options(), /*complete_auto=*/true);
+  }
+  const bool has_ingress_hints =
+      segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty();
+  if (has_ingress_hints && index < segment.boundary_hints->ingress_inputs.size()) {
+    return complete_allocation(segment.boundary_hints->ingress_inputs[index],
+                               /*complete_auto=*/false);
+  }
+  if (segment.input_complete) {
+    InputOptions options = graph::input_opts_from_spec(segment.input_spec, segment.input_complete);
+    // Preserve the existing out-of-range metadata fallback without inventing a
+    // policy for an input absent from the indexed contract.
+    if (has_ingress_hints) {
+      return options;
+    }
+    return complete_allocation(std::move(options), /*complete_auto=*/true);
+  }
+  if (source && !has_ingress_hints) {
+    return complete_allocation(*source, /*complete_auto=*/true);
+  }
+  return std::nullopt;
+}
 
 // An internal boundary transports whatever timeline it was handed, including no timestamp
 // at all; only a public application-owned Input authors one. Stamping here would give each
@@ -238,6 +282,23 @@ inline graph::NodeId attributed_runtime_node_for_segment_node(const PipelineSegm
     return segment.node_ids.front();
   }
   return graph::kInvalidNode;
+}
+
+// Index in `segment.nodes` of the node rendered for `segment.node_ids[local]`. Fusion can prepend
+// nodes owned by other segments, so provenance decides when positional pairing disagrees.
+inline std::size_t rendered_node_index_for_segment_id(const PipelineSegmentPlan& segment,
+                                                      std::size_t local) {
+  if (local >= segment.node_ids.size() || segment.provenance.size() != segment.nodes.size() ||
+      (local < segment.provenance.size() &&
+       segment.provenance[local].runtime_node == segment.node_ids[local])) {
+    return local;
+  }
+  for (std::size_t i = 0; i < segment.provenance.size(); ++i) {
+    if (segment.provenance[i].runtime_node == segment.node_ids[local]) {
+      return i;
+    }
+  }
+  return local;
 }
 
 inline std::vector<MaterializedNodeAttribution>

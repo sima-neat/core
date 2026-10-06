@@ -1,3 +1,4 @@
+#include "mpk_contract_test_utils.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
@@ -18,7 +19,6 @@
 namespace {
 
 using simaai::neat::pipeline_internal::sima::detess_runtime_frame_shape;
-using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
 using simaai::neat::pipeline_internal::sima::MpkContract;
 using json = nlohmann::json;
 
@@ -126,14 +126,14 @@ std::filesystem::path write_detess_fixture(const std::string& name,
 
 const MpkContract load_fixture(const std::filesystem::path& root) {
   std::string error;
-  const auto contract = load_mpk_contract_from_pack_root(root.string(), &error);
+  const auto contract = load_test_mpk_contract(root.string(), &error);
   require(contract.has_value(), "detess fixture should load: " + error);
   return *contract;
 }
 
 std::string reject_fixture(const std::filesystem::path& root) {
   std::string error;
-  const auto contract = load_mpk_contract_from_pack_root(root.string(), &error);
+  const auto contract = load_test_mpk_contract(root.string(), &error);
   require(!contract.has_value(), "invalid detess fixture should be rejected");
   require(!error.empty(), "invalid detess fixture should report an actionable error");
   return error;

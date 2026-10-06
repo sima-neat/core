@@ -315,10 +315,6 @@ int main(int argc, char** argv) {
       }
       std::cerr << "\n";
     }
-    if (!std::getenv("SIMA_DEC_IPC_PROTOCOL")) {
-      // Force legacy IPC for older decoder daemon; allow override via env.
-      setenv("SIMA_DEC_IPC_PROTOCOL", "legacy", 0);
-    }
     setenv("SIMA_ALLOW_GST_INIT", "1", 1);
     simaai::neat::gst_init_once();
 

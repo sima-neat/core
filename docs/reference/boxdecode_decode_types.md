@@ -408,6 +408,4 @@ masks = seg.masks.to_numpy()
 
 ## Upgrading
 
-Replace the preview API's top-level `pose_classes` with `yolox_seg_pose.pose_classes`.
-
-The new options change C++ object layouts. Core uses ABI 5, `libsima_neat.so.5`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 4 binaries to ABI 5 through a compatibility symlink.
+The new options change C++ object layouts. Core uses ABI 6, `libsima_neat.so.6`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 5 binaries to ABI 6 through a compatibility symlink.

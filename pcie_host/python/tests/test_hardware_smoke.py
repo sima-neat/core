@@ -193,7 +193,7 @@ def _assert_outputs_match_metadata(outputs: list[pcie.Tensor], expected: list[pc
 
 
 def _stress_queues() -> list[int]:
-  queues = _env("SIMAPCIE_STRESS_QUEUES", "0 1 2 3").split()
+  queues = _env("SIMAPCIE_STRESS_QUEUES", "0 1 2 3 4 5").split()
   assert queues, "SIMAPCIE_STRESS_QUEUES must contain at least one queue"
   return [int(queue) for queue in queues]
 

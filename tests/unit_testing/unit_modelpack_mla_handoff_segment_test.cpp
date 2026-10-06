@@ -4,12 +4,99 @@
 #include "model/internal/ModelPack.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/Tess.h"
+#include "nodes/common/Output.h"
+#include "nodes/sima/DetessDequant.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "test_main.h"
 
+#include <cstdlib>
 #include <filesystem>
+#include <memory>
+#include <vector>
 #include <string>
+#include <sstream>
+
+namespace {
+
+void require_default_sync_retention_contract(const simaai::neat::Model& model) {
+  using namespace simaai::neat;
+  namespace contract = pipeline_internal::sima;
+  namespace query = pipeline_internal::rendered_stage_query;
+
+  // The same public fragments as sync_yolov8_test_detessdequant, with a concrete
+  // image ingress but no execution-depth override or injected stage selectors.
+  auto input = model.input_appsrc_options(false);
+  input.width = 1920;
+  input.height = 1080;
+  std::vector<std::shared_ptr<Node>> nodes{nodes::Input(input)};
+  const auto preproc = internal::ModelAccess::build_public_preprocess_nodes(model);
+  const auto infer = internal::ModelAccess::build_public_inference_nodes(model);
+  nodes.insert(nodes.end(), preproc.begin(), preproc.end());
+  nodes.insert(nodes.end(), infer.begin(), infer.end());
+  nodes.push_back(std::make_shared<DetessDequant>(DetessDequantOptions(model)));
+  nodes.push_back(nodes::Output());
+  nodes = session_build_materialize_model_bound_nodes(nodes, true);
+  session_build_apply_derived_input_contracts(&nodes);
+  auto build = build_pipeline_full(nodes, false, "mysink", false, {});
+  session_build_compile_contracts(&build, nodes, ContractCompileInput{},
+                                  "unit_modelpack_mla_handoff_segment_test", &nodes);
+  require(build.manifest_diagnostics.errors.empty() && build.rendered_manifest.has_value(),
+          "real YOLO sync route must compile its MPK-derived typed manifest");
+  const auto& manifest = *build.rendered_manifest;
+  const auto* owner = query::find_preproc_stage(manifest);
+  const auto* mla = query::find_mla_stage(manifest);
+  const auto* terminal = query::find_processcvu_stage(manifest, "detessdequant");
+  require(owner && mla && terminal &&
+              owner->frame_arena_role == contract::FrameArenaRole::Allocate &&
+              mla->frame_arena_role == contract::FrameArenaRole::ReuseInput &&
+              terminal->frame_arena_role == contract::FrameArenaRole::ReuseInput,
+          "real YOLO serial route must reuse the preproc-allocated frame arena");
+  require(mla->physical_outputs.size() == 1U && mla->logical_outputs.size() == 6U &&
+              terminal->input_bindings.size() == 6U,
+          "retention regression must cover the real six-head packed MLA handoff");
+  for (const auto* consumer : {mla, terminal}) {
+    std::string error;
+    const auto index = static_cast<std::size_t>(consumer - manifest.stages.data());
+    const auto edges =
+        contract::edgecontract::resolve_consumer_edge_contracts_exact(manifest, index, &error);
+    require(error.empty() && edges.size() == consumer->input_bindings.size(),
+            "real compiler-authored value bindings must resolve without synthesized selectors");
+    for (const auto& edge : edges) {
+      require(edge.producer_stage == (consumer == mla ? owner : mla),
+              "all real YOLO views must resolve through MLA to the actual preproc owner");
+    }
+  }
+  const auto pipeline = session_build_clamp_sync_build_result(build, -1);
+  std::size_t pool_floors = 0U;
+  for (const auto& element : contract::parse_pipeline_elements(pipeline)) {
+    if (element.plugin == "neatprocesscvu" || element.plugin == "neatprocessmla") {
+      std::istringstream properties(element.fragment);
+      std::string property;
+      bool serial_depth = false;
+      while (properties >> property) {
+        if (property.rfind("num-buffers=", 0U) == 0U) {
+          require(property == "num-buffers=1", "default sync depth must remain one execution lane");
+          serial_depth = true;
+        }
+        if (property.rfind("output-pool-min-buffers=", 0U) == 0U) {
+          require(element.element_name == owner->element_name &&
+                      property == "output-pool-min-buffers=2",
+                  "only the real Allocate owner receives the two-carrier storage minimum");
+          ++pool_floors;
+        }
+      }
+      require(serial_depth, "default sync native stages must explicitly retain serial execution");
+    }
+  }
+  require(pool_floors == 1U,
+          "default sync YOLO must budget one retained carrier at its actual owner");
+}
+
+} // namespace
 
 RUN_TEST(
     "unit_modelpack_mla_handoff_segment_test", ([] {
@@ -25,6 +112,8 @@ RUN_TEST(
       model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
       model_opt.upstream_name = "decoder";
       Model model(tar_path, model_opt);
+      const auto& pack = internal::ModelAccess::pack(model);
+      pack.prepare_for_execution();
       const auto infer_nodes = internal::ModelAccess::build_public_inference_nodes(model);
       require(!infer_nodes.empty(), "inference fragment should compile from the YOLOv8 asset");
 
@@ -34,8 +123,6 @@ RUN_TEST(
       require(diagnostics.errors.empty(), "inference fragment contract compile failed");
       require(!compiled.stages.empty(),
               "compiled inference fragment should emit a container stage");
-      const auto& pack = internal::ModelAccess::pack(model);
-
       const CompiledNodeContract* mla_stage = nullptr;
       const auto visit_stage = [&](const auto& self, const CompiledNodeContract& stage) -> void {
         if (!mla_stage && stage.processmla.has_value()) {
@@ -50,13 +137,14 @@ RUN_TEST(
       }
 
       require(mla_stage != nullptr, "compiled full fragment should include an MLA stage");
+      const auto infer_stage_facts =
+          pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
       const auto pre_stage_facts =
           pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
       const internal::ModelFragment::StageFacts* preproc_stage_fact = nullptr;
       for (const auto& fact : pre_stage_facts) {
         if (fact.processcvu_contract.has_value()) {
           preproc_stage_fact = &fact;
-          break;
         }
       }
       require(preproc_stage_fact != nullptr,
@@ -68,8 +156,6 @@ RUN_TEST(
               *preproc_stage_fact->processcvu_contract);
       require(preproc_handoff.has_value(),
               "YOLOv8 preproc contract should resolve one canonical MLA handoff output");
-      require(preproc_handoff->segment_name == "output_tessellated_image",
-              "YOLOv8 preproc handoff should preserve the tessellated MLA segment name");
       require(mla_stage->processmla->runtime_contract.input_bindings.size() == 1U,
               "YOLOv8 MLA stage should expose one input binding");
       // Binding source_segment is now the MPK transform name; the canonical
@@ -86,8 +172,6 @@ RUN_TEST(
         require(logical.physical_index == 0,
                 "YOLOv8 MLA logical outputs should all map to the single packed parent");
       }
-      const auto infer_stage_facts =
-          pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
       const internal::ModelFragment::StageFacts* mla_stage_fact = nullptr;
       for (const auto& fact : infer_stage_facts) {
         if (fact.mla_compiled.has_value()) {
@@ -98,6 +182,11 @@ RUN_TEST(
       require(mla_stage_fact != nullptr, "YOLOv8 should expose a canonical MLA stage fact");
       require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.size() == 1U,
               "YOLOv8 MLA stage fact should expose one input binding");
+      require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
+                          .src_logical_output_index == preproc_handoff->logical_output_index &&
+                  mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
+                          .src_output_slot == preproc_handoff->output_slot,
+              "YOLOv8 MLA stage fact should preserve the exact compiler-authored handoff");
 
       const auto post_plan = pack.execution_plan().post;
       const auto post_stage_facts =
@@ -120,6 +209,8 @@ RUN_TEST(
             "shared stage-kind processcvu builder should preserve post-stage logical outputs");
         break;
       }
+
+      require_default_sync_retention_contract(model);
 
       const std::vector<std::filesystem::path> bf16_candidates = {
           core_root / "tmp" / "yolov8n_drive" / "yolov8n_A_W_BF16_mpk.tar.gz",

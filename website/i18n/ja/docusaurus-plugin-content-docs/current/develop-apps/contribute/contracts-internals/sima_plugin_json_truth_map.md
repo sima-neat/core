@@ -1,15 +1,17 @@
 ---
-title: "SIMAプラグインのJSON検証マップ"
-description: "モデルのパイプラインにおけるSIMAステージで使用される、固定されたJSONフィールドのマッピング"
+title: "SIMAプラグインのJSON検証マップ（過去の記録）"
+description: "モデルパイプラインの SIMA ステージについて、2026 年 2 月時点の JSON フィールド使用状況を記録したマップ"
 sidebar_position: 2
 slug: /develop-apps/contribute/sima_plugin_json_truth_map
 ---
 
-# SIMA プラグイン JSON 参照マップ（固定版）
+# SIMA プラグイン JSON 参照マップ（過去の記録）
 
-_最終更新日：2026-02-17_
+_記録日：2026-02-17_
 
-このドキュメントは、モデルパイプラインの SIMA ステージで使用される JSON フィールドの使用を固定し、削除を制御可能にし、テスト可能にします。
+このドキュメントは、モデルパイプラインの SIMA ステージについて、2026 年 2 月時点の JSON フィールド使用状況を保存したものです。以下で「現在の」動作と記載している箇所は、この記録時点の動作を指します。
+
+> **過去のコントラクト:** 以下のプラグイン名と必須 JSON フィールドは、Platform 3.0.0 のデプロイコントラクトではありません。汎用 BoxDecode は、型付きマニフェストステージとランタイムプロパティから設定される `neatobjectdecode` を使用します。以下の従来の `simaaiboxdecode` 要件は、アプリケーション向けの設定を定義しません。有効な設定と対応するパッケージの要件は、[現在の SIMA 静的マニフェストコンテキストコントラクト](../start-here/architecture.md#sima-static-manifest-context-contract)を参照してください。
 
 ## 1. 固定範囲とプラグインマトリックス
 

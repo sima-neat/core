@@ -175,6 +175,17 @@ def clone_source(repo: str, branches: List[str], githash: str, staging: Path) ->
     raise RuntimeError("no branch candidates to clone")
 
 
+def source_commit(staging: Path) -> str:
+    """Return the commit checked out in `staging`, or "unknown"."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(staging), "rev-parse", "HEAD"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
 def acquire_source(repo: str, branches: List[str], githash: str, staging: Path) -> str:
     """Clone or update `repo` into `staging`; return the branch (or githash) used.
 
@@ -214,10 +225,13 @@ def acquire_source(repo: str, branches: List[str], githash: str, staging: Path) 
 def current_core_branch(repo_root: Path) -> str:
     """Best-effort current branch of the core repo.
 
-    Mirrors build.sh's `current_core_branch`: prefer CI-provided refs, then fall
-    back to the local git checkout. Returns "" when it can't be determined.
+    `AUTODOC_SNAP_BRANCH` overrides detection so a build can resolve snap
+    sources as another core branch would, e.g. develop content against sibling
+    main before a release promotion. Otherwise mirrors build.sh's
+    `current_core_branch`: prefer CI-provided refs, then fall back to the local
+    git checkout. Returns "" when it can't be determined.
     """
-    for env_var in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
+    for env_var in ("AUTODOC_SNAP_BRANCH", "GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
         value = os.environ.get(env_var, "").strip()
         if value:
             return value
@@ -1199,7 +1213,10 @@ def process_source(
         branch_reason = f"snap: matched core@{used_branch}"
     else:
         branch_reason = f"snap: fell back to {used_branch}"
-    LOG.info("[%s] using %s @ %s (%s)", key, repo, githash or used_branch, branch_reason)
+    LOG.info(
+        "[%s] using %s @ %s (%s, commit %s)",
+        key, repo, githash or used_branch, branch_reason, source_commit(staging),
+    )
 
     src_docs = staging / docs_subpath
     if not src_docs.is_dir():

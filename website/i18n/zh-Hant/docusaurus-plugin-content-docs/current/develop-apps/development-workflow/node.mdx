@@ -88,6 +88,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 讀取 RTSP 串流。 | `nodes::RTSPInput(...)`、`nodes::groups::RtspEncodedInput(...)` 或 `nodes::groups::RtspDecodedInput(...)`。 | `pyneat.nodes.rtsp_input(...)`、`pyneat.groups.rtsp_encoded_input(...)` 或 `pyneat.groups.rtsp_decoded_input(...)` |
 | 讀取 HTTP 多部分 MJPEG 格式。 | `nodes::groups::HttpMjpegDecodedInput(...)`，或用於手動設定畫面的 `nodes::HttpSource(...)`、`MultipartJpegDemux()`、`JpegParse()`。 | `pyneat.groups.http_mjpeg_decoded_input(...)`，或 `pyneat.nodes.http_source(...)`、`pyneat.nodes.multipart_jpeg_demux()`、`pyneat.nodes.jpeg_parse()`。 |
 | 解碼圖片 | `nodes::ImageDecode()` 或 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 或 `pyneat.nodes.jpeg_decode()` |
+| 編碼原始視訊 | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | 解碼已編碼的影片 | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
 | 調整影片的畫質或限制播放速率。 | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | 建立一個可重複使用的影像輸入路徑。 | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
@@ -134,25 +135,28 @@ ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
 
 H.265 解碼器需要 `codec_name=hevc`、`profile=Main` 和 `pix_fmt=yuv420p`。
 
-`SimaDecodeOptions::raw_output` 控制解碼器的即時輸出：
+`SimaDecodeOptions::raw_output` 控制解碼器的直接輸出：
 
-| 價值 | 解碼器輸出 |
+| 值 | 解碼器輸出 |
 | --- | --- |
-| `true`（預設值） | 在 SiMaAI 記憶體中使用原生 NV12 或 I420 格式。對於解碼器的零拷貝輸出，請使用 NV12 格式。 |
-| `false` | 已轉換的 `video/x-raw(memory:SystemMemory)` 輸出，供 CPU 使用。 |
+| `true`（預設） | 解碼器輸出緩衝區：預設為原生 NV12，或轉換後的 I420。 |
+| `false` | 供 CPU 使用端使用、經轉換的 `video/x-raw(memory:SystemMemory)` 輸出。 |
 
-`raw_output` 與解碼器分開 `zero-copy-output`。核心功能可讓
-`zero-copy-output` 在解碼器接收時，如果圖可以轉送解碼器的原生 NV12 緩衝區。如果任何後續分支使用無法讀取原生平面佈局的編碼器輸入，則核心會讓解碼器進入，但不會進行零拷貝輸出，因此每個分支都會收到一個打包後的影格。 `RunOptions::output_memory`
-分別控制終端機輸出是否與其後端緩衝區共用`ZeroCopy`) 或複製到框架擁有的儲存空間中（`Owned`)。
+`SimaDecode` 對 NV12 要求零複製解碼器輸出。選擇 I420 時使用複製模式，
+將硬體的 NV12 像素直接轉換至最終 I420 平面。兩種模式都使用解碼器的 DMA-BUF 輸出集區。
+設定 `raw_output=false` 會新增供系統記憶體輸出使用的軟體適配器。
+`RunOptions::output_memory` 則另外控制最終輸出是否共用底層緩衝區（`ZeroCopy`），或複製至框架擁有的儲存空間（`Owned`）。
 
-H.264/H.265 自動偵測功能需要知道解碼器的寬度、高度和幀率。設定 `dec_width`, `dec_height`，以及 `dec_fps` 直接提供，
-或透過鍵入的來源提供。 `RtspEncodedInput` 搭配
-`source_fps`。核心元件在來源幀率未知時，不會預設為 30 FPS。
-允許進入會引發明確的 `num_buffers` 當其低於租賃的
-安全下限時，其價值為。離開 `num_buffers` 「unset」會保留解碼器元素的預設值。
+解碼器外掛程式擁有硬體工作階段。Core 不會透過接納常駐程式預留容量，也不持有解碼器租約。啟動失敗會透過正常的管線錯誤路徑回報。
 
-保留 `decoder_tuning` 設為空白或設定為 `auto` 適用於一般資料流。請使用
-`throughput-low-latency` 僅適用於未包含 B 影格且僅使用一張參考影格進行編碼的影音串流；該模式會停用已解碼影格的重新排序功能。
+只有需要覆寫上游尺寸或影格率時，才使用 `dec_width`、`dec_height` 與
+`dec_fps`；`-1` 代表由上游決定。這些選項不會預留解碼器容量。
+Core 會將明確的 `num_buffers` 值傳給解碼器，由解碼器套用硬體集區要求；`-1` 保留解碼器原則。
+
+將 `decoder_tuning` 留空可保留外掛程式預設值。明確值（包括
+`default` 與 `auto`）會與 `memory_opt` 和緩衝區數量覆寫一起傳給外掛程式，讓解碼器套用調校優先順序。
+`throughput-low-latency` 會停用解碼影像重新排序，720p 以下使用命令深度一，
+更大影格使用深度二。只適用於沒有 B 影格的串流；一般串流請維持未設定調校。
 
 `nodes::JpegDecode()` 以及 `pyneat.nodes.jpeg_decode()` 是獨立的 CPU/GStreamer
 JPEG 解碼節點。將它們用於簡單的 CPU 影像管線。不要將它們用於模型預處理之前的原生 MJPEG 視訊解碼。
@@ -247,7 +251,7 @@ SimaDecode(MJPEG)`，而不是 RTSP 解封包。
 | 即時傳輸經過 RTSP 編碼的 H.264、H.265 或 MJPEG 視訊串流。 | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`，當不是 H.264 時，則使用 `codec`。 | `source_fps`、`latency_ms`、`tcp`、`drop_on_latency`、`buffer_mode`、RTP 負載類型 |
 | 即時解碼並播放 RTSP 格式的 H.264、H.265 或 MJPEG 串流。 | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`，當不是 H.264 時，則使用 `codec`。 | `source_fps`、`latency_ms`、`tcp`、`drop_on_latency`、`buffer_mode`、已解碼的寬度/高度、`out_format`、`output_caps` |
 | HTTP 多部分 MJPEG 串流 | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`，`decoder_next_element`，已解碼的寬度/高度/每秒影格數，`output_caps`。 |
-| 原始或經過編碼的 H.264/H.265 視訊輸出 | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`，或`Passthrough(RtspCodec::H264 / RtspCodec::H265)`。 | `host`、`channel`、`video_port_base`、編碼器/RTP 選項。 |
+| 原始或已編碼 H.264/H.265/MJPEG 視訊輸出 | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::FromRaw(encode_options)` 或 `Passthrough(codec)` | `host`, `channel`, `video_port_base`, 編碼器／RTP 選項 |
 | 透過 UDP 輸出的 RTP/H.264 | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | 當預設值不正確時，請指定目標主機/連接埠。 | `h264_caps`, `payload_type`, `config_interval` |
 
 由來源擁有的圖與由應用程式推送的圖在執行階段的呈現方式不同：
@@ -639,3 +643,91 @@ run = graph.build()
 - [建立您的第一個圖](/tutorials/build-inference-pipeline)
 - [將模型接入管線](/tutorials/plug-model-into-pipeline)
 - [建立自訂資料圖](/tutorials/build-a-custom-data-graph)
+
+`UdpOutputGroupG` 已棄用，保留以維持原始碼相容性。請以受支援的節點建立明確的圖，視需要使用 `VideoSender` 傳送視訊、`MetadataSender` 傳送中繼資料。舊版群組需要渲染與樣本解多工外掛程式，而非所有執行階段套件都包含這些元件。
+
+## 硬體編碼
+
+`SimaEncodeOptions.type` 選擇 H.264、H.265 或 MJPEG。編碼器接受原生
+8 位元 NV12。其輸入適配器會保留相容的 SiMaAI NV12 緩衝區，並一次準備受支援的 CPU 原始佈局。
+輸出是已編碼影格；只有傳送 RTP 時才需新增封包化。
+
+```cpp
+simaai::neat::SimaEncodeOptions encode;
+encode.type = simaai::neat::SimaEncodeType::H265;
+encode.fps = 30;
+encode.bitrate_kbps = 4000;
+encode.gop_length = 30;
+encode.idr_interval = 90;
+graph.add(simaai::neat::nodes::SimaEncode(encode));
+```
+
+```python
+encode = pyneat.SimaEncodeOptions()
+encode.type = pyneat.SimaEncodeType.MJPEG
+encode.fps = 30
+encode.quality = 80
+graph.add(pyneat.nodes.sima_encode(encode))
+```
+
+編碼開始時會從輸入影格取得解析度。編碼器不會縮放影格；要編碼不同解析度，請開始新的執行。
+輸入尺寸必須為正偶數，最大為 3840x2160。
+`nodes::SimaEncode()` 與 `pyneat.nodes.sima_encode()` 使用預設 H.264 設定。
+不要在編碼器選項中重複輸入尺寸。`fps` 設定串流節奏與速率控制，但不控制輸入提交速度。
+H.264/H.265 支援 `bitrate_kbps`（預設 4000）、`rate_control`（`vbr` 或 `cbr`）、
+`profile`、`level`（預設 `4.0`）、`gop_length` 與獨立的 `idr_interval`。
+H.264 預設為 `baseline`；H.265 支援 `main`。串流需要時，執行階段可提高要求的層級，並回報實際設定。
+GOP 為零或未設定時使用 FPS；IDR 為零或未設定時使用三倍 FPS。GOP 為一表示全部使用 intra 影格。API 未提供 B 影格編碼。
+
+各編解碼器專用選項起初均未設定。MJPEG 接受 1 至 100 的 `quality`
+（預設 80），並拒絕明確提供的視訊專用設定。反之，H.264/H.265 拒絕 `quality`。
+`num_buffers` 選擇 1 至 20 個已編碼輸出緩衝區；
+`-1` 保留原生預設的四個。它不會設定生產端輸入儲存空間大小。
+此 API 不支援原生 4:2:2 或高位元深度編碼。
+
+`H264EncodeSima` 與 `pyneat.nodes.h264_encode_sima` 是已棄用的相容入口。
+其引數、getter 與原生輸入行為仍受支援。
+與 `H264Decode` 相同，若在包含標頭前定義 `SIMA_ENABLE_LEGACY_DEPRECATION`，
+C++ 呼叫會發出警告。Python 呼叫會發出 `DeprecationWarning`。
+`H264EncodeSW` 維持不變。此版本將 C++ ABI 改為版本 5；
+請重新建置 C++ 使用端，並使用相符且重新建置的 Python 擴充模組。
+
+## 選擇 VideoSender 編解碼器
+
+對原始輸入，請將相同的編碼器選項傳給 `VideoSenderOptions::FromRaw`。
+編解碼器會同時選擇編碼方式與 RTP 封包化：
+
+```cpp
+auto options = simaai::neat::nodes::groups::VideoSenderOptions::FromRaw(encode);
+options.host = "127.0.0.1";
+options.video_port_base = 9000;
+auto sender = simaai::neat::nodes::groups::VideoSender(options);
+```
+
+```python
+options = pyneat.VideoSenderOptions.from_raw(encode)
+options.host = "127.0.0.1"
+sender = pyneat.groups.video_sender(options)
+```
+
+對已編碼影格，請使用 `VideoSenderOptions::Passthrough(RtspCodec::H265)` 或
+`pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265)`。
+此路徑解析並封裝選定的編解碼器，不進行編碼。兩種工廠也支援 H.264 與 MJPEG。
+工廠會記錄輸入模式；圖建構時會選定路徑一次。`is_raw_input()` 與
+`is_encoded_input()` 提供此選擇的查詢。
+
+RTP 負載預設值為 H.264 96、H.265 98 與 MJPEG 26；`rtp.payload_type`
+可在 0..127 內覆寫。`rtp.config_interval` 只影響 H.264/H.265。
+UDP 連接埠為 `video_port_base + channel`。`sync=true` 會依管線時脈等待封包時間戳記；
+`async=true` 允許輸出端在啟動時等待第一個 preroll 緩衝區。兩者預設都為 false。
+Python 使用 `async_`，並保留 `async` 別名。這些控制項不會選擇編碼器執行緒，也不控制生產端提交速度。
+
+既有的 H.264 原始／已編碼工廠仍是相容入口。新的原始傳送端請使用 `FromRaw`。
+傳送端選項擁有設定的一份副本；變更原始的 `encode` 物件不會生效。
+之後對舊版 `options.encoder` 位元率／設定檔／層級欄位的變更，仍是原始 H.264/H.265 的權威設定。
+Python 也可取代整個物件。MJPEG 拒絕非預設的視訊專用覆寫。已編碼直通忽略編碼器設定。
+
+RTP/JPEG 需要相容的接收器、使用標準 Huffman 表的基準 JPEG，
+以及可被八整除、每個方向介於 8 至 2040 的尺寸。
+原始傳送與已編碼直通會在 RTP 封包化之前的 caps 協商期間拒絕不受支援的尺寸。
+獨立的 `SimaEncode` 保留原生幾何範圍。此功能不會替 Insight 的 RTP/WebRTC 檢視器新增 MJPEG 檢視能力。

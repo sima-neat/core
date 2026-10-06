@@ -255,6 +255,35 @@ RUN_TEST(
     "unit_mla_boundary_output_contract_test", ([] {
       using namespace simaai::neat::pipeline_internal::sima;
 
+      MpkContract engine_authority;
+      MpkPluginIoContract encoder;
+      encoder.name = "MLA_encoder";
+      encoder.processor = "MLA";
+      encoder.kernel = "mla";
+      engine_authority.plugins.push_back(std::move(encoder));
+
+      MpkPluginIoContract interstitial;
+      interstitial.name = "mla_topk_mla_stage2_a65";
+      interstitial.processor = "A65";
+      // Deliberately reproduce stale/diagnostic kernel inference.  Explicit A65
+      // processor identity must win even when every other label contains MLA.
+      interstitial.kernel = "mla";
+      interstitial.executable = "mla_topk_mla_stage2_a65.so";
+      engine_authority.plugins.push_back(std::move(interstitial));
+
+      MpkPluginIoContract decoder;
+      decoder.name = "MLA_decoder";
+      decoder.processor = "MLA";
+      decoder.kernel = "mla";
+      engine_authority.plugins.push_back(std::move(decoder));
+
+      const auto authoritative_mla_stages = get_mla_stage_io_contracts(engine_authority);
+      require(authoritative_mla_stages.size() == 2U,
+              "explicit A65 stages must not be inferred as MLA from kernel or artifact names");
+      require(authoritative_mla_stages[0]->name == "MLA_encoder" &&
+                  authoritative_mla_stages[1]->name == "MLA_decoder",
+              "MLA stage discovery must preserve the compiler-authored engine topology");
+
       const MpkContract mpk = make_packed_bf16_mla_boundary_fixture();
 
       const auto logical_outputs = get_mla_logical_outputs_contract(mpk);

@@ -736,6 +736,26 @@ app.add(yolo);
 app.add(neat::nodes::Output("detections"));
 ```
 
+RTSP デコード入力グループは、C++ と Python で同じデコーダー制御を公開します。
+
+| `RtspDecodedInputOptions` フィールド | デフォルト | 用途 |
+| --- | --- | --- |
+| `decoder_input_buffers` | `-1` | 圧縮入力バッファー数。未設定ならランタイムのデフォルトを使用します。 |
+| `num_buffers` | `-1` | デコード出力プール数。未設定なら自動設定します。 |
+| `decoder_tuning` | `""` | `throughput-low-latency` などの任意のデコーダープリセット。 |
+| `decoder_memory_opt` | `false` | 従来のメモリプリセット。明示的な `decoder_tuning` が優先されます。 |
+
+正のバッファー数の指定は、チューニングプリセットと併用しても有効です。未設定の数には `-1` を使用します。従来の 0 以下の値も、プロパティを未設定のままにします。`throughput-low-latency` プリセットは並べ替えを無効にするため、B フレームの表示順の並べ替えを必要としない互換ストリームで使用してください。入力バッファー数はバイト容量を設定しません。これらの制御は、`SimaDecodeOptions` の `input_buffers`、`num_buffers`、`decoder_tuning`、`memory_opt` として既に提供されています。
+
+```python
+source = pyneat.RtspDecodedInputOptions()
+source.url = "rtsp://camera/stream"
+source.decoder_input_buffers = 2
+source.decoder_tuning = "throughput-low-latency"
+# Leave num_buffers at -1 to use automatic output sizing.
+app.add(pyneat.groups.rtsp_decoded_input(source))
+```
+
 ### アプリケーションからの入力と、グラフが所有する UDP 出力
 
 ```cpp

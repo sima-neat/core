@@ -52,7 +52,6 @@ slug: /develop-apps/contribute/
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/contribute/mpk_contract/"><strong>MPK 合約</strong><span>了解模型封存檔的導入、驗證和安全規則。</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>外掛程式 JSON 真實資料對應</strong><span>檢閱已凍結的 SIMA 外掛程式 JSON 合約映射。</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/appcomplex_workspace_packaging/"><strong>AppComplex 包裝</strong><span>建立並安裝具有閘道功能的應用程式群組工作區服務套件。</span></a></li>
     </ul>
   </section>
 
