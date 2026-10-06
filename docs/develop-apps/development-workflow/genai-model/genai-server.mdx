@@ -226,32 +226,10 @@ history.
 
 For GPT-OSS, set `reasoning_effort` to `low` (default), `medium` or `high`;
 other values return HTTP 400. `enable_thinking` controls whether reasoning is
-returned:
+returned.
 
-```bash
-curl http://<modalix-ip>:9998/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "llm",
-    "messages": [
-      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
-    ],
-    "enable_thinking": true,
-    "reasoning_effort": "high",
-    "stream": false
-  }'
-```
-
-`reasoning_effort` is also accepted inside `chat_template_kwargs`, which takes
-precedence over the top-level field, as it does for `enable_thinking`:
-
-```json
-{
-  "model": "llm",
-  "messages": [{"role": "user", "content": "..."}],
-  "chat_template_kwargs": {"reasoning_effort": "medium"}
-}
-```
+`reasoning_effort` can also be set in `chat_template_kwargs`, whose value
+overrides the top-level field.
 
 ## Audio requests
 

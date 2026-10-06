@@ -196,31 +196,9 @@ curl http://<modalix-ip>:9998/api/chat \
 
 ### Рівень міркувань
 
-Для GPT-OSS задайте `reasoning_effort` як `low` (за замовчуванням), `medium` або `high`; інші значення повертають HTTP 400. `enable_thinking` визначає, чи повертати міркування:
+Для GPT-OSS задайте `reasoning_effort` як `low` (за замовчуванням), `medium` або `high`; інші значення повертають HTTP 400. `enable_thinking` визначає, чи повертати міркування.
 
-```bash
-curl http://<modalix-ip>:9998/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "llm",
-    "messages": [
-      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
-    ],
-    "enable_thinking": true,
-    "reasoning_effort": "high",
-    "stream": false
-  }'
-```
-
-`reasoning_effort` також можна задати в `chat_template_kwargs`. Як і для `enable_thinking`, вкладене значення має пріоритет над полем верхнього рівня:
-
-```json
-{
-  "model": "llm",
-  "messages": [{"role": "user", "content": "..."}],
-  "chat_template_kwargs": {"reasoning_effort": "medium"}
-}
-```
+`reasoning_effort` також можна задати в `chat_template_kwargs`, де його значення має пріоритет над полем верхнього рівня.
 
 ## Аудіозапити
 

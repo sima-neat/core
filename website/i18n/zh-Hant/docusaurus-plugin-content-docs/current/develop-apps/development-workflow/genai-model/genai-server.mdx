@@ -189,31 +189,9 @@ curl http://<modalix-ip>:9998/api/chat \
 
 ### 推理程度
 
-對於 GPT-OSS，請將 `reasoning_effort` 設為 `low`（預設）、`medium` 或 `high`；其他值會傳回 HTTP 400。`enable_thinking` 控制是否傳回推理內容：
+對於 GPT-OSS，請將 `reasoning_effort` 設為 `low`（預設）、`medium` 或 `high`；其他值會傳回 HTTP 400。`enable_thinking` 控制是否傳回推理內容。
 
-```bash
-curl http://<modalix-ip>:9998/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "llm",
-    "messages": [
-      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
-    ],
-    "enable_thinking": true,
-    "reasoning_effort": "high",
-    "stream": false
-  }'
-```
-
-`reasoning_effort` 也可在 `chat_template_kwargs` 中指定。與 `enable_thinking` 相同，巢狀值優先於頂層欄位：
-
-```json
-{
-  "model": "llm",
-  "messages": [{"role": "user", "content": "..."}],
-  "chat_template_kwargs": {"reasoning_effort": "medium"}
-}
-```
+`reasoning_effort` 也可在 `chat_template_kwargs` 中指定，其值優先於頂層欄位。
 
 ## 語音請求
 

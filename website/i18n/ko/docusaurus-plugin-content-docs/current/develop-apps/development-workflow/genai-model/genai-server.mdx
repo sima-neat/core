@@ -184,31 +184,9 @@ curl http://<modalix-ip>:9998/api/chat \
 
 ### 추론 수준
 
-GPT-OSS에서는 `reasoning_effort`를 `low`(기본값), `medium` 또는 `high`로 설정합니다. 다른 값은 HTTP 400을 반환합니다. `enable_thinking`은 추론 내용을 반환할지 제어합니다:
+GPT-OSS에서는 `reasoning_effort`를 `low`(기본값), `medium` 또는 `high`로 설정합니다. 다른 값은 HTTP 400을 반환합니다. `enable_thinking`은 추론 내용을 반환할지 제어합니다.
 
-```bash
-curl http://<modalix-ip>:9998/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "llm",
-    "messages": [
-      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
-    ],
-    "enable_thinking": true,
-    "reasoning_effort": "high",
-    "stream": false
-  }'
-```
-
-`reasoning_effort`는 `chat_template_kwargs` 안에서도 지정할 수 있습니다. `enable_thinking`과 마찬가지로 중첩된 값이 최상위 필드보다 우선합니다:
-
-```json
-{
-  "model": "llm",
-  "messages": [{"role": "user", "content": "..."}],
-  "chat_template_kwargs": {"reasoning_effort": "medium"}
-}
-```
+`reasoning_effort`는 `chat_template_kwargs` 안에서도 지정할 수 있으며, 이 값이 최상위 필드보다 우선합니다.
 
 ## 오디오 요청
 
