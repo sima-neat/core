@@ -6,10 +6,8 @@
 
 #include <simaai/neat/pcie/Model.h>
 #include <simaai/neat/pcie/Runtime.h>
-#if defined(SIMAPCIE_WITH_GENAI)
 #include <simaai/neat/pcie/genai/GenAIModel.h>
 #include <nanobind/stl/filesystem.h>
-#endif
 
 #include <Python.h>
 
@@ -361,7 +359,6 @@ nb::list tensors_to_numpy_list(const pcie::TensorList& tensors) {
 
 } // namespace
 
-#if defined(SIMAPCIE_WITH_GENAI)
 namespace {
 nb::object genai_json(const simaai::neat::genai::Json& value) {
   return nb::module_::import_("json").attr("loads")(value.dump());
@@ -503,7 +500,6 @@ void bind_genai(nb::module_& parent) {
           "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none());
 }
 } // namespace
-#endif
 
 NB_MODULE(_pyneatpcie_core, m) {
   m.doc() = "Python bindings for the SiMa NEAT PCIe host co-processor API";
@@ -878,7 +874,5 @@ NB_MODULE(_pyneatpcie_core, m) {
             return false;
           },
           "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none());
-#if defined(SIMAPCIE_WITH_GENAI)
   bind_genai(m);
-#endif
 }

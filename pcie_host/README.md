@@ -365,6 +365,9 @@ model.close();
 
 ## Build
 
+PCIe host builds always include the GenAI APIs. The matching Internals host artifact
+supplies the required platform service headers; the host driver supplies the runtime library.
+
 The host PCIe plugin is consumed as a prebuilt artifact from the internals repo.
 By default `build.sh` uses `../deps/manifest.json`, resolves the `internals`
 dependency with snap semantics, and downloads the matching Vulcan-hosted PCIe

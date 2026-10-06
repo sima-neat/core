@@ -692,7 +692,7 @@ fi
 GENAI_CMAKE_ARGS=()
 if [[ -n "${SIMAPCIE_SVC_INCLUDE_DIR:-}" ]]; then
   GENAI_CMAKE_ARGS+=("-DSIMAPCIE_SVC_INCLUDE_DIR=${SIMAPCIE_SVC_INCLUDE_DIR}")
-elif [[ "${SIMAPCIE_BUILD_GENAI:-ON}" != "OFF" ]]; then
+else
   for header in simaai_svc.h simaai_svc_proto.h; do
     source_header="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/include/simaai/${header}"
     if [[ ! -f "${source_header}" ]]; then
@@ -708,7 +708,6 @@ fi
 cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
   -DCMAKE_INSTALL_LIBDIR="lib/${HOST_MULTIARCH}" \
-  -DSIMAPCIE_BUILD_GENAI="${SIMAPCIE_BUILD_GENAI:-ON}" \
   -DSIMAPCIE_BUILD_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_HARDWARE_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_EXAMPLES="${BUILD_EXAMPLES}" \

@@ -25,9 +25,8 @@ endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-option(SIMAPCIE_BUILD_GENAI "Build installed PCIe GenAI APIs and CLI" ON)
 find_path(SIMAPCIE_SVC_INCLUDE_DIR simaai_svc.h PATH_SUFFIXES simaai)
-if (SIMAPCIE_BUILD_GENAI AND NOT SIMAPCIE_SVC_INCLUDE_DIR)
+if (NOT SIMAPCIE_SVC_INCLUDE_DIR)
   message(FATAL_ERROR "GenAI requires the platform simaai_svc.h development headers")
 endif()
 
@@ -88,30 +87,23 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/ModelExecutionPlan.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/MpkDecoder.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/TvmHostModuleGraph.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ModelAssets.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/MediaStage.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/RemoteSession.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/genai/ModelDirectory.cpp
+  ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/Service.cpp
 )
-
-if (SIMAPCIE_BUILD_GENAI)
-  list(APPEND SIMA_NEAT_PCIE_HOST_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ModelAssets.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/MediaStage.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/RemoteSession.cpp
-    ${SIMA_NEAT_CORE_ROOT}/src/genai/ModelDirectory.cpp
-    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/Service.cpp)
-endif()
 
 add_library(sima_neat_pcie_host STATIC
   ${SIMA_NEAT_PCIE_HOST_SOURCES}
 )
 
 target_compile_definitions(sima_neat_pcie_host PRIVATE SIMA_NEAT_INTERNAL=1)
-if (SIMAPCIE_BUILD_GENAI)
-  target_compile_definitions(sima_neat_pcie_host PUBLIC SIMAPCIE_WITH_GENAI=1)
-  target_include_directories(sima_neat_pcie_host PRIVATE ${SIMAPCIE_SVC_INCLUDE_DIR}
-    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
-  target_include_directories(sima_neat_pcie_host PUBLIC $<BUILD_INTERFACE:${SIMA_NEAT_CORE_ROOT}/include>)
-  target_link_libraries(sima_neat_pcie_host PRIVATE ${CMAKE_DL_LIBS})
-endif()
+target_include_directories(sima_neat_pcie_host PRIVATE ${SIMAPCIE_SVC_INCLUDE_DIR}
+  ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+target_include_directories(sima_neat_pcie_host PUBLIC $<BUILD_INTERFACE:${SIMA_NEAT_CORE_ROOT}/include>)
+target_link_libraries(sima_neat_pcie_host PRIVATE ${CMAKE_DL_LIBS})
 target_include_directories(sima_neat_pcie_host
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -319,27 +311,25 @@ if (SIMAPCIE_BUILD_TESTS)
   target_include_directories(unit_pcie_host_async_test_runner_test
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
-  if (SIMAPCIE_BUILD_GENAI)
-    add_executable(unit_pcie_host_genai_values_test tests/unit_pcie_host_genai_values_test.cpp)
-    target_link_libraries(unit_pcie_host_genai_values_test PRIVATE sima_neat_pcie_host)
-    target_include_directories(unit_pcie_host_genai_values_test PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/src
-      ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
-    add_test(NAME unit_pcie_host_genai_values_test COMMAND unit_pcie_host_genai_values_test)
+  add_executable(unit_pcie_host_genai_values_test tests/unit_pcie_host_genai_values_test.cpp)
+  target_link_libraries(unit_pcie_host_genai_values_test PRIVATE sima_neat_pcie_host)
+  target_include_directories(unit_pcie_host_genai_values_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/src
+    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+  add_test(NAME unit_pcie_host_genai_values_test COMMAND unit_pcie_host_genai_values_test)
 
-    add_library(fake_genai_service SHARED tests/fake_genai_service.cpp)
-    target_include_directories(fake_genai_service PRIVATE ${SIMAPCIE_SVC_INCLUDE_DIR})
-    target_link_libraries(fake_genai_service PRIVATE Threads::Threads)
-    set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
-      LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
-    add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
-    target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
-    target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE sima_neat_pcie_host fake_genai_service)
-    add_test(NAME unit_pcie_host_genai_assets_test COMMAND unit_pcie_host_genai_assets_test)
-    set_tests_properties(unit_pcie_host_genai_assets_test PROPERTIES TIMEOUT 10
-      ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
-  endif()
+  add_library(fake_genai_service SHARED tests/fake_genai_service.cpp)
+  target_include_directories(fake_genai_service PRIVATE ${SIMAPCIE_SVC_INCLUDE_DIR})
+  target_link_libraries(fake_genai_service PRIVATE Threads::Threads)
+  set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
+  add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
+  target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+  target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE sima_neat_pcie_host fake_genai_service)
+  add_test(NAME unit_pcie_host_genai_assets_test COMMAND unit_pcie_host_genai_assets_test)
+  set_tests_properties(unit_pcie_host_genai_assets_test PROPERTIES TIMEOUT 10
+    ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
 
   add_test(NAME unit_pcie_host_options_test COMMAND unit_pcie_host_options_test)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
