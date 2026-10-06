@@ -12,7 +12,7 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 ### 호환성이 깨지는 변경 사항
 
 - 모델 출력은 이제 중간 장치 형상 대신 MPK에 작성된 최종 논리 형상과 레이아웃을 제공합니다. 예를 들어 ResNet-50의 배치 평탄화 출력은 4차원 HWC 형상 대신 `[1, 1000]` 형상과 알 수 없는 논리 레이아웃을 가집니다. Float32 텐서 형식은 `FP32` 대신 `EVXX_FLOAT32`일 수 있습니다. 값은 텐서의 dtype과 형상으로 해석하며 백엔드 형식 태그에서 논리 축을 추론하지 않습니다.
-- Neat Library C++ ABI는 이제 버전 4이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.4`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함됩니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다.
+- Neat Library C++ ABI는 이제 버전 6이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.6`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함됩니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다.
 - 실시간 그래프 구성은 이제 `GraphLinkOptions`, `Graph::connect()` 및 `Graph::build()`를 사용합니다. 미리보기 API인 `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()` 및 `RealtimeEveryFrameByStream`은 제거되었습니다. `realtime_every_frame_by_stream`을 포함하는 저장된 그래프는 지원되는 정책으로 다시 생성해야 합니다. 자세한 내용은 [라이브 프래그먼트 연결](/develop-apps/development-workflow/graph/#connect-live-fragments)을 참조하십시오.
 
 ### 런타임 변경 사항

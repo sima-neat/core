@@ -12,7 +12,7 @@ SiMa.ai Neat Library のリリースノート。
 ### 互換性のない変更
 
 - モデル出力は、デバイス側の中間形状ではなく、MPK に記述された最終的な論理形状とレイアウトを公開します。たとえば、ResNet-50 のバッチ平坦化出力は、4 次元 HWC 形状ではなく、形状 `[1, 1000]` で論理レイアウトは不明です。Float32 テンソルの形式は `FP32` ではなく `EVXX_FLOAT32` の場合があります。値の解釈にはテンソルのデータ型と形状を使用し、バックエンドの形式タグから論理軸を推定しないでください。
-- Neat Library の C++ ABI は 4、共有ライブラリの SONAME は `libsima_neat.so.4` です。Tensor は特徴抽出器の意味メタデータを保持し、公開 GenAI リクエスト／結果型は ASR タスク、言語、プローブのメタデータを保持します。`GraphLinkOptions` にはリアルタイム受け入れの制限が含まれます。C++ アプリケーションとプラグインを再ビルドし、対応する Core のランタイムと開発パッケージをインストールしてください。
+- Neat Library の C++ ABI は 6、共有ライブラリの SONAME は `libsima_neat.so.6` です。Tensor は特徴抽出器の意味メタデータを保持し、公開 GenAI リクエスト／結果型は ASR タスク、言語、プローブのメタデータを保持します。`GraphLinkOptions` にはリアルタイム受け入れの制限が含まれます。C++ アプリケーションとプラグインを再ビルドし、対応する Core のランタイムと開発パッケージをインストールしてください。
 - リアルタイムのグラフ合成では、`GraphLinkOptions`、`Graph::connect()`、および`Graph::build()`が使用されます。プレビュー用の`RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()`/ `build_fused_realtime_source()`、および`RealtimeEveryFrameByStream` APIは削除されました。`realtime_every_frame_by_stream`を含む保存されたグラフは、サポートされているポリシーを使用して再作成する必要があります。詳細は[ライブフラグメントを接続する](/develop-apps/development-workflow/graph/#connect-live-fragments)を参照してください。
 
 ### ランタイムの変更

@@ -12,7 +12,7 @@ SiMa.ai Neat Library 的版本資訊。
 ### 破壞性變更
 
 - 模型輸出現在呈現 MPK 中定義的最終邏輯形狀與佈局，而非中間裝置形狀。例如，ResNet-50 的批次展平輸出形狀為 `[1, 1000]`，邏輯佈局未知，而不是四維 HWC 形狀。其 Float32 張量格式可能是 `EVXX_FLOAT32` 而非 `FP32`。請依張量的 dtype 與形狀解讀數值，不要從後端格式標籤推斷邏輯軸。
-- Neat Library 的 C++ ABI 現在為 4，共用函式庫 SONAME 為 `libsima_neat.so.4`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，而 `GraphLinkOptions` 包含即時接納限制。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。
+- Neat Library 的 C++ ABI 現在為 6，共用函式庫 SONAME 為 `libsima_neat.so.6`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，而 `GraphLinkOptions` 包含即時接納限制。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。
 - 即時圖組合現在使用 `GraphLinkOptions`、`Graph::connect()` 和 `Graph::build()`。預覽版 API `RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()` / `build_fused_realtime_source()` 和 `RealtimeEveryFrameByStream` 已移除。包含 `realtime_every_frame_by_stream` 的已儲存圖必須使用受支援的原則重新建立；請參閱[連接即時片段](/develop-apps/development-workflow/graph/#connect-live-fragments)。
 
 ### 執行階段變更
