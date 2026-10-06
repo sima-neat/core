@@ -1558,14 +1558,13 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    # The available PCIe card runner does not have a 3.0.0 image yet.
-    if: ${{ false }}
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
       - publish-vulcan-artifacts
       - publish-pciehost-package
-    runs-on: [self-hosted, Linux, X64, pcie]
+    runs-on: [self-hosted, Linux, X64, pcie, 3.0.0-pcie-test]
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
@@ -1582,6 +1581,7 @@ jobs:
       SIMAPCIE_LIFETIME_ITERATIONS: "20"
       SIMAPCIE_STRESS_QUEUES: "0 1 2 3 4 5"
       SIMAPCIE_STRESS_ITERATIONS: "1000"
+      SIMAPCIE_GENAI_RECEIVE_ROOT: ${{ vars.SIMAPCIE_GENAI_RECEIVE_ROOT || '/tmp' }}
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
       SIMAPCIE_CARD_INSTALL_CMD: ${{ vars.SIMAPCIE_CARD_INSTALL_CMD }}
       DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
@@ -1683,6 +1683,16 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/cleanup_queue.sh
+
+      - name: Prepare PCIe GenAI models
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/ci/pciehost/common.sh
+          load_state
+          timeout --signal=TERM --kill-after=30s 3600 \
+            "${TEST_DIR}/prepare_pcie_genai_models.sh"
 
       - name: Run PCIe host C++ CTest suite
         if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}

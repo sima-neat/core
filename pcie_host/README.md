@@ -556,6 +556,40 @@ applications do not need the NEAT core or internals source tree;
 `find_package(SimaPCIeHost)` rediscovers the local GStreamer link flags with
 `pkg-config` and the zlib target through CMake.
 
+## GenAI hardware tests
+
+Prepare the same LLM, VLM and Whisper fixtures used by Core's direct API tests
+(already compiled models; no model compilation or package installation):
+
+```bash
+pcie_host/scripts/prepare_pcie_genai_models.sh
+```
+
+The default download directory is `$HOME/workspace/models_genai`. Override
+`SIMAPCIE_GENAI_MODELS_PATH` to use a different cache. Model names use the same
+`SIMA_TEST_LLIMA_TEXT_MODEL`, `SIMA_TEST_LLIMA_VLM_MODEL` and
+`SIMA_TEST_LLIMA_ASR_MODEL` variables as the standalone tests.
+
+With matching host/card packages and no other job using the card:
+
+```bash
+export SIMAPCIE_CARD_HOST=10.0.0.2
+export SIMAPCIE_USER=sima
+# Match the card's configured temporary receive directory:
+export SIMAPCIE_GENAI_RECEIVE_ROOT=/tmp
+ctest --test-dir <extras>/lib/sima-pcie-host/tests -L genai -j1 --output-on-failure
+~/pyneatpcie/bin/python -m pytest -v -s pcie_host/python/tests/test_genai_hardware.py
+```
+
+The extras contain the preparation script and image/audio fixtures. Python tests
+use repository fixtures by default; `SIMAPCIE_GENAI_TEST_ASSETS` can select the
+extras' `genai-assets` directory for both languages. Tests cover generation,
+streaming, capability checks, ASR transcription/translation and in-memory audio,
+reuse and explicit close; LLM tests also cover history and cancellation. Cached
+images are not supported by the PCIe API and are intentionally excluded. Missing
+models fail an enabled hardware run; Python skips card access when
+`SIMAPCIE_CARD_HOST` is unset. Concurrent mixed-model stress is separate.
+
 ## V1 Scope
 
 Implemented in the initial PCIe host package:
