@@ -42,6 +42,10 @@ STANDARD_SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_codec_h264_decode", "perf_runtime_codec_h264_decode_test"),
     ScenarioSpec("runtime_codec_h265_decode", "perf_runtime_codec_h265_decode_test"),
     ScenarioSpec("runtime_model_archive_load", "perf_runtime_model_archive_load_test"),
+    ScenarioSpec("yolox_seg_pose_payload_decode_representative",
+                 "perf_yolox_seg_pose_payload_representative_test"),
+    ScenarioSpec("yolox_seg_pose_payload_decode_heavy",
+                 "perf_yolox_seg_pose_payload_heavy_test"),
 )
 
 ENCODER_SCENARIOS: tuple[ScenarioSpec, ...] = tuple(

@@ -28,7 +28,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)30)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)31)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -449,6 +449,8 @@ typedef struct SimaPluginBoxDecodeStagePayload {
   const gint* tensor_storage_kind;
   guint tensor_storage_kind_len;
   const SimaPluginSuperPointStagePayloadV1* superpoint;
+  const gint* pose_classes;
+  guint pose_classes_len;
 } SimaPluginBoxDecodeStagePayload;
 
 typedef struct SimaPluginDetessDequantStagePayload {

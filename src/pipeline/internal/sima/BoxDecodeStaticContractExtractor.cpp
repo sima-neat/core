@@ -802,7 +802,11 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
     }
   }
   if (decode_type_is_yolov8_family_local(decode_type) ||
-      decode_type_is_yolov26_family_local(decode_type)) {
+      decode_type_is_yolov26_family_local(decode_type) ||
+      decode_type == BoxDecodeType::YoloXSegPose) {
+    // The packed YOLOX export is always raw logits, so names cannot make it ambiguous.
+    // Resolving it here keeps a head named class_score_0 or output_3 constructible. A
+    // declared probability domain is caught above and rejected by the family override.
     return BoxDecodeScoreActivation::Sigmoid;
   }
   if (decode_type == BoxDecodeType::Ssd) {
@@ -3113,7 +3117,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     if (const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
         parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
-         *parsed_type == BoxDecodeType::YoloV5)) {
+         *parsed_type == BoxDecodeType::YoloV5 || *parsed_type == BoxDecodeType::YoloXSegPose)) {
       out.decode_type = *parsed_type;
     }
     if (const auto parsed_option =

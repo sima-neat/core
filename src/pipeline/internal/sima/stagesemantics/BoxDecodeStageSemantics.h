@@ -26,6 +26,8 @@ struct BoxDecodeCompiledContractOptions {
   double nms_iou_threshold = 0.0;
   int topk = 0;
   int num_classes = 0;
+  /// Overrides the subset's gate when non-empty; empty keeps whatever the subset carries.
+  std::vector<int> pose_classes;
   /// Explicit SuperPoint overlay. Unset preserves all MPK subset fields verbatim.
   std::optional<SuperPointStaticContract> superpoint;
   bool model_owned_flags = false;
@@ -64,6 +66,7 @@ void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract
 // Apply the raw P3/P4/P5 layout, sigmoid score domain, and inferred class count
 // before lowering a model-managed YOLOv5 contract.
 void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
+void apply_yolox_seg_pose_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
 
 // Validate an explicit node-level layout override against a model-managed
 // decoder contract. Auto preserves the compiled contract.
@@ -75,6 +78,12 @@ void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
 /// behavior. A non-positive override selects the inferred value.
 int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferred_num_classes,
                                            int requested_num_classes, const char* context);
+
+/// Validate the pose-class gate and return it sorted and unique. Empty stays empty, meaning
+/// every class is pose-bearing. Throws for decode types that cannot gate keypoints by class.
+std::vector<int> normalize_boxdecode_pose_classes(BoxDecodeType decode_type,
+                                                  const std::vector<int>& requested,
+                                                  int num_classes, const char* context);
 
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
     const BoxDecodeStaticContract& contract, BoxDecodeType decode_type,

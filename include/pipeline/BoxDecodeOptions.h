@@ -7,6 +7,7 @@
 
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/SuperPointTypes.h"
+#include "pipeline/YoloXSegPoseTypes.h"
 
 namespace simaai::neat {
 
@@ -19,6 +20,7 @@ struct BoxDecodeOptions {
   double nms_iou_threshold = 0.0;
   int top_k = 0;
   SuperPointOptions superpoint;
+  YoloXSegPoseOptions yolox_seg_pose;
 };
 
 } // namespace simaai::neat
