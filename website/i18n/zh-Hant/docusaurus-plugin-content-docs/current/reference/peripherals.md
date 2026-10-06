@@ -90,18 +90,6 @@ Core 不會探查、取得、設定相機，也不會從相機串流。因此，
 支援狀態並不保證稍後的獨占取得一定會
 成功。
 
-這些規則不會分類 Metoak SIMOR raw V4L2 設定檔
-（`CameraProfile::MetoakSimor`，RAW8 1920×360，以 `profile` 及
-選用的 `device` 選取）。這些規則沒有個別感測器的條件，因此 SIMOR 感測器
-（名稱以 `simor_metoak` 開頭）若被 Sentinel 列為 `mipi` 相機，就會得到
-與其他 MIPI 感測器相同的 ISP 模式分類。對該相機而言，
-`supported: true` 只表示該模式符合預設設定檔的
-後端、格式、影格率與 ISP 輸出尺寸；並不表示
-libcamera 已針對該感測器驗證合格。請依
-[`CameraInput`](/reference/nodes/camera-input) 的說明，
-以 `profile=MetoakSimor` 選取 SIMOR 相機，而非使用其目錄中的
-`camera_name`。
-
 ## 任何周邊裝置類型的詳細資料
 
 每個周邊裝置不論其 `type` 為何，都會在 `details_json` 中以精簡 JSON 形式攜帶

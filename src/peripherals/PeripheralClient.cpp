@@ -384,9 +384,7 @@ std::string rejection(const std::string& backend, const std::string& format, boo
                       bool lists_intervals, bool covers_default_rate) {
   const CameraInputOptions defaults;
   if (backend != "mipi")
-    return "CameraInput's default libcamera profile accepts MIPI cameras only. These rules do "
-           "not classify raw V4L2 profiles such as MetoakSimor (RAW8 1920x360, selected with "
-           "CameraInputOptions.profile and device).";
+    return "CameraInput's default libcamera profile accepts MIPI cameras only.";
   if (format != defaults.format)
     return "CameraInput's default libcamera profile supports " + defaults.format + " output only.";
   // A mode without intervals is not rejected: CameraInput sets the rate through caps.

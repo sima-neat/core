@@ -90,18 +90,6 @@ Core はカメラのプローブ、取得、設定、ストリーミングを行
 カタログ上のサポートは、後で排他的な取得が成功することを保証する
 ものではありません。
 
-これらのルールは Metoak SIMOR の raw V4L2 プロファイル
-（`CameraProfile::MetoakSimor`、RAW8 1920×360、`profile` と
-任意の `device` で選択）を分類しません。ルールにはセンサーごとの条件がないため、SIMOR センサー
-（名前が `simor_metoak` で始まるもの）を Sentinel が `mipi` カメラとして列挙した場合、
-他の MIPI センサーと同じ ISP モード分類になります。このカメラでの
-`supported: true` は、モードがデフォルトプロファイルの
-バックエンド、形式、フレームレート、ISP 出力サイズに一致することだけを意味し、
-libcamera がそのセンサーに対応済みであることは意味しません。SIMOR カメラは、
-カタログの `camera_name` ではなく、
-[`CameraInput`](/reference/nodes/camera-input) で説明している
-`profile=MetoakSimor` で選択してください。
-
 ## あらゆるペリフェラル型の詳細
 
 すべてのペリフェラルは、`type` に関係なく、Sentinel が公開したデバイスレコード全体を

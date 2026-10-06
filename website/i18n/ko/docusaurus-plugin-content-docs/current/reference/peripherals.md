@@ -90,18 +90,6 @@ Core는 카메라를 검사하거나, 획득하거나, 구성하거나, 카메�
 카탈로그의 지원 표시는 이후의 독점 획득이 성공한다는 것을
 보장하지 않습니다.
 
-이 규칙은 Metoak SIMOR raw V4L2 프로필
-(`CameraProfile::MetoakSimor`, RAW8 1920×360, `profile` 및
-선택적으로 `device`로 선택)을 분류하지 않습니다. 규칙에는 센서별 조건이 없으므로,
-Sentinel이 `mipi` 카메라로 나열하는 SIMOR 센서(이름이 `simor_metoak`으로 시작)는
-다른 MIPI 센서와 동일한 ISP 모드 분류를 받습니다. 이 카메라에서
-`supported: true`는 모드가 기본 프로필의 백엔드, 형식, 프레임 속도,
-ISP 출력 크기와 일치한다는 뜻일 뿐이며, libcamera가 해당 센서에 대해
-검증되었다는 뜻은 아닙니다. SIMOR 카메라는 카탈로그의 `camera_name`이 아니라
-[`CameraInput`](/reference/nodes/camera-input)에
-설명된 대로
-`profile=MetoakSimor`로 선택하십시오.
-
 ## 모든 주변 장치 형식의 세부 정보
 
 모든 주변 장치는 `type`과 관계없이 Sentinel이 게시한 전체 장치 레코드를

@@ -25,9 +25,7 @@ def _load_example():
 _CATALOG = _load_example()
 _MIPI, _USB, _MIC = _CATALOG["devices"]
 _USB_REASON = (
-    "CameraInput's default libcamera profile accepts MIPI cameras only. These rules do not "
-    "classify raw V4L2 profiles such as MetoakSimor (RAW8 1920x360, selected with "
-    "CameraInputOptions.profile and device)."
+    "CameraInput's default libcamera profile accepts MIPI cameras only."
 )
 
 

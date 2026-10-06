@@ -90,18 +90,6 @@ Core does not probe, acquire, configure, or stream from the camera. Catalog
 support therefore does not guarantee that exclusive acquisition will succeed
 later.
 
-These rules do not classify the Metoak SIMOR raw V4L2 profile
-(`CameraProfile::MetoakSimor`, RAW8 1920×360, selected with `profile` and
-optionally `device`). They have no per-sensor condition, so a SIMOR sensor
-(name starting with `simor_metoak`) that Sentinel lists as a `mipi` camera gets
-the same ISP-mode classification as any other MIPI sensor. For that camera,
-`supported: true` means only that the mode matches the default profile's
-backend, format, frame rate, and ISP output size; it does not mean that
-libcamera is qualified for the sensor. Select a SIMOR camera with
-`profile=MetoakSimor` as described in
-[`CameraInput`](/reference/nodes/camera-input), not with its catalog
-`camera_name`.
-
 ## Details for any peripheral type
 
 Every peripheral, whatever its `type`, carries the whole device record that

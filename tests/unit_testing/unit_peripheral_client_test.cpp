@@ -41,9 +41,7 @@ namespace codes = simaai::neat::error_codes;
 
 // The reasons Core gives for CameraInput's default libcamera profile.
 constexpr const char* kBackendReason =
-    "CameraInput's default libcamera profile accepts MIPI cameras only. These rules do not "
-    "classify raw V4L2 profiles such as MetoakSimor (RAW8 1920x360, selected with "
-    "CameraInputOptions.profile and device).";
+    "CameraInput's default libcamera profile accepts MIPI cameras only.";
 constexpr const char* kFormatReason =
     "CameraInput's default libcamera profile supports NV12 output only.";
 constexpr const char* kFramerateReason =
