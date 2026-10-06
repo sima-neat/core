@@ -1,3 +1,4 @@
+#include "mpk_contract_test_utils.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
@@ -124,7 +125,7 @@ ps::SimaPluginStaticManifest make_manifest(const ps::MpkContract& contract) {
 std::uint32_t prepared_input_flags(const std::filesystem::path& root) {
   ensure_gst_ready();
   std::string error;
-  const auto contract = ps::load_mpk_contract_from_pack_root(root.string(), &error);
+  const auto contract = load_test_mpk_contract(root.string(), &error);
   require(contract.has_value(), "ProcessCVU V2 fixture should load: " + error);
   const auto manifest = make_manifest(*contract);
 

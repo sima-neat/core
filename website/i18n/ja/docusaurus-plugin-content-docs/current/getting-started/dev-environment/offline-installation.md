@@ -17,13 +17,13 @@ sidebar_position: 6
 `amd64` ホストの場合：
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.1 -t offline-amd64
+sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
 </ShellCommand>
 
 `arm64` ホストの場合：
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.1 -t offline-arm64
+sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 </ShellCommand>
 
 ダウンロードしたディレクトリを目的のホストにコピーします。そのディレクトリから、次のコマンドを実行してください。
@@ -40,16 +40,16 @@ SDK 2.1.3.0 以降のバージョンでは、SDKオフラインパッケージ�
 
 対象環境および SDK の互換性要件に適合する Model Compiler パッケージをダウンロードしてください。互換性に関する詳細については、[互換性](/getting-started/compatibility/#model-compiler) を参照してください。
 
-`amd64` のホスト上で動作する Model Compiler 2.1.3.1 について：
+`amd64` のホスト上で動作する Model Compiler 2.1.3 について：
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3.1 -t offline
+sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
 </ShellCommand>
 
-`arm64` のホスト上で動作する Model Compiler 2.1.3.1 について：
+`arm64` のホスト上で動作する Model Compiler 2.1.3 について：
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3.1 -t offline
+sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 </ShellCommand>
 
 :::note

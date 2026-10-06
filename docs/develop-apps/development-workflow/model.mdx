@@ -443,6 +443,15 @@ graph.add(pyneat.nodes.output("classes"))
 </CodeTab>
 </CodeTabs>
 
+A default public `Input` directly connected to one model image ingress inherits
+that ingress's image interpretation and format. You can still set the source's
+format explicitly; the graph validates it against the model contract. Source
+memory, dimensions, timestamps, and queue options remain unchanged. For multiple
+or ambiguous consumers, provide explicit input options.
+
+This interpretation applies at the Graph input boundary. Direct model calls still
+require inputs that satisfy the model's declared image or tensor contract.
+
 Use `model.graph(...)` when you need a reusable fragment or explicit route boundaries.
 
 Route options control how that fragment exposes its contract:

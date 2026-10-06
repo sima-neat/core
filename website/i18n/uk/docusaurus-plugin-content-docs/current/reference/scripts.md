@@ -45,7 +45,6 @@ cd website && yarn start           # preview the site
 | `route_refactor_validation.sh` | Спеціалізована перевірка регресії планувальника маршрутів (виконується системою безперервної інтеграції). |
 | `install_neat_plugins.sh` | Встановіть плагіни GStreamer для фреймворку в системну директорію плагінів. |
 | `install_codex_skill.sh` | Встановіть NEAT-навичку для командного рядка Codex (для зручності розробників). |
-| `fix_devkit_runtime.sh` | Виправляє шляхи та бібліотеки середовища виконання свіжовстановленого набору інструментів розробника та перезапускає сопроцесори. Запускає лише M4, коли працює `simaai-appcomplex.service`. |
 | `sync_neatdecoder.sh` / `use_neatdecoder.sh` | Перемикання між вбудованою та зовнішньою версіями декодера. |
 
 ### `core/scripts/ci/`, `core/scripts/dev/`, `core/scripts/release/`

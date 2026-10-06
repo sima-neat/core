@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL="${SIMAPCIE_YOLOV8_MODEL:-}"
-QUEUES="${SIMAPCIE_STRESS_QUEUES:-0 1 2 3}"
+QUEUES="${SIMAPCIE_STRESS_QUEUES:-0 1 2 3 4 5}"
 ITERATIONS="${SIMAPCIE_STRESS_ITERATIONS:-1000}"
 LOG_DIR="${SIMAPCIE_STRESS_LOG_DIR:-${TMPDIR:-/tmp}/sima-pcie-host-parallel-queues-$$}"
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "HostPcieTensorPayload.h"
+#include "HostPcieOutputLayout.h"
 #include "PcieModelFactsReader.h"
 #include "RuntimeModelAccess.h"
 #include "simaai/neat/pcie/Model.h"
@@ -27,7 +28,7 @@ public:
   HostPcieChannel& operator=(const HostPcieChannel&) = delete;
 
   void configure(const PcieModelFacts& facts, int queue, int card_id, int max_inflight,
-                 bool expects_bbox_output);
+                 bool expects_bbox_output, std::size_t output_buffer_bytes = 0);
   void request_stop();
   void stop();
   bool is_running() const;
@@ -41,7 +42,8 @@ public:
   static std::string caps_for_tensors(const TensorList& tensors);
   static std::size_t required_transport_buffer_size(std::size_t packed_input_bytes,
                                                     std::size_t packed_output_bytes,
-                                                    std::size_t submitted_payload_bytes);
+                                                    std::size_t submitted_payload_bytes,
+                                                    std::size_t output_buffer_bytes = 0);
   static void validate_output_payload_size(std::size_t received_bytes, std::size_t expected_bytes);
   static void attach_request_id(GstBuffer* buffer, std::int32_t request_id);
   static std::optional<std::int32_t> request_id_from_buffer(GstBuffer* buffer);
@@ -82,12 +84,14 @@ private:
   std::atomic<std::int32_t> next_request_id_{0};
 
   PcieModelFacts facts_;
+  std::optional<HostPcieOutputLayout> output_layout_;
   int pcie_queue_ = 0;
   int card_id_ = 0;
   int max_inflight_ = 0;
   bool expects_bbox_output_ = false;
   bool configured_ = false;
   std::size_t transport_buffer_size_ = 0;
+  std::size_t output_buffer_bytes_ = 0;
   std::string caps_;
 };
 

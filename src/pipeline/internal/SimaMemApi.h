@@ -56,10 +56,7 @@ inline SimaMemApi& sima_mem_api() {
   api.cpu_read_begin = reinterpret_cast<SimaMemApi::CpuReadBeginFn>(
       dlsym(RTLD_DEFAULT, "gst_simaai_segment_memory_cpu_read_begin"));
 
-  void* handle = dlopen("libsimaaimem.so", RTLD_LAZY | RTLD_LOCAL);
-  if (!handle) {
-    handle = dlopen("libsimaaimem.so.1", RTLD_LAZY | RTLD_LOCAL);
-  }
+  void* handle = dlopen("libsimaaimem.so.2", RTLD_LAZY | RTLD_LOCAL);
   if (!handle) {
     return api;
   }

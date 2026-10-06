@@ -44,7 +44,7 @@ configures DevKit Sync. If you skip pairing, the SDK workspace is still created
 and you can pair later.
 
 The `release-2.1` package tracks the latest Neat SDK patch release in the 2.1
-series. The current release is Neat SDK 2.1.3.1, which is compatible with
+series. The current release is Neat SDK 2.1.3.0, which is compatible with
 DevKit software 2.1.3.
 
 During setup, `sima-cli` also offers to install the matching Model Compiler

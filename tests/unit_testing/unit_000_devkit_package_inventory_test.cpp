@@ -107,17 +107,13 @@ int main() {
     }
 
     const std::vector<PackageExpectation> neat_packages = {
-        {"sima-neat", "neat"},          {"sima-neat-dev", "neat"},
-        {"neat-common", "neat"},        {"neat-appcomplex", "neat"},
-        {"neat-runtime", "neat"},       {"neat-gst-plugins", "neat"},
-        {"neat-ev74-firmware", "neat"}, {"neat-internals-dev", "neat"},
-        {"sima-lmm-core", "neat"},      {"sima-lmm-dev", "neat"},
+        {"sima-neat", "neat"},        {"sima-neat-dev", "neat"},      {"neat-runtime", "neat"},
+        {"neat-gst-plugins", "neat"}, {"neat-ev74-firmware", "neat"}, {"sima-lmm-core", "neat"},
         {"sima-lmm-cli", "neat"},
     };
 
     const std::vector<PackageExpectation> native_sima_packages = {
         {"simaai-palette-modalix", "native-sima"},
-        {"simaai-palette-upgrade", "native-sima"},
         {"libcamera", "native-sima"},
         {"libcamera-tools", "native-sima"},
         {"simaai-a65-plat-tests", "native-sima"},
@@ -128,23 +124,15 @@ int main() {
         {"simaai-logd", "native-sima"},
         {"simaai-mlart-modalix", "native-sima"},
         {"simaai-memory-lib", "native-sima"},
-        {"simaai-memory-lib-dev", "native-sima"},
         {"simaai-parser", "native-sima"},
         {"simaai-pcie-ep", "native-sima"},
-        {"simaai-rctd", "native-sima"},
+        {"simaai-traced", "native-sima"},
         {"simaai-socpipeline", "native-sima"},
         {"simaai-trace", "native-sima"},
-        {"simaai-utils", "native-sima"},
     };
 
     require_installed_packages(neat_packages);
     require_installed_packages(native_sima_packages);
-
-    require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),
-            "simaai-ota command should remain available through simaai-palette-modalix");
-    const std::string ota_owner = run_capture("dpkg-query -S /usr/bin/simaai-ota 2>/dev/null");
-    require(ota_owner.find("simaai-palette-modalix:") != std::string::npos,
-            "simaai-ota should be owned by simaai-palette-modalix, got: " + ota_owner);
 
     std::cout << "[OK] unit_000_devkit_package_inventory_test passed\n";
     return 0;

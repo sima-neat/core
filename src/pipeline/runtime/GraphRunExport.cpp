@@ -20,6 +20,7 @@
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/internal/Diagnostics.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/runtime/CustomerGraphView.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/ExecutionGraphRuntime.h"
@@ -821,15 +822,16 @@ json graph_topology_to_json(const runtime::RunCore& core) {
       n["stable_id"] = "segment_" + std::to_string(segment.id) + ".n" +
                        std::to_string(static_cast<std::size_t>(id));
       n["backend"] = "pipeline";
+      const std::size_t rendered = runtime::rendered_node_index_for_segment_id(segment, local);
       n["segment"] = segment.id;
-      n["segment_local_index"] = local;
+      n["segment_local_index"] = rendered;
       if (id < plan.node_labels.size()) {
         n["label"] = plan.node_labels[id];
       }
-      if (local < segment.nodes.size() && segment.nodes[local]) {
-        n["kind"] = segment.nodes[local]->kind();
-        n["user_label"] = segment.nodes[local]->user_label();
-        attach_node_identity_blocks(n, segment.nodes[local]);
+      if (rendered < segment.nodes.size() && segment.nodes[rendered]) {
+        n["kind"] = segment.nodes[rendered]->kind();
+        n["user_label"] = segment.nodes[rendered]->user_label();
+        attach_node_identity_blocks(n, segment.nodes[rendered]);
       } else {
         n["kind"] = "PipelineNode";
       }
@@ -1447,6 +1449,15 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
 }
 
 } // namespace
+
+namespace session_test {
+std::string export_graph_topology_for_test(const runtime::ExecutionGraphPlan& plan) {
+  runtime::RunCore core;
+  core.closed.store(true, std::memory_order_release);
+  core.graph_export_plan_ = std::make_unique<runtime::ExecutionGraphPlan>(plan);
+  return graph_topology_to_json(core).dump();
+}
+} // namespace session_test
 
 std::string run_to_json(const Run& run, const RunExportOptions& opt, std::string* err) {
   try {

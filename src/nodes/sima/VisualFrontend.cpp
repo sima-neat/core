@@ -249,59 +249,6 @@ void require_track_klt_envelope(const TrackKLTOptions& opt) {
   require_u32_buffer_bytes(owner, "scratch", scratch);
 }
 
-void require_metoak_depth_envelope(const MetoakDepthOptions& opt) {
-  constexpr const char* owner = "MetoakDepth";
-  require_range(owner, "width", opt.width, 8, 2048);
-  require_range(owner, "height", opt.height, 8, 1536);
-  if (opt.width % 2 != 0 || opt.height % 2 != 0) {
-    throw std::runtime_error("MetoakDepth: width/height must be even (4:2:0 chroma)");
-  }
-  require_range(owner, "debug", opt.debug, 0, 2);
-  require_non_negative(owner, "num_buffers", opt.num_buffers);
-  require_non_empty(owner, "y_name", opt.y_name);
-  require_non_empty(owner, "u_name", opt.u_name);
-  require_non_empty(owner, "v_name", opt.v_name);
-  require_non_empty(owner, "disp_name", opt.disp_name);
-  require_non_empty(owner, "bf_mm_name", opt.bf_mm_name);
-  require_non_empty(owner, "proj_name", opt.proj_name);
-  require_non_empty(owner, "rgb_output_name", opt.rgb_output_name);
-  require_non_empty(owner, "depth_output_name", opt.depth_output_name);
-  require_non_empty(owner, "points_output_name", opt.points_output_name);
-  require_distinct(owner, {opt.y_name, opt.u_name, opt.v_name, opt.disp_name, opt.bf_mm_name,
-                           opt.proj_name, opt.rgb_output_name, opt.depth_output_name,
-                           opt.points_output_name});
-
-  if (opt.y_name != "y_src" || opt.u_name != "u_src" || opt.v_name != "v_src" ||
-      opt.disp_name != "disp_src" || opt.bf_mm_name != "bf_mm_src" || opt.proj_name != "proj_src" ||
-      opt.rgb_output_name != "rgb_dst" || opt.depth_output_name != "depth_dst" ||
-      opt.points_output_name != "points_dst") {
-    throw std::runtime_error("MetoakDepth: graph 20 requires the canonical tensor names");
-  }
-
-  // Fixed six-input/three-output contract (migration doc section 2); batch is always 1, so
-  // buffer sizes are plain width*height products with no batch multiplier (unlike the
-  // FAST/KLT family above).
-  const auto luma_bytes = checked_mul_u64(owner, "luma_size", static_cast<std::uint64_t>(opt.width),
-                                          static_cast<std::uint64_t>(opt.height));
-  const auto chroma_bytes =
-      checked_mul_u64(owner, "chroma_size", static_cast<std::uint64_t>(opt.width) / 2ULL,
-                      static_cast<std::uint64_t>(opt.height) / 2ULL);
-  require_u32_buffer_bytes(owner, "y_src", luma_bytes);
-  require_u32_buffer_bytes(owner, "u_src", chroma_bytes);
-  require_u32_buffer_bytes(owner, "v_src", chroma_bytes);
-  require_u32_buffer_bytes(owner, "disp_src",
-                           checked_mul_u64(owner, "disp_src_size", luma_bytes, 2ULL));
-  require_u32_buffer_bytes(owner, "bf_mm_src", sizeof(float));
-  require_u32_buffer_bytes(owner, "proj_src", 3ULL * sizeof(float));
-  require_u32_buffer_bytes(owner, "rgb_dst",
-                           checked_mul_u64(owner, "rgb_dst_size", luma_bytes, 3ULL));
-  require_u32_buffer_bytes(owner, "depth_dst",
-                           checked_mul_u64(owner, "depth_dst_size", luma_bytes, 2ULL));
-  require_u32_buffer_bytes(
-      owner, "points_dst",
-      checked_mul_u64(owner, "points_dst_size", luma_bytes, 3ULL * sizeof(float)));
-}
-
 std::string default_element_name(int node_index, const char* suffix) {
   return "n" + std::to_string(node_index) + "_" + suffix;
 }
@@ -353,19 +300,15 @@ sima_ev_tensor_desc build_contract_tensor_desc(const std::vector<int>& shape,
                                                const char* owner) {
   sima_ev_tensor_desc desc{};
   std::string err;
-  // Graph 20 owns unsigned-16 arithmetic despite the legacy EV tag alias. Never
-  // admit UInt16 through the generic cast/conversion helpers based on byte width.
-  const std::string wire_dtype =
-      std::string(owner) == "simor_depth_map" && dtype == "UINT16" ? "INT16" : dtype;
   bool ok = false;
   if (layout.empty()) {
     ok = tensorsemantics::build_generic_dense_tensor_desc(
-        shape, wire_dtype, &desc, &err, "native_visual_tensor_output_missing",
+        shape, dtype, &desc, &err, "native_visual_tensor_output_missing",
         "native_visual_tensor_rank_invalid", "native_visual_tensor_dim_invalid",
         "native_visual_tensor_dtype_invalid", "native_visual_tensor_stride_output_missing");
   } else {
     ok = tensorsemantics::build_dense_tensor_desc(
-        shape, wire_dtype, layout, &desc, &err, "native_visual_tensor_output_missing",
+        shape, dtype, layout, &desc, &err, "native_visual_tensor_output_missing",
         "native_visual_tensor_rank_invalid", "native_visual_tensor_dim_invalid",
         "native_visual_tensor_dtype_invalid", "native_visual_tensor_stride_output_missing");
   }
@@ -419,7 +362,6 @@ RuntimeConfig make_runtime_base(const NativeVisualSpec& spec) {
   runtime.output_shapes = spec.output_shapes;
   runtime.runtime_output_logical_shapes = spec.output_shapes;
   runtime.input_dtype = spec.input_dtypes.front();
-  runtime.runtime_input_dtype_list = spec.input_dtypes;
   runtime.output_dtype = spec.output_dtypes.front();
   runtime.out_dtype = runtime.output_dtype;
   runtime.runtime_output_dtype_list = spec.output_dtypes;
@@ -704,46 +646,6 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
   return spec;
 }
 
-NativeVisualSpec spec_from_options(const MetoakDepthOptions& opt) {
-  require_metoak_depth_envelope(opt);
-  NativeVisualSpec spec;
-  spec.graph_name = "simor_depth_map";
-  spec.graph_id = 20;
-  spec.input_names = {opt.y_name,    opt.u_name,     opt.v_name,
-                      opt.disp_name, opt.bf_mm_name, opt.proj_name};
-  spec.input_shapes = {
-      {opt.height, opt.width},         // y_src
-      {opt.height / 2, opt.width / 2}, // u_src
-      {opt.height / 2, opt.width / 2}, // v_src
-      {opt.height, opt.width},         // disp_src
-      {1},                             // bf_mm_src
-      {3},                             // proj_src
-  };
-  // No batch packing: SIMOR is a fixed batch-1 kernel (migration doc's explicit "keep batch 1"
-  // scope decision), so the public and transport shapes are identical.
-  spec.transport_input_shapes = spec.input_shapes;
-  spec.input_dtypes = {"UINT8", "UINT8", "UINT8", "UINT16", "FP32", "FP32"};
-  // bf_mm_src/proj_src are plain 1-D vectors, not HW-shaped images -- leave their layout empty
-  // (build_contract_tensor_desc() falls back to the generic dense-tensor builder for those).
-  spec.input_layouts = {"HW", "HW", "HW", "HW", "", ""};
-  spec.runtime_output_names = {opt.rgb_output_name, opt.depth_output_name, opt.points_output_name};
-  spec.published_output_names = spec.runtime_output_names;
-  spec.output_shapes = {
-      {opt.height, opt.width, 3}, // rgb_dst
-      {opt.height, opt.width},    // depth_dst
-      {opt.height, opt.width, 3}, // points_dst
-  };
-  spec.transport_output_shapes = spec.output_shapes;
-  spec.output_dtypes = {"UINT8", "UINT16", "FP32"};
-  spec.output_layouts = {"HWC", "HW", "HWC"};
-  spec.logical_output_layouts = spec.output_layouts;
-  // Primary output for output_spec()'s single-boundary description only -- rgb_dst and
-  // points_dst are still always published alongside it (migration doc section 4: "Selecting
-  // depth as the 'primary output' must not hide RGB or XYZ").
-  spec.primary_output_name = opt.depth_output_name;
-  return spec;
-}
-
 RuntimeConfig make_runtime(const FeatureHistogramOptions& opt) {
   auto runtime = make_runtime_base(spec_from_options(opt));
   runtime.width = opt.width;
@@ -801,32 +703,12 @@ RuntimeConfig make_runtime(const TrackKLTOptions& opt) {
   return runtime;
 }
 
-RuntimeConfig make_runtime(const MetoakDepthOptions& opt) {
-  const auto spec = spec_from_options(opt);
-  auto runtime = make_runtime_base(spec);
-  for (std::size_t i = 0; i < runtime.input_tensors.size(); ++i) {
-    runtime.input_tensors[i].storage.nbytes =
-        shape_bytes(spec.input_shapes[i], spec.input_dtypes[i]);
-  }
-  for (std::size_t i = 0; i < runtime.output_tensors.size(); ++i) {
-    runtime.output_tensors[i].storage.nbytes =
-        shape_bytes(spec.output_shapes[i], spec.output_dtypes[i]);
-  }
-  runtime.width = opt.width;
-  runtime.height = opt.height;
-  runtime.debug = opt.debug;
-  // runtime.batch_size stays at CompiledProcessCvuRuntimeConfig's own default (1) -- MetoakDepth
-  // has no batch_size option (fixed batch-1 kernel).
-  return runtime;
-}
-
 } // namespace
 
 FeatureHistogram::FeatureHistogram(FeatureHistogramOptions opt) : opt_(std::move(opt)) {}
 GriderFast::GriderFast(GriderFastOptions opt) : opt_(std::move(opt)) {}
 TrackDescriptor::TrackDescriptor(TrackDescriptorOptions opt) : opt_(std::move(opt)) {}
 TrackKLT::TrackKLT(TrackKLTOptions opt) : opt_(std::move(opt)) {}
-MetoakDepth::MetoakDepth(MetoakDepthOptions opt) : opt_(std::move(opt)) {}
 
 std::string FeatureHistogramOptions::summary() const {
   std::ostringstream ss;
@@ -891,21 +773,6 @@ std::string TrackKLTOptions::summary() const {
   return ss.str();
 }
 
-std::string MetoakDepthOptions::summary() const {
-  std::ostringstream ss;
-  ss << "MetoakDepthOptions(graph=simor_depth_map,graph_id=20,width=" << width
-     << ",height=" << height << ",debug=" << debug << ",num_buffers=" << num_buffers
-     << ",element_name=" << quoted_or_auto(element_name) << ",y=" << quoted_or_auto(y_name)
-     << ",u=" << quoted_or_auto(u_name) << ",v=" << quoted_or_auto(v_name)
-     << ",disp=" << quoted_or_auto(disp_name) << ",bf_mm=" << quoted_or_auto(bf_mm_name)
-     << ",proj=" << quoted_or_auto(proj_name) << ",rgb_output=" << quoted_or_auto(rgb_output_name)
-     << ",depth_output=" << quoted_or_auto(depth_output_name)
-     << ",points_output=" << quoted_or_auto(points_output_name) << ",luma_shape=[" << height << ","
-     << width << "],rgb_shape=[" << height << "," << width << ",3],points_shape=[" << height << ","
-     << width << ",3])";
-  return ss.str();
-}
-
 NodeContractDefinition FeatureHistogram::contract_definition() const {
   const auto spec = spec_from_options(opt_);
   return make_contract_definition(kind(), spec.input_names, spec.published_output_names);
@@ -922,11 +789,6 @@ NodeContractDefinition TrackDescriptor::contract_definition() const {
 }
 
 NodeContractDefinition TrackKLT::contract_definition() const {
-  const auto spec = spec_from_options(opt_);
-  return make_contract_definition(kind(), spec.input_names, spec.published_output_names);
-}
-
-NodeContractDefinition MetoakDepth::contract_definition() const {
   const auto spec = spec_from_options(opt_);
   return make_contract_definition(kind(), spec.input_names, spec.published_output_names);
 }
@@ -959,13 +821,6 @@ bool TrackKLT::compile_node_contract(const ContractCompileInput& input, Compiled
                                   err);
 }
 
-bool MetoakDepth::compile_node_contract(const ContractCompileInput& input,
-                                        CompiledNodeContract* out, std::string* err) const {
-  const std::string name = element_names(input.node_index).front();
-  return compile_runtime_contract(kind(), name, contract_definition(), make_runtime(opt_), out,
-                                  err);
-}
-
 void FeatureHistogram::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {
   if (err)
     err->clear();
@@ -979,10 +834,6 @@ void TrackDescriptor::apply_compiled_contract(const CompiledNodeContract&, std::
     err->clear();
 }
 void TrackKLT::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {
-  if (err)
-    err->clear();
-}
-void MetoakDepth::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {
   if (err)
     err->clear();
 }
@@ -1003,14 +854,6 @@ std::string TrackKLT::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
   return processcvu_backend_fragment(names.front(), opt_.num_buffers);
 }
-std::string MetoakDepth::backend_fragment(int node_index) const {
-  const auto names = element_names(node_index);
-  // Async Graph::build validates an explicit four-buffer processcvu contract
-  // before parsing. Resolve the automatic default here; sync builds can still
-  // apply their normal pool clamp, and explicit overrides remain observable.
-  const int num_buffers = opt_.num_buffers > 0 ? opt_.num_buffers : 4;
-  return processcvu_backend_fragment(names.front(), num_buffers);
-}
 
 std::vector<std::string> FeatureHistogram::element_names(int node_index) const {
   return {opt_.element_name.empty() ? default_element_name(node_index, "feature_histogram")
@@ -1026,10 +869,6 @@ std::vector<std::string> TrackDescriptor::element_names(int node_index) const {
 }
 std::vector<std::string> TrackKLT::element_names(int node_index) const {
   return {opt_.element_name.empty() ? default_element_name(node_index, "track_klt")
-                                    : opt_.element_name};
-}
-std::vector<std::string> MetoakDepth::element_names(int node_index) const {
-  return {opt_.element_name.empty() ? default_element_name(node_index, "metoak_depth")
                                     : opt_.element_name};
 }
 
@@ -1049,14 +888,6 @@ OutputSpec TrackKLT::output_spec(const OutputSpec& input) const {
   const auto spec = spec_from_options(opt_);
   return tensor_output_spec("TRACK_POINTS", spec.output_shapes.front(), "FP32", input, "HW");
 }
-OutputSpec MetoakDepth::output_spec(const OutputSpec& input) const {
-  // depth_dst is spec.output_shapes[1]/output_dtypes[1]/output_layouts[1] -- see
-  // spec_from_options()'s ordering (rgb_dst, depth_dst, points_dst) and primary_output_name
-  // doc comment above.
-  const auto spec = spec_from_options(opt_);
-  return tensor_output_spec("METOAK_DEPTH", spec.output_shapes[1], spec.output_dtypes[1], input,
-                            spec.output_layouts[1]);
-}
 
 } // namespace simaai::neat
 
@@ -1072,8 +903,5 @@ std::shared_ptr<simaai::neat::Node> TrackDescriptor(TrackDescriptorOptions opt) 
 }
 std::shared_ptr<simaai::neat::Node> TrackKLT(TrackKLTOptions opt) {
   return std::make_shared<simaai::neat::TrackKLT>(std::move(opt));
-}
-std::shared_ptr<simaai::neat::Node> MetoakDepth(MetoakDepthOptions opt) {
-  return std::make_shared<simaai::neat::MetoakDepth>(std::move(opt));
 }
 } // namespace simaai::neat::nodes

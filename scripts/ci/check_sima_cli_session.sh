@@ -10,6 +10,7 @@ if [[ -z "${sima_cli_bin}" ]]; then
   exit 1
 fi
 
+sima_cli_bin="$(readlink -f "${sima_cli_bin}")"
 sima_cli_python="$(dirname "${sima_cli_bin}")/python"
 if [[ ! -x "${sima_cli_python}" ]]; then
   echo "::error::Unable to locate the Python interpreter used by sima-cli: ${sima_cli_python}" >&2

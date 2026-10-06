@@ -4,12 +4,17 @@
 #endif
 
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace simaai::neat {
+namespace internal {
+struct ModelFragmentPlanSource;
+}
 
 struct CompiledRuntimeContract {
   std::string plugin_kind;
@@ -21,6 +26,16 @@ struct CompiledRuntimeContract {
   std::vector<pipeline_internal::sima::StageOutputRoute> output_order;
   std::vector<pipeline_internal::sima::QuantStaticSpec> output_quant;
   std::vector<std::string> required_preprocess_meta_fields;
+  std::uint64_t frame_arena_size_bytes = 0;
+  pipeline_internal::sima::FrameArenaRole frame_arena_role =
+      pipeline_internal::sima::FrameArenaRole::None;
+  pipeline_internal::sima::static_contract::ArenaStorageDomain frame_arena_storage_domain =
+      pipeline_internal::sima::static_contract::ArenaStorageDomain::Unknown;
+  pipeline_internal::sima::static_contract::ArenaAllocationProvenance frame_arena_provenance =
+      pipeline_internal::sima::static_contract::ArenaAllocationProvenance::Unknown;
+  std::uint32_t frame_arena_required_device_access = 0U;
+  pipeline_internal::sima::static_contract::ArenaEscapePolicy frame_arena_escape_policy =
+      pipeline_internal::sima::static_contract::ArenaEscapePolicy::InternalOnly;
   // Mirrors MlaStaticContract::consumer_keeps_distinct_physical_inputs. True
   // when the stage's compiled binary expects N>1 distinct physical input
   // segments (native multi-IFM dispatch). Used downstream to gate
@@ -39,9 +54,15 @@ struct CompiledExposedView {
 };
 
 struct CompiledProcessCvuContract {
+  // Immutable model/command provenance for contextual fragment compilation.
+  // Runtime payloads never consult this build-time source.
+  std::shared_ptr<const internal::ModelFragmentPlanSource> model_execution_source;
+  std::vector<pipeline_internal::sima::static_contract::PhysicalCommandId> physical_command_ids;
   pipeline_internal::sima::ProcessCvuStagePayload payload;
   CompiledRuntimeContract runtime_contract;
   CompiledExposedView exposed_view;
+  std::optional<pipeline_internal::sima::static_contract::PhysicalCommandRole>
+      physical_command_role;
   bool preproc_single_output_handoff = false;
 };
 
@@ -69,6 +90,9 @@ struct CompiledTransportContract {
       pipeline_internal::sima::StagePayloadKind::None;
   std::optional<pipeline_internal::sima::ProcessCvuStagePayload> processcvu_payload;
   bool model_managed_stage = false;
+  // A65's self-contained property is the serialized form of this same typed
+  // contract; apply it to the per-build element before its READY transition.
+  std::string direct_contract_b64;
 };
 
 } // namespace simaai::neat

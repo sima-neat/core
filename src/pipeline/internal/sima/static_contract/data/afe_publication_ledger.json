@@ -1,0 +1,40 @@
+{
+  "schema": "sima.neat.afe-publication-ledger",
+  "version": 1,
+  "contracts": [
+    {
+      "model": "depth-anything-v3-small-exact-public4d",
+      "mpk_json_sha256": "d9b0719dbadd0bd2e60b12be9dddee32792bd06e8565768fa8503da72ebdbb71",
+      "ordered_outputs": [
+        "MLA_4_0/predicted_depth",
+        "MLA_4_1/confidence",
+        "MLA_9/extrinsics",
+        "MLA_17/intrinsics"
+      ]
+    },
+    {
+      "model": "rf-detr-xlarge-raw700-unified-topk-full2d-fix7",
+      "mpk_json_sha256": "b87e77f463f4f8bb355942efc12485b791af73fec36b543a6809167facb25fd5",
+      "ordered_outputs": [
+        "MLA_171_0/pred_boxes",
+        "MLA_171_1/pred_logits"
+      ]
+    },
+    {
+      "model": "rf-detr-xlarge-raw700-unified-topk-full2d-fix8-officialdog",
+      "mpk_json_sha256": "92fdb73e0acbdac85585d977a0675c1a23031679a248eea376242b03cf70158f",
+      "ordered_outputs": [
+        "MLA_171_0/pred_boxes",
+        "MLA_171_1/pred_logits"
+      ]
+    },
+    {
+      "model": "rf-detr-xlarge-raw700-unified-topk-full2d-fix9-allbf16-r9",
+      "mpk_json_sha256": "8d80eb5a21a1c32b3bd9ef39dcaf4cc3f966a6fa44a316bc1ed563a06308a585",
+      "ordered_outputs": [
+        "MLA_171_0/pred_boxes",
+        "MLA_171_1/pred_logits"
+      ]
+    }
+  ]
+}

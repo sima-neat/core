@@ -3,6 +3,8 @@
 #include "nodes/groups/HttpMjpegDecodedInput.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
@@ -10,6 +12,7 @@
 #include "test_utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -587,6 +590,14 @@ Graph make_source_graph(const TestCase& test_case, const std::string& url, int s
 void require_tensor_contract(const TestCase& test_case, const Tensor& tensor) {
   require(!tensor.shape.empty(), test_case.name + ": decoded tensor shape is empty");
   require(tensor.storage != nullptr, test_case.name + ": decoded tensor missing storage");
+  require(tensor.is_nv12(), test_case.name + ": expected NV12 output");
+  const int width = tensor.width();
+  const int height = tensor.height();
+  require(width > 0 && height > 0, test_case.name + ": invalid visible dimensions");
+  const std::size_t visible_bytes =
+      static_cast<std::size_t>(width) * height + 2U * ((width + 1U) / 2U) * ((height + 1U) / 2U);
+  require(tensor.contiguous().copy_payload_bytes().size() == visible_bytes,
+          test_case.name + ": decoded payload does not cover the visible NV12 image");
 }
 
 void require_sample_contract(const TestCase& test_case, const Sample& sample,
@@ -652,9 +663,15 @@ std::vector<std::string> run_source(const TestCase& test_case, const std::string
   Run run = graph.build(make_run_options(output_memory));
 
   int pulled = 0;
+  int64_t previous_pts = -1;
   while (pulled < frames) {
     Sample sample = pull_or_throw(run, "source", timeout_ms, test_case.name + ": source pull");
     require_sample_contract(test_case, sample, source_fps);
+    if (simaai::neat::sample_payload_type(sample) == PayloadType::Image) {
+      require(sample.pts_ns >= 0 && sample.pts_ns > previous_pts,
+              test_case.name + ": decoded PTS is missing or not increasing");
+      previous_pts = sample.pts_ns;
+    }
     signatures.push_back(sample_contract_signature(test_case, sample));
     ++pulled;
   }
@@ -679,17 +696,6 @@ void run_decoded_source_sync(const TestCase& test_case, const std::string& url, 
   graph.run();
   require(callbacks == frames, test_case.name + ": sync callback count mismatch");
   std::cout << "[OK] " << test_case.name << "-sync frames=" << callbacks << "\n";
-}
-
-int skip_missing_env(const TestCase& test_case) {
-  std::cout << "[SKIP] set " << test_case.singular_env << " or " << test_case.plural_env
-            << " to run " << test_case.name << "\n";
-  return 77;
-}
-
-int skip_missing_fps_env(const TestCase& test_case) {
-  std::cout << "[SKIP] set " << test_case.fps_env << " to run " << test_case.name << "\n";
-  return 77;
 }
 
 std::vector<std::string> run_one_iteration(const TestCase& test_case, const std::string& url,
@@ -717,29 +723,58 @@ void run_test_case(const TestCase& test_case, const std::string& url, int source
   }
 }
 
+bool is_rtsp_connection_failure(const std::string& code, std::string diagnostic) {
+  std::transform(diagnostic.begin(), diagnostic.end(), diagnostic.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  for (const auto* setup_error :
+       {"element not found", "factory is missing", "missing plugin", "missing-plugin", "no element",
+        "no such element", "could not link", "syntax error", "invalid property"}) {
+    if (diagnostic.find(setup_error) != std::string::npos) {
+      return false;
+    }
+  }
+  if (!code.empty()) {
+    return code == simaai::neat::error_codes::kRtspConnectionFailed;
+  }
+  return diagnostic.find("failed to connect") != std::string::npos ||
+         diagnostic.find("connection refused") != std::string::npos ||
+         diagnostic.find("could not connect to the rtsp source") != std::string::npos ||
+         diagnostic.find("could not open resource for reading and writing") != std::string::npos;
+}
+
 void run_bad_url_diagnostics(const Args& args) {
   const std::string url = "rtsp://127.0.0.1:1/simaneat-missing";
   TestCase test_case = test_case_for(CaseKind::RtspMjpegEncodedBoundary);
   test_case.name = "bad-url-diagnostics";
 
+  std::optional<PullStatus> status;
+  PullError error;
+  std::string runtime_exception;
+  std::string runtime_error_code;
   try {
     Graph graph = make_source_graph(test_case, url, 1);
     Run run = graph.build(make_run_options(OutputMemory::ZeroCopy));
     Sample sample;
-    PullError error;
-    const PullStatus status = run.pull("source", args.timeout_ms, sample, &error);
+    status = run.pull("source", args.timeout_ms, sample, &error);
     run.close();
-    require(status != PullStatus::Ok, "bad URL unexpectedly produced a sample");
-    if (status == PullStatus::Error) {
-      require(!error.message.empty(), "bad URL error should include a diagnostic message");
-    }
-    std::cout << "[OK] bad-url-diagnostics status=" << static_cast<int>(status) << "\n";
+  } catch (const simaai::neat::NeatError& e) {
+    runtime_exception = e.what();
+    runtime_error_code = e.report().error_code;
   } catch (const std::exception& e) {
-    require(std::string(e.what()).find("bad-url") == std::string::npos,
-            "bad URL failure should come from runtime, not test setup");
-    std::cout << "[OK] bad-url-diagnostics exception=" << redact_configured_stream_urls(e.what())
-              << "\n";
+    runtime_exception = e.what();
   }
+
+  // Assertions stay outside the runtime catch so their failures cannot pass the test.
+  if (status) {
+    require(*status != PullStatus::Ok, "bad URL unexpectedly produced a sample");
+  }
+  const std::string diagnostic = runtime_exception.empty() ? error.message : runtime_exception;
+  require(!diagnostic.empty(), "bad URL must report an actionable runtime diagnostic");
+  const auto& code = runtime_exception.empty() ? error.code : runtime_error_code;
+  require(is_rtsp_connection_failure(code, diagnostic),
+          "bad URL failure must identify a connection failure, not setup failure: " + diagnostic);
+  std::cout << "[OK] bad-url-diagnostics diagnostic=" << redact_configured_stream_urls(diagnostic)
+            << "\n";
 }
 
 } // namespace
@@ -758,11 +793,12 @@ int main(int argc, char** argv) {
       }
       const std::string url = first_url_from_env(test_case);
       if (url.empty()) {
-        return skip_missing_env(test_case);
+        throw std::runtime_error(test_case.name + ": selected case requires " +
+                                 test_case.singular_env + " or " + test_case.plural_env);
       }
       const int source_fps = source_fps_for_url(test_case, url);
       if (test_case.requires_source_fps && source_fps <= 0) {
-        return skip_missing_fps_env(test_case);
+        throw std::runtime_error(test_case.name + ": selected case requires source FPS");
       }
       run_test_case(test_case, url, source_fps, args);
       return 0;

@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+namespace simaai::neat {
+struct CompiledProcessCvuContract;
+}
+
 namespace simaai::neat::internal {
 
 enum class PostRouteStageKind;
@@ -47,6 +51,10 @@ public:
   virtual ~ModelLineageProvider() = default;
   virtual const ModelLineageBinding* model_lineage_binding() const = 0;
 };
+
+const CompiledProcessCvuContract* node_model_processcvu_contract(const std::shared_ptr<Node>& node);
+
+const ModelLineageBinding* node_model_lineage_binding(const std::shared_ptr<Node>& node);
 
 RequestedPostRouteKind requested_post_route_from_stage_kind(PostRouteStageKind kind);
 PostRouteStageKind requested_post_route_to_stage_kind(RequestedPostRouteKind kind);

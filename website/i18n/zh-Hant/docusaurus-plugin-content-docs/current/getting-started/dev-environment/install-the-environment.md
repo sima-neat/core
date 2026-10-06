@@ -33,7 +33,7 @@ sima-cli neat install sdk@release-2.1
 
 若選擇與 DevKit 配對，請在提示時輸入 DevKit IP 位址。設定流程會設定 SDK 工作區、啟動 SDK 容器並設定 DevKit Sync。若略過配對，系統仍會建立 SDK 工作區，之後也可以再進行配對。
 
-`release-2.1` 套件會追蹤 2.1 系列最新的 Neat SDK 修補程式版本。目前版本為 Neat SDK 2.1.3.1，與 DevKit 軟體 2.1.3 相容。
+`release-2.1` 套件會追蹤 2.1 系列最新的 Neat SDK 修補程式版本。目前版本為 Neat SDK 2.1.3.0，與 DevKit 軟體 2.1.3 相容。
 
 設定期間，`sima-cli` 也會詢問是否要在 SDK 中安裝相容的 Model Compiler。若您會自行編譯或量化模型，請接受提示；不需要另外選擇版本。若只執行預先編譯的模型套件，則可略過。若要稍後安裝、固定特定修補版本或使用獨立主機，請參閱[安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)及[相容性指南](/getting-started/compatibility/)。
 

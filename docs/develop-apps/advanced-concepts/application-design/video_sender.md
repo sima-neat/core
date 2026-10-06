@@ -1,6 +1,6 @@
 ---
 title: Send Video
-description: VideoSender H.264 and H.265 RTP/UDP wire formats
+description: VideoSender raw encoding and H.264, H.265 and MJPEG RTP/UDP output
 sidebar_position: 2
 slug: /develop-apps/advanced-concepts/video_sender
 ---
@@ -9,10 +9,16 @@ slug: /develop-apps/advanced-concepts/video_sender
 
 Use `VideoSender` when a Graph should send video to an external receiver. `VideoSender` returns a reusable `Graph` fragment, so add it with `Graph::add(...)`.
 
-`VideoSender` sends H.264 or H.265 over RTP/UDP. Raw input is encoded as H.264;
-encoded H.264 and H.265 input is forwarded without re-encoding. H.264 uses RTP
-payload type 96 by default, while H.265 uses 98. The default UDP port rule is
-`video_port_base + channel`, with `video_port_base = 9000`.
+`VideoSender` sends H.264, H.265 or MJPEG over RTP/UDP. `FromRaw` encodes raw frames using `SimaEncodeOptions.type`, which defaults to H.264. `Passthrough` sends already encoded frames without re-encoding. The default UDP port is `video_port_base + channel`, with `video_port_base = 9000`.
+
+| Codec | Raw encoder type | Encoded passthrough type | Default RTP payload type |
+| --- | --- | --- | ---: |
+| H.264 | `SimaEncodeType::H264` | `RtspCodec::H264` | 96 |
+| H.265 | `SimaEncodeType::H265` | `RtspCodec::H265` | 98 |
+| MJPEG | `SimaEncodeType::MJPEG` | `RtspCodec::MJPEG` | 26 |
+
+Insight's RTP/WebRTC viewer supports H.264 and H.265. MJPEG output requires a compatible RTP/JPEG receiver; it is not supported by that viewer.
+
 If the receiver runs behind container port remapping, pass the mapped host and a matching `video_port_base` from the app.
 
 ## Raw Frames
@@ -21,18 +27,18 @@ Use the raw path when the pipeline input to `VideoSender` is raw video frames.
 Neat selects the safe encoder ingress automatically:
 
 ```text
-NV12 with a proven compatible boundary:
-H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
+NV12 in a compatible DMA-BUF:
+SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 
-Other or unknown raw formats:
-VideoConvert -> H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
+CPU input or raw frames requiring conversion:
+Convert/upload into encoder DMA-BUF -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 ```
 
-The automatic selection does not add an application option or change the
-`H264RtpUdpFromRaw(...)` API. Proven NV12 in system or SiMaAI memory can feed
-the H.264 encoder directly when the installed encoder advertises
-`input-layout-aware=true`. RGB, BGR, grayscale, I420, unknown memory/layouts,
-and inputs without a reliable format contract retain one conversion to NV12.
+The codec selects the encoder, parser and RTP payloader together. The deprecated `H264RtpUdpFromRaw(...)` factory remains available and preserves its H.264 defaults. Compatible NV12 DMA-BUF input retains its backing
+allocation. CPU-backed NV12 requires an upload; RGB, BGR, grayscale and I420
+require conversion. Neat performs that work at the encoder-input boundary,
+writing into the final DMA surface rather than staging a second copy inside
+the encoder. Applications do not need to select a memory backend.
 
 ### Raw frame geometry and layout
 
@@ -42,8 +48,10 @@ must be positive and even; the active codec, profile, level, and hardware define
 the remaining minimum and maximum limits. For example, `680x382`, `672x384`,
 and `642x480` are valid shapes when the installed encoder accepts them.
 
+RTP/JPEG has stricter limits: MJPEG raw sending requires dimensions divisible by eight and within 8..2040 per axis. Encoded JPEG passthrough requires baseline JPEG with standard Huffman tables and dimensions representable by RTP/JPEG. Standalone encoding and RTP transport have separate size limits.
+
 Hardware storage alignment is separate from visible geometry. Neat preserves
-the requested dimensions in caps and allocates or stages into encoder surfaces
+the requested dimensions in caps and produces encoder surfaces
 with the pitch and storage height required by the hardware. A raw buffer with a
 custom physical layout must carry `GstVideoMeta` with authoritative plane
 offsets and strides. Without that metadata, the negotiated GStreamer layout is
@@ -55,12 +63,15 @@ instead of being partially copied.
 simaai::neat::Graph graph;
 const int channel = 0;
 
-auto opt = simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(
-    width, height, fps);
+simaai::neat::SimaEncodeOptions encode;
+encode.type = simaai::neat::SimaEncodeType::H265;
+encode.fps = 30;
+encode.bitrate_kbps = 2500;
+encode.gop_length = 30;
+auto opt = simaai::neat::nodes::groups::VideoSenderOptions::FromRaw(encode);
 opt.host = "127.0.0.1";
 opt.channel = channel;
 opt.video_port_base = 9000;
-opt.encoder.bitrate_kbps = 2500;
 
 graph.add(simaai::neat::nodes::groups::VideoSender(opt));
 ```
@@ -70,21 +81,29 @@ Python:
 ```python
 channel = 0
 
-opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(
-    width=1920,
-    height=1080,
-    fps=30,
-)
+encode = pyneat.SimaEncodeOptions()
+encode.type = pyneat.SimaEncodeType.H265
+encode.fps = 30
+encode.bitrate_kbps = 2500
+encode.gop_length = 30
+opt = pyneat.VideoSenderOptions.from_raw(encode)
 opt.host = "127.0.0.1"
 opt.channel = channel
 opt.video_port_base = 9000
-opt.encoder.bitrate_kbps = 2500
 
 graph = pyneat.Graph()
 graph.add(pyneat.groups.video_sender(opt))
 ```
 
-## Encoded H.264 or H.265
+Raw sending detects resolution from the input frames and preserves it without resizing.
+Start a new run to send raw frames at a different resolution.
+The legacy `H264RtpUdpFromRaw(width, height, fps)` factory retains its fixed input dimensions.
+
+For MJPEG, select `SimaEncodeType::MJPEG` in C++ or `pyneat.SimaEncodeType.MJPEG` in Python and set `quality` from 1 to 100. Leave bitrate, rate control, profile, level, GOP and IDR settings unset. `FromRaw` copies the supplied options, so configure them before calling the factory.
+
+The existing `opt.encoder` bitrate/profile/level overrides remain effective for raw H.264/H.265 senders. `sync=true` schedules sends against timestamps; the default `false` sends without that clock wait. `async=true` allows UDP sink startup to wait for its first buffer; the default is `false`. Python exposes this option as `async_`.
+
+## Encoded frames
 
 For encoded input, pass the stream codec to the passthrough factory. Neat
 parses, packetizes, and sends the stream without re-encoding.
@@ -93,8 +112,11 @@ parses, packetizes, and sends the stream without re-encoding.
 | --- | --- | --- | ---: |
 | H.264 | `Passthrough(RtspCodec::H264)` | `passthrough(pyneat.RtspCodec.H264)` | 96 |
 | H.265 | `Passthrough(RtspCodec::H265)` | `passthrough(pyneat.RtspCodec.H265)` | 98 |
+| MJPEG | `Passthrough(RtspCodec::MJPEG)` | `passthrough(pyneat.RtspCodec.MJPEG)` | 26 |
 
-MJPEG passthrough is rejected: the sender has no RTP/JPEG packetizer.
+Passthrough creates no encoder. The caller's codec selection must match the encoded input; encoder settings do not apply.
+
+When an RTSP source feeds both this sender and a `SimaDecode`, the default `async=false` lets Core render the sender behind a GStreamer `tee` in the source pipeline, so the source, sender, and decoder start, stop, and fail together. Set `async=true` (`async_` in Python) to keep them in separate pipelines.
 
 H.265 example:
 

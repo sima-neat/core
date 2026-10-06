@@ -49,6 +49,9 @@ struct UdpOutputGroupGOptions {
  * configuration string and explicit encoder geometry, then mux/packetize and send
  * to the configured UDP endpoint.
  *
+ * @deprecated Build an explicit graph with VideoSender and MetadataSender as needed.
+ * This legacy group requires the render and sample-demux plugins.
+ *
  * @param opt Render, encoder, and UDP-sink configuration.
  * @return The configured `Graph` ready to be `add()`ed to a Graph.
  *

@@ -8,6 +8,7 @@
 #include "nodes/io/Input.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/internal/SampleUtil.h"
 #include "pipeline/TensorCore.h"
 
 #include <algorithm>
@@ -127,7 +128,7 @@ bool sample_has_zero_copy_tensor(const Sample& sample) {
 
 void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,
                                        std::size_t seg_id) {
-  if (!sample_has_zero_copy_tensor(sample))
+  if (!sample_has_zero_copy_tensor(sample) || pipeline_internal::sample_has_dmabuf_memory(sample))
     return;
   const int cap = zero_copy_backpressure_cap();
   if (cap <= 0 || qsize < static_cast<std::size_t>(cap))

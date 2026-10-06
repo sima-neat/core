@@ -4,7 +4,6 @@
 #include "gst/GstLatestByStreamMux.h"
 #include "gst/GstNeatMultipartJpegDemux.h"
 #include "gst/NeatCameraMemoryBridge.h"
-#include "gst/NeatV4L2CopySource.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -1204,7 +1203,9 @@ void validate_neat_startup_contract(const std::string& plugin_dir) {
   // Contract: Graph runtime must resolve and instantiate NEAT factories.
   // Legacy SIMAAI factories may still be discoverable in the process.
   const char* required[] = {
-      "neatprocesscvu", "neatprocessmla", "neatboxdecode", "neatdequant", "neatdetess",
+      "neatprocesscvu",
+      "neatprocessmla",
+      "neatobjectdecode",
   };
   for (const char* factory : required) {
     validate_neat_factory_loaded(factory, plugin_dir.c_str());
@@ -1412,11 +1413,6 @@ void gst_init_once() {
     if (!register_neat_camera_memory_bridge()) {
       throw std::runtime_error("Failed to register Neat private camera memory bridge");
     }
-#if defined(__linux__)
-    if (!register_neat_v4l2_copy_source()) {
-      throw std::runtime_error("Failed to register Neat private V4L2 copy source");
-    }
-#endif
     if (!register_neat_multipart_jpeg_demux()) {
       throw std::runtime_error("Failed to register Neat private multipart JPEG demuxer");
     }
