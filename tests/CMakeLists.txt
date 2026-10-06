@@ -1877,7 +1877,7 @@ add_pipeline_test(
   model_seeded_input_capacity_test
   e2e_testing/model_seeded_input_capacity_test.cpp
   ARGS ${CMAKE_SOURCE_DIR} mat
-  LOCK_DISPATCHER
+  LOCK_ACCELERATOR
 )
 set_tests_properties(model_seeded_input_capacity_test PROPERTIES
   LABELS "strict;e2e;model;preproc;regression"
@@ -1889,7 +1889,7 @@ foreach(mode tensor sample defaults unseeded oversize_width oversize_height)
   simaneat_append_ctest_env(${test_name})
   set_tests_properties(${test_name} PROPERTIES
     LABELS "strict;e2e;model;preproc;regression"
-    RESOURCE_LOCK "dispatcher"
+    RESOURCE_LOCK "accelerator-device"
     TIMEOUT 180)
 endforeach()
 
