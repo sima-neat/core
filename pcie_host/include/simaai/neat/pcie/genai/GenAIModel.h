@@ -18,7 +18,7 @@ struct ConnectionOptions {
   int card_id = 0;
   /// Optional address override; when empty, card N uses 10.0.N.2.
   std::string card_host;
-  std::string user = "root";
+  std::string user = "sima";
   std::string ssh_key;
   std::string media_serve_root = "data";
   std::filesystem::path media_directory = "/srv/simaai/data";
@@ -127,6 +127,7 @@ public:
   std::string model_id() const;
   GenerationResult run(const GenerationRequest& request);
   GenerationStream stream(const GenerationRequest& request);
+  /// Stop the worker; pending streams fail even if remote cleanup throws.
   void close();
 
 private:

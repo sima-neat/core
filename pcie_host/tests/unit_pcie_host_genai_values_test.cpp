@@ -15,6 +15,7 @@
 namespace g = simaai::neat::pcie::genai;
 namespace wire = simaai::neat::pcie::genai::wire;
 namespace pcie = simaai::neat::pcie;
+extern "C" void test_genai_auto_reply(bool);
 
 namespace simaai::neat::pcie::genai::internal {
 // Test the production aggregation without exposing it in an installed header.
@@ -73,6 +74,7 @@ int main(int argc, char** argv) {
       pause();
   }
   try {
+    require(g::ConnectionOptions{}.user == "sima", "Default SSH user matches PCIe provisioning");
     const std::string session(24, 'a');
     require(wire::tag(session, true).size() < 32, "Platform tag limit");
     const auto e = wire::envelope(session, UINT64_MAX, "sample");
@@ -191,6 +193,38 @@ int main(int argc, char** argv) {
         config["lm_cfg"]["speculative_decoding_cfg"] = {{"is_draft", *draft}};
       std::ofstream(path / "devkit/vlm_config.json") << config.dump();
     };
+    write_model(model_path, std::nullopt);
+    {
+      // Exercise the real model/stream lifecycle using only local substitutes.
+      SearchPath search(directory.path);
+      std::ofstream(fake_ssh) << "#!/bin/sh\ncase \"$*\" in *nohup*) exit 0;; *) exit 1;; esac\n";
+      test_genai_auto_reply(true);
+      g::ConnectionOptions connection;
+      connection.media_directory = directory.path;
+      connection.startup_timeout_ms = 2000;
+      g::GenAIModel model(model_path.string(), connection);
+      g::GenerationRequest request;
+      request.prompt = "hello";
+      const auto started = std::chrono::steady_clock::now();
+      for (int i = 0; i < 2; ++i)
+        require(model.run(request).text == "answer", "Sequential request results");
+      require(std::chrono::steady_clock::now() - started < std::chrono::milliseconds(400),
+              "A new request must not wait for the previous retry interval");
+      unsigned char pixel[] = {1, 2, 3};
+      pcie::Tensor image;
+      image.data = pixel;
+      image.size_bytes = sizeof(pixel);
+      image.dtype = pcie::TensorDType::UInt8;
+      image.shape = {1, 1, 3};
+      request.images = {image};
+      request.prompt = "blocked";
+      auto stream = model.stream(request);
+      rejects([&] { model.close(); }); // The fake SSH launch succeeds; shutdown fails.
+      rejects([&] { stream.next(); }); // Must wake despite the shutdown error.
+      require(!std::filesystem::is_empty(directory.path / "neat-genai"),
+              "Unconfirmed remote shutdown retains staged media");
+      test_genai_auto_reply(false);
+    }
     const auto pair_root = directory.path / "speculative pair";
     write_model(pair_root / "target model", false);
     write_model(pair_root / "draft model", true);
@@ -342,6 +376,25 @@ int main(int argc, char** argv) {
               "Strided RGB staging");
     }
     require(!std::filesystem::exists(staged), "Owned media cleanup");
+    unsigned char dense[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    unsigned char row_padded[] = {1, 2, 3, 4, 5, 6, 99, 99, 7, 8, 9, 10, 11, 12};
+    for (const bool padded : {false, true}) {
+      auto packed = image;
+      packed.data = padded ? row_padded : dense;
+      packed.size_bytes = padded ? sizeof(row_padded) : sizeof(dense);
+      packed.shape = {2, 2, 3};
+      packed.strides_bytes = {padded ? 8 : 6, 3, 1};
+      request.images = {packed};
+      g::internal::MediaStage stage(options, session, 90);
+      const auto encoded = stage.encode(request);
+      std::ifstream input(directory.path / encoded.at("images").at(0).at("name").get<std::string>(),
+                          std::ios::binary);
+      const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+      require(bytes == std::string("P6\n2 2\n255\n") +
+                           std::string(reinterpret_cast<const char*>(dense), sizeof(dense)),
+              "Dense and row-padded RGB staging preserve identical pixels");
+    }
+    request.images = {image};
     request.images[0].image_format = pcie::PixelFormat::BGR;
     rejects([&] {
       g::internal::MediaStage stage(options, session, 3);
@@ -365,6 +418,31 @@ int main(int argc, char** argv) {
               "Chat messages accept in-memory images");
     }
     request.messages.clear();
+    float pcm[] = {1.0f, -0.5f};
+    float strided_pcm[] = {1.0f, 99.0f, -0.5f};
+    std::string dense_wav;
+    for (const bool strided : {false, true}) {
+      pcie::Tensor audio;
+      audio.data = strided ? strided_pcm : pcm;
+      audio.size_bytes = strided ? sizeof(strided_pcm) : sizeof(pcm);
+      audio.dtype = pcie::TensorDType::Float32;
+      audio.shape = {2};
+      audio.strides_bytes = {strided ? 8 : 4};
+      request.audio = audio;
+      g::internal::MediaStage stage(options, session, 91);
+      const auto encoded = stage.encode(request);
+      std::ifstream input(directory.path / encoded.at("audio_file").at("name").get<std::string>(),
+                          std::ios::binary);
+      const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+      require(bytes.size() == 44 + sizeof(pcm) &&
+                  bytes.substr(44) == std::string(reinterpret_cast<const char*>(pcm), sizeof(pcm)),
+              "WAV payload contains only the requested Float32 samples");
+      if (!strided)
+        dense_wav = bytes;
+      else
+        require(bytes == dense_wav, "Dense and strided audio staging produce identical WAV files");
+    }
+    request.audio.reset();
     const auto audio_file = directory.path / "input.wav";
     std::ofstream(audio_file, std::ios::binary) << "audio";
     request.audio_file = audio_file;

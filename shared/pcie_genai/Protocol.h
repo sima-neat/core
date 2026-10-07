@@ -10,6 +10,13 @@ using Json = simaai::neat::genai::Json;
 inline constexpr int version = 2;
 inline constexpr std::size_t event_window = 32;
 inline constexpr std::size_t max_message_bytes = 256 * 1024;
+inline constexpr auto heartbeat_interval = std::chrono::seconds(1);
+inline constexpr auto request_retry_interval = std::chrono::milliseconds(500);
+inline constexpr auto worker_response_timeout = std::chrono::seconds(15);
+inline constexpr auto worker_lease_timeout = std::chrono::seconds(30);
+inline constexpr auto event_ack_timeout = std::chrono::seconds(30);
+inline constexpr auto event_resend_interval = std::chrono::milliseconds(200);
+inline constexpr int receive_poll_timeout_ms = 100;
 inline std::string relative_name(const std::string& name) {
   std::filesystem::path p(name);
   if (name.empty() || p.is_absolute() || name.find('\0') != std::string::npos ||

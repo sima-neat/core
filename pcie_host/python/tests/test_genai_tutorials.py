@@ -28,6 +28,7 @@ def run_tutorial(monkeypatch):
         def __init__(self, path, connection):
             assert path == "host-model"
             assert connection.card_id == 1
+            assert connection.user == "sima"
             assert connection.startup_timeout_ms > 0
             assert connection.request_timeout_ms > 0
 

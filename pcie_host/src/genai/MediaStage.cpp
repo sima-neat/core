@@ -91,14 +91,23 @@ Json MediaStage::tensor(const Tensor& t, bool audio, uint32_t rate) {
     le(out, 32, 2);
     out.write("data", 4);
     le(out, bytes, 4);
-    for (int64_t i = 0; i < t.shape[0]; ++i)
-      out.write(data + i * strides[0], 4);
+    if (strides[0] == item) {
+      out.write(data, bytes);
+    } else {
+      for (int64_t i = 0; i < t.shape[0]; ++i)
+        out.write(data + i * strides[0], 4);
+    }
   } else {
     out << "P6\n" << t.shape[1] << ' ' << t.shape[0] << "\n255\n";
-    for (int64_t y = 0; y < t.shape[0]; ++y)
-      for (int64_t x = 0; x < t.shape[1]; ++x)
-        for (int64_t c = 0; c < 3; ++c)
-          out.put(data[y * strides[0] + x * strides[1] + c * strides[2]]);
+    for (int64_t y = 0; y < t.shape[0]; ++y) {
+      if (strides[2] == 1 && strides[1] == 3) {
+        out.write(data + y * strides[0], t.shape[1] * 3);
+      } else {
+        for (int64_t x = 0; x < t.shape[1]; ++x)
+          for (int64_t c = 0; c < 3; ++c)
+            out.put(data[y * strides[0] + x * strides[1] + c * strides[2]]);
+      }
+    }
   }
   out.close();
   return descriptor(path);

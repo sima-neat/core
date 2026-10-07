@@ -323,6 +323,9 @@ if (SIMAPCIE_BUILD_TESTS)
   target_link_libraries(fake_genai_service PRIVATE Threads::Threads)
   set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
+  target_link_libraries(unit_pcie_host_genai_values_test PRIVATE fake_genai_service)
+  set_tests_properties(unit_pcie_host_genai_values_test PROPERTIES TIMEOUT 20
+    ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
   add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
   target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)

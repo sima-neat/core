@@ -9,6 +9,9 @@ def test_connection_address_override():
   connection = genai.ConnectionOptions()
   assert connection.card_id == 0
   assert connection.card_host == ""
+  assert connection.user == "sima"
+  connection.user = "root"
+  assert connection.user == "root"
   connection.card_id = 1
   assert connection.card_host == ""
   connection.card_host = "192.168.1.42"

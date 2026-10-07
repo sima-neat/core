@@ -1,5 +1,6 @@
 // Local-only daemon substitute. Never opens a PCIe device or connects to SSH.
 #include <simaai_svc.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -9,6 +10,7 @@
 #include <mutex>
 #include <poll.h>
 #include <string>
+#include <string_view>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
@@ -24,6 +26,11 @@ std::vector<simaai_svc*> clients;
 std::filesystem::path receive_root;
 std::atomic<int> copies{0}, put_error{0};
 std::atomic<bool> block_put{false};
+std::atomic<bool> auto_reply{false};
+int deliver(simaai_svc* client, std::string message) {
+  client->messages.push_back(std::move(message));
+  return send(client->sockets[1], "x", 1, MSG_NOSIGNAL) == 1 ? 0 : -ECONNRESET;
+}
 bool disconnected(simaai_svc* client, int timeout) {
   pollfd fd{client->sockets[0], POLLIN, 0};
   return poll(&fd, 1, timeout) > 0 && (fd.revents & (POLLHUP | POLLERR));
@@ -41,6 +48,9 @@ void test_genai_put_error(int error) {
 }
 void test_genai_block_put(bool block) {
   block_put = block;
+}
+void test_genai_auto_reply(bool enabled) {
+  auto_reply = enabled;
 }
 int simaai_svc_open_card(uint32_t, simaai_svc** out) {
   auto* client = new simaai_svc;
@@ -77,10 +87,27 @@ int simaai_svc_notify(simaai_svc* sender, const simaai_svc_note* note, unsigned 
   std::lock_guard lock(mutex);
   for (auto* client : clients) {
     if (client->tag == note->tag) {
-      client->messages.emplace_back(static_cast<const char*>(note->payload), note->payload_len);
-      if (send(client->sockets[1], "x", 1, MSG_NOSIGNAL) != 1)
+      if (deliver(client, std::string(static_cast<const char*>(note->payload), note->payload_len)))
         return -ECONNRESET;
     }
+  }
+  if (auto_reply && std::string_view(note->tag).ends_with(".c")) {
+    auto reply = nlohmann::json::parse(
+        std::string_view(static_cast<const char*>(note->payload), note->payload_len));
+    if (reply.at("kind") == "hello") {
+      reply["capabilities"] = {{"text", true}, {"image", true}, {"audio", false}};
+    } else if (reply.at("kind") == "generate" && reply.at("body").at("prompt") != "blocked") {
+      reply["kind"] = "sample";
+      reply["sequence"] = uint64_t{1};
+      reply["body"] = {{"text", "answer"}, {"reasoning", ""},
+                       {"final", true},    {"finish_reason", "stop"},
+                       {"language", ""},   {"tool_calls", nlohmann::json::array()},
+                       {"tokens", 1},      {"ttft", 0.0},
+                       {"tps", 0.0}};
+    } else {
+      return 0;
+    }
+    return deliver(sender, reply.dump());
   }
   return 0;
 }

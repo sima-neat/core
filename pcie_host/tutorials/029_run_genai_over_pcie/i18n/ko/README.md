@@ -117,7 +117,7 @@ python share/sima-pcie-host/tutorials/029_run_genai_over_pcie/run_whisper.py \
   --model models/whisper-small-a16w8 --audio speech.wav
 ```
 
-C++ 소스 빌드에는 PCIe 개발 패키지와 OpenCV 개발 파일이 필요합니다. 모든 예제는 기본적으로 카드 0과 연결의 기본 SSH 사용자 root를 사용합니다. 설치 환경이 다르면 `--card N`, `--user sima`, `--ssh-key PATH`, `--card-host ADDRESS`를 추가하세요. 설정된 SSH 계정을 사용하세요. 예제는 접근 권한을 설정하지 않습니다.
+C++ 소스 빌드에는 PCIe 개발 패키지와 OpenCV 개발 파일이 필요합니다. 모든 예제는 기본적으로 카드 0과 연결의 기본 SSH 사용자 sima를 사용합니다. 설치 환경이 다르면 `--card N`, `--user USER`, `--ssh-key PATH`, `--card-host ADDRESS`를 추가하세요. 설정된 SSH 계정을 사용하세요. 예제는 접근 권한을 설정하지 않습니다.
 
 LLM 답변, 장면 설명, 또는 녹음된 음성에 맞는 전사문이 출력됩니다. 표현은 모델과 입력에 따라 달라지며, 실행 성공만으로 품질을 확인할 수는 없습니다.
 

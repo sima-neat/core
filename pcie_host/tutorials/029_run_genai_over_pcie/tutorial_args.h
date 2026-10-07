@@ -35,7 +35,7 @@ inline Args parse_args(int argc, char** argv, const std::string& task) {
       std::cout << "Usage: " << argv[0] << " --model HOST_DIRECTORY";
       if (task != "llm")
         std::cout << ' ' << media_option << " HOST_FILE";
-      std::cout << " [--card 0] [--card-host IP] [--user root] [--ssh-key FILE]";
+      std::cout << " [--card 0] [--card-host IP] [--user sima] [--ssh-key FILE]";
       if (task == "whisper")
         std::cout << " [--language auto] [--translate]";
       else

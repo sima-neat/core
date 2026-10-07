@@ -12,7 +12,7 @@ def main():
     parser.add_argument("--audio", required=True, help="audio file on the host")
     parser.add_argument("--card", type=int, default=0)
     parser.add_argument("--card-host", default="")
-    parser.add_argument("--user", default="root")
+    parser.add_argument("--user", default="sima")
     parser.add_argument("--ssh-key", default="")
     parser.add_argument("--language", default="auto")
     parser.add_argument("--translate", action="store_true", help="translate speech into English")

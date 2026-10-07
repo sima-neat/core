@@ -117,7 +117,7 @@ python share/sima-pcie-host/tutorials/029_run_genai_over_pcie/run_whisper.py \
   --model models/whisper-small-a16w8 --audio speech.wav
 ```
 
-從原始碼建置 C++ 需要 PCIe 開發套件與 OpenCV 開發檔案。所有範例預設使用卡 0 與連線的預設 SSH 使用者 root。若安裝環境不同，請加入 `--card N`、`--user sima`、`--ssh-key PATH` 或 `--card-host ADDRESS`。請使用已設定的 SSH 帳號；範例不會設定存取權限。
+從原始碼建置 C++ 需要 PCIe 開發套件與 OpenCV 開發檔案。所有範例預設使用卡 0 與連線的預設 SSH 使用者 sima。若安裝環境不同，請加入 `--card N`、`--user USER`、`--ssh-key PATH` 或 `--card-host ADDRESS`。請使用已設定的 SSH 帳號；範例不會設定存取權限。
 
 您應該看到 LLM 回答、場景描述，或與錄音內容相符的轉錄文字。用詞取決於模型與輸入；僅成功執行並不代表已完成品質檢查。
 

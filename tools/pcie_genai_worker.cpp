@@ -98,7 +98,8 @@ int main(int argc, char** argv) {
     std::string startup_error;
     std::shared_ptr<local::GenerationStream> stream;
     std::atomic<bool> stop{false}, cancel{false};
-    uint64_t active = 0, next_sequence = 0;
+    // Non-atomic request state and retained events are protected by mutex.
+    uint64_t active_request_id = 0, next_event_sequence = 0;
     bool completed = true;
 
     std::thread executor([&] {
@@ -134,20 +135,20 @@ int main(int argc, char** argv) {
               break;
             job = std::move(*command);
             command.reset();
-            id = active;
+            id = active_request_id;
           }
           auto emit = [&](wire::Json event) {
             std::unique_lock lock(mutex);
-            if (!changed.wait_for(lock, std::chrono::seconds(30), [&] {
+            if (!changed.wait_for(lock, wire::event_ack_timeout, [&] {
                   return stop || cancel || events.size() < wire::event_window;
                 }))
               throw std::runtime_error("Host did not acknowledge GenAI events");
             if (stop || cancel)
               return;
-            event["sequence"] = next_sequence + 1;
+            event["sequence"] = next_event_sequence + 1;
             if (event.dump().size() > wire::max_message_bytes)
               throw std::length_error("Generated event too large");
-            ++next_sequence;
+            ++next_event_sequence;
             events.push_back(std::move(event));
           };
           std::optional<wire::Json> terminal;
@@ -188,7 +189,7 @@ int main(int argc, char** argv) {
               terminal = wire::envelope(session, id, "error");
               (*terminal)["message"] = "Generation ended without a terminal result";
             }
-            (*terminal)["sequence"] = ++next_sequence;
+            (*terminal)["sequence"] = ++next_event_sequence;
             events.push_back(std::move(*terminal));
           }
         }
@@ -197,10 +198,21 @@ int main(int argc, char** argv) {
         startup_error = e.what();
       }
     });
+    auto shutdown = [&] {
+      {
+        std::lock_guard lock(mutex);
+        stop = true;
+        cancel = true;
+        if (stream)
+          stream->cancel();
+      }
+      changed.notify_all();
+      executor.join();
+    };
     auto lease = Clock::now(), resend = Clock::now();
     try {
-      while (!interrupted && Clock::now() - lease < std::chrono::seconds(30)) {
-        auto payload = control.receive(100);
+      while (!interrupted && Clock::now() - lease < wire::worker_lease_timeout) {
+        auto payload = control.receive(wire::receive_poll_timeout_ms);
         if (payload) {
           auto j = wire::parse(*payload, session);
           const auto kind = j.at("kind").get<std::string>();
@@ -217,31 +229,31 @@ int main(int argc, char** argv) {
           } else if (kind == "generate") {
             // A new request can carry the previous terminal acknowledgement.
             // This prevents a lost final ACK from making a ready model busy.
-            if (completed && j.value("previous_request", uint64_t{0}) == active &&
-                j.value("previous_sequence", uint64_t{0}) == next_sequence)
+            if (completed && j.value("previous_request", uint64_t{0}) == active_request_id &&
+                j.value("previous_sequence", uint64_t{0}) == next_event_sequence)
               events.clear();
-            if (id == active) {
+            if (id == active_request_id) {
               resend = Clock::time_point{};
-            } else if (id <= active || !completed || !events.empty()) {
+            } else if (id <= active_request_id || !completed || !events.empty()) {
               auto busy = wire::envelope(session, id, "rejected");
               busy["message"] = "Model busy or stale request";
               control.send(wire::tag(session, true), busy.dump());
             } else if (capabilities && startup_error.empty()) {
-              active = id;
-              next_sequence = 0;
+              active_request_id = id;
+              next_event_sequence = 0;
               completed = false;
               cancel = false;
               command = j;
               changed.notify_all();
             }
-          } else if (kind == "ack" && id == active) {
+          } else if (kind == "ack" && id == active_request_id) {
             const uint64_t seq = j.at("sequence");
-            if (seq > next_sequence)
+            if (seq > next_event_sequence)
               throw std::runtime_error("Invalid event acknowledgement");
             while (!events.empty() && events.front().at("sequence").get<uint64_t>() <= seq)
               events.pop_front();
             changed.notify_all();
-          } else if (kind == "cancel" && id == active) {
+          } else if (kind == "cancel" && id == active_request_id) {
             cancel = true;
             if (stream)
               stream->cancel();
@@ -250,7 +262,7 @@ int main(int argc, char** argv) {
             break;
           }
         }
-        if (Clock::now() - resend >= std::chrono::milliseconds(200)) {
+        if (Clock::now() - resend >= wire::event_resend_interval) {
           std::lock_guard lock(mutex);
           for (const auto& event : events)
             control.send(wire::tag(session, true), event.dump());
@@ -258,26 +270,10 @@ int main(int argc, char** argv) {
         }
       }
     } catch (...) {
-      {
-        std::lock_guard lock(mutex);
-        stop = true;
-        cancel = true;
-        if (stream)
-          stream->cancel();
-      }
-      changed.notify_all();
-      executor.join();
+      shutdown();
       throw;
     }
-    {
-      std::lock_guard lock(mutex);
-      stop = true;
-      cancel = true;
-      if (stream)
-        stream->cancel();
-    }
-    changed.notify_all();
-    executor.join();
+    shutdown();
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "neat-pcie-genai-worker: " << e.what() << '\n';

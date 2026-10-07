@@ -107,11 +107,11 @@ struct GenAIModel::Impl {
     auto sent = Clock::time_point{};
     while (Clock::now() < until) {
       assets.check();
-      if (Clock::now() - sent >= std::chrono::seconds(1)) {
+      if (Clock::now() - sent >= wire::heartbeat_interval) {
         send(wire::envelope(remote.id(), 0, "hello"));
         sent = Clock::now();
       }
-      if (auto payload = service.receive(100)) {
+      if (auto payload = service.receive(wire::receive_poll_timeout_ms)) {
         auto j = wire::parse(*payload, remote.id());
         if (j.at("kind") != "hello")
           continue;
@@ -144,14 +144,18 @@ struct GenAIModel::Impl {
     stop = true;
     if (receiver.joinable())
       receiver.join();
+    {
+      std::lock_guard lock(mutex);
+      if (active)
+        active->fail(std::make_exception_ptr(std::runtime_error("GenAI model closed")));
+      active.reset();
+      pending.reset();
+    }
     assets.close();
     remote.stop();
     std::lock_guard lock(mutex);
-    if (active)
-      active->fail(std::make_exception_ptr(std::runtime_error("GenAI model closed")));
-    active.reset();
+    // Keep staged media until remote shutdown is confirmed, even if stop() throws.
     media.reset();
-    pending.reset();
   }
   std::shared_ptr<internal::StreamState> start(const GenerationRequest& request) {
     std::lock_guard lock(mutex);
@@ -182,11 +186,12 @@ struct GenAIModel::Impl {
   }
   void receive() {
     auto heartbeat = Clock::time_point{}, retry = Clock::time_point{}, last_reply = Clock::now();
+    uint64_t last_sent_request = 0;
     try {
       while (!stop) {
         assets.check();
         const auto now = Clock::now();
-        if (now - heartbeat >= std::chrono::seconds(1)) {
+        if (now - heartbeat >= wire::heartbeat_interval) {
           // hello doubles as a lease renewal with a reply, including during long prefill.
           send(wire::envelope(remote.id(), 0, "hello"));
           heartbeat = now;
@@ -196,18 +201,20 @@ struct GenAIModel::Impl {
           if (active) {
             if (now > deadline)
               throw std::runtime_error("GenAI request timeout");
-            if (now - retry >= std::chrono::milliseconds(500)) {
+            // First submission must not inherit the previous request's retry delay.
+            if (id != last_sent_request || now - retry >= wire::request_retry_interval) {
               if (pending)
                 send(*pending);
               if (active->cancelled)
                 send(wire::envelope(remote.id(), id, "cancel")); // same ID; worker deduplicates
               retry = now;
+              last_sent_request = id;
             }
           }
         }
-        if (now - last_reply > std::chrono::seconds(15))
+        if (now - last_reply > wire::worker_response_timeout)
           throw std::runtime_error("GenAI worker stopped responding");
-        auto payload = service.receive(100);
+        auto payload = service.receive(wire::receive_poll_timeout_ms);
         if (!payload)
           continue;
         auto j = wire::parse(*payload, remote.id());

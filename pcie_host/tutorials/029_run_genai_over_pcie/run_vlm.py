@@ -13,7 +13,7 @@ def main():
     parser.add_argument("--image", required=True, help="image file on the host")
     parser.add_argument("--card", type=int, default=0)
     parser.add_argument("--card-host", default="")
-    parser.add_argument("--user", default="root")
+    parser.add_argument("--user", default="sima")
     parser.add_argument("--ssh-key", default="")
     parser.add_argument("--prompt", default="Describe this image briefly.")
     parser.add_argument("--max-tokens", type=int, default=128)

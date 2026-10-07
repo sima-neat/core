@@ -10,7 +10,7 @@ def main():
     parser.add_argument("--model", required=True, help="prepared model directory on the host")
     parser.add_argument("--card", type=int, default=0)
     parser.add_argument("--card-host", default="")
-    parser.add_argument("--user", default="root")
+    parser.add_argument("--user", default="sima")
     parser.add_argument("--ssh-key", default="")
     parser.add_argument("--prompt", default="Explain PCIe in one sentence.")
     parser.add_argument("--max-tokens", type=int, default=128)
