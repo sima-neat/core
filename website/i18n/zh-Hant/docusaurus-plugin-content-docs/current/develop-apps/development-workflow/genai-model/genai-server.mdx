@@ -187,6 +187,12 @@ curl http://<modalix-ip>:9998/api/chat \
 
 如果推理欄位為空，則會省略該欄位。這些欄位僅用於輸出：傳入的 `reasoning_content` 或 `thinking` 欄位不會作為對話歷史重現。
 
+### 推理程度
+
+對於 GPT-OSS，請將 `reasoning_effort` 設為 `low`（預設）、`medium` 或 `high`；其他值會傳回 HTTP 400。`enable_thinking` 控制是否傳回推理內容。
+
+`reasoning_effort` 也可在 `chat_template_kwargs` 中指定，其值優先於頂層欄位。
+
 ## 語音請求
 
 語音端點接受包含已部署 ASR 模型名稱和音訊檔案的多部分表單資料。`language` 的預設值為 `auto`，而 `stream` 的預設值為 `false`。

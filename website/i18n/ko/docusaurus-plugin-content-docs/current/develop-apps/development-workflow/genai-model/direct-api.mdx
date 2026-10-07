@@ -334,6 +334,8 @@ fragment = neat.genai.graphs.vision_language(model, options, "vlm")
 
 Qwen3 또는 Gemma 4 E2B/E4B와 같은 추론 모델의 경우 `GenerationRequest.enable_thinking`를 설정하여 추론을 활성화하십시오. 완전한 결과는 `GenerationResult.reasoning`에 추론 내용을, 최종 답변은 `GenerationResult.text`에 저장합니다. 스트리밍되는 `TokenSample` 객체도 마찬가지로 `reasoning` 및 `text`를 사용합니다.
 
+GPT-OSS에서는 `GenerationRequest.reasoning_effort`로 `low`(기본값), `medium` 또는 `high`를 선택합니다. 다른 값은 거부됩니다. `enable_thinking`은 추론 내용을 반환할지 제어합니다.
+
 이러한 규칙을 통해 Neat는 모호한 프롬프트를 런타임에 전송하는 대신 명확한 요청 오류와 함께 조기에 실패할 수 있습니다.
 
 ## 다음 단계
