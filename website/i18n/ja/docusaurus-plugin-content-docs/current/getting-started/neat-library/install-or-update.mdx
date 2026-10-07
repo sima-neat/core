@@ -80,7 +80,7 @@ grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 
 <ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
-sima-cli neat install core@release-0.3
+sima-cli neat install core@v0.5.0
 </ShellCommand>
 
 </CodeTab>
@@ -100,7 +100,7 @@ cd /media/nvme && mkdir -p neat && cd neat
 `sima-cli` で選択されたデフォルトの Neat Library パッケージをインストールします。必要に応じて、事前に作成されたチュートリアル、ソースコードのチュートリアル、テストなど、追加のパッケージをインストールすることもできます。
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.2.2
+sima-cli neat install core@v0.5.0
 </ShellCommand>
 
 インストーラーが `sima` を `i2c` グループに追加した場合は、新しいグループメンバーシップを有効にするため、ベンチマークを実行する前に DevKit からログアウトして再接続してください。
