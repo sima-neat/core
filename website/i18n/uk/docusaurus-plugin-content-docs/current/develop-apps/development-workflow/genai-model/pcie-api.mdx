@@ -1,0 +1,80 @@
+---
+title: GenAI API через PCIe
+description: Запускайте моделі LLM, VLM та ASR на Modalix PCIe Card із застосунку на хості
+sidebar_position: 4
+slug: /develop-apps/development-workflow/genai-model/pcie-api
+---
+
+# GenAI API через PCIe
+
+Готові до запуску приклади C++ та Python наведено в [Запуску моделей GenAI через PCIe](/tutorials/run-genai-over-pcie).
+
+Використовуйте `simaai::neat::pcie::genai` у C++ або `pyneatpcie.genai` у Python для запуску моделей LLM, VLM та ASR із хоста на підключеній Modalix PCIe Card.
+
+API використовує той самий підхід до запитів і потокового виводу, що й [прямі GenAI API](/develop-apps/development-workflow/genai-model/direct-api). Файли моделі, вхідні дані й результати передаються через PCIe. На відміну від [співобробки моделей комп’ютерного зору](/develop-apps/development-workflow/pcie-model), GenAI не потребує номера черги для моделей комп’ютерного зору чи виклику `build()`.
+
+## Перед початком
+
+- Виконайте [встановлення PCIe Host](/getting-started/neat-library/pcie-host/), використовуючи відповідні сумісні пакети хоста й карти з підтримкою GenAI.
+- Переконайтеся, що підключену карту налаштовано згідно з інструкціями встановлення.
+- Підготуйте теку моделі LLiMa на хості. Передайте абсолютний шлях або шлях відносно поточної робочої теки застосунку, а не локальний шлях на карті. Поки модель відкрита, зберігайте файли доступними для читання та не змінюйте їх.
+
+## Виконайте текстовий запит
+
+У цьому прикладі передбачається, що `Qwen3-0.6B-Autoround-a16w4` доступна в `./models/` відносно поточної робочої теки застосунку.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <simaai/neat/pcie/genai/GenAIModel.h>
+#include <iostream>
+
+int main() {
+  namespace genai = simaai::neat::pcie::genai;
+  genai::ConnectionOptions connection;
+  connection.card_id = 0;
+
+  genai::GenAIModel model("./models/Qwen3-0.6B-Autoround-a16w4", connection);
+  genai::GenerationRequest request;
+  request.prompt = "Explain PCIe in one sentence.";
+  request.max_new_tokens = 64;
+
+  std::cout << model.run(request).text << '\n';
+  model.close();
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+from pyneatpcie import genai
+
+connection = genai.ConnectionOptions()
+connection.card_id = 0
+
+with genai.GenAIModel("./models/Qwen3-0.6B-Autoround-a16w4", connection) as model:
+    request = genai.GenerationRequest()
+    request.prompt = "Explain PCIe in one sentence."
+    request.max_new_tokens = 64
+    print(model.run(request).text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Конструктор завантажує віддалену модель. `run()` повертає повний результат, а `close()` звільняє ресурси моделі. Контекстний менеджер Python закриває модель при виході, зокрема в разі винятку. Компонування застосунків C++ виконуйте з установленою ціллю CMake `SimaPCIeHost::sima_neat_pcie_host`.
+
+`connection.card_id` вибирає карту та її адресу за замовчуванням: `0` використовує `10.0.0.2`, `1` — `10.0.1.2` тощо. Установлюйте `connection.card_host` лише тоді, коли ваша карта використовує іншу адресу.
+
+Для спекулятивного декодування передайте батьківський каталог підготовленої пари цільової та чернеткової моделей, наприклад `./models/speculative-pair`, що містить `target/` і `draft/`. Скомпільовані конфігурації визначають ролі моделей. Обидві моделі завантажуються в одному сеансі карти; додаткова опція запиту не потрібна. Передбачте пам’ять карти для обох моделей.
+
+## Потоковий вивід, медіа та кілька моделей
+
+- Використовуйте `model.stream(request)` та ітеруйте значення `TokenSample` для потокового виводу. Перед повторним використанням моделі викличте `cancel()` і прочитайте завершальний зразок. На одну модель дозволено лише один активний запит.
+- Для VLM використовуйте `request.images` (тензори PCIe UInt8 HWC RGB; Python також приймає масиви NumPy). Завантажуйте файли зображень у застосунку та перетворюйте їх на RGB перед присвоєнням. Для ASR використовуйте `request.audio_file` або `request.audio` (монофонічні відліки Float32) разом із `request.sample_rate`.
+- Передавайте історію розмови через `request.messages`; окремі запити не успадковують попередню історію.
+- Створюйте окремі дескриптори для незалежних моделей. Робочі процеси GenAI можуть співіснувати з моделями комп’ютерного зору в межах ресурсів карти; пропускна здатність залежить від навантаження.
+
+Спільні концепції запитів, результатів і потокового виводу описано в [прямих GenAI API](/develop-apps/development-workflow/genai-model/direct-api). Використовуйте типи запитів і тензорів PCIe замість локальних типів Core. Цей віддалений API не надає перемикання LoRA, повторного використання кешованих зображень чи композиції графа GenAI.

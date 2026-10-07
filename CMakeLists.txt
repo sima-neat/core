@@ -61,7 +61,6 @@ set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME core)
 option(SIMA_WITH_OPENCV "Enable OpenCV convenience APIs" ON)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
-option(SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER "Build the PCIe pipeline builder helper" ON)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
 option(SIMANEAT_BUILD_DOCS "Configure documentation targets" OFF)
 option(SIMANEAT_DOCS_ONLY_CONFIGURE "Relax runtime dependency checks for docs-only builds" OFF)
@@ -1343,28 +1342,39 @@ install(
 )
 
 # ------------------------------------------------------------------------------
-# Card-side PCIe runtime helper
+# Card-side PCIe runtime helpers
 # ------------------------------------------------------------------------------
-if (SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER)
-  add_executable(pcie-pipeline-builder
-    tools/pcie_pipeline_builder.cpp
+if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS)
+  find_path(SIMANEAT_SVC_INCLUDE_DIR simaai_svc.h PATH_SUFFIXES simaai REQUIRED)
+  add_executable(neat-pcie-genai-worker
+    tools/pcie_genai_worker.cpp
+    shared/pcie_genai/Service.cpp
   )
-  target_link_libraries(pcie-pipeline-builder PRIVATE
-    sima_neat_internal
-    ${GST_LIBRARIES}
-  )
-  target_include_directories(pcie-pipeline-builder PRIVATE
-    ${GST_INCLUDE_DIRS}
-  )
-  target_compile_options(pcie-pipeline-builder PRIVATE
-    ${GST_CFLAGS_OTHER}
-  )
-  add_dependencies(sima_neat_libraries pcie-pipeline-builder)
-  install(TARGETS pcie-pipeline-builder
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    COMPONENT core
-  )
+  target_link_libraries(neat-pcie-genai-worker PRIVATE sima_neat_internal ${CMAKE_DL_LIBS})
+  target_include_directories(neat-pcie-genai-worker PRIVATE
+    ${SIMANEAT_SVC_INCLUDE_DIR} shared/pcie_genai tools)
+  target_compile_definitions(neat-pcie-genai-worker PRIVATE SIMA_WITH_OPENCV=1)
+  add_dependencies(sima_neat_libraries neat-pcie-genai-worker)
+  install(TARGETS neat-pcie-genai-worker RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT core)
 endif()
+add_executable(pcie-pipeline-builder
+  tools/pcie_pipeline_builder.cpp
+)
+target_link_libraries(pcie-pipeline-builder PRIVATE
+  sima_neat_internal
+  ${GST_LIBRARIES}
+)
+target_include_directories(pcie-pipeline-builder PRIVATE
+  ${GST_INCLUDE_DIRS}
+)
+target_compile_options(pcie-pipeline-builder PRIVATE
+  ${GST_CFLAGS_OTHER}
+)
+add_dependencies(sima_neat_libraries pcie-pipeline-builder)
+install(TARGETS pcie-pipeline-builder
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  COMPONENT core
+)
 
 # ------------------------------------------------------------------------------
 # Tutorials

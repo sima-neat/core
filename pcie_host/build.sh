@@ -689,6 +689,22 @@ else
   exit 1
 fi
 
+GENAI_CMAKE_ARGS=()
+if [[ -n "${SIMAPCIE_SVC_INCLUDE_DIR:-}" ]]; then
+  GENAI_CMAKE_ARGS+=("-DSIMAPCIE_SVC_INCLUDE_DIR=${SIMAPCIE_SVC_INCLUDE_DIR}")
+else
+  for header in simaai_svc.h simaai_svc_proto.h; do
+    source_header="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/include/simaai/${header}"
+    if [[ ! -f "${source_header}" ]]; then
+      echo "ERROR: PCIe host artifact lacks GenAI service header: ${source_header}" >&2
+      echo "       Update the Internals PCIe host artifact to a matching GenAI build." >&2
+      exit 1
+    fi
+    mkdir -p "${INCLUDE_STAGE_DIR}/simaai"
+    cp -f "${source_header}" "${INCLUDE_STAGE_DIR}/simaai/${header}"
+  done
+  GENAI_CMAKE_ARGS+=("-DSIMAPCIE_SVC_INCLUDE_DIR=${INCLUDE_STAGE_DIR}/simaai")
+fi
 cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
   -DCMAKE_INSTALL_LIBDIR="lib/${HOST_MULTIARCH}" \
@@ -699,7 +715,8 @@ cmake -S . -B "${BUILD_DIR}" \
   -DSIMAPCIE_BUILD_PYTHON="${BUILD_PYTHON}" \
   -DPython_EXECUTABLE="${PYTHON_EXECUTABLE}" \
   -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
-  -DSIMAPCIE_NEATPCIEHOST_INCLUDE_DIR="${INCLUDE_STAGE_DIR}"
+  -DSIMAPCIE_NEATPCIEHOST_INCLUDE_DIR="${INCLUDE_STAGE_DIR}" \
+  "${GENAI_CMAKE_ARGS[@]}"
 
 cmake --build "${BUILD_DIR}" -j 2
 

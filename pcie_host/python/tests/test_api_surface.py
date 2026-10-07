@@ -6,6 +6,16 @@ import pytest
 import pyneatpcie as pcie
 
 
+def test_genai_surface_without_hardware():
+  from pyneatpcie import genai
+
+  assert genai is pcie.genai
+  assert genai.GenAIModel is not None
+  request = genai.GenerationRequest()
+  request.prompt = "Hello"
+  assert request.prompt == "Hello"
+
+
 def test_options_surface():
   conn = pcie.ConnectionOptions(card_host="10.0.0.2", card_id=0, user="sima", queue=0)
   assert conn.card_host == "10.0.0.2"

@@ -5,18 +5,23 @@ add_test(test_metadata ./test_metadata)
 add_test(test_tensor_run ./test_tensor_run)
 add_test(test_tensor_mla_only_run ./test_tensor_mla_only_run)
 add_test(test_tensor_mla_only_bf16_run
-         sh -c "./test_tensor_mla_only_run --model \"$SIMAPCIE_MLA_ONLY_BF16_MODEL\"")
+  sh -c "./test_tensor_mla_only_run --model \"$SIMAPCIE_MLA_ONLY_BF16_MODEL\"")
 add_test(test_tensor_latency
-         ./test_tensor_perf --mode latency --warmup 100 --iterations 3000
-         --max-mean-latency-ms 15)
+  ./test_tensor_perf --mode latency --warmup 100 --iterations 3000
+  --max-mean-latency-ms 15)
 add_test(test_tensor_throughput
-         ./test_tensor_perf --mode throughput --warmup 100 --iterations 3000
-         --min-throughput-fps 380)
+  ./test_tensor_perf --mode throughput --warmup 100 --iterations 3000
+  --min-throughput-fps 380)
 add_test(test_queue_blocker ./test_queue_blocker --iterations 10)
 add_test(test_tensor_parallel_queues ./test_tensor_parallel_queues.sh)
 add_test(test_image_run ./test_image_run)
 add_test(test_image_boxdecode_run ./test_image_boxdecode_run --require-person)
 add_test(test_model_resilience ./test_model_resilience)
+add_test(test_genai_llm_run ./test_genai_run llm ./genai-assets)
+add_test(test_genai_vlm_run ./test_genai_run vlm ./genai-assets)
+add_test(test_genai_asr_run ./test_genai_run asr ./genai-assets)
+set_tests_properties(test_genai_llm_run test_genai_vlm_run test_genai_asr_run
+                    PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS "genai;hardware")
 
 set_tests_properties(test_metadata PROPERTIES TIMEOUT 60)
 set_tests_properties(test_tensor_run PROPERTIES TIMEOUT 3600)

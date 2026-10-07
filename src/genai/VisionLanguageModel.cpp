@@ -1,5 +1,6 @@
 #include "genai/VisionLanguageModel.h"
 #include "genai/GenAIInternal.h"
+#include <sima_lmm/file_provider.hpp>
 
 #include <sima_lmm/chat.hpp>
 #include <sima_lmm/image_processor.hpp>
@@ -18,7 +19,6 @@
 #include <cstddef>
 #include <cstring>
 #include <exception>
-#include <fstream>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -51,9 +51,11 @@ cv::Mat require_genai_rgb_image_tensor(const Tensor& image) {
   return image.to_cv_mat_copy(ImageSpec::PixelFormat::RGB);
 }
 
-simaai::llima::VlmConfig load_vlm_config(const std::filesystem::path& model_root) {
+simaai::llima::VlmConfig load_vlm_config(const std::filesystem::path& model_root,
+                                         simaai::llima::FileProvider& files) {
   const auto config_path = model_root / "devkit" / "vlm_config.json";
-  std::ifstream in(config_path);
+  auto input = files.open_stream("devkit/vlm_config.json");
+  auto& in = *input;
   if (!in) {
     throw std::runtime_error("Unable to open LLiMa VLM config: " + config_path.string());
   }
@@ -100,9 +102,13 @@ std::string token_content_from_json(const nlohmann::json& token_json, const char
   throw std::runtime_error(std::string("Failed to read ") + token_name + " from tokenizer config");
 }
 
-std::string load_bos_token(const std::filesystem::path& model_root) {
+std::string load_bos_token(const std::filesystem::path& model_root,
+                           simaai::llima::FileProvider& files) {
   const auto config_path = model_root / "devkit" / "tokenizer_config.json";
-  std::ifstream in(config_path);
+  if (!files.exists("devkit/tokenizer_config.json"))
+    return {};
+  auto input = files.open_stream("devkit/tokenizer_config.json");
+  auto& in = *input;
   if (!in) {
     return {};
   }
@@ -134,11 +140,10 @@ std::vector<std::string> tool_names_from_definitions(const Json& tools) {
 }
 
 std::unique_ptr<simaai::llima::ImageProcessor>
-make_image_processor(const simaai::llima::VlmConfig& cfg, const std::filesystem::path& devkit_dir) {
-  const auto p1 = devkit_dir / "preprocessor_config.json";
-  const auto p2 = devkit_dir / "processor_config.json";
-  const auto json_root =
-      nlohmann::json::parse(std::ifstream(std::filesystem::exists(p1) ? p1 : p2));
+make_image_processor(const simaai::llima::VlmConfig& cfg, simaai::llima::FileProvider& files) {
+  const auto json_root = nlohmann::json::parse(*files.open_stream(
+      files.exists("devkit/preprocessor_config.json") ? "devkit/preprocessor_config.json"
+                                                      : "devkit/processor_config.json"));
   const auto& json =
       json_root.contains("image_processor") ? json_root["image_processor"] : json_root;
 
@@ -339,8 +344,9 @@ struct VisionLanguageModel::Impl {
     Impl* owner = nullptr;
   };
 
-  explicit Impl(std::filesystem::path model_dir_in)
-      : info(internal::inspect_model_directory(std::move(model_dir_in))) {
+  explicit Impl(internal::ModelLoadContext context)
+      : info(std::move(context.info)), files(std::move(context.files)),
+        draft_files(std::move(context.draft_files)) {
     if (info.task != GenAITask::VisionLanguage) {
       throw std::runtime_error("GenAI model directory is not a vision-language model: " +
                                info.root.string());
@@ -354,10 +360,10 @@ struct VisionLanguageModel::Impl {
     }
 
     internal::ensure_llima_runtime_connected();
-    cfg = load_vlm_config(info.root);
-    bos_token = load_bos_token(info.root);
-    vlm_helper = std::make_unique<simaai::llima::VlmHelper>(cfg, info.root / "devkit", std::nullopt,
-                                                            std::nullopt);
+    cfg = load_vlm_config(info.root, *files);
+    bos_token = load_bos_token(info.root, *files);
+    vlm_helper =
+        std::make_unique<simaai::llima::VlmHelper>(cfg, *files, std::nullopt, std::nullopt);
     text_streamer = std::make_unique<simaai::llima::TextStreamer>(
         vlm_helper->get_tokenizer(),
         [this](const std::string& metric, double value) { record_metric(metric, value); },
@@ -370,22 +376,22 @@ struct VisionLanguageModel::Impl {
     text_streamer->set_preserved_token_ids(preserved_tool_call_tokens);
     language_model = std::make_unique<simaai::llima::LanguageModel>(
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
-        vlm_helper->get_pad_token_id(), *text_streamer);
+        vlm_helper->get_pad_token_id(), *text_streamer, files);
     if (info.draft_root.has_value()) {
-      draft_cfg = load_vlm_config(*info.draft_root);
-      draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(
-          draft_cfg, *info.draft_root / "devkit", std::nullopt, std::nullopt);
+      draft_cfg = load_vlm_config(*info.draft_root, *draft_files);
+      draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(draft_cfg, *draft_files,
+                                                                    std::nullopt, std::nullopt);
       draft_text_streamer = std::make_unique<simaai::llima::TextStreamer>(
           draft_vlm_helper->get_tokenizer(), std::nullopt, std::nullopt);
       draft_text_streamer->set_performance_summary_enabled(false);
       draft_language_model = std::make_unique<simaai::llima::LanguageModel>(
           *info.draft_root, draft_vlm_helper->get_stop_token_ids(),
           draft_vlm_helper->get_image_token_id(), draft_vlm_helper->get_pad_token_id(),
-          *draft_text_streamer);
+          *draft_text_streamer, draft_files);
     }
     if (info.accepts_image) {
-      image_processor = make_image_processor(cfg, info.root / "devkit");
-      vision_model = std::make_unique<simaai::llima::VisionModel>(info.root);
+      image_processor = make_image_processor(cfg, *files);
+      vision_model = std::make_unique<simaai::llima::VisionModel>(info.root, files);
     }
     configure_run_callbacks();
   }
@@ -689,6 +695,8 @@ struct VisionLanguageModel::Impl {
   }
 
   internal::ModelDirectoryInfo info;
+  std::shared_ptr<simaai::llima::FileProvider> files;
+  std::shared_ptr<simaai::llima::FileProvider> draft_files;
   simaai::llima::VlmConfig cfg;
   std::string bos_token;
   std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;
@@ -714,7 +722,14 @@ struct VisionLanguageModel::Impl {
 };
 
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir)
-    : impl_(std::make_shared<Impl>(std::move(model_dir))) {
+    : VisionLanguageModel(internal::local_model_context(model_dir)) {}
+
+VisionLanguageModel internal::ModelAccess::vision(ModelLoadContext context) {
+  return VisionLanguageModel(std::move(context));
+}
+
+VisionLanguageModel::VisionLanguageModel(internal::ModelLoadContext context)
+    : impl_(std::make_shared<Impl>(std::move(context))) {
   impl_->load();
 }
 

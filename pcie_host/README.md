@@ -17,6 +17,8 @@ reports its compiled output capacity during readiness; the host sizes the PCIe
 buffers automatically before the first input. Returned tensors view the received
 raw buffer at the runtime-provided offsets, without an extra reorder copy.
 
+Direct LLM, VLM and ASR APIs use one Core worker per model.
+
 ## Public API
 
 Public headers install under:
@@ -39,6 +41,17 @@ package; applications compiling against this API use `sima-pcie-host-dev`.
 `pcie::Model` serializes only the restricted PCIe model-options schema before
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
+
+The GenAI C++ API is `simaai/neat/pcie/genai/GenAIModel.h`; Python exposes
+`pyneatpcie.genai`. Pass a host model directory: absolute, or relative to the
+application's current working directory. Model files load as needed over PCIe;
+keep them readable and unchanged while the model is open. Use matching host/card
+GenAI packages. Callers supply explicit conversation history in each request.
+VLM requests accept in-memory RGB images; applications load image files themselves.
+Set `connection.card_id` to select the card; its default address is
+`10.0.<card_id>.2`. Set `connection.card_host` to override that address.
+For speculative decoding, pass the parent directory of a prepared target/draft
+pair. Both models load in one card session using their compiled configuration.
 
 ### Multi-model runtime
 
@@ -352,6 +365,9 @@ model.close();
 
 ## Build
 
+PCIe host builds always include the GenAI APIs. The matching Internals host artifact
+supplies the required platform service headers; the host driver supplies the runtime library.
+
 The host PCIe plugin is consumed as a prebuilt artifact from the internals repo.
 By default `build.sh` uses `../deps/manifest.json`, resolves the `internals`
 dependency with snap semantics, and downloads the matching Vulcan-hosted PCIe
@@ -539,6 +555,40 @@ depends on the GStreamer, OpenCV, and zlib development packages. Customer
 applications do not need the NEAT core or internals source tree;
 `find_package(SimaPCIeHost)` rediscovers the local GStreamer link flags with
 `pkg-config` and the zlib target through CMake.
+
+## GenAI hardware tests
+
+Prepare the same LLM, VLM and Whisper fixtures used by Core's direct API tests
+(already compiled models; no model compilation or package installation):
+
+```bash
+pcie_host/scripts/prepare_pcie_genai_models.sh
+```
+
+The default download directory is `$HOME/workspace/models_genai`. Override
+`SIMAPCIE_GENAI_MODELS_PATH` to use a different cache. Model names use the same
+`SIMA_TEST_LLIMA_TEXT_MODEL`, `SIMA_TEST_LLIMA_VLM_MODEL` and
+`SIMA_TEST_LLIMA_ASR_MODEL` variables as the standalone tests.
+
+With matching host/card packages and no other job using the card:
+
+```bash
+export SIMAPCIE_CARD_HOST=10.0.0.2
+export SIMAPCIE_USER=sima
+# Match the card's configured temporary receive directory:
+export SIMAPCIE_GENAI_RECEIVE_ROOT=/tmp
+ctest --test-dir <extras>/lib/sima-pcie-host/tests -L genai -j1 --output-on-failure
+~/pyneatpcie/bin/python -m pytest -v -s pcie_host/python/tests/test_genai_hardware.py
+```
+
+The extras contain the preparation script and image/audio fixtures. Python tests
+use repository fixtures by default; `SIMAPCIE_GENAI_TEST_ASSETS` can select the
+extras' `genai-assets` directory for both languages. Tests cover generation,
+streaming, capability checks, ASR transcription/translation and in-memory audio,
+reuse and explicit close; LLM tests also cover history and cancellation. Cached
+images are not supported by the PCIe API and are intentionally excluded. Missing
+models fail an enabled hardware run; Python skips card access when
+`SIMAPCIE_CARD_HOST` is unset. Concurrent mixed-model stress is separate.
 
 ## V1 Scope
 

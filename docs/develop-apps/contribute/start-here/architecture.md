@@ -1366,6 +1366,49 @@ The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
 native API. OAAX ownership rules, status codes, and last-error storage belong
 in that adapter instead of the C++ API.
 
+### PCIe GenAI transport contract
+
+Core owns `pcie::genai::GenAIModel`, its Python bindings, the shared
+`shared/pcie_genai` protocol, and one `neat-pcie-genai-worker` process per
+model. The worker invokes the existing local Core GenAI API for LLM, VLM
+and ASR; LLiMa retains only a generic asset-provider seam and local execution.
+The host links neither full Core nor LLiMa.
+
+SSH bootstraps and stops an identity-checked worker. Model assets, media,
+requests and results use the unchanged platform daemon's PCIe file and
+notification services. Each session has unique tags and private asset paths.
+The constructor resolves host model paths against the application's working
+directory. The worker requests individual assets on a separate session channel;
+the host validates model-relative names and uploads each file into the worker's
+private receive directory using the existing daemon service. Host model serving
+roots and staging copies are unnecessary. Asset replies are retried without
+re-uploading consumed files; host waits are bounded and interrupted on shutdown.
+Matching host/card GenAI protocol versions are required. Media still uses the
+host daemon's configured serving root.
+There is no global receive-root lock, registry or shared conversation state.
+Requests carry explicit history and reuse Core's validation and output semantics.
+
+The host reuses Core's model-directory inspection to identify the target and
+optional draft. Scoped file providers prefix each model's asset requests while
+sharing the session's transfer channel. Both models live in one worker and reuse
+local speculative decoding and cancellation.
+
+One request is active per worker. Events carry session/request/sequence IDs,
+are acknowledged, deduplicated and retried within a bounded window. Missing
+events fail explicitly rather than yielding a successful partial answer.
+Lease expiry, request deadlines and explicit close bound session ownership;
+blocking platform calls and model loading are not immediately cancellable.
+Normal cleanup removes only owned files; forced shutdown may leave private
+session files and diagnostic logs.
+
+Portable result types are shared in `GenAIValueTypes.h`; host image/audio
+inputs use PCIe tensors rather than Core tensors. VLM images are supplied in
+memory and staged internally for transfer; image-file loading belongs to the
+application. The platform owns service channel selection. Existing vision queues and their builder lifecycle are
+unchanged. Separate workers allow independent models but do not guarantee a
+particular concurrent model count or mixed-workload throughput. LoRA switching
+is not supported by this remote API.
+
 ---
 
 ## How to extend the library

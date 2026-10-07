@@ -12,6 +12,11 @@
 
 namespace simaai::neat::genai {
 
+namespace internal {
+struct ModelLoadContext;
+struct ModelAccess;
+} // namespace internal
+
 class GenAIModel {
 public:
   explicit GenAIModel(std::filesystem::path model_dir);
@@ -34,6 +39,8 @@ public:
   GenerationStream stream(const GenerationRequest& request);
 
 private:
+  explicit GenAIModel(internal::ModelLoadContext context);
+  friend struct internal::ModelAccess;
   bool supports_thinking() const;
 
   struct Impl;

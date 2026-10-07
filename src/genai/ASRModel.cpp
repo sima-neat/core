@@ -27,8 +27,8 @@ const char* asr_task_name(ASRTask task) {
 } // namespace
 
 struct ASRModel::Impl {
-  explicit Impl(std::filesystem::path model_dir_in)
-      : info(internal::inspect_model_directory(std::move(model_dir_in))) {
+  explicit Impl(internal::ModelLoadContext context)
+      : info(std::move(context.info)), files(std::move(context.files)) {
     if (info.task != GenAITask::ASR) {
       throw std::runtime_error("GenAI model directory is not an ASR model: " + info.root.string());
     }
@@ -41,7 +41,7 @@ struct ASRModel::Impl {
     }
 
     internal::ensure_llima_runtime_connected();
-    whisper_model = std::make_unique<simaai::llima::WhisperModel>(info.root);
+    whisper_model = std::make_unique<simaai::llima::WhisperModel>(info.root, files);
     whisper_model->set_performance_summary_enabled(false);
   }
 
@@ -72,13 +72,21 @@ struct ASRModel::Impl {
   }
 
   internal::ModelDirectoryInfo info;
+  std::shared_ptr<simaai::llima::FileProvider> files;
   std::mutex load_mutex;
   std::mutex run_mutex;
   std::unique_ptr<simaai::llima::WhisperModel> whisper_model;
 };
 
 ASRModel::ASRModel(std::filesystem::path model_dir)
-    : impl_(std::make_shared<Impl>(std::move(model_dir))) {}
+    : ASRModel(internal::local_model_context(model_dir)) {}
+
+ASRModel internal::ModelAccess::asr(ModelLoadContext context) {
+  return ASRModel(std::move(context));
+}
+
+ASRModel::ASRModel(internal::ModelLoadContext context)
+    : impl_(std::make_shared<Impl>(std::move(context))) {}
 
 ASRModel::~ASRModel() = default;
 

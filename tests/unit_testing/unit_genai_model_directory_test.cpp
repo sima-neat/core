@@ -1,4 +1,5 @@
 #include "genai/GenAIInternal.h"
+#include "genai/ScopedFileProvider.h"
 #include "test_main.h"
 
 #include <chrono>
@@ -10,10 +11,53 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
 namespace fs = std::filesystem;
+
+class TrackingProvider : public simaai::llima::FileProvider {
+public:
+  explicit TrackingProvider(const fs::path& root) : root_(root) {}
+  fs::path get_path(std::string_view name) override {
+    names.emplace_back(name);
+    return root_ / name;
+  }
+  fs::path reserve(std::string_view name) override {
+    names.emplace_back(name);
+    return root_ / name;
+  }
+  bool exists(std::string_view name) override {
+    names.emplace_back(name);
+    return fs::is_regular_file(root_ / name);
+  }
+  std::unique_ptr<std::istream> open_stream(std::string_view name) override {
+    names.emplace_back(name);
+    auto stream = std::make_unique<std::ifstream>(root_ / name);
+    if (!*stream)
+      throw std::runtime_error("Missing test model asset");
+    return stream;
+  }
+  void release(std::string_view name) override {
+    released = name;
+  }
+  void fetch(const fs::path& path) override {
+    fetched = path;
+  }
+  void evict(const fs::path& path) override {
+    evicted = path;
+  }
+  bool pulls_files() const override {
+    return true;
+  }
+  std::vector<std::string> names;
+  std::string released;
+  fs::path fetched, evicted;
+
+private:
+  fs::path root_;
+};
 
 class TempDirectory {
 public:
@@ -89,6 +133,10 @@ RUN_TEST(
               "normal package root mismatch");
       require(normal.root == normal.package_root, "normal runtime root mismatch");
       require(!normal.draft_root.has_value(), "normal model unexpectedly has a draft");
+      const auto wrapped_root = temp.path() / "wrapped";
+      (void)write_vlm(wrapped_root / "sima_files");
+      require(internal::inspect_model_directory(wrapped_root).root == wrapped_root / "sima_files",
+              "ordinary packaged models must retain runtime-root normalization");
 
       const auto single_vision_root =
           write_vlm(temp.path() / "single-vision", std::nullopt, "vision");
@@ -131,4 +179,54 @@ RUN_TEST(
       require_throws_contains(
           [&] { (void)internal::inspect_model_directory(duplicate_draft_root); },
           "Multiple draft models");
+
+      auto files = std::make_shared<TrackingProvider>(pair_root);
+      auto target_files = std::make_shared<internal::ScopedFileProvider>(files, "target");
+      auto draft_files = std::make_shared<internal::ScopedFileProvider>(files, "draft");
+      const auto remote = internal::provider_model_context(target_root, target_files, draft_files);
+      require(remote.info.root == target_root && remote.info.draft_root == draft_root &&
+                  remote.info.accepts_text && remote.draft_files == draft_files,
+              "provider-backed pair must retain both models");
+      const auto target_elf = target_files->reserve("elf_files/model.elf");
+      const auto draft_elf = draft_files->reserve("elf_files/model.elf");
+      require(target_elf == target_root / "elf_files/model.elf" &&
+                  draft_elf == draft_root / "elf_files/model.elf",
+              "same ELF names must remain isolated between target and draft");
+      draft_files->fetch(draft_elf);
+      draft_files->evict(draft_elf);
+      draft_files->release("devkit/vlm_config.json");
+      require(files->fetched == draft_elf && files->evicted == draft_elf &&
+                  files->released == "draft/devkit/vlm_config.json" && draft_files->pulls_files(),
+              "scoped providers must preserve deferred fetch/load/evict semantics");
+      for (const auto& name : files->names)
+        require(name.starts_with("target/") || name.starts_with("draft/"),
+                "all requests must retain the model prefix");
+      require_throws_contains([&] { (void)draft_files->get_path("../target/weights.bin"); },
+                              "Unsafe model asset path");
+      require_throws_contains([&] { (void)draft_files->reserve("/tmp/weights.bin"); },
+                              "relative model asset path");
+      require_throws_contains(
+          [&] { (void)internal::provider_model_context(target_root, target_files); },
+          "one target and one draft");
+      require_throws_contains(
+          [&] { (void)internal::provider_model_context(target_root, target_files, target_files); },
+          "is_draft=true");
+      require_throws_contains(
+          [&] { (void)internal::provider_model_context(draft_root, draft_files, target_files); },
+          "one target and one draft");
+      auto normal_files = std::make_shared<TrackingProvider>(normal_root);
+      require(!internal::provider_model_context(normal_root, normal_files).info.draft_root,
+              "ordinary provider-backed model must remain supported");
+      require_throws_contains(
+          [&] { (void)internal::provider_model_context(normal_root, normal_files, draft_files); },
+          "one target and one draft");
+      const auto asr_root = temp.path() / "asr";
+      fs::create_directories(asr_root / "devkit");
+      std::ofstream(asr_root / "devkit/whisper_config.json") << "{}";
+      auto asr_files = std::make_shared<TrackingProvider>(asr_root);
+      require(internal::provider_model_context(asr_root, asr_files).info.accepts_audio,
+              "ASR provider-backed model must remain supported");
+      require_throws_contains(
+          [&] { (void)internal::provider_model_context(asr_root, asr_files, draft_files); },
+          "one target and one draft");
     }));

@@ -10,7 +10,8 @@ The numbered chapters progress through:
 2. asynchronous YOLOv8s image detection and throughput measurement;
 3. ResNet-50 and YOLOv8s running concurrently on two PCIe queues;
 4. host-side quantization with the MLA-only INT8 route;
-5. wrapping application-owned tensor memory and safely reusing a buffer ring.
+5. wrapping application-owned tensor memory and safely reusing a buffer ring;
+6. LLM text generation, VLM image questions, and Whisper transcription over PCIe.
 
 YOLOv8s chapters use a detection-oriented scene. The Labrador image is reserved
 for ResNet-50 classification in the multi-queue chapter.

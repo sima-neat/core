@@ -11,7 +11,8 @@ Neat uses the GenAI APIs for LLM, VLM, and ASR models prepared with LLiMa. This
 is the generative-model counterpart to
 [`Model`](/develop-apps/development-workflow/model): load a deployed model
 directory, create a request, then run it inside your application or serve it
-over HTTP.
+over HTTP. For applications on a host machine connected to a Modalix PCIe Card,
+use the [PCIe GenAI APIs](/develop-apps/development-workflow/genai-model/pcie-api).
 
 Use these APIs when your application asks a model to generate text, answer
 questions about images, call tools, or transcribe audio. Use the classic
@@ -23,7 +24,8 @@ detection, segmentation, or embedding models.
 The GenAI path has the same high-level shape as the rest of Neat:
 
 1. Prepare or download a model artifact for Modalix.
-2. Put the model on the target, commonly under `/media/nvme/llima/models/`.
+2. Put the model on the target, commonly under `/media/nvme/llima/models/`, or
+   keep it on your host machine for PCIe execution.
 3. Load the model from your C++ or Python application.
 4. Send a request directly or expose the model through `GenAIServer`.
 5. Read the complete result or consume streamed output.
@@ -60,6 +62,7 @@ served models.
 
 ## Next steps
 
+- Run models from a host machine with the [PCIe GenAI APIs](/develop-apps/development-workflow/genai-model/pcie-api).
 - Follow [Serve GenAI Models](/tutorials/serve-genai-models) for a complete HTTP server example.
 - Follow [Run an LLM with the Direct API](/tutorials/run-an-llm) for an in-process walkthrough.
 - Prepare and benchmark models with [GenAI with LLiMa](/genai-llima/).
