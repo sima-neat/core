@@ -154,24 +154,30 @@ int main(int argc, char** argv) {
           std::optional<wire::Json> terminal;
           try {
             auto request = request_from_json(job.at("body"), *files, id);
-            if (cancel)
-              throw std::runtime_error("Request cancelled during loading");
-            auto running = std::make_shared<local::GenerationStream>(model.stream(request));
-            {
-              std::lock_guard lock(mutex);
-              stream = running;
-              if (cancel || stop)
-                running->cancel();
-            }
-            while (auto sample = running->next()) {
-              auto event = wire::envelope(session, id, "sample");
-              event["body"] = wire::encode(*sample);
-              if (event.dump().size() > wire::max_message_bytes - 64)
-                throw std::length_error("Generated event too large");
-              if (sample->is_final)
-                terminal = std::move(event);
-              else
-                emit(std::move(event));
+            if (cancel) {
+              local::TokenSample sample;
+              sample.is_final = true;
+              sample.finish_reason = "interrupted";
+              terminal = wire::envelope(session, id, "sample");
+              (*terminal)["body"] = wire::encode(sample);
+            } else {
+              auto running = std::make_shared<local::GenerationStream>(model.stream(request));
+              {
+                std::lock_guard lock(mutex);
+                stream = running;
+                if (cancel || stop)
+                  running->cancel();
+              }
+              while (auto sample = running->next()) {
+                auto event = wire::envelope(session, id, "sample");
+                event["body"] = wire::encode(*sample);
+                if (event.dump().size() > wire::max_message_bytes - 64)
+                  throw std::length_error("Generated event too large");
+                if (sample->is_final)
+                  terminal = std::move(event);
+                else
+                  emit(std::move(event));
+              }
             }
           } catch (const std::exception& e) {
             // Preserve prior sequence numbers: a terminal error must not turn

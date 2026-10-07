@@ -76,6 +76,7 @@ void RemoteSession::start(const std::string& target_directory, const std::string
     throw std::runtime_error("Could not launch GenAI worker: " + result.output);
 }
 std::string RemoteSession::stop_script(const std::string& session_id) {
+  wire::validate_session(session_id);
   // The PCIe close message may make the worker exit between owned() and kill.
   // Only tolerate a failed kill when the session no longer owns that process.
   return "set -eu; d=\"$HOME/.cache/neat-genai/" + session_id +
@@ -87,7 +88,9 @@ std::string RemoteSession::stop_script(const std::string& session_id) {
          Runner::shell_escape(session_id) +
          "; }; if owned; then kill -TERM \"$p\" || { if owned; then exit 1; fi; }; "
          "i=0; while owned && test $i -lt 50; do sleep 0.1; i=$((i+1)); done; "
-         "if owned; then kill -KILL \"$p\" || { if owned; then exit 1; fi; }; fi; fi";
+         "if owned; then kill -KILL \"$p\" || { if owned; then exit 1; fi; }; "
+         "i=0; while owned && test $i -lt 10; do sleep 0.1; i=$((i+1)); done; fi; fi; "
+         "if owned; then exit 1; fi; rm -rf -- \"$d\"";
 }
 void RemoteSession::stop() {
   if (!launched_)

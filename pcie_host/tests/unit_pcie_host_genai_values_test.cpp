@@ -210,6 +210,17 @@ int main(int argc, char** argv) {
         require(model.run(request).text == "answer", "Sequential request results");
       require(std::chrono::steady_clock::now() - started < std::chrono::milliseconds(400),
               "A new request must not wait for the previous retry interval");
+      request.prompt = "blocked";
+      {
+        auto cancelled = model.stream(request);
+        cancelled.cancel();
+        const auto final = cancelled.next();
+        require(final && final->is_final && final->finish_reason == "interrupted",
+                "Early cancellation returns a terminal sample");
+        require(!cancelled.next(), "Cancelled stream drains normally");
+      }
+      request.prompt = "hello";
+      require(model.run(request).text == "answer", "Model remains reusable after cancellation");
       unsigned char pixel[] = {1, 2, 3};
       pcie::Tensor image;
       image.data = pixel;
@@ -333,6 +344,8 @@ int main(int argc, char** argv) {
         session + "; do sleep 0.01; done; ";
     const auto normal_stop = Runner::run({"/bin/sh", "-c", launch + stop_script}, 3);
     require(normal_stop.exit_code == 0 && !normal_stop.timed_out, "Normal worker shutdown");
+    require(!std::filesystem::exists(directory.path / ".cache/neat-genai" / session),
+            "Confirmed shutdown removes the session directory");
     const auto raced_stop =
         Runner::run({"/bin/sh", "-c",
                      launch +
@@ -342,10 +355,14 @@ int main(int argc, char** argv) {
                     3);
     require(raced_stop.exit_code == 0 && !raced_stop.timed_out,
             "Worker exiting between ownership check and kill must be successful");
+    require(!std::filesystem::exists(directory.path / ".cache/neat-genai" / session),
+            "Raced shutdown also removes the session directory");
     const auto denied_stop =
         Runner::run({"/bin/sh", "-c", launch + "kill() { return 1; }; " + stop_script}, 3);
     require(denied_stop.exit_code != 0 && !denied_stop.timed_out,
             "A failed kill of a still-owned worker must not be suppressed");
+    require(std::filesystem::exists(directory.path / ".cache/neat-genai" / session / "pid"),
+            "Unconfirmed shutdown preserves session diagnostics");
     g::ConnectionOptions options;
     options.media_directory = directory.path / "does-not-exist";
     g::GenerationRequest request;

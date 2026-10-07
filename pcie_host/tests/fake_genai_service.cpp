@@ -104,6 +104,14 @@ int simaai_svc_notify(simaai_svc* sender, const simaai_svc_note* note, unsigned 
                        {"language", ""},   {"tool_calls", nlohmann::json::array()},
                        {"tokens", 1},      {"ttft", 0.0},
                        {"tps", 0.0}};
+    } else if (reply.at("kind") == "cancel") {
+      reply["kind"] = "sample";
+      reply["sequence"] = uint64_t{1};
+      reply["body"] = {{"text", ""},     {"reasoning", ""},
+                       {"final", true},  {"finish_reason", "interrupted"},
+                       {"language", ""}, {"tool_calls", nlohmann::json::array()},
+                       {"tokens", 0},    {"ttft", 0.0},
+                       {"tps", 0.0}};
     } else {
       return 0;
     }
