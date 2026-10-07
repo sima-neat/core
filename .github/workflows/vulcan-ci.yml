@@ -1,5 +1,4 @@
 name: Vulcan CI
-
 run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'production' }})
 
 on:
