@@ -64,6 +64,25 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
                {{{"type", "function"},
                  {"function", {{"name", "lookup"}, {"parameters", {{"type", "object"}}}}}}});
            request.tool_choice = "auto";
+           // Existing positional initializers omit the new trailing reasoning effort.
+           GenerationRequest aggregate_request{std::string{"hello"},
+                                               std::nullopt,
+                                               {},
+                                               {},
+                                               false,
+                                               std::nullopt,
+                                               std::nullopt,
+                                               "auto",
+                                               ASRTask::Transcribe,
+                                               32,
+                                               false,
+                                               request.tools,
+                                               request.tool_choice};
+           require(aggregate_request.tools == request.tools &&
+                       aggregate_request.tool_choice == request.tool_choice,
+                   "GenerationRequest should preserve positional tool initialization");
+           require(aggregate_request.reasoning_effort == "low",
+                   "GenerationRequest should default omitted reasoning effort to low");
            message.tool_calls =
                Json::array({{{"id", "call_0"},
                              {"type", "function"},

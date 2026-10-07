@@ -114,11 +114,11 @@ struct GenerationRequest {
   ASRTask asr_task = ASRTask::Transcribe;
   std::uint32_t max_new_tokens = 0;
   bool enable_thinking = false;
+  Json tools = Json::array();
+  Json tool_choice = nullptr;
   /// How much the model reasons: `low`, `medium` or `high`. Independent of
   /// `enable_thinking`, which controls whether reasoning is returned.
   std::string reasoning_effort = "low";
-  Json tools = Json::array();
-  Json tool_choice = nullptr;
 };
 
 struct GenerationResult {
