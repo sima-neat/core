@@ -116,6 +116,9 @@ struct GenerationRequest {
   bool enable_thinking = false;
   Json tools = Json::array();
   Json tool_choice = nullptr;
+  /// How much the model reasons: `low`, `medium` or `high`. Independent of
+  /// `enable_thinking`, which controls whether reasoning is returned.
+  std::string reasoning_effort = "low";
 };
 
 struct GenerationResult {
