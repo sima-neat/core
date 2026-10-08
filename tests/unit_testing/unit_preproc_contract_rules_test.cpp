@@ -359,9 +359,12 @@ RUN_TEST(
                 "PreprocOptions(Model) should expose model-managed output shape");
         require(!opt.output_dtype.empty(),
                 "PreprocOptions(Model) should expose model-managed output dtype");
-        require(!opt.normalize,
-                "PreprocOptions(Model) should derive normalize from the resolved preprocess plan, "
-                "not from legacy graph defaults");
+        require(opt.normalize,
+                "PreprocOptions(Model) should resolve normalize=Auto On from the MPK input_range");
+        require(opt.channel_mean.size() == 3U && opt.channel_mean[0] == 0.0f &&
+                    opt.channel_stddev.size() == 3U && opt.channel_stddev[0] == 1.0f,
+                "PreprocOptions(Model) should take normalize stats from input_range [0, 1]");
+
 #ifdef SIMA_NEAT_INTERNAL
         require(opt.compiled_contract != nullptr,
                 "model must retain its admitted preproc contract");

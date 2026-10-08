@@ -122,7 +122,7 @@ bool derive_unit_pixel_normalization_from_input_range(const std::vector<double>&
   // Therefore pixel=0 maps to -mean/stddev and pixel=255 maps to
   // (1-mean)/stddev.  Solve these two equations to recover the stats.
   const double derived_stddev = 1.0 / (hi - lo);
-  const double derived_mean = -lo * derived_stddev;
+  const double derived_mean = 0.0 - lo * derived_stddev; // avoid -0 when lo == 0
   if (!std::isfinite(derived_mean) || !std::isfinite(derived_stddev) || derived_mean < 0.0 ||
       derived_mean > 1.0 || derived_stddev <= 0.0 || derived_stddev > 1.0) {
     return false;
@@ -528,11 +528,20 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   }
   const auto& contract = *maybe_contract;
   for (const auto& ingress : contract.ingress_tensors) {
-    if (derive_unit_pixel_normalization_from_input_range(ingress.input_range, &out.model_input_mean,
-                                                         &out.model_input_stddev)) {
-      out.has_model_input_normalization = true;
-      break;
+    std::array<float, 3> mean{};
+    std::array<float, 3> stddev{};
+    if (!derive_unit_pixel_normalization_from_input_range(ingress.input_range, &mean, &stddev)) {
+      continue;
     }
+    // input_range [0, 255] maps every pixel onto itself: no normalization needed.
+    const bool identity =
+        std::fabs(mean[0]) < 1e-6f && std::fabs(stddev[0] * 255.0f - 1.0f) < 1e-4f;
+    if (!identity) {
+      out.has_model_input_normalization = true;
+      out.model_input_mean = mean;
+      out.model_input_stddev = stddev;
+    }
+    break;
   }
   const auto* mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
   if (!mla_stage) {
@@ -702,11 +711,6 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     apply_preset(&effective);
   }
 
-  // MPK input_range describes the numeric domain expected at model ingress; it is
-  // metadata, not an instruction to enable CVU preproc normalization.  Keep
-  // normalization user-driven: explicit mean/stddev or a preset may supply
-  // stats, but input_range alone must not flip normalize from Auto to On.
-
   validate_layout_convert_spec(effective.layout_convert);
 
   if (effective.enable == AutoFlag::Off && has_transforms) {
@@ -772,6 +776,26 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     normalize_enabled = false;
     quant_enabled = false;
     tess_enabled = false;
+  }
+
+  // MPK input_range is the numeric domain the MLA expects at ingress, while image
+  // input reaches the CVU preproc as [0, 255] pixels.  When normalize is left at
+  // Auto with no stats or preset, follow the model contract instead of feeding raw
+  // pixels; explicit Off still wins.
+  const bool normalize_left_auto =
+      effective.normalize.enable == AutoFlag::Auto && !normalize_requested_or_preset;
+  const bool image_preproc_route = kind == InputKind::Image && effective.enable != AutoFlag::Off &&
+                                   (enabled || effective.kind == InputKind::Image);
+  if (normalize_left_auto && image_preproc_route && capabilities.has_model_input_normalization) {
+    enabled = true;
+    normalize_enabled = true;
+    effective.normalize.mean = capabilities.model_input_mean;
+    effective.normalize.stddev = capabilities.model_input_stddev;
+    std::ostringstream msg;
+    msg << "preprocess.normalize=Auto resolved On from model input_range (mean="
+        << effective.normalize.mean[0] << ", stddev=" << effective.normalize.stddev[0]
+        << "); set preprocess.normalize.enable=Off to feed raw pixels.";
+    out.resolved_plan.warnings.push_back(msg.str());
   }
 
   if (normalize_enabled) {

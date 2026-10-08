@@ -295,4 +295,58 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
              require(!has_warning(out, "op=normalize"),
                      "planner: should not warn normalize off without model/preset expectation");
            }
+
+           // normalize=Auto follows the model input_range for image input.
+           {
+             PreprocessCapabilities model_caps = all_caps();
+             model_caps.has_model_input_normalization = true;
+             model_caps.model_input_mean = {0.0f, 0.0f, 0.0f};
+             model_caps.model_input_stddev = {1.0f, 1.0f, 1.0f};
+
+             Model::Options opt;
+             opt.preprocess.kind = InputKind::Image;
+             const PreprocessPlannerResult out = plan_preprocess(opt, model_caps);
+             require(out.resolved_plan.enabled,
+                     "planner: model-driven normalize should enable image preprocess");
+             require(out.resolved_plan.effective.normalize.enable == AutoFlag::On,
+                     "planner: normalize=Auto should resolve On from model input_range");
+             require(out.normalize, "planner: planner result should report normalize on");
+             require(out.resolved_plan.effective.normalize.mean[0] == 0.0f &&
+                         out.resolved_plan.effective.normalize.stddev[0] == 1.0f,
+                     "planner: model-driven normalize should use input_range stats");
+             require(has_warning(out, "normalize=Auto resolved On from model input_range"),
+                     "planner: model-driven normalize should be reported");
+
+             Model::Options off_opt = opt;
+             off_opt.preprocess.normalize.enable = AutoFlag::Off;
+             const PreprocessPlannerResult off_out = plan_preprocess(off_opt, model_caps);
+             require(off_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
+                     "planner: explicit normalize Off must win over model input_range");
+
+             Model::Options stats_opt = opt;
+             stats_opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
+             stats_opt.preprocess.normalize.stddev = {0.25f, 0.25f, 0.25f};
+             stats_opt.preprocess.normalize.has_explicit_stats = true;
+             const PreprocessPlannerResult stats_out = plan_preprocess(stats_opt, model_caps);
+             require(stats_out.resolved_plan.effective.normalize.mean[0] == 0.5f &&
+                         stats_out.resolved_plan.effective.normalize.stddev[0] == 0.25f,
+                     "planner: explicit normalize stats must win over model input_range");
+
+             Model::Options default_opt;
+             const PreprocessPlannerResult default_out = plan_preprocess(default_opt, model_caps);
+             require(!default_out.resolved_plan.enabled,
+                     "planner: all-default options must not enable preprocess from input_range");
+
+             Model::Options tensor_opt;
+             tensor_opt.preprocess.kind = InputKind::Tensor;
+             const PreprocessPlannerResult tensor_out = plan_preprocess(tensor_opt, model_caps);
+             require(tensor_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
+                     "planner: tensor input must not pick up model-driven normalize");
+
+             PreprocessCapabilities no_range_caps = model_caps;
+             no_range_caps.has_model_input_normalization = false;
+             const PreprocessPlannerResult no_range_out = plan_preprocess(opt, no_range_caps);
+             require(no_range_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
+                     "planner: models without a normalizing input_range keep normalize Off");
+           }
          }));
