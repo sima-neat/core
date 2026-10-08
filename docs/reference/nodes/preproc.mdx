@@ -142,7 +142,7 @@ These are the user-facing options to prefer in application code.
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | Source format hint: `RGB`, `BGR`, `GRAY8`, `NV12`, `I420`, or `Auto`. |
 | `opt.preprocess.color_convert.output_format` | Model input color space, commonly `RGB`, `BGR`, or `GRAY8`. |
-| `opt.preprocess.normalize.enable` | Enable or disable mean/stddev normalization. `Auto` (default) turns it on for image input when the model's MPK `input_range` expects normalized values (for example `[0, 1]`), deriving mean/stddev from that range. |
+| `opt.preprocess.normalize.enable` | Enable or disable mean/stddev normalization. |
 | `opt.preprocess.normalize.mean` | Per-channel mean. Match the model's training preprocessing. |
 | `opt.preprocess.normalize.stddev` | Per-channel divisor. Use the same normalized channel statistics used during model training, for example ImageNet-style values near `{0.229,0.224,0.225}`. |
 | `opt.preprocess.quantize.enable` | Planner/user control for quantized output when the model expects it. |
