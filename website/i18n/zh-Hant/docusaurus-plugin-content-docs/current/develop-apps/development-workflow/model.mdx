@@ -135,7 +135,7 @@ model = pyneat.Model(model_path, options)
 | `decode_type` | 您需要 Neat 將 BoxDecode 階段附加到物體檢測模型。 | `Unspecified`；沒有物體檢測解碼意圖。 |
 | `decode_type_option` | 物體檢測頭張量排序需要特定的變體。 | `Auto`；讓模型合約和路由規劃器決定。 |
 | `score_threshold` | 您希望在解碼期間捨棄低信度候選者。 | `0`；在後續篩選之前保留候選者。 |
-| `nms_iou_threshold` | 解碼路徑應該應用非最大值抑制。 | `0`；NMS 已停用。 |
+| `nms_iou_threshold` | 解碼路徑應該應用非最大值抑制。 | `0`；YOLO26 會略過 NMS，其他解碼器會抑制所有重疊的方框。 |
 | `top_k` | 您希望對每個輸出設定硬性上限的檢測數量。 | `0`；沒有頂級 K 上限。 |
 | `num_classes` | 無法可靠地推斷出類別頭的深度，例如單一類別的 YOLO 分割頭。 | `0`；使用 MPK 中繼資料或舊版推論。 |
 

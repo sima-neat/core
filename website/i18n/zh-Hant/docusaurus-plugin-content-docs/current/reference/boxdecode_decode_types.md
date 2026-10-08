@@ -40,7 +40,7 @@ opt.top_k = 100;
 | --- | --- |
 | `decode_type` | 模型系列/標頭格式，例如 `BoxDecodeType::YoloV8` 或 `BoxDecodeType::YoloX`。必填。|
 | `detection_threshold` | 為了保留檢測結果，所需的最低分數。請使用適合模型的數值，例如 `0.25`。|
-| `nms_iou_threshold` | 非最大值抑制中使用的 IoU 閾值。|
+| `nms_iou_threshold` | 非最大值抑制中使用的 IoU 閾值。設為 `0` 時，YOLO26 會略過 NMS，其他解碼器會抑制所有重疊的方框；請設定適合模型的值，例如 `0.45`。|
 | `top_k` | 保留的最多檢測數量。`0` 使用後端/模型的預設值。|
 | `original_width`, `original_height` | 使用原始幾何建構函時，用於座標映射的原始影像大小。|
 | `model_width`、`model_height` | 用於覆寫模型輸入大小。在使用 `Model` 建構函式時，這會更改空間解碼參數，而非已封裝的張量合約。|

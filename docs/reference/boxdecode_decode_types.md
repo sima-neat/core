@@ -40,7 +40,7 @@ opt.top_k = 100;
 | --- | --- |
 | `decode_type` | Model family/head format, such as `BoxDecodeType::YoloV8` or `BoxDecodeType::YoloX`. Required. |
 | `detection_threshold` | Minimum score required to keep a detection. Use a model-appropriate value such as `0.25`. |
-| `nms_iou_threshold` | IoU threshold used by non-maximum suppression. |
+| `nms_iou_threshold` | IoU threshold used by non-maximum suppression. At `0`, YOLO26 skips NMS and other decoders suppress every overlapping box; set a model-appropriate value such as `0.45`. |
 | `top_k` | Maximum number of detections to keep. `0` uses the backend/model default. |
 | `original_width`, `original_height` | Source image size for coordinate mapping when using the raw-geometry constructor. |
 | `model_width`, `model_height` | Model input size override. With the `Model` constructor this changes spatial decode knobs, not the packaged tensor contract. |

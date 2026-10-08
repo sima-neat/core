@@ -135,7 +135,7 @@ Set detection decode options when the route should return decoded boxes, pose re
 | `decode_type` | You need Neat to attach a BoxDecode stage for a detection model. | `Unspecified`; no detection decode intent. |
 | `decode_type_option` | The detection head tensor ordering needs a specific variant. | `Auto`; let the model contract and route planner decide. |
 | `score_threshold` | You want to drop low-confidence candidates during decode. | `0`; keep candidates before later filtering. |
-| `nms_iou_threshold` | The decode path should apply non-max suppression. | `0`; NMS is disabled. |
+| `nms_iou_threshold` | The decode path should apply non-max suppression. | `0`; YOLO26 skips NMS, and other decoders suppress every overlapping box. |
 | `top_k` | You want a hard cap on detections per output. | `0`; no top-K cap. |
 | `num_classes` | The class-head depth cannot be inferred reliably, such as a single-class YOLO split head. | `0`; use MPK metadata or legacy inference. |
 
