@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows:
       - Vulcan CI
+      - Vulcan Docs
     types:
       - completed
     branches:
