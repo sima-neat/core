@@ -1615,6 +1615,25 @@ jobs:
           set -euo pipefail
           ./scripts/ci/pciehost/preflight.sh
 
+      - name: Provision PCIe card SSH key
+        shell: bash
+        env:
+          SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./pcie_host/scripts/pcie-setup.sh \
+            --user "${SIMAPCIE_USER}" \
+            --key "${HOME}/.ssh/sima_neat_pcie_ed25519" \
+            --hosts "${SIMAPCIE_CARD_HOST}" \
+            --non-interactive \
+            --strict
+
+      - name: Prepare PCIe card CI prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/prepare_card_prerequisites.sh
+
       - name: Check PCIe card platform compatibility
         id: check_pcie_card_compatibility
         shell: bash
