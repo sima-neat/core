@@ -414,7 +414,7 @@ struct BoxDecodeStagePayload {
   bool model_owned_flags = false;
   bool quant_contract_required = false;
   double detection_threshold = 0.0;
-  double nms_iou_threshold = 0.0;
+  double nms_iou_threshold = -1.0; ///< -1 means not set.
   int topk = 0;
   int num_classes = 0;           ///< Legacy runtime value; SSD uses selected_count.
   std::vector<int> pose_classes; ///< Class indices carrying keypoints; empty means all classes.

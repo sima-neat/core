@@ -3155,7 +3155,7 @@ bool generic_preproc_requested(const PreprocessOptions& p) {
 
 bool postprocess_auto_mode(const Model::Options& options) {
   return options.decode_type == BoxDecodeType::Unspecified && options.score_threshold == 0.0f &&
-         options.nms_iou_threshold == 0.0f && options.top_k == 0;
+         options.nms_iou_threshold == -1.0f && options.top_k == 0;
 }
 
 bool user_requested_boxdecode(const Model::Options& options) {

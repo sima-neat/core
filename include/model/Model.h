@@ -263,8 +263,9 @@ public:
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
     float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
-    float nms_iou_threshold =
-        0.0f;      ///< BoxDecode IoU threshold for non-max suppression; 0 disables NMS.
+    /// BoxDecode IoU threshold for non-max suppression, in [0, 1]; `0` is the strictest.
+    /// `-1` means not set: YOLO26 skips NMS and other decoders use `0`.
+    float nms_iou_threshold = -1.0f;
     int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
     SuperPointOptions
         superpoint; ///< SuperPoint profile/output options when decode_type is SuperPoint.

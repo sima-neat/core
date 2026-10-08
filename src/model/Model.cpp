@@ -109,7 +109,7 @@ void apply_model_superpoint_options(pipeline_internal::sima::BoxDecodeStagePaylo
   if (!payload || payload->decode_type != BoxDecodeType::SuperPoint) {
     return;
   }
-  if (options.nms_iou_threshold != 0.0f) {
+  if (options.nms_iou_threshold != -1.0f) {
     throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
                                 ": nms_iou_threshold is not applicable to SuperPoint; use "
                                 "Model::Options.superpoint.nms_radius");

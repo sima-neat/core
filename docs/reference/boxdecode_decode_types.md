@@ -40,7 +40,7 @@ opt.top_k = 100;
 | --- | --- |
 | `decode_type` | Model family/head format, such as `BoxDecodeType::YoloV8` or `BoxDecodeType::YoloX`. Required. |
 | `detection_threshold` | Minimum score required to keep a detection. Use a model-appropriate value such as `0.25`. |
-| `nms_iou_threshold` | IoU threshold used by non-maximum suppression. |
+| `nms_iou_threshold` | IoU threshold used by non-maximum suppression, in `[0, 1]`; `0` is the strictest. The default `-1` means not set: YOLO26 skips NMS and other decoders use `0`. |
 | `top_k` | Maximum number of detections to keep. `0` uses the backend/model default. |
 | `original_width`, `original_height` | Source image size for coordinate mapping when using the raw-geometry constructor. |
 | `model_width`, `model_height` | Model input size override. With the `Model` constructor this changes spatial decode knobs, not the packaged tensor contract. |
@@ -241,8 +241,8 @@ non-empty or positive value.
 | `original_width` / `original_height` | positive integer | Override source dimensions for coordinate mapping. |
 | `detection_threshold` / `score_threshold` | `0.0` | Preserve packaged threshold. |
 | `detection_threshold` / `score_threshold` | `> 0.0` | Override the score gate. |
-| `nms_iou_threshold` | `0.0` | Preserve packaged NMS IoU. |
-| `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
+| `nms_iou_threshold` | `-1` | Preserve the model's NMS IoU. When none is set, YOLO26 skips NMS and other decoders use `0`. |
+| `nms_iou_threshold` | `[0, 1]` | Override NMS IoU. |
 | `top_k` | `0` | Preserve packaged top-K. |
 | `top_k` | `> 0` | Override the maximum kept detections. |
 

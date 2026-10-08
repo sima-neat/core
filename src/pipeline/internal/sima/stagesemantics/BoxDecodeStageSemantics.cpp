@@ -943,7 +943,7 @@ void finalize_superpoint_decode_controls(SuperPointProfile profile, double nms_i
   if (!detection_threshold || !topk) {
     throw std::invalid_argument(prefix + "missing decode controls");
   }
-  if (nms_iou_threshold != 0.0) {
+  if (nms_iou_threshold != -1.0) {
     throw std::invalid_argument(prefix + "nms_iou_threshold is not applicable; use "
                                          "BoxDecodeOptions.superpoint.nms_radius");
   }
@@ -1278,6 +1278,13 @@ void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
   }
 }
 
+void validate_nms_iou_threshold(double value, const std::string& context) {
+  if (value != -1.0 && !(value >= 0.0 && value <= 1.0)) {
+    throw std::invalid_argument(context + ": nms_iou_threshold must be -1 (not set) or in " +
+                                "[0, 1], got " + std::to_string(value));
+  }
+}
+
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
     const BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
     const std::optional<ModelBoxdecodeSemantics>& model_semantics,
@@ -1314,6 +1321,7 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
     finalized.quant_contract_required = model_semantics->quant_contract_required;
     finalized.model_owned_flags = true;
   }
+  validate_nms_iou_threshold(nms_iou_threshold, "BoxDecode");
   finalized.detection_threshold = detection_threshold;
   finalized.nms_iou_threshold = nms_iou_threshold;
   finalized.topk = topk;

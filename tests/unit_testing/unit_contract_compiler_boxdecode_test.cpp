@@ -1,4 +1,5 @@
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
+#include "pipeline/BoxDecodeOptions.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "test_main.h"
@@ -143,6 +144,31 @@ RUN_TEST(
       }
       require(rejected_mismatched_classes,
               "YOLO26 num_classes must not override a contradictory MPK class-head depth");
+
+      // -1 means "not set" (YOLO26 skips NMS); 0 is the strictest explicit threshold.
+      require(BoxDecodeOptions(BoxDecodeType::YoloV26).nms_iou_threshold == -1.0 &&
+                  BoxDecodeStaticContract{}.nms_iou_threshold == -1.0,
+              "nms_iou_threshold must default to -1 (not set)");
+      for (const double nms : {-1.0, 0.0, 0.6, 1.0}) {
+        const auto finalized = finalize_boxdecode_static_contract(
+            contract, BoxDecodeType::YoloV8, std::nullopt, std::nullopt,
+            BoxDecodeTypeOption::GroupedByRoleLogit, 0.25, nms, 100, 80,
+            {"orig_width", "orig_height"});
+        require(build_boxdecode_compiled_contract(finalized).payload.nms_iou_threshold == nms,
+                "nms_iou_threshold must reach the BoxDecode payload unchanged");
+      }
+      for (const double nms : {-2.0, -0.5, 1.5}) {
+        bool rejected = false;
+        try {
+          (void)finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloV8, std::nullopt,
+                                                   std::nullopt,
+                                                   BoxDecodeTypeOption::GroupedByRoleLogit, 0.25,
+                                                   nms, 100, 80, {"orig_width", "orig_height"});
+        } catch (const std::invalid_argument& error) {
+          rejected = std::string(error.what()).find("nms_iou_threshold") != std::string::npos;
+        }
+        require(rejected, "nms_iou_threshold outside -1 and [0, 1] must be rejected by name");
+      }
 
       BoxDecodeStaticContract probability_domain = contract;
       probability_domain.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
@@ -783,6 +809,18 @@ RUN_TEST(
                   valid_superpoint.payload.detection_threshold == 5.0e-4 &&
                   valid_superpoint.payload.topk == 600 && valid_superpoint.payload.num_classes == 0,
               "valid schema-v1 SuperPoint contract must preserve profile and apply defaults");
+
+      auto superpoint_with_nms = make_superpoint_contract();
+      superpoint_with_nms.nms_iou_threshold = 0.0;
+      bool rejected_superpoint_nms = false;
+      try {
+        (void)build_boxdecode_compiled_contract(superpoint_with_nms);
+      } catch (const std::exception& error) {
+        rejected_superpoint_nms =
+            std::string(error.what()).find("nms_iou_threshold") != std::string::npos;
+      }
+      require(rejected_superpoint_nms,
+              "SuperPoint must reject an explicit nms_iou_threshold, including 0");
 
       auto valid_packed_geometry = make_superpoint_contract();
       valid_packed_geometry.tensors[0].slice_shape = {12, 4, 65};

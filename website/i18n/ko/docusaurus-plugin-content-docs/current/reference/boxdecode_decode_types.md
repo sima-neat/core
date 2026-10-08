@@ -40,7 +40,7 @@ opt.top_k = 100;
 | --- | --- |
 | `decode_type` | 모델 패밀리/헤드 형식(예: `BoxDecodeType::YoloV8` 또는 `BoxDecodeType::YoloX`). 필수 항목입니다. |
 | `detection_threshold` | 감지 결과를 유지하기 위해 필요한 최소 점수입니다. `0.25`와 같이 모델에 적합한 값을 사용하십시오. |
-| `nms_iou_threshold` | 비최대 억제(non-maximum suppression)에 사용되는 IoU 임계값입니다. |
+| `nms_iou_threshold` | 비최대 억제(non-maximum suppression)에 사용되는 IoU 임계값으로, 범위는 `[0, 1]`이며 `0`이 가장 엄격합니다. 기본값 `-1`은 설정되지 않음을 의미하며, YOLO26은 NMS를 건너뛰고 다른 디코더는 `0`을 사용합니다. |
 | `top_k` | 유지할 최대 감지 개수입니다. `0`은 백엔드/모델의 기본값을 사용합니다. |
 | `original_width`, `original_height` | 원본 이미지 크기(raw-geometry 생성자를 사용할 때 좌표 매핑에 사용). |
 | `model_width`, `model_height` | 모델 입력 크기 재정의. 다음을 사용하여 `Model` 생성자는 패키징된 텐서 계약이 아닌 공간 디코딩 관련 설정을 변경합니다. |
@@ -211,8 +211,8 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 | `original_width` / `original_height` | 양의 정수 | 좌표 매핑의 소스 크기를 재정의합니다. |
 | `detection_threshold` / `score_threshold` | `0.0` | 패키징된 임계값을 유지합니다. |
 | `detection_threshold` / `score_threshold` | `> 0.0` | 점수 기준을 재정의합니다. |
-| `nms_iou_threshold` | `0.0` | 패키징된 NMS IoU를 유지합니다. |
-| `nms_iou_threshold` | `> 0.0` | NMS IoU를 재정의합니다. |
+| `nms_iou_threshold` | `-1` | 모델의 NMS IoU를 유지합니다. 설정된 값이 없으면 YOLO26은 NMS를 건너뛰고 다른 디코더는 `0`을 사용합니다. |
+| `nms_iou_threshold` | `[0, 1]` | NMS IoU를 재정의합니다. |
 | `top_k` | `0` | 패키징된 top-K를 유지합니다. |
 | `top_k` | `> 0` | 유지할 최대 검출 수를 재정의합니다. |
 

@@ -54,7 +54,7 @@ struct BoxDecodeOptionsInternal {
   std::optional<bool> override_quant_needed;
   int top_k = 0;
   double detection_threshold = 0.0;
-  double nms_iou_threshold = 0.0;
+  double nms_iou_threshold = -1.0;
   SuperPointOptions superpoint;
   std::vector<int> pose_classes;
   std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics;
@@ -665,7 +665,7 @@ options_from_customer(BoxDecodeType decode_type, double detection_threshold,
   if (detection_threshold > 0.0) {
     opt.detection_threshold = detection_threshold;
   }
-  if (nms_iou_threshold > 0.0) {
+  if (nms_iou_threshold != -1.0) {
     opt.nms_iou_threshold = nms_iou_threshold;
   }
   if (top_k > 0) {
@@ -731,7 +731,7 @@ void apply_named_boxdecode_options(BoxDecodeOptionsInternal* opt, const BoxDecod
         "SimaBoxDecode(SuperPoint): paper-bicubic-v1 is reserved but not production-defined; "
         "select lightglue-v1, magic-leap-demo-v1, or a65-v1");
   }
-  if (options.nms_iou_threshold != 0.0) {
+  if (options.nms_iou_threshold != -1.0) {
     throw std::invalid_argument(
         "SimaBoxDecode(SuperPoint): nms_iou_threshold is not applicable; use "
         "options.superpoint.nms_radius");
@@ -820,7 +820,7 @@ static BoxDecodeOptionsInternal options_from_contract(
   if (detection_threshold > 0.0) {
     opt.detection_threshold = detection_threshold;
   }
-  if (nms_iou_threshold > 0.0) {
+  if (nms_iou_threshold != -1.0) {
     opt.nms_iou_threshold = nms_iou_threshold;
   }
   if (top_k > 0) {
@@ -955,7 +955,9 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   if (detection_threshold > 0.0) {
     compiled_contract.payload.detection_threshold = detection_threshold;
   }
-  if (nms_iou_threshold > 0.0) {
+  if (nms_iou_threshold != -1.0) {
+    pipeline_internal::sima::stagesemantics::validate_nms_iou_threshold(nms_iou_threshold,
+                                                                        "SimaBoxDecode(Model)");
     compiled_contract.payload.nms_iou_threshold = nms_iou_threshold;
   }
   if (top_k > 0) {
@@ -1057,7 +1059,7 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   }
   if (detection_threshold > 0.0)
     opt->detection_threshold = detection_threshold;
-  if (nms_iou_threshold > 0.0)
+  if (nms_iou_threshold != -1.0)
     opt->nms_iou_threshold = nms_iou_threshold;
   if (top_k > 0)
     opt->top_k = top_k;
@@ -1267,7 +1269,7 @@ double SimaBoxDecode::detection_threshold_internal() const {
 }
 
 double SimaBoxDecode::nms_iou_threshold_internal() const {
-  return opt_ ? opt_->nms_iou_threshold : 0.0;
+  return opt_ ? opt_->nms_iou_threshold : -1.0;
 }
 
 int SimaBoxDecode::top_k_internal() const {

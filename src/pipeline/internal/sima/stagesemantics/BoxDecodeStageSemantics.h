@@ -23,7 +23,7 @@ struct BoxDecodeCompiledContractOptions {
   std::optional<BoxDecodeTypeOption> decode_type_option;
   BoxDecodeScoreActivation score_activation = BoxDecodeScoreActivation::Unknown;
   double detection_threshold = 0.0;
-  double nms_iou_threshold = 0.0;
+  double nms_iou_threshold = -1.0;
   int topk = 0;
   int num_classes = 0;
   /// Overrides the subset's gate when non-empty; empty keeps whatever the subset carries.
@@ -84,6 +84,9 @@ int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferr
 std::vector<int> normalize_boxdecode_pose_classes(BoxDecodeType decode_type,
                                                   const std::vector<int>& requested,
                                                   int num_classes, const char* context);
+
+/// Throws unless value is -1 (not set) or in [0, 1].
+void validate_nms_iou_threshold(double value, const std::string& context);
 
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
     const BoxDecodeStaticContract& contract, BoxDecodeType decode_type,

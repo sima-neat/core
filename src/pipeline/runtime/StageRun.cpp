@@ -3282,7 +3282,7 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   if (opt.detection_threshold > 0.0) {
     box_model_opt.score_threshold = static_cast<float>(opt.detection_threshold);
   }
-  if (opt.nms_iou_threshold > 0.0) {
+  if (opt.nms_iou_threshold != -1.0) {
     box_model_opt.nms_iou_threshold = static_cast<float>(opt.nms_iou_threshold);
   }
   if (opt.top_k > 0) {

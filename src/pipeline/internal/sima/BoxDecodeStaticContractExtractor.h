@@ -101,7 +101,7 @@ struct BoxDecodeStaticContract {
   bool quant_contract_required = false; ///< True if dq_scale / dq_zp must be present.
   int topk = 0;                         ///< Max detections retained.
   double detection_threshold = 0.0;     ///< Score cutoff before NMS.
-  double nms_iou_threshold = 0.0;       ///< IoU threshold used by NMS.
+  double nms_iou_threshold = -1.0;      ///< NMS IoU threshold; -1 means not set.
   int num_classes = 0; ///< Legacy runtime value; SSD uses ssd_class_selection.selected_count.
   std::vector<int> pose_classes; ///< Class indices carrying keypoints; empty means all classes.
   SuperPointStaticContract superpoint; ///< SuperPoint-only semantic/output contract.

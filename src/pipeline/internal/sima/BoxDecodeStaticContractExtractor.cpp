@@ -3196,7 +3196,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   out.quant_needed = route_flags.quant_needed;
   out.topk = 0;
   out.detection_threshold = 0.0;
-  out.nms_iou_threshold = 0.0;
+  out.nms_iou_threshold = -1.0;
   out.input_dtype = normalize_mpk_dtype_token_local(mla_stage->canonical_output_dtype);
   if (out.input_dtype.empty()) {
     out.input_dtype = normalize_mpk_dtype_token_local(mla_stage->frame_type);

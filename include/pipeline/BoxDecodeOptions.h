@@ -17,7 +17,8 @@ struct BoxDecodeOptions {
 
   BoxDecodeType decode_type;
   double detection_threshold = 0.0;
-  double nms_iou_threshold = 0.0;
+  /// NMS IoU threshold in [0, 1]; `-1` = not set (YOLO26 skips NMS, other decoders use `0`).
+  double nms_iou_threshold = -1.0;
   int top_k = 0;
   SuperPointOptions superpoint;
   YoloXSegPoseOptions yolox_seg_pose;

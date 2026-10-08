@@ -40,7 +40,7 @@ opt.top_k = 100;
 | --- | --- |
 | `decode_type` | モデルファミリー/ヘッド形式。例：`BoxDecodeType::YoloV8` または `BoxDecodeType::YoloX`。必須。|
 | `detection_threshold` | 検出結果を維持するために必要な最小スコア。`0.25`などの、モデルに適した値を設定してください。|
-| `nms_iou_threshold` | 非最大値抑制で使用されるIoU（Intersection over Union）の閾値。|
+| `nms_iou_threshold` | 非最大値抑制で使用されるIoU（Intersection over Union）の閾値で、範囲は`[0, 1]`です。`0`が最も厳しい値です。既定値の`-1`は未設定を意味し、YOLO26はNMSをスキップし、その他のデコーダーは`0`を使用します。|
 | `top_k` | 維持する検出結果の最大数。`0` は、バックエンド/モデルのデフォルト値を使用します。|
 | `original_width` x `original_height` | は、生のジオメトリコンストラクタを使用する際に、座標マッピングに使用するソース画像のサイズです。|
 | `model_width`, `model_height` | モデルの入力サイズを上書きします。これを使用すると、 `Model` コンストラクタは、パッケージ化されたテンソルの契約ではなく、空間デコードのパラメータを変更します。 |
@@ -211,8 +211,8 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 | `original_width` / `original_height` | 正の整数 | 座標マッピングのために、元の画像のサイズを上書きします。|
 | `detection_threshold` / `score_threshold` | `0.0` | パッケージ化されたしきい値を保持します。|
 | `detection_threshold` / `score_threshold` | `> 0.0` | スコアの閾値を上書きします。|
-| `nms_iou_threshold` | `0.0` | パッケージ化されたNMS IoUを保持します。|
-| `nms_iou_threshold` | `> 0.0` | NMS IoU の値を上書きします。|
+| `nms_iou_threshold` | `-1` | モデルのNMS IoUを保持します。設定されていない場合、YOLO26はNMSをスキップし、その他のデコーダーは`0`を使用します。|
+| `nms_iou_threshold` | `[0, 1]` | NMS IoU の値を上書きします。|
 | `top_k` | `0` | パッケージ化された上位K個の要素を保持します。|
 | `top_k` | `> 0` | 保持する検出結果の最大数を上書きします。|
 

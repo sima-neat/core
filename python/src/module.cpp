@@ -5183,7 +5183,7 @@ NB_MODULE(_pyneat_core, m) {
       },
       "model"_a, "decode_type"_a = simaai::neat::BoxDecodeType::Unspecified, "original_width"_a = 0,
       "original_height"_a = 0, "model_width"_a = 0, "model_height"_a = 0,
-      "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0, "top_k"_a = 0,
+      "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = -1.0, "top_k"_a = 0,
       "resize_mode"_a = std::nullopt);
 
   // Do not bind the low-level graph::Graph / GraphRun substrate into Python.

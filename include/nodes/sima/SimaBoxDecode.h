@@ -133,7 +133,8 @@ public:
    *
    * @param decode_type          Decoder variant (see `BoxDecodeType`).
    * @param detection_threshold  Score threshold; boxes below are dropped (`0.0` = use default).
-   * @param nms_iou_threshold    NMS IoU threshold (`0.0` = use default).
+   * @param nms_iou_threshold    NMS IoU threshold in [0, 1]; `-1` = not set (YOLO26 skips
+   *                             NMS, other decoders use `0`).
    * @param top_k                Max boxes to keep after NMS (`0` = unlimited / variant default).
    * @param element_name         Optional GStreamer element name.
    * @param original_width       Width of the unscaled source frame (used for box rescaling).
@@ -156,7 +157,7 @@ public:
    *                             carry quant scale/zero-point.
    */
   explicit SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
-                         double nms_iou_threshold = 0.0, int top_k = 0,
+                         double nms_iou_threshold = -1.0, int top_k = 0,
                          const std::string& element_name = "", int original_width = 0,
                          int original_height = 0, int model_width = 0, int model_height = 0,
                          BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
@@ -182,7 +183,8 @@ public:
    * @param model                Source model (provides input shape, routing hints, etc.).
    * @param decode_type          Decoder variant (see `BoxDecodeType`).
    * @param detection_threshold  Score threshold (`0.0` = use default).
-   * @param nms_iou_threshold    NMS IoU threshold (`0.0` = use default).
+   * @param nms_iou_threshold    NMS IoU threshold in [0, 1]; `-1` = not set (YOLO26 skips
+   *                             NMS, other decoders use `0`).
    * @param top_k                Max boxes to keep after NMS.
    * @param element_name         Optional GStreamer element name.
    * @param route_tess_needed    Override: does the route need a tess stage upstream?
@@ -210,7 +212,7 @@ public:
    * @param decode_type_option   Decoder sub-variant selector.
    */
   explicit SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
-                         double detection_threshold = 0.0, double nms_iou_threshold = 0.0,
+                         double detection_threshold = 0.0, double nms_iou_threshold = -1.0,
                          int top_k = 0, const std::string& element_name = "",
                          std::optional<bool> route_tess_needed = std::nullopt,
                          std::optional<bool> route_quant_needed = std::nullopt,
@@ -233,7 +235,7 @@ public:
   /// Internal constructor: takes a pre-extracted static contract (used by the planner).
   explicit SimaBoxDecode(
       const pipeline_internal::sima::BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
-      double detection_threshold = 0.0, double nms_iou_threshold = 0.0, int top_k = 0,
+      double detection_threshold = 0.0, double nms_iou_threshold = -1.0, int top_k = 0,
       const std::string& element_name = {},
       const std::vector<std::string>& required_preprocess_meta_fields = {},
       std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags = std::nullopt,
@@ -305,7 +307,7 @@ private:
 namespace simaai::neat::nodes {
 /// Convenience factory for `SimaBoxDecode` from raw geometry — see the class constructor docs.
 std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
-    BoxDecodeType decode_type, double detection_threshold = 0.0, double nms_iou_threshold = 0.0,
+    BoxDecodeType decode_type, double detection_threshold = 0.0, double nms_iou_threshold = -1.0,
     int top_k = 0, const std::string& element_name = "", int original_width = 0,
     int original_height = 0, int model_width = 0, int model_height = 0,
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
@@ -327,7 +329,7 @@ std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
 /// Convenience factory for `SimaBoxDecode` from a bound `Model` — see the class constructor docs.
 std::shared_ptr<simaai::neat::Node>
 SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
-              double detection_threshold = 0.0, double nms_iou_threshold = 0.0, int top_k = 0,
+              double detection_threshold = 0.0, double nms_iou_threshold = -1.0, int top_k = 0,
               const std::string& element_name = "",
               std::optional<bool> route_tess_needed = std::nullopt,
               std::optional<bool> route_quant_needed = std::nullopt, int original_width = 0,
@@ -346,7 +348,7 @@ SimaBoxDecode(const simaai::neat::Model& model, const BoxDecodeOptions& options,
 /// Internal-only factory used by the route planner with a pre-extracted static contract.
 std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
     const pipeline_internal::sima::BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
-    double detection_threshold = 0.0, double nms_iou_threshold = 0.0, int top_k = 0,
+    double detection_threshold = 0.0, double nms_iou_threshold = -1.0, int top_k = 0,
     const std::string& element_name = {},
     const std::vector<std::string>& required_preprocess_meta_fields = {},
     std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags = std::nullopt,
