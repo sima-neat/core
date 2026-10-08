@@ -40,7 +40,7 @@ opt.top_k = 100;
 | --- | --- |
 | `decode_type` | モデルファミリー/ヘッド形式。例：`BoxDecodeType::YoloV8` または `BoxDecodeType::YoloX`。必須。|
 | `detection_threshold` | 検出結果を維持するために必要な最小スコア。`0.25`などの、モデルに適した値を設定してください。|
-| `nms_iou_threshold` | 非最大値抑制で使用されるIoU（Intersection over Union）の閾値。|
+| `nms_iou_threshold` | 非最大値抑制で使用されるIoU（Intersection over Union）の閾値。`0`はモデルにパッケージされた値を保持します。パッケージされた値がない場合、YOLO26はNMSをスキップし、その他のデコーダーは重なりのあるボックスをすべて抑制します。`0.45`など、モデルに適した値を設定してください。|
 | `top_k` | 維持する検出結果の最大数。`0` は、バックエンド/モデルのデフォルト値を使用します。|
 | `original_width` x `original_height` | は、生のジオメトリコンストラクタを使用する際に、座標マッピングに使用するソース画像のサイズです。|
 | `model_width`, `model_height` | モデルの入力サイズを上書きします。これを使用すると、 `Model` コンストラクタは、パッケージ化されたテンソルの契約ではなく、空間デコードのパラメータを変更します。 |
