@@ -12,11 +12,12 @@ def notification_workflow() -> str:
     return NOTIFICATION_WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_listener_observes_only_core_vulcan_ci_protected_branches() -> None:
+def test_listener_observes_vulcan_ci_and_docs_on_protected_branches() -> None:
     content = notification_workflow()
 
     assert "workflow_run:" in content
     assert "- Vulcan CI" in content
+    assert "- Vulcan Docs" in content
     assert "- completed" in content
     assert "- main" in content
     assert "- develop" in content
