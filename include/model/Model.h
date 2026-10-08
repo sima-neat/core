@@ -263,8 +263,8 @@ public:
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
     float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
-    /// BoxDecode IoU threshold for non-max suppression. At `0`, YOLO26 skips NMS and other
-    /// decoders suppress every overlapping box.
+    /// BoxDecode IoU threshold for non-max suppression. `0` keeps the model's packaged value;
+    /// when none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box.
     float nms_iou_threshold = 0.0f;
     int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
     SuperPointOptions
