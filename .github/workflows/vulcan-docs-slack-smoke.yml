@@ -1,0 +1,29 @@
+name: Vulcan Docs Slack Smoke Test
+
+on:
+  push:
+    branches:
+      - release-vulcan-docs-slack-notify
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  notify:
+    name: Replay failed docs notification
+    uses: sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@main
+    with:
+      channel_id: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}
+      run_id: 37814772879
+      repository: sima-neat/core
+      workflow_name: vulcan-docs (stg)
+      branch: develop
+      head_sha: cf125d0552968ff2c410938f75f678ef2db91546
+      conclusion: failure
+      run_attempt: 1
+      run_url: https://github.com/sima-neat/core/actions/runs/37814772879
+      actor: Onat-Inak
+      commit_message: "fix(tests): remove race in appsrc fakesink tests (#1029)"
+    secrets:
+      slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
