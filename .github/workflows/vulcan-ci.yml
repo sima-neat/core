@@ -126,6 +126,7 @@ jobs:
             tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_pcie_ci_runner_scripts.py \
             tests/tools/test_cpp_tidy_scope.py \
             tests/tools/test_vulcan_ci_notification.py
 
