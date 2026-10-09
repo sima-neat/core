@@ -6514,6 +6514,11 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
   if (popt.include_input) {
     if (input) {
       src_opt = appsrc_from_info(require_input_info(*input, tensor_mode));
+      // A seed supplies the current shape, not the model's input capacity.
+      const InputOptions capacity = pack.input_appsrc_options(tensor_mode);
+      src_opt.max_width = capacity.max_width;
+      src_opt.max_height = capacity.max_height;
+      src_opt.max_depth = capacity.max_depth;
     } else {
       src_opt = pack.input_appsrc_options(tensor_mode);
       const bool ingress_join = session_route_has_ingress_join(plan.session_route_plan);
