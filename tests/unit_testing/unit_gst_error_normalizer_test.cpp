@@ -864,6 +864,32 @@ RUN_TEST(
         require_contains(render_diagnostic_body(diagnostic, true), kPrivateModelPath,
                          "verbose diagnostics should retain the raw path for troubleshooting");
 
+        constexpr std::size_t kLongPathBytes = 5000;
+        constexpr const char* kLongPathDispatcherError =
+            "MLASHM model path length 5000 exceeds maximum 255 bytes; shorten the extracted model "
+            "path";
+        const std::string long_path(kLongPathBytes, 'a');
+        const std::string long_debug = "plugin='neatprocessmla' model_path='" + long_path +
+                                       "' dispatcher_err='" + kLongPathDispatcherError + "'";
+        GError* long_error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+                                                 "Unable to load model");
+        GstMessage* long_message =
+            gst_message_new_error(GST_OBJECT(source), long_error, long_debug.c_str());
+        g_error_free(long_error);
+        const RawGstError long_raw = parse_gst_error_message(long_message);
+        require(long_raw.debug.size() <= 4096, "long GStreamer debug capture must remain bounded");
+        require_contains(long_raw.debug, "...<truncated>",
+                         "long GStreamer debug capture must identify omitted text");
+        const NormalizedDiagnostic long_diagnostic = classify_gst_error(long_raw);
+        require(long_diagnostic.diagnostic_id == "neatprocessmla.model_path_too_long",
+                "the final dispatcher error must survive an oversized preceding model path");
+        const std::string long_production = render_diagnostic_body(long_diagnostic, false);
+        require_contains(long_production, "Path length: 5000 bytes",
+                         "the preserved dispatcher error must retain its observed length");
+        require(long_production.find(std::string(128, 'a')) == std::string::npos,
+                "production diagnostics must not expose an oversized raw model path");
+        gst_message_unref(long_message);
+
         const NormalizedDiagnostic caps =
             classify_gst_error(raw_error("capsfilter", "gst-core-error-quark",
                                          GST_CORE_ERROR_NEGOTIATION, "Caps negotiation failed"));

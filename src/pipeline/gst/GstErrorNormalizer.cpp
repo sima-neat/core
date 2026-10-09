@@ -822,39 +822,77 @@ struct ModelPathLimit {
 // Legacy SIMAAI_GST_FATAL messages carried this context only in the producer's exact
 // space-delimited key='value' debug format. Keep this parser local and strict so arbitrary debug
 // text cannot become a production-facing diagnosis.
-std::optional<std::string_view> find_legacy_quoted_debug_field(const RawGstError& raw,
-                                                               std::string_view key) {
+std::optional<std::string_view> find_legacy_quoted_debug_field(std::string_view debug,
+                                                               std::string_view key,
+                                                               bool prefer_last = false) {
   const std::string marker = std::string(key) + "='";
   std::size_t pos = 0;
-  while ((pos = raw.debug.find(marker, pos)) != std::string::npos) {
+  std::optional<std::string_view> found;
+  while ((pos = debug.find(marker, pos)) != std::string::npos) {
     const bool starts_field = pos == 0 ||
-                              std::isspace(static_cast<unsigned char>(raw.debug[pos - 1])) ||
-                              raw.debug[pos - 1] == '|';
+                              std::isspace(static_cast<unsigned char>(debug[pos - 1])) ||
+                              debug[pos - 1] == '|';
     const std::size_t value_begin = pos + marker.size();
     if (!starts_field) {
       pos = value_begin;
       continue;
     }
 
-    const std::size_t value_end = raw.debug.find('\'', value_begin);
+    const std::size_t value_end = debug.find('\'', value_begin);
     if (value_end == std::string::npos)
       return std::nullopt;
     const std::size_t field_end = value_end + 1;
-    if (field_end != raw.debug.size() &&
-        !std::isspace(static_cast<unsigned char>(raw.debug[field_end])) &&
-        raw.debug[field_end] != '|') {
+    if (field_end != debug.size() && !std::isspace(static_cast<unsigned char>(debug[field_end])) &&
+        debug[field_end] != '|') {
       pos = field_end;
       continue;
     }
-    return std::string_view(raw.debug).substr(value_begin, value_end - value_begin);
+    found = debug.substr(value_begin, value_end - value_begin);
+    if (!prefer_last)
+      return found;
+    pos = field_end;
   }
-  return std::nullopt;
+  return found;
+}
+
+std::string capture_gst_debug(std::string value) {
+  constexpr std::size_t kMaxDebugBytes = 4096;
+  constexpr std::size_t kMaxPreservedDispatcherErrorBytes = 512;
+
+  value = redact_uri_credentials(std::move(value));
+  if (value.size() <= kMaxDebugBytes)
+    return value;
+
+  // Historical neatprocessmla messages put dispatcher_err after model_path. Preserve that bounded
+  // final field so the actionable cause survives when the offending path itself exceeds the
+  // ordinary debug capture limit. The full value is redacted before either portion is retained.
+  const std::optional<std::string_view> plugin = find_legacy_quoted_debug_field(value, "plugin");
+  const std::optional<std::string_view> dispatcher_error =
+      find_legacy_quoted_debug_field(value, "dispatcher_err", true);
+  if (!plugin.has_value() || lower_copy(std::string(*plugin)) != "neatprocessmla" ||
+      !dispatcher_error.has_value() ||
+      dispatcher_error->size() > kMaxPreservedDispatcherErrorBytes) {
+    return truncate(std::move(value), kMaxDebugBytes);
+  }
+
+  const std::string suffix =
+      "...<truncated> dispatcher_err='" + std::string(*dispatcher_error) + "'";
+  if (suffix.size() >= kMaxDebugBytes)
+    return truncate(std::move(value), kMaxDebugBytes);
+
+  std::size_t boundary = kMaxDebugBytes - suffix.size();
+  while (boundary > 0 && (static_cast<unsigned char>(value[boundary]) & 0xC0U) == 0x80U) {
+    --boundary;
+  }
+  value.resize(boundary);
+  value += suffix;
+  return value;
 }
 
 bool neatprocessmla_source(const RawGstError& raw) {
   const std::optional<std::string> structured_plugin = find_structured_detail(raw, {"plugin"});
   const std::optional<std::string_view> legacy_plugin =
-      find_legacy_quoted_debug_field(raw, "plugin");
+      find_legacy_quoted_debug_field(raw.debug, "plugin");
 
   if (!raw.factory_name.empty() && lower_copy(raw.factory_name) != "neatprocessmla")
     return false;
@@ -887,7 +925,7 @@ std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
   std::optional<std::string> dispatcher_error = find_structured_detail(raw, {"dispatcher-error"});
   if (!dispatcher_error.has_value()) {
     if (const std::optional<std::string_view> legacy =
-            find_legacy_quoted_debug_field(raw, "dispatcher_err")) {
+            find_legacy_quoted_debug_field(raw.debug, "dispatcher_err", true)) {
       dispatcher_error = std::string(*legacy);
     }
   }
@@ -1269,7 +1307,7 @@ RawGstError parse_gst_error_message(GstMessage* message) {
     out.message = truncate(error->message ? error->message : "");
     g_error_free(error);
   }
-  out.debug = truncate(debug ? debug : "");
+  out.debug = capture_gst_debug(debug ? debug : "");
   g_free(debug);
 
   const GstStructure* details = nullptr;
