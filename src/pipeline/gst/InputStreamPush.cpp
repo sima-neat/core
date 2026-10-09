@@ -1414,8 +1414,8 @@ void write_holder_timing_if_needed_or_throw(GstBuffer** buffer, const SampleSpec
 }
 
 bool push_holder_transport(
-    InputStream::State& st, const std::shared_ptr<void>& holder, const char* where,
-    bool record_timings, const std::optional<int64_t>& frame_id_override,
+    InputStream::State& st, std::shared_ptr<void> holder, const char* where, bool record_timings,
+    const std::optional<int64_t>& frame_id_override,
     const std::optional<int64_t>& input_seq_override,
     const std::optional<int64_t>& orig_input_seq_override,
     const std::optional<std::string>& stream_id_override,
@@ -1429,6 +1429,13 @@ bool push_holder_transport(
                              ": missing GstBuffer");
   }
   BufferUnrefGuard holder_guard(&buf, "InputStream::push_holder_transport:buffer_unref");
+  // Drop a push-only holder so attaching metadata does not copy the buffer.
+  if (holder.use_count() == 1 && !pipeline_internal::holder_has_zero_copy_loans(holder)) {
+    if (GstSample* sample = holder_as_gstsample(holder);
+        sample && GST_MINI_OBJECT_REFCOUNT_VALUE(sample) == 1) {
+      holder.reset();
+    }
+  }
   std::optional<SampleSpec> completed_video_spec;
   const SampleSpec* metadata_spec = fail_spec;
   if (!metadata_spec && st.last_spec.has_value()) {
@@ -2207,11 +2214,11 @@ bool InputStream::try_push_message(const Sample& msg) {
     }
     const std::optional<PreprocessRuntimeMeta> envelope_preprocess_meta =
         input_tensor ? input_tensor->semantic.preprocess : std::nullopt;
-    const bool ok =
-        push_holder_transport(*st, holder, "InputStream::try_push_message(holder_envelope)",
-                              /*record_timings=*/st->timing_enabled, meta.frame_id, seq.input_seq,
-                              seq.orig_input_seq, meta.stream_id, meta.stream_label,
-                              timing_override, &transport_msg, &spec, envelope_preprocess_meta);
+    const bool ok = push_holder_transport(
+        *st, std::move(holder), "InputStream::try_push_message(holder_envelope)",
+        /*record_timings=*/st->timing_enabled, meta.frame_id, seq.input_seq, seq.orig_input_seq,
+        meta.stream_id, meta.stream_label, timing_override, &transport_msg, &spec,
+        envelope_preprocess_meta);
     if (inputstream_top_timing) {
       const auto inputstream_end = std::chrono::steady_clock::now();
       const auto pre_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
