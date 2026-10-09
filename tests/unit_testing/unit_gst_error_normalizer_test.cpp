@@ -937,10 +937,15 @@ RUN_TEST(
 
         RawGstError structured = raw_error("neatprocessmla", "gst-resource-error-quark",
                                            GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        structured.details["neat-diagnostic-id"] = "neatprocessmla.model_path_too_long";
         structured.details["dispatcher-error"] = kDispatcherError;
-        require(classify_gst_error(std::move(structured)).diagnostic_id ==
-                    "neatprocessmla.model_path_too_long",
+        const NormalizedDiagnostic structured_diagnostic =
+            classify_gst_error(std::move(structured));
+        require(structured_diagnostic.diagnostic_id == "neatprocessmla.model_path_too_long",
                 "the versioned structured dispatcher field must use the same typed diagnosis");
+        require_contains(render_diagnostic_body(structured_diagnostic, false),
+                         "Path length: 258 bytes",
+                         "the matching explicit diagnostic ID must retain validated byte facts");
 
         RawGstError factory_identified = legacy_model_path_error(kDispatcherError);
         factory_identified.factory_name = "neatprocessmla";

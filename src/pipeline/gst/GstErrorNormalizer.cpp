@@ -1368,9 +1368,9 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
        (raw.code == GST_RESOURCE_ERROR_NOT_FOUND && dispatcher_specific_context(raw)));
 
   // A legacy model path is user-controlled and can contain text recognized by the broad fallback
-  // heuristics below. Prefer the fully validated producer payload, but never override an explicit
-  // producer diagnostic ID.
-  if (diagnostic_id.empty()) {
+  // heuristics below. Prefer the fully validated producer payload when no explicit ID exists or
+  // when the producer supplies this matching ID; never override a different explicit ID.
+  if (diagnostic_id.empty() || diagnostic_id == "neatprocessmla.model_path_too_long") {
     if (const std::optional<ModelPathLimit> limit = find_model_path_limit(raw))
       return model_path_too_long(std::move(raw), *limit);
   }
