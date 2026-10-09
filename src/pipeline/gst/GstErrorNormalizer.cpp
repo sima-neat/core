@@ -957,6 +957,27 @@ std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
   return limit;
 }
 
+// The legacy SIMAAI_GST_FATAL context writes diagnostic_id as its first quoted field, ahead of the
+// user-controlled node, config, and model paths. Accept a legacy ID only in that position so a
+// marker embedded in a path cannot override the validated path-limit payload.
+std::optional<std::string> model_path_precedence_id(const RawGstError& raw) {
+  if (std::optional<std::string> structured = find_structured_detail(
+          raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"})) {
+    return structured;
+  }
+
+  constexpr std::string_view marker = "diagnostic_id='";
+  const std::optional<std::string_view> legacy =
+      find_legacy_quoted_debug_field(raw.debug, "diagnostic_id");
+  if (!legacy.has_value())
+    return std::nullopt;
+  const std::size_t field_begin =
+      static_cast<std::size_t>(legacy->data() - raw.debug.data()) - marker.size();
+  if (std::string_view(raw.debug).substr(0, field_begin).find("='") != std::string_view::npos)
+    return std::nullopt;
+  return std::string(*legacy);
+}
+
 bool device_memory_context(const RawGstError& raw) {
   if (accelerator_plugin_name(raw))
     return true;
@@ -1368,9 +1389,11 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
        (raw.code == GST_RESOURCE_ERROR_NOT_FOUND && dispatcher_specific_context(raw)));
 
   // A legacy model path is user-controlled and can contain text recognized by the broad fallback
-  // heuristics below. Prefer the fully validated producer payload when no explicit ID exists or
-  // when the producer supplies this matching ID; never override a different explicit ID.
-  if (diagnostic_id.empty() || diagnostic_id == "neatprocessmla.model_path_too_long") {
+  // heuristics below, including diagnostic-ID markers. Prefer the fully validated producer payload
+  // when no explicit ID exists or when the producer supplies this matching ID; never override a
+  // different explicit ID.
+  const std::string producer_id = model_path_precedence_id(raw).value_or("");
+  if (producer_id.empty() || producer_id == "neatprocessmla.model_path_too_long") {
     if (const std::optional<ModelPathLimit> limit = find_model_path_limit(raw))
       return model_path_too_long(std::move(raw), *limit);
   }

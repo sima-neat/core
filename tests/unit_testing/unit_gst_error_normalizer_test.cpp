@@ -1033,6 +1033,27 @@ RUN_TEST(
                     "producer.specific_failure",
                 "an explicit producer diagnostic ID must take precedence over legacy parsing");
 
+        const auto require_path_marker_ignored = [&](const std::string& model_path,
+                                                     const std::string& context) {
+          RawGstError marked_path = legacy_model_path_error(kDispatcherError);
+          marked_path.debug = "plugin='neatprocessmla' model_path='" + model_path +
+                              "' dispatcher_err='" + kDispatcherError + "'";
+          require(classify_gst_error(std::move(marked_path)).diagnostic_id ==
+                      "neatprocessmla.model_path_too_long",
+                  context + " inside the model path must not override the path-limit diagnosis");
+        };
+        require_path_marker_ignored("/models/neat-diagnostic-id=foo/model.tar.gz",
+                                    "an unquoted diagnostic-ID marker");
+        require_path_marker_ignored("/models/x diagnostic_id='producer.other' y/model.tar.gz",
+                                    "a quoted legacy diagnostic-ID field");
+
+        RawGstError legacy_explicit = legacy_model_path_error(kDispatcherError);
+        legacy_explicit.debug = "diagnostic_id='producer.specific_failure' " +
+                                model_path_debug("neatprocessmla", kDispatcherError);
+        require(classify_gst_error(std::move(legacy_explicit)).diagnostic_id ==
+                    "producer.specific_failure",
+                "a leading legacy producer diagnostic ID must take precedence over legacy parsing");
+
         gst_message_unref(message);
         gst_object_unref(source);
       }
