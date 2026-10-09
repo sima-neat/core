@@ -1,14 +1,16 @@
 {
   "internals": {
-    "policy": "snap"
+    "branch": "v0.5.0",
+    "spec": "f33a8292921f"
   },
   "llima": {
-    "policy": "snap"
+    "branch": "v0.5.0",
+    "spec": "a23a2caa70b9"
   },
   "sdk": {
     "channel": "develop"
   },
-  "package-version": "0.5.0",
+  "package-version": "0.5.1",
   "platform-version": "2.1.3",
   "modelzoo-version": "2.1.3",
   "abi-version": "5"
