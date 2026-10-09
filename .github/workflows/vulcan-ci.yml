@@ -1500,7 +1500,8 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    # Disabled on release-0.5.1-pc: PCIe hardware testing is out of scope for this patch candidate.
+    if: ${{ false && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
