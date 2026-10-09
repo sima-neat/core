@@ -26,9 +26,7 @@ export SIMAPCIE_BURST_ITERATIONS="${SIMAPCIE_BURST_ITERATIONS:-20}"
 export SIMAPCIE_STRESS_QUEUES="${STRESS_QUEUES}"
 export SIMAPCIE_STRESS_ITERATIONS="${STRESS_ITERATIONS}"
 
-# TODO(core#1037): Re-enable after resolving the PCIe throughput regression.
 ctest \
   --test-dir "${TEST_DIR}" \
-  --exclude-regex '^test_tensor_throughput$' \
   --output-on-failure \
   --no-tests=error
