@@ -855,7 +855,7 @@ std::optional<std::string_view> find_legacy_quoted_debug_field(std::string_view 
   return found;
 }
 
-std::string capture_gst_debug(std::string value) {
+std::string capture_gst_debug(std::string value, std::string_view factory_name) {
   constexpr std::size_t kMaxDebugBytes = 4096;
   constexpr std::size_t kMaxPreservedDispatcherErrorBytes = 512;
 
@@ -869,7 +869,11 @@ std::string capture_gst_debug(std::string value) {
   const std::optional<std::string_view> plugin = find_legacy_quoted_debug_field(value, "plugin");
   const std::optional<std::string_view> dispatcher_error =
       find_legacy_quoted_debug_field(value, "dispatcher_err", true);
-  if (!plugin.has_value() || lower_copy(std::string(*plugin)) != "neatprocessmla" ||
+  const bool factory_is_neatprocessmla = lower_copy(std::string(factory_name)) == "neatprocessmla";
+  const bool plugin_is_neatprocessmla =
+      plugin.has_value() && lower_copy(std::string(*plugin)) == "neatprocessmla";
+  const bool conflicting_plugin = plugin.has_value() && !plugin_is_neatprocessmla;
+  if ((!factory_is_neatprocessmla && !plugin_is_neatprocessmla) || conflicting_plugin ||
       !dispatcher_error.has_value() ||
       dispatcher_error->size() > kMaxPreservedDispatcherErrorBytes) {
     return truncate(std::move(value), kMaxDebugBytes);
@@ -1307,7 +1311,7 @@ RawGstError parse_gst_error_message(GstMessage* message) {
     out.message = truncate(error->message ? error->message : "");
     g_error_free(error);
   }
-  out.debug = capture_gst_debug(debug ? debug : "");
+  out.debug = capture_gst_debug(debug ? debug : "", out.factory_name);
   g_free(debug);
 
   const GstStructure* details = nullptr;

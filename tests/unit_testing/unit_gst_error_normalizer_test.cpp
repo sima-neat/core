@@ -890,6 +890,32 @@ RUN_TEST(
                 "production diagnostics must not expose an oversized raw model path");
         gst_message_unref(long_message);
 
+        GstElementFactory* mla_factory = gst_element_factory_find("neatprocessmla");
+        if (!mla_factory) {
+          require(gst_element_register(nullptr, "neatprocessmla", GST_RANK_NONE, GST_TYPE_BIN),
+                  "test must register a stand-in neatprocessmla factory");
+        } else {
+          gst_object_unref(mla_factory);
+        }
+        GstElement* factory_source = gst_element_factory_make("neatprocessmla", "MLA_factory_0");
+        require(factory_source != nullptr,
+                "factory-identified MLA source must be available for debug-capture test");
+        const std::string factory_debug =
+            "model_path='" + long_path + "' dispatcher_err='" + kLongPathDispatcherError + "'";
+        GError* factory_error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+                                                    "Unable to load model");
+        GstMessage* factory_message =
+            gst_message_new_error(GST_OBJECT(factory_source), factory_error, factory_debug.c_str());
+        g_error_free(factory_error);
+        const RawGstError factory_raw = parse_gst_error_message(factory_message);
+        require(factory_raw.factory_name == "neatprocessmla",
+                "the test message must establish MLA identity through its element factory");
+        require(classify_gst_error(factory_raw).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "factory identity must preserve the final dispatcher error when plugin is absent");
+        gst_message_unref(factory_message);
+        gst_object_unref(factory_source);
+
         const NormalizedDiagnostic caps =
             classify_gst_error(raw_error("capsfilter", "gst-core-error-quark",
                                          GST_CORE_ERROR_NEGOTIATION, "Caps negotiation failed"));
