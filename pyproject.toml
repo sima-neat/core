@@ -16,7 +16,7 @@ authors = [
   { name = "SiMa.ai" },
 ]
 dependencies = [
-  "numpy>=1.24,<2",
+  "numpy",
 ]
 classifiers = [
   "Programming Language :: Python :: 3",

@@ -79,7 +79,7 @@ def parse_pyproject_floors(repo_root: Path) -> dict[str, str]:
         text = pyproject.read_text(encoding="utf-8")
     except OSError:
         return out
-    # numpy>=1.24,<2  /  torch>=2.3.0  /  requires-python = ">=3.9"
+    # "numpy" (unversioned, so no floor recorded)  /  torch>=2.3.0  /  requires-python = ">=3.9"
     m = re.search(r'["\']numpy\s*([^"\']+)["\']', text)
     if m:
         out["numpy"] = m.group(1).strip()
