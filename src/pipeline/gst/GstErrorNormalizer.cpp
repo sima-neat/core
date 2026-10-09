@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <optional>
@@ -812,6 +814,107 @@ bool dispatcher_specific_context(const RawGstError& raw) {
       .has_value();
 }
 
+struct ModelPathLimit {
+  std::uint64_t observed_bytes = 0;
+  std::uint64_t maximum_bytes = 0;
+};
+
+// Legacy SIMAAI_GST_FATAL messages carried this context only in the producer's exact
+// space-delimited key='value' debug format. Keep this parser local and strict so arbitrary debug
+// text cannot become a production-facing diagnosis.
+std::optional<std::string_view> find_legacy_quoted_debug_field(const RawGstError& raw,
+                                                               std::string_view key) {
+  const std::string marker = std::string(key) + "='";
+  std::size_t pos = 0;
+  while ((pos = raw.debug.find(marker, pos)) != std::string::npos) {
+    const bool starts_field = pos == 0 ||
+                              std::isspace(static_cast<unsigned char>(raw.debug[pos - 1])) ||
+                              raw.debug[pos - 1] == '|';
+    const std::size_t value_begin = pos + marker.size();
+    if (!starts_field) {
+      pos = value_begin;
+      continue;
+    }
+
+    const std::size_t value_end = raw.debug.find('\'', value_begin);
+    if (value_end == std::string::npos)
+      return std::nullopt;
+    const std::size_t field_end = value_end + 1;
+    if (field_end != raw.debug.size() &&
+        !std::isspace(static_cast<unsigned char>(raw.debug[field_end])) &&
+        raw.debug[field_end] != '|') {
+      pos = field_end;
+      continue;
+    }
+    return std::string_view(raw.debug).substr(value_begin, value_end - value_begin);
+  }
+  return std::nullopt;
+}
+
+bool neatprocessmla_source(const RawGstError& raw) {
+  const std::optional<std::string> structured_plugin = find_structured_detail(raw, {"plugin"});
+  const std::optional<std::string_view> legacy_plugin =
+      find_legacy_quoted_debug_field(raw, "plugin");
+
+  if (!raw.factory_name.empty() && lower_copy(raw.factory_name) != "neatprocessmla")
+    return false;
+  if (structured_plugin.has_value() && lower_copy(*structured_plugin) != "neatprocessmla")
+    return false;
+  if (legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) != "neatprocessmla")
+    return false;
+
+  return lower_copy(raw.factory_name) == "neatprocessmla" ||
+         (structured_plugin.has_value() && lower_copy(*structured_plugin) == "neatprocessmla") ||
+         (legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) == "neatprocessmla");
+}
+
+bool parse_unsigned(std::string_view text, std::size_t& cursor, std::uint64_t& value) {
+  const char* begin = text.data() + cursor;
+  const char* end = text.data() + text.size();
+  const auto [parsed_end, error] = std::from_chars(begin, end, value);
+  if (error != std::errc{} || parsed_end == begin)
+    return false;
+  cursor = static_cast<std::size_t>(parsed_end - text.data());
+  return true;
+}
+
+std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
+  if (!neatprocessmla_source(raw) || raw.domain_name != "gst-resource-error-quark" ||
+      raw.code != GST_RESOURCE_ERROR_FAILED || raw.message != "Unable to load model") {
+    return std::nullopt;
+  }
+
+  std::optional<std::string> dispatcher_error = find_structured_detail(raw, {"dispatcher-error"});
+  if (!dispatcher_error.has_value()) {
+    if (const std::optional<std::string_view> legacy =
+            find_legacy_quoted_debug_field(raw, "dispatcher_err")) {
+      dispatcher_error = std::string(*legacy);
+    }
+  }
+  if (!dispatcher_error.has_value())
+    return std::nullopt;
+
+  constexpr std::string_view prefix = "MLASHM model path length ";
+  constexpr std::string_view separator = " exceeds maximum ";
+  constexpr std::string_view suffix = " bytes; shorten the extracted model path";
+  const std::string_view text = *dispatcher_error;
+  if (!text.starts_with(prefix))
+    return std::nullopt;
+
+  ModelPathLimit limit;
+  std::size_t cursor = prefix.size();
+  if (!parse_unsigned(text, cursor, limit.observed_bytes) ||
+      text.substr(cursor, separator.size()) != separator) {
+    return std::nullopt;
+  }
+  cursor += separator.size();
+  if (!parse_unsigned(text, cursor, limit.maximum_bytes) || text.substr(cursor) != suffix ||
+      limit.observed_bytes <= limit.maximum_bytes) {
+    return std::nullopt;
+  }
+  return limit;
+}
+
 bool device_memory_context(const RawGstError& raw) {
   if (accelerator_plugin_name(raw))
     return true;
@@ -989,6 +1092,17 @@ NormalizedDiagnostic accelerator_failed(RawGstError raw) {
       "Stop and restart the pipeline.",
       "Reduce concurrent accelerator workloads and retry this model stage.",
   };
+  return out;
+}
+
+NormalizedDiagnostic model_path_too_long(RawGstError raw, const ModelPathLimit& limit) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kRuntimeElementFailed, "neatprocessmla.model_path_too_long",
+           "The MLA model could not be loaded because its extracted path is too long.");
+  add_fact(out, "Operation", "Model loading");
+  add_fact(out, "Path length", std::to_string(limit.observed_bytes) + " bytes");
+  add_fact(out, "Maximum path length", std::to_string(limit.maximum_bytes) + " bytes");
+  out.actions = {"Extract or install the model under a shorter directory and retry."};
   return out;
 }
 
@@ -1357,6 +1471,11 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
              "The encoder could not encode the input frames.");
     out.actions = {"Verify the encoder format, resolution, and bitrate settings."};
     return out;
+  }
+
+  if (diagnostic_id.empty()) {
+    if (const std::optional<ModelPathLimit> limit = find_model_path_limit(raw))
+      return model_path_too_long(std::move(raw), *limit);
   }
 
   NormalizedDiagnostic out =
