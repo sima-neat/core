@@ -167,6 +167,7 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | --- | --- |
 | `build.plugin_missing` |，`libcamerasrc` 或 `neatcamerabridge` 缺少於執行階段的外掛程式集中。|
 | `misconfig.media_caps` / `not-negotiated` | 攝影機不支援您所要求的格式、解析度或幀率。|
+| `io.parse` / `gstreamer.camera_configuration_unsupported` | `libcamerasrc` 以 `EINVAL` 拒絕了所要求的 caps。請以支援的尺寸擷取；模型圖形應由模型前處理調整尺寸，其他圖形則使用 `VideoScale`，後接 `CapsRaw`。|
 | 嚴格的零拷貝錯誤 |，`allow_cpu_fallback` 為「否」，且相機來源未公開 SiMaAI 零拷貝屬性。|
 | 讀取逾時 | 攝影機未傳輸畫面，圖的後壓過大，或攝影機堆疊已停止串流。|
 | 綠色、紫色或顏色過於鮮豔的相框。| 相框格式或模型的預處理色彩轉換可能出錯，或者相框的顏色已經存在於相機的 ISP/libcamera 輸出中。首先驗證一個 `NV12` 格式的圖像，看看是否在 Neat 之外也有同樣的問題。|
