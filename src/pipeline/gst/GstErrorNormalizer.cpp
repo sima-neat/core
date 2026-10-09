@@ -1367,6 +1367,14 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
         (accelerator_plugin_name(raw) || dispatcher_specific_context(raw))) ||
        (raw.code == GST_RESOURCE_ERROR_NOT_FOUND && dispatcher_specific_context(raw)));
 
+  // A legacy model path is user-controlled and can contain text recognized by the broad fallback
+  // heuristics below. Prefer the fully validated producer payload, but never override an explicit
+  // producer diagnostic ID.
+  if (diagnostic_id.empty()) {
+    if (const std::optional<ModelPathLimit> limit = find_model_path_limit(raw))
+      return model_path_too_long(std::move(raw), *limit);
+  }
+
   if (diagnostic_id == "neatprocesscvu.input_envelope_exceeded" ||
       contains_ci(text, "envelope violation")) {
     return input_capacity(std::move(raw));
@@ -1513,11 +1521,6 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
              "The encoder could not encode the input frames.");
     out.actions = {"Verify the encoder format, resolution, and bitrate settings."};
     return out;
-  }
-
-  if (diagnostic_id.empty()) {
-    if (const std::optional<ModelPathLimit> limit = find_model_path_limit(raw))
-      return model_path_too_long(std::move(raw), *limit);
   }
 
   NormalizedDiagnostic out =

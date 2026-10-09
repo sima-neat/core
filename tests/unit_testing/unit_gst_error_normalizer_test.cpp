@@ -868,7 +868,11 @@ RUN_TEST(
         constexpr const char* kLongPathDispatcherError =
             "MLASHM model path length 5000 exceeds maximum 255 bytes; shorten the extracted model "
             "path";
-        const std::string long_path(kLongPathBytes, 'a');
+        const std::string misleading_path_prefix =
+            "/models/not-negotiated/unable to get dispatcher/buffer is too small/";
+        const std::string long_path =
+            misleading_path_prefix +
+            std::string(kLongPathBytes - misleading_path_prefix.size(), 'a');
         const std::string long_debug = "plugin='neatprocessmla' model_path='" + long_path +
                                        "' dispatcher_err='" + kLongPathDispatcherError + "'";
         GError* long_error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
