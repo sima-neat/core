@@ -167,5 +167,6 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | `misconfig.media_caps` / `not-negotiated` | 카메라가 요청된 형식, 해상도 또는 프레임 속도를 지원하지 않습니다. |
 | 엄격한 제로 복사 오류, | `allow_cpu_fallback`은 false이고 카메라 소스에서 SiMaAI 제로 복사 속성을 제공하지 않습니다. |
 | 풀 타임아웃 | 카메라가 프레임을 전송하지 못했거나, 그래프에 역압력이 발생했거나, 카메라 스택이 스트리밍을 중단했습니다. |
+| `runtime.element_failed` / `neatcamera.frame_size_mismatch` | 카메라가 요청된 크기와 다른 크기의 프레임을 전송했습니다. 대개 센서에 해당 크기의 모드가 없기 때문입니다. 센서와 ISP가 모두 지원하는 크기를 요청하십시오. |
 <<번역>>
 | 녹색, 보라색 또는 색조가 강한 프레임 | 프레임 형식 또는 모델의 색상 변환 전처리 과정에 오류가 있거나, 카메라 ISP/libcamera 출력에 이미 색조가 적용되어 있습니다. 먼저 `NV12` 캡처를 Neat에서 확인하십시오. |
