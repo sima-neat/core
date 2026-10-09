@@ -43,6 +43,45 @@ class PromoteIndexFileTests(unittest.TestCase):
 
 
 class RootIndexFileTests(unittest.TestCase):
+    def test_rewrites_inbound_links_to_renamed_documentation_readme(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / "staging"
+            section = root / "section"
+            staging.mkdir()
+            nested = section / "peripherals" / "adding-a-device-type.md"
+            nested.parent.mkdir(parents=True)
+            (staging / "README.md").write_text(
+                "# Sentinel\n", encoding="utf-8"
+            )
+            (section / "README.md").write_text(
+                "# Documentation\n", encoding="utf-8"
+            )
+            nested.write_text(
+                "[Documentation index](../README.md#overview)\n"
+                '<a href="../README.md?view=full#details">HTML index</a>\n'
+                "[Unrelated](../reports.md)\n"
+                "[External](https://example.com/README.md)\n",
+                encoding="utf-8",
+            )
+
+            MODULE.write_root_index_file(
+                {"title": "Sentinel", "root_index_file": "README.md"},
+                staging,
+                section,
+                [],
+            )
+
+            rewritten = nested.read_text(encoding="utf-8")
+            self.assertIn(
+                "[Documentation index](../documentation.md#overview)", rewritten
+            )
+            self.assertIn(
+                'href="../documentation.md?view=full#details"', rewritten
+            )
+            self.assertIn("[Unrelated](../reports.md)", rewritten)
+            self.assertIn("[External](https://example.com/README.md)", rewritten)
+
     def test_omits_configured_repository_only_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -144,6 +183,11 @@ class RootIndexFileTests(unittest.TestCase):
             (localized_docs / "README.md").write_text(
                 "# Sentinel 文件\n\n[報告](reports.md)\n", encoding="utf-8"
             )
+            localized_nested = localized_docs / "peripherals" / "setup.md"
+            localized_nested.parent.mkdir()
+            localized_nested.write_text(
+                "[文件索引](../README.md?view=full#overview)\n", encoding="utf-8"
+            )
 
             MODULE.stage_source_section(
                 {
@@ -165,6 +209,10 @@ class RootIndexFileTests(unittest.TestCase):
             self.assertIn("# Sentinel 文件", generated)
             self.assertNotIn("English Sentinel", generated)
             self.assertTrue((section / "documentation.md").is_file())
+            self.assertIn(
+                "[文件索引](../documentation.md?view=full#overview)",
+                (section / "peripherals" / "setup.md").read_text(encoding="utf-8"),
+            )
 
 
 class LocalizedAutodocTests(unittest.TestCase):
