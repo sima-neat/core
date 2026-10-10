@@ -872,9 +872,7 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
   const bool factory_is_neatprocessmla = lower_copy(std::string(factory_name)) == "neatprocessmla";
   const bool plugin_is_neatprocessmla =
       plugin.has_value() && lower_copy(std::string(*plugin)) == "neatprocessmla";
-  const bool conflicting_plugin = plugin.has_value() && !plugin_is_neatprocessmla;
-  if ((!factory_is_neatprocessmla && !plugin_is_neatprocessmla) || conflicting_plugin ||
-      !dispatcher_error.has_value() ||
+  if ((!factory_is_neatprocessmla && !plugin_is_neatprocessmla) || !dispatcher_error.has_value() ||
       dispatcher_error->size() > kMaxPreservedDispatcherErrorBytes) {
     return truncate(std::move(value), kMaxDebugBytes);
   }
@@ -898,16 +896,13 @@ bool neatprocessmla_source(const RawGstError& raw) {
   const std::optional<std::string_view> legacy_plugin =
       find_legacy_quoted_debug_field(raw.debug, "plugin");
 
-  if (!raw.factory_name.empty() && lower_copy(raw.factory_name) != "neatprocessmla")
-    return false;
-  if (structured_plugin.has_value() && lower_copy(*structured_plugin) != "neatprocessmla")
-    return false;
-  if (legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) != "neatprocessmla")
-    return false;
-
-  return lower_copy(raw.factory_name) == "neatprocessmla" ||
-         (structured_plugin.has_value() && lower_copy(*structured_plugin) == "neatprocessmla") ||
-         (legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) == "neatprocessmla");
+  // The actual element factory is authoritative. Legacy fields are unescaped key='value' text,
+  // so a quoted marker inside a user-controlled model path can look like a top-level field.
+  if (!raw.factory_name.empty())
+    return lower_copy(raw.factory_name) == "neatprocessmla";
+  if (structured_plugin.has_value())
+    return lower_copy(*structured_plugin) == "neatprocessmla";
+  return legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) == "neatprocessmla";
 }
 
 bool parse_unsigned(std::string_view text, std::size_t& cursor, std::uint64_t& value) {

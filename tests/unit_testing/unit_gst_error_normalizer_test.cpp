@@ -904,8 +904,11 @@ RUN_TEST(
         GstElement* factory_source = gst_element_factory_make("neatprocessmla", "MLA_factory_0");
         require(factory_source != nullptr,
                 "factory-identified MLA source must be available for debug-capture test");
+        const std::string factory_marker = "/models/x plugin='otherplugin' y/";
+        const std::string factory_path =
+            factory_marker + std::string(kLongPathBytes - factory_marker.size(), 'b');
         const std::string factory_debug =
-            "model_path='" + long_path + "' dispatcher_err='" + kLongPathDispatcherError + "'";
+            "model_path='" + factory_path + "' dispatcher_err='" + kLongPathDispatcherError + "'";
         GError* factory_error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
                                                     "Unable to load model");
         GstMessage* factory_message =
@@ -916,7 +919,8 @@ RUN_TEST(
                 "the test message must establish MLA identity through its element factory");
         require(classify_gst_error(factory_raw).diagnostic_id ==
                     "neatprocessmla.model_path_too_long",
-                "factory identity must preserve the final dispatcher error when plugin is absent");
+                "factory identity must preserve the dispatcher error when a path contains a "
+                "plugin-field lookalike");
         gst_message_unref(factory_message);
         gst_object_unref(factory_source);
 
