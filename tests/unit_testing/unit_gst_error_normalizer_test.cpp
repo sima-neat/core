@@ -922,6 +922,24 @@ RUN_TEST(
                 "factory identity must preserve the dispatcher error when a path contains a "
                 "plugin-field lookalike");
         gst_message_unref(factory_message);
+
+        const std::string embedded_dispatcher =
+            "/models/x dispatcher_err='" + std::string(kDispatcherError) + "' y/";
+        const std::string misleading_factory_path =
+            embedded_dispatcher + std::string(kLongPathBytes - embedded_dispatcher.size(), 'c');
+        const std::string misleading_factory_debug = "model_path='" + misleading_factory_path + "'";
+        GError* misleading_factory_error = g_error_new_literal(
+            GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        GstMessage* misleading_factory_message = gst_message_new_error(
+            GST_OBJECT(factory_source), misleading_factory_error, misleading_factory_debug.c_str());
+        g_error_free(misleading_factory_error);
+        const RawGstError misleading_factory_raw =
+            parse_gst_error_message(misleading_factory_message);
+        require(classify_gst_error(misleading_factory_raw).diagnostic_id ==
+                    "gstreamer.unclassified_element_failure",
+                "a dispatcher field embedded in the model path must not create a path-limit "
+                "diagnosis");
+        gst_message_unref(misleading_factory_message);
         gst_object_unref(factory_source);
 
         const NormalizedDiagnostic caps =
