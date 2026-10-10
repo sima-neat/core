@@ -822,37 +822,19 @@ struct ModelPathLimit {
 // Legacy SIMAAI_GST_FATAL messages carried this context only in the producer's exact
 // space-delimited key='value' debug format. Keep this parser local and strict so arbitrary debug
 // text cannot become a production-facing diagnosis.
-bool inside_legacy_quoted_value(std::string_view debug, std::size_t end) {
-  bool inside = false;
-  for (std::size_t i = 0; i < std::min(end, debug.size()); ++i) {
-    if (debug[i] == '\'')
-      inside = !inside;
-  }
-  return inside;
-}
-
 std::optional<std::string_view> find_legacy_quoted_debug_field(std::string_view debug,
                                                                std::string_view key,
                                                                bool prefer_last = false) {
   const std::string marker = std::string(key) + "='";
-  std::size_t search_pos = 0;
-  std::size_t quote_scan_pos = 0;
-  bool inside_quoted_value = false;
+  std::size_t pos = 0;
   std::optional<std::string_view> found;
-  while (true) {
-    const std::size_t pos = debug.find(marker, search_pos);
-    if (pos == std::string::npos)
-      break;
-    for (; quote_scan_pos < pos; ++quote_scan_pos) {
-      if (debug[quote_scan_pos] == '\'')
-        inside_quoted_value = !inside_quoted_value;
-    }
+  while ((pos = debug.find(marker, pos)) != std::string::npos) {
     const bool starts_field = pos == 0 ||
                               std::isspace(static_cast<unsigned char>(debug[pos - 1])) ||
                               debug[pos - 1] == '|';
     const std::size_t value_begin = pos + marker.size();
-    if (!starts_field || inside_quoted_value) {
-      search_pos = value_begin;
+    if (!starts_field) {
+      pos = value_begin;
       continue;
     }
 
@@ -862,13 +844,50 @@ std::optional<std::string_view> find_legacy_quoted_debug_field(std::string_view 
     const std::size_t field_end = value_end + 1;
     if (field_end != debug.size() && !std::isspace(static_cast<unsigned char>(debug[field_end])) &&
         debug[field_end] != '|') {
-      search_pos = field_end;
+      pos = field_end;
       continue;
     }
     found = debug.substr(value_begin, value_end - value_begin);
     if (!prefer_last)
       return found;
-    search_pos = field_end;
+    pos = field_end;
+  }
+  return found;
+}
+
+std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view debug) {
+  constexpr std::string_view marker = "dispatcher_err='";
+  constexpr std::string_view trailing_fields[] = {
+      "hint='", "stage_key='", "source_used='", "missing_field='", "fallback_chain='", "detail='"};
+
+  std::size_t search_pos = 0;
+  std::optional<std::string_view> found;
+  while (true) {
+    const std::size_t pos = debug.find(marker, search_pos);
+    if (pos == std::string::npos)
+      break;
+    std::size_t previous = pos;
+    while (previous > 0 && std::isspace(static_cast<unsigned char>(debug[previous - 1])))
+      --previous;
+    const bool starts_top_level =
+        previous == 0 || debug[previous - 1] == '\'' || debug[previous - 1] == '|';
+    const std::size_t value_begin = pos + marker.size();
+    const std::size_t value_end = debug.find('\'', value_begin);
+    if (value_end == std::string::npos)
+      return std::nullopt;
+
+    std::size_t tail = value_end + 1;
+    while (tail < debug.size() &&
+           (std::isspace(static_cast<unsigned char>(debug[tail])) || debug[tail] == '|')) {
+      ++tail;
+    }
+    const bool has_valid_tail =
+        tail == debug.size() ||
+        std::any_of(std::begin(trailing_fields), std::end(trailing_fields),
+                    [&](std::string_view field) { return debug.substr(tail).starts_with(field); });
+    if (starts_top_level && has_valid_tail)
+      found = debug.substr(value_begin, value_end - value_begin);
+    search_pos = value_end + 1;
   }
   return found;
 }
@@ -885,8 +904,7 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
   // final field so the actionable cause survives when the offending path itself exceeds the
   // ordinary debug capture limit. The full value is redacted before either portion is retained.
   const std::optional<std::string_view> plugin = find_legacy_quoted_debug_field(value, "plugin");
-  const std::optional<std::string_view> dispatcher_error =
-      find_legacy_quoted_debug_field(value, "dispatcher_err", true);
+  const std::optional<std::string_view> dispatcher_error = find_legacy_dispatcher_error(value);
   const bool factory_is_neatprocessmla = lower_copy(std::string(factory_name)) == "neatprocessmla";
   const bool plugin_is_neatprocessmla =
       plugin.has_value() && lower_copy(std::string(*plugin)) == "neatprocessmla";
@@ -896,7 +914,7 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
   }
 
   const std::string suffix =
-      "...<truncated> dispatcher_err='" + std::string(*dispatcher_error) + "'";
+      "...<truncated> | dispatcher_err='" + std::string(*dispatcher_error) + "'";
   if (suffix.size() >= kMaxDebugBytes)
     return truncate(std::move(value), kMaxDebugBytes);
 
@@ -904,17 +922,7 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
   while (boundary > 0 && (static_cast<unsigned char>(value[boundary]) & 0xC0U) == 0x80U) {
     --boundary;
   }
-  bool close_truncated_value = inside_legacy_quoted_value(value, boundary);
-  if (close_truncated_value && boundary > 0) {
-    --boundary;
-    while (boundary > 0 && (static_cast<unsigned char>(value[boundary]) & 0xC0U) == 0x80U) {
-      --boundary;
-    }
-    close_truncated_value = inside_legacy_quoted_value(value, boundary);
-  }
   value.resize(boundary);
-  if (close_truncated_value)
-    value.push_back('\'');
   value += suffix;
   return value;
 }
@@ -951,8 +959,7 @@ std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
 
   std::optional<std::string> dispatcher_error = find_structured_detail(raw, {"dispatcher-error"});
   if (!dispatcher_error.has_value()) {
-    if (const std::optional<std::string_view> legacy =
-            find_legacy_quoted_debug_field(raw.debug, "dispatcher_err", true)) {
+    if (const std::optional<std::string_view> legacy = find_legacy_dispatcher_error(raw.debug)) {
       dispatcher_error = std::string(*legacy);
     }
   }

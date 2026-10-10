@@ -969,6 +969,14 @@ RUN_TEST(
                          "Path length: 258 bytes",
                          "the matching explicit diagnostic ID must retain validated byte facts");
 
+        RawGstError apostrophe_path = legacy_model_path_error(kDispatcherError);
+        apostrophe_path.debug =
+            "plugin='neatprocessmla' model_path='/models/O'Reilly/model.tar.gz' dispatcher_err='" +
+            std::string(kDispatcherError) + "'";
+        require(classify_gst_error(std::move(apostrophe_path)).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "an apostrophe in the model path must not hide the real trailing dispatcher field");
+
         RawGstError factory_identified = legacy_model_path_error(kDispatcherError);
         factory_identified.factory_name = "neatprocessmla";
         factory_identified.debug =
