@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cctype>
 #include <cstring>
@@ -314,6 +315,11 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
   std::size_t recognized = 0U;
   std::vector<std::pair<std::string, std::uint64_t>> unindexed_ifm;
   std::vector<std::pair<std::string, std::uint64_t>> unindexed_ofm;
+  // Per-tensor sample-zero sections seen so far, and how many preceded data.{ifm,ofm}.b0.
+  std::size_t ifm_tensors_seen = 0U;
+  std::size_t ofm_tensors_seen = 0U;
+  std::size_t bare_ifm_position = 0U;
+  std::size_t bare_ofm_position = 0U;
   for (const auto& s : sections) {
     const std::string name = section_name_at(shstrtab, s.sh_name);
     if (name.empty()) {
@@ -335,6 +341,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     if (name == kMonolithicIfmName) {
       out->monolithic_ifm = true;
       out->monolithic_ifm_extent_bytes = has_extent ? extent : 0U;
+      bare_ifm_position = ifm_tensors_seen;
       if (!has_extent) {
         append_warning(&out->error, "IFM section lacks a non-zero QMLA SHT_DATA extent");
       }
@@ -344,6 +351,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     if (name == kMonolithicOfmName) {
       out->monolithic_ofm = true;
       out->monolithic_ofm_extent_bytes = has_extent ? extent : 0U;
+      bare_ofm_position = ofm_tensors_seen;
       if (!has_extent) {
         append_warning(&out->error, "OFM section lacks a non-zero QMLA SHT_DATA extent");
       }
@@ -358,6 +366,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       if (!has_extent) {
         append_warning(&out->error, "IFM section '" + name + "' lacks a QMLA extent");
       }
+      ++ifm_tensors_seen;
       ++recognized;
       continue;
     }
@@ -369,17 +378,60 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       if (!has_extent) {
         append_warning(&out->error, "OFM section '" + name + "' lacks a QMLA extent");
       }
+      ++ofm_tensors_seen;
       ++recognized;
       continue;
     }
     if (is_unindexed_section(name, "data.ifm.persistent.MLA_")) {
       unindexed_ifm.emplace_back(name, has_extent ? extent : 0U);
+      ++ifm_tensors_seen;
       ++recognized;
     } else if (is_unindexed_section(name, "data.ofm.persistent.MLA_")) {
       unindexed_ofm.emplace_back(name, has_extent ? extent : 0U);
+      ++ofm_tensors_seen;
       ++recognized;
     }
   }
+
+  // A bare data.{ifm,ofm}.b0 beside per-tensor sections is one more per-tensor port at its ELF
+  // encounter position, the order MLA-RT exposes ports in. Beside indexed sections that position
+  // must be the single unclaimed index. Any other mix stays monolithic and is a layout conflict.
+  const auto admit_bare_section = [](bool* monolithic, std::uint64_t* monolithic_extent,
+                                     const char* bare_name, const std::size_t position,
+                                     auto* unindexed, auto* names, auto* extents) {
+    if (!*monolithic) {
+      return;
+    }
+    if (!unindexed->empty()) {
+      if (!names->empty()) {
+        return;
+      }
+      unindexed->insert(unindexed->begin() + static_cast<std::ptrdiff_t>(position),
+                        {bare_name, *monolithic_extent});
+    } else {
+      const auto unclaimed = std::find(names->begin(), names->end(), std::string{});
+      const auto index = static_cast<std::size_t>(unclaimed - names->begin());
+      if (names->empty() || index != position ||
+          std::count(names->begin(), names->end(), std::string{}) > 1) {
+        return;
+      }
+      if (unclaimed == names->end()) {
+        names->push_back(bare_name);
+        extents->push_back(*monolithic_extent);
+      } else {
+        *unclaimed = bare_name;
+        (*extents)[index] = *monolithic_extent;
+      }
+    }
+    *monolithic = false;
+    *monolithic_extent = 0U;
+  };
+  admit_bare_section(&out->monolithic_ifm, &out->monolithic_ifm_extent_bytes, kMonolithicIfmName,
+                     bare_ifm_position, &unindexed_ifm, &out->ifm_symbol_names,
+                     &out->ifm_extent_bytes);
+  admit_bare_section(&out->monolithic_ofm, &out->monolithic_ofm_extent_bytes, kMonolithicOfmName,
+                     bare_ofm_position, &unindexed_ofm, &out->ofm_symbol_names,
+                     &out->ofm_extent_bytes);
 
   // Native tensor names carry no port index; preserve their physical ELF encounter order.
   const auto bind_unindexed = [&](const auto& sections, auto* names, auto* extents,
@@ -411,7 +463,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
   const auto identify_slots = [&](auto& slots, const auto& names, const char* monolithic) {
     for (auto& slot : slots) {
       const auto sample = batch_section(slot.symbol);
-      if (sample->first == monolithic) {
+      if (sample->first == monolithic && names.empty()) {
         slot.logical_index = 0U;
         continue;
       }

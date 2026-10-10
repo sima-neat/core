@@ -988,6 +988,44 @@ void test_native_port_order() {
   }
 }
 
+// A bare data.{ifm,ofm}.b0 port among native MLA_N sections is assigned by size like its siblings.
+void test_bare_port_among_native_ports() {
+  for (const bool input : {false, true}) {
+    const auto bare = input ? "data.ifm.b0" : "data.ofm.b0";
+    const std::vector<std::uint64_t> identity{16U, 32U, 48U};
+    const std::vector<std::uint64_t> permuted{48U, 16U, 32U};
+    auto topology = native_port_topology(input ? permuted : identity, input ? identity : permuted);
+    (input ? topology.ifm_symbol_names : topology.ofm_symbol_names)[0] = bare;
+    const auto result =
+        MpkDecoder{}.decode_json(port_order_manifest(identity).dump(), topology, "synthetic.json");
+    if (!result && result.error) {
+      std::cerr << result.error->json_path << ": " << result.error->detail << '\n';
+    }
+    check(static_cast<bool>(result), "bare port among native ports decodes by size");
+    for (const auto& port : result.plan->backend_ports()) {
+      if (port.elf_symbol == bare) {
+        check(result.plan->value(port.value_id)->name == (input ? "cast_in2" : "mla_out2"),
+              "bare port binds the tensor matching its extent");
+      }
+    }
+
+    const std::vector<std::uint64_t> equal{16U, 16U, 32U};
+    auto ambiguous =
+        native_port_topology(input ? std::vector<std::uint64_t>{32U, 16U, 16U} : equal,
+                             input ? equal : std::vector<std::uint64_t>{32U, 16U, 16U});
+    (input ? ambiguous.ifm_symbol_names : ambiguous.ofm_symbol_names)[1] = bare;
+    check(!MpkDecoder{}.decode_json(port_order_manifest(equal).dump(), ambiguous, "synthetic.json"),
+          "bare port with an ambiguous size assignment rejects");
+
+    // A packed bare carrier has the extent of every tensor together, which matches none of them.
+    auto packed = native_port_topology(identity, identity);
+    (input ? packed.ifm_symbol_names : packed.ofm_symbol_names)[0] = bare;
+    (input ? packed.ifm_extent_bytes : packed.ofm_extent_bytes)[0] = 96U;
+    check(!MpkDecoder{}.decode_json(port_order_manifest(identity).dump(), packed, "synthetic.json"),
+          "bare port whose extent matches no tensor rejects");
+  }
+}
+
 void test_native_output_quant_order() {
   const std::vector<std::uint64_t> sizes{16U, 32U, 48U};
   for (const std::uint32_t batch : {1U, 2U, 4U}) {
@@ -2708,6 +2746,7 @@ int main(const int argc, char** argv) {
   }
   check(argc == 1, "usage: unit_mpk_decoder_test [manifest elf]");
   test_native_port_order();
+  test_bare_port_among_native_ports();
   test_native_output_quant_order();
   test_reordered_command_contracts();
   test_flat_unpack_compatibility();
