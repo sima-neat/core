@@ -197,12 +197,6 @@ std::optional<std::size_t> parse_ofm_section_index(const std::string& name) {
   return std::nullopt;
 }
 
-bool is_unindexed_section(const std::string& name, const std::string& prefix) {
-  std::size_t stage_index = 0U;
-  return parse_section_index_after_prefix(name, prefix, true, &stage_index) &&
-         name.find('/') + 1U < name.size() - 3U;
-}
-
 std::optional<std::pair<std::string, std::size_t>> batch_section(const std::string& name) {
   const auto suffix = name.rfind(".b");
   if (suffix == std::string::npos) {
@@ -214,6 +208,17 @@ std::optional<std::pair<std::string, std::size_t>> batch_section(const std::stri
     return std::nullopt;
   }
   return std::pair{name.substr(0U, suffix) + ".b0", batch};
+}
+
+// A persistent I/O section without an input/output index cannot be bound to a model tensor.
+bool is_unindexed_io_section(const std::string& name) {
+  const auto sample = batch_section(name);
+  if (!sample) {
+    return false;
+  }
+  const auto& base = sample->first;
+  return (base.starts_with("data.ifm.persistent.") || base.starts_with("data.ofm.persistent.")) &&
+         !parse_ifm_section_index(base) && !parse_ofm_section_index(base);
 }
 
 // Insert `name` at slot `index` in `dst`, growing the vector as needed. If
@@ -312,8 +317,6 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
 
   // Walk every section name and classify.
   std::size_t recognized = 0U;
-  std::vector<std::pair<std::string, std::uint64_t>> unindexed_ifm;
-  std::vector<std::pair<std::string, std::uint64_t>> unindexed_ofm;
   for (const auto& s : sections) {
     const std::string name = section_name_at(shstrtab, s.sh_name);
     if (name.empty()) {
@@ -323,10 +326,8 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     const bool has_extent = read_qmla_data_extent(in, s, &extent);
     if (const auto sample = batch_section(name)) {
       const auto& base = sample->first;
-      const bool ifm = base == kMonolithicIfmName || parse_ifm_section_index(base) ||
-                       is_unindexed_section(base, "data.ifm.persistent.MLA_");
-      const bool ofm = base == kMonolithicOfmName || parse_ofm_section_index(base) ||
-                       is_unindexed_section(base, "data.ofm.persistent.MLA_");
+      const bool ifm = base == kMonolithicIfmName || parse_ifm_section_index(base);
+      const bool ofm = base == kMonolithicOfmName || parse_ofm_section_index(base);
       if (ifm || ofm) {
         auto& slots = ifm ? out->ifm_slots : out->ofm_slots;
         slots.push_back({0U, sample->second, name, has_extent ? extent : 0U});
@@ -372,67 +373,23 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       ++recognized;
       continue;
     }
-    if (is_unindexed_section(name, "data.ifm.persistent.MLA_")) {
-      unindexed_ifm.emplace_back(name, has_extent ? extent : 0U);
-      ++recognized;
-    } else if (is_unindexed_section(name, "data.ofm.persistent.MLA_")) {
-      unindexed_ofm.emplace_back(name, has_extent ? extent : 0U);
-      ++recognized;
-    }
-  }
-
-  // Native tensor names carry no port index; preserve their physical ELF encounter order.
-  const auto bind_unindexed = [&](const auto& sections, auto* names, auto* extents,
-                                  const char* direction) {
-    if (sections.empty()) {
-      return true;
-    }
-    if (!names->empty()) {
-      out->error = std::string("elf-io-topology: mixed indexed and unindexed ") + direction +
-                   " sections have conflicting port orders";
+    if (is_unindexed_io_section(name)) {
+      out->error = "elf-io-topology: I/O section '" + name +
+                   "' has no input/output index; recompile the model with a Model Compiler that "
+                   "names I/O sections input_<i>/output_<i>";
       return false;
     }
-    for (const auto& [name, extent] : sections) {
-      if (std::find(names->begin(), names->end(), name) != names->end()) {
-        out->error = std::string("elf-io-topology: duplicate unindexed ") + direction +
-                     " section '" + name + "'";
-        return false;
-      }
-      names->push_back(name);
-      extents->push_back(extent);
-    }
-    return true;
-  };
-  if (!bind_unindexed(unindexed_ifm, &out->ifm_symbol_names, &out->ifm_extent_bytes, "IFM") ||
-      !bind_unindexed(unindexed_ofm, &out->ofm_symbol_names, &out->ofm_extent_bytes, "OFM")) {
-    return false;
   }
 
-  const auto identify_slots = [&](auto& slots, const auto& names, const char* monolithic) {
+  // Slots hold only monolithic or indexed sections, so the name carries the tensor index.
+  const auto identify_slots = [](auto& slots, const char* monolithic, auto parse_index) {
     for (auto& slot : slots) {
-      const auto sample = batch_section(slot.symbol);
-      if (sample->first == monolithic) {
-        slot.logical_index = 0U;
-        continue;
-      }
-      const auto indexed = parse_ifm_section_index(sample->first)
-                               ? parse_ifm_section_index(sample->first)
-                               : parse_ofm_section_index(sample->first);
-      if (indexed) {
-        slot.logical_index = *indexed;
-        continue;
-      }
-      const auto found = std::find(names.begin(), names.end(), sample->first);
-      if (found == names.end()) {
-        append_warning(&out->error, "batch section has no sample-zero identity");
-        slot.logical_index = names.size();
-        continue;
-      }
-      slot.logical_index = static_cast<std::size_t>(found - names.begin());
+      const auto base = batch_section(slot.symbol)->first;
+      slot.logical_index = base == monolithic ? 0U : *parse_index(base);
     }
   };
-  identify_slots(out->ifm_slots, out->ifm_symbol_names, kMonolithicIfmName);
-  identify_slots(out->ofm_slots, out->ofm_symbol_names, kMonolithicOfmName);
+  identify_slots(out->ifm_slots, kMonolithicIfmName, parse_ifm_section_index);
+  identify_slots(out->ofm_slots, kMonolithicOfmName, parse_ofm_section_index);
 
   if (recognized == 0U) {
     out->error = "elf-io-topology: no IFM/OFM sections recognized";
