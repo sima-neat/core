@@ -465,67 +465,6 @@ bool mla_input_extent_matches(const ValueSpec& value, const std::uint64_t physic
          *aligned_bytes == physical_extent;
 }
 
-// Preserve a valid positional contract; otherwise prove a unique complete assignment.
-template <typename Compatible>
-std::vector<std::size_t>
-resolve_mla_port_order(const std::size_t count, const Compatible& compatible,
-                       const bool allow_permutation, const std::string& path) {
-  std::vector<std::size_t> order(count);
-  std::iota(order.begin(), order.end(), 0U);
-  if (std::all_of(order.begin(), order.end(), [&](const auto i) { return compatible(i, i); }) ||
-      !allow_permutation) {
-    return order;
-  }
-  std::vector<std::vector<std::size_t>> candidates(count);
-  for (std::size_t physical = 0U; physical < count; ++physical) {
-    for (std::size_t logical = 0U; logical < count; ++logical) {
-      if (compatible(physical, logical)) {
-        candidates[physical].push_back(logical);
-      }
-    }
-  }
-  const auto match = [&](const std::size_t excluded_physical, const std::size_t excluded_logical) {
-    std::vector<std::size_t> owners(count, count);
-    const auto augment = [&](const auto& self, const std::size_t physical,
-                             std::vector<bool>& visited) -> bool {
-      for (const auto logical : candidates[physical]) {
-        if (visited[logical] || (physical == excluded_physical && logical == excluded_logical)) {
-          continue;
-        }
-        visited[logical] = true;
-        if (owners[logical] == count || self(self, owners[logical], visited)) {
-          owners[logical] = physical;
-          return true;
-        }
-      }
-      return false;
-    };
-    for (std::size_t physical = 0U; physical < count; ++physical) {
-      std::vector<bool> visited(count, false);
-      if (!augment(augment, physical, visited)) {
-        return std::vector<std::size_t>{};
-      }
-    }
-    std::vector<std::size_t> assignment(count);
-    for (std::size_t logical = 0U; logical < count; ++logical) {
-      assignment[owners[logical]] = logical;
-    }
-    return assignment;
-  };
-  order = match(count, count);
-  if (order.empty()) {
-    reject(MpkDecodeErrorCode::ValueSizeMismatch, path,
-           "MLA port extents have no complete compatible tensor assignment");
-  }
-  for (std::size_t physical = 0U; physical < count; ++physical) {
-    if (!match(physical, order[physical]).empty()) {
-      reject(MpkDecodeErrorCode::ConfigurationMismatch, path,
-             "MLA port extents have more than one compatible tensor assignment");
-    }
-  }
-  return order;
-}
-
 void author_mla_output_storage(ValueSpec& value, const MlaOpConfig& mla,
                                const std::size_t mla_op_index, const std::size_t output_index,
                                const std::string& symbol, const std::uint64_t physical_extent,
@@ -1997,11 +1936,6 @@ MpkDecodeResult decode_impl(const std::string_view text,
           {"MLA[" + std::to_string(stage_index) + "].identity",
            "MPK logical stage '" + mla.name + "' and executable '" + config.executable +
                "' exactly select one ELF topology; no filename/order inference"});
-      const auto native_ports = [](const auto& symbols, const std::string_view prefix) {
-        return !symbols.empty() &&
-               std::all_of(symbols.begin(), symbols.end(),
-                           [&](const auto& symbol) { return symbol.starts_with(prefix); });
-      };
       if (mla.batch_count > 1U) {
         config.batch_count = mla.batch_count;
         const auto batch = static_cast<std::uint64_t>(mla.batch_count);
@@ -2014,10 +1948,19 @@ MpkDecodeResult decode_impl(const std::string_view text,
                    "$.plugins[" + std::to_string(mla_op_index) + "]",
                    "ELF batch slots do not cover every MPK tensor and sample");
           }
-          std::vector<const MlaElfPhysicalSlot*> groups(values.size());
-          for (std::size_t group = 0; group < values.size(); ++group) {
+          std::vector<std::uint64_t> sample_bytes(values.size());
+          std::vector<std::uint64_t> sample_strides(values.size());
+          for (std::size_t logical = 0; logical < values.size(); ++logical) {
+            auto& value = data.values[values[logical]];
+            if (!value.logical_shape || value.logical_shape->empty() ||
+                value.logical_shape->front() != mla.batch_count ||
+                value.required_bytes % batch != 0U) {
+              reject(MpkDecodeErrorCode::ConfigurationMismatch,
+                     "$.plugins[" + std::to_string(mla_op_index) + "]",
+                     "MLA tensor shape and bytes do not describe the declared full batch");
+            }
             const auto first = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
-              return slot.logical_index == group && slot.batch_index == 0U;
+              return slot.logical_index == logical && slot.batch_index == 0U;
             });
             if (first == slots.end()) {
               reject(MpkDecodeErrorCode::ElfTopologyMismatch, "$.plugins",
@@ -2025,7 +1968,7 @@ MpkDecodeResult decode_impl(const std::string_view text,
             }
             std::vector<bool> seen(mla.batch_count, false);
             for (const auto& slot : slots) {
-              if (slot.logical_index != group)
+              if (slot.logical_index != logical)
                 continue;
               if (slot.batch_index >= batch || seen[slot.batch_index] ||
                   slot.extent_bytes != first->extent_bytes) {
@@ -2037,18 +1980,6 @@ MpkDecodeResult decode_impl(const std::string_view text,
             if (std::find(seen.begin(), seen.end(), false) != seen.end()) {
               reject(MpkDecodeErrorCode::ElfTopologyMismatch, "$.plugins",
                      "ELF does not provide every declared sample");
-            }
-            groups[group] = &*first;
-          }
-          const auto prepare_value = [&](ValueSpec& value, const std::size_t logical,
-                                         const MlaElfPhysicalSlot& first,
-                                         std::vector<MpkProofFact>* proof) {
-            if (!value.logical_shape || value.logical_shape->empty() ||
-                value.logical_shape->front() != mla.batch_count ||
-                value.required_bytes % batch != 0U) {
-              reject(MpkDecodeErrorCode::ConfigurationMismatch,
-                     "$.plugins[" + std::to_string(mla_op_index) + "]",
-                     "MLA tensor shape and bytes do not describe the declared full batch");
             }
             const bool padded_channels =
                 value.storage_binding && value.storage_binding->channel_alignment > 1U;
@@ -2063,8 +1994,8 @@ MpkDecodeResult decode_impl(const std::string_view text,
                                       value.representation == ValueRepresentation::Dense &&
                                       !value.read_expression && logical_bytes &&
                                       *logical_bytes == value.required_bytes && aligned &&
-                                      *aligned == first.extent_bytes;
-              if (first.extent_bytes != bytes && !dense_tail) {
+                                      *aligned == first->extent_bytes;
+              if (first->extent_bytes != bytes && !dense_tail) {
                 reject(
                     MpkDecodeErrorCode::ValueSizeMismatch,
                     "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes[" +
@@ -2097,43 +2028,19 @@ MpkDecodeResult decode_impl(const std::string_view text,
                 value.storage_binding = std::move(binding);
               }
             } else {
-              if (first.extent_bytes > std::numeric_limits<std::uint64_t>::max() / batch) {
+              if (first->extent_bytes > std::numeric_limits<std::uint64_t>::max() / batch) {
                 reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.plugins",
                        "MLA batch extent overflows");
               }
-              author_mla_output_storage(value, config, mla_op_index, logical, first.symbol,
-                                        first.extent_bytes * batch, proof);
+              author_mla_output_storage(value, config, mla_op_index, logical, first->symbol,
+                                        first->extent_bytes * batch, &result.proof);
             }
             const auto& binding = value.storage_binding;
-            const auto stride = binding && !binding->stride_bytes.empty()
-                                    ? static_cast<std::uint64_t>(binding->stride_bytes.front())
-                                    : bytes;
-            return std::pair{bytes, stride};
-          };
-          const bool input = direction == BackendPortDirection::Input;
-          const auto order = resolve_mla_port_order(
-              values.size(),
-              [&](const auto group, const auto logical) {
-                auto candidate = data.values[values[logical]];
-                try {
-                  prepare_value(candidate, logical, *groups[group], nullptr);
-                  return true;
-                } catch (const DecodeAbort&) {
-                  return false;
-                }
-              },
-              input ? native_ports(topology.ifm_symbol_names, "data.ifm.persistent.MLA_")
-                    : native_ports(topology.ofm_symbol_names, "data.ofm.persistent.MLA_"),
-              "$.plugins[" + std::to_string(mla_op_index) + "]" +
-                  (input ? ".input_nodes" : ".output_nodes"));
-          std::vector<std::uint64_t> sample_bytes(values.size());
-          std::vector<std::uint64_t> sample_strides(values.size());
-          for (std::size_t group = 0; group < values.size(); ++group) {
-            const auto logical = order[group];
-            const auto [bytes, stride] =
-                prepare_value(data.values[values[logical]], logical, *groups[group], &result.proof);
             sample_bytes[logical] = bytes;
-            sample_strides[logical] = stride;
+            sample_strides[logical] =
+                binding && !binding->stride_bytes.empty()
+                    ? static_cast<std::uint64_t>(binding->stride_bytes.front())
+                    : bytes;
           }
           for (std::size_t physical = 0; physical < slots.size(); ++physical) {
             const auto& slot = slots[physical];
@@ -2141,7 +2048,7 @@ MpkDecodeResult decode_impl(const std::string_view text,
               reject(MpkDecodeErrorCode::ElfTopologyMismatch, "$.plugins",
                      "ELF sample references an unknown logical tensor");
             }
-            const auto logical = order[slot.logical_index];
+            const auto logical = slot.logical_index;
             const auto stride = sample_strides[logical];
             if (slot.batch_index > std::numeric_limits<std::uint64_t>::max() / stride) {
               reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.plugins",
@@ -2182,35 +2089,10 @@ MpkDecodeResult decode_impl(const std::string_view text,
       }
       const bool batch_one =
           ordered[mla_op_index].plugin->at("config_params").at("actual_batch_size") == 1;
-      const auto input_order = resolve_mla_port_order(
-          mla.inputs.size(),
-          [&](const auto physical, const auto logical) {
-            return mla_input_extent_matches(data.values[mla.inputs[logical]],
-                                            mla_elf_ifm_extent_bytes(topology, physical),
-                                            batch_one);
-          },
-          native_ports(topology.ifm_symbol_names, "data.ifm.persistent.MLA_"),
-          "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes");
-      const auto output_order = resolve_mla_port_order(
-          mla.outputs.size(),
-          [&](const auto physical, const auto logical) {
-            auto candidate = data.values[mla.outputs[logical]];
-            const auto symbol =
-                topology.monolithic_ofm ? "data.ofm.b0" : topology.ofm_symbol_names.at(physical);
-            try {
-              author_mla_output_storage(candidate, config, mla_op_index, logical, symbol,
-                                        mla_elf_ofm_extent_bytes(topology, physical), nullptr);
-              return true;
-            } catch (const DecodeAbort&) {
-              return false;
-            }
-          },
-          native_ports(topology.ofm_symbol_names, "data.ofm.persistent.MLA_"),
-          "$.plugins[" + std::to_string(mla_op_index) + "].output_nodes");
       for (std::size_t index = 0; index < mla.inputs.size(); ++index) {
         const std::string symbol =
             topology.monolithic_ifm ? "data.ifm.b0" : topology.ifm_symbol_names.at(index);
-        const auto& value = data.values[mla.inputs[input_order[index]]];
+        const auto& value = data.values[mla.inputs[index]];
         const auto physical_extent = mla_elf_ifm_extent_bytes(topology, index);
         const auto transfer_bytes =
             value.storage_binding && value.storage_binding->channel_alignment > 1U
@@ -2220,7 +2102,7 @@ MpkDecodeResult decode_impl(const std::string_view text,
           if (!mla_input_extent_matches(value, physical_extent, batch_one)) {
             reject(MpkDecodeErrorCode::ValueSizeMismatch,
                    "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes[" +
-                       std::to_string(input_order[index]) + "].size",
+                       std::to_string(index) + "].size",
                    "QMLA IFM extent is neither exact logical bytes nor registered batch-one dense "
                    "tail padding");
           }
@@ -2232,7 +2114,6 @@ MpkDecodeResult decode_impl(const std::string_view text,
                                       value.id, transfer_bytes, kLegacyEvoCmaRegionAlignmentBytes,
                                       BackendPortAlignmentAuthority::LegacyPolicy,
                                       BackendPortAccess::ReadOnly});
-        data.backend_ports.back().logical_port_index = input_order[index];
         result.proof.push_back(
             {"MLA[" + std::to_string(stage_index) + "].IFM[" + std::to_string(index) + "]",
              "ELF symbol '" + symbol + "' and exact stage MPK input agree"});
@@ -2241,14 +2122,13 @@ MpkDecodeResult decode_impl(const std::string_view text,
         const std::string symbol =
             topology.monolithic_ofm ? "data.ofm.b0" : topology.ofm_symbol_names.at(index);
         const auto physical_extent = mla_elf_ofm_extent_bytes(topology, index);
-        author_mla_output_storage(data, mla_op_index, output_order[index], symbol, physical_extent,
+        author_mla_output_storage(data, mla_op_index, index, symbol, physical_extent,
                                   &result.proof);
-        const auto& value = data.values[mla.outputs[output_order[index]]];
+        const auto& value = data.values[mla.outputs[index]];
         data.backend_ports.push_back({stage_index, BackendPortDirection::Output, index, symbol,
                                       value.id, physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
                                       BackendPortAlignmentAuthority::LegacyPolicy,
                                       BackendPortAccess::WriteOnly});
-        data.backend_ports.back().logical_port_index = output_order[index];
         result.proof.push_back(
             {"MLA[" + std::to_string(stage_index) + "].OFM[" + std::to_string(index) + "]",
              "ELF symbol '" + symbol + "' and exact stage MPK output agree"});

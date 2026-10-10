@@ -404,17 +404,17 @@ void test_mla_only_rejects_unusable_output_geometry() {
                    "a head without a dequantize stage must be rejected");
 }
 
-// One cast feeds an MLA whose two outputs are published directly. The MPK
-// lists them as 16 then 32 bytes; ofm_extents gives the executable port order.
+// One cast feeds an MLA whose two outputs are published directly. Section i
+// carries MPK MLA output i; ofm_extents gives their sizes in that order.
 sc::MpkDecodeResult decode_terminal_mla(const std::string& manifest,
                                         const std::vector<std::uint64_t>& ofm_extents) {
   mpk::MlaElfIoTopology topology;
   topology.valid = true;
-  topology.ifm_symbol_names = {"data.ifm.persistent.MLA_0/input0.b0"};
+  topology.ifm_symbol_names = {"data.ifm.persistent.input_0/MLA_0/input0.b0"};
   topology.ifm_extent_bytes = {8U};
   for (std::size_t i = 0; i < ofm_extents.size(); ++i) {
-    topology.ofm_symbol_names.push_back("data.ofm.persistent.MLA_0/output" + std::to_string(i) +
-                                        ".b0");
+    topology.ofm_symbol_names.push_back("data.ofm.persistent.output_" + std::to_string(i) +
+                                        "/MLA_0/output" + std::to_string(i) + ".b0");
   }
   topology.ofm_extent_bytes = ofm_extents;
   return sc::MpkDecoder{}.decode_json(manifest, topology, "synthetic_mpk.json");
@@ -458,7 +458,15 @@ void test_terminal_mla_outputs_follow_executable_port_order() {
               facts.outputs[0].payload_offset == 0U && facts.outputs[1].payload_offset == 16U,
           "outputs already in executable port order keep their packed layout");
 
-  const auto reordered = decode_terminal_mla(manifest, {32U, 16U});
+  // The MLA lists head_b first, so executable port 0 carries head_b while the
+  // published outputs keep model order.
+  auto reordered_manifest = manifest;
+  const std::string mla_outputs =
+      R"("output_nodes":[{"name":"head_a","size":16},{"name":"head_b","size":32}])";
+  reordered_manifest.replace(
+      reordered_manifest.find(mla_outputs), mla_outputs.size(),
+      R"("output_nodes":[{"name":"head_b","size":32},{"name":"head_a","size":16}])");
+  const auto reordered = decode_terminal_mla(reordered_manifest, {32U, 16U});
   require(static_cast<bool>(reordered), "terminal MLA with reordered ports must decode");
   facts = pcie_internal::detail::read_model_facts(*contract);
   require(facts.outputs[0].physical_index == 0 && facts.outputs[1].physical_index == 1,
