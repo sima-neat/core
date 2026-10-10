@@ -32,7 +32,7 @@ def _model(kind):
   defaults = {
       "llm": ("TEXT", "Qwen2.5-0.5B-Instruct-Autoround-a16w4"),
       "vlm": ("VLM", "LFM2.5-VL-450M-Autoround-a16w4"),
-      "asr": ("ASR", "whisper-small-a16w8-layered-encoder"),
+      "asr": ("ASR", "whisper-small-a16w8"),
   }
   variable, name = defaults[kind]
   root = Path(os.environ.get("SIMAPCIE_GENAI_MODELS_PATH", Path.home() / "workspace/models_genai"))
