@@ -57,6 +57,48 @@ The returned report starts with the headline fields most users need: average end
 
 Power comes from Sentinel, the board telemetry daemon that the Neat installer sets up. `report.telemetry` also carries rail power, die and board temperatures, CPU utilization, and MLA memory for the throughput pass; see [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry) for each field. If Sentinel is not running or is recording another trace, the benchmark still reports latency and throughput, leaves the power fields at zero, and sets `report.telemetry.status` to the reason.
 
+### Advanced: per-layer stats {#step-read-layer-stats}
+
+Layer profiling is an advanced opt-in option. `BenchmarkOptions.include_layer_stats` defaults
+to `false`; ordinary benchmarks keep the existing headline measurements and do not run a layer
+profiling pass. Add `--include-layer-stats` to either tutorial command to request it, or enable
+it through `BenchmarkOptions`:
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_layer_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_layer_stats = True
+report = model.benchmark(options)
+```
+
+Iterate over `report.layer_stats` to print each compiled layer's `stage_index`, `name`, and
+`total_execution_time_us`. The examples retain compiler order and zero-time no-op entries.
+`stage_index` follows zero-based executable stage order, including A65 stages.
+
+Layer collection runs after the latency and throughput runners have closed. NEAT reuses the
+extracted MPK, selects each MLA ELF from the manifest, and pairs it with `<elf_stem>_stats.yaml`.
+It copies the input YAML unchanged into a temporary directory and runs
+`mla-rt --connect mip,ma -vs -N --per-layer-stats <copied_yaml> <elf>`. The generated
+`_output.yaml` is validated and read into the report, then the temporary files are removed.
+
+Use an idle devkit with no other active MLA workloads: this command accesses MLA directly.
+`mla-rt` must be installed and available in `PATH`. Profiling uses its default input buffers
+and has a 120-second timeout per MLA stage. With the default `false`, `report.layer_stats` is
+empty and the tutorial prints only the headline values. With the advanced flag, output looks
+like this (illustrative values):
+
+```text
+Layer stats (execution time in microseconds):
+  stage_index=0 name=MLA_0/conv total_execution_time_us=161.95
+  stage_index=0 name=MLA_0/noop total_execution_time_us=0
+  stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
+```
+
 ## Run
 
 Run it and you should see the benchmark summary printed by `benchmark()`, followed by the same values printed from the returned report. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.
@@ -75,8 +117,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -121,6 +163,28 @@ For application performance, benchmark the real pipeline too. Synthetic model in
 
 `Model::benchmark()` requires concrete `input_specs()` dimensions. If an input shape is dynamic or non-concrete, the benchmark fails clearly instead of guessing a shape.
 
+## Save the report
+
+Call `report.save("results/model/yolo_benchmark.yaml")` in C++ or Python to write YAML to that
+exact filename. Missing parent directories are created; an existing file is atomically replaced.
+The returned path is the path you supplied. The tutorial accepts the same path through `--report`.
+Saving is explicit; `benchmark()` does not create a report file automatically.
+
+Saved reports also preserve latency percentiles, throughput-window metadata, and Sentinel telemetry.
+
+The YAML contains `latency_ms`, `fps`, `avg_power_watts`, `energy_joules`, and `layer_stats`.
+Each `LayerStats` record has `name`, `stage_index`, and `total_execution_time_us` (hardware
+`run_time` in microseconds). Compiler-generated MLA names may fuse or split original ONNX
+operators. `stage_index` is zero-based model execution order across MLA and A65 executable
+stages, not archive file order. A single-stage model uses `0`; MLA–A65–MLA uses `0` and `2`
+for the MLA layer records. Zero-time no-op entries are retained. Layer profiling and the headline measurements
+use separate passes and inputs, so their times should not be equated.
+
+Missing profiling files, process failures, timeouts, and invalid generated stats raise an
+exception. The compiler's input YAML is preserved, and temporary profiling files are cleaned
+up on success and failure.
+
 ## Source Files
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

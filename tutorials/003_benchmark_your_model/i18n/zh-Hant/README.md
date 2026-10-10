@@ -52,6 +52,33 @@ Python 會透過 `pyneat.BenchmarkOptions` 公開相同的欄位。設定原始�
 
 功耗資料來自 Sentinel，也就是 Neat 安裝程式所設定的板子遙測常駐程式。`report.telemetry` 還包含吞吐量階段的電源軌功耗、晶粒與板子溫度、CPU 使用率以及 MLA 記憶體；各欄位說明請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。如果 Sentinel 未執行或正在記錄另一個追蹤，基準測試仍會報告延遲和吞吐量，將功耗欄位保持為零，並將 `report.telemetry.status` 設定為原因。
 
+### 進階：層統計資料 {#step-read-layer-stats}
+
+層剖析是需明確啟用的進階選項。`BenchmarkOptions.include_layer_stats` 預設為 `false`；一般基準測試保留現有的主要測量，不執行層剖析。將 `--include-layer-stats` 加到教學指令，或透過 `BenchmarkOptions` 啟用：
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_layer_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_layer_stats = True
+report = model.benchmark(options)
+```
+
+逐一讀取 `report.layer_stats`，列印每個編譯層的 `stage_index`、`name` 和 `total_execution_time_us`。範例保留編譯器順序與執行時間為零的 no-op 記錄。`stage_index` 是包含 A65 的執行階段順序，從零開始。
+
+執行器關閉後，NEAT 從已解壓缩的 MPK 資訊清單選取 MLA ELF，並配對 `<elf_stem>_stats.yaml`。YAML 會原樣複製至暫存目錄，執行 `mla-rt --connect mip,ma -vs -N --per-layer-stats <copied_yaml> <elf>`，驗證產生的 `_output.yaml` 並讀入報告，然後刪除暫存檔。每個 MLA 階段的逾時為 120 秒，使用 mla-rt 預設輸入。需要沒有其他 MLA 工作負載的閒置 DevKit，以及可透過 `PATH` 使用的 `mla-rt`。預設為 `false` 時，`report.layer_stats` 清單為空，只輸出主要數值。啟用後的輸出範例：
+
+```text
+Layer stats (execution time in microseconds):
+  stage_index=0 name=MLA_0/conv total_execution_time_us=161.95
+  stage_index=0 name=MLA_0/noop total_execution_time_us=0
+  stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
+```
+
 ## Run
 
 執行它，您應該會看到 `benchmark()` 輸出的基準測試摘要，後面接著從傳回的報告中輸出的相同值。從 **Neat 安裝根目錄**（包含 `share/` 和 `lib/` 的目錄）執行 **Python** 和 **C++（預先建置）** 命令；從 **儲存庫根目錄**執行 **從原始碼建置** 命令。
@@ -70,8 +97,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -115,6 +142,16 @@ report_telemetry_status=ok
 對於應用程式效能，也請基準測試實際的管線。合成模型輸入是故意設計為穩定的，因此它不代表相機抖動、編解碼器成本、實際的預處理、主機在負載下的排程，或下游應用程式邏輯。若要針對手動建立的非同步執行來調整佇列深度和反壓，請參閱[調整吞吐量和佇列深度](/tutorials/tune-throughput-and-queues)。
 
 `Model::benchmark()` 需要具體的 `input_specs()` 尺寸。如果輸入形狀是動態或非具體的，基準測試將明確失敗，而不是猜測一個形狀。
+
+## 儲存報告
+
+在 C++ 或 Python 中呼叫 `report.save("results/model/yolo_benchmark.yaml")`，即可將 YAML 寫入該確切檔名。不存在的父目錄會自動建立；既有檔案會以原子方式取代。傳回值是您指定的路徑。教學也接受透過 `--report` 指定同一路徑。儲存需要明確呼叫；`benchmark()` 不會自動建立報告檔案。
+
+儲存的報告也會保留延遲百分位數、吞吐量測量時段的中繼資料及 Sentinel 遙測。
+
+YAML 包含 `latency_ms`、`fps`、`avg_power_watts`、`energy_joules` 和 `layer_stats`。每筆 `LayerStats` 記錄包含 `name`、`stage_index` 和 `total_execution_time_us`（以微秒表示的硬體 `run_time`）。編譯器產生的 MLA 名稱可能代表原始 ONNX 運算子的融合或拆分。執行時間為零的 no-op 項目也會保留。各層剖析和主要測量使用不同的執行及輸入，因此不應將其時間視為相同。 `stage_index` 是從零開始的整數，依模型中 MLA 和 A65 執行階段的執行順序編號，而非封存檔內的檔案順序。單一階段使用 `0`；MLA–A65–MLA 的 MLA 層記錄使用 `0` 和 `2`。
+
+檔案缺失、程序失敗、逾時或統計結果無效都會引發例外。原始輸入 YAML 保持不變，成功和失敗後皆會清理暫存檔。
 
 ## 原始程式碼檔案
 - C++：`tutorials/003_benchmark_your_model/benchmark_your_model.cpp`

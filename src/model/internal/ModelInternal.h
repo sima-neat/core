@@ -73,9 +73,13 @@ struct ModelAccess {
   static std::string source_path(const Model& model);
   static Run& run(Model::Runner& runner);
   static const Run& run(const Model::Runner& runner);
+  static Model::Runner build_benchmark_runner(Model& model, const TensorList& inputs,
+                                              const RunOptions& run_options,
+                                              const Model::Options& model_options);
   static Model::Options options(const Model& model);
   static Model clone_with_options(const Model& model, const Model::Options& opt);
   static PostRouteStageKind resolved_post_kind(const Model& model);
+  static bool uses_direct_mla_public_output_boundary(const Model& model);
   static PreprocessContractFlags preprocess_contract_flags(const Model& model);
   static pipeline_internal::sima::ModelManagedRouteFlags
   model_managed_route_flags(const Model& model);
@@ -112,6 +116,8 @@ struct ModelAccess {
   static void configure_session_input_route(simaai::neat::Graph& session, const Model& model,
                                             const Model::RouteOptions& opt);
 };
+
+BenchmarkReport run_benchmark(Model& model, const BenchmarkOptions& options);
 
 /// Project the latency window (`num_samples` inputs), the throughput window
 /// (`throughput_samples` inputs), and Sentinel telemetry into the public benchmark report.

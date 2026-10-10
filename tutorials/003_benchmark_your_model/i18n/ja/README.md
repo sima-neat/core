@@ -52,6 +52,33 @@ Pythonは、`pyneat.BenchmarkOptions`を通じて、同じフィールドを公�
 
 電力は、NeatのインストーラーがセットアップするボードのテレメトリデーモンであるSentinelから取得されます。`report.telemetry`には、スループット測定パスのレール電力、ダイとボードの温度、CPU使用率、MLAメモリも含まれます。各フィールドについては、[モデルの実行を測定する](/develop-apps/development-workflow/model#power-and-board-telemetry)を参照してください。Sentinelが実行されていない場合や別のトレースを記録中の場合でも、ベンチマークはレイテンシとスループットを報告し、電力フィールドをゼロのままにして、`report.telemetry.status`にその理由を設定します。
 
+### 上級: レイヤー統計 {#step-read-layer-stats}
+
+レイヤーのプロファイリングは明示的に有効にする上級オプションです。`BenchmarkOptions.include_layer_stats` の既定値は `false` です。通常のベンチマークは従来の主要な測定を行い、レイヤーのプロファイリングは実行しません。チュートリアルのコマンドに `--include-layer-stats` を追加するか、`BenchmarkOptions` で有効にします。
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_layer_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_layer_stats = True
+report = model.benchmark(options)
+```
+
+`report.layer_stats` を反復処理して、各コンパイル済みレイヤーの `stage_index`、`name`、`total_execution_time_us` を表示します。コンパイラの順序と実行時間がゼロの no-op エントリを保持します。`stage_index` は A65 を含む実行ステージのゼロ始まりの順序です。
+
+ランナーを閉じた後、展開済み MPK のマニフェストから MLA ELF を選択し、`<elf_stem>_stats.yaml` と組み合わせます。YAML を変更せず一時ディレクトリにコピーして `mla-rt --connect mip,ma -vs -N --per-layer-stats <copied_yaml> <elf>` を実行し、生成された `_output.yaml` を検証してレポートに読み込みます。一時ファイルは削除します。MLA ステージごとのタイムアウトは 120 秒で、mla-rt のデフォルト入力を使用します。他の MLA ワークロードが動作していない DevKit と、`PATH` から利用できる `mla-rt` が必要です。既定の `false` では `report.layer_stats` は空になり、主要な値のみを表示します。有効時の出力例：
+
+```text
+Layer stats (execution time in microseconds):
+  stage_index=0 name=MLA_0/conv total_execution_time_us=161.95
+  stage_index=0 name=MLA_0/noop total_execution_time_us=0
+  stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
+```
+
 ## Run
 
 実行すると、`benchmark()`によって出力されるベンチマークの概要が表示され、その後に返されたレポートから同じ値が出力されます。**Neatのインストールルート**（`share/`と`lib/`が含まれるディレクトリ）から、**Python**と**C++（事前にビルドされたもの）**コマンドを実行します。**ソースからビルドする**コマンドは、**リポジトリのルート**から実行します。
@@ -70,8 +97,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -115,6 +142,16 @@ report_telemetry_status=ok
 アプリケーションのパフォーマンスについては、実際のパイプラインもベンチマークしてください。合成モデルの入力は意図的に安定しているため、カメラの揺れ、コーデックのコスト、実際のプリプロセス、負荷時のホストのスケジューリング、または下流のアプリケーションロジックを表すものではありません。手動で構築した非同期実行によるキューの深さとバックプレッシャーの調整については、[スループットとキューの深さの調整](/tutorials/tune-throughput-and-queues)を参照してください。
 
 `Model::benchmark()`には、具体的な`input_specs()`の次元が必要です。入力の形状が動的であるか、または具体的なものでない場合、ベンチマークは形状を推測するのではなく、明確に失敗します。
+
+## レポートの保存
+
+C++ または Python で `report.save("results/model/yolo_benchmark.yaml")` を呼び出すと、そのファイル名で YAML を保存できます。存在しない親ディレクトリは作成され、既存のファイルはアトミックに置き換えられます。指定したパスが返されます。チュートリアルでは `--report` で同じパスを指定できます。保存は明示的に行います。`benchmark()` はレポートファイルを自動作成しません。
+
+保存されるレポートには、レイテンシのパーセンタイル、スループット測定期間のメタデータ、Sentinel のテレメトリも含まれます。
+
+YAML には `latency_ms`、`fps`、`avg_power_watts`、`energy_joules`、`layer_stats` が含まれます。各 `LayerStats` レコードには `name`、`stage_index`、`total_execution_time_us`（マイクロ秒単位のハードウェア `run_time`）があります。コンパイラが生成する MLA 名は、元の ONNX 演算子の結合や分割を表す場合があります。実行時間がゼロの no-op エントリも保持されます。レイヤーのプロファイリングと主要な測定は別の実行と入力を使用するため、時間を同一視できません。 `stage_index` は MLA と A65 の実行ステージを含む、モデル実行順のゼロ始まりの整数です。アーカイブ内のファイル順ではありません。単一ステージでは `0`、MLA–A65–MLA では MLA のレコードに `0` と `2` を使用します。
+
+ファイルの欠落、プロセス失敗、タイムアウト、不正な統計結果は例外を発生させます。元の入力 YAML は保持され、成功時も失敗時も一時ファイルを削除します。
 
 ## ソースファイル
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`

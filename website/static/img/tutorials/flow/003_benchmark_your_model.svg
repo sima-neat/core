@@ -27,11 +27,15 @@
 <g id="code1" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Run benchmark</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">report = model.benchmark(args.samples)</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">options = pyneat.BenchmarkOptions()</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">if report.latency_ms &lt;= 0 or report.fps &lt;=…</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">options.num_samples = args.samples</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">  raise RuntimeError(&quot;benchmark produced no…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">options.include_layer_stats = args.include_…</text>
+<text x="76" y="326" class="fmono fln">4</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">report = model.benchmark(options)</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">if report.latency_ms &lt;= 0 or report.fps &lt;=…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Read report</text>
@@ -46,6 +50,19 @@
 <text x="76" y="352" class="fmono fln">5</text>
 <text x="104" y="352" class="fmono fcode" xml:space="preserve">print(f&quot;report_peak_power_watts={report.pea…</text>
 </g>
+<g id="code3" class="fanim" opacity="0">
+<text x="76" y="212" class="fsans fcap">STEP 4 · Read layer stats</text>
+<text x="76" y="248" class="fmono fln">1</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">if options.include_layer_stats:</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">  print(&quot;Layer stats (execution time in mic…</text>
+<text x="76" y="300" class="fmono fln">3</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">  for layer in report.layer_stats:</text>
+<text x="76" y="326" class="fmono fln">4</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">    print(f&quot;  stage_index={layer.stage_inde…</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">          f&quot;total_execution_time_us={layer.…</text>
+</g>
 </g>
 <g filter="url(#fsh)">
 <g id="shell" opacity="1">
@@ -53,30 +70,39 @@
 <rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>
 </g>
 <g id="node0" class="fanim" opacity="1">
-<rect x="600" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
-<text x="692" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
-<text x="692" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Load model</text>
+<rect x="600" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="664" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
+<text x="664" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="664" dy="0">Load</tspan><tspan x="664" dy="15">model</tspan></text>
 </g>
 <g id="ring0" class="fanim" opacity="1">
-<rect x="596" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="596" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 <g id="node1" class="fanim" opacity="0">
-<line x1="788" y1="293" x2="814" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
-<rect x="820" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
-<text x="912" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
-<text x="912" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Run benchmark</text>
+<line x1="733" y1="293" x2="759" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="765" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="830" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
+<text x="830" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="830" dy="0">Run</tspan><tspan x="830" dy="15">benchmark</tspan></text>
 </g>
 <g id="ring1" class="fanim" opacity="0">
-<rect x="816" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="761" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 <g id="node2" class="fanim" opacity="0">
-<line x1="1008" y1="293" x2="1034" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
-<rect x="1040" y="250" width="184" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
-<text x="1132" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
-<text x="1132" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Read report</text>
+<line x1="898" y1="293" x2="924" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="930" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="994" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
+<text x="994" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="994" dy="0">Read</tspan><tspan x="994" dy="15">report</tspan></text>
 </g>
 <g id="ring2" class="fanim" opacity="0">
-<rect x="1036" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="926" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+</g>
+<g id="node3" class="fanim" opacity="0">
+<line x1="1063" y1="293" x2="1089" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="1095" y="250" width="129" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
+<text x="1160" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 4</text>
+<text x="1160" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="1160" dy="0">Read layer</tspan><tspan x="1160" dy="15">stats</tspan></text>
+</g>
+<g id="ring3" class="fanim" opacity="0">
+<rect x="1091" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 </g>
 <g id="popup" class="fanim" opacity="0">
@@ -85,7 +111,7 @@
 </g>
 <script type="text/ecmascript"><![CDATA[
 (function(){
-  var n=3, i=0, t=null, anchors=["load-model", "run-benchmark", "read-report"];
+  var n=4, i=0, t=null, anchors=["load-model", "run-benchmark", "read-report", "read-layer-stats"];
   function el(id){return document.getElementById(id);}
   function paint(a){
     for(var k=0;k<n;k++){

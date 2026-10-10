@@ -423,6 +423,8 @@ set(UNIT_TESTS
   unit_asset_utils_readable_model_tar_test
   unit_benchmark_measurement_contract_test
   unit_benchmark_telemetry_test
+  unit_benchmark_report_test
+  unit_benchmark_layer_stats_test
   unit_measurement_consistency_test
   unit_lttng_plugin_percentiles_test
   unit_model_infer_output_name_test
