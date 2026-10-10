@@ -869,8 +869,25 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
     std::size_t previous = pos;
     while (previous > 0 && std::isspace(static_cast<unsigned char>(debug[previous - 1])))
       --previous;
-    const bool starts_top_level =
-        previous == 0 || debug[previous - 1] == '\'' || debug[previous - 1] == '|';
+    const auto follows_integer_field = [&]() {
+      std::size_t field_begin = previous;
+      while (field_begin > 0 && !std::isspace(static_cast<unsigned char>(debug[field_begin - 1])) &&
+             debug[field_begin - 1] != '|') {
+        --field_begin;
+      }
+      const std::string_view field = debug.substr(field_begin, previous - field_begin);
+      constexpr std::string_view integer_fields[] = {"graph_id=", "frame_id="};
+      return std::any_of(std::begin(integer_fields), std::end(integer_fields),
+                         [&](std::string_view prefix) {
+                           if (!field.starts_with(prefix) || field.size() == prefix.size())
+                             return false;
+                           const std::string_view value = field.substr(prefix.size());
+                           return std::all_of(value.begin(), value.end(),
+                                              [](unsigned char c) { return std::isdigit(c) != 0; });
+                         });
+    };
+    const bool starts_top_level = previous == 0 || debug[previous - 1] == '\'' ||
+                                  debug[previous - 1] == '|' || follows_integer_field();
     const std::size_t value_begin = pos + marker.size();
     const std::size_t value_end = debug.find('\'', value_begin);
     if (value_end == std::string::npos)

@@ -874,7 +874,8 @@ RUN_TEST(
             misleading_path_prefix +
             std::string(kLongPathBytes - misleading_path_prefix.size(), 'a');
         const std::string long_debug = "plugin='neatprocessmla' model_path='" + long_path +
-                                       "' dispatcher_err='" + kLongPathDispatcherError + "'";
+                                       "' graph_id=7 dispatcher_err='" + kLongPathDispatcherError +
+                                       "'";
         GError* long_error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
                                                  "Unable to load model");
         GstMessage* long_message =
@@ -976,6 +977,13 @@ RUN_TEST(
         require(classify_gst_error(std::move(apostrophe_path)).diagnostic_id ==
                     "neatprocessmla.model_path_too_long",
                 "an apostrophe in the model path must not hide the real trailing dispatcher field");
+
+        RawGstError numeric_context = legacy_model_path_error(kDispatcherError);
+        numeric_context.debug = "plugin='neatprocessmla' graph_id=7 dispatcher_err='" +
+                                std::string(kDispatcherError) + "'";
+        require(classify_gst_error(std::move(numeric_context)).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "an unquoted integer context field must not hide the trailing dispatcher field");
 
         RawGstError factory_identified = legacy_model_path_error(kDispatcherError);
         factory_identified.factory_name = "neatprocessmla";
