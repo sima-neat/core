@@ -1648,10 +1648,16 @@ std::string render_diagnostic_body(const NormalizedDiagnostic& diagnostic,
 }
 
 int diagnostic_priority(const NormalizedDiagnostic& diagnostic) {
-  if (find_detail(diagnostic.raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"})
-          .has_value()) {
+  // A path-limit diagnosis carries the user-controlled model path in its debug text, so only a
+  // producer-positioned ID may grant it explicit-ID priority.
+  const bool explicit_id =
+      diagnostic.diagnostic_id == "neatprocessmla.model_path_too_long"
+          ? model_path_precedence_id(diagnostic.raw).has_value()
+          : find_detail(diagnostic.raw,
+                        {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"})
+                .has_value();
+  if (explicit_id)
     return 200;
-  }
 
   if (diagnostic.error_code.rfind("resource.", 0) == 0 ||
       diagnostic.error_code.rfind("io.", 0) == 0 || diagnostic.error_code.rfind("codec.", 0) == 0 ||

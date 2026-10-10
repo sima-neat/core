@@ -1033,14 +1033,21 @@ RUN_TEST(
                     "producer.specific_failure",
                 "an explicit producer diagnostic ID must take precedence over legacy parsing");
 
+        const NormalizedDiagnostic resource_failure =
+            classify_gst_error(raw_error("filesrc", "gst-resource-error-quark",
+                                         GST_RESOURCE_ERROR_NOT_FOUND, "Resource not found."));
         const auto require_path_marker_ignored = [&](const std::string& model_path,
                                                      const std::string& context) {
           RawGstError marked_path = legacy_model_path_error(kDispatcherError);
           marked_path.debug = "plugin='neatprocessmla' model_path='" + model_path +
                               "' dispatcher_err='" + kDispatcherError + "'";
-          require(classify_gst_error(std::move(marked_path)).diagnostic_id ==
-                      "neatprocessmla.model_path_too_long",
+          const NormalizedDiagnostic marked = classify_gst_error(std::move(marked_path));
+          require(marked.diagnostic_id == "neatprocessmla.model_path_too_long",
                   context + " inside the model path must not override the path-limit diagnosis");
+          require(diagnostic_priority(marked) == diagnostic_priority(diagnostic),
+                  context + " inside the model path must not raise diagnostic priority");
+          require(diagnostic_priority(marked) < diagnostic_priority(resource_failure),
+                  context + " inside the model path must not hide a resource failure");
         };
         require_path_marker_ignored("/models/neat-diagnostic-id=foo/model.tar.gz",
                                     "an unquoted diagnostic-ID marker");
@@ -1053,6 +1060,12 @@ RUN_TEST(
         require(classify_gst_error(std::move(legacy_explicit)).diagnostic_id ==
                     "producer.specific_failure",
                 "a leading legacy producer diagnostic ID must take precedence over legacy parsing");
+
+        RawGstError legacy_matching = legacy_model_path_error(kDispatcherError);
+        legacy_matching.debug = "diagnostic_id='neatprocessmla.model_path_too_long' " +
+                                model_path_debug("neatprocessmla", kDispatcherError);
+        require(diagnostic_priority(classify_gst_error(std::move(legacy_matching))) == 200,
+                "a leading matching producer diagnostic ID must keep explicit-ID priority");
 
         gst_message_unref(message);
         gst_object_unref(source);
