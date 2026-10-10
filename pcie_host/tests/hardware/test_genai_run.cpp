@@ -73,7 +73,7 @@ fs::path model_path(const std::string& kind) {
   const auto name =
       kind == "llm"   ? env("SIMA_TEST_LLIMA_TEXT_MODEL", "Qwen2.5-0.5B-Instruct-Autoround-a16w4")
       : kind == "vlm" ? env("SIMA_TEST_LLIMA_VLM_MODEL", "LFM2.5-VL-450M-Autoround-a16w4")
-                      : env("SIMA_TEST_LLIMA_ASR_MODEL", "whisper-small-a16w8-layered-encoder");
+                      : env("SIMA_TEST_LLIMA_ASR_MODEL", "whisper-small-a16w8");
   const auto path = fs::path(root) / name;
   require(fs::is_regular_file(path / "devkit" /
                               (kind == "asr" ? "whisper_config.json" : "vlm_config.json")),
