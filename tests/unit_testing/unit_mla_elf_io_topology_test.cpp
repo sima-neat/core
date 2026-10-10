@@ -4,11 +4,14 @@
 // Three scenarios:
 //   1. Multi-IFM .elf — sections data.ifm.persistent.input_NN/...
 //   2. Monolithic .elf — sections data.ifm.b0 / data.ofm.b0
-//   3. Inconsistent .elf — both monolithic and placeholder sections present;
-//      parser must accept and prefer placeholders, surfacing a warning.
+//   3. Mixed .elf — a bare data.{ifm,ofm}.b0 beside placeholder sections is
+//      one more placeholder port when its position is unambiguous, and a
+//      layout conflict otherwise.
 
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
+#include "model_archive_fixture_utils.h"
 
 #include <cassert>
 #include <cstdint>
@@ -318,17 +321,86 @@ void test_unindexed_persistent_topology() {
     std::filesystem::remove(ambiguous_path);
   }
 
-  for (const auto& extra : {"data.ifm.b0", "data.ofm.b0"}) {
-    const auto conflict_path = write_minimal_elf("unindexed_conflict", {ifm, ofm, extra});
-    check(read_mla_elf_io_topology(conflict_path, &topology),
-          "unindexed: monolithic conflict retains topology evidence");
-    const auto result = validate_mla_elf_io_topology_strict(topology);
-    check(!result.ok && result.code == (std::string(extra) == "data.ifm.b0"
-                                            ? MlaElfIoTopologyError::ConflictingIfmLayouts
-                                            : MlaElfIoTopologyError::ConflictingOfmLayouts),
-          "unindexed: monolithic layout conflict remains rejected");
-    std::filesystem::remove(conflict_path);
+  for (const std::string extra : {"data.ifm.b0", "data.ofm.b0"}) {
+    const bool input = extra == "data.ifm.b0";
+    const auto bare_path = write_minimal_elf("unindexed_bare", {ifm, ofm, extra});
+    check(read_mla_elf_io_topology(bare_path, &topology),
+          "unindexed: bare section beside a native section is recognized");
+    check(reconcile_mla_elf_io_topology_strict(topology, input ? 2U : 1U, input ? 1U : 2U).ok,
+          "unindexed: bare section is one more per-tensor port");
+    check((input ? topology.ifm_symbol_names : topology.ofm_symbol_names) ==
+              std::vector<std::string>{input ? ifm : ofm, extra},
+          "unindexed: bare section keeps its ELF encounter position");
+    std::filesystem::remove(bare_path);
   }
+}
+
+// The compiler names a tensor's section only when it has a persistent name and
+// otherwise falls back to the bare data.{ifm,ofm}.b<batch> section.
+void test_bare_section_beside_per_tensor_sections() {
+  using namespace simaai::neat::pipeline_internal::sima;
+  const std::string ifm = "data.ifm.persistent.MLA_0/placeholder_0_0.b0";
+  const std::string native_ofm = "data.ofm.persistent.MLA_0/add_0_output.b0";
+  const auto read = [](const std::string& tag, const std::vector<std::string>& names,
+                       const std::unordered_map<std::string, std::uint64_t>& extents = {}) {
+    const auto path = write_minimal_elf(tag, names, extents);
+    MlaElfIoTopology topology;
+    check(read_mla_elf_io_topology(path, &topology), "bare: parser retains topology evidence");
+    std::filesystem::remove(path);
+    return topology;
+  };
+
+  auto topology = read("bare_first", {ifm, "data.ofm.b0", native_ofm},
+                       {{"data.ofm.b0", 3200U}, {native_ofm, 14745600U}});
+  check(reconcile_mla_elf_io_topology_strict(topology, 1U, 2U).ok && !topology.monolithic_ofm &&
+            !topology.ofm_layout_conflict,
+        "bare first: admitted as a per-tensor OFM port");
+  check(topology.ofm_symbol_names == std::vector<std::string>{"data.ofm.b0", native_ofm} &&
+            topology.ofm_extent_bytes == std::vector<std::uint64_t>{3200U, 14745600U},
+        "bare first: ELF encounter order and extents are preserved");
+  check(topology.ofm_slots.size() == 2U && topology.ofm_slots[0].logical_index == 0U &&
+            topology.ofm_slots[1].logical_index == 1U,
+        "bare first: each slot owns its port");
+
+  topology = read("bare_ifm", {"data.ifm.b0", ifm, native_ofm});
+  check(reconcile_mla_elf_io_topology_strict(topology, 2U, 1U).ok &&
+            topology.ifm_symbol_names == std::vector<std::string>{"data.ifm.b0", ifm},
+        "bare IFM: admitted symmetrically");
+
+  topology = read("bare_batch", {ifm, "data.ofm.b0", native_ofm, "data.ofm.b1",
+                                 "data.ofm.persistent.MLA_0/add_0_output.b1"});
+  check(reconcile_mla_elf_io_topology_strict(topology, 1U, 2U).ok,
+        "bare batch: samples of both ports reconcile");
+  for (const auto& slot : topology.ofm_slots) {
+    check(slot.logical_index == (slot.symbol.starts_with("data.ofm.b") ? 0U : 1U),
+          "bare batch: every sample keeps its tensor's port");
+  }
+
+  const std::string output_0 = "data.ofm.persistent.output_0/MLA_0/a.b0";
+  const std::string output_1 = "data.ofm.persistent.output_1/MLA_0/b.b0";
+  topology = read("bare_indexed_gap", {ifm, "data.ofm.b0", output_1});
+  check(reconcile_mla_elf_io_topology_strict(topology, 1U, 2U).ok &&
+            topology.ofm_symbol_names == std::vector<std::string>{"data.ofm.b0", output_1},
+        "bare indexed: fills the unclaimed index at its encounter position");
+  topology = read("bare_indexed_tail", {ifm, output_0, "data.ofm.b0"});
+  check(reconcile_mla_elf_io_topology_strict(topology, 1U, 2U).ok &&
+            topology.ofm_symbol_names == std::vector<std::string>{output_0, "data.ofm.b0"},
+        "bare indexed: follows every claimed index");
+
+  for (const auto& names :
+       {std::vector<std::string>{ifm, output_1, "data.ofm.b0"},
+        std::vector<std::string>{ifm, "data.ofm.b0", "data.ofm.persistent.output_2/MLA_0/c.b0"}}) {
+    topology = read("bare_indexed_conflict", names);
+    const auto result = validate_mla_elf_io_topology_strict(topology);
+    check(!result.ok && result.code == MlaElfIoTopologyError::ConflictingOfmLayouts,
+          "bare indexed: position disagreeing with the unclaimed index stays rejected");
+  }
+
+  const auto mixed_path =
+      write_minimal_elf("bare_mixed", {ifm, "data.ofm.b0", output_0, native_ofm});
+  check(!read_mla_elf_io_topology(mixed_path, &topology) && !topology.valid,
+        "bare mixed: indexed and native siblings remain rejected");
+  std::filesystem::remove(mixed_path);
 }
 
 void test_native_ports_preserve_encounter_order() {
@@ -412,9 +484,9 @@ void test_strict_validation_and_reconciliation() {
         "strict missing extent: zero QMLA extent rejected");
   std::filesystem::remove(missing_extent_path);
 
-  const auto conflict_path = write_minimal_elf(
-      "strict_conflict",
-      {"data.ifm.b0", "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0", "data.ofm.b0"});
+  const auto conflict_path =
+      write_minimal_elf("strict_conflict", {"data.ifm.persistent.input_01/MLA_0/placeholder_1_0.b0",
+                                            "data.ifm.b0", "data.ofm.b0"});
   MlaElfIoTopology conflict;
   check(read_mla_elf_io_topology(conflict_path, &conflict),
         "strict conflict: permissive parser remains compatible");
@@ -490,6 +562,46 @@ void test_batch_slots_preserve_physical_order() {
 
 } // namespace
 
+// EfficientSAM3 image model compiled by Model Compiler 3.0: the detections
+// output has no persistent section name, the masks output does. The ELF is
+// synthesized with the compiled stage's exact I/O section names, extents and
+// header order; the MPK is the compiler's unmodified mpk.json.
+void test_efficientsam3_fixture_decodes() {
+  using namespace simaai::neat::pipeline_internal::sima;
+  const auto manifest =
+      sima_test::test_model_archive_fixture_root_path() / "strict-seeds" / "efficientsam3_mpk.json";
+  std::error_code ec;
+  check(std::filesystem::file_size(manifest, ec) == 9734U && !ec &&
+            sima_test::fixture_file_sha256(manifest) ==
+                "8fef526843a31fea965b309a13b47060052295e7d336821f0c025a552ea6baad",
+        "efficientsam3: exact MPK fixture");
+
+  const std::string text = "data.ifm.persistent.MLA_0/placeholder_12_0.b0";
+  const std::string image = "data.ifm.persistent.MLA_0/placeholder_14_0.b0";
+  const std::string masks = "data.ofm.persistent.MLA_0/add_3728_output.b0";
+  const auto path = write_minimal_elf(
+      "efficientsam3", {"code.r0.c0", text, image, "data.ofm.b0", masks},
+      {{text, 8704U}, {image, 6096384U}, {"data.ofm.b0", 3200U}, {masks, 14745600U}});
+  MlaElfIoTopology topology;
+  check(read_mla_elf_io_topology(path, &topology), "efficientsam3: ELF topology parses");
+  std::filesystem::remove(path);
+
+  const auto result = static_contract::MpkDecoder{}.decode_file(manifest, topology);
+  if (!result && result.error) {
+    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
+  }
+  check(static_cast<bool>(result), "efficientsam3: MPK decodes against its ELF topology");
+  const std::unordered_map<std::string, std::string> expected = {
+      {text, "cast_0"}, {image, "cast_1"}, {"data.ofm.b0", "MLA_0_0"}, {masks, "MLA_0_1"}};
+  const auto& ports = result.plan->backend_ports();
+  check(ports.size() == expected.size(), "efficientsam3: one backend port per ELF section");
+  for (const auto& port : ports) {
+    const auto found = expected.find(port.elf_symbol);
+    check(found != expected.end() && result.plan->value(port.value_id)->name == found->second,
+          "efficientsam3: each ELF section binds its MPK tensor");
+  }
+}
+
 int main() {
   test_batch_slots_preserve_physical_order();
   test_multi_ifm_topology();
@@ -500,6 +612,8 @@ int main() {
   test_missing_file_fails_cleanly();
   test_unindexed_persistent_topology();
   test_native_ports_preserve_encounter_order();
+  test_bare_section_beside_per_tensor_sections();
+  test_efficientsam3_fixture_decodes();
   test_strict_validation_and_reconciliation();
   std::cout << "unit_mla_elf_io_topology_test: PASS\n";
   return 0;
