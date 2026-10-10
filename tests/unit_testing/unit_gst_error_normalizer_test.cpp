@@ -7,7 +7,9 @@
 #include "pipeline/gst/InputStreamInternal.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/ErrorUtil.h"
+#include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
+#include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -15,7 +17,9 @@
 #include <gst/gst.h>
 
 #include <chrono>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -23,6 +27,9 @@ namespace {
 
 using simaai::neat::pipeline_internal::NormalizedDiagnostic;
 using simaai::neat::pipeline_internal::RawGstError;
+
+constexpr char kPrivateModelPath[] =
+    "/home/developer/private-project/build/models/lightglue/model.elf";
 
 RawGstError raw_error(std::string factory, std::string domain, int code, std::string message) {
   RawGstError raw;
@@ -37,6 +44,89 @@ RawGstError raw_error(std::string factory, std::string domain, int code, std::st
 void require_code(const NormalizedDiagnostic& diagnostic, const std::string& expected) {
   require(diagnostic.error_code == expected, "unexpected normalized error code: expected=" +
                                                  expected + " actual=" + diagnostic.error_code);
+}
+
+std::string model_path_debug(std::string_view plugin, std::string_view dispatcher_error) {
+  return "plugin='" + std::string(plugin) + "' model_path='" + std::string(kPrivateModelPath) +
+         "' " + "dispatcher_err='" + std::string(dispatcher_error) + "'";
+}
+
+RawGstError legacy_model_path_error(std::string_view dispatcher_error) {
+  RawGstError raw =
+      raw_error("", "gst-resource-error-quark", GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+  raw.source_name = "MLA_0_1";
+  raw.debug = model_path_debug("neatprocessmla", dispatcher_error);
+  return raw;
+}
+
+void post_error(GstBus* bus, GstObject* source, GQuark domain, int code, const char* message,
+                const char* debug) {
+  GError* error = g_error_new_literal(domain, code, message);
+  GstMessage* gst_message = gst_message_new_error(source, error, debug);
+  g_error_free(error);
+  require(gst_bus_post(bus, gst_message), "test error message must be posted to the bus");
+}
+
+void require_model_path_error_wins_on_bus(bool path_error_first) {
+  constexpr const char* kDispatcherError =
+      "MLASHM model path length 258 exceeds maximum 255 bytes; shorten the extracted model path";
+  const std::string debug = model_path_debug("neatprocessmla", kDispatcherError);
+  GstElement* pipeline = gst_pipeline_new(path_error_first ? "path-first" : "caps-first");
+  GstPad* mla_source = gst_pad_new("MLA_0_1", GST_PAD_UNKNOWN);
+  GstPad* caps_source = gst_pad_new("capsfilter0", GST_PAD_UNKNOWN);
+  require(pipeline != nullptr && mla_source != nullptr && caps_source != nullptr,
+          "pipeline objects must be available for bus-priority tests");
+  GstBus* bus = gst_element_get_bus(pipeline);
+  require(bus != nullptr, "test pipeline must provide a bus");
+
+  const auto post_path_error = [&] {
+    post_error(bus, GST_OBJECT(mla_source), GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+               "Unable to load model", debug.c_str());
+  };
+  const auto post_caps_error = [&] {
+    post_error(bus, GST_OBJECT(caps_source), GST_CORE_ERROR, GST_CORE_ERROR_NEGOTIATION,
+               "Caps negotiation failed", nullptr);
+  };
+  if (path_error_first) {
+    post_path_error();
+    post_caps_error();
+  } else {
+    post_caps_error();
+    post_path_error();
+  }
+
+  bool threw = false;
+  const simaai::neat::VerboseOptions production = simaai::neat::VerboseOptions::production();
+  simaai::neat::pipeline_internal::ux::ScopedVerboseContext verbose_context(production);
+  try {
+    simaai::neat::pipeline_internal::throw_if_bus_error(
+        pipeline, std::shared_ptr<simaai::neat::pipeline_internal::DiagCtx>{},
+        "unit_model_path_error_priority");
+  } catch (const simaai::neat::NeatError& error) {
+    threw = true;
+    const simaai::neat::GraphReport& report = error.report();
+    require(report.error_code == simaai::neat::error_codes::kRuntimeElementFailed,
+            "bus-to-NeatError propagation must preserve the public error code");
+    require_contains(report.repro_note, "Path length: 258 bytes",
+                     "bus-to-NeatError propagation must retain the observed path length");
+    require_contains(report.repro_note, "Maximum path length: 255 bytes",
+                     "bus-to-NeatError propagation must retain the path limit");
+    require_contains(report.repro_note, "shorter directory",
+                     "bus-to-NeatError propagation must retain the corrective action");
+    require(std::string(error.what()) ==
+                simaai::neat::pipeline_internal::error_util::decorate_error(report.error_code,
+                                                                            report.repro_note),
+            "NeatError::what() and GraphReport must describe the same selected cause");
+    require(report.repro_note.find(kPrivateModelPath) == std::string::npos &&
+                report.repro_note.find("dispatcher_err") == std::string::npos,
+            "the default bus error must not expose the model path or raw debug fields");
+  }
+  require(threw, "queued bus errors must produce a NeatError");
+
+  gst_object_unref(bus);
+  gst_object_unref(caps_source);
+  gst_object_unref(mla_source);
+  gst_object_unref(pipeline);
 }
 
 } // namespace
@@ -736,6 +826,291 @@ RUN_TEST(
         gst_message_unref(message);
         gst_object_unref(source);
       }
+
+      {
+        constexpr const char* kDispatcherError =
+            "MLASHM model path length 258 exceeds maximum 255 bytes; shorten the extracted model "
+            "path";
+        GstPad* source = gst_pad_new("MLA_0_1", GST_PAD_UNKNOWN);
+        require(source != nullptr, "GStreamer source object must be available for MLA error test");
+        GError* error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+                                            "Unable to load model");
+        const std::string debug = model_path_debug("neatprocessmla", kDispatcherError);
+        GstMessage* message = gst_message_new_error(GST_OBJECT(source), error, debug.c_str());
+        g_error_free(error);
+
+        const RawGstError raw = parse_gst_error_message(message);
+        const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
+        require_code(diagnostic, error_codes::kRuntimeElementFailed);
+        require(diagnostic.diagnostic_id == "neatprocessmla.model_path_too_long",
+                "legacy MLA path-limit failures should receive an actionable diagnostic; actual=" +
+                    diagnostic.diagnostic_id + " factory=" + raw.factory_name);
+        const std::string production = render_diagnostic_body(diagnostic, false);
+        require_contains(production, "could not be loaded because its extracted path is too long",
+                         "MLA path failures should explain the cause");
+        require_contains(production, "Stage: MLA_0_1",
+                         "MLA path failures should retain the failing stage");
+        require_contains(production, "Operation: Model loading",
+                         "MLA path failures should identify the operation");
+        require_contains(production, "Path length: 258 bytes",
+                         "MLA path failures should report the observed length");
+        require_contains(production, "Maximum path length: 255 bytes",
+                         "MLA path failures should report the supported limit");
+        require_contains(production, "shorter directory",
+                         "MLA path failures should provide a corrective action");
+        require(production.find(kPrivateModelPath) == std::string::npos &&
+                    production.find("dispatcher_err") == std::string::npos,
+                "default MLA diagnostics must not expose the raw path or debug fields");
+        require_contains(render_diagnostic_body(diagnostic, true), kPrivateModelPath,
+                         "verbose diagnostics should retain the raw path for troubleshooting");
+
+        constexpr std::size_t kLongPathBytes = 5000;
+        constexpr const char* kLongPathDispatcherError =
+            "MLASHM model path length 5000 exceeds maximum 255 bytes; shorten the extracted model "
+            "path";
+        const std::string misleading_path_prefix =
+            "/models/not-negotiated/unable to get dispatcher/buffer is too small/";
+        const std::string long_path =
+            misleading_path_prefix +
+            std::string(kLongPathBytes - misleading_path_prefix.size(), 'a');
+        const std::string long_debug = "plugin='neatprocessmla' model_path='" + long_path +
+                                       "' graph_id=7 dispatcher_err='" + kLongPathDispatcherError +
+                                       "'";
+        GError* long_error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+                                                 "Unable to load model");
+        GstMessage* long_message =
+            gst_message_new_error(GST_OBJECT(source), long_error, long_debug.c_str());
+        g_error_free(long_error);
+        const RawGstError long_raw = parse_gst_error_message(long_message);
+        require(long_raw.debug.size() <= 4096, "long GStreamer debug capture must remain bounded");
+        require_contains(long_raw.debug, "...<truncated>",
+                         "long GStreamer debug capture must identify omitted text");
+        const NormalizedDiagnostic long_diagnostic = classify_gst_error(long_raw);
+        require(long_diagnostic.diagnostic_id == "neatprocessmla.model_path_too_long",
+                "the final dispatcher error must survive an oversized preceding model path");
+        const std::string long_production = render_diagnostic_body(long_diagnostic, false);
+        require_contains(long_production, "Path length: 5000 bytes",
+                         "the preserved dispatcher error must retain its observed length");
+        require(long_production.find(std::string(128, 'a')) == std::string::npos,
+                "production diagnostics must not expose an oversized raw model path");
+        gst_message_unref(long_message);
+
+        GstElementFactory* mla_factory = gst_element_factory_find("neatprocessmla");
+        if (!mla_factory) {
+          require(gst_element_register(nullptr, "neatprocessmla", GST_RANK_NONE, GST_TYPE_BIN),
+                  "test must register a stand-in neatprocessmla factory");
+        } else {
+          gst_object_unref(mla_factory);
+        }
+        GstElement* factory_source = gst_element_factory_make("neatprocessmla", "MLA_factory_0");
+        require(factory_source != nullptr,
+                "factory-identified MLA source must be available for debug-capture test");
+        const std::string factory_marker = "/models/x plugin='otherplugin' y/";
+        const std::string factory_path =
+            factory_marker + std::string(kLongPathBytes - factory_marker.size(), 'b');
+        const std::string factory_debug =
+            "model_path='" + factory_path + "' dispatcher_err='" + kLongPathDispatcherError + "'";
+        GError* factory_error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+                                                    "Unable to load model");
+        GstMessage* factory_message =
+            gst_message_new_error(GST_OBJECT(factory_source), factory_error, factory_debug.c_str());
+        g_error_free(factory_error);
+        const RawGstError factory_raw = parse_gst_error_message(factory_message);
+        require(factory_raw.factory_name == "neatprocessmla",
+                "the test message must establish MLA identity through its element factory");
+        require(classify_gst_error(factory_raw).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "factory identity must preserve the dispatcher error when a path contains a "
+                "plugin-field lookalike");
+        gst_message_unref(factory_message);
+
+        const std::string embedded_dispatcher =
+            "/models/x dispatcher_err='" + std::string(kDispatcherError) + "' y/";
+        const std::string misleading_factory_path =
+            embedded_dispatcher + std::string(kLongPathBytes - embedded_dispatcher.size(), 'c');
+        const std::string misleading_factory_debug = "model_path='" + misleading_factory_path + "'";
+        GError* misleading_factory_error = g_error_new_literal(
+            GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        GstMessage* misleading_factory_message = gst_message_new_error(
+            GST_OBJECT(factory_source), misleading_factory_error, misleading_factory_debug.c_str());
+        g_error_free(misleading_factory_error);
+        const RawGstError misleading_factory_raw =
+            parse_gst_error_message(misleading_factory_message);
+        require(classify_gst_error(misleading_factory_raw).diagnostic_id ==
+                    "gstreamer.unclassified_element_failure",
+                "a dispatcher field embedded in the model path must not create a path-limit "
+                "diagnosis");
+        gst_message_unref(misleading_factory_message);
+        gst_object_unref(factory_source);
+
+        const NormalizedDiagnostic caps =
+            classify_gst_error(raw_error("capsfilter", "gst-core-error-quark",
+                                         GST_CORE_ERROR_NEGOTIATION, "Caps negotiation failed"));
+        require(diagnostic_priority(diagnostic) > diagnostic_priority(caps),
+                "the actionable MLA root cause should outrank a trailing caps error");
+
+        const NormalizedDiagnostic different_limit = classify_gst_error(legacy_model_path_error(
+            "MLASHM model path length 4096 exceeds maximum 1024 bytes; shorten the extracted "
+            "model path"));
+        const std::string different_limit_text = render_diagnostic_body(different_limit, false);
+        require_contains(different_limit_text, "Path length: 4096 bytes",
+                         "the classifier must report the observed value instead of a constant");
+        require_contains(different_limit_text, "Maximum path length: 1024 bytes",
+                         "the classifier must report the producer-supplied maximum");
+
+        RawGstError structured = raw_error("neatprocessmla", "gst-resource-error-quark",
+                                           GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        structured.details["neat-diagnostic-id"] = "neatprocessmla.model_path_too_long";
+        structured.details["dispatcher-error"] = kDispatcherError;
+        const NormalizedDiagnostic structured_diagnostic =
+            classify_gst_error(std::move(structured));
+        require(structured_diagnostic.diagnostic_id == "neatprocessmla.model_path_too_long",
+                "the versioned structured dispatcher field must use the same typed diagnosis");
+        require_contains(render_diagnostic_body(structured_diagnostic, false),
+                         "Path length: 258 bytes",
+                         "the matching explicit diagnostic ID must retain validated byte facts");
+
+        RawGstError apostrophe_path = legacy_model_path_error(kDispatcherError);
+        apostrophe_path.debug =
+            "plugin='neatprocessmla' model_path='/models/O'Reilly/model.tar.gz' dispatcher_err='" +
+            std::string(kDispatcherError) + "'";
+        require(classify_gst_error(std::move(apostrophe_path)).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "an apostrophe in the model path must not hide the real trailing dispatcher field");
+
+        RawGstError numeric_context = legacy_model_path_error(kDispatcherError);
+        numeric_context.debug = "plugin='neatprocessmla' graph_id=7 dispatcher_err='" +
+                                std::string(kDispatcherError) + "'";
+        require(classify_gst_error(std::move(numeric_context)).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "an unquoted integer context field must not hide the trailing dispatcher field");
+
+        RawGstError factory_identified = legacy_model_path_error(kDispatcherError);
+        factory_identified.factory_name = "neatprocessmla";
+        factory_identified.debug =
+            "dispatcher_err='MLASHM model path length 258 exceeds maximum 255 bytes; shorten the "
+            "extracted model path'";
+        require(classify_gst_error(std::move(factory_identified)).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "the element factory must establish the MLA source without a legacy plugin field");
+
+        RawGstError other_plugin = raw;
+        other_plugin.debug =
+            "plugin='otherplugin' dispatcher_err='MLASHM model path length 258 exceeds maximum "
+            "255 bytes; shorten the extracted model path'";
+        require(classify_gst_error(std::move(other_plugin)).diagnostic_id ==
+                    "gstreamer.unclassified_element_failure",
+                "the legacy path matcher must require the neatprocessmla plugin");
+
+        const auto require_generic = [](RawGstError candidate, const std::string& context) {
+          const NormalizedDiagnostic fallback = classify_gst_error(std::move(candidate));
+          require(fallback.diagnostic_id == "gstreamer.unclassified_element_failure",
+                  context + " must retain the generic diagnostic ID");
+          const std::string fallback_text = render_diagnostic_body(fallback, false);
+          require_contains(fallback_text, "A pipeline stage stopped while processing data.",
+                           context + " must retain the generic explanation");
+          require(fallback_text.find("Path length:") == std::string::npos,
+                  context + " must not invent path-length facts");
+        };
+
+        require_generic(
+            legacy_model_path_error(
+                "MLASHM model path length 255 exceeds maximum 255 bytes; shorten the extracted "
+                "model path"),
+            "non-exceeding path lengths");
+        require_generic(
+            legacy_model_path_error(
+                "MLASHM model path length 18446744073709551616 exceeds maximum 255 bytes; "
+                "shorten the extracted model path"),
+            "overflowing path lengths");
+        require_generic(
+            legacy_model_path_error(
+                "MLASHM model path length many exceeds maximum 255 bytes; shorten the extracted "
+                "model path"),
+            "nonnumeric path lengths");
+        require_generic(
+            legacy_model_path_error(
+                "MLASHM model path length -1 exceeds maximum 255 bytes; shorten the extracted "
+                "model path"),
+            "negative path lengths");
+        require_generic(
+            legacy_model_path_error(
+                "MLASHM model path length 258 exceeds maximum 255 characters; shorten the "
+                "extracted model path"),
+            "unexpected units");
+
+        RawGstError lookalike_field = legacy_model_path_error(kDispatcherError);
+        lookalike_field.debug =
+            "plugin='neatprocessmla' other_dispatcher_err='MLASHM model path length 258 exceeds "
+            "maximum 255 bytes; shorten the extracted model path'";
+        require_generic(std::move(lookalike_field), "lookalike debug fields");
+
+        RawGstError unterminated_field = legacy_model_path_error(kDispatcherError);
+        unterminated_field.debug =
+            "plugin='neatprocessmla' dispatcher_err='MLASHM model path length 258 exceeds maximum "
+            "255 bytes; shorten the extracted model path";
+        require_generic(std::move(unterminated_field), "unterminated debug fields");
+
+        RawGstError conflicting_factory = legacy_model_path_error(kDispatcherError);
+        conflicting_factory.factory_name = "otherplugin";
+        require_generic(std::move(conflicting_factory), "conflicting factory identity");
+
+        RawGstError other_operation = legacy_model_path_error(kDispatcherError);
+        other_operation.message = "Unable to execute model";
+        require_generic(std::move(other_operation), "other MLA operations");
+
+        RawGstError existing_classification = legacy_model_path_error(kDispatcherError);
+        existing_classification.code = GST_RESOURCE_ERROR_NOT_FOUND;
+        require(classify_gst_error(std::move(existing_classification)).diagnostic_id ==
+                    "neat.dispatcher_unavailable",
+                "an existing classified dispatcher error must take precedence over legacy parsing");
+
+        RawGstError explicit_diagnostic = legacy_model_path_error(kDispatcherError);
+        explicit_diagnostic.details["neat-diagnostic-id"] = "producer.specific_failure";
+        require(classify_gst_error(std::move(explicit_diagnostic)).diagnostic_id ==
+                    "producer.specific_failure",
+                "an explicit producer diagnostic ID must take precedence over legacy parsing");
+
+        const NormalizedDiagnostic resource_failure =
+            classify_gst_error(raw_error("filesrc", "gst-resource-error-quark",
+                                         GST_RESOURCE_ERROR_NOT_FOUND, "Resource not found."));
+        const auto require_path_marker_ignored = [&](const std::string& model_path,
+                                                     const std::string& context) {
+          RawGstError marked_path = legacy_model_path_error(kDispatcherError);
+          marked_path.debug = "plugin='neatprocessmla' model_path='" + model_path +
+                              "' dispatcher_err='" + kDispatcherError + "'";
+          const NormalizedDiagnostic marked = classify_gst_error(std::move(marked_path));
+          require(marked.diagnostic_id == "neatprocessmla.model_path_too_long",
+                  context + " inside the model path must not override the path-limit diagnosis");
+          require(diagnostic_priority(marked) == diagnostic_priority(diagnostic),
+                  context + " inside the model path must not raise diagnostic priority");
+          require(diagnostic_priority(marked) < diagnostic_priority(resource_failure),
+                  context + " inside the model path must not hide a resource failure");
+        };
+        require_path_marker_ignored("/models/neat-diagnostic-id=foo/model.tar.gz",
+                                    "an unquoted diagnostic-ID marker");
+        require_path_marker_ignored("/models/x diagnostic_id='producer.other' y/model.tar.gz",
+                                    "a quoted legacy diagnostic-ID field");
+
+        RawGstError legacy_explicit = legacy_model_path_error(kDispatcherError);
+        legacy_explicit.debug = "diagnostic_id='producer.specific_failure' " +
+                                model_path_debug("neatprocessmla", kDispatcherError);
+        require(classify_gst_error(std::move(legacy_explicit)).diagnostic_id ==
+                    "producer.specific_failure",
+                "a leading legacy producer diagnostic ID must take precedence over legacy parsing");
+
+        RawGstError legacy_matching = legacy_model_path_error(kDispatcherError);
+        legacy_matching.debug = "diagnostic_id='neatprocessmla.model_path_too_long' " +
+                                model_path_debug("neatprocessmla", kDispatcherError);
+        require(diagnostic_priority(classify_gst_error(std::move(legacy_matching))) == 200,
+                "a leading matching producer diagnostic ID must keep explicit-ID priority");
+
+        gst_message_unref(message);
+        gst_object_unref(source);
+      }
+
+      require_model_path_error_wins_on_bus(true);
+      require_model_path_error_wins_on_bus(false);
 
       {
         GstElement* source = gst_pipeline_new("unknown-wire-format");

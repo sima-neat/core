@@ -105,6 +105,15 @@ The same values are available in both language APIs:
 | `runtime.output_timeout` | No output arrives before the configured wait expires. | Verify source flow and back-pressure, or adjust the timeout when the wait is expected. |
 | `runtime.unexpected_eos` | The pipeline reaches EOS before producing a required output. | Check the input for premature EOS and confirm that enough input was supplied. |
 
+`runtime.element_failed` can include a stable diagnostic ID for a recognized element failure:
+
+| Diagnostic ID | When raised | Reported action |
+| --- | --- | --- |
+| `neatprocessmla.model_path_too_long` | The extracted MLA model path exceeds the runtime byte limit. | The diagnostic reports the observed and maximum byte lengths. Move the model archive to a shorter directory or shorten the extraction path, then rebuild the graph. |
+
+The production message omits the full model path. Raw GStreamer debug text, including the path, is
+available only when verbose diagnostics are enabled.
+
 ## I/O failures
 
 | Code | When raised | What to do |
