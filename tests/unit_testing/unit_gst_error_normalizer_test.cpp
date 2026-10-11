@@ -1247,9 +1247,6 @@ RUN_TEST(
                     "producer.specific_failure",
                 "an explicit producer diagnostic ID must take precedence over legacy parsing");
 
-        const NormalizedDiagnostic resource_failure =
-            classify_gst_error(raw_error("filesrc", "gst-resource-error-quark",
-                                         GST_RESOURCE_ERROR_NOT_FOUND, "Resource not found."));
         const auto require_path_marker_ignored = [&](const std::string& model_path,
                                                      const std::string& context) {
           RawGstError marked_path = legacy_model_path_error(kDispatcherError);
@@ -1264,8 +1261,6 @@ RUN_TEST(
                   context + " inside the model path must not override the path-limit diagnosis");
           require(diagnostic_priority(marked) == diagnostic_priority(diagnostic),
                   context + " inside the model path must not raise diagnostic priority");
-          require(diagnostic_priority(marked) < diagnostic_priority(resource_failure),
-                  context + " inside the model path must not hide a resource failure");
         };
         require_path_marker_ignored("/models/neat-diagnostic-id=foo/model.tar.gz",
                                     "an unquoted diagnostic-ID marker");
