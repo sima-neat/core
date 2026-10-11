@@ -1195,6 +1195,13 @@ RUN_TEST(
             "255 bytes; shorten the extracted model path";
         require_generic(std::move(unterminated_field), "unterminated debug fields");
 
+        RawGstError forged_truncation_suffix = legacy_model_path_error(kDispatcherError);
+        forged_truncation_suffix.debug =
+            "plugin='neatprocessmla' model_path='/models/...<truncated> | dispatcher_err='" +
+            std::string(kDispatcherError) + "' y'";
+        require_generic(std::move(forged_truncation_suffix),
+                        "textual truncation markers inside model paths");
+
         RawGstError conflicting_factory = legacy_model_path_error(kDispatcherError);
         conflicting_factory.factory_name = "otherplugin";
         require_generic(std::move(conflicting_factory), "conflicting factory identity");
@@ -1248,8 +1255,16 @@ RUN_TEST(
         RawGstError legacy_matching = legacy_model_path_error(kDispatcherError);
         legacy_matching.debug = "diagnostic_id='neatprocessmla.model_path_too_long' " +
                                 model_path_debug("neatprocessmla", kDispatcherError);
-        require(diagnostic_priority(classify_gst_error(std::move(legacy_matching))) == 200,
+        const NormalizedDiagnostic legacy_matching_diagnostic =
+            classify_gst_error(std::move(legacy_matching));
+        require(diagnostic_priority(legacy_matching_diagnostic) == 200,
                 "a leading matching producer diagnostic ID must keep explicit-ID priority");
+        const std::string legacy_matching_text =
+            render_diagnostic_body(legacy_matching_diagnostic, false);
+        require_contains(legacy_matching_text, "Path length: 258 bytes",
+                         "a matching leading diagnostic ID must retain validated byte facts");
+        require_contains(legacy_matching_text, "shorter directory",
+                         "a matching leading diagnostic ID must retain the corrective action");
 
         gst_message_unref(message);
         gst_object_unref(source);

@@ -908,6 +908,8 @@ bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t 
                                             const ModelPathLimit& limit) {
   constexpr std::string_view marker = "model_path='";
   constexpr std::string_view plugin_prefix = "plugin='neatprocessmla' ";
+  constexpr std::string_view matching_diagnostic_prefix =
+      "diagnostic_id='neatprocessmla.model_path_too_long' plugin='neatprocessmla' ";
   constexpr LegacyFieldSpec intervening_fields[] = {{"graph_id=", false}, {"frame_id=", false}};
 
   // Quotes are not escaped in the legacy format, so a quote immediately before dispatcher_err is
@@ -922,7 +924,7 @@ bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t 
       return false;
     search_pos = model_pos + marker.size();
     const std::string_view prefix = debug.substr(0, model_pos);
-    if (!prefix.empty() && prefix != plugin_prefix) {
+    if (!prefix.empty() && prefix != plugin_prefix && prefix != matching_diagnostic_prefix) {
       continue;
     }
 
@@ -996,12 +998,10 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
 
     const std::string_view value = debug.substr(value_begin, value_end - value_begin);
     const std::optional<ModelPathLimit> limit = parse_model_path_limit(value);
-    const bool preserved_capture = debug.substr(0, pos).ends_with("...<truncated> | ");
     const bool has_valid_source_boundary =
-        pos == 0 || preserved_capture ||
-        (limit.has_value() &&
-         (dispatcher_follows_matching_model_path(debug, pos, *limit) ||
-          (trusted_neatprocessmla_source && debug.substr(0, pos) == plugin_prefix)));
+        pos == 0 || (limit.has_value() &&
+                     (dispatcher_follows_matching_model_path(debug, pos, *limit) ||
+                      (trusted_neatprocessmla_source && debug.substr(0, pos) == plugin_prefix)));
     const bool has_field_terminator =
         value_end + 1 == debug.size() ||
         std::isspace(static_cast<unsigned char>(debug[value_end + 1])) ||
@@ -1020,6 +1020,10 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
 std::string capture_gst_debug(std::string value, std::string_view factory_name) {
   constexpr std::size_t kMaxDebugBytes = 4096;
   constexpr std::size_t kMaxPreservedDispatcherErrorBytes = 512;
+  constexpr std::string_view kTruncationMarker = "...<truncated>";
+  const auto truncate_debug = [=](std::string debug) {
+    return truncate(std::move(debug), kMaxDebugBytes - kTruncationMarker.size());
+  };
 
   const std::optional<std::string_view> original_plugin =
       find_legacy_quoted_debug_field(value, "plugin");
@@ -1040,15 +1044,15 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
   // ordinary debug capture limit. Validate field boundaries against the original message, then
   // redact the full value before either portion is retained.
   if ((!factory_is_neatprocessmla && !plugin_is_neatprocessmla) || !dispatcher_error.has_value()) {
-    return truncate(std::move(value), kMaxDebugBytes);
+    return truncate_debug(std::move(value));
   }
 
   const std::string redacted_dispatcher_error = redact_uri_credentials(*dispatcher_error);
   if (redacted_dispatcher_error.size() > kMaxPreservedDispatcherErrorBytes)
-    return truncate(std::move(value), kMaxDebugBytes);
+    return truncate_debug(std::move(value));
   const std::string suffix = "...<truncated> | dispatcher_err='" + redacted_dispatcher_error + "'";
   if (suffix.size() >= kMaxDebugBytes)
-    return truncate(std::move(value), kMaxDebugBytes);
+    return truncate_debug(std::move(value));
 
   std::size_t boundary = kMaxDebugBytes - suffix.size();
   while (boundary > 0 && (static_cast<unsigned char>(value[boundary]) & 0xC0U) == 0x80U) {
