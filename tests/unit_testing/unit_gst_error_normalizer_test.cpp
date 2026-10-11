@@ -926,8 +926,7 @@ RUN_TEST(
         gst_message_unref(oversized_detail_message);
 
         const std::string missing_optional_model_path_debug =
-            "plugin='neatprocessmla' node='MLA_0_1' dispatcher_err='" +
-            std::string(kDispatcherError) + "'";
+            "plugin='neatprocessmla' dispatcher_err='" + std::string(kDispatcherError) + "'";
         GError* missing_optional_model_path_error = g_error_new_literal(
             GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
         GstMessage* missing_optional_model_path_message =
@@ -955,8 +954,9 @@ RUN_TEST(
         require(oversized_prefix_raw.debug.size() <= 4096,
                 "a large optional prefix must keep debug capture bounded");
         require(classify_gst_error(oversized_prefix_raw).diagnostic_id ==
-                    "neatprocessmla.model_path_too_long",
-                "an oversized optional prefix must not hide the dispatcher diagnosis");
+                    "gstreamer.unclassified_element_failure",
+                "an unescaped path before model_path must retain the generic fallback because its "
+                "field boundary cannot be authenticated");
         gst_message_unref(oversized_prefix_message);
 
         GstElementFactory* mla_factory = gst_element_factory_find("neatprocessmla");
@@ -1068,9 +1068,20 @@ RUN_TEST(
             "plugin='neatprocessmla' config_path='/configs/x model_path='fake.json' model_path='" +
             config_marker_path + "' dispatcher_err='" + std::string(kDispatcherError) + "'";
         require(classify_gst_error(std::move(config_marker)).diagnostic_id ==
-                    "neatprocessmla.model_path_too_long",
-                "a model-path marker inside an earlier config path must not hide the actual "
-                "model field");
+                    "gstreamer.unclassified_element_failure",
+                "an apostrophe inside an earlier unescaped config path must make the legacy "
+                "record ambiguous");
+
+        RawGstError forged_config_fields = legacy_model_path_error(kDispatcherError);
+        std::string forged_model_path = kPrivateModelPath;
+        forged_model_path.append(258 - forged_model_path.size(), 'g');
+        forged_config_fields.debug =
+            "plugin='neatprocessmla' config_path='/configs/x' model_path='" + forged_model_path +
+            "' dispatcher_err='" + std::string(kDispatcherError) + "' detail='still-config'";
+        require(classify_gst_error(std::move(forged_config_fields)).diagnostic_id ==
+                    "gstreamer.unclassified_element_failure",
+                "a complete field tuple forged inside an unescaped config path must not create a "
+                "path-limit diagnosis");
 
         RawGstError numeric_context = legacy_model_path_error(kDispatcherError);
         std::string numeric_model_path = kPrivateModelPath;

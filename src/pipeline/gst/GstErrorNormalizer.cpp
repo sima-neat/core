@@ -13,7 +13,6 @@
 #include <optional>
 #include <sstream>
 #include <string_view>
-#include <unordered_set>
 #include <utility>
 
 namespace simaai::neat::pipeline_internal {
@@ -859,9 +858,11 @@ struct LegacyFieldSpec {
 
 bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* fields,
                                   std::size_t field_count) {
-  // Keep failure memoization sparse. Legacy context is already resident in the GStreamer message,
-  // and valid optional path fields can exceed the later bounded debug-capture window.
-  std::vector<std::unordered_set<std::size_t>> failed(field_count + 1);
+  constexpr std::size_t kMaxLegacyFieldBytes = 4096;
+  if (text.size() > kMaxLegacyFieldBytes)
+    return false;
+
+  std::vector<std::int8_t> memo((text.size() + 1) * (field_count + 1), -1);
   std::function<bool(std::size_t, std::size_t)> parse = [&](std::size_t cursor,
                                                             std::size_t minimum_field) -> bool {
     while (cursor < text.size() && std::isspace(static_cast<unsigned char>(text[cursor]))) {
@@ -870,8 +871,9 @@ bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* 
     if (cursor == text.size())
       return true;
 
-    if (failed[minimum_field].contains(cursor))
-      return false;
+    std::int8_t& cached = memo[cursor * (field_count + 1) + minimum_field];
+    if (cached != -1)
+      return cached != 0;
 
     for (std::size_t index = minimum_field; index < field_count; ++index) {
       const LegacyFieldSpec& field = fields[index];
@@ -886,19 +888,18 @@ bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* 
           ++value_end;
         }
         if (value_end > value_begin && parse(value_end, index + 1))
-          return true;
+          return cached = 1;
         continue;
       }
 
       std::size_t value_end = value_begin;
       while ((value_end = text.find('\'', value_end)) != std::string_view::npos) {
         if (parse(value_end + 1, index + 1))
-          return true;
+          return cached = 1;
         ++value_end;
       }
     }
-    failed[minimum_field].insert(cursor);
-    return false;
+    return cached = 0;
   };
   return parse(0, 0);
 }
@@ -906,25 +907,22 @@ bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* 
 bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t dispatcher_pos,
                                             const ModelPathLimit& limit) {
   constexpr std::string_view marker = "model_path='";
-  constexpr LegacyFieldSpec preceding_fields[] = {
-      {"diagnostic_id='", true}, {"plugin='", true}, {"node='", true}, {"config_path='", true}};
-  constexpr LegacyFieldSpec intervening_fields[] = {{"graph_id=", false},    {"frame_id=", false},
-                                                    {"stream_id='", true},   {"input_caps='", true},
-                                                    {"output_caps='", true}, {"input_dims='", true},
-                                                    {"output_dims='", true}, {"allocator='", true}};
+  constexpr std::string_view plugin_prefix = "plugin='neatprocessmla' ";
+  constexpr LegacyFieldSpec intervening_fields[] = {{"graph_id=", false}, {"frame_id=", false}};
 
   // Quotes are not escaped in the legacy format, so a quote immediately before dispatcher_err is
-  // not a boundary by itself. Cross-check the producer's observed byte count against model_path,
-  // then require every field between that exact byte boundary and dispatcher_err to follow the
-  // formatter's order.
+  // not a boundary by itself. Only accept model_path at the start of the record or after the fixed
+  // plugin identity; arbitrary quoted fields before it could contain a forged field tuple. The
+  // producer's observed byte count authenticates model_path's closing quote. Between that exact
+  // boundary and dispatcher_err, accept only numeric fields, whose boundaries are unambiguous.
   std::size_t search_pos = 0;
   while (true) {
     const std::size_t model_pos = debug.find(marker, search_pos);
     if (model_pos == std::string_view::npos || model_pos >= dispatcher_pos)
       return false;
     search_pos = model_pos + marker.size();
-    if (!parses_ordered_legacy_fields(debug.substr(0, model_pos), preceding_fields,
-                                      std::size(preceding_fields))) {
+    const std::string_view prefix = debug.substr(0, model_pos);
+    if (!prefix.empty() && prefix != plugin_prefix) {
       continue;
     }
 
@@ -980,11 +978,7 @@ std::optional<std::string_view> find_legacy_quoted_debug_field(std::string_view 
 std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view debug,
                                                              bool trusted_neatprocessmla_source) {
   constexpr std::string_view marker = "dispatcher_err='";
-  constexpr LegacyFieldSpec context_without_model_path[] = {
-      {"diagnostic_id='", true}, {"plugin='", true},      {"node='", true},
-      {"config_path='", true},   {"graph_id=", false},    {"frame_id=", false},
-      {"stream_id='", true},     {"input_caps='", true},  {"output_caps='", true},
-      {"input_dims='", true},    {"output_dims='", true}, {"allocator='", true}};
+  constexpr std::string_view plugin_prefix = "plugin='neatprocessmla' ";
   constexpr LegacyFieldSpec trailing_fields[] = {
       {"hint='", true},          {"stage_key='", true},      {"source_used='", true},
       {"missing_field='", true}, {"fallback_chain='", true}, {"detail='", true}};
@@ -1007,9 +1001,7 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
         pos == 0 || preserved_capture ||
         (limit.has_value() &&
          (dispatcher_follows_matching_model_path(debug, pos, *limit) ||
-          (trusted_neatprocessmla_source &&
-           parses_ordered_legacy_fields(debug.substr(0, pos), context_without_model_path,
-                                        std::size(context_without_model_path)))));
+          (trusted_neatprocessmla_source && debug.substr(0, pos) == plugin_prefix)));
     const bool has_field_terminator =
         value_end + 1 == debug.size() ||
         std::isspace(static_cast<unsigned char>(debug[value_end + 1])) ||
