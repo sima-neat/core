@@ -907,16 +907,15 @@ bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* 
 bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t dispatcher_pos,
                                             const ModelPathLimit& limit) {
   constexpr std::string_view marker = "model_path='";
-  constexpr std::string_view plugin_prefix = "plugin='neatprocessmla' ";
   constexpr std::string_view matching_diagnostic_prefix =
       "diagnostic_id='neatprocessmla.model_path_too_long' plugin='neatprocessmla' ";
   constexpr LegacyFieldSpec intervening_fields[] = {{"graph_id=", false}, {"frame_id=", false}};
 
   // Quotes are not escaped in the legacy format, so a quote immediately before dispatcher_err is
-  // not a boundary by itself. Only accept model_path at the start of the record or after the fixed
-  // plugin identity; arbitrary quoted fields before it could contain a forged field tuple. The
-  // producer's observed byte count authenticates model_path's closing quote. Between that exact
-  // boundary and dispatcher_err, accept only numeric fields, whose boundaries are unambiguous.
+  // not a boundary by itself, and a path can forge a matching byte count. Require the fixed leading
+  // producer diagnostic and plugin identity before using the count to locate model_path's closing
+  // quote. Between that boundary and dispatcher_err, accept only numeric fields, whose boundaries
+  // are unambiguous.
   std::size_t search_pos = 0;
   while (true) {
     const std::size_t model_pos = debug.find(marker, search_pos);
@@ -924,7 +923,7 @@ bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t 
       return false;
     search_pos = model_pos + marker.size();
     const std::string_view prefix = debug.substr(0, model_pos);
-    if (!prefix.empty() && prefix != plugin_prefix && prefix != matching_diagnostic_prefix) {
+    if (prefix != matching_diagnostic_prefix) {
       continue;
     }
 
