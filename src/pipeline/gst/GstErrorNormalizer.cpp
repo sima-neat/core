@@ -1001,8 +1001,14 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
     const bool has_valid_source_boundary =
         pos == 0 || preserved_capture ||
         (limit.has_value() && dispatcher_follows_matching_model_path(debug, pos, *limit));
-    const bool has_valid_tail = parses_ordered_legacy_fields(
-        debug.substr(value_end + 1), trailing_fields, std::size(trailing_fields));
+    const bool has_field_terminator =
+        value_end + 1 == debug.size() ||
+        std::isspace(static_cast<unsigned char>(debug[value_end + 1])) ||
+        debug[value_end + 1] == '|';
+    const bool has_valid_tail =
+        (limit.has_value() && has_field_terminator) ||
+        parses_ordered_legacy_fields(debug.substr(value_end + 1), trailing_fields,
+                                     std::size(trailing_fields));
     if (has_valid_source_boundary && has_valid_tail)
       found = value;
     search_pos = value_end + 1;

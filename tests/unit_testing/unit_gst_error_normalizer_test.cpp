@@ -909,6 +909,22 @@ RUN_TEST(
                 "production diagnostics must not expose an oversized raw model path");
         gst_message_unref(long_message);
 
+        const std::string oversized_detail_debug =
+            model_path_debug("neatprocessmla", kDispatcherError) + " detail='" +
+            std::string(5000, 'q') + "'";
+        GError* oversized_detail_error = g_error_new_literal(
+            GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        GstMessage* oversized_detail_message = gst_message_new_error(
+            GST_OBJECT(source), oversized_detail_error, oversized_detail_debug.c_str());
+        g_error_free(oversized_detail_error);
+        const RawGstError oversized_detail_raw = parse_gst_error_message(oversized_detail_message);
+        require(oversized_detail_raw.debug.size() <= 4096,
+                "a large trailing detail must keep debug capture bounded");
+        require(classify_gst_error(oversized_detail_raw).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "an oversized optional trailing field must not hide the dispatcher diagnosis");
+        gst_message_unref(oversized_detail_message);
+
         GstElementFactory* mla_factory = gst_element_factory_find("neatprocessmla");
         if (!mla_factory) {
           require(gst_element_register(nullptr, "neatprocessmla", GST_RANK_NONE, GST_TYPE_BIN),
