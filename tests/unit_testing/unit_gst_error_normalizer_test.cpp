@@ -925,6 +925,40 @@ RUN_TEST(
                 "an oversized optional trailing field must not hide the dispatcher diagnosis");
         gst_message_unref(oversized_detail_message);
 
+        const std::string missing_optional_model_path_debug =
+            "plugin='neatprocessmla' node='MLA_0_1' dispatcher_err='" +
+            std::string(kDispatcherError) + "'";
+        GError* missing_optional_model_path_error = g_error_new_literal(
+            GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        GstMessage* missing_optional_model_path_message =
+            gst_message_new_error(GST_OBJECT(source), missing_optional_model_path_error,
+                                  missing_optional_model_path_debug.c_str());
+        g_error_free(missing_optional_model_path_error);
+        const RawGstError missing_optional_model_path_raw =
+            parse_gst_error_message(missing_optional_model_path_message);
+        require(classify_gst_error(missing_optional_model_path_raw).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "a valid legacy context must not require the optional model_path field");
+        gst_message_unref(missing_optional_model_path_message);
+
+        std::string matching_model_path = kPrivateModelPath;
+        matching_model_path.append(258 - matching_model_path.size(), 'p');
+        const std::string oversized_prefix_debug =
+            "plugin='neatprocessmla' config_path='" + std::string(5000, 'c') + "' model_path='" +
+            matching_model_path + "' dispatcher_err='" + kDispatcherError + "'";
+        GError* oversized_prefix_error = g_error_new_literal(
+            GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        GstMessage* oversized_prefix_message = gst_message_new_error(
+            GST_OBJECT(source), oversized_prefix_error, oversized_prefix_debug.c_str());
+        g_error_free(oversized_prefix_error);
+        const RawGstError oversized_prefix_raw = parse_gst_error_message(oversized_prefix_message);
+        require(oversized_prefix_raw.debug.size() <= 4096,
+                "a large optional prefix must keep debug capture bounded");
+        require(classify_gst_error(oversized_prefix_raw).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "an oversized optional prefix must not hide the dispatcher diagnosis");
+        gst_message_unref(oversized_prefix_message);
+
         GstElementFactory* mla_factory = gst_element_factory_find("neatprocessmla");
         if (!mla_factory) {
           require(gst_element_register(nullptr, "neatprocessmla", GST_RANK_NONE, GST_TYPE_BIN),

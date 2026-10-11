@@ -13,6 +13,7 @@
 #include <optional>
 #include <sstream>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace simaai::neat::pipeline_internal {
@@ -858,11 +859,9 @@ struct LegacyFieldSpec {
 
 bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* fields,
                                   std::size_t field_count) {
-  constexpr std::size_t kMaxLegacyFieldBytes = 4096;
-  if (text.size() > kMaxLegacyFieldBytes)
-    return false;
-
-  std::vector<std::int8_t> memo((text.size() + 1) * (field_count + 1), -1);
+  // Keep failure memoization sparse. Legacy context is already resident in the GStreamer message,
+  // and valid optional path fields can exceed the later bounded debug-capture window.
+  std::vector<std::unordered_set<std::size_t>> failed(field_count + 1);
   std::function<bool(std::size_t, std::size_t)> parse = [&](std::size_t cursor,
                                                             std::size_t minimum_field) -> bool {
     while (cursor < text.size() && std::isspace(static_cast<unsigned char>(text[cursor]))) {
@@ -871,9 +870,8 @@ bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* 
     if (cursor == text.size())
       return true;
 
-    std::int8_t& cached = memo[cursor * (field_count + 1) + minimum_field];
-    if (cached != -1)
-      return cached != 0;
+    if (failed[minimum_field].contains(cursor))
+      return false;
 
     for (std::size_t index = minimum_field; index < field_count; ++index) {
       const LegacyFieldSpec& field = fields[index];
@@ -888,18 +886,19 @@ bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* 
           ++value_end;
         }
         if (value_end > value_begin && parse(value_end, index + 1))
-          return cached = 1;
+          return true;
         continue;
       }
 
       std::size_t value_end = value_begin;
       while ((value_end = text.find('\'', value_end)) != std::string_view::npos) {
         if (parse(value_end + 1, index + 1))
-          return cached = 1;
+          return true;
         ++value_end;
       }
     }
-    return cached = 0;
+    failed[minimum_field].insert(cursor);
+    return false;
   };
   return parse(0, 0);
 }
@@ -978,8 +977,14 @@ std::optional<std::string_view> find_legacy_quoted_debug_field(std::string_view 
   return found;
 }
 
-std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view debug) {
+std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view debug,
+                                                             bool trusted_neatprocessmla_source) {
   constexpr std::string_view marker = "dispatcher_err='";
+  constexpr LegacyFieldSpec context_without_model_path[] = {
+      {"diagnostic_id='", true}, {"plugin='", true},      {"node='", true},
+      {"config_path='", true},   {"graph_id=", false},    {"frame_id=", false},
+      {"stream_id='", true},     {"input_caps='", true},  {"output_caps='", true},
+      {"input_dims='", true},    {"output_dims='", true}, {"allocator='", true}};
   constexpr LegacyFieldSpec trailing_fields[] = {
       {"hint='", true},          {"stage_key='", true},      {"source_used='", true},
       {"missing_field='", true}, {"fallback_chain='", true}, {"detail='", true}};
@@ -1000,7 +1005,11 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
     const bool preserved_capture = debug.substr(0, pos).ends_with("...<truncated> | ");
     const bool has_valid_source_boundary =
         pos == 0 || preserved_capture ||
-        (limit.has_value() && dispatcher_follows_matching_model_path(debug, pos, *limit));
+        (limit.has_value() &&
+         (dispatcher_follows_matching_model_path(debug, pos, *limit) ||
+          (trusted_neatprocessmla_source &&
+           parses_ordered_legacy_fields(debug.substr(0, pos), context_without_model_path,
+                                        std::size(context_without_model_path)))));
     const bool has_field_terminator =
         value_end + 1 == debug.size() ||
         std::isspace(static_cast<unsigned char>(debug[value_end + 1])) ||
@@ -1022,10 +1031,11 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
 
   const std::optional<std::string_view> original_plugin =
       find_legacy_quoted_debug_field(value, "plugin");
+  const bool factory_is_neatprocessmla = lower_copy(std::string(factory_name)) == "neatprocessmla";
+  const bool plugin_is_neatprocessmla =
+      original_plugin.has_value() && lower_copy(std::string(*original_plugin)) == "neatprocessmla";
   const std::optional<std::string_view> original_dispatcher_error =
-      find_legacy_dispatcher_error(value);
-  const std::optional<std::string> plugin =
-      original_plugin.has_value() ? std::optional<std::string>(*original_plugin) : std::nullopt;
+      find_legacy_dispatcher_error(value, factory_is_neatprocessmla || plugin_is_neatprocessmla);
   const std::optional<std::string> dispatcher_error =
       original_dispatcher_error.has_value() ? std::optional<std::string>(*original_dispatcher_error)
                                             : std::nullopt;
@@ -1033,13 +1043,10 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
   if (value.size() <= kMaxDebugBytes)
     return value;
 
-  // Historical neatprocessmla messages put dispatcher_err after model_path. Preserve that bounded
-  // final field so the actionable cause survives when the offending path itself exceeds the
-  // ordinary debug capture limit. Validate field boundaries against the original byte counts,
-  // then redact the full value before either portion is retained.
-  const bool factory_is_neatprocessmla = lower_copy(std::string(factory_name)) == "neatprocessmla";
-  const bool plugin_is_neatprocessmla =
-      plugin.has_value() && lower_copy(std::string(*plugin)) == "neatprocessmla";
+  // Historical neatprocessmla messages put dispatcher_err after optional context paths. Preserve
+  // that bounded field so the actionable cause survives when preceding context exceeds the
+  // ordinary debug capture limit. Validate field boundaries against the original message, then
+  // redact the full value before either portion is retained.
   if ((!factory_is_neatprocessmla && !plugin_is_neatprocessmla) || !dispatcher_error.has_value()) {
     return truncate(std::move(value), kMaxDebugBytes);
   }
@@ -1083,7 +1090,8 @@ std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
   std::optional<std::string> dispatcher_error =
       find_structured_detail(raw, {"dispatcher-error", "legacy-dispatcher-error"});
   if (!dispatcher_error.has_value()) {
-    if (const std::optional<std::string_view> legacy = find_legacy_dispatcher_error(raw.debug)) {
+    if (const std::optional<std::string_view> legacy =
+            find_legacy_dispatcher_error(raw.debug, true)) {
       dispatcher_error = std::string(*legacy);
     }
   }
@@ -1468,8 +1476,14 @@ RawGstError parse_gst_error_message(GstMessage* message) {
     out.message = truncate(error->message ? error->message : "");
     g_error_free(error);
   }
+  const std::string_view debug_view = debug ? std::string_view(debug) : std::string_view{};
+  const std::optional<std::string_view> legacy_plugin =
+      find_legacy_quoted_debug_field(debug_view, "plugin");
+  const bool trusted_neatprocessmla_source =
+      lower_copy(out.factory_name) == "neatprocessmla" ||
+      (legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) == "neatprocessmla");
   const std::optional<std::string_view> legacy_dispatcher_error =
-      find_legacy_dispatcher_error(debug ? std::string_view(debug) : std::string_view{});
+      find_legacy_dispatcher_error(debug_view, trusted_neatprocessmla_source);
   if (legacy_dispatcher_error.has_value() &&
       parse_model_path_limit(*legacy_dispatcher_error).has_value()) {
     out.details.emplace("legacy-dispatcher-error", *legacy_dispatcher_error);
