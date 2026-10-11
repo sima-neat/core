@@ -1003,6 +1003,24 @@ RUN_TEST(
                     "neatprocessmla.model_path_too_long",
                 "an unquoted integer context field must not hide the trailing dispatcher field");
 
+        std::string sensitive_model_path = "/models/token=secret/model.tar.gz";
+        sensitive_model_path.append(258 - sensitive_model_path.size(), 's');
+        const std::string sensitive_debug = "plugin='neatprocessmla' model_path='" +
+                                            sensitive_model_path + "' dispatcher_err='" +
+                                            std::string(kDispatcherError) + "'";
+        GError* sensitive_error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+                                                      "Unable to load model");
+        GstMessage* sensitive_message =
+            gst_message_new_error(GST_OBJECT(source), sensitive_error, sensitive_debug.c_str());
+        g_error_free(sensitive_error);
+        const RawGstError sensitive_raw = parse_gst_error_message(sensitive_message);
+        require(sensitive_raw.debug.find("secret") == std::string::npos,
+                "captured debug must redact sensitive model-path components");
+        require(classify_gst_error(sensitive_raw).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "redaction must not change the original byte boundary used for classification");
+        gst_message_unref(sensitive_message);
+
         RawGstError path_ending_lookalike = legacy_model_path_error(kDispatcherError);
         path_ending_lookalike.debug =
             "plugin='neatprocessmla' model_path='/models/x' dispatcher_err='" +
@@ -1011,6 +1029,15 @@ RUN_TEST(
                     "gstreamer.unclassified_element_failure",
                 "a dispatcher lookalike at the end of a short model path must not establish the "
                 "reported byte count");
+
+        RawGstError embedded_model_marker = legacy_model_path_error(kDispatcherError);
+        embedded_model_marker.debug =
+            "plugin='neatprocessmla' model_path='/models/x model_path='a' dispatcher_err='MLASHM "
+            "model path length 1 exceeds maximum 0 bytes; shorten the extracted model path'";
+        require(classify_gst_error(std::move(embedded_model_marker)).diagnostic_id ==
+                    "gstreamer.unclassified_element_failure",
+                "a model-path marker embedded in the actual path must not provide the byte-count "
+                "anchor");
 
         RawGstError factory_identified = legacy_model_path_error(kDispatcherError);
         factory_identified.factory_name = "neatprocessmla";

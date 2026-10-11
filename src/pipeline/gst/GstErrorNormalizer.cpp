@@ -916,7 +916,7 @@ bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t 
   // not a boundary by itself. Cross-check the producer's observed byte count against model_path,
   // then require every field between that exact byte boundary and dispatcher_err to follow the
   // formatter's order.
-  const std::size_t model_pos = debug.rfind(marker, dispatcher_pos);
+  const std::size_t model_pos = debug.find(marker);
   if (model_pos == std::string_view::npos ||
       (model_pos != 0 && !std::isspace(static_cast<unsigned char>(debug[model_pos - 1])) &&
        debug[model_pos - 1] != '|')) {
@@ -1006,15 +1006,23 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
   constexpr std::size_t kMaxDebugBytes = 4096;
   constexpr std::size_t kMaxPreservedDispatcherErrorBytes = 512;
 
+  const std::optional<std::string_view> original_plugin =
+      find_legacy_quoted_debug_field(value, "plugin");
+  const std::optional<std::string_view> original_dispatcher_error =
+      find_legacy_dispatcher_error(value);
+  const std::optional<std::string> plugin =
+      original_plugin.has_value() ? std::optional<std::string>(*original_plugin) : std::nullopt;
+  const std::optional<std::string> dispatcher_error =
+      original_dispatcher_error.has_value() ? std::optional<std::string>(*original_dispatcher_error)
+                                            : std::nullopt;
   value = redact_uri_credentials(std::move(value));
   if (value.size() <= kMaxDebugBytes)
     return value;
 
   // Historical neatprocessmla messages put dispatcher_err after model_path. Preserve that bounded
   // final field so the actionable cause survives when the offending path itself exceeds the
-  // ordinary debug capture limit. The full value is redacted before either portion is retained.
-  const std::optional<std::string_view> plugin = find_legacy_quoted_debug_field(value, "plugin");
-  const std::optional<std::string_view> dispatcher_error = find_legacy_dispatcher_error(value);
+  // ordinary debug capture limit. Validate field boundaries against the original byte counts,
+  // then redact the full value before either portion is retained.
   const bool factory_is_neatprocessmla = lower_copy(std::string(factory_name)) == "neatprocessmla";
   const bool plugin_is_neatprocessmla =
       plugin.has_value() && lower_copy(std::string(*plugin)) == "neatprocessmla";
@@ -1057,7 +1065,8 @@ std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
     return std::nullopt;
   }
 
-  std::optional<std::string> dispatcher_error = find_structured_detail(raw, {"dispatcher-error"});
+  std::optional<std::string> dispatcher_error =
+      find_structured_detail(raw, {"dispatcher-error", "legacy-dispatcher-error"});
   if (!dispatcher_error.has_value()) {
     if (const std::optional<std::string_view> legacy = find_legacy_dispatcher_error(raw.debug)) {
       dispatcher_error = std::string(*legacy);
@@ -1444,6 +1453,10 @@ RawGstError parse_gst_error_message(GstMessage* message) {
     out.message = truncate(error->message ? error->message : "");
     g_error_free(error);
   }
+  const std::optional<std::string_view> legacy_dispatcher_error =
+      find_legacy_dispatcher_error(debug ? std::string_view(debug) : std::string_view{});
+  if (legacy_dispatcher_error.has_value())
+    out.details.emplace("legacy-dispatcher-error", *legacy_dispatcher_error);
   out.debug = capture_gst_debug(debug ? debug : "", out.factory_name);
   g_free(debug);
 
