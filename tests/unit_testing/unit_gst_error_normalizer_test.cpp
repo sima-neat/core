@@ -938,6 +938,24 @@ RUN_TEST(
                 "plugin-field lookalike");
         gst_message_unref(factory_message);
 
+        const std::string credential_dispatcher_debug =
+            "dispatcher_err='token=secret' detail='" + std::string(4055, 'z') + "'";
+        GError* credential_dispatcher_error = g_error_new_literal(
+            GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        GstMessage* credential_dispatcher_message =
+            gst_message_new_error(GST_OBJECT(factory_source), credential_dispatcher_error,
+                                  credential_dispatcher_debug.c_str());
+        g_error_free(credential_dispatcher_error);
+        const RawGstError credential_dispatcher_raw =
+            parse_gst_error_message(credential_dispatcher_message);
+        require(credential_dispatcher_raw.debug.find("secret") == std::string::npos,
+                "a preserved dispatcher suffix must not restore redacted credentials");
+        require_contains(credential_dispatcher_raw.debug, "dispatcher_err=",
+                         "the regression must exercise the preserved dispatcher suffix");
+        require(credential_dispatcher_raw.debug.size() <= 4096,
+                "a credential-bearing dispatcher capture must remain bounded");
+        gst_message_unref(credential_dispatcher_message);
+
         const std::string embedded_dispatcher =
             "/models/x dispatcher_err='" + std::string(kDispatcherError) + "' y/";
         const std::string misleading_factory_path =
@@ -992,6 +1010,17 @@ RUN_TEST(
         require(classify_gst_error(std::move(apostrophe_path)).diagnostic_id ==
                     "neatprocessmla.model_path_too_long",
                 "an apostrophe in the model path must not hide the real trailing dispatcher field");
+
+        RawGstError config_marker = legacy_model_path_error(kDispatcherError);
+        std::string config_marker_path = kPrivateModelPath;
+        config_marker_path.append(258 - config_marker_path.size(), 'c');
+        config_marker.debug =
+            "plugin='neatprocessmla' config_path='/configs/x model_path='fake.json' model_path='" +
+            config_marker_path + "' dispatcher_err='" + std::string(kDispatcherError) + "'";
+        require(classify_gst_error(std::move(config_marker)).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "a model-path marker inside an earlier config path must not hide the actual "
+                "model field");
 
         RawGstError numeric_context = legacy_model_path_error(kDispatcherError);
         std::string numeric_model_path = kPrivateModelPath;

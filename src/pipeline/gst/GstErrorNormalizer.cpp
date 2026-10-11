@@ -907,6 +907,8 @@ bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* 
 bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t dispatcher_pos,
                                             const ModelPathLimit& limit) {
   constexpr std::string_view marker = "model_path='";
+  constexpr LegacyFieldSpec preceding_fields[] = {
+      {"diagnostic_id='", true}, {"plugin='", true}, {"node='", true}, {"config_path='", true}};
   constexpr LegacyFieldSpec intervening_fields[] = {{"graph_id=", false},    {"frame_id=", false},
                                                     {"stream_id='", true},   {"input_caps='", true},
                                                     {"output_caps='", true}, {"input_dims='", true},
@@ -916,22 +918,28 @@ bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t 
   // not a boundary by itself. Cross-check the producer's observed byte count against model_path,
   // then require every field between that exact byte boundary and dispatcher_err to follow the
   // formatter's order.
-  const std::size_t model_pos = debug.find(marker);
-  if (model_pos == std::string_view::npos ||
-      (model_pos != 0 && !std::isspace(static_cast<unsigned char>(debug[model_pos - 1])) &&
-       debug[model_pos - 1] != '|')) {
-    return false;
+  std::size_t search_pos = 0;
+  while (true) {
+    const std::size_t model_pos = debug.find(marker, search_pos);
+    if (model_pos == std::string_view::npos || model_pos >= dispatcher_pos)
+      return false;
+    search_pos = model_pos + marker.size();
+    if (!parses_ordered_legacy_fields(debug.substr(0, model_pos), preceding_fields,
+                                      std::size(preceding_fields))) {
+      continue;
+    }
+
+    const std::size_t value_begin = model_pos + marker.size();
+    if (value_begin > dispatcher_pos || limit.observed_bytes > dispatcher_pos - value_begin)
+      continue;
+    const std::size_t value_end = value_begin + static_cast<std::size_t>(limit.observed_bytes);
+    if (value_end >= dispatcher_pos || debug[value_end] != '\'')
+      continue;
+    if (parses_ordered_legacy_fields(debug.substr(value_end + 1, dispatcher_pos - value_end - 1),
+                                     intervening_fields, std::size(intervening_fields))) {
+      return true;
+    }
   }
-
-  const std::size_t value_begin = model_pos + marker.size();
-  if (value_begin > dispatcher_pos || limit.observed_bytes > dispatcher_pos - value_begin)
-    return false;
-  const std::size_t value_end = value_begin + static_cast<std::size_t>(limit.observed_bytes);
-  if (value_end >= dispatcher_pos || debug[value_end] != '\'')
-    return false;
-
-  return parses_ordered_legacy_fields(debug.substr(value_end + 1, dispatcher_pos - value_end - 1),
-                                      intervening_fields, std::size(intervening_fields));
 }
 
 // Legacy SIMAAI_GST_FATAL messages carried this context only in the producer's exact
@@ -1026,13 +1034,14 @@ std::string capture_gst_debug(std::string value, std::string_view factory_name) 
   const bool factory_is_neatprocessmla = lower_copy(std::string(factory_name)) == "neatprocessmla";
   const bool plugin_is_neatprocessmla =
       plugin.has_value() && lower_copy(std::string(*plugin)) == "neatprocessmla";
-  if ((!factory_is_neatprocessmla && !plugin_is_neatprocessmla) || !dispatcher_error.has_value() ||
-      dispatcher_error->size() > kMaxPreservedDispatcherErrorBytes) {
+  if ((!factory_is_neatprocessmla && !plugin_is_neatprocessmla) || !dispatcher_error.has_value()) {
     return truncate(std::move(value), kMaxDebugBytes);
   }
 
-  const std::string suffix =
-      "...<truncated> | dispatcher_err='" + std::string(*dispatcher_error) + "'";
+  const std::string redacted_dispatcher_error = redact_uri_credentials(*dispatcher_error);
+  if (redacted_dispatcher_error.size() > kMaxPreservedDispatcherErrorBytes)
+    return truncate(std::move(value), kMaxDebugBytes);
+  const std::string suffix = "...<truncated> | dispatcher_err='" + redacted_dispatcher_error + "'";
   if (suffix.size() >= kMaxDebugBytes)
     return truncate(std::move(value), kMaxDebugBytes);
 
@@ -1455,8 +1464,10 @@ RawGstError parse_gst_error_message(GstMessage* message) {
   }
   const std::optional<std::string_view> legacy_dispatcher_error =
       find_legacy_dispatcher_error(debug ? std::string_view(debug) : std::string_view{});
-  if (legacy_dispatcher_error.has_value())
+  if (legacy_dispatcher_error.has_value() &&
+      parse_model_path_limit(*legacy_dispatcher_error).has_value()) {
     out.details.emplace("legacy-dispatcher-error", *legacy_dispatcher_error);
+  }
   out.debug = capture_gst_debug(debug ? debug : "", out.factory_name);
   g_free(debug);
 
