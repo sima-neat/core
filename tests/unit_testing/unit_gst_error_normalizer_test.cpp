@@ -16,6 +16,7 @@
 
 #include <gst/gst.h>
 
+#include <charconv>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -47,8 +48,21 @@ void require_code(const NormalizedDiagnostic& diagnostic, const std::string& exp
 }
 
 std::string model_path_debug(std::string_view plugin, std::string_view dispatcher_error) {
-  return "plugin='" + std::string(plugin) + "' model_path='" + std::string(kPrivateModelPath) +
-         "' " + "dispatcher_err='" + std::string(dispatcher_error) + "'";
+  constexpr std::string_view prefix = "MLASHM model path length ";
+  std::size_t observed_bytes = 0;
+  if (dispatcher_error.starts_with(prefix)) {
+    const char* begin = dispatcher_error.data() + prefix.size();
+    const char* end = dispatcher_error.data() + dispatcher_error.size();
+    const auto [parsed_end, error] = std::from_chars(begin, end, observed_bytes);
+    if (error != std::errc{} || parsed_end == begin)
+      observed_bytes = 0;
+  }
+
+  std::string model_path = kPrivateModelPath;
+  if (observed_bytes > model_path.size())
+    model_path.append(observed_bytes - model_path.size(), 'x');
+  return "plugin='" + std::string(plugin) + "' model_path='" + model_path + "' dispatcher_err='" +
+         std::string(dispatcher_error) + "'";
 }
 
 RawGstError legacy_model_path_error(std::string_view dispatcher_error) {
@@ -971,19 +985,32 @@ RUN_TEST(
                          "the matching explicit diagnostic ID must retain validated byte facts");
 
         RawGstError apostrophe_path = legacy_model_path_error(kDispatcherError);
-        apostrophe_path.debug =
-            "plugin='neatprocessmla' model_path='/models/O'Reilly/model.tar.gz' dispatcher_err='" +
-            std::string(kDispatcherError) + "'";
+        std::string apostrophe_model_path = "/models/O'Reilly/model.tar.gz";
+        apostrophe_model_path.append(258 - apostrophe_model_path.size(), 'd');
+        apostrophe_path.debug = "plugin='neatprocessmla' model_path='" + apostrophe_model_path +
+                                "' dispatcher_err='" + std::string(kDispatcherError) + "'";
         require(classify_gst_error(std::move(apostrophe_path)).diagnostic_id ==
                     "neatprocessmla.model_path_too_long",
                 "an apostrophe in the model path must not hide the real trailing dispatcher field");
 
         RawGstError numeric_context = legacy_model_path_error(kDispatcherError);
-        numeric_context.debug = "plugin='neatprocessmla' graph_id=7 dispatcher_err='" +
-                                std::string(kDispatcherError) + "'";
+        std::string numeric_model_path = kPrivateModelPath;
+        numeric_model_path.append(258 - numeric_model_path.size(), 'e');
+        numeric_context.debug = "plugin='neatprocessmla' model_path='" + numeric_model_path +
+                                "' graph_id=7 dispatcher_err='" + std::string(kDispatcherError) +
+                                "'";
         require(classify_gst_error(std::move(numeric_context)).diagnostic_id ==
                     "neatprocessmla.model_path_too_long",
                 "an unquoted integer context field must not hide the trailing dispatcher field");
+
+        RawGstError path_ending_lookalike = legacy_model_path_error(kDispatcherError);
+        path_ending_lookalike.debug =
+            "plugin='neatprocessmla' model_path='/models/x' dispatcher_err='" +
+            std::string(kDispatcherError) + "'";
+        require(classify_gst_error(std::move(path_ending_lookalike)).diagnostic_id ==
+                    "gstreamer.unclassified_element_failure",
+                "a dispatcher lookalike at the end of a short model path must not establish the "
+                "reported byte count");
 
         RawGstError factory_identified = legacy_model_path_error(kDispatcherError);
         factory_identified.factory_name = "neatprocessmla";
@@ -1077,7 +1104,9 @@ RUN_TEST(
         const auto require_path_marker_ignored = [&](const std::string& model_path,
                                                      const std::string& context) {
           RawGstError marked_path = legacy_model_path_error(kDispatcherError);
-          marked_path.debug = "plugin='neatprocessmla' model_path='" + model_path +
+          std::string matching_path = model_path;
+          matching_path.append(258 - matching_path.size(), 'f');
+          marked_path.debug = "plugin='neatprocessmla' model_path='" + matching_path +
                               "' dispatcher_err='" + kDispatcherError + "'";
           const NormalizedDiagnostic marked = classify_gst_error(std::move(marked_path));
           require(marked.diagnostic_id == "neatprocessmla.model_path_too_long",

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <iomanip>
 #include <optional>
 #include <sstream>
@@ -819,6 +820,120 @@ struct ModelPathLimit {
   std::uint64_t maximum_bytes = 0;
 };
 
+bool parse_unsigned(std::string_view text, std::size_t& cursor, std::uint64_t& value) {
+  const char* begin = text.data() + cursor;
+  const char* end = text.data() + text.size();
+  const auto [parsed_end, error] = std::from_chars(begin, end, value);
+  if (error != std::errc{} || parsed_end == begin)
+    return false;
+  cursor = static_cast<std::size_t>(parsed_end - text.data());
+  return true;
+}
+
+std::optional<ModelPathLimit> parse_model_path_limit(std::string_view text) {
+  constexpr std::string_view prefix = "MLASHM model path length ";
+  constexpr std::string_view separator = " exceeds maximum ";
+  constexpr std::string_view suffix = " bytes; shorten the extracted model path";
+  if (!text.starts_with(prefix))
+    return std::nullopt;
+
+  ModelPathLimit limit;
+  std::size_t cursor = prefix.size();
+  if (!parse_unsigned(text, cursor, limit.observed_bytes) ||
+      text.substr(cursor, separator.size()) != separator) {
+    return std::nullopt;
+  }
+  cursor += separator.size();
+  if (!parse_unsigned(text, cursor, limit.maximum_bytes) || text.substr(cursor) != suffix ||
+      limit.observed_bytes <= limit.maximum_bytes) {
+    return std::nullopt;
+  }
+  return limit;
+}
+
+struct LegacyFieldSpec {
+  std::string_view marker;
+  bool quoted = true;
+};
+
+bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* fields,
+                                  std::size_t field_count) {
+  constexpr std::size_t kMaxLegacyFieldBytes = 4096;
+  if (text.size() > kMaxLegacyFieldBytes)
+    return false;
+
+  std::vector<std::int8_t> memo((text.size() + 1) * (field_count + 1), -1);
+  std::function<bool(std::size_t, std::size_t)> parse = [&](std::size_t cursor,
+                                                            std::size_t minimum_field) -> bool {
+    while (cursor < text.size() && std::isspace(static_cast<unsigned char>(text[cursor]))) {
+      ++cursor;
+    }
+    if (cursor == text.size())
+      return true;
+
+    std::int8_t& cached = memo[cursor * (field_count + 1) + minimum_field];
+    if (cached != -1)
+      return cached != 0;
+
+    for (std::size_t index = minimum_field; index < field_count; ++index) {
+      const LegacyFieldSpec& field = fields[index];
+      if (!text.substr(cursor).starts_with(field.marker))
+        continue;
+
+      const std::size_t value_begin = cursor + field.marker.size();
+      if (!field.quoted) {
+        std::size_t value_end = value_begin;
+        while (value_end < text.size() &&
+               std::isdigit(static_cast<unsigned char>(text[value_end]))) {
+          ++value_end;
+        }
+        if (value_end > value_begin && parse(value_end, index + 1))
+          return cached = 1;
+        continue;
+      }
+
+      std::size_t value_end = value_begin;
+      while ((value_end = text.find('\'', value_end)) != std::string_view::npos) {
+        if (parse(value_end + 1, index + 1))
+          return cached = 1;
+        ++value_end;
+      }
+    }
+    return cached = 0;
+  };
+  return parse(0, 0);
+}
+
+bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t dispatcher_pos,
+                                            const ModelPathLimit& limit) {
+  constexpr std::string_view marker = "model_path='";
+  constexpr LegacyFieldSpec intervening_fields[] = {{"graph_id=", false},    {"frame_id=", false},
+                                                    {"stream_id='", true},   {"input_caps='", true},
+                                                    {"output_caps='", true}, {"input_dims='", true},
+                                                    {"output_dims='", true}, {"allocator='", true}};
+
+  // Quotes are not escaped in the legacy format, so a quote immediately before dispatcher_err is
+  // not a boundary by itself. Cross-check the producer's observed byte count against model_path,
+  // then require every field between that exact byte boundary and dispatcher_err to follow the
+  // formatter's order.
+  const std::size_t model_pos = debug.rfind(marker, dispatcher_pos);
+  if (model_pos == std::string_view::npos ||
+      (model_pos != 0 && !std::isspace(static_cast<unsigned char>(debug[model_pos - 1])) &&
+       debug[model_pos - 1] != '|')) {
+    return false;
+  }
+
+  const std::size_t value_begin = model_pos + marker.size();
+  if (value_begin > dispatcher_pos || limit.observed_bytes > dispatcher_pos - value_begin)
+    return false;
+  const std::size_t value_end = value_begin + static_cast<std::size_t>(limit.observed_bytes);
+  if (value_end >= dispatcher_pos || debug[value_end] != '\'')
+    return false;
+
+  return parses_ordered_legacy_fields(debug.substr(value_end + 1, dispatcher_pos - value_end - 1),
+                                      intervening_fields, std::size(intervening_fields));
+}
+
 // Legacy SIMAAI_GST_FATAL messages carried this context only in the producer's exact
 // space-delimited key='value' debug format. Keep this parser local and strict so arbitrary debug
 // text cannot become a production-facing diagnosis.
@@ -857,8 +972,9 @@ std::optional<std::string_view> find_legacy_quoted_debug_field(std::string_view 
 
 std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view debug) {
   constexpr std::string_view marker = "dispatcher_err='";
-  constexpr std::string_view trailing_fields[] = {
-      "hint='", "stage_key='", "source_used='", "missing_field='", "fallback_chain='", "detail='"};
+  constexpr LegacyFieldSpec trailing_fields[] = {
+      {"hint='", true},          {"stage_key='", true},      {"source_used='", true},
+      {"missing_field='", true}, {"fallback_chain='", true}, {"detail='", true}};
 
   std::size_t search_pos = 0;
   std::optional<std::string_view> found;
@@ -866,44 +982,21 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
     const std::size_t pos = debug.find(marker, search_pos);
     if (pos == std::string::npos)
       break;
-    std::size_t previous = pos;
-    while (previous > 0 && std::isspace(static_cast<unsigned char>(debug[previous - 1])))
-      --previous;
-    const auto follows_integer_field = [&]() {
-      std::size_t field_begin = previous;
-      while (field_begin > 0 && !std::isspace(static_cast<unsigned char>(debug[field_begin - 1])) &&
-             debug[field_begin - 1] != '|') {
-        --field_begin;
-      }
-      const std::string_view field = debug.substr(field_begin, previous - field_begin);
-      constexpr std::string_view integer_fields[] = {"graph_id=", "frame_id="};
-      return std::any_of(std::begin(integer_fields), std::end(integer_fields),
-                         [&](std::string_view prefix) {
-                           if (!field.starts_with(prefix) || field.size() == prefix.size())
-                             return false;
-                           const std::string_view value = field.substr(prefix.size());
-                           return std::all_of(value.begin(), value.end(),
-                                              [](unsigned char c) { return std::isdigit(c) != 0; });
-                         });
-    };
-    const bool starts_top_level = previous == 0 || debug[previous - 1] == '\'' ||
-                                  debug[previous - 1] == '|' || follows_integer_field();
     const std::size_t value_begin = pos + marker.size();
     const std::size_t value_end = debug.find('\'', value_begin);
     if (value_end == std::string::npos)
       return std::nullopt;
 
-    std::size_t tail = value_end + 1;
-    while (tail < debug.size() &&
-           (std::isspace(static_cast<unsigned char>(debug[tail])) || debug[tail] == '|')) {
-      ++tail;
-    }
-    const bool has_valid_tail =
-        tail == debug.size() ||
-        std::any_of(std::begin(trailing_fields), std::end(trailing_fields),
-                    [&](std::string_view field) { return debug.substr(tail).starts_with(field); });
-    if (starts_top_level && has_valid_tail)
-      found = debug.substr(value_begin, value_end - value_begin);
+    const std::string_view value = debug.substr(value_begin, value_end - value_begin);
+    const std::optional<ModelPathLimit> limit = parse_model_path_limit(value);
+    const bool preserved_capture = debug.substr(0, pos).ends_with("...<truncated> | ");
+    const bool has_valid_source_boundary =
+        pos == 0 || preserved_capture ||
+        (limit.has_value() && dispatcher_follows_matching_model_path(debug, pos, *limit));
+    const bool has_valid_tail = parses_ordered_legacy_fields(
+        debug.substr(value_end + 1), trailing_fields, std::size(trailing_fields));
+    if (has_valid_source_boundary && has_valid_tail)
+      found = value;
     search_pos = value_end + 1;
   }
   return found;
@@ -958,16 +1051,6 @@ bool neatprocessmla_source(const RawGstError& raw) {
   return legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) == "neatprocessmla";
 }
 
-bool parse_unsigned(std::string_view text, std::size_t& cursor, std::uint64_t& value) {
-  const char* begin = text.data() + cursor;
-  const char* end = text.data() + text.size();
-  const auto [parsed_end, error] = std::from_chars(begin, end, value);
-  if (error != std::errc{} || parsed_end == begin)
-    return false;
-  cursor = static_cast<std::size_t>(parsed_end - text.data());
-  return true;
-}
-
 std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
   if (!neatprocessmla_source(raw) || raw.domain_name != "gst-resource-error-quark" ||
       raw.code != GST_RESOURCE_ERROR_FAILED || raw.message != "Unable to load model") {
@@ -983,25 +1066,7 @@ std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
   if (!dispatcher_error.has_value())
     return std::nullopt;
 
-  constexpr std::string_view prefix = "MLASHM model path length ";
-  constexpr std::string_view separator = " exceeds maximum ";
-  constexpr std::string_view suffix = " bytes; shorten the extracted model path";
-  const std::string_view text = *dispatcher_error;
-  if (!text.starts_with(prefix))
-    return std::nullopt;
-
-  ModelPathLimit limit;
-  std::size_t cursor = prefix.size();
-  if (!parse_unsigned(text, cursor, limit.observed_bytes) ||
-      text.substr(cursor, separator.size()) != separator) {
-    return std::nullopt;
-  }
-  cursor += separator.size();
-  if (!parse_unsigned(text, cursor, limit.maximum_bytes) || text.substr(cursor) != suffix ||
-      limit.observed_bytes <= limit.maximum_bytes) {
-    return std::nullopt;
-  }
-  return limit;
+  return parse_model_path_limit(*dispatcher_error);
 }
 
 // The legacy SIMAAI_GST_FATAL context writes diagnostic_id as its first quoted field, ahead of the
