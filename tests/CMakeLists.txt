@@ -806,6 +806,12 @@ if (NOT metadata_sender_udp_integration_test IN_LIST PIPELINESESSION_TEST_BLACKL
 endif()
 
 if (SimaLMM_FOUND)
+  # Manual until a compiled MTP package is part of the CI fixture manifest.
+  add_executable(genai_mtp_run_test e2e_testing/genai/genai_mtp_run_test.cpp)
+  target_include_directories(genai_mtp_run_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(genai_mtp_run_test PRIVATE sima_neat PkgConfig::HTTPLIB)
+  list(APPEND PIPELINESESSION_TEST_TARGETS genai_mtp_run_test)
+
   add_pipeline_test_long(
     genai_llm_run_test
     e2e_testing/genai/genai_llm_run_test.cpp
