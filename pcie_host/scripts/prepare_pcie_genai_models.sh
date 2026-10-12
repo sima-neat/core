@@ -5,8 +5,8 @@ set -euo pipefail
 model_root="${SIMAPCIE_GENAI_MODELS_PATH:-${HOME}/workspace/models_genai}"
 text_model="${SIMA_TEST_LLIMA_TEXT_MODEL:-Qwen2.5-0.5B-Instruct-Autoround-a16w4}"
 vlm_model="${SIMA_TEST_LLIMA_VLM_MODEL:-LFM2.5-VL-450M-Autoround-a16w4}"
-asr_model="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8-layered-encoder}"
-asr_repo="${SIMA_TEST_LLIMA_ASR_REPO:-florianvoss/whisper-small-a16w8-layered-encoder}"
+asr_model="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8}"
+asr_repo="${SIMA_TEST_LLIMA_ASR_REPO:-simaai/whisper-small-a16w8}"
 
 if [[ "${1:-}" == --help ]]; then
   echo "Download prepared LLM, VLM and Whisper fixtures to ${model_root}."
@@ -43,5 +43,5 @@ flock --wait 1800 9
 download_model "${text_model}" "simaai/${text_model}" devkit/vlm_config.json
 download_model "${vlm_model}" "simaai/${vlm_model}" devkit/vlm_config.json
 download_model "${asr_model}" "${asr_repo}" devkit/whisper_config.json \
-  c0a34f15eaeee13fc7d80cd545c3fb828dc5010f
+  b34d5a300e74fcd1e9bc46bd70bd23cfc2b6b8d3
 echo "[pcie-genai-models] ready under ${model_root}"

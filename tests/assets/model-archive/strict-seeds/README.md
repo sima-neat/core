@@ -9,3 +9,9 @@ The embedded JSON is 47,224 bytes with SHA-256
 Its exact terminal topology is 10 ordered heads: three bbox, three class-probability,
 three mask-coefficient, and one mask-prototype head. Tests validate this identity and topology
 before using the seed; model-zoo caches and environment search paths are intentionally ignored.
+
+`efficientsam3_mpk.json` is the unmodified `mpk.json` of a two-output EfficientSAM3 image model
+compiled by Model Compiler 3.0. It is 9,734 bytes with SHA-256
+`8fef526843a31fea965b309a13b47060052295e7d336821f0c025a552ea6baad`. Its MLA stage writes the
+detections output to the bare `data.ofm.b0` section and the masks output to a per-tensor section;
+`unit_mla_elf_io_topology_test` pairs it with a synthesized ELF carrying those section names.

@@ -981,6 +981,65 @@ def maybe_write_landing_page(source: Dict, src_docs: Path, dst_section: Path, ti
              source["key"], len(modules), len(landing.get("groups", [])))
 
 
+def rewrite_inbound_document_links(
+    dst_section: Path,
+    source_path: Path,
+    target_path: Path,
+) -> None:
+    """Rewrite links in a mounted section after a document is moved."""
+    resolved_source = source_path.resolve()
+
+    def rewrite_target(target: str, page: Path) -> str:
+        parsed = urlsplit(target)
+        if (
+            parsed.scheme
+            or parsed.netloc
+            or not parsed.path
+            or parsed.path.startswith("/")
+        ):
+            return target
+        if (page.parent / unquote(parsed.path)).resolve() != resolved_source:
+            return target
+        relative_target = Path(os.path.relpath(target_path, page.parent)).as_posix()
+        return urlunsplit(
+            (
+                "",
+                "",
+                quote(relative_target, safe="/:@-._~"),
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+
+    for page in dst_section.rglob("*"):
+        if page.suffix.lower() not in {".md", ".mdx"}:
+            continue
+        text = page.read_text(encoding="utf-8")
+
+        def rewrite_link(match: re.Match[str]) -> str:
+            target = rewrite_target(match.group("target"), page)
+            return f"{match.group('prefix')}{target}{match.group('suffix')}"
+
+        text = MARKDOWN_TARGET_RE.sub(rewrite_link, text)
+        text = HTML_HREF_TARGET_RE.sub(rewrite_link, text)
+        page.write_text(text, encoding="utf-8")
+
+
+def rename_documentation_readme(
+    dst_section: Path,
+    readme_target: str,
+) -> None:
+    """Rename a copied README and preserve links to it from imported pages."""
+    readme_path = dst_section / "README.md"
+    if not readme_path.is_file():
+        return
+    target_path = dst_section / readme_target
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_readme_path = readme_path.resolve()
+    readme_path.replace(target_path)
+    rewrite_inbound_document_links(dst_section, resolved_readme_path, target_path)
+
+
 def promote_index_file(source: Dict, dst_section: Path) -> None:
     """Promote a source landing document to the mounted section's index.md.
 
@@ -1005,33 +1064,9 @@ def promote_index_file(source: Dict, dst_section: Path) -> None:
             f"index_file '{configured}' conflicts with existing index.md"
         )
     if source_path != index_path:
-        promoted_source = source_path.resolve()
+        resolved_source_path = source_path.resolve()
         source_path.replace(index_path)
-
-        def rewrite_target(target: str, page: Path) -> str:
-            if target.startswith(("http:", "https:", "/", "#")):
-                return target
-            match = re.match(r"^([^?#]*)([?#]?)(.*)$", target)
-            if match is None:
-                return target
-            path_part, separator, suffix = match.groups()
-            if not path_part or (page.parent / path_part).resolve() != promoted_source:
-                return target
-            rewritten = os.path.relpath(index_path, page.parent).replace(os.sep, "/")
-            return f"{rewritten}{separator}{suffix}"
-
-        for page in dst_section.rglob("*"):
-            if page.suffix.lower() not in {".md", ".mdx"}:
-                continue
-            text = page.read_text(encoding="utf-8")
-
-            def rewrite_link(match: re.Match[str]) -> str:
-                target = rewrite_target(match.group("target"), page)
-                return f"{match.group('prefix')}{target}{match.group('suffix')}"
-
-            text = MARKDOWN_TARGET_RE.sub(rewrite_link, text)
-            text = HTML_HREF_TARGET_RE.sub(rewrite_link, text)
-            page.write_text(text, encoding="utf-8")
+        rewrite_inbound_document_links(dst_section, resolved_source_path, index_path)
 
 
 def write_root_index_file(
@@ -1093,13 +1128,9 @@ def write_root_index_file(
     # Docusaurus treats README.md as a directory index too. If docs_subpath
     # contributed one, retaining it alongside this explicit index creates a
     # duplicate route and can make its sibling links resolve nondeterministically.
-    readme_path = dst_section / "README.md"
     readme_target = str(source.get("root_index_readme_target", "documentation.md")).strip()
     text = rewrite_configured_link_targets(text, [("README.md", readme_target)])
-    if readme_path.is_file():
-        target_path = dst_section / readme_target
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        readme_path.replace(target_path)
+    rename_documentation_readme(dst_section, readme_target)
     (dst_section / "index.md").write_text(text, encoding="utf-8")
     return True
 
@@ -1157,14 +1188,10 @@ def stage_source_section(
             localized_source = dict(source, root_index_file=localized_root)
             write_root_index_file(localized_source, staging, dst_section, link_rewrites)
         elif source.get("root_index_file"):
-            readme_path = dst_section / "README.md"
-            if readme_path.is_file():
-                readme_target = str(
-                    source.get("root_index_readme_target", "documentation.md")
-                ).strip()
-                target_path = dst_section / readme_target
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                readme_path.replace(target_path)
+            readme_target = str(
+                source.get("root_index_readme_target", "documentation.md")
+            ).strip()
+            rename_documentation_readme(dst_section, readme_target)
             # The translated docs overlay can replace the English seed's
             # repository-root landing page with its own docs/index.md. With no
             # explicit localized root landing, restore the source root page so
