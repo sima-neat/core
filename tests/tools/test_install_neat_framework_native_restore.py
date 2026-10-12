@@ -197,7 +197,7 @@ install_python_environment
 
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("CONTINUED", result.stdout)
-        self.assertIn("sudo apt-get install -y python3-venv", result.stderr)
+        self.assertIn("Failed to install python3-venv", result.stderr)
 
 
 class Ros2SdkInstallTest(unittest.TestCase):
