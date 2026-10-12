@@ -932,7 +932,8 @@ RUN_TEST(
         gst_message_unref(oversized_detail_message);
 
         const std::string missing_optional_model_path_debug =
-            "plugin='neatprocessmla' dispatcher_err='" + std::string(kDispatcherError) + "'";
+            "plugin='neatprocessmla' graph_id=7 frame_id=42 dispatcher_err='" +
+            std::string(kDispatcherError) + "'";
         GError* missing_optional_model_path_error = g_error_new_literal(
             GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
         GstMessage* missing_optional_model_path_message =
