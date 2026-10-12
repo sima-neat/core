@@ -947,6 +947,23 @@ RUN_TEST(
                 "a valid legacy context must not require the optional model_path field");
         gst_message_unref(missing_optional_model_path_message);
 
+        const std::string identified_missing_model_path_debug =
+            "diagnostic_id='neatprocessmla.model_path_too_long' plugin='neatprocessmla' "
+            "graph_id=7 frame_id=42 dispatcher_err='" +
+            std::string(kDispatcherError) + "'";
+        GError* identified_missing_model_path_error = g_error_new_literal(
+            GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED, "Unable to load model");
+        GstMessage* identified_missing_model_path_message =
+            gst_message_new_error(GST_OBJECT(source), identified_missing_model_path_error,
+                                  identified_missing_model_path_debug.c_str());
+        g_error_free(identified_missing_model_path_error);
+        const RawGstError identified_missing_model_path_raw =
+            parse_gst_error_message(identified_missing_model_path_message);
+        require(classify_gst_error(identified_missing_model_path_raw).diagnostic_id ==
+                    "neatprocessmla.model_path_too_long",
+                "a matching diagnostic ID must support a pathless legacy context");
+        gst_message_unref(identified_missing_model_path_message);
+
         std::string matching_model_path = kPrivateModelPath;
         matching_model_path.append(258 - matching_model_path.size(), 'p');
         const std::string oversized_prefix_debug =

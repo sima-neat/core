@@ -980,6 +980,8 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
                                                              bool trusted_neatprocessmla_source) {
   constexpr std::string_view marker = "dispatcher_err='";
   constexpr std::string_view plugin_prefix = "plugin='neatprocessmla' ";
+  constexpr std::string_view matching_diagnostic_prefix =
+      "diagnostic_id='neatprocessmla.model_path_too_long' plugin='neatprocessmla' ";
   constexpr LegacyFieldSpec numeric_context_fields[] = {{"graph_id=", false}, {"frame_id=", false}};
   constexpr LegacyFieldSpec trailing_fields[] = {
       {"hint='", true},          {"stage_key='", true},      {"source_used='", true},
@@ -999,9 +1001,13 @@ std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view de
     const std::string_view value = debug.substr(value_begin, value_end - value_begin);
     const std::optional<ModelPathLimit> limit = parse_model_path_limit(value);
     const std::string_view prefix = debug.substr(0, pos);
+    const bool has_plugin_prefix = prefix.starts_with(plugin_prefix);
+    const bool has_matching_diagnostic_prefix = prefix.starts_with(matching_diagnostic_prefix);
+    const std::size_t pathless_context_begin =
+        has_matching_diagnostic_prefix ? matching_diagnostic_prefix.size() : plugin_prefix.size();
     const bool has_unambiguous_pathless_prefix =
-        trusted_neatprocessmla_source && prefix.starts_with(plugin_prefix) &&
-        parses_ordered_legacy_fields(prefix.substr(plugin_prefix.size()), numeric_context_fields,
+        trusted_neatprocessmla_source && (has_plugin_prefix || has_matching_diagnostic_prefix) &&
+        parses_ordered_legacy_fields(prefix.substr(pathless_context_begin), numeric_context_fields,
                                      std::size(numeric_context_fields));
     const bool has_valid_source_boundary =
         pos == 0 ||
