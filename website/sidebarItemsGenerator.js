@@ -38,6 +38,28 @@ function replaceApiItems(items, apiItems) {
   });
 }
 
+// Core and Kernels each export Doxygen groups named "classes", "files", etc.
+// Namespace imported categories by their canonical document path so their
+// translation keys do not collide with Core's existing reference navigation.
+function namespaceKernelCategories(items, depth = 0) {
+  function firstDoc(items) {
+    for (const item of items) {
+      const id = item.type === "doc" ? item.id : item.link?.id;
+      if (id) return id;
+      if (item.items) {
+        const nested = firstDoc(item.items);
+        if (nested) return nested;
+      }
+    }
+  }
+  return items.map((item) => {
+    if (item.type !== "category") return item;
+    const id = item.link?.id || firstDoc(item.items);
+    const key = id?.startsWith("kernel-library/") ? `${id}:category:${depth}` : item.key;
+    return {...item, key, items: namespaceKernelCategories(item.items, depth + 1)};
+  });
+}
+
 module.exports = async function sidebarItemsGenerator(args) {
   const tutorialId = "develop-apps/tutorials/pcie/tutorial_029_run_genai_over_pcie";
   const tutorial = args.docs.find((doc) => doc.id === tutorialId);
@@ -57,7 +79,7 @@ module.exports = async function sidebarItemsGenerator(args) {
       return {...item, items: nested};
     });
   }
-  const generatedItems = crossLinkGenAI(await args.defaultSidebarItemsGenerator(args));
+  const generatedItems = namespaceKernelCategories(crossLinkGenAI(await args.defaultSidebarItemsGenerator(args)));
 
   try {
     const generatedApiSidebar = require(path.join(insightApiOutput, "sidebar.js"));

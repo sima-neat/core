@@ -230,6 +230,16 @@
         "run-comparison",
         "api"
       ]
+    },
+    {
+      "key": "kernels",
+      "title": "Kernel Library",
+      "repo": "https://github.com/sima-neat/kernels.git",
+      "branch": "develop",
+      "format": "kernel-library-export",
+      "required": true,
+      "staging_only": true,
+      "mount": "kernel-library"
     }
   ]
 }

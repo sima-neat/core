@@ -3,6 +3,8 @@ title: "Palette Neat"
 sidebar_position: 1
 ---
 
+import KernelLibraryCard from "@site/src/components/KernelLibraryCard";
+
 # Palette Neat
 
 Palette Neat 是 SiMa.ai 為在 Modalix 上建置 AI 應用程式所提供的軟體開發工具組。
@@ -84,6 +86,7 @@ Palette Neat 是 SiMa.ai 為在 Modalix 上建置 AI 應用程式所提供的軟
       <li><a class="overview-link-card" href="/tools/"><strong>工具</strong><span>sima-cli、Model Zoo 與 Insight。</span></a></li>
       <li><a class="overview-link-card" href="/reference/"><strong>參考資料</strong><span>瀏覽 API、疑難排解、環境變數、資料格式與版本資訊。</span></a></li>
       <li><a class="overview-link-card" href="/reference/troubleshooting/"><strong>疑難排解</strong><span>尋找設定、執行階段與管線問題的解決方法。</span></a></li>
+      <KernelLibraryCard title="核心函式庫">瞭解 A65 與 EV74 核心、呼叫慣例、數值運算行為及 C++ API。</KernelLibraryCard>
     </ul>
   </section>
 </div>

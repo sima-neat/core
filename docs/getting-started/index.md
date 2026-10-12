@@ -3,6 +3,8 @@ title: Palette Neat
 sidebar_position: 1
 ---
 
+import KernelLibraryCard from "@site/src/components/KernelLibraryCard";
+
 # Palette Neat
 
 Palette Neat is the SiMa.ai software development toolkit for building AI
@@ -90,6 +92,7 @@ the same way in either place.
       <li><a class="overview-link-card" href="/tools/"><strong>Tools</strong><span>sima-cli, Model Zoo and Insight.</span></a></li>
       <li><a class="overview-link-card" href="/reference/"><strong>Reference</strong><span>Browse APIs, troubleshooting, environment variables, data formats, and release notes.</span></a></li>
       <li><a class="overview-link-card" href="/reference/troubleshooting/"><strong>Troubleshooting</strong><span>Find fixes for setup, runtime, and pipeline issues.</span></a></li>
+      <KernelLibraryCard title="Kernel Library">Explore A65 and EV74 kernels, calling conventions, numerical behavior, and the C++ API.</KernelLibraryCard>
     </ul>
   </section>
 </div>

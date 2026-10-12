@@ -1975,3 +1975,6 @@ html[data-theme='dark'] .cookie-consent__toggle {
     flex-basis: 100%;
   }
 }
+
+/* Keep long kernel equations inside the article on narrow screens. */
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.2rem 0; }

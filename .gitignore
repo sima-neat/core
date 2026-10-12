@@ -141,3 +141,7 @@ _work/
 docs/images/.DS_Store
 python/tests/_platform_version_generated.py
 generated/platform_version.h
+
+# Source-owned Kernel Library import
+/docs/kernel-library/
+/website/i18n/*/docusaurus-plugin-content-docs/current/kernel-library/

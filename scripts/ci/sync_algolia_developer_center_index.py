@@ -90,6 +90,9 @@ def title_from_markdown(path: Path, text: str) -> str:
 
 def section_for_path(path: Path, docs_dir: Path) -> str:
     rel_parts = path.relative_to(docs_dir).parts
+    if rel_parts[0] == "kernel-library":
+        backend = rel_parts[1] if len(rel_parts) > 1 else ""
+        return f"Kernel Library / {backend.upper()}" if backend in ("a65", "ev74") else "Kernel Library"
     mapping = {
         "getting-started": "Getting Started",
         "how-to": "How-To",

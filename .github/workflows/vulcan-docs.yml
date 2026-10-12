@@ -96,6 +96,7 @@ jobs:
       DOCS_URL: ${{ needs.resolve-docs-vars.outputs.sysdoc_base_url }}
       DOCS_STRICT_LINKS: "1"
       DOCS_BASE_URL: /software/
+      DOCS_DEPLOY_ENV: ${{ needs.resolve-target.outputs.deploy_environment }}
       DOCS_DEVELOPER_CENTER_SHELL_BASE: /
       AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
       AUTODOC_SNAP_BRANCH: ${{ inputs.sibling_branch }}
@@ -166,6 +167,13 @@ jobs:
           print(f"DOCS_GA_MEASUREMENT_ID={measurement_id}")
           PY
 
+      - name: Cache Kernel documentation exports
+        uses: actions/cache@v4
+        with:
+          path: build/kernel-docs-cache
+          key: kernel-docs-${{ runner.os }}-${{ hashFiles('tools/kernel_docs.py', 'tools/autodoc.conf.json') }}-${{ github.run_id }}
+          restore-keys: kernel-docs-${{ runner.os }}-
+
       - name: Build software docs site
         shell: bash
         run: |
@@ -177,6 +185,7 @@ jobs:
           fi
 
           python3 tests/test_autodoc.py
+          python3 tests/test_kernel_docs.py
           python3 tests/test_algolia_developer_center_index.py
           ./build.sh --doc
 

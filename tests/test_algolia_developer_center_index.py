@@ -53,6 +53,17 @@ class LocalizedRecordTests(unittest.TestCase):
             self.assertEqual(by_language["uk"]["route"], "/software/uk/getting-started")
             self.assertNotEqual(by_language["en"]["objectID"], by_language["uk"]["objectID"])
 
+    def test_kernel_library_backend_sections(self) -> None:
+        root = Path("docs")
+        for page, expected in (
+            ("kernel-library/index.md", "Kernel Library"),
+            ("kernel-library/a65/quant/index.md", "Kernel Library / A65"),
+            ("kernel-library/ev74/preproc/index.md", "Kernel Library / EV74"),
+            ("kernel-library/reference/cpp/index.md", "Kernel Library"),
+        ):
+            with self.subTest(page=page):
+                self.assertEqual(MODULE.section_for_path(root / page, root), expected)
+
     def test_localized_record_uses_frontmatter_slug(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

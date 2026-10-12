@@ -3,6 +3,8 @@ title: "Palette Neat"
 sidebar_position: 1
 ---
 
+import KernelLibraryCard from "@site/src/components/KernelLibraryCard";
+
 # Palette Neat
 
 Palette Neat — це набір інструментів SiMa.ai для розробки програмного забезпечення, призначений для створення програм штучного інтелекту на платформі Modalix. Він містить середовище розробки, бібліотеку середовища виконання, інструменти для роботи з моделями та робочий процес DevKit для перевірки. Разом ці компоненти підтримують повний цикл розробки: підготовка моделі, створення програми та перевірка результату на апаратному забезпеченні Modalix.
@@ -78,6 +80,7 @@ Palette Neat — це набір інструментів SiMa.ai для роз�
       <li><a class="overview-link-card" href="/tools/"><strong>Інструменти</strong><span>sima-cli, Model Zoo та Insight.</span></a></li>
       <li><a class="overview-link-card" href="/reference/"><strong>Посилання</strong><span>Перегляньте інформацію про API, інструкції з усунення несправностей, змінні середовища, формати даних і примітки до випуску.</span></a></li>
       <li><a class="overview-link-card" href="/reference/troubleshooting/"><strong>Усунення несправностей</strong><span>Знайдіть рішення для проблем, пов’язаних із налаштуванням, середовищем виконання та конвеєром.</span></a></li>
+      <KernelLibraryCard title="Бібліотека ядер">Ознайомтеся з ядрами A65 й EV74, правилами виклику, числовими обчисленнями та C++ API.</KernelLibraryCard>
     </ul>
   </section>
 </div>

@@ -369,4 +369,14 @@ const config = {
   ],
 };
 
+{
+  const docs = config.presets[0][1].docs;
+  docs.beforeDefaultRemarkPlugins = [require("./kernel-docs-headings.cjs")];
+  docs.remarkPlugins.push(require("remark-math").default);
+  docs.rehypePlugins = [[require("rehype-katex").default, {strict: "error"}]];
+  const css = config.presets[0][1].theme.customCss;
+  config.presets[0][1].theme.customCss = [css, require.resolve("katex/dist/katex.min.css")];
+  config.customFields.kernelLibrary = process.env.DOCS_DEPLOY_ENV === "stg";
+}
+
 module.exports = config;

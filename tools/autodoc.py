@@ -12,7 +12,7 @@ configured docs subpath into <out_root>/<mount>/ with light transforms:
 - Import source-owned translations into Docusaurus' locale content trees.
 - Fail the build when source-owned localization is missing, stale, or invalid.
 
-Per-source clone or English copy failures are logged and skipped. Localization
+Required-source failures are fatal; optional source failures are logged and skipped. Localization
 contract failures are fatal so a successful build never silently substitutes
 English for a requested locale.
 """
@@ -1214,6 +1214,11 @@ def process_source(
     locales: Optional[List[str]] = None,
 ) -> Tuple[bool, str]:
     key = source["key"]
+    if source.get("staging_only") and os.environ.get("DOCS_DEPLOY_ENV") != "stg":
+        if source.get("format") == "kernel-library-export":
+            from kernel_docs import unmount
+            unmount(build_dir, out_root, i18n_root)
+        return True, "staging-only documentation not selected"
     repo = source["repo"]
     branches, snap_target = resolve_branch_candidates(source, repo_root)
     githash = source.get("githash", "") or ""
@@ -1244,6 +1249,15 @@ def process_source(
         "[%s] using %s @ %s (%s, commit %s)",
         key, repo, githash or used_branch, branch_reason, source_commit(staging),
     )
+
+    if source.get("format") == "kernel-library-export":
+        from kernel_docs import mount as mount_kernel_docs
+        if not i18n_root:
+            return False, "Kernel Library requires the portal locale destination"
+        try:
+            return True, mount_kernel_docs(staging, build_dir, out_root, i18n_root)
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            return False, f"Kernel Library export failed: {exc}"
 
     src_docs = staging / docs_subpath
     if not src_docs.is_dir():
@@ -1411,6 +1425,10 @@ def main() -> int:
             successes.append(f"{source['key']}: {message}")
             LOG.info("[%s] OK: %s", source["key"], message)
         else:
+            if source.get("required"):
+                localization_failures.append(f"{source['key']}: {message}")
+                LOG.error("[%s] FAILED: %s", source["key"], message)
+                continue
             skipped.append(f"{source['key']}: {message}")
             LOG.warning("[%s] SKIPPED: %s", source["key"], message)
 

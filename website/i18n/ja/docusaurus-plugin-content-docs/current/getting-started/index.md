@@ -3,6 +3,8 @@ title: "Palette Neat"
 sidebar_position: 1
 ---
 
+import KernelLibraryCard from "@site/src/components/KernelLibraryCard";
+
 # Palette Neat
 
 Palette Neat は、Modalix 上で AI アプリケーションを構築するための SiMa.ai
@@ -88,6 +90,7 @@ Neat Library、PyNeat は、DevKit を接続するまで省略できる任意の
       <li><a class="overview-link-card" href="/tools/"><strong>ツール</strong><span>sima-cli、Model Zoo、Insight。</span></a></li>
       <li><a class="overview-link-card" href="/reference/"><strong>リファレンス</strong><span>API、トラブルシューティング、環境変数、データ形式、リリースノートを参照します。</span></a></li>
       <li><a class="overview-link-card" href="/reference/troubleshooting/"><strong>トラブルシューティング</strong><span>セットアップ、ランタイム、パイプラインの問題に対する解決策を確認します。</span></a></li>
+      <KernelLibraryCard title="カーネルライブラリ">A65 と EV74 のカーネル、呼び出し規約、数値演算の動作、C++ API を確認できます。</KernelLibraryCard>
     </ul>
   </section>
 </div>

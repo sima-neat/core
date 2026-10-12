@@ -1,5 +1,6 @@
 {
   "excludedPrefixes": [
+    "docs/kernel-library/",
     "docs/compile-a-model/",
     "docs/doxygen/",
     "docs/genai-llima/",
