@@ -157,63 +157,43 @@ install_for_environment
 class ModalixPythonVenvSupportTest(unittest.TestCase):
     @staticmethod
     def run_install(
-        *, venv_available: bool, apt_install_ok: bool = True, apt_update: str = "AUTO"
+        *, ensurepip_available: bool, apt_install_ok: bool = True
     ) -> subprocess.CompletedProcess[str]:
         return run_bash(
             rf"""
 source "$1"
 tmp="$(mktemp -d)"
 INSTALLER_TMP_DIRS=("${{tmp}}")
-NEAT_INSTALLER_APT_UPDATE={apt_update}
-{'touch "${tmp}/venv-installed"' if venv_available else ''}
-apt-get() {{ :; }}
-apt_package_lists_are_populated() {{ return 1; }}
-python3() {{ [[ -e "${{tmp}}/venv-installed" ]]; }}
+{'touch "${tmp}/ensurepip"' if ensurepip_available else ''}
+python3() {{ [[ -e "${{tmp}}/ensurepip" ]]; }}
+refresh_apt_metadata_for_board_install() {{ printf 'REFRESH\n'; }}
 run_sudo() {{
-  printf 'RUN:'
-  printf ' <%s>' "$@"
-  printf '\n'
-  if [[ "$1 $2" == "apt-get install" ]]; then
-    {'touch "${tmp}/venv-installed"' if apt_install_ok else 'return 100'}
-  fi
+  printf 'RUN: %s\n' "$*"
+  {'touch "${tmp}/ensurepip"' if apt_install_ok else 'return 100'}
 }}
-# First step of the existing flow: reaching it means the venv check passed.
+# First step after the check: reaching it means the installer continued.
 remove_stale_global_sima_lmm_pip_install() {{ printf 'CONTINUED\n'; exit 0; }}
 install_python_environment
 """
         )
 
-    @staticmethod
-    def sudo_commands(result: subprocess.CompletedProcess[str]) -> list[str]:
-        return [
-            line for line in result.stdout.splitlines() if line.startswith("RUN:")
-        ]
-
-    def test_available_venv_skips_apt(self) -> None:
-        result = self.run_install(venv_available=True)
+    def test_available_ensurepip_skips_apt(self) -> None:
+        result = self.run_install(ensurepip_available=True)
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.sudo_commands(result), [])
-        self.assertIn("CONTINUED", result.stdout)
+        self.assertEqual(result.stdout.splitlines(), ["CONTINUED"])
 
-    def test_missing_venv_installs_python3_venv_and_continues(self) -> None:
-        cases = {
-            "AUTO": ["RUN: <apt-get> <update>"],
-            "OFF": [],
-        }
-        for apt_update, refresh in cases.items():
-            with self.subTest(apt_update=apt_update):
-                result = self.run_install(venv_available=False, apt_update=apt_update)
+    def test_missing_ensurepip_installs_python3_venv_and_continues(self) -> None:
+        result = self.run_install(ensurepip_available=False)
 
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(
-                    self.sudo_commands(result),
-                    refresh + ["RUN: <apt-get> <install> <-y> <python3-venv>"],
-                )
-                self.assertIn("CONTINUED", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [line for line in result.stdout.splitlines() if not line.startswith("[")],
+            ["REFRESH", "RUN: apt-get install -y python3-venv", "CONTINUED"],
+        )
 
-    def test_failed_python3_venv_install_stops_before_environment_changes(self) -> None:
-        result = self.run_install(venv_available=False, apt_install_ok=False)
+    def test_failed_python3_venv_install_stops_installer(self) -> None:
+        result = self.run_install(ensurepip_available=False, apt_install_ok=False)
 
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("CONTINUED", result.stdout)
