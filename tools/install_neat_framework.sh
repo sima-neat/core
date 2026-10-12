@@ -21,6 +21,8 @@ set -euo pipefail
 #   neat-install-packages folder for paired DevKit sync.
 # - In eLxr SDK mode, exposes the sysroot-installed neat command at
 #   /usr/local/bin/neat for convenient use inside the SDK container.
+# - In Modalix board mode, installs python3-venv with apt when python3 cannot
+#   create a venv (Platform 3.0.0 images ship without it).
 # - On devices with writable /media/nvme, creates the venv at /media/nvme/pyneat and
 #   exposes it via $HOME/pyneat for consistent activation instructions.
 # - On devices without /media/nvme, creates the venv directly at $HOME/pyneat.
@@ -1738,7 +1740,33 @@ remove_stale_global_sima_lmm_pip_install() {
   fi
 }
 
+python_venv_is_available() {
+  local probe_dir status=0
+  probe_dir="$(mktemp -d /tmp/sima-neat-venv-probe-XXXXXX)"
+  python3 -m venv "${probe_dir}/venv" >/dev/null 2>&1 || status=$?
+  rm -rf -- "${probe_dir}"
+  return "${status}"
+}
+
+# Platform 3.0.0 board images ship python3 without python3-venv (ensurepip).
+ensure_python_venv_support() {
+  if python_venv_is_available; then
+    return 0
+  fi
+
+  log "Python venv support (ensurepip) is missing; installing python3-venv with apt."
+  refresh_apt_metadata_for_board_install
+  if run_sudo apt-get install -y python3-venv && python_venv_is_available; then
+    return 0
+  fi
+
+  echo "Python venv support is unavailable and python3-venv could not be installed." >&2
+  echo "Install it, then rerun this installer: sudo apt-get update && sudo apt-get install -y python3-venv" >&2
+  exit 1
+}
+
 install_python_environment() {
+  ensure_python_venv_support
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
   remove_stale_global_sima_lmm_pip_install
