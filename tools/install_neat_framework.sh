@@ -1746,7 +1746,7 @@ ensure_python_venv_support() {
   log "Python venv support (ensurepip) is missing; installing python3-venv with apt."
   refresh_apt_metadata_for_board_install
   if ! run_sudo apt-get install -y python3-venv; then
-    echo "Failed to install python3-venv, which is required to create the PyNeat venv; see the apt error above." >&2
+    echo "Failed to install python3-venv. Run 'sudo apt-get update && sudo apt-get install -y python3-venv', then rerun this installer." >&2
     exit 1
   fi
 }
