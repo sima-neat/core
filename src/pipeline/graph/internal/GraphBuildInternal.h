@@ -7,6 +7,7 @@
 #include "nodes/common/Output.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
+#include "pipeline/internal/SegmentBuildPlan.h"
 
 #include <memory>
 #include <span>
@@ -118,6 +119,12 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
+// The manifest checks parse applies; returns the manifest with instance stage names.
+std::optional<pipeline_internal::sima::SimaPluginStaticManifest>
+session_build_validate_rendered_manifest_or_throw(const BuildResult& build, const char* where);
+pipeline_internal::SegmentBuildPlan session_build_make_segment_plan(const BuildResult& build);
+// Keep the pre-parse plan on the build's DiagCtx for Model::Runner::execution_plan().
+void session_build_record_segment_plan(const BuildResult& build);
 void session_build_validate_explicit_launch_names_or_throw(
     std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins = {});
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);
@@ -212,5 +219,17 @@ session_build_run_input_stream_internal(const std::vector<std::shared_ptr<Node>>
                                         const GraphOptions& sess_opt, const InputStreamOptions& opt,
                                         const NameTransform& name_transform, bool insert_queue2,
                                         int sync_num_buffers_override, bool sync_mode);
+
+// Plan-only twins of the seeded build: the same steps, stopped before GStreamer parse.
+pipeline_internal::SegmentBuildPlan
+session_build_plan_input_segment(const std::vector<std::shared_ptr<Node>>& nodes,
+                                 const cv::Mat& sample, const GraphOptions& sess_opt,
+                                 const InputStreamOptions& opt, const NameTransform& name_transform,
+                                 bool insert_queue2, int sync_num_buffers_override, bool sync_mode);
+pipeline_internal::SegmentBuildPlan
+session_build_plan_input_segment(const std::vector<std::shared_ptr<Node>>& nodes,
+                                 const Sample& sample, const GraphOptions& sess_opt,
+                                 const InputStreamOptions& opt, const NameTransform& name_transform,
+                                 bool insert_queue2, int sync_num_buffers_override, bool sync_mode);
 
 } // namespace simaai::neat

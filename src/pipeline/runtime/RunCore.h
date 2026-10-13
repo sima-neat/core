@@ -30,7 +30,10 @@ struct GraphRunStats;
 
 namespace simaai::neat {
 class NeatError;
-}
+namespace pipeline_internal {
+struct SegmentBuildPlan;
+} // namespace pipeline_internal
+} // namespace simaai::neat
 
 namespace simaai::neat::runtime {
 
@@ -160,7 +163,13 @@ enum class InputStreamCloseState {
 
 struct RunCore : std::enable_shared_from_this<RunCore> {
   static std::shared_ptr<RunCore> start(ExecutionGraphPlan plan, RunCoreStartOptions opt);
+  // What start(plan, opt) builds for a seeded single-segment linear plan; nothing is parsed.
+  static pipeline_internal::SegmentBuildPlan plan_linear_start(const ExecutionGraphPlan& plan,
+                                                               RunCoreStartOptions opt);
   static std::shared_ptr<RunCore> create_graph_compat();
+  // Plan-only twin of start_pipeline_segment: the same build steps, stopped before parse.
+  static pipeline_internal::SegmentBuildPlan
+  plan_pipeline_segment(const PipelineSegmentPlan& segment, RunCoreStartOptions opt);
   static std::shared_ptr<RunCore> start_pipeline_segment(const PipelineSegmentPlan& segment,
                                                          RunCoreStartOptions opt);
 

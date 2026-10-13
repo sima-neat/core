@@ -370,6 +370,17 @@ def test_run_export_api_surface():
     pyneat.run_to_json(run, measure_report, export_opt)
 
 
+def test_execution_plan_api_surface():
+  for owner in (pyneat.Model, pyneat.ModelRunner):
+    assert hasattr(owner, "execution_plan"), owner.__name__
+  for owner in (pyneat.Graph, pyneat.Run):
+    assert not hasattr(owner, "execution_plan"), owner.__name__
+
+  plan = pyneat.ExecutionPlan()
+  assert plan.schema_version == 1
+  assert plan.to_json(-1) == "{}"
+
+
 def test_public_graph_connect_no_runtime_port_overload():
   source = pyneat.Graph("image")
   source.add(pyneat.nodes.input("image"))

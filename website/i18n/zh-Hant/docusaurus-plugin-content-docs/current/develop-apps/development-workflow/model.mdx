@@ -416,6 +416,48 @@ for warning in info.warnings:
 
 將路線警告視為一級證據。如果路線規劃工具告訴您一些不尋常的事情，請不要迴避它。首先修正合約或選項。
 
+### 查看模型執行的內容
+
+使用 `execution_plan()` 可查看模型執行的節點、每個節點的執行位置，以及在節點之間流動的張量。`Model::execution_plan(...)` 接受與 `build(...)` 相同的引數，並準備相同的管線但不啟動它。`Model::Runner::execution_plan()` 會傳回您已建置之 runner 的計畫。兩者傳回相同的計畫。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const simaai::neat::ExecutionPlan plan = model.execution_plan();
+std::cout << plan.to_json() << "\n";
+
+auto runner = model.build();
+std::cout << runner.execution_plan().to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+plan = model.execution_plan()
+print(plan.to_json())
+
+runner = model.build()
+print(runner.execution_plan().to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+JSON 依管線順序列出模型的圖節點，並在每兩個相鄰節點之間列出一條邊。
+
+| 欄位 | 意義 |
+| --- | --- |
+| `model` | 模型名稱、`batch`（每次 MLA 執行的影格數）和 `memory`（每個處理中影格的裝置記憶體） |
+| `nodes[].kind` | 節點種類，例如 `Input`、`Preproc`、`Quant`、`ModelFragment`、`Dequant`、`SimaBoxDecode` 或 `Output` |
+| `nodes[].runs_on` | 節點的執行位置：`A65`（Arm 核心）、`EV74`（視覺處理器）或 `MLA` |
+| `nodes[].kernel` | `EV74` 或 `A65` 節點執行的核心程式（kernel） |
+| `nodes[].settings` | 已解析的 `Preproc` 與 `SimaBoxDecode` 設定，名稱與 `PreprocOptions` 和 `BoxDecodeOptions` 相同 |
+| `edges[].tensors` | 從一個節點流向下一個節點的張量：批次在前的 `shape`、`dtype`，以及量化張量的 `quant`（`scale`、`zero_point`） |
+
+只有在模型或您的選項設定了閾值與 `top_k` 時，`SimaBoxDecode` 設定才會顯示它們；否則會套用解碼器預設值。結構描述為 `schemas/execution_plan_v1.schema.json`。
+
 ## 在圖中運用模型
 
 對於常見的路徑，請直接在公共輸入和輸出之間新增模型。

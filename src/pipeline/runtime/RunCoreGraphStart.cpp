@@ -1509,4 +1509,13 @@ std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOpt
   return start_graph_plan(std::move(plan), std::move(opt));
 }
 
+pipeline_internal::SegmentBuildPlan RunCore::plan_linear_start(const ExecutionGraphPlan& plan,
+                                                               RunCoreStartOptions opt) {
+  if (!is_simple_linear_plan(plan)) {
+    throw std::runtime_error(
+        "RunCore::plan_linear_start: only a single linear pipeline segment can be planned");
+  }
+  return RunCore::plan_pipeline_segment(plan.pipeline_segments.front(), std::move(opt));
+}
+
 } // namespace simaai::neat::runtime

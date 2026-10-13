@@ -416,6 +416,48 @@ for warning in info.warnings:
 
 Treat route warnings as first-class evidence. If the route planner is telling you something odd, do not tune around it. Fix the contract or the options first.
 
+### See what the model executes
+
+Use `execution_plan()` to see the nodes a model runs, where each node runs, and the tensors that flow between them. `Model::execution_plan(...)` takes the same arguments as `build(...)` and prepares the same pipeline without starting it. `Model::Runner::execution_plan()` returns the plan of a runner you already built. Both return the same plan.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const simaai::neat::ExecutionPlan plan = model.execution_plan();
+std::cout << plan.to_json() << "\n";
+
+auto runner = model.build();
+std::cout << runner.execution_plan().to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+plan = model.execution_plan()
+print(plan.to_json())
+
+runner = model.build()
+print(runner.execution_plan().to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+The JSON lists the model's graph nodes in pipeline order and one edge between each pair of consecutive nodes.
+
+| Field | Meaning |
+| --- | --- |
+| `model` | Model name, `batch` (frames per MLA run), and `memory` (device memory per frame in flight) |
+| `nodes[].kind` | Node kind, such as `Input`, `Preproc`, `Quant`, `ModelFragment`, `Dequant`, `SimaBoxDecode`, or `Output` |
+| `nodes[].runs_on` | Where the node runs: `A65` (Arm cores), `EV74` (vision processor), or `MLA` |
+| `nodes[].kernel` | The kernel an `EV74` or `A65` node executes |
+| `nodes[].settings` | Resolved `Preproc` and `SimaBoxDecode` settings, named as in `PreprocOptions` and `BoxDecodeOptions` |
+| `edges[].tensors` | Tensors from one node to the next: batch-first `shape`, `dtype`, and `quant` (`scale`, `zero_point`) for quantized tensors |
+
+`SimaBoxDecode` settings show thresholds and `top_k` only when the model or your options set them; otherwise the decoder default applies. The schema is `schemas/execution_plan_v1.schema.json`.
+
 ## Use a model in a Graph
 
 For the common path, add the model directly between a public input and output.

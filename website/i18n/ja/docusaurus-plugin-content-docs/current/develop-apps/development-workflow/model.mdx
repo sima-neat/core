@@ -416,6 +416,48 @@ for warning in info.warnings:
 
 経路に関する警告を、最も重要な証拠として扱う。経路プランナーが何か異常なことを示している場合は、それを無視したり、都合の良いように解釈したりしないでください。まず、契約内容または設定を見直して修正してください。
 
+### モデルが実行する内容を確認する
+
+`execution_plan()` を使うと、モデルが実行するノード、各ノードが実行される場所、ノード間を流れるテンソルを確認できます。`Model::execution_plan(...)` は `build(...)` と同じ引数を受け取り、同じパイプラインを開始せずに準備します。`Model::Runner::execution_plan()` は、すでにビルドしたランナーのプランを返します。どちらも同じプランを返します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const simaai::neat::ExecutionPlan plan = model.execution_plan();
+std::cout << plan.to_json() << "\n";
+
+auto runner = model.build();
+std::cout << runner.execution_plan().to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+plan = model.execution_plan()
+print(plan.to_json())
+
+runner = model.build()
+print(runner.execution_plan().to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+JSON には、モデルのグラフノードがパイプライン順に並び、連続する 2 つのノードの間に 1 つのエッジがあります。
+
+| フィールド | 意味 |
+| --- | --- |
+| `model` | モデル名、`batch`（MLA の 1 回の実行あたりのフレーム数）、`memory`（処理中の 1 フレームあたりのデバイスメモリ） |
+| `nodes[].kind` | ノードの種類。`Input`、`Preproc`、`Quant`、`ModelFragment`、`Dequant`、`SimaBoxDecode`、`Output` など |
+| `nodes[].runs_on` | ノードが実行される場所：`A65`（Arm コア）、`EV74`（ビジョンプロセッサ）、または `MLA` |
+| `nodes[].kernel` | `EV74` または `A65` のノードが実行するカーネル |
+| `nodes[].settings` | 解決済みの `Preproc` と `SimaBoxDecode` の設定。名前は `PreprocOptions` と `BoxDecodeOptions` と同じです |
+| `edges[].tensors` | あるノードから次のノードへのテンソル：バッチ先頭の `shape`、`dtype`、量子化テンソルの `quant`（`scale`、`zero_point`） |
+
+`SimaBoxDecode` の設定には、モデルまたはオプションで設定した場合にのみ、しきい値と `top_k` が表示されます。設定していない場合は、デコーダーの既定値が使われます。スキーマは `schemas/execution_plan_v1.schema.json` です。
+
 ## グラフ内のモデルを使用する
 
 一般的なパスの場合、公開されている入力と出力の間にモデルを直接追加します。

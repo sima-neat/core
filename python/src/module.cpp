@@ -76,6 +76,7 @@
 #include "nodes/sima/PCIeSink.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/ExecutionPlan.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/NeatError.h"
@@ -2731,6 +2732,11 @@ NB_MODULE(_pyneat_core, m) {
       .def("stop", &MeasureScope::stop)
       .def("stopped", &MeasureScope::stopped);
 
+  nb::class_<simaai::neat::ExecutionPlan>(m, "ExecutionPlan")
+      .def(nb::init<>())
+      .def("to_json", &simaai::neat::ExecutionPlan::to_json, "indent"_a = 2)
+      .def_prop_ro("schema_version", &simaai::neat::ExecutionPlan::schema_version);
+
   nb::class_<Run>(m, "Run")
       .def(nb::init<>())
       .def("__bool__", [](const Run& run) { return static_cast<bool>(run); })
@@ -4612,7 +4618,9 @@ NB_MODULE(_pyneat_core, m) {
                &simaai::neat::Model::Runner::start_measurement),
            "options"_a = MeasureOptions{})
       .def("close_input", &simaai::neat::Model::Runner::close_input)
-      .def("close", &simaai::neat::Model::Runner::close);
+      .def("close", &simaai::neat::Model::Runner::close)
+      .def("execution_plan", &simaai::neat::Model::Runner::execution_plan,
+           nb::call_guard<nb::gil_scoped_release>());
 
   nb::class_<simaai::neat::BenchmarkOptions>(m, "BenchmarkOptions")
       .def(nb::init<>())
@@ -4951,6 +4959,31 @@ NB_MODULE(_pyneat_core, m) {
             }
             auto tensors = tensor_batch_from_python_input(input, copy, std::nullopt, std::nullopt);
             return model.build(tensors, route_options, run_options);
+          },
+          "input"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
+          "run_options"_a = RunOptions{}, "copy"_a = false)
+      .def(
+          "execution_plan",
+          [](simaai::neat::Model& model, const simaai::neat::Model::RouteOptions& route_options,
+             const RunOptions& run_options) {
+            return model.execution_plan(route_options, run_options);
+          },
+          "route_options"_a = simaai::neat::Model::RouteOptions{}, "run_options"_a = RunOptions{},
+          nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "execution_plan",
+          [](simaai::neat::Model& model, nb::object input,
+             const simaai::neat::Model::RouteOptions& route_options, const RunOptions& run_options,
+             bool copy) {
+            reject_single_tensor_or_sample(input, "Model.execution_plan");
+            if (python_sequence_all_samples(input)) {
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return model.execution_plan(samples, route_options, run_options);
+            }
+            auto tensors = tensor_batch_from_python_input(input, copy, std::nullopt, std::nullopt);
+            nb::gil_scoped_release release;
+            return model.execution_plan(tensors, route_options, run_options);
           },
           "input"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
           "run_options"_a = RunOptions{}, "copy"_a = false)

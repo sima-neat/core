@@ -416,6 +416,48 @@ for warning in info.warnings:
 
 Ставтеся до попереджень щодо маршруту як до першочергової інформації. Якщо планувальник маршруту повідомляє про щось незвичайне, не намагайтеся обійти це. Спочатку внесіть зміни до угоди або параметрів.
 
+### Перегляньте, що виконує модель.
+
+Використовуйте `execution_plan()`, щоб побачити вузли, які виконує модель, де виконується кожен вузол і які тензори передаються між ними. `Model::execution_plan(...)` приймає ті самі аргументи, що й `build(...)`, і готує той самий конвеєр, не запускаючи його. `Model::Runner::execution_plan()` повертає план уже зібраного runner. Обидва методи повертають однаковий план.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const simaai::neat::ExecutionPlan plan = model.execution_plan();
+std::cout << plan.to_json() << "\n";
+
+auto runner = model.build();
+std::cout << runner.execution_plan().to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+plan = model.execution_plan()
+print(plan.to_json())
+
+runner = model.build()
+print(runner.execution_plan().to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+JSON перелічує вузли графа моделі в порядку конвеєра й містить одне ребро між кожною парою сусідніх вузлів.
+
+| Поле | Значення |
+| --- | --- |
+| `model` | Назва моделі, `batch` (кадрів на один запуск MLA) і `memory` (пам’ять пристрою на один кадр в обробці) |
+| `nodes[].kind` | Тип вузла, наприклад `Input`, `Preproc`, `Quant`, `ModelFragment`, `Dequant`, `SimaBoxDecode` або `Output` |
+| `nodes[].runs_on` | Де виконується вузол: `A65` (ядра Arm), `EV74` (процесор комп’ютерного зору) або `MLA` |
+| `nodes[].kernel` | Ядро (kernel), яке виконує вузол `EV74` або `A65` |
+| `nodes[].settings` | Остаточні налаштування `Preproc` і `SimaBoxDecode` з тими самими назвами, що в `PreprocOptions` і `BoxDecodeOptions` |
+| `edges[].tensors` | Тензори від одного вузла до наступного: `shape` із пакетом першим виміром, `dtype` і `quant` (`scale`, `zero_point`) для квантованих тензорів |
+
+Налаштування `SimaBoxDecode` показують пороги й `top_k` лише тоді, коли їх задає модель або ваші параметри; інакше діє типове значення декодера. Схема: `schemas/execution_plan_v1.schema.json`.
+
 ## Використовуйте модель у графі.
 
 Для загальної схеми підключення додайте модель безпосередньо між загальним входом і виходом.

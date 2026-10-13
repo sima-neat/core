@@ -21,6 +21,7 @@
 #include "model/PreprocessPlan.h"
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/ExecutionPlan.h"
 #include "pipeline/SuperPointTypes.h"
 #include "pipeline/YoloXSegPoseTypes.h"
 #include "pipeline/Run.h"
@@ -45,6 +46,7 @@ namespace simaai::neat {
 
 namespace internal {
 struct ModelAccess;
+struct PreparedModelBuild;
 } // namespace internal
 class Graph;
 
@@ -557,12 +559,16 @@ public:
     void close();
     /// Send EOS into the input queue without releasing the Run (lets pull drain in flight).
     void close_input();
+    /// What this Runner executes: its nodes, where each runs, and the tensors between them.
+    /// @throws std::runtime_error if the Runner is empty.
+    simaai::neat::ExecutionPlan execution_plan() const;
 
   private:
     friend struct internal::ModelAccess;
     simaai::neat::Run run_{};
     std::optional<simaai::neat::InputOptions> tensor_input_opt_for_cv_{};
     std::vector<std::string> ingress_names_;
+    std::string model_name_;
   };
 
 private:
@@ -613,6 +619,40 @@ public:
                const simaai::neat::RunOptions& run_opt = default_run_options());
 #endif
 
+  /**
+   * @brief Describe what the matching `build(...)` would execute, without starting a pipeline.
+   *
+   * Takes the same arguments as `build(...)` and runs the same preparation. The plan lists the
+   * Model's nodes (preprocessing, quantization, EV74/A65 kernels, MLA), where each one runs, and
+   * the tensors between them. It equals `build(...).execution_plan()`.
+   * @throws NeatError on the validation or contract errors `build(...)` would raise.
+   */
+  simaai::neat::ExecutionPlan execution_plan();
+  /// Execution plan of `build(opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const RouteOptions& opt);
+  /// Execution plan of `build(run_opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const simaai::neat::RunOptions& run_opt);
+  /// Execution plan of `build(opt, run_opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const RouteOptions& opt,
+                                             const simaai::neat::RunOptions& run_opt);
+  /// Execution plan of `build(inputs, opt, run_opt)` for `Tensor` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const simaai::neat::TensorList& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+  /// Execution plan of `build(inputs, opt, run_opt)` for `Sample` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const simaai::neat::Sample& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+#if defined(SIMA_WITH_OPENCV)
+  /// Execution plan of `build(inputs, opt, run_opt)` for `cv::Mat` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const std::vector<cv::Mat>& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+#endif
+
   // ── One-shot execution (synchronous) ─────────────────────────────────────────────────────
   /**
    * @brief One-shot-style inference for the simplest applications.
@@ -646,6 +686,21 @@ public:
   BenchmarkReport benchmark(bool include_plugin_latency);
 
 private:
+  // Everything build() does before Graph::build; execution_plan() plans the same result.
+  internal::PreparedModelBuild prepare_build_(const RouteOptions& opt,
+                                              const simaai::neat::RunOptions& run_opt);
+  internal::PreparedModelBuild prepare_build_(const simaai::neat::TensorList& inputs,
+                                              const RouteOptions& opt,
+                                              const simaai::neat::RunOptions& run_opt,
+                                              const Options& model_opt);
+  internal::PreparedModelBuild prepare_build_(const simaai::neat::Sample& inputs,
+                                              const RouteOptions& opt,
+                                              const simaai::neat::RunOptions& run_opt);
+#if defined(SIMA_WITH_OPENCV)
+  internal::PreparedModelBuild prepare_build_(const std::vector<cv::Mat>& inputs,
+                                              const RouteOptions& opt,
+                                              const simaai::neat::RunOptions& run_opt);
+#endif
   Runner build_with_model_options(const simaai::neat::TensorList& inputs,
                                   const Model::RouteOptions& opt,
                                   const simaai::neat::RunOptions& run_opt,

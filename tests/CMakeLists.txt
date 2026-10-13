@@ -1997,6 +1997,15 @@ if (NOT model_unique_names_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST model_unique_names_test APPEND PROPERTY LABELS "e2e;img_classification")
 endif()
 
+add_pipeline_test(
+  model_execution_plan_test
+  e2e_pipelines/obj_detection/model_execution_plan_test.cpp
+)
+
+if (NOT model_execution_plan_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST model_execution_plan_test APPEND PROPERTY LABELS "e2e;obj_detection")
+endif()
+
 if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_executable(
     resnet50_modelpack_test
@@ -2307,6 +2316,7 @@ foreach(test
     graphpipes_yolo_metadata_sender_16stream_test
     model_resnet50_multi_test
     model_unique_names_test
+    model_execution_plan_test
     resnet50_modelpack_direct
     resnet50_modelpack_jpeg
     resnet50_modelpack_rtsp
