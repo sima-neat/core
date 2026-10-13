@@ -2672,36 +2672,41 @@ void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Nod
   }
 }
 
+namespace {
+
+bool cross_run_gstsample_push_allowed() {
+  return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
+}
+
+// Rejects a seed whose device buffers still belong to another Run and cannot be handed over.
+void require_transferable_seed(const Sample& seed, const char* where) {
+  if (!pipeline_internal::sample_has_device_gstsample_producer_lifetime(
+          seed, /*require_expired=*/false)) {
+    return;
+  }
+  std::string reason;
+  if (!pipeline_internal::sample_has_transferable_zero_copy_loan(seed, &reason)) {
+    throw std::runtime_error(pipeline_internal::cross_run_zero_copy_sample_error(where) +
+                             (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+  }
+}
+
+} // namespace
+
 Run Graph::build(const std::vector<cv::Mat>& inputs, const RunOptions& opt) {
   return build_seeded_internal(inputs, RunMode::Async, opt);
 }
 
 Run Graph::build(const TensorList& inputs, const RunOptions& opt) {
-  if (!pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false)) {
-    Sample sample = sample_from_tensors(inputs);
-    if (pipeline_internal::sample_has_device_gstsample_producer_lifetime(
-            sample, /*require_expired=*/false)) {
-      std::string reason;
-      if (!pipeline_internal::sample_has_transferable_zero_copy_loan(sample, &reason)) {
-        throw std::runtime_error(
-            pipeline_internal::cross_run_zero_copy_sample_error("Graph::build(tensors)") +
-            (reason.empty() ? std::string{} : " Reason: " + reason + "."));
-      }
-    }
+  if (!cross_run_gstsample_push_allowed()) {
+    require_transferable_seed(sample_from_tensors(inputs), "Graph::build(tensors)");
   }
   return build_seeded_internal(inputs, RunMode::Async, opt);
 }
 
 Run Graph::build(const Sample& inputs, const RunOptions& opt) {
-  if (!pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false) &&
-      pipeline_internal::sample_has_device_gstsample_producer_lifetime(inputs,
-                                                                       /*require_expired=*/false)) {
-    std::string reason;
-    if (!pipeline_internal::sample_has_transferable_zero_copy_loan(inputs, &reason)) {
-      throw std::runtime_error(
-          pipeline_internal::cross_run_zero_copy_sample_error("Graph::build(sample)") +
-          (reason.empty() ? std::string{} : " Reason: " + reason + "."));
-    }
+  if (!cross_run_gstsample_push_allowed()) {
+    require_transferable_seed(inputs, "Graph::build(sample)");
   }
   return build_seeded_internal(inputs, RunMode::Async, opt);
 }
@@ -2914,6 +2919,9 @@ pipeline_internal::SegmentBuildPlan Graph::plan_seeded_internal(const TensorList
     throw std::runtime_error("Graph::plan_seeded_internal: empty tensor list");
   }
   require_linear_for_plan(!composition_ || composition_->is_linear());
+  if (!cross_run_gstsample_push_allowed()) {
+    require_transferable_seed(sample_from_tensors(inputs), "Graph::plan_seeded_internal(tensors)");
+  }
   Sample seed = linear_seed_(inputs);
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
   return runtime::RunCore::plan_linear_start(
@@ -2928,6 +2936,9 @@ pipeline_internal::SegmentBuildPlan Graph::plan_seeded_internal(const Sample& in
     throw std::runtime_error("Graph::plan_seeded_internal: empty sample list");
   }
   require_linear_for_plan(!composition_ || composition_->is_linear());
+  if (!cross_run_gstsample_push_allowed()) {
+    require_transferable_seed(inputs, "Graph::plan_seeded_internal(sample)");
+  }
   Sample seed = linear_seed_(inputs);
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
   return runtime::RunCore::plan_linear_start(
