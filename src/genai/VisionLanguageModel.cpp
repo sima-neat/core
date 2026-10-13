@@ -460,12 +460,9 @@ struct VisionLanguageModel::Impl {
     const auto max_total_tokens =
         make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
     if (draft_language_model) {
-      if (cfg.lm_cfg.speculative_decoding_cfg->is_gemma4_mtp()) {
-        return language_model->run_model_gemma4_mtp(*draft_language_model, prepared.input_token_ids,
-                                                    max_total_tokens, timer_ttft);
-      }
       return language_model->run_model_speculative_decoding(
-          *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft);
+          *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft, nullptr,
+          prepared.stable_prefix_token_count);
     }
     return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens,
                                      std::nullopt, prepared.stable_prefix_token_count);
