@@ -1,0 +1,80 @@
+---
+title: PCIe GenAI API
+description: 從主機應用程式在 Modalix PCIe Card 上執行 LLM、VLM 與 ASR 模型
+sidebar_position: 4
+slug: /develop-apps/development-workflow/genai-model/pcie-api
+---
+
+# PCIe GenAI API
+
+可執行的 C++ 與 Python 範例請參閱[透過 PCIe 執行 GenAI 模型](/tutorials/run-genai-over-pcie)。
+
+在 C++ 中使用 `simaai::neat::pcie::genai`，或在 Python 中使用 `pyneatpcie.genai`，即可從主機在連接的 Modalix PCIe Card 上執行 LLM、VLM 與 ASR 模型。
+
+此 API 採用與[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api)相同的請求與串流模式。模型檔案、輸入與結果透過 PCIe 傳輸。與[視覺模型協同處理](/develop-apps/development-workflow/pcie-model)不同，GenAI 不需要視覺模型佇列編號，也不需要呼叫 `build()`。
+
+## 開始之前
+
+- 依照[安裝 PCIe Host](/getting-started/neat-library/pcie-host/)操作，使用支援 GenAI 且互相對應的主機與卡端套件。
+- 確認連接的卡片已按照安裝步驟完成設定。
+- 在主機上準備 LLiMa 模型目錄。請傳入絕對路徑，或相對於應用程式目前工作目錄的路徑，而非卡端本機路徑。模型開啟期間，請保持檔案可讀取且不要變更。
+
+## 執行文字請求
+
+此範例假設應用程式目前工作目錄下的 `./models/` 中已有 `Qwen3-0.6B-Autoround-a16w4`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <simaai/neat/pcie/genai/GenAIModel.h>
+#include <iostream>
+
+int main() {
+  namespace genai = simaai::neat::pcie::genai;
+  genai::ConnectionOptions connection;
+  connection.card_id = 0;
+
+  genai::GenAIModel model("./models/Qwen3-0.6B-Autoround-a16w4", connection);
+  genai::GenerationRequest request;
+  request.prompt = "Explain PCIe in one sentence.";
+  request.max_new_tokens = 64;
+
+  std::cout << model.run(request).text << '\n';
+  model.close();
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+from pyneatpcie import genai
+
+connection = genai.ConnectionOptions()
+connection.card_id = 0
+
+with genai.GenAIModel("./models/Qwen3-0.6B-Autoround-a16w4", connection) as model:
+    request = genai.GenerationRequest()
+    request.prompt = "Explain PCIe in one sentence."
+    request.max_new_tokens = 64
+    print(model.run(request).text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+建構子會載入遠端模型。`run()` 傳回完整結果；`close()` 釋放模型資源。Python 上下文管理器會在離開區塊時關閉模型，包括發生例外的情況。C++ 應用程式請連結已安裝的 CMake 目標 `SimaPCIeHost::sima_neat_pcie_host`。
+
+`connection.card_id` 選擇卡及其預設位址：`0` 使用 `10.0.0.2`，`1` 使用 `10.0.1.2`，依此類推。只有在卡使用不同位址時，才需設定 `connection.card_host`。
+
+若要使用推測解碼，請傳入已準備好的目標／草稿模型配對的父目錄，例如包含 `target/` 和 `draft/` 的 `./models/speculative-pair`。編譯後的設定會識別目標和草稿角色。兩個模型會在同一卡端工作階段中載入，不需要額外的請求選項。請預留足夠的卡端記憶體以容納兩個模型。
+
+## 串流、媒體與多個模型
+
+- 使用 `model.stream(request)` 並逐一讀取 `TokenSample` 值來串流輸出。在重複使用模型之前，呼叫 `cancel()` 並讀取終止樣本。每個模型同時只能有一個作用中的請求。
+- VLM 使用 `request.images`（UInt8 HWC RGB PCIe 張量；Python 也接受 NumPy 陣列）。請在應用程式中讀取影像檔案，並在指派前轉換為 RGB。ASR 使用 `request.audio_file` 或 `request.audio`（Float32 單聲道取樣值）搭配 `request.sample_rate`。
+- 透過 `request.messages` 傳入對話歷史；獨立請求不會繼承先前的歷史。
+- 為獨立模型建立各自的控制代碼。GenAI 模型可與視覺模型共存，但受限於卡端資源；吞吐量取決於工作負載。
+
+共通的請求、結果與串流概念請參閱[直接 GenAI API](/develop-apps/development-workflow/genai-model/direct-api)。請使用 PCIe 請求／張量型別，而非本機 Core 型別。此遠端 API 不提供 LoRA 切換、快取影像重複使用或 GenAI 圖組合。

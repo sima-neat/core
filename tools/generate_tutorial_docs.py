@@ -110,6 +110,9 @@ CATEGORY_TUTORIAL_ORDER = {
     "PCIe Co-Processing": [24, 25, 26, 27, 28],
 }
 
+# Cross-list cards without generating another copy of the tutorial page.
+TUTORIAL_CROSS_LISTINGS = {"029_run_genai_over_pcie": ["GenAI"]}
+
 
 def _category_flow_key(category: str, number: int) -> tuple:
     """Sort by the curated order inside a category, then by tutorial number."""
@@ -1473,12 +1476,18 @@ def render_tutorial_doc(
     return "\n".join(lines)
 
 
-def _group_tutorials(modules: List[TutorialModule]) -> Dict[str, List[TutorialModule]]:
+def _group_tutorials(
+    modules: List[TutorialModule], *, cross_list: bool = False
+) -> Dict[str, List[TutorialModule]]:
     groups: Dict[str, List[TutorialModule]] = {
         label: [] for label, _, _, _ in CATEGORY_SUBDIRS
     }
     for module in modules:
         groups[module.category].append(module)
+        if cross_list:
+            for category in TUTORIAL_CROSS_LISTINGS.get(module.folder, []):
+                if category != module.category:
+                    groups[category].append(module)
     for key in groups:
         groups[key] = sorted(
             groups[key], key=lambda m: _category_flow_key(key, m.number)
@@ -1557,7 +1566,7 @@ def render_index(
     heading_body: str,
     ui: Dict[str, Any] = ENGLISH_UI,
 ) -> str:
-    groups = _group_tutorials(modules)
+    groups = _group_tutorials(modules, cross_list=True)
     lines: List[str] = [
         "---",
         f"title: {_ui(ui, 'title')}",
@@ -1767,6 +1776,7 @@ def generate_localized_tutorials(
         localized_modules = [
             module for label, _, _, _ in CATEGORY_SUBDIRS for module in groups[label]
         ]
+        card_groups = _group_tutorials(localized_modules, cross_list=True)
         out_root.mkdir(parents=True, exist_ok=True)
         expected_paths = {
             out_root / _category_subdir(module.category) / f"{module.doc_id}.mdx"
@@ -1790,7 +1800,7 @@ def generate_localized_tutorials(
                 encoding="utf-8",
             )
             (sub / "index.md").write_text(
-                render_category_index(label, slug, description, groups[label], ui),
+                render_category_index(label, slug, description, card_groups[label], ui),
                 encoding="utf-8",
             )
         for module in localized_modules:
@@ -1895,10 +1905,11 @@ def main() -> int:
             encoding="utf-8",
         )
 
+    card_groups = _group_tutorials(modules, cross_list=True)
     for label, slug, _, description in CATEGORY_SUBDIRS:
         out_path = docs_tutorials_dir / slug / "index.md"
         out_path.write_text(
-            render_category_index(label, slug, description, groups[label]),
+            render_category_index(label, slug, description, card_groups[label]),
             encoding="utf-8",
         )
 

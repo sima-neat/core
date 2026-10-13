@@ -4,15 +4,15 @@ set -euo pipefail
 DEFAULT_LLIMA_MODELS_PATH="/media/nvme/llima/models"
 DEFAULT_TEXT_MODEL="Qwen2.5-0.5B-Instruct-Autoround-a16w4"
 DEFAULT_VLM_MODEL="LFM2.5-VL-450M-Autoround-a16w4"
-DEFAULT_ASR_MODEL="whisper-small-a16w8-layered-encoder"
-DEFAULT_ASR_REPO="florianvoss/whisper-small-a16w8-layered-encoder"
-DEFAULT_ASR_REVISION="c0a34f15eaeee13fc7d80cd545c3fb828dc5010f"
+DEFAULT_ASR_MODEL="whisper-small-a16w8"
+DEFAULT_ASR_REPO="simaai/whisper-small-a16w8"
+DEFAULT_ASR_REVISION="b34d5a300e74fcd1e9bc46bd70bd23cfc2b6b8d3"
 DEFAULT_REASONING_QWEN_MODEL="Qwen3-0.6B-Autoround-a16w4"
 DEFAULT_REASONING_QWEN_REPO="simaai/Qwen3-0.6B-Autoround-a16w4"
 DEFAULT_REASONING_QWEN_REVISION="bfe4a547a56d94fb4474cbc7e8fcbc1e4ee276ac"
 DEFAULT_REASONING_GEMMA_MODEL="Gemma-4-E2B-it-TextOnly-GPTQ-a16w4"
-DEFAULT_REASONING_GEMMA_REPO="simaai/Gemma-4-E2B-it-TextOnly-GPTQ-a16w4"
-DEFAULT_REASONING_GEMMA_REVISION="1c72307f46ad055a641420310b36a061715b0508"
+DEFAULT_REASONING_GEMMA_REPO="florianvoss/Gemma-4-E2B-it-TextOnly-GPTQ-a16w4"
+DEFAULT_REASONING_GEMMA_REVISION="b0deeb12e4639b3cebde914a66ae14f173a536e1"
 usage() {
   cat <<EOF
 Usage: $(basename "$0")

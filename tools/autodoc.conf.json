@@ -216,6 +216,12 @@
       "localized_root_index_file": "docs/i18n/{locale}/README.md",
       "root_index_link_prefix": "docs/",
       "root_index_omit_line_prefixes": ["**Documentation:**"],
+      "link_rewrites": [
+        {
+          "from": "../i18n/README.md",
+          "to": "https://github.com/sima-neat/sentinel/blob/main/docs/i18n/README.md"
+        }
+      ],
       "files_order": [
         "index",
         "README",

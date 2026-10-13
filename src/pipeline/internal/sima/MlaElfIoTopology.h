@@ -33,7 +33,11 @@ namespace simaai::neat::pipeline_internal::sima {
 //     data.ifm.persistent.qmla_ifm_N or afe_direct_input_N slots, or native
 //     data.ifm.persistent.MLA_N/<tensor>.b0 sections in ELF encounter order.
 //
-// The two strategies are mutually exclusive within a single ELF.
+// A bare data.ifm.b0 / data.ofm.b0 that appears beside per-tensor sections of
+// the same direction is one more per-tensor port, not a monolithic layout. It
+// takes its ELF encounter position, which is the order MLA-RT exposes ports
+// in; beside explicitly indexed sections that position must be the single
+// unclaimed index. Any other mix of the two layouts is a conflict.
 struct MlaElfPhysicalSlot {
   std::size_t logical_index = 0;
   std::size_t batch_index = 0;
@@ -64,9 +68,10 @@ struct MlaElfIoTopology {
   std::vector<std::uint64_t> ofm_extent_bytes;
   std::uint64_t monolithic_ifm_extent_bytes = 0;
   std::uint64_t monolithic_ofm_extent_bytes = 0;
-  // Evidence retained for strict consumers.  The legacy parser continues to
-  // prefer indexed symbols when an ELF declares both layouts, but strict
-  // validation rejects that ambiguity instead of silently choosing one.
+  // Evidence retained for strict consumers. When a bare monolithic section
+  // cannot be admitted as a per-tensor port, the parser prefers the indexed
+  // symbols, but strict validation rejects that ambiguity instead of silently
+  // choosing one.
   bool ifm_layout_conflict = false;
   bool ofm_layout_conflict = false;
   std::vector<std::size_t> duplicate_ifm_indices;
