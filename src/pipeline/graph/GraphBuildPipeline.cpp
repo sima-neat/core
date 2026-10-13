@@ -917,13 +917,6 @@ pipeline_internal::SegmentBuildPlan session_build_make_segment_plan(const BuildR
   return plan;
 }
 
-void session_build_record_segment_plan(const BuildResult& build) {
-  if (build.diag) {
-    build.diag->build_plan = std::make_shared<const pipeline_internal::SegmentBuildPlan>(
-        session_build_make_segment_plan(build));
-  }
-}
-
 namespace {
 
 static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char* where) {

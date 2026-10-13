@@ -73,7 +73,6 @@ struct ModelAccess {
   static std::string source_path(const Model& model);
   static Run& run(Model::Runner& runner);
   static const Run& run(const Model::Runner& runner);
-  static void set_model_name(Model::Runner& runner, std::string name);
   static Model::Options options(const Model& model);
   static Model clone_with_options(const Model& model, const Model::Options& opt);
   static PostRouteStageKind resolved_post_kind(const Model& model);

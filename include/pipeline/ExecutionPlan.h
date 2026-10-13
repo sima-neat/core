@@ -4,8 +4,7 @@
  * @brief What a Model executes: its nodes, where each one runs, and the tensors between them.
  *
  * `Model::execution_plan(...)` takes the same arguments as `Model::build(...)` and returns the
- * plan that build would execute, without starting a pipeline. `Model::Runner::execution_plan()`
- * returns the plan of a built Runner. Both come from one build path, so they are equal.
+ * plan that build would execute, without starting a pipeline.
  *
  * The plan is read through its versioned JSON document (schema `sima.neat.execution_plan`,
  * documented in `schemas/execution_plan_v1.schema.json`).

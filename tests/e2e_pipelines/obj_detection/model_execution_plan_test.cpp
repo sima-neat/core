@@ -105,19 +105,6 @@ int main(int argc, char** argv) {
     require(parse_plan(model.execution_plan(seed), "seeded Model::execution_plan") == planned,
             "a seed shaped like the Model input should not change the plan");
 
-    simaai::neat::Model::Runner runner = model.build(seed);
-    const json built = parse_plan(runner.execution_plan(), "Model::Runner::execution_plan");
-    require(built == planned, "the Runner plan should equal the plan made before build:\nplanned=" +
-                                  planned.dump() + "\nbuilt=" + built.dump());
-    runner.close();
-
-    bool empty_runner_threw = false;
-    try {
-      (void)simaai::neat::Model::Runner{}.execution_plan();
-    } catch (const std::exception&) {
-      empty_runner_threw = true;
-    }
-    require(empty_runner_threw, "an empty Runner should not return a plan");
     require(simaai::neat::ExecutionPlan{}.to_json(-1) == "{}",
             "a default ExecutionPlan should be empty");
   } catch (const std::exception& e) {

@@ -371,9 +371,8 @@ def test_run_export_api_surface():
 
 
 def test_execution_plan_api_surface():
-  for owner in (pyneat.Model, pyneat.ModelRunner):
-    assert hasattr(owner, "execution_plan"), owner.__name__
-  for owner in (pyneat.Graph, pyneat.Run):
+  assert hasattr(pyneat.Model, "execution_plan")
+  for owner in (pyneat.ModelRunner, pyneat.Graph, pyneat.Run):
     assert not hasattr(owner, "execution_plan"), owner.__name__
 
   plan = pyneat.ExecutionPlan()

@@ -21,8 +21,6 @@
 
 namespace simaai::neat::pipeline_internal {
 
-struct SegmentBuildPlan;
-
 struct BoundaryFlowCounters {
   std::string boundary_name;
   int after_node_index = -1;
@@ -244,9 +242,6 @@ struct DiagCtx {
 
   bool has_build_adaptation = false;
   BuildAdaptationSummary build_adaptation;
-
-  // Written once before parse; read by Model::Runner::execution_plan().
-  std::shared_ptr<const SegmentBuildPlan> build_plan;
 
   static int64_t now_us() {
     return (int64_t)g_get_monotonic_time();

@@ -418,7 +418,7 @@ for warning in info.warnings:
 
 ### モデルが実行する内容を確認する
 
-`execution_plan()` を使うと、モデルが実行するノード、各ノードが実行される場所、ノード間を流れるテンソルを確認できます。`Model::execution_plan(...)` は `build(...)` と同じ引数を受け取り、同じパイプラインを開始せずに準備します。`Model::Runner::execution_plan()` は、すでにビルドしたランナーのプランを返します。どちらも同じプランを返します。
+`execution_plan()` を使うと、モデルが実行するノード、各ノードが実行される場所、ノード間を流れるテンソルを確認できます。`Model::execution_plan(...)` は `build(...)` と同じ引数を受け取り、同じパイプラインを開始せずに準備します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -426,9 +426,6 @@ for warning in info.warnings:
 ```cpp
 const simaai::neat::ExecutionPlan plan = model.execution_plan();
 std::cout << plan.to_json() << "\n";
-
-auto runner = model.build();
-std::cout << runner.execution_plan().to_json() << "\n";
 ```
 
 </CodeTab>
@@ -437,9 +434,6 @@ std::cout << runner.execution_plan().to_json() << "\n";
 ```python
 plan = model.execution_plan()
 print(plan.to_json())
-
-runner = model.build()
-print(runner.execution_plan().to_json())
 ```
 
 </CodeTab>

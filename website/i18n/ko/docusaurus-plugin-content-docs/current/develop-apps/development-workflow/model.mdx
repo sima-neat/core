@@ -418,7 +418,7 @@ for warning in info.warnings:
 
 ### 모델이 실행하는 내용 확인
 
-`execution_plan()`을 사용하면 모델이 실행하는 노드, 각 노드가 실행되는 위치, 노드 사이를 흐르는 텐서를 확인할 수 있습니다. `Model::execution_plan(...)`은 `build(...)`와 같은 인수를 받아 같은 파이프라인을 시작하지 않고 준비합니다. `Model::Runner::execution_plan()`은 이미 빌드한 러너의 계획을 반환합니다. 두 방법 모두 같은 계획을 반환합니다.
+`execution_plan()`을 사용하면 모델이 실행하는 노드, 각 노드가 실행되는 위치, 노드 사이를 흐르는 텐서를 확인할 수 있습니다. `Model::execution_plan(...)`은 `build(...)`와 같은 인수를 받아 같은 파이프라인을 시작하지 않고 준비합니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -426,9 +426,6 @@ for warning in info.warnings:
 ```cpp
 const simaai::neat::ExecutionPlan plan = model.execution_plan();
 std::cout << plan.to_json() << "\n";
-
-auto runner = model.build();
-std::cout << runner.execution_plan().to_json() << "\n";
 ```
 
 </CodeTab>
@@ -437,9 +434,6 @@ std::cout << runner.execution_plan().to_json() << "\n";
 ```python
 plan = model.execution_plan()
 print(plan.to_json())
-
-runner = model.build()
-print(runner.execution_plan().to_json())
 ```
 
 </CodeTab>

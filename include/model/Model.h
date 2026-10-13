@@ -559,16 +559,12 @@ public:
     void close();
     /// Send EOS into the input queue without releasing the Run (lets pull drain in flight).
     void close_input();
-    /// What this Runner executes: its nodes, where each runs, and the tensors between them.
-    /// @throws std::runtime_error if the Runner is empty.
-    simaai::neat::ExecutionPlan execution_plan() const;
 
   private:
     friend struct internal::ModelAccess;
     simaai::neat::Run run_{};
     std::optional<simaai::neat::InputOptions> tensor_input_opt_for_cv_{};
     std::vector<std::string> ingress_names_;
-    std::string model_name_;
   };
 
 private:
@@ -624,7 +620,7 @@ public:
    *
    * Takes the same arguments as `build(...)` and runs the same preparation. The plan lists the
    * Model's nodes (preprocessing, quantization, EV74/A65 kernels, MLA), where each one runs, and
-   * the tensors between them. It equals `build(...).execution_plan()`.
+   * the tensors between them.
    * @throws NeatError on the validation or contract errors `build(...)` would raise.
    */
   simaai::neat::ExecutionPlan execution_plan();

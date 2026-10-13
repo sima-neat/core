@@ -4618,9 +4618,7 @@ NB_MODULE(_pyneat_core, m) {
                &simaai::neat::Model::Runner::start_measurement),
            "options"_a = MeasureOptions{})
       .def("close_input", &simaai::neat::Model::Runner::close_input)
-      .def("close", &simaai::neat::Model::Runner::close)
-      .def("execution_plan", &simaai::neat::Model::Runner::execution_plan,
-           nb::call_guard<nb::gil_scoped_release>());
+      .def("close", &simaai::neat::Model::Runner::close);
 
   nb::class_<simaai::neat::BenchmarkOptions>(m, "BenchmarkOptions")
       .def(nb::init<>())

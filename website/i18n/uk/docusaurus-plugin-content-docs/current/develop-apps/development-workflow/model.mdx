@@ -418,7 +418,7 @@ for warning in info.warnings:
 
 ### Перегляньте, що виконує модель.
 
-Використовуйте `execution_plan()`, щоб побачити вузли, які виконує модель, де виконується кожен вузол і які тензори передаються між ними. `Model::execution_plan(...)` приймає ті самі аргументи, що й `build(...)`, і готує той самий конвеєр, не запускаючи його. `Model::Runner::execution_plan()` повертає план уже зібраного runner. Обидва методи повертають однаковий план.
+Використовуйте `execution_plan()`, щоб побачити вузли, які виконує модель, де виконується кожен вузол і які тензори передаються між ними. `Model::execution_plan(...)` приймає ті самі аргументи, що й `build(...)`, і готує той самий конвеєр, не запускаючи його.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -426,9 +426,6 @@ for warning in info.warnings:
 ```cpp
 const simaai::neat::ExecutionPlan plan = model.execution_plan();
 std::cout << plan.to_json() << "\n";
-
-auto runner = model.build();
-std::cout << runner.execution_plan().to_json() << "\n";
 ```
 
 </CodeTab>
@@ -437,9 +434,6 @@ std::cout << runner.execution_plan().to_json() << "\n";
 ```python
 plan = model.execution_plan()
 print(plan.to_json())
-
-runner = model.build()
-print(runner.execution_plan().to_json())
 ```
 
 </CodeTab>

@@ -418,7 +418,7 @@ for warning in info.warnings:
 
 ### 查看模型執行的內容
 
-使用 `execution_plan()` 可查看模型執行的節點、每個節點的執行位置，以及在節點之間流動的張量。`Model::execution_plan(...)` 接受與 `build(...)` 相同的引數，並準備相同的管線但不啟動它。`Model::Runner::execution_plan()` 會傳回您已建置之 runner 的計畫。兩者傳回相同的計畫。
+使用 `execution_plan()` 可查看模型執行的節點、每個節點的執行位置，以及在節點之間流動的張量。`Model::execution_plan(...)` 接受與 `build(...)` 相同的引數，並準備相同的管線但不啟動它。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -426,9 +426,6 @@ for warning in info.warnings:
 ```cpp
 const simaai::neat::ExecutionPlan plan = model.execution_plan();
 std::cout << plan.to_json() << "\n";
-
-auto runner = model.build();
-std::cout << runner.execution_plan().to_json() << "\n";
 ```
 
 </CodeTab>
@@ -437,9 +434,6 @@ std::cout << runner.execution_plan().to_json() << "\n";
 ```python
 plan = model.execution_plan()
 print(plan.to_json())
-
-runner = model.build()
-print(runner.execution_plan().to_json())
 ```
 
 </CodeTab>

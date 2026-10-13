@@ -22,7 +22,6 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Tess.h"
 #include "pipeline/Graph.h"
-#include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -33,7 +32,6 @@
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/ExecutionPlanAssembly.h"
-#include "pipeline/runtime/RunCore.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
@@ -7464,15 +7462,6 @@ void Model::Runner::close_input() {
   run_.close_input();
 }
 
-ExecutionPlan Model::Runner::execution_plan() const {
-  const auto core = run_internal::core(run_);
-  const auto diag = core ? core->pipeline.stream.diag_ctx() : nullptr;
-  if (!diag || !diag->build_plan) {
-    throw std::runtime_error("Model::Runner::execution_plan: the Runner holds no built Model");
-  }
-  return internal::ExecutionPlanAccess::make(*diag->build_plan, model_name_);
-}
-
 Model::Runner Model::build() {
   return build(Model::RouteOptions{}, simaai::neat::RunOptions{});
 }
@@ -7505,12 +7494,10 @@ Model::Runner start_prepared_model_build(internal::PreparedModelBuild prepared) 
   Run run =
       std::visit([&](const auto& seed) { return prepared.graph.build(seed, prepared.run_opt); },
                  prepared.seed);
-  Model::Runner runner = prepared.tensor_input_opt.has_value()
-                             ? Model::Runner(std::move(run), *prepared.tensor_input_opt,
-                                             std::move(prepared.ingress_names))
-                             : Model::Runner(std::move(run), std::move(prepared.ingress_names));
-  internal::ModelAccess::set_model_name(runner, std::move(prepared.model_name));
-  return runner;
+  return prepared.tensor_input_opt.has_value()
+             ? Model::Runner(std::move(run), *prepared.tensor_input_opt,
+                             std::move(prepared.ingress_names))
+             : Model::Runner(std::move(run), std::move(prepared.ingress_names));
 }
 
 ExecutionPlan plan_prepared_model_build(const internal::PreparedModelBuild& prepared) {
@@ -8166,10 +8153,6 @@ void ModelAccess::prepare_for_execution(const Model& model, bool sync) {
 
 std::string ModelAccess::model_id(const Model& model) {
   return model.impl_->model_id;
-}
-
-void ModelAccess::set_model_name(Model::Runner& runner, std::string name) {
-  runner.model_name_ = std::move(name);
 }
 
 std::string ModelAccess::source_path(const Model& model) {

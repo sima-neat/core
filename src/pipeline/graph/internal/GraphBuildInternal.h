@@ -123,8 +123,6 @@ GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, cons
 std::optional<pipeline_internal::sima::SimaPluginStaticManifest>
 session_build_validate_rendered_manifest_or_throw(const BuildResult& build, const char* where);
 pipeline_internal::SegmentBuildPlan session_build_make_segment_plan(const BuildResult& build);
-// Keep the pre-parse plan on the build's DiagCtx for Model::Runner::execution_plan().
-void session_build_record_segment_plan(const BuildResult& build);
 void session_build_validate_explicit_launch_names_or_throw(
     std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins = {});
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);
