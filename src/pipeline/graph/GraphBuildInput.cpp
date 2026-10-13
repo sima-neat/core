@@ -1819,24 +1819,21 @@ template <> struct BuildInputStreamTraits<Sample> {
   }
 };
 
-// What Graph::build(input) resolves for one seeded segment before parse.
-struct InputSegmentPlan {
-  BuildResult br;
-  std::vector<std::shared_ptr<Node>> build_nodes;
-  InputStreamOptions stream_opt;
-  SampleSpec seed_spec;
-  InputOptions normalized_input_opt;
-  const Input* src_node = nullptr;
-  bool has_sink = false;
-};
-
 template <typename InputT>
-InputSegmentPlan plan_input_segment_typed(const std::vector<std::shared_ptr<Node>>& nodes,
-                                          const InputT& sample, const GraphOptions& sess_opt,
-                                          const InputStreamOptions& opt,
-                                          const NameTransform& name_transform, bool insert_queue2,
-                                          int sync_num_buffers_override, bool sync_mode) {
+InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<Node>>& nodes,
+                                            const std::shared_ptr<void>& guard, const void* owner,
+                                            std::string& last_pipeline, const InputT& sample,
+                                            const GraphOptions& sess_opt,
+                                            const InputStreamOptions& opt,
+                                            const NameTransform& name_transform, bool insert_queue2,
+                                            int sync_num_buffers_override, bool sync_mode) {
   using Traits = BuildInputStreamTraits<InputT>;
+  const pipeline_internal::ScopedBuildTiming timing(
+      "run_input_stream_internal", std::string("kind=") + Traits::debug_label() +
+                                       " nodes=" + std::to_string(nodes.size()) +
+                                       " sync=" + std::to_string(sync_mode ? 1 : 0));
+
+  gst_init_once();
   enforce_push_run_mode(nodes, "Graph::build(input)");
   trace_step(Traits::trace_start());
 
@@ -1880,53 +1877,6 @@ InputSegmentPlan plan_input_segment_typed(const std::vector<std::shared_ptr<Node
     br.pipeline_string = session_build_clamp_sync_build_result(br, sync_num_buffers_override);
     br.diag->pipeline_string = br.pipeline_string;
   }
-  return InputSegmentPlan{std::move(br), std::move(build_nodes), std::move(stream_opt),
-                          seed_spec,     normalized_input_opt,   src_node,
-                          has_sink};
-}
-
-template <typename InputT>
-pipeline_internal::SegmentBuildPlan
-plan_input_segment_only(const std::vector<std::shared_ptr<Node>>& nodes, const InputT& sample,
-                        const GraphOptions& sess_opt, const InputStreamOptions& opt,
-                        const NameTransform& name_transform, bool insert_queue2,
-                        int sync_num_buffers_override, bool sync_mode) {
-  gst_init_once();
-  const char* where = "Model::execution_plan";
-  InputSegmentPlan plan =
-      plan_input_segment_typed(nodes, sample, sess_opt, opt, name_transform, insert_queue2,
-                               sync_num_buffers_override, sync_mode);
-  session_build_enforce_mla_num_buffers(plan.br.pipeline_string, where, sync_mode);
-  validate_caps_override_or_throw(plan.src_node->options(), where, plan.br.pipeline_string);
-  (void)session_build_validate_rendered_manifest_or_throw(plan.br, where);
-  return session_build_make_segment_plan(plan.br);
-}
-
-template <typename InputT>
-InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<Node>>& nodes,
-                                            const std::shared_ptr<void>& guard, const void* owner,
-                                            std::string& last_pipeline, const InputT& sample,
-                                            const GraphOptions& sess_opt,
-                                            const InputStreamOptions& opt,
-                                            const NameTransform& name_transform, bool insert_queue2,
-                                            int sync_num_buffers_override, bool sync_mode) {
-  using Traits = BuildInputStreamTraits<InputT>;
-  const pipeline_internal::ScopedBuildTiming timing(
-      "run_input_stream_internal", std::string("kind=") + Traits::debug_label() +
-                                       " nodes=" + std::to_string(nodes.size()) +
-                                       " sync=" + std::to_string(sync_mode ? 1 : 0));
-
-  gst_init_once();
-  InputSegmentPlan plan =
-      plan_input_segment_typed(nodes, sample, sess_opt, opt, name_transform, insert_queue2,
-                               sync_num_buffers_override, sync_mode);
-  BuildResult& br = plan.br;
-  const std::vector<std::shared_ptr<Node>>& build_nodes = plan.build_nodes;
-  InputStreamOptions& stream_opt = plan.stream_opt;
-  const SampleSpec& seed_spec = plan.seed_spec;
-  const InputOptions& normalized_input_opt = plan.normalized_input_opt;
-  const Input* src_node = plan.src_node;
-  const bool has_sink = plan.has_sink;
   last_pipeline = br.pipeline_string;
   br.pipeline_string = last_pipeline;
   br.diag->pipeline_string = last_pipeline;
@@ -1941,6 +1891,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   enforce_mla_pipeline_guard("Graph::build(input)", last_pipeline, owner);
   validate_caps_override_or_throw(src_node->options(), "Graph::build(input)", last_pipeline);
 
+  session_build_record_segment_plan(br);
   GstElement* pipeline = session_build_parse_pipeline_or_throw(br, "Graph::build(input)");
   session_build_dump_pipeline_element_properties(pipeline);
   trace_step(Traits::trace_parsed());
@@ -2672,109 +2623,38 @@ void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Nod
   }
 }
 
-namespace {
-
-bool cross_run_gstsample_push_allowed() {
-  return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
-}
-
-// Rejects a seed whose device buffers still belong to another Run and cannot be handed over.
-void require_transferable_seed(const Sample& seed, const char* where) {
-  if (!pipeline_internal::sample_has_device_gstsample_producer_lifetime(
-          seed, /*require_expired=*/false)) {
-    return;
-  }
-  std::string reason;
-  if (!pipeline_internal::sample_has_transferable_zero_copy_loan(seed, &reason)) {
-    throw std::runtime_error(pipeline_internal::cross_run_zero_copy_sample_error(where) +
-                             (reason.empty() ? std::string{} : " Reason: " + reason + "."));
-  }
-}
-
-} // namespace
-
 Run Graph::build(const std::vector<cv::Mat>& inputs, const RunOptions& opt) {
   return build_seeded_internal(inputs, RunMode::Async, opt);
 }
 
 Run Graph::build(const TensorList& inputs, const RunOptions& opt) {
-  if (!cross_run_gstsample_push_allowed()) {
-    require_transferable_seed(sample_from_tensors(inputs), "Graph::build(tensors)");
+  if (!pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false)) {
+    Sample sample = sample_from_tensors(inputs);
+    if (pipeline_internal::sample_has_device_gstsample_producer_lifetime(
+            sample, /*require_expired=*/false)) {
+      std::string reason;
+      if (!pipeline_internal::sample_has_transferable_zero_copy_loan(sample, &reason)) {
+        throw std::runtime_error(
+            pipeline_internal::cross_run_zero_copy_sample_error("Graph::build(tensors)") +
+            (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+      }
+    }
   }
   return build_seeded_internal(inputs, RunMode::Async, opt);
 }
 
 Run Graph::build(const Sample& inputs, const RunOptions& opt) {
-  if (!cross_run_gstsample_push_allowed()) {
-    require_transferable_seed(inputs, "Graph::build(sample)");
-  }
-  return build_seeded_internal(inputs, RunMode::Async, opt);
-}
-
-namespace {
-
-void require_seed_images(const std::vector<cv::Mat>& inputs) {
-  if (inputs.empty()) {
-    throw std::runtime_error("Graph::build(inputs): empty image list");
-  }
-  for (std::size_t i = 0; i < inputs.size(); ++i) {
-    if (inputs[i].empty()) {
-      throw std::runtime_error("Graph::build(inputs): empty image input at index " +
-                               std::to_string(i));
+  if (!pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false) &&
+      pipeline_internal::sample_has_device_gstsample_producer_lifetime(inputs,
+                                                                       /*require_expired=*/false)) {
+    std::string reason;
+    if (!pipeline_internal::sample_has_transferable_zero_copy_loan(inputs, &reason)) {
+      throw std::runtime_error(
+          pipeline_internal::cross_run_zero_copy_sample_error("Graph::build(sample)") +
+          (reason.empty() ? std::string{} : " Reason: " + reason + "."));
     }
   }
-}
-
-runtime::RunCoreStartOptions
-seeded_start_options(const RunOptions& opt, RunMode mode, const VerboseOptions& verbose,
-                     Sample seed, std::shared_ptr<void> guard,
-                     std::shared_ptr<const pipeline_internal::InputRouteProcessor> route) {
-  runtime::RunCoreStartOptions start_opt;
-  start_opt.run_options = opt;
-  start_opt.mode = mode;
-  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, verbose);
-  start_opt.seed = std::move(seed);
-  start_opt.guard = std::move(guard);
-  start_opt.input_route_processor = std::move(route);
-  start_opt.allow_startup_preflight = true;
-  return start_opt;
-}
-
-} // namespace
-
-Sample Graph::linear_seed_(const std::vector<cv::Mat>& inputs, RunMode mode,
-                           const RunOptions& opt) const {
-  const auto nodes = linear_nodes_snapshot("Graph::build(inputs)");
-  const BuildInputContext ctx = session_build_prepare_build_input_context(nodes, opt_, mode, opt);
-  InputOptions src_opt =
-      linear_seed_input_options(composition_view_for_internal_compile(), *ctx.src_node);
-  src_opt.memory_policy = pipeline_internal::resolve_input_memory(src_opt, nodes).allocation;
-  if (!input_options_expect_tensor_media(src_opt) && inputs.size() != 1U) {
-    throw std::runtime_error("Graph::build(inputs): raw-image ingress supports exactly one "
-                             "cv::Mat per inference item");
-  }
-  TensorList tensors = tensor_list_from_mats(inputs, src_opt, "Graph::build(inputs)");
-  return input_route_processor_
-             ? input_route_processor_->process_tensors(tensors, "Graph::build(inputs)")
-             : pipeline_internal::sample_from_tensors_for_input(tensors, src_opt);
-}
-
-Sample Graph::linear_seed_(const TensorList& inputs) const {
-  const auto nodes = linear_nodes_snapshot("Graph::build(inputs)");
-  const Input* explicit_input = first_input_node(nodes);
-  InputOptions src_opt;
-  if (explicit_input) {
-    src_opt = linear_seed_input_options(composition_view_for_internal_compile(), *explicit_input);
-  }
-  return input_route_processor_
-             ? input_route_processor_->seed_tensors(inputs, "Graph::build(inputs)")
-             : pipeline_internal::sample_from_tensors_for_input(inputs, src_opt);
-}
-
-Sample Graph::linear_seed_(const Sample& inputs) const {
-  return input_route_processor_
-             ? input_route_processor_->seed_samples(inputs, "Graph::build(inputs)")
-             : inputs.front();
+  return build_seeded_internal(inputs, RunMode::Async, opt);
 }
 
 Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mode,
@@ -2785,7 +2665,15 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
   pipeline_internal::ux::ProgressReporter progress(opt_.verbose, 4);
   progress.step("Initializing runtime...");
   gst_init_once();
-  require_seed_images(inputs);
+  if (inputs.empty()) {
+    throw std::runtime_error("Graph::build(inputs): empty image list");
+  }
+  for (std::size_t i = 0; i < inputs.size(); ++i) {
+    if (inputs[i].empty()) {
+      throw std::runtime_error("Graph::build(inputs): empty image input at index " +
+                               std::to_string(i));
+    }
+  }
   if (composition_ && !composition_->is_linear()) {
     progress.step("Building graph...");
     runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
@@ -2793,22 +2681,46 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
     Sample seed =
         connected_seed_from_images(plan, inputs, input_route_processor_, "Graph::build(inputs)");
     progress.step("Starting pipeline...");
-    auto start_opt = seeded_start_options(opt, mode, opt_.verbose, std::move(seed), guard_,
-                                          input_route_processor_);
+    runtime::RunCoreStartOptions start_opt;
+    start_opt.run_options = opt;
+    start_opt.mode = mode;
+    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.seed = std::move(seed);
+    start_opt.guard = guard_;
+    start_opt.input_route_processor = input_route_processor_;
     start_opt.last_pipeline = &last_pipeline_;
     start_opt.owner = this;
+    start_opt.allow_startup_preflight = true;
     auto core = runtime::RunCore::start(std::move(plan), std::move(start_opt));
     progress.done("Graph ready");
     return Run(std::move(core));
   }
+  const auto nodes = linear_nodes_snapshot("Graph::build(inputs)");
+  const BuildInputContext ctx = session_build_prepare_build_input_context(nodes, opt_, mode, opt);
   progress.step("Preparing input stream...");
-  Sample seed = linear_seed_(inputs, mode, opt);
+  InputOptions src_opt =
+      linear_seed_input_options(composition_view_for_internal_compile(), *ctx.src_node);
+  src_opt.memory_policy = pipeline_internal::resolve_input_memory(src_opt, nodes).allocation;
+  if (!input_options_expect_tensor_media(src_opt) && inputs.size() != 1U) {
+    throw std::runtime_error("Graph::build(inputs): raw-image ingress supports exactly one "
+                             "cv::Mat per inference item");
+  }
+  TensorList tensors = tensor_list_from_mats(inputs, src_opt, "Graph::build(inputs)");
+  Sample seed = input_route_processor_
+                    ? input_route_processor_->process_tensors(tensors, "Graph::build(inputs)")
+                    : pipeline_internal::sample_from_tensors_for_input(tensors, src_opt);
   progress.step("Building graph...");
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
-  auto start_opt = seeded_start_options(opt, mode, opt_.verbose, std::move(seed), guard_,
-                                        input_route_processor_);
+  runtime::RunCoreStartOptions start_opt;
+  start_opt.run_options = opt;
+  start_opt.mode = mode;
+  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.seed = std::move(seed);
+  start_opt.guard = guard_;
+  start_opt.input_route_processor = input_route_processor_;
   start_opt.last_pipeline = &last_pipeline_;
   start_opt.owner = this;
+  start_opt.allow_startup_preflight = true;
   auto core = runtime::RunCore::start(std::move(plan), std::move(start_opt));
   progress.done("Graph ready");
   return Run(std::move(core));
@@ -2831,22 +2743,42 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
     Sample seed =
         connected_seed_from_tensors(plan, inputs, input_route_processor_, "Graph::build(inputs)");
     progress.step("Starting pipeline...");
-    auto start_opt = seeded_start_options(opt, mode, opt_.verbose, std::move(seed), guard_,
-                                          input_route_processor_);
+    runtime::RunCoreStartOptions start_opt;
+    start_opt.run_options = opt;
+    start_opt.mode = mode;
+    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.seed = std::move(seed);
+    start_opt.guard = guard_;
+    start_opt.input_route_processor = input_route_processor_;
     start_opt.last_pipeline = &last_pipeline_;
     start_opt.owner = this;
+    start_opt.allow_startup_preflight = true;
     auto core = runtime::RunCore::start(std::move(plan), std::move(start_opt));
     progress.done("Graph ready");
     return Run(std::move(core));
   }
+  const auto nodes = linear_nodes_snapshot("Graph::build(inputs)");
   progress.step("Preparing input stream...");
-  Sample seed = linear_seed_(inputs);
+  const Input* explicit_input = first_input_node(nodes);
+  InputOptions src_opt;
+  if (explicit_input) {
+    src_opt = linear_seed_input_options(composition_view_for_internal_compile(), *explicit_input);
+  }
+  Sample seed = input_route_processor_
+                    ? input_route_processor_->seed_tensors(inputs, "Graph::build(inputs)")
+                    : pipeline_internal::sample_from_tensors_for_input(inputs, src_opt);
   progress.step("Building graph...");
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
-  auto start_opt = seeded_start_options(opt, mode, opt_.verbose, std::move(seed), guard_,
-                                        input_route_processor_);
+  runtime::RunCoreStartOptions start_opt;
+  start_opt.run_options = opt;
+  start_opt.mode = mode;
+  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.seed = std::move(seed);
+  start_opt.guard = guard_;
+  start_opt.input_route_processor = input_route_processor_;
   start_opt.last_pipeline = &last_pipeline_;
   start_opt.owner = this;
+  start_opt.allow_startup_preflight = true;
   auto core = runtime::RunCore::start(std::move(plan), std::move(start_opt));
   progress.done("Graph ready");
   return Run(std::move(core));
@@ -2869,81 +2801,39 @@ Run Graph::build_seeded_internal(const Sample& inputs, RunMode mode, const RunOp
     Sample seed =
         connected_seed_from_samples(plan, inputs, input_route_processor_, "Graph::build(inputs)");
     progress.step("Starting pipeline...");
-    auto start_opt = seeded_start_options(opt, mode, opt_.verbose, std::move(seed), guard_,
-                                          input_route_processor_);
+    runtime::RunCoreStartOptions start_opt;
+    start_opt.run_options = opt;
+    start_opt.mode = mode;
+    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.seed = std::move(seed);
+    start_opt.guard = guard_;
+    start_opt.input_route_processor = input_route_processor_;
     start_opt.last_pipeline = &last_pipeline_;
     start_opt.owner = this;
+    start_opt.allow_startup_preflight = true;
     auto core = runtime::RunCore::start(std::move(plan), std::move(start_opt));
     progress.done("Graph ready");
     return Run(std::move(core));
   }
   progress.step("Preparing input stream...");
-  Sample seed = linear_seed_(inputs);
+  Sample seed = input_route_processor_
+                    ? input_route_processor_->seed_samples(inputs, "Graph::build(inputs)")
+                    : inputs.front();
   progress.step("Building graph...");
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
-  auto start_opt = seeded_start_options(opt, mode, opt_.verbose, std::move(seed), guard_,
-                                        input_route_processor_);
+  runtime::RunCoreStartOptions start_opt;
+  start_opt.run_options = opt;
+  start_opt.mode = mode;
+  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.seed = std::move(seed);
+  start_opt.guard = guard_;
+  start_opt.input_route_processor = input_route_processor_;
   start_opt.last_pipeline = &last_pipeline_;
   start_opt.owner = this;
+  start_opt.allow_startup_preflight = true;
   auto core = runtime::RunCore::start(std::move(plan), std::move(start_opt));
   progress.done("Graph ready");
   return Run(std::move(core));
-}
-
-namespace {
-
-void require_linear_for_plan(bool linear) {
-  if (!linear) {
-    throw std::runtime_error("Graph::plan_seeded_internal: only linear graphs can be planned");
-  }
-}
-
-} // namespace
-
-pipeline_internal::SegmentBuildPlan Graph::plan_seeded_internal(const std::vector<cv::Mat>& inputs,
-                                                                const RunOptions& opt) const {
-  gst_init_once();
-  require_seed_images(inputs);
-  require_linear_for_plan(!composition_ || composition_->is_linear());
-  Sample seed = linear_seed_(inputs, RunMode::Async, opt);
-  runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
-  return runtime::RunCore::plan_linear_start(
-      plan, seeded_start_options(opt, RunMode::Async, opt_.verbose, std::move(seed), guard_,
-                                 input_route_processor_));
-}
-
-pipeline_internal::SegmentBuildPlan Graph::plan_seeded_internal(const TensorList& inputs,
-                                                                const RunOptions& opt) const {
-  gst_init_once();
-  if (inputs.empty()) {
-    throw std::runtime_error("Graph::plan_seeded_internal: empty tensor list");
-  }
-  require_linear_for_plan(!composition_ || composition_->is_linear());
-  if (!cross_run_gstsample_push_allowed()) {
-    require_transferable_seed(sample_from_tensors(inputs), "Graph::plan_seeded_internal(tensors)");
-  }
-  Sample seed = linear_seed_(inputs);
-  runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
-  return runtime::RunCore::plan_linear_start(
-      plan, seeded_start_options(opt, RunMode::Async, opt_.verbose, std::move(seed), guard_,
-                                 input_route_processor_));
-}
-
-pipeline_internal::SegmentBuildPlan Graph::plan_seeded_internal(const Sample& inputs,
-                                                                const RunOptions& opt) const {
-  gst_init_once();
-  if (inputs.empty()) {
-    throw std::runtime_error("Graph::plan_seeded_internal: empty sample list");
-  }
-  require_linear_for_plan(!composition_ || composition_->is_linear());
-  if (!cross_run_gstsample_push_allowed()) {
-    require_transferable_seed(inputs, "Graph::plan_seeded_internal(sample)");
-  }
-  Sample seed = linear_seed_(inputs);
-  runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, seed);
-  return runtime::RunCore::plan_linear_start(
-      plan, seeded_start_options(opt, RunMode::Async, opt_.verbose, std::move(seed), guard_,
-                                 input_route_processor_));
 }
 
 TensorList Graph::run(const std::vector<cv::Mat>& inputs, const RunOptions& opt) {
@@ -3052,26 +2942,6 @@ void session_build_maybe_enable_rtsp_appsink_drop(
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
 session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes) {
   return public_output_endpoint_selector_local(nodes);
-}
-
-pipeline_internal::SegmentBuildPlan
-session_build_plan_input_segment(const std::vector<std::shared_ptr<Node>>& nodes,
-                                 const cv::Mat& sample, const GraphOptions& sess_opt,
-                                 const InputStreamOptions& opt, const NameTransform& name_transform,
-                                 bool insert_queue2, int sync_num_buffers_override,
-                                 bool sync_mode) {
-  return plan_input_segment_only(nodes, sample, sess_opt, opt, name_transform, insert_queue2,
-                                 sync_num_buffers_override, sync_mode);
-}
-
-pipeline_internal::SegmentBuildPlan
-session_build_plan_input_segment(const std::vector<std::shared_ptr<Node>>& nodes,
-                                 const Sample& sample, const GraphOptions& sess_opt,
-                                 const InputStreamOptions& opt, const NameTransform& name_transform,
-                                 bool insert_queue2, int sync_num_buffers_override,
-                                 bool sync_mode) {
-  return plan_input_segment_only(nodes, sample, sess_opt, opt, name_transform, insert_queue2,
-                                 sync_num_buffers_override, sync_mode);
 }
 
 BuildInputContext

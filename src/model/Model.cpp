@@ -22,6 +22,7 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Tess.h"
 #include "pipeline/Graph.h"
+#include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -32,6 +33,7 @@
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/ExecutionPlanAssembly.h"
+#include "pipeline/runtime/RunCore.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
@@ -70,7 +72,6 @@
 #include <thread>
 #include <unordered_set>
 #include <utility>
-#include <variant>
 
 namespace simaai::neat {
 namespace {
@@ -7474,43 +7475,8 @@ Model::Runner Model::build(const simaai::neat::RunOptions& run_opt) {
   return build(Model::RouteOptions{}, run_opt);
 }
 
-namespace internal {
-
-// What Model::build hands to Graph::build; Model::execution_plan plans the same Graph and seed.
-struct PreparedModelBuild {
-  Graph graph;
-  RunOptions run_opt;
-  std::variant<TensorList, Sample, std::vector<cv::Mat>> seed;
-  std::optional<InputOptions> tensor_input_opt;
-  std::vector<std::string> ingress_names;
-  std::string model_name;
-};
-
-} // namespace internal
-
-namespace {
-
-Model::Runner start_prepared_model_build(internal::PreparedModelBuild prepared) {
-  Run run =
-      std::visit([&](const auto& seed) { return prepared.graph.build(seed, prepared.run_opt); },
-                 prepared.seed);
-  return prepared.tensor_input_opt.has_value()
-             ? Model::Runner(std::move(run), *prepared.tensor_input_opt,
-                             std::move(prepared.ingress_names))
-             : Model::Runner(std::move(run), std::move(prepared.ingress_names));
-}
-
-ExecutionPlan plan_prepared_model_build(const internal::PreparedModelBuild& prepared) {
-  const pipeline_internal::SegmentBuildPlan build = std::visit(
-      [&](const auto& seed) { return prepared.graph.plan_seeded_internal(seed, prepared.run_opt); },
-      prepared.seed);
-  return internal::ExecutionPlanAccess::make(build, prepared.model_name);
-}
-
-} // namespace
-
-internal::PreparedModelBuild Model::prepare_build_(const Model::RouteOptions& opt,
-                                                   const simaai::neat::RunOptions& run_opt) {
+Model::Runner Model::build(const Model::RouteOptions& opt,
+                           const simaai::neat::RunOptions& run_opt) {
   const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
   const auto ingress_contracts =
@@ -7540,24 +7506,17 @@ internal::PreparedModelBuild Model::prepare_build_(const Model::RouteOptions& op
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  internal::PreparedModelBuild prepared{
-      std::move(p),
-      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt),
-      std::move(dummy_inputs),
-      std::nullopt,
-      ingress_names_from_contracts(ingress_contracts),
-      impl_->pack.logical_package_name()};
+  const RunOptions effective_run_opt =
+      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  Run run = p.build(dummy_inputs, effective_run_opt);
+  const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (tensor_mode) {
     const auto src_opts2 = input_appsrc_options_list(true);
-    prepared.tensor_input_opt =
+    const InputOptions src_opt =
         !src_opts2.empty() ? src_opts2.front() : pack.input_appsrc_options(true);
+    return Runner(std::move(run), src_opt, ingress_names);
   }
-  return prepared;
-}
-
-Model::Runner Model::build(const Model::RouteOptions& opt,
-                           const simaai::neat::RunOptions& run_opt) {
-  return start_prepared_model_build(prepare_build_(opt, run_opt));
+  return Runner(std::move(run), ingress_names);
 }
 
 Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::RouteOptions& opt,
@@ -7569,13 +7528,6 @@ Model::Runner Model::build_with_model_options(const simaai::neat::TensorList& in
                                               const Model::RouteOptions& opt,
                                               const simaai::neat::RunOptions& run_opt,
                                               const Model::Options& model_opt) {
-  return start_prepared_model_build(prepare_build_(inputs, opt, run_opt, model_opt));
-}
-
-internal::PreparedModelBuild Model::prepare_build_(const simaai::neat::TensorList& inputs,
-                                                   const Model::RouteOptions& opt,
-                                                   const simaai::neat::RunOptions& run_opt,
-                                                   const Model::Options& model_opt) {
   const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   if (inputs.empty()) {
     throw std::runtime_error("Model::build: empty tensor list");
@@ -7615,15 +7567,12 @@ internal::PreparedModelBuild Model::prepare_build_(const simaai::neat::TensorLis
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  internal::PreparedModelBuild prepared{
-      std::move(p),
-      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt),
-      inputs,
-      std::nullopt,
-      ingress_names_from_contracts(ingress_contracts),
-      impl_->pack.logical_package_name()};
+  const RunOptions effective_run_opt =
+      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  Run run = p.build(inputs, effective_run_opt);
+  const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (!tensor_mode) {
-    return prepared;
+    return Runner(std::move(run), ingress_names);
   }
   const auto src_opts = input_appsrc_options_list(true);
   const InputOptions src_opt =
@@ -7634,24 +7583,18 @@ internal::PreparedModelBuild Model::prepare_build_(const simaai::neat::TensorLis
                  resolve_input_media_type(src_opt).c_str(), src_opt.format.str().c_str(),
                  src_opt.width, src_opt.height, src_opt.depth);
   }
-  prepared.tensor_input_opt = src_opt;
-  return prepared;
+  return Runner(std::move(run), src_opt, ingress_names);
 }
 
 Model::Runner Model::build(const simaai::neat::Sample& inputs, const Model::RouteOptions& opt,
                            const simaai::neat::RunOptions& run_opt) {
-  return start_prepared_model_build(prepare_build_(inputs, opt, run_opt));
-}
-
-internal::PreparedModelBuild Model::prepare_build_(const simaai::neat::Sample& inputs,
-                                                   const Model::RouteOptions& opt,
-                                                   const simaai::neat::RunOptions& run_opt) {
   const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   if (inputs.empty()) {
     throw std::runtime_error("Model::build: empty sample list");
   }
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
+  const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   const bool use_input_route_processor =
       plan_uses_model_input_route_processor(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
@@ -7679,24 +7622,15 @@ internal::PreparedModelBuild Model::prepare_build_(const simaai::neat::Sample& i
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  return internal::PreparedModelBuild{
-      std::move(p),
-      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt),
-      inputs,
-      std::nullopt,
-      ingress_names_from_contracts(ingress_contracts),
-      impl_->pack.logical_package_name()};
+  const RunOptions effective_run_opt =
+      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  Run run = p.build(inputs, effective_run_opt);
+  return Runner(std::move(run), ingress_names);
 }
 
 #if defined(SIMA_WITH_OPENCV)
 Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::RouteOptions& opt,
                            const simaai::neat::RunOptions& run_opt) {
-  return start_prepared_model_build(prepare_build_(inputs, opt, run_opt));
-}
-
-internal::PreparedModelBuild Model::prepare_build_(const std::vector<cv::Mat>& inputs,
-                                                   const Model::RouteOptions& opt,
-                                                   const simaai::neat::RunOptions& run_opt) {
   const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   if (inputs.empty()) {
     throw std::runtime_error("Model::build: empty image list");
@@ -7722,7 +7656,7 @@ internal::PreparedModelBuild Model::prepare_build_(const std::vector<cv::Mat>& i
       tensors.emplace_back(
           simaai::neat::tensor_from_cv_mat(prepared_input, src_opt, "Model::build"));
     }
-    return prepare_build_(tensors, build_opt, run_opt, impl_->options);
+    return build(tensors, build_opt, run_opt);
   }
   impl_->pack.prepare_for_execution();
   internal::ModelPack pack = impl_->pack;
@@ -7742,12 +7676,32 @@ internal::PreparedModelBuild Model::prepare_build_(const std::vector<cv::Mat>& i
                                     &info, false, false);
   Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
   add_nodes_to_graph(p, std::move(nodes));
-  return internal::PreparedModelBuild{
-      std::move(p), run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt),
-      inputs,       std::nullopt,
-      {},           impl_->pack.logical_package_name()};
+  const RunOptions effective_run_opt =
+      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  Run run = p.build(inputs, effective_run_opt);
+  return Runner(std::move(run));
 }
 #endif
+
+namespace {
+
+// Startup preflight pushes a frame through the pipeline; the plan needs only the build.
+simaai::neat::RunOptions plan_run_options(simaai::neat::RunOptions run_opt) {
+  run_opt.startup_preflight = false;
+  return run_opt;
+}
+
+// Reads the plan the build recorded; the Runner closes its pipeline when it goes out of scope.
+ExecutionPlan plan_of_build(Model::Runner runner, const std::string& model_name) {
+  const auto core = run_internal::core(internal::ModelAccess::run(runner));
+  const auto diag = core ? core->pipeline.stream.diag_ctx() : nullptr;
+  if (!diag || !diag->build_plan) {
+    throw std::runtime_error("Model::execution_plan: the build recorded no plan");
+  }
+  return internal::ExecutionPlanAccess::make(*diag->build_plan, model_name);
+}
+
+} // namespace
 
 ExecutionPlan Model::execution_plan() {
   return execution_plan(Model::RouteOptions{}, simaai::neat::RunOptions{});
@@ -7763,26 +7717,29 @@ ExecutionPlan Model::execution_plan(const simaai::neat::RunOptions& run_opt) {
 
 ExecutionPlan Model::execution_plan(const Model::RouteOptions& opt,
                                     const simaai::neat::RunOptions& run_opt) {
-  return plan_prepared_model_build(prepare_build_(opt, run_opt));
+  return plan_of_build(build(opt, plan_run_options(run_opt)), impl_->pack.logical_package_name());
 }
 
 ExecutionPlan Model::execution_plan(const simaai::neat::TensorList& inputs,
                                     const Model::RouteOptions& opt,
                                     const simaai::neat::RunOptions& run_opt) {
-  return plan_prepared_model_build(prepare_build_(inputs, opt, run_opt, impl_->options));
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
 }
 
 ExecutionPlan Model::execution_plan(const simaai::neat::Sample& inputs,
                                     const Model::RouteOptions& opt,
                                     const simaai::neat::RunOptions& run_opt) {
-  return plan_prepared_model_build(prepare_build_(inputs, opt, run_opt));
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
 }
 
 #if defined(SIMA_WITH_OPENCV)
 ExecutionPlan Model::execution_plan(const std::vector<cv::Mat>& inputs,
                                     const Model::RouteOptions& opt,
                                     const simaai::neat::RunOptions& run_opt) {
-  return plan_prepared_model_build(prepare_build_(inputs, opt, run_opt));
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
 }
 #endif
 

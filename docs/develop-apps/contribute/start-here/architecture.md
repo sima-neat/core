@@ -185,11 +185,11 @@ failure should surface as an actionable structured error rather than a hidden ru
 
 ### Public execution plan
 
-`Model::execution_plan(...)` returns what `build(...)` with the same arguments would run: the
-Model's graph nodes in pipeline order, where each node runs (`A65`, `EV74`, or `MLA`), and the
-tensors on the edges between them. It runs the same compile step as `build(...)` and stops before
-GStreamer parse, so it starts no pipeline and allocates no device memory. It is a public
-diagnostic view, separate from the internal `ModelExecutionPlan` described below. Its JSON
+`Model::execution_plan(...)` returns what `build(...)` with the same arguments runs: the Model's
+graph nodes in pipeline order, where each node runs (`A65`, `EV74`, or `MLA`), and the tensors on
+the edges between them. It calls `build(...)` with startup preflight off, reads the plan that the
+build recorded on its `DiagCtx` before GStreamer parse, and closes the pipeline, so it needs the
+same device as `build(...)`. It is a public diagnostic view, separate from the internal `ModelExecutionPlan` described below. Its JSON
 contract is `schemas/execution_plan_v1.schema.json`; `schema_version` changes only when a change
 breaks existing readers.
 

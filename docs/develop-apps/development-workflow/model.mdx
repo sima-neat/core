@@ -418,7 +418,7 @@ Treat route warnings as first-class evidence. If the route planner is telling yo
 
 ### See what the model executes
 
-Use `execution_plan()` to see the nodes a model runs, where each node runs, and the tensors that flow between them. `Model::execution_plan(...)` takes the same arguments as `build(...)` and prepares the same pipeline without starting it.
+Use `execution_plan()` to see the nodes a model runs, where each node runs, and the tensors that flow between them. `Model::execution_plan(...)` takes the same arguments as `build(...)`, builds the model without running a frame, and closes it after reading the plan, so it needs the device.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

@@ -418,7 +418,7 @@ for warning in info.warnings:
 
 ### モデルが実行する内容を確認する
 
-`execution_plan()` を使うと、モデルが実行するノード、各ノードが実行される場所、ノード間を流れるテンソルを確認できます。`Model::execution_plan(...)` は `build(...)` と同じ引数を受け取り、同じパイプラインを開始せずに準備します。
+`execution_plan()` を使うと、モデルが実行するノード、各ノードが実行される場所、ノード間を流れるテンソルを確認できます。`Model::execution_plan(...)` は `build(...)` と同じ引数を受け取り、フレームを実行せずにモデルをビルドし、プランを読み取った後に閉じます。そのため、デバイスが必要です。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

@@ -3,8 +3,8 @@
  * @ingroup diagnostics
  * @brief What a Model executes: its nodes, where each one runs, and the tensors between them.
  *
- * `Model::execution_plan(...)` takes the same arguments as `Model::build(...)` and returns the
- * plan that build would execute, without starting a pipeline.
+ * `Model::execution_plan(...)` takes the same arguments as `Model::build(...)`, builds the Model,
+ * and returns the plan that build recorded.
  *
  * The plan is read through its versioned JSON document (schema `sima.neat.execution_plan`,
  * documented in `schemas/execution_plan_v1.schema.json`).

@@ -1575,16 +1575,26 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
   return out;
 }
 
-namespace {
+std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
+                                                         RunCoreStartOptions opt) {
+  const auto total_start = pipeline_internal::build_timing_now();
+  gst_init_once();
 
-// Steps shared by start_pipeline_segment and plan_pipeline_segment before a build path is chosen.
-std::vector<std::shared_ptr<simaai::neat::Node>>
-resolve_segment_start_nodes(const PipelineSegmentPlan& segment, RunCoreStartOptions& opt) {
+  const auto materialize_start = pipeline_internal::build_timing_now();
   MaterializedSegmentNodes materialized = materialize_segment_nodes(segment);
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes = std::move(materialized.nodes);
+  const auto materialize_us = pipeline_internal::build_timing_us(materialize_start);
   if (nodes.empty()) {
     throw std::runtime_error("RunCore::start_pipeline_segment: empty pipeline segment");
   }
+
+  std::string local_last_pipeline;
+  std::string& last_pipeline = opt.last_pipeline ? *opt.last_pipeline : local_last_pipeline;
+  // Runtime queue capacity and accelerator lane depth are independent
+  // contracts.  RunOptions::queue_depth controls framework ingress/egress
+  // queues; the model-authored ProcessMLA num-buffers value must remain intact
+  // unless GraphOptions carries an explicit ProcessMLA pool override.
+  GraphOptions route_options = segment.route_options;
   if (segment.boundary_hints.has_value()) {
     if (!opt.input_route_processor && segment.boundary_hints->input_route_processor) {
       opt.input_route_processor = segment.boundary_hints->input_route_processor;
@@ -1598,69 +1608,12 @@ resolve_segment_start_nodes(const PipelineSegmentPlan& segment, RunCoreStartOpti
     throw std::runtime_error(
         "RunCore::start_pipeline_segment: image_seed and seed are mutually exclusive");
   }
-  if (!opt.image_seed && !opt.seed.has_value() && segment.boundary.needs_input &&
-      !segment.boundary.source_like) {
-    throw std::runtime_error(
-        "RunCore::start_pipeline_segment: push-style segment requires an input seed");
-  }
-  return nodes;
-}
-
-InputStreamOptions segment_input_stream_options(const PipelineSegmentPlan& segment,
-                                                const RunCoreStartOptions& opt,
-                                                const BuildInputContext& ctx) {
-  InputStreamOptions build_stream_opt = ctx.stream_opt;
-  build_stream_opt.startup_preflight =
-      opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
-  build_stream_opt.allow_graph_internal_zero_copy_input =
-      segment.boundary.needs_input && !segment.input_edges.empty();
-  tune_internal_zero_copy_holder_window(build_stream_opt, opt.graph_options,
-                                        segment.boundary.graph_internal_output);
-  return build_stream_opt;
-}
-
-} // namespace
-
-pipeline_internal::SegmentBuildPlan
-RunCore::plan_pipeline_segment(const PipelineSegmentPlan& segment, RunCoreStartOptions opt) {
-  gst_init_once();
-  const auto nodes = resolve_segment_start_nodes(segment, opt);
-  if (!opt.image_seed && !opt.seed.has_value()) {
-    throw std::runtime_error("RunCore::plan_pipeline_segment: only seeded segments can be planned");
-  }
-  const bool public_output_contract = !segment.boundary.graph_internal_output;
-  const BuildInputContext ctx = session_build_prepare_build_input_context(
-      nodes, segment.route_options, opt.mode, opt.run_options, public_output_contract);
-  const InputStreamOptions build_stream_opt = segment_input_stream_options(segment, opt, ctx);
-  if (opt.image_seed) {
-    return session_build_plan_input_segment(
-        nodes, *opt.image_seed, segment.route_options, build_stream_opt, ctx.name_transform,
-        ctx.insert_queue2, ctx.sync_num_buffers_override, ctx.mode == RunMode::Sync);
-  }
-  return session_build_plan_input_segment(nodes, *opt.seed, segment.route_options, build_stream_opt,
-                                          ctx.name_transform, ctx.insert_queue2,
-                                          ctx.sync_num_buffers_override, ctx.mode == RunMode::Sync);
-}
-
-std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
-                                                         RunCoreStartOptions opt) {
-  const auto total_start = pipeline_internal::build_timing_now();
-  gst_init_once();
-
-  const auto materialize_start = pipeline_internal::build_timing_now();
-  std::vector<std::shared_ptr<simaai::neat::Node>> nodes =
-      resolve_segment_start_nodes(segment, opt);
-  const auto materialize_us = pipeline_internal::build_timing_us(materialize_start);
-
-  std::string local_last_pipeline;
-  std::string& last_pipeline = opt.last_pipeline ? *opt.last_pipeline : local_last_pipeline;
-  // Runtime queue capacity and accelerator lane depth are independent
-  // contracts.  RunOptions::queue_depth controls framework ingress/egress
-  // queues; the model-authored ProcessMLA num-buffers value must remain intact
-  // unless GraphOptions carries an explicit ProcessMLA pool override.
-  GraphOptions route_options = segment.route_options;
 
   if (!opt.image_seed && !opt.seed.has_value()) {
+    if (segment.boundary.needs_input && !segment.boundary.source_like) {
+      throw std::runtime_error(
+          "RunCore::start_pipeline_segment: push-style segment requires an input seed");
+    }
     const auto source_start = pipeline_internal::build_timing_now();
     const bool public_output_contract = !segment.boundary.graph_internal_output;
     SourceStreamBuildContext source =
@@ -1697,7 +1650,13 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   const BuildInputContext ctx = session_build_prepare_build_input_context(
       nodes, route_options, opt.mode, opt.run_options, public_output_contract);
   const auto context_us = pipeline_internal::build_timing_us(context_start);
-  InputStreamOptions build_stream_opt = segment_input_stream_options(segment, opt, ctx);
+  InputStreamOptions build_stream_opt = ctx.stream_opt;
+  build_stream_opt.startup_preflight =
+      opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
+  build_stream_opt.allow_graph_internal_zero_copy_input =
+      segment.boundary.needs_input && !segment.input_edges.empty();
+  tune_internal_zero_copy_holder_window(build_stream_opt, opt.graph_options,
+                                        segment.boundary.graph_internal_output);
   InputStream stream;
   const auto input_stream_start = pipeline_internal::build_timing_now();
   if (opt.image_seed) {

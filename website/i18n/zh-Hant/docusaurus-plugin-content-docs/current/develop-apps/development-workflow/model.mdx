@@ -418,7 +418,7 @@ for warning in info.warnings:
 
 ### 查看模型執行的內容
 
-使用 `execution_plan()` 可查看模型執行的節點、每個節點的執行位置，以及在節點之間流動的張量。`Model::execution_plan(...)` 接受與 `build(...)` 相同的引數，並準備相同的管線但不啟動它。
+使用 `execution_plan()` 可查看模型執行的節點、每個節點的執行位置，以及在節點之間流動的張量。`Model::execution_plan(...)` 接受與 `build(...)` 相同的引數，在不執行任何影格的情況下建置模型，並在讀取計畫後將其關閉，因此需要裝置。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

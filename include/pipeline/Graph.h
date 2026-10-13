@@ -66,7 +66,6 @@ class Node;
 }
 namespace pipeline_internal {
 struct InputRouteProcessor;
-struct SegmentBuildPlan;
 }
 
 class Graph;
@@ -314,15 +313,6 @@ public:
   Run build_seeded_internal(const TensorList& inputs, RunMode mode, const RunOptions& opt = {});
   /// Internal seeded build variant for Samples.
   Run build_seeded_internal(const Sample& inputs, RunMode mode, const RunOptions& opt = {});
-  /// Resolves what `build(inputs, opt)` would build for a linear Graph, without starting it.
-  pipeline_internal::SegmentBuildPlan plan_seeded_internal(const std::vector<cv::Mat>& inputs,
-                                                           const RunOptions& opt = {}) const;
-  /// Plan variant for tensors.
-  pipeline_internal::SegmentBuildPlan plan_seeded_internal(const TensorList& inputs,
-                                                           const RunOptions& opt = {}) const;
-  /// Plan variant for Samples.
-  pipeline_internal::SegmentBuildPlan plan_seeded_internal(const Sample& inputs,
-                                                           const RunOptions& opt = {}) const;
 #endif
   /**
    * @brief Validate the Graph against a real input sample without running the pipeline.
@@ -477,11 +467,6 @@ private:
 
 #ifdef SIMA_NEAT_INTERNAL
   CompositionView composition_view_for_internal_compile() const;
-  // The seed a linear build feeds through the pipeline; shared by build and plan.
-  Sample linear_seed_(const std::vector<cv::Mat>& inputs, RunMode mode,
-                      const RunOptions& opt) const;
-  Sample linear_seed_(const TensorList& inputs) const;
-  Sample linear_seed_(const Sample& inputs) const;
   friend runtime::ExecutionGraphPlan runtime::compile_public_graph(const Graph& graph,
                                                                    const RunOptions& opt,
                                                                    std::optional<Sample> seed);

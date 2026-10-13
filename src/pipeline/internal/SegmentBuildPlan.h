@@ -15,8 +15,7 @@ namespace simaai::neat::pipeline_internal {
 /**
  * What a seeded pipeline-segment build resolved immediately before GStreamer parse.
  *
- * `Graph::build()` records it on the segment's DiagCtx; the plan-only build path returns the
- * same value without parsing, so both describe one build.
+ * `Graph::build()` records it on the segment's DiagCtx for `Model::execution_plan()`.
  */
 struct SegmentBuildPlan {
   /// Maps manifest stage names to the instance element names in `node_reports`.

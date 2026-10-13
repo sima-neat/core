@@ -46,7 +46,6 @@ namespace simaai::neat {
 
 namespace internal {
 struct ModelAccess;
-struct PreparedModelBuild;
 } // namespace internal
 class Graph;
 
@@ -616,12 +615,12 @@ public:
 #endif
 
   /**
-   * @brief Describe what the matching `build(...)` would execute, without starting a pipeline.
+   * @brief Describe what the matching `build(...)` executes.
    *
-   * Takes the same arguments as `build(...)` and runs the same preparation. The plan lists the
-   * Model's nodes (preprocessing, quantization, EV74/A65 kernels, MLA), where each one runs, and
-   * the tensors between them.
-   * @throws NeatError on the validation or contract errors `build(...)` would raise.
+   * Builds the Model with the same arguments and startup preflight off, reads the plan that build
+   * recorded, and closes the pipeline. The plan lists the Model's nodes (preprocessing,
+   * quantization, EV74/A65 kernels, MLA), where each one runs, and the tensors between them.
+   * @throws NeatError on the errors `build(...)` raises.
    */
   simaai::neat::ExecutionPlan execution_plan();
   /// Execution plan of `build(opt)`.
@@ -682,21 +681,6 @@ public:
   BenchmarkReport benchmark(bool include_plugin_latency);
 
 private:
-  // Everything build() does before Graph::build; execution_plan() plans the same result.
-  internal::PreparedModelBuild prepare_build_(const RouteOptions& opt,
-                                              const simaai::neat::RunOptions& run_opt);
-  internal::PreparedModelBuild prepare_build_(const simaai::neat::TensorList& inputs,
-                                              const RouteOptions& opt,
-                                              const simaai::neat::RunOptions& run_opt,
-                                              const Options& model_opt);
-  internal::PreparedModelBuild prepare_build_(const simaai::neat::Sample& inputs,
-                                              const RouteOptions& opt,
-                                              const simaai::neat::RunOptions& run_opt);
-#if defined(SIMA_WITH_OPENCV)
-  internal::PreparedModelBuild prepare_build_(const std::vector<cv::Mat>& inputs,
-                                              const RouteOptions& opt,
-                                              const simaai::neat::RunOptions& run_opt);
-#endif
   Runner build_with_model_options(const simaai::neat::TensorList& inputs,
                                   const Model::RouteOptions& opt,
                                   const simaai::neat::RunOptions& run_opt,

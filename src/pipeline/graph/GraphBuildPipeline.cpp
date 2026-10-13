@@ -16,6 +16,7 @@
 #include "gst/internal/GstLaunchBindings.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
+#include "pipeline/internal/SegmentBuildPlan.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
@@ -825,100 +826,6 @@ ExplicitBindingIndex validate_explicit_bindings_or_throw(
   return explicit_by_name;
 }
 
-} // namespace
-
-std::optional<pipeline_internal::sima::SimaPluginStaticManifest>
-session_build_validate_rendered_manifest_or_throw(const BuildResult& build, const char* where) {
-  using namespace simaai::neat::pipeline_internal::sima;
-  ManifestBuildDiagnostics manifest_diag;
-  // Helper: append captured compile/render diagnostics (collected by
-  // session_build_compile_contracts and stashed on build.manifest_diagnostics)
-  // to a wrapper failure message. The pipeline-shape throws below would
-  // otherwise discard the specific stage-level error string that explains
-  // *why* the rendered manifest came back empty or partial — historically
-  // surfacing as a generic "compiled manifest is missing" with no signal
-  // about which stage's compile or render call actually failed.
-  const auto append_compile_render_diagnostics = [&](std::string& msg) {
-    const auto& diag_errors = build.manifest_diagnostics.errors;
-    const auto& diag_warnings = build.manifest_diagnostics.warnings;
-    if (diag_errors.empty() && diag_warnings.empty()) {
-      return;
-    }
-    std::ostringstream oss;
-    oss << msg;
-    if (!diag_errors.empty()) {
-      oss << "\nCompile/render diagnostics (errors):";
-      for (const auto& e : diag_errors) {
-        oss << "\n  - " << e;
-      }
-    }
-    if (!diag_warnings.empty()) {
-      oss << "\nCompile/render diagnostics (warnings):";
-      for (const auto& w : diag_warnings) {
-        oss << "\n  - " << w;
-      }
-    }
-    msg = oss.str();
-  };
-  const bool has_compiled_stage_contracts =
-      build.compiled_contracts && !build.compiled_contracts->stages.empty();
-  if (has_compiled_stage_contracts && !build.rendered_manifest.has_value()) {
-    std::string msg = std::string(where ? where : "Graph::build") +
-                      ": compiled manifest is missing; semantic contracts were not rendered";
-    append_compile_render_diagnostics(msg);
-    session_build_throw_session_error_simple(
-        error_codes::kPipelineShape, msg,
-        "Compile and render stage contracts before pipeline parse/attach.", build.pipeline_string);
-  }
-  if (build.compiled_contracts && !build.compiled_contracts->fully_renderable) {
-    std::string msg = std::string(where ? where : "Graph::build") +
-                      ": compiled contracts are partial; resolver fallback is no longer supported";
-    append_compile_render_diagnostics(msg);
-    session_build_throw_session_error_simple(
-        error_codes::kPipelineShape, msg,
-        "Migrate every semantic stage to compiled-contract render before building the pipeline.",
-        build.pipeline_string);
-  }
-  std::optional<SimaPluginStaticManifest> transformed_manifest;
-  if (build.rendered_manifest.has_value()) {
-    transformed_manifest =
-        transform_manifest_stage_names(*build.rendered_manifest, build.name_transform);
-    validate_boxdecode_manifest_completeness(build, *transformed_manifest, &manifest_diag);
-  }
-
-  for (const auto& warning : manifest_diag.warnings) {
-    if (env_bool("SIMA_MANIFEST_DEBUG", false)) {
-      std::fprintf(stderr, "[DBG] %s: manifest warning: %s\n", where ? where : "Graph::build",
-                   warning.c_str());
-    }
-  }
-  if (!manifest_diag.errors.empty()) {
-    std::ostringstream oss;
-    oss << (where ? where : "Graph::build") << ": static manifest resolution failed:\n";
-    for (const auto& error : manifest_diag.errors) {
-      oss << "  - " << error << '\n';
-    }
-    std::string msg = oss.str();
-    append_compile_render_diagnostics(msg);
-    session_build_throw_session_error_simple(error_codes::kPipelineShape, msg,
-                                             "Fix manifest field ownership/precedence issues.",
-                                             build.pipeline_string);
-  }
-  return transformed_manifest;
-}
-
-pipeline_internal::SegmentBuildPlan session_build_make_segment_plan(const BuildResult& build) {
-  pipeline_internal::SegmentBuildPlan plan;
-  plan.name_transform = build.name_transform;
-  if (build.diag) {
-    plan.node_reports = build.diag->node_reports;
-  }
-  plan.rendered_manifest = build.rendered_manifest;
-  return plan;
-}
-
-namespace {
-
 static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char* where) {
   const auto timing_start = pipeline_internal::build_timing_now();
   const auto binding_analysis = gst::launch::analyze(build.pipeline_string);
@@ -1053,12 +960,82 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
   pipeline = parsed.release();
 
   using namespace simaai::neat::pipeline_internal::sima;
-  std::optional<SimaPluginStaticManifest> transformed_manifest;
-  try {
-    transformed_manifest = session_build_validate_rendered_manifest_or_throw(build, where);
-  } catch (...) {
+  ManifestBuildDiagnostics manifest_diag;
+  // Helper: append captured compile/render diagnostics (collected by
+  // session_build_compile_contracts and stashed on build.manifest_diagnostics)
+  // to a wrapper failure message. The pipeline-shape throws below would
+  // otherwise discard the specific stage-level error string that explains
+  // *why* the rendered manifest came back empty or partial — historically
+  // surfacing as a generic "compiled manifest is missing" with no signal
+  // about which stage's compile or render call actually failed.
+  const auto append_compile_render_diagnostics = [&](std::string& msg) {
+    const auto& diag_errors = build.manifest_diagnostics.errors;
+    const auto& diag_warnings = build.manifest_diagnostics.warnings;
+    if (diag_errors.empty() && diag_warnings.empty()) {
+      return;
+    }
+    std::ostringstream oss;
+    oss << msg;
+    if (!diag_errors.empty()) {
+      oss << "\nCompile/render diagnostics (errors):";
+      for (const auto& e : diag_errors) {
+        oss << "\n  - " << e;
+      }
+    }
+    if (!diag_warnings.empty()) {
+      oss << "\nCompile/render diagnostics (warnings):";
+      for (const auto& w : diag_warnings) {
+        oss << "\n  - " << w;
+      }
+    }
+    msg = oss.str();
+  };
+  const bool has_compiled_stage_contracts =
+      build.compiled_contracts && !build.compiled_contracts->stages.empty();
+  if (has_compiled_stage_contracts && !build.rendered_manifest.has_value()) {
     gst_object_unref(pipeline);
-    throw;
+    std::string msg = std::string(where ? where : "Graph::build") +
+                      ": compiled manifest is missing; semantic contracts were not rendered";
+    append_compile_render_diagnostics(msg);
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape, msg,
+        "Compile and render stage contracts before pipeline parse/attach.", build.pipeline_string);
+  }
+  if (build.compiled_contracts && !build.compiled_contracts->fully_renderable) {
+    gst_object_unref(pipeline);
+    std::string msg = std::string(where ? where : "Graph::build") +
+                      ": compiled contracts are partial; resolver fallback is no longer supported";
+    append_compile_render_diagnostics(msg);
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape, msg,
+        "Migrate every semantic stage to compiled-contract render before building the pipeline.",
+        build.pipeline_string);
+  }
+  std::optional<SimaPluginStaticManifest> transformed_manifest;
+  if (build.rendered_manifest.has_value()) {
+    transformed_manifest =
+        transform_manifest_stage_names(*build.rendered_manifest, build.name_transform);
+    validate_boxdecode_manifest_completeness(build, *transformed_manifest, &manifest_diag);
+  }
+
+  for (const auto& warning : manifest_diag.warnings) {
+    if (env_bool("SIMA_MANIFEST_DEBUG", false)) {
+      std::fprintf(stderr, "[DBG] %s: manifest warning: %s\n", where ? where : "Graph::build",
+                   warning.c_str());
+    }
+  }
+  if (!manifest_diag.errors.empty()) {
+    std::ostringstream oss;
+    oss << (where ? where : "Graph::build") << ": static manifest resolution failed:\n";
+    for (const auto& error : manifest_diag.errors) {
+      oss << "  - " << error << '\n';
+    }
+    std::string msg = oss.str();
+    append_compile_render_diagnostics(msg);
+    gst_object_unref(pipeline);
+    session_build_throw_session_error_simple(error_codes::kPipelineShape, msg,
+                                             "Fix manifest field ownership/precedence issues.",
+                                             build.pipeline_string);
   }
 
   if (transformed_manifest.has_value() && !transformed_manifest->stages.empty()) {
@@ -2758,6 +2735,17 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
 
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where) {
   return parse_pipeline_or_throw(build, where);
+}
+
+void session_build_record_segment_plan(const BuildResult& build) {
+  if (!build.diag) {
+    return;
+  }
+  auto plan = std::make_shared<pipeline_internal::SegmentBuildPlan>();
+  plan->name_transform = build.name_transform;
+  plan->node_reports = build.diag->node_reports;
+  plan->rendered_manifest = build.rendered_manifest;
+  build.diag->build_plan = std::move(plan);
 }
 
 void session_build_validate_explicit_launch_names_or_throw(
