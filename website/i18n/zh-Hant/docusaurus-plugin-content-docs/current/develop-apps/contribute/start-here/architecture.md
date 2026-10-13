@@ -134,6 +134,10 @@ input Sample/Tensor
 
 ---
 
+### 公開執行計畫
+
+`Model::execution_plan(...)` 會傳回以相同引數呼叫 `build(...)` 時將執行的內容：依管線順序列出模型的圖節點、每個節點的執行位置（`A65`、`EV74` 或 `MLA`），以及節點之間邊上的張量。它執行與 `build(...)` 相同的編譯步驟，並在 GStreamer 剖析之前停止，因此不會啟動管線，也不會配置裝置記憶體。這是公開的診斷檢視，與下文所述的內部 `ModelExecutionPlan` 不同。其 JSON 合約為 `schemas/execution_plan_v1.schema.json`；`schema_version` 只會在變更破壞現有讀取端時才會改變。
+
 ### 已編譯模型執行合約
 
 DMA-BUF 驅動程式遷移會將模型語意與每影格儲存空間分開。

@@ -183,6 +183,16 @@ Preprocessing and postprocessing are explicit framework stages/options. A format
 required preprocessing metadata, unavailable selected hardware transport, invalid model archive or MPK contract, or caps negotiation
 failure should surface as an actionable structured error rather than a hidden runtime correction.
 
+### Public execution plan
+
+`Model::execution_plan(...)` returns what `build(...)` with the same arguments would run: the
+Model's graph nodes in pipeline order, where each node runs (`A65`, `EV74`, or `MLA`), and the
+tensors on the edges between them. It runs the same compile step as `build(...)` and stops before
+GStreamer parse, so it starts no pipeline and allocates no device memory. It is a public
+diagnostic view, separate from the internal `ModelExecutionPlan` described below. Its JSON
+contract is `schemas/execution_plan_v1.schema.json`; `schema_version` changes only when a change
+breaks existing readers.
+
 ### Compiled model execution contract
 
 The DMA-BUF driver migration keeps model semantics separate from per-frame
