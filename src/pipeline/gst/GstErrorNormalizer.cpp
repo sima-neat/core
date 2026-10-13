@@ -917,9 +917,8 @@ NormalizedDiagnostic camera_configuration_unsupported(RawGstError raw) {
   add_fact(out, "Requested caps",
            find_detail(out.raw, {"requested-caps", "requested_caps"}).value_or(""));
   out.actions = {
-      "Request a resolution the camera pipeline supports. libcamera adjusts an unsupported size "
-      "to one the sensor and ISP support; the libcamera log line \"configuring streams: (0) "
-      "WxH-FORMAT\" shows the adjusted size.",
+      "Request a resolution and pixel format the camera offers. libcamerasrc reports an "
+      "unsupported resolution and an unsupported format with this same error.",
       "For a camera-to-model graph, capture at a supported resolution and let model-managed CVU "
       "preprocessing resize it for inference.",
       "For other graphs, capture at a supported resolution and add a VideoScale Node followed by "
@@ -1317,7 +1316,7 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       contains_ci(text, "could not find a camera")) {
     return camera_not_found(std::move(raw));
   }
-  // libcamera adjusts an unsupported size, so the camera's caps no longer match the request.
+  // libcamerasrc fails negotiation when the camera does not offer the requested size or format.
   if (raw.factory_name == "libcamerasrc" && contains_ci(text, "not-negotiated")) {
     return camera_configuration_unsupported(std::move(raw));
   }
