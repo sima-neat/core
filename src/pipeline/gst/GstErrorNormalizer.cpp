@@ -906,10 +906,10 @@ NormalizedDiagnostic camera_not_found(RawGstError raw) {
   return out;
 }
 
-// Keeps kIoParse, this failure's code before it got its own diagnostic.
+// Keeps kMediaCaps, this failure's code before it got its own diagnostic.
 NormalizedDiagnostic camera_configuration_unsupported(RawGstError raw) {
   NormalizedDiagnostic out =
-      base(std::move(raw), error_codes::kIoParse, "gstreamer.camera_configuration_unsupported",
+      base(std::move(raw), error_codes::kMediaCaps, "gstreamer.camera_configuration_unsupported",
            "The camera cannot produce the requested resolution or format.");
   add_fact(
       out, "Camera",
@@ -917,9 +917,9 @@ NormalizedDiagnostic camera_configuration_unsupported(RawGstError raw) {
   add_fact(out, "Requested caps",
            find_detail(out.raw, {"requested-caps", "requested_caps"}).value_or(""));
   out.actions = {
-      "Request a resolution the camera pipeline supports. On Modalix the ISP accepts fewer "
-      "output sizes than the sensor lists; the libcamera log line \"ISP output adjusted the "
-      "sensor format from ... to ...\" shows the size it would use instead.",
+      "Request a resolution the camera pipeline supports. libcamera adjusts an unsupported size "
+      "to one the sensor and ISP support; the libcamera log line \"configuring streams: (0) "
+      "WxH-FORMAT\" shows the adjusted size.",
       "For a camera-to-model graph, capture at a supported resolution and let model-managed CVU "
       "preprocessing resize it for inference.",
       "For other graphs, capture at a supported resolution and add a VideoScale Node followed by "
@@ -1317,11 +1317,8 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       contains_ci(text, "could not find a camera")) {
     return camera_not_found(std::move(raw));
   }
-  const bool camera_config_einval =
-      raw.factory_name == "libcamerasrc" && raw.domain_name == "gst-resource-error-quark" &&
-      raw.code == GST_RESOURCE_ERROR_SETTINGS && contains_ci(text, "failed to configure camera") &&
-      (contains_ci(text, "invalid argument") || contains_ci(text, "error code -22"));
-  if (camera_config_einval) {
+  // libcamera adjusts an unsupported size, so the camera's caps no longer match the request.
+  if (raw.factory_name == "libcamerasrc" && contains_ci(text, "not-negotiated")) {
     return camera_configuration_unsupported(std::move(raw));
   }
   if (raw.factory_name == "h264parse" && contains_ci(text, "no valid frames")) {
