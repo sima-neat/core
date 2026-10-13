@@ -53,6 +53,18 @@ inline Json parse(const std::string& text, const std::string& session) {
   (void)j.at("kind").get<std::string>();
   return j;
 }
+inline void validate_received_asset(const std::filesystem::path& path, uint64_t expected_bytes,
+                                    const std::string& name) {
+  if (!std::filesystem::exists(path))
+    throw std::runtime_error("Transferred model asset missing at expected path: " + path.string());
+  if (!std::filesystem::is_regular_file(path))
+    throw std::runtime_error("Transferred model asset is not a regular file: " + path.string());
+  const auto actual_bytes = std::filesystem::file_size(path);
+  if (actual_bytes != expected_bytes)
+    throw std::runtime_error("Model asset transfer size mismatch: " + name + " (expected " +
+                             std::to_string(expected_bytes) + ", received " +
+                             std::to_string(actual_bytes) + " bytes at " + path.string() + ")");
+}
 // One outstanding asset per provider. Callbacks allow the exchange to be tested
 // without opening a daemon or a PCIe queue.
 template <class Send, class Receive, class Cancelled>

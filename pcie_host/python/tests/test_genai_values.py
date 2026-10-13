@@ -10,6 +10,7 @@ def test_connection_address_override():
   assert connection.card_id == 0
   assert connection.card_host == ""
   assert connection.user == "sima"
+  assert not hasattr(connection, "card_receive_directory")
   connection.user = "root"
   assert connection.user == "root"
   connection.card_id = 1

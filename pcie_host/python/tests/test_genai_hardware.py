@@ -21,8 +21,6 @@ def connection():
   result.card_id = int(os.environ.get("SIMAPCIE_CARD_ID", "0"))
   result.user = os.environ.get("SIMAPCIE_USER", "sima")
   result.ssh_key = os.environ.get("SIMAPCIE_SSH_KEY", "")
-  result.card_receive_directory = os.environ.get(
-      "SIMAPCIE_GENAI_RECEIVE_ROOT", str(result.card_receive_directory))
   result.startup_timeout_ms = int(os.environ.get("SIMAPCIE_READINESS_TIMEOUT_MS", "180000"))
   result.request_timeout_ms = int(os.environ.get("SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS", "120000"))
   return result

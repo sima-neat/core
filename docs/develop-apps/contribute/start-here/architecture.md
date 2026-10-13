@@ -1386,6 +1386,8 @@ re-uploading consumed files; host waits are bounded and interrupted on shutdown.
 Matching host/card GenAI protocol versions are required. Media still uses the
 host daemon's configured serving root.
 There is no global receive-root lock, registry or shared conversation state.
+Model assets stage under `/tmp/neat-genai/<session>/model`, matching the platform's
+default receive root; applications do not configure the receive directory.
 Requests carry explicit history and reuse Core's validation and output semantics.
 
 The host reuses Core's model-directory inspection to identify the target and

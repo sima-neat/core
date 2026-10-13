@@ -61,8 +61,6 @@ g::ConnectionOptions connection() {
   result.card_host = env("SIMAPCIE_CARD_HOST");
   result.user = env("SIMAPCIE_USER", "sima");
   result.ssh_key = env("SIMAPCIE_SSH_KEY");
-  result.card_receive_directory =
-      env("SIMAPCIE_GENAI_RECEIVE_ROOT", result.card_receive_directory.string());
   result.startup_timeout_ms = std::stoi(env("SIMAPCIE_READINESS_TIMEOUT_MS", "180000"));
   result.request_timeout_ms = std::stoi(env("SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS", "120000"));
   return result;
