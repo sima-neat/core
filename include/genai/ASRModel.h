@@ -12,6 +12,11 @@
 
 namespace simaai::neat::genai {
 
+namespace internal {
+struct ModelLoadContext;
+struct ModelAccess;
+} // namespace internal
+
 class ASRModel {
 public:
   explicit ASRModel(std::filesystem::path model_dir);
@@ -29,6 +34,8 @@ public:
   GenerationStream stream(const GenerationRequest& request);
 
 private:
+  explicit ASRModel(internal::ModelLoadContext context);
+  friend struct internal::ModelAccess;
   struct Impl;
   std::shared_ptr<Impl> impl_;
 };

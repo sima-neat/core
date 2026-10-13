@@ -154,6 +154,52 @@ install_for_environment
         )
 
 
+class ModalixPythonVenvSupportTest(unittest.TestCase):
+    @staticmethod
+    def run_install(
+        *, ensurepip_available: bool, apt_install_ok: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return run_bash(
+            rf"""
+source "$1"
+tmp="$(mktemp -d)"
+INSTALLER_TMP_DIRS=("${{tmp}}")
+{'touch "${tmp}/ensurepip"' if ensurepip_available else ''}
+python3() {{ [[ -e "${{tmp}}/ensurepip" ]]; }}
+refresh_apt_metadata_for_board_install() {{ printf 'REFRESH\n'; }}
+run_sudo() {{
+  printf 'RUN: %s\n' "$*"
+  {'touch "${tmp}/ensurepip"' if apt_install_ok else 'return 100'}
+}}
+# First step after the check: reaching it means the installer continued.
+remove_stale_global_sima_lmm_pip_install() {{ printf 'CONTINUED\n'; exit 0; }}
+install_python_environment
+"""
+        )
+
+    def test_available_ensurepip_skips_apt(self) -> None:
+        result = self.run_install(ensurepip_available=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["CONTINUED"])
+
+    def test_missing_ensurepip_installs_python3_venv_and_continues(self) -> None:
+        result = self.run_install(ensurepip_available=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [line for line in result.stdout.splitlines() if not line.startswith("[")],
+            ["REFRESH", "RUN: apt-get install -y python3-venv", "CONTINUED"],
+        )
+
+    def test_failed_python3_venv_install_stops_installer(self) -> None:
+        result = self.run_install(ensurepip_available=False, apt_install_ok=False)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("CONTINUED", result.stdout)
+        self.assertIn("sudo apt-get install -y python3-venv", result.stderr)
+
+
 class Ros2SdkInstallTest(unittest.TestCase):
     def test_sdk_metadata_selects_supported_environment_modes(self) -> None:
         result = run_bash(

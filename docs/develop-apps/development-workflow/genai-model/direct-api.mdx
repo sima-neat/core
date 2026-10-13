@@ -371,6 +371,10 @@ Set `GenerationRequest.enable_thinking` for reasoning models like Qwen3 or Gemma
 E2B/E4B to enable reasoning. Complete results keep reasoning in `GenerationResult.reasoning` and the final answer in `GenerationResult.text`;
 streamed `TokenSample` objects likewise use `reasoning` and `text`.
 
+For GPT-OSS, `GenerationRequest.reasoning_effort` selects `low` (default),
+`medium` or `high`; other values are rejected. `enable_thinking` controls whether
+reasoning is returned.
+
 These rules let Neat fail early with a clear request error instead of sending an
 ambiguous prompt to the runtime.
 

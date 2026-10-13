@@ -133,7 +133,8 @@ public:
    *
    * @param decode_type          Decoder variant (see `BoxDecodeType`).
    * @param detection_threshold  Score threshold; boxes below are dropped (`0.0` = use default).
-   * @param nms_iou_threshold    NMS IoU threshold (`0.0` = use default).
+   * @param nms_iou_threshold    NMS IoU threshold. At `0.0`, YOLO26 skips NMS and other
+   *                             decoders suppress every overlapping box.
    * @param top_k                Max boxes to keep after NMS (`0` = unlimited / variant default).
    * @param element_name         Optional GStreamer element name.
    * @param original_width       Width of the unscaled source frame (used for box rescaling).
@@ -182,7 +183,7 @@ public:
    * @param model                Source model (provides input shape, routing hints, etc.).
    * @param decode_type          Decoder variant (see `BoxDecodeType`).
    * @param detection_threshold  Score threshold (`0.0` = use default).
-   * @param nms_iou_threshold    NMS IoU threshold (`0.0` = use default).
+   * @param nms_iou_threshold    NMS IoU threshold (`0.0` = keep the model's value).
    * @param top_k                Max boxes to keep after NMS.
    * @param element_name         Optional GStreamer element name.
    * @param route_tess_needed    Override: does the route need a tess stage upstream?

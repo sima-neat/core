@@ -1,5 +1,6 @@
 {
   "ko": {
+    "pcie_host/tutorials/029_run_genai_over_pcie/README.md": "c403ad4654b88225447523424c5b493e50462330377dc2a8119af0e6dc36771d",
     "pcie_host/tutorials/024_run_your_first_model_over_pcie/README.md": "ca0195844b8f2f8f664ff0f3f2851d417dbef9d3ddf5c39e68905107d27917d1",
     "pcie_host/tutorials/025_run_pcie_inference_async/README.md": "ecd3e256dc076ef4555daa3222813b1f36ab7a10fc98dae93261d55d8439b982",
     "pcie_host/tutorials/026_run_multiple_models/README.md": "8cfcfe8eee05c35942de75af2c91e91f8685851381543de1376aef1f26cda768",
@@ -30,6 +31,7 @@
     "tutorials/023_run_mipi_camera_model/README.md": "b62bc9d7d61ded672ac8577b6731623ab1ad03433f2feab1e00831208e22a3ac"
   },
   "ja": {
+    "pcie_host/tutorials/029_run_genai_over_pcie/README.md": "c403ad4654b88225447523424c5b493e50462330377dc2a8119af0e6dc36771d",
     "pcie_host/tutorials/024_run_your_first_model_over_pcie/README.md": "ca0195844b8f2f8f664ff0f3f2851d417dbef9d3ddf5c39e68905107d27917d1",
     "pcie_host/tutorials/025_run_pcie_inference_async/README.md": "ecd3e256dc076ef4555daa3222813b1f36ab7a10fc98dae93261d55d8439b982",
     "pcie_host/tutorials/026_run_multiple_models/README.md": "8cfcfe8eee05c35942de75af2c91e91f8685851381543de1376aef1f26cda768",
@@ -60,6 +62,7 @@
     "tutorials/023_run_mipi_camera_model/README.md": "b62bc9d7d61ded672ac8577b6731623ab1ad03433f2feab1e00831208e22a3ac"
   },
   "zh-Hant": {
+    "pcie_host/tutorials/029_run_genai_over_pcie/README.md": "c403ad4654b88225447523424c5b493e50462330377dc2a8119af0e6dc36771d",
     "pcie_host/tutorials/024_run_your_first_model_over_pcie/README.md": "ca0195844b8f2f8f664ff0f3f2851d417dbef9d3ddf5c39e68905107d27917d1",
     "pcie_host/tutorials/025_run_pcie_inference_async/README.md": "ecd3e256dc076ef4555daa3222813b1f36ab7a10fc98dae93261d55d8439b982",
     "pcie_host/tutorials/026_run_multiple_models/README.md": "8cfcfe8eee05c35942de75af2c91e91f8685851381543de1376aef1f26cda768",
@@ -90,6 +93,7 @@
     "tutorials/023_run_mipi_camera_model/README.md": "b62bc9d7d61ded672ac8577b6731623ab1ad03433f2feab1e00831208e22a3ac"
   },
   "uk": {
+    "pcie_host/tutorials/029_run_genai_over_pcie/README.md": "c403ad4654b88225447523424c5b493e50462330377dc2a8119af0e6dc36771d",
     "pcie_host/tutorials/024_run_your_first_model_over_pcie/README.md": "ca0195844b8f2f8f664ff0f3f2851d417dbef9d3ddf5c39e68905107d27917d1",
     "pcie_host/tutorials/025_run_pcie_inference_async/README.md": "ecd3e256dc076ef4555daa3222813b1f36ab7a10fc98dae93261d55d8439b982",
     "pcie_host/tutorials/026_run_multiple_models/README.md": "8cfcfe8eee05c35942de75af2c91e91f8685851381543de1376aef1f26cda768",

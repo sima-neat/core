@@ -25,6 +25,11 @@ endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+find_path(SIMAPCIE_SVC_INCLUDE_DIR simaai_svc.h PATH_SUFFIXES simaai)
+if (NOT SIMAPCIE_SVC_INCLUDE_DIR)
+  message(FATAL_ERROR "GenAI requires the platform simaai_svc.h development headers")
+endif()
+
 option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
 option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware tests" OFF)
 option(SIMAPCIE_BUILD_EXAMPLES "Build PCIe host C++ examples" OFF)
@@ -82,6 +87,12 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/ModelExecutionPlan.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/MpkDecoder.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/TvmHostModuleGraph.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ModelAssets.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/MediaStage.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/RemoteSession.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/genai/ModelDirectory.cpp
+  ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/Service.cpp
 )
 
 add_library(sima_neat_pcie_host STATIC
@@ -89,6 +100,10 @@ add_library(sima_neat_pcie_host STATIC
 )
 
 target_compile_definitions(sima_neat_pcie_host PRIVATE SIMA_NEAT_INTERNAL=1)
+target_include_directories(sima_neat_pcie_host PRIVATE ${SIMAPCIE_SVC_INCLUDE_DIR}
+  ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+target_include_directories(sima_neat_pcie_host PUBLIC $<BUILD_INTERFACE:${SIMA_NEAT_CORE_ROOT}/include>)
+target_link_libraries(sima_neat_pcie_host PRIVATE ${CMAKE_DL_LIBS})
 target_include_directories(sima_neat_pcie_host
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -99,13 +114,13 @@ target_include_directories(sima_neat_pcie_host
     ${SIMA_NEAT_CORE_ROOT}/src
     ${GST_INCLUDE_DIRS}
 )
+target_link_libraries(sima_neat_pcie_host PUBLIC nlohmann_json::nlohmann_json)
 target_compile_options(sima_neat_pcie_host PRIVATE ${GST_CFLAGS_OTHER})
 target_link_directories(sima_neat_pcie_host PRIVATE ${GST_LIBRARY_DIRS})
 target_link_libraries(sima_neat_pcie_host PRIVATE
   ${GST_LIBRARIES}
   Threads::Threads
   ZLIB::ZLIB
-  $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
 )
 if (NOT SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR)
   message(FATAL_ERROR
@@ -125,6 +140,9 @@ install(TARGETS sima_neat_pcie_host
   EXPORT SimaPCIeHostTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
 )
+
+install(FILES ${SIMA_NEAT_CORE_ROOT}/include/genai/GenAIValueTypes.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/genai COMPONENT Development)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/simaai/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/simaai
@@ -293,6 +311,29 @@ if (SIMAPCIE_BUILD_TESTS)
   target_include_directories(unit_pcie_host_async_test_runner_test
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
+  add_executable(unit_pcie_host_genai_values_test tests/unit_pcie_host_genai_values_test.cpp)
+  target_link_libraries(unit_pcie_host_genai_values_test PRIVATE sima_neat_pcie_host)
+  target_include_directories(unit_pcie_host_genai_values_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/src
+    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+  add_test(NAME unit_pcie_host_genai_values_test COMMAND unit_pcie_host_genai_values_test)
+
+  add_library(fake_genai_service SHARED tests/fake_genai_service.cpp)
+  target_include_directories(fake_genai_service PRIVATE ${SIMAPCIE_SVC_INCLUDE_DIR})
+  target_link_libraries(fake_genai_service PRIVATE Threads::Threads)
+  set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
+  target_link_libraries(unit_pcie_host_genai_values_test PRIVATE fake_genai_service)
+  set_tests_properties(unit_pcie_host_genai_values_test PROPERTIES TIMEOUT 20
+    ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
+  add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
+  target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+  target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE sima_neat_pcie_host fake_genai_service)
+  add_test(NAME unit_pcie_host_genai_assets_test COMMAND unit_pcie_host_genai_assets_test)
+  set_tests_properties(unit_pcie_host_genai_assets_test PROPERTIES TIMEOUT 10
+    ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
+
   add_test(NAME unit_pcie_host_options_test COMMAND unit_pcie_host_options_test)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
   add_test(NAME unit_pcie_host_tensor_test COMMAND unit_pcie_host_tensor_test)
@@ -350,7 +391,7 @@ set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_NAME "sima-pcie-host-dev")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_SECTION "libdevel")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_DEPENDS
-  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, libopencv-dev, zlib1g-dev"
+  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, libopencv-dev, zlib1g-dev, nlohmann-json3-dev"
 )
 set(CPACK_DEBIAN_DEVELOPMENT_DESCRIPTION
   "Headers, static library, and CMake package files for the NEAT PCIe host API.")

@@ -9,6 +9,7 @@
 #include <gst/video/video.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <string>
@@ -18,10 +19,10 @@ namespace sima_test {
 
 struct ProbeState {
   int caps_events = 0;
-  int expected_w = 0;
-  int expected_h = 0;
-  std::size_t expected_bytes = 0;
-  bool saw_buffer = false;
+  std::atomic<int> expected_w{0};
+  std::atomic<int> expected_h{0};
+  std::atomic<std::size_t> expected_bytes{0};
+  std::atomic<bool> saw_buffer{false};
   std::string error;
 };
 
@@ -73,6 +74,10 @@ inline GstPadProbeReturn probe_cb(GstPad* /*pad*/, GstPadProbeInfo* info, gpoint
     GstBuffer* buf = gst_pad_probe_info_get_buffer(info);
     if (!buf)
       return GST_PAD_PROBE_OK;
+    // Read the expectation before signalling the main thread, which then changes it.
+    const int expected_w = st->expected_w;
+    const int expected_h = st->expected_h;
+    const std::size_t expected_bytes = st->expected_bytes;
     st->saw_buffer = true;
     GstVideoMeta* meta = gst_buffer_get_video_meta(buf);
     if (!meta) {
@@ -83,8 +88,8 @@ inline GstPadProbeReturn probe_cb(GstPad* /*pad*/, GstPadProbeInfo* info, gpoint
       st->error = "unexpected video format";
       return GST_PAD_PROBE_OK;
     }
-    if (meta->width != static_cast<guint>(st->expected_w) ||
-        meta->height != static_cast<guint>(st->expected_h)) {
+    if (meta->width != static_cast<guint>(expected_w) ||
+        meta->height != static_cast<guint>(expected_h)) {
       st->error = "unexpected video dimensions";
       return GST_PAD_PROBE_OK;
     }
@@ -92,13 +97,13 @@ inline GstPadProbeReturn probe_cb(GstPad* /*pad*/, GstPadProbeInfo* info, gpoint
       st->error = "unexpected plane count";
       return GST_PAD_PROBE_OK;
     }
-    const std::size_t y_size = static_cast<std::size_t>(st->expected_w * st->expected_h);
-    if (meta->offset[0] != 0 || meta->stride[0] != st->expected_w || meta->offset[1] != y_size ||
-        meta->stride[1] != st->expected_w) {
+    const std::size_t y_size = static_cast<std::size_t>(expected_w * expected_h);
+    if (meta->offset[0] != 0 || meta->stride[0] != expected_w || meta->offset[1] != y_size ||
+        meta->stride[1] != expected_w) {
       st->error = "unexpected plane layout";
       return GST_PAD_PROBE_OK;
     }
-    if (gst_buffer_get_size(buf) != st->expected_bytes) {
+    if (gst_buffer_get_size(buf) != expected_bytes) {
       st->error = "unexpected buffer size";
       return GST_PAD_PROBE_OK;
     }
@@ -201,6 +206,13 @@ inline void run_appsrc_fakesink_test(const char* element, int w1, int h1, int w2
                           "height", G_TYPE_INT, h2, "framerate", GST_TYPE_FRACTION, 30, 1, nullptr);
   gst_app_src_set_caps(GST_APP_SRC(appsrc), caps2);
   gst_caps_unref(caps2);
+
+  // The probe checks each buffer against the expected size, so buffer #1 must reach
+  // fakesink before the expectation changes.
+  const auto first_buffer_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!probe.saw_buffer && std::chrono::steady_clock::now() < first_buffer_deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  require(probe.saw_buffer, "buffer #1 did not reach fakesink");
 
   probe.expected_w = w2;
   probe.expected_h = h2;
