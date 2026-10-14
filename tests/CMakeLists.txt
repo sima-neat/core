@@ -1879,19 +1879,21 @@ add_pipeline_test(
   ARGS ${CMAKE_SOURCE_DIR} mat
   LOCK_ACCELERATOR
 )
-set_tests_properties(model_seeded_input_capacity_test PROPERTIES
-  LABELS "strict;e2e;model;preproc;regression"
-  TIMEOUT 180)
-foreach(mode tensor sample defaults unseeded oversize_width oversize_height)
-  set(test_name model_seeded_input_capacity_${mode}_test)
-  add_test(NAME ${test_name}
-    COMMAND model_seeded_input_capacity_test ${CMAKE_SOURCE_DIR} ${mode})
-  simaneat_append_ctest_env(${test_name})
-  set_tests_properties(${test_name} PROPERTIES
+if (NOT model_seeded_input_capacity_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(model_seeded_input_capacity_test PROPERTIES
     LABELS "strict;e2e;model;preproc;regression"
-    RESOURCE_LOCK "accelerator-device"
     TIMEOUT 180)
-endforeach()
+  foreach(mode tensor sample defaults unseeded oversize_width oversize_height)
+    set(test_name model_seeded_input_capacity_${mode}_test)
+    add_test(NAME ${test_name}
+      COMMAND model_seeded_input_capacity_test ${CMAKE_SOURCE_DIR} ${mode})
+    simaneat_append_ctest_env(${test_name})
+    set_tests_properties(${test_name} PROPERTIES
+      LABELS "strict;e2e;model;preproc;regression"
+      RESOURCE_LOCK "accelerator-device"
+      TIMEOUT 180)
+  endforeach()
+endif()
 
 add_pipeline_test(
   seedless_yolov8_preproc_input_max_smoke_test
