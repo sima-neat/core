@@ -293,6 +293,9 @@ public:
   void sample_once() {
     if (!options_.enabled)
       return;
+    // One fetch at a time, so a slower fetch cannot replace a newer accepted timestamp and let
+    // that sample be counted again.
+    std::lock_guard<std::mutex> sample_lock(sample_mu_);
     const std::optional<json> sample = read_latest_sample();
     if (!sample) {
       return;
@@ -396,6 +399,7 @@ private:
   PowerMonitorOptions options_;
   pipeline_internal::SentinelClient sentinel_;
   mutable std::mutex mu_;
+  std::mutex sample_mu_;
   std::mutex wait_mu_;
   std::condition_variable cv_;
   std::thread worker_;
