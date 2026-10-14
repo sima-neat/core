@@ -7881,8 +7881,12 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
           ++pulled;
         }
       } catch (...) {
-        std::lock_guard<std::mutex> lock(count_mu);
-        pull_error = std::current_exception();
+        {
+          std::lock_guard<std::mutex> lock(count_mu);
+          pull_error = std::current_exception();
+        }
+        // Nothing drains the outputs any more, so wake a push blocked on a full input queue.
+        runner.close_input();
       }
     });
     const auto finish_pushing = [&] {
@@ -7922,6 +7926,10 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
         pull_thread.join();
       }
       runner.close();
+      // A failed pull closes the input, which fails the push; report the cause.
+      if (pull_error) {
+        std::rethrow_exception(pull_error);
+      }
       throw;
     }
     if (pull_error) {
@@ -7933,6 +7941,7 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
+    trace.stop();
     throughput_measured = measure.stop();
     telemetry = trace.finish();
     runner.close();
