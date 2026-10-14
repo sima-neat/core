@@ -120,13 +120,13 @@ tensor_rank=3
 - `advanced.max_input_bytes`：入力バッファーの成長を制限します。
 - `advanced.copy_input`：防御的な入力コピーを強制します。
 
-`Run::start_measurement()`を使用して、レイテンシ、スループット、入力カウンター、プラグイン/エッジのタイミング、およびオプションのボードPMIC電力テレメトリを、1つの測定ウィンドウで検査します。
+`Run::start_measurement()`を使用して、レイテンシ、スループット、入力カウンター、プラグイン/エッジのタイミング、およびオプションのボード電力テレメトリを、1つの測定ウィンドウで検査します。
 
 ボードの電力を含めるには、コードで有効にします（環境変数は不要）次に、測定レポートから読み取ります。
 
 ```cpp
 simaai::neat::RunOptions run_opt;
-run_opt.enable_board_power(); // default 100 ms sampling, auto-detects built-in profile
+run_opt.enable_board_power(); // reads board power from Sentinel
 auto run = graph.build(inputs, run_opt);
 auto scope = run.start_measurement();
 run.push(inputs);
@@ -136,7 +136,7 @@ auto report = scope.stop();
 
 ```python
 run_opt = neat.RunOptions()
-run_opt.enable_board_power()  # default 100 ms sampling, auto-detects built-in profile
+run_opt.enable_board_power()  # reads board power from Sentinel
 run = graph.build(tensor, run_opt)
 scope = run.start_measurement()
 run.push(tensor)
@@ -144,7 +144,7 @@ _ = run.pull_tensors(5000)
 report = scope.stop()
 ```
 
-`Model::build(run_opt)`、`Model::build(route_opt, run_opt)`、および`Graph::build(run_opt)`は、同じランタイムオプションを基盤となる`Run`に渡すため、パイプラインごとに個別にレールサンプリングを行うのではなく、グラフレベルのボード電源モニターを1つ使用します。特定の組み込みプロファイルを強制する必要がある場合は、ボード固有のヘルパーが引き続き利用可能です：`enable_modalix_som_power()`、`enable_modalix_dvt_power()`。
+`Model::build(run_opt)`、`Model::build(route_opt, run_opt)`、および`Graph::build(run_opt)`は、同じランタイムオプションを基盤となる`Run`に渡すため、パイプラインごとに個別にレールサンプリングを行うのではなく、グラフレベルのボード電源モニターを1つ使用します。
 
 ## ソースファイル
 - C++: `tutorials/004_build_inference_pipeline/build_inference_pipeline.cpp`

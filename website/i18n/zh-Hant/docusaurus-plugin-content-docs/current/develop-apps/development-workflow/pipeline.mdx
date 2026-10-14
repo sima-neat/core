@@ -1055,7 +1055,7 @@ run.close()
 
 ```cpp
 simaai::neat::RunOptions options;
-options.enable_board_power(/*sample_interval_ms=*/100);
+options.enable_board_power();
 
 auto run = graph.build(options);
 
@@ -1069,7 +1069,7 @@ auto scope = run.start_measurement(measure_options);
 
 ```python
 options = pyneat.RunOptions()
-options.enable_board_power(sample_interval_ms=100)
+options.enable_board_power()
 
 run = graph.build(options)
 
@@ -1081,7 +1081,7 @@ scope = run.start_measurement(measure_options)
 </CodeTab>
 </CodeTabs>
 
-電力資料取決於板載電壓軌的支援和監控設定。使用數字記錄測量設置；當電壓軌未啟用時，請勿使電力資料看起來像是可攜帶的。
+電力資料來自 Sentinel，它每 2 秒取樣一次板載電壓軌，因此短於約 2 秒的測量視窗可能沒有電力樣本。使用數字記錄測量設置；當電壓軌未啟用時，請勿使電力資料看起來像是可攜帶的。
 
 編譯時的匯出功能回答了「Neat 建置了什麼？」；執行完成後的匯出功能回答了「在執行過程中發生了什麼？」。
 

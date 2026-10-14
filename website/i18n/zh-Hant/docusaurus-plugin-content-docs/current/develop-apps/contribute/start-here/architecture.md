@@ -140,7 +140,7 @@ input Sample/Tensor
 
 ### 基準測試遙測
 
-`Model::benchmark()` 會透過 `/run/simaai-sentinel/api.sock` 上的 HTTP API，從板子遙測常駐程式 Sentinel 讀取功耗與板子遙測資料；基準測試不會由 Core 直接讀取電源監控晶片。基準測試會在吞吐量階段期間記錄名為 `neat-benchmark-<UTC 時間>` 的 Sentinel 追蹤，只停止該追蹤，並保留它供 Sentinel 自身的工具使用。Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `BenchmarkOptions::min_duration_ms`（預設為 30 秒）。當 Sentinel 未執行、另一個追蹤正在記錄，或量測期間沒有樣本時，基準測試仍會傳回延遲與 FPS；功耗欄位為零，並由 `telemetry.status` 說明原因。`tools/install_neat_framework.sh` 的板子模式會安裝 Sentinel，或將其升級至最新的正式版建置。
+`Model::benchmark()` 會透過 `/run/simaai-sentinel/api.sock` 上的 HTTP API，從板子遙測常駐程式 Sentinel 讀取功耗與板子遙測資料；基準測試不會由 Core 直接讀取電源監控晶片。基準測試會在吞吐量階段期間記錄名為 `neat-benchmark-<UTC 時間>` 的 Sentinel 追蹤，只停止該追蹤，並保留它供 Sentinel 自身的工具使用。Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `BenchmarkOptions::min_duration_ms`（預設為 30 秒）。當 Sentinel 未執行、另一個追蹤正在記錄，或量測期間沒有樣本時，基準測試仍會傳回延遲與 FPS；功耗欄位為零，並由 `telemetry.status` 說明原因。`tools/install_neat_framework.sh` 的板子模式會安裝 Sentinel，或將其升級至最新的正式版建置。`Run` 的功耗（`RunOptions::power_monitor`）同樣來自 Sentinel：Core 會輪詢其最新樣本，不會透過 I2C 讀取電源監控晶片。
 
 ### 已編譯模型執行合約
 

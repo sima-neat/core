@@ -63,96 +63,7 @@ ensure_sima_lmm_sysroot_deps "${tmp}/sysroot"
         self.assertIn("libbrotli1:arm64", requested)
         self.assertNotIn("libfmt10:arm64", requested)
 
-class ModalixI2cAccessTest(unittest.TestCase):
-    @staticmethod
-    def run_setup(
-        *, group_exists: bool, groups: str, fail_command: str = ""
-    ) -> subprocess.CompletedProcess[str]:
-        return run_bash(
-            rf"""
-source "$1"
-tmp="$(mktemp -d)"
-INSTALLER_TMP_DIRS=("${{tmp}}")
-getent() {{ return {0 if group_exists else 1}; }}
-id() {{ printf '%s\n' '{groups}'; }}
-run_sudo() {{
-  printf 'RUN:'
-  printf ' <%s>' "$@"
-  printf '\n'
-  if [[ "$1" == '{fail_command}' ]]; then
-    exit 1
-  fi
-}}
-configure_board_i2c_access
-printf 'CONTINUED\n'
-"""
-        )
-
-    @staticmethod
-    def sudo_commands(result: subprocess.CompletedProcess[str]) -> list[str]:
-        return [
-            line for line in result.stdout.splitlines() if line.startswith("RUN:")
-        ]
-
-    def test_existing_group_and_membership_are_unchanged(self) -> None:
-        result = self.run_setup(group_exists=True, groups="sima sudo i2c")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.sudo_commands(result), [])
-        self.assertIn("sima is already in the i2c group; skipping.", result.stdout)
-
-    def test_missing_membership_is_appended(self) -> None:
-        result = self.run_setup(group_exists=True, groups="sima sudo")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self.sudo_commands(result),
-            ["RUN: <usermod> <-aG> <i2c> <sima>"],
-        )
-        self.assertIn("log out and back in", result.stdout)
-
-    def test_missing_group_is_created_before_membership(self) -> None:
-        result = self.run_setup(group_exists=False, groups="sima sudo")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self.sudo_commands(result),
-            [
-                "RUN: <groupadd> <--system> <i2c>",
-                "RUN: <usermod> <-aG> <i2c> <sima>",
-            ],
-        )
-
-    def test_group_creation_failure_warns_and_continues(self) -> None:
-        result = self.run_setup(
-            group_exists=False,
-            groups="sima sudo",
-            fail_command="groupadd",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self.sudo_commands(result),
-            ["RUN: <groupadd> <--system> <i2c>"],
-        )
-        self.assertIn("WARNING: Failed to create the i2c group", result.stdout)
-        self.assertIn("CONTINUED", result.stdout)
-
-    def test_membership_failure_warns_and_continues(self) -> None:
-        result = self.run_setup(
-            group_exists=True,
-            groups="sima sudo",
-            fail_command="usermod",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self.sudo_commands(result),
-            ["RUN: <usermod> <-aG> <i2c> <sima>"],
-        )
-        self.assertIn("WARNING: Failed to add sima to the i2c group", result.stdout)
-        self.assertIn("CONTINUED", result.stdout)
-
+class ModalixBoardRouteTest(unittest.TestCase):
     def test_board_route_preserves_later_install_failures(self) -> None:
         result = run_bash(
             r"""
@@ -163,7 +74,6 @@ ENV_MODE=modalix-board
 install_board_sentinel() { printf 'SENTINEL\n'; }
 install_python_environment() { printf 'PYNEAT\n'; }
 install_debs_on_board() { printf 'DEBS\n'; }
-configure_board_i2c_access() { printf 'I2C\n'; }
 install_agent_skills_for_current_user() { printf 'SKILLS\n'; return 23; }
 install_for_environment
 """
@@ -172,7 +82,7 @@ install_for_environment
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertEqual(
             result.stdout.splitlines(),
-            ["SENTINEL", "PYNEAT", "DEBS", "I2C", "SKILLS"],
+            ["SENTINEL", "PYNEAT", "DEBS", "SKILLS"],
         )
 
 

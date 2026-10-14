@@ -192,26 +192,15 @@ struct RunOptions {
    */
   bool startup_preflight = true;
   RunAdvancedOptions advanced{};       ///< Advanced tuning (rarely needed).
-  PowerMonitorOptions power_monitor{}; ///< Optional board rail power telemetry.
+  PowerMonitorOptions power_monitor{}; ///< Optional board power telemetry from Sentinel.
   RunAutoExportOptions run_export{};   ///< Optional build-time Run/graph JSON export.
   /// Backward-compatible spelling for the previous graph-run export field.
   RunAutoExportOptions graph_run_export{};
 
   /**
-   * @brief Enable board power monitoring using built-in auto-detect.
+   * @brief Enable board power monitoring, read from Sentinel.
    *
-   * This is the preferred no-env path for capturing latency, throughput, and power
-   * together from any Run.
-   */
-  RunOptions& enable_board_power(int sample_interval_ms = 100) {
-    power_monitor = board_power_monitor_options(sample_interval_ms);
-    return *this;
-  }
-
-  /**
-   * @brief Enable default Modalix SOM PMIC rail power monitoring for this Run.
-   *
-   * Prefer `enable_board_power()` unless you need to force the SOM profile:
+   * Captures power together with latency and throughput from any Run:
    *
    * @code
    * RunOptions opt;
@@ -221,18 +210,24 @@ struct RunOptions {
    * // push/pull workload
    * auto report = scope.stop();
    * @endcode
+   *
+   * `sample_interval_ms` is deprecated and ignored.
    */
-  RunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
-    power_monitor = modalix_som_power_monitor_options(sample_interval_ms);
+  RunOptions& enable_board_power(int sample_interval_ms = 100) {
+    power_monitor = board_power_monitor_options(sample_interval_ms);
     return *this;
   }
 
-  /**
-   * @brief Enable the built-in Modalix DVT PMIC table for this Run.
-   */
+  /// Same as `enable_board_power()`.
+  [[deprecated("Use enable_board_power()")]]
+  RunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
+    return enable_board_power(sample_interval_ms);
+  }
+
+  /// Same as `enable_board_power()`.
+  [[deprecated("Use enable_board_power()")]]
   RunOptions& enable_modalix_dvt_power(int sample_interval_ms = 100) {
-    power_monitor = modalix_dvt_power_monitor_options(sample_interval_ms);
-    return *this;
+    return enable_board_power(sample_interval_ms);
   }
 
   /**

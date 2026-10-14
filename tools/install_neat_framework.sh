@@ -386,27 +386,6 @@ run_sudo() {
   exit 1
 }
 
-configure_board_i2c_access() {
-  if ! getent group i2c >/dev/null 2>&1; then
-    if ! (run_sudo groupadd --system i2c); then
-      log "WARNING: Failed to create the i2c group; Run power telemetry may be unavailable."
-      return 0
-    fi
-  fi
-
-  if id -nG sima 2>/dev/null | grep -qw i2c; then
-    log "sima is already in the i2c group; skipping."
-    return 0
-  fi
-
-  if ! (run_sudo usermod -aG i2c sima); then
-    log "WARNING: Failed to add sima to the i2c group; Run power telemetry may be unavailable."
-    return 0
-  fi
-
-  log "Added sima to the i2c group; log out and back in before measuring Run power."
-}
-
 require_sentinel_installer() {
   if [[ ! -f "${SENTINEL_INSTALLER_PATH}" ]]; then
     echo "Missing ${SENTINEL_INSTALLER_PATH}; it ships with this installer and installs the Sentinel telemetry daemon." >&2
@@ -2053,7 +2032,6 @@ install_for_environment() {
       install_board_sentinel
       install_python_environment
       install_debs_on_board
-      configure_board_i2c_access
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     *)

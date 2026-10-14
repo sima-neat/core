@@ -77,4 +77,13 @@ json SentinelClient::read_run(const std::string& trace_id) const {
   return expect_ok(send(socket_path_, "GET", "/v1/runs/" + trace_id), "read trace " + trace_id);
 }
 
+json SentinelClient::latest_sample() const {
+  const std::string action = "read the latest sample";
+  const json reply = expect_ok(send(socket_path_, "GET", "/v1/samples/latest"), action);
+  if (!reply.contains("sample") || !reply["sample"].is_object()) {
+    throw std::runtime_error("Sentinel sent no sample when asked to " + action);
+  }
+  return reply["sample"];
+}
+
 } // namespace simaai::neat::pipeline_internal

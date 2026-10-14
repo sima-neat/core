@@ -34,6 +34,8 @@ public:
   void stop_trace(const std::string& trace_id) const;
   /// Read a saved run: its metadata, metric definitions, and samples.
   nlohmann::json read_run(const std::string& trace_id) const;
+  /// Read the latest sample: its `timestamp` and metric `values`.
+  nlohmann::json latest_sample() const;
 
 private:
   std::string socket_path_;

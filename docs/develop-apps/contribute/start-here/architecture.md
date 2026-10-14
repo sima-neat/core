@@ -203,7 +203,9 @@ samples about every 2 s, so the throughput pass runs for at least
 `BenchmarkOptions::min_duration_ms` (30 s by default). When Sentinel is not running, another trace
 is recording, or the window has no samples, the benchmark still returns latency and FPS; the power
 fields are zero and `telemetry.status` names the reason. Board mode of
-`tools/install_neat_framework.sh` installs Sentinel or upgrades it to the latest production build.
+`tools/install_neat_framework.sh` installs Sentinel or upgrades it to the latest production build. `Run` power
+(`RunOptions::power_monitor`) also comes from Sentinel: Core polls its latest sample and reads no
+power monitor chips over I2C.
 
 ### Compiled model execution contract
 

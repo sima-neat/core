@@ -1058,7 +1058,7 @@ run.close()
 
 ```cpp
 simaai::neat::RunOptions options;
-options.enable_board_power(/*sample_interval_ms=*/100);
+options.enable_board_power();
 
 auto run = graph.build(options);
 
@@ -1072,7 +1072,7 @@ auto scope = run.start_measurement(measure_options);
 
 ```python
 options = pyneat.RunOptions()
-options.enable_board_power(sample_interval_ms=100)
+options.enable_board_power()
 
 run = graph.build(options)
 
@@ -1084,7 +1084,7 @@ scope = run.start_measurement(measure_options)
 </CodeTab>
 </CodeTabs>
 
-電力データは、ボードの電源レールとモニターの構成によって異なります。測定設定を数値で記録し、電源レールが接続されていない場合に、電力の数値がポータブルなものに見えないようにしてください。
+電力データは Sentinel から取得されます。Sentinel はボードの電源レールを 2 秒ごとにサンプリングするため、約 2 秒より短い測定ウィンドウでは電力サンプルが得られない場合があります。測定設定を数値で記録し、電源レールが接続されていない場合に、電力の数値がポータブルなものに見えないようにしてください。
 
 ビルド時のエクスポートは、「Neat は何をビルドしたのか？」という問いに答えます。実行後のエクスポートは、「実行中に何が起こったのか？」という問いに答えます。
 

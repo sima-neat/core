@@ -36,6 +36,16 @@ Release notes for the SiMa.ai Neat Library.
   installer installs Sentinel with `sima-cli neat install sentinel`, or upgrades
   it when the running version is not the latest production build. See
   [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry).
+- Run power telemetry, enabled with `enable_board_power()`, also reads from
+  Sentinel. Core no longer opens the I2C power monitors, so its readings no
+  longer interfere with Sentinel's reads of the same rails, and the installer no
+  longer adds `sima` to the `i2c` group. Sentinel samples every 2 s, so a
+  measurement window shorter than about 2 s can have no power samples. Rails are
+  named after Sentinel's metrics, such as `mla`, and report power only.
+  `sample_interval_ms`, `PowerMonitorProfile`, the built-in rail tables, the
+  `PowerRailConfig` I2C fields, `enable_modalix_som_power()`,
+  `enable_modalix_dvt_power()`, and `modalix_som_power_monitor_options()` /
+  `modalix_dvt_power_monitor_options()` are deprecated and ignored.
 - Hardware decode uses direct codec sessions and DMA-BUF output. Core no longer
   uses decoder-daemon admission leases or `SIMA_DECODER_ADMISSION_REQUIRE`.
   Decoder pool and tuning options remain available.

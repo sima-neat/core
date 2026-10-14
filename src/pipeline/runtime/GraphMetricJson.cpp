@@ -131,8 +131,7 @@ json power_status_json(const PowerSummary& power, bool export_requested, bool mo
   j["scope"] = std::string(scope);
   j["available"] = status == "collected" || status == "collected_with_errors";
   j["attribution"] = "graph_level_only";
-  j["note"] =
-      "Power is board/SOM rail telemetry. DVT board readings may be unavailable or unreliable.";
+  j["note"] = "Power is board rail telemetry from Sentinel, which samples every 2 s.";
   return j;
 }
 
