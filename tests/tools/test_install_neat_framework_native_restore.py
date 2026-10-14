@@ -139,6 +139,7 @@ source "$1"
 tmp="$(mktemp -d)"
 INSTALLER_TMP_DIRS=("${tmp}")
 ENV_MODE=modalix-board
+install_board_sentinel() { printf 'SENTINEL\n'; }
 install_python_environment() { printf 'PYNEAT\n'; }
 install_debs_on_board() { printf 'DEBS\n'; }
 configure_board_i2c_access() { printf 'I2C\n'; }
@@ -150,8 +151,82 @@ install_for_environment
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertEqual(
             result.stdout.splitlines(),
-            ["PYNEAT", "DEBS", "I2C", "SKILLS"],
+            ["SENTINEL", "PYNEAT", "DEBS", "I2C", "SKILLS"],
         )
+
+
+class ModalixSentinelInstallTest(unittest.TestCase):
+    @staticmethod
+    def run_install(
+        *, installed: bool, active: bool, health_after_install: bool = True,
+        install_ok: bool = True, sima_cli: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return run_bash(
+            rf"""
+source "$1"
+tmp="$(mktemp -d)"
+INSTALLER_TMP_DIRS=("${{tmp}}")
+SENTINEL_BINARY="${{tmp}}/simaai-sentinel"
+{'touch "${SENTINEL_BINARY}"; chmod +x "${SENTINEL_BINARY}"' if installed else ''}
+{'touch "${tmp}/active"' if active else ''}
+systemctl() {{ [[ -e "${{tmp}}/active" ]]; }}
+curl() {{ [[ -e "${{tmp}}/active" ]] && printf '{{
+  "version": "main:2b0360551b5f"
+}}
+'; }}
+sleep() {{ :; }}
+{'' if sima_cli else 'command() { [[ "$2" != sima-cli ]] && builtin command "$@"; }'}
+sima-cli() {{
+  printf 'SIMA-CLI %s
+' "$*"
+  {'touch "${SENTINEL_BINARY}"; chmod +x "${SENTINEL_BINARY}"; touch "${tmp}/active"'
+   if health_after_install else ''}
+  return {0 if install_ok else 1}
+}}
+install_board_sentinel
+printf 'CONTINUED
+'
+"""
+        )
+
+    def test_running_sentinel_is_kept(self) -> None:
+        result = self.run_install(installed=True, active=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("SIMA-CLI", result.stdout)
+        self.assertIn("Sentinel main:2b0360551b5f is running; skipping", result.stdout)
+        self.assertIn("CONTINUED", result.stdout)
+
+    def test_missing_sentinel_is_installed_from_production(self) -> None:
+        result = self.run_install(installed=False, active=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"SIMA-CLI neat install sentinel --prod --install-dir \S+")
+        self.assertIn("Sentinel main:2b0360551b5f is running.", result.stdout)
+        self.assertIn("CONTINUED", result.stdout)
+
+    def test_install_error_with_healthy_daemon_warns(self) -> None:
+        result = self.run_install(installed=True, active=False, install_ok=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING: 'sima-cli neat install sentinel' reported a failure", result.stdout)
+        self.assertIn("CONTINUED", result.stdout)
+
+    def test_unhealthy_daemon_stops_installer(self) -> None:
+        result = self.run_install(
+            installed=False, active=False, health_after_install=False, install_ok=False
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("CONTINUED", result.stdout)
+        self.assertIn("Run 'sima-cli neat install sentinel'", result.stderr)
+
+    def test_missing_sima_cli_stops_installer(self) -> None:
+        result = self.run_install(installed=False, active=False, sima_cli=False)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("SIMA-CLI", result.stdout)
+        self.assertIn("sima-cli is required to install Sentinel", result.stderr)
 
 
 class ModalixPythonVenvSupportTest(unittest.TestCase):

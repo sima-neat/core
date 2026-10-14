@@ -387,7 +387,7 @@ run_sudo() {
 configure_board_i2c_access() {
   if ! getent group i2c >/dev/null 2>&1; then
     if ! (run_sudo groupadd --system i2c); then
-      log "WARNING: Failed to create the i2c group; benchmark power telemetry may be unavailable."
+      log "WARNING: Failed to create the i2c group; Run power telemetry may be unavailable."
       return 0
     fi
   fi
@@ -398,11 +398,59 @@ configure_board_i2c_access() {
   fi
 
   if ! (run_sudo usermod -aG i2c sima); then
-    log "WARNING: Failed to add sima to the i2c group; benchmark power telemetry may be unavailable."
+    log "WARNING: Failed to add sima to the i2c group; Run power telemetry may be unavailable."
     return 0
   fi
 
-  log "Added sima to the i2c group; log out and back in before running benchmark power measurements."
+  log "Added sima to the i2c group; log out and back in before measuring Run power."
+}
+
+SENTINEL_BINARY="/usr/local/bin/simaai-sentinel"
+SENTINEL_API_SOCKET="/run/simaai-sentinel/api.sock"
+
+sentinel_version() {
+  curl -fsS --max-time 5 --unix-socket "${SENTINEL_API_SOCKET}" http://localhost/v1/health 2>/dev/null |
+    sed -n 's/.*"version": *"\([^"]*\)".*/\1/p'
+}
+
+sentinel_is_healthy() {
+  [[ -x "${SENTINEL_BINARY}" ]] &&
+    systemctl is-active --quiet simaai-sentinel &&
+    [[ -n "$(sentinel_version)" ]]
+}
+
+# Model::benchmark() reads board power, temperature, CPU, and memory from the
+# Sentinel daemon. A running daemon is kept: reinstalling would restart it and
+# interrupt any trace another tool is recording.
+install_board_sentinel() {
+  if sentinel_is_healthy; then
+    log "Sentinel $(sentinel_version) is running; skipping its installation."
+    return 0
+  fi
+  if ! command -v sima-cli >/dev/null 2>&1; then
+    echo "sima-cli is required to install Sentinel, the board telemetry daemon used by Model::benchmark()." >&2
+    echo "Install sima-cli, then rerun this installer." >&2
+    exit 1
+  fi
+
+  local install_dir
+  install_dir="$(mktemp -d)"
+  INSTALLER_TMP_DIRS+=("${install_dir}")
+  log "Installing Sentinel, the board telemetry daemon used by Model::benchmark()."
+  if ! sima-cli neat install sentinel --prod --install-dir "${install_dir}"; then
+    log "WARNING: 'sima-cli neat install sentinel' reported a failure; checking the daemon."
+  fi
+
+  local attempt
+  for attempt in {1..10}; do
+    if sentinel_is_healthy; then
+      log "Sentinel $(sentinel_version) is running."
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Sentinel is not running after installation. Run 'sima-cli neat install sentinel', then rerun this installer." >&2
+  exit 1
 }
 
 read_metadata_field() {
@@ -2020,8 +2068,10 @@ install_for_environment() {
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     modalix-board)
-      # Preserve the established board ordering: provision PyNeat before the
-      # board-specific package recovery and runtime restart transaction.
+      # Sentinel comes first so a failure leaves the installed Neat packages
+      # untouched. Then preserve the established board ordering: provision PyNeat
+      # before the board-specific package recovery and runtime restart transaction.
+      install_board_sentinel
       install_python_environment
       install_debs_on_board
       configure_board_i2c_access
