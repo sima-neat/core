@@ -88,20 +88,26 @@ Input: synthetic
 Samples: 100
 Compiled batch: 1
 Measurement detail: e2e+throughput-only
-Latency: 1.96 ms
-FPS:     1461.30 inferences/s
-Batch throughput: 1461.30 batches/s
-Throughput window: 30.02 s, 43861 inputs
-Power avg:    14.00 W
-Power peak:   14.34 W
-Energy:       0.96 J for 100 inputs
-Telemetry:    Sentinel, 15 samples, trace 20261014T031628.431Z-neat-benchmark-20261014t031628-397z
-report_latency_ms=1.95595
-report_fps=1461.3
-report_avg_power_watts=13.9958
-report_energy_joules=0.957765
-report_peak_power_watts=14.3438
-report_throughput_duration_ms=30015
+Latency: 1.95 ms
+FPS:     1458.19 inferences/s
+Batch throughput: 1458.19 batches/s
+Throughput window: 30.08 s, 43866 inputs
+Power avg:    13.57 W
+Power peak:   14.06 W
+Energy:       0.93 J for 100 inputs
+power_mla_watts: 3.28 W avg, 3.50 W max
+die_temperature_max_c: 51.08 C avg, 51.98 C max
+cpu_usage_pct: 12.74 % avg, 13.51 % max
+mla_memory_mib: 29.65 MiB avg, 29.65 MiB max
+cma_memory_mib: 6023.09 MiB avg, 6033.17 MiB max
+linux_memory_used_mib: 681.10 MiB avg, 698.57 MiB max
+Telemetry:    Sentinel, 15 samples, trace 20261014T135442.014Z-neat-benchmark-20261014t135441-939z
+report_latency_ms=1.94755
+report_fps=1458.19
+report_avg_power_watts=13.5708
+report_energy_joules=0.930664
+report_peak_power_watts=14.0625
+report_throughput_duration_ms=30082.5
 report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
