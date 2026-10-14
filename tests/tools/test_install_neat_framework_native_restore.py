@@ -42,6 +42,21 @@ ensure_sima_lmm_sysroot_deps "${tmp}/sysroot"
                         "libcpp-httplib-dev", "libfftw3-dev", "libavcodec-dev"):
             self.assertNotIn(package, requested)
 
+    def test_core_runtime_dependencies_do_not_need_sima_lmm(self) -> None:
+        result = run_bash(r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cd "${tmp}"
+apt-get() { printf 'DOWNLOAD %s\n' "$*"; return 1; }
+ensure_sima_lmm_sysroot_deps "${tmp}/sysroot"
+""")
+        self.assertNotEqual(result.returncode, 0)
+        requested = next(line for line in result.stdout.splitlines() if line.startswith("DOWNLOAD"))
+        self.assertIn("libcpp-httplib0.18:arm64", requested)
+        self.assertIn("libbrotli1:arm64", requested)
+        self.assertNotIn("libfmt10:arm64", requested)
+
 class ModalixI2cAccessTest(unittest.TestCase):
     @staticmethod
     def run_setup(

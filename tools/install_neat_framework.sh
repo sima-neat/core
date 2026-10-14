@@ -834,13 +834,16 @@ sysroot_neat_install_packages_dir() {
 
 ensure_sima_lmm_sysroot_deps() {
   local sysroot="$1"
-  local -a dependencies=("usr/include/nlohmann/json.hpp:nlohmann-json3-dev")
+  # libsima_neat.so links cpp-httplib, which links brotli.
+  local -a dependencies=(
+    "usr/include/nlohmann/json.hpp:nlohmann-json3-dev"
+    "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
+    "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
+  )
   if compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
     dependencies+=(
       "usr/lib/aarch64-linux-gnu/libfmt.so.10:libfmt10:arm64"
       "usr/lib/aarch64-linux-gnu/libspdlog.so.1.15:libspdlog1.15:arm64"
-      "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
-      "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
       "usr/lib/aarch64-linux-gnu/libfftw3.so.3:libfftw3-double3:arm64"
       "usr/lib/aarch64-linux-gnu/libavcodec.so.61:libavcodec61:arm64"
       "usr/lib/aarch64-linux-gnu/libavformat.so.61:libavformat61:arm64"

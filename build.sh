@@ -114,6 +114,7 @@ SYSTEM_DEPS_LINUX=(
   libglib2.0-dev
   libopencv-dev
   nlohmann-json3-dev
+  libcpp-httplib-dev
   clang
   clang-format
   ripgrep
@@ -134,6 +135,7 @@ SYSTEM_DEPS_MAC=(
   glib
   opencv
   nlohmann-json
+  cpp-httplib
 )
 
 SELECTED_SYSTEM_DEPS_LINUX=()
