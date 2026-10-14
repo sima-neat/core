@@ -7946,7 +7946,7 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
-    trace.stop();
+    // End the window before stopping Sentinel: its stop request takes about 0.1 s.
     throughput_measured = measure.stop();
     telemetry = trace.finish();
     runner.close();

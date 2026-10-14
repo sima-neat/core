@@ -32,13 +32,12 @@ public:
   SentinelTrace(const SentinelTrace&) = delete;
   SentinelTrace& operator=(const SentinelTrace&) = delete;
 
-  /// Stop the trace. Call it as soon as the measured window ends; `finish()` stops it otherwise.
-  void stop() noexcept;
-
   /// Stop the trace and summarize the samples it recorded.
   BenchmarkTelemetry finish();
 
 private:
+  void stop() noexcept;
+
   pipeline_internal::SentinelClient client_;
   std::string trace_id_;
   std::string failure_;
