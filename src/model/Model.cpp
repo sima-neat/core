@@ -7791,7 +7791,7 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
   const int num_samples = options.num_samples;
   const bool include_plugin_latency = options.include_plugin_latency;
 
-  constexpr int kWarmupSamples = 50;
+  constexpr int kWarmupSamples = 100;
   constexpr int kTimeoutMs = 120000;
   const TensorList inputs = make_synthetic_benchmark_inputs(*this, options);
   const int logical_batch_size = compiled_batch_size();
