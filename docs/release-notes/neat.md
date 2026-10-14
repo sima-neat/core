@@ -33,8 +33,8 @@ Release notes for the SiMa.ai Neat Library.
   `avg_power_watts` and `energy_joules` keep their meaning; `energy_joules` is
   the energy for `num_samples` inputs. When Sentinel is unavailable, latency and
   FPS are still reported and `telemetry.status` names the reason. The DevKit
-  installer installs Sentinel with `sima-cli neat install sentinel` when it is
-  not already running. See
+  installer installs Sentinel with `sima-cli neat install sentinel`, or upgrades
+  it when the running version is not the latest production build. See
   [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry).
 - Hardware decode uses direct codec sessions and DMA-BUF output. Core no longer
   uses decoder-daemon admission leases or `SIMA_DECODER_ADMISSION_REQUIRE`.

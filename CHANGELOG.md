@@ -21,7 +21,7 @@ The format is based on Keep a Changelog and follows semantic versioning.
   `throughput_duration_ms`. Its throughput pass now lasts at least
   `BenchmarkOptions::min_duration_ms` (30 s by default); set it to 0 for the previous
   count-based timing. `energy_joules` stays the energy for `num_samples` inputs. The board
-  installer now installs Sentinel when it is not running.
+  installer now installs Sentinel, or upgrades it when it is not the latest production build.
 - BREAKING: Model archives must now use the exact lowercase `.tar.gz` suffix; `.mpk`, `.tgz`,
   `.tar`, and bare `.gz` inputs are rejected before tar inspection.
 - BREAKING: The archive loader is now an internal `Model` implementation detail; public
