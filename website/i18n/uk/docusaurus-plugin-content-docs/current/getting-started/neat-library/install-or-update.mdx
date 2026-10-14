@@ -33,8 +33,8 @@ target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
 Статичний архів залишається в `sima-neat-dev`. Наявні статичні споживачі мають додати `COMPONENTS Static` і встановити сумісні `neat-internals-dev`,
-`simaai-memory-lib-dev`, `zlib1g-dev`, а для збірок із LLiMa —
-`sima-lmm-dev` і `libcpp-httplib-dev` з їхніми залежностями:
+`simaai-memory-lib-dev`, `zlib1g-dev`, `libcpp-httplib-dev`, а для збірок із LLiMa —
+`sima-lmm-dev`, з їхніми залежностями:
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)

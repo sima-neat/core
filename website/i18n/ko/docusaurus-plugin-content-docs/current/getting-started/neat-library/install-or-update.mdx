@@ -31,7 +31,7 @@ find_package(SimaNeat CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
-정적 아카이브는 `sima-neat-dev`에 계속 포함됩니다. 기존 정적 소비자는 `COMPONENTS Static`을 추가하고 호환되는 `neat-internals-dev`, `simaai-memory-lib-dev`, `zlib1g-dev`를 준비해야 합니다. LLiMa를 활성화한 빌드에는 `sima-lmm-dev`, `libcpp-httplib-dev`와 해당 종속성도 필요합니다.
+정적 아카이브는 `sima-neat-dev`에 계속 포함됩니다. 기존 정적 소비자는 `COMPONENTS Static`을 추가하고 호환되는 `neat-internals-dev`, `simaai-memory-lib-dev`, `zlib1g-dev`, `libcpp-httplib-dev`를 준비해야 합니다. LLiMa를 활성화한 빌드에는 `sima-lmm-dev`와 해당 종속성도 필요합니다.
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)

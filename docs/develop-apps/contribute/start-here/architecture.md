@@ -193,6 +193,18 @@ same device as `build(...)`. It is a public diagnostic view, separate from the i
 contract is `schemas/execution_plan_v1.schema.json`; `schema_version` changes only when a change
 breaks existing readers.
 
+### Benchmark telemetry
+
+`Model::benchmark()` reads power and board telemetry from Sentinel, the board telemetry daemon,
+through its HTTP API on `/run/simaai-sentinel/api.sock`; Core does not read the power monitor
+chips for the benchmark. The benchmark records a Sentinel trace named `neat-benchmark-<UTC time>`
+around the throughput pass, stops only that trace, and keeps it for Sentinel's own tools. Sentinel
+samples about every 2 s, so the throughput pass runs for at least
+`BenchmarkOptions::min_duration_ms` (30 s by default). When Sentinel is not running, another trace
+is recording, or the window has no samples, the benchmark still returns latency and FPS; the power
+fields are zero and `telemetry.status` names the reason. Board mode of
+`tools/install_neat_framework.sh` installs Sentinel or upgrades it to the latest production build.
+
 ### Compiled model execution contract
 
 The DMA-BUF driver migration keeps model semantics separate from per-frame

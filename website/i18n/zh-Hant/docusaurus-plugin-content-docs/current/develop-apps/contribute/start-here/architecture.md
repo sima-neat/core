@@ -138,6 +138,10 @@ input Sample/Tensor
 
 `Model::execution_plan(...)` 會傳回以相同引數呼叫 `build(...)` 時將執行的內容：依管線順序列出模型的圖節點、每個節點的執行位置（`A65`、`EV74` 或 `MLA`），以及節點之間邊上的張量。它會在關閉啟動預檢的情況下呼叫 `build(...)`，讀取建置在 GStreamer 剖析之前記錄於 `DiagCtx` 的計畫，然後關閉管線，因此需要與 `build(...)` 相同的裝置。這是公開的診斷檢視，與下文所述的內部 `ModelExecutionPlan` 不同。其 JSON 合約為 `schemas/execution_plan_v1.schema.json`；`schema_version` 只會在變更破壞現有讀取端時才會改變。
 
+### 基準測試遙測
+
+`Model::benchmark()` 會透過 `/run/simaai-sentinel/api.sock` 上的 HTTP API，從板子遙測常駐程式 Sentinel 讀取功耗與板子遙測資料；基準測試不會由 Core 直接讀取電源監控晶片。基準測試會在吞吐量階段期間記錄名為 `neat-benchmark-<UTC 時間>` 的 Sentinel 追蹤，只停止該追蹤，並保留它供 Sentinel 自身的工具使用。Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `BenchmarkOptions::min_duration_ms`（預設為 30 秒）。當 Sentinel 未執行、另一個追蹤正在記錄，或量測期間沒有樣本時，基準測試仍會傳回延遲與 FPS；功耗欄位為零，並由 `telemetry.status` 說明原因。`tools/install_neat_framework.sh` 的板子模式會安裝 Sentinel，或將其升級至最新的正式版建置。
+
 ### 已編譯模型執行合約
 
 DMA-BUF 驅動程式遷移會將模型語意與每影格儲存空間分開。

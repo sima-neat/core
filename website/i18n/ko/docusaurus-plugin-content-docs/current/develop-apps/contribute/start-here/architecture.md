@@ -135,6 +135,10 @@ input Sample/Tensor
 
 `Model::execution_plan(...)`은 같은 인수로 `build(...)`를 호출했을 때 실행될 내용을 반환합니다. 모델의 그래프 노드를 파이프라인 순서대로 나열하고, 각 노드가 실행되는 위치(`A65`, `EV74`, `MLA`)와 노드 사이 엣지를 흐르는 텐서를 보여 줍니다. 시작 프리플라이트를 끈 상태로 `build(...)`를 호출하고, 빌드가 GStreamer 파싱 전에 `DiagCtx`에 기록한 계획을 읽은 뒤 파이프라인을 닫습니다. 따라서 `build(...)`와 같은 디바이스가 필요합니다. 이는 공개 진단 뷰이며, 아래에서 설명하는 내부 `ModelExecutionPlan`과는 별개입니다. JSON 계약은 `schemas/execution_plan_v1.schema.json`이며, `schema_version`은 기존 읽기 측을 깨뜨리는 변경에서만 바뀝니다.
 
+### 벤치마크 텔레메트리
+
+`Model::benchmark()`는 보드 텔레메트리 데몬인 Sentinel에서 `/run/simaai-sentinel/api.sock`의 HTTP API를 통해 전력과 보드 텔레메트리를 읽습니다. 벤치마크를 위해 Core가 전력 모니터 칩을 직접 읽지 않습니다. 벤치마크는 처리량 패스 동안 `neat-benchmark-<UTC 시간>`이라는 이름의 Sentinel 트레이스를 기록하고, 그 트레이스만 중지한 뒤 Sentinel 자체 도구에서 사용할 수 있도록 보존합니다. Sentinel은 약 2초마다 샘플링하므로 처리량 패스는 최소 `BenchmarkOptions::min_duration_ms`(기본값 30초) 동안 실행됩니다. Sentinel이 실행 중이 아니거나, 다른 트레이스가 기록 중이거나, 측정 구간에 샘플이 없어도 벤치마크는 지연 시간과 FPS를 반환합니다. 이때 전력 필드는 0이며 `telemetry.status`가 이유를 알려 줍니다. `tools/install_neat_framework.sh`의 보드 모드는 Sentinel을 설치하거나 최신 프로덕션 빌드로 업그레이드합니다.
+
 ### 컴파일된 모델 실행 계약
 
 DMA-BUF 드라이버 마이그레이션은 모델 의미와 프레임별 저장을 분리합니다. Core는 모델 로드 정보를 하나의 불변 내부 `ModelExecutionPlan`으로 컴파일합니다.

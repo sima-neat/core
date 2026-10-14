@@ -138,6 +138,10 @@ input Sample/Tensor
 
 `Model::execution_plan(...)` は、同じ引数の `build(...)` が実行する内容を返します。モデルのグラフノードをパイプライン順に並べ、各ノードの実行場所（`A65`、`EV74`、`MLA`）と、ノード間のエッジを流れるテンソルを示します。スタートアップのプリフライトを無効にして `build(...)` を呼び出し、ビルドが GStreamer の解析の前に `DiagCtx` に記録したプランを読み取ってから、パイプラインを閉じます。そのため、`build(...)` と同じデバイスが必要です。これは公開の診断ビューであり、後述する内部の `ModelExecutionPlan` とは別のものです。JSON コントラクトは `schemas/execution_plan_v1.schema.json` です。`schema_version` は、既存の読み取り側を壊す変更のときにのみ変わります。
 
+### ベンチマークテレメトリ
+
+`Model::benchmark()` は、ボードテレメトリデーモンである Sentinel から、`/run/simaai-sentinel/api.sock` 上の HTTP API を通じて電力とボードのテレメトリを読み取ります。ベンチマークのために Core が電力モニタチップを直接読むことはありません。ベンチマークはスループット測定パスの間、`neat-benchmark-<UTC 時刻>` という名前の Sentinel トレースを記録し、そのトレースだけを停止して、Sentinel 自身のツールで使えるように保持します。Sentinel はおよそ 2 秒ごとにサンプリングするため、スループット測定パスは少なくとも `BenchmarkOptions::min_duration_ms`（デフォルトは 30 秒）の間実行されます。Sentinel が動作していない、別のトレースを記録中である、または測定期間にサンプルがない場合でも、ベンチマークはレイテンシと FPS を返します。この場合、電力フィールドは 0 になり、`telemetry.status` が理由を示します。`tools/install_neat_framework.sh` のボードモードは、Sentinel をインストールするか、最新の本番ビルドにアップグレードします。
+
 ### コンパイル済みモデルの実行コントラクト
 
 DMA-BUF ドライバーへの移行では、モデルの意味とフレームごとのストレージを区別します。Core はモデル読み込み時の事実を、変更不可の内部 `ModelExecutionPlan` にコンパイルします。

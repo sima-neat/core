@@ -31,7 +31,7 @@ find_package(SimaNeat CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
-静的アーカイブは引き続き `sima-neat-dev` に含まれます。既存の静的リンクを使用する側は、`COMPONENTS Static` を追加し、互換性のある `neat-internals-dev`、`simaai-memory-lib-dev`、`zlib1g-dev` を用意する必要があります。LLiMa を有効にしたビルドでは、`sima-lmm-dev` と `libcpp-httplib-dev` およびそれらの依存関係も必要です。
+静的アーカイブは引き続き `sima-neat-dev` に含まれます。既存の静的リンクを使用する側は、`COMPONENTS Static` を追加し、互換性のある `neat-internals-dev`、`simaai-memory-lib-dev`、`zlib1g-dev`、`libcpp-httplib-dev` を用意する必要があります。LLiMa を有効にしたビルドでは、`sima-lmm-dev` とその依存関係も必要です。
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)

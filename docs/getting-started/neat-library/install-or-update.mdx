@@ -38,8 +38,8 @@ target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 
 The static archive remains in `sima-neat-dev`. Existing static consumers must add
 `COMPONENTS Static` and provision compatible `neat-internals-dev`,
-`simaai-memory-lib-dev`, `zlib1g-dev`, and, for LLiMa-enabled builds,
-`sima-lmm-dev` and `libcpp-httplib-dev` with their dependencies:
+`simaai-memory-lib-dev`, `zlib1g-dev`, `libcpp-httplib-dev`, and, for LLiMa-enabled
+builds, `sima-lmm-dev`, with their dependencies:
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
