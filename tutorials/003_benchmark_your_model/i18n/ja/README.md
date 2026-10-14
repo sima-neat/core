@@ -83,26 +83,25 @@ Input: synthetic
 Samples: 100
 Compiled batch: 1
 Measurement detail: e2e+throughput-only
-Latency: 1.95 ms
-FPS:     1458.19 inferences/s
-Batch throughput: 1458.19 batches/s
-Throughput window: 30.08 s, 43866 inputs
-Power avg:    13.57 W
-Power peak:   14.06 W
-Energy:       0.93 J for 100 inputs
-power_mla_watts: 3.28 W avg, 3.50 W max
-die_temperature_max_c: 51.08 C avg, 51.98 C max
-cpu_usage_pct: 12.74 % avg, 13.51 % max
-mla_memory_mib: 29.65 MiB avg, 29.65 MiB max
-cma_memory_mib: 6023.09 MiB avg, 6033.17 MiB max
-linux_memory_used_mib: 681.10 MiB avg, 698.57 MiB max
-Telemetry:    Sentinel, 15 samples, trace 20261014T135442.014Z-neat-benchmark-20261014t135441-939z
-report_latency_ms=1.94755
-report_fps=1458.19
-report_avg_power_watts=13.5708
-report_energy_joules=0.930664
-report_peak_power_watts=14.0625
-report_throughput_duration_ms=30082.5
+Latency: 1.97 ms
+FPS:     1457.04 inferences/s
+Batch throughput: 1457.04 batches/s
+Throughput window: 30.09 s, 43849 inputs
+Power:         13.19 W avg, 13.81 W peak (SoM)
+MLA power:     3.05 W avg, 3.25 W max
+Energy:        0.91 J for 100 inputs
+Die temp:      46.34 °C avg, 47.56 °C max
+CPU usage:     12.38 % avg, 13.22 % max
+MLA memory:    29.65 MiB
+CMA used:      6035.02 MiB avg, 6044.38 MiB max
+Linux memory:  682.88 MiB avg, 697.41 MiB max
+Telemetry:     Sentinel, 15 samples, trace 20261014T144839.984Z-neat-benchmark-20261014t144839-905z
+report_latency_ms=1.96852
+report_fps=1457.04
+report_avg_power_watts=13.1875
+report_energy_joules=0.905085
+report_peak_power_watts=13.8125
+report_throughput_duration_ms=30094.5
 report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```

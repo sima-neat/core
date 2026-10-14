@@ -7979,32 +7979,36 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
                   throughput_measured.plugin_latency_unattributed.size())
               << "\n";
   }
-  // One line per telemetry metric, named after its BenchmarkTelemetry field; metrics the board did
-  // not report are skipped.
-  const auto print_metric = [](const char* field, const BenchmarkMetric& metric, const char* unit) {
-    if (metric.samples > 0) {
-      std::cout << field << ": " << metric.mean << " " << unit << " avg, " << metric.maximum << " "
-                << unit << " max\n";
+  // One line per telemetry metric; metrics the board did not report are skipped. A metric that
+  // stayed constant over the window prints a single value.
+  const auto print_metric = [](const char* label, const BenchmarkMetric& metric, const char* unit) {
+    if (metric.samples == 0) {
+      return;
     }
+    std::cout << label << metric.mean << " " << unit;
+    if (metric.minimum != metric.maximum) {
+      std::cout << " avg, " << metric.maximum << " " << unit << " max";
+    }
+    std::cout << "\n";
   };
   if (board.power_som_watts.samples > 0) {
-    std::cout << "Power avg:    " << report.avg_power_watts << " W\n";
-    std::cout << "Power peak:   " << report.peak_power_watts << " W\n";
-    std::cout << "Energy:       " << report.energy_joules << " J for " << num_samples
+    std::cout << "Power:         " << report.avg_power_watts << " W avg, "
+              << report.peak_power_watts << " W peak (SoM)\n";
+    print_metric("MLA power:     ", board.power_mla_watts, "W");
+    std::cout << "Energy:        " << report.energy_joules << " J for " << num_samples
               << " inputs\n";
   } else {
     std::cout << "Power: unavailable ("
               << (board.status == "ok" ? "Sentinel reported no SoM power" : board.status) << ")\n";
   }
   if (board.status == "ok") {
-    print_metric("power_mla_watts", board.power_mla_watts, "W");
-    print_metric("die_temperature_max_c", board.die_temperature_max_c, "C");
-    print_metric("cpu_usage_pct", board.cpu_usage_pct, "%");
-    print_metric("mla_memory_mib", board.mla_memory_mib, "MiB");
-    print_metric("cma_memory_mib", board.cma_memory_mib, "MiB");
-    print_metric("linux_memory_used_mib", board.linux_memory_used_mib, "MiB");
-    std::cout << "Telemetry:    Sentinel, " << board.samples << " samples, trace " << board.trace_id
-              << "\n";
+    print_metric("Die temp:      ", board.die_temperature_max_c, "°C");
+    print_metric("CPU usage:     ", board.cpu_usage_pct, "%");
+    print_metric("MLA memory:    ", board.mla_memory_mib, "MiB");
+    print_metric("CMA used:      ", board.cma_memory_mib, "MiB");
+    print_metric("Linux memory:  ", board.linux_memory_used_mib, "MiB");
+    std::cout << "Telemetry:     Sentinel, " << board.samples << " samples, trace "
+              << board.trace_id << "\n";
   }
   std::cout.flags(old_flags);
   std::cout.precision(old_precision);
