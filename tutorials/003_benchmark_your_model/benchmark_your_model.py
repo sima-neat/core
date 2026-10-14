@@ -41,6 +41,9 @@ def main(argv: list[str]) -> int:
   print(f"report_fps={report.fps}")
   print(f"report_avg_power_watts={report.avg_power_watts}")
   print(f"report_energy_joules={report.energy_joules}")
+  print(f"report_peak_power_watts={report.peak_power_watts}")
+  print(f"report_throughput_duration_ms={report.throughput_duration_ms}")
+  print(f"report_telemetry_status={report.telemetry.status}")
   # END STEP
   # END CORE LOGIC
 

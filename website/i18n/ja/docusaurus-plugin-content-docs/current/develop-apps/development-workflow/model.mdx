@@ -712,7 +712,7 @@ runner = model.build([tensor], route_options=route)
 
 ## モデルの実行を測定する
 
-`model.benchmark(...)` を使用して、迅速な合成モデルのベンチマークを実施してください。これにより、`input_specs()` から入力が生成され、主要なレイテンシー、スループット、およびオプションの電力に関する情報が返されます。モデルやランタイムの変更を比較するために使用し、実際の運用環境におけるスループットを主張するためには使用しないでください。
+`model.benchmark(...)` を使用して、迅速な合成モデルのベンチマークを実施してください。これにより、`input_specs()` から入力が生成され、主要なレイテンシー、スループット、電力、およびボードのテレメトリが返されます。モデルやランタイムの変更を比較するために使用し、実際の運用環境におけるスループットを主張するためには使用しないでください。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -768,7 +768,52 @@ report = model.benchmark(options)
 
 `original_width`と`original_height`を組み合わせて設定します。ベンチマークは引き続き、モデルの形状を持つ合成テンソルを生成します。これらのフィールドは、BoxDecodeメタデータに必要なソースジオメトリとリサイズ変換を提供します。これらを省略すると、ベンチマークは解決された前処理とモデル入力コントラクトからジオメトリを推測します。これらの実行ごとの値は、`ModelOptions`内の非推奨のBoxDecodeジオメトリヒントよりも優先されます。既存の`benchmark(num_samples)`の呼び出しは、同じ動作を維持します。
 
-`avg_power_watts`と`energy_joules`は、ボードの電力モニターがサンプルを生成した場合にのみ読み取ります。ボードまたはレール構成で電力テレメトリが利用できない場合、これらのフィールドはゼロのままになります。
+### 実行時間
+
+ベンチマークは、`num_samples` 個の入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。スループット測定パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 30 秒）が経過するまで続きます。そのため、電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`throughput_samples` と `throughput_duration_ms` は、このパスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、`num_samples` 個の入力の後で停止します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.min_duration_ms = 0;
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.min_duration_ms = 0
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+### 電力とボードのテレメトリ {#power-and-board-telemetry}
+
+電力とボードのテレメトリは、Neat のインストーラーがボードにセットアップする DevKit のテレメトリデーモンである [Sentinel](/tools/sentinel/) から取得されます。ベンチマークは、スループット測定パスの間に `neat-benchmark-<UTC time>` という名前の Sentinel トレースを記録して保持するため、後で Sentinel 自体のツールで開けます。`report.telemetry` はこのトレースを要約します。
+
+| フィールド | 意味 |
+| --- | --- |
+| `avg_power_watts`, `peak_power_watts` | スループット測定パス中の SoM 入力電力の平均値と最大値です。 |
+| `energy_joules` | `num_samples` 個の入力の処理に必要なエネルギーです。平均電力に、測定したスループットで `num_samples` 個の入力を処理するのに必要な時間を掛けた値です。パスが長くなっても増加しません。 |
+| `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA レールの電力と、ボードが報告するすべてのレールの電力です。MLA レールのないボードでは、`samples == 0` として報告されます。 |
+| `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA、APU、CVU、TOP の各サイトにあるオンダイセンサーの温度と、各サンプルにおけるそれらの最高温度です。 |
+| `telemetry.board_temperatures_c` | SoM の表面側と裏面側のセンサーの温度です。 |
+| `telemetry.cpu_usage_pct` | CPU 使用率です。各サンプルは直前の区間の平均であるため、`maximum` は最も負荷の高い区間を示します。 |
+| `telemetry.mla_memory_mib` | MLA に割り当てられたメモリ（MiB 単位）です。モデルはロード時にこれを割り当てるため、他に何も実行していなければ、この値がモデルの MLA メモリです。 |
+| `telemetry.cma_memory_mib` | 使用中の連続メモリ（CMA、MiB 単位）です。MLA のメモリプールを含むため、`mla_memory_mib` に加算しないでください。アイドル時には、Linux が CMA から借りているページキャッシュも含まれます。 |
+| `telemetry.linux_memory_used_mib` | ページキャッシュを除いた Linux の使用メモリ（MiB 単位）です。 |
+
+各メトリクスは `samples`、`mean`、`minimum`、`maximum` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。メモリの値はボード全体のもので、実行中の他のプロセスも含みます。Sentinel は 2 秒ごとにサンプリングするため、30 秒のパスでは約 15 個のサンプルが得られます。
+
+Sentinel が実行されていない場合、別の Sentinel トレースがすでに記録中の場合、またはパスが短すぎてサンプルを収集できない場合でも、ベンチマークはレイテンシーと FPS を返します。電力フィールドはゼロのままになり、`telemetry.status` にその理由が示され（それ以外の場合は `"ok"`）、出力される概要には `Power: unavailable (<reason>)` と表示されます。
+
+### 独自のループを測定する
 
 入力ループを制御し、そのループを測定したい場合は、ランナー測定を使用してください。
 

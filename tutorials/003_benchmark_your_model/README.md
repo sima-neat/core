@@ -29,9 +29,9 @@ Start with the same compiled `.tar.gz` archive used by the earlier model tutoria
 
 ### Run the benchmark {#step-run-benchmark}
 
-Call `benchmark(samples)`. The API warms up the async model runner, measures an async push/pull window, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
+Call `benchmark(samples)`. The API warms up the model, measures single-flight latency over `samples` inputs, then measures throughput in a separate async push/pull pass, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
 
-The sample count is the number of measured synthetic inputs. Use a larger number for steadier throughput and power numbers; use a smaller number when you only want a quick smoke check.
+The throughput pass runs until it has measured at least `samples` inputs and 30 seconds have passed, so its power and temperature readings are steady. Set `BenchmarkOptions::min_duration_ms` to change that floor, or to 0 for a quick smoke check that stops after `samples` inputs.
 
 Detection models whose route ends in BoxDecode can also use `BenchmarkOptions`. Set
 `original_width`, `original_height`, and `resize_mode` to describe the source-image geometry that
@@ -53,9 +53,9 @@ benchmark geometry takes precedence over deprecated BoxDecode geometry in `Model
 
 ### Read the report {#step-read-report}
 
-The returned report keeps only the headline fields most users need: average end-to-end latency in milliseconds, throughput in frames per second, average board power in watts when available, and measured energy in joules when available.
+The returned report starts with the headline fields most users need: average end-to-end latency in milliseconds, throughput in frames per second, average and peak SoM power in watts, and the energy in joules needed to process `samples` inputs. `throughput_duration_ms` reports how long the throughput pass ran.
 
-Power telemetry depends on board support. If the runtime cannot sample power rails on the current target, the benchmark still reports latency and throughput and leaves the power fields at zero.
+Power comes from Sentinel, the board telemetry daemon that the Neat installer sets up. `report.telemetry` also carries rail power, die and board temperatures, CPU utilization, and MLA memory for the throughput pass; see [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry) for each field. If Sentinel is not running or is recording another trace, the benchmark still reports latency and throughput, leaves the power fields at zero, and sets `report.telemetry.status` to the reason.
 
 ## Run
 
@@ -86,14 +86,23 @@ Expected output (exact numbers depend on the model, board, and current load; the
 NEAT Benchmark
 Input: synthetic
 Samples: 100
-Latency:      12.4 ms
-FPS:          80.6
-Power avg:    2.3 W
-Energy:       2.8 J
-report_latency_ms=12.4
-report_fps=80.6
-report_avg_power_watts=2.3
-report_energy_joules=2.8
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 1.96 ms
+FPS:     1461.30 inferences/s
+Batch throughput: 1461.30 batches/s
+Throughput window: 30.02 s, 43861 inputs
+Power avg:    14.00 W
+Power peak:   14.34 W
+Energy:       0.96 J for 100 inputs
+Telemetry:    Sentinel, 15 samples, trace 20261014T031628.431Z-neat-benchmark-20261014t031628-397z
+report_latency_ms=1.95595
+report_fps=1461.3
+report_avg_power_watts=13.9958
+report_energy_joules=0.957765
+report_peak_power_watts=14.3438
+report_throughput_duration_ms=30015
+report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
 

@@ -29,9 +29,9 @@
 
 ### 執行基準測試 {#step-run-benchmark}
 
-呼叫 `benchmark(samples)`。API 會預熱非同步模型執行器，測量非同步推送/拉取窗口，將摘要列印到標準輸出，並在 `BenchmarkReport` 中傳回相同的主要值。
+呼叫 `benchmark(samples)`。API 會預熱模型，以 `samples` 個輸入測量單次執行（single-flight）延遲，接著在另一個非同步推送/拉取階段中測量吞吐量，將摘要列印到標準輸出，並在 `BenchmarkReport` 中傳回相同的主要值。
 
-樣本數量是測量的合成輸入的數量。對於更穩定的吞吐量和功耗數字，請使用較大的數量；當您只想進行快速的初步檢查時，請使用較小的數量。
+吞吐量階段會持續執行，直到至少測量了 `samples` 個輸入且已經過 30 秒，因此其功耗和溫度讀數會保持穩定。設定 `BenchmarkOptions::min_duration_ms` 可變更此下限；設為 0 則可進行快速的初步檢查，在測量 `samples` 個輸入後即停止。
 
 其路徑以 BoxDecode 結尾的檢測模型也可以使用 `BenchmarkOptions`。設定 `original_width`、`original_height` 和 `resize_mode`，以描述源圖像幾何形狀，BoxDecode 在將檢測映射到模型座標時使用該幾何形狀。合成張量仍然保持模型形狀：
 
@@ -48,9 +48,9 @@ Python 會透過 `pyneat.BenchmarkOptions` 公開相同的欄位。設定原始�
 
 ### 閱讀報告 {#step-read-report}
 
-傳回的報告僅保留大多數使用者需要的標題欄位：以毫秒為單位的平均端到端延遲、以每秒幀數為單位的吞吐量、如果有的話，以瓦特為單位的平均板載功耗，以及如果有的話，以焦耳為單位的測量能量。
+傳回的報告以大多數使用者需要的標題欄位開頭：以毫秒為單位的平均端到端延遲、以每秒幀數為單位的吞吐量、以瓦特為單位的平均與峰值 SoM 功耗，以及處理 `samples` 個輸入所需的能量（以焦耳為單位）。`throughput_duration_ms` 會回報吞吐量階段執行了多久。
 
-功耗遙測取決於板載支援。如果執行階段無法對當前目標進行功耗軌的取樣，基準測試仍會報告延遲和吞吐量，並將功耗欄位設定為零。
+功耗資料來自 Sentinel，也就是 Neat 安裝程式所設定的板子遙測常駐程式。`report.telemetry` 還包含吞吐量階段的電源軌功耗、晶粒與板子溫度、CPU 使用率以及 MLA 記憶體；各欄位說明請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。如果 Sentinel 未執行或正在記錄另一個追蹤，基準測試仍會報告延遲和吞吐量，將功耗欄位保持為零，並將 `report.telemetry.status` 設定為原因。
 
 ## Run
 
@@ -81,14 +81,23 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 NEAT Benchmark
 Input: synthetic
 Samples: 100
-Latency:      12.4 ms
-FPS:          80.6
-Power avg:    2.3 W
-Energy:       2.8 J
-report_latency_ms=12.4
-report_fps=80.6
-report_avg_power_watts=2.3
-report_energy_joules=2.8
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 1.96 ms
+FPS:     1461.30 inferences/s
+Batch throughput: 1461.30 batches/s
+Throughput window: 30.02 s, 43861 inputs
+Power avg:    14.00 W
+Power peak:   14.34 W
+Energy:       0.96 J for 100 inputs
+Telemetry:    Sentinel, 15 samples, trace 20261014T031628.431Z-neat-benchmark-20261014t031628-397z
+report_latency_ms=1.95595
+report_fps=1461.3
+report_avg_power_watts=13.9958
+report_energy_joules=0.957765
+report_peak_power_watts=14.3438
+report_throughput_duration_ms=30015
+report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
 

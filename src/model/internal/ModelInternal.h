@@ -113,9 +113,12 @@ struct ModelAccess {
                                             const Model::RouteOptions& opt);
 };
 
+/// Project the latency window (`num_samples` inputs), the throughput window
+/// (`throughput_samples` inputs), and Sentinel telemetry into the public benchmark report.
 BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& latency_report,
                                                          const MeasureReport& throughput_report,
-                                                         int expected_samples);
+                                                         int num_samples, int throughput_samples,
+                                                         BenchmarkTelemetry telemetry);
 
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,

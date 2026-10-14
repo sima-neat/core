@@ -43,6 +43,8 @@
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">print(f&quot;report_avg_power_watts={report.avg_…</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">print(f&quot;report_energy_joules={report.energy…</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">print(f&quot;report_peak_power_watts={report.pea…</text>
 </g>
 </g>
 <g filter="url(#fsh)">

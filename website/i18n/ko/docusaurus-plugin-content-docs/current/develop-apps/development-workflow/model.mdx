@@ -711,7 +711,7 @@ runner = model.build([tensor], route_options=route)
 
 ## 모델 실행 측정
 
-빠른 합성 모델 벤치마크를 위해 `model.benchmark(...)`를 사용하십시오. `input_specs()`에서 입력을 생성하고 주요 지연 시간, 처리량 및 선택적 전력 필드를 반환합니다. 이를 사용하여 모델/런타임 변경 사항을 비교하되, 프로덕션 애플리케이션의 처리량을 주장하는 데 사용하지 마십시오.
+빠른 합성 모델 벤치마크를 위해 `model.benchmark(...)`를 사용하십시오. `input_specs()`에서 입력을 생성하고 주요 지연 시간, 처리량, 전력 및 보드 텔레메트리를 반환합니다. 이를 사용하여 모델/런타임 변경 사항을 비교하되, 프로덕션 애플리케이션의 처리량을 주장하는 데 사용하지 마십시오.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -767,7 +767,52 @@ report = model.benchmark(options)
 
 `original_width`와 `original_height`를 함께 설정합니다. 벤치마크는 여전히 모델 형태의 합성 텐서를 생성합니다. 이 필드는 BoxDecode 메타데이터에 필요한 소스 지오메트리와 크기 조정 변환을 제공합니다. 이 필드를 생략하면 벤치마크는 해결된 전처리 및 모델 입력 계약에서 지오메트리를 추론합니다. 이러한 실행별 값은 `ModelOptions`의 더 이상 사용되지 않는 BoxDecode 지오메트리 힌트보다 우선합니다. 기존 `benchmark(num_samples)` 호출은 동일한 동작을 유지합니다.
 
-보드 전력 모니터가 샘플을 생성한 경우에만 `avg_power_watts`와 `energy_joules`를 읽습니다. 보드 또는 레일 구성에 대한 전력 텔레메트리가 제공되지 않으면 해당 필드는 0으로 유지됩니다.
+### 실행 길이
+
+벤치마크는 `num_samples`개의 단일 실행(single-flight) 입력으로 지연 시간을 측정한 다음, 별도의 처리량 패스를 실행합니다. 처리량 패스는 최소 `num_samples`개의 입력을 측정하고 `min_duration_ms`(기본값 30초)가 경과할 때까지 계속되므로, 전력 및 온도 측정값이 짧은 버스트가 아니라 여러 텔레메트리 샘플에 걸쳐 수집됩니다. `throughput_samples`와 `throughput_duration_ms`는 이 패스에서 측정한 내용을 보고합니다. 빠른 스모크 테스트를 하려면 `min_duration_ms`를 0으로 설정하여 `num_samples`개의 입력 후에 중지하십시오.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.min_duration_ms = 0;
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.min_duration_ms = 0
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+### 전력 및 보드 텔레메트리 {#power-and-board-telemetry}
+
+전력 및 보드 텔레메트리는 Neat 설치 프로그램이 보드에 설정하는 DevKit 텔레메트리 데몬인 [Sentinel](/tools/sentinel/)에서 제공됩니다. 벤치마크는 처리량 패스 동안 `neat-benchmark-<UTC time>`이라는 이름의 Sentinel 트레이스를 기록하고 이를 보존하므로, 나중에 Sentinel 자체 도구로 열어 볼 수 있습니다. `report.telemetry`는 이 트레이스를 요약합니다.
+
+| 필드 | 의미 |
+| --- | --- |
+| `avg_power_watts`, `peak_power_watts` | 처리량 패스 동안의 SoM 입력 전력 평균값과 최고값입니다. |
+| `energy_joules` | `num_samples`개의 입력을 처리하는 데 필요한 에너지입니다. 평균 전력에, 측정된 처리량으로 `num_samples`개의 입력을 처리하는 데 걸리는 시간을 곱한 값입니다. 패스가 길어져도 이 값은 증가하지 않습니다. |
+| `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA 레일 전력 및 보드가 보고하는 모든 레일의 전력입니다. MLA 레일이 없는 보드는 이를 `samples == 0`으로 보고합니다. |
+| `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA, APU, CVU, TOP 위치의 온다이 센서와, 각 샘플에서 그중 가장 높은 온도입니다. |
+| `telemetry.board_temperatures_c` | SoM 상단 및 하단 센서입니다. |
+| `telemetry.cpu_usage_pct` | CPU 사용률입니다. 각 샘플은 직전 구간의 평균이므로 `maximum`은 가장 바쁜 구간입니다. |
+| `telemetry.mla_memory_mib` | MLA에 할당된 메모리(MiB)입니다. 모델은 로드될 때 이 메모리를 할당하므로, 다른 작업이 실행 중이지 않다면 이 값이 모델의 MLA 메모리입니다. |
+| `telemetry.cma_memory_mib` | 사용 중인 연속 메모리(CMA, MiB)입니다. MLA 메모리 풀을 포함하므로 `mla_memory_mib`에 더하지 마십시오. 유휴 상태에서는 Linux가 CMA에서 빌려 쓰는 페이지 캐시도 포함합니다. |
+| `telemetry.linux_memory_used_mib` | 페이지 캐시를 제외한 Linux 사용 메모리(MiB)입니다. |
+
+각 지표는 `samples`, `mean`, `minimum`, `maximum`을 보고하며, `samples == 0`은 보드가 해당 지표를 보고하지 않았음을 의미합니다. 메모리 값은 보드 전체 기준이며 실행 중인 다른 프로세스도 포함합니다. Sentinel은 2초마다 샘플링하므로 30초 패스에서는 약 15개의 샘플이 수집됩니다.
+
+Sentinel이 실행 중이 아니거나, 다른 Sentinel 트레이스가 이미 기록 중이거나, 패스가 너무 짧아 샘플을 수집하지 못한 경우에도 벤치마크는 지연 시간과 FPS를 반환합니다. 전력 필드는 0으로 유지되고, `telemetry.status`에 그 이유가 표시되며(정상인 경우 `"ok"`), 출력되는 요약에는 `Power: unavailable (<reason>)`이 표시됩니다.
+
+### 자체 루프 측정
 
 입력 루프를 직접 제어하고 해당 루프를 측정하려는 경우 러너 측정을 사용합니다.
 

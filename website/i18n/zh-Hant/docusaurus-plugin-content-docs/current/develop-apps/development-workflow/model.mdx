@@ -711,7 +711,7 @@ runner = model.build([tensor], route_options=route)
 
 ## 測量模型執行效能
 
-使用 `model.benchmark(...)` 進行快速的合成模型基準測試。它會從 `input_specs()` 產生輸入，並回傳延遲、吞吐量以及可選的功耗等指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
+使用 `model.benchmark(...)` 進行快速的合成模型基準測試。它會從 `input_specs()` 產生輸入，並回傳延遲、吞吐量、功耗以及板子遙測等主要指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -767,7 +767,52 @@ report = model.benchmark(options)
 
 將 `original_width` 和 `original_height` 組合在一起。基準測試仍然會產生一個模型形狀的合成張量；這些欄位提供 BoxDecode 中繼資料所需的來源幾何形狀和調整大小的轉換。如果您省略它們，基準測試將從解析後的預處理和模型輸入合約中推斷幾何形狀。這些每次執行的值優先於 `ModelOptions` 中已棄用的 BoxDecode 幾何形狀提示。現有的 `benchmark(num_samples)` 呼叫會保持相同的行為。
 
-僅當板子的電源監測器產生樣本時，才讀取 `avg_power_watts` 和 `energy_joules`。如果無法取得板子或電壓軌設定的電源遙測資料，則這些欄位將保持為零。
+### 執行長度
+
+基準測試會以 `num_samples` 個單次執行（single-flight）輸入測量延遲，然後執行另一個獨立的吞吐量階段。吞吐量階段會持續執行，直到至少測量了 `num_samples` 個輸入且已經過 `min_duration_ms`（預設為 30 秒），因此功耗和溫度讀數會涵蓋多個遙測樣本，而不只是短暫的爆發。`throughput_samples` 和 `throughput_duration_ms` 會回報此階段實際測量的內容。若要進行快速的初步檢查，請將 `min_duration_ms` 設為 0，在測量 `num_samples` 個輸入後即停止：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.min_duration_ms = 0;
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.min_duration_ms = 0
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+### 功耗與板子遙測 {#power-and-board-telemetry}
+
+功耗與板子遙測資料來自 [Sentinel](/tools/sentinel/)，也就是 Neat 安裝程式在板子上設定的 DevKit 遙測常駐程式。基準測試會在吞吐量階段前後記錄一個名為 `neat-benchmark-<UTC time>` 的 Sentinel 追蹤並予以保留，讓您之後可以使用 Sentinel 本身的工具開啟它。`report.telemetry` 會彙整此追蹤：
+
+| 欄位 | 意義 |
+| --- | --- |
+| `avg_power_watts`, `peak_power_watts` | 吞吐量階段期間 SoM 輸入功耗的平均值與最高值。 |
+| `energy_joules` | 處理 `num_samples` 個輸入所需的能量：平均功耗乘以依測得的吞吐量處理 `num_samples` 個輸入所需的時間。較長的階段不會使其增加。 |
+| `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA 電源軌功耗，以及板子回報的每一個電源軌。沒有 MLA 電源軌的板子會以 `samples == 0` 回報該項。 |
+| `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA、APU、CVU 與 TOP 位置的晶粒內感測器，以及每個樣本中其中最高的溫度。 |
+| `telemetry.board_temperatures_c` | SoM 頂面與底面感測器。 |
+| `telemetry.cpu_usage_pct` | CPU 使用率。每個樣本為前一個區間的平均值，因此 `maximum` 代表最忙碌的區間。 |
+| `telemetry.mla_memory_mib` | 為 MLA 分配的記憶體（MiB）。模型在載入時分配這些記憶體，因此若沒有其他程式在執行，這就是模型的 MLA 記憶體。 |
+| `telemetry.cma_memory_mib` | 已使用的連續記憶體（CMA，MiB）。它包含 MLA 記憶體池，因此請勿將其與 `mla_memory_mib` 相加。閒置時，它也包含 Linux 從 CMA 借用的頁面快取。 |
+| `telemetry.linux_memory_used_mib` | Linux 已使用的記憶體（不含頁面快取，MiB）。 |
+
+每項指標都會回報 `samples`、`mean`、`minimum` 與 `maximum`，而 `samples == 0` 表示板子未回報該項指標。記憶體數值涵蓋整個板子，包括其他正在執行的程序。Sentinel 每 2 秒取樣一次，因此 30 秒的階段約可取得 15 個樣本。
+
+當 Sentinel 未執行、已有另一個 Sentinel 追蹤正在記錄，或階段太短而無法收集到樣本時，基準測試仍會傳回延遲與 FPS。功耗欄位會保持為零，`telemetry.status` 會指出原因（否則為 `"ok"`），而列印的摘要會顯示 `Power: unavailable (<reason>)`。
+
+### 測量您自己的迴圈
 
 當您擁有輸入迴圈並希望測量該迴圈時，請使用執行器測量：
 

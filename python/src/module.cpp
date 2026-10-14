@@ -4626,14 +4626,47 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("original_width", &simaai::neat::BenchmarkOptions::original_width)
       .def_rw("original_height", &simaai::neat::BenchmarkOptions::original_height)
       .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
-      .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency);
+      .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency)
+      .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms);
+
+  nb::class_<simaai::neat::BenchmarkMetric>(m, "BenchmarkMetric")
+      .def(nb::init<>())
+      .def_ro("key", &simaai::neat::BenchmarkMetric::key)
+      .def_ro("label", &simaai::neat::BenchmarkMetric::label)
+      .def_ro("unit", &simaai::neat::BenchmarkMetric::unit)
+      .def_ro("samples", &simaai::neat::BenchmarkMetric::samples)
+      .def_ro("mean", &simaai::neat::BenchmarkMetric::mean)
+      .def_ro("minimum", &simaai::neat::BenchmarkMetric::minimum)
+      .def_ro("maximum", &simaai::neat::BenchmarkMetric::maximum);
+
+  nb::class_<simaai::neat::BenchmarkTelemetry>(m, "BenchmarkTelemetry")
+      .def(nb::init<>())
+      .def_ro("status", &simaai::neat::BenchmarkTelemetry::status)
+      .def_ro("trace_id", &simaai::neat::BenchmarkTelemetry::trace_id)
+      .def_ro("sentinel_version", &simaai::neat::BenchmarkTelemetry::sentinel_version)
+      .def_ro("sample_interval_ms", &simaai::neat::BenchmarkTelemetry::sample_interval_ms)
+      .def_ro("samples", &simaai::neat::BenchmarkTelemetry::samples)
+      .def_ro("power_som_watts", &simaai::neat::BenchmarkTelemetry::power_som_watts)
+      .def_ro("power_mla_watts", &simaai::neat::BenchmarkTelemetry::power_mla_watts)
+      .def_ro("power_rails_watts", &simaai::neat::BenchmarkTelemetry::power_rails_watts)
+      .def_ro("die_temperatures_c", &simaai::neat::BenchmarkTelemetry::die_temperatures_c)
+      .def_ro("die_temperature_max_c", &simaai::neat::BenchmarkTelemetry::die_temperature_max_c)
+      .def_ro("board_temperatures_c", &simaai::neat::BenchmarkTelemetry::board_temperatures_c)
+      .def_ro("cpu_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_usage_pct)
+      .def_ro("mla_memory_mib", &simaai::neat::BenchmarkTelemetry::mla_memory_mib)
+      .def_ro("cma_memory_mib", &simaai::neat::BenchmarkTelemetry::cma_memory_mib)
+      .def_ro("linux_memory_used_mib", &simaai::neat::BenchmarkTelemetry::linux_memory_used_mib);
 
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
       .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
       .def_rw("fps", &simaai::neat::BenchmarkReport::fps)
       .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
-      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
+      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules)
+      .def_rw("peak_power_watts", &simaai::neat::BenchmarkReport::peak_power_watts)
+      .def_rw("throughput_samples", &simaai::neat::BenchmarkReport::throughput_samples)
+      .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
+      .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry);
 
   // ── Phase 3: model / preprocess introspection (plan slice S1/S14) ────────────────────────────
   // Tiering per S1 ("advanced = by namespace, not by docs"): the diagnostic snapshots that are the

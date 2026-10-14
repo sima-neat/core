@@ -55,6 +55,9 @@ int main(int argc, char** argv) {
     std::cout << "report_fps=" << report.fps << "\n";
     std::cout << "report_avg_power_watts=" << report.avg_power_watts << "\n";
     std::cout << "report_energy_joules=" << report.energy_joules << "\n";
+    std::cout << "report_peak_power_watts=" << report.peak_power_watts << "\n";
+    std::cout << "report_throughput_duration_ms=" << report.throughput_duration_ms << "\n";
+    std::cout << "report_telemetry_status=" << report.telemetry.status << "\n";
     // END STEP
     // END CORE LOGIC
 

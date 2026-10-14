@@ -452,18 +452,42 @@ def test_benchmark_options_are_mutable():
   assert opt.original_height is None
   assert opt.resize_mode is None
   assert opt.include_plugin_latency is False
+  assert opt.min_duration_ms == 30000
 
   opt.num_samples = 7
   opt.original_width = 1920
   opt.original_height = 1080
   opt.resize_mode = pyneat.ResizeMode.Letterbox
   opt.include_plugin_latency = True
+  opt.min_duration_ms = 0
 
   assert opt.num_samples == 7
   assert opt.original_width == 1920
   assert opt.original_height == 1080
   assert opt.resize_mode == pyneat.ResizeMode.Letterbox
   assert opt.include_plugin_latency is True
+  assert opt.min_duration_ms == 0
+
+
+def test_benchmark_report_exposes_telemetry():
+  report = pyneat.BenchmarkReport()
+
+  for field in ("latency_ms", "fps", "avg_power_watts", "energy_joules", "peak_power_watts",
+                "throughput_duration_ms"):
+    assert getattr(report, field) == 0.0, field
+  assert report.throughput_samples == 0
+
+  telemetry = report.telemetry
+  assert isinstance(telemetry, pyneat.BenchmarkTelemetry)
+  assert telemetry.status == ""
+  assert telemetry.samples == 0
+  for field in ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
+                "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib"):
+    metric = getattr(telemetry, field)
+    assert isinstance(metric, pyneat.BenchmarkMetric), field
+    assert (metric.samples, metric.mean, metric.minimum, metric.maximum) == (0, 0.0, 0.0, 0.0)
+  for field in ("power_rails_watts", "die_temperatures_c", "board_temperatures_c"):
+    assert getattr(telemetry, field) == [], field
 
 
 def test_input_stage_option_structs_expose_expected_fields():

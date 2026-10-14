@@ -53,19 +53,78 @@ class Graph;
 using TensorSpec = TensorConstraint;
 
 /**
+ * @brief One Sentinel metric summarized over the benchmark throughput window.
+ *
+ * `samples == 0` means the board did not report the metric during the window, and the
+ * statistics are then zero.
+ */
+struct BenchmarkMetric {
+  std::string key;   ///< Sentinel metric key, for example `power_current_watts`.
+  std::string label; ///< Sentinel display label.
+  std::string unit;  ///< Unit of the values.
+  int samples = 0;   ///< Telemetry samples that carried a value.
+  double mean = 0.0; ///< Mean over those samples.
+  double minimum = 0.0;
+  double maximum = 0.0;
+};
+
+/**
+ * @brief Board telemetry recorded by the Sentinel daemon during the throughput window.
+ *
+ * `Model::benchmark()` records a Sentinel trace around the throughput pass. Sentinel samples
+ * every 2 s by default, so the window yields about one sample per 2 s of measurement.
+ * `status` is `"ok"` when the trace was recorded; otherwise it names why telemetry is missing
+ * and every metric has `samples == 0`. Memory values are board-wide, in MiB, and include
+ * whatever else is running.
+ */
+struct BenchmarkTelemetry {
+  std::string status;              ///< `"ok"`, or why telemetry is unavailable.
+  std::string trace_id;            ///< Saved Sentinel trace, for `simaai-sentinel` tooling.
+  std::string sentinel_version;    ///< Version of the Sentinel daemon that recorded the trace.
+  int sample_interval_ms = 0;      ///< Sentinel sampling interval.
+  int samples = 0;                 ///< Telemetry samples recorded in the window.
+  BenchmarkMetric power_som_watts; ///< Total SoM input power.
+  BenchmarkMetric power_mla_watts; ///< MLA rail power; not reported on boards without that rail.
+  std::vector<BenchmarkMetric> power_rails_watts;  ///< Every power rail the board reports.
+  std::vector<BenchmarkMetric> die_temperatures_c; ///< Die sensors at the MLA, APU, CVU, and TOP.
+  BenchmarkMetric die_temperature_max_c; ///< Hottest die sensor per sample, then summarized.
+  std::vector<BenchmarkMetric> board_temperatures_c; ///< SoM top-side and bottom-side sensors.
+  /// CPU utilization. Each sample averages the preceding interval, so `maximum` is the busiest
+  /// interval rather than an instantaneous peak.
+  BenchmarkMetric cpu_usage_pct;
+  /// DMA buffers allocated for the MLA. The model allocates them when it loads, so with nothing
+  /// else running this is the model's MLA memory.
+  BenchmarkMetric mla_memory_mib;
+  /// Used contiguous memory (CMA). This includes the MLA memory pool, so never add it to
+  /// `mla_memory_mib`. At idle it also includes movable pages, such as page cache, that Linux
+  /// borrows from CMA.
+  BenchmarkMetric cma_memory_mib;
+  BenchmarkMetric linux_memory_used_mib; ///< Linux used memory, excluding page cache.
+};
+
+/**
  * @brief Headline result returned by `Model::benchmark()`.
  *
  * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
- * `latency_ms` is measured with a warmed-up single-flight push/pull loop. `fps` means logical
- * inferences per second from a separate async throughput run (for batched models this is
- * batches/sec multiplied by the compiled batch size). Power fields are populated when board power
- * telemetry is available during the throughput run.
+ * `latency_ms` is measured with a warmed-up single-flight push/pull loop over `num_samples`
+ * inputs. `fps` means logical inferences per second from a separate async throughput pass (for
+ * batched models this is batches/sec multiplied by the compiled batch size). The throughput pass
+ * runs until it has measured at least `num_samples` inputs and `min_duration_ms` has elapsed.
+ *
+ * Power and board telemetry come from the Sentinel daemon. When Sentinel is unavailable, the
+ * power fields are zero and `telemetry.status` names the reason.
  */
 struct BenchmarkReport {
   double latency_ms = 0.0;
   double fps = 0.0;
-  double avg_power_watts = 0.0;
+  double avg_power_watts = 0.0; ///< Mean SoM power over the throughput window.
+  /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
+  /// measured throughput needs for `num_samples` inputs.
   double energy_joules = 0.0;
+  double peak_power_watts = 0.0;       ///< Highest SoM power sample in the throughput window.
+  int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
+  double throughput_duration_ms = 0.0; ///< Length of the throughput window.
+  BenchmarkTelemetry telemetry;        ///< Board telemetry for the throughput window.
 };
 
 /**
@@ -85,6 +144,11 @@ struct BenchmarkOptions {
   /// resolved preprocess policy, or stretch when the model route has no resize stage.
   std::optional<ResizeMode> resize_mode;
   bool include_plugin_latency = false; ///< Include per-plugin latency collection.
+  /// Minimum length of the throughput pass, in milliseconds; must be zero or greater. The pass
+  /// continues past `num_samples` inputs until this much time has elapsed, so power and
+  /// temperature readings cover several telemetry samples. Set it to 0 to stop after
+  /// `num_samples` inputs.
+  int min_duration_ms = 30000;
 };
 
 /**
@@ -673,8 +737,10 @@ public:
    * @brief Run a small synthetic benchmark for simple model execution.
    *
    * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
-   * measures single-flight latency and async logical-inference throughput separately, prints a
-   * compact summary, and returns headline metrics.
+   * measures single-flight latency and async logical-inference throughput separately, records
+   * board telemetry through Sentinel during the throughput pass, prints a compact summary, and
+   * returns headline metrics. The throughput pass lasts at least
+   * `BenchmarkOptions::min_duration_ms` (30 s by default).
    */
   BenchmarkReport benchmark(const BenchmarkOptions& options);
   BenchmarkReport benchmark(int num_samples = 100, bool include_plugin_latency = false);

@@ -1,4 +1,5 @@
 #include "model/Model.h"
+#include "model/internal/BenchmarkTelemetry.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/InputPlanner.h"
 #include "model/internal/ModelPack.h"
@@ -52,9 +53,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -2141,6 +2144,9 @@ void validate_benchmark_options(const BenchmarkOptions& options) {
   if (options.num_samples <= 0) {
     throw std::runtime_error("Model::benchmark: num_samples must be > 0");
   }
+  if (options.min_duration_ms < 0) {
+    throw std::runtime_error("Model::benchmark: min_duration_ms must be >= 0");
+  }
   if (options.original_width.has_value() != options.original_height.has_value()) {
     throw std::runtime_error(
         "Model::benchmark: original_width and original_height must be provided together");
@@ -2236,7 +2242,7 @@ TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOp
 }
 
 MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_size,
-                                              bool include_power, bool include_plugin_latency,
+                                              bool include_plugin_latency,
                                               std::string title = "NEAT Benchmark") {
   MeasureOptions opt;
   opt.duration_ms = timeout_ms;
@@ -2245,7 +2251,6 @@ MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_
   opt.include_plugin_latency = include_plugin_latency;
   opt.include_edge_latency = false;
   opt.include_message_latency = false;
-  opt.include_power = include_power;
   opt.logical_batch_size = logical_batch_size > 0 ? logical_batch_size : 1;
   opt.title = std::move(title);
   opt.input = "synthetic";
@@ -7812,9 +7817,8 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
       require_benchmark_output(out, "latency warmup");
     }
 
-    MeasureScope measure = latency_runner.start_measurement(
-        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, /*include_power=*/false,
-                                       include_plugin_latency, "NEAT Benchmark latency"));
+    MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
+        kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark latency"));
     for (int i = 0; i < num_samples; ++i) {
       if (!latency_runner.push(inputs)) {
         latency_runner.close();
@@ -7828,10 +7832,13 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
     latency_runner.close();
   }
 
+  internal::BenchmarkTelemetryRecorder telemetry(
+      std::filesystem::path(impl_->source_path).filename().string());
+
   RunOptions throughput_run_options;
   throughput_run_options.startup_preflight = false;
-  throughput_run_options.enable_board_power();
 
+  int pushed = 0;
   {
     Runner runner = build_with_model_options(inputs, Model::RouteOptions{}, throughput_run_options,
                                              benchmark_model_options);
@@ -7846,29 +7853,61 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
       require_benchmark_output(out, "throughput warmup");
     }
 
-    MeasureScope measure = runner.start_measurement(
-        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, /*include_power=*/true,
-                                       include_plugin_latency, "NEAT Benchmark throughput"));
+    telemetry.start();
+    MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
+        kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark throughput"));
+    const auto min_end =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
+
+    // The push loop decides how many inputs the window measures, so the pull thread only pulls
+    // an output once its input has been pushed.
+    std::mutex count_mu;
+    std::condition_variable count_cv;
+    bool pushing = true;
     int pulled = 0;
     std::exception_ptr pull_error;
     std::thread pull_thread([&] {
       try {
-        while (pulled < num_samples) {
+        for (;;) {
+          {
+            std::unique_lock<std::mutex> lock(count_mu);
+            count_cv.wait(lock, [&] { return pulled < pushed || !pushing; });
+            if (pulled == pushed) {
+              break;
+            }
+          }
           Sample out = runner.pull(kTimeoutMs);
           require_benchmark_output(out, "throughput measured");
           ++pulled;
         }
       } catch (...) {
+        std::lock_guard<std::mutex> lock(count_mu);
         pull_error = std::current_exception();
       }
     });
+    const auto finish_pushing = [&] {
+      {
+        std::lock_guard<std::mutex> lock(count_mu);
+        pushing = false;
+      }
+      count_cv.notify_one();
+    };
 
     try {
-      for (int i = 0; i < num_samples; ++i) {
+      while (pushed < num_samples || std::chrono::steady_clock::now() < min_end) {
         if (!runner.push(inputs)) {
           throw std::runtime_error("Model::benchmark: throughput measured push failed");
         }
+        {
+          std::lock_guard<std::mutex> lock(count_mu);
+          ++pushed;
+          if (pull_error) {
+            break;
+          }
+        }
+        count_cv.notify_one();
       }
+      finish_pushing();
       if (!defer_eos_until_outputs_drained) {
         runner.close_input();
       }
@@ -7877,6 +7916,7 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
         runner.close_input();
       }
     } catch (...) {
+      finish_pushing();
       runner.close_input();
       if (pull_thread.joinable()) {
         pull_thread.join();
@@ -7888,20 +7928,20 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
       runner.close();
       std::rethrow_exception(pull_error);
     }
-    if (pulled != num_samples) {
+    if (pulled != pushed) {
       runner.close();
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
     throughput_measured = measure.stop();
+    telemetry.stop();
     runner.close();
   }
 
   const BenchmarkReport report = internal::build_benchmark_report_from_measurements(
-      latency_measured, throughput_measured, num_samples);
+      latency_measured, throughput_measured, num_samples, pushed, telemetry.collect());
   const double batch_throughput = throughput_measured.throughput_batches_per_s;
-  const bool power_available =
-      throughput_measured.power.enabled && throughput_measured.power.samples > 0;
+  const BenchmarkTelemetry& board = report.telemetry;
 
   const auto old_flags = std::cout.flags();
   const auto old_precision = std::cout.precision();
@@ -7916,6 +7956,8 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
   std::cout << "Latency: " << report.latency_ms << " ms\n";
   std::cout << "FPS:     " << report.fps << " inferences/s\n";
   std::cout << "Batch throughput: " << batch_throughput << " batches/s\n";
+  std::cout << "Throughput window: " << report.throughput_duration_ms / 1000.0 << " s, "
+            << report.throughput_samples << " inputs\n";
   if (include_plugin_latency) {
     std::cout << "Plugin latency latency-run: " << latency_measured.plugin_latency_source << "/"
               << latency_measured.plugin_latency_status << " rows="
@@ -7928,11 +7970,16 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
                   throughput_measured.plugin_latency_unattributed.size())
               << "\n";
   }
-  if (power_available) {
+  if (board.power_som_watts.samples > 0) {
     std::cout << "Power avg:    " << report.avg_power_watts << " W\n";
-    std::cout << "Energy:       " << report.energy_joules << " J\n";
+    std::cout << "Power peak:   " << report.peak_power_watts << " W\n";
+    std::cout << "Energy:       " << report.energy_joules << " J for " << num_samples
+              << " inputs\n";
+    std::cout << "Telemetry:    Sentinel, " << board.samples << " samples, trace " << board.trace_id
+              << "\n";
   } else {
-    std::cout << "Power: unavailable\n";
+    std::cout << "Power: unavailable ("
+              << (board.status == "ok" ? "Sentinel reported no SoM power" : board.status) << ")\n";
   }
   std::cout.flags(old_flags);
   std::cout.precision(old_precision);
@@ -8004,9 +8051,10 @@ void require_finite_positive(double value, const char* field) {
 
 BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& latency_report,
                                                          const MeasureReport& throughput_report,
-                                                         int expected_samples) {
-  require_benchmark_measure_report_window(latency_report, "latency", expected_samples);
-  require_benchmark_measure_report_window(throughput_report, "throughput", expected_samples);
+                                                         int num_samples, int throughput_samples,
+                                                         BenchmarkTelemetry telemetry) {
+  require_benchmark_measure_report_window(latency_report, "latency", num_samples);
+  require_benchmark_measure_report_window(throughput_report, "throughput", throughput_samples);
 
   const int latency_batch =
       latency_report.options.logical_batch_size > 0 ? latency_report.options.logical_batch_size : 1;
@@ -8043,10 +8091,17 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
   BenchmarkReport out;
   out.latency_ms = latency_report.end_to_end.avg_ms;
   out.fps = throughput_report.throughput_inferences_per_s;
-  if (throughput_report.power.enabled && throughput_report.power.samples > 0) {
-    out.avg_power_watts = throughput_report.power.total_avg_watts;
-    out.energy_joules = throughput_report.power.energy_joules;
+  out.throughput_samples = throughput_samples;
+  out.throughput_duration_ms = throughput_report.elapsed_s * 1000.0;
+  if (telemetry.power_som_watts.samples > 0) {
+    out.avg_power_watts = telemetry.power_som_watts.mean;
+    out.peak_power_watts = telemetry.power_som_watts.maximum;
+    // Energy for num_samples inputs at the measured rate keeps the value independent of how
+    // long the throughput window ran.
+    out.energy_joules = out.avg_power_watts * static_cast<double>(num_samples) /
+                        throughput_report.throughput_batches_per_s;
   }
+  out.telemetry = std::move(telemetry);
   return out;
 }
 
