@@ -2689,6 +2689,7 @@ stage_package_artifacts_to_dist() {
     dist/*.deb \
     dist/*-Linux-extras.tar.gz \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
+    dist/install_sentinel.sh \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
     dist/manifest.json \
@@ -2727,15 +2728,16 @@ stage_package_artifacts_to_dist() {
   fi
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
-    cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
-    chmod +x "dist/install_neat_framework.sh"
+    # install_neat_framework.sh runs install_sentinel.sh from its own directory.
+    cp -f "tools/install_neat_framework.sh" "tools/install_sentinel.sh" dist/
+    chmod +x "dist/install_neat_framework.sh" "dist/install_sentinel.sh"
     staged_any=ON
   fi
 
   if [[ "${staged_any}" == "ON" ]]; then
     echo
     echo "Moved package artifacts into dist/:"
-    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh dist/manifest.json 2>/dev/null || true
+    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh dist/install_sentinel.sh dist/manifest.json 2>/dev/null || true
   fi
 }
 
@@ -3153,6 +3155,7 @@ deploy_artifacts_to_devkit_if_requested() {
   local -a deploy_files=()
   collect_install_artifact_files deploy_files
   local installer_path="${REPO_ROOT}/tools/install_neat_framework.sh"
+  local sentinel_installer_path="${REPO_ROOT}/tools/install_sentinel.sh"
   local installer_basename
   installer_basename="$(basename "${installer_path}")"
 
@@ -3160,7 +3163,7 @@ deploy_artifacts_to_devkit_if_requested() {
     echo "No deployable .deb or .whl artifacts found."
     return 0
   fi
-  deploy_files+=("${installer_path}")
+  deploy_files+=("${installer_path}" "${sentinel_installer_path}")
 
   echo
   echo "Deploying artifacts to ${ssh_target}:${remote_dir}"

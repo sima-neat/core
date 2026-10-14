@@ -83,6 +83,8 @@ NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
 NEAT_PACKAGE_MANIFEST="${NEAT_PACKAGE_MANIFEST:-manifest.json}"
 NEAT_INSTALLER_SKIP_PLATFORM_CHECK="${NEAT_INSTALLER_SKIP_PLATFORM_CHECK:-OFF}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
+# Installs the Sentinel telemetry daemon on boards; ships next to this installer.
+SENTINEL_INSTALLER_PATH="$(dirname "${INSTALLER_SCRIPT_PATH}")/install_sentinel.sh"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
@@ -405,52 +407,18 @@ configure_board_i2c_access() {
   log "Added sima to the i2c group; log out and back in before measuring Run power."
 }
 
-SENTINEL_BINARY="/usr/local/bin/simaai-sentinel"
-SENTINEL_API_SOCKET="/run/simaai-sentinel/api.sock"
-
-sentinel_version() {
-  curl -fsS --max-time 5 --unix-socket "${SENTINEL_API_SOCKET}" http://localhost/v1/health 2>/dev/null |
-    sed -n 's/.*"version": *"\([^"]*\)".*/\1/p'
-}
-
-sentinel_is_healthy() {
-  [[ -x "${SENTINEL_BINARY}" ]] &&
-    systemctl is-active --quiet simaai-sentinel &&
-    [[ -n "$(sentinel_version)" ]]
-}
-
-# Model::benchmark() reads board power, temperature, CPU, and memory from the
-# Sentinel daemon. A running daemon is kept: reinstalling would restart it and
-# interrupt any trace another tool is recording.
-install_board_sentinel() {
-  if sentinel_is_healthy; then
-    log "Sentinel $(sentinel_version) is running; skipping its installation."
-    return 0
-  fi
-  if ! command -v sima-cli >/dev/null 2>&1; then
-    echo "sima-cli is required to install Sentinel, the board telemetry daemon used by Model::benchmark()." >&2
-    echo "Install sima-cli, then rerun this installer." >&2
+require_sentinel_installer() {
+  if [[ ! -f "${SENTINEL_INSTALLER_PATH}" ]]; then
+    echo "Missing ${SENTINEL_INSTALLER_PATH}; it ships with this installer and installs the Sentinel telemetry daemon." >&2
     exit 1
   fi
+}
 
-  local install_dir
-  install_dir="$(mktemp -d)"
-  INSTALLER_TMP_DIRS+=("${install_dir}")
-  log "Installing Sentinel, the board telemetry daemon used by Model::benchmark()."
-  if ! sima-cli neat install sentinel --prod --install-dir "${install_dir}"; then
-    log "WARNING: 'sima-cli neat install sentinel' reported a failure; checking the daemon."
-  fi
-
-  local attempt
-  for attempt in {1..10}; do
-    if sentinel_is_healthy; then
-      log "Sentinel $(sentinel_version) is running."
-      return 0
-    fi
-    sleep 1
-  done
-  echo "Sentinel is not running after installation. Run 'sima-cli neat install sentinel', then rerun this installer." >&2
-  exit 1
+# Model::benchmark() reads board telemetry from the Sentinel daemon. Run the
+# script through bash because downloads may drop its executable bit.
+install_board_sentinel() {
+  require_sentinel_installer
+  bash "${SENTINEL_INSTALLER_PATH}" || exit 1
 }
 
 read_metadata_field() {
@@ -911,7 +879,8 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}"/*.whl \
     "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}/${NEAT_PACKAGE_MANIFEST}" \
-    "${cache_dir}"/install_neat_framework.sh
+    "${cache_dir}"/install_neat_framework.sh \
+    "${cache_dir}"/install_sentinel.sh
 
   local file
   for file in "${DEBS[@]}"; do
@@ -934,6 +903,9 @@ cache_install_artifacts_in_sysroot() {
   fi
   run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
   run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
+  require_sentinel_installer
+  run_sudo cp -f "${SENTINEL_INSTALLER_PATH}" "${cache_dir}/install_sentinel.sh"
+  run_sudo chmod 0755 "${cache_dir}/install_sentinel.sh"
 }
 
 collect_cached_devkit_deploy_files() {
@@ -956,6 +928,7 @@ collect_cached_devkit_deploy_files() {
   collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
   collect_wheel_files "${cache_dir}" CACHED_WHEELS
   local cached_installer="${cache_dir}/install_neat_framework.sh"
+  local cached_sentinel_installer="${cache_dir}/install_sentinel.sh"
   local cached_manifest="${cache_dir}/${NEAT_INSTALL_MANIFEST}"
   local cached_package_manifest="${cache_dir}/${NEAT_PACKAGE_MANIFEST}"
 
@@ -975,10 +948,13 @@ collect_cached_devkit_deploy_files() {
     echo "No cached PyNeat wheel found for paired DevKit sync in: ${cache_dir}" >&2
     exit 1
   fi
-  if [[ ! -f "${cached_installer}" ]]; then
-    echo "Cached installer script not found for paired DevKit sync: ${cached_installer}" >&2
-    exit 1
-  fi
+  local script
+  for script in "${cached_installer}" "${cached_sentinel_installer}"; do
+    if [[ ! -f "${script}" ]]; then
+      echo "Cached installer script not found for paired DevKit sync: ${script}" >&2
+      exit 1
+    fi
+  done
 
   CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}")
   if [[ -f "${cached_manifest}" ]]; then
@@ -987,7 +963,7 @@ collect_cached_devkit_deploy_files() {
   if [[ -f "${cached_package_manifest}" ]]; then
     CACHED_DEPLOY_FILES+=("${cached_package_manifest}")
   fi
-  CACHED_DEPLOY_FILES+=("${cached_installer}")
+  CACHED_DEPLOY_FILES+=("${cached_installer}" "${cached_sentinel_installer}")
 }
 
 apt_package_database_is_healthy() {

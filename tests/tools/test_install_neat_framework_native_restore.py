@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -20,6 +22,10 @@ def run_bash(script: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
     )
 
+
+def write_executable(path: Path, body: str) -> None:
+    path.write_text(f"#!/usr/bin/env bash\n{body}\n")
+    path.chmod(0o755)
 
 
 class CustomerSdkDependenciesTest(unittest.TestCase):
@@ -171,77 +177,112 @@ install_for_environment
 
 
 class ModalixSentinelInstallTest(unittest.TestCase):
-    @staticmethod
+    """install_sentinel.sh against fake systemctl, curl, and sima-cli commands."""
+
+    FAKE_COMMANDS = {
+        "systemctl": '[[ -e "${STATE}/active" ]]',
+        "curl": '[[ -e "${STATE}/active" ]] && printf \'{\n  "version": "main:2b0360551b5f"\n}\n\'',
+        "sleep": ":",
+    }
+
     def run_install(
-        *, installed: bool, active: bool, health_after_install: bool = True,
-        install_ok: bool = True, sima_cli: bool = True
-    ) -> subprocess.CompletedProcess[str]:
-        return run_bash(
-            rf"""
-source "$1"
-tmp="$(mktemp -d)"
-INSTALLER_TMP_DIRS=("${{tmp}}")
-SENTINEL_BINARY="${{tmp}}/simaai-sentinel"
-{'touch "${SENTINEL_BINARY}"; chmod +x "${SENTINEL_BINARY}"' if installed else ''}
-{'touch "${tmp}/active"' if active else ''}
-systemctl() {{ [[ -e "${{tmp}}/active" ]]; }}
-curl() {{ [[ -e "${{tmp}}/active" ]] && printf '{{
-  "version": "main:2b0360551b5f"
-}}
-'; }}
-sleep() {{ :; }}
-{'' if sima_cli else 'command() { [[ "$2" != sima-cli ]] && builtin command "$@"; }'}
-sima-cli() {{
-  printf 'SIMA-CLI %s
-' "$*"
-  {'touch "${SENTINEL_BINARY}"; chmod +x "${SENTINEL_BINARY}"; touch "${tmp}/active"'
-   if health_after_install else ''}
-  return {0 if install_ok else 1}
-}}
-install_board_sentinel
-printf 'CONTINUED
-'
-"""
+        self, *, active: bool, starts: bool = True, install_ok: bool = True,
+        sima_cli: str | None = "path"
+    ) -> tuple[subprocess.CompletedProcess[str], Path]:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        state = tmp / "state"
+        bin_dir = tmp / "bin"
+        home = tmp / "home"
+        for directory in (state, bin_dir, home):
+            directory.mkdir()
+        if active:
+            (state / "active").touch()
+
+        commands = dict(self.FAKE_COMMANDS)
+        sima_cli_script = (
+            'printf \'SIMA-CLI %s\\n\' "$*"; printf \'%s\\n\' "$*" >"${STATE}/args"; '
+            'printf \'SIMA_CLI=%s\\n\' "${SIMA_CLI}"; '
+            + ('touch "${STATE}/active"; ' if starts else "")
+            + f"exit {0 if install_ok else 1}"
         )
+        if sima_cli == "path":
+            commands["sima-cli"] = sima_cli_script
+        elif sima_cli == "venv":
+            venv_bin = home / ".sima-cli" / ".venv" / "bin"
+            venv_bin.mkdir(parents=True)
+            write_executable(venv_bin / "sima-cli", sima_cli_script)
+        for name, body in commands.items():
+            write_executable(bin_dir / name, body)
+
+        result = subprocess.run(
+            ["bash", str(INSTALLER.parent / "install_sentinel.sh")],
+            check=False,
+            text=True,
+            capture_output=True,
+            env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home), "STATE": str(state)},
+        )
+        return result, state
 
     def test_running_sentinel_is_kept(self) -> None:
-        result = self.run_install(installed=True, active=True)
+        result, _ = self.run_install(active=True)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("SIMA-CLI", result.stdout)
         self.assertIn("Sentinel main:2b0360551b5f is running; skipping", result.stdout)
-        self.assertIn("CONTINUED", result.stdout)
 
     def test_missing_sentinel_is_installed_from_production(self) -> None:
-        result = self.run_install(installed=False, active=False)
+        result, state = self.run_install(active=False)
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertRegex(result.stdout, r"SIMA-CLI neat install sentinel --prod --install-dir \S+")
+        args = (state / "args").read_text().split()
+        self.assertEqual(args[:5], ["neat", "install", "sentinel", "--prod", "--force"])
+        self.assertEqual(args[5], "--install-dir")
+        self.assertFalse(Path(args[6]).exists(), "the download directory must be removed")
         self.assertIn("Sentinel main:2b0360551b5f is running.", result.stdout)
-        self.assertIn("CONTINUED", result.stdout)
 
-    def test_install_error_with_healthy_daemon_warns(self) -> None:
-        result = self.run_install(installed=True, active=False, install_ok=False)
+    def test_sima_cli_outside_path_is_found(self) -> None:
+        result, _ = self.run_install(active=False, sima_cli="venv")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SIMA-CLI neat install sentinel", result.stdout)
+        self.assertRegex(result.stdout, r"SIMA_CLI=\S+/\.sima-cli/\.venv/bin/sima-cli")
+
+    def test_install_error_with_running_daemon_warns(self) -> None:
+        result, _ = self.run_install(active=False, install_ok=False)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WARNING: 'sima-cli neat install sentinel' reported a failure", result.stdout)
-        self.assertIn("CONTINUED", result.stdout)
 
-    def test_unhealthy_daemon_stops_installer(self) -> None:
-        result = self.run_install(
-            installed=False, active=False, health_after_install=False, install_ok=False
-        )
+    def test_daemon_that_does_not_start_fails(self) -> None:
+        result, _ = self.run_install(active=False, starts=False, install_ok=False)
 
         self.assertEqual(result.returncode, 1)
-        self.assertNotIn("CONTINUED", result.stdout)
         self.assertIn("Run 'sima-cli neat install sentinel'", result.stderr)
 
-    def test_missing_sima_cli_stops_installer(self) -> None:
-        result = self.run_install(installed=False, active=False, sima_cli=False)
+    def test_missing_sima_cli_fails(self) -> None:
+        result, _ = self.run_install(active=False, sima_cli=None)
 
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("SIMA-CLI", result.stdout)
         self.assertIn("sima-cli is required to install Sentinel", result.stderr)
+
+    def test_board_installer_runs_the_sibling_script(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+SENTINEL_INSTALLER_PATH="${tmp}/install_sentinel.sh"
+printf 'echo SENTINEL-SCRIPT; exit 7\n' >"${SENTINEL_INSTALLER_PATH}"
+(install_board_sentinel; printf 'CONTINUED\n') || printf 'EXIT %s\n' "$?"
+rm "${SENTINEL_INSTALLER_PATH}"
+(install_board_sentinel; printf 'CONTINUED\n') || printf 'EXIT %s\n' "$?"
+"""
+        )
+
+        self.assertEqual(result.stdout.splitlines(), ["SENTINEL-SCRIPT", "EXIT 1", "EXIT 1"])
+        self.assertIn("install_sentinel.sh; it ships with this installer", result.stderr)
 
 
 class ModalixPythonVenvSupportTest(unittest.TestCase):
