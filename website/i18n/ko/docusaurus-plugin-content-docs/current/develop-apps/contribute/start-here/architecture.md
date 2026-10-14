@@ -137,7 +137,7 @@ input Sample/Tensor
 
 ### 벤치마크 텔레메트리
 
-`Model::benchmark()`는 보드 텔레메트리 데몬인 Sentinel에서 `/run/simaai-sentinel/api.sock`의 HTTP API를 통해 전력과 보드 텔레메트리를 읽습니다. 벤치마크를 위해 Core가 전력 모니터 칩을 직접 읽지 않습니다. 벤치마크는 처리량 패스 동안 `neat-benchmark-<UTC 시간>`이라는 이름의 Sentinel 트레이스를 기록하고, 그 트레이스만 중지한 뒤 Sentinel 자체 도구에서 사용할 수 있도록 보존합니다. Sentinel은 약 2초마다 샘플링하므로 처리량 패스는 최소 `BenchmarkOptions::min_duration_ms`(기본값 30초) 동안 실행됩니다. Sentinel이 실행 중이 아니거나, 다른 트레이스가 기록 중이거나, 측정 구간에 샘플이 없어도 벤치마크는 지연 시간과 FPS를 반환합니다. 이때 전력 필드는 0이며 `telemetry.status`가 이유를 알려 줍니다. `tools/install_neat_framework.sh`의 보드 모드는 Sentinel을 설치하거나 최신 프로덕션 빌드로 업그레이드합니다. `Run`의 전력(`RunOptions::power_monitor`)도 Sentinel에서 가져옵니다. Core는 Sentinel의 최신 샘플을 폴링하며 I2C로 전력 모니터 칩을 읽지 않습니다.
+`Model::benchmark()`는 보드 텔레메트리 데몬인 Sentinel에서 `/run/simaai-sentinel/api.sock`의 HTTP API를 통해 전력과 보드 텔레메트리를 읽습니다. 벤치마크를 위해 Core가 전력 모니터 칩을 직접 읽지 않습니다. 벤치마크는 처리량 패스 동안 `neat-benchmark-<UTC time>`이라는 이름의 Sentinel 트레이스를 기록하고, 그 트레이스만 중지한 뒤 Sentinel 자체 도구에서 사용할 수 있도록 보존합니다. Sentinel은 약 2초마다 샘플링하므로 처리량 패스는 최소 `BenchmarkOptions::min_duration_ms`(기본값 30초) 동안 실행됩니다. Sentinel이 실행 중이 아니거나, 다른 트레이스가 기록 중이거나, 측정 구간에 샘플이 없어도 벤치마크는 지연 시간과 FPS를 반환합니다. 이때 전력 필드는 0이며 `telemetry.status`가 이유를 알려 줍니다. `tools/install_neat_framework.sh`의 보드 모드는 Sentinel을 설치하거나 최신 프로덕션 빌드로 업그레이드합니다. `Run`의 전력(`RunOptions::power_monitor`)도 Sentinel에서 가져옵니다. Core는 Sentinel의 최신 샘플을 폴링하며 I2C로 전력 모니터 칩을 읽지 않습니다.
 
 ### 컴파일된 모델 실행 계약
 

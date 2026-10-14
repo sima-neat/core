@@ -140,7 +140,7 @@ input Sample/Tensor
 
 ### ベンチマークテレメトリ
 
-`Model::benchmark()` は、ボードテレメトリデーモンである Sentinel から、`/run/simaai-sentinel/api.sock` 上の HTTP API を通じて電力とボードのテレメトリを読み取ります。ベンチマークのために Core が電力モニタチップを直接読むことはありません。ベンチマークはスループット測定パスの間、`neat-benchmark-<UTC 時刻>` という名前の Sentinel トレースを記録し、そのトレースだけを停止して、Sentinel 自身のツールで使えるように保持します。Sentinel はおよそ 2 秒ごとにサンプリングするため、スループット測定パスは少なくとも `BenchmarkOptions::min_duration_ms`（デフォルトは 30 秒）の間実行されます。Sentinel が動作していない、別のトレースを記録中である、または測定期間にサンプルがない場合でも、ベンチマークはレイテンシと FPS を返します。この場合、電力フィールドは 0 になり、`telemetry.status` が理由を示します。`tools/install_neat_framework.sh` のボードモードは、Sentinel をインストールするか、最新の本番ビルドにアップグレードします。`Run` の電力（`RunOptions::power_monitor`）も Sentinel から取得します。Core は Sentinel の最新サンプルをポーリングし、I2C 経由で電力モニタチップを読むことはありません。
+`Model::benchmark()` は、ボードテレメトリデーモンである Sentinel から、`/run/simaai-sentinel/api.sock` 上の HTTP API を通じて電力とボードのテレメトリを読み取ります。ベンチマークのために Core が電力モニタチップを直接読むことはありません。ベンチマークはスループット測定パスの間、`neat-benchmark-<UTC time>` という名前の Sentinel トレースを記録し、そのトレースだけを停止して、Sentinel 自身のツールで使えるように保持します。Sentinel はおよそ 2 秒ごとにサンプリングするため、スループット測定パスは少なくとも `BenchmarkOptions::min_duration_ms`（デフォルトは 30 秒）の間実行されます。Sentinel が動作していない、別のトレースを記録中である、または測定期間にサンプルがない場合でも、ベンチマークはレイテンシと FPS を返します。この場合、電力フィールドは 0 になり、`telemetry.status` が理由を示します。`tools/install_neat_framework.sh` のボードモードは、Sentinel をインストールするか、最新の本番ビルドにアップグレードします。`Run` の電力（`RunOptions::power_monitor`）も Sentinel から取得します。Core は Sentinel の最新サンプルをポーリングし、I2C 経由で電力モニタチップを読むことはありません。
 
 ### コンパイル済みモデルの実行コントラクト
 
