@@ -179,15 +179,16 @@ install_for_environment
 class ModalixSentinelInstallTest(unittest.TestCase):
     """install_sentinel.sh against fake systemctl, curl, and sima-cli commands."""
 
+    LATEST = "766066b74f49"
     FAKE_COMMANDS = {
-        "systemctl": '[[ -e "${STATE}/active" ]]',
-        "curl": '[[ -e "${STATE}/active" ]] && printf \'{\n  "version": "main:2b0360551b5f"\n}\n\'',
+        "systemctl": '[[ -e "${STATE}/version" ]]',
+        "curl": '[[ -e "${STATE}/version" ]] && printf \'{\n  "version": "%s"\n}\n\' "$(<"${STATE}/version")"',
         "sleep": ":",
     }
 
     def run_install(
-        self, *, active: bool, starts: bool = True, install_ok: bool = True,
-        sima_cli: str | None = "path"
+        self, *, running: str | None, latest: str | None = LATEST, starts: bool = True,
+        install_ok: bool = True, sima_cli: str | None = "path"
     ) -> tuple[subprocess.CompletedProcess[str], Path]:
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp)
@@ -196,14 +197,19 @@ class ModalixSentinelInstallTest(unittest.TestCase):
         home = tmp / "home"
         for directory in (state, bin_dir, home):
             directory.mkdir()
-        if active:
-            (state / "active").touch()
+        if running:
+            (state / "version").write_text(running)
+        if latest:
+            (state / "latest").write_text(latest)
 
         commands = dict(self.FAKE_COMMANDS)
         sima_cli_script = (
+            'if [[ " $* " == *" --json "* ]]; then '
+            '[[ -e "${STATE}/latest" ]] || { echo "Error: GET latest.tag failed" >&2; exit 1; }; '
+            'printf \'{\\n  "resolved_spec": "%s"\\n}\\n\' "$(<"${STATE}/latest")"; exit 0; fi; '
             'printf \'SIMA-CLI %s\\n\' "$*"; printf \'%s\\n\' "$*" >"${STATE}/args"; '
             'printf \'SIMA_CLI=%s\\n\' "${SIMA_CLI}"; '
-            + ('touch "${STATE}/active"; ' if starts else "")
+            + ('printf \'main:%s\' "${3#sentinel@}" >"${STATE}/version"; ' if starts else "")
             + f"exit {0 if install_ok else 1}"
         )
         if sima_cli == "path":
@@ -224,44 +230,65 @@ class ModalixSentinelInstallTest(unittest.TestCase):
         )
         return result, state
 
-    def test_running_sentinel_is_kept(self) -> None:
-        result, _ = self.run_install(active=True)
+    def assert_installed_latest(self, result: subprocess.CompletedProcess[str], state: Path) -> None:
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = (state / "args").read_text().split()
+        self.assertEqual(args[:5], ["neat", "install", f"sentinel@{self.LATEST}", "--prod", "--force"])
+        self.assertEqual(args[5], "--install-dir")
+        self.assertFalse(Path(args[6]).exists(), "the download directory must be removed")
+        self.assertIn(f"Sentinel main:{self.LATEST} is running.", result.stdout)
+
+    def test_latest_sentinel_is_kept(self) -> None:
+        result, _ = self.run_install(running=f"main:{self.LATEST}")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("SIMA-CLI", result.stdout)
-        self.assertIn("Sentinel main:2b0360551b5f is running; skipping", result.stdout)
+        self.assertIn(f"Sentinel main:{self.LATEST} is up to date.", result.stdout)
 
-    def test_missing_sentinel_is_installed_from_production(self) -> None:
-        result, state = self.run_install(active=False)
+    def test_older_sentinel_is_upgraded(self) -> None:
+        self.assert_installed_latest(*self.run_install(running="main:2b0360551b5f"))
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        args = (state / "args").read_text().split()
-        self.assertEqual(args[:5], ["neat", "install", "sentinel", "--prod", "--force"])
-        self.assertEqual(args[5], "--install-dir")
-        self.assertFalse(Path(args[6]).exists(), "the download directory must be removed")
-        self.assertIn("Sentinel main:2b0360551b5f is running.", result.stdout)
+    def test_branch_build_is_replaced(self) -> None:
+        self.assert_installed_latest(*self.run_install(running="feat-telemetry:0123456789ab"))
+
+    def test_missing_sentinel_is_installed(self) -> None:
+        self.assert_installed_latest(*self.run_install(running=None))
 
     def test_sima_cli_outside_path_is_found(self) -> None:
-        result, _ = self.run_install(active=False, sima_cli="venv")
+        result, _ = self.run_install(running=None, sima_cli="venv")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("SIMA-CLI neat install sentinel", result.stdout)
+        self.assertIn("SIMA-CLI neat install sentinel@", result.stdout)
         self.assertRegex(result.stdout, r"SIMA_CLI=\S+/\.sima-cli/\.venv/bin/sima-cli")
 
-    def test_install_error_with_running_daemon_warns(self) -> None:
-        result, _ = self.run_install(active=False, install_ok=False)
+    def test_install_error_with_latest_running_warns(self) -> None:
+        result, _ = self.run_install(running=None, install_ok=False)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WARNING: 'sima-cli neat install sentinel' reported a failure", result.stdout)
 
-    def test_daemon_that_does_not_start_fails(self) -> None:
-        result, _ = self.run_install(active=False, starts=False, install_ok=False)
+    def test_sentinel_left_on_older_build_fails(self) -> None:
+        result, _ = self.run_install(running="main:2b0360551b5f", starts=False, install_ok=False)
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("Run 'sima-cli neat install sentinel'", result.stderr)
+        self.assertIn(f"Sentinel main:{self.LATEST} is not running after installation", result.stderr)
+
+    def test_unresolved_build_keeps_running_sentinel(self) -> None:
+        result, _ = self.run_install(running="main:2b0360551b5f", latest=None)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("SIMA-CLI", result.stdout)
+        self.assertIn("keeping Sentinel main:2b0360551b5f", result.stdout)
+
+    def test_unresolved_build_without_sentinel_fails(self) -> None:
+        result, _ = self.run_install(running=None, latest=None)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("SIMA-CLI", result.stdout)
+        self.assertIn("Could not resolve the latest Sentinel build", result.stderr)
 
     def test_missing_sima_cli_fails(self) -> None:
-        result, _ = self.run_install(active=False, sima_cli=None)
+        result, _ = self.run_install(running=None, sima_cli=None)
 
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("SIMA-CLI", result.stdout)
