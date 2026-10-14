@@ -46,6 +46,11 @@ Release notes for the SiMa.ai Neat Library.
   `PowerRailConfig` I2C fields, `enable_modalix_som_power()`,
   `enable_modalix_dvt_power()`, and `modalix_som_power_monitor_options()` /
   `modalix_dvt_power_monitor_options()` are deprecated and ignored.
+- Plugin latency is deprecated and will be removed. This covers
+  `MeasureOptions::include_plugin_latency` and `plugin_latency_source`,
+  `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)`, and
+  `Model::benchmark(int, bool)` / `Model::benchmark(bool)`. Use
+  `start_measurement()` and `benchmark(num_samples)` instead.
 - Hardware decode uses direct codec sessions and DMA-BUF output. Core no longer
   uses decoder-daemon admission leases or `SIMA_DECODER_ADMISSION_REQUIRE`.
   Decoder pool and tuning options remain available.

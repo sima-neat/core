@@ -375,7 +375,8 @@ public:
   std::string describe() const;
   /// Start observing this internal graph run's caller-owned push/pull interval.
   simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
-  /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+  /// Deprecated: use `start_measurement()`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
   simaai::neat::MeasureScope start_measurement(bool include_plugin_latency);
 
   /// Stop the underlying runtime. Idempotent.

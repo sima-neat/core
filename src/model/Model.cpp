@@ -7462,7 +7462,9 @@ Model::Runner::start_measurement(const simaai::neat::MeasureOptions& opt) {
 }
 
 simaai::neat::MeasureScope Model::Runner::start_measurement(bool include_plugin_latency) {
-  return run_.start_measurement(include_plugin_latency);
+  simaai::neat::MeasureOptions opt;
+  opt.include_plugin_latency = include_plugin_latency;
+  return run_.start_measurement(opt);
 }
 
 void Model::Runner::close() {
@@ -8021,6 +8023,12 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
   return report;
 }
 
+BenchmarkReport Model::benchmark(int num_samples) {
+  BenchmarkOptions options;
+  options.num_samples = num_samples;
+  return benchmark(options);
+}
+
 BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
   BenchmarkOptions options;
   options.num_samples = num_samples;
@@ -8029,7 +8037,9 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
 }
 
 BenchmarkReport Model::benchmark(bool include_plugin_latency) {
-  return benchmark(/*num_samples=*/100, include_plugin_latency);
+  BenchmarkOptions options;
+  options.include_plugin_latency = include_plugin_latency;
+  return benchmark(options);
 }
 
 namespace internal {

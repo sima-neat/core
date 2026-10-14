@@ -143,7 +143,7 @@ struct BenchmarkOptions {
   /// Resize policy used to map the source geometry to the model input. When omitted, use the
   /// resolved preprocess policy, or stretch when the model route has no resize stage.
   std::optional<ResizeMode> resize_mode;
-  bool include_plugin_latency = false; ///< Include per-plugin latency collection.
+  bool include_plugin_latency = false; ///< Deprecated: plugin latency will be removed.
   /// Minimum length of the throughput pass, in milliseconds; must be zero or greater. The pass
   /// continues past `num_samples` inputs until this much time has elapsed, so power and
   /// temperature readings cover several telemetry samples. Set it to 0 to stop after
@@ -616,7 +616,8 @@ public:
 
     /// Start observing caller-owned push/pull code without consuming outputs.
     simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
-    /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+    /// Deprecated: use `start_measurement()`. True also collects plugin latency.
+    [[deprecated("Plugin latency is deprecated and will be removed")]]
     simaai::neat::MeasureScope start_measurement(bool include_plugin_latency);
     /// Close input (sends EOS) and release the underlying Run.
     void close();
@@ -743,7 +744,12 @@ public:
    * `BenchmarkOptions::min_duration_ms` (30 s by default).
    */
   BenchmarkReport benchmark(const BenchmarkOptions& options);
-  BenchmarkReport benchmark(int num_samples = 100, bool include_plugin_latency = false);
+  BenchmarkReport benchmark(int num_samples = 100);
+  /// Deprecated: use `benchmark(num_samples)`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
+  BenchmarkReport benchmark(int num_samples, bool include_plugin_latency);
+  /// Deprecated: use `benchmark()`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
   BenchmarkReport benchmark(bool include_plugin_latency);
 
 private:

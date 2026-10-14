@@ -2619,7 +2619,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("duration_ms", &MeasureOptions::duration_ms)
       .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
       .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
-      .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency)
+      .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency,
+              "Deprecated: plugin latency will be removed.")
       .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)
       .def_rw("include_edge_latency", &MeasureOptions::include_edge_latency)
       .def_rw("include_message_latency", &MeasureOptions::include_message_latency)
@@ -2741,6 +2742,12 @@ NB_MODULE(_pyneat_core, m) {
       .def("to_json", &simaai::neat::ExecutionPlan::to_json, "indent"_a = 2)
       .def_prop_ro("schema_version", &simaai::neat::ExecutionPlan::schema_version);
 
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto run_start_measurement_bool =
+      static_cast<MeasureScope (Run::*)(bool)>(&Run::start_measurement);
+#pragma GCC diagnostic pop
   nb::class_<Run>(m, "Run")
       .def(nb::init<>())
       .def("__bool__", [](const Run& run) { return static_cast<bool>(run); })
@@ -2868,8 +2875,9 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("start_measurement", static_cast<MeasureScope (Run::*)(bool)>(&Run::start_measurement),
-           "include_plugin_latency"_a)
+      .def("start_measurement", run_start_measurement_bool, "include_plugin_latency"_a,
+           "Deprecated: use start_measurement(). True also collects plugin latency, which will be "
+           "removed.")
       .def("start_measurement",
            static_cast<MeasureScope (Run::*)(const MeasureOptions&)>(&Run::start_measurement),
            "options"_a = MeasureOptions{})
@@ -4551,6 +4559,13 @@ NB_MODULE(_pyneat_core, m) {
       .value("Postprocess", simaai::neat::Model::Stage::Postprocess)
       .value("Full", simaai::neat::Model::Stage::Full);
 
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto runner_start_measurement_bool =
+      static_cast<MeasureScope (simaai::neat::Model::Runner::*)(bool)>(
+          &simaai::neat::Model::Runner::start_measurement);
+#pragma GCC diagnostic pop
   nb::class_<simaai::neat::Model::Runner>(m, "ModelRunner")
       .def(nb::init<>())
       .def("__bool__", [](const simaai::neat::Model::Runner& r) { return static_cast<bool>(r); })
@@ -4617,10 +4632,9 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("start_measurement",
-           static_cast<MeasureScope (simaai::neat::Model::Runner::*)(bool)>(
-               &simaai::neat::Model::Runner::start_measurement),
-           "include_plugin_latency"_a)
+      .def("start_measurement", runner_start_measurement_bool, "include_plugin_latency"_a,
+           "Deprecated: use start_measurement(). True also collects plugin latency, which will be "
+           "removed.")
       .def("start_measurement",
            static_cast<MeasureScope (simaai::neat::Model::Runner::*)(const MeasureOptions&)>(
                &simaai::neat::Model::Runner::start_measurement),
@@ -4921,6 +4935,13 @@ NB_MODULE(_pyneat_core, m) {
       .def("to_debug_string", &simaai::neat::ResolvedPreprocessPlan::to_debug_string)
       .def("__repr__", &simaai::neat::ResolvedPreprocessPlan::to_debug_string);
 
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto model_benchmark_int_bool =
+      static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
+          &simaai::neat::Model::benchmark);
+#pragma GCC diagnostic pop
   nb::class_<simaai::neat::Model>(m, "Model")
       // std::filesystem::path, not std::string: the caster routes through PyOS_FSPath, so str and
       // os.PathLike both work. Same as the GenAI constructors above.
@@ -5049,11 +5070,9 @@ NB_MODULE(_pyneat_core, m) {
             return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
-      .def("benchmark",
-           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
-               &simaai::neat::Model::benchmark),
-           "num_samples"_a = 100, "include_plugin_latency"_a = false,
-           nb::call_guard<nb::gil_scoped_release>())
+      .def("benchmark", model_benchmark_int_bool, "num_samples"_a = 100,
+           "include_plugin_latency"_a = false, nb::call_guard<nb::gil_scoped_release>(),
+           "include_plugin_latency is deprecated and will be removed.")
       .def("benchmark",
            static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(
                const simaai::neat::BenchmarkOptions&)>(&simaai::neat::Model::benchmark),

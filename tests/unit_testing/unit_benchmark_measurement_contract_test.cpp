@@ -171,15 +171,22 @@ simaai::neat::ResolvedPreprocessPlan make_benchmark_preprocess_plan() {
 void benchmark_options_api_is_additive() {
   using namespace simaai::neat;
   using OptionsOverload = BenchmarkReport (Model::*)(const BenchmarkOptions&);
+  using SamplesOverload = BenchmarkReport (Model::*)(int);
   using LegacyOverload = BenchmarkReport (Model::*)(int, bool);
   using BooleanOverload = BenchmarkReport (Model::*)(bool);
 
   require(static_cast<OptionsOverload>(&Model::benchmark) != nullptr,
           "BenchmarkOptions overload should be available");
+  require(static_cast<SamplesOverload>(&Model::benchmark) != nullptr,
+          "benchmark(int) overload should be available");
+  // The plugin-latency overloads are deprecated but remain until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   require(static_cast<LegacyOverload>(&Model::benchmark) != nullptr,
           "legacy benchmark(int, bool) overload should remain available");
   require(static_cast<BooleanOverload>(&Model::benchmark) != nullptr,
           "legacy benchmark(bool) overload should remain available");
+#pragma GCC diagnostic pop
 }
 
 void benchmark_build_options_prefer_runtime_metadata() {
@@ -624,7 +631,7 @@ void measurement_boolean_flags_make_profiling_explicit() {
 
   const Tensor seed = make_rgb_input(0);
   Run run = make_benchmark_style_rgb_run(seed);
-  MeasureScope scope = run.start_measurement(/*include_plugin_latency=*/false);
+  MeasureScope scope = run.start_measurement();
   require(run.push(TensorList{make_rgb_input(1)}), "e2e-only measured push should succeed");
   require_measured_output(run.pull(kTimeoutMs), "e2e-only measured pull");
   const MeasureReport report = scope.stop();

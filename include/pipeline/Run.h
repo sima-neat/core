@@ -285,16 +285,15 @@ enum class MetricsTraceSource {
  *
  * Default construction is the production-safe/customer path: public E2E latency and throughput
  * only.  It does not start plugin tracing, message tracing, graph queue probes, or measurement-
- * local power monitoring.  Set `include_plugin_latency=true` only when you intentionally want
- * deeper per-plugin/kernel profiling.
+ * local power monitoring.
  */
 struct MeasureOptions {
   int duration_ms = 10000; ///< Timed measurement window.
   int warmup_ms = 1000;    ///< Warmup window excluded from latency/metrics results.
   int timeout_ms = 5000;   ///< Per-output pull timeout.
-  /// Capture per-plugin/kernel execution latency through the LTTng metrics collector.
+  /// Deprecated: capture per-plugin execution latency through LTTng. It will be removed.
   bool include_plugin_latency = false;
-  /// Backend used for plugin execution latency.
+  /// Deprecated with `include_plugin_latency`: backend used for plugin execution latency.
   MetricsTraceSource plugin_latency_source = MetricsTraceSource::Lttng;
   /// Include low-overhead inter-plugin/edge/queue diagnostics in the report.
   bool include_edge_latency = false;
@@ -720,7 +719,8 @@ public:
 
   /// Start observing a caller-owned push/pull interval without consuming outputs.
   MeasureScope start_measurement(const MeasureOptions& opt = {});
-  /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+  /// Deprecated: use `start_measurement()`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
   MeasureScope start_measurement(bool include_plugin_latency);
   /// Returns the most recent runtime error string (empty if no error occurred).
   std::string last_error() const;

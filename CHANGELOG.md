@@ -33,6 +33,9 @@ The format is based on Keep a Changelog and follows semantic versioning.
 - `PowerMonitorOptions::sample_interval_ms`, `profile`, and `rails`, the `PowerRailConfig` I2C
   fields, the built-in power rail tables and profile helpers, `enable_modalix_som_power()`,
   `enable_modalix_dvt_power()`, and `modalix_som/dvt_power_monitor_options()`; they are ignored.
+- Plugin latency: `MeasureOptions::include_plugin_latency` and `plugin_latency_source`,
+  `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)`, and
+  `Model::benchmark(int, bool)` / `Model::benchmark(bool)`. It will be removed.
 
 ## [0.3.0]
 
