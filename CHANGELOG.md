@@ -17,8 +17,9 @@ The format is based on Keep a Changelog and follows semantic versioning.
   changed, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild downstream C++
   consumers.
 - `Model::benchmark()` reads power, temperature, CPU, and memory from the Sentinel daemon and
-  reports them in `BenchmarkReport::telemetry`, with `peak_power_watts`, `throughput_samples`, and
-  `throughput_duration_ms`. Its throughput pass now lasts at least
+  reports them in `BenchmarkReport::telemetry`, including per-core CPU usage, with
+  `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `peak_power_watts`, `throughput_samples`,
+  and `throughput_duration_ms`. Its throughput pass now lasts at least
   `BenchmarkOptions::min_duration_ms` (30 s by default); set it to 0 for the previous
   count-based timing. `energy_joules` stays the energy for `num_samples` inputs. The board
   installer now installs Sentinel, or upgrades it when it is not the latest production build.

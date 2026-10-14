@@ -4675,6 +4675,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("die_temperature_max_c", &simaai::neat::BenchmarkTelemetry::die_temperature_max_c)
       .def_ro("board_temperatures_c", &simaai::neat::BenchmarkTelemetry::board_temperatures_c)
       .def_ro("cpu_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_usage_pct)
+      .def_ro("cpu_cores_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_cores_usage_pct)
       .def_ro("mla_memory_mib", &simaai::neat::BenchmarkTelemetry::mla_memory_mib)
       .def_ro("cma_memory_mib", &simaai::neat::BenchmarkTelemetry::cma_memory_mib)
       .def_ro("linux_memory_used_mib", &simaai::neat::BenchmarkTelemetry::linux_memory_used_mib);
@@ -4682,6 +4683,9 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
       .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
+      .def_rw("latency_p50_ms", &simaai::neat::BenchmarkReport::latency_p50_ms)
+      .def_rw("latency_p95_ms", &simaai::neat::BenchmarkReport::latency_p95_ms)
+      .def_rw("latency_p99_ms", &simaai::neat::BenchmarkReport::latency_p99_ms)
       .def_rw("fps", &simaai::neat::BenchmarkReport::fps)
       .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
       .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules)

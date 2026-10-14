@@ -472,8 +472,8 @@ def test_benchmark_options_are_mutable():
 def test_benchmark_report_exposes_telemetry():
   report = pyneat.BenchmarkReport()
 
-  for field in ("latency_ms", "fps", "avg_power_watts", "energy_joules", "peak_power_watts",
-                "throughput_duration_ms"):
+  for field in ("latency_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "fps",
+                "avg_power_watts", "energy_joules", "peak_power_watts", "throughput_duration_ms"):
     assert getattr(report, field) == 0.0, field
   assert report.throughput_samples == 0
 
@@ -486,7 +486,8 @@ def test_benchmark_report_exposes_telemetry():
     metric = getattr(telemetry, field)
     assert isinstance(metric, pyneat.BenchmarkMetric), field
     assert (metric.samples, metric.mean, metric.minimum, metric.maximum) == (0, 0.0, 0.0, 0.0)
-  for field in ("power_rails_watts", "die_temperatures_c", "board_temperatures_c"):
+  for field in ("power_rails_watts", "die_temperatures_c", "board_temperatures_c",
+                "cpu_cores_usage_pct"):
     assert getattr(telemetry, field) == [], field
 
 

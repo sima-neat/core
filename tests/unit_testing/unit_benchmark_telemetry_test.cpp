@@ -48,6 +48,8 @@ json modalix_run() {
       metric_definition("power_rail_mla_watts", "MLA", "W"),
       metric_definition("power_rail_soc_ddr_vdd_watts", "DDR VDD", "W"),
       metric_definition("cpu_usage_pct", "CPU", "%"),
+      metric_definition("cpu_core_0_usage_pct", "CPU core 0", "%"),
+      metric_definition("cpu_core_1_usage_pct", "CPU core 1", "%"),
       metric_definition("lm96163_temp1", "SoM top", "°C"),
       metric_definition("lm96163_temp2", "SoM bottom", "°C"),
       metric_definition("mla_mem_allocated_mb", "MLA memory", "MB"),
@@ -64,7 +66,9 @@ json modalix_run() {
                    {"power_average_watts", 100.0},
                    {"power_rail_mla_watts", mla},
                    {"power_rail_soc_ddr_vdd_watts", 0.5},
-                   {"cpu_usage_pct", std::move(cpu)},
+                   {"cpu_usage_pct", cpu},
+                   {"cpu_core_0_usage_pct", 100.0},
+                   {"cpu_core_1_usage_pct", std::move(cpu)},
                    {"lm96163_temp1", 40.0},
                    {"lm96163_temp2", 42.0},
                    {"mla_mem_allocated_mb", mla_mem},
@@ -124,6 +128,12 @@ void summary_maps_sentinel_metrics() {
 
   require(t.cpu_usage_pct.samples == 2, "null CPU readings are skipped");
   require_near(t.cpu_usage_pct.maximum, 80.0, "CPU maximum");
+  require(t.cpu_cores_usage_pct.size() == 2 &&
+              t.cpu_cores_usage_pct[0].key == "cpu_core_0_usage_pct" &&
+              t.cpu_cores_usage_pct[1].label == "CPU core 1",
+          "one entry per CPU core, in Sentinel definition order");
+  require_near(t.cpu_cores_usage_pct[0].mean, 100.0, "a busy core keeps its own reading");
+  require(t.cpu_cores_usage_pct[1].samples == 2, "null core readings are skipped");
 
   const BenchmarkMetric& mla = t.mla_memory_mib;
   require(mla.key == "mla_mem_allocated_mb" && mla.unit == "MiB" && mla.samples == 3,

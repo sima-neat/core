@@ -531,6 +531,9 @@ void model_benchmark_projection_uses_same_window_reports() {
 
   MeasureReport latency = make_complete_measure_report(kSamples, /*logical_batch_size=*/4);
   latency.end_to_end.avg_ms = 7.5;
+  latency.end_to_end.p50_ms = 7.0;
+  latency.end_to_end.p95_ms = 9.0;
+  latency.end_to_end.p99_ms = 11.0;
   latency.throughput_batches_per_s = 1.0;
   latency.throughput_inferences_per_s = 4.0;
 
@@ -555,6 +558,9 @@ void model_benchmark_projection_uses_same_window_reports() {
 
   require(report.latency_ms == 7.5,
           "Model::benchmark projection must publish latency from latency measurement window");
+  require(report.latency_p50_ms == 7.0 && report.latency_p95_ms == 9.0 &&
+              report.latency_p99_ms == 11.0,
+          "Model::benchmark projection must publish latency percentiles from the same window");
   require(report.fps == 50.0,
           "Model::benchmark projection must publish logical inferences/s from throughput window");
   require(report.throughput_samples == kThroughputSamples,

@@ -787,11 +787,12 @@ hints in `ModelOptions`. Existing `benchmark(num_samples)` calls keep the same b
 ### Run length
 
 The benchmark measures latency over `num_samples` single-flight inputs, then runs a separate
-throughput pass. The throughput pass continues until it has measured at least `num_samples` inputs
-and `min_duration_ms` has elapsed (30 s by default), so power and temperature readings cover
-several telemetry samples rather than a short burst. `throughput_samples` and
-`throughput_duration_ms` report what the pass measured. For a quick smoke check, set
-`min_duration_ms` to 0 to stop after `num_samples` inputs:
+throughput pass. `latency_ms` is the mean latency of those inputs, and `latency_p50_ms`,
+`latency_p95_ms`, and `latency_p99_ms` are its percentiles. The throughput pass continues until it
+has measured at least `num_samples` inputs and `min_duration_ms` has elapsed (30 s by default), so
+power and temperature readings cover several telemetry samples rather than a short burst.
+`throughput_samples` and `throughput_duration_ms` report what the pass measured. For a quick smoke
+check, set `min_duration_ms` to 0 to stop after `num_samples` inputs:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -829,6 +830,7 @@ Sentinel's own tools. `report.telemetry` summarizes the trace:
 | `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | On-die sensors at the MLA, APU, CVU, and TOP sites, and the hottest of them in each sample. |
 | `telemetry.board_temperatures_c` | SoM top-side and bottom-side sensors. |
 | `telemetry.cpu_usage_pct` | CPU utilization. Each sample averages the preceding interval, so `maximum` is the busiest interval. |
+| `telemetry.cpu_cores_usage_pct` | Utilization of each CPU core, in core order. A single busy core shows here even when `cpu_usage_pct`, the average over all cores, stays low. |
 | `telemetry.mla_memory_mib` | Memory allocated for the MLA, in MiB. The model allocates it when it loads, so with nothing else running this is the model's MLA memory. |
 | `telemetry.cma_memory_mib` | Used contiguous memory (CMA), in MiB. It includes the MLA memory pool, so do not add it to `mla_memory_mib`. At idle it also includes page cache that Linux borrows from CMA. |
 | `telemetry.linux_memory_used_mib` | Linux used memory, excluding page cache, in MiB. |

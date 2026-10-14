@@ -771,7 +771,7 @@ report = model.benchmark(options)
 
 ### 실행 길이
 
-벤치마크는 `num_samples`개의 단일 실행(single-flight) 입력으로 지연 시간을 측정한 다음, 별도의 처리량 패스를 실행합니다. 처리량 패스는 최소 `num_samples`개의 입력을 측정하고 `min_duration_ms`(기본값 30초)가 경과할 때까지 계속되므로, 전력 및 온도 측정값이 짧은 버스트가 아니라 여러 텔레메트리 샘플에 걸쳐 수집됩니다. `throughput_samples`와 `throughput_duration_ms`는 이 패스에서 측정한 내용을 보고합니다. 빠른 스모크 테스트를 하려면 `min_duration_ms`를 0으로 설정하여 `num_samples`개의 입력 후에 중지하십시오.
+벤치마크는 `num_samples`개의 단일 실행(single-flight) 입력으로 지연 시간을 측정한 다음, 별도의 처리량 패스를 실행합니다. `latency_ms`는 해당 입력의 평균 지연 시간이며, `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`는 그 백분위수입니다. 처리량 패스는 최소 `num_samples`개의 입력을 측정하고 `min_duration_ms`(기본값 30초)가 경과할 때까지 계속되므로, 전력 및 온도 측정값이 짧은 버스트가 아니라 여러 텔레메트리 샘플에 걸쳐 수집됩니다. `throughput_samples`와 `throughput_duration_ms`는 이 패스에서 측정한 내용을 보고합니다. 빠른 스모크 테스트를 하려면 `min_duration_ms`를 0으로 설정하여 `num_samples`개의 입력 후에 중지하십시오.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -806,6 +806,7 @@ report = model.benchmark(options)
 | `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA, APU, CVU, TOP 위치의 온다이 센서와, 각 샘플에서 그중 가장 높은 온도입니다. |
 | `telemetry.board_temperatures_c` | SoM 상단 및 하단 센서입니다. |
 | `telemetry.cpu_usage_pct` | CPU 사용률입니다. 각 샘플은 직전 구간의 평균이므로 `maximum`은 가장 바쁜 구간입니다. |
+| `telemetry.cpu_cores_usage_pct` | 코어 순서대로 나열한 각 CPU 코어의 사용률입니다. 전체 코어 평균인 `cpu_usage_pct`가 낮게 유지되어도 바쁜 코어 하나가 여기에 표시됩니다. |
 | `telemetry.mla_memory_mib` | MLA에 할당된 메모리(MiB)입니다. 모델은 로드될 때 이 메모리를 할당하므로, 다른 작업이 실행 중이지 않다면 이 값이 모델의 MLA 메모리입니다. |
 | `telemetry.cma_memory_mib` | 사용 중인 연속 메모리(CMA, MiB)입니다. MLA 메모리 풀을 포함하므로 `mla_memory_mib`에 더하지 마십시오. 유휴 상태에서는 Linux가 CMA에서 빌려 쓰는 페이지 캐시도 포함합니다. |
 | `telemetry.linux_memory_used_mib` | 페이지 캐시를 제외한 Linux 사용 메모리(MiB)입니다. |

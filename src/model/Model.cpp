@@ -8134,6 +8134,9 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
 
   BenchmarkReport out;
   out.latency_ms = latency_report.end_to_end.avg_ms;
+  out.latency_p50_ms = latency_report.end_to_end.p50_ms;
+  out.latency_p95_ms = latency_report.end_to_end.p95_ms;
+  out.latency_p99_ms = latency_report.end_to_end.p99_ms;
   out.fps = throughput_report.throughput_inferences_per_s;
   out.throughput_samples = throughput_samples;
   out.throughput_duration_ms = throughput_report.elapsed_s * 1000.0;

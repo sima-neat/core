@@ -772,7 +772,7 @@ report = model.benchmark(options)
 
 ### 実行時間
 
-ベンチマークは、`num_samples` 個の入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。スループット測定パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 30 秒）が経過するまで続きます。そのため、電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`throughput_samples` と `throughput_duration_ms` は、このパスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、`num_samples` 個の入力の後で停止します。
+ベンチマークは、`num_samples` 個の入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。`latency_ms` はそれらの入力の平均レイテンシーで、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms` はそのパーセンタイルです。スループット測定パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 30 秒）が経過するまで続きます。そのため、電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`throughput_samples` と `throughput_duration_ms` は、このパスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、`num_samples` 個の入力の後で停止します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -807,6 +807,7 @@ report = model.benchmark(options)
 | `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA、APU、CVU、TOP の各サイトにあるオンダイセンサーの温度と、各サンプルにおけるそれらの最高温度です。 |
 | `telemetry.board_temperatures_c` | SoM の表面側と裏面側のセンサーの温度です。 |
 | `telemetry.cpu_usage_pct` | CPU 使用率です。各サンプルは直前の区間の平均であるため、`maximum` は最も負荷の高い区間を示します。 |
+| `telemetry.cpu_cores_usage_pct` | 各 CPU コアの使用率です（コア順）。全コアの平均である `cpu_usage_pct` が低いままでも、1 つのコアの高負荷がここに表れます。 |
 | `telemetry.mla_memory_mib` | MLA に割り当てられたメモリ（MiB 単位）です。モデルはロード時にこれを割り当てるため、他に何も実行していなければ、この値がモデルの MLA メモリです。 |
 | `telemetry.cma_memory_mib` | 使用中の連続メモリ（CMA、MiB 単位）です。MLA のメモリプールを含むため、`mla_memory_mib` に加算しないでください。アイドル時には、Linux が CMA から借りているページキャッシュも含まれます。 |
 | `telemetry.linux_memory_used_mib` | ページキャッシュを除いた Linux の使用メモリ（MiB 単位）です。 |

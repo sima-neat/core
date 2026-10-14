@@ -164,6 +164,7 @@ BenchmarkTelemetry summarize_benchmark_telemetry(const json& run) {
   telemetry.die_temperature_max_c = die_max(run, die_sensors);
   telemetry.board_temperatures_c = metrics(run, {"lm96163_temp1", "lm96163_temp2"});
   telemetry.cpu_usage_pct = metric(run, "cpu_usage_pct");
+  telemetry.cpu_cores_usage_pct = metrics(run, metric_keys(run, "cpu_core_", "_usage_pct"));
   telemetry.mla_memory_mib = memory_mib(run, "mla_mem_allocated_mb");
   telemetry.cma_memory_mib = memory_mib(run, "ev74_cma_used_mb");
   telemetry.linux_memory_used_mib = memory_mib(run, "linux_mem_used_mb");

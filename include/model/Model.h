@@ -92,6 +92,9 @@ struct BenchmarkTelemetry {
   /// CPU utilization. Each sample averages the preceding interval, so `maximum` is the busiest
   /// interval rather than an instantaneous peak.
   BenchmarkMetric cpu_usage_pct;
+  /// Utilization of each CPU core, in core order, summarized like `cpu_usage_pct`. A single busy
+  /// core shows here even when the all-core average stays low.
+  std::vector<BenchmarkMetric> cpu_cores_usage_pct;
   /// DMA buffers allocated for the MLA. The model allocates them when it loads, so with nothing
   /// else running this is the model's MLA memory.
   BenchmarkMetric mla_memory_mib;
@@ -107,7 +110,8 @@ struct BenchmarkTelemetry {
  *
  * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
  * `latency_ms` is measured with a warmed-up single-flight push/pull loop over `num_samples`
- * inputs. `fps` means logical inferences per second from a separate async throughput pass (for
+ * inputs; `latency_p50_ms`, `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same
+ * loop. `fps` means logical inferences per second from a separate async throughput pass (for
  * batched models this is batches/sec multiplied by the compiled batch size). The throughput pass
  * runs until it has measured at least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
@@ -116,6 +120,9 @@ struct BenchmarkTelemetry {
  */
 struct BenchmarkReport {
   double latency_ms = 0.0;
+  double latency_p50_ms = 0.0;
+  double latency_p95_ms = 0.0;
+  double latency_p99_ms = 0.0;
   double fps = 0.0;
   double avg_power_watts = 0.0; ///< Mean SoM power over the throughput window.
   /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
