@@ -267,16 +267,6 @@ void client_supports_sentinel_without_stop_by_id() {
           "Sentinel without stop-by-ID falls back to stopping the active trace");
 }
 
-void client_retries_once_on_server_error() {
-  const json busy = {{"error", "cache busy"}};
-  FakeSentinel sentinel({{500, busy}, {200, kTrace}, {200, kTrace}, {500, busy}, {500, busy}});
-  SentinelTrace trace("model.tar.gz", sentinel.client());
-  const BenchmarkTelemetry t = trace.finish();
-  require(t.status.find("read trace trace-1 (HTTP 500): cache busy") != std::string::npos,
-          "a server error that repeats is reported; got " + t.status);
-  require(sentinel.requests().size() == 5, "each server error is retried once");
-}
-
 } // namespace
 
 RUN_TEST("unit_benchmark_telemetry_test", ([] {
@@ -296,7 +286,6 @@ RUN_TEST("unit_benchmark_telemetry_test", ([] {
            run_case("trace_with_active_trace", trace_with_active_trace_reports_conflict);
            run_case("trace_stops_on_throw", trace_stops_when_benchmark_throws);
            run_case("client_without_stop_by_id", client_supports_sentinel_without_stop_by_id);
-           run_case("client_retries_server_error", client_retries_once_on_server_error);
 
            std::string message =
                std::to_string(failures.size()) + " benchmark telemetry check(s) failed:";

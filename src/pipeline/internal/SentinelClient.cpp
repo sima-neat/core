@@ -14,8 +14,7 @@ using nlohmann::json;
 
 constexpr int kTimeoutSeconds = 5;
 
-/// Send one request. Sentinel can answer 500 while it rewrites its sample cache, so a 500 is
-/// retried once.
+/// Send one request; throw when Sentinel cannot be reached.
 httplib::Result send(const std::string& socket_path, const std::string& method,
                      const std::string& path, const std::string& body = {}) {
   httplib::Client client(socket_path);
@@ -23,13 +22,8 @@ httplib::Result send(const std::string& socket_path, const std::string& method,
   client.set_connection_timeout(kTimeoutSeconds);
   client.set_read_timeout(kTimeoutSeconds);
   client.set_write_timeout(kTimeoutSeconds);
-  const auto attempt = [&] {
-    return method == "GET" ? client.Get(path) : client.Post(path, body, "application/json");
-  };
-  httplib::Result result = attempt();
-  if (result && result->status == 500) {
-    result = attempt();
-  }
+  httplib::Result result =
+      method == "GET" ? client.Get(path) : client.Post(path, body, "application/json");
   if (!result) {
     throw std::runtime_error("Sentinel is not reachable at " + socket_path + ": " +
                              httplib::to_string(result.error()));
