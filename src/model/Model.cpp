@@ -7832,8 +7832,8 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
     latency_runner.close();
   }
 
-  internal::BenchmarkTelemetryRecorder telemetry(
-      std::filesystem::path(impl_->source_path).filename().string());
+  const std::string trace_note = std::filesystem::path(impl_->source_path).filename().string();
+  BenchmarkTelemetry telemetry;
 
   RunOptions throughput_run_options;
   throughput_run_options.startup_preflight = false;
@@ -7853,7 +7853,7 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
       require_benchmark_output(out, "throughput warmup");
     }
 
-    telemetry.start();
+    internal::SentinelTrace trace(trace_note);
     MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
         kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark throughput"));
     const auto min_end =
@@ -7934,12 +7934,12 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
     }
 
     throughput_measured = measure.stop();
-    telemetry.stop();
+    telemetry = trace.finish();
     runner.close();
   }
 
   const BenchmarkReport report = internal::build_benchmark_report_from_measurements(
-      latency_measured, throughput_measured, num_samples, pushed, telemetry.collect());
+      latency_measured, throughput_measured, num_samples, pushed, std::move(telemetry));
   const double batch_throughput = throughput_measured.throughput_batches_per_s;
   const BenchmarkTelemetry& board = report.telemetry;
 

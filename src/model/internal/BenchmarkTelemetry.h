@@ -8,6 +8,7 @@
 #endif
 
 #include "model/Model.h"
+#include "pipeline/internal/SentinelClient.h"
 
 #include <nlohmann/json.hpp>
 
@@ -15,38 +16,35 @@
 
 namespace simaai::neat::internal {
 
-inline constexpr const char* kSentinelSocketPath = "/run/simaai-sentinel/api.sock";
-
 /**
- * @brief Records a Sentinel trace around the benchmark throughput window.
+ * @brief Records a Sentinel trace over the benchmark throughput window.
  *
- * Every step is best effort: the first failure is kept as the telemetry status and later steps
- * are skipped, so a missing or busy Sentinel never fails the benchmark. The destructor stops a
- * trace that is still recording, which covers exceptions thrown during the window.
+ * The trace starts at construction. `finish()` stops it and summarizes its samples. Nothing
+ * throws: the first failure becomes `BenchmarkTelemetry::status`, so a missing or busy Sentinel
+ * never fails the benchmark. The destructor stops a trace that is still recording, which covers
+ * exceptions thrown during the window.
  */
-class BenchmarkTelemetryRecorder {
+class SentinelTrace {
 public:
-  explicit BenchmarkTelemetryRecorder(std::string note,
-                                      std::string socket_path = kSentinelSocketPath);
-  ~BenchmarkTelemetryRecorder();
-  BenchmarkTelemetryRecorder(const BenchmarkTelemetryRecorder&) = delete;
-  BenchmarkTelemetryRecorder& operator=(const BenchmarkTelemetryRecorder&) = delete;
+  explicit SentinelTrace(const std::string& note, pipeline_internal::SentinelClient client =
+                                                      pipeline_internal::SentinelClient());
+  ~SentinelTrace();
+  SentinelTrace(const SentinelTrace&) = delete;
+  SentinelTrace& operator=(const SentinelTrace&) = delete;
 
-  void start();                 ///< Start the trace.
-  void stop() noexcept;         ///< Stop the trace; safe to call more than once.
-  BenchmarkTelemetry collect(); ///< Stop the trace and summarize its samples.
+  /// Stop the trace and summarize the samples it recorded.
+  BenchmarkTelemetry finish();
 
 private:
-  template <typename Step> void attempt(Step&& step);
+  void stop() noexcept;
 
-  std::string note_;
-  std::string socket_path_;
-  std::string failure_;
+  pipeline_internal::SentinelClient client_;
   std::string trace_id_;
+  std::string failure_;
   bool recording_ = false;
 };
 
-/// Summarize a saved Sentinel run (`GET /v1/runs/{id}`).
+/// Summarize a saved Sentinel run (`SentinelClient::read_run`).
 BenchmarkTelemetry summarize_benchmark_telemetry(const nlohmann::json& run);
 
 } // namespace simaai::neat::internal

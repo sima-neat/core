@@ -3,20 +3,19 @@
 #endif
 
 #include "model/internal/BenchmarkTelemetry.h"
+#include "pipeline/internal/SentinelClient.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <httplib.h>
 #include <nlohmann/json.hpp>
-
-#include <poll.h>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <unistd.h>
 
 #include <cmath>
 #include <cstdlib>
-#include <cstring>
 #include <functional>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -28,8 +27,9 @@ namespace {
 using nlohmann::json;
 using simaai::neat::BenchmarkMetric;
 using simaai::neat::BenchmarkTelemetry;
-using simaai::neat::internal::BenchmarkTelemetryRecorder;
+using simaai::neat::internal::SentinelTrace;
 using simaai::neat::internal::summarize_benchmark_telemetry;
+using simaai::neat::pipeline_internal::SentinelClient;
 
 void require_near(double actual, double expected, const std::string& label) {
   require(std::abs(actual - expected) <= 1e-9,
@@ -160,7 +160,7 @@ void summary_without_mla_rail_or_samples() {
           "a run without samples measures nothing");
 }
 
-/// Serves canned replies on a Unix socket, one per connection, and records each request line.
+/// Answers requests on a Unix socket with canned replies, in order, and records each request.
 class FakeSentinel {
 public:
   explicit FakeSentinel(std::vector<std::pair<int, json>> replies) : replies_(std::move(replies)) {
@@ -170,114 +170,73 @@ public:
     }
     dir_ = dir_template;
     path_ = dir_ + "/api.sock";
-    fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    sockaddr_un address{};
-    address.sun_family = AF_UNIX;
-    std::strncpy(address.sun_path, path_.c_str(), sizeof(address.sun_path) - 1);
-    if (fd_ < 0 || ::bind(fd_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 ||
-        ::listen(fd_, 8) != 0) {
-      throw std::runtime_error("cannot start the fake Sentinel socket");
-    }
-    thread_ = std::thread([this] { serve(); });
+    const auto answer = [this](const httplib::Request& request, httplib::Response& response) {
+      std::lock_guard<std::mutex> lock(mu_);
+      const std::size_t index = requests_.size();
+      requests_.push_back(request.method + " " + request.path);
+      const auto& [status, body] =
+          index < replies_.size() ? replies_[index] : std::pair<int, json>{599, json::object()};
+      response.status = status;
+      response.set_content(body.dump(), "application/json");
+    };
+    server_.Get(".*", answer);
+    server_.Post(".*", answer);
+    server_.set_address_family(AF_UNIX);
+    thread_ = std::thread([this] { server_.listen(path_, 80); });
+    server_.wait_until_ready();
   }
 
   ~FakeSentinel() {
-    if (thread_.joinable()) {
-      thread_.join();
-    }
-    ::close(fd_);
+    server_.stop();
+    thread_.join();
     ::unlink(path_.c_str());
     ::rmdir(dir_.c_str());
   }
 
-  const std::string& path() const {
-    return path_;
+  SentinelClient client() const {
+    return SentinelClient(path_);
   }
 
-  /// Requests served so far; waits until the server has answered or idled out.
-  const std::vector<std::string>& requests() {
-    if (thread_.joinable()) {
-      thread_.join();
-    }
+  std::vector<std::string> requests() {
+    std::lock_guard<std::mutex> lock(mu_);
     return requests_;
   }
 
 private:
-  void serve() {
-    for (const auto& [status, body] : replies_) {
-      pollfd ready{fd_, POLLIN, 0};
-      if (::poll(&ready, 1, 1000) <= 0) {
-        return;
-      }
-      const int client = ::accept(fd_, nullptr, nullptr);
-      if (client < 0) {
-        return;
-      }
-      std::string request;
-      char buffer[4096];
-      std::size_t header_end = std::string::npos;
-      std::size_t length = 0;
-      while (header_end == std::string::npos || request.size() < header_end + 4 + length) {
-        const ssize_t n = ::recv(client, buffer, sizeof(buffer), 0);
-        if (n <= 0) {
-          break;
-        }
-        request.append(buffer, static_cast<std::size_t>(n));
-        header_end = request.find("\r\n\r\n");
-        const std::size_t at = request.find("Content-Length: ");
-        if (at != std::string::npos) {
-          length = std::strtoul(request.c_str() + at + 16, nullptr, 10);
-        }
-      }
-      requests_.push_back(request.substr(0, request.find(" HTTP/1.1")));
-      const std::string payload = body.dump();
-      const std::string reply = "HTTP/1.1 " + std::to_string(status) +
-                                " X\r\nContent-Type: application/json\r\nContent-Length: " +
-                                std::to_string(payload.size()) + "\r\nConnection: close\r\n\r\n" +
-                                payload;
-      (void)::send(client, reply.data(), reply.size(), MSG_NOSIGNAL);
-      ::close(client);
-    }
-  }
-
   std::vector<std::pair<int, json>> replies_;
   std::vector<std::string> requests_;
+  std::mutex mu_;
   std::string dir_;
   std::string path_;
-  int fd_ = -1;
+  httplib::Server server_;
   std::thread thread_;
 };
 
-const json kStarted = {{"schema", 1}, {"trace", {{"id", "trace-1"}}}};
-const json kStopped = {{"schema", 1}, {"trace", {{"id", "trace-1"}}}};
+const json kTrace = {{"schema", 1}, {"trace", {{"id", "trace-1"}}}};
 
-void recorder_records_one_trace() {
-  FakeSentinel sentinel({{200, kStarted}, {200, kStopped}, {200, modalix_run()}});
-  BenchmarkTelemetryRecorder recorder("model.tar.gz", sentinel.path());
-  recorder.start();
-  recorder.stop();
-  const BenchmarkTelemetry t = recorder.collect();
+void trace_records_one_run() {
+  FakeSentinel sentinel({{200, kTrace}, {200, kTrace}, {200, modalix_run()}});
+  SentinelTrace trace("model.tar.gz", sentinel.client());
+  const BenchmarkTelemetry t = trace.finish();
   require(t.status == "ok" && t.samples == 3, "a recorded trace is summarized; got " + t.status);
   const std::vector<std::string> expected = {"POST /v1/traces", "POST /v1/traces/trace-1/stop",
                                              "GET /v1/runs/trace-1"};
-  require(sentinel.requests() == expected, "recorder must stop the trace once, by ID");
+  require(sentinel.requests() == expected, "the trace must be stopped once, by ID");
 }
 
-void recorder_without_sentinel_reports_reason() {
-  BenchmarkTelemetryRecorder recorder("model.tar.gz", "/tmp/neat-no-such-sentinel.sock");
-  recorder.start();
-  const BenchmarkTelemetry t = recorder.collect();
+void trace_without_sentinel_reports_reason() {
+  SentinelTrace trace("model.tar.gz", SentinelClient("/tmp/neat-no-such-sentinel.sock"));
+  const BenchmarkTelemetry t = trace.finish();
   require(t.status.find("not reachable") != std::string::npos,
           "a missing Sentinel socket reports why; got " + t.status);
   require(t.samples == 0 && t.power_som_watts.samples == 0, "no telemetry without Sentinel");
 }
 
-void recorder_with_active_trace_reports_conflict() {
+void trace_with_active_trace_reports_conflict() {
   FakeSentinel sentinel(
       {{409, {{"error", "checkpoint 'user' is already recording; stop it before starting"}}}});
-  BenchmarkTelemetryRecorder recorder("model.tar.gz", sentinel.path());
-  recorder.start();
-  const BenchmarkTelemetry t = recorder.collect();
+  SentinelTrace trace("model.tar.gz", sentinel.client());
+  const BenchmarkTelemetry t = trace.finish();
   require(t.status.find("HTTP 409") != std::string::npos &&
               t.status.find("already recording") != std::string::npos,
           "a busy Sentinel reports its own reason; got " + t.status);
@@ -285,39 +244,36 @@ void recorder_with_active_trace_reports_conflict() {
   require(sentinel.requests() == expected, "the user's trace must not be stopped");
 }
 
-void recorder_stops_trace_when_benchmark_throws() {
-  FakeSentinel sentinel({{200, kStarted}, {200, kStopped}});
+void trace_stops_when_benchmark_throws() {
+  FakeSentinel sentinel({{200, kTrace}, {200, kTrace}});
   try {
-    BenchmarkTelemetryRecorder recorder("model.tar.gz", sentinel.path());
-    recorder.start();
+    SentinelTrace trace("model.tar.gz", sentinel.client());
     throw std::runtime_error("pull timed out");
   } catch (const std::runtime_error&) {
   }
-  require(sentinel.requests().back() == "POST /v1/traces/trace-1/stop",
-          "the trace must be stopped when the benchmark throws");
+  const std::vector<std::string> expected = {"POST /v1/traces", "POST /v1/traces/trace-1/stop"};
+  require(sentinel.requests() == expected, "the trace must be stopped when the benchmark throws");
 }
 
-void recorder_supports_sentinel_without_stop_by_id() {
-  FakeSentinel sentinel({{200, kStarted},
+void client_supports_sentinel_without_stop_by_id() {
+  FakeSentinel sentinel({{200, kTrace},
                          {404, {{"error", "unknown Sentinel API endpoint"}}},
-                         {200, kStopped},
+                         {200, kTrace},
                          {200, modalix_run()}});
-  BenchmarkTelemetryRecorder recorder("model.tar.gz", sentinel.path());
-  recorder.start();
-  const BenchmarkTelemetry t = recorder.collect();
+  SentinelTrace trace("model.tar.gz", sentinel.client());
+  const BenchmarkTelemetry t = trace.finish();
   require(t.status == "ok", "Sentinel 0.1.0 still records the benchmark; got " + t.status);
   require(sentinel.requests()[2] == "POST /v1/traces/stop",
           "Sentinel without stop-by-ID falls back to stopping the active trace");
 }
 
-void recorder_retries_once_on_server_error() {
+void client_retries_once_on_server_error() {
   const json busy = {{"error", "cache busy"}};
-  FakeSentinel sentinel({{500, busy}, {200, kStarted}, {200, kStopped}, {500, busy}, {500, busy}});
-  BenchmarkTelemetryRecorder recorder("model.tar.gz", sentinel.path());
-  recorder.start();
-  const BenchmarkTelemetry t = recorder.collect();
+  FakeSentinel sentinel({{500, busy}, {200, kTrace}, {200, kTrace}, {500, busy}, {500, busy}});
+  SentinelTrace trace("model.tar.gz", sentinel.client());
+  const BenchmarkTelemetry t = trace.finish();
   require(t.status.find("read trace trace-1 (HTTP 500): cache busy") != std::string::npos,
-          "a retried server error that repeats is reported; got " + t.status);
+          "a server error that repeats is reported; got " + t.status);
   require(sentinel.requests().size() == 5, "each server error is retried once");
 }
 
@@ -335,12 +291,12 @@ RUN_TEST("unit_benchmark_telemetry_test", ([] {
 
            run_case("summary_maps_sentinel_metrics", summary_maps_sentinel_metrics);
            run_case("summary_without_mla_rail_or_samples", summary_without_mla_rail_or_samples);
-           run_case("recorder_records_one_trace", recorder_records_one_trace);
-           run_case("recorder_without_sentinel", recorder_without_sentinel_reports_reason);
-           run_case("recorder_with_active_trace", recorder_with_active_trace_reports_conflict);
-           run_case("recorder_stops_trace_on_throw", recorder_stops_trace_when_benchmark_throws);
-           run_case("recorder_without_stop_by_id", recorder_supports_sentinel_without_stop_by_id);
-           run_case("recorder_retries_server_error", recorder_retries_once_on_server_error);
+           run_case("trace_records_one_run", trace_records_one_run);
+           run_case("trace_without_sentinel", trace_without_sentinel_reports_reason);
+           run_case("trace_with_active_trace", trace_with_active_trace_reports_conflict);
+           run_case("trace_stops_on_throw", trace_stops_when_benchmark_throws);
+           run_case("client_without_stop_by_id", client_supports_sentinel_without_stop_by_id);
+           run_case("client_retries_server_error", client_retries_once_on_server_error);
 
            std::string message =
                std::to_string(failures.size()) + " benchmark telemetry check(s) failed:";
