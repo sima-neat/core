@@ -2,7 +2,8 @@
 """Benchmark a compiled model with deterministic synthetic inputs.
 
 Usage:
-  python3 benchmark_your_model.py --model /path/to/model.tar.gz [--samples 100] [--include-layer-stats]
+  python3 benchmark_your_model.py --model /path/to/model.tar.gz [--samples 100]
+    [--report results/model/yolo_benchmark.yaml] [--include-layer-stats]
 """
 from __future__ import annotations
 
@@ -58,10 +59,12 @@ def main(argv: list[str]) -> int:
       print(f"  stage_index={layer.stage_index} name={layer.name} "
             f"total_execution_time_us={layer.total_execution_time_us}")
   # END STEP
-  # END CORE LOGIC
 
+  # STEP save-report
   if args.report is not None:
     print(f"report_path={report.save(args.report)}")
+  # END STEP
+  # END CORE LOGIC
 
   return 0
 

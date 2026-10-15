@@ -70,7 +70,21 @@ report = model.benchmark(options)
 
 `report.layer_stats`에서 컴파일된 각 MLA 레이어의 `name`, 0부터 시작하는 `stage_index`, `total_execution_time_us`를 읽습니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 시간은 별도의 프로파일링 실행에서 측정하므로 합계가 전체 지연 시간과 일치하지 않습니다.
 
-다른 작업이 없는 DevKit과 MIP에서 커널로 제어를 넘기는 수정이 포함된 `PATH`의 `mla-rt`를 사용하세요(eLxr B2121, MLA-RT `603a8c6`에서 검증). 진행 중인 추론을 완료한 후 프로파일링을 시작하세요. `benchmark()`가 반환되면 일반 추론을 재개할 수 있습니다.
+### 보고서 저장 {#step-save-report}
+
+`report.save(path)`를 호출하면 요청한 레이어 통계를 포함한 전체 보고서를 YAML로 저장합니다.
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+```
+
+파일 이름을 포함한 경로를 지정하세요. 없는 상위 디렉터리는 생성되고 기존 파일은 교체되며, 저장한 경로가 반환됩니다. 저장은 명시적으로 수행합니다. `benchmark()`는 보고서 파일을 자동으로 생성하지 않습니다.
+
+두 튜토리얼 명령 모두에 `--report results/model/yolo_benchmark.yaml`을 추가할 수 있습니다. `--include-layer-stats`와 함께 사용하면 주요 측정값과 레이어 실행 시간을 모두 저장합니다.
 
 ## Run
 
@@ -135,16 +149,6 @@ report_telemetry_status=ok
 애플리케이션 성능을 위해 실제 파이프라인도 벤치마크합니다. 합성 모델 입력은 의도적으로 안정적이므로 카메라 흔들림, 코덱 비용, 실제 전처리, 부하 상태에서의 호스트 스케줄링 또는 다운스트림 애플리케이션 로직을 나타내지 않습니다. 수동으로 구축된 비동기 실행을 사용하여 큐 깊이 및 역압 튜닝을 수행하려면 [처리량 및 큐 깊이 조정](/tutorials/tune-throughput-and-queues)을 참조하세요.
 
 `Model::benchmark()`는 구체적인 `input_specs()` 차원을 필요로 합니다. 입력 모양이 동적이거나 구체적이지 않은 경우, 벤치마크는 추측하는 대신 명확하게 실패합니다.
-
-## 보고서 저장
-
-C++ 또는 Python에서 `report.save("results/model/yolo_benchmark.yaml")`을 호출하면 정확히 해당 파일 이름으로 YAML을 저장합니다. 없는 상위 디렉터리는 생성하고 기존 파일은 원자적으로 교체합니다. 지정한 경로가 반환됩니다. 튜토리얼에서도 `--report`로 같은 경로를 지정할 수 있습니다. 저장은 명시적으로 수행하며 `benchmark()`는 보고서 파일을 자동으로 생성하지 않습니다.
-
-저장된 보고서에는 지연 시간 백분위수, 처리량 측정 구간의 메타데이터, Sentinel 텔레메트리도 포함됩니다.
-
-YAML에는 `latency_ms`, `fps`, `avg_power_watts`, `energy_joules`, `layer_stats`가 포함됩니다. 각 `LayerStats` 레코드는 `name`, `stage_index`, `total_execution_time_us`(마이크로초 단위의 하드웨어 `run_time`)를 가집니다. 컴파일러가 생성한 MLA 이름은 원래 ONNX 연산자를 융합하거나 분할한 결과일 수 있습니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 프로파일링과 주요 측정은 별도의 실행 및 입력을 사용하므로 실행 시간을 동일하게 간주해서는 안 됩니다. `stage_index`는 MLA와 A65 실행 단계를 포함한 모델 실행 순서의 0부터 시작하는 정수이며, 아카이브 파일 순서가 아닙니다. 단일 단계 모델은 `0`을 사용하고, MLA–A65–MLA 모델의 MLA 레코드는 `0`과 `2`를 사용합니다.
-
-파일 누락, 프로세스 실패, 시간 초과 및 잘못된 통계 결과는 예외를 발생시킵니다. 원본 입력 YAML은 유지되며 성공 및 실패 시 임시 파일을 삭제합니다.
 
 ## 소스 파일
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`

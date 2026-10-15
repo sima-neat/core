@@ -70,7 +70,21 @@ report = model.benchmark(options)
 
 從 `report.layer_stats` 讀取每個已編譯 MLA 層的 `name`、從零開始的 `stage_index` 與 `total_execution_time_us`。執行時間為零的 no-op 項目也會保留。各層時間是在獨立的剖析執行中測量，因此總和不等於整體延遲。
 
-請使用沒有其他工作負載的 DevKit，以及 `PATH` 中包含 MIP 到核心控制權交接修正的 `mla-rt`（已在 eLxr B2121、MLA-RT `603a8c6` 上驗證）。剖析前請先完成進行中的推論；`benchmark()` 傳回後即可恢復一般推論。
+### 儲存報告 {#step-save-report}
+
+呼叫 `report.save(path)` 即可將完整報告寫入 YAML，包含已要求的各層統計資料：
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+```
+
+請指定包含檔名的路徑。不存在的父目錄會自動建立，既有檔案會被取代，並傳回寫入的路徑。儲存需要明確呼叫；`benchmark()` 不會自動建立報告檔案。
+
+在任一教學命令後加入 `--report results/model/yolo_benchmark.yaml`。搭配 `--include-layer-stats`，即可同時儲存主要測量值與各層執行時間。
 
 ## Run
 
@@ -135,16 +149,6 @@ report_telemetry_status=ok
 對於應用程式效能，也請基準測試實際的管線。合成模型輸入是故意設計為穩定的，因此它不代表相機抖動、編解碼器成本、實際的預處理、主機在負載下的排程，或下游應用程式邏輯。若要針對手動建立的非同步執行來調整佇列深度和反壓，請參閱[調整吞吐量和佇列深度](/tutorials/tune-throughput-and-queues)。
 
 `Model::benchmark()` 需要具體的 `input_specs()` 尺寸。如果輸入形狀是動態或非具體的，基準測試將明確失敗，而不是猜測一個形狀。
-
-## 儲存報告
-
-在 C++ 或 Python 中呼叫 `report.save("results/model/yolo_benchmark.yaml")`，即可將 YAML 寫入該確切檔名。不存在的父目錄會自動建立；既有檔案會以原子方式取代。傳回值是您指定的路徑。教學也接受透過 `--report` 指定同一路徑。儲存需要明確呼叫；`benchmark()` 不會自動建立報告檔案。
-
-儲存的報告也會保留延遲百分位數、吞吐量測量時段的中繼資料及 Sentinel 遙測。
-
-YAML 包含 `latency_ms`、`fps`、`avg_power_watts`、`energy_joules` 和 `layer_stats`。每筆 `LayerStats` 記錄包含 `name`、`stage_index` 和 `total_execution_time_us`（以微秒表示的硬體 `run_time`）。編譯器產生的 MLA 名稱可能代表原始 ONNX 運算子的融合或拆分。執行時間為零的 no-op 項目也會保留。各層剖析和主要測量使用不同的執行及輸入，因此不應將其時間視為相同。 `stage_index` 是從零開始的整數，依模型中 MLA 和 A65 執行階段的執行順序編號，而非封存檔內的檔案順序。單一階段使用 `0`；MLA–A65–MLA 的 MLA 層記錄使用 `0` 和 `2`。
-
-檔案缺失、程序失敗、逾時或統計結果無效都會引發例外。原始輸入 YAML 保持不變，成功和失敗後皆會清理暫存檔。
 
 ## 原始程式碼檔案
 - C++：`tutorials/003_benchmark_your_model/benchmark_your_model.cpp`

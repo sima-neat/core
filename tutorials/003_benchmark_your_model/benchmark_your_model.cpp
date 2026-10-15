@@ -2,7 +2,7 @@
 //
 // Usage:
 //   tutorial_003_benchmark_your_model --model /path/to/model.tar.gz [--samples 100]
-//   [--include-layer-stats]
+//   [--report results/model/yolo_benchmark.yaml] [--include-layer-stats]
 
 #include "neat.h"
 
@@ -81,12 +81,15 @@ int main(int argc, char** argv) {
       }
     }
     // END STEP
-    // END CORE LOGIC
 
+    // STEP save-report
     std::string report_path;
     if (get_arg(argc, argv, "--report", report_path)) {
       std::cout << "report_path=" << report.save(report_path).string() << "\n";
     }
+    // END STEP
+    // END CORE LOGIC
+
     std::cout << "[OK] 003_benchmark_your_model\n";
     return 0;
   } catch (const std::exception& e) {

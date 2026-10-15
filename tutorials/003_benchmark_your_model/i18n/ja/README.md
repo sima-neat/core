@@ -70,7 +70,21 @@ report = model.benchmark(options)
 
 `report.layer_stats` から、コンパイル済みの各 MLA レイヤーの `name`、ゼロ始まりの `stage_index`、`total_execution_time_us` を読み取ります。実行時間がゼロの no-op エントリも保持されます。レイヤーの時間は別のプロファイリング実行で測定されるため、その合計は全体のレイテンシとは一致しません。
 
-他の処理が動作していない DevKit と、MIP からカーネルへの引き継ぎ修正を含む `PATH` 内の `mla-rt` を使用してください（eLxr B2121、MLA-RT `603a8c6` で検証済み）。実行中の推論を完了してからプロファイリングを開始します。`benchmark()` が戻った後は通常の推論を再開できます。
+### レポートの保存 {#step-save-report}
+
+`report.save(path)` を呼び出すと、要求した場合はレイヤー統計も含め、完全なレポートを YAML で保存できます。
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+```
+
+ファイル名を含むパスを指定してください。存在しない親ディレクトリは作成され、既存のファイルは置き換えられ、書き込まれたパスが返されます。保存は明示的に行います。`benchmark()` はレポートファイルを自動作成しません。
+
+どちらのチュートリアルコマンドにも `--report results/model/yolo_benchmark.yaml` を追加できます。`--include-layer-stats` と組み合わせると、主要な測定値とレイヤーの実行時間の両方を保存できます。
 
 ## Run
 
@@ -135,16 +149,6 @@ report_telemetry_status=ok
 アプリケーションのパフォーマンスについては、実際のパイプラインもベンチマークしてください。合成モデルの入力は意図的に安定しているため、カメラの揺れ、コーデックのコスト、実際のプリプロセス、負荷時のホストのスケジューリング、または下流のアプリケーションロジックを表すものではありません。手動で構築した非同期実行によるキューの深さとバックプレッシャーの調整については、[スループットとキューの深さの調整](/tutorials/tune-throughput-and-queues)を参照してください。
 
 `Model::benchmark()`には、具体的な`input_specs()`の次元が必要です。入力の形状が動的であるか、または具体的なものでない場合、ベンチマークは形状を推測するのではなく、明確に失敗します。
-
-## レポートの保存
-
-C++ または Python で `report.save("results/model/yolo_benchmark.yaml")` を呼び出すと、そのファイル名で YAML を保存できます。存在しない親ディレクトリは作成され、既存のファイルはアトミックに置き換えられます。指定したパスが返されます。チュートリアルでは `--report` で同じパスを指定できます。保存は明示的に行います。`benchmark()` はレポートファイルを自動作成しません。
-
-保存されるレポートには、レイテンシのパーセンタイル、スループット測定期間のメタデータ、Sentinel のテレメトリも含まれます。
-
-YAML には `latency_ms`、`fps`、`avg_power_watts`、`energy_joules`、`layer_stats` が含まれます。各 `LayerStats` レコードには `name`、`stage_index`、`total_execution_time_us`（マイクロ秒単位のハードウェア `run_time`）があります。コンパイラが生成する MLA 名は、元の ONNX 演算子の結合や分割を表す場合があります。実行時間がゼロの no-op エントリも保持されます。レイヤーのプロファイリングと主要な測定は別の実行と入力を使用するため、時間を同一視できません。 `stage_index` は MLA と A65 の実行ステージを含む、モデル実行順のゼロ始まりの整数です。アーカイブ内のファイル順ではありません。単一ステージでは `0`、MLA–A65–MLA では MLA のレコードに `0` と `2` を使用します。
-
-ファイルの欠落、プロセス失敗、タイムアウト、不正な統計結果は例外を発生させます。元の入力 YAML は保持され、成功時も失敗時も一時ファイルを削除します。
 
 ## ソースファイル
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`

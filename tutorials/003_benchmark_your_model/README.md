@@ -78,9 +78,25 @@ Read `report.layer_stats` for each compiled MLA layer's `name`, zero-based `stag
 and `total_execution_time_us`. Zero-time no-op entries are retained. Layer timings use
 separate profiling passes and do not sum to the headline latency.
 
-Use an idle devkit and `mla-rt` in `PATH` with the MIP-to-kernel handoff fix (verified on
-eLxr B2121, MLA-RT `603a8c6`). Finish pending inference before profiling; you can resume
-normal inference when `benchmark()` returns.
+### Save the report {#step-save-report}
+
+Call `report.save(path)` to write the complete report as YAML, including layer stats when
+requested:
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+```
+
+Give a file path including the filename. Missing parent directories are created, an existing
+file is replaced, and the written path is returned. Saving is explicit; `benchmark()` does
+not create a report file automatically.
+
+For either tutorial command, append `--report results/model/yolo_benchmark.yaml`. Combine
+it with `--include-layer-stats` to save both the headline measurements and layer timings.
 
 ## Run
 
@@ -145,27 +161,6 @@ Use this benchmark when you want a quick answer for a compiled model archive: do
 For application performance, benchmark the real pipeline too. Synthetic model input is deliberately stable, so it does not represent camera jitter, codec cost, real preprocessing, host scheduling under load, or downstream application logic. For queue-depth and backpressure tuning with a hand-built async run, see [Tune Throughput and Queue Depth](/tutorials/tune-throughput-and-queues).
 
 `Model::benchmark()` requires concrete `input_specs()` dimensions. If an input shape is dynamic or non-concrete, the benchmark fails clearly instead of guessing a shape.
-
-## Save the report
-
-Call `report.save("results/model/yolo_benchmark.yaml")` in C++ or Python to write YAML to that
-exact filename. Missing parent directories are created; an existing file is atomically replaced.
-The returned path is the path you supplied. The tutorial accepts the same path through `--report`.
-Saving is explicit; `benchmark()` does not create a report file automatically.
-
-Saved reports also preserve latency percentiles, throughput-window metadata, and Sentinel telemetry.
-
-The YAML contains `latency_ms`, `fps`, `avg_power_watts`, `energy_joules`, and `layer_stats`.
-Each `LayerStats` record has `name`, `stage_index`, and `total_execution_time_us` (hardware
-`run_time` in microseconds). Compiler-generated MLA names may fuse or split original ONNX
-operators. `stage_index` is zero-based model execution order across MLA and A65 executable
-stages, not archive file order. A single-stage model uses `0`; MLA–A65–MLA uses `0` and `2`
-for the MLA layer records. Zero-time no-op entries are retained. Layer profiling and the headline measurements
-use separate passes and inputs, so their times should not be equated.
-
-Missing profiling files, process failures, timeouts, and invalid generated stats raise an
-exception. The compiler's input YAML is preserved, and temporary profiling files are cleaned
-up on success and failure.
 
 ## Source Files
 
