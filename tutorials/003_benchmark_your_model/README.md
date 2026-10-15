@@ -59,10 +59,8 @@ Power comes from Sentinel, the board telemetry daemon that the Neat installer se
 
 ### Advanced: per-layer stats {#step-read-layer-stats}
 
-Layer profiling is an advanced opt-in option. `BenchmarkOptions.include_layer_stats` defaults
-to `false`; ordinary benchmarks keep the existing headline measurements and do not run a layer
-profiling pass. Add `--include-layer-stats` to either tutorial command to request it, or enable
-it through `BenchmarkOptions`:
+Add `--include-layer-stats` to either tutorial command to include layer timings in the
+benchmark report. This option is disabled by default. To enable it through the API:
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
@@ -76,38 +74,13 @@ options.include_layer_stats = True
 report = model.benchmark(options)
 ```
 
-Iterate over `report.layer_stats` to print each compiled layer's `stage_index`, `name`, and
-`total_execution_time_us`. The examples retain compiler order and zero-time no-op entries.
-`stage_index` follows zero-based executable stage order, including A65 stages.
+Read `report.layer_stats` for each compiled MLA layer's `name`, zero-based `stage_index`,
+and `total_execution_time_us`. Zero-time no-op entries are retained. Layer timings use
+separate profiling passes and do not sum to the headline latency.
 
-Layer collection runs after the latency and throughput runners have closed. NEAT reuses the
-extracted MPK, selects each MLA ELF from the manifest, and pairs it with `<elf_stem>_stats.yaml`.
-It copies the input YAML unchanged into a temporary directory and runs
-`mla-rt --connect mip,ma -vs -N --per-layer-stats <copied_yaml> <elf>`. The generated
-`_output.yaml` is validated and read into the report, then the temporary files are removed.
-
-Use an idle devkit with no other active MLA workloads: this command accesses MLA directly.
-`mla-rt` must be installed and available in `PATH`. Profiling uses its default input buffers
-and has a 120-second timeout per MLA stage. With the default `false`, `report.layer_stats` is
-empty and the tutorial prints only the headline values. With the advanced flag, output looks
-like this (illustrative values):
-
-```text
-Layer stats (execution time in microseconds):
-  stage_index=0 name=MLA_0/conv total_execution_time_us=161.95
-  stage_index=0 name=MLA_0/noop total_execution_time_us=0
-  stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
-```
-
-Profiling requires MLA-RT with the MIP-to-kernel handoff fix. Verified on eLxr B2121
-with MLA-RT `2.2.0~git202610140145.603a8c6-2121` (commit `603a8c6`). With that fix,
-you can resume ordinary inference immediately after `benchmark()` returns; no manual reset
-or delay is needed. Older builds can leave the hardware in a state that causes subsequent
-kernel-driven inference to fail.
-
-Sequential calls to `Model.run()` before and after profiling are supported, including reuse
-of its cached runner. Finish pending inference before requesting layer stats; profiling must
-not overlap inference through `Model.run()`, an explicit runner, or another application.
+Use an idle devkit and `mla-rt` in `PATH` with the MIP-to-kernel handoff fix (verified on
+eLxr B2121, MLA-RT `603a8c6`). Finish pending inference before profiling; you can resume
+normal inference when `benchmark()` returns.
 
 ## Run
 

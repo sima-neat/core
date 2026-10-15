@@ -54,7 +54,7 @@ Pythonは、`pyneat.BenchmarkOptions`を通じて、同じフィールドを公�
 
 ### 上級: レイヤー統計 {#step-read-layer-stats}
 
-レイヤーのプロファイリングは明示的に有効にする上級オプションです。`BenchmarkOptions.include_layer_stats` の既定値は `false` です。通常のベンチマークは従来の主要な測定を行い、レイヤーのプロファイリングは実行しません。チュートリアルのコマンドに `--include-layer-stats` を追加するか、`BenchmarkOptions` で有効にします。
+チュートリアルのコマンドに `--include-layer-stats` を追加すると、ベンチマークレポートにレイヤーの実行時間が含まれます。既定では無効です。API では次のように有効にします。
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
@@ -68,20 +68,9 @@ options.include_layer_stats = True
 report = model.benchmark(options)
 ```
 
-`report.layer_stats` を反復処理して、各コンパイル済みレイヤーの `stage_index`、`name`、`total_execution_time_us` を表示します。コンパイラの順序と実行時間がゼロの no-op エントリを保持します。`stage_index` は A65 を含む実行ステージのゼロ始まりの順序です。
+`report.layer_stats` から、コンパイル済みの各 MLA レイヤーの `name`、ゼロ始まりの `stage_index`、`total_execution_time_us` を読み取ります。実行時間がゼロの no-op エントリも保持されます。レイヤーの時間は別のプロファイリング実行で測定されるため、その合計は全体のレイテンシとは一致しません。
 
-ランナーを閉じた後、展開済み MPK のマニフェストから MLA ELF を選択し、`<elf_stem>_stats.yaml` と組み合わせます。YAML を変更せず一時ディレクトリにコピーして `mla-rt --connect mip,ma -vs -N --per-layer-stats <copied_yaml> <elf>` を実行し、生成された `_output.yaml` を検証してレポートに読み込みます。一時ファイルは削除します。MLA ステージごとのタイムアウトは 120 秒で、mla-rt のデフォルト入力を使用します。他の MLA ワークロードが動作していない DevKit と、`PATH` から利用できる `mla-rt` が必要です。既定の `false` では `report.layer_stats` は空になり、主要な値のみを表示します。有効時の出力例：
-
-```text
-Layer stats (execution time in microseconds):
-  stage_index=0 name=MLA_0/conv total_execution_time_us=161.95
-  stage_index=0 name=MLA_0/noop total_execution_time_us=0
-  stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
-```
-
-MIP からカーネルへの引き継ぎ修正を含む MLA-RT が必要です。eLxr B2121 の MLA-RT `2.2.0~git202610140145.603a8c6-2121`（コミット `603a8c6`）で検証済みです。この修正があれば、`benchmark()` が戻った直後に通常の推論を再開でき、手動リセットや待機は不要です。古いビルドでは、後続のカーネル経由の推論が失敗する状態がハードウェアに残る場合があります。
-
-プロファイリングの前後に `Model.run()` を順番に呼び出すことができ、キャッシュされたランナーも再利用できます。レイヤー統計を要求する前に、実行中の推論を完了してください。プロファイリングを `Model.run()`、明示的なランナー、または他のアプリケーションによる推論と同時に実行しないでください。
+他の処理が動作していない DevKit と、MIP からカーネルへの引き継ぎ修正を含む `PATH` 内の `mla-rt` を使用してください（eLxr B2121、MLA-RT `603a8c6` で検証済み）。実行中の推論を完了してからプロファイリングを開始します。`benchmark()` が戻った後は通常の推論を再開できます。
 
 ## Run
 

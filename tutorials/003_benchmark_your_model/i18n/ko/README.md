@@ -54,7 +54,7 @@ Python은 `pyneat.BenchmarkOptions`를 통해 동일한 필드를 노출합니�
 
 ### 고급: 레이어 통계 {#step-read-layer-stats}
 
-레이어 프로파일링은 명시적으로 활성화하는 고급 옵션입니다. `BenchmarkOptions.include_layer_stats`의 기본값은 `false`입니다. 일반 벤치마크는 기존 주요 측정을 유지하며 레이어 프로파일링을 실행하지 않습니다. 튜토리얼 명령에 `--include-layer-stats`를 추가하거나 `BenchmarkOptions`에서 활성화합니다.
+튜토리얼 명령에 `--include-layer-stats`를 추가하면 벤치마크 보고서에 레이어 실행 시간이 포함됩니다. 기본값은 비활성화입니다. API에서는 다음과 같이 활성화합니다.
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
@@ -68,20 +68,9 @@ options.include_layer_stats = True
 report = model.benchmark(options)
 ```
 
-`report.layer_stats`를 순회하여 각 컴파일된 레이어의 `stage_index`, `name`, `total_execution_time_us`를 출력합니다. 컴파일러 순서와 실행 시간이 0인 no-op 항목을 유지합니다. `stage_index`는 A65를 포함한 실행 단계의 0부터 시작하는 순서입니다.
+`report.layer_stats`에서 컴파일된 각 MLA 레이어의 `name`, 0부터 시작하는 `stage_index`, `total_execution_time_us`를 읽습니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 시간은 별도의 프로파일링 실행에서 측정하므로 합계가 전체 지연 시간과 일치하지 않습니다.
 
-러너를 닫은 후 압축 해제된 MPK 매니페스트에서 MLA ELF를 선택하고 `<elf_stem>_stats.yaml`과 연결합니다. YAML을 변경 없이 임시 디렉터리에 복사하여 `mla-rt --connect mip,ma -vs -N --per-layer-stats <copied_yaml> <elf>`를 실행하고, 생성된 `_output.yaml`을 검증하여 보고서에 읽어 들인 뒤 임시 파일을 삭제합니다. MLA 단계별 제한 시간은 120초이며 mla-rt 기본 입력을 사용합니다. 다른 MLA 작업이 없는 DevKit과 `PATH`에서 사용 가능한 `mla-rt`가 필요합니다. 기본값인 `false`에서는 `report.layer_stats`가 비어 있고 주요 값만 출력합니다. 활성화 시 출력 예시:
-
-```text
-Layer stats (execution time in microseconds):
-  stage_index=0 name=MLA_0/conv total_execution_time_us=161.95
-  stage_index=0 name=MLA_0/noop total_execution_time_us=0
-  stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
-```
-
-MIP에서 커널로 제어를 넘기는 수정이 포함된 MLA-RT가 필요합니다. eLxr B2121의 MLA-RT `2.2.0~git202610140145.603a8c6-2121`(커밋 `603a8c6`)에서 검증했습니다. 이 수정이 있으면 `benchmark()` 반환 직후 일반 추론을 재개할 수 있으며 수동 재설정이나 대기는 필요하지 않습니다. 이전 빌드는 이후 커널을 통한 추론이 실패하는 하드웨어 상태를 남길 수 있습니다.
-
-프로파일링 전후에 `Model.run()`을 순차적으로 호출할 수 있으며 캐시된 러너도 재사용할 수 있습니다. 레이어 통계를 요청하기 전에 진행 중인 추론을 완료하세요. 프로파일링은 `Model.run()`, 명시적 러너 또는 다른 애플리케이션의 추론과 동시에 실행하면 안 됩니다.
+다른 작업이 없는 DevKit과 MIP에서 커널로 제어를 넘기는 수정이 포함된 `PATH`의 `mla-rt`를 사용하세요(eLxr B2121, MLA-RT `603a8c6`에서 검증). 진행 중인 추론을 완료한 후 프로파일링을 시작하세요. `benchmark()`가 반환되면 일반 추론을 재개할 수 있습니다.
 
 ## Run
 

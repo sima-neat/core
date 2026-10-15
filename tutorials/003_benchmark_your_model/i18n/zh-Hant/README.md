@@ -54,7 +54,7 @@ Python 會透過 `pyneat.BenchmarkOptions` 公開相同的欄位。設定原始�
 
 ### 進階：層統計資料 {#step-read-layer-stats}
 
-層剖析是需明確啟用的進階選項。`BenchmarkOptions.include_layer_stats` 預設為 `false`；一般基準測試保留現有的主要測量，不執行層剖析。將 `--include-layer-stats` 加到教學指令，或透過 `BenchmarkOptions` 啟用：
+在任一教學命令中加入 `--include-layer-stats`，即可在基準測試報告中包含各層執行時間。此選項預設停用。透過 API 啟用的方式如下：
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
@@ -68,20 +68,9 @@ options.include_layer_stats = True
 report = model.benchmark(options)
 ```
 
-逐一讀取 `report.layer_stats`，列印每個編譯層的 `stage_index`、`name` 和 `total_execution_time_us`。範例保留編譯器順序與執行時間為零的 no-op 記錄。`stage_index` 是包含 A65 的執行階段順序，從零開始。
+從 `report.layer_stats` 讀取每個已編譯 MLA 層的 `name`、從零開始的 `stage_index` 與 `total_execution_time_us`。執行時間為零的 no-op 項目也會保留。各層時間是在獨立的剖析執行中測量，因此總和不等於整體延遲。
 
-執行器關閉後，NEAT 從已解壓缩的 MPK 資訊清單選取 MLA ELF，並配對 `<elf_stem>_stats.yaml`。YAML 會原樣複製至暫存目錄，執行 `mla-rt --connect mip,ma -vs -N --per-layer-stats <copied_yaml> <elf>`，驗證產生的 `_output.yaml` 並讀入報告，然後刪除暫存檔。每個 MLA 階段的逾時為 120 秒，使用 mla-rt 預設輸入。需要沒有其他 MLA 工作負載的閒置 DevKit，以及可透過 `PATH` 使用的 `mla-rt`。預設為 `false` 時，`report.layer_stats` 清單為空，只輸出主要數值。啟用後的輸出範例：
-
-```text
-Layer stats (execution time in microseconds):
-  stage_index=0 name=MLA_0/conv total_execution_time_us=161.95
-  stage_index=0 name=MLA_0/noop total_execution_time_us=0
-  stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
-```
-
-需要包含 MIP 到核心驅動程式控制權交接修正的 MLA-RT。已在 eLxr B2121 搭配 MLA-RT `2.2.0~git202610140145.603a8c6-2121`（提交 `603a8c6`）上驗證。有此修正時，`benchmark()` 傳回後即可立即恢復一般推論，無需手動重設或延遲。舊版可能使硬體停留在導致後續核心驅動程式推論失敗的狀態。
-
-支援在剖析前後依序呼叫 `Model.run()`，並重用其快取的執行器。要求各層統計資料前，請先完成尚未結束的推論。剖析不得與透過 `Model.run()`、明確建立的執行器或其他應用程式執行的推論重疊。
+請使用沒有其他工作負載的 DevKit，以及 `PATH` 中包含 MIP 到核心控制權交接修正的 `mla-rt`（已在 eLxr B2121、MLA-RT `603a8c6` 上驗證）。剖析前請先完成進行中的推論；`benchmark()` 傳回後即可恢復一般推論。
 
 ## Run
 
