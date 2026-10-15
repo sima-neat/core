@@ -421,6 +421,7 @@ jobs:
         tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tests/CTestTestfile.cmake' >/dev/null
         tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tutorials/CTestTestfile.cmake' >/dev/null
         test -f dist/install_neat_framework.sh
+        test -f dist/install_sentinel.sh
         test -f dist/neat-install-manifest.txt
         cmp deps/internals-manifest.json dist/internals-manifest.json
         test -f build/resolved_manifest.json
@@ -955,7 +956,7 @@ jobs:
       - publish-vulcan-artifacts
     runs-on:
       group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
-      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+      labels: [self-hosted, Linux, ARM64, modalix, rtsp, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
@@ -974,7 +975,7 @@ jobs:
         run: |
           rm -rf _work
           mkdir -p _work
-          rm -f ./*-Linux-core.deb ./*-Linux-dev.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
+          rm -f ./*-Linux-core.deb ./*-Linux-dev.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./install_sentinel.sh ./neat-install-manifest.txt || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
       - name: Pre-install devkit storage cleanup
@@ -1155,7 +1156,7 @@ jobs:
           export LLIMA_MODELS_PATH="${LLIMA_MODELS_PATH:-/media/nvme/llima/models}"
           export SIMA_TEST_LLIMA_TEXT_MODEL="${SIMA_TEST_LLIMA_TEXT_MODEL:-Qwen2.5-0.5B-Instruct-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_VLM_MODEL="${SIMA_TEST_LLIMA_VLM_MODEL:-LFM2.5-VL-450M-Autoround-a16w4}"
-          export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8-layered-encoder}"
+          export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8}"
           export SIMA_TEST_LLIMA_REASONING_QWEN_MODEL="${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL:-Qwen3-0.6B-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL="${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL:-Gemma-4-E2B-it-TextOnly-GPTQ-a16w4}"
 
@@ -1580,7 +1581,6 @@ jobs:
       SIMAPCIE_LIFETIME_ITERATIONS: "20"
       SIMAPCIE_STRESS_QUEUES: "0 1 2 3 4 5"
       SIMAPCIE_STRESS_ITERATIONS: "1000"
-      SIMAPCIE_GENAI_RECEIVE_ROOT: ${{ vars.SIMAPCIE_GENAI_RECEIVE_ROOT || '/tmp' }}
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
       SIMAPCIE_CARD_INSTALL_CMD: ${{ vars.SIMAPCIE_CARD_INSTALL_CMD }}
       DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
@@ -1614,6 +1614,25 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/preflight.sh
+
+      - name: Provision PCIe card SSH key
+        shell: bash
+        env:
+          SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./pcie_host/scripts/pcie-setup.sh \
+            --user "${SIMAPCIE_USER}" \
+            --key "${HOME}/.ssh/sima_neat_pcie_ed25519" \
+            --hosts "${SIMAPCIE_CARD_HOST}" \
+            --non-interactive \
+            --strict
+
+      - name: Prepare PCIe card CI prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/prepare_card_prerequisites.sh
 
       - name: Check PCIe card platform compatibility
         id: check_pcie_card_compatibility

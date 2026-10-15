@@ -1,4 +1,5 @@
 #include "model/Model.h"
+#include "model/internal/BenchmarkTelemetry.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/InputPlanner.h"
 #include "model/internal/ModelPack.h"
@@ -22,6 +23,7 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Tess.h"
 #include "pipeline/Graph.h"
+#include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -31,6 +33,8 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
+#include "pipeline/runtime/ExecutionPlanAssembly.h"
+#include "pipeline/runtime/RunCore.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
@@ -49,9 +53,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -2138,6 +2144,9 @@ void validate_benchmark_options(const BenchmarkOptions& options) {
   if (options.num_samples <= 0) {
     throw std::runtime_error("Model::benchmark: num_samples must be > 0");
   }
+  if (options.min_duration_ms < 0) {
+    throw std::runtime_error("Model::benchmark: min_duration_ms must be >= 0");
+  }
   if (options.original_width.has_value() != options.original_height.has_value()) {
     throw std::runtime_error(
         "Model::benchmark: original_width and original_height must be provided together");
@@ -2233,7 +2242,7 @@ TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOp
 }
 
 MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_size,
-                                              bool include_power, bool include_plugin_latency,
+                                              bool include_plugin_latency,
                                               std::string title = "NEAT Benchmark") {
   MeasureOptions opt;
   opt.duration_ms = timeout_ms;
@@ -2242,7 +2251,6 @@ MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_
   opt.include_plugin_latency = include_plugin_latency;
   opt.include_edge_latency = false;
   opt.include_message_latency = false;
-  opt.include_power = include_power;
   opt.logical_batch_size = logical_batch_size > 0 ? logical_batch_size : 1;
   opt.title = std::move(title);
   opt.input = "synthetic";
@@ -6521,6 +6529,11 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
   if (popt.include_input) {
     if (input) {
       src_opt = appsrc_from_info(require_input_info(*input, tensor_mode));
+      // A seed supplies the current shape, not the model's input capacity.
+      const InputOptions capacity = pack.input_appsrc_options(tensor_mode);
+      src_opt.max_width = capacity.max_width;
+      src_opt.max_height = capacity.max_height;
+      src_opt.max_depth = capacity.max_depth;
     } else {
       src_opt = pack.input_appsrc_options(tensor_mode);
       const bool ingress_join = session_route_has_ingress_join(plan.session_route_plan);
@@ -7456,7 +7469,9 @@ Model::Runner::start_measurement(const simaai::neat::MeasureOptions& opt) {
 }
 
 simaai::neat::MeasureScope Model::Runner::start_measurement(bool include_plugin_latency) {
-  return run_.start_measurement(include_plugin_latency);
+  simaai::neat::MeasureOptions opt;
+  opt.include_plugin_latency = include_plugin_latency;
+  return run_.start_measurement(opt);
 }
 
 void Model::Runner::close() {
@@ -7687,6 +7702,66 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
 }
 #endif
 
+namespace {
+
+// Startup preflight pushes a frame through the pipeline; the plan needs only the build.
+simaai::neat::RunOptions plan_run_options(simaai::neat::RunOptions run_opt) {
+  run_opt.startup_preflight = false;
+  return run_opt;
+}
+
+// Reads the plan the build recorded; the Runner closes its pipeline when it goes out of scope.
+ExecutionPlan plan_of_build(Model::Runner runner, const std::string& model_name) {
+  const auto core = run_internal::core(internal::ModelAccess::run(runner));
+  const auto diag = core ? core->pipeline.stream.diag_ctx() : nullptr;
+  if (!diag || !diag->build_plan) {
+    throw std::runtime_error("Model::execution_plan: the build recorded no plan");
+  }
+  return internal::ExecutionPlanAccess::make(*diag->build_plan, model_name);
+}
+
+} // namespace
+
+ExecutionPlan Model::execution_plan() {
+  return execution_plan(Model::RouteOptions{}, simaai::neat::RunOptions{});
+}
+
+ExecutionPlan Model::execution_plan(const Model::RouteOptions& opt) {
+  return execution_plan(opt, simaai::neat::RunOptions{});
+}
+
+ExecutionPlan Model::execution_plan(const simaai::neat::RunOptions& run_opt) {
+  return execution_plan(Model::RouteOptions{}, run_opt);
+}
+
+ExecutionPlan Model::execution_plan(const Model::RouteOptions& opt,
+                                    const simaai::neat::RunOptions& run_opt) {
+  return plan_of_build(build(opt, plan_run_options(run_opt)), impl_->pack.logical_package_name());
+}
+
+ExecutionPlan Model::execution_plan(const simaai::neat::TensorList& inputs,
+                                    const Model::RouteOptions& opt,
+                                    const simaai::neat::RunOptions& run_opt) {
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
+}
+
+ExecutionPlan Model::execution_plan(const simaai::neat::Sample& inputs,
+                                    const Model::RouteOptions& opt,
+                                    const simaai::neat::RunOptions& run_opt) {
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
+}
+
+#if defined(SIMA_WITH_OPENCV)
+ExecutionPlan Model::execution_plan(const std::vector<cv::Mat>& inputs,
+                                    const Model::RouteOptions& opt,
+                                    const simaai::neat::RunOptions& run_opt) {
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
+}
+#endif
+
 simaai::neat::TensorList Model::run(const std::vector<Tensor>& inputs, int timeout_ms) {
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty input list");
@@ -7730,7 +7805,7 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
   const int num_samples = options.num_samples;
   const bool include_plugin_latency = options.include_plugin_latency;
 
-  constexpr int kWarmupSamples = 50;
+  constexpr int kWarmupSamples = 100;
   constexpr int kTimeoutMs = 120000;
   const TensorList inputs = make_synthetic_benchmark_inputs(*this, options);
   const int logical_batch_size = compiled_batch_size();
@@ -7756,9 +7831,8 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
       require_benchmark_output(out, "latency warmup");
     }
 
-    MeasureScope measure = latency_runner.start_measurement(
-        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, /*include_power=*/false,
-                                       include_plugin_latency, "NEAT Benchmark latency"));
+    MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
+        kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark latency"));
     for (int i = 0; i < num_samples; ++i) {
       if (!latency_runner.push(inputs)) {
         latency_runner.close();
@@ -7772,10 +7846,13 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
     latency_runner.close();
   }
 
+  const std::string trace_note = std::filesystem::path(impl_->source_path).filename().string();
+  BenchmarkTelemetry telemetry;
+
   RunOptions throughput_run_options;
   throughput_run_options.startup_preflight = false;
-  throughput_run_options.enable_board_power();
 
+  int pushed = 0;
   {
     Runner runner = build_with_model_options(inputs, Model::RouteOptions{}, throughput_run_options,
                                              benchmark_model_options);
@@ -7790,29 +7867,65 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
       require_benchmark_output(out, "throughput warmup");
     }
 
-    MeasureScope measure = runner.start_measurement(
-        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, /*include_power=*/true,
-                                       include_plugin_latency, "NEAT Benchmark throughput"));
+    internal::SentinelTrace trace(trace_note);
+    MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
+        kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark throughput"));
+    const auto min_end =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
+
+    // The push loop decides how many inputs the window measures, so the pull thread only pulls
+    // an output once its input has been pushed.
+    std::mutex count_mu;
+    std::condition_variable count_cv;
+    bool pushing = true;
     int pulled = 0;
     std::exception_ptr pull_error;
     std::thread pull_thread([&] {
       try {
-        while (pulled < num_samples) {
+        for (;;) {
+          {
+            std::unique_lock<std::mutex> lock(count_mu);
+            count_cv.wait(lock, [&] { return pulled < pushed || !pushing; });
+            if (pulled == pushed) {
+              break;
+            }
+          }
           Sample out = runner.pull(kTimeoutMs);
           require_benchmark_output(out, "throughput measured");
           ++pulled;
         }
       } catch (...) {
-        pull_error = std::current_exception();
+        {
+          std::lock_guard<std::mutex> lock(count_mu);
+          pull_error = std::current_exception();
+        }
+        // Nothing drains the outputs any more, so wake a push blocked on a full input queue.
+        runner.close_input();
       }
     });
+    const auto finish_pushing = [&] {
+      {
+        std::lock_guard<std::mutex> lock(count_mu);
+        pushing = false;
+      }
+      count_cv.notify_one();
+    };
 
     try {
-      for (int i = 0; i < num_samples; ++i) {
+      while (pushed < num_samples || std::chrono::steady_clock::now() < min_end) {
         if (!runner.push(inputs)) {
           throw std::runtime_error("Model::benchmark: throughput measured push failed");
         }
+        {
+          std::lock_guard<std::mutex> lock(count_mu);
+          ++pushed;
+          if (pull_error) {
+            break;
+          }
+        }
+        count_cv.notify_one();
       }
+      finish_pushing();
       if (!defer_eos_until_outputs_drained) {
         runner.close_input();
       }
@@ -7821,31 +7934,37 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
         runner.close_input();
       }
     } catch (...) {
+      finish_pushing();
       runner.close_input();
       if (pull_thread.joinable()) {
         pull_thread.join();
       }
       runner.close();
+      // A failed pull closes the input, which fails the push; report the cause.
+      if (pull_error) {
+        std::rethrow_exception(pull_error);
+      }
       throw;
     }
     if (pull_error) {
       runner.close();
       std::rethrow_exception(pull_error);
     }
-    if (pulled != num_samples) {
+    if (pulled != pushed) {
       runner.close();
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
+    // End the window before stopping Sentinel: its stop request takes about 0.1 s.
     throughput_measured = measure.stop();
+    telemetry = trace.finish();
     runner.close();
   }
 
   const BenchmarkReport report = internal::build_benchmark_report_from_measurements(
-      latency_measured, throughput_measured, num_samples);
+      latency_measured, throughput_measured, num_samples, pushed, std::move(telemetry));
   const double batch_throughput = throughput_measured.throughput_batches_per_s;
-  const bool power_available =
-      throughput_measured.power.enabled && throughput_measured.power.samples > 0;
+  const BenchmarkTelemetry& board = report.telemetry;
 
   const auto old_flags = std::cout.flags();
   const auto old_precision = std::cout.precision();
@@ -7860,6 +7979,8 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
   std::cout << "Latency: " << report.latency_ms << " ms\n";
   std::cout << "FPS:     " << report.fps << " inferences/s\n";
   std::cout << "Batch throughput: " << batch_throughput << " batches/s\n";
+  std::cout << "Throughput window: " << report.throughput_duration_ms / 1000.0 << " s, "
+            << report.throughput_samples << " inputs\n";
   if (include_plugin_latency) {
     std::cout << "Plugin latency latency-run: " << latency_measured.plugin_latency_source << "/"
               << latency_measured.plugin_latency_status << " rows="
@@ -7872,16 +7993,47 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
                   throughput_measured.plugin_latency_unattributed.size())
               << "\n";
   }
-  if (power_available) {
-    std::cout << "Power avg:    " << report.avg_power_watts << " W\n";
-    std::cout << "Energy:       " << report.energy_joules << " J\n";
+  // One line per telemetry metric; metrics the board did not report are skipped. A metric that
+  // stayed constant over the window prints a single value.
+  const auto print_metric = [](const char* label, const BenchmarkMetric& metric, const char* unit) {
+    if (metric.samples == 0) {
+      return;
+    }
+    std::cout << label << metric.mean << " " << unit;
+    if (metric.minimum != metric.maximum) {
+      std::cout << " avg, " << metric.maximum << " " << unit << " max";
+    }
+    std::cout << "\n";
+  };
+  if (board.power_som_watts.samples > 0) {
+    std::cout << "Power:         " << report.avg_power_watts << " W avg, "
+              << report.peak_power_watts << " W peak (SoM)\n";
+    print_metric("MLA power:     ", board.power_mla_watts, "W");
+    std::cout << "Energy:        " << report.energy_joules << " J for " << num_samples
+              << " inputs\n";
   } else {
-    std::cout << "Power: unavailable\n";
+    std::cout << "Power: unavailable ("
+              << (board.status == "ok" ? "Sentinel reported no SoM power" : board.status) << ")\n";
+  }
+  if (board.status == "ok") {
+    print_metric("Die temp:      ", board.die_temperature_max_c, "°C");
+    print_metric("CPU usage:     ", board.cpu_usage_pct, "%");
+    print_metric("MLA memory:    ", board.mla_memory_mib, "MiB");
+    print_metric("CMA used:      ", board.cma_memory_mib, "MiB");
+    print_metric("Linux memory:  ", board.linux_memory_used_mib, "MiB");
+    std::cout << "Telemetry:     Sentinel, " << board.samples << " samples, trace "
+              << board.trace_id << "\n";
   }
   std::cout.flags(old_flags);
   std::cout.precision(old_precision);
 
   return report;
+}
+
+BenchmarkReport Model::benchmark(int num_samples) {
+  BenchmarkOptions options;
+  options.num_samples = num_samples;
+  return benchmark(options);
 }
 
 BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
@@ -7892,7 +8044,9 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
 }
 
 BenchmarkReport Model::benchmark(bool include_plugin_latency) {
-  return benchmark(/*num_samples=*/100, include_plugin_latency);
+  BenchmarkOptions options;
+  options.include_plugin_latency = include_plugin_latency;
+  return benchmark(options);
 }
 
 namespace internal {
@@ -7948,9 +8102,10 @@ void require_finite_positive(double value, const char* field) {
 
 BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& latency_report,
                                                          const MeasureReport& throughput_report,
-                                                         int expected_samples) {
-  require_benchmark_measure_report_window(latency_report, "latency", expected_samples);
-  require_benchmark_measure_report_window(throughput_report, "throughput", expected_samples);
+                                                         int num_samples, int throughput_samples,
+                                                         BenchmarkTelemetry telemetry) {
+  require_benchmark_measure_report_window(latency_report, "latency", num_samples);
+  require_benchmark_measure_report_window(throughput_report, "throughput", throughput_samples);
 
   const int latency_batch =
       latency_report.options.logical_batch_size > 0 ? latency_report.options.logical_batch_size : 1;
@@ -7986,11 +8141,21 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
 
   BenchmarkReport out;
   out.latency_ms = latency_report.end_to_end.avg_ms;
+  out.latency_p50_ms = latency_report.end_to_end.p50_ms;
+  out.latency_p95_ms = latency_report.end_to_end.p95_ms;
+  out.latency_p99_ms = latency_report.end_to_end.p99_ms;
   out.fps = throughput_report.throughput_inferences_per_s;
-  if (throughput_report.power.enabled && throughput_report.power.samples > 0) {
-    out.avg_power_watts = throughput_report.power.total_avg_watts;
-    out.energy_joules = throughput_report.power.energy_joules;
+  out.throughput_samples = throughput_samples;
+  out.throughput_duration_ms = throughput_report.elapsed_s * 1000.0;
+  if (telemetry.power_som_watts.samples > 0) {
+    out.avg_power_watts = telemetry.power_som_watts.mean;
+    out.peak_power_watts = telemetry.power_som_watts.maximum;
+    // Energy for num_samples inputs at the measured rate keeps the value independent of how
+    // long the throughput window ran.
+    out.energy_joules = out.avg_power_watts * static_cast<double>(num_samples) /
+                        throughput_report.throughput_batches_per_s;
   }
+  out.telemetry = std::move(telemetry);
   return out;
 }
 

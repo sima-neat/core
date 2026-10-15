@@ -96,8 +96,8 @@ slug: /reference/environment-variables
 - `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 자동 복구 디스패처 (기본값: true).
 - `SIMA_ASYNC_TPUT_DIAG=1` — 비동기 처리량 진단.
 - `SIMA_ASYNC_WARMUP=<n>` — 비동기 워밍업 프레임.
-- `SIMA_PERF_POWER=1` — 성능 테스트 시 SOM PMIC 전원 레일 전력 소비량 측정 기능을 활성화합니다.
-- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 전력 샘플링 간격(기본값: 100).
+- `SIMA_PERF_POWER=1` — 성능 테스트 시 Sentinel에서 보드 전력을 수집하는 기능을 활성화합니다.
+- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 더 이상 사용되지 않으며 무시됩니다. Sentinel은 2초마다 샘플링합니다.
 - `SIMA_PULL_TIMEOUT_DIAG=0/1` — 풀 요청 시간 초과에 대한 보고서 (기본값: true).
 - `SIMA_STAGE_DEBUG=1` — 스테이지 실행 디버그 로그.
 

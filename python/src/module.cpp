@@ -76,6 +76,7 @@
 #include "nodes/sima/PCIeSink.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/ExecutionPlan.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/NeatError.h"
@@ -2549,6 +2550,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("port_name", &simaai::neat::InputDropInfo::port_name)
       .def_rw("reason", &simaai::neat::InputDropInfo::reason);
 
+  // The deprecated power profile helpers stay bound for compatibility.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   nb::class_<RunOptions>(m, "RunOptions")
       .def(nb::init<>())
       .def_rw("preset", &RunOptions::preset)
@@ -2582,6 +2586,7 @@ NB_MODULE(_pyneat_core, m) {
   m.def("modalix_dvt_power_monitor_options", &simaai::neat::modalix_dvt_power_monitor_options,
         "sample_interval_ms"_a = 100);
   m.def("power_monitor_profile_name", &simaai::neat::power_monitor_profile_name, "profile"_a);
+#pragma GCC diagnostic pop
 
   nb::class_<NodeLatencySummary>(m, "NodeLatencySummary")
       .def(nb::init<>())
@@ -2614,7 +2619,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("duration_ms", &MeasureOptions::duration_ms)
       .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
       .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
-      .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency)
+      .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency,
+              "Deprecated: plugin latency will be removed.")
       .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)
       .def_rw("include_edge_latency", &MeasureOptions::include_edge_latency)
       .def_rw("include_message_latency", &MeasureOptions::include_message_latency)
@@ -2731,6 +2737,17 @@ NB_MODULE(_pyneat_core, m) {
       .def("stop", &MeasureScope::stop)
       .def("stopped", &MeasureScope::stopped);
 
+  nb::class_<simaai::neat::ExecutionPlan>(m, "ExecutionPlan")
+      .def(nb::init<>())
+      .def("to_json", &simaai::neat::ExecutionPlan::to_json, "indent"_a = 2)
+      .def_prop_ro("schema_version", &simaai::neat::ExecutionPlan::schema_version);
+
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto run_start_measurement_bool =
+      static_cast<MeasureScope (Run::*)(bool)>(&Run::start_measurement);
+#pragma GCC diagnostic pop
   nb::class_<Run>(m, "Run")
       .def(nb::init<>())
       .def("__bool__", [](const Run& run) { return static_cast<bool>(run); })
@@ -2858,8 +2875,9 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("start_measurement", static_cast<MeasureScope (Run::*)(bool)>(&Run::start_measurement),
-           "include_plugin_latency"_a)
+      .def("start_measurement", run_start_measurement_bool, "include_plugin_latency"_a,
+           "Deprecated: use start_measurement(). True also collects plugin latency, which will be "
+           "removed.")
       .def("start_measurement",
            static_cast<MeasureScope (Run::*)(const MeasureOptions&)>(&Run::start_measurement),
            "options"_a = MeasureOptions{})
@@ -4222,7 +4240,7 @@ NB_MODULE(_pyneat_core, m) {
   // Already-bound config/summary types and the *_power_monitor_options factories are REUSED via
   // aliases (not rebound/relocated — relocation would break test_api_surface). format_power_summary
   // / power_summary_to_json (formatting helpers) are deferred.
-  nb::module_ power_mod = m.def_submodule("power", "Board power telemetry (PMBus rail readings).");
+  nb::module_ power_mod = m.def_submodule("power", "Board power telemetry read from Sentinel.");
   nb::class_<simaai::neat::PowerFieldReading>(power_mod, "PowerFieldReading")
       .def_ro("available", &simaai::neat::PowerFieldReading::available)
       .def_ro("raw", &simaai::neat::PowerFieldReading::raw)
@@ -4246,11 +4264,15 @@ NB_MODULE(_pyneat_core, m) {
       .def("summary", &simaai::neat::PowerMonitor::summary)
       .def("running", &simaai::neat::PowerMonitor::running);
   power_mod.def("read_power_snapshot", &simaai::neat::read_power_snapshot, "options"_a);
+  // The deprecated power profile helpers stay bound for compatibility.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   power_mod.def("default_modalix_som_power_rails", &simaai::neat::default_modalix_som_power_rails);
   power_mod.def("default_modalix_dvt_power_rails", &simaai::neat::default_modalix_dvt_power_rails);
   power_mod.def("detect_default_power_monitor_profile",
                 &simaai::neat::detect_default_power_monitor_profile);
   power_mod.def("power_rails_for_profile", &simaai::neat::power_rails_for_profile, "profile"_a);
+#pragma GCC diagnostic pop
   // Reuse already-bound config/summary types + option factories (S9: alias, don't relocate).
   power_mod.attr("PowerMonitorProfile") = m.attr("PowerMonitorProfile");
   power_mod.attr("PowerMonitorOptions") = m.attr("PowerMonitorOptions");
@@ -4537,6 +4559,13 @@ NB_MODULE(_pyneat_core, m) {
       .value("Postprocess", simaai::neat::Model::Stage::Postprocess)
       .value("Full", simaai::neat::Model::Stage::Full);
 
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto runner_start_measurement_bool =
+      static_cast<MeasureScope (simaai::neat::Model::Runner::*)(bool)>(
+          &simaai::neat::Model::Runner::start_measurement);
+#pragma GCC diagnostic pop
   nb::class_<simaai::neat::Model::Runner>(m, "ModelRunner")
       .def(nb::init<>())
       .def("__bool__", [](const simaai::neat::Model::Runner& r) { return static_cast<bool>(r); })
@@ -4603,10 +4632,9 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("start_measurement",
-           static_cast<MeasureScope (simaai::neat::Model::Runner::*)(bool)>(
-               &simaai::neat::Model::Runner::start_measurement),
-           "include_plugin_latency"_a)
+      .def("start_measurement", runner_start_measurement_bool, "include_plugin_latency"_a,
+           "Deprecated: use start_measurement(). True also collects plugin latency, which will be "
+           "removed.")
       .def("start_measurement",
            static_cast<MeasureScope (simaai::neat::Model::Runner::*)(const MeasureOptions&)>(
                &simaai::neat::Model::Runner::start_measurement),
@@ -4620,14 +4648,51 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("original_width", &simaai::neat::BenchmarkOptions::original_width)
       .def_rw("original_height", &simaai::neat::BenchmarkOptions::original_height)
       .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
-      .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency);
+      .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency)
+      .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms);
+
+  nb::class_<simaai::neat::BenchmarkMetric>(m, "BenchmarkMetric")
+      .def(nb::init<>())
+      .def_ro("key", &simaai::neat::BenchmarkMetric::key)
+      .def_ro("label", &simaai::neat::BenchmarkMetric::label)
+      .def_ro("unit", &simaai::neat::BenchmarkMetric::unit)
+      .def_ro("samples", &simaai::neat::BenchmarkMetric::samples)
+      .def_ro("mean", &simaai::neat::BenchmarkMetric::mean)
+      .def_ro("minimum", &simaai::neat::BenchmarkMetric::minimum)
+      .def_ro("maximum", &simaai::neat::BenchmarkMetric::maximum);
+
+  nb::class_<simaai::neat::BenchmarkTelemetry>(m, "BenchmarkTelemetry")
+      .def(nb::init<>())
+      .def_ro("status", &simaai::neat::BenchmarkTelemetry::status)
+      .def_ro("trace_id", &simaai::neat::BenchmarkTelemetry::trace_id)
+      .def_ro("sentinel_version", &simaai::neat::BenchmarkTelemetry::sentinel_version)
+      .def_ro("sample_interval_ms", &simaai::neat::BenchmarkTelemetry::sample_interval_ms)
+      .def_ro("samples", &simaai::neat::BenchmarkTelemetry::samples)
+      .def_ro("power_som_watts", &simaai::neat::BenchmarkTelemetry::power_som_watts)
+      .def_ro("power_mla_watts", &simaai::neat::BenchmarkTelemetry::power_mla_watts)
+      .def_ro("power_rails_watts", &simaai::neat::BenchmarkTelemetry::power_rails_watts)
+      .def_ro("die_temperatures_c", &simaai::neat::BenchmarkTelemetry::die_temperatures_c)
+      .def_ro("die_temperature_max_c", &simaai::neat::BenchmarkTelemetry::die_temperature_max_c)
+      .def_ro("board_temperatures_c", &simaai::neat::BenchmarkTelemetry::board_temperatures_c)
+      .def_ro("cpu_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_usage_pct)
+      .def_ro("cpu_cores_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_cores_usage_pct)
+      .def_ro("mla_memory_mib", &simaai::neat::BenchmarkTelemetry::mla_memory_mib)
+      .def_ro("cma_memory_mib", &simaai::neat::BenchmarkTelemetry::cma_memory_mib)
+      .def_ro("linux_memory_used_mib", &simaai::neat::BenchmarkTelemetry::linux_memory_used_mib);
 
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
       .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
+      .def_rw("latency_p50_ms", &simaai::neat::BenchmarkReport::latency_p50_ms)
+      .def_rw("latency_p95_ms", &simaai::neat::BenchmarkReport::latency_p95_ms)
+      .def_rw("latency_p99_ms", &simaai::neat::BenchmarkReport::latency_p99_ms)
       .def_rw("fps", &simaai::neat::BenchmarkReport::fps)
       .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
-      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
+      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules)
+      .def_rw("peak_power_watts", &simaai::neat::BenchmarkReport::peak_power_watts)
+      .def_rw("throughput_samples", &simaai::neat::BenchmarkReport::throughput_samples)
+      .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
+      .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry);
 
   // ── Phase 3: model / preprocess introspection (plan slice S1/S14) ────────────────────────────
   // Tiering per S1 ("advanced = by namespace, not by docs"): the diagnostic snapshots that are the
@@ -4874,6 +4939,13 @@ NB_MODULE(_pyneat_core, m) {
       .def("to_debug_string", &simaai::neat::ResolvedPreprocessPlan::to_debug_string)
       .def("__repr__", &simaai::neat::ResolvedPreprocessPlan::to_debug_string);
 
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto model_benchmark_int_bool =
+      static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
+          &simaai::neat::Model::benchmark);
+#pragma GCC diagnostic pop
   nb::class_<simaai::neat::Model>(m, "Model")
       // std::filesystem::path, not std::string: the caster routes through PyOS_FSPath, so str and
       // os.PathLike both work. Same as the GenAI constructors above.
@@ -4955,6 +5027,31 @@ NB_MODULE(_pyneat_core, m) {
           "input"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
           "run_options"_a = RunOptions{}, "copy"_a = false)
       .def(
+          "execution_plan",
+          [](simaai::neat::Model& model, const simaai::neat::Model::RouteOptions& route_options,
+             const RunOptions& run_options) {
+            return model.execution_plan(route_options, run_options);
+          },
+          "route_options"_a = simaai::neat::Model::RouteOptions{}, "run_options"_a = RunOptions{},
+          nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "execution_plan",
+          [](simaai::neat::Model& model, nb::object input,
+             const simaai::neat::Model::RouteOptions& route_options, const RunOptions& run_options,
+             bool copy) {
+            reject_single_tensor_or_sample(input, "Model.execution_plan");
+            if (python_sequence_all_samples(input)) {
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return model.execution_plan(samples, route_options, run_options);
+            }
+            auto tensors = tensor_batch_from_python_input(input, copy, std::nullopt, std::nullopt);
+            nb::gil_scoped_release release;
+            return model.execution_plan(tensors, route_options, run_options);
+          },
+          "input"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
+          "run_options"_a = RunOptions{}, "copy"_a = false)
+      .def(
           "run",
           [](simaai::neat::Model& model, nb::object input, int timeout_ms,
              bool copy) -> nb::object {
@@ -4977,11 +5074,9 @@ NB_MODULE(_pyneat_core, m) {
             return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
-      .def("benchmark",
-           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
-               &simaai::neat::Model::benchmark),
-           "num_samples"_a = 100, "include_plugin_latency"_a = false,
-           nb::call_guard<nb::gil_scoped_release>())
+      .def("benchmark", model_benchmark_int_bool, "num_samples"_a = 100,
+           "include_plugin_latency"_a = false, nb::call_guard<nb::gil_scoped_release>(),
+           "include_plugin_latency is deprecated and will be removed.")
       .def("benchmark",
            static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(
                const simaai::neat::BenchmarkOptions&)>(&simaai::neat::Model::benchmark),

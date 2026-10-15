@@ -29,9 +29,9 @@
 
 ### 벤치마크 실행 {#step-run-benchmark}
 
-`benchmark(samples)`를 호출합니다. API는 비동기 모델 러너를 준비하고, 비동기 푸시/풀 창을 측정하고, 요약을 표준 출력으로 출력한 다음, 동일한 주요 값을 `BenchmarkReport`로 반환합니다.
+`benchmark(samples)`를 호출합니다. API는 모델을 준비하고, `samples`개의 입력으로 단일 실행(single-flight) 지연 시간을 측정한 다음, 별도의 비동기 푸시/풀 패스에서 처리량을 측정하고, 요약을 표준 출력으로 출력한 뒤, 동일한 주요 값을 `BenchmarkReport`로 반환합니다.
 
-샘플 수는 측정된 합성 입력의 수입니다. 더 안정적인 처리량 및 전력 값을 얻으려면 더 큰 수를 사용하고, 간단한 성능 테스트만 수행하려는 경우 더 작은 수를 사용합니다.
+처리량 패스는 최소 `samples`개의 입력을 측정하고 30초가 경과할 때까지 실행되므로 전력 및 온도 측정값이 안정적입니다. 이 하한을 변경하려면 `BenchmarkOptions::min_duration_ms`를 설정하고, `samples`개의 입력 후에 중지하는 빠른 스모크 테스트를 하려면 0으로 설정합니다.
 
 BoxDecode로 끝나는 경로를 가진 감지 모델은 `BenchmarkOptions`를 사용할 수도 있습니다. `original_width`, `original_height` 및 `resize_mode`를 설정하여 BoxDecode가 모델 좌표에서 감지를 매핑할 때 사용하는 소스 이미지의 기하학적 구조를 설명합니다. 합성 텐서는 모델의 형태를 유지합니다.
 
@@ -48,9 +48,9 @@ Python은 `pyneat.BenchmarkOptions`를 통해 동일한 필드를 노출합니�
 
 ### 보고서 읽기 {#step-read-report}
 
-반환되는 보고서는 대부분의 사용자가 필요로 하는 주요 필드만 유지합니다. 즉, 평균 엔드투엔드 지연 시간(밀리초), 초당 프레임 단위의 처리량, 사용 가능한 경우 평균 보드 전력(와트), 사용 가능한 경우 측정된 에너지(줄)입니다.
+반환되는 보고서는 대부분의 사용자가 필요로 하는 주요 필드로 시작합니다. 즉, 평균 엔드투엔드 지연 시간(밀리초), 초당 프레임 단위의 처리량, 평균 및 최대 SoM 전력(와트), `samples`개의 입력을 처리하는 데 필요한 에너지(줄)입니다. `throughput_duration_ms`는 처리량 패스가 실행된 시간을 보고합니다.
 
-전력 텔레메트리는 보드 지원에 따라 달라집니다. 런타임이 현재 대상에서 전력 레일을 샘플링할 수 없는 경우, 벤치마크는 여전히 지연 시간과 처리량을 보고하고 전력 필드를 0으로 둡니다.
+전력 값은 Neat 설치 프로그램이 설정하는 보드 텔레메트리 데몬인 Sentinel에서 제공됩니다. `report.telemetry`에는 처리량 패스 동안의 레일 전력, 다이 및 보드 온도, CPU 사용률, MLA 메모리도 포함됩니다. 각 필드에 대해서는 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오. Sentinel이 실행 중이 아니거나 다른 트레이스를 기록 중인 경우에도 벤치마크는 지연 시간과 처리량을 보고하고, 전력 필드를 0으로 두며, `report.telemetry.status`에 그 이유를 설정합니다.
 
 ## Run
 
@@ -81,14 +81,28 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 NEAT Benchmark
 Input: synthetic
 Samples: 100
-Latency:      12.4 ms
-FPS:          80.6
-Power avg:    2.3 W
-Energy:       2.8 J
-report_latency_ms=12.4
-report_fps=80.6
-report_avg_power_watts=2.3
-report_energy_joules=2.8
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 1.97 ms
+FPS:     1457.04 inferences/s
+Batch throughput: 1457.04 batches/s
+Throughput window: 30.09 s, 43849 inputs
+Power:         13.19 W avg, 13.81 W peak (SoM)
+MLA power:     3.05 W avg, 3.25 W max
+Energy:        0.91 J for 100 inputs
+Die temp:      46.34 °C avg, 47.56 °C max
+CPU usage:     12.38 % avg, 13.22 % max
+MLA memory:    29.65 MiB
+CMA used:      6035.02 MiB avg, 6044.38 MiB max
+Linux memory:  682.88 MiB avg, 697.41 MiB max
+Telemetry:     Sentinel, 15 samples, trace 20261014T144839.984Z-neat-benchmark-20261014t144839-905z
+report_latency_ms=1.96852
+report_fps=1457.04
+report_avg_power_watts=13.1875
+report_energy_joules=0.905085
+report_peak_power_watts=13.8125
+report_throughput_duration_ms=30094.5
+report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
 

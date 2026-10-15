@@ -120,13 +120,13 @@ tensor_rank=3
 - `advanced.max_input_bytes`: 입력 버퍼 증가 제한.
 - `advanced.copy_input`: 방어적인 입력 복사 강제.
 
-`Run::start_measurement()`를 사용하여 단일 측정 창에서 지연 시간, 처리량, 입력 카운터, 플러그인/에지 타이밍 및 선택적 보드 PMIC 전력 텔레메트리를 검사합니다.
+`Run::start_measurement()`를 사용하여 단일 측정 창에서 지연 시간, 처리량, 입력 카운터, 플러그인/에지 타이밍 및 선택적 보드 전력 텔레메트리를 검사합니다.
 
 보드 전력을 포함하려면 코드에서 활성화하고(환경 변수는 필요하지 않음) 측정 보고서에서 읽습니다.
 
 ```cpp
 simaai::neat::RunOptions run_opt;
-run_opt.enable_board_power(); // default 100 ms sampling, auto-detects built-in profile
+run_opt.enable_board_power(); // reads board power from Sentinel
 auto run = graph.build(inputs, run_opt);
 auto scope = run.start_measurement();
 run.push(inputs);
@@ -136,7 +136,7 @@ auto report = scope.stop();
 
 ```python
 run_opt = neat.RunOptions()
-run_opt.enable_board_power()  # default 100 ms sampling, auto-detects built-in profile
+run_opt.enable_board_power()  # reads board power from Sentinel
 run = graph.build(tensor, run_opt)
 scope = run.start_measurement()
 run.push(tensor)
@@ -144,7 +144,7 @@ _ = run.pull_tensors(5000)
 report = scope.stop()
 ```
 
-`Model::build(run_opt)`, `Model::build(route_opt, run_opt)` 및 `Graph::build(run_opt)`는 동일한 런타임 옵션을 기본 `Run`에 전달하므로, 파이프라인별로 중복되는 레일 샘플링 대신 그래프 수준의 보드 전력 모니터 하나를 사용합니다. 특정 기본 프로필을 강제로 적용해야 하는 경우, 보드별 헬퍼를 계속 사용할 수 있습니다: `enable_modalix_som_power()`, `enable_modalix_dvt_power()`.
+`Model::build(run_opt)`, `Model::build(route_opt, run_opt)` 및 `Graph::build(run_opt)`는 동일한 런타임 옵션을 기본 `Run`에 전달하므로, 파이프라인별로 중복되는 레일 샘플링 대신 그래프 수준의 보드 전력 모니터 하나를 사용합니다.
 
 ## 소스 파일
 - C++: `tutorials/004_build_inference_pipeline/build_inference_pipeline.cpp`

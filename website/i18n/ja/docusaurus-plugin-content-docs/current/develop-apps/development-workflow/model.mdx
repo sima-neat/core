@@ -135,7 +135,7 @@ model = pyneat.Model(model_path, options)
 | `decode_type` | 検出モデルに BoxDecode ステージをアタッチするには、Neat が必要です。 | `Unspecified`；検出された意図はデコードされませんでした。 |
 | `decode_type_option` | 検出ヘッドのテンソル順序には、特定のバリアントが必要です。 | `Auto`。モデル、契約、およびルートプランナーに判断を任せましょう。 |
 | `score_threshold` | デコード処理中に、信頼度の低い候補を排除したいと考えています。 | `0`：後で絞り込む前に、候補者を保持しておく。 |
-| `nms_iou_threshold` | デコード処理では、非最大値抑制を適用する必要があります。 | `0`；NMSが無効になっています。 |
+| `nms_iou_threshold` | デコード処理では、非最大値抑制を適用する必要があります。 | `0`；モデルにパッケージされた値を保持します。パッケージされた値がない場合、YOLO26はNMSをスキップし、その他のデコーダーは重なりのあるボックスをすべて抑制します。 |
 | `top_k` | 1回の出力あたりの検出件数に上限を設けたいのですね。 | `0`；上位K件の制限なし。 |
 | `num_classes` | クラスヘッドの深さは、例えば単一クラスのYOLO分割ヘッドのように、確実に推測することはできません。 | `0`。MPKメタデータまたは従来の推論を使用してください。 |
 
@@ -416,6 +416,42 @@ for warning in info.warnings:
 
 経路に関する警告を、最も重要な証拠として扱う。経路プランナーが何か異常なことを示している場合は、それを無視したり、都合の良いように解釈したりしないでください。まず、契約内容または設定を見直して修正してください。
 
+### モデルが実行する内容を確認する
+
+`execution_plan()` を使うと、モデルが実行するノード、各ノードが実行される場所、ノード間を流れるテンソルを確認できます。`Model::execution_plan(...)` は `build(...)` と同じ引数を受け取り、フレームを実行せずにモデルをビルドし、プランを読み取った後に閉じます。そのため、デバイスが必要です。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const simaai::neat::ExecutionPlan plan = model.execution_plan();
+std::cout << plan.to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+plan = model.execution_plan()
+print(plan.to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+JSON には、モデルのグラフノードがパイプライン順に並び、連続する 2 つのノードの間に 1 つのエッジがあります。
+
+| フィールド | 意味 |
+| --- | --- |
+| `model` | モデル名、`batch`（MLA の 1 回の実行あたりのフレーム数）、`memory`（処理中の 1 フレームあたりのデバイスメモリ） |
+| `nodes[].kind` | ノードの種類。`Input`、`Preproc`、`Quant`、`ModelFragment`、`Dequant`、`SimaBoxDecode`、`Output` など |
+| `nodes[].runs_on` | ノードが実行される場所：`A65`（Arm コア）、`EV74`（ビジョンプロセッサ）、または `MLA` |
+| `nodes[].kernel` | `EV74` または `A65` のノードが実行するカーネル |
+| `nodes[].settings` | 解決済みの `Preproc` と `SimaBoxDecode` の設定。名前は `PreprocOptions` と `BoxDecodeOptions` と同じです |
+| `edges[].tensors` | あるノードから次のノードへのテンソル：バッチ先頭の `shape`、`dtype`、量子化テンソルの `quant`（`scale`、`zero_point`） |
+
+`SimaBoxDecode` の設定には、モデルまたはオプションで設定した場合にのみ、しきい値と `top_k` が表示されます。設定していない場合は、デコーダーの既定値が使われます。スキーマは `schemas/execution_plan_v1.schema.json` です。
+
 ## グラフ内のモデルを使用する
 
 一般的なパスの場合、公開されている入力と出力の間にモデルを直接追加します。
@@ -674,9 +710,11 @@ runner = model.build([tensor], route_options=route)
 
 証拠や早期の不具合検出のために、毎回同じ条件でビルドを行うのではなく、必要に応じて特定の条件でビルドを行ってください。デフォルトのビルドで既に要件が満たされている場合は、サンプルをより簡潔に保ってください。
 
+画像入力では、シードは現在の形状とピクセル形式を指定し、`preprocess.input_max_width`、`input_max_height`、`input_max_depth` を置き換えません。たとえば、容量を 1920×1920 と指定して 640×640 のシードを使った場合、同じランナーで後続の 800×800 や 1920×1080 のフレームを受け入れます。容量を超えるフレームは拒否されます。上限を省略すると、シードなしのビルドと同じ解決済み容量が維持されます。
+
 ## モデルの実行を測定する
 
-`model.benchmark(...)` を使用して、迅速な合成モデルのベンチマークを実施してください。これにより、`input_specs()` から入力が生成され、主要なレイテンシー、スループット、およびオプションの電力に関する情報が返されます。モデルやランタイムの変更を比較するために使用し、実際の運用環境におけるスループットを主張するためには使用しないでください。
+`model.benchmark(...)` を使用して、迅速な合成モデルのベンチマークを実施してください。これにより、`input_specs()` から入力が生成され、主要なレイテンシー、スループット、電力、およびボードのテレメトリが返されます。モデルやランタイムの変更を比較するために使用し、実際の運用環境におけるスループットを主張するためには使用しないでください。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -732,7 +770,53 @@ report = model.benchmark(options)
 
 `original_width`と`original_height`を組み合わせて設定します。ベンチマークは引き続き、モデルの形状を持つ合成テンソルを生成します。これらのフィールドは、BoxDecodeメタデータに必要なソースジオメトリとリサイズ変換を提供します。これらを省略すると、ベンチマークは解決された前処理とモデル入力コントラクトからジオメトリを推測します。これらの実行ごとの値は、`ModelOptions`内の非推奨のBoxDecodeジオメトリヒントよりも優先されます。既存の`benchmark(num_samples)`の呼び出しは、同じ動作を維持します。
 
-`avg_power_watts`と`energy_joules`は、ボードの電力モニターがサンプルを生成した場合にのみ読み取ります。ボードまたはレール構成で電力テレメトリが利用できない場合、これらのフィールドはゼロのままになります。
+### 実行時間
+
+ベンチマークは、`num_samples` 個の入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。`latency_ms` はそれらの入力の平均レイテンシーで、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms` はそのパーセンタイルです。スループット測定パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 30 秒）が経過するまで続きます。そのため、電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`throughput_samples` と `throughput_duration_ms` は、このパスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、`num_samples` 個の入力の後で停止します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.min_duration_ms = 0;
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.min_duration_ms = 0
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+### 電力とボードのテレメトリ {#power-and-board-telemetry}
+
+電力とボードのテレメトリは、Neat のインストーラーがボードにセットアップする DevKit のテレメトリデーモンである [Sentinel](/tools/sentinel/) から取得されます。ベンチマークは、スループット測定パスの間に `neat-benchmark-<UTC time>` という名前の Sentinel トレースを記録して保持するため、後で Sentinel 自体のツールで開けます。`report.telemetry` はこのトレースを要約します。
+
+| フィールド | 意味 |
+| --- | --- |
+| `avg_power_watts`, `peak_power_watts` | スループット測定パス中の SoM 入力電力の平均値と最大値です。 |
+| `energy_joules` | `num_samples` 個の入力の処理に必要なエネルギーです。平均電力に、測定したスループットで `num_samples` 個の入力を処理するのに必要な時間を掛けた値です。パスが長くなっても増加しません。 |
+| `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA レールの電力と、ボードが報告するすべてのレールの電力です。MLA レールのないボードでは、`samples == 0` として報告されます。 |
+| `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA、APU、CVU、TOP の各サイトにあるオンダイセンサーの温度と、各サンプルにおけるそれらの最高温度です。 |
+| `telemetry.board_temperatures_c` | SoM の表面側と裏面側のセンサーの温度です。 |
+| `telemetry.cpu_usage_pct` | CPU 使用率です。各サンプルは直前の区間の平均であるため、`maximum` は最も負荷の高い区間を示します。 |
+| `telemetry.cpu_cores_usage_pct` | 各 CPU コアの使用率です（コア順）。全コアの平均である `cpu_usage_pct` が低いままでも、1 つのコアの高負荷がここに表れます。 |
+| `telemetry.mla_memory_mib` | MLA に割り当てられたメモリ（MiB 単位）です。モデルはロード時にこれを割り当てるため、他に何も実行していなければ、この値がモデルの MLA メモリです。 |
+| `telemetry.cma_memory_mib` | 使用中の連続メモリ（CMA、MiB 単位）です。MLA のメモリプールを含むため、`mla_memory_mib` に加算しないでください。アイドル時には、Linux が CMA から借りているページキャッシュも含まれます。 |
+| `telemetry.linux_memory_used_mib` | ページキャッシュを除いた Linux の使用メモリ（MiB 単位）です。 |
+
+各メトリクスは `samples`、`mean`、`minimum`、`maximum` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。メモリの値はボード全体のもので、実行中の他のプロセスも含みます。Sentinel は 2 秒ごとにサンプリングするため、30 秒のパスでは約 15 個のサンプルが得られます。
+
+Sentinel が実行されていない場合、別の Sentinel トレースがすでに記録中の場合、またはパスが短すぎてサンプルを収集できない場合でも、ベンチマークはレイテンシーと FPS を返します。電力フィールドはゼロのままになり、`telemetry.status` にその理由が示され（それ以外の場合は `"ok"`）、出力される概要には `Power: unavailable (<reason>)` と表示されます。
+
+### 独自のループを測定する
 
 入力ループを制御し、そのループを測定したい場合は、ランナー測定を使用してください。
 

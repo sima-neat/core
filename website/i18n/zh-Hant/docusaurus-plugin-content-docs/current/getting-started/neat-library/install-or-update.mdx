@@ -32,8 +32,8 @@ target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
 靜態封存仍包含在 `sima-neat-dev` 中。既有的靜態連結使用端必須新增 `COMPONENTS Static`，並安裝相容的 `neat-internals-dev`、
-`simaai-memory-lib-dev`、`zlib1g-dev`；若建置啟用 LLiMa，還須安裝
-`sima-lmm-dev` 與 `libcpp-httplib-dev` 及其相依套件：
+`simaai-memory-lib-dev`、`zlib1g-dev`、`libcpp-httplib-dev`；若建置啟用 LLiMa，還須安裝
+`sima-lmm-dev`，以及上述套件的相依套件：
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
@@ -126,8 +126,6 @@ cd /media/nvme && mkdir -p neat && cd neat
 <ShellCommand prompt="devkit">
 sima-cli neat install core@v0.2.2
 </ShellCommand>
-
-如果安裝程式將 `sima` 加入 `i2c` 群組，請在執行基準測試之前登出 DevKit 並重新連線，讓新的群組成員資格生效。
 
 </CodeTab>
 </CodeTabs>

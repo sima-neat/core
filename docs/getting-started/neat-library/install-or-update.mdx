@@ -38,8 +38,8 @@ target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 
 The static archive remains in `sima-neat-dev`. Existing static consumers must add
 `COMPONENTS Static` and provision compatible `neat-internals-dev`,
-`simaai-memory-lib-dev`, `zlib1g-dev`, and, for LLiMa-enabled builds,
-`sima-lmm-dev` and `libcpp-httplib-dev` with their dependencies:
+`simaai-memory-lib-dev`, `zlib1g-dev`, `libcpp-httplib-dev`, and, for LLiMa-enabled
+builds, `sima-lmm-dev`, with their dependencies:
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
@@ -160,9 +160,6 @@ and tests:
 <ShellCommand prompt="devkit">
 sima-cli neat install core@v0.2.2
 </ShellCommand>
-
-If the installer adds `sima` to the `i2c` group, log out of the DevKit and
-reconnect before running benchmarks so the new group membership takes effect.
 
 </CodeTab>
 </CodeTabs>

@@ -120,13 +120,13 @@ tensor_rank=3
 - `advanced.max_input_bytes`：限制輸入緩衝區的增長。
 - `advanced.copy_input`：強制進行防禦性輸入複製。
 
-使用 `Run::start_measurement()` 來檢查延遲、輸送量、輸入計數器、外掛程式/邊緣計時，以及在單個測量視窗中的可選板 PMIC 電源遙測。
+使用 `Run::start_measurement()` 來檢查延遲、輸送量、輸入計數器、外掛程式/邊緣計時，以及在單個測量視窗中的可選板電源遙測。
 
 若要包含板載電源，請在程式碼中啟用它（無需環境變數），並從測量報告中讀取：
 
 ```cpp
 simaai::neat::RunOptions run_opt;
-run_opt.enable_board_power(); // default 100 ms sampling, auto-detects built-in profile
+run_opt.enable_board_power(); // reads board power from Sentinel
 auto run = graph.build(inputs, run_opt);
 auto scope = run.start_measurement();
 run.push(inputs);
@@ -136,7 +136,7 @@ auto report = scope.stop();
 
 ```python
 run_opt = neat.RunOptions()
-run_opt.enable_board_power()  # default 100 ms sampling, auto-detects built-in profile
+run_opt.enable_board_power()  # reads board power from Sentinel
 run = graph.build(tensor, run_opt)
 scope = run.start_measurement()
 run.push(tensor)
@@ -144,7 +144,7 @@ _ = run.pull_tensors(5000)
 report = scope.stop()
 ```
 
-`Model::build(run_opt)`、`Model::build(route_opt, run_opt)` 和 `Graph::build(run_opt)` 將相同的執行階段選項傳遞給底層的 `Run`，因此使用一個圖層級的板子電源監測器，而不是為每個管線重複採樣。如果您需要強制使用特定的內建設定檔，則仍可使用板子特定的輔助工具：`enable_modalix_som_power()`、`enable_modalix_dvt_power()`。
+`Model::build(run_opt)`、`Model::build(route_opt, run_opt)` 和 `Graph::build(run_opt)` 將相同的執行階段選項傳遞給底層的 `Run`，因此使用一個圖層級的板子電源監測器，而不是為每個管線重複採樣。
 
 ## 原始檔案
 - C++：`tutorials/004_build_inference_pipeline/build_inference_pipeline.cpp`

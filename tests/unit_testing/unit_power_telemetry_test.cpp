@@ -3,145 +3,172 @@
 #include "test_main.h"
 #include "test_utils.h"
 
-#include <cstdint>
+#include <httplib.h>
+#include <nlohmann/json.hpp>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <algorithm>
 #include <cmath>
-#include <map>
-#include <memory>
+#include <cstdlib>
+#include <mutex>
+#include <stdexcept>
 #include <string>
-#include <tuple>
+#include <thread>
 #include <utility>
 #include <vector>
 
 namespace {
 
-struct Call {
-  std::string op;
-  int bus = 0;
-  std::uint8_t addr = 0;
-  std::uint8_t value = 0;
-};
-
-class FakeI2cBackend final : public simaai::neat::pipeline_internal::PowerI2cBackend {
-public:
-  std::map<std::tuple<int, std::uint8_t, std::uint8_t, std::uint8_t>, std::uint8_t> regs;
-  std::map<std::tuple<int, std::uint8_t, std::uint8_t>, std::string> failures;
-  std::map<std::pair<int, std::uint8_t>, std::uint8_t> current_page;
-  std::vector<Call> calls;
-
-  bool set_page(int bus, std::uint8_t addr, std::uint8_t page, std::string& error) override {
-    calls.push_back({"set_page", bus, addr, page});
-    const auto key = std::make_tuple(bus, addr, page);
-    const auto it = failures.find(key);
-    if (it != failures.end()) {
-      error = it->second;
-      return false;
-    }
-    current_page[{bus, addr}] = page;
-    return true;
-  }
-
-  bool read_register(int bus, std::uint8_t addr, std::uint8_t reg, std::uint8_t& value,
-                     std::string& error) override {
-    calls.push_back({"read", bus, addr, reg});
-    const std::uint8_t page = current_page[{bus, addr}];
-    const auto fail = failures.find(std::make_tuple(bus, addr, reg));
-    if (fail != failures.end()) {
-      error = fail->second;
-      return false;
-    }
-    const auto key = std::make_tuple(bus, addr, page, reg);
-    const auto it = regs.find(key);
-    if (it == regs.end()) {
-      error = "missing fake register";
-      return false;
-    }
-    value = it->second;
-    return true;
-  }
-};
+using nlohmann::json;
+using simaai::neat::PowerMonitor;
+using simaai::neat::PowerMonitorOptions;
+using simaai::neat::PowerSummary;
+using simaai::neat::internal::PowerMonitorAccess;
 
 void require_near(double actual, double expected, const std::string& label) {
-  const double diff = std::abs(actual - expected);
-  require(diff < 1e-9,
+  require(std::abs(actual - expected) < 1e-9,
           label + " expected=" + std::to_string(expected) + " actual=" + std::to_string(actual));
+}
+
+/// Reply of Sentinel's `GET /v1/samples/latest`.
+json latest_sample(const std::string& timestamp, json mla_watts, json ddr_watts) {
+  return {{"schema", 1},
+          {"sample",
+           {{"timestamp", timestamp},
+            {"values",
+             {{"power_current_watts", 99.0},
+              {"power_rail_mla_watts", std::move(mla_watts)},
+              {"power_rail_soc_ddr_vdd_watts", std::move(ddr_watts)},
+              {"cpu_usage_pct", 10.0}}}}}};
+}
+
+/// Sentinel on a Unix socket that answers each request with the next reply, then the last.
+class FakeSentinel {
+public:
+  explicit FakeSentinel(std::vector<json> replies) : replies_(std::move(replies)) {
+    char dir_template[] = "/tmp/neat-sentinel-XXXXXX";
+    if (::mkdtemp(dir_template) == nullptr) {
+      throw std::runtime_error("mkdtemp failed");
+    }
+    dir_ = dir_template;
+    path_ = dir_ + "/api.sock";
+    server_.Get(".*", [this](const httplib::Request& request, httplib::Response& response) {
+      std::lock_guard<std::mutex> lock(mu_);
+      requests_.push_back(request.path);
+      const json& reply = replies_[std::min(requests_.size(), replies_.size()) - 1];
+      response.set_content(reply.dump(), "application/json");
+    });
+    server_.set_address_family(AF_UNIX);
+    thread_ = std::thread([this] { server_.listen(path_, 80); });
+    server_.wait_until_ready();
+  }
+
+  ~FakeSentinel() {
+    server_.stop();
+    thread_.join();
+    ::unlink(path_.c_str());
+    ::rmdir(dir_.c_str());
+  }
+
+  PowerMonitor monitor(bool enabled = true) const {
+    PowerMonitorOptions options;
+    options.enabled = enabled;
+    return PowerMonitorAccess::make(options, path_);
+  }
+
+  std::vector<std::string> requests() {
+    std::lock_guard<std::mutex> lock(mu_);
+    return requests_;
+  }
+
+private:
+  std::vector<json> replies_;
+  std::vector<std::string> requests_;
+  std::mutex mu_;
+  std::string dir_;
+  std::string path_;
+  httplib::Server server_;
+  std::thread thread_;
+};
+
+void samples_become_rail_summaries() {
+  FakeSentinel sentinel({latest_sample("t1", 3.0, 0.5), latest_sample("t1", 3.0, 0.5),
+                         latest_sample("t2", 5.0, nullptr)});
+  PowerMonitor monitor = sentinel.monitor();
+  monitor.sample_once();
+  monitor.sample_once();
+  monitor.sample_once();
+  const PowerSummary summary = monitor.summary();
+
+  require(summary.samples == 2, "a repeated Sentinel sample is added once");
+  require(summary.rails.size() == 2, "one rail per power_rail_*_watts metric");
+  require(summary.rails[0].config.name == "mla", "rail name comes from the metric key");
+  require_near(summary.rails[0].power_w.avg, 4.0, "MLA rail average");
+  require(summary.rails[1].config.name == "soc_ddr_vdd" && summary.rails[1].power_w.samples == 1 &&
+              summary.rails[1].power_w.errors == 1,
+          "a missing rail reading counts as an error");
+  require_near(summary.total_avg_watts, 4.25, "total is the sum of the rails with a reading");
+  require_near(summary.total_max_watts, 5.0, "total maximum");
+  require(summary.rails[0].voltage_v.samples == 0 && summary.rails[0].current_a.samples == 0,
+          "Sentinel reports no rail voltage or current");
+}
+
+void interval_keeps_only_later_samples() {
+  FakeSentinel sentinel({latest_sample("before", 9.0, 9.0), latest_sample("during", 2.0, 1.0)});
+  PowerMonitor monitor = sentinel.monitor();
+  monitor.start();
+  monitor.stop();
+  const PowerSummary summary = monitor.summary();
+
+  require(summary.samples == 1, "the sample taken before start() is excluded");
+  require_near(summary.total_avg_watts, 3.0, "the sample taken before stop() is kept");
+  require(summary.duration_seconds > 0.0, "the interval has a duration");
+}
+
+void missing_sentinel_collects_nothing() {
+  PowerMonitorOptions options;
+  options.enabled = true;
+  PowerMonitor monitor = PowerMonitorAccess::make(options, "/tmp/neat-no-such-sentinel.sock");
+  monitor.start();
+  monitor.stop();
+  const PowerSummary summary = monitor.summary();
+  require(summary.enabled && summary.samples == 0 && summary.rails.empty(),
+          "without Sentinel the monitor collects no samples");
+}
+
+void disabled_monitor_reads_nothing() {
+  FakeSentinel sentinel({latest_sample("t1", 1.0, 1.0)});
+  PowerMonitor monitor = sentinel.monitor(/*enabled=*/false);
+  monitor.start();
+  monitor.sample_once();
+  monitor.stop();
+  require(!monitor.summary().enabled && sentinel.requests().empty(),
+          "a disabled monitor never reads Sentinel");
+}
+
+void summaries_format() {
+  PowerSummary summary;
+  summary.enabled = true;
+  summary.samples = 1;
+  summary.duration_seconds = 0.25;
+  summary.total_avg_watts = 2.0;
+  summary.total_min_watts = 2.0;
+  summary.total_max_watts = 2.0;
+  summary.energy_joules = 0.5;
+  require_contains(format_power_summary(summary), "PowerStats:", "text power report");
+  require_contains(power_summary_to_json(summary), "\"total_avg_watts\": 2.000000",
+                   "json power report");
+  require(format_power_summary(PowerSummary{}).empty(), "disabled power summary is omitted");
+  require(simaai::neat::board_power_monitor_options().enabled, "board power options enable it");
 }
 
 } // namespace
 
 RUN_TEST("unit_power_telemetry_test", ([] {
-           using namespace simaai::neat;
-           using simaai::neat::pipeline_internal::read_power_snapshot_with_backend;
-
-           const auto rails = default_modalix_som_power_rails();
-           require(rails.size() == 8, "expected default SOM rail table");
-           require(rails[0].i2c_addr == 0x4f && rails[0].page == 0x00,
-                   "expected 0x4f page0 rail first");
-           require(rails[0].iout_exponent == -3 && rails[0].pout_exponent == -2,
-                   "expected special SoC/DDR current/power exponents");
-           require(rails[4].i2c_addr == 0x4d && rails[4].page == 0x00, "expected 0x4d page0 rail");
-           require(rails[4].iout_exponent == -3 && rails[4].pout_exponent == -2,
-                   "expected special MLA current/power exponents");
-           const auto convenience = modalix_som_power_monitor_options(50);
-           require(convenience.enabled && convenience.sample_interval_ms == 50 &&
-                       convenience.rails.size() == rails.size(),
-                   "expected convenience Modalix SOM power options");
-           require(convenience.profile == PowerMonitorProfile::ModalixSom,
-                   "expected SOM convenience profile");
-           const auto dvt_rails = default_modalix_dvt_power_rails();
-           require(dvt_rails.size() == 1, "expected single stable DVT rail table");
-           require(dvt_rails[0].i2c_bus == 4 && dvt_rails[0].i2c_addr == 0x4d &&
-                       dvt_rails[0].page == 0x00,
-                   "expected stable DVT PMIC 0x4d page0 on bus 4");
-           require(dvt_rails[0].pout_exponent == -2, "expected verified DVT page0 POUT exponent");
-           const auto auto_options =
-               board_power_monitor_options(75, PowerMonitorProfile::ModalixDvt);
-           require(auto_options.enabled && auto_options.sample_interval_ms == 75 &&
-                       auto_options.profile == PowerMonitorProfile::ModalixDvt &&
-                       auto_options.rails.size() == dvt_rails.size(),
-                   "expected board power options for DVT profile");
-           require(power_monitor_profile_name(PowerMonitorProfile::Auto) == "auto",
-                   "expected profile string helper");
-           const auto detected_profile = detect_default_power_monitor_profile();
-           require(detected_profile == PowerMonitorProfile::ModalixSom ||
-                       detected_profile == PowerMonitorProfile::ModalixDvt,
-                   "expected detectable built-in profile");
-
-           PowerMonitorOptions options;
-           options.enabled = true;
-           options.profile = PowerMonitorProfile::ModalixSom;
-           options.rails = {rails[0], rails[1]};
-
-           auto fake = std::make_shared<FakeI2cBackend>();
-           fake->regs[{3, 0x4f, 0x00, 0x96}] = 8; // page0: 8 * 2^-2 = 2 W
-
-           const PowerSnapshot snap = read_power_snapshot_with_backend(options, fake);
-           require(snap.rails.size() == 2, "expected two rail readings");
-           require(!snap.rails[0].voltage_v.available && !snap.rails[0].current_a.available,
-                   "voltage/current are intentionally not sampled by PMBus power telemetry");
-           require_near(snap.rails[0].power_w.value, 2.0, "special power scaling");
-           require(!snap.rails[1].power_w.error.empty(),
-                   "missing fake register should produce non-fatal field error");
-           require_near(snap.total_watts, 2.0, "total watts should use available rails");
-
-           require(fake->calls.size() >= 4, "expected page and POUT register calls");
-           require(fake->calls[0].op == "set_page" && fake->calls[0].addr == 0x4f &&
-                       fake->calls[0].value == 0x00,
-                   "expected first page selection");
-           require(fake->calls[1].op == "read" && fake->calls[1].value == 0x96,
-                   "expected POUT-only read after page selection");
-
-           PowerSummary summary;
-           summary.enabled = true;
-           summary.samples = 1;
-           summary.duration_seconds = 0.25;
-           summary.total_avg_watts = 2.0;
-           summary.total_min_watts = 2.0;
-           summary.total_max_watts = 2.0;
-           summary.energy_joules = 0.5;
-           require_contains(format_power_summary(summary), "PowerStats:", "text power report");
-           require_contains(power_summary_to_json(summary), "\"total_avg_watts\": 2.000000",
-                            "json power report");
-
-           PowerSummary disabled;
-           require(format_power_summary(disabled).empty(), "disabled power summary is omitted");
+           samples_become_rail_summaries();
+           interval_keeps_only_later_samples();
+           missing_sentinel_collects_nothing();
+           disabled_monitor_reads_nothing();
+           summaries_format();
          }));

@@ -21,6 +21,8 @@ set -euo pipefail
 #   neat-install-packages folder for paired DevKit sync.
 # - In eLxr SDK mode, exposes the sysroot-installed neat command at
 #   /usr/local/bin/neat for convenient use inside the SDK container.
+# - In Modalix board mode, installs python3-venv with apt when python3 lacks
+#   ensurepip (Platform 3.0.0 images ship without it).
 # - On devices with writable /media/nvme, creates the venv at /media/nvme/pyneat and
 #   exposes it via $HOME/pyneat for consistent activation instructions.
 # - On devices without /media/nvme, creates the venv directly at $HOME/pyneat.
@@ -81,6 +83,8 @@ NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
 NEAT_PACKAGE_MANIFEST="${NEAT_PACKAGE_MANIFEST:-manifest.json}"
 NEAT_INSTALLER_SKIP_PLATFORM_CHECK="${NEAT_INSTALLER_SKIP_PLATFORM_CHECK:-OFF}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
+# Installs the Sentinel telemetry daemon on boards; ships next to this installer.
+SENTINEL_INSTALLER_PATH="$(dirname "${INSTALLER_SCRIPT_PATH}")/install_sentinel.sh"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
@@ -382,25 +386,18 @@ run_sudo() {
   exit 1
 }
 
-configure_board_i2c_access() {
-  if ! getent group i2c >/dev/null 2>&1; then
-    if ! (run_sudo groupadd --system i2c); then
-      log "WARNING: Failed to create the i2c group; benchmark power telemetry may be unavailable."
-      return 0
-    fi
+require_sentinel_installer() {
+  if [[ ! -f "${SENTINEL_INSTALLER_PATH}" ]]; then
+    echo "Missing ${SENTINEL_INSTALLER_PATH}; it ships with this installer and installs the Sentinel telemetry daemon." >&2
+    exit 1
   fi
+}
 
-  if id -nG sima 2>/dev/null | grep -qw i2c; then
-    log "sima is already in the i2c group; skipping."
-    return 0
-  fi
-
-  if ! (run_sudo usermod -aG i2c sima); then
-    log "WARNING: Failed to add sima to the i2c group; benchmark power telemetry may be unavailable."
-    return 0
-  fi
-
-  log "Added sima to the i2c group; log out and back in before running benchmark power measurements."
+# Model::benchmark() reads board telemetry from the Sentinel daemon. Run the
+# script through bash because downloads may drop its executable bit.
+install_board_sentinel() {
+  require_sentinel_installer
+  bash "${SENTINEL_INSTALLER_PATH}" || exit 1
 }
 
 read_metadata_field() {
@@ -784,13 +781,16 @@ sysroot_neat_install_packages_dir() {
 
 ensure_sima_lmm_sysroot_deps() {
   local sysroot="$1"
-  local -a dependencies=("usr/include/nlohmann/json.hpp:nlohmann-json3-dev")
+  # libsima_neat.so links cpp-httplib, which links brotli.
+  local -a dependencies=(
+    "usr/include/nlohmann/json.hpp:nlohmann-json3-dev"
+    "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
+    "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
+  )
   if compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
     dependencies+=(
       "usr/lib/aarch64-linux-gnu/libfmt.so.10:libfmt10:arm64"
       "usr/lib/aarch64-linux-gnu/libspdlog.so.1.15:libspdlog1.15:arm64"
-      "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
-      "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
       "usr/lib/aarch64-linux-gnu/libfftw3.so.3:libfftw3-double3:arm64"
       "usr/lib/aarch64-linux-gnu/libavcodec.so.61:libavcodec61:arm64"
       "usr/lib/aarch64-linux-gnu/libavformat.so.61:libavformat61:arm64"
@@ -858,7 +858,8 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}"/*.whl \
     "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}/${NEAT_PACKAGE_MANIFEST}" \
-    "${cache_dir}"/install_neat_framework.sh
+    "${cache_dir}"/install_neat_framework.sh \
+    "${cache_dir}"/install_sentinel.sh
 
   local file
   for file in "${DEBS[@]}"; do
@@ -881,6 +882,9 @@ cache_install_artifacts_in_sysroot() {
   fi
   run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
   run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
+  require_sentinel_installer
+  run_sudo cp -f "${SENTINEL_INSTALLER_PATH}" "${cache_dir}/install_sentinel.sh"
+  run_sudo chmod 0755 "${cache_dir}/install_sentinel.sh"
 }
 
 collect_cached_devkit_deploy_files() {
@@ -903,6 +907,7 @@ collect_cached_devkit_deploy_files() {
   collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
   collect_wheel_files "${cache_dir}" CACHED_WHEELS
   local cached_installer="${cache_dir}/install_neat_framework.sh"
+  local cached_sentinel_installer="${cache_dir}/install_sentinel.sh"
   local cached_manifest="${cache_dir}/${NEAT_INSTALL_MANIFEST}"
   local cached_package_manifest="${cache_dir}/${NEAT_PACKAGE_MANIFEST}"
 
@@ -922,10 +927,13 @@ collect_cached_devkit_deploy_files() {
     echo "No cached PyNeat wheel found for paired DevKit sync in: ${cache_dir}" >&2
     exit 1
   fi
-  if [[ ! -f "${cached_installer}" ]]; then
-    echo "Cached installer script not found for paired DevKit sync: ${cached_installer}" >&2
-    exit 1
-  fi
+  local script
+  for script in "${cached_installer}" "${cached_sentinel_installer}"; do
+    if [[ ! -f "${script}" ]]; then
+      echo "Cached installer script not found for paired DevKit sync: ${script}" >&2
+      exit 1
+    fi
+  done
 
   CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}")
   if [[ -f "${cached_manifest}" ]]; then
@@ -934,7 +942,7 @@ collect_cached_devkit_deploy_files() {
   if [[ -f "${cached_package_manifest}" ]]; then
     CACHED_DEPLOY_FILES+=("${cached_package_manifest}")
   fi
-  CACHED_DEPLOY_FILES+=("${cached_installer}")
+  CACHED_DEPLOY_FILES+=("${cached_installer}" "${cached_sentinel_installer}")
 }
 
 apt_package_database_is_healthy() {
@@ -1738,7 +1746,19 @@ remove_stale_global_sima_lmm_pip_install() {
   fi
 }
 
+ensure_python_venv_support() {
+  python3 -c 'import ensurepip' >/dev/null 2>&1 && return 0
+
+  log "Python venv support (ensurepip) is missing; installing python3-venv with apt."
+  refresh_apt_metadata_for_board_install
+  if ! run_sudo apt-get install -y python3-venv; then
+    echo "Failed to install python3-venv. Run 'sudo apt-get update && sudo apt-get install -y python3-venv', then rerun this installer." >&2
+    exit 1
+  fi
+}
+
 install_python_environment() {
+  ensure_python_venv_support
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
   remove_stale_global_sima_lmm_pip_install
@@ -2006,11 +2026,12 @@ install_for_environment() {
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     modalix-board)
-      # Preserve the established board ordering: provision PyNeat before the
-      # board-specific package recovery and runtime restart transaction.
+      # Sentinel comes first so a failure leaves the installed Neat packages
+      # untouched. Then preserve the established board ordering: provision PyNeat
+      # before the board-specific package recovery and runtime restart transaction.
+      install_board_sentinel
       install_python_environment
       install_debs_on_board
-      configure_board_i2c_access
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     *)

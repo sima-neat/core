@@ -135,7 +135,7 @@ model = pyneat.Model(model_path, options)
 | `decode_type` | 您需要 Neat 將 BoxDecode 階段附加到物體檢測模型。 | `Unspecified`；沒有物體檢測解碼意圖。 |
 | `decode_type_option` | 物體檢測頭張量排序需要特定的變體。 | `Auto`；讓模型合約和路由規劃器決定。 |
 | `score_threshold` | 您希望在解碼期間捨棄低信度候選者。 | `0`；在後續篩選之前保留候選者。 |
-| `nms_iou_threshold` | 解碼路徑應該應用非最大值抑制。 | `0`；NMS 已停用。 |
+| `nms_iou_threshold` | 解碼路徑應該應用非最大值抑制。 | `0`；保留模型封裝的值。若未封裝任何值，YOLO26 會略過 NMS，其他解碼器會抑制所有重疊的方框。 |
 | `top_k` | 您希望對每個輸出設定硬性上限的檢測數量。 | `0`；沒有頂級 K 上限。 |
 | `num_classes` | 無法可靠地推斷出類別頭的深度，例如單一類別的 YOLO 分割頭。 | `0`；使用 MPK 中繼資料或舊版推論。 |
 
@@ -416,6 +416,42 @@ for warning in info.warnings:
 
 將路線警告視為一級證據。如果路線規劃工具告訴您一些不尋常的事情，請不要迴避它。首先修正合約或選項。
 
+### 查看模型執行的內容
+
+使用 `execution_plan()` 可查看模型執行的節點、每個節點的執行位置，以及在節點之間流動的張量。`Model::execution_plan(...)` 接受與 `build(...)` 相同的引數，在不執行任何影格的情況下建置模型，並在讀取計畫後將其關閉，因此需要裝置。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const simaai::neat::ExecutionPlan plan = model.execution_plan();
+std::cout << plan.to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+plan = model.execution_plan()
+print(plan.to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+JSON 依管線順序列出模型的圖節點，並在每兩個相鄰節點之間列出一條邊。
+
+| 欄位 | 意義 |
+| --- | --- |
+| `model` | 模型名稱、`batch`（每次 MLA 執行的影格數）和 `memory`（每個處理中影格的裝置記憶體） |
+| `nodes[].kind` | 節點種類，例如 `Input`、`Preproc`、`Quant`、`ModelFragment`、`Dequant`、`SimaBoxDecode` 或 `Output` |
+| `nodes[].runs_on` | 節點的執行位置：`A65`（Arm 核心）、`EV74`（視覺處理器）或 `MLA` |
+| `nodes[].kernel` | `EV74` 或 `A65` 節點執行的核心程式（kernel） |
+| `nodes[].settings` | 已解析的 `Preproc` 與 `SimaBoxDecode` 設定，名稱與 `PreprocOptions` 和 `BoxDecodeOptions` 相同 |
+| `edges[].tensors` | 從一個節點流向下一個節點的張量：批次在前的 `shape`、`dtype`，以及量化張量的 `quant`（`scale`、`zero_point`） |
+
+只有在模型或您的選項設定了閾值與 `top_k` 時，`SimaBoxDecode` 設定才會顯示它們；否則會套用解碼器預設值。結構描述為 `schemas/execution_plan_v1.schema.json`。
+
 ## 在圖中運用模型
 
 對於常見的路徑，請直接在公共輸入和輸出之間新增模型。
@@ -673,9 +709,11 @@ runner = model.build([tensor], route_options=route)
 
 請將「seeded build」用於驗證和及早發現問題，而不是將其視為一種習慣。如果預設建置已經證明符合規範，請保持範例的規模較小。
 
+對於影像輸入，種子提供目前的形狀與像素格式，不會取代 `preprocess.input_max_width`、`input_max_height` 或 `input_max_depth`。例如，宣告容量為 1920×1920 並使用 640×640 種子時，同一個執行器可接受後續的 800×800 與 1920×1080 影格。超過容量的影格會被拒絕。省略上限時，會保留與無種子建置相同的已解析容量。
+
 ## 測量模型執行效能
 
-使用 `model.benchmark(...)` 進行快速的合成模型基準測試。它會從 `input_specs()` 產生輸入，並回傳延遲、吞吐量以及可選的功耗等指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
+使用 `model.benchmark(...)` 進行快速的合成模型基準測試。它會從 `input_specs()` 產生輸入，並回傳延遲、吞吐量、功耗以及板子遙測等主要指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -731,7 +769,53 @@ report = model.benchmark(options)
 
 將 `original_width` 和 `original_height` 組合在一起。基準測試仍然會產生一個模型形狀的合成張量；這些欄位提供 BoxDecode 中繼資料所需的來源幾何形狀和調整大小的轉換。如果您省略它們，基準測試將從解析後的預處理和模型輸入合約中推斷幾何形狀。這些每次執行的值優先於 `ModelOptions` 中已棄用的 BoxDecode 幾何形狀提示。現有的 `benchmark(num_samples)` 呼叫會保持相同的行為。
 
-僅當板子的電源監測器產生樣本時，才讀取 `avg_power_watts` 和 `energy_joules`。如果無法取得板子或電壓軌設定的電源遙測資料，則這些欄位將保持為零。
+### 執行長度
+
+基準測試會以 `num_samples` 個單次執行（single-flight）輸入測量延遲，然後執行另一個獨立的吞吐量階段。`latency_ms` 是這些輸入的平均延遲，`latency_p50_ms`、`latency_p95_ms` 和 `latency_p99_ms` 則是其百分位數。吞吐量階段會持續執行，直到至少測量了 `num_samples` 個輸入且已經過 `min_duration_ms`（預設為 30 秒），因此功耗和溫度讀數會涵蓋多個遙測樣本，而不只是短暫的爆發。`throughput_samples` 和 `throughput_duration_ms` 會回報此階段實際測量的內容。若要進行快速的初步檢查，請將 `min_duration_ms` 設為 0，在測量 `num_samples` 個輸入後即停止：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.min_duration_ms = 0;
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.min_duration_ms = 0
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+### 功耗與板子遙測 {#power-and-board-telemetry}
+
+功耗與板子遙測資料來自 [Sentinel](/tools/sentinel/)，也就是 Neat 安裝程式在板子上設定的 DevKit 遙測常駐程式。基準測試會在吞吐量階段前後記錄一個名為 `neat-benchmark-<UTC time>` 的 Sentinel 追蹤並予以保留，讓您之後可以使用 Sentinel 本身的工具開啟它。`report.telemetry` 會彙整此追蹤：
+
+| 欄位 | 意義 |
+| --- | --- |
+| `avg_power_watts`, `peak_power_watts` | 吞吐量階段期間 SoM 輸入功耗的平均值與最高值。 |
+| `energy_joules` | 處理 `num_samples` 個輸入所需的能量：平均功耗乘以依測得的吞吐量處理 `num_samples` 個輸入所需的時間。較長的階段不會使其增加。 |
+| `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA 電源軌功耗，以及板子回報的每一個電源軌。沒有 MLA 電源軌的板子會以 `samples == 0` 回報該項。 |
+| `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA、APU、CVU 與 TOP 位置的晶粒內感測器，以及每個樣本中其中最高的溫度。 |
+| `telemetry.board_temperatures_c` | SoM 頂面與底面感測器。 |
+| `telemetry.cpu_usage_pct` | CPU 使用率。每個樣本為前一個區間的平均值，因此 `maximum` 代表最忙碌的區間。 |
+| `telemetry.cpu_cores_usage_pct` | 依核心順序列出的各 CPU 核心使用率。即使所有核心平均值 `cpu_usage_pct` 維持偏低，單一忙碌的核心也會顯示在這裡。 |
+| `telemetry.mla_memory_mib` | 為 MLA 分配的記憶體（MiB）。模型在載入時分配這些記憶體，因此若沒有其他程式在執行，這就是模型的 MLA 記憶體。 |
+| `telemetry.cma_memory_mib` | 已使用的連續記憶體（CMA，MiB）。它包含 MLA 記憶體池，因此請勿將其與 `mla_memory_mib` 相加。閒置時，它也包含 Linux 從 CMA 借用的頁面快取。 |
+| `telemetry.linux_memory_used_mib` | Linux 已使用的記憶體（不含頁面快取，MiB）。 |
+
+每項指標都會回報 `samples`、`mean`、`minimum` 與 `maximum`，而 `samples == 0` 表示板子未回報該項指標。記憶體數值涵蓋整個板子，包括其他正在執行的程序。Sentinel 每 2 秒取樣一次，因此 30 秒的階段約可取得 15 個樣本。
+
+當 Sentinel 未執行、已有另一個 Sentinel 追蹤正在記錄，或階段太短而無法收集到樣本時，基準測試仍會傳回延遲與 FPS。功耗欄位會保持為零，`telemetry.status` 會指出原因（否則為 `"ok"`），而列印的摘要會顯示 `Power: unavailable (<reason>)`。
+
+### 測量您自己的迴圈
 
 當您擁有輸入迴圈並希望測量該迴圈時，請使用執行器測量：
 

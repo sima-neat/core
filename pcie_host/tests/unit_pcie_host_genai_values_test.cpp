@@ -168,6 +168,9 @@ int main(int argc, char** argv) {
               override_address ? "192.168.1.42" : "10.0." + std::to_string(card) + ".2";
           require(contents.find("\nsima@" + expected + "\n") != std::string::npos,
                   "Card-specific address or explicit override reaches SSH");
+          require(contents.find(Runner::shell_escape("/tmp")) != std::string::npos &&
+                      contents.find("/srv/simaai/incoming") == std::string::npos,
+                  "Worker uses the platform default receive directory without configuration");
           remote.stop();
           remote.start("target model", "draft model");
           std::ifstream pair_arguments(ssh_arguments);

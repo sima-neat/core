@@ -16,6 +16,7 @@
 #include "gst/internal/GstLaunchBindings.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
+#include "pipeline/internal/SegmentBuildPlan.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
@@ -2734,6 +2735,17 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
 
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where) {
   return parse_pipeline_or_throw(build, where);
+}
+
+void session_build_record_segment_plan(const BuildResult& build) {
+  if (!build.diag) {
+    return;
+  }
+  auto plan = std::make_shared<pipeline_internal::SegmentBuildPlan>();
+  plan->name_transform = build.name_transform;
+  plan->node_reports = build.diag->node_reports;
+  plan->rendered_manifest = build.rendered_manifest;
+  build.diag->build_plan = std::move(plan);
 }
 
 void session_build_validate_explicit_launch_names_or_throw(

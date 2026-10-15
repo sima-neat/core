@@ -52,6 +52,7 @@ tmp/
 tmp-*/
 sima-neat-*-extras/
 /install_neat_framework.sh
+/install_sentinel.sh
 core
 core/
 a.out

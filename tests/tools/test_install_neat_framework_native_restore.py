@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -20,6 +22,10 @@ def run_bash(script: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
     )
 
+
+def write_executable(path: Path, body: str) -> None:
+    path.write_text(f"#!/usr/bin/env bash\n{body}\n")
+    path.chmod(0o755)
 
 
 class CustomerSdkDependenciesTest(unittest.TestCase):
@@ -42,96 +48,22 @@ ensure_sima_lmm_sysroot_deps "${tmp}/sysroot"
                         "libcpp-httplib-dev", "libfftw3-dev", "libavcodec-dev"):
             self.assertNotIn(package, requested)
 
-class ModalixI2cAccessTest(unittest.TestCase):
-    @staticmethod
-    def run_setup(
-        *, group_exists: bool, groups: str, fail_command: str = ""
-    ) -> subprocess.CompletedProcess[str]:
-        return run_bash(
-            rf"""
+    def test_core_runtime_dependencies_do_not_need_sima_lmm(self) -> None:
+        result = run_bash(r"""
 source "$1"
 tmp="$(mktemp -d)"
-INSTALLER_TMP_DIRS=("${{tmp}}")
-getent() {{ return {0 if group_exists else 1}; }}
-id() {{ printf '%s\n' '{groups}'; }}
-run_sudo() {{
-  printf 'RUN:'
-  printf ' <%s>' "$@"
-  printf '\n'
-  if [[ "$1" == '{fail_command}' ]]; then
-    exit 1
-  fi
-}}
-configure_board_i2c_access
-printf 'CONTINUED\n'
-"""
-        )
+trap 'rm -rf "${tmp}"' EXIT
+cd "${tmp}"
+apt-get() { printf 'DOWNLOAD %s\n' "$*"; return 1; }
+ensure_sima_lmm_sysroot_deps "${tmp}/sysroot"
+""")
+        self.assertNotEqual(result.returncode, 0)
+        requested = next(line for line in result.stdout.splitlines() if line.startswith("DOWNLOAD"))
+        self.assertIn("libcpp-httplib0.18:arm64", requested)
+        self.assertIn("libbrotli1:arm64", requested)
+        self.assertNotIn("libfmt10:arm64", requested)
 
-    @staticmethod
-    def sudo_commands(result: subprocess.CompletedProcess[str]) -> list[str]:
-        return [
-            line for line in result.stdout.splitlines() if line.startswith("RUN:")
-        ]
-
-    def test_existing_group_and_membership_are_unchanged(self) -> None:
-        result = self.run_setup(group_exists=True, groups="sima sudo i2c")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.sudo_commands(result), [])
-        self.assertIn("sima is already in the i2c group; skipping.", result.stdout)
-
-    def test_missing_membership_is_appended(self) -> None:
-        result = self.run_setup(group_exists=True, groups="sima sudo")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self.sudo_commands(result),
-            ["RUN: <usermod> <-aG> <i2c> <sima>"],
-        )
-        self.assertIn("log out and back in", result.stdout)
-
-    def test_missing_group_is_created_before_membership(self) -> None:
-        result = self.run_setup(group_exists=False, groups="sima sudo")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self.sudo_commands(result),
-            [
-                "RUN: <groupadd> <--system> <i2c>",
-                "RUN: <usermod> <-aG> <i2c> <sima>",
-            ],
-        )
-
-    def test_group_creation_failure_warns_and_continues(self) -> None:
-        result = self.run_setup(
-            group_exists=False,
-            groups="sima sudo",
-            fail_command="groupadd",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self.sudo_commands(result),
-            ["RUN: <groupadd> <--system> <i2c>"],
-        )
-        self.assertIn("WARNING: Failed to create the i2c group", result.stdout)
-        self.assertIn("CONTINUED", result.stdout)
-
-    def test_membership_failure_warns_and_continues(self) -> None:
-        result = self.run_setup(
-            group_exists=True,
-            groups="sima sudo",
-            fail_command="usermod",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self.sudo_commands(result),
-            ["RUN: <usermod> <-aG> <i2c> <sima>"],
-        )
-        self.assertIn("WARNING: Failed to add sima to the i2c group", result.stdout)
-        self.assertIn("CONTINUED", result.stdout)
-
+class ModalixBoardRouteTest(unittest.TestCase):
     def test_board_route_preserves_later_install_failures(self) -> None:
         result = run_bash(
             r"""
@@ -139,9 +71,9 @@ source "$1"
 tmp="$(mktemp -d)"
 INSTALLER_TMP_DIRS=("${tmp}")
 ENV_MODE=modalix-board
+install_board_sentinel() { printf 'SENTINEL\n'; }
 install_python_environment() { printf 'PYNEAT\n'; }
 install_debs_on_board() { printf 'DEBS\n'; }
-configure_board_i2c_access() { printf 'I2C\n'; }
 install_agent_skills_for_current_user() { printf 'SKILLS\n'; return 23; }
 install_for_environment
 """
@@ -150,8 +82,190 @@ install_for_environment
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertEqual(
             result.stdout.splitlines(),
-            ["PYNEAT", "DEBS", "I2C", "SKILLS"],
+            ["SENTINEL", "PYNEAT", "DEBS", "SKILLS"],
         )
+
+
+class ModalixSentinelInstallTest(unittest.TestCase):
+    """install_sentinel.sh against fake systemctl, curl, and sima-cli commands."""
+
+    LATEST = "766066b74f49"
+    FAKE_COMMANDS = {
+        "systemctl": '[[ -e "${STATE}/version" ]]',
+        "curl": '[[ -e "${STATE}/version" ]] && printf \'{\n  "version": "%s"\n}\n\' "$(<"${STATE}/version")"',
+        "sleep": ":",
+    }
+
+    def run_install(
+        self, *, running: str | None, latest: str | None = LATEST, starts: bool = True,
+        install_ok: bool = True, sima_cli: str | None = "path"
+    ) -> tuple[subprocess.CompletedProcess[str], Path]:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        state = tmp / "state"
+        bin_dir = tmp / "bin"
+        home = tmp / "home"
+        for directory in (state, bin_dir, home):
+            directory.mkdir()
+        if running:
+            (state / "version").write_text(running)
+        if latest:
+            (state / "latest").write_text(latest)
+
+        commands = dict(self.FAKE_COMMANDS)
+        sima_cli_script = (
+            'if [[ " $* " == *" --json "* ]]; then '
+            '[[ -e "${STATE}/latest" ]] || { echo "Error: GET latest.tag failed" >&2; exit 1; }; '
+            'printf \'{\\n  "resolved_spec": "%s"\\n}\\n\' "$(<"${STATE}/latest")"; exit 0; fi; '
+            'printf \'SIMA-CLI %s\\n\' "$*"; printf \'%s\\n\' "$*" >"${STATE}/args"; '
+            'printf \'SIMA_CLI=%s\\n\' "${SIMA_CLI}"; '
+            + ('printf \'main:%s\' "${3#sentinel@}" >"${STATE}/version"; ' if starts else "")
+            + f"exit {0 if install_ok else 1}"
+        )
+        if sima_cli == "path":
+            commands["sima-cli"] = sima_cli_script
+        elif sima_cli == "venv":
+            venv_bin = home / ".sima-cli" / ".venv" / "bin"
+            venv_bin.mkdir(parents=True)
+            write_executable(venv_bin / "sima-cli", sima_cli_script)
+        for name, body in commands.items():
+            write_executable(bin_dir / name, body)
+
+        result = subprocess.run(
+            ["bash", str(INSTALLER.parent / "install_sentinel.sh")],
+            check=False,
+            text=True,
+            capture_output=True,
+            env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home), "STATE": str(state)},
+        )
+        return result, state
+
+    def assert_installed_latest(self, result: subprocess.CompletedProcess[str], state: Path) -> None:
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = (state / "args").read_text().split()
+        self.assertEqual(args[:5], ["neat", "install", f"sentinel@{self.LATEST}", "--prod", "--force"])
+        self.assertEqual(args[5], "--install-dir")
+        self.assertFalse(Path(args[6]).exists(), "the download directory must be removed")
+        self.assertIn(f"Sentinel main:{self.LATEST} is running.", result.stdout)
+
+    def test_latest_sentinel_is_kept(self) -> None:
+        result, _ = self.run_install(running=f"main:{self.LATEST}")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("SIMA-CLI", result.stdout)
+        self.assertIn(f"Sentinel main:{self.LATEST} is up to date.", result.stdout)
+
+    def test_older_sentinel_is_upgraded(self) -> None:
+        self.assert_installed_latest(*self.run_install(running="main:2b0360551b5f"))
+
+    def test_branch_build_is_replaced(self) -> None:
+        self.assert_installed_latest(*self.run_install(running="feat-telemetry:0123456789ab"))
+
+    def test_missing_sentinel_is_installed(self) -> None:
+        self.assert_installed_latest(*self.run_install(running=None))
+
+    def test_sima_cli_outside_path_is_found(self) -> None:
+        result, _ = self.run_install(running=None, sima_cli="venv")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SIMA-CLI neat install sentinel@", result.stdout)
+        self.assertRegex(result.stdout, r"SIMA_CLI=\S+/\.sima-cli/\.venv/bin/sima-cli")
+
+    def test_install_error_with_latest_running_warns(self) -> None:
+        result, _ = self.run_install(running=None, install_ok=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING: 'sima-cli neat install sentinel' reported a failure", result.stdout)
+
+    def test_sentinel_left_on_older_build_fails(self) -> None:
+        result, _ = self.run_install(running="main:2b0360551b5f", starts=False, install_ok=False)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"Sentinel main:{self.LATEST} is not running after installation", result.stderr)
+
+    def test_unresolved_build_keeps_running_sentinel(self) -> None:
+        result, _ = self.run_install(running="main:2b0360551b5f", latest=None)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("SIMA-CLI", result.stdout)
+        self.assertIn("keeping Sentinel main:2b0360551b5f", result.stdout)
+
+    def test_unresolved_build_without_sentinel_fails(self) -> None:
+        result, _ = self.run_install(running=None, latest=None)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("SIMA-CLI", result.stdout)
+        self.assertIn("Could not resolve the latest Sentinel build", result.stderr)
+
+    def test_missing_sima_cli_fails(self) -> None:
+        result, _ = self.run_install(running=None, sima_cli=None)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("SIMA-CLI", result.stdout)
+        self.assertIn("sima-cli is required to install Sentinel", result.stderr)
+
+    def test_board_installer_runs_the_sibling_script(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+SENTINEL_INSTALLER_PATH="${tmp}/install_sentinel.sh"
+printf 'echo SENTINEL-SCRIPT; exit 7\n' >"${SENTINEL_INSTALLER_PATH}"
+(install_board_sentinel; printf 'CONTINUED\n') || printf 'EXIT %s\n' "$?"
+rm "${SENTINEL_INSTALLER_PATH}"
+(install_board_sentinel; printf 'CONTINUED\n') || printf 'EXIT %s\n' "$?"
+"""
+        )
+
+        self.assertEqual(result.stdout.splitlines(), ["SENTINEL-SCRIPT", "EXIT 1", "EXIT 1"])
+        self.assertIn("install_sentinel.sh; it ships with this installer", result.stderr)
+
+
+class ModalixPythonVenvSupportTest(unittest.TestCase):
+    @staticmethod
+    def run_install(
+        *, ensurepip_available: bool, apt_install_ok: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return run_bash(
+            rf"""
+source "$1"
+tmp="$(mktemp -d)"
+INSTALLER_TMP_DIRS=("${{tmp}}")
+{'touch "${tmp}/ensurepip"' if ensurepip_available else ''}
+python3() {{ [[ -e "${{tmp}}/ensurepip" ]]; }}
+refresh_apt_metadata_for_board_install() {{ printf 'REFRESH\n'; }}
+run_sudo() {{
+  printf 'RUN: %s\n' "$*"
+  {'touch "${tmp}/ensurepip"' if apt_install_ok else 'return 100'}
+}}
+# First step after the check: reaching it means the installer continued.
+remove_stale_global_sima_lmm_pip_install() {{ printf 'CONTINUED\n'; exit 0; }}
+install_python_environment
+"""
+        )
+
+    def test_available_ensurepip_skips_apt(self) -> None:
+        result = self.run_install(ensurepip_available=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["CONTINUED"])
+
+    def test_missing_ensurepip_installs_python3_venv_and_continues(self) -> None:
+        result = self.run_install(ensurepip_available=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [line for line in result.stdout.splitlines() if not line.startswith("[")],
+            ["REFRESH", "RUN: apt-get install -y python3-venv", "CONTINUED"],
+        )
+
+    def test_failed_python3_venv_install_stops_installer(self) -> None:
+        result = self.run_install(ensurepip_available=False, apt_install_ok=False)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("CONTINUED", result.stdout)
+        self.assertIn("sudo apt-get install -y python3-venv", result.stderr)
 
 
 class Ros2SdkInstallTest(unittest.TestCase):

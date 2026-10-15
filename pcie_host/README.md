@@ -575,11 +575,13 @@ With matching host/card packages and no other job using the card:
 ```bash
 export SIMAPCIE_CARD_HOST=10.0.0.2
 export SIMAPCIE_USER=sima
-# Match the card's configured temporary receive directory:
-export SIMAPCIE_GENAI_RECEIVE_ROOT=/tmp
 ctest --test-dir <extras>/lib/sima-pcie-host/tests -L genai -j1 --output-on-failure
 ~/pyneatpcie/bin/python -m pytest -v -s pcie_host/python/tests/test_genai_hardware.py
 ```
+
+Model assets use the platform's default card receive directory, `/tmp`; no
+receive-directory option is needed in C++ or Python. Remove any previous
+`card_receive_directory` assignments when updating applications.
 
 The extras contain the preparation script and image/audio fixtures. Python tests
 use repository fixtures by default; `SIMAPCIE_GENAI_TEST_ASSETS` can select the

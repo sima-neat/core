@@ -191,6 +191,29 @@ The MPK `input_range` of the model ingress is part of the preprocessing contract
 - `[0, 255]` is the identity mapping, so normalization stays off.
 - The range is used only when every ingress tensor declares the same value. Differing or partially missing ranges leave normalization off and log a planner warning.
 - Explicit `On` or `Off`, explicit `mean`/`stddev`, and presets always override this rule. Tensor input is unaffected.
+### Public execution plan
+
+`Model::execution_plan(...)` returns what `build(...)` with the same arguments runs: the Model's
+graph nodes in pipeline order, where each node runs (`A65`, `EV74`, or `MLA`), and the tensors on
+the edges between them. It calls `build(...)` with startup preflight off, reads the plan that the
+build recorded on its `DiagCtx` before GStreamer parse, and closes the pipeline, so it needs the
+same device as `build(...)`. It is a public diagnostic view, separate from the internal `ModelExecutionPlan` described below. Its JSON
+contract is `schemas/execution_plan_v1.schema.json`; `schema_version` changes only when a change
+breaks existing readers.
+
+### Benchmark telemetry
+
+`Model::benchmark()` reads power and board telemetry from Sentinel, the board telemetry daemon,
+through its HTTP API on `/run/simaai-sentinel/api.sock`; Core does not read the power monitor
+chips for the benchmark. The benchmark records a Sentinel trace named `neat-benchmark-<UTC time>`
+around the throughput pass, stops only that trace, and keeps it for Sentinel's own tools. Sentinel
+samples about every 2 s, so the throughput pass runs for at least
+`BenchmarkOptions::min_duration_ms` (30 s by default). When Sentinel is not running, another trace
+is recording, or the window has no samples, the benchmark still returns latency and FPS; the power
+fields are zero and `telemetry.status` names the reason. Board mode of
+`tools/install_neat_framework.sh` installs Sentinel or upgrades it to the latest production build. `Run` power
+(`RunOptions::power_monitor`) also comes from Sentinel: Core polls its latest sample and reads no
+power monitor chips over I2C.
 
 ### Compiled model execution contract
 
@@ -1038,6 +1061,7 @@ GStreamer name collisions.
 * **Capability-gated dynamic input**: runtime renegotiation is allowed only when the built graph advertises dynamic capability. `FullyDynamic` graphs can renegotiate raw-video geometry/format/fps/media caps; `IngressDynamicCvuOnly` allows geometry changes and permits format changes only when build-time downstream contract checks prove stable output behavior.
 * **Dynamic within effective bounds**: `max_*` are hard ceilings; if `max_*` is unset, `width/height/depth` act as implicit ceilings.
 * **Model vs Graph defaults**: both flows now resolve seed/max/byte-guard policy through `src/pipeline/internal/InputPolicy.*`; `Model` still applies its documented metadata-backed defaults (for example 1920x1080 ceilings) while `Graph` remains node-option driven unless configured.
+* **Seeded Model image builds**: the seed sets the current shape/format while the model's resolved `input_max_*` capacity is carried into the input node independently. OpenCV, Tensor, and Sample seeds preserve the same capacity as unseeded builds; a seed above that capacity is rejected.
 * **`caps_override` is authoritative**: when set, renegotiation is blocked and shape changes require rebuild.
 
 | Flow | Seed defaults | Max defaults | Byte-guard default |
@@ -1395,6 +1419,8 @@ re-uploading consumed files; host waits are bounded and interrupted on shutdown.
 Matching host/card GenAI protocol versions are required. Media still uses the
 host daemon's configured serving root.
 There is no global receive-root lock, registry or shared conversation state.
+Model assets stage under `/tmp/neat-genai/<session>/model`, matching the platform's
+default receive root; applications do not configure the receive directory.
 Requests carry explicit history and reuse Core's validation and output semantics.
 
 The host reuses Core's model-directory inspection to identify the target and

@@ -1997,10 +1997,13 @@ MpkDecodeResult decode_impl(const std::string_view text,
           {"MLA[" + std::to_string(stage_index) + "].identity",
            "MPK logical stage '" + mla.name + "' and executable '" + config.executable +
                "' exactly select one ELF topology; no filename/order inference"});
-      const auto native_ports = [](const auto& symbols, const std::string_view prefix) {
+      // An admitted bare data.{ifm,ofm}.b0 port is native when its siblings are.
+      const auto native_ports = [](const auto& symbols, const std::string_view prefix,
+                                   const std::string_view bare) {
         return !symbols.empty() &&
-               std::all_of(symbols.begin(), symbols.end(),
-                           [&](const auto& symbol) { return symbol.starts_with(prefix); });
+               std::all_of(symbols.begin(), symbols.end(), [&](const auto& symbol) {
+                 return symbol.starts_with(prefix) || symbol == bare;
+               });
       };
       if (mla.batch_count > 1U) {
         config.batch_count = mla.batch_count;
@@ -2122,8 +2125,10 @@ MpkDecodeResult decode_impl(const std::string_view text,
                   return false;
                 }
               },
-              input ? native_ports(topology.ifm_symbol_names, "data.ifm.persistent.MLA_")
-                    : native_ports(topology.ofm_symbol_names, "data.ofm.persistent.MLA_"),
+              input ? native_ports(topology.ifm_symbol_names, "data.ifm.persistent.MLA_",
+                                   "data.ifm.b0")
+                    : native_ports(topology.ofm_symbol_names, "data.ofm.persistent.MLA_",
+                                   "data.ofm.b0"),
               "$.plugins[" + std::to_string(mla_op_index) + "]" +
                   (input ? ".input_nodes" : ".output_nodes"));
           std::vector<std::uint64_t> sample_bytes(values.size());
@@ -2189,7 +2194,7 @@ MpkDecodeResult decode_impl(const std::string_view text,
                                             mla_elf_ifm_extent_bytes(topology, physical),
                                             batch_one);
           },
-          native_ports(topology.ifm_symbol_names, "data.ifm.persistent.MLA_"),
+          native_ports(topology.ifm_symbol_names, "data.ifm.persistent.MLA_", "data.ifm.b0"),
           "$.plugins[" + std::to_string(mla_op_index) + "].input_nodes");
       const auto output_order = resolve_mla_port_order(
           mla.outputs.size(),
@@ -2205,7 +2210,7 @@ MpkDecodeResult decode_impl(const std::string_view text,
               return false;
             }
           },
-          native_ports(topology.ofm_symbol_names, "data.ofm.persistent.MLA_"),
+          native_ports(topology.ofm_symbol_names, "data.ofm.persistent.MLA_", "data.ofm.b0"),
           "$.plugins[" + std::to_string(mla_op_index) + "].output_nodes");
       for (std::size_t index = 0; index < mla.inputs.size(); ++index) {
         const std::string symbol =

@@ -461,7 +461,8 @@ struct VisionLanguageModel::Impl {
         make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
     if (draft_language_model) {
       return language_model->run_model_speculative_decoding(
-          *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft);
+          *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft, nullptr,
+          prepared.stable_prefix_token_count);
     }
     return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens,
                                      std::nullopt, prepared.stable_prefix_token_count);

@@ -299,17 +299,13 @@ RUN_TEST(
                 "loader should leave no archive staging directories behind");
       }
 
-      // The reserve must be refused before the write, not noticed after it. The margin has to
-      // stay below the 10 KiB the fixture inflates to, so only a per-chunk budget can reject it.
+      // The reserve must be refused before the write, not noticed after it. The reserve exceeds
+      // any filesystem, so the result cannot depend on what parallel tests free on /tmp.
       {
         const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_reserve");
         const std::string out = sima_test::make_temp_dir("model_archive_loader_reserve_out");
-        constexpr std::uint64_t kWritableMargin = 9216ULL;
-        const auto available = static_cast<std::uint64_t>(fs::space(private_tmp).available);
-        require(available > kWritableMargin, "test needs a temp filesystem with free space");
-
         ModelArchiveLoaderOptions reserved;
-        reserved.min_output_free_bytes = available - kWritableMargin;
+        reserved.min_output_free_bytes = std::numeric_limits<std::uint64_t>::max() / 2ULL;
         sima_test::ScopedEnvVar tmpdir("TMPDIR", private_tmp);
 
         // Matching the message pins this to the inflation budget: the extraction-root check
@@ -322,7 +318,7 @@ RUN_TEST(
         }
         require_contains(reported, "insufficient free space inflating model archive",
                          "inflating past the free-space reserve should be refused before the "
-                         "write, by the per-chunk budget");
+                         "write, by the inflation budget");
         require(fs::is_empty(private_tmp), "a refused inflation should leave no staging copy");
       }
 

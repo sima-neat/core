@@ -682,7 +682,7 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 
 ```cpp
 neat::RunOptions opt;
-opt.enable_board_power(/*sample_interval_ms=*/100);
+opt.enable_board_power();
 
 neat::Run run = app.build(opt);
 ```

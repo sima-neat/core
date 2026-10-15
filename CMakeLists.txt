@@ -315,7 +315,10 @@ find_path(SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR
     "${CMAKE_SYSROOT}/usr/include/eigen3"
     "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
     "/usr/include/eigen3")
-if (SimaLMM_FOUND)
+# Model::benchmark() talks to the Sentinel daemon over HTTP on a Unix socket.
+if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
+  pkg_check_modules(HTTPLIB QUIET IMPORTED_TARGET cpp-httplib)
+else()
   pkg_check_modules(HTTPLIB REQUIRED IMPORTED_TARGET cpp-httplib)
 endif()
 
@@ -1053,8 +1056,11 @@ endif()
 
 set(SIMANEAT_PRIVATE_LIBRARIES ZLIB::ZLIB)
 find_package(ZLIB REQUIRED)
+if (HTTPLIB_FOUND)
+  list(APPEND SIMANEAT_PRIVATE_LIBRARIES PkgConfig::HTTPLIB)
+endif()
 if (SimaLMM_FOUND)
-  list(APPEND SIMANEAT_PRIVATE_LIBRARIES SimaLMM::sima_lmm_runtime PkgConfig::HTTPLIB)
+  list(APPEND SIMANEAT_PRIVATE_LIBRARIES SimaLMM::sima_lmm_runtime)
 endif()
 
 if (GST_FOUND)
@@ -1560,11 +1566,10 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "zlib1g"
   "neat-runtime"
   "neat-gst-plugins"
+  "libcpp-httplib0.18"
 )
 if (SimaLMM_FOUND)
-  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
-    "sima-lmm-core"
-    "libcpp-httplib0.18")
+  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "sima-lmm-core")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(SIMANEAT_DEV_DEBIAN_DEPENDS

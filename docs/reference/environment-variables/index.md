@@ -100,8 +100,8 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 - `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — auto-recover dispatcher (default true).
 - `SIMA_ASYNC_TPUT_DIAG=1` — async throughput diagnostics.
 - `SIMA_ASYNC_WARMUP=<n>` — async warmup frames.
-- `SIMA_PERF_POWER=1` — enable SOM PMIC rail power capture in perf scenarios.
-- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — power sampling interval (default 100).
+- `SIMA_PERF_POWER=1` — enable board power capture from Sentinel in perf scenarios.
+- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — deprecated and ignored; Sentinel samples every 2 s.
 - `SIMA_PULL_TIMEOUT_DIAG=0/1` — report on pull timeouts (default true).
 - `SIMA_STAGE_DEBUG=1` — StageRun debug logs.
 

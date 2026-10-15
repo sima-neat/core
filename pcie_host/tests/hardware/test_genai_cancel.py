@@ -1,6 +1,5 @@
 """Run explicitly against a configured PCIe GenAI worker and an LLM model."""
 import argparse
-from pathlib import Path
 
 from pyneatpcie import genai
 
@@ -10,12 +9,10 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--card-host", default="10.0.0.2")
     parser.add_argument("--user", default="sima")
-    parser.add_argument("--receive-root", default="/srv/simaai/incoming")
     args = parser.parse_args()
     connection = genai.ConnectionOptions()
     connection.card_host = args.card_host
     connection.user = args.user
-    connection.card_receive_directory = Path(args.receive_root)
     connection.startup_timeout_ms = 180000
     connection.request_timeout_ms = 120000
     with genai.GenAIModel(args.model, connection) as model:

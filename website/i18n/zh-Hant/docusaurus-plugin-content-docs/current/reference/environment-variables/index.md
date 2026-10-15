@@ -95,8 +95,8 @@ slug: /reference/environment-variables
 - `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 自動恢復分派器（預設為啟用）。
 - `SIMA_ASYNC_TPUT_DIAG=1` — 非同步吞吐量診斷。
 - `SIMA_ASYNC_WARMUP=<n>` — 非同步預熱幀。
-- `SIMA_PERF_POWER=1` — 在效能測試情境中啟用 SOM PMIC 供電軌道的監測。
-- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 電力採樣間隔（預設值為 100）。
+- `SIMA_PERF_POWER=1` — 在效能測試情境中啟用從 Sentinel 擷取板子電力資料。
+- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 已棄用且會被忽略；Sentinel 每 2 秒取樣一次。
 - `SIMA_PULL_TIMEOUT_DIAG=0/1` — 報告拉取逾時的情況（預設為啟用）。
 - `SIMA_STAGE_DEBUG=1` — StageRun 除錯日誌。
 

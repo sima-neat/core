@@ -120,18 +120,20 @@ add_custom_target(prepare_perf_codec_fixtures
   VERBATIM
 )
 
-# Bundle the installer beside its test so installed extras can run it.
+# Bundle the installers beside their test so installed extras can run them.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_install_neat_framework_native_restore.py"
   "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
   COPYONLY
 )
-configure_file(
-  "${CMAKE_SOURCE_DIR}/tools/install_neat_framework.sh"
-  "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
-  COPYONLY
-)
+foreach(_installer install_neat_framework.sh install_sentinel.sh)
+  configure_file(
+    "${CMAKE_SOURCE_DIR}/tools/${_installer}"
+    "${CMAKE_CURRENT_BINARY_DIR}/tools/${_installer}"
+    COPYONLY
+  )
+endforeach()
 add_test(
   NAME unit_install_neat_framework_native_restore_test
   COMMAND "${Python3_EXECUTABLE}"
@@ -420,6 +422,7 @@ set(UNIT_TESTS
   unit_tensorbuffer_strided_parent_view_materialize_test
   unit_asset_utils_readable_model_tar_test
   unit_benchmark_measurement_contract_test
+  unit_benchmark_telemetry_test
   unit_measurement_consistency_test
   unit_lttng_plugin_percentiles_test
   unit_model_infer_output_name_test
@@ -1874,6 +1877,28 @@ if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  model_seeded_input_capacity_test
+  e2e_testing/model_seeded_input_capacity_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR} mat
+  LOCK_ACCELERATOR
+)
+if (NOT model_seeded_input_capacity_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(model_seeded_input_capacity_test PROPERTIES
+    LABELS "strict;e2e;model;preproc;regression"
+    TIMEOUT 180)
+  foreach(mode tensor sample defaults unseeded oversize_width oversize_height)
+    set(test_name model_seeded_input_capacity_${mode}_test)
+    add_test(NAME ${test_name}
+      COMMAND model_seeded_input_capacity_test ${CMAKE_SOURCE_DIR} ${mode})
+    simaneat_append_ctest_env(${test_name})
+    set_tests_properties(${test_name} PROPERTIES
+      LABELS "strict;e2e;model;preproc;regression"
+      RESOURCE_LOCK "accelerator-device"
+      TIMEOUT 180)
+  endforeach()
+endif()
+
+add_pipeline_test(
   seedless_yolov8_preproc_input_max_smoke_test
   e2e_pipelines/obj_detection/seedless_yolov8_preproc_input_max_smoke_test.cpp
   e2e_pipelines/e2e_utils.cpp
@@ -1995,6 +2020,15 @@ add_pipeline_test(
 
 if (NOT model_unique_names_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST model_unique_names_test APPEND PROPERTY LABELS "e2e;img_classification")
+endif()
+
+add_pipeline_test(
+  model_execution_plan_test
+  e2e_pipelines/obj_detection/model_execution_plan_test.cpp
+)
+
+if (NOT model_execution_plan_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST model_execution_plan_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -2307,6 +2341,7 @@ foreach(test
     graphpipes_yolo_metadata_sender_16stream_test
     model_resnet50_multi_test
     model_unique_names_test
+    model_execution_plan_test
     resnet50_modelpack_direct
     resnet50_modelpack_jpeg
     resnet50_modelpack_rtsp

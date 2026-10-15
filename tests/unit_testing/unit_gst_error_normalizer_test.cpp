@@ -141,6 +141,39 @@ RUN_TEST(
       }
 
       {
+        // libcamerasrc fails negotiation for an unsupported size or format (core #883): the
+        // diagnostic must name the camera and requested caps and cover both causes.
+        RawGstError raw = raw_error("libcamerasrc", "gst-stream-error-quark",
+                                    GST_STREAM_ERROR_FAILED, "Internal data stream error.");
+        raw.debug = "../src/gstreamer/gstlibcamerasrc.cpp(911): gst_libcamera_src_task_enter (): "
+                    "/GstPipeline:pipeline0/GstLibcameraSrc:src:\n"
+                    "streaming stopped, reason not-negotiated (-4)";
+        raw.details["source-identity"] = "imx477 5-001a";
+        raw.details["requested-caps"] =
+            "video/x-raw, format=(string)NV12, width=(int)1280, height=(int)720";
+        const NormalizedDiagnostic camera = classify_gst_error(std::move(raw));
+        require_code(camera, error_codes::kMediaCaps);
+        require(camera.diagnostic_id == "gstreamer.camera_configuration_unsupported",
+                "libcamerasrc negotiation failures should use the camera configuration diagnostic");
+        const std::string text = render_diagnostic_body(camera, false);
+        require_contains(text, "Camera: imx477 5-001a", "camera diagnostic should name the camera");
+        require_contains(text, "Requested caps: video/x-raw, format=(string)NV12, width=(int)1280",
+                         "camera diagnostic should show the requested caps");
+        require_contains(text, "resolution and pixel format",
+                         "camera diagnostic should cover both an unsupported size and format");
+        require_contains(text, "model-managed CVU preprocessing",
+                         "model camera diagnostic should keep resize in preproc");
+        require_contains(text, "VideoScale", "camera diagnostic should suggest resizing");
+
+        // Negotiation failures elsewhere keep the generic caps diagnostic.
+        const NormalizedDiagnostic other = classify_gst_error(
+            raw_error("videoconvert", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                      "Internal data stream error. streaming stopped, reason not-negotiated (-4)"));
+        require(other.diagnostic_id == "gstreamer.caps_incompatible",
+                "non-camera negotiation failures should stay generic");
+      }
+
+      {
         const NormalizedDiagnostic busy =
             classify_gst_error(raw_error("neatprocesscvu", "gst-resource-error-quark",
                                          GST_RESOURCE_ERROR_BUSY, "Accelerator resource is busy"));

@@ -44,6 +44,22 @@ int main() {
     std::ofstream(model / "target/elf_files/model.elf") << "target";
     std::ofstream(model / "draft/elf_files/model.elf") << "draft";
     const auto recv = directory.path / "received";
+    auto rejects_asset = [&](const std::filesystem::path& path, uint64_t size,
+                             const std::string& message) {
+      try {
+        wire::validate_received_asset(path, size, "layer.bin");
+      } catch (const std::runtime_error& e) {
+        require(std::string(e.what()).find(message) != std::string::npos &&
+                    std::string(e.what()).find(path.string()) != std::string::npos,
+                "Asset failure distinguishes its cause and includes the expected path");
+        return;
+      }
+      throw std::runtime_error("Expected asset validation failure");
+    };
+    wire::validate_received_asset(model / "layer.bin", 7, "layer.bin");
+    rejects_asset(model / "missing.bin", 7, "missing at expected path");
+    rejects_asset(model, 7, "not a regular file");
+    rejects_asset(model / "layer.bin", 8, "expected 8, received 7 bytes");
     test_genai_receive_root(recv.c_str());
     const std::string session(24, 'b');
     internal::ModelAssets assets(model, session, 0);

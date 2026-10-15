@@ -61,8 +61,6 @@ g::ConnectionOptions connection() {
   result.card_host = env("SIMAPCIE_CARD_HOST");
   result.user = env("SIMAPCIE_USER", "sima");
   result.ssh_key = env("SIMAPCIE_SSH_KEY");
-  result.card_receive_directory =
-      env("SIMAPCIE_GENAI_RECEIVE_ROOT", result.card_receive_directory.string());
   result.startup_timeout_ms = std::stoi(env("SIMAPCIE_READINESS_TIMEOUT_MS", "180000"));
   result.request_timeout_ms = std::stoi(env("SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS", "120000"));
   return result;
@@ -73,7 +71,7 @@ fs::path model_path(const std::string& kind) {
   const auto name =
       kind == "llm"   ? env("SIMA_TEST_LLIMA_TEXT_MODEL", "Qwen2.5-0.5B-Instruct-Autoround-a16w4")
       : kind == "vlm" ? env("SIMA_TEST_LLIMA_VLM_MODEL", "LFM2.5-VL-450M-Autoround-a16w4")
-                      : env("SIMA_TEST_LLIMA_ASR_MODEL", "whisper-small-a16w8-layered-encoder");
+                      : env("SIMA_TEST_LLIMA_ASR_MODEL", "whisper-small-a16w8");
   const auto path = fs::path(root) / name;
   require(fs::is_regular_file(path / "devkit" /
                               (kind == "asr" ? "whisper_config.json" : "vlm_config.json")),

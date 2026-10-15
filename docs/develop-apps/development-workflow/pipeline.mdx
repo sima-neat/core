@@ -1069,7 +1069,7 @@ Enable power telemetry on the `RunOptions` that builds the run:
 
 ```cpp
 simaai::neat::RunOptions options;
-options.enable_board_power(/*sample_interval_ms=*/100);
+options.enable_board_power();
 
 auto run = graph.build(options);
 
@@ -1083,7 +1083,7 @@ auto scope = run.start_measurement(measure_options);
 
 ```python
 options = pyneat.RunOptions()
-options.enable_board_power(sample_interval_ms=100)
+options.enable_board_power()
 
 run = graph.build(options)
 
@@ -1095,7 +1095,7 @@ scope = run.start_measurement(measure_options)
 </CodeTab>
 </CodeTabs>
 
-Power data depends on board rail support and monitor configuration. Document the measurement setup with the numbers; do not make power numbers look portable when the rails are not.
+Power comes from Sentinel, which samples the board rails every 2 s, so a measurement window shorter than about 2 s can have no power samples. Document the measurement setup with the numbers; do not make power numbers look portable when the rails are not.
 
 Build-time export answers “what did Neat build?” After-run export answers “what happened while it ran?”
 

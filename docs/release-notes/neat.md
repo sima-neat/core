@@ -17,11 +17,42 @@ Release notes for the SiMa.ai Neat Library.
   four-dimensional HWC shape. Its Float32 tensor format may be `EVXX_FLOAT32`
   instead of `FP32`. Use the tensor's dtype and shape to interpret values; do not
   infer logical axes from a backend format tag.
-- The Neat Library C++ ABI is now 6 and the shared-library SONAME is `libsima_neat.so.6`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, and `GraphLinkOptions` contains realtime admission limits. Rebuild C++ applications and plugins and install matching Core runtime and development packages.
+- The Neat Library C++ ABI is now 6 and the shared-library SONAME is `libsima_neat.so.6`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, `GraphLinkOptions` contains realtime admission limits, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild C++ applications and plugins and install matching Core runtime and development packages.
 - Realtime graph composition now uses `GraphLinkOptions`, `Graph::connect()`, and `Graph::build()`. The preview `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()`, and `RealtimeEveryFrameByStream` APIs were removed. Saved graphs containing `realtime_every_frame_by_stream` must be recreated with a supported policy; see [Connect live fragments](/develop-apps/development-workflow/graph/#connect-live-fragments).
 
 ### Runtime changes
 
+- `Model::benchmark()` reads board telemetry from [Sentinel](/tools/sentinel/)
+  instead of sampling power rails itself. The throughput pass now runs until it
+  has measured `num_samples` inputs and at least `BenchmarkOptions::min_duration_ms`
+  has elapsed, 30 s by default, so power and temperature readings span several
+  Sentinel samples. Set `min_duration_ms` to 0 for the previous count-based
+  timing. `BenchmarkReport` adds `latency_p50_ms`, `latency_p95_ms`,
+  `latency_p99_ms`, `peak_power_watts`, `throughput_samples`,
+  `throughput_duration_ms`, and `telemetry` with rail power, die and board
+  temperatures, CPU utilization overall and per core, and MLA, CMA, and Linux
+  memory.
+  `avg_power_watts` and `energy_joules` keep their meaning; `energy_joules` is
+  the energy for `num_samples` inputs. When Sentinel is unavailable, latency and
+  FPS are still reported and `telemetry.status` names the reason. The DevKit
+  installer installs Sentinel with `sima-cli neat install sentinel`, or upgrades
+  it when the running version is not the latest production build. See
+  [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry).
+- Run power telemetry, enabled with `enable_board_power()`, also reads from
+  Sentinel. Core no longer opens the I2C power monitors, so its readings no
+  longer interfere with Sentinel's reads of the same rails, and the installer no
+  longer adds `sima` to the `i2c` group. Sentinel samples every 2 s, so a
+  measurement window shorter than about 2 s can have no power samples. Rails are
+  named after Sentinel's metrics, such as `mla`, and report power only.
+  `sample_interval_ms`, `PowerMonitorProfile`, the built-in rail tables, the
+  `PowerRailConfig` I2C fields, `enable_modalix_som_power()`,
+  `enable_modalix_dvt_power()`, and `modalix_som_power_monitor_options()` /
+  `modalix_dvt_power_monitor_options()` are deprecated and ignored.
+- Plugin latency is deprecated and will be removed. This covers
+  `MeasureOptions::include_plugin_latency` and `plugin_latency_source`,
+  `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)`, and
+  `Model::benchmark(int, bool)` / `Model::benchmark(bool)`. Use
+  `start_measurement()` and `benchmark(num_samples)` instead.
 - Hardware decode uses direct codec sessions and DMA-BUF output. Core no longer
   uses decoder-daemon admission leases or `SIMA_DECODER_ADMISSION_REQUIRE`.
   Decoder pool and tuning options remain available.
