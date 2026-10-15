@@ -120,16 +120,19 @@ bool derive_unit_pixel_normalization_from_input_range(const std::vector<double>&
   // preproc, the CVU preproc graph implements:
   //   normalized = (pixel / 255 - mean) / stddev
   // Therefore pixel=0 maps to -mean/stddev and pixel=255 maps to
-  // (1-mean)/stddev.  Solve these two equations to recover the stats.
+  // (1-mean)/stddev.  Solve these two equations to recover the stats.  Any finite
+  // range with hi > lo is a valid contract; like explicit stats, the only
+  // requirement on the result is a finite mean and a positive stddev.
   const double derived_stddev = 1.0 / (hi - lo);
   const double derived_mean = 0.0 - lo * derived_stddev; // avoid -0 when lo == 0
-  if (!std::isfinite(derived_mean) || !std::isfinite(derived_stddev) || derived_mean < 0.0 ||
-      derived_mean > 1.0 || derived_stddev <= 0.0 || derived_stddev > 1.0) {
+  const float mean_f = static_cast<float>(derived_mean);
+  const float stddev_f = static_cast<float>(derived_stddev);
+  if (!std::isfinite(mean_f) || !std::isfinite(stddev_f) || stddev_f <= 0.0f) {
     return false;
   }
 
-  mean->fill(static_cast<float>(derived_mean));
-  stddev->fill(static_cast<float>(derived_stddev));
+  mean->fill(mean_f);
+  stddev->fill(stddev_f);
   return true;
 }
 

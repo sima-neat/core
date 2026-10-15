@@ -57,11 +57,12 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
   return {};
 }
 
-sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
-  const auto fixture = sima_test::make_model_archive_fixture(tag,
-                                                             {
-                                                                 {"etc/test_model_mpk.json",
-                                                                  R"json({
+sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag,
+                                                    const std::string& input_range = "[0.0, 1.0]") {
+  const auto fixture =
+      sima_test::make_model_archive_fixture(tag,
+                                            {
+                                                {"etc/test_model_mpk.json", std::string(R"json({
   "name": "preproc_contract_model",
   "model_path": "preproc_contract_model.onnx",
   "model_sdk_version": "2.0.0",
@@ -71,7 +72,7 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
       "name": "images",
       "type": "buffer",
       "size": 4915200,
-      "input_range": [0.0, 1.0],
+      "input_range": )json") + input_range + R"json(,
       "logical_shape": [1, 640, 640, 3],
       "logical_dtype": "FP32"
     }
@@ -131,8 +132,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
     }
   ]
 })json"},
-                                                                 {"etc/pipeline_sequence.json",
-                                                                  R"json({
+                                                {"etc/pipeline_sequence.json",
+                                                 R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -156,8 +157,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                                                 {"etc/0_preproc.json",
-                                                                  R"json({
+                                                {"etc/0_preproc.json",
+                                                 R"json({
   "node_name": "preproc_0",
   "graph_name": "preproc",
   "input_width": 1280,
@@ -172,8 +173,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
   "output_dtype": "BF16",
   "tessellate": false
 })json"},
-                                                                 {"etc/0_process_mla.json",
-                                                                  R"json({
+                                                {"etc/0_process_mla.json",
+                                                 R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["EV81_BFLOAT16"],
@@ -181,8 +182,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                                             },
-                                                             false);
+                                            },
+                                            false);
   // Image preprocessing comes from Model::Options; the MPK describes its tensor target.
   // Planning needs the declared MLA topology, not an executable MLA program.
   const auto share = std::filesystem::path(fixture.root_dir) / "share";
@@ -295,6 +296,25 @@ std::vector<int> shape3(int h, int w, int c) {
   out.push_back(w);
   out.push_back(c);
   return out;
+}
+
+void require_auto_normalize_from_range(const std::string& tag, const std::string& input_range,
+                                       bool normalize, float mean, float stddev) {
+  using namespace simaai::neat;
+  const auto fixture = make_preproc_fixture(tag, input_range);
+  Model::Options model_opt;
+  model_opt.preprocess.kind = InputKind::Image;
+  model_opt.preprocess.enable = AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+  Model model(fixture.tar_path, model_opt);
+  PreprocOptions opt(model);
+  const std::string label = "input_range " + input_range;
+  require(opt.normalize == normalize, label + ": unexpected normalize resolution");
+  if (normalize) {
+    require(opt.channel_mean.size() == 3U && opt.channel_mean[0] == mean &&
+                opt.channel_stddev.size() == 3U && opt.channel_stddev[0] == stddev,
+            label + ": normalize stats must be derived from the full range");
+  }
 }
 
 } // namespace
@@ -508,6 +528,13 @@ RUN_TEST(
         require_not_contains(
             frag, "config=", "model-managed Preproc fragment must not emit a legacy config path");
       }
+
+      // normalize=Auto honours every finite MPK input_range; [0, 255] keeps raw pixels.
+      require_auto_normalize_from_range("preproc_range_half", "[0.0, 0.5]", true, 0.0f, 2.0f);
+      require_auto_normalize_from_range("preproc_range_shifted", "[1.0, 2.0]", true, -1.0f, 1.0f);
+      require_auto_normalize_from_range("preproc_range_symmetric", "[-1.0, 1.0]", true, 0.5f, 0.5f);
+      require_auto_normalize_from_range("preproc_range_raw_pixels", "[0.0, 255.0]", false, 0.0f,
+                                        1.0f);
 
       {
         const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");
