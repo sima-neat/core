@@ -835,6 +835,14 @@ class CategoryKeyTests(unittest.TestCase):
                 "guides/_category_.json": '{"key": null}',
                 "guides/index.md": keyed,
             }, False),
+            "link to a doc that keeps its number prefixes": ({
+                "guides/_category_.json": (
+                    '{"link": {"type": "doc", "id": "tools/tool/guides/01-basics/02-setup"}}'
+                ),
+                "guides/01-basics/02-setup.md": (
+                    "---\nparse_number_prefixes: false\nsidebar_key: tool-guides\n---\n# S\n"
+                ),
+            }, True),
             "yaml block link": ({
                 "guides/_category_.yml": "label: G\nlink:\n  type: doc\n  id: setup\n",
                 "guides/setup.md": keyed,
@@ -883,6 +891,7 @@ class CategoryKeyTests(unittest.TestCase):
             "key: value # comment\n": "value",
             'key: ""\n': "",
             "key: null\n": None,
+            "key: # comment\n": None,
             "key: ~\n": None,
             "key:\n": None,
             "label: x\n": None,

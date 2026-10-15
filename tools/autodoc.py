@@ -808,7 +808,7 @@ def yaml_scalar(text: str, field: str) -> Optional[str]:
     if value[:1] in ("'", '"'):
         quoted = re.match(r"(['\"])(.*?)\1", value)
         return quoted.group(2) if quoted else None
-    value = re.sub(r"\s+#.*$", "", value)
+    value = re.sub(r"(?:^|\s+)#.*$", "", value)
     return None if value in ("", "null", "Null", "NULL", "~") else value
 
 
@@ -851,10 +851,13 @@ def strip_number_prefix(name: str) -> str:
 
 def docusaurus_doc_id(doc: Path, docs_root: Path) -> str:
     """Docusaurus doc id: number prefixes stripped from the directories, then
-    the front matter `id` or the file name without its number prefix."""
+    the front matter `id` or the file name without its number prefix. A doc
+    with `parse_number_prefixes: false` keeps its prefixes."""
+    keep = frontmatter_field(doc, "parse_number_prefixes") in ("false", "False", "FALSE")
+    strip = (lambda name: name) if keep else strip_number_prefix
     directories = doc.parent.relative_to(docs_root).parts
-    local_id = frontmatter_field(doc, "id") or strip_number_prefix(doc.stem)
-    return "/".join([*(strip_number_prefix(part) for part in directories), local_id])
+    local_id = frontmatter_field(doc, "id") or strip(doc.stem)
+    return "/".join([*(strip(part) for part in directories), local_id])
 
 
 def linked_doc_sidebar_key(
