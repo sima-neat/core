@@ -552,6 +552,10 @@ foreach(test ${UNIT_TESTS})
   endif()
 endforeach()
 
+if (TARGET unit_benchmark_report_test AND TARGET PkgConfig::YAML)
+  target_link_libraries(unit_benchmark_report_test PRIVATE PkgConfig::YAML)
+endif()
+
 # Optional frozen-corpus gate. The normal unit target uses synthetic JSON/ELF
 # fixtures and is always available; this integration test is registered only
 # when a developer/CI job explicitly supplies the external official corpus.

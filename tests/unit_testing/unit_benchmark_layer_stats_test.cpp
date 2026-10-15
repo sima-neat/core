@@ -1,7 +1,7 @@
 #ifndef SIMA_NEAT_INTERNAL
 #define SIMA_NEAT_INTERNAL 1
 #endif
-#include "model/internal/BenchmarkInternal.h"
+#include "model/internal/MlaLayerStats.h"
 #include "test_main.h"
 
 #include <glib.h>
@@ -59,9 +59,18 @@ const std::string input =
 const std::string output =
     "1:\n  name: MLA_0/noop\n  start_cycle: 5\n  end_cycle: 4\n  run_time: 0.00us\n"
     "2:\n  name: 'MLA_0/conv: quoted'\n  start_cycle: 5\n  end_cycle: 20\n  run_time: 161.95us\n";
-LayerProfileStage stage(Fixture& fixture) {
-  return {2, fixture.write("share/demo_stage1_mla.elf", "elf fixture"),
-          fixture.write("etc/demo_stage1_mla_stats.yaml", input)};
+LayerProfileStage stage(Fixture& fixture, const std::string& source = input) {
+  fixture.write("share/demo_stage1_mla.elf", "elf fixture");
+  fixture.write("etc/demo_stage1_mla_stats.yaml", source);
+  pipeline_internal::sima::MpkContract contract;
+  contract.mpk_json_path = (fixture.root / "etc/demo_mpk.json").string();
+  pipeline_internal::sima::MpkPluginIoContract plugin;
+  plugin.processor = "MLA";
+  plugin.executable = "demo_stage1_mla.elf";
+  contract.plugins.push_back(plugin);
+  auto selected = resolve_layer_profile_stages(contract).front();
+  selected.stage_index = 2;
+  return selected;
 }
 std::string capture(const Fixture& fixture) {
   // Fixture paths have spaces; quote every shell argument in the fake runtime too.
@@ -100,8 +109,9 @@ void successful_profile_preserves_original_and_cleans_files() {
       fixture.runtime("[ \"$1\" = --connect ] && [ \"$2\" = mip,ma ] && [ \"$3\" = -vs ] && "
                       "[ \"$4\" = -N ] && [ \"$5\" = --per-layer-stats ]\n" +
                       capture(fixture) + emit(output));
-  const auto records =
-      collect_mla_layer_stats({selected, {0, selected.executable, selected.stats_yaml}}, command);
+  auto second = selected;
+  second.stage_index = 0;
+  const auto records = collect_mla_layer_stats({selected, second}, command);
   require(records.size() == 4 && records[0].name == "MLA_0/noop" &&
               records[0].total_execution_time_us == 0 &&
               records[1].total_execution_time_us == 161.95 && records[0].stage_index == 2 &&
@@ -110,6 +120,28 @@ void successful_profile_preserves_original_and_cleans_files() {
   require(read(selected.stats_yaml) == input, "compiler YAML must remain unchanged");
   require(!std::filesystem::exists(read(fixture.root / "copied-path")), "temporary YAML cleaned");
 }
+void unrelated_metadata_is_ignored() {
+  Fixture fixture;
+  const auto source = input + "  compiler_metadata:\n    tags: [conv, quantized]\n";
+  const auto selected = stage(fixture, source);
+  const auto command = fixture.runtime(emit(output + "  debug_metadata: {version: 1}\n"));
+  const auto records = collect_mla_layer_stats({selected}, command);
+  require(records.size() == 2 && records.back().total_execution_time_us == 161.95,
+          "unrelated nested metadata must not change layer timing collection");
+  require(read(selected.stats_yaml) == source, "compiler metadata must be preserved unchanged");
+}
+
+void invalid_inputs_are_rejected_before_profiling() {
+  Fixture fixture;
+  for (const auto& [text, error] : std::vector<std::pair<std::string, std::string>>{
+           {input + input, "duplicate layer ID"},
+           {input + "  name: duplicate\n", "duplicate layer field"},
+           {input + "---\n{}\n", "exactly one document"},
+           {"0: {name: placeholder}\n2: {name: conv, start_cycle: 0, end_cycle: 20}\n",
+            "contiguous from zero"}})
+    fails([&] { stage(fixture, text); }, error);
+}
+
 void process_failures_and_timeout_clean_up() {
   Fixture fixture;
   const auto selected = stage(fixture);
@@ -162,6 +194,8 @@ void invalid_outputs_are_rejected() {
 RUN_TEST("unit_benchmark_layer_stats_test", ([] {
            pairing_and_stage_order();
            successful_profile_preserves_original_and_cleans_files();
+           unrelated_metadata_is_ignored();
+           invalid_inputs_are_rejected_before_profiling();
            process_failures_and_timeout_clean_up();
            invalid_outputs_are_rejected();
          }));

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -15,25 +16,33 @@ namespace {
 using namespace simaai::neat;
 
 // Use the same public tensor-input path and YOLOv8s fixture as model_execution_plan_test.
-TensorList make_input(const Model& model) {
+TensorList make_input(const Model& model, int phase) {
   const auto options = model.input_appsrc_options(true);
   const int height = options.height > 0 ? options.height : options.max_height;
   const int width = options.width > 0 ? options.width : options.max_width;
   const int depth = options.depth > 0 ? options.depth : options.max_depth;
   require(height > 0 && width > 0 && depth > 0, "YOLOv8s needs concrete input dimensions");
-  const std::vector<float> zeros(static_cast<std::size_t>(height) * width * depth, 0.0F);
-  return {Tensor::from_vector(zeros, {height, width, depth}, TensorMemory::EV74)};
+  std::vector<float> values(static_cast<std::size_t>(height) * width * depth);
+  for (std::size_t i = 0; i < values.size(); ++i)
+    values[i] = static_cast<float>((i * (phase ? 17 : 1) + phase * 13) % 251);
+  return {Tensor::from_vector(values, {height, width, depth}, TensorMemory::EV74)};
 }
 
-void run_inference(Model& model, const TensorList& inputs) {
-  auto runner = model.build(inputs);
-  for (int i = 0; i < 3; ++i) {
-    const auto outputs = runner.run(inputs, 30000);
-    require(!outputs.empty(), "ordinary inference after profiling produced no outputs");
-    for (const auto& tensor : outputs)
-      require(!tensor.shape.empty(), "ordinary inference returned an empty tensor shape");
+using OutputSnapshot =
+    std::vector<std::tuple<TensorDType, std::vector<int64_t>, std::vector<std::uint8_t>>>;
+
+OutputSnapshot snapshot(const TensorList& outputs) {
+  require(!outputs.empty(), "inference produced no outputs");
+  OutputSnapshot result;
+  for (const auto& tensor : outputs) {
+    const auto contiguous = tensor.contiguous();
+    const auto mapping = contiguous.view_read();
+    require(mapping.data && mapping.size_bytes > 0, "inference returned empty tensor data");
+    const auto* bytes = static_cast<const std::uint8_t*>(mapping.data);
+    result.emplace_back(tensor.dtype, tensor.shape,
+                        std::vector<std::uint8_t>(bytes, bytes + mapping.size_bytes));
   }
-  runner.close();
+  return result;
 }
 
 void require_headlines(const BenchmarkReport& report) {
@@ -52,7 +61,13 @@ int main(int argc, char** argv) {
     // Strict CI coverage: missing model, runtime, or profiling files must fail, never skip.
     require(!archive.empty(), "Failed to resolve the existing CI YOLOv8s model archive");
     Model model(archive);
-    const auto inputs = make_input(model);
+    const std::vector<TensorList> inputs{make_input(model, 0), make_input(model, 1)};
+    // Retain Model::run()'s cached runner throughout profiling. Snapshot each output now:
+    // the runtime can reuse its buffers on the next inference.
+    const std::vector<OutputSnapshot> expected_outputs{snapshot(model.run(inputs[0], 30000)),
+                                                       snapshot(model.run(inputs[1], 30000))};
+    require(expected_outputs[0] != expected_outputs[1],
+            "the two inputs must produce different outputs to detect stale results");
     BenchmarkOptions options;
     options.num_samples = 20;
     options.min_duration_ms = 0;
@@ -84,7 +99,16 @@ int main(int argc, char** argv) {
 
       // Exercise the public inference API immediately after MIP profiling. No reset or sleep:
       // MLA-RT must hand the hardware back to the kernel driver before benchmark() returns.
-      run_inference(model, inputs);
+      for (std::size_t i = 0; i < inputs.size(); ++i)
+        require(snapshot(model.run(inputs[i], 30000)) == expected_outputs[i],
+                "cached inference output changed after profiling");
+      {
+        auto runner = model.build(inputs.front());
+        for (std::size_t i = 0; i < inputs.size(); ++i)
+          require(snapshot(runner.run(inputs[i], 30000)) == expected_outputs[i],
+                  "fresh inference output changed after profiling");
+        runner.close();
+      }
       options.include_layer_stats = false;
       const auto ordinary = model.benchmark(options);
       require_headlines(ordinary);
@@ -92,7 +116,7 @@ int main(int argc, char** argv) {
       require(ordinary.throughput_samples == options.num_samples,
               "ordinary benchmark lost inputs after profiling");
       std::cerr << "[layer_stats] round=" << round + 1 << " layers=" << layers.size()
-                << " normal_inference=ok normal_benchmark=ok\n";
+                << " cached_inference=correct fresh_inference=correct normal_benchmark=ok\n";
     }
     std::cerr << "[OK] yolov8_model_layer_stats_test passed\n";
     return 0;

@@ -1055,9 +1055,9 @@ if (GST_FOUND)
 endif()
 
 if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
-  pkg_check_modules(YAML QUIET IMPORTED_TARGET yaml-0.1)
+  pkg_check_modules(YAML QUIET IMPORTED_TARGET yaml-cpp)
 else()
-  pkg_check_modules(YAML REQUIRED IMPORTED_TARGET yaml-0.1)
+  pkg_check_modules(YAML REQUIRED IMPORTED_TARGET yaml-cpp)
 endif()
 set(SIMANEAT_PRIVATE_LIBRARIES ZLIB::ZLIB)
 if (YAML_FOUND)
@@ -1573,7 +1573,7 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-imgcodecs410"
   # libsima_neat.so links libz directly to inflate model archives in process.
   "zlib1g"
-  "libyaml-0-2"
+  "libyaml-cpp0.8"
   "neat-runtime"
   "neat-gst-plugins"
   "libcpp-httplib0.18"
@@ -1591,7 +1591,7 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "libglib2.0-dev"
   "libopencv-dev"
   "nlohmann-json3-dev"
-  "libyaml-dev"
+  "libyaml-cpp-dev"
 )
 string(JOIN ", " CPACK_DEBIAN_DEV_PACKAGE_DEPENDS ${SIMANEAT_DEV_DEBIAN_DEPENDS})
 set(CPACK_INSTALL_CMAKE_PROJECTS

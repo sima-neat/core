@@ -105,6 +105,10 @@ you can resume ordinary inference immediately after `benchmark()` returns; no ma
 or delay is needed. Older builds can leave the hardware in a state that causes subsequent
 kernel-driven inference to fail.
 
+Sequential calls to `Model.run()` before and after profiling are supported, including reuse
+of its cached runner. Finish pending inference before requesting layer stats; profiling must
+not overlap inference through `Model.run()`, an explicit runner, or another application.
+
 ## Run
 
 Run it and you should see the benchmark summary printed by `benchmark()`, followed by the same values printed from the returned report. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.

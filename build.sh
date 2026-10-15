@@ -115,7 +115,7 @@ SYSTEM_DEPS_LINUX=(
   libopencv-dev
   nlohmann-json3-dev
   libcpp-httplib-dev
-  libyaml-dev
+  libyaml-cpp-dev
   clang
   clang-format
   ripgrep
@@ -137,7 +137,7 @@ SYSTEM_DEPS_MAC=(
   opencv
   nlohmann-json
   cpp-httplib
-  libyaml
+  yaml-cpp
 )
 
 SELECTED_SYSTEM_DEPS_LINUX=()
@@ -705,13 +705,14 @@ ensure_core_yaml_sdk_deps() {
   if [[ "${ELXR_SDK}" != "ON" || "${DOCS_ONLY}" == "ON" ]]; then
     return
   fi
-  if [[ -f "${SYSROOT}/usr/include/yaml.h" &&
-        -f "${SYSROOT}/usr/lib/aarch64-linux-gnu/pkgconfig/yaml-0.1.pc" ]]; then
+  if [[ -f "${SYSROOT}/usr/include/yaml-cpp/yaml.h" &&
+        -f "${SYSROOT}/usr/lib/aarch64-linux-gnu/pkgconfig/yaml-cpp.pc" &&
+        -e "${SYSROOT}/usr/lib/aarch64-linux-gnu/libyaml-cpp.so" ]]; then
     return
   fi
   local yaml_stage
   yaml_stage="$(mktemp -d /tmp/sima-neat-yaml-deps-XXXXXX)"
-  (cd "${yaml_stage}" && apt-get download libyaml-dev:arm64)
+  (cd "${yaml_stage}" && apt-get download libyaml-cpp-dev:arm64 libyaml-cpp0.8:arm64)
   local yaml_deb
   for yaml_deb in "${yaml_stage}"/*.deb; do
     if ! dpkg-deb -x "${yaml_deb}" "${SYSROOT}" 2>/dev/null; then

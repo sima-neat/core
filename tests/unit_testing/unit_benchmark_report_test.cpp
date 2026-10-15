@@ -2,6 +2,7 @@
 #include "test_main.h"
 
 #include <glib.h>
+#include <yaml-cpp/yaml.h>
 
 #include <fstream>
 #include <limits>
@@ -77,22 +78,24 @@ void saves_exact_path_and_replaces_existing_report() {
     LocaleGuard locale;
     require(report.save(target) == target, "save must return the caller's complete file path");
   }
-  const auto contents = read_file(target);
-  require(contents.find("latency_ms: 1.25\n") != std::string::npos,
+  const auto parsed = YAML::LoadFile(target.string());
+  require(parsed["latency_ms"].as<double>() == report.latency_ms,
           "decimal scalars must be locale independent");
-  require(contents.find("layer_stats: []\n") != std::string::npos,
+  require(parsed["layer_stats"].IsSequence() && parsed["layer_stats"].size() == 0,
           "a report without profiling must save an empty sequence");
   require(!std::filesystem::exists(target.parent_path() / "benchmark.yaml"),
           "save must not append an invented filename");
-  require(contents.find("latency_p95_ms: 2.5\n") != std::string::npos,
+  require(parsed["latency_p95_ms"].as<double>() == report.latency_p95_ms,
           "save must preserve latency percentiles");
-  require(contents.find("\"mean\":42.25") != std::string::npos,
+  require(parsed["telemetry"]["cpu_cores_usage_pct"][0]["mean"].as<double>() == 42.25,
           "save must preserve per-core telemetry measurements");
   report.layer_stats = {{"MLA_0/noop", 0.0, 2}};
   report.save(target);
-  require(read_file(target).find("stage_index: 2\n") != std::string::npos,
+  const auto layer = YAML::LoadFile(target.string())["layer_stats"][0];
+  require(layer["stage_index"].as<std::size_t>() == 2,
           "stage indices must preserve execution order gaps for A65 stages");
-  require(read_file(target).find("total_execution_time_us: 0\n") != std::string::npos,
+  require(layer["name"].as<std::string>() == "MLA_0/noop" &&
+              layer["total_execution_time_us"].as<double>() == 0,
           "replacement must retain zero-time no-op records");
 }
 
@@ -106,11 +109,11 @@ void telemetry_scientific_notation_remains_numeric() {
   const auto contents = read_file(path);
   // YAML 1.1 resolvers require a decimal point before an exponent. Check all three
   // metric values, including a negative value (temperatures can be below zero).
-  require(contents.find("\"mean\":1.0e-09") != std::string::npos,
+  require(contents.find("mean: 1.0e-09") != std::string::npos,
           "small telemetry means must remain YAML numbers");
-  require(contents.find("\"minimum\":-1.0e-20") != std::string::npos,
+  require(contents.find("minimum: -1.0e-20") != std::string::npos,
           "negative telemetry values must remain YAML numbers");
-  require(contents.find("\"maximum\":1.0e+20") != std::string::npos,
+  require(contents.find("maximum: 1.0e+20") != std::string::npos,
           "large telemetry values must remain YAML numbers");
 }
 

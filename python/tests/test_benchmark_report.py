@@ -26,6 +26,8 @@ def test_report_yaml_round_trip(tmp_path):
       ('MLA_0/conv: "quoted"\nline\\end\tα🚀\u007f\u0080\u0085\u2028\u2029', 161.95, 0),
       ("null", 0.0, 0),
       ("null", 1e-9, 2),
+      ("42", 1e20, 2),
+      ("true", 1e-20, 2),
   ]:
     layer = pyneat.LayerStats()
     layer.name = name
