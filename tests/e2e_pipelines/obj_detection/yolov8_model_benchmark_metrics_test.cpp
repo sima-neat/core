@@ -14,7 +14,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr int kBenchmarkSamples = 100;
-constexpr double kDefaultMinDurationMs = 30000.0;
+constexpr double kDefaultMinDurationMs = 10000.0;
 
 } // namespace
 

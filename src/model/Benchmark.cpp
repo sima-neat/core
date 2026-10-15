@@ -387,6 +387,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
 
   MeasureReport latency_measured;
   MeasureReport throughput_measured;
+  int latency_samples = 0;
   {
     Model::Runner latency_runner = ModelAccess::build_benchmark_runner(
         model, inputs, latency_run_options, benchmark_model_options);
@@ -401,13 +402,16 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
 
     MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
         kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark latency"));
-    for (int i = 0; i < num_samples; ++i) {
+    const auto min_end =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
+    while (latency_samples < num_samples || std::chrono::steady_clock::now() < min_end) {
       if (!latency_runner.push(inputs)) {
         latency_runner.close();
         throw std::runtime_error("Model::benchmark: latency measured push failed");
       }
       Sample out = latency_runner.pull(kTimeoutMs);
       require_benchmark_output(out, "latency measured");
+      ++latency_samples;
     }
 
     latency_measured = measure.stop();
@@ -530,7 +534,8 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
   }
 
   BenchmarkReport report = internal::build_benchmark_report_from_measurements(
-      latency_measured, throughput_measured, num_samples, pushed, std::move(telemetry));
+      latency_measured, throughput_measured, num_samples, latency_samples, pushed,
+      std::move(telemetry));
   if (options.include_layer_stats) {
     report.layer_stats = collect_mla_layer_stats(profile_stages, mla_rt);
   }
@@ -548,6 +553,8 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
             << (include_plugin_latency ? "e2e+throughput+plugin-latency" : "e2e+throughput-only")
             << "\n";
   std::cout << "Latency: " << report.latency_ms << " ms\n";
+  std::cout << "Latency window: " << latency_measured.elapsed_s << " s, " << latency_samples
+            << " inputs\n";
   std::cout << "FPS:     " << report.fps << " inferences/s\n";
   std::cout << "Batch throughput: " << batch_throughput << " batches/s\n";
   std::cout << "Throughput window: " << report.throughput_duration_ms / 1000.0 << " s, "
@@ -652,9 +659,10 @@ void require_finite_positive(double value, const char* field) {
 
 BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& latency_report,
                                                          const MeasureReport& throughput_report,
-                                                         int num_samples, int throughput_samples,
+                                                         int num_samples, int latency_samples,
+                                                         int throughput_samples,
                                                          BenchmarkTelemetry telemetry) {
-  require_benchmark_measure_report_window(latency_report, "latency", num_samples);
+  require_benchmark_measure_report_window(latency_report, "latency", latency_samples);
   require_benchmark_measure_report_window(throughput_report, "throughput", throughput_samples);
 
   const int latency_batch =

@@ -200,7 +200,8 @@ through its HTTP API on `/run/simaai-sentinel/api.sock`; Core does not read the 
 chips for the benchmark. The benchmark records a Sentinel trace named `neat-benchmark-<UTC time>`
 around the throughput pass, stops only that trace, and keeps it for Sentinel's own tools. Sentinel
 samples about every 2 s, so the throughput pass runs for at least
-`BenchmarkOptions::min_duration_ms` (30 s by default). When Sentinel is not running, another trace
+`BenchmarkOptions::min_duration_ms` (10 s by default). The latency pass follows the same minimum
+so both passes stop by the same rule. When Sentinel is not running, another trace
 is recording, or the window has no samples, the benchmark still returns latency and FPS; the power
 fields are zero and `telemetry.status` names the reason. Board mode of
 `tools/install_neat_framework.sh` installs Sentinel or upgrades it to the latest production build. `Run` power

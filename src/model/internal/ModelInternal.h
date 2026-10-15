@@ -119,11 +119,13 @@ struct ModelAccess {
 
 BenchmarkReport run_benchmark(Model& model, const BenchmarkOptions& options);
 
-/// Project the latency window (`num_samples` inputs), the throughput window
+/// Project the latency window (`latency_samples` inputs), the throughput window
 /// (`throughput_samples` inputs), and Sentinel telemetry into the public benchmark report.
+/// `num_samples` is the requested count that `energy_joules` is normalized to.
 BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& latency_report,
                                                          const MeasureReport& throughput_report,
-                                                         int num_samples, int throughput_samples,
+                                                         int num_samples, int latency_samples,
+                                                         int throughput_samples,
                                                          BenchmarkTelemetry telemetry);
 
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,

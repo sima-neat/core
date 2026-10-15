@@ -29,9 +29,9 @@
 
 ### 벤치마크 실행 {#step-run-benchmark}
 
-`benchmark(samples)`를 호출합니다. API는 모델을 준비하고, `samples`개의 입력으로 단일 실행(single-flight) 지연 시간을 측정한 다음, 별도의 비동기 푸시/풀 패스에서 처리량을 측정하고, 요약을 표준 출력으로 출력한 뒤, 동일한 주요 값을 `BenchmarkReport`로 반환합니다.
+`benchmark(samples)`를 호출합니다. API는 모델을 준비하고, 단일 실행(single-flight) 지연 시간을 측정한 다음, 별도의 비동기 푸시/풀 패스에서 처리량을 측정하고, 요약을 표준 출력으로 출력한 뒤, 동일한 주요 값을 `BenchmarkReport`로 반환합니다.
 
-처리량 패스는 최소 `samples`개의 입력을 측정하고 30초가 경과할 때까지 실행되므로 전력 및 온도 측정값이 안정적입니다. 이 하한을 변경하려면 `BenchmarkOptions::min_duration_ms`를 설정하고, `samples`개의 입력 후에 중지하는 빠른 스모크 테스트를 하려면 0으로 설정합니다.
+각 패스는 최소 `samples`개의 입력을 측정하고 10초가 경과할 때까지 실행되므로 처리량 패스의 전력 및 온도 측정값은 여러 샘플에 걸쳐 수집됩니다. 이 하한을 변경하려면 `BenchmarkOptions::min_duration_ms`를 설정하고, 각 패스가 `samples`개의 입력 후에 중지하는 빠른 스모크 테스트를 하려면 0으로 설정합니다.
 
 BoxDecode로 끝나는 경로를 가진 감지 모델은 `BenchmarkOptions`를 사용할 수도 있습니다. `original_width`, `original_height` 및 `resize_mode`를 설정하여 BoxDecode가 모델 좌표에서 감지를 매핑할 때 사용하는 소스 이미지의 기하학적 구조를 설명합니다. 합성 텐서는 모델의 형태를 유지합니다.
 

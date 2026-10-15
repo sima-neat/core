@@ -124,11 +124,11 @@ struct BenchmarkTelemetry {
  * @brief Headline result returned by `Model::benchmark()`.
  *
  * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
- * `latency_ms` is measured with a warmed-up single-flight push/pull loop over `num_samples`
- * inputs; `latency_p50_ms`, `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same
- * loop. `fps` means logical inferences per second from a separate async throughput pass (for
- * batched models this is batches/sec multiplied by the compiled batch size). The throughput pass
- * runs until it has measured at least `num_samples` inputs and `min_duration_ms` has elapsed.
+ * `latency_ms` is measured with a warmed-up single-flight push/pull loop; `latency_p50_ms`,
+ * `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same loop. `fps` means logical
+ * inferences per second from a separate async throughput pass (for batched models this is
+ * batches/sec multiplied by the compiled batch size). Each pass runs until it has measured at
+ * least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
  * Power and board telemetry come from the Sentinel daemon. When Sentinel is unavailable, the
  * power fields are zero and `telemetry.status` names the reason.
@@ -177,11 +177,11 @@ struct BenchmarkOptions {
   /// resolved preprocess policy, or stretch when the model route has no resize stage.
   std::optional<ResizeMode> resize_mode;
   bool include_plugin_latency = false; ///< Deprecated: plugin latency will be removed.
-  /// Minimum length of the throughput pass, in milliseconds; must be zero or greater. The pass
-  /// continues past `num_samples` inputs until this much time has elapsed, so power and
-  /// temperature readings cover several telemetry samples. Set it to 0 to stop after
-  /// `num_samples` inputs.
-  int min_duration_ms = 30000;
+  /// Minimum length of each pass, latency and throughput, in milliseconds; must be zero or
+  /// greater. Each pass continues past `num_samples` inputs until this much time has elapsed, so
+  /// both passes follow the same rule and the throughput pass's power and temperature readings
+  /// cover several telemetry samples. Set it to 0 to stop each pass after `num_samples` inputs.
+  int min_duration_ms = 10000;
   /// Advanced: collect compiled MLA layer timings in a separate profiling pass. Default off.
   /// Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an idle devkit with no
   /// other active MLA workloads. See tutorial 003 for the verified runtime build.
@@ -777,8 +777,8 @@ public:
    * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
    * measures single-flight latency and async logical-inference throughput separately, records
    * board telemetry through Sentinel during the throughput pass, prints a compact summary, and
-   * returns headline metrics. The throughput pass lasts at least
-   * `BenchmarkOptions::min_duration_ms` (30 s by default).
+   * returns headline metrics. Each pass lasts at least `BenchmarkOptions::min_duration_ms`
+   * (10 s by default).
    */
   BenchmarkReport benchmark(const BenchmarkOptions& options);
   BenchmarkReport benchmark(int num_samples = 100);

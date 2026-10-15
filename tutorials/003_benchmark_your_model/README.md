@@ -29,9 +29,9 @@ Start with the same compiled `.tar.gz` archive used by the earlier model tutoria
 
 ### Run the benchmark {#step-run-benchmark}
 
-Call `benchmark(samples)`. The API warms up the model, measures single-flight latency over `samples` inputs, then measures throughput in a separate async push/pull pass, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
+Call `benchmark(samples)`. The API warms up the model, measures single-flight latency, then measures throughput in a separate async push/pull pass, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
 
-The throughput pass runs until it has measured at least `samples` inputs and 30 seconds have passed, so its power and temperature readings are steady. Set `BenchmarkOptions::min_duration_ms` to change that floor, or to 0 for a quick smoke check that stops after `samples` inputs.
+Each pass runs until it has measured at least `samples` inputs and 10 seconds have passed, so the throughput pass's power and temperature readings cover several samples. Set `BenchmarkOptions::min_duration_ms` to change that floor, or to 0 for a quick smoke check that stops each pass after `samples` inputs.
 
 Detection models whose route ends in BoxDecode can also use `BenchmarkOptions`. Set
 `original_width`, `original_height`, and `resize_mode` to describe the source-image geometry that

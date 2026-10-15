@@ -29,9 +29,9 @@
 
 ### 執行基準測試 {#step-run-benchmark}
 
-呼叫 `benchmark(samples)`。API 會預熱模型，以 `samples` 個輸入測量單次執行（single-flight）延遲，接著在另一個非同步推送/拉取階段中測量吞吐量，將摘要列印到標準輸出，並在 `BenchmarkReport` 中傳回相同的主要值。
+呼叫 `benchmark(samples)`。API 會預熱模型，測量單次執行（single-flight）延遲，接著在另一個非同步推送/拉取階段中測量吞吐量，將摘要列印到標準輸出，並在 `BenchmarkReport` 中傳回相同的主要值。
 
-吞吐量階段會持續執行，直到至少測量了 `samples` 個輸入且已經過 30 秒，因此其功耗和溫度讀數會保持穩定。設定 `BenchmarkOptions::min_duration_ms` 可變更此下限；設為 0 則可進行快速的初步檢查，在測量 `samples` 個輸入後即停止。
+每個階段都會持續執行，直到至少測量了 `samples` 個輸入且已經過 10 秒，因此吞吐量階段的功耗和溫度讀數會涵蓋多個樣本。設定 `BenchmarkOptions::min_duration_ms` 可變更此下限；設為 0 則可進行快速的初步檢查，讓每個階段在測量 `samples` 個輸入後即停止。
 
 其路徑以 BoxDecode 結尾的檢測模型也可以使用 `BenchmarkOptions`。設定 `original_width`、`original_height` 和 `resize_mode`，以描述源圖像幾何形狀，BoxDecode 在將檢測映射到模型座標時使用該幾何形狀。合成張量仍然保持模型形狀：
 

@@ -23,11 +23,11 @@ Release notes for the SiMa.ai Neat Library.
 ### Runtime changes
 
 - `Model::benchmark()` reads board telemetry from [Sentinel](/tools/sentinel/)
-  instead of sampling power rails itself. The throughput pass now runs until it
-  has measured `num_samples` inputs and at least `BenchmarkOptions::min_duration_ms`
-  has elapsed, 30 s by default, so power and temperature readings span several
-  Sentinel samples. Set `min_duration_ms` to 0 for the previous count-based
-  timing. `BenchmarkReport` adds `latency_p50_ms`, `latency_p95_ms`,
+  instead of sampling power rails itself. The latency and throughput passes now
+  each run until they have measured `num_samples` inputs and at least
+  `BenchmarkOptions::min_duration_ms` has elapsed, 10 s by default, so power and
+  temperature readings span several Sentinel samples. Set `min_duration_ms` to 0
+  for the previous count-based timing. `BenchmarkReport` adds `latency_p50_ms`, `latency_p95_ms`,
   `latency_p99_ms`, `peak_power_watts`, `throughput_samples`,
   `throughput_duration_ms`, and `telemetry` with rail power, die and board
   temperatures, CPU utilization overall and per core, and MLA, CMA, and Linux
