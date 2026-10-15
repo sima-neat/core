@@ -786,13 +786,14 @@ hints in `ModelOptions`. Existing `benchmark(num_samples)` calls keep the same b
 
 ### Run length
 
-The benchmark measures latency over `num_samples` single-flight inputs, then runs a separate
-throughput pass. `latency_ms` is the mean latency of those inputs, and `latency_p50_ms`,
-`latency_p95_ms`, and `latency_p99_ms` are its percentiles. The throughput pass continues until it
-has measured at least `num_samples` inputs and `min_duration_ms` has elapsed (30 s by default), so
-power and temperature readings cover several telemetry samples rather than a short burst.
-`throughput_samples` and `throughput_duration_ms` report what the pass measured. For a quick smoke
-check, set `min_duration_ms` to 0 to stop after `num_samples` inputs:
+The benchmark measures single-flight latency, then runs a separate throughput pass. Each pass
+continues until it has measured at least `num_samples` inputs and `min_duration_ms` has elapsed
+(10 s by default), so both passes stop by the same rule and the throughput pass's power and
+temperature readings cover several telemetry samples rather than a short burst. `latency_ms` is the
+mean latency of the latency pass, and `latency_p50_ms`, `latency_p95_ms`, and `latency_p99_ms` are
+its percentiles. `throughput_samples` and `throughput_duration_ms` report what the throughput pass
+measured. For a quick smoke check, set `min_duration_ms` to 0 to stop each pass after `num_samples`
+inputs:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -836,7 +837,7 @@ Sentinel's own tools. `report.telemetry` summarizes the trace:
 | `telemetry.linux_memory_used_mib` | Linux used memory, excluding page cache, in MiB. |
 
 Each metric reports `samples`, `mean`, `minimum`, and `maximum`, and `samples == 0` means the board
-did not report it. Memory values cover the whole board, including other running processes. Sentinel samples every 2 s, so a 30 s pass yields about 15 samples.
+did not report it. Memory values cover the whole board, including other running processes. Sentinel samples every 2 s, so a 10 s pass yields about 5 samples.
 
 When Sentinel is not running, another Sentinel trace is already recording, or the pass is too short
 to collect a sample, the benchmark still returns latency and FPS. The power fields stay zero,

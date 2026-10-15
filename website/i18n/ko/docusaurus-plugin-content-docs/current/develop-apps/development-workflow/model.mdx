@@ -771,7 +771,7 @@ report = model.benchmark(options)
 
 ### 실행 길이
 
-벤치마크는 `num_samples`개의 단일 실행(single-flight) 입력으로 지연 시간을 측정한 다음, 별도의 처리량 패스를 실행합니다. `latency_ms`는 해당 입력의 평균 지연 시간이며, `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`는 그 백분위수입니다. 처리량 패스는 최소 `num_samples`개의 입력을 측정하고 `min_duration_ms`(기본값 30초)가 경과할 때까지 계속되므로, 전력 및 온도 측정값이 짧은 버스트가 아니라 여러 텔레메트리 샘플에 걸쳐 수집됩니다. `throughput_samples`와 `throughput_duration_ms`는 이 패스에서 측정한 내용을 보고합니다. 빠른 스모크 테스트를 하려면 `min_duration_ms`를 0으로 설정하여 `num_samples`개의 입력 후에 중지하십시오.
+벤치마크는 단일 실행(single-flight) 지연 시간을 측정한 다음, 별도의 처리량 패스를 실행합니다. 각 패스는 최소 `num_samples`개의 입력을 측정하고 `min_duration_ms`(기본값 10초)가 경과할 때까지 계속되므로, 두 패스는 같은 규칙으로 멈추고 처리량 패스의 전력 및 온도 측정값은 짧은 버스트가 아니라 여러 텔레메트리 샘플에 걸쳐 수집됩니다. `latency_ms`는 지연 시간 패스의 평균 지연 시간이며, `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`는 그 백분위수입니다. `throughput_samples`와 `throughput_duration_ms`는 처리량 패스에서 측정한 내용을 보고합니다. 빠른 스모크 테스트를 하려면 `min_duration_ms`를 0으로 설정하여 각 패스가 `num_samples`개의 입력 후에 중지하도록 하십시오.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -811,7 +811,7 @@ report = model.benchmark(options)
 | `telemetry.cma_memory_mib` | 사용 중인 연속 메모리(CMA, MiB)입니다. MLA 메모리 풀을 포함하므로 `mla_memory_mib`에 더하지 마십시오. 유휴 상태에서는 Linux가 CMA에서 빌려 쓰는 페이지 캐시도 포함합니다. |
 | `telemetry.linux_memory_used_mib` | 페이지 캐시를 제외한 Linux 사용 메모리(MiB)입니다. |
 
-각 지표는 `samples`, `mean`, `minimum`, `maximum`을 보고하며, `samples == 0`은 보드가 해당 지표를 보고하지 않았음을 의미합니다. 메모리 값은 보드 전체 기준이며 실행 중인 다른 프로세스도 포함합니다. Sentinel은 2초마다 샘플링하므로 30초 패스에서는 약 15개의 샘플이 수집됩니다.
+각 지표는 `samples`, `mean`, `minimum`, `maximum`을 보고하며, `samples == 0`은 보드가 해당 지표를 보고하지 않았음을 의미합니다. 메모리 값은 보드 전체 기준이며 실행 중인 다른 프로세스도 포함합니다. Sentinel은 2초마다 샘플링하므로 10초 패스에서는 약 5개의 샘플이 수집됩니다.
 
 Sentinel이 실행 중이 아니거나, 다른 Sentinel 트레이스가 이미 기록 중이거나, 패스가 너무 짧아 샘플을 수집하지 못한 경우에도 벤치마크는 지연 시간과 FPS를 반환합니다. 전력 필드는 0으로 유지되고, `telemetry.status`에 그 이유가 표시되며(정상인 경우 `"ok"`), 출력되는 요약에는 `Power: unavailable (<reason>)`이 표시됩니다.
 

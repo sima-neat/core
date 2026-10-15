@@ -771,7 +771,7 @@ report = model.benchmark(options)
 
 ### 執行長度
 
-基準測試會以 `num_samples` 個單次執行（single-flight）輸入測量延遲，然後執行另一個獨立的吞吐量階段。`latency_ms` 是這些輸入的平均延遲，`latency_p50_ms`、`latency_p95_ms` 和 `latency_p99_ms` 則是其百分位數。吞吐量階段會持續執行，直到至少測量了 `num_samples` 個輸入且已經過 `min_duration_ms`（預設為 30 秒），因此功耗和溫度讀數會涵蓋多個遙測樣本，而不只是短暫的爆發。`throughput_samples` 和 `throughput_duration_ms` 會回報此階段實際測量的內容。若要進行快速的初步檢查，請將 `min_duration_ms` 設為 0，在測量 `num_samples` 個輸入後即停止：
+基準測試會測量單次執行（single-flight）延遲，然後執行另一個獨立的吞吐量階段。每個階段都會持續執行，直到至少測量了 `num_samples` 個輸入且已經過 `min_duration_ms`（預設為 10 秒），因此兩個階段依相同規則停止，吞吐量階段的功耗和溫度讀數也會涵蓋多個遙測樣本，而不只是短暫的爆發。`latency_ms` 是延遲階段的平均延遲，`latency_p50_ms`、`latency_p95_ms` 和 `latency_p99_ms` 則是其百分位數。`throughput_samples` 和 `throughput_duration_ms` 會回報吞吐量階段實際測量的內容。若要進行快速的初步檢查，請將 `min_duration_ms` 設為 0，讓每個階段在測量 `num_samples` 個輸入後即停止：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -811,7 +811,7 @@ report = model.benchmark(options)
 | `telemetry.cma_memory_mib` | 已使用的連續記憶體（CMA，MiB）。它包含 MLA 記憶體池，因此請勿將其與 `mla_memory_mib` 相加。閒置時，它也包含 Linux 從 CMA 借用的頁面快取。 |
 | `telemetry.linux_memory_used_mib` | Linux 已使用的記憶體（不含頁面快取，MiB）。 |
 
-每項指標都會回報 `samples`、`mean`、`minimum` 與 `maximum`，而 `samples == 0` 表示板子未回報該項指標。記憶體數值涵蓋整個板子，包括其他正在執行的程序。Sentinel 每 2 秒取樣一次，因此 30 秒的階段約可取得 15 個樣本。
+每項指標都會回報 `samples`、`mean`、`minimum` 與 `maximum`，而 `samples == 0` 表示板子未回報該項指標。記憶體數值涵蓋整個板子，包括其他正在執行的程序。Sentinel 每 2 秒取樣一次，因此 10 秒的階段約可取得 5 個樣本。
 
 當 Sentinel 未執行、已有另一個 Sentinel 追蹤正在記錄，或階段太短而無法收集到樣本時，基準測試仍會傳回延遲與 FPS。功耗欄位會保持為零，`telemetry.status` 會指出原因（否則為 `"ok"`），而列印的摘要會顯示 `Power: unavailable (<reason>)`。
 
