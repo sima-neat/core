@@ -9,12 +9,14 @@ const locales = ["ko", "ja", "zh-Hant", "uk"];
 const categoryPrefix = "sidebar.docs.category.";
 const protectedLabels = new Set([
   "API", "GenAI", "Insight", "Model Compiler API", "Neat Library", "Neat SDK",
-  "Sentinel", "appzoo", "device", "mla", "modelzoo", "neat", "packages", "playbooks",
-  "pyneat", "sdk", "sima-cli",
+  "Sentinel", "pyneat", "sima-cli",
 ]);
-// Command names keep their English spelling. Listed by key, because a label
-// such as `peripherals` also names categories that must be translated.
-const protectedKeys = new Set(["tools/sima-cli/peripherals"]);
+// sima-cli command names keep their English spelling. Listed by key, because
+// a label such as `peripherals` can also name a category that needs translating.
+const protectedKeys = new Set(
+  ["appzoo", "device", "mla", "modelzoo", "neat", "packages", "peripherals", "playbooks", "sdk"]
+    .map((command) => `tools/sima-cli/${command}`),
+);
 const requiredLabels = new Set([
   "Advanced Concepts", "Application Design", "Build & Test", "Cameras & Streaming",
   "Compile a Model", "Contracts & Internals", "Contribute", "Data & Model Contracts",
