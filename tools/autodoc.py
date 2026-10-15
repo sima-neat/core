@@ -803,6 +803,14 @@ def frontmatter_field(doc: Path, field: str) -> Optional[str]:
     return match.group(1).strip().strip("\"'") if match else None
 
 
+def strip_number_prefix(name: str) -> str:
+    """Docusaurus' default number prefix parser: `01-guides` -> `guides`."""
+    if re.match(r"^\d+[-_.]\d+", name):  # date or version, not a prefix
+        return name
+    match = re.match(r"^\d+\s*[-_.]+\s*([^-_.\s].*)$", name)
+    return match.group(1) if match else name
+
+
 def linked_doc_sidebar_key(
     folder: Path, link: object, dst_section: Path, mount: str
 ) -> Optional[str]:
@@ -812,7 +820,8 @@ def linked_doc_sidebar_key(
     is the metadata's `link` value, or `...` when the metadata has no `link`:
     then the conventional index doc (`index`, `readme` or the folder name)
     is linked. An explicit doc link names a doc id, `<dir>/<id>` with the
-    front matter `id` or the file name without its number prefix.
+    front matter `id` or the file name, number prefixes stripped from every
+    directory and the file name.
     """
     docs = sorted(p for p in folder.iterdir() if p.suffix in (".md", ".mdx"))
     if link is ...:
@@ -823,9 +832,9 @@ def linked_doc_sidebar_key(
         for doc in sorted(dst_section.rglob("*.md*")):
             if doc.suffix not in (".md", ".mdx"):
                 continue
-            local_id = frontmatter_field(doc, "id") or re.sub(r"^\d+[-_.]\s*", "", doc.stem)
-            directory = doc.parent.relative_to(dst_section).as_posix()
-            doc_id = "/".join(part for part in (mount, directory, local_id) if part != ".")
+            local_id = frontmatter_field(doc, "id") or strip_number_prefix(doc.stem)
+            directory = Path(mount) / doc.parent.relative_to(dst_section)
+            doc_id = "/".join([*(strip_number_prefix(part) for part in directory.parts), local_id])
             if doc_id == link["id"]:
                 linked.append(doc)
     else:

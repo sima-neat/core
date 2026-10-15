@@ -785,6 +785,7 @@ class CategoryKeyTests(unittest.TestCase):
         cases = {
             "file name": ("guides/02-setup.md", "tools/tool/guides/setup"),
             "front matter id": ("guides/start.md", "tools/tool/guides/getting-started"),
+            "numbered directory": ("guides/01-basics/setup.md", "tools/tool/guides/basics/setup"),
         }
         for name, (relative, doc_id) in cases.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:
