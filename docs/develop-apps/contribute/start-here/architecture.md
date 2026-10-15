@@ -191,6 +191,7 @@ The MPK `input_range` of the model ingress is part of the preprocessing contract
 - `[0, 255]` is the identity mapping, so normalization stays off.
 - The range is used only when every ingress tensor declares the same value. Differing or partially missing ranges leave normalization off and log a planner warning.
 - Explicit `On` or `Off`, explicit `mean`/`stddev`, and presets always override this rule. Tensor input is unaffected.
+
 ### Public execution plan
 
 `Model::execution_plan(...)` returns what `build(...)` with the same arguments runs: the Model's
