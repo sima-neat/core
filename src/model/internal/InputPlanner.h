@@ -68,6 +68,7 @@ struct PreprocessCapabilities {
   GraphFamilyCapabilities quanttess;
   PreprocessGraphFamily tensor_auto_family = PreprocessGraphFamily::Disabled;
   bool has_model_input_normalization = false;
+  bool model_input_range_ambiguous = false; ///< MPK ingress tensors disagree on input_range.
   std::array<float, 3> model_input_mean = {0.0f, 0.0f, 0.0f};
   std::array<float, 3> model_input_stddev = {1.0f, 1.0f, 1.0f};
 };

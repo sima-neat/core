@@ -348,5 +348,13 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
              const PreprocessPlannerResult no_range_out = plan_preprocess(opt, no_range_caps);
              require(no_range_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
                      "planner: models without a normalizing input_range keep normalize Off");
+
+             PreprocessCapabilities ambiguous_caps = no_range_caps;
+             ambiguous_caps.model_input_range_ambiguous = true;
+             const PreprocessPlannerResult ambiguous_out = plan_preprocess(opt, ambiguous_caps);
+             require(ambiguous_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
+                     "planner: ambiguous multi-ingress input_range keeps normalize Off");
+             require(has_warning(ambiguous_out, "image ingress range is ambiguous"),
+                     "planner: ambiguous multi-ingress input_range must be reported");
            }
          }));

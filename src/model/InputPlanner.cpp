@@ -530,12 +530,27 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
         " Ensure the model pack includes an mpk.json manifest with plugin IO contracts.");
   }
   const auto& contract = *maybe_contract;
+  // The image ingress is not identified separately from the MPK ingress list, so
+  // only a range shared by every ingress tensor is trusted.  Differing or partially
+  // missing ranges are ambiguous: normalize=Auto must not pick one by manifest order.
+  const std::vector<double>* shared_range = nullptr;
+  bool any_missing = false;
+  bool conflict = false;
   for (const auto& ingress : contract.ingress_tensors) {
-    std::array<float, 3> mean{};
-    std::array<float, 3> stddev{};
-    if (!derive_unit_pixel_normalization_from_input_range(ingress.input_range, &mean, &stddev)) {
-      continue;
+    if (ingress.input_range.size() < 2U) {
+      any_missing = true;
+    } else if (!shared_range) {
+      shared_range = &ingress.input_range;
+    } else if (ingress.input_range[0] != (*shared_range)[0] ||
+               ingress.input_range[1] != (*shared_range)[1]) {
+      conflict = true;
     }
+  }
+  out.model_input_range_ambiguous = shared_range && (conflict || any_missing);
+  std::array<float, 3> mean{};
+  std::array<float, 3> stddev{};
+  if (shared_range && !out.model_input_range_ambiguous &&
+      derive_unit_pixel_normalization_from_input_range(*shared_range, &mean, &stddev)) {
     // input_range [0, 255] maps every pixel onto itself: no normalization needed.
     const bool identity =
         std::fabs(mean[0]) < 1e-6f && std::fabs(stddev[0] * 255.0f - 1.0f) < 1e-4f;
@@ -544,7 +559,6 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
       out.model_input_mean = mean;
       out.model_input_stddev = stddev;
     }
-    break;
   }
   const auto* mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
   if (!mla_stage) {
@@ -784,7 +798,8 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   // MPK input_range is the numeric domain the MLA expects at ingress, while image
   // input reaches the CVU preproc as [0, 255] pixels.  When normalize is left at
   // Auto with no stats or preset, follow the model contract instead of feeding raw
-  // pixels; explicit Off still wins.
+  // pixels; explicit Off still wins.  See "Preprocess normalization from MPK
+  // input_range" in docs/develop-apps/contribute/start-here/architecture.md.
   const bool normalize_left_auto =
       effective.normalize.enable == AutoFlag::Auto && !normalize_requested_or_preset;
   const bool image_preproc_route = kind == InputKind::Image && effective.enable != AutoFlag::Off &&
@@ -799,6 +814,12 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
         << effective.normalize.mean[0] << ", stddev=" << effective.normalize.stddev[0]
         << "); set preprocess.normalize.enable=Off to feed raw pixels.";
     out.resolved_plan.warnings.push_back(msg.str());
+  } else if (normalize_left_auto && image_preproc_route &&
+             capabilities.model_input_range_ambiguous) {
+    out.resolved_plan.warnings.push_back(
+        "preprocess.normalize=Auto left Off: MPK ingress tensors declare different or partially "
+        "missing input_range values, so the image ingress range is ambiguous; set "
+        "preprocess.normalize explicitly.");
   }
 
   if (normalize_enabled) {
