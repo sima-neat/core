@@ -9,8 +9,7 @@ const locales = ["ko", "ja", "zh-Hant", "uk"];
 const categoryPrefix = "sidebar.docs.category.";
 const protectedLabels = new Set([
   "API", "GenAI", "Insight", "Model Compiler API", "Neat Library", "Neat SDK",
-  "appzoo", "device", "mla", "modelzoo", "neat", "packages", "playbooks",
-  "pyneat", "sdk", "sima-cli",
+  "pyneat", "sima-cli",
 ]);
 const requiredLabels = new Set([
   "Advanced Concepts", "Application Design", "Build & Test", "Cameras & Streaming",

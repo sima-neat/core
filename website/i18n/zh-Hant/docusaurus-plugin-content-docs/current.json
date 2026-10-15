@@ -111,39 +111,39 @@
     "message": "sima-cli",
     "description": "The label for category 'sima-cli' in sidebar 'docs'"
   },
-  "sidebar.docs.category.appzoo": {
+  "sidebar.docs.category.tools/sima-cli/appzoo": {
     "message": "appzoo",
     "description": "The label for category 'appzoo' in sidebar 'docs'"
   },
-  "sidebar.docs.category.device": {
+  "sidebar.docs.category.tools/sima-cli/device": {
     "message": "device",
     "description": "The label for category 'device' in sidebar 'docs'"
   },
-  "sidebar.docs.category.mla": {
+  "sidebar.docs.category.tools/sima-cli/mla": {
     "message": "mla",
     "description": "The label for category 'mla' in sidebar 'docs'"
   },
-  "sidebar.docs.category.modelzoo": {
+  "sidebar.docs.category.tools/sima-cli/modelzoo": {
     "message": "modelzoo",
     "description": "The label for category 'modelzoo' in sidebar 'docs'"
   },
-  "sidebar.docs.category.neat": {
+  "sidebar.docs.category.tools/sima-cli/neat": {
     "message": "neat",
     "description": "The label for category 'neat' in sidebar 'docs'"
   },
-  "sidebar.docs.category.packages": {
+  "sidebar.docs.category.tools/sima-cli/packages": {
     "message": "packages",
     "description": "The label for category 'packages' in sidebar 'docs'"
   },
-  "sidebar.docs.category.playbooks": {
+  "sidebar.docs.category.tools/sima-cli/playbooks": {
     "message": "playbooks",
     "description": "The label for category 'playbooks' in sidebar 'docs'"
   },
-  "sidebar.docs.category.sdk": {
+  "sidebar.docs.category.tools/sima-cli/sdk": {
     "message": "sdk",
     "description": "The label for category 'sdk' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Neat SDK Networking Setup": {
+  "sidebar.docs.category.tools/sima-cli/sdk-networking": {
     "message": "Neat SDK 網路設定",
     "description": "The label for category 'Neat SDK Networking Setup' in sidebar 'docs'"
   },
@@ -255,27 +255,27 @@
     "message": "Model Compiler API",
     "description": "The label for category 'Model Compiler API' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Compilation": {
+  "sidebar.docs.category.reference/model-sdk-api/compilation": {
     "message": "編譯",
     "description": "The label for category 'Compilation' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Model Lifecycle": {
+  "sidebar.docs.category.reference/model-sdk-api/model-lifecycle": {
     "message": "模型生命週期",
     "description": "The label for category 'Model Lifecycle' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Versioned Public APIs": {
+  "sidebar.docs.category.reference/model-sdk-api/versioned-public-apis": {
     "message": "版本化公開 API",
     "description": "The label for category 'Versioned Public APIs' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Execution & Analysis": {
+  "sidebar.docs.category.reference/model-sdk-api/execution-analysis": {
     "message": "執行與分析",
     "description": "The label for category 'Execution & Analysis' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Transforms": {
+  "sidebar.docs.category.reference/model-sdk-api/transforms": {
     "message": "轉換",
     "description": "The label for category 'Transforms' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Types & Error Handling": {
+  "sidebar.docs.category.reference/model-sdk-api/types-error-handling": {
     "message": "型別與錯誤處理",
     "description": "The label for category 'Types & Error Handling' in sidebar 'docs'"
   },

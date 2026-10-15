@@ -790,6 +790,33 @@ def write_category_json(dst_root: Path, label: str, position: int) -> None:
     )
 
 
+def assign_category_keys(dst_section: Path, mount: str) -> None:
+    """Give every category folder below an imported section a path-based key.
+
+    Docusaurus derives a category's translation key from its label, and a
+    localized build fails when two categories share one. Imported repositories
+    pick their folder names independently (sima-cli's `peripherals` command
+    group and Sentinel's `peripherals` guides), so key each folder by its path
+    under the mount. A key the source already set is kept.
+    """
+    for folder in sorted(p for p in dst_section.rglob("*") if p.is_dir()):
+        if not any(folder.rglob("*.md")) and not any(folder.rglob("*.mdx")):
+            continue  # asset folder, not a sidebar category
+        if any(folder.glob("_category_.y*ml")):
+            LOG.warning("[%s] %s uses a YAML category file; its key is left unset", mount, folder)
+            continue
+        category_file = folder / "_category_.json"
+        payload = (
+            json.loads(category_file.read_text(encoding="utf-8"))
+            if category_file.is_file()
+            else {}
+        )
+        if payload.get("key"):
+            continue
+        payload["key"] = f"{mount}/{folder.relative_to(dst_section).as_posix()}"
+        category_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def set_frontmatter_field(text: str, field: str, value: str) -> str:
     """Insert or replace a scalar field in existing YAML frontmatter (no-op if none)."""
     match = FRONTMATTER_RE.match(text)
@@ -1282,6 +1309,8 @@ def process_source(
             dst_section,
             exclude_prefixes=excluded_prefixes,
         )
+        # Docusaurus reads category metadata only from the English tree.
+        assign_category_keys(dst_section, mount)
     except OSError as exc:
         return False, f"copy failed: {exc}"
 

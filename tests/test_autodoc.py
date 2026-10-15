@@ -679,6 +679,76 @@ class LocalizedAutodocTests(unittest.TestCase):
             self.assertFalse((destination / "commands").exists())
 
 
+class CategoryKeyTests(unittest.TestCase):
+    def stage(self, root: Path, source: dict, pages: dict) -> Path:
+        staging = root / "build/autodoc" / source["key"]
+        src_docs = staging / source["docs_subpath"]
+        for relative, text in pages.items():
+            path = src_docs / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        source = {"repo": "unused", "branch": "main", **source}
+        with mock.patch.object(MODULE, "acquire_source", return_value="main"):
+            ok, message = MODULE.process_source(source, root, root / "build", root / "docs")
+        self.assertTrue(ok, message)
+        return root / "docs" / source["mount"]
+
+    @staticmethod
+    def category(folder: Path) -> dict:
+        return json.loads((folder / "_category_.json").read_text(encoding="utf-8"))
+
+    def test_same_folder_name_in_two_sources_gets_distinct_keys(self):
+        # sima-cli's `peripherals` command group and Sentinel's `peripherals`
+        # guides both became a category labelled `peripherals`, which broke
+        # every localized docs build with a duplicate translation key.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cli = self.stage(
+                root,
+                {
+                    "key": "sima-cli",
+                    "docs_subpath": "docs/sima-cli",
+                    "mount": "tools/sima-cli",
+                    "group_commands": {"prefix": "sima-cli-", "root_stem": "sima-cli"},
+                },
+                {
+                    "index.md": "# sima-cli\n",
+                    "commands/sima-cli-peripherals.md": "# sima-cli peripherals\n",
+                    "commands/sima-cli-peripherals-list.md": "# list\n",
+                },
+            )
+            sentinel = self.stage(
+                root,
+                {"key": "sentinel", "docs_subpath": "docs", "mount": "tools/sentinel"},
+                {"README.md": "# Sentinel\n", "peripherals/camera.md": "# Camera\n"},
+            )
+
+            cli_category = self.category(cli / "peripherals")
+            self.assertEqual(cli_category["key"], "tools/sima-cli/peripherals")
+            self.assertEqual(cli_category["label"], "peripherals")
+            self.assertEqual(
+                self.category(sentinel / "peripherals"),
+                {"key": "tools/sentinel/peripherals"},
+            )
+            self.assertNotIn("key", self.category(cli))
+
+    def test_keeps_source_keys_and_skips_asset_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            section = self.stage(
+                Path(directory),
+                {"key": "insight", "docs_subpath": "docs", "mount": "tools/insight"},
+                {
+                    "index.md": "# Insight\n",
+                    "observe/_category_.json": '{"label": "Observe", "key": "observe"}',
+                    "observe/viewer.md": "# Viewer\n",
+                    "images/screen.png": "png",
+                },
+            )
+
+            self.assertEqual(self.category(section / "observe")["key"], "observe")
+            self.assertFalse((section / "images/_category_.json").exists())
+
+
 class NestedSourceMountTests(unittest.TestCase):
     def test_parent_then_child_refresh_preserves_nested_section(self):
         with tempfile.TemporaryDirectory() as directory:
