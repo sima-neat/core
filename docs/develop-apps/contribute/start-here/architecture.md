@@ -207,6 +207,19 @@ fields are zero and `telemetry.status` names the reason. Board mode of
 (`RunOptions::power_monitor`) also comes from Sentinel: Core polls its latest sample and reads no
 power monitor chips over I2C.
 
+Layer profiling is opt-in through `BenchmarkOptions::include_layer_stats`, which defaults to
+false. After the latency and throughput runners close, Core invokes `mla-rt` in a separate
+process using the extracted model's MLA executables and compiler stats YAML. Core owns
+validation, subprocess timeout, and temporary-file cleanup; MLA-RT owns hardware profiling
+and the handoff back to kernel execution. Profiling requires no overlapping MLA workloads.
+
+`BenchmarkReport::layer_stats` contains compiled layer names, zero-based executable stage
+indices, and execution times in microseconds. These measurements use separate profiling
+passes and do not sum to headline latency. `BenchmarkReport::save(file_path)` explicitly
+writes the complete report as YAML using the public field names and units, including
+telemetry and an empty layer list when profiling is disabled. It creates missing parent
+directories and atomically replaces an existing destination.
+
 ### Compiled model execution contract
 
 The DMA-BUF driver migration keeps model semantics separate from per-frame
