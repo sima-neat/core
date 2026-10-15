@@ -265,10 +265,11 @@ internal::resolve_layer_profile_stages(const pipeline_internal::sima::MpkContrac
   std::size_t stage_index = 0;
   for (const auto plugin_index : pipeline_internal::sima::plugins_in_execution_order(contract)) {
     const auto& plugin = contract.plugins.at(plugin_index);
-    if (plugin.processor != "MLA" && plugin.processor != "A65")
+    const bool is_mla = g_ascii_strcasecmp(plugin.processor.c_str(), "MLA") == 0;
+    if (!is_mla && g_ascii_strcasecmp(plugin.processor.c_str(), "A65") != 0)
       continue;
     const auto current_index = stage_index++;
-    if (plugin.processor != "MLA")
+    if (!is_mla)
       continue;
     const auto executable = pipeline_internal::sima::static_contract::resolve_mla_executable(
         contract.mpk_json_path, plugin.executable);

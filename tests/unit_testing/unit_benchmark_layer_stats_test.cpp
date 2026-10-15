@@ -99,6 +99,20 @@ void pairing_and_stage_order() {
   require(stages.size() == 2 && stages[0].stage_index == 0 && stages[1].stage_index == 2,
           "MLA/A65 execution order must determine stage indices");
   require(stages[0].stats_yaml.filename() == "demo_stage1_mla_stats.yaml", "exact ELF pairing");
+  for (const auto& [mla, a65] : std::vector<std::pair<std::string, std::string>>{
+           {"mla", "A65"}, {"MLA", "a65"}, {"mla", "a65"}, {"mLa", "a65"}}) {
+    contract.plugins[0].processor = mla;
+    contract.plugins[2].processor = mla;
+    contract.plugins[3].processor = a65;
+    const auto normalized = resolve_layer_profile_stages(contract);
+    require(normalized.size() == stages.size(), "processor case must not change MLA selection");
+    for (std::size_t i = 0; i < stages.size(); ++i) {
+      require(normalized[i].stage_index == stages[i].stage_index &&
+                  normalized[i].executable == stages[i].executable &&
+                  normalized[i].stats_yaml == stages[i].stats_yaml,
+              "processor case must not change stage indices or ELF/YAML pairing");
+    }
+  }
   std::filesystem::remove(stages[0].stats_yaml);
   fails([&] { resolve_layer_profile_stages(contract); }, "missing matching stats YAML");
 }
