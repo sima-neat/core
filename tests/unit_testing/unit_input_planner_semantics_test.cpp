@@ -17,6 +17,7 @@ using simaai::neat::PreprocessGraphFamily;
 using simaai::neat::ResizeMode;
 using simaai::neat::Transform;
 using simaai::neat::TransformType;
+using simaai::neat::internal::apply_auto_route_input_normalization;
 using simaai::neat::internal::GraphFamilyCapabilities;
 using simaai::neat::internal::plan_preprocess;
 using simaai::neat::internal::PreprocessCapabilities;
@@ -356,5 +357,42 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
                      "planner: ambiguous multi-ingress input_range keeps normalize Off");
              require(has_warning(ambiguous_out, "image ingress range is ambiguous"),
                      "planner: ambiguous multi-ingress input_range must be reported");
+
+             // Default options: route planning may auto-select the MPK image preproc stage.
+             Model::Options auto_opt;
+             PreprocessPlannerResult auto_plan = plan_preprocess(auto_opt, model_caps);
+             require(auto_plan.resolved_plan.effective.normalize.enable == AutoFlag::Off,
+                     "planner: default options leave normalize to route planning");
+             PreprocessPlannerResult not_selected = auto_plan;
+             apply_auto_route_input_normalization(auto_opt, model_caps, false, &not_selected);
+             require(not_selected.resolved_plan.effective.normalize.enable == AutoFlag::Off,
+                     "route: no image preproc stage selected keeps normalize Off");
+             apply_auto_route_input_normalization(auto_opt, model_caps, true, &auto_plan);
+             require(auto_plan.resolved_plan.effective.normalize.enable == AutoFlag::On &&
+                         auto_plan.normalize && auto_plan.mean.size() == 3U &&
+                         auto_plan.mean[0] == 0.0f && auto_plan.stddev[0] == 1.0f,
+                     "route: auto-selected image preproc must apply MPK input_range stats");
+             require(has_warning(auto_plan, "resolved On from model input_range"),
+                     "route: auto-selected image preproc normalization must be reported");
+
+             Model::Options auto_off_opt;
+             auto_off_opt.preprocess.normalize.enable = AutoFlag::Off;
+             PreprocessPlannerResult auto_off_plan = plan_preprocess(auto_off_opt, model_caps);
+             apply_auto_route_input_normalization(auto_off_opt, model_caps, true, &auto_off_plan);
+             require(auto_off_plan.resolved_plan.effective.normalize.enable == AutoFlag::Off &&
+                         !auto_off_plan.normalize,
+                     "route: explicit normalize Off must win on auto-selected image preproc");
+
+             PreprocessPlannerResult planned = plan_preprocess(opt, model_caps);
+             const size_t planned_warnings = planned.resolved_plan.warnings.size();
+             apply_auto_route_input_normalization(opt, model_caps, true, &planned);
+             require(planned.resolved_plan.warnings.size() == planned_warnings,
+                     "route: input_range rule already applied by the planner must not repeat");
+
+             PreprocessPlannerResult auto_ambiguous = plan_preprocess(auto_opt, ambiguous_caps);
+             apply_auto_route_input_normalization(auto_opt, ambiguous_caps, true, &auto_ambiguous);
+             require(auto_ambiguous.resolved_plan.effective.normalize.enable == AutoFlag::Off &&
+                         has_warning(auto_ambiguous, "image ingress range is ambiguous"),
+                     "route: ambiguous input_range on auto-selected image preproc stays Off");
            }
          }));

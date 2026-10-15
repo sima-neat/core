@@ -136,7 +136,7 @@ input Sample/Tensor
 
 ### MPK `input_range` による前処理の正規化
 
-モデル入力の MPK `input_range` は前処理の仕様の一部です。画像入力は `[0, 255]` のピクセルとして CVU 前処理に渡され、前処理は `(pixel / 255 - mean) / stddev` を計算します。`preprocess.normalize.enable` が `Auto` で、明示的な統計値やプリセットが設定されていない場合、`plan_preprocess()` はこの範囲から正規化を決定します。
+モデル入力の MPK `input_range` は前処理の仕様の一部です。画像入力は `[0, 255]` のピクセルとして CVU 前処理に渡され、前処理は `(pixel / 255 - mean) / stddev` を計算します。`preprocess.normalize.enable` が `Auto` で、明示的な統計値やプリセットが設定されていない場合、`plan_preprocess()` はこの範囲から正規化を決定し、ルート計画が画像前処理ステージを自動選択した場合は `apply_auto_route_input_normalization()` が同じルールを適用します。
 
 - 有限の範囲 `[lo, hi]`（`hi > lo`）では、`mean = -lo / (hi - lo)` と `stddev = 1 / (hi - lo)` で正規化が有効になります。
 - `[0, 255]` は恒等変換のため、正規化は無効のままです。

@@ -133,7 +133,7 @@ input Sample/Tensor
 
 ### MPK `input_range` 기반 전처리 정규화
 
-모델 입력의 MPK `input_range`는 전처리 계약의 일부입니다. 이미지 입력은 `[0, 255]` 픽셀로 CVU 전처리에 전달되며, 전처리는 `(pixel / 255 - mean) / stddev`를 계산합니다. `preprocess.normalize.enable`이 `Auto`이고 명시적인 통계값이나 프리셋이 설정되지 않은 경우, `plan_preprocess()`는 이 범위에서 정규화를 결정합니다.
+모델 입력의 MPK `input_range`는 전처리 계약의 일부입니다. 이미지 입력은 `[0, 255]` 픽셀로 CVU 전처리에 전달되며, 전처리는 `(pixel / 255 - mean) / stddev`를 계산합니다. `preprocess.normalize.enable`이 `Auto`이고 명시적인 통계값이나 프리셋이 설정되지 않은 경우, `plan_preprocess()`는 이 범위에서 정규화를 결정하며, 라우트 계획이 이미지 전처리 단계를 자동으로 선택한 경우에는 `apply_auto_route_input_normalization()`이 같은 규칙을 적용합니다.
 
 - 유한한 범위 `[lo, hi]`(`hi > lo`)는 `mean = -lo / (hi - lo)` 및 `stddev = 1 / (hi - lo)`로 정규화를 활성화합니다.
 - `[0, 255]`는 항등 매핑이므로 정규화는 비활성 상태로 유지됩니다.

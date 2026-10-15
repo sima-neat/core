@@ -101,4 +101,13 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack);
 PreprocessPlannerResult plan_preprocess(const Model::Options& options,
                                         const PreprocessCapabilities& capabilities);
 
+/// Applies the MPK input_range normalization rule after route planning, for an
+/// image preproc stage that route selection picked automatically (for example
+/// default options with an MPK preproc stage), which plan_preprocess() cannot see.
+/// No-op when the user set normalize, stats, a preset or transforms explicitly.
+void apply_auto_route_input_normalization(const Model::Options& options,
+                                          const PreprocessCapabilities& capabilities,
+                                          bool image_preproc_selected,
+                                          PreprocessPlannerResult* plan);
+
 } // namespace simaai::neat::internal

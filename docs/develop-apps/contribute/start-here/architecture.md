@@ -185,7 +185,7 @@ failure should surface as an actionable structured error rather than a hidden ru
 
 ### Preprocess normalization from MPK `input_range`
 
-The MPK `input_range` of the model ingress is part of the preprocessing contract. Image input reaches the CVU preproc as `[0, 255]` pixels, and the preproc computes `(pixel / 255 - mean) / stddev`. When `preprocess.normalize.enable` is `Auto` and no explicit stats or preset are set, `plan_preprocess()` resolves normalization from that range:
+The MPK `input_range` of the model ingress is part of the preprocessing contract. Image input reaches the CVU preproc as `[0, 255]` pixels, and the preproc computes `(pixel / 255 - mean) / stddev`. When `preprocess.normalize.enable` is `Auto` and no explicit stats or preset are set, `plan_preprocess()` resolves normalization from that range, and `apply_auto_route_input_normalization()` applies the same rule when route planning selects an image preproc stage on its own:
 
 - A finite range `[lo, hi]` with `hi > lo` enables normalization with `mean = -lo / (hi - lo)` and `stddev = 1 / (hi - lo)`.
 - `[0, 255]` is the identity mapping, so normalization stays off.

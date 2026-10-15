@@ -104,6 +104,21 @@ bool resolve_step_enabled(AutoFlag flag, bool default_when_auto) {
   return default_when_auto;
 }
 
+constexpr char kModelNormalizeAdvisoryPrefix[] = "preprocess.normalize=Auto";
+constexpr char kModelNormalizeAmbiguousMessage[] =
+    "preprocess.normalize=Auto left Off: MPK ingress tensors declare different or partially "
+    "missing input_range values, so the image ingress range is ambiguous; set "
+    "preprocess.normalize explicitly.";
+
+std::string model_normalize_resolved_message(const NormalizeSpec& normalize) {
+  std::ostringstream msg;
+  msg << kModelNormalizeAdvisoryPrefix
+      << " resolved On from model input_range (mean=" << normalize.mean[0]
+      << ", stddev=" << normalize.stddev[0]
+      << "); set preprocess.normalize.enable=Off to feed raw pixels.";
+  return msg.str();
+}
+
 bool derive_unit_pixel_normalization_from_input_range(const std::vector<double>& input_range,
                                                       std::array<float, 3>* mean,
                                                       std::array<float, 3>* stddev) {
@@ -809,17 +824,10 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     normalize_enabled = true;
     effective.normalize.mean = capabilities.model_input_mean;
     effective.normalize.stddev = capabilities.model_input_stddev;
-    std::ostringstream msg;
-    msg << "preprocess.normalize=Auto resolved On from model input_range (mean="
-        << effective.normalize.mean[0] << ", stddev=" << effective.normalize.stddev[0]
-        << "); set preprocess.normalize.enable=Off to feed raw pixels.";
-    out.resolved_plan.warnings.push_back(msg.str());
+    out.resolved_plan.warnings.push_back(model_normalize_resolved_message(effective.normalize));
   } else if (normalize_left_auto && image_preproc_route &&
              capabilities.model_input_range_ambiguous) {
-    out.resolved_plan.warnings.push_back(
-        "preprocess.normalize=Auto left Off: MPK ingress tensors declare different or partially "
-        "missing input_range values, so the image ingress range is ambiguous; set "
-        "preprocess.normalize explicitly.");
+    out.resolved_plan.warnings.push_back(kModelNormalizeAmbiguousMessage);
   }
 
   if (normalize_enabled) {
@@ -1039,6 +1047,41 @@ std::string requirement_issue_message(const RequirementIssue& issue) {
     oss << " fix=" << issue.fix_hint;
   }
   return oss.str();
+}
+
+void apply_auto_route_input_normalization(const Model::Options& options,
+                                          const PreprocessCapabilities& capabilities,
+                                          bool image_preproc_selected,
+                                          PreprocessPlannerResult* plan) {
+  if (!plan || !image_preproc_selected) {
+    return;
+  }
+  const PreprocessOptions& requested = options.preprocess;
+  if (requested.enable == AutoFlag::Off || requested.normalize.enable != AutoFlag::Auto ||
+      requested.normalize.has_explicit_stats || requested.preset != NormalizePreset::None ||
+      !requested.transforms.empty()) {
+    return;
+  }
+  NormalizeSpec& normalize = plan->resolved_plan.effective.normalize;
+  if (normalize.enable == AutoFlag::On) {
+    return;
+  }
+  for (const auto& warning : plan->resolved_plan.warnings) {
+    if (warning.rfind(kModelNormalizeAdvisoryPrefix, 0) == 0) {
+      return; // plan_preprocess() already applied the input_range rule.
+    }
+  }
+  if (capabilities.has_model_input_normalization) {
+    normalize.enable = AutoFlag::On;
+    normalize.mean = capabilities.model_input_mean;
+    normalize.stddev = capabilities.model_input_stddev;
+    plan->normalize = true;
+    plan->mean.assign(normalize.mean.begin(), normalize.mean.end());
+    plan->stddev.assign(normalize.stddev.begin(), normalize.stddev.end());
+    plan->resolved_plan.warnings.push_back(model_normalize_resolved_message(normalize));
+  } else if (capabilities.model_input_range_ambiguous) {
+    plan->resolved_plan.warnings.push_back(kModelNormalizeAmbiguousMessage);
+  }
 }
 
 } // namespace simaai::neat::internal

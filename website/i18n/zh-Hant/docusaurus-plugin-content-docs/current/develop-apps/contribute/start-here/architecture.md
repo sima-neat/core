@@ -134,7 +134,7 @@ input Sample/Tensor
 
 ### 依 MPK `input_range` 進行前處理正規化
 
-模型輸入的 MPK `input_range` 是前處理合約的一部分。影像輸入會以 `[0, 255]` 像素進入 CVU 前處理，前處理會計算 `(pixel / 255 - mean) / stddev`。當 `preprocess.normalize.enable` 為 `Auto`，且未設定明確的統計值或預設組合時，`plan_preprocess()` 會依該範圍決定正規化方式：
+模型輸入的 MPK `input_range` 是前處理合約的一部分。影像輸入會以 `[0, 255]` 像素進入 CVU 前處理，前處理會計算 `(pixel / 255 - mean) / stddev`。當 `preprocess.normalize.enable` 為 `Auto`，且未設定明確的統計值或預設組合時，`plan_preprocess()` 會依該範圍決定正規化方式；若路由規劃自動選擇影像前處理階段，則由 `apply_auto_route_input_normalization()` 套用相同規則：
 
 - 有限範圍 `[lo, hi]`（`hi > lo`）會以 `mean = -lo / (hi - lo)` 與 `stddev = 1 / (hi - lo)` 啟用正規化。
 - `[0, 255]` 為恆等對應，因此正規化維持停用。
