@@ -337,8 +337,7 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
 
 Model::Options benchmark_build_model_options(const Model::Options& model_options) {
   Model::Options options = model_options;
-  // BenchmarkOptions describes a per-run buffer contract. Keep deprecated construction-time
-  // BoxDecode geometry from becoming authoritative element properties and masking that metadata.
+  // Let per-run metadata override deprecated BoxDecode geometry.
   options.boxdecode_original_width = 0;
   options.boxdecode_original_height = 0;
   options.boxdecode_resize_mode.reset();
@@ -349,8 +348,7 @@ Model::Options benchmark_build_model_options(const Model::Options& model_options
 
 BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& options) {
   validate_benchmark_options(options);
-  // Benchmark calls can share the kernel scheduler, but direct MIP profiling must not overlap
-  // another benchmark call in this process. Other applications require an idle devkit.
+  // This gate covers benchmark calls only; MIP profiling requires an idle devkit.
   static std::shared_mutex benchmark_gate;
   std::unique_lock exclusive(benchmark_gate, std::defer_lock);
   std::shared_lock shared(benchmark_gate, std::defer_lock);
@@ -444,8 +442,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     const auto min_end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
 
-    // The push loop decides how many inputs the window measures, so the pull thread only pulls
-    // an output once its input has been pushed.
+    // Pull only after the corresponding input has been pushed.
     std::mutex count_mu;
     std::condition_variable count_cv;
     bool pushing = true;
@@ -470,7 +467,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
           std::lock_guard<std::mutex> lock(count_mu);
           pull_error = std::current_exception();
         }
-        // Nothing drains the outputs any more, so wake a push blocked on a full input queue.
+        // Unblock a producer when output draining fails.
         runner.close_input();
       }
     });
@@ -511,7 +508,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
         pull_thread.join();
       }
       runner.close();
-      // A failed pull closes the input, which fails the push; report the cause.
+      // Report the pull failure that closed the input.
       if (pull_error) {
         std::rethrow_exception(pull_error);
       }
@@ -526,7 +523,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
-    // End the window before stopping Sentinel: its stop request takes about 0.1 s.
+    // Stop timing before Sentinel's slower stop request.
     throughput_measured = measure.stop();
     telemetry = trace.finish();
     runner.close();
@@ -567,8 +564,6 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
                   throughput_measured.plugin_latency_unattributed.size())
               << "\n";
   }
-  // One line per telemetry metric; metrics the board did not report are skipped. A metric that
-  // stayed constant over the window prints a single value.
   const auto print_metric = [](const char* label, const BenchmarkMetric& metric, const char* unit) {
     if (metric.samples == 0) {
       return;
@@ -705,8 +700,7 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
   if (telemetry.power_som_watts.samples > 0) {
     out.avg_power_watts = telemetry.power_som_watts.mean;
     out.peak_power_watts = telemetry.power_som_watts.maximum;
-    // Energy for num_samples inputs at the measured rate keeps the value independent of how
-    // long the throughput window ran.
+    // Normalize energy to num_samples, independent of window length.
     out.energy_joules = out.avg_power_watts * static_cast<double>(num_samples) /
                         throughput_report.throughput_batches_per_s;
   }

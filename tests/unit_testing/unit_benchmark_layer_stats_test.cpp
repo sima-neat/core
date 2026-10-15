@@ -73,7 +73,7 @@ LayerProfileStage stage(Fixture& fixture, const std::string& source = input) {
   return selected;
 }
 std::string capture(const Fixture& fixture) {
-  // Fixture paths have spaces; quote every shell argument in the fake runtime too.
+  // Quote fixture paths containing spaces.
   return "printf '%s' \"$6\" > '" + (fixture.root / "copied-path").string() + "'\n";
 }
 std::string emit(const std::string& text) {

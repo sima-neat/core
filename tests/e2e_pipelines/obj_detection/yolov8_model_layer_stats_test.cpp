@@ -15,7 +15,7 @@
 namespace {
 using namespace simaai::neat;
 
-// Use the same public tensor-input path and YOLOv8s fixture as model_execution_plan_test.
+// Match the CI YOLOv8s tensor input.
 TensorList make_input(const Model& model, int phase) {
   const auto options = model.input_appsrc_options(true);
   const int height = options.height > 0 ? options.height : options.max_height;
@@ -58,12 +58,11 @@ int main(int argc, char** argv) {
   try {
     const auto root = argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::current_path();
     const auto archive = sima_e2e::resolve_yolov8s_tar(root);
-    // Strict CI coverage: missing model, runtime, or profiling files must fail, never skip.
+    // Missing CI prerequisites must fail, never skip.
     require(!archive.empty(), "Failed to resolve the existing CI YOLOv8s model archive");
     Model model(archive);
     const std::vector<TensorList> inputs{make_input(model, 0), make_input(model, 1)};
-    // Retain Model::run()'s cached runner throughout profiling. Snapshot each output now:
-    // the runtime can reuse its buffers on the next inference.
+    // Copy reusable output buffers while retaining Model::run()'s cached runner.
     const std::vector<OutputSnapshot> expected_outputs{snapshot(model.run(inputs[0], 30000)),
                                                        snapshot(model.run(inputs[1], 30000))};
     require(expected_outputs[0] != expected_outputs[1],
@@ -97,8 +96,7 @@ int main(int argc, char** argv) {
         expected_layers = layers;
       require(layers == expected_layers, "repeated profiling changed layer identity or order");
 
-      // Exercise the public inference API immediately after MIP profiling. No reset or sleep:
-      // MLA-RT must hand the hardware back to the kernel driver before benchmark() returns.
+      // Verify the MIP-to-kernel handoff without a reset or delay.
       for (std::size_t i = 0; i < inputs.size(); ++i)
         require(snapshot(model.run(inputs[i], 30000)) == expected_outputs[i],
                 "cached inference output changed after profiling");

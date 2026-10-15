@@ -16,8 +16,7 @@ void require_nonnegative(double value, const char* field) {
                                 " must be finite and nonnegative");
 }
 
-// yaml-cpp handles quoting/escaping. Keep only the numeric compatibility rule that YAML 1.1
-// readers (including PyYAML) require a decimal point before an exponent, e.g. 1.0e-09.
+// PyYAML requires a decimal mantissa in scientific notation, e.g. 1.0e-09.
 std::string yaml_number(double value) {
   char buffer[64];
   const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);

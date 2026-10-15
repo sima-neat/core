@@ -107,8 +107,7 @@ void telemetry_scientific_notation_remains_numeric() {
   const auto path = dir.path / "scientific.yaml";
   report.save(path);
   const auto contents = read_file(path);
-  // YAML 1.1 resolvers require a decimal point before an exponent. Check all three
-  // metric values, including a negative value (temperatures can be below zero).
+  // Cover YAML 1.1 scientific notation, including negative telemetry values.
   require(contents.find("mean: 1.0e-09") != std::string::npos,
           "small telemetry means must remain YAML numbers");
   require(contents.find("minimum: -1.0e-20") != std::string::npos,

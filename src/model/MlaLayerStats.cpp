@@ -71,7 +71,7 @@ ProfileRows parse_stats_rows(const std::filesystem::path& path, bool measured) {
         if (!keys.insert(field.first.as<std::string>()).second)
           profile_error("duplicate layer field: " + field.first.as<std::string>());
       }
-      // Only consumed fields need scalar values; ignore unrelated compiler metadata.
+      // Allow unrelated compiler metadata.
       const auto required = [&](const char* key) {
         const auto value = layer.second[key];
         if (!value || !value.IsScalar())
@@ -166,7 +166,7 @@ struct ProfileChild {
 };
 
 void profile_child_group(gpointer) {
-  // Child setup uses only async-signal-safe operations (the caller can have GStreamer threads).
+  // GStreamer may have other threads; child setup must be async-signal-safe.
   if (::setpgid(0, 0) != 0)
     _exit(127);
 }
@@ -217,7 +217,7 @@ std::string run_profile_process(const std::filesystem::path& mla_rt,
       if (fd < 0 || descriptors[i].revents == 0)
         continue;
       char buffer[4096];
-      // A bounded drain prevents noisy output from postponing the timeout check indefinitely.
+      // Bound reads so noisy output cannot starve the timeout.
       for (int reads = 0; reads < 16; ++reads) {
         const auto bytes = ::read(fd, buffer, sizeof(buffer));
         if (bytes > 0) {
@@ -306,7 +306,7 @@ internal::collect_mla_layer_stats(const std::vector<LayerProfileStage>& stages,
       bool has_nonzero_time = false;
       bool expects_work = false;
       for (const auto& [id, row] : expected) {
-        // mla-rt omits layer zero and compiler placeholders. All real no-ops remain intact.
+        // Match MLA-RT's placeholder filtering; retain real no-ops.
         if (!profileable(id, row))
           continue;
         ++profiled;
