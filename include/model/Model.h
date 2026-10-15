@@ -182,7 +182,8 @@ struct BenchmarkOptions {
   /// `num_samples` inputs.
   int min_duration_ms = 30000;
   /// Advanced: collect compiled MLA layer timings in a separate profiling pass. Default off.
-  /// Requires mla-rt in PATH and an idle devkit with no other active MLA workloads.
+  /// Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an idle devkit with no
+  /// other active MLA workloads. See tutorial 003 for the verified runtime build.
   bool include_layer_stats = false;
 };
 

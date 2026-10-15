@@ -99,6 +99,12 @@ Layer stats (execution time in microseconds):
   stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
 ```
 
+Profiling requires MLA-RT with the MIP-to-kernel handoff fix. Verified on eLxr B2121
+with MLA-RT `2.2.0~git202610140145.603a8c6-2121` (commit `603a8c6`). With that fix,
+you can resume ordinary inference immediately after `benchmark()` returns; no manual reset
+or delay is needed. Older builds can leave the hardware in a state that causes subsequent
+kernel-driven inference to fail.
+
 ## Run
 
 Run it and you should see the benchmark summary printed by `benchmark()`, followed by the same values printed from the returned report. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.

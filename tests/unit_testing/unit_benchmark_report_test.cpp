@@ -96,6 +96,24 @@ void saves_exact_path_and_replaces_existing_report() {
           "replacement must retain zero-time no-op records");
 }
 
+void telemetry_scientific_notation_remains_numeric() {
+  TemporaryDirectory dir;
+  simaai::neat::BenchmarkReport report;
+  report.telemetry.cpu_cores_usage_pct = {
+      {"cpu0", "Core 0: \"quoted\"\nline", "%", 2, 1e-9, -1e-20, 1e20}};
+  const auto path = dir.path / "scientific.yaml";
+  report.save(path);
+  const auto contents = read_file(path);
+  // YAML 1.1 resolvers require a decimal point before an exponent. Check all three
+  // metric values, including a negative value (temperatures can be below zero).
+  require(contents.find("\"mean\":1.0e-09") != std::string::npos,
+          "small telemetry means must remain YAML numbers");
+  require(contents.find("\"minimum\":-1.0e-20") != std::string::npos,
+          "negative telemetry values must remain YAML numbers");
+  require(contents.find("\"maximum\":1.0e+20") != std::string::npos,
+          "large telemetry values must remain YAML numbers");
+}
+
 void failures_do_not_destroy_a_previous_report() {
   TemporaryDirectory dir;
   const auto target = dir.path / "report.yaml";
@@ -122,5 +140,6 @@ void failures_do_not_destroy_a_previous_report() {
 
 RUN_TEST("unit_benchmark_report_test", ([] {
            saves_exact_path_and_replaces_existing_report();
+           telemetry_scientific_notation_remains_numeric();
            failures_do_not_destroy_a_previous_report();
          }));

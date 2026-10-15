@@ -1,5 +1,4 @@
 #include "model/Model.h"
-#include "model/internal/BenchmarkTelemetry.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelFormat.h"
 #include "model/internal/InputPlanner.h"

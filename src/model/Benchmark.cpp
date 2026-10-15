@@ -95,6 +95,31 @@ std::string yaml_number(double value) {
   return number;
 }
 
+// Keep floating-point telemetry compatible with YAML 1.1 readers too. A plain JSON dump
+// spells small values as 1e-09, which PyYAML resolves as a string rather than a number.
+void write_yaml_flow(std::ostream& out, const nlohmann::json& value) {
+  if (value.is_number_float()) {
+    out << yaml_number(value.get<double>());
+  } else if (value.is_string()) {
+    out << yaml_string(value.get_ref<const std::string&>());
+  } else if (value.is_structured()) {
+    const bool object = value.is_object();
+    out << (object ? '{' : '[');
+    bool first = true;
+    for (const auto& item : value.items()) {
+      if (!first)
+        out << ',';
+      first = false;
+      if (object)
+        out << yaml_string(item.key()) << ':';
+      write_yaml_flow(out, item.value());
+    }
+    out << (object ? '}' : ']');
+  } else {
+    out << value.dump();
+  }
+}
+
 nlohmann::json metric_json(const BenchmarkMetric& metric) {
   if (metric.samples < 0 || !std::isfinite(metric.mean) || !std::isfinite(metric.minimum) ||
       !std::isfinite(metric.maximum)) {
@@ -161,10 +186,10 @@ std::filesystem::path BenchmarkReport::save(const std::filesystem::path& file_pa
        << "latency_p99_ms: " << yaml_number(latency_p99_ms) << '\n'
        << "peak_power_watts: " << yaml_number(peak_power_watts) << '\n'
        << "throughput_samples: " << throughput_samples << '\n'
-       << "throughput_duration_ms: " << yaml_number(throughput_duration_ms)
-       << '\n'
-       // JSON flow mappings are valid YAML; ASCII escapes preserve arbitrary telemetry labels.
-       << "telemetry: " << telemetry_json(telemetry).dump(-1, ' ', true) << '\n'
+       << "throughput_duration_ms: " << yaml_number(throughput_duration_ms) << '\n'
+       << "telemetry: ";
+  write_yaml_flow(yaml, telemetry_json(telemetry));
+  yaml << '\n'
        << "fps: " << yaml_number(fps) << '\n'
        << "avg_power_watts: " << yaml_number(avg_power_watts) << '\n'
        << "energy_joules: " << yaml_number(energy_joules) << '\n'

@@ -79,6 +79,8 @@ Layer stats (execution time in microseconds):
   stage_index=2 name=MLA_1/conv total_execution_time_us=42.5
 ```
 
+需要包含 MIP 到核心驅動程式控制權交接修正的 MLA-RT。已在 eLxr B2121 搭配 MLA-RT `2.2.0~git202610140145.603a8c6-2121`（提交 `603a8c6`）上驗證。有此修正時，`benchmark()` 傳回後即可立即恢復一般推論，無需手動重設或延遲。舊版可能使硬體停留在導致後續核心驅動程式推論失敗的狀態。
+
 ## Run
 
 執行它，您應該會看到 `benchmark()` 輸出的基準測試摘要，後面接著從傳回的報告中輸出的相同值。從 **Neat 安裝根目錄**（包含 `share/` 和 `lib/` 的目錄）執行 **Python** 和 **C++（預先建置）** 命令；從 **儲存庫根目錄**執行 **從原始碼建置** 命令。
