@@ -144,7 +144,7 @@ input Sample/Tensor
 
 各層剖析透過 `BenchmarkOptions::include_layer_stats` 明確啟用，預設為 false。延遲與吞吐量執行器關閉後，Core 會使用已解壓縮模型的 MLA 執行檔與編譯器統計 YAML，在獨立程序中呼叫 `mla-rt`。Core 負責驗證、子程序逾時與暫存檔清理；MLA-RT 負責硬體剖析，以及將控制權交回核心執行路徑。剖析不得與其他 MLA 工作負載重疊。
 
-`BenchmarkReport::layer_stats` 包含已編譯的層名稱、從零開始的執行階段索引，以及以微秒表示的執行時間。這些測量使用獨立的剖析階段，因此總和不等於整體延遲。`BenchmarkReport::save(file_path)` 會使用公開欄位名稱與單位，明確將完整報告寫入 YAML，包含遙測資料；停用剖析時，層清單為空。此方法會建立不存在的父目錄，並以原子方式取代既有的目標檔案。
+`BenchmarkReport::layer_stats` 包含已編譯的層名稱、從零開始的執行階段索引，以及以微秒表示的執行時間。這些測量使用獨立的剖析階段，因此總和不等於整體延遲。`BenchmarkReport::save(file_path)` 會使用公開欄位名稱與單位，明確寫入完整報告：`.json` 選擇 JSON；`.yaml` 與其他結尾選擇 YAML。報告包含遙測資料；停用剖析時，層清單為空。此方法會建立不存在的父目錄，並以原子方式取代既有的目標檔案。
 
 ### 已編譯模型執行合約
 

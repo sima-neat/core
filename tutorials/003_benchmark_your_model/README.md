@@ -80,16 +80,20 @@ separate profiling passes and do not sum to the headline latency.
 
 ### Save the report {#step-save-report}
 
-Call `report.save(path)` to write the complete report as YAML, including layer stats when
+Call `report.save(path)` to write the complete report as YAML or JSON, including layer stats when
 requested:
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
 ```
 
 ```python
 path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
 ```
+
+The `.json` extension selects JSON; `.yaml` and all other endings use YAML. The filename is preserved.
 
 Give a file path including the filename. Missing parent directories are created, an existing
 file is replaced, and the written path is returned. Saving is explicit; `benchmark()` does

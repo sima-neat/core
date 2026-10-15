@@ -2,6 +2,7 @@
 #include "test_main.h"
 
 #include <glib.h>
+#include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include <fstream>
@@ -64,7 +65,7 @@ struct LocaleGuard {
   }
 };
 
-void saves_exact_path_and_replaces_existing_report() {
+void saves_exact_path_and_replaces_existing_report(const std::string& extension) {
   TemporaryDirectory dir;
   simaai::neat::BenchmarkReport report;
   report.latency_ms = 1.25;
@@ -73,7 +74,7 @@ void saves_exact_path_and_replaces_existing_report() {
   report.telemetry.cpu_cores_usage_pct = {{"cpu0", "Core 0", "%", 2, 42.25, 40, 44.5}};
   require(simaai::neat::LayerStats{}.stage_index == 0,
           "single-stage records default to stage zero");
-  const auto target = dir.path / "model with spaces" / "yolo_benchmark.yaml";
+  const auto target = dir.path / "model with spaces" / ("yolo_benchmark" + extension);
   {
     LocaleGuard locale;
     require(report.save(target) == target, "save must return the caller's complete file path");
@@ -91,6 +92,17 @@ void saves_exact_path_and_replaces_existing_report() {
           "save must preserve per-core telemetry measurements");
   report.layer_stats = {{"MLA_0/noop", 0.0, 2}};
   report.save(target);
+  if (extension == ".json") {
+    const auto json = nlohmann::json::parse(read_file(target));
+    require(json["latency_ms"] == report.latency_ms && json["layer_stats"].is_array() &&
+                json["layer_stats"][0]["stage_index"] == 2 &&
+                json["layer_stats"][0]["name"] == "MLA_0/noop" &&
+                json["telemetry"]["cpu_cores_usage_pct"][0]["mean"] == 42.25,
+            "JSON output must preserve headline values, layers, and telemetry");
+  } else {
+    require(read_file(target).starts_with("# NEAT benchmark report."),
+            "non-JSON endings must retain YAML output");
+  }
   const auto layer = YAML::LoadFile(target.string())["layer_stats"][0];
   require(layer["stage_index"].as<std::size_t>() == 2,
           "stage indices must preserve execution order gaps for A65 stages");
@@ -114,11 +126,18 @@ void telemetry_scientific_notation_remains_numeric() {
           "negative telemetry values must remain YAML numbers");
   require(contents.find("maximum: 1.0e+20") != std::string::npos,
           "large telemetry values must remain YAML numbers");
+  const auto json_path = dir.path / ".json";
+  report.save(json_path);
+  const auto metric =
+      nlohmann::json::parse(read_file(json_path))["telemetry"]["cpu_cores_usage_pct"][0];
+  require(metric["mean"] == 1e-9 && metric["minimum"] == -1e-20 && metric["maximum"] == 1e20 &&
+              metric["label"] == report.telemetry.cpu_cores_usage_pct[0].label,
+          "JSON must preserve scientific numbers, negative telemetry, and escaped strings");
 }
 
-void failures_do_not_destroy_a_previous_report() {
+void failures_do_not_destroy_a_previous_report(const std::string& extension) {
   TemporaryDirectory dir;
-  const auto target = dir.path / "report.yaml";
+  const auto target = dir.path / ("report" + extension);
   simaai::neat::BenchmarkReport report;
   report.save(target);
   const auto original = read_file(target);
@@ -133,6 +152,16 @@ void failures_do_not_destroy_a_previous_report() {
   require_throws([&] { report.save(target); });
   require(read_file(target) == original, "invalid headline values must preserve the existing file");
   report.fps = 0;
+  report.telemetry.samples = -1;
+  require_throws([&] { report.save(target); });
+  require(read_file(target) == original,
+          "invalid telemetry counts must preserve the existing file");
+  report.telemetry.samples = 0;
+  report.telemetry.cpu_usage_pct.mean = std::numeric_limits<double>::infinity();
+  require_throws([&] { report.save(target); });
+  require(read_file(target) == original,
+          "invalid telemetry metrics must preserve the existing file");
+  report.telemetry.cpu_usage_pct.mean = 0;
   require_throws([&] { report.save({}); });
   require_throws([&] { report.save(dir.path); });
   require_throws([&] { report.save(target / "child.yaml"); });
@@ -141,7 +170,9 @@ void failures_do_not_destroy_a_previous_report() {
 } // namespace
 
 RUN_TEST("unit_benchmark_report_test", ([] {
-           saves_exact_path_and_replaces_existing_report();
+           for (const auto& extension : {".yaml", ".json", "", ".txt"})
+             saves_exact_path_and_replaces_existing_report(extension);
            telemetry_scientific_notation_remains_numeric();
-           failures_do_not_destroy_a_previous_report();
+           for (const auto& extension : {".yaml", ".json"})
+             failures_do_not_destroy_a_previous_report(extension);
          }));

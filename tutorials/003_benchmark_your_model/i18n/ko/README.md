@@ -72,15 +72,19 @@ report = model.benchmark(options)
 
 ### 보고서 저장 {#step-save-report}
 
-`report.save(path)`를 호출하면 요청한 레이어 통계를 포함한 전체 보고서를 YAML로 저장합니다.
+`report.save(path)`를 호출하면 요청한 레이어 통계를 포함한 전체 보고서를 YAML 또는 JSON으로 저장합니다.
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
 ```
 
 ```python
 path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
 ```
+
+확장자가 `.json`이면 JSON을, `.yaml` 또는 그 외의 끝부분이면 YAML을 사용합니다. 파일 이름은 유지됩니다.
 
 파일 이름을 포함한 경로를 지정하세요. 없는 상위 디렉터리는 생성되고 기존 파일은 교체되며, 저장한 경로가 반환됩니다. 저장은 명시적으로 수행합니다. `benchmark()`는 보고서 파일을 자동으로 생성하지 않습니다.
 

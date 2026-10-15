@@ -150,8 +150,9 @@ struct BenchmarkReport {
   std::vector<LayerStats> layer_stats{}; ///< Empty when layer profiling was not collected.
 
   /**
-   * @brief Write the complete report as YAML to the exact destination filename.
+   * @brief Write the complete report as YAML or JSON to the exact destination filename.
    *
+   * A `.json` extension selects JSON; `.yaml` and all other endings select YAML.
    * Creates missing parent directories and atomically replaces an existing file. Returns
    * `file_path` unchanged. Throws on invalid/non-finite values or filesystem/write failures.
    * Saving is explicit: `benchmark()` does not create a report file automatically.

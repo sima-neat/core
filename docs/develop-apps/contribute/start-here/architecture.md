@@ -216,9 +216,10 @@ and the handoff back to kernel execution. Profiling requires no overlapping MLA 
 `BenchmarkReport::layer_stats` contains compiled layer names, zero-based executable stage
 indices, and execution times in microseconds. These measurements use separate profiling
 passes and do not sum to headline latency. `BenchmarkReport::save(file_path)` explicitly
-writes the complete report as YAML using the public field names and units, including
-telemetry and an empty layer list when profiling is disabled. It creates missing parent
-directories and atomically replaces an existing destination.
+writes the complete report using the public field names and units: `.json` selects JSON;
+`.yaml` and other endings select YAML. It includes telemetry and an empty layer list when
+profiling is disabled. It creates missing parent directories and atomically replaces an
+existing destination.
 
 ### Compiled model execution contract
 

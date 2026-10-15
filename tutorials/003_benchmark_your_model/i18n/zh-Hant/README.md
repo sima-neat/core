@@ -72,15 +72,19 @@ report = model.benchmark(options)
 
 ### 儲存報告 {#step-save-report}
 
-呼叫 `report.save(path)` 即可將完整報告寫入 YAML，包含已要求的各層統計資料：
+呼叫 `report.save(path)` 即可將完整報告寫入 YAML 或 JSON，包含已要求的各層統計資料：
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
 ```
 
 ```python
 path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
 ```
+
+副檔名 `.json` 選擇 JSON；`.yaml` 與其他結尾使用 YAML。檔名保持不變。
 
 請指定包含檔名的路徑。不存在的父目錄會自動建立，既有檔案會被取代，並傳回寫入的路徑。儲存需要明確呼叫；`benchmark()` 不會自動建立報告檔案。
 

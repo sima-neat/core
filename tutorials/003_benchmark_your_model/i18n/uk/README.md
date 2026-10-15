@@ -75,15 +75,19 @@ report = model.benchmark(options)
 
 ### Збереження звіту {#step-save-report}
 
-Викличте `report.save(path)`, щоб записати повний звіт у YAML, включно зі статистикою шарів, якщо її запитано:
+Викличте `report.save(path)`, щоб записати повний звіт у YAML або JSON, включно зі статистикою шарів, якщо її запитано:
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
 ```
 
 ```python
 path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
 ```
+
+Розширення `.json` вибирає JSON; `.yaml` та всі інші закінчення використовують YAML. Ім’я файлу зберігається.
 
 Укажіть шлях разом з іменем файлу. Відсутні батьківські каталоги створюються, наявний файл замінюється, а метод повертає шлях записаного файлу. Збереження виконується явно; `benchmark()` не створює файл звіту автоматично.
 

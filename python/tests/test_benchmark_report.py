@@ -1,5 +1,6 @@
-"""Benchmark YAML round trips through an independent parser; no hardware is required."""
+"""Benchmark reports round trip through independent parsers; no hardware is required."""
 
+import json
 from pathlib import Path
 from threading import Event, Thread
 
@@ -9,7 +10,9 @@ import yaml
 import pyneat
 
 
-def test_report_yaml_round_trip(tmp_path):
+@pytest.mark.parametrize("filename", ["yolo_benchmark.yaml", "yolo_benchmark.json",
+                                      "yolo_benchmark", "yolo_benchmark.txt", ".json"])
+def test_report_round_trip(tmp_path, filename):
   report = pyneat.BenchmarkReport()
   report.latency_ms = 0.12345678901234567
   report.latency_p50_ms = 0.1
@@ -35,15 +38,26 @@ def test_report_yaml_round_trip(tmp_path):
     layer.stage_index = stage_index
     layers.append(layer)
   report.layer_stats = layers
-  path = tmp_path / "model with spaces" / "yolo_benchmark.yaml"
+  path = tmp_path / "model with spaces" / filename
   written = report.save(path)
   assert Path(written) == path
-  parsed = yaml.safe_load(path.read_text())
+  load = json.loads if path.name.endswith(".json") else yaml.safe_load
+  parsed = load(path.read_text())
   telemetry = parsed.pop("telemetry")
-  assert telemetry["status"] == report.telemetry.status
-  assert telemetry["samples"] == 0
-  assert telemetry["power_som_watts"]["mean"] == 0.0
-  assert telemetry["cpu_cores_usage_pct"] == []
+
+  def metric(value):
+    return {field: getattr(value, field)
+            for field in ("key", "label", "unit", "samples", "mean", "minimum", "maximum")}
+
+  expected_telemetry = {field: getattr(report.telemetry, field)
+                        for field in ("status", "trace_id", "sentinel_version",
+                                      "sample_interval_ms", "samples")}
+  for field in ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
+                "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib"):
+    expected_telemetry[field] = metric(getattr(report.telemetry, field))
+  for field in ("power_rails_watts", "die_temperatures_c", "board_temperatures_c", "cpu_cores_usage_pct"):
+    expected_telemetry[field] = [metric(value) for value in getattr(report.telemetry, field)]
+  assert telemetry == expected_telemetry
   assert parsed == {
       "latency_ms": report.latency_ms,
       "latency_p50_ms": report.latency_p50_ms,
@@ -63,15 +77,16 @@ def test_report_yaml_round_trip(tmp_path):
   }
   report.layer_stats = []
   assert Path(report.save(str(path))) == path
-  assert yaml.safe_load(path.read_text())["layer_stats"] == []
+  assert load(path.read_text())["layer_stats"] == []
 
 
+@pytest.mark.parametrize("extension", ["yaml", "json"])
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), -1.0])
 @pytest.mark.parametrize("field", ["latency_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "fps",
                                   "avg_power_watts", "peak_power_watts", "energy_joules",
                                   "throughput_duration_ms"])
-def test_invalid_headline_preserves_existing_file(tmp_path, value, field):
-  path = tmp_path / "existing.yaml"
+def test_invalid_headline_preserves_existing_file(tmp_path, value, field, extension):
+  path = tmp_path / f"existing.{extension}"
   path.write_text("previous report\n")
   report = pyneat.BenchmarkReport()
   setattr(report, field, value)
@@ -80,8 +95,9 @@ def test_invalid_headline_preserves_existing_file(tmp_path, value, field):
   assert path.read_text() == "previous report\n"
 
 
-def test_invalid_layer_preserves_existing_file(tmp_path):
-  path = tmp_path / "existing.yaml"
+@pytest.mark.parametrize("extension", ["yaml", "json"])
+def test_invalid_layer_preserves_existing_file(tmp_path, extension):
+  path = tmp_path / f"existing.{extension}"
   path.write_text("previous report\n")
   report = pyneat.BenchmarkReport()
   layer = pyneat.LayerStats()

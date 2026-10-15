@@ -24,7 +24,7 @@ def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
   ap.add_argument("--model", type=Path, required=True)
   ap.add_argument("--samples", type=int, default=100, help="number of measured synthetic samples")
-  ap.add_argument("--report", type=Path, help="destination YAML file, including the filename")
+  ap.add_argument("--report", type=Path, help="destination report file (.json selects JSON; otherwise YAML)")
   ap.add_argument("--include-layer-stats", action="store_true",
                   help="advanced: request separate MLA layer profiling (requires an idle devkit)")
   args = ap.parse_args(argv[1:])

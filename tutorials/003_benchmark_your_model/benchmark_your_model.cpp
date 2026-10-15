@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     std::string model_path;
     if (!get_arg(argc, argv, "--model", model_path)) {
       std::cerr << "Usage: tutorial_003_benchmark_your_model --model <path> [--samples <n>] "
-                   "[--report <file.yaml>] [--include-layer-stats]\n";
+                   "[--report <file>] [--include-layer-stats]\n";
       return 1;
     }
     const int samples = parse_int_arg(argc, argv, "--samples", 100);
