@@ -9,7 +9,8 @@ const locales = ["ko", "ja", "zh-Hant", "uk"];
 const categoryPrefix = "sidebar.docs.category.";
 const protectedLabels = new Set([
   "API", "GenAI", "Insight", "Model Compiler API", "Neat Library", "Neat SDK",
-  "pyneat", "sima-cli",
+  "appzoo", "device", "mla", "modelzoo", "neat", "packages", "playbooks",
+  "pyneat", "sdk", "sima-cli",
 ]);
 const requiredLabels = new Set([
   "Advanced Concepts", "Application Design", "Build & Test", "Cameras & Streaming",
@@ -81,7 +82,10 @@ for (const locale of locales) {
   }
   for (const [id, translation] of Object.entries(catalog)) {
     if (!id.startsWith(categoryPrefix)) continue;
-    const englishLabel = id.slice(categoryPrefix.length);
+    // Imported categories are keyed by path; the description names the label.
+    const englishLabel =
+      /^The label for category '(.*)' in sidebar /.exec(translation.description ?? "")?.[1] ??
+      id.slice(categoryPrefix.length);
     if (translation.message === englishLabel && !protectedLabels.has(englishLabel)) {
       failures.push(`${locale} sidebar category remains in English: ${englishLabel}`);
     }
