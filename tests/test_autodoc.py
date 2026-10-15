@@ -781,6 +781,31 @@ class CategoryKeyTests(unittest.TestCase):
                 if category.exists():
                     self.assertNotIn("key", self.category(section / "guides"))
 
+    def test_keeps_sidebar_key_of_explicitly_linked_doc(self):
+        cases = {
+            "file name": ("guides/02-setup.md", "tools/tool/guides/setup"),
+            "front matter id": ("guides/start.md", "tools/tool/guides/getting-started"),
+        }
+        for name, (relative, doc_id) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                link = json.dumps({"label": "Guides", "link": {"type": "doc", "id": doc_id}})
+                section = self.stage(
+                    Path(directory),
+                    {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                    {
+                        "index.md": "# Tool\n",
+                        "guides/index.md": "# Guides\n",
+                        relative: (
+                            "---\nid: getting-started\nsidebar_key: tool-guides\n---\n# Setup\n"
+                            if name == "front matter id"
+                            else "---\nsidebar_key: tool-guides\n---\n# Setup\n"
+                        ),
+                        "guides/_category_.json": link,
+                    },
+                )
+
+                self.assertNotIn("key", self.category(section / "guides"))
+
     def test_keys_category_whose_explicit_link_bypasses_the_index_doc(self):
         with tempfile.TemporaryDirectory() as directory:
             section = self.stage(

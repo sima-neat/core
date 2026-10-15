@@ -794,22 +794,46 @@ def write_category_json(dst_root: Path, label: str, position: int) -> None:
     )
 
 
-def linked_doc_sidebar_key(folder: Path) -> Optional[str]:
-    """`sidebar_key` of the folder's conventional category index doc, if any.
+def frontmatter_field(doc: Path, field: str) -> Optional[str]:
+    """A scalar front matter value of a Markdown doc, unquoted, or None."""
+    frontmatter = FRONTMATTER_RE.match(doc.read_text(encoding="utf-8"))
+    match = frontmatter and re.search(
+        rf"^{re.escape(field)}:[ \t]*(\S.*)$", frontmatter.group(0), re.MULTILINE
+    )
+    return match.group(1).strip().strip("\"'") if match else None
 
-    Docusaurus falls back to that doc's `sidebar_key` when the category
-    metadata sets no `key` and no explicit `link`.
+
+def linked_doc_sidebar_key(
+    folder: Path, link: object, dst_section: Path, mount: str
+) -> Optional[str]:
+    """`sidebar_key` of the doc a category links to, if any.
+
+    Docusaurus uses that key when the category metadata sets none. `link`
+    is the metadata's `link` value, or `...` when the metadata has no `link`:
+    then the conventional index doc (`index`, `readme` or the folder name)
+    is linked. An explicit doc link names a doc id, `<dir>/<id>` with the
+    front matter `id` or the file name without its number prefix.
     """
-    index_names = {"index", "readme", folder.name.lower()}
-    for doc in sorted(folder.iterdir()):
-        if doc.suffix not in (".md", ".mdx") or doc.stem.lower() not in index_names:
-            continue
-        frontmatter = FRONTMATTER_RE.match(doc.read_text(encoding="utf-8"))
-        key = frontmatter and re.search(
-            r"^sidebar_key:[ \t]*(\S.*)$", frontmatter.group(0), re.MULTILINE
-        )
+    docs = sorted(p for p in folder.iterdir() if p.suffix in (".md", ".mdx"))
+    if link is ...:
+        index_names = {"index", "readme", folder.name.lower()}
+        linked = [doc for doc in docs if doc.stem.lower() in index_names]
+    elif isinstance(link, dict) and link.get("type") == "doc" and link.get("id"):
+        linked = []
+        for doc in sorted(dst_section.rglob("*.md*")):
+            if doc.suffix not in (".md", ".mdx"):
+                continue
+            local_id = frontmatter_field(doc, "id") or re.sub(r"^\d+[-_.]\s*", "", doc.stem)
+            directory = doc.parent.relative_to(dst_section).as_posix()
+            doc_id = "/".join(part for part in (mount, directory, local_id) if part != ".")
+            if doc_id == link["id"]:
+                linked.append(doc)
+    else:
+        return None
+    for doc in linked:
+        key = frontmatter_field(doc, "sidebar_key")
         if key:
-            return key.group(1).strip()
+            return key
     return None
 
 
@@ -835,7 +859,7 @@ def assign_category_keys(dst_section: Path, mount: str) -> None:
             text = yaml_files[0].read_text(encoding="utf-8")
             if not re.search(r"^key\s*:\s*\S", text, re.MULTILINE) and not (
                 not re.search(r"^link\s*:", text, re.MULTILINE)
-                and linked_doc_sidebar_key(folder)
+                and linked_doc_sidebar_key(folder, ..., dst_section, mount)
             ):
                 raise CategoryMetadataError(
                     f"{relative}/{yaml_files[0].name} has no top-level `key`; set "
@@ -853,7 +877,9 @@ def assign_category_keys(dst_section: Path, mount: str) -> None:
             raise CategoryMetadataError(
                 f"{relative}/_category_.json is not valid JSON: {exc}"
             ) from exc
-        if payload.get("key") or ("link" not in payload and linked_doc_sidebar_key(folder)):
+        if payload.get("key") or linked_doc_sidebar_key(
+            folder, payload.get("link", ...), dst_section, mount
+        ):
             continue
         payload["key"] = f"{mount}/{relative}"
         category_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
