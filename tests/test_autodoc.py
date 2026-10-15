@@ -763,6 +763,38 @@ class CategoryKeyTests(unittest.TestCase):
                     )
                 self.assertIn("guides/_category_", str(caught.exception))
 
+    def test_keeps_sidebar_key_of_linked_index_doc(self):
+        index = '---\nsidebar_key: tool-guides\n---\n# Guides\n'
+        cases = {
+            "no metadata": {},
+            "json label": {"guides/_category_.json": '{"label": "Guides"}'},
+            "yaml label": {"guides/_category_.yml": "label: Guides\n"},
+        }
+        for name, metadata in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                section = self.stage(
+                    Path(directory),
+                    {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                    {"index.md": "# Tool\n", "guides/index.md": index, **metadata},
+                )
+                category = section / "guides/_category_.json"
+                if category.exists():
+                    self.assertNotIn("key", self.category(section / "guides"))
+
+    def test_keys_category_whose_explicit_link_bypasses_the_index_doc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            section = self.stage(
+                Path(directory),
+                {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                {
+                    "index.md": "# Tool\n",
+                    "guides/index.md": "---\nsidebar_key: tool-guides\n---\n# Guides\n",
+                    "guides/_category_.json": '{"label": "Guides", "link": null}',
+                },
+            )
+
+            self.assertEqual(self.category(section / "guides")["key"], "tools/tool/guides")
+
     def test_keeps_yaml_category_that_sets_a_key(self):
         with tempfile.TemporaryDirectory() as directory:
             section = self.stage(

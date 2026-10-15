@@ -794,6 +794,25 @@ def write_category_json(dst_root: Path, label: str, position: int) -> None:
     )
 
 
+def linked_doc_sidebar_key(folder: Path) -> Optional[str]:
+    """`sidebar_key` of the folder's conventional category index doc, if any.
+
+    Docusaurus falls back to that doc's `sidebar_key` when the category
+    metadata sets no `key` and no explicit `link`.
+    """
+    index_names = {"index", "readme", folder.name.lower()}
+    for doc in sorted(folder.iterdir()):
+        if doc.suffix not in (".md", ".mdx") or doc.stem.lower() not in index_names:
+            continue
+        frontmatter = FRONTMATTER_RE.match(doc.read_text(encoding="utf-8"))
+        key = frontmatter and re.search(
+            r"^sidebar_key:[ \t]*(\S.*)$", frontmatter.group(0), re.MULTILINE
+        )
+        if key:
+            return key.group(1).strip()
+    return None
+
+
 def assign_category_keys(dst_section: Path, mount: str) -> None:
     """Give every category folder below an imported section a path-based key.
 
@@ -801,7 +820,8 @@ def assign_category_keys(dst_section: Path, mount: str) -> None:
     localized build fails when two categories share one. Imported repositories
     pick their folder names independently (sima-cli's `peripherals` command
     group and Sentinel's `peripherals` guides), so key each folder by its path
-    under the mount. A key the source already set is kept.
+    under the mount. A key the source already set is kept, in the category
+    metadata or as the linked index doc's `sidebar_key`.
 
     Raises CategoryMetadataError for metadata it cannot key: invalid JSON, or a YAML
     category file without a top-level `key` (autodoc has no YAML parser).
@@ -813,7 +833,10 @@ def assign_category_keys(dst_section: Path, mount: str) -> None:
         yaml_files = sorted(folder.glob("_category_.y*ml"))
         if yaml_files:
             text = yaml_files[0].read_text(encoding="utf-8")
-            if not re.search(r"^key\s*:\s*\S", text, re.MULTILINE):
+            if not re.search(r"^key\s*:\s*\S", text, re.MULTILINE) and not (
+                not re.search(r"^link\s*:", text, re.MULTILINE)
+                and linked_doc_sidebar_key(folder)
+            ):
                 raise CategoryMetadataError(
                     f"{relative}/{yaml_files[0].name} has no top-level `key`; set "
                     f'`key: "{mount}/{relative}"` or ship _category_.json instead'
@@ -830,7 +853,7 @@ def assign_category_keys(dst_section: Path, mount: str) -> None:
             raise CategoryMetadataError(
                 f"{relative}/_category_.json is not valid JSON: {exc}"
             ) from exc
-        if payload.get("key"):
+        if payload.get("key") or ("link" not in payload and linked_doc_sidebar_key(folder)):
             continue
         payload["key"] = f"{mount}/{relative}"
         category_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
