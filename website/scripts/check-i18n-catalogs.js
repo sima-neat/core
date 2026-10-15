@@ -9,9 +9,12 @@ const locales = ["ko", "ja", "zh-Hant", "uk"];
 const categoryPrefix = "sidebar.docs.category.";
 const protectedLabels = new Set([
   "API", "GenAI", "Insight", "Model Compiler API", "Neat Library", "Neat SDK",
-  "appzoo", "device", "mla", "modelzoo", "neat", "packages", "playbooks",
+  "Sentinel", "appzoo", "device", "mla", "modelzoo", "neat", "packages", "playbooks",
   "pyneat", "sdk", "sima-cli",
 ]);
+// Command names keep their English spelling. Listed by key, because a label
+// such as `peripherals` also names categories that must be translated.
+const protectedKeys = new Set(["tools/sima-cli/peripherals"]);
 const requiredLabels = new Set([
   "Advanced Concepts", "Application Design", "Build & Test", "Cameras & Streaming",
   "Compile a Model", "Contracts & Internals", "Contribute", "Data & Model Contracts",
@@ -86,7 +89,12 @@ for (const locale of locales) {
     const englishLabel =
       /^The label for category '(.*)' in sidebar /.exec(translation.description ?? "")?.[1] ??
       id.slice(categoryPrefix.length);
-    if (translation.message === englishLabel && !protectedLabels.has(englishLabel)) {
+    const key = id.slice(categoryPrefix.length);
+    if (
+      translation.message === englishLabel &&
+      !protectedLabels.has(englishLabel) &&
+      !protectedKeys.has(key)
+    ) {
       failures.push(`${locale} sidebar category remains in English: ${englishLabel}`);
     }
   }

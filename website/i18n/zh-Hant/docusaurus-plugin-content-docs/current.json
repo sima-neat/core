@@ -290,5 +290,25 @@
   "sidebar.docs.category.Release Notes": {
     "message": "版本資訊",
     "description": "The label for category 'Release Notes' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/peripherals": {
+    "message": "peripherals",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/guides": {
+    "message": "指南",
+    "description": "The label for category 'guides' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Sentinel": {
+    "message": "Sentinel",
+    "description": "The label for category 'Sentinel' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/panels": {
+    "message": "面板",
+    "description": "The label for category 'panels' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/peripherals": {
+    "message": "周邊裝置",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
   }
 }

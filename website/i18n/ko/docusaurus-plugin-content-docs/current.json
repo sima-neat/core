@@ -290,5 +290,25 @@
   "sidebar.docs.category.Release Notes": {
     "message": "릴리스 노트",
     "description": "The label for category 'Release Notes' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/peripherals": {
+    "message": "peripherals",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/guides": {
+    "message": "가이드",
+    "description": "The label for category 'guides' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Sentinel": {
+    "message": "Sentinel",
+    "description": "The label for category 'Sentinel' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/panels": {
+    "message": "패널",
+    "description": "The label for category 'panels' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/peripherals": {
+    "message": "주변 장치",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
   }
 }

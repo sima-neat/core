@@ -290,5 +290,25 @@
   "sidebar.docs.category.structs": {
     "message": "Структури",
     "description": "The label for category 'structs' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/peripherals": {
+    "message": "peripherals",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/guides": {
+    "message": "Посібники",
+    "description": "The label for category 'guides' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Sentinel": {
+    "message": "Sentinel",
+    "description": "The label for category 'Sentinel' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/panels": {
+    "message": "Панелі",
+    "description": "The label for category 'panels' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/peripherals": {
+    "message": "Периферійні пристрої",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
   }
 }
