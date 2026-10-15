@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -811,6 +812,29 @@ def yaml_scalar(text: str, field: str) -> Optional[str]:
     return None if value in ("", "null", "Null", "NULL", "~") else value
 
 
+def yaml_link(text: str) -> object:
+    """The top-level `link` of simple category YAML, in JSON form.
+
+    `...` when there is no `link`, a dict for a block or flow mapping, and
+    None for anything else (`null`, or a form autodoc does not read).
+    """
+    match = re.search(r"^link[ \t]*:[ \t]*(.*)$", text, re.MULTILINE)
+    if not match:
+        return ...
+    inline = re.sub(r"\s+#.*$", "", match.group(1)).strip()
+    if inline.startswith("{") and inline.endswith("}"):
+        pairs = (part.split(":", 1) for part in inline[1:-1].split(",") if ":" in part)
+        return {k.strip(): yaml_scalar(f"v: {v.strip()}", "v") for k, v in pairs}
+    if inline:
+        return None
+    block = re.match(r"((?:[ \t]+\S.*\n?)+)", text[match.end() + 1:])
+    if not block:
+        return None
+    return {
+        field: yaml_scalar(textwrap.dedent(block.group(1)), field) for field in ("type", "id")
+    }
+
+
 def frontmatter_field(doc: Path, field: str) -> Optional[str]:
     """A scalar front matter value of a Markdown doc, or None when unset."""
     frontmatter = FRONTMATTER_RE.match(doc.read_text(encoding="utf-8"))
@@ -890,8 +914,7 @@ def assign_category_keys(dst_section: Path, mount: str) -> None:
             text = yaml_files[0].read_text(encoding="utf-8")
             if yaml_scalar(text, "key") or (
                 not re.search(r"^key[ \t]*:", text, re.MULTILINE)
-                and not re.search(r"^link[ \t]*:", text, re.MULTILINE)
-                and linked_doc_sidebar_key(folder, ..., dst_section, mount)
+                and linked_doc_sidebar_key(folder, yaml_link(text), dst_section, mount)
             ):
                 continue
             raise CategoryMetadataError(
@@ -1412,7 +1435,11 @@ def process_source(
             exclude_prefixes=excluded_prefixes,
         )
         # Docusaurus reads category metadata only from the English tree.
-        assign_category_keys(dst_section, mount)
+        try:
+            assign_category_keys(dst_section, mount)
+        except OSError as exc:
+            # A skip would publish this section unkeyed.
+            raise CategoryMetadataError(f"cannot write category keys: {exc}") from exc
     except OSError as exc:
         return False, f"copy failed: {exc}"
 

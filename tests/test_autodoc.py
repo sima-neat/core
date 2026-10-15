@@ -835,6 +835,14 @@ class CategoryKeyTests(unittest.TestCase):
                 "guides/_category_.json": '{"key": null}',
                 "guides/index.md": keyed,
             }, False),
+            "yaml block link": ({
+                "guides/_category_.yml": "label: G\nlink:\n  type: doc\n  id: setup\n",
+                "guides/setup.md": keyed,
+            }, True),
+            "yaml flow link": ({
+                "guides/_category_.yml": "link: {type: doc, id: setup}\n",
+                "guides/setup.md": keyed,
+            }, True),
             "yaml key with a comment": ({
                 "guides/_category_.yml": "key: tool-guides # stable\n",
                 "guides/index.md": plain,
