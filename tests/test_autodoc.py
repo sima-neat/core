@@ -807,6 +807,82 @@ class CategoryKeyTests(unittest.TestCase):
 
                 self.assertNotIn("key", self.category(section / "guides"))
 
+    def test_resolves_linked_doc_like_docusaurus(self):
+        keyed = "---\nsidebar_key: tool-guides\n---\n# Doc\n"
+        plain = "# Doc\n"
+        cases = {
+            # name: (pages, whether the source's sidebar_key is kept)
+            "local id link": ({
+                "guides/_category_.json": '{"link": {"type": "doc", "id": "setup"}}',
+                "guides/setup.md": keyed,
+            }, True),
+            "full id link outside the folder": ({
+                "guides/_category_.json": (
+                    '{"link": {"type": "doc", "id": "tools/tool/shared/intro"}}'
+                ),
+                "guides/setup.md": plain,
+                "shared/intro.md": keyed,
+            }, True),
+            "first index candidate is linked": ({
+                "guides/index.md": plain,
+                "guides/readme.md": keyed,
+            }, False),
+            "empty json key falls back to the label": ({
+                "guides/_category_.json": '{"key": ""}',
+                "guides/index.md": keyed,
+            }, False),
+            "null json key is replaced": ({
+                "guides/_category_.json": '{"key": null}',
+                "guides/index.md": keyed,
+            }, False),
+            "yaml key with a comment": ({
+                "guides/_category_.yml": "key: tool-guides # stable\n",
+                "guides/index.md": plain,
+            }, True),
+        }
+        for name, (pages, kept) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                section = self.stage(
+                    Path(directory),
+                    {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                    {"index.md": "# Tool\n", **pages},
+                )
+                category = section / "guides/_category_.json"
+                key = self.category(section / "guides").get("key") if category.exists() else None
+                self.assertEqual(key in (None, "tool-guides"), kept, key)
+                if not kept:
+                    self.assertEqual(key, "tools/tool/guides")
+
+    def test_rejects_empty_or_null_yaml_key(self):
+        for value in ('""', "null", ""):
+            with self.subTest(value), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(MODULE.CategoryMetadataError):
+                    self.stage(
+                        Path(directory),
+                        {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                        {
+                            "index.md": "# Tool\n",
+                            "guides/_category_.yml": f"key: {value}\n",
+                            "guides/index.md": "---\nsidebar_key: tool-guides\n---\n# Doc\n",
+                        },
+                    )
+
+    def test_yaml_scalar_reads_values_like_yaml(self):
+        cases = {
+            "key: plain\n": "plain",
+            'key: "quoted # not a comment"\n': "quoted # not a comment",
+            "key: 'single'\n": "single",
+            "key: value # comment\n": "value",
+            'key: ""\n': "",
+            "key: null\n": None,
+            "key: ~\n": None,
+            "key:\n": None,
+            "label: x\n": None,
+        }
+        for text, expected in cases.items():
+            with self.subTest(text):
+                self.assertEqual(MODULE.yaml_scalar(text, "key"), expected)
+
     def test_keys_category_whose_explicit_link_bypasses_the_index_doc(self):
         with tempfile.TemporaryDirectory() as directory:
             section = self.stage(
