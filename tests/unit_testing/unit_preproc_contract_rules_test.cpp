@@ -58,8 +58,7 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
 }
 
 sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag,
-                                                    const std::string& input_range = "[0.0, 1.0]",
-                                                    const std::string& extra_input_nodes = "") {
+                                                    const std::string& input_range = "[0.0, 1.0]") {
   const auto fixture =
       sima_test::make_model_archive_fixture(tag,
                                             {
@@ -76,7 +75,7 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag,
       "input_range": )json") + input_range + R"json(,
       "logical_shape": [1, 640, 640, 3],
       "logical_dtype": "FP32"
-    })json" + extra_input_nodes + R"json(
+    }
   ],
   "plugins": [
     {
@@ -300,10 +299,9 @@ std::vector<int> shape3(int h, int w, int c) {
 }
 
 void require_auto_normalize_from_range(const std::string& tag, const std::string& input_range,
-                                       bool normalize, float mean, float stddev,
-                                       const std::string& extra_input_nodes = "") {
+                                       bool normalize, float mean, float stddev) {
   using namespace simaai::neat;
-  const auto fixture = make_preproc_fixture(tag, input_range, extra_input_nodes);
+  const auto fixture = make_preproc_fixture(tag, input_range);
   Model::Options model_opt;
   model_opt.preprocess.kind = InputKind::Image;
   model_opt.preprocess.enable = AutoFlag::On;
@@ -537,15 +535,6 @@ RUN_TEST(
       require_auto_normalize_from_range("preproc_range_symmetric", "[-1.0, 1.0]", true, 0.5f, 0.5f);
       require_auto_normalize_from_range("preproc_range_raw_pixels", "[0.0, 255.0]", false, 0.0f,
                                         1.0f);
-      // Multi-ingress: only a range shared by every ingress tensor is trusted.
-      const std::string aux_raw =
-          R"json(, {"name": "aux", "type": "buffer", "size": 4, "input_range": [0.0, 255.0], "logical_shape": [1, 1], "logical_dtype": "FP32"})json";
-      const std::string aux_unit =
-          R"json(, {"name": "aux", "type": "buffer", "size": 4, "input_range": [0.0, 1.0], "logical_shape": [1, 1], "logical_dtype": "FP32"})json";
-      require_auto_normalize_from_range("preproc_range_multi_conflict", "[0.0, 1.0]", false, 0.0f,
-                                        1.0f, aux_raw);
-      require_auto_normalize_from_range("preproc_range_multi_shared", "[0.0, 1.0]", true, 0.0f,
-                                        1.0f, aux_unit);
 
       {
         const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");

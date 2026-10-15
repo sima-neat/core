@@ -22,6 +22,7 @@ using simaai::neat::internal::GraphFamilyCapabilities;
 using simaai::neat::internal::plan_preprocess;
 using simaai::neat::internal::PreprocessCapabilities;
 using simaai::neat::internal::PreprocessPlannerResult;
+using simaai::neat::internal::select_shared_input_range;
 
 GraphFamilyCapabilities all_ops_family(bool available) {
   GraphFamilyCapabilities fam;
@@ -61,6 +62,29 @@ void require_throws_contains(const std::function<void()>& fn, const std::string&
     return;
   }
   throw std::runtime_error(msg + " (no exception)");
+}
+
+// Multi-ingress MPKs: only a range shared by every ingress tensor is used.
+void require_shared_input_range_selection() {
+  using Ranges = std::vector<std::vector<double>>;
+  bool ambiguous = true;
+  require(select_shared_input_range(Ranges{{0.0, 1.0}}, &ambiguous) ==
+                  std::vector<double>({0.0, 1.0}) &&
+              !ambiguous,
+          "ranges: single ingress range is used");
+  require(select_shared_input_range(Ranges{{0.0, 1.0}, {0.0, 1.0}}, &ambiguous) ==
+                  std::vector<double>({0.0, 1.0}) &&
+              !ambiguous,
+          "ranges: identical ingress ranges are used");
+  require(select_shared_input_range(Ranges{{0.0, 1.0}, {0.0, 255.0}}, &ambiguous).empty() &&
+              ambiguous,
+          "ranges: differing ingress ranges are ambiguous");
+  require(select_shared_input_range(Ranges{{0.0, 1.0}, {}}, &ambiguous).empty() && ambiguous,
+          "ranges: a missing range after a declared one is ambiguous");
+  require(select_shared_input_range(Ranges{{}, {0.0, 1.0}}, &ambiguous).empty() && ambiguous,
+          "ranges: a missing range before a declared one is ambiguous");
+  require(select_shared_input_range(Ranges{{}, {}}, &ambiguous).empty() && !ambiguous,
+          "ranges: no declared range is not ambiguous");
 }
 
 } // namespace
@@ -394,5 +418,7 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
              require(auto_ambiguous.resolved_plan.effective.normalize.enable == AutoFlag::Off &&
                          has_warning(auto_ambiguous, "image ingress range is ambiguous"),
                      "route: ambiguous input_range on auto-selected image preproc stays Off");
+
+             require_shared_input_range_selection();
            }
          }));

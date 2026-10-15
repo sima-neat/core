@@ -535,6 +535,33 @@ std::string canonical_mpk_kernel_kind(const std::string& raw_kernel) {
 
 } // namespace
 
+std::vector<double>
+select_shared_input_range(const std::vector<std::vector<double>>& ingress_ranges, bool* ambiguous) {
+  // The image ingress is not identified separately from the MPK ingress list, so
+  // only a range shared by every ingress tensor is trusted.  Differing or partially
+  // missing ranges are ambiguous: normalize=Auto must not pick one by manifest order.
+  const std::vector<double>* shared = nullptr;
+  bool any_missing = false;
+  bool conflict = false;
+  for (const auto& range : ingress_ranges) {
+    if (range.size() < 2U) {
+      any_missing = true;
+    } else if (!shared) {
+      shared = &range;
+    } else if (range[0] != (*shared)[0] || range[1] != (*shared)[1]) {
+      conflict = true;
+    }
+  }
+  const bool is_ambiguous = shared && (conflict || any_missing);
+  if (ambiguous) {
+    *ambiguous = is_ambiguous;
+  }
+  if (!shared || is_ambiguous) {
+    return {};
+  }
+  return {(*shared)[0], (*shared)[1]};
+}
+
 PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   PreprocessCapabilities out;
   out.preproc = defaults_for_kernel("preproc");
@@ -545,27 +572,17 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
         " Ensure the model pack includes an mpk.json manifest with plugin IO contracts.");
   }
   const auto& contract = *maybe_contract;
-  // The image ingress is not identified separately from the MPK ingress list, so
-  // only a range shared by every ingress tensor is trusted.  Differing or partially
-  // missing ranges are ambiguous: normalize=Auto must not pick one by manifest order.
-  const std::vector<double>* shared_range = nullptr;
-  bool any_missing = false;
-  bool conflict = false;
+  std::vector<std::vector<double>> ingress_ranges;
+  ingress_ranges.reserve(contract.ingress_tensors.size());
   for (const auto& ingress : contract.ingress_tensors) {
-    if (ingress.input_range.size() < 2U) {
-      any_missing = true;
-    } else if (!shared_range) {
-      shared_range = &ingress.input_range;
-    } else if (ingress.input_range[0] != (*shared_range)[0] ||
-               ingress.input_range[1] != (*shared_range)[1]) {
-      conflict = true;
-    }
+    ingress_ranges.push_back(ingress.input_range);
   }
-  out.model_input_range_ambiguous = shared_range && (conflict || any_missing);
+  const std::vector<double> shared_range =
+      select_shared_input_range(ingress_ranges, &out.model_input_range_ambiguous);
   std::array<float, 3> mean{};
   std::array<float, 3> stddev{};
-  if (shared_range && !out.model_input_range_ambiguous &&
-      derive_unit_pixel_normalization_from_input_range(*shared_range, &mean, &stddev)) {
+  if (!shared_range.empty() &&
+      derive_unit_pixel_normalization_from_input_range(shared_range, &mean, &stddev)) {
     // input_range [0, 255] maps every pixel onto itself: no normalization needed.
     const bool identity =
         std::fabs(mean[0]) < 1e-6f && std::fabs(stddev[0] * 255.0f - 1.0f) < 1e-4f;

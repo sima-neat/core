@@ -97,6 +97,11 @@ struct PreprocessPlannerResult {
   std::vector<float> stddev;
 };
 
+/// Returns the MPK input_range shared by every ingress tensor, or an empty vector
+/// when none is declared.  Sets *ambiguous when ingress ranges differ or are only
+/// partially declared; the result is then empty.
+std::vector<double>
+select_shared_input_range(const std::vector<std::vector<double>>& ingress_ranges, bool* ambiguous);
 PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack);
 PreprocessPlannerResult plan_preprocess(const Model::Options& options,
                                         const PreprocessCapabilities& capabilities);
