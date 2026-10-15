@@ -748,6 +748,35 @@ class CategoryKeyTests(unittest.TestCase):
             self.assertEqual(self.category(section / "observe")["key"], "observe")
             self.assertFalse((section / "images/_category_.json").exists())
 
+    def test_rejects_category_metadata_it_cannot_key(self):
+        cases = {
+            "yaml without key": ("guides/_category_.yml", "label: Guides\n"),
+            "invalid json": ("guides/_category_.json", '{"label": "Guides",}'),
+        }
+        for name, (relative, text) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(MODULE.CategoryMetadataError) as caught:
+                    self.stage(
+                        Path(directory),
+                        {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                        {"index.md": "# Tool\n", "guides/setup.md": "# Setup\n", relative: text},
+                    )
+                self.assertIn("guides/_category_", str(caught.exception))
+
+    def test_keeps_yaml_category_that_sets_a_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            section = self.stage(
+                Path(directory),
+                {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                {
+                    "index.md": "# Tool\n",
+                    "guides/setup.md": "# Setup\n",
+                    "guides/_category_.yml": "label: Guides\nkey: tool-guides\n",
+                },
+            )
+
+            self.assertFalse((section / "guides/_category_.json").exists())
+
 
 class NestedSourceMountTests(unittest.TestCase):
     def test_parent_then_child_refresh_preserves_nested_section(self):

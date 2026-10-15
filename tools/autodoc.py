@@ -78,6 +78,10 @@ class SourceLocalizationError(RuntimeError):
     """A source-owned localization contract cannot be published safely."""
 
 
+class CategoryMetadataError(RuntimeError):
+    """An imported category folder cannot be given a unique translation key."""
+
+
 def run_git(args: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> None:
     """Run git with stdout/stderr captured; raise CalledProcessError on failure."""
     run_env = os.environ.copy()
@@ -798,22 +802,37 @@ def assign_category_keys(dst_section: Path, mount: str) -> None:
     pick their folder names independently (sima-cli's `peripherals` command
     group and Sentinel's `peripherals` guides), so key each folder by its path
     under the mount. A key the source already set is kept.
+
+    Raises CategoryMetadataError for metadata it cannot key: invalid JSON, or a YAML
+    category file without a top-level `key` (autodoc has no YAML parser).
     """
     for folder in sorted(p for p in dst_section.rglob("*") if p.is_dir()):
         if not any(folder.rglob("*.md")) and not any(folder.rglob("*.mdx")):
             continue  # asset folder, not a sidebar category
-        if any(folder.glob("_category_.y*ml")):
-            LOG.warning("[%s] %s uses a YAML category file; its key is left unset", mount, folder)
+        relative = folder.relative_to(dst_section).as_posix()
+        yaml_files = sorted(folder.glob("_category_.y*ml"))
+        if yaml_files:
+            text = yaml_files[0].read_text(encoding="utf-8")
+            if not re.search(r"^key\s*:\s*\S", text, re.MULTILINE):
+                raise CategoryMetadataError(
+                    f"{relative}/{yaml_files[0].name} has no top-level `key`; set "
+                    f'`key: "{mount}/{relative}"` or ship _category_.json instead'
+                )
             continue
         category_file = folder / "_category_.json"
-        payload = (
-            json.loads(category_file.read_text(encoding="utf-8"))
-            if category_file.is_file()
-            else {}
-        )
+        try:
+            payload = (
+                json.loads(category_file.read_text(encoding="utf-8"))
+                if category_file.is_file()
+                else {}
+            )
+        except json.JSONDecodeError as exc:
+            raise CategoryMetadataError(
+                f"{relative}/_category_.json is not valid JSON: {exc}"
+            ) from exc
         if payload.get("key"):
             continue
-        payload["key"] = f"{mount}/{folder.relative_to(dst_section).as_posix()}"
+        payload["key"] = f"{mount}/{relative}"
         category_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
@@ -1426,6 +1445,7 @@ def main() -> int:
 
     skipped: List[str] = []
     localization_failures: List[str] = []
+    metadata_failures: List[str] = []
     successes: List[str] = []
     for source in sources:
         try:
@@ -1434,6 +1454,11 @@ def main() -> int:
             )
         except SourceLocalizationError as exc:
             localization_failures.append(f"{source['key']}: {exc}")
+            LOG.error("[%s] FAILED: %s", source["key"], exc)
+            continue
+        except CategoryMetadataError as exc:
+            # Skipping would publish the docs without this section.
+            metadata_failures.append(f"{source['key']}: {exc}")
             LOG.error("[%s] FAILED: %s", source["key"], exc)
             continue
         if ok:
@@ -1449,7 +1474,9 @@ def main() -> int:
         len(skipped),
         len(localization_failures),
     )
-    return 1 if localization_failures else 0
+    if metadata_failures:
+        LOG.error("%d category metadata failures", len(metadata_failures))
+    return 1 if localization_failures or metadata_failures else 0
 
 
 if __name__ == "__main__":
