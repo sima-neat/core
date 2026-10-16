@@ -177,3 +177,17 @@ Platform 3.0.0에서 사용할 수 없는 디스패처는 조사해야 할 오�
 설치 프로그램은 패키지를 바꾸기 전에 번들된 `neat-runtime` 프로파일과 호환되는 `neat-gst-plugins` 버전을 확인합니다. 플랫폼 검사 재정의는 런타임 버전 일치 검사를 우회하지 않습니다. 검사에 실패하면 호환되는 번들을 구해야 하며 기록을 교체하거나 이전 런타임을 강제로 설치하지 않습니다.
 
 보드에 설치하기 전에 CVU나 하드웨어 코덱을 사용하는 앱을 중지합니다. 전체 설치 프로그램은 모든 패키지를 설치한 뒤 준비된 EV74 펌웨어를 활성화하며 해당 장치가 열려 있으면 EV74 재설정을 거부합니다. `NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF`로 설정하면 펌웨어를 준비 상태로 유지하고 나중에 `sudo /usr/libexec/sima-neat-firmware/install.sh --activate`로 활성화할 수 있습니다.
+
+설치 시 `FORCE_INSTALL=1`(또는 `sima-cli neat install core -f`)을 사용하고
+`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF`로 활성화를 미뤘다면,
+보드에서 수동으로 활성화할 때 재정의를 다시 전달해야 합니다. 설치 프로그램은
+이 설정을 저장하지 않습니다. CVU나 하드웨어 코덱을 사용하는 앱을 중지한 뒤 실행합니다.
+
+```bash
+sudo env FORCE_INSTALL=1 /usr/libexec/sima-neat-firmware/install.sh --activate
+```
+
+이 명령은 EV74 커널 빌드 호환성 검사 재정의를 요청하며, 이를 지원하는 펌웨어
+패키지가 필요합니다. 일치하지 않는 런타임은 안전하지 않을 수 있으며, 강제 활성화가
+호환성을 보장하지는 않습니다. 펌웨어 무결성, 소유권, DMA 안전성 검사는 계속
+적용됩니다. 가능한 한 서로 일치하는 펌웨어/커널 번들을 사용합니다.

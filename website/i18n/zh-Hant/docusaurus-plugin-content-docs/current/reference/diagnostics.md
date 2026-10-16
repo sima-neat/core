@@ -183,3 +183,15 @@ std::cout << report.to_text();
 稍後再以
 `sudo /usr/libexec/sima-neat-firmware/install.sh --activate`
 啟用。
+
+若安裝時使用了 `FORCE_INSTALL=1`（或 `sima-cli neat install core -f`），並以
+`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` 延後啟用，請在板上手動啟用時
+再次傳入覆寫設定；安裝程式不會保留此設定。停止使用 CVU 或硬體編解碼器的應用程式後，執行：
+
+```bash
+sudo env FORCE_INSTALL=1 /usr/libexec/sima-neat-firmware/install.sh --activate
+```
+
+此命令會要求覆寫 EV74 核心建置相容性檢查，因此需要支援此覆寫功能的韌體套件。
+不相符的執行階段可能不安全；強制啟用不代表具有相容性。韌體完整性、擁有權與
+DMA 安全性檢查仍會執行。請優先使用相符的韌體與核心套件組。

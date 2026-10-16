@@ -210,3 +210,18 @@ packages and refuses to reset EV74 while those devices are open. Set
 `NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` to leave the firmware staged for
 later activation with
 `sudo /usr/libexec/sima-neat-firmware/install.sh --activate`.
+
+If installation used `FORCE_INSTALL=1` (or `sima-cli neat install core -f`) and
+you deferred activation with `NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF`,
+pass the override again when activating manually on the board; the installer
+does not persist it. After stopping applications using CVU or the hardware
+codec, run:
+
+```bash
+sudo env FORCE_INSTALL=1 /usr/libexec/sima-neat-firmware/install.sh --activate
+```
+
+This requests the EV74 kernel-build compatibility override and requires a
+firmware package that supports it. A mismatched runtime may be unsafe; forcing
+activation does not establish compatibility. Firmware integrity, ownership,
+and DMA safety checks still apply. Prefer a matching firmware/kernel bundle.
