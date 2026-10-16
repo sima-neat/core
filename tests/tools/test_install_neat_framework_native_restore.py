@@ -558,6 +558,59 @@ install_ros2_sdk_tvm_runtime
         self.assertIn("libtvm_runtime.so>", result.stdout)
 
 
+class ForceInstallTest(unittest.TestCase):
+    def test_only_one_bypasses_platform_mismatch(self) -> None:
+        for mode in ("elxr-sdk", "ros2-sdk", "modalix-board"):
+            for value in (None, "", "0", "1", "true", "ON"):
+                with self.subTest(mode=mode, value=value):
+                    force_setup = "unset FORCE_INSTALL" if value is None else f"export FORCE_INSTALL='{value}'"
+                    result = run_bash(
+                        r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+printf '%s\n' '{"platform-version":"3.0.0"}' > "${tmp}/manifest.json"
+printf '%s\n' 'Platform Version = 2.1.3' 'SDK Version = 2.1.3' > "${tmp}/sdk-release"
+printf '%s\n' 'MACHINE = modalix' 'DISTRO_VERSION = 2.1.3' > "${tmp}/buildinfo"
+NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+NEAT_BUILDINFO_FILE="${tmp}/buildinfo"
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF
+"""
+                        + f"\nENV_MODE={mode}\n{force_setup}\nensure_platform_compatible\n"
+                    )
+                    if value == "1":
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn("FORCE_INSTALL=1; skipping", result.stdout)
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("Incompatible platform version", result.stderr)
+
+    def test_force_is_forwarded_to_paired_devkit(self) -> None:
+        for value in ("0", "1"):
+            with self.subTest(value=value):
+                result = run_bash(
+                    r"""
+source "$1"
+NEAT_INSTALLER_SKIP_DEVKIT_SYNC=OFF
+DEVKIT_SYNC_DEVKIT_IP=example.invalid
+collect_cached_devkit_deploy_files() { CACHED_DEPLOY_FILES=(fake.deb); }
+run_scp() { :; }
+run_ssh() {
+  if [[ "$1" == -t ]]; then
+    [[ "$3" == 'bash -lc '* ]]
+    # Decode the quoted remote payload without executing an installation.
+    eval "set -- ${3#bash -lc }"
+    printf '%s\n' "$1"
+  fi
+}
+"""
+                    + f"\nexport FORCE_INSTALL={value}\ndeploy_artifacts_to_paired_devkit_if_configured\n"
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"export FORCE_INSTALL={value}", result.stdout)
+
+
 class NativeModalixRestoreTest(unittest.TestCase):
     def test_sdk_platform_version_prefers_pre_release_platform_base(self) -> None:
         result = run_bash(

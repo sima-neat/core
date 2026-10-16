@@ -34,6 +34,8 @@ set -euo pipefail
 #   - neat-install-manifest.txt when installed from a packaged release
 #
 # Environment overrides:
+# - FORCE_INSTALL: set to 1 to skip platform compatibility checks, including on
+#   a paired DevKit. Set by sima-cli neat install -f; other values do not force.
 # - PYNEAT_VENV_DIR: Python virtualenv path
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
@@ -105,6 +107,14 @@ Options:
   --local      Install only into the current environment from artifacts in cwd.
                Disables paired SDK->DevKit sync behavior.
   -h, --help   Show this help.
+
+Environment:
+  FORCE_INSTALL=1  Skip platform compatibility checks (also on a paired DevKit).
+                   Set automatically by sima-cli neat install core -f.
+                   Package dependency and removal checks still apply.
+
+Example:
+  FORCE_INSTALL=1 bash install_neat_framework.sh --local
 EOF
 }
 
@@ -601,6 +611,10 @@ read_devkit_platform_version() {
 }
 
 ensure_platform_compatible() {
+  if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
+    log "FORCE_INSTALL=1; skipping platform compatibility check. Package may not work on this platform."
+    return 0
+  fi
   if [[ "${NEAT_INSTALLER_SKIP_PLATFORM_CHECK}" == "ON" ]]; then
     log "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON; skipping platform compatibility check."
     return 0
@@ -1998,6 +2012,7 @@ deploy_artifacts_to_paired_devkit_if_configured() {
   remote_install_cmd="set -euo pipefail
 remote_dir=$(printf '%q' "${remote_dir}")
 installer_name=$(printf '%q' "${installer_basename}")
+export FORCE_INSTALL=$(printf '%q' "${FORCE_INSTALL:-0}")
 cleanup_remote_artifacts() {
   rm -rf \"\${remote_dir}\"
 }
