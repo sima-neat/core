@@ -65,7 +65,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertIn('PATTERN "SimaaiGstErrors.h" EXCLUDE', install_headers)
         manifest = json.loads((ROOT / "deps/manifest.json").read_text())
         subprocess.run(["dpkg", "--compare-versions", manifest["package-version"],
-                        "ge", "0.6.1"], check=True)
+                        "ge", "0.6.0"], check=True)
         self.assertFalse((ROOT / "include/gst/SimaCvuCapabilityAbi.h").exists())
         self.assertIn(
             "#include <simaai/runtime/gstreamer/abi/SimaPluginStaticManifestAbi.h>",

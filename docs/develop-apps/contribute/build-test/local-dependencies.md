@@ -72,14 +72,16 @@ install the complete matching distribution rather than replacing one package.
 
 ### Migrating GStreamer header ownership
 
-Starting with Core package version `0.6.1`, Scheduler is the sole owner of
+The unreleased Core `0.6.0` moves ownership to Scheduler for
 `/usr/include/gst/SimaaiGstErrors.h`. The include path remains unchanged. Core
 no longer carries its own implementation or installs that file; consumers use
 the installed Scheduler headers and `SimaScheduler::Headers` target.
 
 Upgrade Core and Scheduler together using the matching distribution. Scheduler's
-bounded `Breaks`/`Replaces` relationship prevents an older Core development
-package from silently losing the header. Do not use `--force-overwrite` or delete
+bounded `Breaks`/`Replaces` relationships cover pre-0.6 packages and the
+explicitly audited older 0.6 development artifact. They do not reject the corrected
+0.6.0 release. Unknown overlapping development artifacts fail the ownership
+preflight rather than being silently overwritten. Do not use `--force-overwrite` or delete
 dpkg-owned files. A standalone Scheduler test image does not need Core installed;
 an existing Core installation needs the coordinated upgrade.
 
