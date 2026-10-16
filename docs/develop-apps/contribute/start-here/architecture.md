@@ -13,6 +13,14 @@ without breaking its module and runtime contracts.
 
 ---
 
+## GStreamer interface ownership
+
+Scheduler owns the GStreamer transport and structured error interfaces, including
+the installed `gst/SimaaiGstErrors.h` header. Core consumes those interfaces; it
+does not keep a second implementation. Core package version `0.6.1` marks this
+file-ownership transition. Upgrade the matching Core/Scheduler package set
+together; this package version does not change a platform or numerical contract.
+
 ## Framework vs environment
 
 The word "Neat" is used for two related but separate concerns:

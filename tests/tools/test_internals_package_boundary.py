@@ -57,11 +57,15 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "SimaPluginStaticManifestAbi.h",
             "SimaPreparedRuntimeAbi.h",
             "SimaTensorSetMetaAbi.h",
-            "SimaaiGstErrors.h",
         ):
             with self.subTest(header=header):
                 self.assertTrue((ROOT / "include/gst" / header).is_file())
                 self.assertIn(f'PATTERN "{header}" EXCLUDE', install_headers)
+        self.assertFalse((ROOT / "include/gst/SimaaiGstErrors.h").exists())
+        self.assertIn('PATTERN "SimaaiGstErrors.h" EXCLUDE', install_headers)
+        manifest = json.loads((ROOT / "deps/manifest.json").read_text())
+        subprocess.run(["dpkg", "--compare-versions", manifest["package-version"],
+                        "ge", "0.6.1"], check=True)
         self.assertFalse((ROOT / "include/gst/SimaCvuCapabilityAbi.h").exists())
         self.assertIn(
             "#include <simaai/runtime/gstreamer/abi/SimaPluginStaticManifestAbi.h>",
@@ -99,6 +103,26 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
                         check=False, text=True, capture_output=True,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_actual_header_install_leaves_scheduler_contracts_to_scheduler(self) -> None:
+        text = cmake()
+        start = text.rfind("install(", 0, text.index("DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/"))
+        block = text[start:text.index("\n)", start) + 3]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CMakeLists.txt").write_text(
+                "cmake_minimum_required(VERSION 3.18)\nproject(HeaderOwnership NONE)\n"
+                'set(CMAKE_INSTALL_INCLUDEDIR "include")\n'
+                f'set(CMAKE_CURRENT_SOURCE_DIR "{ROOT}")\n' + block)
+            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build")],
+                           check=True, capture_output=True)
+            subprocess.run(["cmake", "--install", str(root / "build"), "--prefix",
+                            str(root / "installed"), "--component", "dev"],
+                           check=True, capture_output=True)
+            installed = root / "installed/include"
+            self.assertTrue((installed / "neat.h").is_file())
+            for name in ("SimaaiGstErrors.h", "SimaTensorSetMetaAbi.h", "SimaPreparedRuntimeAbi.h"):
+                self.assertFalse((installed / "gst" / name).exists(), name)
 
     def test_no_manually_constructed_internals_version_ranges(self) -> None:
         text = cmake()

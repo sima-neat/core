@@ -70,6 +70,21 @@ and Scheduler dependencies. Canonical packages own their files once; Runner alon
 owns the existing loader configuration. Always
 install the complete matching distribution rather than replacing one package.
 
+### Migrating GStreamer header ownership
+
+Starting with Core package version `0.6.1`, Scheduler is the sole owner of
+`/usr/include/gst/SimaaiGstErrors.h`. The include path remains unchanged. Core
+no longer carries its own implementation or installs that file; consumers use
+the installed Scheduler headers and `SimaScheduler::Headers` target.
+
+Upgrade Core and Scheduler together using the matching distribution. Scheduler's
+bounded `Breaks`/`Replaces` relationship prevents an older Core development
+package from silently losing the header. Do not use `--force-overwrite` or delete
+dpkg-owned files. A standalone Scheduler test image does not need Core installed;
+an existing Core installation needs the coordinated upgrade.
+
+### Backend providers
+
 Scheduler requires separately installed platform backends. These are not
 copied into Scheduler or fetched by this workflow:
 

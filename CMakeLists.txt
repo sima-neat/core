@@ -1367,7 +1367,7 @@ install(
   PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
   PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
   PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
-  # Runtime owns the current structured GStreamer error contract at this path.
+  # Scheduler owns this installed path; never restore a Core implementation.
   PATTERN "SimaaiGstErrors.h" EXCLUDE
   PATTERN "ev_tensor_abi.h" EXCLUDE
   PATTERN "PreparedRuntimeBridge.h" EXCLUDE
