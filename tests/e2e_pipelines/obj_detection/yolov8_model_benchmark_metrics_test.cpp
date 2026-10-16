@@ -14,7 +14,12 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr int kBenchmarkSamples = 100;
-constexpr double kDefaultMinDurationMs = 30000.0;
+constexpr double kDefaultMinDurationMs = 10000.0;
+constexpr double kSentinelSampleIntervalMs = 2000.0;
+// Two thirds of the samples Sentinel publishes during the default window, allowing for the
+// window edges: 10 s at 2 s per sample is about 5 samples.
+constexpr int kMinSentinelSamples =
+    static_cast<int>(kDefaultMinDurationMs / kSentinelSampleIntervalMs * 2.0 / 3.0);
 
 } // namespace
 
@@ -58,7 +63,9 @@ int main(int argc, char** argv) {
     // Board telemetry comes from the Sentinel daemon that the board installer provisions.
     require(telemetry.status == "ok",
             "yolov8 benchmark: Sentinel telemetry unavailable: " + telemetry.status);
-    require(telemetry.samples >= 10, "yolov8 benchmark: expected >= 10 Sentinel samples");
+    require(telemetry.samples >= kMinSentinelSamples,
+            "yolov8 benchmark: expected >= " + std::to_string(kMinSentinelSamples) +
+                " Sentinel samples, got " + std::to_string(telemetry.samples));
     require(report.avg_power_watts > 0.0, "yolov8 benchmark: power must be positive");
     require(report.peak_power_watts >= report.avg_power_watts,
             "yolov8 benchmark: peak power must be at least the average");

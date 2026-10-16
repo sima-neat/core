@@ -3,6 +3,7 @@
 
 Usage:
   python3 benchmark_your_model.py --model /path/to/model.tar.gz [--samples 100]
+    [--report results/model/yolo_benchmark.yaml] [--include-layer-stats]
 """
 from __future__ import annotations
 
@@ -23,6 +24,9 @@ def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
   ap.add_argument("--model", type=Path, required=True)
   ap.add_argument("--samples", type=int, default=100, help="number of measured synthetic samples")
+  ap.add_argument("--report", type=Path, help="destination report file (.json selects JSON; otherwise YAML)")
+  ap.add_argument("--include-layer-stats", action="store_true",
+                  help="advanced: request separate MLA layer profiling (requires an idle devkit)")
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
@@ -31,7 +35,10 @@ def main(argv: list[str]) -> int:
   # END STEP
 
   # STEP run-benchmark
-  report = model.benchmark(args.samples)
+  options = pyneat.BenchmarkOptions()
+  options.num_samples = args.samples
+  options.include_layer_stats = args.include_layer_stats
+  report = model.benchmark(options)
   if report.latency_ms <= 0 or report.fps <= 0:
     raise RuntimeError("benchmark produced no measured latency/fps")
   # END STEP
@@ -44,6 +51,18 @@ def main(argv: list[str]) -> int:
   print(f"report_peak_power_watts={report.peak_power_watts}")
   print(f"report_throughput_duration_ms={report.throughput_duration_ms}")
   print(f"report_telemetry_status={report.telemetry.status}")
+  # END STEP
+  # STEP read-layer-stats
+  if options.include_layer_stats:
+    print("Layer stats (execution time in microseconds):")
+    for layer in report.layer_stats:
+      print(f"  stage_index={layer.stage_index} name={layer.name} "
+            f"total_execution_time_us={layer.total_execution_time_us}")
+  # END STEP
+
+  # STEP save-report
+  if args.report is not None:
+    print(f"report_path={report.save(args.report)}")
   # END STEP
   # END CORE LOGIC
 

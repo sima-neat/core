@@ -146,7 +146,11 @@ input Sample/Tensor
 
 ### 벤치마크 텔레메트리
 
-`Model::benchmark()`는 보드 텔레메트리 데몬인 Sentinel에서 `/run/simaai-sentinel/api.sock`의 HTTP API를 통해 전력과 보드 텔레메트리를 읽습니다. 벤치마크를 위해 Core가 전력 모니터 칩을 직접 읽지 않습니다. 벤치마크는 처리량 패스 동안 `neat-benchmark-<UTC time>`이라는 이름의 Sentinel 트레이스를 기록하고, 그 트레이스만 중지한 뒤 Sentinel 자체 도구에서 사용할 수 있도록 보존합니다. Sentinel은 약 2초마다 샘플링하므로 처리량 패스는 최소 `BenchmarkOptions::min_duration_ms`(기본값 30초) 동안 실행됩니다. Sentinel이 실행 중이 아니거나, 다른 트레이스가 기록 중이거나, 측정 구간에 샘플이 없어도 벤치마크는 지연 시간과 FPS를 반환합니다. 이때 전력 필드는 0이며 `telemetry.status`가 이유를 알려 줍니다. `tools/install_neat_framework.sh`의 보드 모드는 Sentinel을 설치하거나 최신 프로덕션 빌드로 업그레이드합니다. `Run`의 전력(`RunOptions::power_monitor`)도 Sentinel에서 가져옵니다. Core는 Sentinel의 최신 샘플을 폴링하며 I2C로 전력 모니터 칩을 읽지 않습니다.
+`Model::benchmark()`는 보드 텔레메트리 데몬인 Sentinel에서 `/run/simaai-sentinel/api.sock`의 HTTP API를 통해 전력과 보드 텔레메트리를 읽습니다. 벤치마크를 위해 Core가 전력 모니터 칩을 직접 읽지 않습니다. 벤치마크는 처리량 패스 동안 `neat-benchmark-<UTC time>`이라는 이름의 Sentinel 트레이스를 기록하고, 그 트레이스만 중지한 뒤 Sentinel 자체 도구에서 사용할 수 있도록 보존합니다. Sentinel은 약 2초마다 샘플링하므로 처리량 패스는 최소 `BenchmarkOptions::min_duration_ms`(기본값 10초) 동안 실행됩니다. 지연 시간 패스도 같은 최솟값을 따르므로 두 패스는 같은 규칙으로 멈춥니다. Sentinel이 실행 중이 아니거나, 다른 트레이스가 기록 중이거나, 측정 구간에 샘플이 없어도 벤치마크는 지연 시간과 FPS를 반환합니다. 이때 전력 필드는 0이며 `telemetry.status`가 이유를 알려 줍니다. `tools/install_neat_framework.sh`의 보드 모드는 Sentinel을 설치하거나 최신 프로덕션 빌드로 업그레이드합니다. `Run`의 전력(`RunOptions::power_monitor`)도 Sentinel에서 가져옵니다. Core는 Sentinel의 최신 샘플을 폴링하며 I2C로 전력 모니터 칩을 읽지 않습니다.
+
+레이어 프로파일링은 기본값이 false인 `BenchmarkOptions::include_layer_stats`로 명시적으로 활성화합니다. 지연 시간 및 처리량 러너가 종료된 후 Core는 추출된 모델의 MLA 실행 파일과 컴파일러 통계 YAML을 사용하여 별도 프로세스에서 `mla-rt`를 호출합니다. Core는 검증, 하위 프로세스 시간 제한 및 임시 파일 정리를 담당하며, MLA-RT는 하드웨어 프로파일링과 커널 실행으로의 제어권 반환을 담당합니다. 프로파일링은 다른 MLA 작업과 겹치지 않아야 합니다.
+
+`BenchmarkReport::layer_stats`에는 컴파일된 레이어 이름, 0부터 시작하는 실행 단계 인덱스 및 마이크로초 단위 실행 시간이 포함됩니다. 이 측정은 별도의 프로파일링 패스를 사용하므로 합계가 전체 지연 시간과 일치하지 않습니다. `BenchmarkReport::save(file_path)`는 공개 필드 이름과 단위를 사용하여 전체 보고서를 명시적으로 저장합니다. `.json`은 JSON을, `.yaml` 및 기타 끝부분은 YAML을 선택합니다. 텔레메트리를 포함하며 프로파일링이 비활성화된 경우 레이어 목록은 비어 있습니다. 없는 상위 디렉터리를 생성하고 기존 대상 파일을 원자적으로 교체합니다.
 
 ### 컴파일된 모델 실행 계약
 

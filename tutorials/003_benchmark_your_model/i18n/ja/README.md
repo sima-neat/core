@@ -29,9 +29,9 @@
 
 ### ベンチマークの実行 {#step-run-benchmark}
 
-`benchmark(samples)`を呼び出します。このAPIは、モデルをウォームアップし、`samples`個の入力を1つずつ実行してレイテンシを測定した後、別の非同期プッシュ/プルのパスでスループットを測定し、概要を標準出力に出力し、同じ主要な値を`BenchmarkReport`として返します。
+`benchmark(samples)`を呼び出します。このAPIは、モデルをウォームアップし、入力を1つずつ実行してレイテンシを測定した後、別の非同期プッシュ/プルのパスでスループットを測定し、概要を標準出力に出力し、同じ主要な値を`BenchmarkReport`として返します。
 
-スループット測定パスは、少なくとも`samples`個の入力を測定し、かつ30秒が経過するまで続くため、電力と温度の値が安定します。この下限を変更するには`BenchmarkOptions::min_duration_ms`を設定します。0に設定すると、`samples`個の入力の後で停止する簡単なスモークテストになります。
+各パスは、少なくとも`samples`個の入力を測定し、かつ10秒が経過するまで続くため、スループット測定パスの電力と温度の値は複数のサンプルにわたります。この下限を変更するには`BenchmarkOptions::min_duration_ms`を設定します。0に設定すると、各パスが`samples`個の入力の後で停止する簡単なスモークテストになります。
 
 BoxDecodeで終わる検出モデルは、`BenchmarkOptions`も使用できます。`original_width`、`original_height`、および`resize_mode`を設定して、BoxDecodeがモデル座標から検出をマッピングするときに使用するソース画像のジオメトリを記述します。合成テンソルはモデルの形状のままです。
 
@@ -52,6 +52,44 @@ Pythonは、`pyneat.BenchmarkOptions`を通じて、同じフィールドを公�
 
 電力は、NeatのインストーラーがセットアップするボードのテレメトリデーモンであるSentinelから取得されます。`report.telemetry`には、スループット測定パスのレール電力、ダイとボードの温度、CPU使用率、MLAメモリも含まれます。各フィールドについては、[モデルの実行を測定する](/develop-apps/development-workflow/model#power-and-board-telemetry)を参照してください。Sentinelが実行されていない場合や別のトレースを記録中の場合でも、ベンチマークはレイテンシとスループットを報告し、電力フィールドをゼロのままにして、`report.telemetry.status`にその理由を設定します。
 
+### 上級: レイヤー統計 {#step-read-layer-stats}
+
+チュートリアルのコマンドに `--include-layer-stats` を追加すると、ベンチマークレポートにレイヤーの実行時間が含まれます。既定では無効です。API では次のように有効にします。
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_layer_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_layer_stats = True
+report = model.benchmark(options)
+```
+
+`report.layer_stats` から、コンパイル済みの各 MLA レイヤーの `name`、ゼロ始まりの `stage_index`、`total_execution_time_us` を読み取ります。実行時間がゼロの no-op エントリも保持されます。レイヤーの時間は別のプロファイリング実行で測定されるため、その合計は全体のレイテンシとは一致しません。
+
+### レポートの保存 {#step-save-report}
+
+`report.save(path)` を呼び出すと、要求した場合はレイヤー統計も含め、完全なレポートを YAML または JSON で保存できます。
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
+```
+
+拡張子が `.json` の場合は JSON、`.yaml` またはその他の末尾の場合は YAML を使用します。ファイル名は変更しません。
+
+ファイル名を含むパスを指定してください。存在しない親ディレクトリは作成され、既存のファイルは置き換えられ、書き込まれたパスが返されます。保存は明示的に行います。`benchmark()` はレポートファイルを自動作成しません。
+
+どちらのチュートリアルコマンドにも `--report results/model/yolo_benchmark.yaml` を追加できます。`--include-layer-stats` と組み合わせると、主要な測定値とレイヤーの実行時間の両方を保存できます。
+
 ## Run
 
 実行すると、`benchmark()`によって出力されるベンチマークの概要が表示され、その後に返されたレポートから同じ値が出力されます。**Neatのインストールルート**（`share/`と`lib/`が含まれるディレクトリ）から、**Python**と**C++（事前にビルドされたもの）**コマンドを実行します。**ソースからビルドする**コマンドは、**リポジトリのルート**から実行します。
@@ -70,8 +108,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 

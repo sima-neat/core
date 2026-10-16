@@ -772,7 +772,7 @@ report = model.benchmark(options)
 
 ### 実行時間
 
-ベンチマークは、`num_samples` 個の入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。`latency_ms` はそれらの入力の平均レイテンシーで、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms` はそのパーセンタイルです。スループット測定パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 30 秒）が経過するまで続きます。そのため、電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`throughput_samples` と `throughput_duration_ms` は、このパスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、`num_samples` 個の入力の後で停止します。
+ベンチマークは、入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。各パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 10 秒）が経過するまで続きます。そのため、両方のパスは同じ規則で停止し、スループット測定パスの電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`latency_ms` はレイテンシー測定パスの平均レイテンシーで、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms` はそのパーセンタイルです。`throughput_samples` と `throughput_duration_ms` は、スループット測定パスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、各パスが `num_samples` 個の入力の後で停止します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -812,7 +812,7 @@ report = model.benchmark(options)
 | `telemetry.cma_memory_mib` | 使用中の連続メモリ（CMA、MiB 単位）です。MLA のメモリプールを含むため、`mla_memory_mib` に加算しないでください。アイドル時には、Linux が CMA から借りているページキャッシュも含まれます。 |
 | `telemetry.linux_memory_used_mib` | ページキャッシュを除いた Linux の使用メモリ（MiB 単位）です。 |
 
-各メトリクスは `samples`、`mean`、`minimum`、`maximum` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。メモリの値はボード全体のもので、実行中の他のプロセスも含みます。Sentinel は 2 秒ごとにサンプリングするため、30 秒のパスでは約 15 個のサンプルが得られます。
+各メトリクスは `samples`、`mean`、`minimum`、`maximum` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。メモリの値はボード全体のもので、実行中の他のプロセスも含みます。Sentinel は 2 秒ごとにサンプリングするため、10 秒のパスでは約 5 個のサンプルが得られます。
 
 Sentinel が実行されていない場合、別の Sentinel トレースがすでに記録中の場合、またはパスが短すぎてサンプルを収集できない場合でも、ベンチマークはレイテンシーと FPS を返します。電力フィールドはゼロのままになり、`telemetry.status` にその理由が示され（それ以外の場合は `"ok"`）、出力される概要には `Power: unavailable (<reason>)` と表示されます。
 

@@ -115,6 +115,7 @@ SYSTEM_DEPS_LINUX=(
   libopencv-dev
   nlohmann-json3-dev
   libcpp-httplib-dev
+  libyaml-cpp-dev
   clang
   clang-format
   ripgrep
@@ -136,6 +137,7 @@ SYSTEM_DEPS_MAC=(
   opencv
   nlohmann-json
   cpp-httplib
+  yaml-cpp
 )
 
 SELECTED_SYSTEM_DEPS_LINUX=()
@@ -697,6 +699,27 @@ run_privileged() {
   fi
 
   return 1
+}
+
+ensure_core_yaml_sdk_deps() {
+  if [[ "${ELXR_SDK}" != "ON" || "${DOCS_ONLY}" == "ON" ]]; then
+    return
+  fi
+  if [[ -f "${SYSROOT}/usr/include/yaml-cpp/yaml.h" &&
+        -f "${SYSROOT}/usr/lib/aarch64-linux-gnu/pkgconfig/yaml-cpp.pc" &&
+        -e "${SYSROOT}/usr/lib/aarch64-linux-gnu/libyaml-cpp.so" ]]; then
+    return
+  fi
+  local yaml_stage
+  yaml_stage="$(mktemp -d /tmp/sima-neat-yaml-deps-XXXXXX)"
+  (cd "${yaml_stage}" && apt-get download libyaml-cpp-dev:arm64 libyaml-cpp0.8:arm64)
+  local yaml_deb
+  for yaml_deb in "${yaml_stage}"/*.deb; do
+    if ! dpkg-deb -x "${yaml_deb}" "${SYSROOT}" 2>/dev/null; then
+      run_privileged dpkg-deb -x "${yaml_deb}" "${SYSROOT}"
+    fi
+  done
+  rm -rf "${yaml_stage}"
 }
 
 ensure_llima_sdk_sysroot_deps() {
@@ -3202,6 +3225,7 @@ main() {
   install_system_deps
   ensure_node22_for_docs
   activate_elxr_build_env_if_needed
+  ensure_core_yaml_sdk_deps
   detect_elxr_host_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then

@@ -29,9 +29,9 @@
 
 ### 執行基準測試 {#step-run-benchmark}
 
-呼叫 `benchmark(samples)`。API 會預熱模型，以 `samples` 個輸入測量單次執行（single-flight）延遲，接著在另一個非同步推送/拉取階段中測量吞吐量，將摘要列印到標準輸出，並在 `BenchmarkReport` 中傳回相同的主要值。
+呼叫 `benchmark(samples)`。API 會預熱模型，測量單次執行（single-flight）延遲，接著在另一個非同步推送/拉取階段中測量吞吐量，將摘要列印到標準輸出，並在 `BenchmarkReport` 中傳回相同的主要值。
 
-吞吐量階段會持續執行，直到至少測量了 `samples` 個輸入且已經過 30 秒，因此其功耗和溫度讀數會保持穩定。設定 `BenchmarkOptions::min_duration_ms` 可變更此下限；設為 0 則可進行快速的初步檢查，在測量 `samples` 個輸入後即停止。
+每個階段都會持續執行，直到至少測量了 `samples` 個輸入且已經過 10 秒，因此吞吐量階段的功耗和溫度讀數會涵蓋多個樣本。設定 `BenchmarkOptions::min_duration_ms` 可變更此下限；設為 0 則可進行快速的初步檢查，讓每個階段在測量 `samples` 個輸入後即停止。
 
 其路徑以 BoxDecode 結尾的檢測模型也可以使用 `BenchmarkOptions`。設定 `original_width`、`original_height` 和 `resize_mode`，以描述源圖像幾何形狀，BoxDecode 在將檢測映射到模型座標時使用該幾何形狀。合成張量仍然保持模型形狀：
 
@@ -52,6 +52,44 @@ Python 會透過 `pyneat.BenchmarkOptions` 公開相同的欄位。設定原始�
 
 功耗資料來自 Sentinel，也就是 Neat 安裝程式所設定的板子遙測常駐程式。`report.telemetry` 還包含吞吐量階段的電源軌功耗、晶粒與板子溫度、CPU 使用率以及 MLA 記憶體；各欄位說明請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。如果 Sentinel 未執行或正在記錄另一個追蹤，基準測試仍會報告延遲和吞吐量，將功耗欄位保持為零，並將 `report.telemetry.status` 設定為原因。
 
+### 進階：層統計資料 {#step-read-layer-stats}
+
+在任一教學命令中加入 `--include-layer-stats`，即可在基準測試報告中包含各層執行時間。此選項預設停用。透過 API 啟用的方式如下：
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_layer_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_layer_stats = True
+report = model.benchmark(options)
+```
+
+從 `report.layer_stats` 讀取每個已編譯 MLA 層的 `name`、從零開始的 `stage_index` 與 `total_execution_time_us`。執行時間為零的 no-op 項目也會保留。各層時間是在獨立的剖析執行中測量，因此總和不等於整體延遲。
+
+### 儲存報告 {#step-save-report}
+
+呼叫 `report.save(path)` 即可將完整報告寫入 YAML 或 JSON，包含已要求的各層統計資料：
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
+```
+
+副檔名 `.json` 選擇 JSON；`.yaml` 與其他結尾使用 YAML。檔名保持不變。
+
+請指定包含檔名的路徑。不存在的父目錄會自動建立，既有檔案會被取代，並傳回寫入的路徑。儲存需要明確呼叫；`benchmark()` 不會自動建立報告檔案。
+
+在任一教學命令後加入 `--report results/model/yolo_benchmark.yaml`。搭配 `--include-layer-stats`，即可同時儲存主要測量值與各層執行時間。
+
 ## Run
 
 執行它，您應該會看到 `benchmark()` 輸出的基準測試摘要，後面接著從傳回的報告中輸出的相同值。從 **Neat 安裝根目錄**（包含 `share/` 和 `lib/` 的目錄）執行 **Python** 和 **C++（預先建置）** 命令；從 **儲存庫根目錄**執行 **從原始碼建置** 命令。
@@ -70,8 +108,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 

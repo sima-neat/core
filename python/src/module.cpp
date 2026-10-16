@@ -4649,7 +4649,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("original_height", &simaai::neat::BenchmarkOptions::original_height)
       .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
       .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency)
-      .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms);
+      .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms)
+      .def_rw("include_layer_stats", &simaai::neat::BenchmarkOptions::include_layer_stats);
 
   nb::class_<simaai::neat::BenchmarkMetric>(m, "BenchmarkMetric")
       .def(nb::init<>())
@@ -4680,6 +4681,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("cma_memory_mib", &simaai::neat::BenchmarkTelemetry::cma_memory_mib)
       .def_ro("linux_memory_used_mib", &simaai::neat::BenchmarkTelemetry::linux_memory_used_mib);
 
+  nb::class_<simaai::neat::LayerStats>(m, "LayerStats")
+      .def(nb::init<>())
+      .def_rw("name", &simaai::neat::LayerStats::name)
+      .def_rw("total_execution_time_us", &simaai::neat::LayerStats::total_execution_time_us)
+      .def_rw("stage_index", &simaai::neat::LayerStats::stage_index);
+
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
       .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
@@ -4692,7 +4699,17 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("peak_power_watts", &simaai::neat::BenchmarkReport::peak_power_watts)
       .def_rw("throughput_samples", &simaai::neat::BenchmarkReport::throughput_samples)
       .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
-      .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry);
+      .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry)
+      .def_rw("layer_stats", &simaai::neat::BenchmarkReport::layer_stats)
+      .def(
+          "save",
+          [](const simaai::neat::BenchmarkReport& report, const std::filesystem::path& file_path) {
+            // Snapshot mutable Python fields before releasing the GIL for filesystem I/O.
+            const auto snapshot = report;
+            nb::gil_scoped_release release;
+            return snapshot.save(file_path);
+          },
+          "file_path"_a);
 
   // ── Phase 3: model / preprocess introspection (plan slice S1/S14) ────────────────────────────
   // Tiering per S1 ("advanced = by namespace, not by docs"): the diagnostic snapshots that are the

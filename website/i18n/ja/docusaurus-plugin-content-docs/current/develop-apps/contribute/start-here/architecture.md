@@ -149,7 +149,11 @@ input Sample/Tensor
 
 ### ベンチマークテレメトリ
 
-`Model::benchmark()` は、ボードテレメトリデーモンである Sentinel から、`/run/simaai-sentinel/api.sock` 上の HTTP API を通じて電力とボードのテレメトリを読み取ります。ベンチマークのために Core が電力モニタチップを直接読むことはありません。ベンチマークはスループット測定パスの間、`neat-benchmark-<UTC time>` という名前の Sentinel トレースを記録し、そのトレースだけを停止して、Sentinel 自身のツールで使えるように保持します。Sentinel はおよそ 2 秒ごとにサンプリングするため、スループット測定パスは少なくとも `BenchmarkOptions::min_duration_ms`（デフォルトは 30 秒）の間実行されます。Sentinel が動作していない、別のトレースを記録中である、または測定期間にサンプルがない場合でも、ベンチマークはレイテンシと FPS を返します。この場合、電力フィールドは 0 になり、`telemetry.status` が理由を示します。`tools/install_neat_framework.sh` のボードモードは、Sentinel をインストールするか、最新の本番ビルドにアップグレードします。`Run` の電力（`RunOptions::power_monitor`）も Sentinel から取得します。Core は Sentinel の最新サンプルをポーリングし、I2C 経由で電力モニタチップを読むことはありません。
+`Model::benchmark()` は、ボードテレメトリデーモンである Sentinel から、`/run/simaai-sentinel/api.sock` 上の HTTP API を通じて電力とボードのテレメトリを読み取ります。ベンチマークのために Core が電力モニタチップを直接読むことはありません。ベンチマークはスループット測定パスの間、`neat-benchmark-<UTC time>` という名前の Sentinel トレースを記録し、そのトレースだけを停止して、Sentinel 自身のツールで使えるように保持します。Sentinel はおよそ 2 秒ごとにサンプリングするため、スループット測定パスは少なくとも `BenchmarkOptions::min_duration_ms`（デフォルトは 10 秒）の間実行されます。レイテンシ測定パスも同じ下限に従うため、両方のパスは同じ規則で停止します。Sentinel が動作していない、別のトレースを記録中である、または測定期間にサンプルがない場合でも、ベンチマークはレイテンシと FPS を返します。この場合、電力フィールドは 0 になり、`telemetry.status` が理由を示します。`tools/install_neat_framework.sh` のボードモードは、Sentinel をインストールするか、最新の本番ビルドにアップグレードします。`Run` の電力（`RunOptions::power_monitor`）も Sentinel から取得します。Core は Sentinel の最新サンプルをポーリングし、I2C 経由で電力モニタチップを読むことはありません。
+
+レイヤープロファイリングは、デフォルトが false の `BenchmarkOptions::include_layer_stats` で明示的に有効にします。レイテンシとスループットのランナーが終了した後、Core は展開済みモデルの MLA 実行ファイルとコンパイラの統計 YAML を使い、別プロセスで `mla-rt` を呼び出します。Core は検証、子プロセスのタイムアウト、一時ファイルの削除を担当し、MLA-RT はハードウェアのプロファイリングとカーネル実行への制御の引き継ぎを担当します。プロファイリングは他の MLA ワークロードと重複させないでください。
+
+`BenchmarkReport::layer_stats` には、コンパイル済みレイヤー名、ゼロ始まりの実行ステージ番号、マイクロ秒単位の実行時間が含まれます。これらの測定には別のプロファイリングパスを使うため、合計は全体のレイテンシとは一致しません。`BenchmarkReport::save(file_path)` は、公開フィールド名と単位を使い、完全なレポートを明示的に保存します。`.json` は JSON、`.yaml` とその他の末尾は YAML を選択します。テレメトリも含まれ、プロファイリングが無効の場合はレイヤーリストが空になります。存在しない親ディレクトリを作成し、既存の保存先ファイルをアトミックに置き換えます。
 
 ### コンパイル済みモデルの実行コントラクト
 

@@ -423,6 +423,8 @@ set(UNIT_TESTS
   unit_asset_utils_readable_model_tar_test
   unit_benchmark_measurement_contract_test
   unit_benchmark_telemetry_test
+  unit_benchmark_report_test
+  unit_benchmark_layer_stats_test
   unit_measurement_consistency_test
   unit_lttng_plugin_percentiles_test
   unit_model_infer_output_name_test
@@ -549,6 +551,10 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+if (TARGET unit_benchmark_report_test AND TARGET PkgConfig::YAML)
+  target_link_libraries(unit_benchmark_report_test PRIVATE PkgConfig::YAML)
+endif()
 
 # Optional frozen-corpus gate. The normal unit target uses synthetic JSON/ELF
 # fixtures and is always available; this integration test is registered only
@@ -1770,6 +1776,22 @@ if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLI
     APPEND PROPERTY LABELS "e2e;obj_detection;benchmark;metrics")
   set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY
     RESOURCE_LOCK "perf-device;accelerator-device")
+endif()
+
+# The normal E2E CI lane selects this strict test via the e2e label. MIP profiling must
+# own an idle MLA, so also exclude every other CTest test while it runs.
+add_pipeline_test_strict(
+  yolov8_model_layer_stats_test
+  e2e_pipelines/obj_detection/yolov8_model_layer_stats_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+if (NOT yolov8_model_layer_stats_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(yolov8_model_layer_stats_test PROPERTIES
+    LABELS "strict;e2e;obj_detection;benchmark;layer-stats"
+    RUN_SERIAL TRUE
+    RESOURCE_LOCK "perf-device;accelerator-device"
+    TIMEOUT 240)
 endif()
 
 add_pipeline_test_long(

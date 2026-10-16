@@ -27,6 +27,7 @@
 #include "pipeline/Run.h"
 #include "pipeline/TensorSpec.h"
 
+#include <filesystem>
 #include <cstddef>
 #include <array>
 #include <cstdint>
@@ -51,6 +52,20 @@ class Graph;
 
 /// Tensor specification used by the Model API.
 using TensorSpec = TensorConstraint;
+
+/**
+ * @brief Hardware timing for one compiled MLA layer or segment.
+ *
+ * Names describe compiler-generated MLA operations, which may fuse or split ONNX operators.
+ * `total_execution_time_us` is the hardware `run_time` counter, not host wall-clock latency.
+ * Zero-time no-op entries are retained. `stage_index` identifies the containing executable stage
+ * in model execution order (zero-based, including A65 stages), not archive file order.
+ */
+struct LayerStats {
+  std::string name;
+  double total_execution_time_us = 0.0;
+  std::size_t stage_index = 0;
+};
 
 /**
  * @brief One Sentinel metric summarized over the benchmark throughput window.
@@ -109,11 +124,11 @@ struct BenchmarkTelemetry {
  * @brief Headline result returned by `Model::benchmark()`.
  *
  * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
- * `latency_ms` is measured with a warmed-up single-flight push/pull loop over `num_samples`
- * inputs; `latency_p50_ms`, `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same
- * loop. `fps` means logical inferences per second from a separate async throughput pass (for
- * batched models this is batches/sec multiplied by the compiled batch size). The throughput pass
- * runs until it has measured at least `num_samples` inputs and `min_duration_ms` has elapsed.
+ * `latency_ms` is measured with a warmed-up single-flight push/pull loop; `latency_p50_ms`,
+ * `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same loop. `fps` means logical
+ * inferences per second from a separate async throughput pass (for batched models this is
+ * batches/sec multiplied by the compiled batch size). Each pass runs until it has measured at
+ * least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
  * Power and board telemetry come from the Sentinel daemon. When Sentinel is unavailable, the
  * power fields are zero and `telemetry.status` names the reason.
@@ -128,10 +143,21 @@ struct BenchmarkReport {
   /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
   /// measured throughput needs for `num_samples` inputs.
   double energy_joules = 0.0;
-  double peak_power_watts = 0.0;       ///< Highest SoM power sample in the throughput window.
-  int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
-  double throughput_duration_ms = 0.0; ///< Length of the throughput window.
-  BenchmarkTelemetry telemetry;        ///< Board telemetry for the throughput window.
+  double peak_power_watts = 0.0;         ///< Highest SoM power sample in the throughput window.
+  int throughput_samples = 0;            ///< Inputs measured by the throughput pass.
+  double throughput_duration_ms = 0.0;   ///< Length of the throughput window.
+  BenchmarkTelemetry telemetry;          ///< Board telemetry for the throughput window.
+  std::vector<LayerStats> layer_stats{}; ///< Empty when layer profiling was not collected.
+
+  /**
+   * @brief Write the complete report as YAML or JSON to the exact destination filename.
+   *
+   * A `.json` extension selects JSON; `.yaml` and all other endings select YAML.
+   * Creates missing parent directories and atomically replaces an existing file. Returns
+   * `file_path` unchanged. Throws on invalid/non-finite values or filesystem/write failures.
+   * Saving is explicit: `benchmark()` does not create a report file automatically.
+   */
+  std::filesystem::path save(const std::filesystem::path& file_path) const;
 };
 
 /**
@@ -151,11 +177,15 @@ struct BenchmarkOptions {
   /// resolved preprocess policy, or stretch when the model route has no resize stage.
   std::optional<ResizeMode> resize_mode;
   bool include_plugin_latency = false; ///< Deprecated: plugin latency will be removed.
-  /// Minimum length of the throughput pass, in milliseconds; must be zero or greater. The pass
-  /// continues past `num_samples` inputs until this much time has elapsed, so power and
-  /// temperature readings cover several telemetry samples. Set it to 0 to stop after
-  /// `num_samples` inputs.
-  int min_duration_ms = 30000;
+  /// Minimum length of each pass, latency and throughput, in milliseconds; must be zero or
+  /// greater. Each pass continues past `num_samples` inputs until this much time has elapsed, so
+  /// both passes follow the same rule and the throughput pass's power and temperature readings
+  /// cover several telemetry samples. Set it to 0 to stop each pass after `num_samples` inputs.
+  int min_duration_ms = 10000;
+  /// Advanced: collect compiled MLA layer timings in a separate profiling pass. Default off.
+  /// Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an idle devkit with no
+  /// other active MLA workloads. See tutorial 003 for the verified runtime build.
+  bool include_layer_stats = false;
 };
 
 /**
@@ -747,8 +777,8 @@ public:
    * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
    * measures single-flight latency and async logical-inference throughput separately, records
    * board telemetry through Sentinel during the throughput pass, prints a compact summary, and
-   * returns headline metrics. The throughput pass lasts at least
-   * `BenchmarkOptions::min_duration_ms` (30 s by default).
+   * returns headline metrics. Each pass lasts at least `BenchmarkOptions::min_duration_ms`
+   * (10 s by default).
    */
   BenchmarkReport benchmark(const BenchmarkOptions& options);
   BenchmarkReport benchmark(int num_samples = 100);

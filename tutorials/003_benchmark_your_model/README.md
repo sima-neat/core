@@ -29,9 +29,9 @@ Start with the same compiled `.tar.gz` archive used by the earlier model tutoria
 
 ### Run the benchmark {#step-run-benchmark}
 
-Call `benchmark(samples)`. The API warms up the model, measures single-flight latency over `samples` inputs, then measures throughput in a separate async push/pull pass, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
+Call `benchmark(samples)`. The API warms up the model, measures single-flight latency, then measures throughput in a separate async push/pull pass, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
 
-The throughput pass runs until it has measured at least `samples` inputs and 30 seconds have passed, so its power and temperature readings are steady. Set `BenchmarkOptions::min_duration_ms` to change that floor, or to 0 for a quick smoke check that stops after `samples` inputs.
+Each pass runs until it has measured at least `samples` inputs and 10 seconds have passed, so the throughput pass's power and temperature readings cover several samples. Set `BenchmarkOptions::min_duration_ms` to change that floor, or to 0 for a quick smoke check that stops each pass after `samples` inputs.
 
 Detection models whose route ends in BoxDecode can also use `BenchmarkOptions`. Set
 `original_width`, `original_height`, and `resize_mode` to describe the source-image geometry that
@@ -57,6 +57,51 @@ The returned report starts with the headline fields most users need: average end
 
 Power comes from Sentinel, the board telemetry daemon that the Neat installer sets up. `report.telemetry` also carries rail power, die and board temperatures, CPU utilization, and MLA memory for the throughput pass; see [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry) for each field. If Sentinel is not running or is recording another trace, the benchmark still reports latency and throughput, leaves the power fields at zero, and sets `report.telemetry.status` to the reason.
 
+### Advanced: per-layer stats {#step-read-layer-stats}
+
+Add `--include-layer-stats` to either tutorial command to include layer timings in the
+benchmark report. This option is disabled by default. To enable it through the API:
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_layer_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_layer_stats = True
+report = model.benchmark(options)
+```
+
+Read `report.layer_stats` for each compiled MLA layer's `name`, zero-based `stage_index`,
+and `total_execution_time_us`. Zero-time no-op entries are retained. Layer timings use
+separate profiling passes and do not sum to the headline latency.
+
+### Save the report {#step-save-report}
+
+Call `report.save(path)` to write the complete report as YAML or JSON, including layer stats when
+requested:
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
+```
+
+The `.json` extension selects JSON; `.yaml` and all other endings use YAML. The filename is preserved.
+
+Give a file path including the filename. Missing parent directories are created, an existing
+file is replaced, and the written path is returned. Saving is explicit; `benchmark()` does
+not create a report file automatically.
+
+For either tutorial command, append `--report results/model/yolo_benchmark.yaml`. Combine
+it with `--include-layer-stats` to save both the headline measurements and layer timings.
+
 ## Run
 
 Run it and you should see the benchmark summary printed by `benchmark()`, followed by the same values printed from the returned report. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.
@@ -75,8 +120,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -122,5 +167,6 @@ For application performance, benchmark the real pipeline too. Synthetic model in
 `Model::benchmark()` requires concrete `input_specs()` dimensions. If an input shape is dynamic or non-concrete, the benchmark fails clearly instead of guessing a shape.
 
 ## Source Files
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

@@ -452,7 +452,8 @@ def test_benchmark_options_are_mutable():
   assert opt.original_height is None
   assert opt.resize_mode is None
   assert opt.include_plugin_latency is False
-  assert opt.min_duration_ms == 30000
+  assert opt.min_duration_ms == 10000
+  assert opt.include_layer_stats is False
 
   opt.num_samples = 7
   opt.original_width = 1920
@@ -460,6 +461,7 @@ def test_benchmark_options_are_mutable():
   opt.resize_mode = pyneat.ResizeMode.Letterbox
   opt.include_plugin_latency = True
   opt.min_duration_ms = 0
+  opt.include_layer_stats = True
 
   assert opt.num_samples == 7
   assert opt.original_width == 1920
@@ -467,6 +469,7 @@ def test_benchmark_options_are_mutable():
   assert opt.resize_mode == pyneat.ResizeMode.Letterbox
   assert opt.include_plugin_latency is True
   assert opt.min_duration_ms == 0
+  assert opt.include_layer_stats is True
 
 
 def test_benchmark_report_exposes_telemetry():

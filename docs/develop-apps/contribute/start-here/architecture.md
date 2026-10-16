@@ -209,12 +209,27 @@ through its HTTP API on `/run/simaai-sentinel/api.sock`; Core does not read the 
 chips for the benchmark. The benchmark records a Sentinel trace named `neat-benchmark-<UTC time>`
 around the throughput pass, stops only that trace, and keeps it for Sentinel's own tools. Sentinel
 samples about every 2 s, so the throughput pass runs for at least
-`BenchmarkOptions::min_duration_ms` (30 s by default). When Sentinel is not running, another trace
+`BenchmarkOptions::min_duration_ms` (10 s by default). The latency pass follows the same minimum
+so both passes stop by the same rule. When Sentinel is not running, another trace
 is recording, or the window has no samples, the benchmark still returns latency and FPS; the power
 fields are zero and `telemetry.status` names the reason. Board mode of
 `tools/install_neat_framework.sh` installs Sentinel or upgrades it to the latest production build. `Run` power
 (`RunOptions::power_monitor`) also comes from Sentinel: Core polls its latest sample and reads no
 power monitor chips over I2C.
+
+Layer profiling is opt-in through `BenchmarkOptions::include_layer_stats`, which defaults to
+false. After the latency and throughput runners close, Core invokes `mla-rt` in a separate
+process using the extracted model's MLA executables and compiler stats YAML. Core owns
+validation, subprocess timeout, and temporary-file cleanup; MLA-RT owns hardware profiling
+and the handoff back to kernel execution. Profiling requires no overlapping MLA workloads.
+
+`BenchmarkReport::layer_stats` contains compiled layer names, zero-based executable stage
+indices, and execution times in microseconds. These measurements use separate profiling
+passes and do not sum to headline latency. `BenchmarkReport::save(file_path)` explicitly
+writes the complete report using the public field names and units: `.json` selects JSON;
+`.yaml` and other endings select YAML. It includes telemetry and an empty layer list when
+profiling is disabled. It creates missing parent directories and atomically replaces an
+existing destination.
 
 ### Compiled model execution contract
 
