@@ -10,6 +10,38 @@ namespace simaai::neat {
 
 namespace {
 
+// Public appsrc ingress is an unnegotiated compatibility boundary. Never
+// forward native publication metadata to an arbitrary legacy consumer. The
+// envelope clone retains its source checkout and shares payload memory only.
+std::shared_ptr<GstBuffer> legacy_appsrc_envelope(GstBuffer* source) {
+  std::string error;
+  auto publication = simaai::gst::tensor_buffer_publication(source, &error);
+  if (!error.empty()) {
+    throw std::runtime_error("InputStream appsrc publication: " + error);
+  }
+  if (!publication) {
+    return {};
+  }
+  auto clone = std::shared_ptr<GstBuffer>(simaai::gst::tensor_buffer_clone_envelope(source, &error),
+                                          [](GstBuffer* buffer) {
+                                            if (buffer)
+                                              gst_buffer_unref(buffer);
+                                          });
+  if (!clone || !simaai::gst::tensor_buffer_materialize_publication(clone.get(), &error)) {
+    throw std::runtime_error("InputStream appsrc materialization: " + error);
+  }
+  return clone;
+}
+
+void materialize_appsrc_holder(GstBuffer** owned) {
+  if (!owned || !*owned)
+    return;
+  if (auto legacy = legacy_appsrc_envelope(*owned)) {
+    gst_buffer_unref(*owned);
+    *owned = gst_buffer_ref(legacy.get());
+  }
+}
+
 struct SeqOverrides {
   std::optional<int64_t> input_seq;
   std::optional<int64_t> orig_input_seq;
@@ -506,7 +538,7 @@ make_prepare_for_spec(const SampleSpec& spec, const char* where,
     } else if (spec.kind == SampleMediaKind::Tensor) {
       apply_tensor_size_or_throw(buf, spec, where);
       if (tensor_set_meta_tensors && !tensor_set_meta_tensors->empty() &&
-          !gst_buffer_get_custom_meta(*buf, SIMA_TENSOR_SET_META_NAME)) {
+          !simaai::gst::tensor_buffer_has_canonical_meta(*buf)) {
         pipeline_internal::attach_tensor_set_meta_from_tensors(*buf, *tensor_set_meta_tensors);
       }
     } else {
@@ -887,16 +919,17 @@ void apply_holder_spec_and_meta_or_throw(
     InputBufferPoolGuard& guard, const char* where,
     const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta = std::nullopt,
     const TensorList* tensor_set_meta_tensors = nullptr) {
+  materialize_appsrc_holder(buffer);
   GstBuffer* const original = buffer ? *buffer : nullptr;
   const bool source_has_preproc_meta = has_simaai_preprocess_meta(original);
 
   if (spec.kind == SampleMediaKind::Tensor) {
     apply_tensor_size_or_throw(buffer, spec, where);
     if (tensor_set_meta_tensors && !tensor_set_meta_tensors->empty() &&
-        !gst_buffer_get_custom_meta(*buffer, SIMA_TENSOR_SET_META_NAME)) {
+        !simaai::gst::tensor_buffer_has_canonical_meta(*buffer)) {
       ensure_holder_metadata_writable_or_throw(buffer, &spec, where, "attach tensor-set metadata");
       pipeline_internal::attach_tensor_set_meta_from_tensors(*buffer, *tensor_set_meta_tensors);
-      if (!gst_buffer_get_custom_meta(*buffer, SIMA_TENSOR_SET_META_NAME)) {
+      if (!simaai::gst::tensor_buffer_has_canonical_meta(*buffer)) {
         throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
                                  ": failed to attach canonical tensor-set metadata");
       }
@@ -968,6 +1001,12 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
                                     const SampleSpec* fail_spec,
                                     const std::optional<int64_t>& input_seq_override,
                                     const std::optional<int64_t>& orig_input_seq_override) {
+  // This function consumes buffer. Protect it if validation/conversion throws.
+  BufferUnrefGuard publication_guard(&buffer, "InputStream::appsrc_publication_unref");
+  if (auto legacy = legacy_appsrc_envelope(buffer)) {
+    gst_buffer_unref(buffer);
+    buffer = gst_buffer_ref(legacy.get());
+  }
   std::chrono::steady_clock::time_point t_push_start{};
   if (record_timings || inputstream_push_timing_enabled()) {
     t_push_start = std::chrono::steady_clock::now();
@@ -979,8 +1018,7 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
     pipeline_internal::attach_zero_copy_loans_to_gst_buffer(buffer, *fail_msg);
   }
   if (holder_debug_enabled()) {
-    const bool has_tensor_set =
-        gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME) != nullptr;
+    const bool has_tensor_set = simaai::gst::tensor_buffer_has_canonical_meta(buffer);
     std::fprintf(stderr,
                  "[HOLDER] push_holder_buffer_with_appsrc before_push where=%s buffer=%p bytes=%zu "
                  "mems=%u has_tensor_set=%d\n",
@@ -988,7 +1026,10 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
                  static_cast<std::size_t>(gst_buffer_get_size(buffer)), gst_buffer_n_memory(buffer),
                  has_tensor_set ? 1 : 0);
   }
+  auto observed = st.input_publication_measurement.observe(buffer);
+  publication_guard.release();
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buffer);
+  observed.finish(ret);
   if (holder_debug_enabled()) {
     std::fprintf(stderr, "[HOLDER] push_holder_buffer_with_appsrc after_push where=%s ret=%d\n",
                  where ? where : "<null>", static_cast<int>(ret));
@@ -1175,13 +1216,29 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
                                     const SampleSpec* fail_spec,
                                     const std::optional<int64_t>& input_seq_override,
                                     const std::optional<int64_t>& orig_input_seq_override) {
+  auto legacy = legacy_appsrc_envelope(buffer);
+  std::shared_ptr<GstSample> compatibility_sample;
+  if (legacy) {
+    const auto* info = gst_sample_get_info(sample);
+    compatibility_sample = std::shared_ptr<GstSample>(
+        gst_sample_new(legacy.get(), gst_sample_get_caps(sample), gst_sample_get_segment(sample),
+                       info ? gst_structure_copy(info) : nullptr),
+        [](GstSample* value) {
+          if (value)
+            gst_sample_unref(value);
+        });
+    if (!compatibility_sample) {
+      throw std::runtime_error("InputStream: cannot materialize appsrc sample");
+    }
+    sample = compatibility_sample.get();
+    buffer = legacy.get();
+  }
   std::chrono::steady_clock::time_point t_push_start{};
   if (record_timings || inputstream_push_timing_enabled()) {
     t_push_start = std::chrono::steady_clock::now();
   }
   if (holder_debug_enabled()) {
-    const bool has_tensor_set =
-        buffer && gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME) != nullptr;
+    const bool has_tensor_set = buffer && simaai::gst::tensor_buffer_has_canonical_meta(buffer);
     std::fprintf(stderr,
                  "[HOLDER] push_holder_sample_with_appsrc before_push where=%s sample=%p buffer=%p "
                  "bytes=%zu mems=%u has_tensor_set=%d\n",
@@ -1192,7 +1249,9 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
   if (fail_msg) {
     pipeline_internal::attach_zero_copy_loans_to_gst_buffer(buffer, *fail_msg);
   }
+  auto observed = st.input_publication_measurement.observe(buffer);
   GstFlowReturn ret = gst_app_src_push_sample(GST_APP_SRC(st.appsrc), sample);
+  observed.finish(ret);
   if (holder_debug_enabled()) {
     std::fprintf(stderr, "[HOLDER] push_holder_sample_with_appsrc after_push where=%s ret=%d\n",
                  where ? where : "<null>", static_cast<int>(ret));
@@ -1429,6 +1488,7 @@ bool push_holder_transport(
                              ": missing GstBuffer");
   }
   BufferUnrefGuard holder_guard(&buf, "InputStream::push_holder_transport:buffer_unref");
+  materialize_appsrc_holder(&buf);
   std::optional<SampleSpec> completed_video_spec;
   const SampleSpec* metadata_spec = fail_spec;
   if (!metadata_spec && st.last_spec.has_value()) {
@@ -1502,11 +1562,11 @@ bool push_holder_transport(
   }
   if (metadata_spec && metadata_spec->kind == SampleMediaKind::Tensor && fail_msg &&
       sample_has_tensor_list(*fail_msg) && !fail_msg->tensors.empty() &&
-      !gst_buffer_get_custom_meta(buf, SIMA_TENSOR_SET_META_NAME)) {
+      !simaai::gst::tensor_buffer_has_canonical_meta(buf)) {
     ensure_holder_metadata_writable_or_throw(&buf, metadata_spec, where,
                                              "attach tensor-set metadata");
     pipeline_internal::attach_tensor_set_meta_from_tensors(buf, fail_msg->tensors);
-    if (!gst_buffer_get_custom_meta(buf, SIMA_TENSOR_SET_META_NAME)) {
+    if (!simaai::gst::tensor_buffer_has_canonical_meta(buf)) {
       throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
                                ": failed to attach canonical tensor-set metadata");
     }
@@ -1576,8 +1636,7 @@ bool push_holder_transport(
       &buf, fail_msg, holder, where ? where : "InputStream::push_holder_transport");
 
   if (GstSample* sample = holder_as_gstsample(holder)) {
-    const bool has_tensor_set =
-        buf && gst_buffer_get_custom_meta(buf, SIMA_TENSOR_SET_META_NAME) != nullptr;
+    const bool has_tensor_set = buf && simaai::gst::tensor_buffer_has_canonical_meta(buf);
     if (has_tensor_set) {
       if (holder_debug_enabled()) {
         std::fprintf(stderr,
@@ -1725,7 +1784,9 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   if (timings)
     t_push_start = std::chrono::steady_clock::now();
   log_push_refcount("InputStream::try_push_message(encoded)", buf);
+  auto observed = st.input_publication_measurement.observe(buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
+  observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
   if (timings) {

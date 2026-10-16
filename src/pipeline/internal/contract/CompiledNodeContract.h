@@ -24,6 +24,7 @@ struct CompiledNodeContract {
   std::optional<CompiledMlaContract> processmla;
   std::optional<CompiledBoxDecodeContract> boxdecode;
   std::optional<CompiledDequantContract> dequant;
+  std::optional<CompiledKernelContract> kernel;
   std::optional<CompiledTransportContract> transport;
   std::vector<CompiledNodeContract> child_stages;
   bool renderable = false;

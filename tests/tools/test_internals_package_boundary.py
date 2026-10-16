@@ -28,80 +28,8 @@ def shell_function(name: str) -> str:
     return text[start : text.index("\n}\n", start) + 2]
 
 
-def run_sync(
-    artifact: dict[str, str] | str | None,
-    consumer_base: str = "2.1.3",
-    enabled: str = "ON",
-    update_status: int = 0,
-    sdk_platform_version: str | None = "2.1.3",
-    sdk_platform_channel: str = "release",
-) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        artifact_dir = root / "artifact"
-        artifact_dir.mkdir()
-        if artifact is not None:
-            contents = json.dumps(artifact) if isinstance(artifact, dict) else artifact
-            (artifact_dir / "internals-manifest.json").write_text(
-                contents, encoding="utf-8"
-            )
-        consumer = root / "manifest.json"
-        consumer.write_text(
-            json.dumps({"platform-version": consumer_base}), encoding="utf-8"
-        )
-        sdk_release = root / "sdk-release"
-        if sdk_platform_version is not None:
-            sdk_release.write_text(
-                f"Platform Version = {sdk_platform_version}\n"
-                f"Platform Channel = {sdk_platform_channel}\n",
-                encoding="utf-8",
-            )
-        log = root / "sysroot.log"
-        script = f"""
-set -euo pipefail
-id() {{ echo 0; }}
-sysroot() {{
-  printf '%s\n' "$*" >> {shlex.quote(str(log))}
-  [[ "$1" != update ]] || return {update_status}
-}}
-install() {{ printf 'install %s\n' "$*" >> {shlex.quote(str(log))}; }}
-function setup-sdk-sysroot.sh {{
-  printf 'setup-sdk-sysroot %s\n' "$*" >> {shlex.quote(str(log))}
-  return {update_status}
-}}
-{shell_function("run_privileged")}
-{shell_function("sync_sysroot_from_internals_manifest")}
-ELXR_SDK=ON
-ELXR_SDK_RELEASE_FILE={shlex.quote(str(sdk_release))}
-SYSROOT={shlex.quote(str(root / "sysroot"))}
-NEAT_SYNC_SYSROOT={shlex.quote(enabled)}
-NEAT_DEPS_MANIFEST={shlex.quote(str(consumer))}
-sync_sysroot_from_internals_manifest {shlex.quote(str(artifact_dir))}
-"""
-        result = subprocess.run(
-            ["bash", "-c", script], check=False, text=True, capture_output=True
-        )
-        calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
-        return result, calls
 
 
-def run_preserve(contents: bytes) -> tuple[subprocess.CompletedProcess[str], bytes]:
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        artifact_dir = root / "artifact"
-        artifact_dir.mkdir()
-        (artifact_dir / "internals-manifest.json").write_bytes(contents)
-        retained = root / "retained" / "internals-manifest.json"
-        script = f"""
-set -e
-{shell_function("preserve_internals_artifact_manifest")}
-NEAT_INTERNALS_ARTIFACT_MANIFEST={shlex.quote(str(retained))}
-preserve_internals_artifact_manifest {shlex.quote(str(artifact_dir))}
-"""
-        result = subprocess.run(
-            ["bash", "-c", script], check=False, text=True, capture_output=True
-        )
-        return result, retained.read_bytes() if retained.exists() else b""
 
 
 class InternalsPackageBoundaryTest(unittest.TestCase):
@@ -129,13 +57,14 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "SimaPluginStaticManifestAbi.h",
             "SimaPreparedRuntimeAbi.h",
             "SimaTensorSetMetaAbi.h",
+            "SimaaiGstErrors.h",
         ):
             with self.subTest(header=header):
                 self.assertTrue((ROOT / "include/gst" / header).is_file())
                 self.assertIn(f'PATTERN "{header}" EXCLUDE', install_headers)
         self.assertFalse((ROOT / "include/gst/SimaCvuCapabilityAbi.h").exists())
         self.assertIn(
-            "#include <gst/SimaCvuCapabilityAbi.h>",
+            "#include <simaai/runtime/gstreamer/abi/SimaPluginStaticManifestAbi.h>",
             (ROOT / "include/gst/SimaPluginStaticManifestAbi.h").read_text(),
         )
         self.assertNotIn('"neat-internals-dev"', text)
@@ -182,7 +111,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "neat-internals-dev (<<",
         ):
             self.assertNotIn(removed, text, removed)
-        for kept in ('"neat-runtime"', '"neat-gst-plugins"'):
+        for kept in ('"simaai-scheduler"', '"simaai-kernels-dev"'):
             self.assertIn(kept, text, kept)
 
     def test_llima_is_consumed_without_a_version_policy(self) -> None:
@@ -233,7 +162,7 @@ dpkg-deb() {{
 {shell_function("ensure_neat_llima")}
 NEAT_LLIMA_ARTIFACT_DIR={shlex.quote(str(artifact))}
 NEAT_LLIMA_DEB_DIR={shlex.quote(str(cache))}
-NEAT_INTERNALS_DIR={shlex.quote(str(deps))}
+NEAT_DEPS_DIR={shlex.quote(str(deps))}
 SYSROOT={shlex.quote(str(sysroot))}
 ELXR_SDK=ON
 ensure_neat_llima
@@ -298,7 +227,28 @@ function(pkg_check_modules prefix)
   set(${prefix}_LIBRARY_DIRS "${CMAKE_SOURCE_DIR}/lib" PARENT_SCOPE)
 endfunction()
 """)
+            (root / "SimaSchedulerConfig.cmake").write_text("""
+foreach(component elements gstreamer tensor_stage PreparedRuntimeBridge kernel_preparation)
+  if(NOT TARGET SimaScheduler::${component})
+    add_library(SimaScheduler::${component} INTERFACE IMPORTED)
+  endif()
+endforeach()
+""")
+            (root / "SimaRunnerConfig.cmake").write_text("set(SimaRunner_FOUND TRUE)\n")
             (root / "nlohmann_jsonConfig.cmake").write_text("set(nlohmann_json_FOUND TRUE)\n")
+            kernels_config = root / "SimaKernelsConfig.cmake"
+            kernels_config.write_text("""
+if(NOT TARGET SimaKernels::executables)
+  add_library(SimaKernels::executables INTERFACE IMPORTED)
+endif()
+""")
+            (root / "SimaKernelsConfigVersion.cmake").write_text("""
+set(PACKAGE_VERSION "0.1.0")
+if(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)
+  set(PACKAGE_VERSION_EXACT TRUE)
+  set(PACKAGE_VERSION_COMPATIBLE TRUE)
+endif()
+""")
             (root / "SimaNeatTargets.cmake").write_text("""
 add_library(SimaNeat::sima_neat INTERFACE IMPORTED)
 add_library(SimaNeat::sima_neat_common INTERFACE IMPORTED)
@@ -334,188 +284,27 @@ endif()
             result = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build")],
                                     text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            runtime_config = root / "SimaSchedulerConfig.cmake"
+            runtime_config.write_text(runtime_config.read_text().replace(" tensor_stage", ""))
+            missing = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "missing-carrier")],
+                                     text=True, capture_output=True)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("SimaScheduler::tensor_stage", missing.stdout + missing.stderr)
+            runtime_config.write_text(runtime_config.read_text().replace("gstreamer PreparedRuntimeBridge", "gstreamer tensor_stage PreparedRuntimeBridge"))
+            runtime_config.write_text(runtime_config.read_text().replace(" kernel_preparation", ""))
+            missing_factories = subprocess.run(
+                ["cmake", "-S", str(root), "-B", str(root / "missing-factories")],
+                text=True, capture_output=True)
+            self.assertNotEqual(missing_factories.returncode, 0)
+            self.assertIn("SimaScheduler::kernel_preparation", missing_factories.stdout + missing_factories.stderr)
 
-    def test_selected_internals_artifact_is_installed_before_build(self) -> None:
-        text = build_script()
-        start = text.index("ensure_neat_internals()")
-        end = text.index("\nensure_neat_llima()", start)
-        function = text[start:end]
-        self.assertNotIn("return 0", function[: function.index("fetch_neat_internals")])
 
-    def test_vulcan_build_uses_the_internals_sysroot_receipt(self) -> None:
-        text = build_script()
-        workflow = (ROOT / ".github/workflows/vulcan-ci.yml").read_text(
-            encoding="utf-8"
-        )
-        manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
-        sync = text.index('sync_sysroot_from_internals_manifest "${artifact_dir}"')
-        preserve = text.index(
-            'preserve_internals_artifact_manifest "${artifact_dir}"', sync
-        )
-        install = text.index('collect_plugin_files_from_debs "${artifact_dir}"', sync)
-        stage = text.index(
-            'cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" '
-            "dist/internals-manifest.json"
-        )
-        metadata = text.index("generate_package_metadata_if_requested\n", stage)
-        ensure = text.index("ensure_neat_internals\n", text.index("main()"))
-        target_python = text.index("detect_elxr_target_python\n", ensure)
 
-        self.assertIn('[[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0', text)
-        self.assertIn('-e NEAT_SYNC_SYSROOT="ON"', workflow)
-        self.assertIn(
-            'if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then\n'
-            '    preserve_internals_artifact_manifest "${artifact_dir}"\n'
-            "  fi",
-            text,
-        )
-        self.assertIn(
-            'if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then\n'
-            '    if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then',
-            text,
-        )
-        self.assertIn("internals-manifest.json", text)
-        self.assertIn(
-            '(?:~(?:pre[0-9]+|git[0-9]{12}[.][a-f0-9]+-[0-9]+))?', text
-        )
-        self.assertIn('sysroot update "${receipt}"', text)
-        self.assertIn("Using SDK sysroot", text)
-        self.assertIn("Internals artifact is missing internals-manifest.json", text)
-        self.assertIn("invalid sysroot-version", text)
-        self.assertIn("platform-version does not match the Internals receipt", text)
-        self.assertIn('dist/internals-manifest.json', text)
-        self.assertIn('resources-checksum', workflow)
-        self.assertNotIn("sysroot-version", manifest)
-        self.assertNotRegex(text, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
-        self.assertNotRegex(workflow, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
-        self.assertLess(sync, install)
-        self.assertLess(sync, preserve)
-        self.assertLess(preserve, install)
-        self.assertLess(stage, metadata)
-        self.assertLess(ensure, target_python)
 
-    def test_selected_internals_manifest_is_preserved_byte_for_byte(self) -> None:
-        contents = b'{"sysroot-version":"2.1.3~pre9999", "marker":"exact"}\n'
-        result, retained = run_preserve(contents)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(retained, contents)
 
-    def test_sysroot_receipt_behavior(self) -> None:
-        base = "2.1.3"
-        receipt = f"{base}~pre9999"
-        result, calls = run_sync({"sysroot-version": receipt}, base)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [f"update {receipt}", "status"])
 
-        result, calls = run_sync({"sysroot-version": base}, base)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(
-            "Using SDK sysroot 2.1.3 without updating it.", result.stdout
-        )
-        self.assertEqual(calls, [])
 
-        daily_receipt = "3.0.0~git202601020304.abcdef0-9999"
-        old_daily_receipt = "3.0.0~git202601010203.1234567-9998"
-        result, calls = run_sync(
-            {"sysroot-version": daily_receipt},
-            "3.0.0",
-            sdk_platform_version=old_daily_receipt,
-            sdk_platform_channel="daily",
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(calls), 3)
-        self.assertRegex(
-            calls[0],
-            r"^install -m 0644 /tmp/sima-neat-sdk-version[.]"
-            r"[^ ]+ /etc/apt/preferences[.]d/simaai-sdk-version[.]pref$",
-        )
-        self.assertTrue(
-            calls[1].startswith(f"setup-sdk-sysroot {daily_receipt} "), calls[1]
-        )
-        self.assertRegex(
-            calls[2],
-            r"^install -m 0644 /tmp/sima-neat-sysroot-overlay[.]"
-            r"[^ ]+ .*/var/lib/sima-sdk/sysroot-overlay$",
-        )
 
-        result, calls = run_sync(
-            {"sysroot-version": daily_receipt},
-            "3.0.0",
-            sdk_platform_version=daily_receipt,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(
-            f"Using SDK sysroot {daily_receipt} without updating it.", result.stdout
-        )
-        self.assertEqual(calls, [])
-
-        result, calls = run_sync(None, enabled="OFF")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [])
-
-        result, calls = run_sync({"sysroot-version": ""}, base)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [])
-
-    def test_immutable_receipt_requires_a_matching_sdk(self) -> None:
-        base = "2.1.3"
-        for sdk_platform_version, actual in (("2.1.2", "2.1.2"), (None, "unknown")):
-            with self.subTest(sdk_platform_version=sdk_platform_version):
-                result, calls = run_sync(
-                    {"sysroot-version": base},
-                    base,
-                    sdk_platform_version=sdk_platform_version,
-                )
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(
-                    f"SDK platform {actual} does not match required platform {base}",
-                    result.stderr,
-                )
-                self.assertEqual(calls, [])
-
-    def test_invalid_sysroot_receipts_fail_closed(self) -> None:
-        base = "2.1.3"
-        receipt = f"{base}~pre9999"
-        cases = (
-            (None, base, "missing internals-manifest.json"),
-            ("{", base, "Cannot read Internals build receipt"),
-            ({}, base, "Cannot read Internals build receipt"),
-            (
-                {"sysroot-version": "latest"},
-                base,
-                "Cannot read Internals build receipt",
-            ),
-            (
-                {"sysroot-version": "|latest"},
-                base,
-                "Cannot read Internals build receipt",
-            ),
-            (
-                {"sysroot-version": "\nmalformed"},
-                base,
-                "Cannot read Internals build receipt",
-            ),
-            (
-                {"sysroot-version": receipt},
-                "2.1.4",
-                "Cannot read Internals build receipt",
-            ),
-        )
-        for artifact, consumer_base, message in cases:
-            with self.subTest(message=message):
-                result, calls = run_sync(artifact, consumer_base)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(message, result.stderr)
-                self.assertEqual(calls, [])
-
-    def test_failed_sysroot_update_is_not_masked(self) -> None:
-        base = "2.1.3"
-        result, calls = run_sync(
-            {"sysroot-version": f"{base}~pre9999"}, base, update_status=23
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Failed to update SDK sysroot", result.stderr)
-        self.assertEqual(calls, [f"update {base}~pre9999"])
 
     def test_installer_has_no_bundled_memory_transaction(self) -> None:
         text = installer()

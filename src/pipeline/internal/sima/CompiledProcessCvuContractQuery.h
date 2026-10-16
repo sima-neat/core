@@ -64,7 +64,7 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
                                 int height, int width, int channels, int roi_capacity) {
   if (source_count <= 0 || source_count > 50 || height <= 0 || width <= 0 ||
       (channels != 1 && channels != 3) || roi_capacity <= 0 || roi_capacity > 50 ||
-      admitted.payload.graph_id != 200 || !admitted.preproc_single_output_handoff ||
+      admitted.payload.graph_name != "preproc" || !admitted.preproc_single_output_handoff ||
       admitted.payload.batch_size != 1 || admitted.payload.input_tensors.size() != 1U ||
       admitted.payload.output_tensors.size() != 1U ||
       admitted.runtime_contract.physical_inputs.size() != 1U ||
@@ -166,6 +166,7 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   runtime.frame_arena_role = FrameArenaRole::None;
   runtime.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Unknown;
   runtime.frame_arena_provenance = static_contract::ArenaAllocationProvenance::Unknown;
+  runtime.frame_arena_allocation_policy = static_contract::ArenaAllocationPolicy::RequiredDomain;
   runtime.frame_arena_required_device_access = 0;
   runtime.frame_arena_escape_policy = static_contract::ArenaEscapePolicy::InternalOnly;
   runtime.physical_outputs.front().source_byte_offset = 0;

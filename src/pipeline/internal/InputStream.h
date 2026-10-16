@@ -31,6 +31,7 @@ struct SampleTimingOverrides;
 
 namespace pipeline_internal {
 struct DiagCtx;
+class InputPublicationMeasurement;
 } // namespace pipeline_internal
 
 struct InputStreamOptions {
@@ -141,6 +142,8 @@ public:
   explicit operator bool() const noexcept;
   bool can_push() const noexcept;
   bool can_pull() const noexcept;
+  std::shared_ptr<pipeline_internal::InputPublicationMeasurement>
+  input_publication_measurement() noexcept;
 
   static InputStream create(GstElement* pipeline, GstElement* appsrc, GstElement* appsink,
                             const SampleSpec& spec, const InputOptions& src_opt,
@@ -172,6 +175,10 @@ public:
   InputStreamStats stats() const;
   std::string diagnostics_summary() const;
   std::shared_ptr<pipeline_internal::DiagCtx> diag_ctx() const;
+  // Finalized policy retained by the actual stream, not the caller's build
+  // options. Absence means no State; neither result certifies retirement.
+  std::optional<pipeline_internal::InputStreamTeardownPolicy>
+  effective_teardown_policy() const noexcept;
   GstElement* pipeline_handle() const;
   void set_on_caps_change(std::function<void(const SampleSpec&, const SampleSpec&)> cb);
 

@@ -1,6 +1,10 @@
 #include "gst/GstHelpers.h"
 #include "builder/NodeContractProvider.h"
 #include "nodes/sima/Dequant.h"
+#include "nodes/sima/Detess.h"
+#include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/contract/ContractFacts.h"
@@ -27,7 +31,8 @@ void require_not_contains(const std::string& haystack, const std::string& needle
 
 int main() {
   try {
-    require(simaai::neat::element_exists("neatdequant"), "required plugin missing (neatdequant)");
+    require(simaai::neat::element_exists("neatkernelrunner"),
+            "required plugin missing (neatkernelrunner)");
 
     {
       simaai::neat::DequantOptions opt;
@@ -62,8 +67,9 @@ int main() {
           std::make_shared<const simaai::neat::CompiledDequantContract>(compiled_contract);
       auto node = simaai::neat::nodes::Dequant(opt);
       const std::string frag = node->backend_fragment(7);
-      require_contains(frag, "neatdequant name=n7_dequant", "model-managed fragment name mismatch");
-      require_contains(frag, "stage-id=n7_dequant", "model-managed fragment stage-id missing");
+      require_contains(frag, "neatkernelrunner name=n7_dequant",
+                       "model-managed fragment name mismatch");
+      require_not_contains(frag, "stage-id=", "typed stage must not use a string property");
       require_not_contains(frag,
                            "q-scale=", "model-managed fragment must not emit standalone quant");
       auto* provider = dynamic_cast<const simaai::neat::NodeContractProvider*>(node.get());
@@ -102,6 +108,19 @@ int main() {
       require(logical_output.shape == std::vector<std::int64_t>({80, 80, 64}),
               "model-managed dequant output shape mismatch");
       require(logical_output.dtype == "FLOAT32", "model-managed dequant output dtype mismatch");
+      auto manifest = simaai::neat::render_manifest_from_compiled_contracts(compiled_pipeline,
+                                                                            input, &diagnostics);
+      require(manifest.has_value() && diagnostics.errors.empty(),
+              "single-input Dequant must lower to a native execution manifest");
+      const auto& stage = manifest->stages.front();
+      require(stage.payload_kind ==
+                      simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessCvu &&
+                  stage.processcvu.graph_name == "dequant" &&
+                  stage.processcvu.resolved_exec_backend == "A65",
+              "standalone Dequant must prepare native A65 Dequant, not a legacy plugin");
+      require(stage.processcvu.q_scale_list == std::vector<double>{0.125} &&
+                  stage.processcvu.q_zp_list == std::vector<int>{-7},
+              "native lowering must preserve authored reciprocal-scale convention");
     }
 
     {
@@ -179,7 +198,49 @@ int main() {
               "multi-input model-managed dequant should preserve physical input count");
       require(compiled.dequant->runtime_contract.logical_outputs.size() == 6U,
               "multi-input model-managed dequant should preserve logical output count");
+      auto manifest = simaai::neat::render_manifest_from_compiled_contracts(compiled_pipeline,
+                                                                            input, &diagnostics);
+      require(manifest.has_value() && diagnostics.errors.empty(),
+              "six-source packed-output Dequant must lower without losing carrier identities: " +
+                  (diagnostics.errors.empty() ? std::string{} : diagnostics.errors.front()));
+      require(manifest->stages.front().processcvu.input_tensors.size() == 6 &&
+                  manifest->stages.front().processcvu.output_tensors.size() == 6 &&
+                  manifest->stages.front().physical_inputs.size() == 6 &&
+                  manifest->stages.front().physical_outputs.size() == 1,
+              "native Dequant must preserve six independent sources and one packed output");
+      const auto failure = simaai::neat::pipeline_internal::sima::prepare_kernel_stage_recipes(
+          &*manifest, std::nullopt, {}, {}, simaai::neat::NameTransform{});
+      require(!failure, "native Dequant preparation failed: " +
+                            (failure ? failure->field + ": " + failure->message : std::string{}));
+      const auto& native = manifest->stages.front();
+      const auto& prepared_native = native;
+      require(prepared_native.native_kernel && prepared_native.native_kernel->publication,
+              "Dequant must retain its checked canonical recipe and publication");
+      const auto& prepared_stage = *prepared_native.native_kernel;
+      require(prepared_stage.members.size() == 6 &&
+                  prepared_stage.publication->contract->logical_outputs.size() == 6,
+              "preparation must preserve executable members and published logical outputs");
+      for (std::size_t index = 0; index < prepared_stage.members.size(); ++index) {
+        const auto& member = prepared_stage.members[index];
+        auto inspected = simaai::scheduler::inspect_kernel(member.executable);
+        require(std::holds_alternative<simaai::runtime::KernelInspection>(inspected),
+                "Dequant member must retain a checked executable");
+        const auto& checked = std::get<simaai::runtime::KernelInspection>(inspected);
+        require(checked.target() == simaai::runtime::Hardware::A65 &&
+                    checked.inputs().size() == 1 && checked.outputs().size() == 1 &&
+                    checked.input_requirements().front().storage_bytes == input_size &&
+                    checked.output_requirements().front().storage_bytes == output_size,
+                "canonical Dequant contract must preserve each source and destination extent");
+        require(member.inputs.size() == 1 && member.inputs.front().tensor == index &&
+                    member.outputs.size() == 1 && member.outputs.front().tensor == index,
+                "canonical Dequant members must retain independent backend port identities");
+      }
       for (int i = 0; i < 6; ++i) {
+        require(native.processcvu.output_tensors[i].storage.addr == output_size * i,
+                "native output descriptor must retain each packed byte offset");
+        require(native.logical_inputs[i].backend_input_index == i &&
+                    native.logical_outputs[i].backend_output_index == i,
+                "native member indices must be dense and independent of source output IDs");
         const std::string input_name = "MLA_0_" + std::to_string(i);
         require(compiled.dequant->runtime_contract.logical_inputs[i].physical_index == i,
                 "multi-input model-managed dequant should preserve logical input physical index");
@@ -207,10 +268,10 @@ int main() {
       opt.q_zp = -7;
       auto node = simaai::neat::nodes::Dequant(opt);
       const std::string frag = node->backend_fragment(3);
-      require_contains(frag, "neatdequant name=dq0",
-                       "standalone dequant fragment should use neatdequant");
-      require_contains(frag, "q-scale=0.125", "standalone dequant fragment should emit q-scale");
-      require_contains(frag, "q-zp=-7", "standalone dequant fragment should emit q-zp");
+      require_contains(frag, "neatkernelrunner name=dq0",
+                       "standalone dequant fragment should use the generic runner");
+      require_not_contains(frag, "q-scale=", "quantization must stay in the typed contract");
+      require_not_contains(frag, "q-zp=", "zero point must stay in the typed contract");
       require_not_contains(
           frag, "stage-id=", "standalone dequant fragment must not emit processcvu stage-id");
       auto* provider = dynamic_cast<const simaai::neat::NodeContractProvider*>(node.get());
@@ -242,6 +303,19 @@ int main() {
       require(compiled.dequant->runtime_contract.logical_inputs.front().quant->zero_points ==
                   std::vector<std::int64_t>{-7},
               "standalone dequant quant zero-point mismatch");
+    }
+
+    {
+      auto node = simaai::neat::nodes::Detess();
+      require_contains(node->backend_fragment(0), "neatkernelrunner",
+                       "Detess must not depend on the old dedicated element");
+      simaai::neat::ContractCompileInput input;
+      simaai::neat::CompiledNodeContract output;
+      std::string error;
+      auto* provider = dynamic_cast<const simaai::neat::NodeContractProvider*>(node.get());
+      require(provider && !provider->compile_node_contract(input, &output, &error),
+              "Detess without physical tile geometry must fail before execution");
+      require_contains(error, "compiled tensor/tile contract", "missing actionable Detess error");
     }
 
     std::cout << "[OK] unit_dequant_node_fragment_test passed\n";

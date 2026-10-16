@@ -12,6 +12,10 @@
 typedef struct _GstSample GstSample;
 typedef struct _GstBuffer GstBuffer;
 
+namespace simaai::neat {
+struct Sample;
+}
+
 namespace simaai::neat::pipeline_internal {
 
 struct TensorIoStats {
@@ -36,7 +40,13 @@ struct TensorIoStats {
 std::shared_ptr<simaai::neat::Storage> make_gst_sample_storage(GstSample* sample);
 std::shared_ptr<simaai::neat::Storage>
 make_gst_sample_storage_with_segments(GstSample* sample,
-                                      const std::vector<simaai::neat::Segment>& segments);
+                                      std::vector<simaai::neat::Segment> segments);
+// Rebind admitted names to this frame's live carrier extents without admitting
+// descriptors, mapping payloads, or acquiring a CPU synchronization epoch.
+enum class TensorBufferBindingResult { Current, IncompatibleCarrierCount, Invalid };
+TensorBufferBindingResult tensor_buffer_current_segments(
+    GstBuffer* buffer, const std::vector<simaai::neat::Segment>& admitted_segments,
+    std::vector<simaai::neat::Segment>* current_segments, std::string* err);
 TensorIoStats snapshot_tensor_io_stats();
 void reset_tensor_io_stats();
 void record_tensor_holder_fast_path_hit();
@@ -54,9 +64,20 @@ GstBuffer* buffer_from_tensor_holder(const std::shared_ptr<void>& holder);
 bool drop_tensor_holder(const simaai::neat::Tensor& tensor);
 
 // Map tensor payload for CPU access. Uses device-aware mapping for GstSample-backed
-// tensors when available, and falls back to Tensor::map for other cases.
+// tensors when available, and falls back to the storage mapping for other cases.
 simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
                                       simaai::neat::MapMode mode);
+
+// Internal checked dense READ for shape-bounded consumers. Returns the exact
+// reachable tensor span (including positive stride gaps), with byte_offset
+// applied once. Invalid/unsupported geometry or insufficient authority returns
+// an empty Mapping. Does not change public Tensor::map/view semantics or bypass
+// the existing custom/selected-segment mapping contract.
+simaai::neat::Mapping map_dense_tensor_read(const simaai::neat::Tensor& tensor);
+
+// Materialize public output storage once per carrier, retaining tensor views and
+// metadata but no producer buffer/pool loan. Auto may preserve existing DMA-BUFs.
+void materialize_owned_output(Sample& sample, bool preserve_dmabuf = false);
 
 // Copy a specific GstBuffer memory index into an owned simaai::neat::Tensor.
 simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& ref,
@@ -70,7 +91,7 @@ simaai::neat::Tensor tensor_view_from_sample_segment(const simaai::neat::Tensor&
 std::shared_ptr<void> holder_from_tensor(const simaai::neat::Tensor& tensor);
 
 // Copy `bytes` from `src` into the simaai segment memory pointed to by `segment`
-// (an opaque simaai_memory_t*). Maps the segment, memcpys, flushes cache, unmaps.
+// (an opaque Runtime memory::Segment*). Copies within a checked CPU-write scope.
 // Used by the bundled-input multi-IO path to materialize user CPU tensors into
 // device-accessible segments addressed via the SimaaiSegmentAllocator.
 bool copy_into_simaai_segment_memory(void* segment, const void* src, std::size_t bytes,

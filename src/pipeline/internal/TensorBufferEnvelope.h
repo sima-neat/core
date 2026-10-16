@@ -54,6 +54,11 @@ struct TensorBufferView {
   GstBuffer* buffer = nullptr;
   GstCaps* caps = nullptr;
   std::string stage_key;
+  // Value-only current carrier facts from the same Runtime admission as tensors.
+  // Indices are Runtime selectors, not producer physical identities.
+  std::vector<Segment> segments;
+  // Runtime-computed descriptor spans, combined once per carrier at admission.
+  std::vector<std::uint64_t> required_segment_extents;
   std::vector<TensorBufferTensorDescriptor> tensors;
 };
 

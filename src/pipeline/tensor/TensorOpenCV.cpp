@@ -25,6 +25,7 @@
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorTransfer.h"
+#include "pipeline/internal/TensorUtil.h"
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/imgproc.hpp>
@@ -313,7 +314,7 @@ std::optional<CvMatView> Tensor::map_cv_mat_view(ImageSpec::PixelFormat desired)
       return std::nullopt;
   }
 
-  Mapping mapping = map_read();
+  Mapping mapping = pipeline_internal::map_dense_tensor_read(*this);
   if (!mapping.data)
     return std::nullopt;
 

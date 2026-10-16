@@ -1,6 +1,10 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
+#include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include <gstsimaaitensorbuffer.h>
 #include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
@@ -764,6 +768,109 @@ void test_registered_detess_layout_is_preserved_through_dequant() {
         "publication retains the exact transform layout");
 }
 
+// Real Scheduler public admission is exercised without connecting a device.
+// A valid request reaches this deliberately unavailable transport only after
+// Scheduler has proved its recipe/publication relation. No buffers are submitted.
+struct UnavailableAdmissionTransport final : simaai::runtime::Ev74Transport {
+  mutable unsigned queries = 0;
+  bool submitted = false;
+  bool supports(std::string_view, std::uint32_t, std::size_t) const noexcept override {
+    ++queries;
+    return false;
+  }
+  simaai::runtime::Status submit(const simaai::runtime::Ev74Packet&, Retired) noexcept override {
+    submitted = true;
+    return simaai::runtime::Error{simaai::runtime::ErrorCode::ExecutionFailed, "test",
+                                  "cold admission must not submit"};
+  }
+};
+
+void check_resnet_canonical_publication(const simaai::neat::CompiledProcessCvuContract& contract) {
+  namespace rt = simaai::runtime;
+  namespace gs = rt::gstreamer;
+  gst_init(nullptr, nullptr);
+  check(simaai::gst::tensor_buffer_register_meta(), "tensor metadata registration succeeds");
+  auto stage = simaai::neat::project_processcvu_stage_contract(contract);
+  stage.element_name = stage.logical_stage_id = "resnet_fused_postprocess";
+  stage.processcvu.requested_run_target = "EV74";
+  SimaPluginStaticManifest manifest;
+  manifest.stages.push_back(std::move(stage));
+  const auto failure = prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
+  if (failure)
+    std::cerr << failure->field << ": " << failure->message << '\n';
+  check(!failure, "ResNet MPK-derived fused contract prepares canonically");
+  const auto& authored = manifest.stages.front();
+  const auto& recipe = *authored.native_kernel;
+  check(recipe.members.size() == 1U && recipe.members.front().inputs.size() == 1U &&
+            recipe.members.front().outputs.size() == 1U,
+        "ResNet retains one fused executable with only outer bindings");
+  const auto inspected = simaai::scheduler::inspect_kernel(recipe.members.front().executable);
+  check(std::holds_alternative<rt::KernelInspection>(inspected), "fused executable is inspectable");
+  const auto& output = std::get<rt::KernelInspection>(inspected).outputs().front();
+  const auto dimensions = output.shape.dimensions();
+  check(std::vector<std::int64_t>(dimensions.begin(), dimensions.end()) ==
+            std::vector<std::int64_t>({1, 1, 1, 1000}),
+        "checked fused execution retains Detess geometry");
+  gs::TensorStagePublication publication;
+  std::string error;
+  check(build_kernel_stage_publication(authored, &publication, &error),
+        "ResNet public tensor contract builds");
+  check(publication.contract->logical_outputs.size() == 1U &&
+            publication.contract->logical_outputs.front().shape ==
+                std::vector<std::int64_t>({1, 1000}) &&
+            publication.contract->logical_outputs.front().size_bytes == 4000U &&
+            publication.physical_views.size() == 1U &&
+            publication.physical_views.front().relation ==
+                gs::TensorStagePublicationRelation::SingletonAxes,
+        "Core preserves MPK public geometry and proven singleton authority");
+
+  const auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new("cold-resnet-admission"),
+                                                    [](auto* value) { gst_object_unref(value); });
+  check(attach_manifest_context(pipeline.get(), manifest, &error), "production placement attaches");
+  const auto context = std::shared_ptr<GstContext>(
+      gst_element_get_context(pipeline.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
+      [](auto* value) {
+        if (value)
+          gst_context_unref(value);
+      });
+  const auto* placement = sima_plugin_manifest_context_stage_lookup_typed(
+      context.get(), authored.logical_stage_id.c_str(), authored.element_name.c_str(),
+      SIMA_PLUGIN_STAGE_PAYLOAD_NONE);
+  check(placement != nullptr, "production placement is retrievable");
+  gs::TensorStageRequest request;
+  request.target = recipe.target;
+  request.members = recipe.members;
+  request.publication = publication;
+  request.placement = std::shared_ptr<const SimaPluginStageSpec>(context, placement);
+  request.options.storage = gs::make_storage();
+  auto transport = std::make_shared<UnavailableAdmissionTransport>();
+  gs::TensorStageCohortOptions options;
+  options.ev74.runtime.ev74 = transport;
+  options.ev74.ev74.device = "/invalid/resnet-cold-admission-must-not-connect";
+  const auto result = gs::prepare_tensor_stages(std::array{request}, options);
+  const auto* admission = std::get_if<rt::Error>(&result);
+  if (admission)
+    std::cerr << "ResNet cold admission boundary: " << admission->field << ": "
+              << admission->message << '\n';
+  check(admission && admission->code == rt::ErrorCode::UnsupportedTarget &&
+            admission->field == "prepared.ev74" && transport->queries > 0U && !transport->submitted,
+        "valid Core publication passes Scheduler checks before unavailable transport rejection");
+
+  // Permission does not permit arbitrary equal-byte reshapes. Keep the checked
+  // operation unchanged and corrupt only the published logical geometry.
+  auto wrong_publication =
+      std::make_shared<simaai::gst::TensorBufferPublishContract>(*publication.contract);
+  wrong_publication->logical_outputs.front().shape = {2, 500};
+  request.publication.contract = std::move(wrong_publication);
+  const auto queries = transport->queries;
+  const auto rejected = gs::prepare_tensor_stages(std::array{request}, options);
+  const auto* mismatch = std::get_if<rt::Error>(&rejected);
+  check(mismatch && mismatch->code == rt::ErrorCode::InvalidBinding &&
+            mismatch->field == "output.contract" && transport->queries == queries &&
+            !transport->submitted,
+        "equal-byte non-singleton shape fails Scheduler authority before device admission");
+}
+
 void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   const auto result =
       AfeMpkV2Decoder{}.decode_json(resnet_batch_flatten_manifest(),
@@ -813,7 +920,7 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
       continue;
     }
     ++cvu_commands;
-    if (command.graph_id == 227U) {
+    if (command.implementation_id == "detessdequant") {
       graph227_commands.push_back(command.id);
     }
   }
@@ -830,7 +937,7 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   check(arena.has_value(), "relation-transparent graph227 frame arena compiles");
   const auto contract = build_dmabuf_plan_processcvu_command_contract(
       plan, *physical, graph227_commands, *arena, &error);
-  check(contract && contract->payload.graph_id == 227 &&
+  check(contract && contract->payload.graph_name == "detessdequant" &&
             contract->payload.input_tensors.size() == 1U &&
             contract->payload.output_tensors.size() == 1U,
         "projection accepts the same proved relation path and authors one graph227 outer pair");
@@ -862,6 +969,12 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
               contract->runtime_contract.logical_outputs.size() == 1U &&
               contract->runtime_contract.logical_outputs.front().layout.empty(),
           "unknown post-view layout must not inherit the physical EV image axes");
+    check(contract->runtime_contract.logical_outputs.front().publication_relation ==
+                  PublicationViewRelation::SingletonAxes &&
+              contract->exposed_view.exposed_logical_outputs.front().publication_relation ==
+                  PublicationViewRelation::SingletonAxes,
+          "both runtime and exposed projection retain singleton authority");
+    check_resnet_canonical_publication(*contract);
     auto layout_payload = contract->payload;
     layout_payload.runtime_output_logical_layout_list = {"HWC", ""};
     check(layout_payload.logical_output_layout_token(0U) == "HWC" &&
@@ -871,6 +984,36 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
     check(layout_payload.logical_output_layout_token() == "HWC",
           "payloads without authored logical layout retain physical layout fallback");
   }
+
+  // A legitimate reshape may preserve bytes without being a singleton view.
+  // Keep batch one so this tests publication geometry, not a batch fusion barrier.
+  // Such a model must not receive authority for the fused Detess output geometry.
+  auto reshaped_json = nlohmann::json::parse(resnet_batch_flatten_manifest());
+  auto& view_config = reshaped_json["plugins"][2]["config_params"];
+  view_config["kernel"] = "reshape_transform";
+  view_config["params"]["newshape"] = {1, 20, 50};
+  view_config["params"]["output_shapes"] = {{1, 20, 50}};
+  auto& dequant_params = reshaped_json["plugins"][3]["config_params"]["params"];
+  dequant_params["input_shapes"] = {{1, 20, 50}};
+  dequant_params["output_shapes"] = {{1, 20, 50}};
+  const auto reshaped = AfeMpkV2Decoder{}.decode_json(
+      reshaped_json.dump(), monolithic_topology(16U, 1008U), "resnet-nonsingleton-view.json");
+  check(static_cast<bool>(reshaped), "equal-byte non-singleton reshape has valid model semantics");
+  const auto reshaped_physical = PhysicalExecutionLowerer::lower(*reshaped.plan, &error);
+  check(reshaped_physical.has_value(), "non-singleton shape remains a mandatory fused candidate");
+  const auto reshaped_arena = FrameSlotArenaPlan::compile(
+      *reshaped.plan, *reshaped_physical, FrameSlotArenaReuse::DisjointLifetimes,
+      kLegacyEvoCmaRegionAlignmentBytes, &error);
+  check(reshaped_arena.has_value(), "non-singleton candidate arena compiles");
+  std::vector<PhysicalCommandId> reshaped_commands;
+  for (const auto& command : reshaped_physical->commands)
+    if (command.engine == PhysicalEngine::Cvu && command.implementation_id == "detessdequant")
+      reshaped_commands.push_back(command.id);
+  check(reshaped_commands.size() == 1U, "non-singleton reshape must not silently unfuse");
+  const auto incompatible = build_dmabuf_plan_processcvu_command_contract(
+      *reshaped.plan, *reshaped_physical, reshaped_commands, *reshaped_arena, &error);
+  check(!incompatible && error.find("singleton") != std::string::npos,
+        "equal-byte non-singleton projection fails with a specific singleton-relation diagnostic");
 
   auto two_views =
       replace_once(resnet_batch_flatten_manifest(),
@@ -911,7 +1054,7 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   std::size_t twice_graph227 = 0U;
   if (twice_physical) {
     for (const auto& command : twice_physical->commands) {
-      twice_graph227 += command.graph_id == 227U ? 1U : 0U;
+      twice_graph227 += command.implementation_id == "detessdequant" ? 1U : 0U;
     }
   }
   check(twice_physical && twice_graph227 == 1U && !twice_physical->command_for_semantic_op[2U] &&
@@ -937,9 +1080,9 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   std::size_t graph227 = 0U;
   if (split) {
     for (const auto& command : split->commands) {
-      graph3 += command.graph_id == 3U ? 1U : 0U;
-      graph223 += command.graph_id == 223U ? 1U : 0U;
-      graph227 += command.graph_id == 227U ? 1U : 0U;
+      graph3 += command.implementation_id == "detess" ? 1U : 0U;
+      graph223 += command.implementation_id == "dequant" ? 1U : 0U;
+      graph227 += command.implementation_id == "detessdequant" ? 1U : 0U;
     }
   }
   check(split && graph3 == 1U && graph223 == 1U && graph227 == 0U,
@@ -949,13 +1092,13 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
 void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
   struct Case {
     const std::string& manifest;
-    std::uint32_t graph_id;
+    const char* operation;
     std::uint64_t mla_ifm_bytes;
     const char* label;
   };
   const std::array cases{
-      Case{cast_tess_manifest(), 224U, 128U, "Cast+Tess"},
-      Case{quant_tess_manifest(), 226U, 64U, "Quantize+Tess"},
+      Case{cast_tess_manifest(), "casttess", 128U, "Cast+Tess"},
+      Case{quant_tess_manifest(), "quanttess", 64U, "Quantize+Tess"},
   };
   const std::array<std::uint8_t, 4U> expected_axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
                                                    SIMA_EV_AXIS_C};
@@ -979,7 +1122,8 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
     check(physical.has_value(), "raw fused-ingress plan lowers physically");
     std::vector<PhysicalCommandId> commands;
     for (const auto& command : physical->commands) {
-      if (command.engine == PhysicalEngine::Cvu && command.graph_id == test_case.graph_id) {
+      if (command.engine == PhysicalEngine::Cvu &&
+          command.implementation_id == test_case.operation) {
         commands.push_back(command.id);
       }
     }
@@ -1056,7 +1200,7 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
   check(physical.has_value(), "standalone Quantize plan lowers physically");
   std::vector<PhysicalCommandId> commands;
   for (const auto& command : physical->commands) {
-    if (command.engine == PhysicalEngine::Cvu && command.graph_id == 222U) {
+    if (command.engine == PhysicalEngine::Cvu && command.implementation_id == "quant") {
       commands.push_back(command.id);
     }
   }
@@ -1070,7 +1214,7 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
   check(contract.has_value(), "standalone graph 222 descriptor contract builds");
 
   const auto& payload = contract->payload;
-  check(payload.graph_id == 222 && payload.input_tensors.size() == 1U &&
+  check(payload.graph_name == "quant" && payload.input_tensors.size() == 1U &&
             payload.output_tensors.size() == 1U && payload.round_off == 1 && payload.has_q_scale &&
             payload.q_scale == 0.25 && payload.has_q_zp && payload.q_zp == 0 &&
             payload.q_scale_list == std::vector<double>{0.25} &&

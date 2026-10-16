@@ -36,7 +36,9 @@ bool contract_looks_like_grouped_yolov26(const BoxDecodeStaticContract& contract
         bbox.slice_shape.size() >= 3U ? bbox.slice_shape[2] : bbox.input_shape[2];
     const int score_depth =
         scores.slice_shape.size() >= 3U ? scores.slice_shape[2] : scores.input_shape[2];
-    if (bbox_depth != 4 || bbox.input_shape[2] < bbox_depth || score_depth <= 4) {
+    // The explicit YOLO26 family fixes the first role as raw LTRB. A valid
+    // detector may have one to four classes; class depth is not a role tag.
+    if (bbox_depth != 4 || bbox.input_shape[2] < bbox_depth || score_depth <= 0) {
       return false;
     }
   }
@@ -568,6 +570,8 @@ bool decode_type_is_packed_yolo(BoxDecodeType type) {
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract);
 
 int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
+  if (contract.decode_type == BoxDecodeType::RcnnStage1)
+    return 1; // Three anchors, each with one class-agnostic objectness logit.
   if (box_decode_type_is_ssd_family(contract.decode_type)) {
     // SSD class count is derived from the loc/conf head geometry, not head names:
     // confidence heads pack num_classes * priors-per-cell channels, so a name-based

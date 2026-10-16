@@ -45,25 +45,11 @@ std::string native_visual_canonical_name_runtime(std::string name) {
   return name;
 }
 
-int native_visual_graph_id_runtime(const std::string& name) {
-  const std::string token = native_visual_canonical_name_runtime(name);
-  if (token == "feature_histogram")
-    return 235;
-  if (token == "grider_fast")
-    return 236;
-  if (token == "track_descriptor")
-    return 237;
-  if (token == "track_klt")
-    return 238;
-  return -1;
-}
-
 bool is_native_visual_runtime_config(const CompiledProcessCvuRuntimeConfig& config) {
-  if (config.graph_id >= 235 && config.graph_id <= 238) {
-    return true;
-  }
-  return native_visual_graph_id_runtime(!config.graph_name.empty() ? config.graph_name
-                                                                   : config.graph_family) > 0;
+  const auto token = native_visual_canonical_name_runtime(
+      !config.graph_name.empty() ? config.graph_name : config.graph_family);
+  return token == "feature_histogram" || token == "grider_fast" || token == "track_descriptor" ||
+         token == "track_klt";
 }
 
 bool graph_family_implies_tessellate_local(const std::string& family) {
@@ -456,13 +442,6 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
   }
 
   const bool native_visual_graph = is_native_visual_runtime_config(config);
-  if (native_visual_graph) {
-    const int expected_id = native_visual_graph_id_runtime(
-        !config.graph_name.empty() ? config.graph_name : config.graph_family);
-    if (expected_id > 0 && config.graph_id > 0 && config.graph_id != expected_id) {
-      throw std::invalid_argument("processcvu native visual runtime config graph_id/name mismatch");
-    }
-  }
 
   require_non_empty_unique_names(physical_input_names, "physical_input_names");
   require_non_empty_unique_names(physical_output_names, "physical_output_names");

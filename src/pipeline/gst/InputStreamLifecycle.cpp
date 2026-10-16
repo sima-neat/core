@@ -1,8 +1,8 @@
+#include "pipeline/internal/MemoryCoherencyPolicy.h"
 #include "InputStreamInternal.h"
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
-#include "pipeline/internal/CpuVisibleSample.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
 
 namespace simaai::neat {
@@ -57,6 +57,8 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
                                 std::shared_ptr<void> guard) {
   auto state = std::make_shared<State>();
   state->pipeline = pipeline;
+  state->demand_coherency = pipeline_internal::graph_memory_coherency_mode(pipeline) ==
+      pipeline_internal::MemoryCoherencyMode::DemandLocalV1;
   state->appsrc = appsrc;
   state->appsink = appsink;
   state->src_opt = src_opt;
@@ -214,6 +216,16 @@ std::shared_ptr<DiagCtx> InputStream::diag_ctx() const {
   if (!state)
     return {};
   return state->diag;
+}
+
+std::optional<pipeline_internal::InputStreamTeardownPolicy>
+InputStream::effective_teardown_policy() const noexcept {
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
+    return std::nullopt;
+  // This field is fixed by create(); close may release State, not change its
+  // policy. Retaining the snapshot follows diag_ctx()'s existing lifetime rule.
+  return state->opt.teardown_policy;
 }
 
 GstElement* InputStream::pipeline_handle() const {
@@ -391,9 +403,6 @@ void InputStream::start(std::function<void(Sample)> on_output) {
         if (timings)
           t_decode_start = std::chrono::steady_clock::now();
         Sample out = decode_sample_from_inputstream_state(*st, sample, "InputStream::start");
-        if (st->opt.prepare_output_cpu_visible) {
-          (void)pipeline_internal::prepare_sample_for_cpu_read(out);
-        }
         if (pipeline_or_graph_debug_enabled()) {
           const char* kind = "Unknown";
           if (out.kind == SampleKind::TensorSet)

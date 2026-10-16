@@ -84,6 +84,7 @@
 #include "pipeline/FeatureTypes.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/FormatSpec.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "neat/version.h"
@@ -1148,7 +1149,8 @@ python_preproc_images_to_cv_mats(const nb::object& images,
       throw std::runtime_error(
           "pyneat.stages.preproc: images must be packed HW or packed HWC after conversion");
     }
-    simaai::neat::Mapping mapping = tensor.map_read();
+    simaai::neat::Mapping mapping =
+        simaai::neat::pipeline_internal::map_dense_tensor_read(tensor);
     if (!mapping.data) {
       throw std::runtime_error("pyneat.stages.preproc: failed to map image tensor");
     }
@@ -2392,6 +2394,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("element_name_prefix", &GraphOptions::element_name_prefix)
       .def_rw("element_name_suffix", &GraphOptions::element_name_suffix)
       .def_rw("verbose", &GraphOptions::verbose)
+      .def_rw("kernel_runner_a65_workers", &GraphOptions::kernel_runner_a65_workers)
       .def_rw("advanced_execution", &GraphOptions::advanced_execution);
 
   nb::class_<simaai::neat::OutputTensorOptions>(m, "OutputTensorOptions")

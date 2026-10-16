@@ -1,4 +1,5 @@
-#include "asset_utils.h"
+#include "support/yolov8_variant_fixture.h"
+#include "support/cold_contract_gst_init.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
@@ -33,72 +34,8 @@ std::filesystem::path core_root() {
   return sima_test::test_source_root();
 }
 
-struct Yolov8VariantFixture {
-  std::string tar_path;
-  std::string unpack_root;
-};
-
-std::string trim_trailing_slashes(std::string value) {
-  while (!value.empty() && value.back() == '/') {
-    value.pop_back();
-  }
-  return value;
-}
-
-bool path_has_yolov8_contract_files(const std::filesystem::path& root) {
-  return sima_test::is_usable_regular_file(root / "yolov8n_modified_mpk.json") &&
-         sima_test::is_usable_regular_file(root / "pipeline_sequence.json");
-}
-
-std::string yolo_variant_base_url() {
-  if (const char* env = std::getenv("SIMA_YOLOV8N_VARIANTS_BASE_URL"); env && *env) {
-    return trim_trailing_slashes(env);
-  }
-  if (const char* env = std::getenv("SIMA_YOLOV8_VARIANTS_BASE_URL"); env && *env) {
-    return trim_trailing_slashes(env);
-  }
-  return "https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix";
-}
-
-Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& stem) {
-  const std::filesystem::path root = core_root();
-  const std::filesystem::path drive_dir = root / "tmp" / "yolov8n_drive";
-  const std::filesystem::path unpack_dir = root / "tmp" / "yolov8n_unpack" / stem;
-  const std::filesystem::path tar_path = drive_dir / (stem + ".tar.gz");
-
-  std::error_code ec;
-  std::filesystem::create_directories(drive_dir, ec);
-  ec.clear();
-  std::filesystem::create_directories(unpack_dir.parent_path(), ec);
-
-  const sima_test::ScopedFileLock lock(drive_dir / ".download.lock");
-  if (!sima_test::is_listable_tar_gz(tar_path)) {
-    sima_test::purge_unlistable_tar_gz(tar_path);
-    const std::string base_url = yolo_variant_base_url();
-    const std::string url = base_url + "/" + stem + ".tar.gz";
-    require(sima_test::download_file(url, tar_path),
-            "failed to download YOLOv8n fixture from " + url + " to " + tar_path.string() +
-                " (run `sima-cli login` if the docs.sima.ai endpoint requires OAuth, or set "
-                "SIMA_YOLOV8N_VARIANTS_BASE_URL to a mirror)");
-    require(sima_test::is_listable_tar_gz(tar_path),
-            "downloaded YOLOv8n fixture is not a readable tar.gz: " + tar_path.string());
-  }
-
-  if (!path_has_yolov8_contract_files(unpack_dir)) {
-    ec.clear();
-    std::filesystem::remove_all(unpack_dir, ec);
-    ec.clear();
-    std::filesystem::create_directories(unpack_dir, ec);
-    const std::string cmd = "tar -xzf " + sima_test::shell_quote(tar_path.string()) + " -C " +
-                            sima_test::shell_quote(unpack_dir.string());
-    require(std::system(cmd.c_str()) == 0, "failed to unpack YOLOv8n fixture " + tar_path.string() +
-                                               " into " + unpack_dir.string());
-    require(path_has_yolov8_contract_files(unpack_dir),
-            "YOLOv8n fixture missing expected contract files after unpack: " + unpack_dir.string());
-  }
-
-  return Yolov8VariantFixture{tar_path.string(), unpack_dir.string()};
-}
+using sima_test::Yolov8VariantFixture;
+using sima_test::resolve_yolov8_variant_fixture;
 
 const Yolov8VariantFixture& yolov8_int8_fixture() {
   static const Yolov8VariantFixture fixture =
@@ -596,7 +533,7 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
   auto verify = [&](const Model& model,
                     const simaai::neat::pipeline_internal::sima::MpkContract& mpk,
                     internal::ExecutionStageKind kind, const std::string& expected_stage_name,
-                    int expected_graph_id, const std::string& label) {
+                    const std::string& label) {
     const auto& pack = internal::ModelAccess::pack(model);
     const auto plan = pack.execution_plan();
     const auto pre_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
@@ -613,18 +550,18 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
     require(pre_facts.front().processcvu_contract.has_value(),
             label + " preprocess stage fact should include a processcvu contract");
 
-    const auto generic = pss::build_processcvu_mpk_compiled_contract_for_stage_kind(mpk, kind);
     const auto& from_fact = *pre_facts.front().processcvu_contract;
-    require(from_fact.payload.graph_id == expected_graph_id,
-            label + " preprocess stage fact should preserve the expected graph id");
-    require(from_fact.payload.graph_id == generic.payload.graph_id,
-            label + " preprocess stage fact should match the canonical graph id");
-    require(from_fact.payload.graph_family == generic.payload.graph_family,
-            label + " preprocess stage fact should match the canonical graph family");
-    const auto* quant = pipeline_internal::sima::get_stage_io_contract(mpk, "quantize_0");
-    require(quant != nullptr && quant->input_tensors.size() == 1U,
-            label + " requires the authored quantization input tensor");
-    const auto& authored_shape = quant->input_tensors.front().mpk_shape;
+    require(from_fact.payload.graph_name == expected_stage_name,
+            label + " preprocess stage fact should preserve the expected semantic operation");
+    require(from_fact.payload.graph_family == expected_stage_name &&
+                from_fact.payload.graph_id == 0,
+            label + " physical contract must carry canonical semantic identity, not firmware IDs");
+    const auto* scalar = pipeline_internal::sima::get_stage_io_contract(
+        mpk, kind == internal::ExecutionStageKind::CastTess ? "cast_0" : "quantize_0");
+    require(scalar != nullptr && scalar->input_tensors.size() == 1U &&
+                scalar->output_tensors.size() == 1U,
+            label + " requires the authored scalar transform boundary");
+    const auto& authored_shape = scalar->input_tensors.front().mpk_shape;
     require(authored_shape == std::vector<std::int64_t>({1, 640, 640, 3}),
             label + " MPK must preserve its explicit singleton-batch geometry");
     const std::vector<std::vector<int>> expected_shapes{
@@ -632,40 +569,57 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
     require(from_fact.payload.input_shapes == expected_shapes,
             label + " physical preprocess input must preserve the exact authored MPK geometry");
     require(from_fact.payload.output_shapes == expected_shapes,
-            label + " shape-preserving QuantTess must retain the exact authored geometry");
+            label + " shape-preserving fused input transform must retain the exact authored geometry");
     // Batch is authored beside params, independently of the normalized semantic subset.
     std::ifstream mpk_stream(mpk.mpk_json_path);
     require(mpk_stream.is_open(), label + " requires the authoritative MPK manifest");
     const auto authored_mpk = nlohmann::json::parse(mpk_stream);
     const auto& plugins = authored_mpk.at("plugins");
-    const auto authored_quant =
+    const auto authored_scalar =
         std::find_if(plugins.begin(), plugins.end(),
-                     [&](const auto& plugin) { return plugin.at("name") == quant->name; });
-    require(authored_quant != plugins.end(), label + " requires the authored quantization stage");
-    const auto& config = authored_quant->at("config_params");
+                     [&](const auto& plugin) { return plugin.at("name") == scalar->name; });
+    require(authored_scalar != plugins.end(), label + " requires the authored scalar conversion stage");
+    const auto& config = authored_scalar->at("config_params");
     const int desired_batch_size = config.at("desired_batch_size").get<int>();
     require(desired_batch_size == 1 && config.at("actual_batch_size").get<int>() == 1,
             label + " MPK must explicitly author singleton desired and actual batches");
     require(from_fact.payload.batch_size == desired_batch_size,
             label + " physical preprocess must retain the explicit MPK batch count");
-    require(from_fact.payload.input_dtype == generic.payload.input_dtype &&
-                from_fact.payload.output_dtype == generic.payload.output_dtype,
-            label + " preprocess stage fact should match canonical dtypes");
+    const auto expected_dtype =
+        kind == internal::ExecutionStageKind::CastTess ? std::string("BF16") : std::string("INT8");
+    require(from_fact.payload.input_dtype == "FP32" &&
+                from_fact.payload.output_dtype == expected_dtype,
+            label + " fused scalar conversion must preserve the independent fixture dtypes");
+    require(from_fact.payload.input_tensors.size() == 1U &&
+                from_fact.payload.output_tensors.size() == 1U &&
+                from_fact.runtime_contract.logical_inputs.size() == 1U &&
+                from_fact.runtime_contract.logical_outputs.size() == 1U,
+            label + " fused operation must bind only the outer input and tessellated output");
+    const auto* mla = pipeline_internal::sima::get_mla_stage_io_contract(mpk);
+    require(mla && mla->input_tensors.size() == 1U &&
+                from_fact.payload.output_tensors.front().storage.nbytes ==
+                    mla->input_tensors.front().size_bytes &&
+                from_fact.runtime_contract.logical_outputs.front().size_bytes ==
+                    mla->input_tensors.front().size_bytes,
+            label + " fused output must preserve the MPK-authorized physical MLA input span");
+    require(from_fact.runtime_contract.logical_outputs.front().segment_name !=
+                scalar->output_tensors.front().name,
+            label + " fused scalar intermediate must not escape as the published output");
   };
 
   const Model int8_model(yolov8_int8_tar_path(), int8_model_options());
   verify(int8_model, load_yolov8_int8_contract(), internal::ExecutionStageKind::QuantTess,
-         "quanttess", 226, "YOLOv8 INT8");
+         "quanttess", "YOLOv8 INT8");
 
-  // BF16 path uses the fused CastTess stage, but
-  // build_processcvu_mpk_compiled_contract_for_stage_kind currently returns
-  // nullopt for casttess (canonical contract not yet wired). Skipping the
-  // canonical-equivalence verification for BF16 until that gap is closed.
+  const Model bf16_model(yolov8_bf16_tar_path(), bf16_model_options());
+  verify(bf16_model, load_yolov8_bf16_contract(), internal::ExecutionStageKind::CastTess,
+         "casttess", "YOLOv8 BF16");
 }
 
 } // namespace
 
 RUN_TEST("unit_yolov8_contract_subset_test", ([] {
+           sima_test::initialize_cold_contract_gstreamer();
            verify_yolov8_int8_contract_subset();
            verify_yolov8_bf16_contract_subset();
            verify_yolov8_pre_stage_facts_match_canonical_contracts();

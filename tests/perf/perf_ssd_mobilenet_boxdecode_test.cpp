@@ -52,7 +52,8 @@ select_exact_component_rows(const simaai::neat::MeasureReportWithPluginPercentil
 
 void validate_component_selection(
     const ComponentIdentity& identity,
-    const std::vector<const simaai::neat::MeasurePluginLatencyWithPercentiles*>& rows) {
+    const std::vector<const simaai::neat::MeasurePluginLatencyWithPercentiles*>& rows,
+    std::size_t expected_samples) {
   if (rows.empty()) {
     throw std::runtime_error(std::string("PERF_HARNESS_ERROR:HARNESS_COMPONENT_MISSING: ") +
                              identity.component_id);
@@ -67,9 +68,10 @@ void validate_component_selection(
     throw std::runtime_error(std::string("PERF_HARNESS_ERROR:HARNESS_COMPONENT_UNRELIABLE: ") +
                              identity.component_id);
   }
-  if (row.calls == 0U) {
+  if (row.calls != expected_samples) {
     throw std::runtime_error(std::string("PERF_HARNESS_ERROR:HARNESS_COMPONENT_SAMPLE_COUNT: ") +
-                             identity.component_id + " samples=0");
+                             identity.component_id + " samples=" + std::to_string(row.calls) +
+                             " expected=" + std::to_string(expected_samples));
   }
   if (!percentiles.available || !std::isfinite(percentiles.p50_ms) ||
       !std::isfinite(percentiles.p95_ms) || !std::isfinite(percentiles.p99_ms)) {
@@ -172,20 +174,27 @@ int main(int argc, char** argv) {
       throw std::runtime_error("SSD performance measurement did not correlate every output");
     }
     if (report.plugin_latency_status != "collected") {
+      for (const auto& warning : report.warnings)
+        std::cerr << "SSD metrics: " << warning << '\n';
+      if (!report.metrics_trace_dir.empty())
+        std::cerr << "SSD metrics trace: " << report.metrics_trace_dir << '\n';
       throw std::runtime_error("SSD BoxDecode plugin latency was not collected (status=" +
                                report.plugin_latency_status + ")");
     }
+    // V2 wall envelopes are deliberate new identities, not aliases for legacy
+    // synchronous plugin timing. Keep decode-to-wire scheduling and pool waits.
     // Graph construction applies its per-run name transform (for example, `boxdecode_1`) to the
     // element and stage. Select the stable tracepoint identity and then require exactly one row;
     // requiring stage_name == gst_element_name still rejects malformed or cross-node attribution.
-    constexpr ComponentIdentity kBackendComponent{"boxdecode_backend", "A65", "Run",
-                                                  "boxdecode_backend"};
-    constexpr ComponentIdentity kExclusiveComponent{"boxdecode_plugin_exclusive", "A65", "Exec",
-                                                    "boxdecode_plugin_exclusive"};
+    constexpr ComponentIdentity kBackendComponent{"boxdecode_backend_wall_v2", "A65", "Run",
+                                                  "boxdecode_backend_wall_v2"};
+    constexpr ComponentIdentity kStageComponent{"boxdecode_stage_wall_v2", "A65", "Exec",
+                                                "boxdecode_stage_wall_v2"};
     auto backend_rows = select_exact_component_rows(measured, kBackendComponent);
-    auto exclusive_rows = select_exact_component_rows(measured, kExclusiveComponent);
-    validate_component_selection(kBackendComponent, backend_rows);
-    validate_component_selection(kExclusiveComponent, exclusive_rows);
+    auto stage_rows = select_exact_component_rows(measured, kStageComponent);
+    validate_component_selection(kBackendComponent, backend_rows,
+                                 static_cast<std::size_t>(iterations));
+    validate_component_selection(kStageComponent, stage_rows, static_cast<std::size_t>(iterations));
 
     sima_perf::PerfMetrics metrics;
     const double elapsed_s = sima_perf::elapsed_seconds(run_t0, run_t1);
@@ -200,7 +209,7 @@ int main(int argc, char** argv) {
     const PowerSummary power = power_monitor.summary();
     const std::vector<sima_perf::ComponentLatencySelection> component_latency = {
         {kBackendComponent.component_id, std::move(backend_rows)},
-        {kExclusiveComponent.component_id, std::move(exclusive_rows)},
+        {kStageComponent.component_id, std::move(stage_rows)},
     };
     progress_output.restore();
     sima_perf::emit_metrics_json("ssd_mobilenet_boxdecode", iterations, metrics, "sync", &power,

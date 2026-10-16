@@ -2203,7 +2203,10 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
           std::string(plugin_contract_field_key_name(PluginContractFieldKey::SliceGeometry)) +
           "' for stage '" + stage_name + "'");
     }
-    if (subset.quant_needed) {
+    const bool needs_quant = subset.decode_type == BoxDecodeType::SuperPoint
+                                 ? normalize_dtype_token(logical.dtype) == "INT8"
+                                 : subset.quant_needed;
+    if (needs_quant) {
       if (!logical.quant.has_value() || logical.quant->scales.empty() ||
           logical.quant->zero_points.empty()) {
         throw std::invalid_argument(
@@ -2260,7 +2263,7 @@ build_quanttess_runtime_config_from_subset(const QuantTessContractSubset& subset
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "quanttess";
   runtime.graph_name = "quantizetessellate";
-  runtime.graph_id = 226;
+
   runtime.default_input_name = "input_tensor";
   runtime.runtime_input_names = {"input_tensor"};
   runtime.runtime_output_names = {"output_tensor"};
@@ -2407,7 +2410,7 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "tessellate";
   runtime.graph_name = "tessellate";
-  runtime.graph_id = 2;
+
   runtime.default_input_name = "input_tensor";
   runtime.runtime_input_names = {"input_tensor"};
   runtime.runtime_output_names = {"output_tensor"};
@@ -2539,8 +2542,7 @@ build_quantize_runtime_config_from_subset(const QuantizeContractSubset& subset,
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "quantize";
   runtime.graph_name = "quantize";
-  runtime.graph_id =
-      222; /* SIMA_GRAPH_QUANTIZE — graph 220 is header-only with no kernel impl in cvu-sw */
+
   runtime.default_input_name = "input_tensor";
   runtime.runtime_input_names = {"input_tensor"};
   runtime.runtime_output_names = {"output_tensor"};
@@ -2613,7 +2615,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "detessellate";
   runtime.graph_name = "detessellate";
-  runtime.graph_id = 7;
+
   runtime.batch_size = 0;
   runtime.byte_align = 1;
   runtime.tessellate = 1;
@@ -2749,7 +2751,7 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "dequantize";
   runtime.graph_name = "dequantize";
-  runtime.graph_id = 6;
+
   runtime.batch_size = 0;
   runtime.byte_align = 1;
   runtime.default_input_name = "input_tensor";
@@ -2866,7 +2868,7 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "detessdequant";
   runtime.graph_name = "detessdequant";
-  runtime.graph_id = 8;
+
   runtime.batch_size = 0;
   runtime.byte_align = 1;
   runtime.tessellate = 1;

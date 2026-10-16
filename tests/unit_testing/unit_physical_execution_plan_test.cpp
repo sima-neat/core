@@ -22,18 +22,18 @@ void require(bool condition, const std::string& detail) {
 
 enum class FusedFamily { QuantTess, CastTess, DetessCast, DetessDequant };
 
-std::uint32_t graph_id(FusedFamily family) {
+std::string operation(FusedFamily family) {
   switch (family) {
   case FusedFamily::QuantTess:
-    return 226U;
+    return "quanttess";
   case FusedFamily::CastTess:
-    return 224U;
+    return "casttess";
   case FusedFamily::DetessCast:
-    return 225U;
+    return "detesscast";
   case FusedFamily::DetessDequant:
-    return 227U;
+    return "detessdequant";
   }
-  return 0U;
+  return {};
 }
 
 std::string family_name(FusedFamily family) {
@@ -372,10 +372,10 @@ sc::ModelExecutionPlan make_materializing_pack_barrier_plan() {
 }
 
 std::vector<const sc::PhysicalCommand*> commands(const sc::PhysicalExecutionPlan& plan,
-                                                 std::uint32_t graph) {
+                                                 std::string_view operation) {
   std::vector<const sc::PhysicalCommand*> result;
   for (const auto& command : plan.commands) {
-    if (command.graph_id == graph)
+    if (command.implementation_id == operation)
       result.push_back(&command);
   }
   return result;
@@ -386,7 +386,7 @@ void verify_family_and_capacity(FusedFamily family, std::size_t lanes) {
   const auto semantic = make_fused_plan(family, lanes);
   const auto physical = sc::PhysicalExecutionLowerer::lower(semantic, &error);
   require(physical.has_value(), family_name(family) + " lowers: " + error);
-  auto fused = commands(*physical, graph_id(family));
+  auto fused = commands(*physical, operation(family));
   std::sort(fused.begin(), fused.end(), [](const auto* left, const auto* right) {
     return left->members.front().ordinal < right->members.front().ordinal;
   });
@@ -451,9 +451,9 @@ void test_public_and_branch_barriers_do_not_fuse_observed_edge() {
     auto semantic = make_fused_plan(FusedFamily::QuantTess, 3U, !branch, branch);
     const auto physical = sc::PhysicalExecutionLowerer::lower(semantic, &error);
     require(physical.has_value(), "barrier fixture lowers with standalone commands: " + error);
-    const auto fused = commands(*physical, 226U);
-    const auto quant = commands(*physical, 222U);
-    const auto tess = commands(*physical, 2U);
+    const auto fused = commands(*physical, "quanttess");
+    const auto quant = commands(*physical, "quant");
+    const auto tess = commands(*physical, "tess");
     require(fused.size() == 1U && fused.front()->members.size() == 2U,
             "barrier terminates only the observed lane");
     require(quant.size() == 1U && tess.size() == 1U && quant.front()->members.size() == 1U &&
@@ -468,7 +468,7 @@ void test_relation_transparency_rejects_offset_and_materialization() {
   require(!sc::resolve_exact_private_ordered_relation_path(offset, 1U, 3U),
           "nonzero-offset view is never transparent to a fused kernel");
   const auto offset_physical = sc::PhysicalExecutionLowerer::lower(offset, &error);
-  require(offset_physical && commands(*offset_physical, 227U).empty(),
+  require(offset_physical && commands(*offset_physical, "detessdequant").empty(),
           "nonzero-offset view splits instead of selecting graph227");
 
   const auto materializing = make_materializing_pack_barrier_plan();
@@ -515,7 +515,7 @@ void test_dependency_tracker_chunk_failure() {
   require(physical.has_value(), "tracker fixture lowers: " + error);
   auto tracker = sc::PhysicalExecutionTracker::create(*physical, &error);
   require(tracker.has_value(), "tracker accepts fused plan: " + error);
-  auto fused = commands(*physical, 226U);
+  auto fused = commands(*physical, "quanttess");
   std::sort(fused.begin(), fused.end(), [](const auto* a, const auto* b) {
     return a->members.front().ordinal < b->members.front().ordinal;
   });
@@ -534,8 +534,7 @@ void test_dependency_tracker_cross_engine_parallelism() {
                           .topological_rank = 0U,
                           .engine = sc::PhysicalEngine::Cvu,
                           .role = sc::PhysicalCommandRole::Interstitial,
-                          .implementation_id = "cvu.graph221.cast.v1",
-                          .graph_id = 221U,
+                          .implementation_id = "cast",
                           .maximum_members = 32U,
                           .members = {{0U, {0U}, {0U}, {1U}}},
                           .inputs = {0U},
@@ -583,20 +582,23 @@ void test_exact_physical_role_placement_precedes_coarse_target() {
 
   struct FusedPlacement {
     sima::ProcessCvuGraphFamily family;
-    int graph_id;
+    const char* operation;
     sc::PhysicalCommandRole role;
     const char* expected;
   };
   const std::vector<FusedPlacement> fused{
-      {sima::ProcessCvuGraphFamily::CastTess, 224, sc::PhysicalCommandRole::Ingress, "EV74"},
-      {sima::ProcessCvuGraphFamily::DetessCast, 225, sc::PhysicalCommandRole::Egress, "A65"},
-      {sima::ProcessCvuGraphFamily::QuantTess, 226, sc::PhysicalCommandRole::Ingress, "EV74"},
-      {sima::ProcessCvuGraphFamily::DetessDequant, 227, sc::PhysicalCommandRole::Egress, "A65"},
+      {sima::ProcessCvuGraphFamily::CastTess, "casttess", sc::PhysicalCommandRole::Ingress, "EV74"},
+      {sima::ProcessCvuGraphFamily::DetessCast, "detesscast", sc::PhysicalCommandRole::Egress,
+       "A65"},
+      {sima::ProcessCvuGraphFamily::QuantTess, "quanttess", sc::PhysicalCommandRole::Ingress,
+       "EV74"},
+      {sima::ProcessCvuGraphFamily::DetessDequant, "detessdequant", sc::PhysicalCommandRole::Egress,
+       "A65"},
   };
   for (const auto& item : fused) {
     sima::ProcessCvuStagePayload payload;
     payload.graph_family_enum = item.family;
-    payload.graph_id = item.graph_id;
+    payload.graph_name = item.operation;
     const auto decision = sima::resolve_processcvu_backend_decision(
         payload, input, "physical_cvu_cohort_1", item.role);
     require(decision.effective_run_target == item.expected,
@@ -605,7 +607,7 @@ void test_exact_physical_role_placement_precedes_coarse_target() {
 
   sima::ProcessCvuStagePayload interstitial;
   interstitial.graph_family_enum = sima::ProcessCvuGraphFamily::DetessCast;
-  interstitial.graph_id = 225;
+  interstitial.graph_name = "detesscast";
   const char* original_env = std::getenv("SIMA_PROCESSCVU_RUN_TARGET");
   const std::optional<std::string> saved_env =
       original_env ? std::optional<std::string>(original_env) : std::nullopt;

@@ -316,6 +316,11 @@ void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticC
       box_decode_type_is_ssd_family(contract->decode_type)) {
     return;
   }
+  if (contract->decode_type == BoxDecodeType::RcnnStage1) {
+    // The stage-one RPN recipe has one objectness logit per anchor.
+    contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
+    return;
+  }
   bool saw_prob_tensor = false;
   bool saw_logit_tensor = false;
   for (const auto& tensor : contract->tensors) {
@@ -770,6 +775,13 @@ maybe_infer_float_yolov8_score_activation_from_sample_values_local(
 std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_sample_local(
     const TensorList& tensors, BoxDecodeType decode_type,
     const std::optional<InputContract>& input_contract, std::string* error_message) {
+  if (decode_type == BoxDecodeType::RcnnStage1)
+    return BoxDecodeScoreActivation::Sigmoid;
+  if (decode_type == BoxDecodeType::SuperPoint) {
+    // Detector-logit normalization is part of the explicit SuperPoint profile,
+    // not a BoxDecode class-score activation inferred from tensor names.
+    return BoxDecodeScoreActivation::Unknown;
+  }
   if (box_decode_type_is_ssd_family(decode_type)) {
     // SSD score domains are fixed by the selected geometry recipe. Tensor names
     // are routing labels and must not override that recipe's activation.
@@ -3874,7 +3886,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
     entry.input_shape = {h, w, c};
     entry.slice_shape = {h, w, c};
     entry.data_type = dtype;
-    entry.layout = logical.layout;
+    // input_shape is canonical HWC, independently of upstream logical axes.
+    entry.layout = "HWC";
     entry.logical_name = !logical.logical_name.empty() ? logical.logical_name : tensor_name;
     entry.backend_name = !logical.backend_name.empty() ? logical.backend_name : tensor_name;
     entry.source_segment_name = !logical.segment_name.empty() ? logical.segment_name : tensor_name;
@@ -3899,11 +3912,21 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
     physical.size_bytes = entry.source_size_bytes;
     out.physical_inputs.push_back(std::move(physical));
 
+    const bool needs_quant = decode_type == BoxDecodeType::SuperPoint
+                                 ? dtype_is_quantized_like_local(dtype)
+                                 : out.quant_needed;
+    if (decode_type == BoxDecodeType::SuperPoint) {
+      out.quant_needed = out.quant_needed || needs_quant;
+      if (needs_quant && logical.quant &&
+          (logical.quant->granularity != QuantGranularity::PerTensor || logical.quant->axis != -1 ||
+           logical.quant->scales.size() != 1 || logical.quant->zero_points.size() != 1))
+        return fail("SuperPoint requires one authored per-tensor quantization value per INT8 port");
+    }
     if (logical.quant.has_value() && !logical.quant->scales.empty() &&
         !logical.quant->zero_points.empty()) {
       out.dq_scale.push_back(logical.quant->scales.front());
       out.dq_zp.push_back(logical.quant->zero_points.front());
-    } else if (!out.quant_needed) {
+    } else if (!needs_quant) {
       out.dq_scale.push_back(1.0);
       out.dq_zp.push_back(0);
     } else {
@@ -3993,7 +4016,7 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
 
     const std::string tensor_name = tensor_name_from_sample_local(tensor, i);
     const std::string dtype =
-        input_dtype.empty()
+        decode_type == BoxDecodeType::SuperPoint || input_dtype.empty()
             ? normalize_mpk_dtype_token_local(dtype_token_from_tensor_local(tensor.dtype))
             : input_dtype;
     if (dtype.empty()) {
@@ -4010,8 +4033,8 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
     entry.input_shape = {h, w, c};
     entry.slice_shape = {h, w, c};
     entry.data_type = dtype;
-    entry.layout =
-        layout_token_from_tensor_layout_local(resolve_tensor_layout_local(tensor, input_contract));
+    // The extractor has already normalized input_shape to HWC above.
+    entry.layout = "HWC";
     entry.logical_name = tensor_name;
     entry.backend_name = tensor_name;
     entry.source_segment_name = tensor_name;
@@ -4043,6 +4066,20 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
     physical.size_bytes = entry.source_size_bytes;
     out.physical_inputs.push_back(std::move(physical));
 
+    const bool needs_quant = decode_type == BoxDecodeType::SuperPoint
+                                 ? dtype_is_quantized_like_local(dtype)
+                                 : out.quant_needed;
+    if (decode_type == BoxDecodeType::SuperPoint) {
+      out.quant_needed = out.quant_needed || needs_quant;
+      if (needs_quant && tensor.semantic.quant &&
+          (tensor.semantic.quant->axis != -1 || tensor.semantic.quant->scales.size() > 1 ||
+           tensor.semantic.quant->zero_points.size() > 1 ||
+           tensor.semantic.quant->scales.empty() != tensor.semantic.quant->zero_points.empty()))
+        return fail("SuperPoint requires one authored per-tensor quantization value per INT8 port");
+    }
+    // Scalar QuantSpec.scale has multiplier semantics; it must not be copied
+    // into this legacy authored-vector divisor contract without conversion.
+    // An explicit InputContract q_scale/q_zp remains an authoritative fallback.
     if (tensor.semantic.quant.has_value() && !tensor.semantic.quant->scales.empty() &&
         !tensor.semantic.quant->zero_points.empty()) {
       out.dq_scale.push_back(tensor.semantic.quant->scales.front());
@@ -4051,7 +4088,7 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
                input_contract->q_zp.has_value()) {
       out.dq_scale.push_back(*input_contract->q_scale);
       out.dq_zp.push_back(*input_contract->q_zp);
-    } else if (!out.quant_needed) {
+    } else if (!needs_quant) {
       out.dq_scale.push_back(1.0);
       out.dq_zp.push_back(0);
     } else {

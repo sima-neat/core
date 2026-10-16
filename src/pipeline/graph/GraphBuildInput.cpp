@@ -4,6 +4,7 @@
  */
 
 #include "GraphDetail.h"
+#include "pipeline/internal/sima/KernelRunnerIntegration.h"
 #include "internal/GraphBuildInternal.h"
 #include "pipeline/internal/RtpJpegEndMarker.h"
 #include "pipeline/internal/UxLogging.h"
@@ -29,7 +30,7 @@
 #include "pipeline/internal/InputSpecCapabilities.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/PublicInputContract.h"
-#include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -65,7 +66,6 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 namespace simaai::neat {
 
 namespace {
-namespace rendered_stage_query = pipeline_internal::rendered_stage_query;
 
 bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b);
 std::string dtype_token_from_tensor(const Tensor& tensor);
@@ -907,26 +907,13 @@ void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<
   if (!immediate_next || immediate_next->kind() != "ModelFragment") {
     return;
   }
-  // Resolve the rendered MLA-input contract from the actual ModelFragment.
-  const auto& first = first_effective_downstream_node(nodes);
-  if (!first || first->kind() != "ModelFragment") {
+  const auto direct_mla_input = pipeline_internal::direct_model_mla_input_info(nodes);
+  if (!direct_mla_input) {
+    // The selected fragment starts with a transform, not MLA. Its actual
+    // application ingress is admitted by the seeded compiler below.
     return;
   }
-
-  const std::vector<std::shared_ptr<Node>> first_nodes{first};
-  const auto first_manifest = rendered_stage_query::rendered_manifest_from_nodes(
-      first_nodes, "GraphBuildInput.ingress_guard");
-  if (!first_manifest.has_value() || first_manifest->stages.empty() ||
-      first_manifest->stages.front().payload_kind !=
-          pipeline_internal::sima::StagePayloadKind::ProcessMla) {
-    // ModelFragment is a container, not an assertion that its first command is
-    // MLA.  A strict compiler-authored schedule may begin with Quant, Cast,
-    // Tess, or A65 and legitimately consume an application-boundary tensor
-    // whose size differs from the later MLA IFM.  The child-stage manifest is
-    // the exact authority for that distinction.
-    return;
-  }
-  const auto mla_input = rendered_stage_query::mla_input_tensor_info_from_nodes(first_nodes);
+  const auto& mla_input = *direct_mla_input;
   if (mla_input.span_size_bytes <= 0) {
     return;
   }
@@ -1586,7 +1573,7 @@ std::string parse_named_element_for_error(const std::string& pipeline, const std
 }
 
 std::string infer_error_node_name(const std::string& pipeline) {
-  for (const char* element : {"neatdecoder", "neatencoder", "neatprocesscvu", "neatprocessmla",
+  for (const char* element : {"neatdecoder", "neatencoder", "neatkernelrunner", "neatprocessmla",
                               "neatobjectdecode", "neatdequant", "neatdetess"}) {
     const std::string name = parse_named_element_for_error(pipeline, element);
     if (!name.empty())
@@ -1598,7 +1585,7 @@ std::string infer_error_node_name(const std::string& pipeline) {
 std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
   // List neat stage instance names in pipeline order. A preflight *timeout*
   // posts no per-element bus error, so infer_error_node_name() can only return
-  // the first stage *type* present (e.g. neatprocesscvu -> "cast_1") and never
+  // the first stage *type* present (e.g. neatkernelrunner -> "cast_1") and never
   // the stage that actually stalled. Emitting the whole chain shows every
   // candidate stage instead of mis-blaming the first one.
   std::string chain;
@@ -1664,8 +1651,9 @@ std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
     note << "\nHint: inspect node configuration/caps and upstream bus diagnostics.";
   }
   rep.repro_note = note.str();
-  throw NeatError(session_build_decorate_with_error_code(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      session_build_decorate_with_error_code(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 std::string single_sample_preflight_unsupported_reason(const std::string& pipeline,
@@ -1676,7 +1664,7 @@ std::string single_sample_preflight_unsupported_reason(const std::string& pipeli
   }
 
   const bool has_async_hardware_stage = (lower.find("neatprocessmla") != std::string::npos ||
-                                         lower.find("neatprocesscvu") != std::string::npos) &&
+                                         lower.find("neatkernelrunner") != std::string::npos) &&
                                         lower.find("async=true") != std::string::npos;
   // A hidden build-time preflight frame must not be sent through a zero-copy
   // async hardware stage that owns only one output pool slot.  Even if the
@@ -1873,6 +1861,31 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  // Execution and output ownership are independent: a completed frame may
+  // remain retained by the application after its execution slot is reusable.
+  br.kernel_runner_capacity =
+      sync_mode ? 1U : static_cast<std::size_t>(std::clamp(sess_opt.async_queue_depth, 1, 64));
+  const auto retained_samples =
+      stream_opt.copy_output && !stream_opt.preserve_dmabuf_output
+          ? 0U
+          : static_cast<std::size_t>(std::max(1, stream_opt.holder_loan_sample_window));
+  auto output_budget = pipeline_internal::sima::kernel_runner_output_pool_capacity(
+      br.kernel_runner_capacity, retained_samples);
+  if (const auto* error = std::get_if<simaai::runtime::Error>(&output_budget))
+    throw std::runtime_error("Graph::build: " + error->field + ": " + error->message);
+  br.kernel_runner_output_pool_capacity =
+      std::max(br.kernel_runner_output_pool_capacity, std::get<std::size_t>(output_budget));
+  const bool legacy_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
+                               env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
+                               env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||
+                               env_bool("SIMA_GST_DETESS_OUTPUT_DEBUG", false) ||
+                               env_bool("SIMA_GST_APPSINK_BUFFER_DEBUG", false) ||
+                               env_bool("SIMA_GST_ALL_BUFFER_DEBUG", false) ||
+                               env_bool("SIMA_GST_BOXDECODE_BUFFER_DEBUG", false) ||
+                               !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
+  br.kernel_runner_compact =
+      !insert_boundaries && !legacy_observer && env_bool("SIMA_CORE_COMPACT_METADATA", false);
+
   if (sync_mode) {
     br.pipeline_string = session_build_clamp_sync_build_result(br, sync_num_buffers_override);
     br.diag->pipeline_string = br.pipeline_string;

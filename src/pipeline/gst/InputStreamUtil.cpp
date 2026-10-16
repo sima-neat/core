@@ -1,3 +1,4 @@
+#include <simaai/runtime/gstreamer/elements.h>
 #include "InputStreamUtil.h"
 
 #include "pipeline/GraphOptions.h"
@@ -515,6 +516,23 @@ bool ensure_custom_meta_structure_mutable(GstBuffer* buffer, const char* meta_na
                                           GstCustomMeta** meta_out, GstStructure** structure_out) {
   if (!buffer || !meta_name || !meta_out || !structure_out) {
     return false;
+  }
+  // A legacy writer is an explicit representation boundary. Never add a
+  // second current-frame authority alongside the compact immutable header.
+  if (std::strcmp(meta_name, "GstSimaMeta") == 0) {
+    std::string error;
+    const auto* frame = simaai::gst::tensor_buffer_frame_metadata(buffer, &error);
+    if (!error.empty()) {
+      throw std::runtime_error(error);
+    }
+    if (frame) {
+      if (!gst_buffer_is_writable(buffer)) {
+        return false;
+      }
+      if (!simaai::gst::tensor_buffer_materialize_frame_metadata(buffer, &error)) {
+        throw std::runtime_error(error);
+      }
+    }
   }
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, meta_name);
   bool added_meta = false;
@@ -1257,6 +1275,7 @@ bool contains_launch_factory_token(std::string_view pipeline, std::string_view f
 pipeline_internal::InputStreamTeardownPolicy
 inputstream_pipeline_teardown_policy(std::string_view pipeline) {
   if (contains_launch_factory_token(pipeline, "neatprocessmla") ||
+      contains_launch_factory_token(pipeline, "neatkernelrunner") ||
       contains_launch_factory_token(pipeline, "neatprocesscvu") ||
       contains_launch_factory_token(pipeline, "neatdecoder") ||
       contains_launch_factory_token(pipeline, "neatencoder")) {
@@ -1788,6 +1807,14 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
     media = (mat.depth() == CV_32F) ? "application/vnd.simaai.tensor" : "video/x-raw";
   }
 
+  // Owning cv::Mat ingress follows Tensor creators' EV74 default. Keep an
+  // explicit host request (including the compatibility pool opt-out) borrowed;
+  // it must not be silently promoted to device storage.
+  const auto memory_policy = opt.memory_policy == InputMemoryPolicy::Auto
+                                 ? (opt.use_simaai_pool ? InputMemoryPolicy::Ev74
+                                                       : InputMemoryPolicy::SystemMemory)
+                                 : opt.memory_policy;
+
   if (media == "video/x-raw") {
     if (mat.depth() != CV_8U) {
       throw std::invalid_argument(tag + ": video input must be CV_8U");
@@ -1815,20 +1842,13 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
       pf = simaai::neat::ImageSpec::PixelFormat::RGB;
     if (fmt == "GRAY8")
       pf = simaai::neat::ImageSpec::PixelFormat::GRAY8;
-    if (opt.memory_policy == InputMemoryPolicy::Ev74) {
+    if (memory_policy == InputMemoryPolicy::Ev74) {
       return simaai::neat::from_cv_mat(mat, pf, simaai::neat::TensorMemory::EV74);
     }
-    if (opt.memory_policy == InputMemoryPolicy::Dms0) {
+    if (memory_policy == InputMemoryPolicy::Dms0) {
       return simaai::neat::from_cv_mat(mat, pf, simaai::neat::TensorMemory::MLA);
     }
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-    return simaai::neat::from_cv_mat(mat, pf, true);
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
+    return simaai::neat::from_cv_mat_view(mat, pf, /*read_only=*/true);
   }
 
   if (media == "application/vnd.simaai.tensor") {
@@ -1872,9 +1892,9 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
                            static_cast<int64_t>(holder->elemSize()),
                            static_cast<int64_t>(holder->elemSize1())};
     }
-    if (opt.memory_policy == InputMemoryPolicy::Ev74 ||
-        opt.memory_policy == InputMemoryPolicy::Dms0) {
-      const Device target = opt.memory_policy == InputMemoryPolicy::Ev74
+    if (memory_policy == InputMemoryPolicy::Ev74 ||
+        memory_policy == InputMemoryPolicy::Dms0) {
+      const Device target = memory_policy == InputMemoryPolicy::Ev74
                                 ? Device{DeviceType::SIMA_CVU, 0}
                                 : Device{DeviceType::SIMA_MLA, 0};
       const std::size_t device_bytes = out.dense_bytes_tight();
@@ -2185,7 +2205,7 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
 }
 
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
-                                 InputBufferPoolGuard& guard) {
+                                 InputBufferPoolGuard& guard, bool demand_coherency) {
   const std::string media_type_up = upper_copy(resolve_input_media_type(opt));
   const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
   const ResolvedInputMemoryPolicy resolved = resolve_input_memory_policy(opt);
@@ -2202,8 +2222,15 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
       const auto heap = target_flag == GST_SIMAAI_MEMORY_TARGET_DMS0
                             ? internal::dmabuf::HeapKind::MlaDms
                             : internal::dmabuf::HeapKind::Cma;
-      GstBufferPool* new_pool = internal::dmabuf::createDmaBufPool(
-          heap, bytes, static_cast<unsigned int>(opt.pool_min_buffers),
+      const auto create_pool = demand_coherency
+          ? static_cast<GstBufferPool* (*)(internal::dmabuf::HeapKind, std::size_t,
+              unsigned int, unsigned int, internal::dmabuf::HeapPaths, internal::dmabuf::Error*)>(
+                  internal::dmabuf::createDmaBufPoolForDemandCoherencyV1)
+          : static_cast<GstBufferPool* (*)(internal::dmabuf::HeapKind, std::size_t,
+              unsigned int, unsigned int, internal::dmabuf::HeapPaths, internal::dmabuf::Error*)>(
+                  internal::dmabuf::createDmaBufPool);
+      GstBufferPool* new_pool = create_pool(heap, bytes,
+          static_cast<unsigned int>(opt.pool_min_buffers),
           static_cast<unsigned int>(opt.pool_max_buffers), {}, &error);
       if (new_pool) {
         guard.pool = std::unique_ptr<GstBufferPool, void (*)(GstBufferPool*)>(
@@ -2248,8 +2275,7 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
 }
 
 int64_t next_input_frame_id() {
-  static std::atomic<int64_t> next_id{0};
-  return next_id.fetch_add(1);
+  return simaai::runtime::gstreamer::next_input_frame_id();
 }
 
 bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptions& opt) {
@@ -2289,16 +2315,16 @@ bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptio
     return false;
   }
   const std::string name = opt.buffer_name;
-  gint64 phys_addr = gst_simaai_segment_memory_get_phys_addr(gst_buffer_peek_memory(buffer, 0));
-  gst_structure_set(s, "buffer-id", G_TYPE_INT64, phys_addr, "buffer-name", G_TYPE_STRING,
+  // DMA-BUF ownership travels with GstMemory; buffer-id is not a physical address.
+  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(0), "buffer-name", G_TYPE_STRING,
                     name.c_str(), "buffer-offset", G_TYPE_INT64, static_cast<gint64>(0), "frame-id",
                     G_TYPE_INT64, static_cast<gint64>(frame_id), "orig-input-seq", G_TYPE_INT64,
                     static_cast<gint64>(frame_id), "stream-id", G_TYPE_STRING, "0",
                     "origin_stage_id", G_TYPE_STRING, name.c_str(), "origin_output_slot",
                     G_TYPE_INT, 0, "timestamp", G_TYPE_UINT64, static_cast<guint64>(0), nullptr);
   if (pipeline_internal::env_bool("SIMA_INPUTSTREAM_META_DEBUG", false)) {
-    std::fprintf(stderr, "[DBG] GstSimaMeta set name=%s phys=%lld frame=%lld\n", name.c_str(),
-                 static_cast<long long>(phys_addr), static_cast<long long>(frame_id));
+    std::fprintf(stderr, "[DBG] GstSimaMeta set name=%s frame=%lld\n", name.c_str(),
+                 static_cast<long long>(frame_id));
   }
   dump_sima_meta(buffer, "maybe_add_simaai_meta(after)");
   return true;
@@ -2814,10 +2840,96 @@ bool merge_simaai_preprocess_axis_perm(GstBuffer* buffer, const std::vector<int>
 #endif
 }
 
+namespace {
+PreprocessRuntimeMeta
+preprocess_from_compact_facts(const simaai::gst::TensorBufferPreprocessFacts& facts) {
+  auto integer = [](std::int64_t value) {
+    if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max())
+      throw std::runtime_error("compact preprocess fact exceeds Core integer range");
+    return static_cast<int>(value);
+  };
+  auto count = [&](std::uint64_t value) {
+    if (value > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
+      throw std::runtime_error("compact preprocess count exceeds Core integer range");
+    return static_cast<int>(value);
+  };
+  PreprocessRuntimeMeta meta;
+  meta.original_width = integer(facts.original_width);
+  meta.original_height = integer(facts.original_height);
+  meta.resized_width = integer(facts.resized_width);
+  meta.resized_height = integer(facts.resized_height);
+  meta.scaled_width = integer(facts.placed[2]);
+  meta.scaled_height = integer(facts.placed[3]);
+  meta.pad_left = integer(facts.placed[0]);
+  meta.pad_top = integer(facts.placed[1]);
+  meta.pad_right = integer(facts.resized_width - facts.placed[0] - facts.placed[2]);
+  meta.pad_bottom = integer(facts.resized_height - facts.placed[1] - facts.placed[3]);
+  meta.resize_mode = facts.resize_mode;
+  meta.color_in = facts.color_in;
+  meta.color_out = facts.color_out;
+  meta.normalize = facts.normalize;
+  meta.quantize = facts.quantize;
+  meta.tessellate = facts.tessellate;
+  meta.affine_m00 = meta.affine_scale_x = facts.affine[0];
+  meta.affine_m01 = facts.affine[1];
+  meta.affine_m02 = meta.affine_offset_x = facts.affine[2];
+  meta.affine_m10 = facts.affine[3];
+  meta.affine_m11 = meta.affine_scale_y = facts.affine[4];
+  meta.affine_m12 = meta.affine_offset_y = facts.affine[5];
+  if (facts.roi_list) {
+    meta.roi_list_enabled = true;
+    meta.roi_input_batch_size = integer(facts.input_batch);
+    meta.roi_capacity = integer(facts.capacity);
+    meta.roi_valid_count = count(facts.counts[1]);
+    meta.roi_input_count = count(facts.counts[0]);
+    meta.roi_dropped_invalid = count(facts.counts[2]);
+    meta.roi_dropped_overflow = count(facts.counts[3]);
+    meta.roi_source_stride_bytes = integer(facts.source_stride);
+    meta.roi_pad_value = facts.pad;
+    const auto n = facts.roi_batch_indices.size();
+    if (facts.roi_rects.size() != n * 4 || facts.roi_affines.size() != n * 6)
+      throw std::runtime_error("compact preprocess ROI list has inconsistent extents");
+    meta.rois.reserve(n);
+    meta.roi_affines.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      meta.rois.push_back({integer(facts.roi_batch_indices[i]), integer(facts.roi_rects[i * 4]),
+                           integer(facts.roi_rects[i * 4 + 1]), integer(facts.roi_rects[i * 4 + 2]),
+                           integer(facts.roi_rects[i * 4 + 3])});
+      meta.roi_affines.push_back({facts.roi_affines[i * 6], facts.roi_affines[i * 6 + 1],
+                                  facts.roi_affines[i * 6 + 2], facts.roi_affines[i * 6 + 3],
+                                  facts.roi_affines[i * 6 + 4], facts.roi_affines[i * 6 + 5]});
+    }
+  } else if (facts.has_roi) {
+    meta.roi_list_enabled = true;
+    meta.rois.push_back({integer(facts.source_index), integer(facts.primary[0]),
+                         integer(facts.primary[1]), integer(facts.primary[2]),
+                         integer(facts.primary[3])});
+    meta.roi_capacity = meta.roi_valid_count = meta.roi_input_count = 1;
+    meta.roi_input_batch_size = integer(facts.source_index + 1);
+  }
+  if (facts.roi_list || facts.has_roi) {
+    meta.roi_source_width = meta.original_width;
+    meta.roi_source_height = meta.original_height;
+    if (auto error = validate_preprocess_roi_list_local(meta))
+      throw std::runtime_error("compact preprocess ROI facts: " + *error);
+  }
+  return meta;
+}
+} // namespace
+
 std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buffer) {
 #if SIMA_HAS_SIMAAI_POOL
   if (!buffer)
     return std::nullopt;
+  std::string compact_error;
+  const auto* frame = simaai::gst::tensor_buffer_frame_metadata(buffer, &compact_error);
+  if (!compact_error.empty())
+    throw std::runtime_error("compact frame metadata: " + compact_error);
+  if (frame) {
+    const auto* facts = simaai::gst::tensor_buffer_preprocess_facts(frame->preprocess);
+    return facts ? std::optional<PreprocessRuntimeMeta>(preprocess_from_compact_facts(*facts))
+                 : std::nullopt;
+  }
   GstCustomMeta* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = custom ? gst_custom_meta_get_structure(custom) : nullptr;
   if (!s)
@@ -3211,44 +3323,21 @@ GstBuffer* attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt
 
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  GstStructure* old_s = s ? gst_structure_copy(s) : nullptr;
-  if (meta) {
-    // Recycled/pool buffers can carry a previous custom meta whose structure is
-    // immutable.  Replacing the meta avoids gst_structure_set mutability
-    // assertions while preserving any existing preprocess fields below.
-    gst_buffer_remove_meta(buffer, &meta->meta);
-    meta = nullptr;
-    s = nullptr;
+  // GstCustomMeta ties structure writability to its containing GstBuffer.
+  // make_writable above already copies a shared envelope; retain its metadata
+  // here instead of snapshotting and copying every field a second time.
+  if (!meta) {
+    meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
+    s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
   }
-  meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
-  s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (old_s && s) {
-    gst_structure_foreach(
-        old_s,
-        +[](GQuark field_id, const GValue* value, gpointer user_data) -> gboolean {
-          auto* dst = static_cast<GstStructure*>(user_data);
-          gst_structure_set_value(dst, g_quark_to_string(field_id), value);
-          return TRUE;
-        },
-        s);
-  }
-  if (old_s)
-    gst_structure_free(old_s);
   if (!s) {
     std::fprintf(stderr, "[DBG] %s GstSimaMeta add failed\n", label ? label : "buffer");
     return buffer;
   }
-  gint64 phys_addr = 0;
-  if (gst_buffer_n_memory(buffer) > 0) {
-    GstMemory* memory = gst_buffer_peek_memory(buffer, 0);
-    if (memory && !gst_is_dmabuf_memory(memory)) {
-      phys_addr = gst_simaai_segment_memory_get_phys_addr(memory);
-    }
-  }
   const gint64 frame_id = frame_id_override.has_value()
                               ? static_cast<gint64>(*frame_id_override)
                               : static_cast<gint64>(next_input_frame_id());
-  gst_structure_set(s, "buffer-id", G_TYPE_INT64, phys_addr, "buffer-name", G_TYPE_STRING,
+  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(0), "buffer-name", G_TYPE_STRING,
                     name.c_str(), "buffer-offset", G_TYPE_INT64, static_cast<gint64>(0), "frame-id",
                     G_TYPE_INT64, frame_id, "orig-input-seq", G_TYPE_INT64, frame_id, "timestamp",
                     G_TYPE_UINT64, static_cast<guint64>(0), nullptr);

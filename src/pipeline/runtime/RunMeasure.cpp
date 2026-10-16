@@ -1,3 +1,4 @@
+#include "pipeline/internal/InputPublicationMeasurement.h"
 #include "pipeline/Run.h"
 #include "EdgeMetrics.h"
 #include "LttngMetricsCollector.h"
@@ -8,6 +9,7 @@
 #include "pipeline/GraphMetrics.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -27,6 +29,8 @@ namespace simaai::neat {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+// Cold measurement generation; never used as graph/run identity or touched per frame.
+std::atomic<std::uint64_t> next_measurement_epoch{1};
 
 std::vector<MeasurePluginLatencyWithPercentiles>
 zip_plugin_percentiles(const std::vector<MeasurePluginLatency>& metrics,
@@ -358,6 +362,13 @@ struct MeasureScope::Impl {
   std::unique_ptr<pipeline_internal::LttngMetricsCollector> lttng_metrics;
   pipeline_internal::TraceIdentityContext trace_context{};
   bool lttng_trace_identity_applied = false;
+  std::uint64_t measurement_epoch = 0;
+  std::shared_ptr<pipeline_internal::InputPublicationMeasurement> linear_input_measurement;
+  ~Impl() {
+    if (linear_input_measurement)
+      linear_input_measurement->discard(measurement_epoch);
+  }
+  std::vector<std::string> trace_plugin_instances;
   std::unique_ptr<PowerMonitor> power_monitor;
   std::vector<std::string> warnings;
   std::string plugin_latency_status = "off";
@@ -445,6 +456,22 @@ MeasureReport MeasureScope::stop() {
     return impl_->cached;
 
   const auto end = Clock::now();
+  pipeline_internal::InputPublicationSnapshot linear_input_snapshot;
+  if (impl_->core) {
+    std::lock_guard<std::mutex> lock(impl_->core->latency_mu);
+    impl_->core->measurement_active = false;
+    if (impl_->linear_input_measurement)
+      linear_input_snapshot = impl_->linear_input_measurement->stop(impl_->measurement_epoch);
+  }
+  // Disarm new admissions first. Existing invocations retain their own immutable
+  // snapshot; metric stop neither drains nor cancels native work.
+  if (impl_->lttng_trace_identity_applied) {
+    pipeline_internal::apply_lttng_trace_identity(
+        impl_->core, impl_->before_graph_metrics.node_metrics, impl_->trace_context.run_id_hash,
+        impl_->trace_context.graph_id_hash, false);
+    impl_->lttng_trace_identity_applied = false;
+  }
+
   const RunStats after = impl_->core ? impl_->core->stats() : RunStats{};
   const RunStats measured = delta_counters(impl_->before, after);
   const InputStreamStats after_input =
@@ -518,6 +545,7 @@ MeasureReport MeasureScope::stop() {
                          : PowerSummary{};
     }
   }
+
   if (impl_->lttng_metrics) {
     std::string err;
     if (!impl_->lttng_metrics->stop_and_destroy(&err)) {
@@ -529,7 +557,49 @@ MeasureReport MeasureScope::stop() {
         report.message_latency_status = "failed";
       }
     } else {
-      pipeline_internal::LttngParseResult parsed = impl_->lttng_metrics->parse(&err);
+      pipeline_internal::PluginTraceSelection selection;
+      selection.require_session_identity = true;
+      selection.measurement_epoch = impl_->measurement_epoch;
+      selection.plugin_instance_ids.insert(impl_->trace_plugin_instances.begin(),
+                                           impl_->trace_plugin_instances.end());
+      selection.require_sample_identity = true;
+      // Entries, not pulls alone, define this measurement: a warmup frame can
+      // finish during the window. Retain unpulled entries so early-stop spans
+      // remain incomplete evidence rather than silently disappearing.
+      for (const auto& entry : graph_entry_events) {
+        pipeline_internal::PluginSampleKeyKind kind;
+        switch (entry.key_kind) {
+        case runtime::GraphSampleTimingKeyKind::OrigInputSeq:
+          kind = pipeline_internal::PluginSampleKeyKind::OrigInputSeq;
+          break;
+        case runtime::GraphSampleTimingKeyKind::InputSeq:
+          kind = pipeline_internal::PluginSampleKeyKind::InputSeq;
+          break;
+        case runtime::GraphSampleTimingKeyKind::FrameId:
+          kind = pipeline_internal::PluginSampleKeyKind::FrameId;
+          break;
+        }
+        pipeline_internal::add_measured_plugin_sample(&selection,
+                                                      {entry.stream_id, kind, entry.key_value});
+      }
+      // The optimized linear path has no graph router events. Its measured
+      // identities come from final appsrc metadata, before ownership handoff,
+      // rather than from unstamped public Samples or inferred frame counters.
+      for (const auto& entry : linear_input_snapshot.entries) {
+        auto kind = pipeline_internal::PluginSampleKeyKind::OrigInputSeq;
+        auto value = entry.original_sequence;
+        if (value < 0) {
+          kind = pipeline_internal::PluginSampleKeyKind::InputSeq;
+          value = entry.input_sequence;
+        }
+        if (value < 0) {
+          kind = pipeline_internal::PluginSampleKeyKind::FrameId;
+          value = entry.frame_id;
+        }
+        if (value >= 0)
+          pipeline_internal::add_measured_plugin_sample(&selection, {entry.stream_id, kind, value});
+      }
+      pipeline_internal::LttngParseResult parsed = impl_->lttng_metrics->parse(selection, &err);
       if (!parsed.parsed) {
         report.warnings.push_back("LTTng metrics parse failed: " + err);
         impl_->lttng_metrics->retain_trace_for_debug();
@@ -572,8 +642,8 @@ MeasureReport MeasureScope::stop() {
             report.plugin_latency_unattributed.empty()) {
           report.plugin_latency_status = "unavailable";
           report.warnings.push_back(
-              "LTTng plugin latency collected no plugin spans; no trace-capable plugin emitted "
-              "during the measured window or the active plugin build lacks metrics tracepoints");
+              "LTTng plugin latency collected no selected complete plugin spans; verify session "
+              "identity, measured input correlation and the installed trace-capable provider");
         }
         if (impl_->options.include_message_latency && parsed.raw_edge_spans.empty() &&
             parsed.raw_graph_events.empty()) {
@@ -586,14 +656,14 @@ MeasureReport MeasureScope::stop() {
         }
       }
     }
+    if (linear_input_snapshot.failed) {
+      report.plugin_latency_status = "failed";
+      report.warnings.push_back("Linear input publication identity observation failed");
+      impl_->lttng_metrics->retain_trace_for_debug();
+      report.metrics_trace_dir = impl_->lttng_metrics->trace_dir();
+    }
     impl_->lttng_metrics->cleanup_noexcept();
     impl_->lttng_metrics.reset();
-  }
-  if (impl_->lttng_trace_identity_applied) {
-    pipeline_internal::apply_lttng_trace_identity(impl_->core, after_graph_metrics.node_metrics,
-                                                  impl_->trace_context.run_id_hash,
-                                                  impl_->trace_context.graph_id_hash, false);
-    impl_->lttng_trace_identity_applied = false;
   }
 
   if (impl_->options.include_edge_latency) {
@@ -697,18 +767,11 @@ MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::Ru
   if (need_lttng) {
     auto lttng_opt = make_lttng_options(opt, effective_message_lttng);
     impl->trace_context = trace_identity_for_core(impl->core);
-    pipeline_internal::apply_lttng_trace_identity(
-        impl->core, impl->before_graph_metrics.node_metrics, impl->trace_context.run_id_hash,
-        impl->trace_context.graph_id_hash, true, effective_message_lttng);
-    impl->lttng_trace_identity_applied = true;
+    impl->measurement_epoch = next_measurement_epoch.fetch_add(1, std::memory_order_relaxed);
     impl->lttng_metrics = std::make_unique<pipeline_internal::LttngMetricsCollector>(
         std::move(lttng_opt), impl->trace_context);
     std::string err;
     if (!impl->lttng_metrics->start(&err)) {
-      pipeline_internal::apply_lttng_trace_identity(
-          impl->core, impl->before_graph_metrics.node_metrics, impl->trace_context.run_id_hash,
-          impl->trace_context.graph_id_hash, false);
-      impl->lttng_trace_identity_applied = false;
       const bool required =
           plugin_source == MetricsTraceSource::Lttng || message_source == MetricsTraceSource::Lttng;
       impl->lttng_metrics.reset();
@@ -743,6 +806,15 @@ MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::Ru
       impl->power_monitor->start();
     }
   }
+  // Enable the complete graph before opening the selected input window. Frames
+  // entering during cold configuration remain warmup, even if they finish later.
+  if (impl->lttng_metrics) {
+    pipeline_internal::apply_lttng_trace_identity(
+        impl->core, impl->before_graph_metrics.node_metrics, impl->trace_context.run_id_hash,
+        impl->trace_context.graph_id_hash, true, effective_message_lttng, impl->measurement_epoch,
+        &impl->trace_plugin_instances);
+    impl->lttng_trace_identity_applied = true;
+  }
   impl->start = Clock::now();
   if (impl->core) {
     std::lock_guard<std::mutex> lock(impl->core->latency_mu);
@@ -753,6 +825,11 @@ MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::Ru
     impl->core->measurement_started_at = impl->start;
     impl->core->measurement_output_timing_init = false;
     impl->core->measurement_active = true;
+    if (impl->lttng_metrics && effective_plugin_lttng && !impl->core->graph_execution_) {
+      impl->linear_input_measurement = impl->core->pipeline.stream.input_publication_measurement();
+      if (impl->linear_input_measurement)
+        impl->linear_input_measurement->start(impl->measurement_epoch);
+    }
   }
   return MeasureScope(std::move(impl));
 }

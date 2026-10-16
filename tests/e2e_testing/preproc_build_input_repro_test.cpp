@@ -116,8 +116,8 @@ void run_preproc_build_repro(simaai::neat::RunMode mode, bool tessellate) {
 
 int main() {
   try {
-    require(simaai::neat::element_exists("neatprocesscvu"),
-            "missing NEAT CVU plugin (neatprocesscvu)");
+    require(simaai::neat::element_exists("neatkernelrunner"),
+            "missing NEAT CVU plugin (neatkernelrunner)");
 
     const bool tessellate = env_bool("SIMA_PREPROC_REPRO_TESSELLATE", true);
     const bool run_sync = env_bool("SIMA_PREPROC_REPRO_RUN_SYNC", true);

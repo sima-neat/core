@@ -15,11 +15,11 @@ namespace {
 using namespace simaai::neat;
 
 std::string require_yolov9_tar() {
-  const std::string tar =
-      sima_test::resolve_modelzoo_tar("yolo_v9c_seg", sima_test::repo_root_for_modelzoo());
-  require(!tar.empty(), "missing yolo_v9c_seg tar; run sima-cli modelzoo get yolo_v9c_seg");
-  require(std::filesystem::exists(tar), "resolved yolo_v9c_seg tar does not exist: " + tar);
-  return tar;
+  // Metadata-only unit coverage: reuse the checked exact modelzoo manifest
+  // and existing topology fixture builder; no inference binary is executed.
+  static const auto fixture = sima_test::make_strict_model_archive_fixture(
+      "unit_model_input_spec_contract_test", {}, true, "yolo_v9c_seg", true);
+  return fixture.tar_path;
 }
 
 sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::string& tag) {

@@ -1,3 +1,4 @@
+#include "pipeline/internal/MemoryCoherencyPolicy.h"
 /**
  * @file TensorTransfer.cpp
  * @brief CPU <-> SiMa device transfer helpers for Tensor using standard DMA-BUF memory.
@@ -484,7 +485,11 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
   const std::size_t allocation_bytes = segment_total_bytes(segments);
   const HeapKind heap = target.type == DeviceType::SIMA_MLA ? HeapKind::MlaDms : HeapKind::Cma;
   Error error;
-  GstBuffer* dst = internal::dmabuf::allocateDmaBufBuffer(heap, allocation_bytes, {}, &error);
+  // Mint origin only. A later admitted graph seals demand policy; transfer
+  // itself does not claim a closed producer/consumer lifetime.
+  GstBuffer* dst = pipeline_internal::demand_coherency_available()
+      ? internal::dmabuf::allocateDmaBufBufferForDemandCoherencyV1(heap, allocation_bytes, {}, &error)
+      : internal::dmabuf::allocateDmaBufBuffer(heap, allocation_bytes, {}, &error);
   if (!dst) {
     throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " + error.message());
   }

@@ -235,7 +235,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-The production path should include `libcamerasrc`, `neatcamerabridge` when fallback is enabled, `neatprocesscvu`, `neatprocessmla`, and `appsink`. For BoxDecode routes, also confirm the `--decode` token and thresholds match the model archive.
+The production path should include `libcamerasrc`, `neatcamerabridge` when fallback is enabled, `neatkernelrunner`, `neatprocessmla`, and `appsink`. For BoxDecode routes, also confirm the `--decode` token and thresholds match the model archive.
 :::
 
 ### 16. Graph throughput is low, or live frames get dropped

@@ -9,6 +9,15 @@ else()
   set(SIMANEAT_TUTORIAL_LINK_TARGET sima_neat)
 endif()
 
+# Source-tree and installed standalone tutorials use the same registration helper.
+if (NOT COMMAND simaneat_add_test)
+  if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/NeatGuardedTests.cmake")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/NeatGuardedTests.cmake")
+  else()
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/NeatGuardedTests.cmake")
+  endif()
+endif()
+
 # Tutorial executables and CTest registration.
 
 include(CMakeParseArguments)
@@ -46,7 +55,7 @@ function(add_tutorial exe source)
 
   if (NOT AT_NO_TEST)
     if (AT_MODEL)
-      add_test(NAME ${exe}
+      simaneat_add_test(NAME ${exe} NATIVE_COMMAND
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
           ${AT_MODEL}
           "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
@@ -56,7 +65,7 @@ function(add_tutorial exe source)
           ${test_args}
       )
     else()
-      add_test(NAME ${exe} COMMAND ${exe} ${test_args})
+      simaneat_add_test(NAME ${exe} COMMAND ${exe} ${test_args})
     endif()
     set_tests_properties(${exe} PROPERTIES
       LABELS "${label_list}"
@@ -171,8 +180,8 @@ add_tutorial(tutorial_018_consume_rtsp_stream
 )
 
 function(add_rtsp_tutorial_test test_name codec)
-  add_test(
-    NAME ${test_name}
+  simaneat_add_test(
+    NAME ${test_name} NATIVE_COMMAND
     COMMAND /bin/sh -c [=[
 codec="$2"
 test_name="$3"
@@ -251,6 +260,12 @@ add_tutorial(tutorial_023_run_mipi_camera_model
   NO_TEST
   LABELS asset mipi camera
 )
+
+# Keep standalone installed source builds self-contained, including guarded mode.
+install(FILES "${SIMANEAT_GUARDED_TESTS_MODULE}"
+  DESTINATION share/sima-neat/tutorials/cmake COMPONENT extras)
+install(FILES "${SIMANEAT_HARDWARE_SUPERVISOR_SOURCE}"
+  DESTINATION share/sima-neat/tutorials/tools COMPONENT extras)
 
 install(
   TARGETS ${PIPELINESESSION_TUTORIAL_TARGETS}

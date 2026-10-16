@@ -115,3 +115,10 @@ tar -xzf ./sima-neat-*-Linux-extras.tar.gz -C "${HOME}/sima-neat-extras"
 
 Full documentation, guides, and API references are published [here](https://developer.sima.ai/software).
 Contributor and agent quality guidance is documented in `AGENTS.md` at the repository root.
+
+### Build related repositories together
+
+`./build.sh --all --install` builds local sibling Kernels and Runner sources in
+dependency order before Core. Local package overrides support mixed-source
+development; remote Kernels/Runner artifact downloads remain TODO. See
+[local dependency builds](docs/develop-apps/contribute/build-test/local-dependencies.md).

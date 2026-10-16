@@ -34,6 +34,7 @@
 #include "pipeline/internal/contract/ContractApply.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/SyncBuild.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -61,6 +62,7 @@
 #include <gst/base/gstbasetransform.h>
 #include <gst/sdp/sdp.h>
 #include <gst/video/video.h>
+#include <gstsimaaitensorbuffer.h>
 #include <glib.h>
 
 #include <algorithm>
@@ -120,7 +122,8 @@ GraphReport make_error_report(const std::shared_ptr<DiagCtx>& diag, const std::s
                                              const std::string& hint = {},
                                              const std::string& pipeline = {}) {
   GraphReport rep = pipeline_internal::error_util::make_report(code, message, pipeline, hint);
-  throw NeatError(decorate_with_error_code(rep.error_code, rep.repro_note), std::move(rep));
+  const std::string diagnostic = decorate_with_error_code(rep.error_code, rep.repro_note);
+  throw NeatError(diagnostic, std::move(rep));
 }
 
 using internal::node_model_lineage_binding;
@@ -351,20 +354,38 @@ static bool should_attach_transport_pad_timing(GstElement* elem) {
   return std::strcmp(fname, "appsrc") == 0 || std::strcmp(fname, "appsink") == 0;
 }
 
-static bool extract_sima_meta_key(GstBuffer* buf, pipeline_internal::ElementTimingKey& out) {
+bool extract_element_timing_key(GstBuffer* buf, pipeline_internal::ElementTimingKey& out) noexcept {
   if (!buf)
     return false;
-  GstCustomMeta* meta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
-  GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (!s)
+  try {
+    std::string error;
+    if (const auto* frame = simaai::gst::tensor_buffer_frame_metadata(buf, &error)) {
+      out.frame_id = frame->frame_id;
+      out.stream_hash = std::hash<std::string>{}(frame->stream_id);
+      return true;
+    }
+    // A missing typed header is normal for legacy/V1. Conflicting authorities
+    // are not: never guess a correlation key from one of the two headers.
+    if (!error.empty())
+      return false;
+    GstCustomMeta* meta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
+    GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+    if (!s)
+      return false;
+    gint64 frame_id = -1;
+    if (!gst_structure_get_int64(s, "frame-id", &frame_id))
+      return false;
+    const gchar* stream_id = gst_structure_get_string(s, "stream-id");
+    const auto stream_hash = stream_id ? std::hash<std::string_view>{}(stream_id) : 0U;
+    out.frame_id = frame_id;
+    out.stream_hash = stream_hash;
+    return true;
+  } catch (...) {
+    // This observer runs inside a GStreamer C callback. Invalid metadata or an
+    // allocation failure must not unwind across that boundary. Data readers
+    // separately reject malformed publication; timing simply has no key.
     return false;
-  gint64 frame_id = -1;
-  if (!gst_structure_get_int64(s, "frame-id", &frame_id))
-    return false;
-  out.frame_id = frame_id;
-  const gchar* stream_id = gst_structure_get_string(s, "stream-id");
-  out.stream_hash = stream_id ? std::hash<std::string>{}(stream_id) : 0U;
-  return true;
+  }
 }
 
 static void update_element_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
@@ -508,7 +529,7 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
     *ts = now;
 
     pipeline_internal::ElementTimingKey key;
-    if (extract_sima_meta_key(buf, key)) {
+    if (extract_element_timing_key(buf, key)) {
       add_pending_timing(ctx->counters, key, now);
       // Also keep a bounded FIFO timestamp for simple 1:1 transforms that replace buffers or
       // strip metadata before the src pad.  If the normal qdata/key path succeeds on src, the
@@ -532,7 +553,7 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
     discard_pending_fifo_timing(ctx->counters);
   } else {
     pipeline_internal::ElementTimingKey key;
-    if (extract_sima_meta_key(buf, key)) {
+    if (extract_element_timing_key(buf, key)) {
       if (pop_pending_timing(ctx->counters, key, start)) {
         used = true;
         discard_pending_fifo_timing(ctx->counters);
@@ -1970,6 +1991,215 @@ std::string session_build_select_terminal_objectdecode_cpu_visibility(std::strin
   return fragment;
 }
 
+std::string session_build_select_kernel_cpu_visibility(const BuildResult& build) {
+  namespace sima = pipeline_internal::sima;
+  namespace runtime = ::simaai::runtime;
+  using sima::FrameArenaRole;
+  using sima::static_contract::ArenaAllocationProvenance;
+  if (!build.rendered_manifest) {
+    return build.pipeline_string;
+  }
+  const auto launch = gst::launch::analyze(build.pipeline_string);
+  auto elements = sima::parse_pipeline_elements(build.pipeline_string);
+  // A producer READ epoch is allocation-wide. Do not infer ownership through
+  // fanout, pad references, bins, or an unknown carrier-preserving element.
+  if (!launch.complete || launch.has_nontrivial_topology_syntax || !launch.references.empty() ||
+      std::any_of(elements.begin(), elements.end(), [](const auto& element) {
+        return element.plugin == "tee" || element.plugin == "input-selector" ||
+               element.plugin == "output-selector";
+      })) {
+    return build.pipeline_string;
+  }
+  const auto& manifest = *build.rendered_manifest;
+  auto rendered_index = [&](const auto& stage) -> std::optional<std::size_t> {
+    const auto name = apply_name_transform(build.name_transform, stage.element_name);
+    std::optional<std::size_t> found;
+    for (std::size_t i = 0; i < elements.size(); ++i) {
+      if (!name.empty() && elements[i].element_name == name) {
+        if (found) {
+          return std::nullopt;
+        }
+        found = i;
+      }
+    }
+    return found;
+  };
+  const auto preserves_frames = [](const auto& element) {
+    const auto& plugin = element.plugin;
+    if (plugin != "queue" && plugin != "queue2" && plugin != "identity" && plugin != "capsfilter") {
+      return false;
+    }
+    const auto properties = gst::launch::analyze(element.fragment);
+    if (!properties.complete) {
+      return false;
+    }
+    // A dropped frame never acquires a reader lease to retire its handoff.
+    // Admit only the non-dropping transport properties authored by Core;
+    // user callbacks and unknown properties need an explicit lifetime proof.
+    for (const auto& property : properties.assignments) {
+      if (property.key == "name") {
+        continue;
+      }
+      if ((plugin == "queue" || plugin == "queue2") &&
+          (property.key == "max-size-buffers" || property.key == "max-size-bytes" ||
+           property.key == "max-size-time")) {
+        continue;
+      }
+      if (plugin == "queue" && property.key == "leaky" &&
+          (property.canonical_value == "no" || property.canonical_value == "0")) {
+        continue;
+      }
+      if ((plugin == "identity" && property.key == "silent") ||
+          (plugin == "capsfilter" && property.key == "caps")) {
+        continue;
+      }
+      return false;
+    }
+    return true;
+  };
+  const auto has_pool_retirement = [&](std::size_t producer) {
+    std::vector<bool> visiting(manifest.stages.size(), false);
+    std::function<std::optional<std::size_t>(std::size_t)> origin =
+        [&](std::size_t index) -> std::optional<std::size_t> {
+      const auto& stage = manifest.stages[index];
+      const auto position = rendered_index(stage);
+      if (visiting[index] || !position || stage.frame_arena_size_bytes == 0U ||
+          stage.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated) {
+        return std::nullopt;
+      }
+      if (stage.frame_arena_role == FrameArenaRole::Allocate) {
+        // Native published pools always install return-time READ retirement.
+        // Only this MLA's own pool gains it from the handoff selected below.
+        if (elements[*position].plugin == "neatkernelrunner" ||
+            (index == producer && elements[*position].plugin == "neatprocessmla")) {
+          return index;
+        }
+        return std::nullopt;
+      }
+      if (stage.frame_arena_role != FrameArenaRole::ReuseInput) {
+        return std::nullopt;
+      }
+      visiting[index] = true;
+      std::string error;
+      const auto edges =
+          sima::edgecontract::resolve_consumer_edge_contracts_exact(manifest, index, &error);
+      if (!error.empty() || edges.empty() || edges.size() != stage.input_bindings.size()) {
+        return std::nullopt;
+      }
+      std::optional<std::size_t> owner;
+      for (const auto& edge : edges) {
+        const auto upstream_position = rendered_index(manifest.stages[edge.producer_stage_index]);
+        if (!upstream_position || *upstream_position >= *position) {
+          return std::nullopt;
+        }
+        const auto upstream = origin(edge.producer_stage_index);
+        if (!upstream || (owner && owner != upstream)) {
+          return std::nullopt;
+        }
+        owner = upstream;
+      }
+      visiting[index] = false;
+      return owner;
+    };
+    return origin(producer).has_value();
+  };
+  bool changed = false;
+  for (std::size_t index = 0; index < manifest.stages.size(); ++index) {
+    const auto& consumer = manifest.stages[index];
+    const auto& recipe = consumer.native_kernel;
+    // Checked A65 members read Input ports and write Output ports. Require a
+    // separate, Core-owned output arena: ReuseInput would write under the
+    // producer's READ lease, even when logical tensor spans do not overlap.
+    if (!recipe || recipe->target != runtime::Hardware::A65 || recipe->members.empty() ||
+        consumer.frame_arena_role != FrameArenaRole::Allocate ||
+        consumer.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated ||
+        consumer.frame_arena_size_bytes == 0U) {
+      continue;
+    }
+    bool reads_input = false;
+    bool valid = true;
+    for (const auto& member : recipe->members) {
+      valid = valid && static_cast<bool>(member.executable);
+      for (const auto& port : member.inputs) {
+        if (port.source == runtime::gstreamer::TensorStagePortSource::Input) {
+          reads_input = true;
+          valid = valid && std::any_of(consumer.logical_inputs.begin(),
+                                       consumer.logical_inputs.end(), [&](const auto& input) {
+                                         return input.backend_input_index >= 0 &&
+                                                static_cast<std::size_t>(
+                                                    input.backend_input_index) == port.tensor;
+                                       });
+        }
+      }
+    }
+    if (!valid || !reads_input) {
+      continue;
+    }
+    std::string error;
+    const auto edges =
+        sima::edgecontract::resolve_consumer_edge_contracts_exact(manifest, index, &error);
+    if (!error.empty() || edges.empty() || edges.size() != consumer.input_bindings.size()) {
+      continue;
+    }
+    const auto producer_index = edges.front().producer_stage_index;
+    if (std::any_of(edges.begin(), edges.end(), [&](const auto& edge) {
+          return edge.producer_stage_index != producer_index;
+        })) {
+      continue;
+    }
+    const auto& producer = manifest.stages[producer_index];
+    if (producer.payload_kind != sima::StagePayloadKind::ProcessMla ||
+        !has_pool_retirement(producer_index)) {
+      continue;
+    }
+    bool exclusive_consumer = true;
+    for (std::size_t other = 0; other < manifest.stages.size(); ++other) {
+      if (other == index) {
+        continue;
+      }
+      const auto other_edges =
+          sima::edgecontract::resolve_consumer_edge_contracts_exact(manifest, other);
+      exclusive_consumer =
+          exclusive_consumer &&
+          std::none_of(other_edges.begin(), other_edges.end(), [&](const auto& edge) {
+            return edge.producer_stage_index == producer_index;
+          });
+    }
+    if (!exclusive_consumer) {
+      continue;
+    }
+    const auto from = rendered_index(producer);
+    const auto to = rendered_index(consumer);
+    if (!from || !to || *to <= *from || elements[*from].plugin != "neatprocessmla" ||
+        elements[*to].plugin != "neatkernelrunner") {
+      continue;
+    }
+    bool adjacent = true;
+    for (std::size_t between = *from + 1U; between < *to; ++between) {
+      adjacent = adjacent && preserves_frames(elements[between]);
+    }
+    if (!adjacent) {
+      continue;
+    }
+    set_fragment_segment_property(&elements[*from].fragment, "defer-output-invalidate", "false");
+    // Transfer this exact CPU handoff to Runtime's counted readers. A retained
+    // producer epoch would block an upstream writer when MLA reuses its arena.
+    set_fragment_segment_property(&elements[*from].fragment, "output-read-handoff", "true");
+    changed = true;
+  }
+  if (!changed) {
+    return build.pipeline_string;
+  }
+  std::string result;
+  for (const auto& element : elements) {
+    if (!result.empty()) {
+      result += " ! ";
+    }
+    result += element.fragment;
+  }
+  return result;
+}
+
 std::string session_build_propagate_terminal_consumer_lane_window(std::string fragment) {
   struct SegmentRange {
     std::size_t begin;
@@ -2102,88 +2332,6 @@ std::string session_build_propagate_terminal_consumer_lane_window(std::string fr
   return fragment;
 }
 
-static std::string read_gst_fragment_property(const std::string& fragment,
-                                              const std::string& property) {
-  const std::string key = property + "=";
-  const size_t pos = fragment.find(key);
-  if (pos == std::string::npos) {
-    return {};
-  }
-  size_t vstart = pos + key.size();
-  if (vstart >= fragment.size()) {
-    return {};
-  }
-  char quote = 0;
-  if (fragment[vstart] == '\'' || fragment[vstart] == '"') {
-    quote = fragment[vstart++];
-  }
-  size_t vend = vstart;
-  while (vend < fragment.size()) {
-    const char c = fragment[vend];
-    if (quote) {
-      if (c == quote)
-        break;
-    } else if (std::isspace(static_cast<unsigned char>(c)) || c == '!') {
-      break;
-    }
-    ++vend;
-  }
-  return fragment.substr(vstart, vend - vstart);
-}
-
-static bool fragment_is_graph223_dequant_processcvu(const std::string& fragment) {
-  const std::string lower = lower_copy(fragment);
-  if (lower.find("neatprocesscvu") == std::string::npos) {
-    return false;
-  }
-  return lower.find("dequant") != std::string::npos ||
-         lower.find("graph-id=223") != std::string::npos ||
-         lower.find("graph_id=223") != std::string::npos;
-}
-
-static std::string maybe_replace_post_dequant_with_prepared_runner(const std::string& fragment,
-                                                                   const GraphOptions* sess_opt) {
-  if (!sess_opt) {
-    return fragment;
-  }
-  const std::string mode = lower_copy(sess_opt->prepared_runner.mode);
-  if (!(mode == "dequant" || mode == "post" || mode == "dequant-only")) {
-    return fragment;
-  }
-  if (!fragment_is_graph223_dequant_processcvu(fragment)) {
-    return fragment;
-  }
-
-  const std::string name = read_gst_fragment_property(fragment, "name");
-  std::string stage_id = read_gst_fragment_property(fragment, "stage-id");
-  if (stage_id.empty()) {
-    stage_id = read_gst_fragment_property(fragment, "stage_id");
-  }
-  if (stage_id.empty()) {
-    stage_id = name;
-  }
-
-  std::ostringstream out;
-  out << "neatpreparedrunner";
-  if (!name.empty()) {
-    out << " name=" << name;
-  }
-  out << " mode=dequant";
-  if (!stage_id.empty()) {
-    out << " post-stage-id=" << stage_id;
-  }
-  if (sess_opt->prepared_runner.ring_depth > 0) {
-    out << " ring-depth=" << std::min(sess_opt->prepared_runner.ring_depth, 64);
-  }
-  if (sess_opt->prepared_runner.profile) {
-    out << " profile=true";
-  }
-  if (!sess_opt->prepared_runner.dequant_flags.empty()) {
-    out << " dequant-flags=" << sess_opt->prepared_runner.dequant_flags;
-  }
-  return out.str();
-}
-
 static bool env_explicit_false_session_build_local(const char* name) {
   const char* raw = std::getenv(name);
   return raw && *raw && std::strcmp(raw, "0") == 0;
@@ -2194,13 +2342,21 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
   if (!sess_opt) {
     return fragment;
   }
-  fragment = maybe_replace_post_dequant_with_prepared_runner(fragment, sess_opt);
+  const auto& retired = sess_opt->prepared_runner;
+  const std::string retired_mode = lower_copy(retired.mode);
+  if ((!retired_mode.empty() && retired_mode != "passthrough" && retired_mode != "off") ||
+      retired.ring_depth != 0 || retired.profile || !retired.dequant_flags.empty()) {
+    throw_session_error_simple(
+        error_codes::kPipelineShape,
+        "PreparedRunnerOptions is retired; use the default Runtime kernel runner and "
+        "AdvancedExecutionOptions instead of legacy mode/ring-depth/dequant tuning");
+  }
   const bool processcvu_async = sess_opt->processcvu.async &&
                                 !env_explicit_false_session_build_local("SIMA_PROCESSCVU_ASYNC");
   const bool processmla_async =
       sess_opt->processmla.async &&
       !env_explicit_false_session_build_local("SIMA_PROCESSMLA_SAFE_ASYNC");
-  fragment = set_property_for_factory_segments(std::move(fragment), "neatprocesscvu", "async",
+  fragment = set_property_for_factory_segments(std::move(fragment), "neatkernelrunner", "async",
                                                processcvu_async ? "true" : "false");
   fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "async",
                                                processmla_async ? "true" : "false");
@@ -3018,8 +3174,7 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
   return clamp_detess_num_buffers_impl(std::move(pipeline), num_buffers_override, {});
 }
 
-std::string session_build_clamp_sync_build_result(const BuildResult& build,
-                                                  int num_buffers_override) {
+std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override) {
   namespace sima = pipeline_internal::sima;
   using sima::FrameArenaRole;
   using sima::static_contract::ArenaAllocationProvenance;
@@ -3065,7 +3220,8 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
   while (terminal > 0U && transparent(elements[terminal])) {
     --terminal;
   }
-  if (elements[terminal].plugin != "neatprocesscvu" &&
+  if (elements[terminal].plugin != "neatkernelrunner" &&
+      elements[terminal].plugin != "neatprocesscvu" &&
       elements[terminal].plugin != "neatprocessmla") {
     return legacy(); // A real non-native materializer owns its own terminal pool.
   }
@@ -3188,10 +3344,17 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     if (element.element_name != owner_name) {
       continue;
     }
+    ++owner_matches;
+    if (element.plugin == "neatkernelrunner") {
+      // Carrier retention belongs to Runtime's prepared pool, not to a plugin
+      // property. Execution remains one submitted job followed by its wait.
+      build.kernel_runner_output_pool_capacity =
+          std::max<std::size_t>(2, build.kernel_runner_output_pool_capacity);
+      continue;
+    }
     if (element.plugin != "neatprocesscvu" && element.plugin != "neatprocessmla") {
       fail("native Allocate owner has no supported pool property: '" + owner_name + "'");
     }
-    ++owner_matches;
     // Exactly one active serial frame plus appsink's previous cached frame.
     // This is not an async lane/window override or a general fanout budget.
     const auto existing = gst_props::get_int(element.fragment, "output-pool-min-buffers=");
@@ -3209,6 +3372,30 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     out += element.fragment;
   }
   return out;
+}
+
+void session_build_initialize_kernel_runner_budget(BuildResult* build,
+                                                   const GraphOptions* options) {
+  if (!build) {
+    return;
+  }
+  const int workers = options ? options->kernel_runner_a65_workers : 2;
+  if (workers < 1 || workers > 64) {
+    throw_session_error_simple(error_codes::kPipelineShape,
+                               "kernel_runner_a65_workers must be between 1 and 64");
+  }
+  build->kernel_runner_a65_workers = static_cast<std::size_t>(workers);
+  build->kernel_runner_capacity =
+      static_cast<std::size_t>(std::clamp(options ? options->async_queue_depth : 1, 1, 64));
+  build->kernel_runner_output_pool_capacity = build->kernel_runner_capacity + 1U;
+  if (options && options->processmla.output_pool_buffers > 0 &&
+      build->pipeline_string.find("neatprocessmla") != std::string::npos) {
+    // A reused arena must cover the explicitly requested downstream MLA window,
+    // plus a published carrier. Do not multiply queues by logical tensor heads.
+    build->kernel_runner_output_pool_capacity =
+        std::max(build->kernel_runner_output_pool_capacity,
+                 static_cast<std::size_t>(options->processmla.output_pool_buffers) + 1U);
+  }
 }
 
 BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
@@ -3272,7 +3459,7 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     nr.index = (int)i;
     nr.kind = nodes[i]->kind();
     nr.user_label = nodes[i]->user_label();
-    NodeFragment frag = make_node_fragment(nodes[i], (int)i, name_transform);
+    NodeFragment frag = make_node_fragment(nodes[i], static_cast<int>(i), name_transform);
     nr.backend_fragment =
         session_build_apply_fast_path_options_to_fragment(frag.fragment, sess_opt);
     nr.elements = frag.element_names;
@@ -3297,6 +3484,7 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
   br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(
       session_build_select_terminal_objectdecode_cpu_visibility(ss.str()));
   br.pipeline_string = br.diag->pipeline_string;
+  session_build_initialize_kernel_runner_budget(&br, sess_opt);
   return br;
 }
 
@@ -3435,7 +3623,9 @@ void session_build_compile_contracts(BuildResult* build_result,
   const auto compile_us = pipeline_internal::build_timing_us(compile_start);
 
   std::int64_t apply_us = 0;
-  if (apply_nodes) {
+  // Never apply a partial/failed admission: an apply error can otherwise hide
+  // the provider diagnostic and mutate nodes that were not admitted.
+  if (apply_nodes && diagnostics.errors.empty()) {
     const auto apply_start = pipeline_internal::build_timing_now();
     std::string apply_error;
     apply_compiled_contracts(apply_nodes, *compiled, &apply_error);
@@ -3448,7 +3638,9 @@ void session_build_compile_contracts(BuildResult* build_result,
   build_result->compiled_contracts = compiled;
   const auto render_start = pipeline_internal::build_timing_now();
   build_result->rendered_manifest =
-      render_manifest_from_compiled_contracts(*compiled, compile_input, &diagnostics);
+      diagnostics.errors.empty()
+          ? render_manifest_from_compiled_contracts(*compiled, compile_input, &diagnostics)
+          : std::nullopt;
   const auto render_us = pipeline_internal::build_timing_us(render_start);
   // Carry forward compile + render diagnostics so the wrapper throws in
   // parse_pipeline_or_throw can surface the actual stage-level failure
@@ -3975,7 +4167,8 @@ void enforce_names_contract(GstElement* pipeline, const BuildResult& br) {
                          "' is not owned by any node.\n"
                          "Fix: ensure every fragment uses deterministic names and "
                          "element_names() matches.\n";
-        throw NeatError(decorate_with_error_code(rep.error_code, rep.repro_note), std::move(rep));
+        const std::string diagnostic = decorate_with_error_code(rep.error_code, rep.repro_note);
+        throw NeatError(diagnostic, std::move(rep));
       }
     }
   }

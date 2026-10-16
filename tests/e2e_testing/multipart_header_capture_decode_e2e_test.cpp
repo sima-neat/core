@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <future>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -458,8 +459,10 @@ void test_attributes_survive_decode() {
                              (detail.empty() ? std::string(" no bus detail") : detail));
   }
 
+  // Both branches must release their samples while the bounded decoder pool is in use.
+  auto slow_result = std::async(std::launch::async, [slow] { return drain(slow); });
   const std::vector<Decoded> fast_frames = drain(fast);
-  const std::vector<Decoded> slow_frames = drain(slow);
+  const std::vector<Decoded> slow_frames = slow_result.get();
 
   gst_element_set_state(pipeline, GST_STATE_NULL);
   gst_object_unref(fast);

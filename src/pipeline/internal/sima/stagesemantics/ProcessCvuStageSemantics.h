@@ -118,19 +118,6 @@ build_processcvu_compiled_contract_from_facts(const ProcessCvuStagePayload& payl
 CompiledProcessCvuContract
 build_processcvu_compiled_contract(const ProcessCvuCanonicalCompileInputs& inputs);
 
-CompiledProcessCvuContract build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
-    const MpkContract& contract, ::simaai::neat::internal::ExecutionStageKind stage_kind,
-    const std::optional<std::string>& exact_stage_name_or_id = std::nullopt,
-    const std::optional<std::string>& canonical_handoff_segment_name = std::nullopt);
-CompiledProcessCvuContract build_processcvu_mpk_compiled_contract_for_stage_kind(
-    const MpkContract& contract, ::simaai::neat::internal::ExecutionStageKind stage_kind,
-    const std::optional<std::string>& exact_stage_name_or_id = std::nullopt,
-    const std::optional<std::string>& canonical_handoff_segment_name = std::nullopt,
-    const std::optional<bool>& preproc_single_output_handoff = std::nullopt,
-    const std::string& input_format = {}, int input_depth = 0, int max_input_width = 0,
-    int max_input_height = 0, bool normalize = false, const std::vector<float>& mean = {},
-    const std::vector<float>& stddev = {});
-
 std::string
 resolve_preproc_primary_output_name(const std::vector<std::string>& runtime_output_names,
                                     bool tessellate,

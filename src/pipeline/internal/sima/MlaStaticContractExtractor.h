@@ -55,6 +55,8 @@ struct MlaStaticContract {
       static_contract::ArenaStorageDomain::Unknown;
   static_contract::ArenaAllocationProvenance frame_arena_provenance =
       static_contract::ArenaAllocationProvenance::Unknown;
+  static_contract::ArenaAllocationPolicy frame_arena_allocation_policy =
+      static_contract::ArenaAllocationPolicy::RequiredDomain;
   std::uint32_t frame_arena_required_device_access = 0U;
   static_contract::ArenaEscapePolicy frame_arena_escape_policy =
       static_contract::ArenaEscapePolicy::InternalOnly;

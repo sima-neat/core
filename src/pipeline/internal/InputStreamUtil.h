@@ -215,7 +215,8 @@ SampleTimingOverrides sample_timing_overrides_from_sample(const Sample& sample);
 
 GstCaps* caps_from_spec(const SampleSpec& spec);
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
-                                 InputBufferPoolGuard& guard);
+                                 InputBufferPoolGuard& guard,
+                                 bool demand_coherency = false);
 int64_t next_input_frame_id();
 bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptions& opt);
 void maybe_update_simaai_meta_name(GstBuffer* buffer, const std::string& name);

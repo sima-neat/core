@@ -58,6 +58,8 @@ set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME core)
 # ------------------------------------------------------------------------------
 # Build options
 # ------------------------------------------------------------------------------
+option(SIMA_CORE_DEMAND_COHERENCY_V1
+  "Enable experimental closed-graph demand CPU coherency qualification" OFF)
 option(SIMA_WITH_OPENCV "Enable OpenCV convenience APIs" ON)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
@@ -369,6 +371,8 @@ if (SIMANEAT_USE_EXPORTED_NEAT_INTERNALS)
   endif()
 endif()
 
+include(cmake/SchedulerRenderCapability.cmake)
+
 function(simaneat_imported_target_location out_var target_name)
   set(${out_var} "" PARENT_SCOPE)
   if (NOT TARGET ${target_name})
@@ -655,24 +659,6 @@ find_library(SIMANEAT_NEAT_TENSORBUFFER_LIB
   NAMES gstneattensorbuffer
   HINTS ${SIMANEAT_NEAT_TENSORBUFFER_HINTS}
 )
-find_library(SIMANEAT_SIMAAIMEM_LIB
-  NAMES simaaimem
-  HINTS
-    /opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu
-    /usr/lib/aarch64-linux-gnu
-    /lib/aarch64-linux-gnu
-    /usr/lib
-    /lib
-)
-find_path(SIMANEAT_SIMAAIMEM_INCLUDE_ROOT
-  NAMES simaai/simaai_memory.h
-  HINTS
-    ${SIMANEAT_LOCAL_DEP_HEADER_ROOT}
-    /opt/toolchain/aarch64/modalix/usr/include
-    /usr/include
-    /usr/local/include
-    $ENV{HOME}/.local/include
-)
 find_path(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
   NAMES gstsimaaitensorbuffer.h
   HINTS
@@ -774,10 +760,6 @@ simaneat_require_dependency(SIMANEAT_NEAT_BUFFERPOOL_LIB
   "Required NEAT buffer pool library not found: libgstneatbufferpool.so. Expected under a NEAT/GStreamer plugin directory.")
 simaneat_require_dependency(SIMANEAT_NEAT_TENSORBUFFER_LIB
   "Required NEAT tensor buffer library not found: libgstneattensorbuffer.so. Expected under a NEAT/GStreamer plugin directory.")
-simaneat_require_dependency(SIMANEAT_SIMAAIMEM_LIB
-  "Required simaai memory library not found: libsimaaimem.so.")
-simaneat_require_dependency(SIMANEAT_SIMAAIMEM_INCLUDE_ROOT
-  "Required simaai memory headers not found: simaai/simaai_memory.h.")
 simaneat_require_dependency(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
   "Required NEAT tensor buffer headers not found: gstsimaaitensorbuffer.h.")
 simaneat_require_dependency(SIMANEAT_NEAT_DMABUFPOOL_LIB
@@ -812,54 +794,6 @@ if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   endif()
 endif()
 
-set(SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT "${SIMANEAT_SIMAAIMEM_INCLUDE_ROOT}")
-simaneat_dependency_is_found(_simaneat_has_simaaimem_include_root
-  SIMANEAT_SIMAAIMEM_INCLUDE_ROOT)
-if (SIMANEAT_CPP_TIDY)
-  set(SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT
-    "${CMAKE_BINARY_DIR}/tidy-include")
-  file(MAKE_DIRECTORY "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}/simaai")
-  if (_simaneat_has_simaaimem_include_root)
-    set(_simaneat_tidy_simaaimem_header
-      "#pragma once\n#include \"${SIMANEAT_SIMAAIMEM_INCLUDE_ROOT}/simaai/simaai_memory.h\"\n")
-  else()
-    set(_simaneat_tidy_simaaimem_header [=[
-#pragma once
-#include <stddef.h>
-#include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef struct simaai_memory_t simaai_memory_t;
-
-#define SIMAAI_MEM_TARGET_GENERIC (0)
-#define SIMAAI_MEM_TARGET_OCM (1)
-#define SIMAAI_MEM_TARGET_DMS0 (2)
-#define SIMAAI_MEM_TARGET_DMS1 (3)
-#define SIMAAI_MEM_TARGET_DMS2 (4)
-#define SIMAAI_MEM_TARGET_DMS3 (5)
-#define SIMAAI_MEM_TARGET_EV74 (SIMAAI_MEM_TARGET_GENERIC)
-#define SIMAAI_MEM_TARGET_ALL (SIMAAI_MEM_TARGET_EV74)
-#define SIMAAI_MEM_TARGET_UNKNOWN (SIMAAI_MEM_TARGET_ALL)
-
-#define SIMAAI_MEM_FLAG_CACHED (1 << 0)
-#define SIMAAI_MEM_FLAG_RDONLY (1 << 1)
-#define SIMAAI_MEM_FLAG_DEFAULT (0x0)
-
-#ifdef __cplusplus
-}
-#endif
-]=])
-  endif()
-  file(WRITE
-    "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}/simaai/simaai_memory.h"
-    "${_simaneat_tidy_simaaimem_header}")
-  set(SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT
-    "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}")
-endif()
-
 # ------------------------------------------------------------------------------
 # Library: sima_neat (FULL ORIGINAL SOURCE LIST)
 # ------------------------------------------------------------------------------
@@ -882,6 +816,14 @@ file(GLOB_RECURSE SIMANEAT_ALL_SOURCES
 # Apply blacklist
 # ------------------------------------------------------------------------------
 set(SIMANEAT_SOURCES ${SIMANEAT_ALL_SOURCES})
+# Core lowers canonical requests through Scheduler's installed preparation
+# facade. The facade selects the precise lower Runner component closure.
+find_package(SimaScheduler CONFIG REQUIRED)
+foreach(_component elements gstreamer tensor_stage PreparedRuntimeBridge kernel_preparation)
+  if (NOT TARGET SimaScheduler::${_component})
+    message(FATAL_ERROR "Core requires the installed SimaScheduler::${_component} target")
+  endif()
+endforeach()
 if (SimaLMM_FOUND)
   list(REMOVE_ITEM SIMANEAT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIUnavailableStubs.cpp")
@@ -923,7 +865,8 @@ add_library(sima_neat_objects OBJECT
 set_target_properties(sima_neat_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
-target_compile_definitions(sima_neat_objects PRIVATE SIMA_NEAT_INTERNAL=1)
+target_compile_definitions(sima_neat_objects PRIVATE SIMA_NEAT_INTERNAL=1
+  SIMA_CORE_DEMAND_COHERENCY_V1=$<BOOL:${SIMA_CORE_DEMAND_COHERENCY_V1}>)
 if (NOT SIMANEAT_PLATFORM_VERSION MATCHES "^2[.]1[.]")
   target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_DIRECT_DRIVER_PROFILE=1)
 endif()
@@ -959,6 +902,12 @@ set_target_properties(sima_neat_static PROPERTIES
 target_link_libraries(sima_neat PUBLIC sima_neat_common)
 target_link_libraries(sima_neat_static PUBLIC sima_neat_common)
 target_link_libraries(sima_neat_objects PRIVATE sima_neat_common)
+foreach(_target sima_neat_objects sima_neat sima_neat_static)
+  target_link_libraries(${_target} PRIVATE
+    SimaScheduler::kernel_preparation
+    SimaScheduler::elements SimaScheduler::gstreamer SimaScheduler::tensor_stage
+    SimaScheduler::PreparedRuntimeBridge)
+endforeach()
 add_custom_target(sima_neat_libraries DEPENDS sima_neat sima_neat_static)
 target_compile_definitions(sima_neat_objects PRIVATE
   SIMA_NEAT_VERSION_STRING="${SIMANEAT_VERSION}"
@@ -990,10 +939,8 @@ target_include_directories(sima_neat_objects
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal
-    # Keep the source tree's public/internal bridge headers ahead of the
-    # sibling internals checkout.  The sibling headers can lag while this repo
-    # is under graph-contract development; source files in this target must see
-    # the matching headers from core_graph_changes first.
+    # Transport ABI headers forward to the matched Runtime package; Core owns
+    # only the graph-level projections, never another ABI definition.
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
 )
@@ -1015,7 +962,6 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       "${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}"
       "${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}"
       "${SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT}"
-      "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}"
       "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
     if (_simaneat_neat_include_dir AND
         NOT _simaneat_neat_include_dir MATCHES "-NOTFOUND$")
@@ -1023,9 +969,6 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
         "${_simaneat_neat_include_dir}")
     endif()
   endforeach()
-elseif (SIMANEAT_CPP_TIDY AND SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT)
-  target_include_directories(sima_neat_objects PRIVATE
-    "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}")
 endif()
 
 # Resolve public dependency paths on the consuming machine.
@@ -1092,11 +1035,6 @@ else()
   if (SIMANEAT_NEAT_DMABUF_LIB)
     list(APPEND SIMANEAT_PRIVATE_LIBRARIES ${SIMANEAT_NEAT_DMABUF_LIB})
   endif()
-endif()
-if (SIMANEAT_SIMAAIMEM_LIB)
-  add_library(SimaNeat::Memory UNKNOWN IMPORTED)
-  set_target_properties(SimaNeat::Memory PROPERTIES IMPORTED_LOCATION "${SIMANEAT_SIMAAIMEM_LIB}")
-  list(APPEND SIMANEAT_PRIVATE_LIBRARIES SimaNeat::Memory)
 endif()
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
@@ -1297,7 +1235,10 @@ endfunction()
 # Internal-only helper targets (tests/bench/tools/bindings)
 # ------------------------------------------------------------------------------
 add_library(sima_neat_internal_headers INTERFACE)
-target_link_libraries(sima_neat_internal_headers INTERFACE ${SIMANEAT_PRIVATE_LIBRARIES})
+# Internal contracts expose canonical preparation types. Propagate the installed
+# facade's usage requirements; public Core headers remain dependency-isolated.
+target_link_libraries(sima_neat_internal_headers INTERFACE
+  ${SIMANEAT_PRIVATE_LIBRARIES} SimaScheduler::elements SimaScheduler::kernel_preparation)
 target_include_directories(sima_neat_internal_headers INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
@@ -1310,7 +1251,6 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       "${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}"
       "${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}"
       "${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}"
-      "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}"
       "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
     if (_simaneat_neat_internal_include_dir AND
         NOT _simaneat_neat_internal_include_dir MATCHES "-NOTFOUND$")
@@ -1369,6 +1309,7 @@ endif()
 # ------------------------------------------------------------------------------
 # Tutorials
 # ------------------------------------------------------------------------------
+include(cmake/NeatGuardedTests.cmake)
 if (SIMANEAT_BUILD_TUTORIALS)
   add_subdirectory(tutorials)
 endif()
@@ -1426,6 +1367,8 @@ install(
   PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
   PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
   PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
+  # Runtime owns the current structured GStreamer error contract at this path.
+  PATTERN "SimaaiGstErrors.h" EXCLUDE
   PATTERN "ev_tensor_abi.h" EXCLUDE
   PATTERN "PreparedRuntimeBridge.h" EXCLUDE
 )
@@ -1539,6 +1482,18 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_DEV_PACKAGE_NAME "sima-neat-dev")
 
+# Source-first preparation verifies the complete selected DEBs and supplies
+# their actual control versions. Never derive dependency pins from Git hashes.
+# Direct CMake builds retain their existing installed-package dependency names.
+set(_simaneat_runtime_dependency "simaai-scheduler")
+if (SIMANEAT_SCHEDULER_DEBIAN_VERSION)
+  set(_simaneat_runtime_dependency "simaai-scheduler (= ${SIMANEAT_SCHEDULER_DEBIAN_VERSION})")
+endif()
+set(_simaneat_kernels_dependency "simaai-kernels-dev")
+if (SIMANEAT_KERNELS_DEBIAN_VERSION)
+  set(_simaneat_kernels_dependency "simaai-kernels-dev (= ${SIMANEAT_KERNELS_DEBIAN_VERSION})")
+endif()
+
 set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libgstreamer1.0-0"
   "libgstreamer-plugins-base1.0-0"
@@ -1549,8 +1504,7 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-imgcodecs410"
   # libsima_neat.so links libz directly to inflate model archives in process.
   "zlib1g"
-  "neat-runtime"
-  "neat-gst-plugins"
+  "${_simaneat_runtime_dependency}"
 )
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
@@ -1559,6 +1513,8 @@ if (SimaLMM_FOUND)
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(SIMANEAT_DEV_DEBIAN_DEPENDS
+  "${_simaneat_kernels_dependency}"
+  "${_simaneat_runtime_dependency}"
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"
   "pkg-config"
   "libgstreamer1.0-dev"

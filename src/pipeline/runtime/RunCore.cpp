@@ -1,4 +1,5 @@
 #include "RunCore.h"
+#include "GraphTransportLifecycle.h"
 
 #include "ExecutionGraphPlan.h"
 #include "gst/GstInit.h"
@@ -387,7 +388,7 @@ void RunCore::graph_signal_stop() {
       continue;
     if (pipe->transport.input_queue)
       pipe->transport.input_queue->close();
-    pipe->transport.cv.notify_all();
+    notify_graph_transport_external_state(pipe->transport);
   }
 }
 
@@ -651,8 +652,9 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
   if (!pipe.seg.node_ids.empty()) {
     graph_producer_completed(pipe.seg.node_ids.back());
   }
-  pipe.transport.completion_forwarded.store(true, std::memory_order_release);
-  pipe.transport.cv.notify_all();
+  // Forward downstream closure before publishing completion, but never call downstream code
+  // with the waiter mutex held. The mutex also pairs publication with lazy-build waiters.
+  publish_graph_transport_completion(pipe.transport);
 }
 
 void RunCore::graph_stage_worker_completed(std::size_t group_index) {
@@ -740,7 +742,7 @@ void RunCore::graph_close_public_input() {
   // lets the last push forward producer completion after that build returns.
   for (const auto& pipeline : execution.pipelines) {
     if (pipeline) {
-      pipeline->transport.cv.notify_all();
+      notify_graph_transport_external_state(pipeline->transport);
     }
   }
 

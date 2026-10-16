@@ -1,7 +1,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
-#include <gst/SimaCvuCapabilityAbi.h>
+#include "pipeline/internal/sima/static_contract/TransformOperation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,7 +26,6 @@ struct DraftCommand {
   PhysicalEngine engine = PhysicalEngine::Cvu;
   PhysicalCommandRole role = PhysicalCommandRole::NonCvu;
   std::string implementation_id;
-  std::uint32_t graph_id = 0U;
   std::uint32_t batch_size = 1U;
   std::uint32_t maximum_members = 0U;
   std::vector<PhysicalCommandMember> members;
@@ -103,69 +102,32 @@ bool is_dense_order_preserving_view(const ValueSpec& root, const ValueSpec& prev
   return stride == view.required_bytes;
 }
 
-std::optional<std::uint32_t> cvu_semantic_op(const OpKind kind) {
-  switch (kind) {
-  case OpKind::Cast:
-    return SIMA_CVU_SEMANTIC_OP_CAST;
-  case OpKind::Quantize:
-    return SIMA_CVU_SEMANTIC_OP_QUANTIZE;
-  case OpKind::Tessellate:
-    return SIMA_CVU_SEMANTIC_OP_TESSELLATE;
-  case OpKind::Detessellate:
-    return SIMA_CVU_SEMANTIC_OP_DETESSELLATE;
-  case OpKind::Dequantize:
-    return SIMA_CVU_SEMANTIC_OP_DEQUANTIZE;
-  case OpKind::Pack:
-  case OpKind::Mla:
-  case OpKind::Unpack:
-  case OpKind::Slice:
-  case OpKind::Reshape:
-  case OpKind::HostTvm:
-  case OpKind::PassThrough:
+std::optional<TransformOperationRule> cvu_rewrite_rule(const std::vector<OpId>& chain,
+                                                       const ModelExecutionPlan& plan) {
+  if (chain.empty() || chain.size() > 2U || chain.front() >= plan.ops().size() ||
+      chain.back() >= plan.ops().size())
     return std::nullopt;
-  }
-  return std::nullopt;
-}
-
-std::optional<SimaCvuCapabilityAbiRecord> cvu_capability(const std::vector<OpId>& chain,
-                                                         const ModelExecutionPlan& plan) {
-  if (chain.empty() || chain.size() > 2U) {
-    return std::nullopt;
-  }
-  const auto first = chain.front() < plan.ops().size()
-                         ? cvu_semantic_op(plan.ops()[chain.front()].kind)
-                         : std::nullopt;
-  const auto second = chain.size() == 2U && chain.back() < plan.ops().size()
-                          ? cvu_semantic_op(plan.ops()[chain.back()].kind)
-                          : std::optional<std::uint32_t>{SIMA_CVU_SEMANTIC_OP_NONE};
-  if (!first || !second) {
-    return std::nullopt;
-  }
-  SimaCvuCapabilityAbiRecord record{};
-  if (!sima_cvu_capability_abi_lookup_semantic_pattern(static_cast<std::uint32_t>(chain.size()),
-                                                       *first, *second, &record) ||
-      record.maximum_members == 0U) {
-    return std::nullopt;
-  }
-  return record;
+  const auto* rule = transform_operation(
+      plan.ops()[chain.front()].kind,
+      chain.size() == 2U ? std::optional{plan.ops()[chain.back()].kind} : std::nullopt);
+  return rule ? std::optional{*rule} : std::nullopt;
 }
 
 bool is_groupable_cvu(const OpSpec& op, const ModelExecutionPlan& plan) {
   if (op.processor != "EV74" || op.inputs.size() != 1U || op.outputs.size() != 1U ||
-      !cvu_semantic_op(op.kind)) {
+      !transform_operation(op.kind)) {
     return false;
   }
-  return cvu_capability(std::vector<OpId>{op.id}, plan).has_value();
+  return cvu_rewrite_rule(std::vector<OpId>{op.id}, plan).has_value();
 }
 
-std::string cvu_implementation_id(const SimaCvuCapabilityAbiRecord& capability) {
-  return "cvu.graph" + std::to_string(capability.graph_id) + "." + capability.canonical_token +
-         ".v" + std::to_string(capability.descriptor_contract_version);
+std::string cvu_implementation_id(const TransformOperationRule& rule) {
+  return std::string(rule.operation);
 }
 
 std::string implementation_id(const OpSpec& op, const ModelExecutionPlan& plan) {
-  if (const auto capability = cvu_capability(std::vector<OpId>{op.id}, plan)) {
-    return cvu_implementation_id(*capability);
+  if (const auto rule = cvu_rewrite_rule(std::vector<OpId>{op.id}, plan)) {
+    return cvu_implementation_id(*rule);
   }
   switch (op.kind) {
   case OpKind::Cast:
@@ -351,7 +313,7 @@ struct Lane {
 
 struct ReducedMember {
   PhysicalCommandMember physical;
-  SimaCvuCapabilityAbiRecord capability{};
+  TransformOperationRule rule{};
   std::int64_t batch = 1;
   std::string processor;
   bool align_c16 = false;
@@ -598,7 +560,7 @@ void implementation_flags(const ModelExecutionPlan& plan, const std::vector<OpId
 std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& plan,
                                                       const Lane& lane, std::string* error) {
   std::vector<ReducedMember> result;
-  std::vector<std::optional<SimaCvuCapabilityAbiRecord>> pair_matches(
+  std::vector<std::optional<TransformOperationRule>> pair_matches(
       lane.operations.size() > 1U ? lane.operations.size() - 1U : 0U);
   for (std::size_t index = 0; index < pair_matches.size(); ++index) {
     const auto& first = plan.ops()[lane.operations[index]];
@@ -606,13 +568,13 @@ std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& 
     const bool exact_private_edge =
         resolve_exact_private_ordered_relation_path(plan, first.id, second.id);
     if (exact_private_edge) {
-      pair_matches[index] = cvu_capability(std::vector<OpId>{first.id, second.id}, plan);
+      pair_matches[index] = cvu_rewrite_rule(std::vector<OpId>{first.id, second.id}, plan);
     }
   }
   for (std::size_t index = 1; index < pair_matches.size(); ++index) {
     if (pair_matches[index - 1U] && pair_matches[index] &&
-        (pair_matches[index - 1U]->mandatory_when_matched != 0U ||
-         pair_matches[index]->mandatory_when_matched != 0U)) {
+        (pair_matches[index - 1U]->mandatory_when_matched() ||
+         pair_matches[index]->mandatory_when_matched())) {
       record_error(error, "overlapping mandatory CVU patterns at semantic operation '" +
                               plan.ops()[lane.operations[index]].name +
                               "' require a registered longer implementation");
@@ -621,27 +583,27 @@ std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& 
   }
   for (std::size_t index = 0; index < lane.operations.size();) {
     std::vector<OpId> chain{lane.operations[index]};
-    std::optional<SimaCvuCapabilityAbiRecord> capability;
+    std::optional<TransformOperationRule> rule;
     if (index < pair_matches.size() && pair_matches[index]) {
       const auto& first = plan.ops()[lane.operations[index]];
       const auto& second = plan.ops()[lane.operations[index + 1U]];
       std::vector<OpId> candidate{first.id, second.id};
       std::string detail;
       if (!validate_fused_member(plan, candidate, &detail)) {
-        if (pair_matches[index]->mandatory_when_matched != 0U) {
+        if (pair_matches[index]->mandatory_when_matched()) {
           record_error(error, "mandatory fused CVU chain '" + first.name + " -> " + second.name +
                                   "' is invalid: " + detail);
           return std::nullopt;
         }
       } else {
         chain = std::move(candidate);
-        capability = *pair_matches[index];
+        rule = *pair_matches[index];
       }
     }
-    if (!capability) {
-      capability = cvu_capability(chain, plan);
+    if (!rule) {
+      rule = cvu_rewrite_rule(chain, plan);
     }
-    if (!capability) {
+    if (!rule) {
       record_error(error, "physical lowering has no registered CVU implementation for '" +
                               plan.ops()[chain.front()].name + "'");
       return std::nullopt;
@@ -654,7 +616,7 @@ std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& 
     member.physical.semantic_chain = chain;
     member.physical.outer_inputs = first.inputs;
     member.physical.outer_outputs = last.outputs;
-    member.capability = *capability;
+    member.rule = *rule;
     member.batch = batch_for(first);
     if (member.batch <= 0 ||
         static_cast<std::uint64_t>(member.batch) > std::numeric_limits<std::uint32_t>::max()) {
@@ -669,7 +631,7 @@ std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& 
   return result;
 }
 
-using CohortKey = std::tuple<std::size_t, std::uint32_t, std::int64_t, std::string, bool, bool>;
+using CohortKey = std::tuple<std::size_t, std::string, std::int64_t, std::string, bool, bool>;
 
 bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes,
                          const bool align_from_boundary_end, const PhysicalCommandRole role,
@@ -684,8 +646,8 @@ bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes
     for (std::size_t index = 0; index < reduced->size(); ++index) {
       auto& member = (*reduced)[index];
       const auto boundary_distance = align_from_boundary_end ? reduced->size() - index - 1U : index;
-      cohorts[{boundary_distance, member.capability.graph_id, member.batch, member.processor,
-               member.align_c16, member.cblock}]
+      cohorts[{boundary_distance, std::string(member.rule.operation), member.batch,
+               member.processor, member.align_c16, member.cblock}]
           .push_back(std::move(member));
     }
   }
@@ -695,19 +657,18 @@ bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes
     std::sort(cohort.begin(), cohort.end(), [](const auto& left, const auto& right) {
       return left.physical.ordinal < right.physical.ordinal;
     });
-    const auto& capability = cohort.front().capability;
+    const auto& rule = cohort.front().rule;
     const auto cohort_id = (*next_cohort_id)++;
-    for (std::size_t begin = 0; begin < cohort.size(); begin += capability.maximum_members) {
+    for (std::size_t begin = 0; begin < cohort.size(); begin += rule.maximum_members) {
       const auto end =
-          std::min(cohort.size(), begin + static_cast<std::size_t>(capability.maximum_members));
+          std::min(cohort.size(), begin + static_cast<std::size_t>(rule.maximum_members));
       DraftCommand draft;
       draft.cohort_id = cohort_id;
       draft.engine = PhysicalEngine::Cvu;
       draft.role = role;
-      draft.graph_id = capability.graph_id;
       draft.batch_size = static_cast<std::uint32_t>(cohort.front().batch);
-      draft.implementation_id = cvu_implementation_id(capability);
-      draft.maximum_members = capability.maximum_members;
+      draft.implementation_id = cvu_implementation_id(rule);
+      draft.maximum_members = rule.maximum_members;
       for (std::size_t index = begin; index < end; ++index) {
         auto& member = cohort[index].physical;
         const auto already_claimed =
@@ -917,7 +878,7 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
         next_groupable_cvu_consumer(semantic, consumers, public_values, first.outputs.front());
     if (!second_id || *second_id >= ops.size() || claimed.contains(*second_id) ||
         !resolve_exact_private_ordered_relation_path(semantic, first.id, *second_id) ||
-        !cvu_capability(std::vector<OpId>{first.id, *second_id}, semantic)) {
+        !cvu_rewrite_rule(std::vector<OpId>{first.id, *second_id}, semantic)) {
       continue;
     }
     if (!residual_pair_ops.emplace(first.id).second ||
@@ -963,9 +924,8 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
       return std::nullopt;
     }
     draft.batch_size = static_cast<std::uint32_t>(batch);
-    if (const auto capability = cvu_capability(std::vector<OpId>{op.id}, semantic)) {
-      draft.graph_id = capability->graph_id;
-      draft.maximum_members = capability->maximum_members;
+    if (const auto rule = cvu_rewrite_rule(std::vector<OpId>{op.id}, semantic)) {
+      draft.maximum_members = rule->maximum_members;
     }
     draft.members = {{0U, {op.id}, op.inputs, op.outputs}};
     claimed.emplace(op.id);
@@ -1089,7 +1049,6 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     command.engine = draft.engine;
     command.role = draft.role;
     command.implementation_id = draft.implementation_id;
-    command.graph_id = draft.graph_id;
     command.batch_size = draft.batch_size;
     command.maximum_members = draft.maximum_members;
     command.members = draft.members;
@@ -1111,9 +1070,8 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     }
     std::sort(command.successors.begin(), command.successors.end());
     digest << command.id << '@' << command.cohort_id << ':'
-           << static_cast<unsigned int>(command.role) << ':' << command.graph_id << ':'
-           << command.batch_size << ':' << command.implementation_id << ':'
-           << command.maximum_members << ':';
+           << static_cast<unsigned int>(command.role) << ':' << command.batch_size << ':'
+           << command.implementation_id << ':' << command.maximum_members << ':';
     for (const auto& member : command.members) {
       digest << '[' << member.ordinal << ':';
       for (const auto origin : member.semantic_chain) {
@@ -1164,7 +1122,7 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     return std::nullopt;
   }
   using CvuCohortContract =
-      std::tuple<PhysicalCommandRole, std::uint32_t, std::uint32_t, std::string, std::uint32_t>;
+      std::tuple<PhysicalCommandRole, std::uint32_t, std::string, std::uint32_t>;
   std::unordered_map<PhysicalCohortId, CvuCohortContract> cvu_cohorts;
   for (std::size_t index = 0; index < plan.commands.size(); ++index) {
     const auto& command = plan.commands[index];
@@ -1172,25 +1130,21 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
       record_error(error, "physical execution tracker requires dense topological command ids");
       return std::nullopt;
     }
-    SimaCvuCapabilityAbiRecord capability{};
-    const bool valid_cvu_identity = command.engine == PhysicalEngine::Cvu &&
-                                    command.graph_id != 0U &&
-                                    sima_cvu_capability_abi_lookup(command.graph_id, &capability) &&
-                                    command.maximum_members == capability.maximum_members &&
-                                    command.implementation_id == cvu_implementation_id(capability);
+    const auto* rule = transform_operation(command.implementation_id);
+    const bool valid_cvu_identity = command.engine == PhysicalEngine::Cvu && rule &&
+                                    command.maximum_members == rule->maximum_members;
     if (command.batch_size == 0U || command.members.empty() ||
         (command.engine == PhysicalEngine::Cvu &&
          (command.role == PhysicalCommandRole::NonCvu || !valid_cvu_identity ||
           command.members.size() > command.maximum_members)) ||
         (command.engine != PhysicalEngine::Cvu &&
-         (command.role != PhysicalCommandRole::NonCvu || command.graph_id != 0U ||
-          command.maximum_members != 0U))) {
+         (command.role != PhysicalCommandRole::NonCvu || command.maximum_members != 0U))) {
       record_error(error, "physical execution tracker found invalid command membership");
       return std::nullopt;
     }
     if (command.engine == PhysicalEngine::Cvu) {
-      const CvuCohortContract contract{command.role, command.graph_id, command.batch_size,
-                                       command.implementation_id, command.maximum_members};
+      const CvuCohortContract contract{command.role, command.batch_size, command.implementation_id,
+                                       command.maximum_members};
       const auto [found, inserted] = cvu_cohorts.emplace(command.cohort_id, contract);
       if (!inserted && found->second != contract) {
         record_error(error, "physical execution tracker found an inconsistent CVU cohort");
@@ -1206,7 +1160,7 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
           (previous_ordinal && member.ordinal <= *previous_ordinal) ||
           (command.engine == PhysicalEngine::Cvu &&
            (member.outer_inputs.size() != 1U || member.outer_outputs.size() != 1U ||
-            member.semantic_chain.size() != capability.semantic_pattern_length))) {
+            member.semantic_chain.size() != rule->semantic_pattern_length()))) {
         record_error(error, "physical execution tracker found an invalid physical member");
         return std::nullopt;
       }

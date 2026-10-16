@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -1315,6 +1316,311 @@ repair_global_sima_neat_lib_links
             "Packaged libsima_neat SONAME does not match its package manifest",
             result.stderr,
         )
+
+
+class RunnerRetirementTest(unittest.TestCase):
+    def test_only_bounded_native_retirement_is_allowed(self):
+        cases = [
+            ("neat-runtime", "0.5.0+3.0.0-prep.abc", "3.0.0", "simaai-runtime", "<< 0.6~", False),
+            ("neat-gst-plugins", "0.4.0+local.abc", "3.0.0", "simaai-runtime", "<< 0.6~", False),
+            ("neat-runtime", "0.6.0", "3.0.0", "simaai-runtime", "<< 0.6~", False),
+            ("neat-runtime", "0.5.0", "2.1.3", "simaai-runtime", "<< 0.6~", False),
+            ("neat-runtime", "0.5.0", "3.0.0", "other-runtime", "<< 0.6~", False),
+            ("neat-runtime", "0.5.0", "3.0.0", "simaai-runtime", "<< 9.0", False),
+            ("simaai-palette-modalix", "0.5.0", "3.0.0", "simaai-runtime", "<< 0.6~", False),
+        ]
+        cases.extend([
+            ("neat-gst-plugins", "0.5.0", "3.0.0", "simaai-scheduler", "<< 0.6~", True),
+            ("neat-runtime", "0.5.0", "3.0.0", "simaai-runner", "<< 0.6~", False),
+            ("neat-gst-plugins", "0.5.0", "3.0.0", "simaai-scheduler", "<< 9.0", False),
+        ])
+        for removed, version, platform, package, bound, accepted in cases:
+            with self.subTest(removed=removed, version=version, platform=platform, package=package, bound=bound):
+                result = run_bash(rf'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+printf '%s\n' '{{"platform-version":"{platform}"}}' > "$tmp/manifest.json"
+resolve_package_manifest_path() {{ printf '%s' "$tmp/manifest.json"; }}
+touch "$tmp/runner.deb"
+printf '%s\n' 'Remv {removed} [{version}]' > "$tmp/simulation"
+dpkg-query() {{ printf '%s' '{version}'; }}
+dpkg-deb() {{
+  case "$3" in
+    Package) printf '%s' '{package}' ;;
+    Breaks|Replaces) printf '%s' '{removed} ({bound})' ;;
+    *) return 1 ;;
+  esac
+}}
+verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb"
+''')
+                self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
+
+    def test_split_support_retirement_requires_both_real_providers(self):
+        for include_scheduler in (False, True):
+            extra = '\"$tmp/scheduler.deb\"' if include_scheduler else ''
+            result = run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+printf '%s\n' '{"platform-version":"3.0.0"}' > "$tmp/manifest.json"
+resolve_package_manifest_path() { printf '%s' "$tmp/manifest.json"; }
+touch "$tmp/runner.deb" "$tmp/scheduler.deb"
+printf '%s\n' 'Remv neat-runtime [0.5.0]' > "$tmp/simulation"
+dpkg-query() { printf '%s' '0.5.0'; }
+dpkg-deb() {
+  case "$3" in
+    Package) if [[ "$2" == *scheduler.deb ]]; then printf simaai-scheduler; else printf simaai-runner; fi ;;
+    Breaks|Replaces) printf '%s' 'neat-runtime (<< 0.6~)' ;;
+    *) return 1 ;;
+  esac
+}
+verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb" ''' + extra)
+            self.assertEqual(result.returncode == 0, include_scheduler, result.stdout + result.stderr)
+
+
+class InstalledCoreLibraryLayoutTest(unittest.TestCase):
+    def test_package_manifest_selects_library_directory(self) -> None:
+        for layout in ("lib", "lib64", "lib/aarch64-linux-gnu"):
+            with self.subTest(layout=layout):
+                result = run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+fixture_dir="${tmp}/usr/''' + layout + r'''"
+mkdir -p "${fixture_dir}"
+touch "${fixture_dir}/libsima_neat.so.3.0.0"
+# Exercise the real discovery and repair functions, not a libdir override.
+dpkg-query() {
+  [[ "$1" == '-L' && "$2" == 'sima-neat' ]] || return 1
+  printf '%s\n' "${fixture_dir}/libsima_neat.so.3.0.0" \
+    "${fixture_dir}/libsima_neat.so.4" "${fixture_dir}/libsima_neat.so"
+}
+read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.4'; }
+run_sudo() { "$@"; }
+[[ "$(sima_neat_global_lib_dir)" == "${fixture_dir}" ]]
+repair_global_sima_neat_lib_links
+verify_global_sima_neat_lib_links
+[[ "$(readlink "${fixture_dir}/libsima_neat.so.4")" == 'libsima_neat.so.3.0.0' ]]
+[[ "$(readlink "${fixture_dir}/libsima_neat.so")" == 'libsima_neat.so.4' ]]
+printf 'LAYOUT_OK\n'
+''')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("LAYOUT_OK", result.stdout)
+
+    def test_multiple_versioned_paths_are_rejected_before_repair(self) -> None:
+        result = run_bash(r'''
+source "$1"
+dpkg-query() {
+  [[ "$1" == '-L' && "$2" == 'sima-neat' ]] || return 1
+  printf '%s\n' /usr/lib/libsima_neat.so.3.0.0 \
+    /usr/lib/aarch64-linux-gnu/libsima_neat.so.3.0.0
+}
+run_sudo() { printf 'UNEXPECTED_MUTATION\n'; return 1; }
+repair_global_sima_neat_lib_links
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one packaged versioned", result.stderr)
+        self.assertNotIn("UNEXPECTED_MUTATION", result.stdout)
+
+    def test_soname_must_belong_to_selected_directory(self) -> None:
+        result = run_bash(r'''
+source "$1"
+dpkg-query() {
+  [[ "$1" == '-L' && "$2" == 'sima-neat' ]] || return 1
+  printf '%s\n' /usr/lib/aarch64-linux-gnu/libsima_neat.so.3.0.0 \
+    /usr/lib/libsima_neat.so.4
+}
+run_sudo() { printf 'UNEXPECTED_MUTATION\n'; return 1; }
+repair_global_sima_neat_lib_links
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one packaged libsima_neat SONAME", result.stderr)
+        self.assertNotIn("UNEXPECTED_MUTATION", result.stdout)
+
+
+class BoardExactReinstallTest(unittest.TestCase):
+    SETUP = r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+apt_package_database_is_healthy() { return 0; }
+collect_board_heal_specs() { :; }
+complete_board_install_after_packages() { :; }
+board_runtime_is_legacy() { return 0; }
+'''
+
+    def test_exact_architecture_version_specs_are_deduplicated(self) -> None:
+        result = run_bash(self.SETUP + r'''
+DEBS=(./runtime.deb ./headers.deb ./runtime.deb)
+dpkg-deb() {
+  case "$2:$3" in
+    ./runtime.deb:Package) echo example-runtime ;;
+    ./headers.deb:Package) echo example-headers ;;
+    *:Version) echo 1.2.3 ;;
+    ./runtime.deb:Architecture) echo arm64 ;;
+    ./headers.deb:Architecture) echo all ;;
+    *) return 1 ;;
+  esac
+}
+run_sudo() { printf '%s\n' "$*" >> "${tmp}/commands"; }
+install_debs_on_board
+cat "${tmp}/commands"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [line for line in result.stdout.splitlines() if line.startswith("apt-get install")]
+        self.assertEqual(len(commands), 2)
+        for command in commands:
+            for spec in ("./runtime.deb", "./headers.deb", "example-runtime:arm64=1.2.3", "example-headers=1.2.3"):
+                self.assertEqual(command.split().count(spec), 1)
+        self.assertIn("--simulate", commands[0])
+        self.assertNotIn("--simulate", commands[1])
+
+    def test_conflicting_local_versions_fail_before_apt(self) -> None:
+        result = run_bash(self.SETUP + r'''
+DEBS=(./one.deb ./two.deb)
+dpkg-deb() {
+  case "$3" in
+    Package) echo example-runtime ;;
+    Architecture) echo arm64 ;;
+    Version) [[ "$2" == ./one.deb ]] && echo 1 || echo 2 ;;
+    *) return 1 ;;
+  esac
+}
+run_sudo() { printf 'UNEXPECTED_APT\n'; }
+install_debs_on_board
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Conflicting local DEB versions", result.stderr)
+        self.assertNotIn("UNEXPECTED_APT", result.stdout)
+
+    def test_real_apt_simulation_reinstalls_same_version_local_deb(self) -> None:
+        # A private dpkg status and empty source lists keep this behavioral
+        # probe read-only. No package is installed, and no target code runs.
+        result = run_bash(self.SETUP + r'''
+command -v apt-get >/dev/null
+command -v dpkg-deb >/dev/null
+mkdir -p "${tmp}/package/DEBIAN" "${tmp}/lists/partial" "${tmp}/cache/archives/partial" "${tmp}/sources"
+cat > "${tmp}/package/DEBIAN/control" <<'CONTROL'
+Package: neat-reinstall-probe
+Version: 1.0
+Architecture: all
+Maintainer: Test <test@example.invalid>
+Description: local reinstall simulation fixture
+CONTROL
+{ cat "${tmp}/package/DEBIAN/control"; printf 'Status: install ok installed\n'; } > "${tmp}/status"
+dpkg-deb --build --root-owner-group "${tmp}/package" "${tmp}/probe.deb" >/dev/null
+DEBS=("${tmp}/probe.deb")
+run_sudo() {
+  if [[ " $* " == *" --simulate "* ]]; then
+    shift
+    command apt-get -o "Dir::State::status=${tmp}/status" \
+      -o "Dir::State::lists=${tmp}/lists" -o "Dir::Cache=${tmp}/cache" \
+      -o Dir::Etc::sourcelist=/dev/null -o "Dir::Etc::sourceparts=${tmp}/sources" \
+      -o APT::Get::Download=false -o APT::Get::Remove=false "$@" > "${tmp}/simulation"
+    cat "${tmp}/simulation"
+  fi
+  # Deliberately do not execute the non-simulated transaction or apt check.
+}
+install_debs_on_board
+cat "${tmp}/simulation"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Inst neat-reinstall-probe [1.0] (1.0 local-deb", result.stdout)
+        self.assertIn("1 reinstalled", result.stdout)
+
+
+class DirectPlatformPreservationTest(unittest.TestCase):
+    def probe(self, script: str) -> subprocess.CompletedProcess[str]:
+        # Relocate only the canonical filesystem path in an isolated copy;
+        # retain the production functions and use real files/hashes/permissions.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ota = root / "simaai-ota"
+            installer = root / "installer.sh"
+            installer.write_text(INSTALLER.read_text().replace("/usr/bin/simaai-ota", str(ota)))
+            return run_bash(r'''
+source "$1"
+ota_fixture="''' + str(ota) + r'''"
+fixture_declared=0
+legacy=1
+fixture_owner=simaai-palette-modalix
+version=1
+board_runtime_is_legacy() { return "$legacy"; }
+deb_package_is_installed() { return 0; }
+simaai_ota_command_path() { [[ -x "$ota_fixture" ]] && printf '%s\n' "$ota_fixture" || true; }
+dpkg-query() {
+  case "$1" in
+    -L) [[ "$fixture_declared" == 1 ]] && printf '%s\n' "$ota_fixture" || printf '/usr/share/doc/palette\n' ;;
+    -S) printf '%s: %s\n' "$fixture_owner" "$ota_fixture" ;;
+    -W) printf 'simaai-palette-modalix\t%s\tarm64\tinstall ok installed\n' "$version" ;;
+    *) return 1 ;;
+  esac
+}
+repair_global_sima_neat_lib_links() { :; }
+verify_global_sima_neat_lib_links() { :; }
+activate_board_runtime_after_install() { :; }
+restart_board_codec_services() { :; }
+verify_board_codec_services() { :; }
+verify_board_runtime_services() { :; }
+''' + script, target=installer)
+
+    def test_undeclared_absence_and_declared_present_are_supported(self) -> None:
+        for present in (False, True):
+            with self.subTest(present=present):
+                result = self.probe((r'''
+fixture_declared=1
+printf '#!/bin/sh\nexit 0\n' > "$ota_fixture"
+chmod 755 "$ota_fixture"
+''' if present else '') + r'''
+before="$(capture_direct_platform_identity)"
+complete_board_install_after_packages "$before"
+printf '%s\n' "$before"
+''')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("OTA_PRESENT" if present else "OTA_ABSENT", result.stdout)
+
+    def test_missing_declared_or_legacy_ota_is_rejected(self) -> None:
+        for setup in ("fixture_declared=1", "legacy=0"):
+            with self.subTest(setup=setup):
+                result = self.probe(setup + "\nverify_canonical_palette_and_ota_installation\n")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(result.stderr, "Canonical simaai-ota is missing|Palette OTA declaration")
+
+    def test_unowned_or_shadowed_ota_is_rejected(self) -> None:
+        for change in ("fixture_owner=other", "fixture_owner=$'simaai-palette-modalix: /unrelated\\nother'",
+                       "simaai_ota_command_path() { echo /unexpected/simaai-ota; }"):
+            with self.subTest(change=change):
+                result = self.probe(r'''
+fixture_declared=1
+printf '#!/bin/sh\n' > "$ota_fixture"
+chmod 755 "$ota_fixture"
+''' + change + "\nverify_canonical_palette_and_ota_installation\n")
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_post_install_identity_changes_are_rejected(self) -> None:
+        for change in ("rm -- \"$ota_fixture\"", "printf changed >> \"$ota_fixture\"", "version=2"):
+            with self.subTest(change=change):
+                result = self.probe(r'''
+fixture_declared=1
+printf '#!/bin/sh\n' > "$ota_fixture"
+chmod 755 "$ota_fixture"
+before="$(capture_direct_platform_identity)"
+''' + change + '\ncomplete_board_install_after_packages "$before"\n')
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_absent_to_present_is_rejected(self) -> None:
+        result = self.probe(r'''
+before="$(capture_direct_platform_identity)"
+fixture_declared=1
+printf '#!/bin/sh\n' > "$ota_fixture"
+chmod 755 "$ota_fixture"
+complete_board_install_after_packages "$before"
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Native Palette/OTA identity changed", result.stderr)
 
 
 def _take_path_option(flag: str) -> Path | None:

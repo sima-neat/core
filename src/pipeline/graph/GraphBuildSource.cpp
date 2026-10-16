@@ -6,6 +6,7 @@
 #include "GraphDetail.h"
 #include "internal/GraphBuildInternal.h"
 #include "pipeline/internal/RtpJpegEndMarker.h"
+#include "pipeline/internal/TensorUtil.h"
 
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
@@ -619,12 +620,8 @@ GstBuffer* source_sima_meta_preserve_existing(GstBuffer* buffer, SourceSimaMetaP
                                                                        : fallback_buffer_name);
   source_sima_meta_set_int_if_missing(s, "origin_output_slot", 0);
 
-  gint64 phys_addr = 0;
-  if (gst_buffer_n_memory(writable) > 0) {
-    phys_addr = static_cast<gint64>(
-        gst_simaai_segment_memory_get_phys_addr(gst_buffer_peek_memory(writable, 0)));
-  }
-  source_sima_meta_set_int64_if_missing(s, "buffer-id", phys_addr);
+  // Legacy envelope field only; memory authority is the retained GstMemory.
+  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(0), nullptr);
   source_sima_meta_set_int64_if_missing(s, "buffer-offset", 0);
   source_sima_meta_set_uint64_if_missing(
       s, "timestamp", static_cast<guint64>(timing.pts_ns.value_or(static_cast<std::uint64_t>(0))));
@@ -1288,7 +1285,7 @@ struct FusedRealtimePadProbeCtx {
 std::vector<std::string> fused_realtime_probe_patterns() {
   const std::string raw =
       env_str("SIMA_FUSED_REALTIME_PAD_PROBE_ELEMENTS",
-              "latestmux,neatlatest,preproc,processcvu,processmla,mla,boxdecode,appsink");
+              "latestmux,neatlatest,preproc,neatkernelrunner,processcvu,processmla,mla,boxdecode,appsink");
   std::vector<std::string> out;
   std::string cur;
   auto flush = [&]() {
@@ -1531,7 +1528,7 @@ struct FusedStageCounterProbeCtx {
 std::vector<std::string> fused_stage_counter_patterns() {
   const std::string raw =
       env_str("SIMA_FUSED_STAGE_COUNTER_ELEMENTS",
-              "latestmux,neatlatest,processcvu,preproc,processmla,mla,boxdecode,objectdecode,"
+              "latestmux,neatlatest,neatkernelrunner,processcvu,preproc,processmla,mla,boxdecode,objectdecode,"
               "appsink");
   std::vector<std::string> out;
   std::string cur;
@@ -1590,7 +1587,8 @@ fused_stage_counter_kind_for_pad(const std::string& elem_name, const std::string
     }
   }
 
-  if (factory.find("processcvu") != std::string::npos ||
+  if (factory.find("neatkernelrunner") != std::string::npos ||
+      factory.find("processcvu") != std::string::npos ||
       factory.find("preproc") != std::string::npos ||
       elem.find("processcvu") != std::string::npos || elem.find("preproc") != std::string::npos) {
     if (is_sink) {
@@ -1906,49 +1904,6 @@ Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
     throw std::runtime_error("encoded H.264 caps are unavailable");
   }
 
-  if (copy_output) {
-    GstMapInfo map = GST_MAP_INFO_INIT;
-    if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-      throw std::runtime_error("failed to map encoded H.264 buffer");
-    }
-    std::vector<std::uint8_t> bytes;
-    try {
-      bytes.assign(map.data, map.data + map.size);
-    } catch (...) {
-      gst_buffer_unmap(buffer, &map);
-      throw;
-    }
-    gst_buffer_unmap(buffer, &map);
-    if (bytes.empty()) {
-      throw std::runtime_error("encoded H.264 buffer is empty");
-    }
-
-    gchar* caps_text = gst_caps_to_string(caps);
-    if (!caps_text || !*caps_text) {
-      if (caps_text) {
-        g_free(caps_text);
-      }
-      throw std::runtime_error("encoded H.264 caps are empty");
-    }
-    const std::string caps_string(caps_text);
-    g_free(caps_text);
-    const std::int64_t pts = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))
-                                 ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer))
-                                 : -1;
-    const std::int64_t dts = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))
-                                 ? static_cast<std::int64_t>(GST_BUFFER_DTS(buffer))
-                                 : -1;
-    const std::int64_t duration = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DURATION(buffer))
-                                      ? static_cast<std::int64_t>(GST_BUFFER_DURATION(buffer))
-                                      : -1;
-    Sample sample = make_encoded_sample(std::move(bytes), caps_string, pts, dts, duration);
-    const GstStructure* structure = gst_caps_get_structure(caps, 0);
-    const char* media_type = structure ? gst_structure_get_name(structure) : nullptr;
-    sample.media_type = media_type ? media_type : "";
-    sample.stream_id = stream_id;
-    return sample;
-  }
-
   GstSample* gst_sample = gst_sample_new(buffer, caps, nullptr, nullptr);
   if (!gst_sample) {
     throw std::runtime_error("failed to create encoded H.264 sample");
@@ -2049,6 +2004,9 @@ Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
                              ? static_cast<std::int64_t>(GST_BUFFER_DURATION(buffer))
                              : -1;
     sample.stream_id = stream_id;
+    if (copy_output) {
+      pipeline_internal::materialize_owned_output(sample);
+    }
     gst_sample_unref(gst_sample);
     return sample;
   } catch (...) {
@@ -2735,7 +2693,7 @@ std::string fused_consumer_segment_factory(const std::string& segment) {
 }
 
 bool is_fused_consumer_stage_factory(const std::string& factory) {
-  return factory == "neatprocesscvu" || factory == "neatprocessmla" ||
+  return factory == "neatkernelrunner" || factory == "neatprocessmla" ||
          factory == "neatobjectdecode";
 }
 
@@ -2845,31 +2803,17 @@ fused_first_processcvu_element_name(const std::vector<std::shared_ptr<Node>>& co
     const std::string rendered_fragment =
         session_build_apply_fast_path_options_to_fragment(fragment.fragment, &options);
     for (const auto& segment : split_fused_consumer_segments(rendered_fragment)) {
-      if (fused_consumer_segment_factory(segment) != "neatprocesscvu") {
+      if (fused_consumer_segment_factory(segment) != "neatkernelrunner") {
         continue;
       }
-      // In the prepared-direct synchronous hot path ProcessCVU may defer
-      // unreffing its input list until after src push. Async completion cleans
-      // that list before finish_buffer(), so only async=true is a proven
-      // decoder-buffer release boundary. Sync chains retain terminal release.
-      const auto async = fused_consumer_segment_property_value(segment, "async");
-      if (!async || (*async != "true" && *async != "1")) {
-        return std::nullopt;
-      }
-      if (const auto buffers = fused_consumer_segment_property_value(segment, "num-buffers");
-          buffers) {
-        char* end = nullptr;
-        const unsigned long parsed = std::strtoul(buffers->c_str(), &end, 10);
-        if (end == buffers->c_str() || !end || *end != '\0' || parsed <= 1UL) {
-          return std::nullopt;
-        }
-      }
+      // Runtime releases input loans before publication, including the sync
+      // facade and one-slot execution. No per-frame property probing is needed.
       if (auto name = fused_consumer_segment_property_raw_value(segment, "name");
           name && !name->empty()) {
         return name;
       }
       // Framework nodes declare every concrete element name. A nameless
-      // ProcessCVU fragment is invalid for probe attachment, but retaining the
+      // runner fragment is invalid for probe attachment, but retaining the
       // single-name fallback keeps custom test nodes deterministic.
       if (fragment.element_names.size() == 1U && !fragment.element_names.front().empty()) {
         return fragment.element_names.front();
@@ -2882,10 +2826,9 @@ fused_first_processcvu_element_name(const std::vector<std::shared_ptr<Node>>& co
 
 struct FusedRawInputCreditProbeCtx {
   std::uint64_t mux_namespace = 0;
-  std::atomic<int> runtime_early_release_enabled{-1};
 };
 
-GstPadProbeReturn fused_raw_input_credit_probe(GstPad* pad, GstPadProbeInfo* info,
+GstPadProbeReturn fused_raw_input_credit_probe(GstPad*, GstPadProbeInfo* info,
                                                gpointer user_data) {
   auto* ctx = static_cast<FusedRawInputCreditProbeCtx*>(user_data);
   GstBuffer* buffer = info ? GST_PAD_PROBE_INFO_BUFFER(info) : nullptr;
@@ -2893,27 +2836,8 @@ GstPadProbeReturn fused_raw_input_credit_probe(GstPad* pad, GstPadProbeInfo* inf
     return GST_PAD_PROBE_OK;
   }
 
-  int enabled = ctx->runtime_early_release_enabled.load(std::memory_order_acquire);
-  if (enabled < 0) {
-    gboolean effective_async = FALSE;
-    gulong num_buffers = 0;
-    GstObject* parent = pad ? gst_pad_get_parent(pad) : nullptr;
-    if (parent) {
-      GObjectClass* object_class = G_OBJECT_GET_CLASS(parent);
-      if (g_object_class_find_property(object_class, "async") &&
-          g_object_class_find_property(object_class, "num-buffers")) {
-        g_object_get(G_OBJECT(parent), "async", &effective_async, "num-buffers", &num_buffers,
-                     nullptr);
-      }
-      gst_object_unref(parent);
-    }
-    enabled = effective_async == TRUE && num_buffers > 1UL ? 1 : 0;
-    ctx->runtime_early_release_enabled.store(enabled, std::memory_order_release);
-  }
-  if (enabled != 0) {
-    (void)pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
-        buffer, ctx->mux_namespace);
-  }
+  (void)pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+      buffer, ctx->mux_namespace);
   return GST_PAD_PROBE_OK;
 }
 
@@ -3268,6 +3192,7 @@ BuildResult build_fused_realtime_source_pipeline(
   br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(
       session_build_select_terminal_objectdecode_cpu_visibility(ss.str()));
   br.pipeline_string = br.diag->pipeline_string;
+  session_build_initialize_kernel_runner_budget(&br, &sess_opt);
   return br;
 }
 

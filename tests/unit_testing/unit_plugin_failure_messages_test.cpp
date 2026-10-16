@@ -6,10 +6,8 @@
 #include "nodes/io/Input.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/SimaDecode.h"
-#include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
-#include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_utils.h"
 
 #include <cstdio>
@@ -24,6 +22,8 @@
 #include <gst/gst.h>
 
 #include <unistd.h>
+
+
 
 static void maybe_dump_error(const std::string& label, const std::string& err) {
   const char* env = std::getenv("SIMA_TEST_DUMP_ERRORS");
@@ -73,11 +73,7 @@ static std::string expect_pipeline_error(const std::string& label,
   throw std::runtime_error(label + ": expected NeatError, got success");
 }
 
-static void require_resolution_fields(const std::string& err) {
-  require_contains(err, "source_used=", "missing source_used field");
-  require_contains(err, "missing_field=", "missing missing_field field");
-  require_contains(err, "fallback_chain=", "missing fallback_chain field");
-}
+
 
 static void require_configuration_error(const std::string& err, const std::string& stage) {
   require_contains(err, "[io.parse]", "expected the configuration error code");
@@ -108,146 +104,9 @@ static void require_caps_production_error(const std::string& err, const std::str
           "production error should not expose a raw GST ERROR dump");
 }
 
-static std::string expect_raw_gst_pipeline_error(const std::string& label,
-                                                 const std::string& pipeline_desc,
-                                                 GstState target = GST_STATE_READY) {
-  GError* parse_err = nullptr;
-  GstElement* pipeline = gst_parse_launch(pipeline_desc.c_str(), &parse_err);
-  if (!pipeline || parse_err != nullptr) {
-    std::string msg = label + ": gst_parse_launch failed";
-    if (parse_err && parse_err->message) {
-      msg += ": ";
-      msg += parse_err->message;
-    }
-    if (parse_err) {
-      g_error_free(parse_err);
-    }
-    if (pipeline) {
-      gst_object_unref(pipeline);
-    }
-    throw std::runtime_error(msg);
-  }
 
-  GstBus* bus = gst_element_get_bus(pipeline);
-  if (!bus) {
-    gst_object_unref(pipeline);
-    throw std::runtime_error(label + ": missing bus");
-  }
 
-  (void)gst_element_set_state(pipeline, target);
-  GstMessage* msg = gst_bus_timed_pop_filtered(bus, 3 * GST_SECOND, GST_MESSAGE_ERROR);
 
-  std::string out;
-  if (!msg) {
-    gst_element_set_state(pipeline, GST_STATE_NULL);
-    gst_object_unref(bus);
-    gst_object_unref(pipeline);
-    throw std::runtime_error(label + ": expected GST_MESSAGE_ERROR, got timeout");
-  }
-
-  GError* gerr = nullptr;
-  gchar* debug = nullptr;
-  gst_message_parse_error(msg, &gerr, &debug);
-  if (gerr && gerr->message) {
-    out += gerr->message;
-  }
-  if (debug && *debug) {
-    if (!out.empty()) {
-      out += " | ";
-    }
-    out += debug;
-  }
-  if (gerr) {
-    g_error_free(gerr);
-  }
-  if (debug) {
-    g_free(debug);
-  }
-
-  gst_message_unref(msg);
-  gst_element_set_state(pipeline, GST_STATE_NULL);
-  gst_object_unref(bus);
-  gst_object_unref(pipeline);
-  return out;
-}
-
-static std::string expect_raw_gst_pipeline_error_with_manifest_context(
-    const std::string& label, const std::string& pipeline_desc, const std::string& manifest_json,
-    GstState target = GST_STATE_READY) {
-  using namespace simaai::neat::pipeline_internal::sima;
-
-  GError* parse_err = nullptr;
-  GstElement* pipeline = gst_parse_launch(pipeline_desc.c_str(), &parse_err);
-  if (!pipeline || parse_err != nullptr) {
-    std::string msg = label + ": gst_parse_launch failed";
-    if (parse_err && parse_err->message) {
-      msg += ": ";
-      msg += parse_err->message;
-    }
-    if (parse_err) {
-      g_error_free(parse_err);
-    }
-    if (pipeline) {
-      gst_object_unref(pipeline);
-    }
-    throw std::runtime_error(msg);
-  }
-
-  std::string parse_error;
-  const auto manifest = parse_manifest_json(manifest_json, &parse_error);
-  if (!manifest.has_value()) {
-    gst_object_unref(pipeline);
-    throw std::runtime_error(label + ": failed to parse manifest json: " + parse_error);
-  }
-
-  std::string attach_error;
-  if (!attach_manifest_context(pipeline, *manifest, &attach_error)) {
-    gst_object_unref(pipeline);
-    throw std::runtime_error(label + ": failed to attach manifest context: " + attach_error);
-  }
-
-  GstBus* bus = gst_element_get_bus(pipeline);
-  if (!bus) {
-    gst_object_unref(pipeline);
-    throw std::runtime_error(label + ": missing bus");
-  }
-
-  (void)gst_element_set_state(pipeline, target);
-  GstMessage* msg = gst_bus_timed_pop_filtered(bus, 3 * GST_SECOND, GST_MESSAGE_ERROR);
-
-  std::string out;
-  if (!msg) {
-    gst_element_set_state(pipeline, GST_STATE_NULL);
-    gst_object_unref(bus);
-    gst_object_unref(pipeline);
-    throw std::runtime_error(label + ": expected GST_MESSAGE_ERROR, got timeout");
-  }
-
-  GError* gerr = nullptr;
-  gchar* debug = nullptr;
-  gst_message_parse_error(msg, &gerr, &debug);
-  if (gerr && gerr->message) {
-    out += gerr->message;
-  }
-  if (debug && *debug) {
-    if (!out.empty()) {
-      out += " | ";
-    }
-    out += debug;
-  }
-  if (gerr) {
-    g_error_free(gerr);
-  }
-  if (debug) {
-    g_free(debug);
-  }
-
-  gst_message_unref(msg);
-  gst_element_set_state(pipeline, GST_STATE_NULL);
-  gst_object_unref(bus);
-  gst_object_unref(pipeline);
-  return out;
-}
 
 static void test_processmla_failure() {
   TempFile cfg = write_temp("sima_mla_bad", "{\n"
@@ -313,316 +172,21 @@ static void test_boxdecode_failure() {
   require_configuration_error(err, "box_fail");
 }
 
-static void test_boxdecode_missing_manifest_context_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatobjectdecode name=box_ctx_fail "
-                               "stage-id=stage_box_ctx ! fakesink";
-  const std::string err = expect_raw_gst_pipeline_error("boxdecode_missing_context", pipeline);
 
-  maybe_dump_error("boxdecode_missing_context", err);
-  require_contains(err, "Missing", "missing context error summary");
-  require_contains(err, "missing_field=", "missing manifest detail");
-  require_contains(err, "no_fallback=true", "expected explicit no-fallback marker");
-}
 
-static void test_boxdecode_missing_manifest_stage_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatobjectdecode name=box_stage_fail "
-                               "stage-id=stage_box_missing ! fakesink";
-  const std::string manifest = R"({
-    "session_id": "sess-missing-stage",
-    "stages": [
-      {
-        "element_name": "some_other_stage",
-        "logical_stage_id": "stage_other",
-        "plugin_kind": "neatobjectdecode",
-        "kernel_kind": "boxdecode"
-      }
-    ]
-  })";
-  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
-      "boxdecode_missing_stage", pipeline, manifest);
 
-  maybe_dump_error("boxdecode_missing_stage", err);
-  require_contains(err, "Missing", "missing stage error summary");
-  require_contains(err, "missing_field=", "missing stage detail");
-  require_contains(err, "no_fallback=true", "expected explicit no-fallback marker");
-}
 
-static void test_boxdecode_ambiguous_sink_map_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatobjectdecode name=box_map_fail "
-                               "stage-id=stage_box_map ! fakesink";
-  const std::string manifest = R"({
-    "session_id": "sess-ambiguous-map",
-    "stages": [
-      {
-        "element_name": "box_map_fail",
-        "logical_stage_id": "stage_box_map",
-        "plugin_kind": "neatobjectdecode",
-        "kernel_kind": "boxdecode",
-        "logical_inputs": [
-          {
-            "logical_index": 0,
-            "backend_input_index": 0,
-            "physical_index": 0,
-            "shape": [84,80,80],
-            "dtype": "INT8",
-            "layout": "CHW",
-            "logical_name": "tensor0",
-            "backend_name": "tensor0",
-            "segment_name": "tensor0"
-          },
-          {
-            "logical_index": 1,
-            "backend_input_index": 1,
-            "physical_index": 1,
-            "shape": [84,40,40],
-            "dtype": "INT8",
-            "layout": "CHW",
-            "logical_name": "tensor1",
-            "backend_name": "tensor1",
-            "segment_name": "tensor1"
-          }
-        ],
-        "input_bindings": [
-          {
-            "sink_pad_index": 0,
-            "local_logical_input_index": 0,
-            "src_stage_id": "upstream",
-            "src_logical_output_index": 0,
-            "src_output_slot": 0,
-            "src_physical_output_index": 0,
-            "required": true,
-            "cm_input_name": "tensor0",
-            "source_segment_name": "tensor0"
-          },
-          {
-            "sink_pad_index": 1,
-            "local_logical_input_index": 0,
-            "src_stage_id": "upstream",
-            "src_logical_output_index": 1,
-            "src_output_slot": 1,
-            "src_physical_output_index": 1,
-            "required": true,
-            "cm_input_name": "tensor1",
-            "source_segment_name": "tensor1"
-          }
-        ],
-        "physical_inputs": [
-          {"physical_index": 0, "allocator_index": 0, "size_bytes": 537600, "device_kind": "CPU", "memory_flags": 0, "segment_name": "tensor0"},
-          {"physical_index": 1, "allocator_index": 0, "size_bytes": 134400, "device_kind": "CPU", "memory_flags": 0, "segment_name": "tensor1"}
-        ]
-      }
-    ]
-  })";
-  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
-      "boxdecode_ambiguous_map", pipeline, manifest);
 
-  maybe_dump_error("boxdecode_ambiguous_map", err);
-  // Error path now surfaces as "Manifest payload kind mismatch" earlier in
-  // the boxdecode change_state, before the strict v3 typed-payload check.
-  require(!err.empty(), "ambiguous boxdecode setup should fail");
-}
 
-static void test_processcvu_missing_manifest_context_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=cvu_ctx_fail stage-id=stage_cvu_ctx ! fakesink";
-  const std::string err = expect_raw_gst_pipeline_error("processcvu_missing_context", pipeline);
+// Kernel identity and parameters are admitted into a retained Runtime stage,
+// not reparsed by an operation-specific element from a legacy manifest.
 
-  maybe_dump_error("processcvu_missing_context", err);
-  require_contains(err, "Missing", "missing context error summary");
-  require_contains(err, "missing_field=", "missing context field marker");
-  require_resolution_fields(err);
-}
 
-static void test_processcvu_missing_manifest_stage_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=cvu_stage_fail "
-                               "stage-id=stage_cvu_missing ! fakesink";
-  const std::string manifest = R"({
-    "session_id": "sess-cvu-missing-stage",
-    "stages": [
-      {
-        "element_name": "some_other_stage",
-        "logical_stage_id": "stage_other",
-        "plugin_kind": "neatprocesscvu",
-        "kernel_kind": "preproc"
-      }
-    ]
-  })";
-  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
-      "processcvu_missing_stage", pipeline, manifest);
 
-  maybe_dump_error("processcvu_missing_stage", err);
-  require_contains(err, "Missing", "missing stage error summary");
-  require_contains(err, "missing_field=", "missing stage detail field marker");
-  require_resolution_fields(err);
-}
 
-static void test_processmla_missing_manifest_context_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocessmla name=mla_ctx_fail stage-id=stage_mla_ctx ! fakesink";
-  const std::string err =
-      expect_raw_gst_pipeline_error("processmla_missing_context", pipeline, GST_STATE_PAUSED);
 
-  maybe_dump_error("processmla_missing_context", err);
-  require_contains(err, "Missing", "missing context error summary");
-  require_resolution_fields(err);
-}
 
-static void test_processmla_missing_manifest_stage_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocessmla name=mla_stage_fail "
-                               "stage-id=stage_mla_missing ! fakesink";
-  const std::string manifest = R"({
-    "session_id": "sess-mla-missing-stage",
-    "stages": [
-      {
-        "element_name": "some_other_stage",
-        "logical_stage_id": "stage_other",
-        "plugin_kind": "neatprocessmla",
-        "kernel_kind": "mla"
-      }
-    ]
-  })";
-  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
-      "processmla_missing_stage", pipeline, manifest, GST_STATE_PAUSED);
 
-  maybe_dump_error("processmla_missing_stage", err);
-  require_contains(err, "Missing", "missing stage error summary");
-  require_contains(err, "missing_field=", "missing stage detail field marker");
-  require_resolution_fields(err);
-}
-
-static void test_detessdequant_missing_manifest_context_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=detess_ctx_fail "
-                               "stage-id=stage_detessdequant_ctx ! fakesink";
-  const std::string err =
-      expect_raw_gst_pipeline_error("detessdequant_missing_context", pipeline, GST_STATE_PAUSED);
-
-  maybe_dump_error("detessdequant_missing_context", err);
-  require_contains(err, "Missing", "missing context error summary");
-  require_resolution_fields(err);
-}
-
-static void test_detessdequant_missing_manifest_stage_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=detess_stage_fail "
-                               "stage-id=stage_detessdequant_missing ! fakesink";
-  const std::string manifest = R"({
-    "session_id": "sess-detess-missing-stage",
-    "stages": [
-      {
-        "element_name": "some_other_stage",
-        "logical_stage_id": "stage_other",
-        "plugin_kind": "neatprocesscvu",
-        "kernel_kind": "detessdequant"
-      }
-    ]
-  })";
-  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
-      "detessdequant_missing_stage", pipeline, manifest, GST_STATE_PAUSED);
-
-  maybe_dump_error("detessdequant_missing_stage", err);
-  require_contains(err, "Missing", "missing stage error summary");
-  require_contains(err, "missing_field=", "missing stage detail field marker");
-  require_resolution_fields(err);
-}
-
-static void test_quantize_missing_manifest_context_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=quant_ctx_fail "
-                               "stage-id=stage_quantize_ctx ! fakesink";
-  const std::string err = expect_raw_gst_pipeline_error("quantize_missing_context", pipeline);
-
-  maybe_dump_error("quantize_missing_context", err);
-  require_contains(err, "Missing", "missing context error summary");
-  require_resolution_fields(err);
-}
-
-static void test_quantize_missing_manifest_stage_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=quant_stage_fail "
-                               "stage-id=stage_quantize_missing ! fakesink";
-  const std::string manifest = R"({
-    "session_id": "sess-quant-missing-stage",
-    "stages": [
-      {
-        "element_name": "some_other_stage",
-        "logical_stage_id": "stage_other",
-        "plugin_kind": "neatprocesscvu",
-        "kernel_kind": "quantize"
-      }
-    ]
-  })";
-  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
-      "quantize_missing_stage", pipeline, manifest);
-
-  maybe_dump_error("quantize_missing_stage", err);
-  require_contains(err, "Missing", "missing stage error summary");
-  require_contains(err, "missing_field=", "missing stage detail field marker");
-  require_resolution_fields(err);
-}
-
-static void test_detessellate_missing_manifest_context_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=detessellate_ctx_fail "
-                               "stage-id=stage_detessellate_ctx ! fakesink";
-  const std::string err = expect_raw_gst_pipeline_error("detessellate_missing_context", pipeline);
-
-  maybe_dump_error("detessellate_missing_context", err);
-  require_contains(err, "Missing", "missing context error summary");
-  require_resolution_fields(err);
-}
-
-static void test_detessellate_missing_manifest_stage_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=detessellate_stage_fail "
-      "stage-id=stage_detessellate_missing ! fakesink";
-  const std::string manifest = R"({
-    "session_id": "sess-detessellate-missing-stage",
-    "stages": [
-      {
-        "element_name": "some_other_stage",
-        "logical_stage_id": "stage_other",
-        "plugin_kind": "neatprocesscvu",
-        "kernel_kind": "detessellate"
-      }
-    ]
-  })";
-  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
-      "detessellate_missing_stage", pipeline, manifest);
-
-  maybe_dump_error("detessellate_missing_stage", err);
-  require_contains(err, "Missing", "missing stage error summary");
-  require_contains(err, "missing_field=", "missing stage detail field marker");
-  require_resolution_fields(err);
-}
-
-static void test_dequantize_missing_manifest_context_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=dequantize_ctx_fail "
-                               "stage-id=stage_dequantize_ctx ! fakesink";
-  const std::string err = expect_raw_gst_pipeline_error("dequantize_missing_context", pipeline);
-
-  maybe_dump_error("dequantize_missing_context", err);
-  require_contains(err, "Missing", "missing context error summary");
-  require_resolution_fields(err);
-}
-
-static void test_dequantize_missing_manifest_stage_failure() {
-  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=dequantize_stage_fail "
-                               "stage-id=stage_dequantize_missing ! fakesink";
-  const std::string manifest = R"({
-    "session_id": "sess-dequantize-missing-stage",
-    "stages": [
-      {
-        "element_name": "some_other_stage",
-        "logical_stage_id": "stage_other",
-        "plugin_kind": "neatprocesscvu",
-        "kernel_kind": "dequantize"
-      }
-    ]
-  })";
-  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
-      "dequantize_missing_stage", pipeline, manifest);
-
-  maybe_dump_error("dequantize_missing_stage", err);
-  require_contains(err, "Missing", "missing stage error summary");
-  require_contains(err, "missing_field=", "missing stage detail field marker");
-  require_resolution_fields(err);
-}
 
 static void test_neatdecoder_failure() {
   const std::string caps = "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au,"
@@ -697,34 +261,17 @@ int main() {
 
     if (simaai::neat::element_exists("neatprocessmla")) {
       test_processmla_failure();
-      test_processmla_missing_manifest_context_failure();
-      test_processmla_missing_manifest_stage_failure();
       ran_any = true;
     } else {
       std::cout << "[SKIP] neatprocessmla element missing\n";
     }
 
-    if (simaai::neat::element_exists("neatprocesscvu")) {
-      test_processcvu_missing_manifest_context_failure();
-      test_processcvu_missing_manifest_stage_failure();
-      test_detessdequant_missing_manifest_context_failure();
-      test_detessdequant_missing_manifest_stage_failure();
-      test_quantize_missing_manifest_context_failure();
-      test_quantize_missing_manifest_stage_failure();
-      test_detessellate_missing_manifest_context_failure();
-      test_detessellate_missing_manifest_stage_failure();
-      test_dequantize_missing_manifest_context_failure();
-      test_dequantize_missing_manifest_stage_failure();
-      ran_any = true;
-    } else {
-      std::cout << "[SKIP] neatprocesscvu element missing\n";
-    }
+    require(simaai::neat::element_exists("neatkernelrunner"),
+            "Core startup must register the Runtime kernel element");
+    ran_any = true;
 
     if (simaai::neat::element_exists("neatobjectdecode")) {
       test_boxdecode_failure();
-      test_boxdecode_missing_manifest_context_failure();
-      test_boxdecode_missing_manifest_stage_failure();
-      test_boxdecode_ambiguous_sink_map_failure();
       ran_any = true;
     } else {
       std::cout << "[SKIP] neatobjectdecode element missing\n";

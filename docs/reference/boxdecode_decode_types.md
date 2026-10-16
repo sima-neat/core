@@ -10,6 +10,26 @@ sidebar_position: 6
 
 For normal model-pack usage, prefer the `Model`-aware constructor. The model archive supplies the tensor order, layout, quantization, class count, resize metadata, and score-domain hints needed by the decoder. Your application usually only chooses the decode family and filtering thresholds.
 
+## Runtime backend
+
+BoxDecode and SuperPoint use `neatkernelrunner` with checked Kernels executables.
+The public detection and feature output formats are unchanged. For direct tensor
+ingress, use shared-CMA tensors (`TensorMemory::EV74`), even when decode executes
+on A65: this memory choice supplies DMA-BUF transport, not the execution target.
+
+RCNN stage 1 uses the kernel-owned per-level top-K contract: global NMS,
+then up to `top_k` survivors per model-area level. Its output is a proposal wire,
+not the ordinary BBOX format: four groups, each containing an INT32 count and
+`top_k` six-FP16 records (`score, 0, x1, y1, x2, y2`). Coordinate conversion
+preserves fractional geometry until final serialization. Use it as stage-two
+proposal input, not with `decode_bbox_tensor()`. No legacy plugin is loaded.
+
+Padded, interleaved INT8, BF16 and FP32 SuperPoint heads use the native dense
+reader with explicit pixel strides. Padding is excluded from detector reductions
+and descriptor sampling without a Cast stage or materialization. INT8 ports
+retain their own authored quantization. Native MLA-tiled heads retain their
+declared physical layout; dense scalars are never relabeled as MLA byte planes.
+
 ## Quick start
 
 ```cpp
@@ -195,9 +215,11 @@ model family and model archive contract.
 
 ## Override contract
 
-The model archive can provide defaults for decode type, thresholds, `top_k`, and
-source geometry. Runtime arguments override those defaults only when you pass a
-non-empty or positive value.
+The MPK supplies tensor contracts and decode-family facts. Set filtering controls
+in `ModelOptions`. For a `SimaBoxDecode(Model, ...)` node, positive filtering
+arguments override the resolved Model controls; zero arguments inherit them.
+`ModelOptions.score_threshold = 0.0` is a real zero score gate, not a request to
+recover a packaged threshold.
 
 | Runtime argument | Value passed | Behavior |
 | --- | --- | --- |
@@ -205,12 +227,18 @@ non-empty or positive value.
 | `decode_type` | concrete type | Override the decode family for this run. |
 | `original_width` / `original_height` | `0` | Preserve packaged geometry or upstream preprocess metadata. |
 | `original_width` / `original_height` | positive integer | Override source dimensions for coordinate mapping. |
-| `detection_threshold` / `score_threshold` | `0.0` | Preserve packaged threshold. |
-| `detection_threshold` / `score_threshold` | `> 0.0` | Override the score gate. |
-| `nms_iou_threshold` | `0.0` | Preserve packaged NMS IoU. |
-| `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
-| `top_k` | `0` | Preserve packaged top-K. |
-| `top_k` | `> 0` | Override the maximum kept detections. |
+| Model-bound node `detection_threshold` | `0.0` | Inherit the resolved Model score gate. |
+| Model-bound node `detection_threshold` | `> 0.0` | Override the score gate. |
+| Model-bound node `nms_iou_threshold` | `0.0` | Inherit the resolved Model NMS IoU. |
+| Model-bound node `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
+| Model-bound node `top_k` | `0` | Inherit the resolved Model output cap. |
+| Model-bound node `top_k` | `> 0` | Override the maximum kept detections. |
+
+Bounding-box decoding requires a positive resolved `top_k`; zero does not request
+unbounded output storage. A zero score gate permits zero-valued scores, but does
+not bypass geometry validation, background exclusion, NMS or the output cap.
+At NMS IoU zero, YOLO26 skips NMS. Other NMS-enabled YOLO and SSD profiles still
+apply their quantized-IoU suppression. Positive YOLO26 thresholds enable NMS.
 
 `num_classes` compares the value configured by the caller with the class count
 derived from the MPK tensor contract:
@@ -252,7 +280,7 @@ feeds the same control.
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet detection |
-| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | R-CNN proposal stage |
+| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | Five ordered RPN heads; global NMS then top-K per area level |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNet detection |
 
 `BoxDecodeType::Unspecified` is an unset sentinel and fails before runtime. SSD recipe identity is
@@ -339,7 +367,7 @@ Advanced tensor-contract rules:
   default.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
-- `EffDet`, `RcnnStage1`, and `Centernet` use their model-family contracts; do
+- `EffDet` and `Centernet` use their model-family contracts; do
   not route them through a YOLO decode type.
 - `*-seg` decode types produce box-leading output plus task-specific mask data.
 

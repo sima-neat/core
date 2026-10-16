@@ -106,8 +106,9 @@ namespace {
   }
 
   GraphReport rep = pipeline_internal::error_util::make_report(code, oss.str());
-  throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 struct JsonValue {

@@ -65,16 +65,11 @@ Detess::Detess(DetessOptions opt) : opt_(std::move(opt)) {
 }
 
 std::string Detess::backend_fragment(int node_index) const {
-  std::ostringstream ss;
-  require_element("neatdetess", "Detess::backend_fragment");
   const std::string name = opt_.element_name.empty()
                                ? ("n" + std::to_string(node_index) + "_detess")
                                : opt_.element_name;
-  ss << "neatdetess name=" << name << " stage-id=" << name;
-  if (opt_.num_buffers > 0 && element_property_exists("neatdetess", "num-buffers")) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
-  return ss.str();
+  require_element("neatkernelrunner", "Detess::backend_fragment");
+  return "neatkernelrunner name=" + name;
 }
 
 std::vector<std::string> Detess::element_names(int node_index) const {
@@ -90,7 +85,7 @@ OutputSpec Detess::output_spec(const OutputSpec& input) const {
     out.depth = input.depth;
   }
   out.certainty = SpecCertainty::Hint;
-  out.note = "neatdetess";
+  out.note = "neatkernelrunner";
   return out;
 }
 
@@ -132,14 +127,14 @@ bool Detess::compile_node_contract(const ContractCompileInput& input, CompiledNo
     return pipeline_internal::sima::stagesemantics::build_transport_node_contract(
         kind(), element_name, element_name, contract_definition(), compiled, out, err);
   }
-  pipeline_internal::sima::stagesemantics::TransportCanonicalFacts facts;
-  facts.plugin_kind = "neatdetess";
-  facts.kernel_kind = "detess";
-  facts.model_managed_stage = opt_.num_buffers_locked;
-  const auto compiled =
-      pipeline_internal::sima::stagesemantics::build_transport_compiled_contract_from_facts(facts);
-  return pipeline_internal::sima::stagesemantics::build_transport_node_contract(
-      kind(), element_name, element_name, contract_definition(), compiled, out, err);
+  // A logical shape alone cannot recover MLA tile sizes or physical encoding.
+  // The former transport-only element failed later with missing tile geometry;
+  // fail at graph construction instead of guessing storage from caps or JSON.
+  if (err) {
+    *err = "Detess requires a compiled tensor/tile contract; use DetessOptions(Model) "
+           "or provide compiled_contract. A config file is not an inference contract.";
+  }
+  return false;
 }
 
 void Detess::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {

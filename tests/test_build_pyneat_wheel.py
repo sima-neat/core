@@ -10,6 +10,8 @@ import zipfile
 from pathlib import Path
 
 from packaging.metadata import Metadata
+from packaging.requirements import Requirement
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +24,31 @@ SPEC.loader.exec_module(MODULE)
 
 
 class BuildPyneatWheelTests(unittest.TestCase):
+    def test_current_numpy_markers_resolve_and_survive_cp313_wheel(self):
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+        requirements = [Requirement(item) for item in project["dependencies"]]
+        for python, accepted, rejected in (("3.12", "1.26.4", "2.1.0"),
+                                           ("3.13", "2.1.0", "1.26.4"),
+                                           ("3.14", "2.5.3", "3.0.0")):
+            with self.subTest(python=python):
+                active = [item for item in requirements if item.name == "numpy" and
+                          item.marker.evaluate({"python_version": python})]
+                self.assertEqual(len(active), 1)
+                self.assertIn(accepted, active[0].specifier)
+                self.assertNotIn(rejected, active[0].specifier)
+        with tempfile.TemporaryDirectory() as directory:
+            extension = Path(directory) / "_pyneat_core.cpython-313-aarch64-linux-gnu.so"
+            extension.write_bytes(b"HOST_METADATA_FIXTURE_NOT_ELF")
+            wheel = MODULE.build_wheel(ROOT, extension, Path(directory) / "dist", "1.2.3",
+                                       "cp313", "cp313", "linux_aarch64")
+            with zipfile.ZipFile(wheel) as archive:
+                metadata = Metadata.from_email(archive.read("pyneat-1.2.3.dist-info/METADATA"), validate=True)
+                numpy = [item for item in metadata.requires_dist if item.name == "numpy"]
+                self.assertEqual(len(numpy), 2)
+                active = [item for item in numpy if item.marker.evaluate({"python_version": "3.13"})]
+                self.assertEqual(len(active), 1)
+                self.assertIn("2.5.3", active[0].specifier)
+
     def test_packages_existing_extension_with_valid_record(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,5 +1,6 @@
 #include "gst/GstInit.h"
 #include "internal/InputStream.h"
+#include "pipeline/internal/InputPublicationMeasurement.h"
 #include "nodes/io/Input.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/GstTeardownBudget.h"
@@ -165,6 +166,10 @@ RUN_TEST(
                   InputStreamTeardownPolicy::MustReachNull,
               "ProcessMLA appsrc pipelines must use synchronous teardown");
       require(inputstream_pipeline_teardown_policy(
+                  "( appsrc name=mysrc ! neatkernelrunner name=kernel async=true ) ! fakesink") ==
+                  InputStreamTeardownPolicy::MustReachNull,
+              "numerical runner pipelines must retire device work before teardown returns");
+      require(inputstream_pipeline_teardown_policy(
                   "( appsrc name=mysrc ! neatprocesscvu name=cvu async=true ) ! fakesink") ==
                   InputStreamTeardownPolicy::MustReachNull,
               "ProcessCVU appsrc pipelines must use synchronous teardown");
@@ -222,6 +227,18 @@ RUN_TEST(
         stream_options.teardown_policy = teardown_policy;
         InputStream stream = InputStream::create(pipeline, appsrc, nullptr, make_encoded_spec(),
                                                  input_options, stream_options, {}, nullptr);
+        auto measurement = stream.input_publication_measurement();
+        require(bool(measurement), "stream must expose its cold measurement owner");
+        std::weak_ptr<pipeline_internal::InputPublicationMeasurement> weak_measurement =
+            measurement;
+        measurement->start(1);
+        GstBuffer* observed_input = gst_buffer_new();
+        auto* metadata = gst_buffer_add_custom_meta(observed_input, "GstSimaMeta");
+        require(metadata != nullptr, "measurement lifetime fixture metadata");
+        gst_structure_set(gst_custom_meta_get_structure(metadata), "stream-id", G_TYPE_STRING,
+                          "closed-stream", "orig-input-seq", G_TYPE_INT64, gint64{7}, nullptr);
+        auto pending_publication = measurement->observe(observed_input);
+        gst_buffer_unref(observed_input);
         stream.stop();
 
         const int starts = counts.starts.load(std::memory_order_relaxed);
@@ -231,6 +248,16 @@ RUN_TEST(
         (void)gst_element_get_state(observed_pipeline, &current, &pending, 0);
         gst_object_unref(observed_pipeline);
         stream.close();
+        require(!stream.input_publication_measurement(), "closed stream must release its State");
+        require(!weak_measurement.expired(), "live scope must retain its ledger after close");
+        const auto snapshot = measurement->stop(1);
+        require(!snapshot.failed && snapshot.entries.size() == 1 &&
+                    snapshot.entries.front().original_sequence == 7,
+                "scope stop after real stream close must retain observed identity");
+        pending_publication.finish(GST_FLOW_FLUSHING);
+        measurement->discard(1); // Equivalent to scope destruction after close.
+        measurement.reset();
+        require(weak_measurement.expired(), "closed stream measurement must not create a cycle");
         return std::tuple{starts, stops, current, pending};
       };
 

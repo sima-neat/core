@@ -12,6 +12,9 @@ compiled_runtime_contract_from_stage(const CompiledNodeContract* stage) {
   if (!stage) {
     return nullptr;
   }
+  if (stage->kernel.has_value()) {
+    return &stage->kernel->runtime_contract;
+  }
   if (stage->processcvu.has_value()) {
     return &stage->processcvu->runtime_contract;
   }

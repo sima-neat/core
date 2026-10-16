@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 import re
+import shutil
 import subprocess
 import textwrap
+import venv
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -19,8 +22,9 @@ def write_exe(path: Path, content: str) -> None:
 
 
 def run_neat(tmp_path: Path, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    merged = os.environ.copy()
-    merged.update(env)
+    # CLI fixtures describe the complete environment. In particular, do not
+    # inherit a real Insight venv, shell startup file, or package registry.
+    merged = {"LC_ALL": "C", **env}
     merged.setdefault("NO_COLOR", "1")
     return subprocess.run(
         [str(NEAT), *args],
@@ -36,8 +40,21 @@ def run_neat(tmp_path: Path, args: list[str], env: dict[str, str]) -> subprocess
 def base_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
     home = tmp_path / "home"
     home.mkdir()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for name in (
+        "awk", "basename", "bash", "cat", "dirname", "env", "find", "grep",
+        "head", "mkdir", "mktemp", "python3", "rm", "sed", "sort", "tail", "tr",
+    ):
+        executable = shutil.which(name, path="/usr/bin:/bin")
+        assert executable is not None, f"required CLI test tool is missing: {name}"
+        (tools / name).symlink_to(executable)
+    # Block resolve_sima_cli's real /data fallback; individual tests replace
+    # this fixture when they need playbooks or update calls.
+    if not (bin_dir / "sima-cli").exists():
+        make_sima_cli_with_playbooks(bin_dir, output="")
     return {
-        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "PATH": f"{bin_dir}:{tools}",
         "HOME": str(home),
         "ELXR_SDK_RELEASE_FILE": str(tmp_path / "missing-sdk-release"),
         "NEAT_BUILDINFO_FILE": str(tmp_path / "missing-buildinfo"),
@@ -45,7 +62,8 @@ def base_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
         "NEAT_ARTIFACTS_BASE_URL": "https://core.test",
         "NEAT_INSIGHT_BASE_URL": "https://insight.test",
         "NEAT_PORT_MAP_FILE": str(tmp_path / "missing-port-map.json"),
-        "NEAT_INSIGHT_VENV_DIR": "",
+        "NEAT_INSIGHT_VENV_DIR": str(tmp_path / "missing-insight-venv"),
+        "NEAT_MODEL_COMPILER_DIR": str(tmp_path / "missing-model-compiler"),
         "SIMA_CLI_BIN": "",
         "SIMA_CLI_REGISTRY_FILE": str(home / ".sima-cli" / "registry.json"),
         "SYSROOT": str(tmp_path / "missing-sysroot"),
@@ -544,7 +562,6 @@ def test_status_finds_sima_cli_in_user_install_location(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     env = base_env(tmp_path, bin_dir)
-    env["PATH"] = f"{bin_dir}:/bin:/usr/bin"
     make_sima_cli_with_playbooks(bin_dir, output="global-playbook\n")
     sima_cli = Path(env["HOME"]) / ".sima-cli" / ".venv" / "bin" / "sima-cli"
     sima_cli.parent.mkdir(parents=True)
@@ -1177,3 +1194,282 @@ def test_vulcan_buildinfo_selects_core_update_environment(tmp_path: Path) -> Non
     assert "https://artifacts.neat.paconsultings.com/core/feat%2Fx/abcdef123456/metadata-minimal.json" in calls.read_text(
         encoding="utf-8"
     )
+
+
+def optional_distribution_env(
+    tmp_path: Path,
+    component: str,
+) -> tuple[dict[str, str], Path, str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    if component == "pyneat":
+        venv = Path(env["HOME"]) / "pyneat"
+        package, label = "pyneat", "PyNeat"
+    else:
+        venv = tmp_path / "insight-venv"
+        env["NEAT_INSIGHT_VENV_DIR"] = str(venv)
+        package, label = "neat-insight", "neat-insight"
+    (venv / "bin").mkdir(parents=True)
+    return env, venv, package, label
+
+
+def make_metadata_python(venv_dir: Path, package: str, version: str | None) -> None:
+    # A no-pip venv exercises isolated standard-library metadata discovery.
+    # Write synthetic dist-info directly; do not install host dependencies.
+    venv.EnvBuilder(with_pip=False).create(venv_dir)
+    site_packages = next((venv_dir / "lib").glob("python*/site-packages"))
+    if version is not None:
+        dist_info = site_packages / f"{package.replace('-', '_')}-test.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: {package}\nVersion: {version}\n",
+            encoding="utf-8",
+        )
+
+
+@pytest.mark.parametrize("component", ["pyneat", "insight"])
+@pytest.mark.parametrize("version", ["0.0.0+develop.1234567", None])
+@pytest.mark.parametrize("python_name", ["python", "python3"])
+def test_optional_distribution_uses_selected_python_metadata_without_pip(
+    tmp_path: Path, component: str, version: str | None, python_name: str,
+) -> None:
+    env, venv, package, label = optional_distribution_env(tmp_path, component)
+    make_metadata_python(venv, package, version)
+    if python_name == "python3":
+        (venv / "bin" / "python").unlink()
+    assert not (venv / "bin" / "pip3").exists()
+    proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert (version or "not installed") in component_line(proc.stdout, label)
+    assert "cannot determine" not in proc.stderr
+    json_proc = run_neat(tmp_path, ["--offline", "--json"], env)
+    assert json_proc.returncode == 0, json_proc.stderr
+    payload = json.loads(json_proc.stdout)
+    assert payload["schema"] == "sima.neat.status.v1"
+    assert payload["components"][component]["version"] == version
+    if component == "insight" and version is not None:
+        assert payload["components"][component]["channel"] == "develop"
+        assert payload["components"][component]["tag"] == "1234567"
+
+
+@pytest.mark.parametrize("component", ["pyneat", "insight"])
+@pytest.mark.parametrize("version", ["0.0.0+main.1234567", None])
+def test_optional_distribution_python_does_not_consult_stale_pip(
+    tmp_path: Path, component: str, version: str | None,
+) -> None:
+    env, venv, package, _ = optional_distribution_env(tmp_path, component)
+    make_metadata_python(venv, package, version)
+    calls = tmp_path / "pip-calls"
+    write_exe(venv / "bin" / "pip3", f'#!/usr/bin/env bash\necho called > "{calls}"\nexit 99\n')
+    proc = run_neat(tmp_path, ["--json", "--offline"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["components"][component]["version"] == version
+    assert not calls.exists()
+    assert proc.stderr == ""
+
+
+@pytest.mark.parametrize("component", ["pyneat", "insight"])
+def test_optional_distribution_python_isolates_ambient_metadata(tmp_path: Path, component: str) -> None:
+    env, selected_venv, package, label = optional_distribution_env(tmp_path, component)
+    make_metadata_python(selected_venv, package, None)
+    unrelated_packages = tmp_path / "unrelated-site-packages"
+    dist_info = unrelated_packages / f"{package.replace('-', '_')}-9.9.9.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {package}\nVersion: 9.9.9\n", encoding="utf-8",
+    )
+    env["PYTHONPATH"] = str(unrelated_packages)
+    proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert "not installed" in component_line(proc.stdout, label)
+    assert "9.9.9" not in proc.stdout
+    assert proc.stderr == ""
+
+
+@pytest.mark.parametrize("component", ["pyneat", "insight"])
+def test_optional_distribution_unexpected_metadata_exception_is_nonfatal(
+    tmp_path: Path, component: str,
+) -> None:
+    env, selected_venv, package, label = optional_distribution_env(tmp_path, component)
+    make_metadata_python(selected_venv, package, "1.0")
+    metadata_file = next((selected_venv / "lib").glob("python*/site-packages/*.dist-info/METADATA"))
+    # A corrupt installed distribution yields None instead of a version.
+    metadata_file.write_text(f"Metadata-Version: 2.1\nName: {package}\n", encoding="utf-8")
+    proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert "unknown" in component_line(proc.stdout, label)
+    assert "metadata query failed (exit 1)" in proc.stderr
+    assert "TypeError" in proc.stderr
+
+
+@pytest.mark.parametrize("component", ["pyneat", "insight"])
+@pytest.mark.parametrize(
+    ("provider", "output", "exit_code", "reason"),
+    [
+        ("pip3", "provider failed in another language", 1, "pip show failed (exit 1)"),
+        ("pip3", "provider is broken", 7, "pip show failed (exit 7)"),
+        ("pip3", "Name: package\n", 0, "malformed pip show response"),
+        ("pip3", "Version: 1.0\nVersion: 2.0\n", 0, "malformed pip show response"),
+        ("python", "interpreter unavailable", 7, "metadata query failed (exit 7)"),
+        ("python", "unexpected response", 0, "malformed metadata response"),
+        ("python", "installed\t", 0, "invalid version"),
+    ],
+)
+def test_optional_distribution_provider_fault_is_unknown_not_missing(
+    tmp_path: Path, component: str, provider: str, output: str, exit_code: int, reason: str,
+) -> None:
+    env, venv, package, label = optional_distribution_env(tmp_path, component)
+    write_exe(
+        venv / "bin" / provider,
+        f"#!/usr/bin/env bash\nprintf '%b' {output!r}\nexit {exit_code}\n",
+    )
+    if provider == "python":
+        # A broken selected interpreter must not be hidden by stale pip data.
+        make_pip(venv / "bin" / "pip3", package, "9.9.9")
+    proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
+    assert proc.returncode == 0, proc.stderr
+    line = component_line(proc.stdout, label)
+    assert "unknown" in line and "version unavailable" in line
+    assert "not installed" not in line and "9.9.9" not in line
+    assert f"cannot determine {package} version" in proc.stderr
+    assert str(venv / "bin" / provider) in proc.stderr
+    assert reason in proc.stderr
+    json_proc = run_neat(tmp_path, ["--offline", "--json"], env)
+    assert json_proc.returncode == 0, json_proc.stderr
+    payload = json.loads(json_proc.stdout)
+    assert payload["components"][component]["version"] is None
+    assert "unknown" not in json_proc.stdout
+    assert reason in json_proc.stderr
+
+
+@pytest.mark.parametrize(
+    "original_test",
+    [
+        "test_status_update_available_note_is_yellow",
+        "test_sdk_status_requires_neat_core_and_dev_debs",
+        "test_sdk_status_prints_exposed_ports_from_port_map",
+        "test_sdk_status_colorizes_insight_web_ui_url",
+        "test_sdk_status_prints_vscode_urls_without_port_map",
+        "test_status_infers_non_main_channel_from_core_version",
+        "test_update_core_only_current_exits_without_confirmation_or_sima_cli",
+    ],
+)
+def test_original_cli_contracts_survive_optional_pip_failure(
+    tmp_path: Path, monkeypatch, original_test: str,
+) -> None:
+    original_base_env = base_env
+    calls = tmp_path / "optional-pip-calls"
+
+    def failed_insight_env(path: Path, bin_dir: Path) -> dict[str, str]:
+        env = original_base_env(path, bin_dir)
+        venv = path / "broken-insight-venv"
+        (venv / "bin").mkdir(parents=True)
+        write_exe(
+            venv / "bin" / "pip3",
+            f'#!/usr/bin/env bash\necho called >> "{calls}"\nexit 1\n',
+        )
+        env["NEAT_INSIGHT_VENV_DIR"] = str(venv)
+        return env
+
+    monkeypatch.setitem(globals(), "base_env", failed_insight_env)
+    # Execute, rather than replace or weaken, every original failing oracle.
+    globals()[original_test](tmp_path)
+    assert calls.exists() == ("core_only" not in original_test)
+
+
+@pytest.mark.parametrize("core_current", [True, False])
+def test_core_only_update_never_probes_insight(tmp_path: Path, core_current: bool) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    sdk_release = tmp_path / "sdk-release"
+    sdk_release.write_text("SDK Version = 10.0.0.244\n", encoding="utf-8")
+    sysroot = tmp_path / "sysroot"
+    cache = sysroot / "neat-install-packages"
+    cache.mkdir(parents=True)
+    write_neat_debs(cache, "0.0.0+main-abcdef0" if core_current else "0.0.0+main-1111111")
+    env.update({"ELXR_SDK_RELEASE_FILE": str(sdk_release), "SYSROOT": str(sysroot)})
+    insight_venv = tmp_path / "insight-venv"
+    (insight_venv / "bin").mkdir(parents=True)
+    env["NEAT_INSIGHT_VENV_DIR"] = str(insight_venv)
+    forbidden_calls = tmp_path / "insight-calls"
+    for provider in (insight_venv / "bin" / "python", insight_venv / "bin" / "pip3", bin_dir / "insight-admin"):
+        write_exe(provider, f'#!/usr/bin/env bash\necho "$0 $*" >> "{forbidden_calls}"\nexit 99\n')
+    curl_log = tmp_path / "curl-calls"
+    make_curl(bin_dir, log_path=curl_log)
+    core_calls = tmp_path / "core-calls"
+    write_exe(bin_dir / "sima-cli", f'#!/usr/bin/env bash\necho "$*" >> "{core_calls}"\n')
+    proc = run_neat(tmp_path, ["update", "--core-only", "--yes"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert not forbidden_calls.exists()
+    assert "insight.test" not in curl_log.read_text(encoding="utf-8")
+    assert core_calls.exists() == (not core_current)
+    if not core_current:
+        assert core_calls.read_text(encoding="utf-8").splitlines() == [
+            "install -m https://core.test/main/abcdef0/metadata-minimal.json"
+        ]
+    assert proc.stderr == ""
+
+
+def test_cli_fixtures_ignore_ambient_installations_and_shell_startup(tmp_path: Path, monkeypatch) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    before = run_neat(tmp_path, ["--json", "--offline"], env)
+    assert before.returncode == 0, before.stderr
+    calls = tmp_path / "ambient-calls"
+    contaminated_bin = tmp_path / "ambient-bin"
+    contaminated_bin.mkdir()
+    for name in ("sima-cli", "insight-admin", "dpkg-query", "curl", "activate-model-compiler"):
+        write_exe(contaminated_bin / name, f'#!/usr/bin/env bash\necho "$0" >> "{calls}"\nexit 99\n')
+    startup = tmp_path / "ambient-bash-env"
+    startup.write_text(f'echo startup >> "{calls}"\nexit 99\n', encoding="utf-8")
+    for name, value in {
+        "PATH": str(contaminated_bin),
+        "HOME": str(tmp_path / "ambient-home"),
+        "BASH_ENV": str(startup),
+        "PYTHONPATH": str(tmp_path / "ambient-python"),
+        "NEAT_INSIGHT_VENV_DIR": "/opt/neat-insight/venv",
+        "NEAT_MODEL_COMPILER_DIR": "/sdk-extensions/model-compiler",
+        "NEAT_PACKAGE_BUILDINFO_FILE": "/usr/share/sima-neat/buildinfo.json",
+        "SIMA_CLI_BIN": str(contaminated_bin / "sima-cli"),
+        "CONTAINER_HOST_IP": "192.0.2.99",
+    }.items():
+        monkeypatch.setenv(name, value)
+    after = run_neat(tmp_path, ["--json", "--offline"], env)
+    assert after.returncode == 0, after.stderr
+    assert (after.stdout, after.stderr) == (before.stdout, before.stderr)
+    assert not calls.exists()
+
+
+@pytest.mark.parametrize("failure", ["metadata", "confirmation", "installer"])
+def test_core_only_required_update_failures_remain_fatal(tmp_path: Path, failure: str) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    make_curl(bin_dir)
+    if failure == "metadata":
+        write_exe(bin_dir / "curl", "#!/usr/bin/env bash\necho download-failed >&2\nexit 28\n")
+    calls = tmp_path / "installer-calls"
+    write_exe(
+        bin_dir / "sima-cli",
+        f'#!/usr/bin/env bash\necho "$*" >> "{calls}"\nexit 7\n',
+    )
+    args = ["update", "--core-only", "--color=never"]
+    if failure != "confirmation":
+        args.append("--yes")
+    proc = run_neat(tmp_path, args, env)
+    assert proc.returncode != 0
+    if failure == "metadata":
+        assert "unable to resolve latest Neat core artifact" in proc.stderr
+        assert "download-failed" in proc.stderr
+        assert not calls.exists()
+    elif failure == "confirmation":
+        assert "refusing to update without confirmation" in proc.stderr
+        assert not calls.exists()
+    else:
+        assert proc.returncode == 7
+        assert calls.read_text(encoding="utf-8").splitlines() == [
+            "install -m https://core.test/main/abcdef0/metadata-minimal.json"
+        ]

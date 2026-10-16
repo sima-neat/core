@@ -2,6 +2,9 @@
 #include "genai/GenAIInternal.h"
 #include "pipeline/TensorAudio.h"
 
+// The Platform 3.0 LLiMa header uses std::variant without including it.
+#include <variant>
+
 #include <sima_lmm/whisper_model.hpp>
 
 #include <cstdint>

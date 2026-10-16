@@ -3,9 +3,13 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/contract/CompiledNodeContractQuery.h"
+#include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/TensorMath.h"
 #include "test_main.h"
 #include "test_utils.h"
+
+#include <array>
 
 namespace {
 
@@ -72,39 +76,77 @@ RUN_TEST(
       require(diagnostics.errors.empty(),
               "compile_node_contracts should succeed for Cast -> SimaBoxDecode");
       require(compiled.stages.size() == 2U, "expected cast and boxdecode stages");
-      require(compiled.stages[0].transport.has_value(),
-              "first stage should compile as cast transport");
-      require(compiled.stages[1].boxdecode.has_value(), "second stage should compile as boxdecode");
-
-      const auto& cast_runtime = compiled.stages[0].transport->runtime_contract;
-      require(cast_runtime.logical_outputs.size() == 6U,
-              "cast contract should publish six logical outputs");
-      require(cast_runtime.logical_outputs[0].size_bytes == 819200U,
-              "cast contract should convert first logical size to BF16 bytes");
-      require(cast_runtime.logical_outputs[1].byte_offset == 819200,
-              "cast contract should convert second logical byte offset to BF16 bytes");
-      require(cast_runtime.logical_outputs[1].size_bytes == 204800U,
-              "cast contract should convert second logical size to BF16 bytes");
-      require(cast_runtime.logical_outputs[5].byte_offset == 2355200,
-              "cast contract should preserve grouped-by-role BF16 head offsets");
-      require(cast_runtime.logical_outputs[5].size_bytes == 64000U,
-              "cast contract should convert final logical size to BF16 bytes");
-
-      const auto& boxdecode_runtime = compiled.stages[1].boxdecode->runtime_contract;
-      require(boxdecode_runtime.logical_inputs.size() == 6U,
-              "boxdecode contract should inherit six logical inputs from cast");
-      require(boxdecode_runtime.logical_inputs[3].byte_offset == 1075200,
-              "boxdecode logical inputs should preserve grouped-by-role BF16 offsets");
-      require(boxdecode_runtime.input_bindings.size() == 6U,
-              "boxdecode contract should build six input bindings");
-      require(boxdecode_runtime.input_bindings[3].src_physical_byte_offset == 1075200,
-              "boxdecode binding should come from upstream cast-adjusted physical byte offset");
-      require(boxdecode_runtime.input_bindings[3].src_physical_size_bytes == 1024000U,
-              "boxdecode binding should come from upstream cast-adjusted physical size");
-      require(
-          compiled.stages[1].boxdecode->payload.decode_type_option ==
-              BoxDecodeTypeOption::GroupedByRoleLogit,
-          "standalone cast->boxdecode should infer grouped-by-role-logit for BF16 YOLOv8 heads");
+      require(compiled.stages[0].node_kind == nodes[0]->kind() &&
+                  compiled.stages[1].node_kind == nodes[1]->kind(),
+              "compiled stages must preserve Cast and BoxDecode Node identity");
+      const auto* cast_runtime = compiled_runtime_contract_from_stage(&compiled.stages[0]);
+      const auto* boxdecode_runtime = compiled_runtime_contract_from_stage(&compiled.stages[1]);
+      require(cast_runtime && boxdecode_runtime, "both Nodes must expose tensor contracts");
+      require(cast_runtime->logical_outputs.size() == 6U &&
+                  boxdecode_runtime->logical_inputs.size() == 6U &&
+                  boxdecode_runtime->input_bindings.size() == 6U,
+              "Cast -> BoxDecode must preserve six heads and bindings");
+      constexpr std::array<std::int64_t, 6> offsets{0, 819200, 1024000, 1075200, 2099200, 2355200};
+      constexpr std::array<std::uint64_t, 6> sizes{819200, 204800, 51200, 1024000, 256000, 64000};
+      constexpr std::uint64_t carrier_bytes = 2419200;
+      const std::array<std::string, 6> names{"reg_head_0", "reg_head_1", "reg_head_2",
+                                             "cls_head_0", "cls_head_1", "cls_head_2"};
+      const TensorList heads{reg0, reg1, reg2, cls0, cls1, cls2};
+      require(cast_runtime->physical_outputs.size() == 1U &&
+                  cast_runtime->physical_outputs[0].physical_index == 0 &&
+                  cast_runtime->physical_outputs[0].size_bytes == carrier_bytes,
+              "Cast must publish the fixture's complete packed BF16 carrier");
+      require(boxdecode_runtime->physical_inputs.size() == 1U &&
+                  boxdecode_runtime->physical_inputs[0].size_bytes == carrier_bytes,
+              "BoxDecode must retain the complete producer carrier extent");
+      // Cast retains the fixture's CHW logical axes; BoxDecode's semantic
+      // contract canonicalizes them to HWC without changing the head region.
+      const auto hwc_shape = [&](std::size_t i) {
+        return std::vector<std::int64_t>{heads[i].shape[1], heads[i].shape[2], heads[i].shape[0]};
+      };
+      for (std::size_t i = 0; i < heads.size(); ++i) {
+        const auto& produced = cast_runtime->logical_outputs[i];
+        const auto& consumed = boxdecode_runtime->logical_inputs[i];
+        const auto& binding = boxdecode_runtime->input_bindings[i];
+        require(produced.dtype == "BF16" && consumed.dtype == "BF16",
+                "BoxDecode must consume Cast output dtype, not FP32 ingress dtype");
+        require(produced.logical_index == static_cast<int>(i) &&
+                    consumed.logical_index == static_cast<int>(i) &&
+                    binding.local_logical_input_index == static_cast<int>(i) &&
+                    binding.src_logical_output_index == static_cast<int>(i) &&
+                    binding.src_output_slot == static_cast<int>(i),
+                "Cast -> BoxDecode must preserve head order and source identity");
+        require(produced.logical_name == names[i] && consumed.logical_name == names[i] &&
+                    produced.layout == "CHW" && produced.shape == heads[i].shape &&
+                    consumed.layout == "HWC" && consumed.shape == hwc_shape(i),
+                "head names and logical shapes must match the fixture");
+        require(produced.byte_offset == offsets[i] && produced.size_bytes == sizes[i] &&
+                    consumed.byte_offset == offsets[i],
+                "Cast must scale every head region from FP32 to BF16 exactly");
+        require(produced.physical_index == 0 && consumed.physical_index == 0 &&
+                    binding.src_physical_output_index == 0 && binding.sink_pad_index == 0,
+                "every head must reference the single upstream carrier");
+        // The binding admits the carrier; the logical view supplies the offset.
+        // Consumed size is available capacity, not necessarily the head's tight size.
+        require(binding.src_physical_byte_offset == 0 &&
+                    binding.src_physical_size_bytes == carrier_bytes &&
+                    binding.src_physical_byte_offset + consumed.byte_offset == offsets[i] &&
+                    sizes[i] <= carrier_bytes - static_cast<std::uint64_t>(offsets[i]) &&
+                    consumed.size_bytes >= sizes[i] &&
+                    consumed.size_bytes <= carrier_bytes - static_cast<std::uint64_t>(offsets[i]),
+                "each head must address its exact region once, within the producer extent");
+      }
+      // Domain inference is a semantic-contract assertion, not an executable
+      // recipe assertion. Exercise the same extractor used by the Node.
+      namespace si = pipeline_internal::sima;
+      const si::BoxDecodeStandaloneContractOverrides overrides{
+          si::BoxDecodeSourceStorageKind::DenseHwcPhysical, std::nullopt, std::nullopt};
+      std::string semantic_error;
+      const auto cast_semantics = si::build_boxdecode_static_contract_from_compiled_upstream(
+          compiled.stages[0], BoxDecodeType::YoloV8, overrides, &semantic_error);
+      require(cast_semantics && semantic_error.empty() &&
+                  cast_semantics->decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit,
+              "grouped BF16 regression/class heads must infer logit-domain semantics");
 
       std::vector<std::shared_ptr<Node>> standalone_nodes;
       standalone_nodes.push_back(simaai::neat::nodes::SimaBoxDecode(
@@ -120,22 +162,34 @@ RUN_TEST(
       require(standalone_diagnostics.errors.empty(),
               "compile_node_contracts should succeed for standalone FP32 SimaBoxDecode");
       require(standalone_compiled.stages.size() == 1U, "expected one standalone boxdecode stage");
-      require(standalone_compiled.stages[0].boxdecode.has_value(),
-              "standalone stage should compile as boxdecode");
-
-      const auto& standalone_runtime = standalone_compiled.stages[0].boxdecode->runtime_contract;
-      require(standalone_compiled.stages[0].boxdecode->payload.input_dtype == "FP32",
-              "standalone boxdecode should preserve FP32 input dtype");
-      require(standalone_runtime.logical_inputs.size() == 6U,
-              "standalone boxdecode contract should preserve six logical inputs");
-      require(standalone_runtime.logical_inputs[0].size_bytes == 1638400U,
-              "standalone boxdecode should preserve FP32 logical size");
-      require(standalone_runtime.logical_inputs[3].byte_offset == 2150400,
-              "standalone boxdecode should preserve FP32 grouped-by-role offsets");
-      require(standalone_runtime.input_bindings.size() == 6U,
-              "standalone boxdecode contract should build six input bindings");
-      require(standalone_runtime.input_bindings[3].src_physical_size_bytes == 2048000U,
-              "standalone boxdecode binding should preserve FP32 physical size");
+      require(standalone_compiled.stages[0].node_kind == standalone_nodes[0]->kind(),
+              "standalone stage must retain BoxDecode Node identity");
+      const auto* standalone_runtime =
+          compiled_runtime_contract_from_stage(&standalone_compiled.stages[0]);
+      require(standalone_runtime && standalone_runtime->logical_inputs.size() == 6U &&
+                  standalone_runtime->physical_inputs.size() == 6U &&
+                  standalone_runtime->input_bindings.size() == 6U,
+              "standalone BoxDecode must preserve six independently owned heads");
+      // make_fp32_head allocates each tensor independently. Producer route
+      // offsets describe the old packed layout, not these CPU-owned carriers.
+      for (std::size_t i = 0; i < heads.size(); ++i) {
+        const auto& logical = standalone_runtime->logical_inputs[i];
+        const auto& physical = standalone_runtime->physical_inputs[i];
+        const auto& binding = standalone_runtime->input_bindings[i];
+        require(logical.dtype == "FP32" && logical.logical_name == names[i] &&
+                    logical.logical_index == static_cast<int>(i) && logical.layout == "HWC" &&
+                    logical.shape == hwc_shape(i),
+                "standalone BoxDecode must preserve FP32 head identity and shape");
+        require(logical.physical_index == static_cast<int>(i) && logical.byte_offset == 0 &&
+                    logical.size_bytes == 2 * sizes[i] &&
+                    physical.physical_index == static_cast<int>(i) &&
+                    physical.size_bytes == 2 * sizes[i],
+                "owned FP32 head must address its own complete carrier at offset zero");
+        require(binding.local_logical_input_index == static_cast<int>(i) &&
+                    binding.src_stage_index == -1 && binding.src_physical_output_index == -1 &&
+                    binding.src_physical_byte_offset == 0,
+                "standalone ingress must not retain an upstream producer binding");
+      }
 
       Tensor wrap_reg0 = make_fp32_head(0, {64, 80, 80}, 0, "cast_2/bbox_0");
       Tensor wrap_reg1 = make_fp32_head(1, {64, 40, 40}, 1638400, "cast_3/bbox_1");
@@ -161,9 +215,16 @@ RUN_TEST(
               "compile_node_contracts should succeed for cast-wrapped FP32 SimaBoxDecode");
       require(wrapped_compiled.stages.size() == 1U,
               "expected one standalone wrapped boxdecode stage");
-      require(wrapped_compiled.stages[0].boxdecode.has_value(),
-              "wrapped stage should compile as boxdecode");
-      require(wrapped_compiled.stages[0].boxdecode->payload.decode_type_option ==
-                  BoxDecodeTypeOption::GroupedByRoleProbability,
-              "cast-wrapped class_prob names should preserve probability-domain semantics");
+      require(wrapped_compiled.stages[0].node_kind == wrapped_nodes[0]->kind(),
+              "wrapped stage must retain BoxDecode Node identity");
+      const auto* wrapped_runtime =
+          compiled_runtime_contract_from_stage(&wrapped_compiled.stages[0]);
+      require(wrapped_runtime && wrapped_runtime->logical_inputs.size() == 6U,
+              "wrapped BoxDecode must retain all six input heads");
+      const auto wrapped_semantics = si::build_boxdecode_static_contract_from_sample(
+          wrapped_ingress, BoxDecodeType::YoloV8, std::nullopt, overrides, &semantic_error);
+      require(wrapped_semantics && semantic_error.empty() &&
+                  wrapped_semantics->decode_type_option ==
+                      BoxDecodeTypeOption::GroupedByRoleProbability,
+              "cast-wrapped class_prob names must preserve probability-domain semantics");
     }));

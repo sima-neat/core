@@ -228,8 +228,8 @@ RUN_TEST(
               "default Model route must not auto-select BoxDecode from inferred MPK "
               "topology");
 
-      // YOLO defines the established preprocessing-metadata contract. SSD and
-      // SuperPoint consume geometry through the same neatobjectdecode path.
+      // YOLO and SSD consume image geometry. SuperPoint uses model-space
+      // keypoints; all three families share the generic neatkernelrunner path.
       auto metadata_yolo = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8,
                                                               0.25, 0.45, 100, "metadata_yolo");
       auto metadata_ssd = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::Ssd, 0.30,
@@ -247,22 +247,22 @@ RUN_TEST(
           dynamic_cast<const simaai::neat::SimaBoxDecode*>(metadata_superpoint.get());
       require(metadata_yolo_box && metadata_ssd_box && metadata_superpoint_box,
               "all BoxDecode families must use concrete SimaBoxDecode nodes");
-      require_contains(metadata_yolo_box->backend_fragment(0), "neatobjectdecode",
-                       "YOLO must use the shared ObjectDecode plugin");
-      require_contains(metadata_ssd_box->backend_fragment(0), "neatobjectdecode",
-                       "SSD must use the shared ObjectDecode plugin");
-      require_contains(metadata_superpoint_box->backend_fragment(0), "neatobjectdecode",
-                       "SuperPoint must use the shared ObjectDecode plugin");
+      require_contains(metadata_yolo_box->backend_fragment(0), "neatkernelrunner",
+                       "YOLO must use the shared kernel runner plugin");
+      require_contains(metadata_ssd_box->backend_fragment(0), "neatkernelrunner",
+                       "SSD must use the shared kernel runner plugin");
+      require_contains(metadata_superpoint_box->backend_fragment(0), "neatkernelrunner",
+                       "SuperPoint must use the shared kernel runner plugin");
 
       const auto yolo_geometry_req = metadata_yolo_box->preprocess_meta_requirement();
       const auto ssd_geometry_req = metadata_ssd_box->preprocess_meta_requirement();
       const auto superpoint_geometry_req = metadata_superpoint_box->preprocess_meta_requirement();
-      require(yolo_geometry_req && ssd_geometry_req && superpoint_geometry_req,
+      require(yolo_geometry_req && ssd_geometry_req,
               "metadata-driven BoxDecode families must require preprocessing metadata");
       require(yolo_geometry_req->required_fields == ssd_geometry_req->required_fields,
               "SSD must preserve YOLO's preprocessing metadata contract");
-      require(yolo_geometry_req->required_fields == superpoint_geometry_req->required_fields,
-              "SuperPoint must preserve YOLO's preprocessing metadata contract");
+      require(!superpoint_geometry_req,
+              "model-space SuperPoint must not require image-space preprocessing metadata");
       for (const char* geometry_field :
            {"preproc_original_width", "preproc_original_height", "preproc_resized_width",
             "preproc_resized_height", "preproc_scaled_width",    "preproc_scaled_height",
@@ -398,12 +398,60 @@ RUN_TEST(
       require(managed_box != nullptr,
               "model-managed boxdecode factory should return a concrete SimaBoxDecode node");
       const std::string managed_fragment = managed_box->backend_fragment(0);
-      require_contains(managed_fragment, "num-buffers=4",
-                       "model-managed terminal must use the model-authored MLA lane window");
+      // The graph supplies execution capacity through the prepared Runtime
+      // context. Geometry stays on the Node, not on the generic element.
+      require(managed_fragment.find("num-buffers=") == std::string::npos,
+              "model-managed fragment must not emit the retired plugin queue property");
+      require(managed_box->original_width_internal() == 0 &&
+                  managed_box->original_height_internal() == 0,
+              "model-managed boxdecode must retain metadata-driven original geometry");
       require(managed_fragment.find("original-width=") == std::string::npos,
               "model-managed boxdecode should let metadata drive original width");
       require(managed_fragment.find("original-height=") == std::string::npos,
               "model-managed boxdecode should let metadata drive original height");
+
+      auto precedence_opt = managed_opt;
+      precedence_opt.score_threshold = .70f;
+      precedence_opt.nms_iou_threshold = .30f;
+      precedence_opt.top_k = 7;
+      simaai::neat::Model precedence_model(tar_path, precedence_opt);
+      auto explicit_node = simaai::neat::nodes::SimaBoxDecode(
+          precedence_model, simaai::neat::BoxDecodeType::YoloV8Seg, .25, .55, 120,
+          "explicit_geometry", std::nullopt, std::nullopt, 640, 360, 640, 640,
+          simaai::neat::ResizeMode::Letterbox);
+      const auto* explicit_box =
+          dynamic_cast<const simaai::neat::SimaBoxDecode*>(explicit_node.get());
+      require(explicit_box && explicit_box->original_width_internal() == 640 &&
+                  explicit_box->original_height_internal() == 360 &&
+                  explicit_box->model_width_internal() == 640 &&
+                  explicit_box->model_height_internal() == 640,
+              "model-bound BoxDecode lost the Python640x360 override contract");
+      require(explicit_box->detection_threshold_internal() == .25 &&
+                  explicit_box->nms_iou_threshold_internal() == .55 &&
+                  explicit_box->top_k_internal() == 120,
+              "positive Node controls must take precedence over Model controls");
+      const auto explicit_req = explicit_box->preprocess_meta_requirement();
+      require(!explicit_req || explicit_req->required_fields.empty(),
+              "complete external geometry must not require absent preprocessing metadata");
+      auto inherited_node = simaai::neat::nodes::SimaBoxDecode(
+          precedence_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0., 0., 120);
+      const auto* inherited_box =
+          dynamic_cast<const simaai::neat::SimaBoxDecode*>(inherited_node.get());
+      require(inherited_box &&
+                  inherited_box->detection_threshold_internal() ==
+                      static_cast<double>(precedence_opt.score_threshold) &&
+                  inherited_box->nms_iou_threshold_internal() ==
+                      static_cast<double>(precedence_opt.nms_iou_threshold) &&
+                  inherited_box->top_k_internal() == 120,
+              "model-bound zero arguments must keep Model controls and explicit capacity");
+      auto zero_node = simaai::neat::nodes::SimaBoxDecode(
+          managed_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0., 0., 120);
+      require(managed_opt.score_threshold == 0.f && managed_opt.nms_iou_threshold == 0.f,
+              "zero-control fixture Model options must actually be zero");
+      const auto* zero_box = dynamic_cast<const simaai::neat::SimaBoxDecode*>(zero_node.get());
+      require(zero_box && zero_box->detection_threshold_internal() == 0. &&
+                  zero_box->nms_iou_threshold_internal() == 0. && zero_box->top_k_internal() == 120,
+              "zero Model controls must not be replaced by guessed positive defaults");
 
       auto standalone_node =
           simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45, 100,
@@ -415,12 +463,14 @@ RUN_TEST(
       const auto standalone_req = standalone_box->preprocess_meta_requirement();
       require(standalone_req.has_value(),
               "manual boxdecode should still expose non-geometry preprocess requirements");
-      require_contains(standalone_box->backend_fragment(0), "model-width=640",
-                       "boxdecode node fragment should emit explicit model-width");
-      require_contains(standalone_box->backend_fragment(0), "model-height=640",
-                       "boxdecode node fragment should emit explicit model-height");
-      require_contains(standalone_box->backend_fragment(0), "num-buffers=2",
-                       "standalone terminal must declare its bounded compatibility window");
+      require(standalone_box->model_width_internal() == 640 &&
+                  standalone_box->model_height_internal() == 640 &&
+                  standalone_box->original_width_internal() == 1280 &&
+                  standalone_box->original_height_internal() == 720,
+              "standalone BoxDecode Node must retain the explicit model and image dimensions");
+      require(
+          standalone_box->backend_fragment(0) == "neatkernelrunner name=manual_boxdecode",
+          "standalone fragment must preserve its element name without legacy kernel properties");
       require(std::find(standalone_req->required_fields.begin(),
                         standalone_req->required_fields.end(),
                         "preproc_original_width") == standalone_req->required_fields.end(),

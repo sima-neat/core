@@ -136,7 +136,21 @@ void verify_runtime_output_order_rendering() {
   stage_contract.logical_stage_id = "n0_preproc";
   stage_contract.renderable = true;
 
+  // Output routing is synthetic, but direct rendering must still carry genuine
+  // input authority. Reuse the production Preproc compiler rather than inventing
+  // an input allocation or bypassing the standalone projection boundary.
+  ManifestBuildDiagnostics input_diagnostics;
+  const auto input_contract = compile_node_contracts(
+      {nodes::Preproc(make_render_preproc_options())}, ContractCompileInput{}, &input_diagnostics);
+  require(input_diagnostics.errors.empty() && input_contract.stages.size() == 1U &&
+              input_contract.stages.front().processcvu.has_value(),
+          "routing fixture requires a real compiled Preproc input contract");
+  const auto& input_runtime = input_contract.stages.front().processcvu->runtime_contract;
+
   CompiledProcessCvuContract processcvu;
+  processcvu.runtime_contract.logical_inputs = input_runtime.logical_inputs;
+  processcvu.runtime_contract.physical_inputs = input_runtime.physical_inputs;
+  processcvu.runtime_contract.input_bindings = input_runtime.input_bindings;
   processcvu.payload.graph_family = "preproc";
   processcvu.payload.graph_name = "preproc";
   processcvu.payload.input_dtype = "UINT8";
@@ -276,17 +290,17 @@ void verify_nested_processcvu_role_placement_rendering() {
 
   struct Case {
     ProcessCvuGraphFamily family;
-    int graph_id;
+    const char* operation;
     sc::PhysicalCommandRole role;
     const char* expected_target;
     const char* expected_source;
   };
   const std::array cases{
-      Case{ProcessCvuGraphFamily::Cast, 221, sc::PhysicalCommandRole::Egress, "A65",
+      Case{ProcessCvuGraphFamily::Cast, "cast", sc::PhysicalCommandRole::Egress, "A65",
            "processcvu_post"},
-      Case{ProcessCvuGraphFamily::Dequant, 223, sc::PhysicalCommandRole::Egress, "A65",
+      Case{ProcessCvuGraphFamily::Dequant, "dequant", sc::PhysicalCommandRole::Egress, "A65",
            "processcvu_post"},
-      Case{ProcessCvuGraphFamily::Quant, 222, sc::PhysicalCommandRole::Ingress, "EV74",
+      Case{ProcessCvuGraphFamily::Quant, "quant", sc::PhysicalCommandRole::Ingress, "EV74",
            "processcvu_pre"},
   };
 
@@ -305,14 +319,13 @@ void verify_nested_processcvu_role_placement_rendering() {
     CompiledNodeContract child;
     child.node_kind = "ModelFragmentStage";
     child.plugin_kind = "processcvu";
-    child.element_name = "physical_cvu_graph_" + std::to_string(item.graph_id);
+    child.element_name = std::string("physical_cvu_") + item.operation;
     child.logical_stage_id = child.element_name;
     child.renderable = true;
     child.processcvu.emplace();
     child.processcvu->payload.graph_family_enum = item.family;
-    child.processcvu->payload.graph_id = item.graph_id;
-    child.processcvu->payload.graph_name = child.element_name;
-    child.processcvu->payload.graph_family = child.element_name;
+    child.processcvu->payload.graph_name = item.operation;
+    child.processcvu->payload.graph_family = item.operation;
     child.processcvu->physical_command_role = item.role;
 
     const std::string output_name = child.element_name + "_output";
@@ -363,7 +376,7 @@ void verify_nested_processcvu_role_placement_rendering() {
   for (std::size_t index = 0; index < cases.size(); ++index) {
     const auto& expected = cases[index];
     const auto& payload = manifest->stages[index].processcvu;
-    require(payload.graph_id == expected.graph_id &&
+    require(payload.graph_name == expected.operation &&
                 payload.requested_run_target == expected.expected_target &&
                 payload.run_target == expected.expected_target &&
                 payload.resolved_exec_backend ==

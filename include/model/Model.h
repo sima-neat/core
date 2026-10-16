@@ -260,10 +260,11 @@ public:
      */
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
-    float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
-    float nms_iou_threshold =
-        0.0f;      ///< BoxDecode IoU threshold for non-max suppression; 0 disables NMS.
-    int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
+    /// BoxDecode score threshold. Zero permits zero-valued scores; NMS and top-K still apply.
+    float score_threshold = 0.0f;
+    /// BoxDecode NMS IoU threshold. Zero skips YOLO26 NMS; other NMS profiles still suppress.
+    float nms_iou_threshold = 0.0f;
+    int top_k = 0; ///< BoxDecode output cap; bounding-box decoding requires a positive value.
     SuperPointOptions
         superpoint; ///< SuperPoint profile/output options when decode_type is SuperPoint.
     /// Number of classes produced by detection heads. Set this for detection MPKs whose raw

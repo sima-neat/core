@@ -33,6 +33,8 @@ struct CompiledRuntimeContract {
       pipeline_internal::sima::static_contract::ArenaStorageDomain::Unknown;
   pipeline_internal::sima::static_contract::ArenaAllocationProvenance frame_arena_provenance =
       pipeline_internal::sima::static_contract::ArenaAllocationProvenance::Unknown;
+  pipeline_internal::sima::static_contract::ArenaAllocationPolicy frame_arena_allocation_policy =
+      pipeline_internal::sima::static_contract::ArenaAllocationPolicy::RequiredDomain;
   std::uint32_t frame_arena_required_device_access = 0U;
   pipeline_internal::sima::static_contract::ArenaEscapePolicy frame_arena_escape_policy =
       pipeline_internal::sima::static_contract::ArenaEscapePolicy::InternalOnly;
@@ -76,6 +78,11 @@ struct CompiledMlaContract {
 struct CompiledBoxDecodeContract {
   pipeline_internal::sima::BoxDecodeStagePayload payload;
   CompiledRuntimeContract runtime_contract;
+};
+
+struct CompiledKernelContract {
+  CompiledRuntimeContract runtime_contract;
+  std::shared_ptr<const pipeline_internal::sima::KernelStageRecipe> recipe;
 };
 
 struct CompiledDequantContract {

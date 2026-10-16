@@ -1,6 +1,7 @@
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include <simaai/runtime/gstreamer/prepared_tensor_stage.h>
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "test_main.h"
 
@@ -201,38 +202,33 @@ make_detess_manifest(const MpkContract& contract) {
   return manifest;
 }
 
-void require_prepared_runtime_geometry(const std::filesystem::path& root,
-                                       const std::vector<std::int64_t>& runtime_shape,
-                                       const std::vector<std::int64_t>& logical_shape,
-                                       const std::uint64_t transport_bytes) {
-  using simaai::neat::pipeline_internal::sima::build_prepared_runtime_context;
-  using simaai::neat::pipeline_internal::sima::PipelineElementSpec;
-
+void require_metadata_geometry(
+    const std::filesystem::path& root, const std::vector<std::int64_t>& runtime_shape,
+    const std::vector<std::int64_t>& logical_shape, const std::uint64_t transport_bytes) {
+  namespace ps = simaai::neat::pipeline_internal::sima;
   ensure_gst_ready();
   const auto contract = load_fixture(root);
-  const auto manifest = make_detess_manifest(contract);
-  PipelineElementSpec mla_element;
-  mla_element.plugin = "neatprocessmla";
-  mla_element.model_path_property = root.string();
-
+  auto manifest = make_detess_manifest(contract);
+  const auto& detess = manifest.stages.front().processcvu;
+  require(detess.input_tensors.size() == 1U &&
+              tensor_desc_shape(detess.input_tensors.front()) == runtime_shape,
+          "detess input descriptor should use resolved runtime geometry");
+  require(detess.output_tensors.size() == 1U &&
+              tensor_desc_shape(detess.output_tensors.front()) == runtime_shape,
+          "detess output descriptor should use resolved runtime geometry");
+  require(detess.input_tensors.front().storage.nbytes == transport_bytes,
+          "detess input descriptor should preserve the packed MLA byte span");
+  simaai::runtime::gstreamer::TensorStagePublication publication;
   std::string error;
-  const auto prepared = build_prepared_runtime_context(
-      nullptr, manifest, std::nullopt, {mla_element}, {}, simaai::neat::NameTransform{}, &error);
-  require(prepared.has_value(), "detess prepared runtime should build: " + error);
-  require(prepared->stages.size() == 1U && prepared->stages.front().processcvu.has_value(),
-          "detess prepared runtime should contain one processcvu stage");
-  const auto& detess = *prepared->stages.front().processcvu;
-  require(detess.typed_config.input_tensors.size() == 1U &&
-              tensor_desc_shape(detess.typed_config.input_tensors.front()) == runtime_shape,
-          "prepared detess input descriptor should use resolved runtime geometry");
-  require(detess.typed_config.output_tensors.size() == 1U &&
-              tensor_desc_shape(detess.typed_config.output_tensors.front()) == runtime_shape,
-          "prepared detess output descriptor should use resolved runtime geometry");
-  require(detess.typed_config.input_tensors.front().storage.nbytes == transport_bytes,
-          "prepared detess input descriptor should preserve the packed MLA byte span");
-  require(detess.output_publish_contract.logical_outputs.size() == 1U &&
-              detess.output_publish_contract.logical_outputs.front().shape == logical_shape,
-          "prepared detess output should preserve the authored logical rank");
+  require(ps::build_kernel_stage_publication(manifest.stages.front(), &publication, &error),
+          "detess metadata publication should build: " + error);
+  require(publication.contract && publication.contract->logical_outputs.size() == 1U &&
+              publication.contract->logical_outputs.front().shape == logical_shape,
+          "detess publication should preserve the authored logical rank");
+  // These fixtures test MPK geometry and publication metadata only. They do
+  // not claim numerical admission for their unaligned tiled descriptor.
+  require(!manifest.stages.front().native_kernel,
+          "metadata projection must not manufacture a prepared executable");
 }
 
 } // namespace
@@ -322,12 +318,13 @@ RUN_TEST(
                   two_head_outputs[1].size_bytes == 192U,
               "multi-output MLA boundaries should retain physical output order and byte spans");
 
-      require_prepared_runtime_geometry(write_detess_fixture("prepared_nc", {1, 213}, 448U, 426U),
-                                        {1, 1, 1, 213}, {1, 213}, 448U);
-      require_prepared_runtime_geometry(
+      require_metadata_geometry(
+          write_detess_fixture("prepared_nc", {1, 213}, 448U, 426U), {1, 1, 1, 213}, {1, 213},
+          448U);
+      require_metadata_geometry(
           write_detess_fixture("prepared_hw", {2, 3}, 192U, 12U, true, true, {1, 1, 1}),
           {1, 2, 3, 1}, {2, 3}, 192U);
-      require_prepared_runtime_geometry(
+      require_metadata_geometry(
           write_detess_fixture("prepared_rank4", {1, 2, 3, 7}, 192U, 84U, true, true, {1, 1, 1}),
           {1, 2, 3, 7}, {1, 2, 3, 7}, 192U);
 

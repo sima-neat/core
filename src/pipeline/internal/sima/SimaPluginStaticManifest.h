@@ -137,6 +137,12 @@ struct PhysicalBufferStaticSpec {
   PhysicalAddressSource address_source = PhysicalAddressSource::DirectCarrierSpan;
 };
 
+// In-process authority for a byte-preserving publication view of a checked
+// kernel output. Authored by the semantic/compiler contract, never inferred
+// from a shape mismatch during kernel inspection. The stable plugin transport
+// ABI does not carry numerical preparation or this cold-only authority.
+enum class PublicationViewRelation : std::uint8_t { Identity, SingletonAxes, PackedStorage };
+
 /// Static spec for one logical (publishable) output tensor on a stage.
 struct LogicalTensorStaticSpec {
   int logical_index = -1;                          ///< Stage-local logical-output index.
@@ -158,6 +164,7 @@ struct LogicalTensorStaticSpec {
   int segment_name_id = -1;                        ///< Name-table index for `segment_name`.
   std::string segment_name;                        ///< Backing segment name.
   std::optional<QuantStaticSpec> quant;            ///< Quant params, if quantized.
+  PublicationViewRelation publication_relation = PublicationViewRelation::Identity;
 };
 
 /// Static spec for one logical input tensor on a stage (the consumer-side counterpart).
@@ -436,7 +443,10 @@ struct QuantLikeStagePayload {
  * the active payload variant (selected by `payload_kind`), and a resolution trace recording
  * how each non-trivial field was decided.
  */
+struct KernelStageRecipe;
+
 struct StageStaticSpec {
+  std::shared_ptr<const KernelStageRecipe> native_kernel;
   std::string element_name;
   std::string logical_stage_id;
   bool model_managed_stage = false;
@@ -460,6 +470,8 @@ struct StageStaticSpec {
       static_contract::ArenaStorageDomain::Unknown;
   static_contract::ArenaAllocationProvenance frame_arena_provenance =
       static_contract::ArenaAllocationProvenance::Unknown;
+  static_contract::ArenaAllocationPolicy frame_arena_allocation_policy =
+      static_contract::ArenaAllocationPolicy::RequiredDomain;
   std::uint32_t frame_arena_required_device_access = 0U;
   static_contract::ArenaEscapePolicy frame_arena_escape_policy =
       static_contract::ArenaEscapePolicy::InternalOnly;

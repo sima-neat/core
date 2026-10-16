@@ -5,7 +5,6 @@
 
 #include "builder/Node.h"
 #include "pipeline/internal/RenderedStageQueryTypes.h"
-#include "pipeline/internal/contract/ContractApply.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -18,29 +17,39 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::pipeline_internal::rendered_stage_query {
 
+// Intentional executable query. Callers requiring ingress context must pass it
+// explicitly; runtime metadata wiring should use the compiled-contract projections
+// below. Diagnostics distinguish a failed compilation from a legitimately absent
+// rendered stage. A query never applies its result to the shared source nodes.
 inline std::optional<sima::SimaPluginStaticManifest>
 rendered_manifest_from_nodes(std::span<const std::shared_ptr<Node>> nodes,
-                             const char* pipeline_label = "RenderedStageQuery") {
-  ContractCompileInput input;
-  input.pipeline_label = pipeline_label ? pipeline_label : "RenderedStageQuery";
+                             const ContractCompileInput& input,
+                             sima::ManifestBuildDiagnostics* diagnostics_out = nullptr) {
   sima::ManifestBuildDiagnostics diagnostics;
   const std::vector<std::shared_ptr<Node>> node_vec(nodes.begin(), nodes.end());
   const CompiledPipelineContracts compiled = compile_node_contracts(node_vec, input, &diagnostics);
-  if (!diagnostics.errors.empty()) {
-    return std::nullopt;
+  std::optional<sima::SimaPluginStaticManifest> manifest;
+  if (diagnostics.errors.empty()) {
+    manifest = render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
   }
+  if (diagnostics_out) {
+    *diagnostics_out = std::move(diagnostics);
+  }
+  return manifest;
+}
 
-  std::vector<std::shared_ptr<Node>> applied_nodes = node_vec;
-  std::string apply_error;
-  apply_compiled_contracts(&applied_nodes, compiled, &apply_error);
-  if (!apply_error.empty()) {
-    return std::nullopt;
-  }
-  return render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
+inline std::optional<sima::SimaPluginStaticManifest>
+rendered_manifest_from_nodes(std::span<const std::shared_ptr<Node>> nodes,
+                             const char* pipeline_label = "RenderedStageQuery",
+                             sima::ManifestBuildDiagnostics* diagnostics_out = nullptr) {
+  ContractCompileInput input;
+  input.pipeline_label = pipeline_label ? pipeline_label : "RenderedStageQuery";
+  return rendered_manifest_from_nodes(nodes, input, diagnostics_out);
 }
 
 inline const sima::StageStaticSpec*
@@ -357,6 +366,31 @@ preproc_output_info_from_manifest(const sima::SimaPluginStaticManifest& manifest
 }
 
 inline stages::PreprocOutputInfo
+preproc_output_info_from_compiled_contract(const CompiledProcessCvuContract& compiled) {
+  sima::SimaPluginStaticManifest manifest;
+  manifest.stages.push_back(project_processcvu_stage_contract(compiled));
+  return preproc_output_info_from_manifest(manifest);
+}
+
+inline std::string
+primary_input_buffer_name_from_runtime_contract(const CompiledRuntimeContract& compiled) {
+  for (const auto& binding : compiled.input_bindings) {
+    if (!binding.source_segment_name.empty() && binding.source_segment_name != "parent") {
+      return binding.source_segment_name;
+    }
+  }
+  for (const auto& binding : compiled.input_bindings) {
+    if (!binding.cm_input_name.empty()) {
+      return binding.cm_input_name;
+    }
+    if (!binding.source_segment_name.empty()) {
+      return binding.source_segment_name;
+    }
+  }
+  return {};
+}
+
+inline stages::PreprocOutputInfo
 preproc_output_info_from_nodes(std::span<const std::shared_ptr<Node>> nodes) {
   const auto manifest = rendered_manifest_from_nodes(nodes);
   return manifest.has_value() ? preproc_output_info_from_manifest(*manifest)
@@ -504,6 +538,13 @@ mla_input_tensor_info_from_manifest(const sima::SimaPluginStaticManifest& manife
   }
 
   return info;
+}
+
+inline stages::MlaInputTensorInfo
+mla_input_tensor_info_from_compiled_contract(const CompiledMlaContract& compiled) {
+  sima::SimaPluginStaticManifest manifest;
+  manifest.stages.push_back(project_mla_stage_contract(compiled));
+  return mla_input_tensor_info_from_manifest(manifest);
 }
 
 inline stages::MlaInputTensorInfo

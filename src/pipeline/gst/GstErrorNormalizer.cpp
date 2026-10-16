@@ -660,6 +660,63 @@ std::string dimensions(const std::optional<int64_t>& width, const std::optional<
   return std::to_string(*width) + "x" + std::to_string(*height);
 }
 
+// The Runtime adapter already classified the failure. Keep its canonical
+// category/rule in raw details; this is public presentation, not revalidation.
+NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
+  const auto category = find_structured_detail(raw, {"runtime-category"}).value_or("");
+  const char* code = error_codes::kRuntimeElementFailed;
+  const char* title = "The kernel stage could not complete.";
+  const char* action = "Inspect the stage's Runtime diagnostic and underlying device cause.";
+  if (category == "invalid_request") {
+    code = error_codes::kKernelRequest;
+    title = "The kernel request violates its operation contract.";
+    action = "Correct the reported tensor specification or parameter before preparing the stage.";
+  } else if (category == "unsupported_implementation" || category == "unsupported_target") {
+    code = error_codes::kKernelUnsupported;
+    title = "The selected implementation cannot execute this kernel request.";
+    action = "Use a supported implementation and format in a matched Runtime and firmware cohort.";
+  } else if (category == "invalid_binding") {
+    code = error_codes::kKernelBinding;
+    title = "A kernel buffer binding does not satisfy the prepared contract.";
+    action = "Check the reported buffer's span, alignment, access rights and retained ownership.";
+  } else if (category == "resource_busy") {
+    title = "A resource required by the kernel stage is unavailable.";
+    action = "Inspect the reported access or capacity cause; do not reuse buffers while ownership "
+             "or device completion is unresolved.";
+  } else if (category == "dependency_failed") {
+    code = error_codes::kKernelDependency;
+    title = "A dependency failed before the kernel could execute.";
+    action = "Inspect the failed dependency; its dependent outputs are not valid.";
+  } else if (category == "retirement_unknown") {
+    code = error_codes::kAcceleratorExecutionFailed;
+    title = "Device retirement could not be established.";
+    action =
+        "Retain affected buffers and stop new device work. Use external recovery that verifies "
+        "hardware quiescence before releasing memory or starting another execution domain.";
+  } else if (category == "execution_failed") {
+    code = error_codes::kAcceleratorExecutionFailed;
+    title = "The kernel execution failed.";
+    action = "Inspect the device cause and follow the documented retirement or recovery procedure.";
+  } else if (category == "timeout") {
+    code = error_codes::kOutputTimeout;
+    title = "The kernel did not complete within the observation timeout.";
+    action =
+        "A timeout is not retirement: retain buffers until completion or verified device recovery.";
+  }
+  auto out = base(std::move(raw), code, "neatkernelrunner." + category, title);
+  for (const auto* key : {"runtime-category", "runtime-phase", "runtime-field", "kernel-rule",
+                          "kernel-code", "operation-index"})
+    add_fact(out, key, find_structured_detail(out.raw, {key}).value_or(""));
+  // Access contention is not necessarily exhausted execution capacity. Preserve
+  // the provider cause without guessing from its category; serialization is
+  // failure-only, bounded and credential-redacted.
+  if (category == "invalid_request" || category == "invalid_binding" ||
+      category == "resource_busy")
+    add_fact(out, "Reason", sanitize_gst_diagnostic_text(out.raw.message));
+  out.actions = {action};
+  return out;
+}
+
 NormalizedDiagnostic input_capacity(RawGstError raw) {
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kInputCapacity, "neatprocesscvu.input_envelope_exceeded",
@@ -1210,6 +1267,10 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       ((raw.code == GST_RESOURCE_ERROR_BUSY &&
         (accelerator_plugin_name(raw) || dispatcher_specific_context(raw))) ||
        (raw.code == GST_RESOURCE_ERROR_NOT_FOUND && dispatcher_specific_context(raw)));
+
+  if (find_structured_detail(raw, {"neat-diagnostic-id"}) == "neatkernelrunner.failure" &&
+      find_structured_detail(raw, {"runtime-category"}).has_value())
+    return kernel_runner_failure(std::move(raw));
 
   if (diagnostic_id == "neatprocesscvu.input_envelope_exceeded" ||
       contains_ci(text, "envelope violation")) {

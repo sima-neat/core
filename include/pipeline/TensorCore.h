@@ -74,14 +74,16 @@ struct Device {
  * Determines the framework's strategy for `map()` and lifetime management. `CpuOwned` is the
  * default — framework allocated, framework frees. `CpuExternal` wraps a foreign pointer
  * (cv::Mat data, NumPy array, mmap'd file). `GstSample` carries a reference to a GStreamer
- * buffer pool sample. `DeviceHandle` lives in accelerator memory (e.g., MLA scratchpad) and
+ * sample. That sample may retain a producer pool loan (`Auto`/`ZeroCopy`) or own an independent
+ * DMA-BUF allocation (`Owned`); the storage kind alone does not distinguish them.
+ * `DeviceHandle` lives in accelerator memory (e.g., MLA scratchpad) and
  * requires an explicit transfer for CPU access.
  * @ingroup tensors
  */
 enum class StorageKind {
   CpuOwned = 0, ///< Framework allocated; freed when the storage refcount hits zero.
   CpuExternal,  ///< Wraps a foreign pointer; lifetime tracked via `holder`.
-  GstSample,    ///< References a GStreamer pool sample; refcounted via GStreamer.
+  GstSample,    ///< Refcounted GStreamer carrier, either borrowed or independently allocated.
   DeviceHandle, ///< Lives in accelerator memory; CPU access requires an explicit transfer.
   Unknown,
 };
@@ -619,8 +621,8 @@ struct TensorRouteMeta {
   int logical_index = -1;           ///< Logical output index (user-facing).
   int backend_output_index = -1;    ///< Backend output index (per-stage; may differ from logical).
   int route_slot = -1;              ///< Internal route-graph slot ID.
-  int physical_index = -1;          ///< Physical memory index for packed outputs.
-  int memory_index = -1;            ///< Underlying memory pool index.
+  int physical_index = -1;          ///< Physical output index in the producing stage's contract.
+  int memory_index = -1;            ///< Memory selector in the current transport envelope.
   int64_t physical_byte_offset = 0; ///< Byte offset within the physical allocation.
   std::string name;                 ///< Logical (user-facing) name of this output tensor.
   std::string backend_name;         ///< Backend (kernel-side) name of this output.
@@ -737,7 +739,10 @@ struct Tensor {
     return *found;
   }
 
-  /// Map the underlying storage for access (delegates to `storage->map`).
+  /// Map this tensor for access, retaining its storage/producer loan. The
+  /// selected storage mapping applies byte_offset once; its accessible extent
+  /// may include trailing backing bytes. Custom mapping callbacks and existing
+  /// named-segment view bounds remain authoritative.
   Mapping map(MapMode mode) const;
 
   /// Convenience: map for read-only access.
@@ -748,7 +753,7 @@ struct Tensor {
   Mapping map_write() const {
     return map(MapMode::Write);
   }
-  /// Map a view of just this tensor's bytes (respecting `byte_offset`/strides).
+  /// Compatibility alias for map(); this does not narrow the mapping to shape.
   Mapping view(MapMode mode = MapMode::Read) const;
   /// Convenience: read-only `view`.
   Mapping view_read() const {

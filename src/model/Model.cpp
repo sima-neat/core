@@ -4587,6 +4587,7 @@ struct Model::Impl {
   internal::ModelPack pack;
   mutable std::optional<internal::ModelPack> sync_pack;
   std::string model_id;
+  std::string stage_cache_identity;
 
   mutable std::mutex sync_mu;
   mutable bool sync_ready = false;
@@ -4771,6 +4772,13 @@ struct Model::Impl {
     if (!options.name_suffix.empty()) {
       model_id += "::" + options.name_suffix;
     }
+    // Keep full values for equality: neither delimiter ambiguity nor hash collisions can
+    // alias different stage preparations. This is never serialized on the warm path.
+    stage_cache_identity =
+        nlohmann::ordered_json(
+            {{"model_id", model_id},
+             {"effective_options", internal::model_stage_options_cache_identity(options)}})
+            .dump();
   }
 
   const internal::ModelPack& pack_for_sync() const {
@@ -6813,6 +6821,13 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   nlohmann::ordered_json out;
   out["preprocess"] = preprocess_options_json(opt.preprocess);
   out["decode_type"] = model_options_enum_int(opt.decode_type);
+  out["decode_type_option"] = model_options_enum_int(opt.decode_type_option);
+  out["superpoint"] = {
+      {"profile", model_options_enum_int(opt.superpoint.profile)},
+      {"nms_radius", opt.superpoint.nms_radius},
+      {"border_margin", opt.superpoint.border_margin},
+      {"descriptor_output_dtype", model_options_enum_int(opt.superpoint.descriptor_output_dtype)},
+      {"output_format", model_options_enum_int(opt.superpoint.output_format)}};
   out["score_threshold"] = opt.score_threshold;
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
@@ -6831,6 +6846,25 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["processmla"] = processmla_options_json(opt.processmla);
   out["prepared_runner"] = prepared_runner_options_json(opt.prepared_runner);
   out["async_queue_depth"] = opt.async_queue_depth;
+  nlohmann::ordered_json advanced = nlohmann::ordered_json::object();
+  const auto& execution = opt.advanced_execution;
+  if (execution.preprocess_target)
+    advanced["preprocess_target"] = *execution.preprocess_target;
+  if (execution.postprocess_target)
+    advanced["postprocess_target"] = *execution.postprocess_target;
+  if (execution.preprocess_async)
+    advanced["preprocess_async"] = *execution.preprocess_async;
+  if (execution.inference_async)
+    advanced["inference_async"] = *execution.inference_async;
+  if (execution.inference_output_buffers)
+    advanced["inference_output_buffers"] = *execution.inference_output_buffers;
+  if (execution.defer_output_cache_sync)
+    advanced["defer_output_cache_sync"] = *execution.defer_output_cache_sync;
+  if (execution.prepared_runner)
+    advanced["prepared_runner"] = prepared_runner_options_json(*execution.prepared_runner);
+  if (execution.internal_queue_depth)
+    advanced["internal_queue_depth"] = *execution.internal_queue_depth;
+  out["advanced_execution"] = std::move(advanced);
   return out.dump();
 }
 
@@ -8038,6 +8072,34 @@ void ModelAccess::prepare_for_execution(const Model& model, bool sync) {
 
 std::string ModelAccess::model_id(const Model& model) {
   return model.impl_->model_id;
+}
+
+const std::string& ModelAccess::stage_cache_identity(const Model& model) {
+  return model.impl_->stage_cache_identity;
+}
+
+bool ModelAccess::stage_cache_has_dynamic_boxdecode_geometry(const Model& model) {
+  const auto& impl = *model.impl_;
+  return impl.preprocess_plan.session_route_plan.boxdecode_selected &&
+         impl.options.decode_type != BoxDecodeType::Unspecified &&
+         impl.options.decode_type != BoxDecodeType::SuperPoint;
+}
+
+std::string model_stage_options_cache_identity(const Model::Options& options) {
+  Model::Options effective = options;
+  GraphOptions execution;
+  execution.processcvu = options.processcvu;
+  execution.processmla = options.processmla;
+  execution.prepared_runner = options.prepared_runner;
+  execution.async_queue_depth = options.async_queue_depth;
+  execution.advanced_execution = options.advanced_execution;
+  execution.resolve_advanced_execution();
+  effective.processcvu = execution.processcvu;
+  effective.processmla = execution.processmla;
+  effective.prepared_runner = execution.prepared_runner;
+  effective.async_queue_depth = execution.async_queue_depth;
+  effective.advanced_execution = {};
+  return model_options_json_for_graph_provenance(effective);
 }
 
 std::string ModelAccess::source_path(const Model& model) {

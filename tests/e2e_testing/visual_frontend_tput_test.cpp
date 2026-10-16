@@ -1687,8 +1687,8 @@ bool run_case(const BenchCase& c, int warmup, int iterations, int timeout_ms, in
 
 int main() {
   try {
-    require(simaai::neat::element_exists("neatprocesscvu"),
-            "Missing SIMA processcvu plugin (neatprocesscvu).");
+    require(simaai::neat::element_exists("neatkernelrunner"),
+            "Missing SIMA processcvu plugin (neatkernelrunner).");
 
     const int warmup = env_int_local("SIMA_VISUAL_TPUT_WARMUP", 2);
     const int iterations = env_int_local("SIMA_VISUAL_TPUT_ITERS", 20);

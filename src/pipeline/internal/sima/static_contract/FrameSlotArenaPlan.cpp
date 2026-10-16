@@ -745,9 +745,21 @@ std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile_impl(
   }
   const bool ev74_required =
       (required_access & static_cast<std::uint32_t>(ArenaDeviceAccess::Ev74)) != 0U;
-  result.placement_.domain = dms_policy == ArenaDmsPolicy::PreferDmsForEligible && !ev74_required
+  if (dms_policy != ArenaDmsPolicy::CmaOnly && dms_policy != ArenaDmsPolicy::PreferDmsForEligible &&
+      dms_policy != ArenaDmsPolicy::PreferDmsThenCma) {
+    fail(error, "frame-slot arena has unknown allocation policy");
+    return std::nullopt;
+  }
+  if (dms_policy == ArenaDmsPolicy::PreferDmsThenCma && ev74_required) {
+    fail(error, "DMS-to-CMA capacity fallback cannot authorize an EV74 consumer");
+    return std::nullopt;
+  }
+  result.placement_.domain = dms_policy != ArenaDmsPolicy::CmaOnly && !ev74_required
                                  ? ArenaStorageDomain::Dms
                                  : ArenaStorageDomain::Cma;
+  result.placement_.allocation_policy = dms_policy == ArenaDmsPolicy::PreferDmsThenCma
+                                            ? ArenaAllocationPolicy::PreferDmsThenCma
+                                            : ArenaAllocationPolicy::RequiredDomain;
   result.placement_.provenance = ArenaAllocationProvenance::CoreAllocated;
   result.placement_.required_device_access = required_access;
   result.placement_.escape = escape;

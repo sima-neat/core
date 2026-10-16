@@ -183,6 +183,56 @@ find_verified_bundled_replacement() {
   return 1
 }
 
+# Runner replaces the retired 0.4/0.5 Neat implementation packages, not their
+# legacy API. Prove that narrow retirement without claiming fake Provides.
+find_verified_runner_retirement() {
+  local removed_package="$1" installed_version="$2"
+  shift 2
+  case "${removed_package}" in neat-runtime|neat-gst-plugins) ;; *) return 1 ;; esac
+  python3 - "$(resolve_package_manifest_path)" <<'PYRETIRE' || return 1
+import json, re, sys
+try:
+    with open(sys.argv[1]) as stream:
+        version = json.load(stream).get("platform-version", "")
+    raise SystemExit(0 if re.fullmatch(r"3[.]0[.][0-9]+", str(version)) else 1)
+except (OSError, ValueError):
+    raise SystemExit(1)
+PYRETIRE
+  dpkg --compare-versions "${installed_version}" lt '0.6~' || return 1
+  local deb field relations expected role runner="" scheduler=""
+  expected="${removed_package} (<< 0.6~)"
+  for deb in "$@"; do
+    [[ -f "${deb}" ]] || continue
+    role="$(dpkg-deb -f "${deb}" Package 2>/dev/null)"
+    case "${role}" in simaai-runner|simaai-scheduler) ;; *) continue ;; esac
+    for field in Breaks Replaces; do
+      relations="$(dpkg-deb -f "${deb}" "${field}" 2>/dev/null | tr ',' '\n' |
+        sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
+      grep -Fxq -- "${expected}" <<< "${relations}" || break
+    done
+    if [[ "${field}" == Replaces ]] && grep -Fxq -- "${expected}" <<< "${relations}"; then
+      if [[ "${role}" == simaai-runner ]]; then
+        [[ -z "${runner}" ]] || return 1
+        runner="${deb}"
+      else
+        [[ -z "${scheduler}" ]] || return 1
+        scheduler="${deb}"
+      fi
+    fi
+  done
+  # The old support payload is split across both providers. Metadata-only
+  # SimaRuntime cannot prove replacement of either implementation.
+  if [[ "${removed_package}" == neat-runtime && -n "${runner}" && -n "${scheduler}" ]]; then
+    printf '%s + %s\n' "$(basename "${runner}")" "$(basename "${scheduler}")"
+    return 0
+  fi
+  if [[ "${removed_package}" == neat-gst-plugins && -n "${scheduler}" ]]; then
+    basename "${scheduler}"
+    return 0
+  fi
+  return 1
+}
+
 verify_simulated_package_removals() {
   local simulation_log="$1"
   shift
@@ -214,6 +264,10 @@ verify_simulated_package_removals() {
         find_verified_bundled_replacement \
           "${package_name}" "${installed_version}" "${install_specs[@]}" || true
       )"
+    fi
+    if [[ -z "${replacement_deb}" && -n "${installed_version}" ]]; then
+      replacement_deb="$(find_verified_runner_retirement \
+        "${package_name}" "${installed_version}" "${install_specs[@]}" || true)"
     fi
     if [[ -n "${replacement_deb}" ]]; then
       verified_replacements+=(
@@ -1000,14 +1054,61 @@ simaai_ota_command_path() {
   command -v simaai-ota 2>/dev/null || true
 }
 
+# Resolve only the executable declared by the installed Palette package. New
+# platform cohorts may omit OTA entirely; a declared but missing tool is broken.
+resolve_direct_palette_ota() {
+  local palette_files command_path resolved candidate candidate_resolved owner owner_package
+  local -a declared=()
+  if ! deb_package_is_installed simaai-palette-modalix; then
+    echo "simaai-palette-modalix is not installed." >&2
+    return 1
+  fi
+  palette_files="$(dpkg-query -L simaai-palette-modalix)" || return 1
+  while IFS= read -r candidate; do
+    if [[ "${candidate}" == /* && "${candidate##*/}" == simaai-ota ]]; then
+      declared+=("${candidate}")
+    fi
+  done <<<"${palette_files}"
+  command_path="$(simaai_ota_command_path)"
+  if [[ "${#declared[@]}" == 0 && -z "${command_path}" ]]; then
+    return 0
+  fi
+  if [[ "${#declared[@]}" == 0 || "${command_path}" != /* || ! -x "${command_path}" ]]; then
+    echo "Palette OTA declaration does not match an available executable." >&2
+    return 1
+  fi
+  resolved="$(readlink -e "${command_path}")" || return 1
+  [[ -f "${resolved}" ]] || return 1
+  for candidate in "${declared[@]}"; do
+    candidate_resolved="$(readlink -e "${candidate}")" || return 1
+    if [[ "${candidate_resolved}" == "${resolved}" ]]; then
+      owner="$(dpkg-query -S "${resolved}" 2>/dev/null)" || return 1
+      owner_package="${owner%%: /*}"
+      if [[ ! "${owner_package}" =~ ^simaai-palette-modalix(:[a-z0-9-]+)?$ ||
+            "${owner}" != "${owner_package}: ${resolved}" ]]; then
+        echo "OTA executable is not owned by simaai-palette-modalix: ${resolved}." >&2
+        return 1
+      fi
+      printf '%s\n' "${resolved}"
+      return 0
+    fi
+  done
+  echo "OTA command is not the Palette-declared executable." >&2
+  return 1
+}
+
 verify_canonical_palette_and_ota_installation() {
+  if ! board_runtime_is_legacy; then
+    resolve_direct_palette_ota >/dev/null
+    return $?
+  fi
   local ota_path ota_owner
   if ! deb_package_is_installed simaai-palette-modalix; then
     echo "simaai-palette-modalix is not installed after the native Modalix transaction." >&2
     return 1
   fi
   ota_path="$(simaai_ota_command_path)"
-  if [[ "${ota_path}" != "/usr/bin/simaai-ota" ]]; then
+  if [[ "${ota_path}" != "/usr/bin/simaai-ota" || ! -x /usr/bin/simaai-ota ]]; then
     echo "Canonical simaai-ota is missing after the native Modalix transaction: ${ota_path:-<missing>}." >&2
     return 1
   fi
@@ -1015,6 +1116,21 @@ verify_canonical_palette_and_ota_installation() {
   if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
     echo "/usr/bin/simaai-ota is not owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
     return 1
+  fi
+}
+
+# Direct-runtime installs preserve native Palette and OTA identity rather than
+# performing legacy Palette recovery. Absence is captured explicitly.
+capture_direct_platform_identity() {
+  local ota_path
+  ota_path="$(resolve_direct_palette_ota)" || return 1
+  dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${Status}\n' \
+    simaai-palette-modalix || return 1
+  if [[ -n "${ota_path}" ]]; then
+    printf 'OTA_PRESENT %s\n' "${ota_path}"
+    sha256sum "${ota_path}" || return 1
+  else
+    printf 'OTA_ABSENT\n'
   fi
 }
 
@@ -1366,17 +1482,19 @@ verify_private_dispatcher_runtime() {
 }
 
 sima_neat_global_lib_dir() {
-  printf '%s\n' "/usr/lib"
+  local versioned_lib
+  versioned_lib="$(find_packaged_sima_neat_versioned_lib)" || return 1
+  dirname "${versioned_lib}"
 }
 
 find_packaged_sima_neat_versioned_lib() {
-  local lib_dir package_files candidate basename
+  local package_files candidate basename
   local -a matches=()
-  lib_dir="$(sima_neat_global_lib_dir)"
   package_files="$(dpkg-query -L sima-neat 2>/dev/null)" || return 1
 
+  # The installed package, not the host triplet or a guessed libdir, owns
+  # this location (lib, lib64 and multiarch layouts are all supported).
   while IFS= read -r candidate; do
-    [[ "$(dirname "${candidate}")" == "${lib_dir}" ]] || continue
     basename="$(basename "${candidate}")"
     if [[ "${basename}" =~ ^libsima_neat\.so\.[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]; then
       matches+=("${candidate}")
@@ -1393,7 +1511,7 @@ find_packaged_sima_neat_versioned_lib() {
 find_packaged_sima_neat_soname_link() {
   local lib_dir package_files candidate basename
   local -a matches=()
-  lib_dir="$(sima_neat_global_lib_dir)"
+  lib_dir="$(sima_neat_global_lib_dir)" || return 1
   package_files="$(dpkg-query -L sima-neat 2>/dev/null)" || return 1
 
   while IFS= read -r candidate; do
@@ -1446,7 +1564,7 @@ quarantine_unowned_sima_neat_path() {
 quarantine_stale_unowned_sima_neat_soname_links() {
   local expected_soname_link="$1"
   local lib_dir candidate basename nullglob_was_set=0
-  lib_dir="$(sima_neat_global_lib_dir)"
+  lib_dir="$(sima_neat_global_lib_dir)" || return 1
 
   shopt -q nullglob && nullglob_was_set=1
   shopt -s nullglob
@@ -1557,6 +1675,7 @@ verify_global_sima_neat_lib_links() {
 }
 
 complete_board_install_after_packages() {
+  local direct_platform_before="${1:-}" direct_platform_after
   if board_runtime_is_legacy; then
     migrate_stale_global_dispatcher_libs
     verify_private_dispatcher_runtime
@@ -1568,6 +1687,13 @@ complete_board_install_after_packages() {
   restart_board_codec_services
   verify_board_codec_services
   verify_board_runtime_services
+  if [[ -n "${direct_platform_before}" ]]; then
+    direct_platform_after="$(capture_direct_platform_identity)" || return 1
+    if [[ "${direct_platform_after}" != "${direct_platform_before}" ]]; then
+      echo "Native Palette/OTA identity changed during direct-runtime installation." >&2
+      return 1
+    fi
+  fi
 }
 
 validate_ros2_sdk_native_host() {
@@ -1739,6 +1865,10 @@ install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
+  local direct_platform_before=""
+  if ! board_runtime_is_legacy; then
+    direct_platform_before="$(capture_direct_platform_identity)" || return 1
+  fi
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
@@ -1759,6 +1889,34 @@ install_debs_on_board() {
     fi
     seen_install_specs["${spec}"]=1
     board_install_specs+=("${spec}")
+  done
+
+  # APT's volatile local-file selection can ignore --reinstall when the
+  # installed version is identical. Explicit exact-version selections make
+  # reinstall apply while the accompanying DEBs supply the local archives.
+  local deb package version architecture package_key exact_spec
+  local -A selected_package_specs=()
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package)" || return 1
+    version="$(dpkg-deb -f "${deb}" Version)" || return 1
+    architecture="$(dpkg-deb -f "${deb}" Architecture)" || return 1
+    if [[ -z "${package}" || -z "${version}" || -z "${architecture}" ]]; then
+      echo "Incomplete package identity in local DEB: ${deb}" >&2
+      return 1
+    fi
+    package_key="${package}"
+    [[ "${architecture}" == all ]] || package_key+=":${architecture}"
+    exact_spec="${package_key}=${version}"
+    if [[ -n "${selected_package_specs[${package_key}]+x}" &&
+          "${selected_package_specs[${package_key}]}" != "${exact_spec}" ]]; then
+      echo "Conflicting local DEB versions for ${package_key}." >&2
+      return 1
+    fi
+    selected_package_specs["${package_key}"]="${exact_spec}"
+    if [[ -z "${seen_install_specs[${exact_spec}]+x}" ]]; then
+      seen_install_specs["${exact_spec}"]=1
+      board_install_specs+=("${exact_spec}")
+    fi
   done
 
   local -a board_heal_specs=()
@@ -1790,7 +1948,7 @@ install_debs_on_board() {
 
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
-    complete_board_install_after_packages
+    complete_board_install_after_packages "${direct_platform_before}"
     return 0
   fi
 
@@ -1803,7 +1961,7 @@ install_debs_on_board() {
   log "apt-get install failed; NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON, removing installed NEAT packages represented by the local DEB set and retrying apt."
   remove_installed_local_deb_packages
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
-    complete_board_install_after_packages
+    complete_board_install_after_packages "${direct_platform_before}"
     return 0
   fi
 
@@ -1816,7 +1974,7 @@ install_debs_on_board() {
 
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
   run_sudo apt-get check
-  complete_board_install_after_packages
+  complete_board_install_after_packages "${direct_platform_before}"
 }
 
 remove_stale_global_sima_lmm_pip_install() {

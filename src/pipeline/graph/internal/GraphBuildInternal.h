@@ -81,6 +81,8 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
 // producer-owned CPU visibility boundary because adjacent stages may be
 // rendered by distinct Nodes.
 std::string session_build_select_terminal_objectdecode_cpu_visibility(std::string pipeline);
+// Typed allocation-safe A65 READ handoff; unknown or shared writable routes stay deferred.
+std::string session_build_select_kernel_cpu_visibility(const BuildResult& build);
 // Propagate an authored producer lane window to its immediate terminal
 // consumer. Both endpoints opt in by rendering `num-buffers`; the producer is
 // selected by its CPU-visible handoff, so no consumer factory/plugin name is
@@ -104,7 +106,8 @@ std::string session_build_clamp_sync_pipeline(std::string pipeline, int num_buff
 std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num_buffers_override);
 // Serial single-appsink retention is storage at the typed Allocate owner, not
 // execution depth at a downstream ReuseInput stage. Untyped routes keep legacy clamps.
-std::string session_build_clamp_sync_build_result(const BuildResult& build,
+void session_build_initialize_kernel_runner_budget(BuildResult* build, const GraphOptions* options);
+std::string session_build_clamp_sync_build_result(BuildResult& build,
                                                   int num_buffers_override);
 std::uint64_t session_build_estimate_frame_bytes_limit(const InputOptions& opt,
                                                        const SampleSpec& spec);

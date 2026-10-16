@@ -722,24 +722,17 @@ void Preproc::apply_compiled_contract(const CompiledNodeContract& contract, std:
 
 std::string Preproc::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  require_element("neatprocesscvu", "Preproc::backend_fragment");
-  const char* factory = "neatprocesscvu";
+  require_element("neatkernelrunner", "Preproc::backend_fragment");
+  const char* factory = "neatkernelrunner";
   const std::string name = opt_.element_name.empty()
                                ? ("n" + std::to_string(node_index) + "_preproc")
                                : opt_.element_name;
-  const std::string stage_id = opt_.model_managed_contract ? name : std::string();
   if ((!config_holder_ || !config_holder_->has_config) && !opt_.model_managed_contract) {
     throw std::runtime_error(
         "Preproc: standalone preproc requires actual input contract before pipeline build. "
         "Build with input so width/height/format can be derived from the upstream input.");
   }
   ss << factory << " name=" << name;
-  if (!stage_id.empty()) {
-    ss << " stage-id=" << stage_id;
-  }
-  if (opt_.num_buffers > 0) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
   return ss.str();
 }
 
@@ -780,7 +773,7 @@ OutputSpec Preproc::output_spec(const OutputSpec& input) const {
     out.memory = "SimaAI";
   }
   out.certainty = SpecCertainty::Derived;
-  out.note = "neatprocesscvu";
+  out.note = "neatkernelrunner";
   out.byte_size = expected_byte_size(out);
   return out;
 }

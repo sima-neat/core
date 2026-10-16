@@ -48,6 +48,136 @@ RUN_TEST(
 
       gst_init(nullptr, nullptr);
 
+      // The plugin wire record and cold graph preparation use the same canonical
+      // fields. Human prose must not affect classification or erase the cause.
+      for (const auto& [category, expected] :
+           {std::pair{"invalid_request", error_codes::kKernelRequest},
+            std::pair{"unsupported_implementation", error_codes::kKernelUnsupported},
+            std::pair{"unsupported_target", error_codes::kKernelUnsupported},
+            std::pair{"invalid_binding", error_codes::kKernelBinding},
+            std::pair{"resource_busy", error_codes::kRuntimeElementFailed},
+            std::pair{"dependency_failed", error_codes::kKernelDependency},
+            std::pair{"execution_failed", error_codes::kAcceleratorExecutionFailed},
+            std::pair{"retirement_unknown", error_codes::kAcceleratorExecutionFailed},
+            std::pair{"timeout", error_codes::kOutputTimeout}}) {
+        auto* source = gst_pipeline_new("kernel_stage");
+        auto* error = g_error_new_literal(GST_STREAM_ERROR, GST_STREAM_ERROR_FAILED,
+                                          "Human wording may change");
+        auto* details = gst_structure_new(
+            "simaai-neat-error", "neat-schema-version", G_TYPE_UINT, 1U, "neat-diagnostic-id",
+            G_TYPE_STRING, "neatkernelrunner.failure", "runtime-category", G_TYPE_STRING, category,
+            "runtime-phase", G_TYPE_STRING, "semantic_validation", "runtime-field", G_TYPE_STRING,
+            "outputs[0].shape", "kernel-rule", G_TYPE_STRING, "cast.output_shape", "kernel-code",
+            G_TYPE_INT, 3, nullptr);
+        auto* message =
+            gst_message_new_error_with_details(GST_OBJECT(source), error, nullptr, details);
+        auto diagnostic = classify_gst_error(parse_gst_error_message(message));
+        require_code(diagnostic, expected);
+        require(diagnostic.raw.details.at("kernel-rule") == "cast.output_shape" &&
+                    diagnostic.raw.details.at("kernel-code") == "3" &&
+                    diagnostic.raw.details.at("runtime-category") == category,
+                "canonical Runtime cause was lost at the Core boundary");
+        if (std::string_view(category) == "retirement_unknown") {
+          const auto text = render_diagnostic_body(diagnostic, false);
+          require_contains(text, "Retain affected buffers",
+                           "uncertain DMA requires retention guidance");
+          require_contains(text, "hardware quiescence",
+                           "uncertain DMA must not suggest ordinary retry");
+        }
+        gst_message_unref(message);
+        g_error_free(error);
+        gst_object_unref(source);
+      }
+
+      for (const auto* category : {"invalid_request", "invalid_binding"}) {
+        auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                             "inputs[0]: physical carrier does not cover the requested span; "
+                             "source=rtsp://user:binding-secret@example.test/camera");
+        raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
+        raw.details["runtime-category"] = category;
+        raw.details["runtime-phase"] = "binding";
+        raw.details["runtime-field"] = "inputs[0]";
+        raw.debug = "private-debug-only-marker";
+        const auto diagnostic = classify_gst_error(std::move(raw));
+        require_code(diagnostic, std::string_view(category) == "invalid_binding"
+                                     ? error_codes::kKernelBinding
+                                     : error_codes::kKernelRequest);
+        const auto text = render_diagnostic_body(diagnostic, false);
+        require_contains(text,
+                         "Reason: inputs[0]: physical carrier does not cover the requested span",
+                         "default reports must preserve the actionable kernel binding cause");
+        require(text.find("binding-secret") == std::string::npos &&
+                    text.find("private-debug-only-marker") == std::string::npos,
+                "default kernel reasons must redact credentials without exposing debug details");
+        require_contains(render_diagnostic_body(diagnostic, true), "private-debug-only-marker",
+                         "verbose reports must retain the separate technical diagnostic");
+      }
+
+      {
+        auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                             "span mismatch: " + std::string(17000, 'x') + " password=late-secret");
+        raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
+        raw.details["runtime-category"] = "invalid_binding";
+        const auto diagnostic = classify_gst_error(std::move(raw));
+        bool found_reason = false;
+        for (const auto& fact : diagnostic.facts) {
+          if (fact.label != "Reason")
+            continue;
+          found_reason = true;
+          require(fact.value.size() <= 16384U + std::string("...<truncated>").size() &&
+                      fact.value.ends_with("...<truncated>") &&
+                      fact.value.find("late-secret") == std::string::npos,
+                  "kernel binding reasons must use bounded credential-safe diagnostic text");
+        }
+        require(found_reason, "a long binding reason must remain available, not be discarded");
+      }
+
+      // Preserve distinct ownership failures instead of claiming the kernel
+      // queue is full. These are real provider causes, not classification keys.
+      for (const auto* cause : {"conflicting allocation transition",
+                                "enroll CPU coherency: current owner active",
+                                "begin planned CPU access: incompatible owner",
+                                "begin device ticket: incompatible owner",
+                                "submission capacity exhausted"}) {
+        auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                             std::string("storage.access: ") + cause +
+                                 "; source=rtsp://user:busy-secret@example.test/camera");
+        raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
+        raw.details["runtime-category"] = "resource_busy";
+        raw.details["runtime-phase"] = "unavailable";
+        raw.details["runtime-field"] = "storage.access";
+        const auto diagnostic = classify_gst_error(std::move(raw));
+        require_code(diagnostic, error_codes::kRuntimeElementFailed);
+        require(diagnostic.diagnostic_id == "neatkernelrunner.resource_busy",
+                "busy cause must not change the canonical diagnostic identity");
+        const auto text = render_diagnostic_body(diagnostic, false);
+        require_contains(text, std::string("Reason: storage.access: ") + cause,
+                         "normal reports must retain the precise resource cause");
+        require(text.find("busy-secret") == std::string::npos &&
+                    text.find("The kernel execution capacity is exhausted") == std::string::npos,
+                "busy reports must redact credentials and not invent a capacity diagnosis");
+      }
+
+      {
+        auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                             "storage.access: " + std::string(17000, 'x') +
+                                 " password=late-busy-secret");
+        raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
+        raw.details["runtime-category"] = "resource_busy";
+        const auto diagnostic = classify_gst_error(std::move(raw));
+        bool found_reason = false;
+        for (const auto& fact : diagnostic.facts) {
+          if (fact.label != "Reason")
+            continue;
+          found_reason = true;
+          require(fact.value.size() <= 16384U + std::string("...<truncated>").size() &&
+                      fact.value.ends_with("...<truncated>") &&
+                      fact.value.find("late-busy-secret") == std::string::npos,
+                  "busy reasons must remain bounded and credential-safe");
+        }
+        require(found_reason, "a long resource cause must not be discarded");
+      }
+
       {
         RawGstError raw = raw_error("filesrc", "gst-resource-error-quark",
                                     GST_RESOURCE_ERROR_NOT_FOUND, "Resource not found.");
