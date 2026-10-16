@@ -159,18 +159,16 @@ metadata and verify the complete distribution again if an artifact changes.
 ## Explicit platform provider packages
 
 Core's production box/mask publication uses int32 coordinates. Select a Scheduler
-built with its typed V2 renderer provider, not the standalone float-only profile.
+built with canonical Kernels rendering and the matching Runner execution APIs.
 `SIMANEAT_REQUIRE_INT32_RENDERER` defaults to the runtime-artifact requirement and
 fails configuration if the installed Scheduler lacks this capability. Set it to
 `OFF` only for a Core profile that does not use Core box/mask rendering.
 
+Rendering uses the selected Kernels/Runner packages, not a separate platform
+renderer archive. Rebuild the cohort together for request API revision 2.
+
 Before running Core's source-first `build.sh`, provide:
 
-- `NEAT_BOXRENDER_PACKAGE_DIR`: a complete extracted `a65apps` / `a65apps-dev`
-  pair, with both genuine DEBs beside `usr/` and `opt/`. The SDK package must pin
-  its exact runtime version. Core forwards this directory to Scheduler, verifies
-  its consumed identity using Scheduler's installed verifier, and composes the
-  unchanged DEBs as separate dependencies. Scheduler never owns provider DSOs.
 - `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`: a JSON array of absolute paths to the exact
   optional backend runtime DEBs selected by Runner. For example, supply the
   checked-completion MLA runtime archive and the matching TVM runtime archive

@@ -67,12 +67,57 @@ class BoxrenderDependencyTests(unittest.TestCase):
             'installed_files':{'usr/include/shared.h':{}}}}}}
         with self.assertRaisesRegex(ValueError,'duplicates'):m.verify_package_ownership(packages)
 
-    def test_source_wrapper_forwards_explicit_provider(self):
+    def test_source_wrapper_does_not_forward_retired_provider(self):
         with patch.object(m.subprocess,'run') as run:
             m.build_runtime_source('scheduler',self.root/'src',self.root/'package',self.root/'output',
                 {'kernels':{'package':'kernels','buildinfo':{}},'runner':{'package':'runner'}},2,False)
         command=run.call_args.args[0]
-        self.assertEqual(command[command.index('--boxrender-package')+1],str(self.provider))
+        self.assertNotIn('--boxrender-package', command)
+
+
+class CanonicalRendererDependencyTests(unittest.TestCase):
+    def setUp(self):
+        self.kernels = {'contract_sha256': 'a' * 64}
+        self.runner = {'contract_sha256': 'b' * 64}
+        self.scheduler = {
+            'renderer': {'schema_version': 1, 'provider': 'kernels', 'operation': 'render',
+                         'request_api_revision': 2, 'coordinates': ['int32', 'float32'],
+                         'kernels_contract_sha256': 'a' * 64, 'runner_contract_sha256': 'b' * 64},
+            'build_configuration': {'SIMA_RUNTIME_RENDER': 'ON',
+                                    'SIMA_SCHEDULER_RENDER_INT32_CAPABLE': 'ON'}}
+
+    def check(self):
+        return m.compose_external_boxrender(self.scheduler, Path('/unused'), None,
+                                           self.kernels, self.runner)
+
+    def test_no_external_archive_or_subprocess_needed(self):
+        with patch.object(m.subprocess, 'check_output') as command:
+            self.assertIsNone(self.check())
+            command.assert_not_called()
+
+    def test_selected_cohort_must_match(self):
+        for key in ('kernels_contract_sha256', 'runner_contract_sha256'):
+            with self.subTest(key=key):
+                original = self.scheduler['renderer'][key]
+                self.scheduler['renderer'][key] = 'c' * 64
+                with self.assertRaisesRegex(ValueError, 'cohort'): self.check()
+                self.scheduler['renderer'][key] = original
+
+    def test_missing_actual_capability_is_not_a_receipt_only_pass(self):
+        self.scheduler['build_configuration'].pop('SIMA_SCHEDULER_RENDER_INT32_CAPABLE')
+        with self.assertRaisesRegex(ValueError, 'checked int32'): self.check()
+
+    def test_canonical_and_retired_provider_cannot_be_combined(self):
+        self.scheduler['debian_dependencies'] = [{'Package': 'a65apps'}]
+        with self.assertRaisesRegex(ValueError, 'retired a65apps'): self.check()
+
+    def test_invalid_contract_revision_and_coordinate_set_fail(self):
+        for key, value in (('request_api_revision', 1), ('coordinates', ['float32'])):
+            with self.subTest(key=key):
+                original = self.scheduler['renderer'][key]
+                self.scheduler['renderer'][key] = value
+                with self.assertRaisesRegex(ValueError, 'cohort'): self.check()
+                self.scheduler['renderer'][key] = original
 
 
 class CoreRenderCapabilityTests(unittest.TestCase):

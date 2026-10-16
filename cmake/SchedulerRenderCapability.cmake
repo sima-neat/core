@@ -9,8 +9,8 @@ if(SIMANEAT_REQUIRE_INT32_RENDERER AND
    (NOT SimaScheduler_RENDER_ENABLED OR NOT SimaScheduler_RENDER_INT32_CAPABLE))
   message(FATAL_ERROR
     "Core box/mask publication requires a Scheduler package with typed int32 "
-    "renderer capability. Build Scheduler with its separately packaged V2 "
-    "boxrender provider; a float-only renderer cannot consume Core coordinates. "
+    "renderer capability. Build Scheduler against matching canonical Kernels "
+    "and Runner packages; a float-only renderer cannot consume Core coordinates. "
     "SIMANEAT_REQUIRE_INT32_RENDERER=OFF is only for profiles that do not use "
     "Core box/mask rendering.")
 endif()

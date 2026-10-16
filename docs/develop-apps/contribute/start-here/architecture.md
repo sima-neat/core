@@ -52,10 +52,10 @@ updated rather than repaired by Core or LLiMa.
 Core owns box/mask publication policy and emits int32 coordinates. Scheduler owns
 caps, lifecycle and cold provider admission. Production composition requires the
 renderer’s typed int32 capability; it does not reinterpret those values as float
-or add per-frame conversion. The independently produced `a65apps` runtime and
-SDK packages remain provider-owned and are pinned by Scheduler’s consumed
-receipt. Standalone float-only Scheduler profiles remain supported outside this
-Core rendering contract.
+or add per-frame conversion. Kernels owns the canonical A65 `render` operation;
+Runner owns execution and ReadWrite image retirement. Scheduler records the
+checked operation and consumed Kernels/Runner identities. Core verifies this
+cohort and composes the normal dependencies, without an `a65apps` archive.
 
 Runner owns optional backend admission, including MLA checked completion. Core
 forwards the exact runtime archives recorded by Runner; it does not infer safety

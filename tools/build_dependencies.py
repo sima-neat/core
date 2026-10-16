@@ -209,8 +209,6 @@ def build_runtime_source(component, path, destination, output, packages, jobs, c
     codecs = child_env.get("NEAT_CODECS_PACKAGE_DIR")
     if component == "scheduler" and codecs:
         command += ["--codecs-package", str(Path(codecs).resolve())]
-    if component == "scheduler" and child_env.get("NEAT_BOXRENDER_PACKAGE_DIR"):
-        command += ["--boxrender-package", str(Path(child_env["NEAT_BOXRENDER_PACKAGE_DIR"]).resolve())]
     if component == "runner":
         for archive in platform_runtime_archives(child_env):
             command += ["--platform-runtime-deb", str(archive)]
@@ -473,8 +471,30 @@ def compose_external_runtimes(runner: dict, destination: Path | None) -> dict:
     return result
 
 
-def compose_external_boxrender(scheduler: dict, prefix: Path, destination: Path | None) -> dict | None:
-    """Reuse Scheduler's installed verifier for its separately owned platform provider."""
+def compose_external_boxrender(scheduler: dict, prefix: Path, destination: Path | None,
+                              kernels: dict | None = None, runner: dict | None = None) -> dict | None:
+    """Validate canonical rendering; retain composition for older installed Schedulers."""
+    if scheduler.get('renderer') is not None:
+        renderer = scheduler['renderer']
+        expected = {'schema_version': 1, 'provider': 'kernels', 'operation': 'render',
+                    'request_api_revision': 2, 'coordinates': ['int32', 'float32']}
+        for name, selected in (('kernels', kernels), ('runner', runner)):
+            digest = (selected or {}).get('contract_sha256', '')
+            if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+                raise ValueError(f'Canonical renderer requires selected {name} identity')
+            expected[name + '_contract_sha256'] = digest
+        if renderer != expected:
+            raise ValueError('Canonical renderer differs from selected Kernels/Runner cohort')
+        configuration = scheduler.get('build_configuration', {})
+        if any(str(configuration.get(key, '')).upper() not in ('ON', 'TRUE', '1', 'YES')
+               for key in ('SIMA_RUNTIME_RENDER', 'SIMA_SCHEDULER_RENDER_INT32_CAPABLE')):
+            raise ValueError('Canonical renderer lacks checked int32 capability')
+        if scheduler.get('external_dependencies', {}).get('BoxRender') or any(
+                item.get('Package') in ('a65apps', 'a65apps-dev')
+                for item in scheduler.get('debian_dependencies', [])):
+            raise ValueError('Canonical renderer must not depend on retired a65apps')
+        # Kernels and Runner are already composed by the normal dependency path.
+        return None
     consumed = scheduler.get('external_dependencies', {}).get('BoxRender')
     required = scheduler.get('build_configuration', {}).get('SIMA_SCHEDULER_REQUIRE_RENDER_INT32', '').upper() in ('ON', 'TRUE', '1', 'YES')
     if not consumed:
@@ -542,7 +562,8 @@ def prepare(core: Path, output: Path, selected: dict, jobs: int, headers_only: b
     validate_cohort(packages)
     external_runtimes = compose_external_runtimes(packages['runner']['buildinfo'], None)
     external_codecs = compose_external_codecs(packages['scheduler']['buildinfo'], None)
-    external_boxrender = compose_external_boxrender(packages['scheduler']['buildinfo'], Path(packages['scheduler']['prefix']), None)
+    external_boxrender = compose_external_boxrender(packages['scheduler']['buildinfo'], Path(packages['scheduler']['prefix']), None,
+        packages['kernels']['buildinfo'], packages['runner']['buildinfo'])
     # Compatibility metadata is composed from the verified canonical packages;
     # it never owns a second implementation or a child's payload.
     compatibility = selected.get("runtime_compat")
@@ -615,7 +636,8 @@ def prepare(core: Path, output: Path, selected: dict, jobs: int, headers_only: b
             raise ValueError('Selected external Codecs cohort changed during preparation')
         packages.setdefault('external_dependencies', {})['SimaCodecs'] = verified
     if external_boxrender is not None:
-        verified = compose_external_boxrender(packages['scheduler']['buildinfo'], Path(packages['scheduler']['prefix']), debs)
+        verified = compose_external_boxrender(packages['scheduler']['buildinfo'], Path(packages['scheduler']['prefix']), debs,
+            packages['kernels']['buildinfo'], packages['runner']['buildinfo'])
         if verified != external_boxrender:
             raise ValueError('Selected external BoxRender cohort changed during preparation')
         packages.setdefault('external_dependencies', {})['BoxRender'] = verified
