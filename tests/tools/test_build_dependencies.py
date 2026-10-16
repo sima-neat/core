@@ -342,14 +342,24 @@ class BuildDependenciesTest(unittest.TestCase):
         runtime=root/'usr/lib/aarch64-linux-gnu/neat/runtime';runtime.mkdir(parents=True)
         stage=root/'control';shutil.copytree(root/'usr',stage/'usr',dirs_exist_ok=True)
         info=DEPENDENCIES.receipt(root,'SimaRunner')
-        loader=stage/'etc/ld.so.conf.d/sima-neat.conf';loader.parent.mkdir(parents=True)
-        loader.write_bytes(b'/usr/lib/aarch64-linux-gnu/neat/runtime\n/usr/lib/aarch64-linux-gnu/neat/gst-plugins\n')
+        loader=stage/'etc/ld.so.conf.d/sima-runner.conf';loader.parent.mkdir(parents=True)
+        loader.write_bytes(b'/usr/lib/aarch64-linux-gnu/neat/runtime\n')
         archive=root/'runner.deb'
         subprocess.run(['dpkg-deb','--build',str(stage),str(archive)],check=True,stdout=subprocess.DEVNULL)
         DEPENDENCIES.verify_deb_receipt(archive,'SimaRunner',info,root/'usr')
         loader.write_text('unrelated loader path\n')
         subprocess.run(['dpkg-deb','--build',str(stage),str(archive)],check=True,stdout=subprocess.DEVNULL)
         with self.assertRaisesRegex(ValueError,'payload does not match'):
+            DEPENDENCIES.verify_deb_receipt(archive,'SimaRunner',info,root/'usr')
+        loader.write_bytes(b'/usr/lib/aarch64-linux-gnu/neat/runtime\n')
+        loader.chmod(0o755)
+        subprocess.run(['dpkg-deb','--build',str(stage),str(archive)],check=True,stdout=subprocess.DEVNULL)
+        with self.assertRaisesRegex(ValueError,'payload does not match'):
+            DEPENDENCIES.verify_deb_receipt(archive,'SimaRunner',info,root/'usr')
+        loader.chmod(0o644)
+        loader.rename(loader.with_name('sima-neat.conf'))
+        subprocess.run(['dpkg-deb','--build',str(stage),str(archive)],check=True,stdout=subprocess.DEVNULL)
+        with self.assertRaisesRegex(ValueError,'outside owned paths'):
             DEPENDENCIES.verify_deb_receipt(archive,'SimaRunner',info,root/'usr')
 
     def test_runtime_receipt_checks_exact_payload_and_modes(self):

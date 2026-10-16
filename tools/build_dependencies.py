@@ -754,14 +754,14 @@ def verify_deb_receipt(deb: Path, name: str, expected: dict, prefix: Path) -> No
             expected_files[relative] = ('link', target)
         elif path.is_file():
             expected_files[relative] = ('file', hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mode & 0o7777)
-    # Runtime's canonical make_deb adds its loader configuration outside /usr.
+    # Runner's canonical make_deb adds its runtime-only loader outside /usr.
     # It is not part of the installed SDK prefix: allow this one exact contract,
     # never arbitrary /etc files. Its bytes/mode must match the producer.
-    loader = 'etc/ld.so.conf.d/sima-neat.conf'
+    loader = 'etc/ld.so.conf.d/sima-runner.conf'
     loader_dirs = {'etc', 'etc/ld.so.conf.d'}
     loader_required = name == 'SimaRunner' and (prefix/'lib/aarch64-linux-gnu/neat/runtime').is_dir()
     if loader_required:
-        data = b'/usr/lib/aarch64-linux-gnu/neat/runtime\n/usr/lib/aarch64-linux-gnu/neat/gst-plugins\n'
+        data = b'/usr/lib/aarch64-linux-gnu/neat/runtime\n'
         expected_files[loader] = ('file', hashlib.sha256(data).hexdigest(), 0o644)
     with dependency_archive(deb) as archive:
         for member in archive:
