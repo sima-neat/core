@@ -559,6 +559,114 @@ install_ros2_sdk_tvm_runtime
 
 
 class ForceInstallTest(unittest.TestCase):
+    def run_activation_fixture(self, script: str, exit_code: int = 0) -> subprocess.CompletedProcess[str]:
+        # Redirect only the fixed firmware path in a temporary installer copy;
+        # never create or execute firmware under the host's /usr/libexec.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            firmware = root / "firmware.sh"
+            write_executable(
+                firmware,
+                'printf "FIRMWARE_FORCE=%s ARG=%s\\n" "${FORCE_INSTALL-unset}" "$1"\n'
+                f"exit {exit_code}",
+            )
+            installer = root / "installer.sh"
+            source = INSTALLER.read_text()
+            fixed_path = "/usr/libexec/sima-neat-firmware/install.sh"
+            self.assertEqual(source.count(fixed_path), 2)
+            installer.write_text(source.replace(fixed_path, str(firmware)))
+            return subprocess.run(
+                ["bash", "-c", script, "bash", str(installer)],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+    def test_activation_normalizes_force_after_privilege_environment_filtering(self) -> None:
+        for sanitized in (False, True):
+            for value in (None, "", "0", "1", "true", "ON"):
+                with self.subTest(sanitized=sanitized, value=value):
+                    force_setup = "unset FORCE_INSTALL" if value is None else f"FORCE_INSTALL='{value}'"
+                    # The sanitized stand-in models sudo env_reset. FORCE_INSTALL
+                    # is deliberately not exported: argv must carry the override.
+                    privilege_boundary = (
+                        'run_sudo() { env -i PATH="$PATH" "$@"; }'
+                        if sanitized else 'run_sudo() { "$@"; }'
+                    )
+                    result = self.run_activation_fixture(
+                        'source "$1"\nunset FORCE_INSTALL\n'
+                        f"{force_setup}\n{privilege_boundary}\n"
+                        "NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON\n"
+                        "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON\n"
+                        "activate_board_runtime_after_install\n"
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    expected = "1" if value == "1" else "0"
+                    self.assertIn(f"FIRMWARE_FORCE={expected} ARG=--activate", result.stdout)
+
+    def test_force_does_not_enable_disabled_activation(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+FORCE_INSTALL=1
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF
+run_sudo() { printf 'UNEXPECTED_PRIVILEGE_CALL\n'; return 99; }
+activate_board_runtime_after_install
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("EV74 firmware activation skipped", result.stdout)
+        self.assertNotIn("FIRMWARE_FORCE=", result.stdout)
+        self.assertNotIn("UNEXPECTED_PRIVILEGE_CALL", result.stdout)
+
+    def test_activation_failure_stops_board_completion(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+FORCE_INSTALL=1
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { env -i PATH="$PATH" "$@"; }
+board_runtime_is_legacy() { return 1; }
+repair_global_sima_neat_lib_links() { :; }
+verify_global_sima_neat_lib_links() { :; }
+verify_canonical_palette_installation() { :; }
+restart_board_codec_services() { printf 'UNEXPECTED_RESTART\n'; }
+verify_board_codec_services() { printf 'UNEXPECTED_VERIFY\n'; }
+complete_board_install_after_packages
+printf 'UNEXPECTED_SUCCESS\n'
+""", exit_code=23)
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assertIn("FIRMWARE_FORCE=1 ARG=--activate", result.stdout)
+        self.assertNotIn("UNEXPECTED_", result.stdout)
+
+    def test_paired_force_reaches_activation_in_clean_remote_environment(self) -> None:
+        for value in ("0", "1"):
+            with self.subTest(value=value):
+                result = self.run_activation_fixture(
+                    r"""
+source "$1"
+NEAT_INSTALLER_SKIP_DEVKIT_SYNC=OFF
+DEVKIT_SYNC_DEVKIT_IP=example.invalid
+collect_cached_devkit_deploy_files() { CACHED_DEPLOY_FILES=(fake.deb); }
+run_scp() { :; }
+run_ssh() {
+  if [[ "$1" == -t ]]; then
+    eval "set -- ${3#bash -lc }"
+    # Execute the actual export from the SSH payload in a clean shell, then
+    # invoke the real activation function with a sanitized privilege boundary.
+    local force_export
+    force_export="$(printf '%s\n' "$1" | grep '^export FORCE_INSTALL=')"
+    env -i PATH="$PATH" bash -c "${force_export}
+source \"\$1\"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { env -i PATH=\"\$PATH\" \"\$@\"; }
+activate_board_runtime_after_install
+" bash "${INSTALLER_SCRIPT_PATH}"
+  fi
+}
+"""
+                    + f"\nFORCE_INSTALL={value}\ndeploy_artifacts_to_paired_devkit_if_configured\n"
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"FIRMWARE_FORCE={value} ARG=--activate", result.stdout)
+
     def test_only_one_bypasses_platform_mismatch(self) -> None:
         for mode in ("elxr-sdk", "ros2-sdk", "modalix-board"):
             for value in (None, "", "0", "1", "true", "ON"):

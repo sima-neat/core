@@ -34,8 +34,11 @@ set -euo pipefail
 #   - neat-install-manifest.txt when installed from a packaged release
 #
 # Environment overrides:
-# - FORCE_INSTALL: set to 1 to skip platform compatibility checks, including on
-#   a paired DevKit. Set by sima-cli neat install -f; other values do not force.
+# - FORCE_INSTALL: set to 1 to skip platform compatibility checks and request the
+#   EV74 kernel-build compatibility override, including on a paired DevKit.
+#   Set by sima-cli neat install -f; other values do not force. Requires an
+#   override-aware firmware package; does not establish runtime compatibility.
+#   Firmware integrity, ownership, DMA safety, and package safeguards still apply.
 # - PYNEAT_VENV_DIR: Python virtualenv path
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
@@ -45,7 +48,7 @@ set -euo pipefail
 # - NEAT_BUILDINFO_FILE: DevKit build metadata path (default: /etc/buildinfo)
 # - NEAT_PACKAGE_MANIFEST: package manifest filename/path (default: manifest.json)
 # - NEAT_INSTALLER_SKIP_PLATFORM_CHECK: ON/OFF (default: OFF) explicit escape hatch
-#   for development installs on nonstandard images.
+#   for development installs on nonstandard images; does not override EV74 checks.
 # - DEVKIT_SYNC_DEVKIT_IP: paired DevKit IP for SDK->DevKit artifact sync
 # - DEVKIT_DEPLOY_USER: DevKit SSH user (default: sima)
 # - DEVKIT_SYNC_REQUIRED: ON/OFF (default: ON) fail hard if paired DevKit sync fails
@@ -109,9 +112,13 @@ Options:
   -h, --help   Show this help.
 
 Environment:
-  FORCE_INSTALL=1  Skip platform compatibility checks (also on a paired DevKit).
+  FORCE_INSTALL=1  Skip platform compatibility checks and request the EV74
+                   kernel-build compatibility override (also on a paired DevKit).
                    Set automatically by sima-cli neat install core -f.
-                   Package dependency and removal checks still apply.
+                   Requires an override-aware firmware package. A mismatched
+                   runtime may be unsafe; force does not establish compatibility.
+                   Firmware integrity, ownership, DMA safety, and package
+                   dependency/removal checks still apply.
 
 Example:
   FORCE_INSTALL=1 bash install_neat_framework.sh --local
@@ -1117,8 +1124,14 @@ stop_board_runtime_before_install() {
 activate_board_runtime_after_install() {
   if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
         -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
+    local force_install=0
+    if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
+      force_install=1
+    fi
     log "Activating staged EV74 firmware."
-    run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
+    # Scope the normalized override to activation, after sudo environment filtering.
+    # Do not preserve unrelated caller variables or expand SKIP_PLATFORM_CHECK.
+    run_sudo env "FORCE_INSTALL=${force_install}" /usr/libexec/sima-neat-firmware/install.sh --activate
   else
     log "EV74 firmware activation skipped."
   fi
