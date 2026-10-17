@@ -41,6 +41,7 @@ set -euo pipefail
 #   Firmware integrity, ownership, DMA safety, and package safeguards still apply.
 # - PYNEAT_VENV_DIR: Python virtualenv path
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
+#   Also passed to the Sentinel installer.
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
 # - ELXR_SDK_RELEASE_FILE: SDK release metadata path (default: /etc/sdk-release)
@@ -417,9 +418,11 @@ require_sentinel_installer() {
 # Model::benchmark() reads board telemetry from the Sentinel daemon but runs
 # without it, so a failed Sentinel install only warns unless
 # NEAT_INSTALLER_SENTINEL_REQUIRED=ON. Run the script through bash because
-# downloads may drop its executable bit.
+# downloads may drop its executable bit. Sentinel's installer reads the sudo
+# password from SUDO_PASSWORD, which may hold the DEVKIT_PASSWORD value.
 install_board_sentinel() {
-  if require_sentinel_installer && bash "${SENTINEL_INSTALLER_PATH}"; then
+  if require_sentinel_installer &&
+    SUDO_PASSWORD="${SUDO_PASSWORD}" bash "${SENTINEL_INSTALLER_PATH}"; then
     return 0
   fi
 

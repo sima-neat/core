@@ -240,6 +240,29 @@ rm "${{SENTINEL_INSTALLER_PATH}}"
         self.assertIn("NEAT_INSTALLER_SENTINEL_REQUIRED=ON", result.stderr)
         self.assertIn("install_sentinel.sh; it ships with this installer", result.stderr)
 
+    def test_sentinel_installer_receives_the_sudo_password(self) -> None:
+        result = run_bash(
+            r"""
+unset SUDO_PASSWORD DEVKIT_PASSWORD DEFAULT_SUDO_PASSWORD
+DEVKIT_PASSWORD=devkit-pw
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+SENTINEL_INSTALLER_PATH="${tmp}/install_sentinel.sh"
+printf 'printf "SENTINEL SUDO_PASSWORD=%%s\n" "${SUDO_PASSWORD-unset}"\n' \
+  >"${SENTINEL_INSTALLER_PATH}"
+install_board_sentinel
+SUDO_PASSWORD=""
+install_board_sentinel
+"""
+        )
+
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["SENTINEL SUDO_PASSWORD=devkit-pw", "SENTINEL SUDO_PASSWORD="],
+            result.stderr,
+        )
+
     def test_sentinel_is_optional_unless_required(self) -> None:
         result = run_bash('source "$1"; printf "%s\n" "${NEAT_INSTALLER_SENTINEL_REQUIRED}"')
 
