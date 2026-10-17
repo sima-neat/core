@@ -25,10 +25,10 @@ jobs:
         github.event.workflow_run.conclusion == 'startup_failure' ||
         github.event.workflow_run.conclusion == 'stale'
       }}
-    uses: sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@0221d9152b19764b94016d12c4beb06c9fb5ee9a
+    uses: sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@a9eb642800cff08a2ac841dac83396f517ba1625
     with:
       analyze_failure: true
-      implementation_ref: 0221d9152b19764b94016d12c4beb06c9fb5ee9a
+      implementation_ref: a9eb642800cff08a2ac841dac83396f517ba1625
       channel_id: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}
       run_id: ${{ github.event.workflow_run.id }}
       repository: ${{ github.event.workflow_run.repository.full_name }}
