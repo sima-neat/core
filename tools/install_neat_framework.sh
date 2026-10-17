@@ -69,6 +69,9 @@ set -euo pipefail
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
 #   staged EV74 firmware after board package replacement.
+# - NEAT_INSTALLER_SENTINEL_REQUIRED: ON/OFF (default: OFF) fail the board
+#   install when Sentinel, the telemetry daemon Model::benchmark() reads,
+#   cannot be installed. OFF warns and continues; CI sets ON.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -82,6 +85,7 @@ NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL="${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL:-OFF}"
 NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
+NEAT_INSTALLER_SENTINEL_REQUIRED="${NEAT_INSTALLER_SENTINEL_REQUIRED:-OFF}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 NEAT_OS_RELEASE_FILE="${NEAT_OS_RELEASE_FILE:-/etc/os-release}"
 NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
@@ -406,15 +410,24 @@ run_sudo() {
 require_sentinel_installer() {
   if [[ ! -f "${SENTINEL_INSTALLER_PATH}" ]]; then
     echo "Missing ${SENTINEL_INSTALLER_PATH}; it ships with this installer and installs the Sentinel telemetry daemon." >&2
-    exit 1
+    return 1
   fi
 }
 
-# Model::benchmark() reads board telemetry from the Sentinel daemon. Run the
-# script through bash because downloads may drop its executable bit.
+# Model::benchmark() reads board telemetry from the Sentinel daemon but runs
+# without it, so a failed Sentinel install only warns unless
+# NEAT_INSTALLER_SENTINEL_REQUIRED=ON. Run the script through bash because
+# downloads may drop its executable bit.
 install_board_sentinel() {
-  require_sentinel_installer
-  bash "${SENTINEL_INSTALLER_PATH}" || exit 1
+  if require_sentinel_installer && bash "${SENTINEL_INSTALLER_PATH}"; then
+    return 0
+  fi
+
+  if [[ "${NEAT_INSTALLER_SENTINEL_REQUIRED}" == "ON" ]]; then
+    echo "Sentinel installation failed and NEAT_INSTALLER_SENTINEL_REQUIRED=ON." >&2
+    exit 1
+  fi
+  log "WARNING: Sentinel is not installed. Model::benchmark() reports power and board telemetry as unavailable until you run 'sima-cli neat install sentinel'."
 }
 
 read_metadata_field() {
@@ -903,7 +916,7 @@ cache_install_artifacts_in_sysroot() {
   fi
   run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
   run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
-  require_sentinel_installer
+  require_sentinel_installer || exit 1
   run_sudo cp -f "${SENTINEL_INSTALLER_PATH}" "${cache_dir}/install_sentinel.sh"
   run_sudo chmod 0755 "${cache_dir}/install_sentinel.sh"
 }
@@ -2026,6 +2039,7 @@ deploy_artifacts_to_paired_devkit_if_configured() {
 remote_dir=$(printf '%q' "${remote_dir}")
 installer_name=$(printf '%q' "${installer_basename}")
 export FORCE_INSTALL=$(printf '%q' "${FORCE_INSTALL:-0}")
+export NEAT_INSTALLER_SENTINEL_REQUIRED=$(printf '%q' "${NEAT_INSTALLER_SENTINEL_REQUIRED}")
 cleanup_remote_artifacts() {
   rm -rf \"\${remote_dir}\"
 }
@@ -2054,9 +2068,10 @@ install_for_environment() {
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     modalix-board)
-      # Sentinel comes first so a failure leaves the installed Neat packages
-      # untouched. Then preserve the established board ordering: provision PyNeat
-      # before the board-specific package recovery and runtime restart transaction.
+      # Sentinel comes first so a required Sentinel that fails to install
+      # leaves the installed Neat packages untouched. Then preserve the
+      # established board ordering: provision PyNeat before the board-specific
+      # package recovery and runtime restart transaction.
       install_board_sentinel
       install_python_environment
       install_debs_on_board

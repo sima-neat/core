@@ -204,22 +204,46 @@ class ModalixSentinelInstallTest(unittest.TestCase):
         self.assertNotIn("SIMA-CLI", result.stdout)
         self.assertIn("sima-cli is required to install Sentinel", result.stderr)
 
-    def test_board_installer_runs_the_sibling_script(self) -> None:
-        result = run_bash(
-            r"""
+    @staticmethod
+    def run_board_sentinel(required: str) -> subprocess.CompletedProcess[str]:
+        """Run install_board_sentinel with a failing sibling script, then with none."""
+        return run_bash(
+            rf"""
 source "$1"
 tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-SENTINEL_INSTALLER_PATH="${tmp}/install_sentinel.sh"
-printf 'echo SENTINEL-SCRIPT; exit 7\n' >"${SENTINEL_INSTALLER_PATH}"
+trap 'rm -rf "${{tmp}}"' EXIT
+NEAT_INSTALLER_SENTINEL_REQUIRED={required}
+SENTINEL_INSTALLER_PATH="${{tmp}}/install_sentinel.sh"
+printf 'echo SENTINEL-SCRIPT; exit 7\n' >"${{SENTINEL_INSTALLER_PATH}}"
 (install_board_sentinel; printf 'CONTINUED\n') || printf 'EXIT %s\n' "$?"
-rm "${SENTINEL_INSTALLER_PATH}"
+rm "${{SENTINEL_INSTALLER_PATH}}"
 (install_board_sentinel; printf 'CONTINUED\n') || printf 'EXIT %s\n' "$?"
 """
         )
 
-        self.assertEqual(result.stdout.splitlines(), ["SENTINEL-SCRIPT", "EXIT 1", "EXIT 1"])
+    def test_sentinel_failure_warns_and_continues_by_default(self) -> None:
+        result = self.run_board_sentinel("OFF")
+
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[0], "SENTINEL-SCRIPT")
+        self.assertEqual(lines.count("CONTINUED"), 2, result.stdout)
+        self.assertEqual(
+            sum("WARNING: Sentinel is not installed" in line for line in lines), 2, result.stdout
+        )
+        self.assertIn("sima-cli neat install sentinel", result.stdout)
         self.assertIn("install_sentinel.sh; it ships with this installer", result.stderr)
+
+    def test_required_sentinel_failure_exits(self) -> None:
+        result = self.run_board_sentinel("ON")
+
+        self.assertEqual(result.stdout.splitlines(), ["SENTINEL-SCRIPT", "EXIT 1", "EXIT 1"])
+        self.assertIn("NEAT_INSTALLER_SENTINEL_REQUIRED=ON", result.stderr)
+        self.assertIn("install_sentinel.sh; it ships with this installer", result.stderr)
+
+    def test_sentinel_is_optional_unless_required(self) -> None:
+        result = run_bash('source "$1"; printf "%s\n" "${NEAT_INSTALLER_SENTINEL_REQUIRED}"')
+
+        self.assertEqual(result.stdout.strip(), "OFF", result.stderr)
 
 
 class ModalixPythonVenvSupportTest(unittest.TestCase):

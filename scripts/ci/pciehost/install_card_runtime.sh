@@ -39,6 +39,7 @@ if [[ -n "${SIMAPCIE_CARD_INSTALL_CMD:-}" ]]; then
   export VULCAN_ENV REF_NAME SHORT_SHA CARD_HOST CARD_USER package_spec
   export DEVKIT_PASSWORD="${DEVKIT_PASSWORD:-}"
   export SUDO_PASSWORD="${DEVKIT_PASSWORD:-}"
+  export NEAT_INSTALLER_SENTINEL_REQUIRED=ON
   bash -lc "${SIMAPCIE_CARD_INSTALL_CMD}"
   exit 0
 fi
@@ -76,6 +77,8 @@ echo "Using card installation directory ${card_install_dir}"
 export SIMA_CLI_CHECK_FOR_UPDATE=0
 export DEVKIT_PASSWORD="${REMOTE_DEVKIT_PASSWORD}"
 export SUDO_PASSWORD="${REMOTE_SUDO_PASSWORD}"
+# Benchmark telemetry is part of CI; fail when Sentinel cannot be installed.
+export NEAT_INSTALLER_SENTINEL_REQUIRED=ON
 setup_remote_sudo_wrapper() {
   local password="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
   if [[ -z "${password}" || ! -x /usr/bin/sudo ]]; then

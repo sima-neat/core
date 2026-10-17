@@ -26,7 +26,8 @@ httplib::Result send(const std::string& socket_path, const std::string& method,
       method == "GET" ? client.Get(path) : client.Post(path, body, "application/json");
   if (!result) {
     throw std::runtime_error("Sentinel is not reachable at " + socket_path + ": " +
-                             httplib::to_string(result.error()));
+                             httplib::to_string(result.error()) +
+                             "; install it with 'sima-cli neat install sentinel'");
   }
   return result;
 }

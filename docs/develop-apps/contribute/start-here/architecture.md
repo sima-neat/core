@@ -204,7 +204,9 @@ samples about every 2 s, so the throughput pass runs for at least
 so both passes stop by the same rule. When Sentinel is not running, another trace
 is recording, or the window has no samples, the benchmark still returns latency and FPS; the power
 fields are zero and `telemetry.status` names the reason. Board mode of
-`tools/install_neat_framework.sh` installs Sentinel or upgrades it to the latest production build. `Run` power
+`tools/install_neat_framework.sh` installs Sentinel or upgrades it to the latest production build. When
+that fails, the installer warns and continues; run `sima-cli neat install sentinel` later, or set
+`NEAT_INSTALLER_SENTINEL_REQUIRED=ON` to make the failure fatal, as CI does. `Run` power
 (`RunOptions::power_monitor`) also comes from Sentinel: Core polls its latest sample and reads no
 power monitor chips over I2C.
 

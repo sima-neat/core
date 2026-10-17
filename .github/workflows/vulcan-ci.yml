@@ -987,6 +987,8 @@ jobs:
       - name: Install test runtime from Vulcan artifact
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          # Benchmark telemetry is part of CI; fail when Sentinel cannot be installed.
+          NEAT_INSTALLER_SENTINEL_REQUIRED: "ON"
         run: |
           if ! command -v sima-cli >/dev/null 2>&1; then
             echo "sima-cli not found on test runner." >&2
