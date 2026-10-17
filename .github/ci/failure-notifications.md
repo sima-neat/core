@@ -4,7 +4,7 @@
 `main`, `develop`, and `v*.*.*` release branches. The default-branch listener
 posts actionable failures to `SLACK_VULCAN_EVENT_CHANNEL_ID` using `SLACK_BOT_TOKEN`.
 
-The pinned shared notifier posts the parent alert immediately, collects logs for
+The shared notifier on `main` posts the parent alert immediately, collects logs for
 the exact failed attempt, and requests a read-only Codex diagnosis on a bridge
 runner. A hosted job appends the validated diagnosis to the parent Slack thread.
 The report identifies observed errors, likely cause, confidence, and next action.
@@ -16,6 +16,7 @@ the original alert remains available. Evidence and analysis artifacts expire
 after seven days. Rerunning the notification workflow creates another alert;
 rerun the source build when retrying a CI/docs failure.
 
-Upgrade both the reusable workflow SHA and `implementation_ref` together after
-reviewing the shared workflow. Runner prerequisites and the no-Slack smoke check
-are documented in `sima-neat/.github/.github/workflows/vulcan/README.md`.
+Core follows the shared repository’s `main` branch for both the reusable workflow
+and `implementation_ref`, so merged shared changes are adopted without updating
+Core commit pins. Runner prerequisites and the no-Slack smoke check are documented
+in `sima-neat/.github/.github/workflows/vulcan/README.md`.
