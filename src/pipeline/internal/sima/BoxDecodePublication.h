@@ -12,6 +12,7 @@ enum class BoxDecodeWireFormat {
   Boxes,
   Pose,
   Masks,
+  MasksPose,
   RcnnProposals,
   FeaturePointsV1,
   LegacyFeaturePointsV0

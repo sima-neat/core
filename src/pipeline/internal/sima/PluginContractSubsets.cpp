@@ -1,6 +1,7 @@
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+#include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/ProcessCvuFamily.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
@@ -1195,6 +1196,8 @@ logical_input_from_boxdecode_static_contract(const BoxDecodeStaticContract& cont
       default_boxdecode_backend_name(contract, index),
       default_boxdecode_tensorbuffer_segment_name(contract, index), tensor.source_byte_offset);
   logical.size_bytes = tensor.source_size_bytes;
+  if (!tensor.stride_bytes.empty())
+    logical.stride_bytes = tensor.stride_bytes;
   if (index < contract.dq_scale.size() && index < contract.dq_zp.size()) {
     QuantStaticSpec quant;
     quant.granularity = QuantGranularity::PerTensor;
@@ -2098,6 +2101,7 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   }
   subset.score_activation = contract.score_activation;
   subset.num_classes = contract.num_classes;
+  subset.pose_classes = contract.pose_classes;
   subset.superpoint = contract.superpoint;
 
   auto fill_shape_desc = [](const std::vector<int>& shape, sima_ev_shape_desc* out) -> bool {
@@ -2149,6 +2153,7 @@ std::optional<BoxDecodeContractSubset> extract_boxdecode_contract_subset_from_mp
   // score domain, and layout instead of the raw MPK defaults.
   stagesemantics::apply_yolov5_model_managed_contract_defaults(&*extracted);
   stagesemantics::apply_ssd_model_managed_contract_defaults(&*extracted);
+  stagesemantics::apply_yolox_seg_pose_model_managed_contract_defaults(&*extracted);
   return extract_boxdecode_contract_subset_from_static_contract(*extracted);
 }
 
@@ -2203,7 +2208,7 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
           std::string(plugin_contract_field_key_name(PluginContractFieldKey::SliceGeometry)) +
           "' for stage '" + stage_name + "'");
     }
-    const bool needs_quant = subset.decode_type == BoxDecodeType::SuperPoint
+    const bool needs_quant = box_decode_type_uses_per_port_dtype(subset.decode_type)
                                  ? normalize_dtype_token(logical.dtype) == "INT8"
                                  : subset.quant_needed;
     if (needs_quant) {

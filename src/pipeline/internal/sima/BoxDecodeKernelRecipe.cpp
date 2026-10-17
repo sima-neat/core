@@ -81,7 +81,7 @@ std::array<std::int64_t, 3> hwc(std::span<const std::int64_t> shape, const std::
   else if (layout != "HWC" && layout != "NHWC")
     invalid("head layout must explicitly identify HWC axes");
   for (auto value : result)
-    if (value <= 0 || (bounded && value > 32767))
+    if ((bounded ? value <= 0 : value < 0) || (bounded && value > 32767))
       invalid("head extent outside supported range");
   return result;
 }
@@ -124,13 +124,9 @@ struct Builder {
         static_cast<int>(index), static_cast<int>(index), bytes, DeviceKind::Cpu, name));
     return {index, 0, gs::TensorStagePortSource::Output};
   }
-  enum class Transform { Cast, Detess };
-  void transform(Input& input, Transform operation, const k::TensorSpec& output) {
-    auto executable = scheduler::check_kernel({operation == Transform::Cast ? "cast" : "detess",
-                                               k::Target::A65,
-                                               {&input.tensor, 1},
-                                               {&output, 1},
-                                               {}});
+  void detess(Input& input, const k::TensorSpec& output) {
+    auto executable =
+        scheduler::check_kernel({"detess", k::Target::A65, {&input.tensor, 1}, {&output, 1}, {}});
     if (auto* error = std::get_if<rt::Error>(&executable))
       invalid(std::string(error->field) + ": " + error->message);
     const auto inspection =
@@ -165,8 +161,10 @@ struct Builder {
           {-1, 0, 1, 2}, {1, tile[0], tile[1], tile[2]}, k::MlaTiled::Channels::PadTo16};
     } else if (kind != 1)
       invalid("unknown explicit source storage kind");
-    // Storage kind 1 explicitly means physical HWC; the logical layout token
-    // only locates H/W/C axes. Explicit byte strides remain authoritative.
+    // Storage kind 1 is linear storage, not MLA-tiled. Logical layout locates
+    // H/W/C axes; explicit byte strides remain authoritative, including planar
+    // FP32 views. An absent stride vector retains the established physical-HWC
+    // storage contract rather than inferring a new layout from the axis names.
     if (kind == 1 && !logical.stride_bytes.empty()) {
       if (logical.stride_bytes.size() != logical.shape.size())
         invalid("head stride rank does not match shape");
@@ -184,13 +182,10 @@ struct Builder {
     // SuperPoint consumes it natively. Neither format aliases C-block bytes.
     if (kind == 2 && box_operation) {
       const k::TensorSpec output{in.tensor.shape, in.tensor.dtype};
-      transform(in, Transform::Detess, output);
+      detess(in, output);
     }
-    if (box_operation && in.tensor.dtype == k::DType::Float32) {
-      if (kind != 1)
-        invalid("FP32 heads require explicit dense storage");
-      transform(in, Transform::Cast, {in.tensor.shape, k::DType::BFloat16});
-    }
+    // Preserve native FP32. A compulsory BF16 cast changes threshold/NMS decisions;
+    // Kernels owns admission of the exact dtype and physical layout.
     auto narrowed = shape;
     narrowed[2] = logical_channels;
     in.tensor.shape = k::Shape(narrowed);
@@ -227,6 +222,8 @@ std::string_view profile(BoxDecodeType type) {
     return "yolov6_v1";
   case BoxDecodeType::YoloX:
     return "yolox_v1";
+  case BoxDecodeType::YoloXSegPose:
+    return "yolox_seg_pose_v1";
   case BoxDecodeType::Yolo:
     return "decoded_v1";
   case BoxDecodeType::EffDet:
@@ -245,6 +242,8 @@ std::string_view profile(BoxDecodeType type) {
 }
 std::string_view task(BoxDecodeType type) {
   switch (type) {
+  case BoxDecodeType::YoloXSegPose:
+    return "segmentation_pose";
   case BoxDecodeType::YoloV26Pose:
   case BoxDecodeType::YoloV8Pose:
     return "pose";
@@ -295,7 +294,8 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   if (geometry.model_width <= 0 || geometry.model_height <= 0 || geometry.original_width <= 0 ||
       geometry.original_height <= 0)
     invalid("model and original image geometry must be resolved");
-  if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint)
+  if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
+      !(p.decode_type == BoxDecodeType::YoloXSegPose && geometry.model_to_original))
     invalid("crop geometry is not supported by the numerical recipe");
   if (p.topk <= 0 || p.topk > 65536)
     invalid("output capacity must be 1..65536");
@@ -410,12 +410,14 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     const bool x = selected_profile == "yolox_v1";
     const bool center = selected_profile == "centernet_v1";
     const bool auxiliary = selected_task != "detection";
-    const bool masks = selected_task == "segmentation";
+    const bool seg_pose = selected_task == "segmentation_pose";
+    const bool masks = selected_task == "segmentation" || seg_pose;
+    int keypoints = 17;
     const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
     const bool split_extents = decoded && (option == BoxDecodeTypeOption::Split3Interleaved ||
                                            option == BoxDecodeTypeOption::Split3Grouped);
-    const std::size_t per_head =
-        (combined ? 1 : 2) + (x || center || split_extents ? 1 : 0) + (auxiliary ? 1 : 0);
+    const std::size_t per_head = (combined ? 1 : 2) + (x || center || split_extents ? 1 : 0) +
+                                 (auxiliary ? 1 : 0) + (seg_pose ? 1 : 0);
     if (count < (masks ? 1U : 0U) || (count - (masks ? 1 : 0)) % per_head)
       invalid("head arity does not match profile/task");
     const std::size_t heads = (count - (masks ? 1 : 0)) / per_head;
@@ -436,6 +438,13 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     }
     auto port = [&](std::size_t head, std::size_t role) {
       return by_role ? role * heads + head : head * per_head + role;
+    };
+    const auto logical_depth = [&](std::size_t index) {
+      const auto& input = runtime.logical_inputs[index];
+      // Dense carriers may have channel padding; packed slice depth is a tile,
+      // not the logical tensor depth.
+      return p.tensor_storage_kind[index] == 1 ? slice_hwc(p, index, input)[2]
+                                               : hwc(input.shape, input.layout)[2];
     };
     std::vector<int> channels(count);
     std::array<int, 6> ssd_anchors{};
@@ -523,12 +532,12 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
             ssd ? anchors * ssd_classes
             : selected_profile == "detr_v1"
                 ? p.num_classes + 1
-                : anchors * (p.num_classes + (decoded && decoded_objectness ? 1 : 0));
+                : anchors * (p.num_classes + (seg_pose || (decoded && decoded_objectness) ? 1 : 0));
       if (extra)
         channels[*extra] = x ? 1 : center ? 2 : 2 * anchors;
       std::optional<std::size_t> aux;
       if (auxiliary) {
-        aux = port(h, per_head - 1);
+        aux = port(h, seg_pose ? 2 : per_head - 1);
         channels[*aux] = masks ? 32 * anchors : 51;
       }
       k::ParameterRecord head{{"boxes_input", boxes}, {"scores_input", scores}};
@@ -536,6 +545,23 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         head.push_back({"extra_input", *extra});
       if (aux)
         head.push_back({"auxiliary_input", *aux});
+      if (seg_pose) {
+        const auto keypoints_input = port(h, 3);
+        // Logical depth, never padded carrier channels, determines P.
+        if (logical_depth(boxes) != 4 || logical_depth(scores) != p.num_classes + 1 ||
+            logical_depth(*aux) != 32)
+          invalid("combined logical roles require 4 box channels, packed objectness+classes and 32 "
+                  "mask coefficients");
+        const auto point_channels = logical_depth(keypoints_input);
+        if (point_channels < 3 || point_channels > 51 || point_channels % 3)
+          invalid("combined keypoint head requires 1..17 logical triplets");
+        const auto points = static_cast<int>(point_channels / 3);
+        if (h && points != keypoints)
+          invalid("combined keypoint counts disagree across heads");
+        keypoints = points;
+        channels[keypoints_input] = static_cast<int>(point_channels);
+        head.push_back({"keypoints_input", keypoints_input});
+      }
       head_parameters.push_back(std::move(head));
       if (h == 0)
         first_scores_input = scores;
@@ -549,6 +575,8 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       model_height = static_cast<int>(grid[0]);
     }
     if (masks) {
+      if (seg_pose && logical_depth(count - 1) != 32)
+        invalid("combined mask basis requires 32 logical channels");
       channels.back() = 32;
     }
     for (std::size_t i = 0; i < count; ++i) {
@@ -579,6 +607,10 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       outputs.push_back({{p.topk, 160, 160}, k::DType::UInt8});
       wire = BoxDecodeWireFormat::Masks;
     }
+    if (seg_pose) {
+      outputs.push_back({{p.topk, keypoints, 3}, k::DType::Float32});
+      wire = BoxDecodeWireFormat::MasksPose;
+    }
     std::vector<k::TensorSpec> tensors;
     for (const auto& in : inputs)
       tensors.push_back(in.tensor);
@@ -603,6 +635,19 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         {"quantization", std::move(quantization_parameters)}};
     if (masks)
       parameters.push_back({"mask_basis_input", count - 1});
+    if (seg_pose) {
+      parameters.push_back({"keypoints", keypoints});
+      k::ParameterArray pose_classes;
+      for (const auto value : p.pose_classes)
+        pose_classes.emplace_back(value);
+      parameters.push_back({"pose_classes", std::move(pose_classes)});
+      if (geometry.model_to_original) {
+        const auto& t = *geometry.model_to_original;
+        parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
+      }
+    } else if (geometry.model_to_original) {
+      invalid("explicit affine requires a complete-geometry BoxDecode profile");
+    }
     numerical = checked(
         scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters}));
   }

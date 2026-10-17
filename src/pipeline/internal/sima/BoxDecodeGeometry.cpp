@@ -3,6 +3,7 @@
 #include <gstsimaaitensorbuffer.h>
 #include <simaai/scheduler/kernel_preparation.h>
 #include <array>
+#include <cmath>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -11,14 +12,33 @@ namespace simaai::neat::pipeline_internal::sima {
 namespace {
 namespace rt = ::simaai::runtime;
 namespace scheduler = ::simaai::scheduler;
+using Transform = std::array<float, 4>;
 struct Geometry {
-  int width = 0, height = 0;
+  int width = 0, height = 0, model_width = 0, model_height = 0;
   std::string_view resize;
+  std::optional<Transform> transform;
 };
 rt::Error invalid(const char* message) {
   return {rt::ErrorCode::InvalidRequest, "boxdecode.geometry", message};
 }
-rt::Result<Geometry> read_geometry(GstBuffer* buffer) {
+rt::Result<Transform> checked_transform(const std::array<double, 6>& matrix) {
+  for (const auto value : matrix)
+    if (!std::isfinite(value))
+      return invalid("preprocess affine must be finite");
+  if (matrix[1] != 0. || matrix[3] != 0. || matrix[0] <= 0. || matrix[4] <= 0.)
+    return invalid("preprocess affine requires positive axis-aligned scales without shear");
+  // PreprocFrameAdapter and the Scheduler facts serializer publish SOURCE from
+  // DESTINATION coordinates: original = model * scale + offset. Do not invert.
+  Transform result{static_cast<float>(matrix[0]), static_cast<float>(matrix[4]),
+                   static_cast<float>(matrix[2]), static_cast<float>(matrix[5])};
+  for (const auto value : result)
+    if (!std::isfinite(value))
+      return invalid("preprocess affine cannot be represented as FP32");
+  if (result[0] <= 0.f || result[1] <= 0.f)
+    return invalid("preprocess affine scales underflow FP32");
+  return result;
+}
+rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete) {
   if (!buffer)
     return invalid("input buffer is absent");
   std::string error;
@@ -32,8 +52,21 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer) {
     if (facts->original_width < 1 || facts->original_width > 1048576 ||
         facts->original_height < 1 || facts->original_height > 1048576)
       return invalid("original image dimensions must be 1..1048576");
-    return Geometry{static_cast<int>(facts->original_width),
-                    static_cast<int>(facts->original_height), facts->resize_mode};
+    Geometry geometry{static_cast<int>(facts->original_width),
+                      static_cast<int>(facts->original_height),
+                      static_cast<int>(facts->resized_width),
+                      static_cast<int>(facts->resized_height),
+                      facts->resize_mode,
+                      {}};
+    if (complete) {
+      if (facts->roi_list)
+        return invalid("one BoxDecode frame requires one unambiguous preprocessing transform");
+      auto transform = checked_transform(facts->affine);
+      if (const auto* error = std::get_if<rt::Error>(&transform))
+        return *error;
+      geometry.transform = std::get<Transform>(transform);
+    }
+    return geometry;
   }
   auto* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   const auto* meta = custom ? gst_custom_meta_get_structure(custom) : nullptr;
@@ -44,15 +77,55 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer) {
   gst_structure_get_int(meta, "preproc_original_height", &geometry.height);
   if (const auto* mode = gst_structure_get_string(meta, "preproc_resize_mode"))
     geometry.resize = mode;
+  if (complete) {
+    gst_structure_get_int(meta, "preproc_resized_width", &geometry.model_width);
+    gst_structure_get_int(meta, "preproc_resized_height", &geometry.model_height);
+    gboolean roi_list = FALSE;
+    gst_structure_get_boolean(meta, "preproc_roi_list_enable", &roi_list);
+    if (roi_list)
+      return invalid("one BoxDecode frame requires one unambiguous preprocessing transform");
+    constexpr std::array matrix_names{"preproc_affine_m00", "preproc_affine_m01",
+                                      "preproc_affine_m02", "preproc_affine_m10",
+                                      "preproc_affine_m11", "preproc_affine_m12"};
+    constexpr std::array alias_names{"preproc_affine_scale_x", "preproc_affine_scale_y",
+                                     "preproc_affine_offset_x", "preproc_affine_offset_y"};
+    std::array<double, 6> matrix{};
+    bool matrix_present = false, alias_present = false;
+    for (const auto* name : matrix_names)
+      matrix_present |= gst_structure_has_field(meta, name);
+    for (const auto* name : alias_names)
+      alias_present |= gst_structure_has_field(meta, name);
+    if (matrix_present) {
+      for (std::size_t i = 0; i < matrix.size(); ++i)
+        if (!gst_structure_get_double(meta, matrix_names[i], &matrix[i]))
+          return invalid("preprocess affine matrix is partial or has invalid field types");
+      auto transform = checked_transform(matrix);
+      if (const auto* error = std::get_if<rt::Error>(&transform))
+        return *error;
+      geometry.transform = std::get<Transform>(transform);
+    }
+    if (alias_present) {
+      std::array<double, 4> values{};
+      for (std::size_t i = 0; i < values.size(); ++i)
+        if (!gst_structure_get_double(meta, alias_names[i], &values[i]))
+          return invalid("preprocess affine aliases are partial or have invalid field types");
+      auto transform = checked_transform({values[0], 0., values[2], 0., values[1], values[3]});
+      if (const auto* error = std::get_if<rt::Error>(&transform))
+        return *error;
+      if (geometry.transform && *geometry.transform != std::get<Transform>(transform))
+        return invalid("preprocess affine matrix and aliases disagree");
+      geometry.transform = std::get<Transform>(transform);
+    }
+  }
   return geometry;
 }
 struct Cache {
   struct Entry {
     int width = 0, height = 0;
+    std::optional<Transform> transform;
     std::shared_ptr<const rt::PreparedOperation> operation;
   };
-  // The same immutable recipe can be prepared by more than one graph. Never
-  // reuse another executor's admitted operation just because geometry matches.
+  // Per-admission bounded cache. Entries retain values, never metadata views.
   std::mutex mutex;
   std::shared_ptr<const rt::PreparedOperation> base;
   std::array<Entry, 4> variants;
@@ -63,25 +136,26 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
                                         BoxDecodeGeometryOptions options,
                                         bool original_size_from_metadata,
                                         bool require_resize_metadata) {
-  if (!original_size_from_metadata && !require_resize_metadata)
+  if (!original_size_from_metadata && !require_resize_metadata && !options.complete_geometry)
     return;
   const auto& member = recipe.members.at(member_index);
   std::optional<rt::KernelVariant> variant;
-  if (original_size_from_metadata) {
-    auto bound = scheduler::bind_kernel_variant(member.executable, "image_size");
+  if (original_size_from_metadata || options.complete_geometry) {
+    auto bound = scheduler::bind_kernel_variant(
+        member.executable, options.complete_geometry ? "image_geometry" : "image_size");
     if (const auto* error = std::get_if<rt::Error>(&bound))
       throw std::invalid_argument("BoxDecode geometry: " + error->message);
     variant = std::get<rt::KernelVariant>(std::move(bound));
     const auto fields = variant->fields();
     if (variant->contract_policy() != rt::KernelVariantPolicy::PreserveContract ||
-        fields.size() != 1 || fields.front() != "image_size")
-      throw std::invalid_argument("BoxDecode geometry: incompatible image_size capability");
+        fields.size() != (options.complete_geometry ? 2U : 1U) || fields.front() != "image_size" ||
+        (options.complete_geometry && fields[1] != "model_to_original"))
+      throw std::invalid_argument("BoxDecode geometry: incompatible image geometry capability");
   }
   recipe.resolver_factories.push_back(
       {member_index,
        [variant = std::move(variant), options, original_size_from_metadata,
         require_resize_metadata]() -> KernelStageRecipe::Resolver {
-         // The factory is reusable; only this request instance owns its mutable cache.
          return [cache = std::make_shared<Cache>(), variant, options, original_size_from_metadata,
                  require_resize_metadata](const rt::Executor& executor,
                                           const std::shared_ptr<const rt::PreparedOperation>& base,
@@ -90,19 +164,35 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
            if (!base || buffers.empty())
              return invalid("prepared operation and input buffers are required");
            Geometry selected;
-           bool found = false;
+           bool found = false, found_transform_authority = false;
            for (auto* buffer : buffers) {
-             auto parsed = read_geometry(buffer);
-             if (auto* error = std::get_if<rt::Error>(&parsed))
+             auto parsed = read_geometry(buffer, options.complete_geometry);
+             if (const auto* error = std::get_if<rt::Error>(&parsed))
                return *error;
              const auto geometry = std::get<Geometry>(parsed);
-             // Explicit image dimensions retain their original API precedence. Only
-             // metadata-derived dimensions need agreement across split-head carriers.
              if (!geometry.resize.empty()) {
                if (!selected.resize.empty() && selected.resize != geometry.resize)
                  return invalid("input head carriers disagree on resize mode");
                selected.resize = geometry.resize;
              }
+             if (options.complete_geometry) {
+               if ((geometry.model_width || geometry.model_height) &&
+                   (geometry.model_width != options.model_width ||
+                    geometry.model_height != options.model_height))
+                 return invalid("preprocess destination dimensions differ from the checked model");
+               if (geometry.transform || geometry.width || geometry.height) {
+                 if (found_transform_authority && selected.transform != geometry.transform)
+                   return invalid("input head carriers disagree on preprocessing transform");
+                 selected.transform = geometry.transform;
+                 found_transform_authority = true;
+               }
+               if (geometry.transform && !original_size_from_metadata &&
+                   (geometry.width != options.original_width ||
+                    geometry.height != options.original_height))
+                 return invalid(
+                     "preprocess affine source dimensions conflict with explicit image size");
+             }
+             // Explicit image dimensions retain their established precedence.
              if (!original_size_from_metadata || (geometry.width == 0 && geometry.height == 0))
                continue;
              if (geometry.width < 1 || geometry.width > 1048576 || geometry.height < 1 ||
@@ -115,17 +205,30 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
              found = true;
            }
            const std::string_view expected_resize =
-               options.resize == ResizeMode::Stretch ? "stretch" : "letterbox";
+               options.resize == ResizeMode::Stretch ? "stretch"
+               : options.resize == ResizeMode::Crop  ? "crop"
+                                                     : "letterbox";
            if (require_resize_metadata && selected.resize.empty())
              return invalid("required resize-mode metadata is missing");
            if (!selected.resize.empty() && selected.resize != expected_resize)
              return invalid("preprocess resize mode differs from the checked decode geometry");
-           if (!original_size_from_metadata)
-             return base;
-           if (!found)
+           if (!original_size_from_metadata) {
+             selected.width = options.original_width;
+             selected.height = options.original_height;
+           } else if (!found) {
              return invalid("original image dimensions require preprocess metadata");
+           }
+           if (!options.complete_geometry && !original_size_from_metadata)
+             return base;
+           if (options.complete_geometry) {
+             if (!found_transform_authority)
+               selected.transform = options.model_to_original;
+             if (options.resize == ResizeMode::Crop && !selected.transform)
+               return invalid("crop decoding requires the actual model-to-original affine");
+           }
            if (selected.width == options.original_width &&
-               selected.height == options.original_height)
+               selected.height == options.original_height &&
+               selected.transform == options.model_to_original)
              return base;
            std::lock_guard lock(cache->mutex);
            if (cache->base != base) {
@@ -135,12 +238,18 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
            }
            for (const auto& entry : cache->variants)
              if (entry.operation && entry.width == selected.width &&
-                 entry.height == selected.height)
+                 entry.height == selected.height && entry.transform == selected.transform)
                return entry.operation;
-           const std::array<std::optional<::simaai::kernels::ParameterValue>, 1> values{
+           std::array<std::optional<::simaai::kernels::ParameterValue>, 2> values{
                ::simaai::kernels::ParameterValue{
-                   ::simaai::kernels::ParameterArray{selected.width, selected.height}}};
-           auto checked = scheduler::apply_kernel_variant(*variant, {{}, {}, values});
+                   ::simaai::kernels::ParameterArray{selected.width, selected.height}},
+               {}};
+           if (selected.transform) {
+             const auto& t = *selected.transform;
+             values[1] = ::simaai::kernels::ParameterArray{t[0], t[1], t[2], t[3]};
+           }
+           auto checked = scheduler::apply_kernel_variant(
+               *variant, {{}, {}, {values.data(), options.complete_geometry ? 2U : 1U}});
            if (const auto* error = std::get_if<rt::Error>(&checked))
              return *error;
            auto prepared =
@@ -149,7 +258,8 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
              return *error;
            auto operation = std::make_shared<const rt::PreparedOperation>(
                std::get<rt::PreparedOperation>(std::move(prepared)));
-           cache->variants[cache->next] = {selected.width, selected.height, operation};
+           cache->variants[cache->next] = {selected.width, selected.height, selected.transform,
+                                           operation};
            cache->next = (cache->next + 1) % cache->variants.size();
            return operation;
          };

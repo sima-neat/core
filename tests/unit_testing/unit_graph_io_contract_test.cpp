@@ -221,10 +221,30 @@ RUN_TEST(
           model_fixture.tar_path +
           "\",\"stage_role\":\"route\",\"model_options\":{"
           "\"superpoint\":{\"profile\":2,\"nms_radius\":7,\"border_margin\":3,"
-          "\"descriptor_output_dtype\":5,\"output_format\":2}}}]\n";
+          "\"descriptor_output_dtype\":5,\"output_format\":2},"
+          "\"yolox_seg_pose\":{\"pose_classes\":[0,5]}}}]\n";
       superpoint_options_json.insert(root_end, model_fragment);
       const std::string superpoint_options_path = tmp_json_path("graph_io_superpoint_options.json");
       write_text(superpoint_options_path, superpoint_options_json);
+
+      // Serialized class IDs cannot be silently dropped or truncated into another gate.
+      for (const std::string bad_gate :
+           {"[0,0.5]", "[0,\"five\"]", "[0,-1]", "[0,2147483648]", "5"}) {
+        std::string malformed = superpoint_options_json;
+        const auto gate = malformed.find("\"pose_classes\":[0,5]");
+        require(gate != std::string::npos, "pose class fixture is missing");
+        malformed.replace(gate, std::string("\"pose_classes\":[0,5]").size(),
+                          "\"pose_classes\":" + bad_gate);
+        const auto malformed_path = tmp_json_path("graph_io_bad_pose_classes.json");
+        write_text(malformed_path, malformed);
+        bool refused = false;
+        try {
+          (void)Graph::load(malformed_path);
+        } catch (const std::exception& error) {
+          refused = std::string(error.what()).find("pose_classes") != std::string::npos;
+        }
+        require(refused, "invalid serialized pose class IDs must fail with a field diagnostic");
+      }
 
       const Graph loaded_superpoint_model_graph = Graph::load(superpoint_options_path);
       const std::string superpoint_options_roundtrip_path =
@@ -232,6 +252,9 @@ RUN_TEST(
       loaded_superpoint_model_graph.save(superpoint_options_roundtrip_path);
       const std::string superpoint_options_roundtrip_json =
           read_text(superpoint_options_roundtrip_path);
+      require_contains(superpoint_options_roundtrip_json,
+                       "\"yolox_seg_pose\":{\"pose_classes\":[0,5]}",
+                       "nested YOLOX segmentation/pose settings must survive save/load");
       require_contains(
           superpoint_options_roundtrip_json, "\"superpoint\":{\"profile\":2",
           io_case("superpoint_profile_roundtrip", "SuperPoint profile should survive save/load"));

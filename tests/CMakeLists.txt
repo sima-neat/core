@@ -55,15 +55,25 @@ set_tests_properties(unit_boxdecode_publication_test PROPERTIES
 
 add_executable(unit_boxdecode_kernel_recipe_test
   unit_testing/unit_boxdecode_kernel_recipe_test.cpp
+  ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodeGeometry.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodeKernelRecipe.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodePublication.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/StaticSpecBuilders.cpp)
 target_link_libraries(unit_boxdecode_kernel_recipe_test PRIVATE
-  sima_neat_internal_headers SimaScheduler::kernel_preparation SimaScheduler::gstreamer
+  sima_neat sima_neat_internal_headers SimaScheduler::kernel_preparation SimaScheduler::gstreamer
   SimaKernels::executables)
 target_include_directories(unit_boxdecode_kernel_recipe_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
 simaneat_add_test(NAME unit_boxdecode_kernel_recipe_test COMMAND unit_boxdecode_kernel_recipe_test)
 set_tests_properties(unit_boxdecode_kernel_recipe_test PROPERTIES
+  TIMEOUT 30 LABELS "strict;unit;contracts")
+
+add_executable(unit_boxdecode_geometry_test
+  unit_testing/unit_boxdecode_geometry_test.cpp)
+target_link_libraries(unit_boxdecode_geometry_test PRIVATE
+  sima_neat sima_neat_internal_headers SimaScheduler::gstreamer
+  SimaScheduler::kernel_preparation SimaScheduler::tensor_stage SimaKernels::executables)
+simaneat_add_test(NAME unit_boxdecode_geometry_test COMMAND unit_boxdecode_geometry_test)
+set_tests_properties(unit_boxdecode_geometry_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
 
 add_executable(unit_kernel_runner_integration_test
@@ -426,6 +436,11 @@ set(UNIT_TESTS
   unit_boxdecode_render_manifest_from_model_test
   unit_boxdecode_yolo_layout_matrix_test
   unit_boxdecode_ssd_layout_matrix_test
+  unit_boxdecode_yolox_seg_pose_class_inference_test
+  unit_boxdecode_yolox_seg_pose_standalone_contract_test
+  unit_boxdecode_pose_class_gate_test
+  unit_boxdecode_yolox_seg_pose_contract_matrix_test
+  unit_boxdecode_seg_pose_determinism_test
   unit_model_route_retarget_helper_test
   unit_processcvu_family_fragment_test
   unit_dequant_processcvu_contract_equivalence_test
@@ -1188,6 +1203,8 @@ set(PERF_TARGETS
   perf_runtime_codec_h265_decode_test
   perf_runtime_model_archive_load_test
   perf_ssd_mobilenet_boxdecode_test
+  perf_yolox_seg_pose_payload_representative_test
+  perf_yolox_seg_pose_payload_heavy_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -1230,6 +1247,18 @@ if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
   set_property(TEST ssd_mobilenet_boxdecode_perf_smoke
     APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
 endif()
+
+# Model-free payload API performance; no optional provider or skip path.
+foreach(seg_pose_perf representative heavy)
+  set(seg_pose_perf_target "perf_yolox_seg_pose_payload_${seg_pose_perf}_test")
+  if (NOT seg_pose_perf_target IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    simaneat_add_test(NAME yolox_seg_pose_payload_${seg_pose_perf}_perf
+      COMMAND ${seg_pose_perf_target})
+    simaneat_append_ctest_env(yolox_seg_pose_payload_${seg_pose_perf}_perf)
+    set_tests_properties(yolox_seg_pose_payload_${seg_pose_perf}_perf PROPERTIES
+      LABELS "perf;boxdecode;metrics" TIMEOUT 300)
+  endif()
+endforeach()
 
 set(PERF_PYTHON_TESTS
   test_perf_schema
@@ -1948,6 +1977,19 @@ add_pipeline_test(
 if (NOT async_yolov8_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST async_yolov8_tput_test APPEND PROPERTY LABELS "e2e;obj_detection;perf;tput")
   set_property(TEST async_yolov8_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+endif()
+
+add_pipeline_test_long(
+  async_yolov11_pose_bf16_tput_test
+  e2e_pipelines/obj_detection/async_yolov11_pose_bf16_tput_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;pose;smoke;modalix-only")
+  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY
+    RESOURCE_LOCK "perf-device;accelerator-device")
 endif()
 
 add_pipeline_test(

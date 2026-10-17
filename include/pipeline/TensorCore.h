@@ -320,8 +320,8 @@ struct PreprocessAffine {
  * downstream BoxDecode (and any user code) uses these fields to map model-space coordinates
  * (e.g., detected boxes in 640×640) back to original image coordinates.
  *
- * The `affine_*` fields encode the full 2×3 affine transform from original image coordinates
- * to model input coordinates; invert this matrix to map detections back to the source frame.
+ * The `affine_*` fields encode the full 2×3 affine transform from model input coordinates
+ * to original image coordinates, matching preprocess publication and ROI affine metadata.
  * @ingroup tensors
  */
 struct PreprocessRuntimeMeta {
@@ -352,10 +352,10 @@ struct PreprocessRuntimeMeta {
   double affine_m10 = 0.0;      ///< 2×3 affine matrix element (row 1, col 0): y shear.
   double affine_m11 = 1.0;      ///< 2×3 affine matrix element (row 1, col 1): y scale.
   double affine_m12 = 0.0;      ///< 2×3 affine matrix element (row 1, col 2): y translation.
-  double affine_scale_x = 1.0;  ///< Scalar X scale factor from original to model coordinates.
-  double affine_scale_y = 1.0;  ///< Scalar Y scale factor from original to model coordinates.
-  double affine_offset_x = 0.0; ///< Scalar X offset (typically pad_left) in model coordinates.
-  double affine_offset_y = 0.0; ///< Scalar Y offset (typically pad_top) in model coordinates.
+  double affine_scale_x = 1.0;  ///< Scalar X scale factor from model to original coordinates.
+  double affine_scale_y = 1.0;  ///< Scalar Y scale factor from model to original coordinates.
+  double affine_offset_x = 0.0; ///< Scalar X offset in original-image coordinates.
+  double affine_offset_y = 0.0; ///< Scalar Y offset in original-image coordinates.
 
   bool roi_list_enabled = false; ///< True when runtime ROI-list metadata is intentionally present.
   std::vector<PreprocessRoi> rois; ///< Runtime ROI windows in output-slot order.

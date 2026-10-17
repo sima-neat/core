@@ -13,13 +13,14 @@
 
 namespace {
 
-simaai::neat::Tensor make_fp32_head(int logical_index, const std::vector<int64_t>& shape,
-                                    int64_t physical_offset, const std::string& name,
-                                    float fill_value = 0.0f) {
+simaai::neat::Tensor
+make_fp32_head(int logical_index, const std::vector<int64_t>& shape, int64_t physical_offset,
+               const std::string& name, float fill_value = 0.0f,
+               simaai::neat::TensorLayout layout = simaai::neat::TensorLayout::CHW) {
   using namespace simaai::neat;
   Tensor tensor;
   tensor.dtype = TensorDType::Float32;
-  tensor.layout = TensorLayout::CHW;
+  tensor.layout = layout;
   tensor.shape = shape;
   tensor.strides_bytes = simaai::neat::pipeline_internal::contiguous_strides_bytes(shape, 4U);
 
@@ -47,6 +48,14 @@ simaai::neat::Tensor make_fp32_head(int logical_index, const std::vector<int64_t
   return tensor;
 }
 
+std::string describe_errors(
+    const simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics& diagnostics) {
+  std::string text;
+  for (const auto& error : diagnostics.errors)
+    text += "\n  " + error;
+  return text;
+}
+
 } // namespace
 
 RUN_TEST(
@@ -61,6 +70,19 @@ RUN_TEST(
       Tensor cls2 = make_fp32_head(5, {80, 20, 20}, 4710400, "cls_head_2", 8.0f);
       const Sample ingress = sample_from_tensors(TensorList{reg0, reg1, reg2, cls0, cls1, cls2});
 
+      // Cast is dtype-only: use genuinely HWC-authored storage for the positive
+      // BF16 path. Keep the original planar FP32 sample for native FP32 checks
+      // and the explicit unsupported-planar-BF16 admission check below.
+      const TensorList heads{reg0, reg1, reg2, cls0, cls1, cls2};
+      TensorList hwc_heads;
+      for (std::size_t i = 0; i < heads.size(); ++i) {
+        const auto& head = heads[i];
+        hwc_heads.push_back(make_fp32_head(static_cast<int>(i),
+                                           {head.shape[1], head.shape[2], head.shape[0]},
+                                           head.route.physical_byte_offset, head.route.name,
+                                           i < 3 ? 0.f : 8.f, TensorLayout::HWC));
+      }
+
       std::vector<std::shared_ptr<Node>> nodes;
       nodes.push_back(simaai::neat::nodes::Cast(
           CastOptions{.direction = CastDirection::Fp32ToBf16, .element_name = "pre_box_cast"}));
@@ -69,12 +91,13 @@ RUN_TEST(
           BoxDecodeTypeOption::Auto, BoxDecodeSourceStorage::DenseHwc));
 
       ContractCompileInput input;
-      input.ingress.ingress_sample = ingress;
+      input.ingress.ingress_sample = sample_from_tensors(hwc_heads);
       pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
       const auto compiled = compile_node_contracts(nodes, input, &diagnostics);
 
       require(diagnostics.errors.empty(),
-              "compile_node_contracts should succeed for Cast -> SimaBoxDecode");
+              "compile_node_contracts should succeed for HWC Cast -> SimaBoxDecode" +
+                  describe_errors(diagnostics));
       require(compiled.stages.size() == 2U, "expected cast and boxdecode stages");
       require(compiled.stages[0].node_kind == nodes[0]->kind() &&
                   compiled.stages[1].node_kind == nodes[1]->kind(),
@@ -91,7 +114,6 @@ RUN_TEST(
       constexpr std::uint64_t carrier_bytes = 2419200;
       const std::array<std::string, 6> names{"reg_head_0", "reg_head_1", "reg_head_2",
                                              "cls_head_0", "cls_head_1", "cls_head_2"};
-      const TensorList heads{reg0, reg1, reg2, cls0, cls1, cls2};
       require(cast_runtime->physical_outputs.size() == 1U &&
                   cast_runtime->physical_outputs[0].physical_index == 0 &&
                   cast_runtime->physical_outputs[0].size_bytes == carrier_bytes,
@@ -99,8 +121,8 @@ RUN_TEST(
       require(boxdecode_runtime->physical_inputs.size() == 1U &&
                   boxdecode_runtime->physical_inputs[0].size_bytes == carrier_bytes,
               "BoxDecode must retain the complete producer carrier extent");
-      // Cast retains the fixture's CHW logical axes; BoxDecode's semantic
-      // contract canonicalizes them to HWC without changing the head region.
+      // Both producer and consumer retain actual HWC storage. Dtype conversion
+      // scales its byte geometry without changing the logical head region.
       const auto hwc_shape = [&](std::size_t i) {
         return std::vector<std::int64_t>{heads[i].shape[1], heads[i].shape[2], heads[i].shape[0]};
       };
@@ -117,9 +139,13 @@ RUN_TEST(
                     binding.src_output_slot == static_cast<int>(i),
                 "Cast -> BoxDecode must preserve head order and source identity");
         require(produced.logical_name == names[i] && consumed.logical_name == names[i] &&
-                    produced.layout == "CHW" && produced.shape == heads[i].shape &&
+                    produced.layout == "HWC" && produced.shape == hwc_shape(i) &&
                     consumed.layout == "HWC" && consumed.shape == hwc_shape(i),
                 "head names and logical shapes must match the fixture");
+        const auto expected_strides = pipeline_internal::contiguous_strides_bytes(hwc_shape(i), 2U);
+        require(produced.stride_bytes == expected_strides &&
+                    consumed.stride_bytes == expected_strides,
+                "Cast -> BoxDecode must retain actual HWC BF16 byte strides");
         require(produced.byte_offset == offsets[i] && produced.size_bytes == sizes[i] &&
                     consumed.byte_offset == offsets[i],
                 "Cast must scale every head region from FP32 to BF16 exactly");
@@ -148,6 +174,40 @@ RUN_TEST(
                   cast_semantics->decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit,
               "grouped BF16 regression/class heads must infer logit-domain semantics");
 
+      // A CHW Cast really emits planar BF16, which the current numerical
+      // provider does not support. The former metadata-only pass silently
+      // discarded those strides and reinterpreted its bytes as HWC.
+      ContractCompileInput planar_cast_input;
+      planar_cast_input.ingress.ingress_sample = ingress;
+      pipeline_internal::sima::ManifestBuildDiagnostics planar_cast_diagnostics;
+      const auto planar_cast_compiled =
+          compile_node_contracts(nodes, planar_cast_input, &planar_cast_diagnostics);
+      const auto planar_error = describe_errors(planar_cast_diagnostics);
+      require(!planar_cast_diagnostics.errors.empty() &&
+                  planar_error.find("input.layout") != std::string::npos &&
+                  planar_error.find("requires tight HWC rows with bounded channel padding") !=
+                      std::string::npos,
+              "planar BF16 must fail at numerical layout admission, not be reinterpreted" +
+                  planar_error);
+      require(planar_cast_compiled.stages.size() == 2U &&
+                  planar_cast_compiled.stages[0].node_kind == nodes[0]->kind() &&
+                  planar_cast_compiled.stages[0].renderable &&
+                  !planar_cast_compiled.stages[1].renderable &&
+                  !planar_cast_compiled.fully_renderable,
+              "planar BF16 refusal must retain the valid Cast and mark BoxDecode unrenderable");
+      const auto* planar_cast_runtime =
+          compiled_runtime_contract_from_stage(&planar_cast_compiled.stages[0]);
+      require(planar_cast_runtime && planar_cast_runtime->logical_outputs.size() == heads.size(),
+              "planar Cast must retain its complete producer contract before refusal");
+      for (std::size_t i = 0; i < heads.size(); ++i) {
+        const auto& produced = planar_cast_runtime->logical_outputs[i];
+        const auto planar_strides = pipeline_internal::contiguous_strides_bytes(heads[i].shape, 2U);
+        require(produced.dtype == "BF16" && produced.layout == "CHW" &&
+                    produced.shape == heads[i].shape && produced.stride_bytes == planar_strides &&
+                    produced.byte_offset == offsets[i] && produced.size_bytes == sizes[i],
+                "refused planar BF16 producer bytes must not be relabeled or reordered");
+      }
+
       std::vector<std::shared_ptr<Node>> standalone_nodes;
       standalone_nodes.push_back(simaai::neat::nodes::SimaBoxDecode(
           BoxDecodeType::YoloV8, 0.25, 0.45, 100, "fp32_boxdecode", 1280, 720, 640, 640,
@@ -160,7 +220,8 @@ RUN_TEST(
           compile_node_contracts(standalone_nodes, standalone_input, &standalone_diagnostics);
 
       require(standalone_diagnostics.errors.empty(),
-              "compile_node_contracts should succeed for standalone FP32 SimaBoxDecode");
+              "compile_node_contracts should succeed for standalone FP32 SimaBoxDecode" +
+                  describe_errors(standalone_diagnostics));
       require(standalone_compiled.stages.size() == 1U, "expected one standalone boxdecode stage");
       require(standalone_compiled.stages[0].node_kind == standalone_nodes[0]->kind(),
               "standalone stage must retain BoxDecode Node identity");
@@ -212,7 +273,8 @@ RUN_TEST(
           compile_node_contracts(wrapped_nodes, wrapped_input, &wrapped_diagnostics);
 
       require(wrapped_diagnostics.errors.empty(),
-              "compile_node_contracts should succeed for cast-wrapped FP32 SimaBoxDecode");
+              "compile_node_contracts should succeed for cast-wrapped FP32 SimaBoxDecode" +
+                  describe_errors(wrapped_diagnostics));
       require(wrapped_compiled.stages.size() == 1U,
               "expected one standalone wrapped boxdecode stage");
       require(wrapped_compiled.stages[0].node_kind == wrapped_nodes[0]->kind(),

@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
+#include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/contract/ContractFacts.h"
@@ -11,6 +12,9 @@
 #include <gst/gst.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -41,7 +45,8 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       throw std::invalid_argument("SimaBoxDecode: cannot resolve ingress carriers: " + error);
   }
   runtime.physical_inputs.clear();
-  for (auto& logical : runtime.logical_inputs) {
+  for (std::size_t input_index = 0; input_index < runtime.logical_inputs.size(); ++input_index) {
+    auto& logical = runtime.logical_inputs[input_index];
     auto binding = std::find_if(runtime.input_bindings.begin(), runtime.input_bindings.end(),
                                 [&](const auto& value) {
                                   return value.local_logical_input_index == logical.logical_index;
@@ -73,11 +78,30 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
           static_cast<guint>(source->memory_index) >= gst_buffer_n_memory(ingress.buffer))
         throw std::invalid_argument("SimaBoxDecode: ingress head has no physical carrier");
       const int memory = source->memory_index;
+      const auto carrier_bytes =
+          gst_memory_get_sizes(gst_buffer_peek_memory(ingress.buffer, memory), nullptr, nullptr);
       logical.physical_index = memory;
       logical.byte_offset = source->byte_offset;
+      if (compiled.payload.tensor_storage_kind.at(input_index) ==
+          static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical)) {
+        // Envelope materialization may compact a strided CPU view. Bind the
+        // actual carrier's descriptor, not the pre-materialization strides.
+        const auto* layout = source->layout == SIMA_TENSOR_SET_LAYOUT_CHW_V1 ? "CHW"
+                             : source->layout == SIMA_TENSOR_SET_LAYOUT_HW_V1 ? "HW"
+                                                                            : "HWC";
+        const auto linear = boxdecode_linear_storage(
+            source->shape, source->stride_bytes, layout,
+            si::specbuilders::dtype_size_bytes_from_token(logical.dtype));
+        if (!linear || source->byte_offset < 0 ||
+            static_cast<std::uint64_t>(source->byte_offset) > carrier_bytes ||
+            linear->span_bytes > carrier_bytes - static_cast<std::uint64_t>(source->byte_offset))
+          throw std::invalid_argument("SimaBoxDecode: ingress linear storage geometry exceeds "
+                                      "its physical carrier");
+        logical.stride_bytes = linear->stride_bytes;
+      }
       physical = si::specbuilders::build_physical_buffer_static_spec(
           memory, memory,
-          gst_memory_get_sizes(gst_buffer_peek_memory(ingress.buffer, memory), nullptr, nullptr),
+          carrier_bytes,
           si::DeviceKind::Cpu, logical.segment_name);
       binding->src_stage_index = -1;
       binding->src_stage_id.clear();
@@ -111,6 +135,11 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
              existing->address_source != physical.address_source)
       throw std::invalid_argument("SimaBoxDecode: shared head carrier contracts disagree");
   }
+  geometry.complete_geometry = compiled.payload.decode_type == BoxDecodeType::YoloXSegPose;
+  const auto affine = [](const PreprocessRuntimeMeta& meta) {
+    return std::array<double, 6>{meta.affine_m00, meta.affine_m01, meta.affine_m02,
+                                 meta.affine_m10, meta.affine_m11, meta.affine_m12};
+  };
   std::optional<PreprocessRuntimeMeta> observed;
   if (input.ingress.ingress_sample) {
     for (const auto& tensor : tensors_from_sample(*input.ingress.ingress_sample, true)) {
@@ -120,6 +149,10 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       if (observed && (observed->original_width != facts.original_width ||
                        observed->original_height != facts.original_height))
         throw std::invalid_argument("SimaBoxDecode: ingress tensors disagree on image geometry");
+      if (geometry.complete_geometry && observed &&
+          (affine(*observed) != affine(facts) || observed->resize_mode != facts.resize_mode ||
+           observed->roi_list_enabled != facts.roi_list_enabled))
+        throw std::invalid_argument("SimaBoxDecode: ingress tensors disagree on affine geometry");
       observed = facts;
     }
   }
@@ -129,9 +162,13 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     const auto height =
         observed->scaled_height > 0 ? observed->scaled_height : observed->resized_height;
     const std::int64_t padded_width =
-        std::int64_t(width) + observed->pad_left + observed->pad_right;
+        observed->resize_mode == "crop"
+            ? observed->resized_width
+            : std::int64_t(width) + observed->pad_left + observed->pad_right;
     const std::int64_t padded_height =
-        std::int64_t(height) + observed->pad_top + observed->pad_bottom;
+        observed->resize_mode == "crop"
+            ? observed->resized_height
+            : std::int64_t(height) + observed->pad_top + observed->pad_bottom;
     if (padded_width < 1 || padded_width > 1048576 || padded_height < 1 || padded_height > 1048576)
       throw std::invalid_argument("SimaBoxDecode: ingress model geometry is invalid");
     geometry.model_width = static_cast<int>(padded_width);
@@ -166,12 +203,35 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       geometry.resize = ResizeMode::Stretch;
     else if (observed->resize_mode == "letterbox")
       geometry.resize = ResizeMode::Letterbox;
-    else if (compiled.payload.decode_type == BoxDecodeType::SuperPoint &&
+    else if ((compiled.payload.decode_type == BoxDecodeType::SuperPoint ||
+              geometry.complete_geometry) &&
              observed->resize_mode == "crop")
       geometry.resize = ResizeMode::Crop;
     else
       throw std::invalid_argument("SimaBoxDecode: unsupported preprocess resize geometry");
   }
+  if (geometry.complete_geometry && observed) {
+    // Both compact preprocess facts and the public metadata projection carry
+    // model-to-original coefficients. Do not invert them a second time.
+    const auto values = affine(*observed);
+    if (observed->roi_list_enabled || observed->has_roi_list())
+      throw std::invalid_argument("SimaBoxDecode: combined segmentation/pose requires one image "
+                                  "transform, not ROI-list metadata");
+    if (std::any_of(values.begin(), values.end(),
+                    [](double v) {
+                      return !std::isfinite(v) || std::abs(v) > std::numeric_limits<float>::max();
+                    }) ||
+        values[1] != 0 || values[3] != 0 || values[0] <= 0 || values[4] <= 0)
+      throw std::invalid_argument("SimaBoxDecode: model-to-original affine must be finite, "
+                                  "axis-aligned and have positive scales");
+    geometry.model_to_original =
+        std::array<float, 4>{static_cast<float>(values[0]), static_cast<float>(values[4]),
+                             static_cast<float>(values[2]), static_cast<float>(values[5])};
+  }
+  if (geometry.complete_geometry && geometry.resize == ResizeMode::Crop &&
+      !geometry.model_to_original)
+    throw std::invalid_argument("SimaBoxDecode: crop geometry requires authoritative ingress "
+                                "preprocess model-to-original affine metadata");
   auto native = si::prepare_boxdecode_kernel(admitted, geometry);
   if (compiled.payload.decode_type != BoxDecodeType::SuperPoint) {
     auto recipe = std::make_shared<si::KernelStageRecipe>(*native.compiled.recipe);

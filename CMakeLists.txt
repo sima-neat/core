@@ -1238,7 +1238,8 @@ add_library(sima_neat_internal_headers INTERFACE)
 # Internal contracts expose canonical preparation types. Propagate the installed
 # facade's usage requirements; public Core headers remain dependency-isolated.
 target_link_libraries(sima_neat_internal_headers INTERFACE
-  ${SIMANEAT_PRIVATE_LIBRARIES} SimaScheduler::elements SimaScheduler::kernel_preparation)
+  ${SIMANEAT_PRIVATE_LIBRARIES} SimaScheduler::elements SimaScheduler::kernel_preparation
+  nlohmann_json::nlohmann_json)
 target_include_directories(sima_neat_internal_headers INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline

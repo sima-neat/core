@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -116,6 +117,84 @@ void boxes(F format, std::int64_t capacity) {
   fixture.input[0].size_bytes--;
   require(bool(fixture.run()) && fixture.output == before, "short input modified wire");
 }
+void masks_pose(int points) {
+  constexpr std::int64_t capacity = 3;
+  constexpr std::size_t mask_bytes = 160 * 160;
+  const std::array<k::TensorSpec, 6> specs{{{{capacity, 4}, k::DType::Int32},
+                                            {{capacity}, k::DType::Float32},
+                                            {{capacity}, k::DType::Int32},
+                                            {{1}, k::DType::Int32},
+                                            {{capacity, 160, 160}, k::DType::UInt8},
+                                            {{capacity, points, 3}, k::DType::Float32}}};
+  Fixture f(F::MasksPose, specs);
+  require(f.plan.bytes == 4 + capacity * (24 + mask_bytes + 204), "combined wire extent");
+  for (const int count : {3, 1, 0}) {
+    write(f.storage[3].data(), std::int32_t(count));
+    for (int row = 0; row < count; ++row) {
+      write(f.storage[0].data() + row * 16, std::int32_t(10 + row));
+      write(f.storage[1].data() + row * 4, .25f * (row + 1));
+      write(f.storage[2].data() + row * 4, std::int32_t(7 - row));
+      std::memset(f.storage[4].data() + row * mask_bytes, 0x10 + row, mask_bytes);
+      for (int point = 0; point < points; ++point) {
+        auto* to = f.storage[5].data() + (row * points + point) * 12;
+        // Simulate a class-gated zero row. Publisher must not filter/reorder it.
+        write(to, row == 1 ? 0.f : float(100 * row + point));
+        write(to + 4, row == 1 ? 0.f : float(200 * row + point));
+        write(to + 8, row == 1 ? 0.f : .75f);
+      }
+    }
+    require(!f.run(), "combined publication rejected");
+    const auto* masks = f.output.data() + 4 + capacity * 24;
+    const auto* poses = masks + capacity * mask_bytes;
+    require(read<std::int32_t>(f.output.data()) == count, "combined count changed");
+    for (int row = 0; row < capacity; ++row) {
+      const auto* box = f.output.data() + 4 + row * 24;
+      if (row < count) {
+        require(read<std::int32_t>(box) == 10 + row && read<std::int32_t>(box + 20) == 7 - row,
+                "combined survivor row association changed");
+        require(std::all_of(masks + row * mask_bytes, masks + (row + 1) * mask_bytes,
+                            [row](auto byte) { return byte == std::byte(0x10 + row); }),
+                "combined mask survivor changed");
+        for (int point = 0; point < points; ++point) {
+          const auto* from = poses + row * 204 + point * 12;
+          require(read<std::uint32_t>(from) == unsigned(row == 1 ? 0 : 100 * row + point) &&
+                      read<std::uint32_t>(from + 4) == unsigned(row == 1 ? 0 : 200 * row + point) &&
+                      read<float>(from + 8) == (row == 1 ? 0.f : .75f),
+                  "combined pose survivor changed");
+        }
+      } else {
+        require(std::all_of(box, box + 24, [](auto byte) { return byte == std::byte{}; }),
+                "combined box tail stale");
+        require(std::all_of(masks + row * mask_bytes, masks + (row + 1) * mask_bytes,
+                            [](auto byte) { return byte == std::byte{}; }),
+                "combined mask tail stale");
+      }
+      const auto* zero_begin = poses + row * 204 + (row < count ? points * 12 : 0);
+      require(std::all_of(zero_begin, poses + (row + 1) * 204,
+                          [](auto byte) { return byte == std::byte{}; }),
+              "combined pose padding or tail stale");
+    }
+    f.check_guard();
+  }
+  const auto before = f.output;
+  write(f.storage[3].data(), std::int32_t{1});
+  for (float bad : {-1.f, std::numeric_limits<float>::infinity(), 4294967296.f}) {
+    write(f.storage[5].data(), bad);
+    require(bool(f.run()) && f.output == before, "invalid combined coordinate modified wire");
+  }
+  write(f.storage[3].data(), std::int32_t{0});
+  f.input[5] = {f.output.data(), f.storage[5].size()};
+  require(bool(f.run()) && f.output == before, "combined alias modified wire");
+  auto malformed = specs;
+  malformed[5] = {{capacity, 18, 3}, k::DType::Float32};
+  bool rejected = false;
+  try {
+    (void)core::prepare_boxdecode_publication(F::MasksPose, malformed);
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "oversized combined point count admitted");
+}
 void rcnn() {
   const std::array<k::TensorSpec, 5> specs{{{{8, 4}, k::DType::Float32},
                                             {{8}, k::DType::Float32},
@@ -212,6 +291,8 @@ void features(F format, k::DType dtype, std::int64_t dim) {
 int main() {
   try {
     rcnn();
+    for (int points : {1, 13, 17})
+      masks_pose(points);
     for (auto format : {F::Boxes, F::Pose, F::Masks})
       for (auto capacity : {1, 3, 31})
         boxes(format, capacity);
@@ -219,7 +300,8 @@ int main() {
       for (auto dim : {1, 17, 256})
         features(F::FeaturePointsV1, dtype, dim);
     features(F::LegacyFeaturePointsV0, k::DType::Int8, 256);
-    std::cout << "BoxDecode publication: 19 format/capacity/dtype combinations passed\n";
+    std::cout << "BoxDecode publication: formats, padding, survivor association and negative "
+                 "controls passed\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

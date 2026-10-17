@@ -77,6 +77,9 @@ struct BoxDecodeOptionsInternal;
  * `decode_bbox()`, or `stages::BoxDecodeResults()` when you only need boxes. For task-specific
  * payloads, use `decode_pose()` to get boxes plus `[N, 17, 3]` keypoints, or
  * `decode_segmentation()` to get boxes plus `[N, 160, 160]` masks.
+ * `BoxDecodeType::YoloXSegPose` carries masks and keypoints in one payload; consume it with
+ * `decode_segmentation_pose()` to get all three tensors at once. `decode_bbox()` still works on
+ * it if you only need boxes, since the payload is box-leading.
  * `BoxDecodeType::SuperPoint` instead emits a type-honest `FEATURE_POINTS_V1` payload; consume it
  * with `decode_superpoint()` or `stages::SuperPointResults()`. Use `SimaRender` downstream when
  * you want an annotated video/image stream.

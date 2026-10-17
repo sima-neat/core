@@ -225,7 +225,10 @@ class PerfMatrixFailfastTest(unittest.TestCase):
             first = json.loads((results / "runtime_session_sync_rgb.json").read_text())
             self.assertEqual((first["failure_class"], first["reason_code"]), ("ENV_BROKEN", "ENV_TIMEOUT"))
             summary = json.loads((results / "hardware-fail-stop-summary.json").read_text())
-            self.assertEqual(len(summary["not_run_scenarios"]), 7)
+            self.assertEqual(
+                summary["not_run_scenarios"],
+                [scenario.scenario_id for scenario in run_perf_matrix.STANDARD_SCENARIOS[1:]],
+            )
             self.assertFalse((results / "runtime_session_async_rgb.json").exists())
 
     def test_only_skippable_scenario_honors_return_code_77(self) -> None:

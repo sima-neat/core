@@ -78,6 +78,7 @@ opt.top_k = 100;
 | Detection | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
 | Pose | `decode_pose(...)` | `pyneat.decode_pose(...)` | boxes `[N, 6]` and keypoints `[N, 17, 3]` float32: `x, y, visibility` |
 | Segmentation | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | boxes `[N, 6]` float32 and masks `[N, 160, 160]` uint8 |
+| Segmentation + pose | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | boxes `[N, 6]` float32, masks `[N, 160, 160]` uint8, keypoints `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | keypoints `[N,2]`, scores `[N]`, descriptors `[N,D]` |
 
 Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
@@ -197,6 +198,44 @@ Coordinates are in original-image pixels when upstream preprocessing metadata is
 present. They are not normalized to `[0, 1]` and are not expressed in the
 model's internal letterboxed input space.
 
+### Combined segmentation + pose payload
+
+`yolox-seg-pose` emits a single buffer carrying three regions. Every region is
+strided by the same slot count, `top_k`:
+
+| Region | Offset | Stride | Contents |
+| --- | --- | --- | --- |
+| header | `0` | 4 | `int32` detection count |
+| boxes | `4` | 24 | `BoundingBoxOut` records, as above |
+| masks | `4 + 24*top_k` | `mask_w * mask_h` | `uint8`, one plane per slot |
+| poses | `4 + (24 + mask_w*mask_h)*top_k` | 204 | 17 x `{uint32 x, uint32 y, float32 visibility}` |
+
+Use `decode_segmentation_pose(...)` to get boxes, masks and keypoints. Row `i` in each tensor describes the same detection. Use `decode_bbox(...)` or `BoxDecodeResults(...)` if you only need boxes.
+
+The combined decoder also accepts the legacy `BBOX` tag. Simultaneous mask-and-pose
+rendering is not supported. Do not pass the combined buffer to `poseyolo`: that
+renderer expects keypoints directly after the boxes, whereas the combined payload
+stores masks there.
+
+There are 17 keypoint slots per detection. The backend zeros unused slots and keypoints for classes excluded by `pose_classes`. The helper copies those values unchanged.
+
+Core derives `num_classes` from the class-head depth minus one, because channel 0 holds objectness. For example, 30 channels means 29 classes. An explicit `num_classes` must match.
+
+### Keypoint classes
+
+Set the class IDs that have keypoints:
+
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.YoloXSegPose)
+options.yolox_seg_pose.pose_classes = [0, 5]
+```
+
+`ModelOptions.yolox_seg_pose` accepts the same setting.
+
+- Classes outside the list get zero keypoint coordinates and visibility.
+- An empty `BoxDecodeOptions` list inherits the model's settings. With no list configured, every class gets keypoints.
+- IDs must be unique and in `[0, num_classes)`. This option is only supported for `YoloXSegPose`.
+
 ## When `model.run` returns raw heads
 
 Some model routes return raw feature-map heads from `model.run(...)` instead of
@@ -276,6 +315,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
+| `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | YOLOX packed export carrying box, mask and keypoint heads together |
 | `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300, SSD-Mobile-300, SSD-Mobile-320, or SSDlite-Mobile-320 contract, selected from ordered head geometry |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
@@ -398,3 +438,29 @@ seg = pyneat.decode_segmentation(outputs)[0]
 seg_boxes = seg.boxes.to_numpy()
 masks = seg.masks.to_numpy()
 ```
+
+## Upgrading
+
+The new options change C++ object layouts. Core uses ABI 6, `libsima_neat.so.6`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 5 binaries to ABI 6 through a compatibility symlink.
+
+
+### Combined YOLOX input admission
+
+`YoloXSegPose` accepts BF16 and INT8 heads, or native FP32 heads in contiguous
+or positive, non-overlapping strided storage (including planar CHW views).
+FP32 addresses and strides must be four-byte aligned; channel-blocked FP32 and
+UINT8 are rejected. No implicit lossy FP32 conversion is added. The prototype
+has its own dtype and per-tensor INT8 quantization; the roles of each detection
+head must still agree on dtype. Core preserves these per-port facts for Kernels
+admission rather than applying the first head's dtype or quantization to every port.
+The three detection levels have strides 8, 16 and 32 in both axes. The model
+width and height must be multiples of 32; they need not be equal. The prototype
+remains 160×160×32 and does not resize silently with model dimensions.
+
+Use preprocess metadata for off-center padding or crop coordinates. The affine
+maps **model to original** coordinates; shear, rotation and ROI lists are not
+supported by this combined profile. Crop needs authoritative affine metadata at
+preparation. This is a decoder contract for externally preprocessed tensors,
+not new support for crop production in `Model` preprocessing. A model with
+fewer than 17 keypoints still publishes the fixed
+17-slot public wire format, with unused slots set to zero.

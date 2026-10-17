@@ -409,6 +409,7 @@ RUN_TEST(
       different_option([](auto& o) { o.nms_iou_threshold = 0.5f; });
       different_option([](auto& o) { o.top_k = 10; });
       different_option([](auto& o) { o.num_classes = 80; });
+      different_option([](auto& o) { o.yolox_seg_pose.pose_classes = {0, 5}; });
       different_option([](auto& o) { o.superpoint.profile = SuperPointProfile::LightGlueV1; });
       different_option([](auto& o) { o.superpoint.nms_radius = 0; });
       different_option([](auto& o) { o.superpoint.border_margin = 0; });

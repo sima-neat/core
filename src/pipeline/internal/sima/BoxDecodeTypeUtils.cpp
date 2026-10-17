@@ -113,6 +113,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "superpoint" || lower == "super-point") {
     return BoxDecodeType::SuperPoint;
   }
+  if (lower == "yolox-seg-pose" || lower == "yolox_seg_pose") {
+    return BoxDecodeType::YoloXSegPose;
+  }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
   }
@@ -158,6 +161,10 @@ std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::
     return SuperPointOutputFormat::LegacyA65InterleavedV0;
   }
   return std::nullopt;
+}
+
+bool box_decode_type_uses_per_port_dtype(BoxDecodeType type) {
+  return type == BoxDecodeType::SuperPoint || type == BoxDecodeType::YoloXSegPose;
 }
 
 bool is_box_decode_type_specified(BoxDecodeType type) {

@@ -19,6 +19,7 @@ namespace host = ::simaai::scheduler::host;
 struct WirePlan {
   BoxDecodeWireFormat format;
   std::size_t capacity = 0, bytes = 0, auxiliary_row = 0;
+  std::size_t pose_points = 0, pose_input = 0;
   std::vector<k::TensorRequirements> inputs;
   FeaturePointsHeaderV1 feature_header;
 };
@@ -167,12 +168,12 @@ k::Status publish(const WirePlan& plan, std::span<const k::ConstHostBuffer> inpu
     std::memset(output + 4 + n * 264, 0, (plan.capacity - n) * 264);
     return {};
   }
-  if (plan.format == BoxDecodeWireFormat::Pose) {
+  if (plan.pose_points) {
     // Coordinates were already rounded/clipped by the numerical kernel. Check
     // representability before writing; converting is wire encoding, not math.
-    for (std::size_t i = 0; i < n * 17; ++i)
+    for (std::size_t i = 0; i < n * plan.pose_points; ++i)
       for (std::size_t axis = 0; axis < 2; ++axis) {
-        const float value = load<float>(inputs[4].data + (i * 3 + axis) * 4);
+        const float value = load<float>(inputs[plan.pose_input].data + (i * 3 + axis) * 4);
         if (!std::isfinite(value) || value < 0.f || double(value) > UINT32_MAX)
           return k::Error{k::ErrorCode::InvalidParameter, "coordinates",
                           "pose coordinate cannot be encoded"};
@@ -187,16 +188,23 @@ k::Status publish(const WirePlan& plan, std::span<const k::ConstHostBuffer> inpu
   }
   std::memset(output + 4 + n * 24, 0, (plan.capacity - n) * 24);
   auto* auxiliary = output + 4 + plan.capacity * 24;
-  if (plan.format == BoxDecodeWireFormat::Masks) {
+  if (plan.format == BoxDecodeWireFormat::Masks || plan.format == BoxDecodeWireFormat::MasksPose) {
     std::memcpy(auxiliary, inputs[4].data, n * plan.auxiliary_row);
     std::memset(auxiliary + n * plan.auxiliary_row, 0, (plan.capacity - n) * plan.auxiliary_row);
-  } else if (plan.format == BoxDecodeWireFormat::Pose) {
-    for (std::size_t i = 0; i < n * 17; ++i) {
-      const auto* from = inputs[4].data + i * 12;
-      auto* to = auxiliary + i * 12;
-      store(to, static_cast<std::uint32_t>(load<float>(from)));
-      store(to + 4, static_cast<std::uint32_t>(load<float>(from + 4)));
-      std::memcpy(to + 8, from + 8, 4);
+    auxiliary += plan.capacity * plan.auxiliary_row;
+  }
+  if (plan.pose_points) {
+    // Public wire capacity is fixed at 17 points, independently of canonical P.
+    // Copy only the shared survivor rows and clear every unused point/tail.
+    for (std::size_t i = 0; i < n; ++i) {
+      for (std::size_t point = 0; point < plan.pose_points; ++point) {
+        const auto* from = inputs[plan.pose_input].data + (i * plan.pose_points + point) * 12;
+        auto* to = auxiliary + i * 204 + point * 12;
+        store(to, static_cast<std::uint32_t>(load<float>(from)));
+        store(to + 4, static_cast<std::uint32_t>(load<float>(from + 4)));
+        std::memcpy(to + 8, from + 8, 4);
+      }
+      std::memset(auxiliary + i * 204 + plan.pose_points * 12, 0, 204 - plan.pose_points * 12);
     }
     std::memset(auxiliary + n * 204, 0, (plan.capacity - n) * 204);
   }
@@ -209,10 +217,15 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
   const bool features = format == BoxDecodeWireFormat::FeaturePointsV1 ||
                         format == BoxDecodeWireFormat::LegacyFeaturePointsV0;
   const bool rcnn = format == BoxDecodeWireFormat::RcnnProposals;
-  const bool auxiliary =
-      rcnn || format == BoxDecodeWireFormat::Pose || format == BoxDecodeWireFormat::Masks;
+  const bool combined = format == BoxDecodeWireFormat::MasksPose;
+  const bool pose = format == BoxDecodeWireFormat::Pose || combined;
+  const bool masks = format == BoxDecodeWireFormat::Masks || combined;
+  const bool auxiliary = rcnn || pose || masks;
   if ((!features && !auxiliary && format != BoxDecodeWireFormat::Boxes) ||
-      inputs.size() != (auxiliary ? 5u : 4u) || inputs[0].shape.size() != 2)
+      inputs.size() != (combined    ? 6u
+                        : auxiliary ? 5u
+                                    : 4u) ||
+      inputs[0].shape.size() != 2)
     throw std::invalid_argument("BoxDecode wire format or port count is invalid");
   const auto capacity = inputs[0].shape.dimensions()[0];
   if (capacity < 1 || capacity > 65536)
@@ -261,15 +274,24 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
     }
   } else {
     require_spec(inputs[2], k::DType::Int32, {capacity});
-    if (format == BoxDecodeWireFormat::Pose) {
-      require_spec(inputs[4], k::DType::Float32, {capacity, 17, 3});
-      plan->auxiliary_row = 204;
-    } else if (format == BoxDecodeWireFormat::Masks) {
+    if (pose) {
+      plan->pose_input = combined ? 5 : 4;
+      const auto& points = inputs[plan->pose_input];
+      if (points.shape.size() != 3)
+        throw std::invalid_argument("BoxDecode keypoints must have shape [K,P,3]");
+      const auto count = points.shape.dimensions()[1];
+      if (count < 1 || count > 17 || (!combined && count != 17))
+        throw std::invalid_argument("BoxDecode wire requires 1..17 combined or 17 pose points");
+      require_spec(points, k::DType::Float32, {capacity, count, 3});
+      plan->pose_points = static_cast<std::size_t>(count);
+    }
+    if (masks) {
       if (inputs[4].shape.size() != 3)
         throw std::invalid_argument("BoxDecode masks must have shape [K,H,W]");
       const auto shape = inputs[4].shape.dimensions();
-      if (shape[1] < 1 || shape[2] < 1)
-        throw std::invalid_argument("BoxDecode mask extents must be positive");
+      if (shape[1] < 1 || shape[2] < 1 || (combined && (shape[1] != 160 || shape[2] != 160)))
+        throw std::invalid_argument(
+            "BoxDecode mask extents must be positive; combined wire requires 160x160");
       require_spec(inputs[4], k::DType::UInt8, {capacity, shape[1], shape[2]});
       plan->auxiliary_row = checked_mul(shape[1], shape[2]);
     }
@@ -279,8 +301,9 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
       require_spec(inputs[4], k::DType::Int32, {capacity});
       plan->bytes = checked_mul(4, checked_add(4, checked_mul(plan->capacity / 4, 12)));
     } else
-      plan->bytes =
-          checked_add(4, checked_mul(plan->capacity, checked_add(24, plan->auxiliary_row)));
+      plan->bytes = checked_add(
+          4, checked_mul(plan->capacity,
+                         checked_add(checked_add(24, plan->auxiliary_row), pose ? 204 : 0)));
   }
   for (const auto& input : inputs) {
     auto bytes = scalar_bytes(input.dtype);

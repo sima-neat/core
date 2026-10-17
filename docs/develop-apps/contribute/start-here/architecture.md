@@ -1914,8 +1914,20 @@ payloads without duplicating decode math.
 
 Image-size changes select immutable, resource-compatible prepared BoxDecode variants
 before binding. They do not mutate an operation used by an in-flight frame. RCNN
-stage 1 remains an explicit unsupported contract until its per-level top-K semantics
-are qualified; Core must not load the retired objectdecode plugin as a fallback.
+stage 1 preserves per-level top-K count-plus-FP16 proposal groups. Core must not
+load the retired objectdecode plugin as a fallback.
+
+YOLOX segmentation/pose uses one canonical numerical request with six outputs:
+count, boxes, scores, classes, masks and keypoints. Core retains the producer's
+model-to-original axis-aligned affine and its original image extent in each
+immutable geometry variant. Explicit image dimensions do not discard crop/pad
+offsets. Crop admission requires authoritative preprocess affine metadata.
+The kernel emits 1–17 keypoints; Core's compatibility publication always has
+17 slots per detection, with unused slots zeroed. The optional pose-class gate
+is checked and sorted during preparation, included in graph serialization and
+stage cache identity, and forwarded generically without Scheduler dispatch.
+`decode_bbox()` bounds reads by the box region even when masks and keypoints
+follow it. The combined helper returns aligned boxes, masks and keypoints.
 
 A65 is an execution target, not a GStreamer memory domain. The plugin still imports
 DMA-BUF carriers. Direct tensor ingress uses shared-CMA allocations, for example
