@@ -142,7 +142,7 @@ pyneat.stages.preproc(
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | 入力フォーマットのヒント：`RGB`、`BGR`、`GRAY8`、`NV12`、`I420`、または`Auto`。|
 | `opt.preprocess.color_convert.output_format` | モデルへの入力カラーフォーマット。通常は、`RGB`、`BGR`、または`GRAY8`です。|
-| `opt.preprocess.normalize.enable` | 平均値/標準偏差による正規化を有効または無効にします。 |
+| `opt.preprocess.normalize.enable` | 平均値/標準偏差による正規化を有効または無効にします。`Auto`（デフォルト）の場合、画像入力でモデルの MPK `input_range` が正規化された値（例: `[0, 1]`）を想定しているときに有効になり、その範囲から平均値/標準偏差を算出します。`Off` を指定すると、生の `[0, 255]` ピクセルのままになります。 |
 | `opt.preprocess.normalize.mean` | チャンネルごとの平均値。モデルの学習時に使用した前処理と一致させる。 |
 | `opt.preprocess.normalize.stddev` | チャンネルごとの除数。モデルのトレーニング中に使用されたのと同じ正規化されたチャンネル統計を使用します。たとえば、ImageNetスタイルの値（`{0.229,0.224,0.225}`付近の値）などです。|
 | モデルが量子化された出力を期待する場合に、プランナー/ユーザーが量子化された出力を制御できるようにします。| `opt.preprocess.quantize.enable` |

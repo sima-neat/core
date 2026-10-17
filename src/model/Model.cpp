@@ -4018,6 +4018,13 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   }
   plan.session_route_plan = session_route_plan;
   populate_effective_model_managed_contract_fields(&plan, capability_pack);
+  // Route planning can select an image preproc stage on its own (default options
+  // with an MPK preproc stage); apply the MPK input_range normalization there too.
+  const bool image_preproc_selected =
+      plan.session_route_plan.include_pre_stage && !plan.session_route_plan.pre_chain.empty() &&
+      plan.session_route_plan.pre_chain.front() == internal::SessionPreStageOp::Preproc;
+  internal::apply_auto_route_input_normalization(options, capabilities, image_preproc_selected,
+                                                 &plan);
 
   // Typed route owns ingress contract. Adapter-first pre chains must ingest
   // tensor data at appsrc (not legacy video caps from preproc family probing).

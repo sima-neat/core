@@ -142,7 +142,7 @@ pyneat.stages.preproc(
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | 來源格式提示：`RGB`、`BGR`、`GRAY8`、`NV12`、`I420` 或 `Auto`。|
 | `opt.preprocess.color_convert.output_format` | 模型輸入的色彩空間，通常為 `RGB`、`BGR` 或 `GRAY8`。|
-| `opt.preprocess.normalize.enable` | 啟用或停用平均值/標準差正規化。|
+| `opt.preprocess.normalize.enable` | 啟用或停用平均值/標準差正規化。`Auto`（預設值）會在影像輸入時，若模型的 MPK `input_range` 需要正規化數值（例如 `[0, 1]`），便自動啟用，並由該範圍推導平均值/標準差；設為 `Off` 則保留原始 `[0, 255]` 像素。|
 | `opt.preprocess.normalize.mean` | 每個通道的平均值。與模型的訓練預處理方式相符。|
 | `opt.preprocess.normalize.stddev` | 每個通道的除數。使用與模型訓練期間相同的正規化通道統計資訊，例如 ImageNet 樣式的數值，接近 `{0.229,0.224,0.225}`。|
 | 當模型預期輸出為量化格式時，規劃器/使用者控制量化輸出的設定。| `opt.preprocess.quantize.enable` |
