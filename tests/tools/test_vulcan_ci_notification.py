@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,7 +44,10 @@ def test_listener_uses_shared_notifier_with_minimal_permissions_and_secrets() ->
 
     assert "actions: read" in content
     assert "contents: read" in content
-    assert "sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@main" in content
+    match = re.search(r"vulcan-notify-slack.yml@([0-9a-f]{40})", content)
+    assert match is not None
+    assert f"implementation_ref: {match.group(1)}" in content
+    assert "analyze_failure: true" in content
     assert "channel_id: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}" in content
     assert "slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}" in content
     assert "secrets: inherit" not in content
