@@ -217,8 +217,7 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
           "independent requests lost immutable image factories");
   auto first_adapter = take(first_instance.frame_adapter_factory());
   auto second_adapter = take(second_instance.frame_adapter_factory());
-  require(first_adapter != second_adapter,
-          "independent requests shared mutable image state");
+  require(first_adapter != second_adapter, "independent requests shared mutable image state");
   std::weak_ptr<gs::TensorStageFrameAdapter> released = first_adapter;
   first_adapter.reset();
   second_adapter.reset();
@@ -433,9 +432,9 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
       }
     }
     const std::array inputs{input.get()};
-    auto frame = take(stage.bind(inputs, full ? probe::PublicationMode::CompactFrameV2
-                                      : compact ? probe::PublicationMode::CompactTensorSetV1
-                                                : probe::PublicationMode::Legacy));
+    auto frame = take(stage.bind(inputs, full      ? probe::PublicationMode::CompactFrameV2
+                                         : compact ? probe::PublicationMode::CompactTensorSetV1
+                                                   : probe::PublicationMode::Legacy));
     require(frame.admitted(0), "Preproc did not use admitted storage");
     const auto operation = frame.operation_identity(0);
     require(bool(operation), "dynamic Preproc operation missing");

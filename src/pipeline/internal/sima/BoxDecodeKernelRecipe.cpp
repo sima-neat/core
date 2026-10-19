@@ -114,8 +114,7 @@ struct Builder {
     if (bytes != dense_bytes(tensor))
       invalid("private output projection differs from checked storage");
     const auto name = "kernel_private_" + std::to_string(index);
-    const std::vector<std::int64_t> shape(tensor.shape.begin(),
-                                          tensor.shape.end());
+    const std::vector<std::int64_t> shape(tensor.shape.begin(), tensor.shape.end());
     recipe->private_outputs.push_back(specs::build_logical_output_static_spec(
         static_cast<int>(index), static_cast<int>(index), static_cast<int>(index),
         static_cast<int>(index), static_cast<int>(index), shape, dtype_name(tensor.dtype), "", name,

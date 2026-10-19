@@ -788,7 +788,8 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   const char* stream_id = gst_structure_get_string(s, "stream-id");
   const char* buffer_name = gst_structure_get_string(s, "buffer-name");
   const char* orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
-  if (frame_id >= 0) out->frame_id = frame_id;
+  if (frame_id >= 0)
+    out->frame_id = frame_id;
   if (has_input_seq && input_seq >= 0) {
     out->input_seq = input_seq;
   } else if (has_orig_input_seq && orig_input_seq >= 0) {
@@ -1744,7 +1745,8 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
     }
     current_runtime_segments.reserve(current_view.segment_count());
     for (std::size_t i = 0; i < current_view.segment_count(); ++i) {
-      current_runtime_segments.push_back(Segment{std::move(current_view.segment_name(i)), current_view.segment_size(i)});
+      current_runtime_segments.push_back(
+          Segment{std::move(current_view.segment_name(i)), current_view.segment_size(i)});
     }
     if (pipeline_internal::tensor_buffer_current_segments(
             gst_sample_get_buffer(sample), current_runtime_segments, &current_runtime_segments,

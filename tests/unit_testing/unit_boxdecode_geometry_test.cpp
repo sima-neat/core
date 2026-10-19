@@ -14,7 +14,12 @@ namespace k = simaai::scheduler::client;
 namespace probe = simaai::scheduler::testing;
 namespace rt = simaai::scheduler::client;
 namespace core = simaai::neat::pipeline_internal::sima;
-struct BufferFree { void operator()(GstBuffer* p) const { if (p) gst_buffer_unref(p); } };
+struct BufferFree {
+  void operator()(GstBuffer* p) const {
+    if (p)
+      gst_buffer_unref(p);
+  }
+};
 using Buffer = std::unique_ptr<GstBuffer, BufferFree>;
 void require(bool condition, const char* message) {
   if (!condition)
@@ -55,8 +60,7 @@ k::KernelExecutable executable() {
                               k::Parameter{"score_activation", "sigmoid"},
                               k::Parameter{"mask_basis_input", 12},
                               k::Parameter{"keypoints", 1}};
-  return take(
-      k::check_kernel({"boxdecode", k::Target::A65, inputs, outputs, parameters}));
+  return take(k::check_kernel({"boxdecode", k::Target::A65, inputs, outputs, parameters}));
 }
 void set_geometry(GstStructure* meta, double offset = 10.) {
   gst_structure_remove_all_fields(meta);
@@ -176,9 +180,9 @@ void geometry() {
   for (int i = 0; i < 6; ++i) {
     set_geometry(a, 30. + i);
     set_geometry(b, 30. + i);
-    require(
-        k::same_kernel_contract_resources(take(resolve(executor.preparer(), buffers)).executable(), checked),
-        "geometry cache eviction changed resource identity");
+    require(k::same_kernel_contract_resources(
+                take(resolve(executor.preparer(), buffers)).executable(), checked),
+            "geometry cache eviction changed resource identity");
   }
   set_geometry(a);
   set_geometry(b);

@@ -282,8 +282,8 @@ static gboolean push_frame_cb(gpointer user_data) {
   }
   ::simaai::scheduler::client::dma::Error error;
   if (acquired != GST_FLOW_OK || !buf ||
-      !::simaai::scheduler::client::dma::convertEncoderInput(pc->converter, pc->source_info, pc->source_buffer,
-                                             pc->surface_info, buf, &error)) {
+      !::simaai::scheduler::client::dma::convertEncoderInput(
+          pc->converter, pc->source_info, pc->source_buffer, pc->surface_info, buf, &error)) {
     if (acquired != GST_FLOW_FLUSHING) {
       GST_ELEMENT_ERROR(appsrc, RESOURCE, WRITE, ("Cannot prepare RTSP encoder DMA input"),
                         ("%s", error.message().c_str()));
@@ -588,7 +588,8 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
           gst_video_info_init(&pc->source_info);
           const bool valid_surface =
               gst_video_info_set_format(&pc->source_info, GST_VIDEO_FORMAT_NV12, pc->w, pc->h) &&
-              ::simaai::scheduler::client::dma::encoderInputInfo(pc->source_info, &pc->surface_info, &error);
+              ::simaai::scheduler::client::dma::encoderInputInfo(pc->source_info, &pc->surface_info,
+                                                                 &error);
           if (valid_surface) {
             // StillImageInput owns tight NV12, independent of GstVideoInfo's
             // generic four-byte row rounding for arbitrary even widths.
@@ -597,8 +598,8 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
             pc->source_info.offset[1] = static_cast<gsize>(pc->w) * pc->h;
             pc->source_info.size = pc->source_info.offset[1] * 3 / 2;
             pc->converter = gst_video_converter_new(&pc->source_info, &pc->surface_info, nullptr);
-            pc->surface_pool =
-                ::simaai::scheduler::client::dma::createEncoderInputPool(pc->surface_info, 2, 30, &error);
+            pc->surface_pool = ::simaai::scheduler::client::dma::createEncoderInputPool(
+                pc->surface_info, 2, 30, &error);
             if (pc->nv12) {
               // The shared image vector owns these immutable source bytes.
               // Only final DMA surfaces are ever submitted to appsrc.

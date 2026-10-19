@@ -1923,13 +1923,13 @@ private:
 
       out.spec.payload.processcvu.num_in_tensor = stage.processcvu.num_in_tensor;
       out.processcvu_input_tensors.assign(stage.processcvu.input_tensors.begin(),
-                                            stage.processcvu.input_tensors.end());
+                                          stage.processcvu.input_tensors.end());
       out.spec.payload.processcvu.input_tensors =
           out.processcvu_input_tensors.empty() ? nullptr : out.processcvu_input_tensors.data();
       out.spec.payload.processcvu.input_tensors_len =
           static_cast<guint>(out.processcvu_input_tensors.size());
       out.processcvu_output_tensors.assign(stage.processcvu.output_tensors.begin(),
-                                            stage.processcvu.output_tensors.end());
+                                           stage.processcvu.output_tensors.end());
       out.spec.payload.processcvu.output_tensors =
           out.processcvu_output_tensors.empty() ? nullptr : out.processcvu_output_tensors.data();
       out.spec.payload.processcvu.output_tensors_len =

@@ -242,8 +242,10 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
   caps.supports_ev74 = supports(name, ::simaai::scheduler::client::Target::EV74);
   caps.supports_a65 = supports(name, ::simaai::scheduler::client::Target::A65);
   if (name == "tracker" && payload.detect_new_features > 0) {
-    caps.supports_ev74 = caps.supports_ev74 && supports("fast", ::simaai::scheduler::client::Target::EV74);
-    caps.supports_a65 = caps.supports_a65 && supports("fast", ::simaai::scheduler::client::Target::A65);
+    caps.supports_ev74 =
+        caps.supports_ev74 && supports("fast", ::simaai::scheduler::client::Target::EV74);
+    caps.supports_a65 =
+        caps.supports_a65 && supports("fast", ::simaai::scheduler::client::Target::A65);
   }
   // Preserve EV-preferred ingress and A65-preferred terminal-post placement.
   caps.auto_run_target = caps.supports_ev74 ? "EV74" : "A65";

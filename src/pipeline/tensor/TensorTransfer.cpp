@@ -484,8 +484,8 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
   const std::size_t allocation_bytes = segment_total_bytes(segments);
   const HeapKind heap = target.type == DeviceType::SIMA_MLA ? HeapKind::MlaDms : HeapKind::Cma;
   Error error;
-  GstBuffer* dst = ::simaai::scheduler::client::dma::allocateDmaBufBuffer(
-      heap, allocation_bytes, {}, &error);
+  GstBuffer* dst =
+      ::simaai::scheduler::client::dma::allocateDmaBufBuffer(heap, allocation_bytes, {}, &error);
   if (!dst) {
     throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " + error.message());
   }

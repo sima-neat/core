@@ -47,7 +47,7 @@ bool resolve_graph_processcvu_tiled_channel_encoding(const std::string&, bool c1
 // resolver. Explicit coordinates, including a complete zero offset, remain
 // authoritative. This is metadata normalization, not numerical admission.
 ::simaai::scheduler::client::Status complete_kernel_input_routes(SimaPluginStaticManifest*,
-                                                       std::size_t stage_index);
+                                                                 std::size_t stage_index);
 
 // Cold metadata-only lowering. Completes MPK-owned contracts, checks canonical
 // requests once, and retains their owned executables for graph-wide admission.

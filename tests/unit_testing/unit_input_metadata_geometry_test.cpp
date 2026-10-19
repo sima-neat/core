@@ -21,23 +21,36 @@
 namespace {
 std::atomic<bool> count_allocations{false};
 std::atomic<unsigned> allocations{0};
-}
+} // namespace
 void* operator new(std::size_t size) {
-  if (count_allocations.load(std::memory_order_relaxed)) ++allocations;
-  if (void* p = std::malloc(size ? size : 1)) return p;
+  if (count_allocations.load(std::memory_order_relaxed))
+    ++allocations;
+  if (void* p = std::malloc(size ? size : 1))
+    return p;
   throw std::bad_alloc();
 }
-void* operator new[](std::size_t size) { return ::operator new(size); }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+void* operator new[](std::size_t size) {
+  return ::operator new(size);
+}
+void operator delete(void* p) noexcept {
+  std::free(p);
+}
+void operator delete[](void* p) noexcept {
+  std::free(p);
+}
+void operator delete(void* p, std::size_t) noexcept {
+  std::free(p);
+}
+void operator delete[](void* p, std::size_t) noexcept {
+  std::free(p);
+}
 
 namespace {
 using namespace simaai::neat;
 template <class Fn> void rejects(Fn fn, const char* code) {
-  try { fn(); }
-  catch (const NeatError& e) {
+  try {
+    fn();
+  } catch (const NeatError& e) {
     require(e.report().error_code == code, "wrong structured rejection code");
     require(!e.report().repro_note.empty(), "rejection must carry diagnostic");
     return;
@@ -48,43 +61,50 @@ void metadata_contract() {
   InputOptions opt;
   opt.payload_type = PayloadType::Image;
   opt.format = FormatTag::RGB;
-  opt.max_width = 96; opt.max_height = 96; opt.max_depth = 3;
+  opt.max_width = 96;
+  opt.max_height = 96;
+  opt.max_depth = 3;
   InputStreamOptions stream;
   stream.max_input_bytes = 96 * 96 * 3;
-  cv::Mat image(48,64,CV_8UC3,cv::Scalar(4,7,9));
+  cv::Mat image(48, 64, CV_8UC3, cv::Scalar(4, 7, 9));
   Tensor tensor = Tensor::from_cv_mat_view(image, ImageSpec::PixelFormat::RGB);
   Sample sample = sample_from_tensors(TensorList{tensor});
   // The pure common normalizer must not map, clone, allocate, or author caps.
   allocations = 0;
   count_allocations = true;
-  for (int i=0;i<100;++i) {
-    validate_public_input(image,opt,stream,"test");
-    validate_public_input(tensor,opt,stream,"test");
-    validate_public_input(sample,opt,stream,"test");
+  for (int i = 0; i < 100; ++i) {
+    validate_public_input(image, opt, stream, "test");
+    validate_public_input(tensor, opt, stream, "test");
+    validate_public_input(sample, opt, stream, "test");
   }
   count_allocations = false;
   require(allocations == 0, "successful metadata preflight allocated");
-  const auto geometry = describe_tensor_geometry_or_throw(tensor,opt,"test");
-  const auto spec = describe_tensor_spec_or_throw(tensor,opt,"test");
+  const auto geometry = describe_tensor_geometry_or_throw(tensor, opt, "test");
+  const auto spec = describe_tensor_spec_or_throw(tensor, opt, "test");
   require(geometry.required_bytes_actual == spec.required_bytes_actual &&
-          geometry.width == spec.width && geometry.height == spec.height,
+              geometry.width == spec.width && geometry.height == spec.height,
           "preflight and materialized builder disagree");
-  cv::Mat oversized(48,97,CV_8UC3);
-  rejects([&]{ validate_public_input(oversized,opt,stream,"test"); },error_codes::kInputCapacity);
+  cv::Mat oversized(48, 97, CV_8UC3);
+  rejects([&] { validate_public_input(oversized, opt, stream, "test"); },
+          error_codes::kInputCapacity);
   auto short_tensor = tensor;
   short_tensor.storage = make_cpu_owned_storage(1);
-  rejects([&]{ validate_public_input(short_tensor,opt,stream,"test"); },error_codes::kInputShape);
+  rejects([&] { validate_public_input(short_tensor, opt, stream, "test"); },
+          error_codes::kInputShape);
   auto overflow = tensor;
-  overflow.shape = {std::numeric_limits<int64_t>::max(),64,3};
-  rejects([&]{ validate_public_input(overflow,opt,stream,"test"); },error_codes::kInputShape);
+  overflow.shape = {std::numeric_limits<int64_t>::max(), 64, 3};
+  rejects([&] { validate_public_input(overflow, opt, stream, "test"); }, error_codes::kInputShape);
   auto bad_stride = tensor;
-  bad_stride.strides_bytes = {std::numeric_limits<int64_t>::max(),3,1};
-  rejects([&]{ validate_public_input(bad_stride,opt,stream,"test"); },error_codes::kInputShape);
+  bad_stride.strides_bytes = {std::numeric_limits<int64_t>::max(), 3, 1};
+  rejects([&] { validate_public_input(bad_stride, opt, stream, "test"); },
+          error_codes::kInputShape);
   // Non-contiguous matrices remain accepted: bounds are the original view,
   // whereas the later explicit copy transports its tight logical pixels.
-  cv::Mat roi = image(cv::Rect(2,2,20,20));
-  validate_public_input(roi,opt,stream,"test");
-  InputOptions fp32; fp32.payload_type=PayloadType::Tensor; fp32.max_width=8;
+  cv::Mat roi = image(cv::Rect(2, 2, 20, 20));
+  validate_public_input(roi, opt, stream, "test");
+  InputOptions fp32;
+  fp32.payload_type = PayloadType::Tensor;
+  fp32.max_width = 8;
   bool exact_fp32_rejection = false;
   try {
     (void)describe_mat_geometry_or_throw(image, fp32, "FP32 Mat contract");
@@ -98,50 +118,64 @@ void metadata_contract() {
           error_codes::kInputCapacity);
   // Match canonical rank/batch, not lossy W/H/D projections. Single-channel
   // matrices retain the public HW <-> unit-channel HWC/CHW convenience alias.
-  const auto mat_geometry = describe_mat_geometry_or_throw(float_image,fp32,"test");
-  const std::vector<std::int64_t> single_channel{1,4,9,1}, batched{2,4,9,1};
-  require(input_geometry_matches_logical_shape(mat_geometry,single_channel,TensorLayout::HWC),
+  const auto mat_geometry = describe_mat_geometry_or_throw(float_image, fp32, "test");
+  const std::vector<std::int64_t> single_channel{1, 4, 9, 1}, batched{2, 4, 9, 1};
+  require(input_geometry_matches_logical_shape(mat_geometry, single_channel, TensorLayout::HWC),
           "unit-channel HW convenience alias lost");
-  require(!input_geometry_matches_logical_shape(mat_geometry,batched,TensorLayout::HWC),
+  require(!input_geometry_matches_logical_shape(mat_geometry, batched, TensorLayout::HWC),
           "non-unit leading batch silently dropped");
-  const std::vector<std::int64_t> high_rank{2,3,4,5,6}, different_batch{3,3,4,5,6};
-  InputGeometry rank_geometry; rank_geometry.shape=high_rank;
-  require(input_geometry_matches_logical_shape(rank_geometry,high_rank,TensorLayout::Unknown) &&
-          !input_geometry_matches_logical_shape(rank_geometry,different_batch,TensorLayout::Unknown),
+  const std::vector<std::int64_t> high_rank{2, 3, 4, 5, 6}, different_batch{3, 3, 4, 5, 6};
+  InputGeometry rank_geometry;
+  rank_geometry.shape = high_rank;
+  require(input_geometry_matches_logical_shape(rank_geometry, high_rank, TensorLayout::Unknown) &&
+              !input_geometry_matches_logical_shape(rank_geometry, different_batch,
+                                                    TensorLayout::Unknown),
           "higher-rank canonical shape was reduced to trailing dimensions");
   // TensorSet is a transport container, not permission to skip logical bounds.
-  Tensor wide = Tensor::from_vector(std::vector<float>(36, 1.0f), {4,9}, TensorMemory::CPU);
+  Tensor wide = Tensor::from_vector(std::vector<float>(36, 1.0f), {4, 9}, TensorMemory::CPU);
   wide.layout = TensorLayout::HW;
-  rejects([&]{validate_public_input(sample_from_tensors(TensorList{wide,wide}),fp32,
-                                    InputStreamOptions{},"test");},error_codes::kInputCapacity);
+  rejects(
+      [&] {
+        validate_public_input(sample_from_tensors(TensorList{wide, wide}), fp32,
+                              InputStreamOptions{}, "test");
+      },
+      error_codes::kInputCapacity);
   auto opaque = tensor;
   opaque.storage = std::make_shared<TensorBuffer>(*tensor.storage);
   unsigned maps = 0;
-  opaque.storage->map_fn = [&](MapMode) { ++maps; return Mapping{}; };
-  validate_public_input(opaque,opt,stream,"test");
+  opaque.storage->map_fn = [&](MapMode) {
+    ++maps;
+    return Mapping{};
+  };
+  validate_public_input(opaque, opt, stream, "test");
   require(maps == 0, "preflight accessed provider mapping");
   // Planar metadata, including a late-plane overflow, uses the same extent
   // normalization as ordinary contiguous image admission.
-  for (auto format : {ImageSpec::PixelFormat::NV12, ImageSpec::PixelFormat::NV16,
-                      ImageSpec::PixelFormat::I420}) {
-    auto planar = make_nv12_tensor(8,6);
+  for (auto format :
+       {ImageSpec::PixelFormat::NV12, ImageSpec::PixelFormat::NV16, ImageSpec::PixelFormat::I420}) {
+    auto planar = make_nv12_tensor(8, 6);
     planar.semantic.image->format = format;
-    InputOptions plane_opt; plane_opt.payload_type = PayloadType::Image;
+    InputOptions plane_opt;
+    plane_opt.payload_type = PayloadType::Image;
     if (format == ImageSpec::PixelFormat::NV16) {
       planar.storage = make_cpu_owned_storage(96);
-      planar.planes[1].shape = {6,8};
+      planar.planes[1].shape = {6, 8};
     } else if (format == ImageSpec::PixelFormat::I420) {
       planar.planes[1].role = PlaneRole::U;
-      planar.planes[1].shape = {3,4}; planar.planes[1].strides_bytes = {4,1};
-      Plane v = planar.planes[1]; v.role = PlaneRole::V; v.byte_offset = 60;
+      planar.planes[1].shape = {3, 4};
+      planar.planes[1].strides_bytes = {4, 1};
+      Plane v = planar.planes[1];
+      v.role = PlaneRole::V;
+      v.byte_offset = 60;
       planar.planes.push_back(v);
     }
-    validate_public_input(planar,plane_opt,InputStreamOptions{},"test");
-    auto short_plane = planar; short_plane.storage = make_cpu_owned_storage(1);
-    rejects([&]{validate_public_input(short_plane,plane_opt,InputStreamOptions{},"test");},
+    validate_public_input(planar, plane_opt, InputStreamOptions{}, "test");
+    auto short_plane = planar;
+    short_plane.storage = make_cpu_owned_storage(1);
+    rejects([&] { validate_public_input(short_plane, plane_opt, InputStreamOptions{}, "test"); },
             error_codes::kInputShape);
   }
-  validate_public_input(image,opt,stream,"test");
+  validate_public_input(image, opt, stream, "test");
 }
 
 Sample make_mixed_sample() {
@@ -296,32 +330,34 @@ void queue_metadata_contract() {
   InputOptions options;
   options.payload_type = PayloadType::Image;
   options.format = FormatTag::RGB;
-  options.max_width = 96; options.max_height = 96; options.max_depth = 3;
+  options.max_width = 96;
+  options.max_height = 96;
+  options.max_depth = 3;
   core->pipeline.tensor_input_opt_for_cv = options;
-  const Tensor valid = make_color_tensor(64,48,ImageSpec::PixelFormat::RGB,0x4A);
+  const Tensor valid = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x4A);
   Sample sample = sample_from_tensors(TensorList{valid});
   sample.frame_id = 17;
-  require(core->push_samples(Sample{sample},false), "initial queue admission refused");
+  require(core->push_samples(Sample{sample}, false), "initial queue admission refused");
   auto short_tensor = valid;
   short_tensor.storage = make_cpu_owned_storage(1);
   const auto submitted = core->inputs_enqueued.load();
-  rejects([&]{core->push_samples(Sample{sample_from_tensors(TensorList{short_tensor})},false);},
+  rejects([&] { core->push_samples(Sample{sample_from_tensors(TensorList{short_tensor})}, false); },
           error_codes::kInputShape);
-  require(core->pipeline.in_queue.size() == 1 &&
-              core->pipeline.in_queue.front().msg.frame_id == 17,
+  require(core->pipeline.in_queue.size() == 1 && core->pipeline.in_queue.front().msg.frame_id == 17,
           "rejected short backing evicted pending work");
   require(core->inputs_enqueued.load() == submitted && core->inputs_dropped.load() == 0 &&
-              !core->stop_requested.load(), "rejection changed queue counters or terminal state");
+              !core->stop_requested.load(),
+          "rejection changed queue counters or terminal state");
   sample.frame_id = 18;
-  require(core->push_samples(Sample{sample},false), "valid input refused after rejection");
+  require(core->push_samples(Sample{sample}, false), "valid input refused after rejection");
   require(core->pipeline.in_queue.front().msg.frame_id == 18 && core->inputs_dropped.load() == 1,
           "ordinary KeepLatest replacement changed");
   core->pipeline.input_closed = true;
-  require(!core->push_samples(Sample{sample},false), "closed queue accepted input");
+  require(!core->push_samples(Sample{sample}, false), "closed queue accepted input");
   core->close();
 }
 
-}
+} // namespace
 RUN_TEST("unit_input_metadata_geometry_test", ([] {
            metadata_contract();
            aggregate_metadata_contract();

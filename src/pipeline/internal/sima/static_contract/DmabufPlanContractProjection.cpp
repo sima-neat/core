@@ -1259,8 +1259,10 @@ build_dmabuf_plan_processcvu_command_contract(const ModelExecutionPlan& plan,
                   std::begin(output_descriptor.shape.axis_semantics));
       }
     }
-    authored.input_tensors.emplace_back(input_descriptor, cvu_dtype(*input, detess ? detess->frame_type : std::string{}));
-    authored.output_tensors.emplace_back(output_descriptor, cvu_dtype(*output, tess ? tess->frame_type : std::string{}));
+    authored.input_tensors.emplace_back(
+        input_descriptor, cvu_dtype(*input, detess ? detess->frame_type : std::string{}));
+    authored.output_tensors.emplace_back(
+        output_descriptor, cvu_dtype(*output, tess ? tess->frame_type : std::string{}));
     publication_relations.push_back(publication_relation);
     authored.input_shapes.push_back(cvu_shape(*input));
     authored.output_shapes.push_back(cvu_shape(*output));

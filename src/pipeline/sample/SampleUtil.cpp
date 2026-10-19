@@ -852,8 +852,8 @@ bool tensor_buffer_descriptor_from_tensors(const TensorList& tensors, TensorBuff
   return true;
 }
 
-bool tensor_buffer_view_from_runtime_view(simaai::scheduler::client::TensorBufferView view, TensorBufferView* out,
-                                          std::string* err) {
+bool tensor_buffer_view_from_runtime_view(simaai::scheduler::client::TensorBufferView view,
+                                          TensorBufferView* out, std::string* err) {
   if (!out) {
     if (err) {
       *err = "tensor buffer view: missing output view";

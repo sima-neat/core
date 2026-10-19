@@ -712,7 +712,8 @@ RUN_TEST(
         require(ingress_cast.payload.input_dtype == "FP32" &&
                     ingress_cast.payload.output_dtype == "BF16" &&
                     ingress_cast.payload.input_tensors.size() == 1U &&
-                    ingress_cast.payload.input_tensors.front().descriptor().storage.nbytes == 128U &&
+                    ingress_cast.payload.input_tensors.front().descriptor().storage.nbytes ==
+                        128U &&
                     ingress_cast.payload.output_tensors.size() == 1U &&
                     ingress_cast.payload.output_tensors.front().descriptor().storage.nbytes == 64U,
                 "the true first Cast must retain its exact FP32 ingress and BF16 output spans");

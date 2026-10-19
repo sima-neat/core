@@ -41,8 +41,8 @@ inline client::TensorBufferView admitted_view(GstSample* sample, const std::stri
   return view;
 }
 
-inline const transport::TensorBufferTensorView*
-find_logical(const client::TensorBufferView& view, int logical_index) {
+inline const transport::TensorBufferTensorView* find_logical(const client::TensorBufferView& view,
+                                                             int logical_index) {
   const auto tensors = view.tensors();
   const auto found = std::find_if(tensors.begin(), tensors.end(), [=](const auto& tensor) {
     return tensor.logical_index == logical_index;

@@ -2294,18 +2294,21 @@ RUN_TEST(
           &error);
       require(padded_cast_contract.has_value(),
               "grouped padded-Cast contract must build: " + error);
-      require(padded_cast_contract->payload.input_tensors.size() == 2U &&
-                  padded_cast_contract->runtime_contract.physical_inputs.size() == 2U &&
-                  padded_cast_contract->payload.input_tensors[0].descriptor().storage.nbytes == 9800U &&
-                  padded_cast_contract->payload.input_tensors[1].descriptor().storage.nbytes == 2450U &&
-                  padded_cast_contract->payload.input_tensors[0].descriptor().layout.strided.strides_bytes[0] ==
-                      9808 &&
-                  padded_cast_contract->payload.input_tensors[1].descriptor().layout.strided.strides_bytes[0] ==
-                      2464 &&
-                  padded_cast_contract->runtime_contract.physical_inputs[0].size_bytes == 9808U &&
-                  padded_cast_contract->runtime_contract.physical_inputs[1].size_bytes == 2464U,
-              "graph221 must keep QMLA carrier padding in physical buffers while its tensor "
-              "descriptors retain exact addressed spans and strides");
+      require(
+          padded_cast_contract->payload.input_tensors.size() == 2U &&
+              padded_cast_contract->runtime_contract.physical_inputs.size() == 2U &&
+              padded_cast_contract->payload.input_tensors[0].descriptor().storage.nbytes == 9800U &&
+              padded_cast_contract->payload.input_tensors[1].descriptor().storage.nbytes == 2450U &&
+              padded_cast_contract->payload.input_tensors[0]
+                      .descriptor()
+                      .layout.strided.strides_bytes[0] == 9808 &&
+              padded_cast_contract->payload.input_tensors[1]
+                      .descriptor()
+                      .layout.strided.strides_bytes[0] == 2464 &&
+              padded_cast_contract->runtime_contract.physical_inputs[0].size_bytes == 9808U &&
+              padded_cast_contract->runtime_contract.physical_inputs[1].size_bytes == 2464U,
+          "graph221 must keep QMLA carrier padding in physical buffers while its tensor "
+          "descriptors retain exact addressed spans and strides");
 
       struct FusedCase {
         sc::OpKind first;
@@ -3046,7 +3049,10 @@ RUN_TEST(
       require(detesscast_contract->payload.input_tensors.size() == kGroupedUnpackMembers &&
                   std::all_of(detesscast_contract->payload.input_tensors.begin(),
                               detesscast_contract->payload.input_tensors.end(),
-                              [](const auto& input) { return input.scalar() == ::simaai::scheduler::client::DType::BFloat16; }),
+                              [](const auto& input) {
+                                return input.scalar() ==
+                                       ::simaai::scheduler::client::DType::BFloat16;
+                              }),
               "graph225 must retain BF16 consumer descriptors independently of MLA carrier "
               "publication dtype");
       require(
@@ -3493,12 +3499,15 @@ RUN_TEST(
                 graph200_contract.payload.input_tensors.front().descriptor().shape.sizes[2] == 3 &&
                 graph200_contract.payload.input_tensors.front().descriptor().layout_kind ==
                     SIMA_EV_LAYOUT_STRIDED &&
-                graph200_contract.payload.input_tensors.front().descriptor().layout.strided.strides_bytes[0] ==
-                    6 &&
-                graph200_contract.payload.input_tensors.front().descriptor().layout.strided.strides_bytes[1] ==
-                    3 &&
-                graph200_contract.payload.input_tensors.front().descriptor().layout.strided.strides_bytes[2] ==
-                    1 &&
+                graph200_contract.payload.input_tensors.front()
+                        .descriptor()
+                        .layout.strided.strides_bytes[0] == 6 &&
+                graph200_contract.payload.input_tensors.front()
+                        .descriptor()
+                        .layout.strided.strides_bytes[1] == 3 &&
+                graph200_contract.payload.input_tensors.front()
+                        .descriptor()
+                        .layout.strided.strides_bytes[2] == 1 &&
                 graph200_contract.payload.default_output_names ==
                     std::vector<std::string>{"output_rgb_image"} &&
                 graph200_contract.payload.runtime_output_logical_index_list ==
@@ -3856,9 +3865,9 @@ RUN_TEST(
               const auto& exposed = compiled.exposed_view.exposed_logical_outputs.front();
               require(exposed.size_bytes == required_bytes && exposed.shape == expected_shape &&
                           exposed.layout == "HWC" &&
-                          (batch == 1 ||
-                           compiled.payload.output_tensors.front().descriptor().shape.axis_semantics[0] ==
-                               SIMA_EV_AXIS_N) &&
+                          (batch == 1 || compiled.payload.output_tensors.front()
+                                                 .descriptor()
+                                                 .shape.axis_semantics[0] == SIMA_EV_AXIS_N) &&
                           compiled.runtime_contract.physical_outputs.at(exposed.physical_index)
                                   .size_bytes == required_bytes,
                       "standalone " + dtype +

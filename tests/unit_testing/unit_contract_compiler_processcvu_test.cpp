@@ -1053,17 +1053,21 @@ RUN_TEST(
       require(!direct_inputs.payload.output_tensors.empty() &&
                   std::any_of(direct_inputs.payload.output_tensors.begin(),
                               direct_inputs.payload.output_tensors.end(),
-                              [](const auto& t) { return t.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED; }),
+                              [](const auto& t) {
+                                return t.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED;
+                              }),
               "direct preproc compile inputs should synthesize tiled typed output descriptor");
       {
         const auto tiled_it =
             std::find_if(direct_inputs.payload.output_tensors.begin(),
-                         direct_inputs.payload.output_tensors.end(),
-                         [](const auto& t) { return t.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED; });
+                         direct_inputs.payload.output_tensors.end(), [](const auto& t) {
+                           return t.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED;
+                         });
         require(tiled_it != direct_inputs.payload.output_tensors.end(),
                 "direct preproc compile inputs should include a tiled output descriptor");
         require(sima_ev_tensor_tile_axis_size(&tiled_it->descriptor(), SIMA_EV_AXIS_H, 0) == 32 &&
-                    sima_ev_tensor_tile_axis_size(&tiled_it->descriptor(), SIMA_EV_AXIS_W, 0) == 128 &&
+                    sima_ev_tensor_tile_axis_size(&tiled_it->descriptor(), SIMA_EV_AXIS_W, 0) ==
+                        128 &&
                     sima_ev_tensor_tile_axis_size(&tiled_it->descriptor(), SIMA_EV_AXIS_C, 0) == 3,
                 "direct preproc compile inputs should preserve typed output tile geometry");
       }
@@ -1301,7 +1305,8 @@ RUN_TEST(
                 "quanttess runtime config logical outputs should stay faithful to the semantic MPK "
                 "output shape");
         require(exact_quanttess_runtime.output_tensors.size() == 1U &&
-                    exact_quanttess_runtime.output_tensors.front().descriptor().storage.nbytes == 638976U,
+                    exact_quanttess_runtime.output_tensors.front().descriptor().storage.nbytes ==
+                        638976U,
                 "quanttess runtime config should preserve the MPK packed output byte count instead "
                 "of using fixed full-tile slots");
 
@@ -1402,9 +1407,9 @@ RUN_TEST(
             packed_multi_runtime.output_shapes.front(), packed_multi_runtime.output_dtype, "HW",
             &output_desc, "packed multi runtime should synthesize typed output tensor");
         packed_multi_runtime.input_tensors = {{input_desc0, packed_multi_runtime.input_dtype},
-                                             {input_desc1, packed_multi_runtime.input_dtype}};
+                                              {input_desc1, packed_multi_runtime.input_dtype}};
         packed_multi_runtime.output_tensors = {{output_desc, packed_multi_runtime.output_dtype},
-                                              {output_desc, packed_multi_runtime.output_dtype}};
+                                               {output_desc, packed_multi_runtime.output_dtype}};
       }
       packed_multi_runtime.q_scale_list = {0.5, 0.25};
       packed_multi_runtime.q_zp_list = {-7, 9};

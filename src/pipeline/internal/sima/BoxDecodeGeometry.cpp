@@ -157,9 +157,9 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
        [variant = std::move(variant), options, original_size_from_metadata,
         require_resize_metadata]() -> KernelStageRecipe::Resolver {
          return [cache = std::make_shared<Cache>(), variant, options, original_size_from_metadata,
-                 require_resize_metadata](const rt::VariantPreparer& preparer,
-                                          std::span<GstBuffer* const> buffers)
-                    -> rt::Result<rt::PreparedSelection> {
+                 require_resize_metadata](
+                    const rt::VariantPreparer& preparer,
+                    std::span<GstBuffer* const> buffers) -> rt::Result<rt::PreparedSelection> {
            const auto& base = preparer.base();
            if (!base || buffers.empty())
              return invalid("prepared operation and input buffers are required");

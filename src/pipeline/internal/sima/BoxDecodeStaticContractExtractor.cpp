@@ -2884,9 +2884,10 @@ void set_error(std::string* error_message, const std::string& message) {
 
 } // namespace
 
-std::optional<BoxDecodeLinearStorage> boxdecode_linear_storage(
-    const std::vector<std::int64_t>& shape, const std::vector<std::int64_t>& authored,
-    const std::string& layout, std::size_t scalar_bytes) {
+std::optional<BoxDecodeLinearStorage>
+boxdecode_linear_storage(const std::vector<std::int64_t>& shape,
+                         const std::vector<std::int64_t>& authored, const std::string& layout,
+                         std::size_t scalar_bytes) {
   if (scalar_bytes == 0 || scalar_bytes > 8 || shape.size() < 2 || shape.size() > 4 ||
       (shape.size() == 4 && shape.front() != 1) ||
       (!authored.empty() && authored.size() != shape.size()))
@@ -3952,7 +3953,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
          entry.source_storage_kind == BoxDecodeSourceStorageKind::Unknown) &&
         !logical.stride_bytes.empty()) {
       const auto linear = boxdecode_linear_storage(logical.shape, logical.stride_bytes,
-                                                    logical.layout, dtype_size_bytes_local(dtype));
+                                                   logical.layout, dtype_size_bytes_local(dtype));
       if (!linear)
         return fail("boxdecode upstream linear strides have invalid geometry at tensor index " +
                     std::to_string(i));
@@ -4118,10 +4119,11 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
                                                   : BoxDecodeSourceStorageKind::DenseHwcPhysical;
     }
     if (entry.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical) {
-      const auto linear = boxdecode_linear_storage(
-          tensor.shape, tensor.strides_bytes,
-          layout_token_from_tensor_layout_local(resolve_tensor_layout_local(tensor, input_contract)),
-          dtype_size_bytes_local(dtype));
+      const auto linear =
+          boxdecode_linear_storage(tensor.shape, tensor.strides_bytes,
+                                   layout_token_from_tensor_layout_local(
+                                       resolve_tensor_layout_local(tensor, input_contract)),
+                                   dtype_size_bytes_local(dtype));
       if (!linear)
         return fail("boxdecode sample linear strides have invalid geometry at tensor index " +
                     std::to_string(i));

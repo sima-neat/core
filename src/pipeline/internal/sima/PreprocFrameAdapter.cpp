@@ -486,7 +486,8 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
       for (auto& value : tile->axes)
         if (value >= 0)
           ++value;
-    } else if (auto* strides = std::get_if<::simaai::scheduler::client::Strided>(&policy->output.layout)) {
+    } else if (auto* strides =
+                   std::get_if<::simaai::scheduler::client::Strided>(&policy->output.layout)) {
       auto previous = strides->strides_bytes;
       for (std::size_t i = shape.size(); i > 0; --i)
         strides->strides_bytes[i] = previous[i - 1];
@@ -543,7 +544,8 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
         if (yuv)
           layout = ::simaai::scheduler::client::Strided{
               {std::int64_t(pitch * storage_rows), std::int64_t(pitch), std::int64_t(c), 1}};
-        policy->outputs.push_back({std::vector<std::int64_t>{1, rows, columns, std::int64_t(c)}, DType::UInt8, layout});
+        policy->outputs.push_back(
+            {std::vector<std::int64_t>{1, rows, columns, std::int64_t(c)}, DType::UInt8, layout});
         publication->planes.push_back({int(i), 0, gint(pitch), guint(rows), guint(row_bytes)});
       }
       policy->image_publication = std::move(publication);
@@ -595,9 +597,9 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   for (std::size_t i = 0; i < values.size(); ++i)
     if (values[i])
       parameters.push_back({names[i], std::move(*values[i])});
-  auto checked = ::simaai::scheduler::client::check_kernel({"preproc", Hardware::EV74,
-                                                    std::get<std::vector<TensorSpec>>(specs),
-                                                    policy->outputs, parameters});
+  auto checked = ::simaai::scheduler::client::check_kernel(
+      {"preproc", Hardware::EV74, std::get<std::vector<TensorSpec>>(specs), policy->outputs,
+       parameters});
   if (auto* error = std::get_if<Error>(&checked))
     return *error;
   policy->initial_executable = std::get<KernelExecutable>(std::move(checked));
@@ -622,7 +624,8 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
     }
     policy->image_publication = std::move(publication);
   }
-  auto bound = ::simaai::scheduler::client::bind_kernel_variant(policy->initial_executable, "geometry");
+  auto bound =
+      ::simaai::scheduler::client::bind_kernel_variant(policy->initial_executable, "geometry");
   if (auto* error = std::get_if<Error>(&bound))
     return *error;
   policy->geometry_variant = std::get<KernelVariant>(std::move(bound));
@@ -657,8 +660,7 @@ PreprocFrameAdapter::check(std::shared_ptr<const ProcessCvuStagePayload> prepare
 Status PreprocFrameAdapter::admitted(const VariantPreparer& preparer) {
   if (preparation_started_.exchange(true, std::memory_order_acq_rel))
     return invalid("preproc.preparation", "image recipe must be prepared exactly once");
-  if (!preparer || !preparer.base() ||
-      preparer.base().executable() != policy_->initial_executable)
+  if (!preparer || !preparer.base() || preparer.base().executable() != policy_->initial_executable)
     return invalid("preproc.preparation", "admission does not match the checked image recipe");
   preparer_ = preparer;
   auto& initial = variants_[0];
@@ -690,11 +692,12 @@ Result<std::vector<TensorSpec>> PreprocFrameAdapter::input_specs(const Geometry&
     if (geometry.strides[i] > std::size_t(INT64_MAX) ||
         geometry.frame_bytes > std::size_t(INT64_MAX))
       return invalid("input.stride", "image stride is not representable");
-    result.push_back(
-        {std::vector<std::int64_t>{std::int64_t(geometry.batch), std::int64_t(h), std::int64_t(w), std::int64_t(c)},
-         DType::UInt8,
-         ::simaai::scheduler::client::Strided{{std::int64_t(geometry.frame_bytes), std::int64_t(geometry.strides[i]),
-                           std::int64_t(c), 1}}});
+    result.push_back({std::vector<std::int64_t>{std::int64_t(geometry.batch), std::int64_t(h),
+                                                std::int64_t(w), std::int64_t(c)},
+                      DType::UInt8,
+                      ::simaai::scheduler::client::Strided{{std::int64_t(geometry.frame_bytes),
+                                                            std::int64_t(geometry.strides[i]),
+                                                            std::int64_t(c), 1}}});
   }
   return result;
 }
@@ -964,8 +967,8 @@ Status PreprocFrameAdapter::check_caps(const GstCaps* caps) const {
 }
 
 Status
-PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding,
-                          GstStructure* out, bool fresh_metadata,
+PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructure* out,
+                          bool fresh_metadata,
                           simaai::gst::TensorBufferPreprocessFactsOwner* compact_facts) const {
   if (!preparer_)
     return invalid("preproc.preparation", "image policy has not been admitted");
@@ -1109,9 +1112,9 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding,
     if (auto* error = std::get_if<Error>(&specs))
       return *error;
     SIMA_SCHEDULER_TRACE_CURRENT(PreprocPrepare);
-    auto prepared = preparer_.prepare(
-        *policy_->geometry_variant, {std::get<std::vector<TensorSpec>>(specs), policy_->outputs,
-                                     std::get<GeometryParameters>(params)});
+    auto prepared = preparer_.prepare(*policy_->geometry_variant,
+                                      {std::get<std::vector<TensorSpec>>(specs), policy_->outputs,
+                                       std::get<GeometryParameters>(params)});
     if (auto* error = std::get_if<Error>(&prepared))
       return *error;
     operation = std::get<PreparedSelection>(std::move(prepared));
@@ -1322,7 +1325,8 @@ PreprocFrameAdapter::prepare_publication(const Geometry& geometry,
   publication.source_stride = geometry.strides[0];
   publication.normalize = cfg.normalize == 1;
   publication.quantize = policy_->output.dtype == DType::Int8;
-  publication.tessellate = std::holds_alternative<::simaai::scheduler::client::MlaTiled>(policy_->output.layout);
+  publication.tessellate =
+      std::holds_alternative<::simaai::scheduler::client::MlaTiled>(policy_->output.layout);
   publication.resize_mode = cfg.aspect_ratio == 1 ? "letterbox" : "stretch";
   publication.color_in = cfg.input_img_type;
   publication.color_out = cfg.output_img_type;

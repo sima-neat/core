@@ -82,9 +82,10 @@ struct BoxDecodeLinearStorage {
 /// Normalize declared logical axes/strides without touching or copying the payload.
 /// Empty strides mean compact row-major in the supplied shape, as for public Tensor.
 /// Numerical layout support and nonoverlap remain Kernels admission responsibilities.
-std::optional<BoxDecodeLinearStorage> boxdecode_linear_storage(
-    const std::vector<std::int64_t>& shape, const std::vector<std::int64_t>& stride_bytes,
-    const std::string& layout, std::size_t scalar_bytes);
+std::optional<BoxDecodeLinearStorage>
+boxdecode_linear_storage(const std::vector<std::int64_t>& shape,
+                         const std::vector<std::int64_t>& stride_bytes, const std::string& layout,
+                         std::size_t scalar_bytes);
 
 /// Description of one physical input buffer feeding the box-decode stage.
 struct BoxDecodePhysicalInputStaticContract {

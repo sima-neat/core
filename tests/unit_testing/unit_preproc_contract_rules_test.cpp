@@ -386,19 +386,20 @@ RUN_TEST(
               pipeline_internal::sima::static_contract::ArenaAllocationPolicy::PreferDmsThenCma;
           auto invocation = pipeline_internal::sima::specialize_preproc_roi_contract(
               inherited, 2, 48, 64, 3, capacity);
-          require(invocation.payload.batch_size == capacity &&
-                      invocation.payload.input_shapes.front() == std::vector<int>({48, 64, 3}) &&
-                      invocation.payload.input_tensors.front().descriptor().shape.sizes[0] == 2 &&
-                      invocation.payload.input_tensors.front().descriptor().shape.axis_semantics[0] ==
-                          SIMA_EV_AXIS_N,
-                  "ROI source N must be independent of output R and public HWC options");
+          require(
+              invocation.payload.batch_size == capacity &&
+                  invocation.payload.input_shapes.front() == std::vector<int>({48, 64, 3}) &&
+                  invocation.payload.input_tensors.front().descriptor().shape.sizes[0] == 2 &&
+                  invocation.payload.input_tensors.front().descriptor().shape.axis_semantics[0] ==
+                      SIMA_EV_AXIS_N,
+              "ROI source N must be independent of output R and public HWC options");
           require(invocation.runtime_contract.physical_inputs.front().size_bytes == 18432U &&
                       invocation.runtime_contract.logical_inputs.front().size_bytes == 18432U &&
                       invocation.runtime_contract.input_bindings.front().src_physical_size_bytes ==
                           18432U,
                   "ROI source descriptor and binding must cover both source frames");
-          require(std::memcmp(&invocation.payload.output_tensors.front().descriptor(), &original_output,
-                              sizeof(original_output)) == 0,
+          require(std::memcmp(&invocation.payload.output_tensors.front().descriptor(),
+                              &original_output, sizeof(original_output)) == 0,
                   "ROI specialization must preserve every one-member output descriptor byte");
           require(invocation.runtime_contract.physical_outputs.front().size_bytes ==
                           slot_bytes * capacity &&
@@ -471,8 +472,8 @@ RUN_TEST(
                     admitted->runtime_contract.frame_arena_size_bytes == original_arena &&
                     admitted->runtime_contract.logical_outputs.front().shape ==
                         original_logical.shape &&
-                    std::memcmp(&admitted->payload.output_tensors.front().descriptor(), &original_output,
-                                sizeof(original_output)) == 0,
+                    std::memcmp(&admitted->payload.output_tensors.front().descriptor(),
+                                &original_output, sizeof(original_output)) == 0,
                 "ROI invocation must not mutate the shared model contract");
 
         // Explicit batch layouts do not reinterpret unqualified volume descriptors.

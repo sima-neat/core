@@ -14,9 +14,10 @@ RUN_TEST("unit_route_plan_detess_adapter_test", ([] {
              compiled->runtime_contract.plugin_kind = "processcvu";
              options.compiled_contract = compiled;
              const Detess node(options);
-             require(node.contract_definition().plugin_kind == "processcvu" &&
-                         node.backend_fragment(0) == "neatkernelrunner name=n0_detess",
-                     "model-managed Detess preserves its semantic contract with canonical renderer");
+             require(
+                 node.contract_definition().plugin_kind == "processcvu" &&
+                     node.backend_fragment(0) == "neatkernelrunner name=n0_detess",
+                 "model-managed Detess preserves its semantic contract with canonical renderer");
              const Detess standalone;
              require(standalone.contract_definition().plugin_kind == "neatdetess" &&
                          standalone.backend_fragment(7) == "neatkernelrunner name=n7_detess",

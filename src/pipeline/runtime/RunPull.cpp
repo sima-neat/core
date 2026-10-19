@@ -1033,8 +1033,8 @@ void Run::enqueue_run_images(const std::vector<cv::Mat>& inputs) {
     st->pipeline.input_route_processor->validate_images(inputs, "Run::run");
   } else {
     for (const auto& input : inputs)
-      validate_public_input(input, *st->pipeline.tensor_input_opt_for_cv,
-                            st->pipeline.stream_opt, "Run::run");
+      validate_public_input(input, *st->pipeline.tensor_input_opt_for_cv, st->pipeline.stream_opt,
+                            "Run::run");
   }
   TensorList tensors;
   tensors.reserve(inputs.size());

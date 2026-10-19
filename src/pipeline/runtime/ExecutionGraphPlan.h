@@ -217,15 +217,17 @@ struct PipelineSegmentPlan {
 
 // Borrow the declared source contract for metadata-only public preflight. Unlike
 // media completion, this never infers a source size from a downstream model.
-inline const InputOptions& pipeline_segment_declared_ingress(
-    const PipelineSegmentPlan& segment, std::size_t index = 0) {
-  const auto* input = segment.nodes.empty() ? nullptr
-      : dynamic_cast<const Input*>(segment.nodes.front().get());
+inline const InputOptions& pipeline_segment_declared_ingress(const PipelineSegmentPlan& segment,
+                                                             std::size_t index = 0) {
+  const auto* input =
+      segment.nodes.empty() ? nullptr : dynamic_cast<const Input*>(segment.nodes.front().get());
   if (input && (input->options().payload_type != PayloadType::Auto ||
-                !input->options().caps_override.empty())) return input->options();
+                !input->options().caps_override.empty()))
+    return input->options();
   if (segment.boundary_hints && index < segment.boundary_hints->ingress_inputs.size())
     return segment.boundary_hints->ingress_inputs[index];
-  if (input && segment.input_edges.empty()) return input->options();
+  if (input && segment.input_edges.empty())
+    return input->options();
   static const InputOptions unspecified;
   return unspecified;
 }

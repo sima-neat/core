@@ -92,7 +92,7 @@ struct OriginalFactoryException final : std::runtime_error {
 };
 
 void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
-                                             bool derived_exception = false) {
+                                              bool derived_exception = false) {
   namespace rt = simaai::scheduler::client;
   namespace gs = rt;
   namespace kernels = simaai::scheduler::client;
@@ -129,11 +129,12 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
                                {},
                                {}});
     if (!reject_output_span)
-      recipe->resolver_factories.push_back({0, [failure, derived_exception]() -> si::KernelStageRecipe::Resolver {
-                                              if (derived_exception)
-                                                throw OriginalFactoryException(failure);
-                                              throw std::runtime_error(failure);
-                                            }});
+      recipe->resolver_factories.push_back(
+          {0, [failure, derived_exception]() -> si::KernelStageRecipe::Resolver {
+             if (derived_exception)
+               throw OriginalFactoryException(failure);
+             throw std::runtime_error(failure);
+           }});
     gs::TensorStagePublication publication;
     publication.input_caps = {gst_caps_new_empty_simple("application/vnd.simaai.tensor"),
                               gst_caps_unref};
@@ -168,8 +169,8 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
         static_cast<std::uint32_t>(si::static_contract::ArenaDeviceAccess::Ev74);
     stage.logical_inputs.push_back(si::specbuilders::build_logical_input_static_spec(
         0, 0, 0, {2}, "FP32", "C", "input", "input", "input"));
-    stage.input_bindings.push_back(si::specbuilders::build_input_binding_static_spec(
-        0, 0, "input", "input"));
+    stage.input_bindings.push_back(
+        si::specbuilders::build_input_binding_static_spec(0, 0, "input", "input"));
     stage.physical_inputs.push_back(si::specbuilders::build_physical_buffer_static_spec(
         0, 0, input_requirement.storage_bytes, si::DeviceKind::Cpu, "input", -1, 0,
         input_requirement.alignment_bytes));

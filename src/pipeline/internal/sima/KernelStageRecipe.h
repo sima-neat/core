@@ -27,8 +27,7 @@ struct KernelStageRecipe {
       frame_adapter_factory;
   std::vector<std::byte> constant_data;
   std::optional<::simaai::scheduler::client::TensorStagePublication> publication;
-  std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication>
-      image_publication;
+  std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication> image_publication;
   // Internal tensor regions share the stage arena but are not graph outputs.
   // Cold preparation makes these available to dependent members, then removes
   // their metadata routes from the published tensor set.
@@ -41,5 +40,5 @@ struct KernelStageRecipe {
 // only after validating the entire stopped cohort and resource budgets.
 [[nodiscard]] ::simaai::scheduler::client::Status
 wire_kernel_stage_factories(const KernelStageRecipe&,
-                           ::simaai::scheduler::client::TensorStageRequest&);
+                            ::simaai::scheduler::client::TensorStageRequest&);
 } // namespace simaai::neat::pipeline_internal::sima

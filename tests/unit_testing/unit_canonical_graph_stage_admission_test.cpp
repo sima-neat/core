@@ -123,8 +123,7 @@ c::TensorStageRequest request(const ps::StageStaticSpec& stage) {
   result.options.capacity = 1;
   const std::array input{c::TensorSpec{{2, 3, 4}, c::DType::Float32}};
   const std::array output{c::TensorSpec{{2, 3, 4}, c::DType::BFloat16}};
-  auto executable =
-      take(c::check_kernel({"cast", result.target, input, output, {}}));
+  auto executable = take(c::check_kernel({"cast", result.target, input, output, {}}));
   result.members.push_back({std::move(executable), {{0, 0}}, {{0, 0}}, {}});
   auto publication = std::make_shared<tr::TensorBufferPublishContract>();
   publication->stage_key = stage.logical_stage_id;

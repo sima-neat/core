@@ -3,9 +3,9 @@
  * @ingroup nodes_sima
  * @brief `SimaArgMax` Node — postprocess argmax over a tensor (classification).
  *
- * Runs on A65 through the generic kernel runner. Reads a classification tensor (after dequant/cast) and emits the
- * top class index per sample. Place after `Detess`/`DetessDequant`/`DetessCast` at the
- * tail of a classification pipeline.
+ * Runs on A65 through the generic kernel runner. Reads a classification tensor (after dequant/cast)
+ * and emits the top class index per sample. Place after `Detess`/`DetessDequant`/`DetessCast` at
+ * the tail of a classification pipeline.
  */
 #pragma once
 
@@ -29,9 +29,9 @@ struct SimaArgMaxOptions {
   int sima_allocator_type = 2; ///< Compatibility field: use 0 or 2; allocation belongs to Runtime.
   bool silent = true;          ///< Retained source-compatible diagnostic option.
   bool emit_signals = false;   ///< Retired transport option; must remain false.
-  bool transmit = false; ///< Retired transport option; must remain false.
-  int axis = -1; ///< Reduction axis; negative values count from the trailing axis.
-  bool keepdims = false; ///< Retain the reduced axis with extent one.
+  bool transmit = false;       ///< Retired transport option; must remain false.
+  int axis = -1;               ///< Reduction axis; negative values count from the trailing axis.
+  bool keepdims = false;       ///< Retain the reduced axis with extent one.
 };
 
 /**

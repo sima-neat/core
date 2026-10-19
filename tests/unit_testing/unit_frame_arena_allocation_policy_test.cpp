@@ -155,8 +155,8 @@ RUN_TEST(
       inherited.payload.batch_size = 1;
       sima_ev_tensor_desc output_descriptor{};
       require(sima::tensorsemantics::build_dense_tensor_desc(
-                  {1, 2, 2, 3}, "UINT8", "NHWC", &output_descriptor, &error,
-                  "empty", "rank", "dimension", "dtype", "stride"),
+                  {1, 2, 2, 3}, "UINT8", "NHWC", &output_descriptor, &error, "empty", "rank",
+                  "dimension", "dtype", "stride"),
               error);
       output_descriptor.storage.nbytes = 12;
       inherited.payload.input_tensors.emplace_back(output_descriptor, "UINT8");

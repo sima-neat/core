@@ -280,11 +280,11 @@ void execute_rcnn_stage1_graph() {
         // Independent IEEE-half goldens for the four square-anchor winners:
         // score, reserved label, clipped x1,y1,x2,y2. Level-zero's second
         // higher-scoring anchor must not replace the lower-scoring level three.
-        constexpr std::array<std::array<std::uint16_t, 6>, 4> expected{{
-            {0x3bfb, 0, 0x5c00, 0x5c00, 0x5c80, 0x5c80},
-            {0x3bdb, 0, 0x5a80, 0x5a80, 0x5d40, 0x5d40},
-            {0x3b9f, 0, 0x5800, 0x5800, 0x5e00, 0x5e00},
-            {0x3b0c, 0, 0, 0, 0x5fc0, 0x5fc0}}};
+        constexpr std::array<std::array<std::uint16_t, 6>, 4> expected{
+            {{0x3bfb, 0, 0x5c00, 0x5c00, 0x5c80, 0x5c80},
+             {0x3bdb, 0, 0x5a80, 0x5a80, 0x5d40, 0x5d40},
+             {0x3b9f, 0, 0x5800, 0x5800, 0x5e00, 0x5e00},
+             {0x3b0c, 0, 0, 0, 0x5fc0, 0x5fc0}}};
         for (int field = 0; field < 6; ++field) {
           std::uint16_t value;
           std::memcpy(&value, bytes + level * 16 + 4 + field * 2, 2);

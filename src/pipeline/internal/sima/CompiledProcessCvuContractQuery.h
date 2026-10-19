@@ -100,10 +100,10 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   const std::vector<int> source_shape{source_count, height, width, channels};
   std::string detail;
   sima_ev_tensor_desc source_descriptor{};
-  if (!tensorsemantics::build_dense_tensor_desc(
-          source_shape, "UINT8", "NHWC", &source_descriptor, &detail,
-          "missing source descriptor", "invalid source rank", "invalid source dimension",
-          "invalid source dtype", "invalid source stride")) {
+  if (!tensorsemantics::build_dense_tensor_desc(source_shape, "UINT8", "NHWC", &source_descriptor,
+                                                &detail, "missing source descriptor",
+                                                "invalid source rank", "invalid source dimension",
+                                                "invalid source dtype", "invalid source stride")) {
     throw std::invalid_argument("Preproc ROI-list: " + detail);
   }
   source_descriptor.storage.nbytes = source_bytes;
@@ -129,8 +129,8 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   const auto slot_bytes = runtime.physical_outputs.front().size_bytes;
   runtime.physical_outputs.front().size_bytes = multiply(slot_bytes, roi_capacity);
   auto& output = runtime.logical_outputs.front();
-  const auto output_axes =
-      tensorsemantics::host_axis_semantics_from_ev(payload.output_tensors.front().descriptor().shape);
+  const auto output_axes = tensorsemantics::host_axis_semantics_from_ev(
+      payload.output_tensors.front().descriptor().shape);
   const auto batch_axis = tensorsemantics::find_axis(output_axes, TensorAxisSemantic::N);
   if (batch_axis) {
     if (*batch_axis != 0U || *batch_axis >= output.shape.size() || output.shape[*batch_axis] != 1 ||

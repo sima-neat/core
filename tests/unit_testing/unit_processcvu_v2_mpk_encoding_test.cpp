@@ -692,8 +692,10 @@ void verify_tiled_explicit_batch_axes() {
     config.output_tensors = {{dense, "INT8"}};
     const auto adapted = pss::build_processcvu_payload_from_runtime_config_internal(config);
     require(adapted.input_tensors.size() == 1U && adapted.output_tensors.size() == 1U &&
-                std::memcmp(&adapted.input_tensors.front().descriptor(), &descriptor, sizeof(descriptor)) == 0 &&
-                std::memcmp(&adapted.output_tensors.front().descriptor(), &dense, sizeof(dense)) == 0,
+                std::memcmp(&adapted.input_tensors.front().descriptor(), &descriptor,
+                            sizeof(descriptor)) == 0 &&
+                std::memcmp(&adapted.output_tensors.front().descriptor(), &dense, sizeof(dense)) ==
+                    0,
             "runtime adapter must preserve complete explicit dense and tiled descriptors");
     config.input_tensors.clear();
     config.output_tensors.clear();

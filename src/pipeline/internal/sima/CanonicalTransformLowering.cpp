@@ -29,7 +29,8 @@ constexpr std::array families{Family{"cast", Family::None},
                               Family{"detess", Family::None}};
 
 Result<DType> dtype(std::string_view meaning, std::uint32_t wire) {
-  if (const auto scalar = scalar_from_model_descriptor(meaning, wire)) return *scalar;
+  if (const auto scalar = scalar_from_model_descriptor(meaning, wire))
+    return *scalar;
   return Error{ErrorCode::InvalidRequest, "dtype",
                "missing, ambiguous or contradictory scalar type: name='" + std::string(meaning) +
                    "', wire=" + std::to_string(wire)};
@@ -39,8 +40,7 @@ Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, DType scalar,
                           bool blocked_bf16 = false) {
   if (desc.shape.rank == 0 || desc.shape.rank > std::size(desc.shape.sizes))
     return invalid("shape.rank", "legacy tensor rank must be in [1,6]");
-  TensorSpec result{std::vector<std::int64_t>(desc.shape.rank),
-                    scalar};
+  TensorSpec result{std::vector<std::int64_t>(desc.shape.rank), scalar};
   // Packed wire fields may be unaligned. Copy values rather than binding spans
   // or references into their storage.
   for (std::size_t i = 0; i < desc.shape.rank; ++i)
@@ -56,7 +56,8 @@ Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, DType scalar,
       strides.strides_bytes[i] = desc.layout.strided.strides_bytes[i];
       if (result.shape[i] <= 0 || (result.shape[i] > 1 && strides.strides_bytes[i] != dense))
         contiguous = false;
-      if (result.shape[i] > 0 && dense <= std::numeric_limits<std::int64_t>::max() / result.shape[i])
+      if (result.shape[i] > 0 &&
+          dense <= std::numeric_limits<std::int64_t>::max() / result.shape[i])
         dense *= result.shape[i];
       else
         contiguous = false;
@@ -151,7 +152,8 @@ Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, DType scalar,
 Result<TensorSpec> tensor_spec_from_model_descriptor(const sima_ev_tensor_desc& descriptor,
                                                      std::string_view meaning) {
   auto scalar = dtype(meaning, descriptor.dtype);
-  if (const auto* error = std::get_if<Error>(&scalar)) return *error;
+  if (const auto* error = std::get_if<Error>(&scalar))
+    return *error;
   return tensor(descriptor, std::get<DType>(scalar));
 }
 
@@ -178,8 +180,8 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
       cfg.resolved_exec_backend != "EVXX")
     return invalid("target", "Core must resolve the backend before preparation");
   const auto exact = [count](const auto& array) { return array.empty() || array.size() == count; };
-  if (!exact(cfg.q_scale_list) ||
-      !exact(cfg.dq_scale_list) || !exact(cfg.q_zp_list) || !exact(cfg.dq_zp_list))
+  if (!exact(cfg.q_scale_list) || !exact(cfg.dq_scale_list) || !exact(cfg.q_zp_list) ||
+      !exact(cfg.dq_zp_list))
     return invalid("parameters", "per-member arrays must be empty or match tensor count");
   const auto same_float_values = [](const auto& left, const auto& right) {
     return left.size() == right.size() &&
@@ -219,9 +221,7 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
         return invalid("shape", "transform input/output logical axes differ");
     auto in = tensor(cfg.input_tensors[i], cfg.input_tensors[i].scalar(),
                      family->canonical == "detesscast" && (cfg.opt_flags & (1U << 6)) != 0);
-    auto out = tensor(
-        cfg.output_tensors[i],
-        cfg.output_tensors[i].scalar());
+    auto out = tensor(cfg.output_tensors[i], cfg.output_tensors[i].scalar());
     const auto at_port = [&](Error error, const char* port) {
       error.field = std::string(port) + "[" + std::to_string(i) + "]." + error.field;
       error.message = cfg.graph_name + ": " + error.message;

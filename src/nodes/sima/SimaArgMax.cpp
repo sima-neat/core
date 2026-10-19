@@ -161,7 +161,8 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
     auto recipe = std::make_shared<si::KernelStageRecipe>();
     for (std::size_t index = 0; index < upstream->logical_outputs.size(); ++index) {
       const auto& source = upstream->logical_outputs[index];
-      if (source.shape.empty() || source.shape.size() > std::size(sima_ev_tensor_desc{}.shape.sizes) ||
+      if (source.shape.empty() ||
+          source.shape.size() > std::size(sima_ev_tensor_desc{}.shape.sizes) ||
           source.byte_offset < 0)
         throw std::invalid_argument("SimaArgMax requires a positive tensor rank of at most six");
       const auto rank = static_cast<int>(source.shape.size());
@@ -207,8 +208,7 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
           static_cast<std::size_t>(source.backend_output_index) < legacy->output_tensors.size()) {
         const auto& descriptor = legacy->output_tensors[source.backend_output_index];
         if (descriptor.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED) {
-          auto native = si::kernel_lowering::tensor_spec_from_model_descriptor(
-              descriptor);
+          auto native = si::kernel_lowering::tensor_spec_from_model_descriptor(descriptor);
           if (auto* failure = std::get_if<rt::Error>(&native))
             throw std::invalid_argument("SimaArgMax input: " + failure->message);
           in = std::get<rt::TensorSpec>(std::move(native));
@@ -223,8 +223,9 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
       else
         shape.erase(shape.begin() + axis);
       rt::TensorSpec out{shape, rt::DType::Int32};
-      const std::array parameters{::simaai::scheduler::client::Parameter{"axis", opt_.axis},
-                                  ::simaai::scheduler::client::Parameter{"keepdims", opt_.keepdims}};
+      const std::array parameters{
+          ::simaai::scheduler::client::Parameter{"axis", opt_.axis},
+          ::simaai::scheduler::client::Parameter{"keepdims", opt_.keepdims}};
       auto checked =
           scheduler::check_kernel({"argmax", rt::Hardware::A65, {&in, 1}, {&out, 1}, parameters});
       if (auto* failure = std::get_if<rt::Error>(&checked))

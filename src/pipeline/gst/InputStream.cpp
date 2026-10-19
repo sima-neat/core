@@ -766,9 +766,10 @@ BuiltBuffer build_buffer_with_fill(
                                ": DMA-BUF pool returned an invalid payload span");
     }
     ::simaai::scheduler::client::dma::Error error;
-    auto view =
-        ::simaai::scheduler::client::dma::DmaBufView::fromGstMemory(payload_memory, 0U, payload_bytes, &error);
-    dmabuf_mapping = view ? view->map(::simaai::scheduler::client::dma::CpuAccess::Write, &error) : std::nullopt;
+    auto view = ::simaai::scheduler::client::dma::DmaBufView::fromGstMemory(payload_memory, 0U,
+                                                                            payload_bytes, &error);
+    dmabuf_mapping =
+        view ? view->map(::simaai::scheduler::client::dma::CpuAccess::Write, &error) : std::nullopt;
     if (!dmabuf_mapping) {
       if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
         release_input_buffer(buf, (std::string(tag) + ":dmabuf_map_fail").c_str());

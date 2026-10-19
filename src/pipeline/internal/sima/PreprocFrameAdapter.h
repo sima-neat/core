@@ -40,9 +40,9 @@ public:
   }
   // Scheduler supplies a borrowed writer over the existing frame binding and
   // current producer loans. Geometry caching retains neither writer nor buffer.
-  Status bind(GstBuffer*, BindingWriter&, GstStructure* output_metadata,
-              bool fresh_metadata = false,
-              simaai::gst::TensorBufferPreprocessFactsOwner* compact_facts = nullptr) const override;
+  Status
+  bind(GstBuffer*, BindingWriter&, GstStructure* output_metadata, bool fresh_metadata = false,
+       simaai::gst::TensorBufferPreprocessFactsOwner* compact_facts = nullptr) const override;
 
 private:
   struct Geometry {

@@ -1303,12 +1303,6 @@ void test_public_per_stream_limit_reaches_mux_gate() {
   stop_latest_mux_pipeline(&fixture);
 }
 
-
-
-
-
-
-
 void test_fanout_terminal_and_drop_release_retained_credit() {
   constexpr const char* kStreamId = "fanout-drop-stream";
   LatestMuxPipeline fixture =
@@ -1452,16 +1446,6 @@ void test_fanout_terminal_and_drop_release_retained_credit() {
   }
   stop_latest_mux_pipeline(&fixture);
 }
-
-
-
-
-
-
-
-
-
-
 
 } // namespace
 

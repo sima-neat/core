@@ -188,14 +188,25 @@ void check_current_frame_routing(const TensorBufferPreparedMetaTemplate& prepare
 }
 void check_source_values(const TensorBufferPublicationOwner& owner) {
   using V = TensorBufferSourceValues;
-  struct Case { const char* name; V source; int64_t id, pts, dts, duration; };
-  V zero; zero.present = V::AllFields; zero.valid = V::ValidityFields;
-  V invalid = zero; invalid.valid = 0;
-  V missing = zero; missing.present = V::ValidityFields;
-  V numeric = zero; numeric.present = V::AllFields & ~V::ValidityFields;
-  V range = zero; range.frame_id = -2;
+  struct Case {
+    const char* name;
+    V source;
+    int64_t id, pts, dts, duration;
+  };
+  V zero;
+  zero.present = V::AllFields;
+  zero.valid = V::ValidityFields;
+  V invalid = zero;
+  invalid.valid = 0;
+  V missing = zero;
+  missing.present = V::ValidityFields;
+  V numeric = zero;
+  numeric.present = V::AllFields & ~V::ValidityFields;
+  V range = zero;
+  range.frame_id = -2;
   range.pts_ns = range.dts_ns = range.duration_ns = std::numeric_limits<uint64_t>::max();
-  V maximum = zero; maximum.frame_id = std::numeric_limits<int64_t>::max();
+  V maximum = zero;
+  maximum.frame_id = std::numeric_limits<int64_t>::max();
   maximum.pts_ns = maximum.dts_ns = maximum.duration_ns = uint64_t(maximum.frame_id);
   const Case cases[] = {
       {"absent", {}, 71, 101, 102, 103},
@@ -204,8 +215,8 @@ void check_source_values(const TensorBufferPublicationOwner& owner) {
       {"validity without numeric", missing, -1, 101, 102, 103},
       {"numeric without validity", numeric, 71, 101, 102, 103},
       {"out of public range", range, -1, 101, 102, 103},
-      {"maximum public value", maximum, maximum.frame_id, maximum.frame_id,
-       maximum.frame_id, maximum.frame_id},
+      {"maximum public value", maximum, maximum.frame_id, maximum.frame_id, maximum.frame_id,
+       maximum.frame_id},
   };
   InputStream::State reused;
   reused.opt.copy_output = false;
@@ -225,9 +236,12 @@ void check_source_values(const TensorBufferPublicationOwner& owner) {
       GST_BUFFER_DURATION(compact.get()) = 103;
       require(tensor_buffer_attach_publication(compact.get(), owner, &error), error);
       TensorBufferFrameMetadata stage;
-      stage.frame_id = 71; stage.timestamp = 777;
-      stage.input_sequence = 53; stage.original_sequence = 54;
-      require(tensor_buffer_attach_frame_metadata(compact.get(), stage, test.source, &error), error);
+      stage.frame_id = 71;
+      stage.timestamp = 777;
+      stage.input_sequence = 53;
+      stage.original_sequence = 54;
+      require(tensor_buffer_attach_frame_metadata(compact.get(), stage, test.source, &error),
+              error);
       InputStream::State cold;
       cold.opt.copy_output = false;
       check_values(decode(cold, compact.get(), 0, false), test);
@@ -238,14 +252,13 @@ void check_source_values(const TensorBufferPublicationOwner& owner) {
       check_values(decode(reused, legacy.get(), 0, false), test);
       // A wrong-typed numeric behaves as absent, not as zero; an absent or
       // wrong-typed validity leaves stage/header fallback unchanged.
-      auto* fields = gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
-      gst_structure_set(fields,
-          "sample-frame-id-valid", G_TYPE_BOOLEAN, TRUE,
-          "sample-frame-id", G_TYPE_STRING, "not-an-id",
-          "sample-pts-valid", G_TYPE_BOOLEAN, TRUE,
-          "sample-pts-ns", G_TYPE_STRING, "not-a-time",
-          "sample-dts-valid", G_TYPE_STRING, "not-a-bool",
-          "sample-duration-valid", G_TYPE_STRING, "not-a-bool", nullptr);
+      auto* fields =
+          gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
+      gst_structure_set(fields, "sample-frame-id-valid", G_TYPE_BOOLEAN, TRUE, "sample-frame-id",
+                        G_TYPE_STRING, "not-an-id", "sample-pts-valid", G_TYPE_BOOLEAN, TRUE,
+                        "sample-pts-ns", G_TYPE_STRING, "not-a-time", "sample-dts-valid",
+                        G_TYPE_STRING, "not-a-bool", "sample-duration-valid", G_TYPE_STRING,
+                        "not-a-bool", nullptr);
       check_values(decode(reused, legacy.get(), 0, false),
                    {"legacy wrong types", {}, -1, 101, 102, 103});
     }

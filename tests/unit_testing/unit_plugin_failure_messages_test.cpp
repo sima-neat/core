@@ -23,8 +23,6 @@
 
 #include <unistd.h>
 
-
-
 static void maybe_dump_error(const std::string& label, const std::string& err) {
   const char* env = std::getenv("SIMA_TEST_DUMP_ERRORS");
   if (!env || !*env || std::string(env) == "0")
@@ -73,8 +71,6 @@ static std::string expect_pipeline_error(const std::string& label,
   throw std::runtime_error(label + ": expected NeatError, got success");
 }
 
-
-
 static void require_configuration_error(const std::string& err, const std::string& stage) {
   require_contains(err, "[io.parse]", "expected the configuration error code");
   require_contains(err, "The reported pipeline stage configuration is invalid.",
@@ -103,10 +99,6 @@ static void require_caps_production_error(const std::string& err, const std::str
   require(err.find("GST ERROR") == std::string::npos,
           "production error should not expose a raw GST ERROR dump");
 }
-
-
-
-
 
 static void test_processmla_failure() {
   TempFile cfg = write_temp("sima_mla_bad", "{\n"
@@ -172,21 +164,8 @@ static void test_boxdecode_failure() {
   require_configuration_error(err, "box_fail");
 }
 
-
-
-
-
-
-
 // Kernel identity and parameters are admitted into a retained Runtime stage,
 // not reparsed by an operation-specific element from a legacy manifest.
-
-
-
-
-
-
-
 
 static void test_neatdecoder_failure() {
   const std::string caps = "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au,"

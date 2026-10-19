@@ -2121,7 +2121,8 @@ bool processcvu_build_stage_tensor_descs_local(const StageStaticSpec& stage,
     return true;
   }
   if (!payload.input_tensors.empty() || !payload.output_tensors.empty()) {
-    if (error_message) *error_message = "processcvu stage has incomplete authored tensor ports";
+    if (error_message)
+      *error_message = "processcvu stage has incomplete authored tensor ports";
     return false;
   }
   cfg->input_tensors.clear();
@@ -4551,7 +4552,8 @@ bool image_publication_matches_local(
       input.shape = stage->logical_inputs.front().shape;
     }
     if (input.shape.empty() && !payload.input_tensors.empty())
-      input.shape = shape_vector_from_ev_shape_local(payload.input_tensors.front().descriptor().shape);
+      input.shape =
+          shape_vector_from_ev_shape_local(payload.input_tensors.front().descriptor().shape);
     input.dtype = processcvu_caps_format_from_dtype_local(input.dtype, payload.input_dtype);
     if (!input.shape.empty())
       sink = processmla_make_tensor_caps_from_tensor_local(input, input.dtype, false);

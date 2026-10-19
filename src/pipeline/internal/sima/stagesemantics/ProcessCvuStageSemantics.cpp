@@ -767,18 +767,19 @@ bool overlay_processcvu_runtime_geometry_from_graph_local(const MpkGraphNode& no
       }
     }
   };
-  const auto populate_tile_shapes_from_descs = [](const std::vector<AuthoredTensorDescriptor>& descs,
-                                                  std::vector<std::vector<int>>* out_shapes) {
-    if (!out_shapes || !out_shapes->empty()) {
-      return;
-    }
-    for (const auto& desc : descs) {
-      const auto shape = tile_shape_vec_from_tensor_desc_local(desc);
-      if (!shape.empty()) {
-        out_shapes->push_back(shape);
-      }
-    }
-  };
+  const auto populate_tile_shapes_from_descs =
+      [](const std::vector<AuthoredTensorDescriptor>& descs,
+         std::vector<std::vector<int>>* out_shapes) {
+        if (!out_shapes || !out_shapes->empty()) {
+          return;
+        }
+        for (const auto& desc : descs) {
+          const auto shape = tile_shape_vec_from_tensor_desc_local(desc);
+          if (!shape.empty()) {
+            out_shapes->push_back(shape);
+          }
+        }
+      };
 
   populate_shapes_from_descs(cfg->input_tensors, &cfg->input_shapes);
   populate_shapes_from_descs(cfg->output_tensors, &cfg->output_shapes);
@@ -1634,9 +1635,8 @@ void synthesize_preproc_payload_tensor_descs(ProcessCvuStagePayload* payload) {
     if (batched_output && output_shape.front() != payload->batch_size) {
       throw std::invalid_argument("processcvu preproc output batch contradicts ROI capacity");
     }
-    const std::string output_layout = batched_output
-                                          ? "NHWC"
-                                          : preproc_image_axis_layout_token_local(output_shape);
+    const std::string output_layout =
+        batched_output ? "NHWC" : preproc_image_axis_layout_token_local(output_shape);
     if (output_shape.empty() || output_layout.empty()) {
       payload->output_tensors.clear();
       return;
@@ -3690,7 +3690,8 @@ void enforce_packed_parent_input_views(
     if (i < out->payload.input_tensors.size()) {
       auto descriptor = out->payload.input_tensors[i].descriptor();
       descriptor.storage.addr = static_cast<std::uint64_t>(byte_offset);
-      if (size_bytes > 0U) descriptor.storage.nbytes = size_bytes;
+      if (size_bytes > 0U)
+        descriptor.storage.nbytes = size_bytes;
       out->payload.input_tensors[i] = out->payload.input_tensors[i].with_geometry(descriptor);
     }
 
@@ -5668,7 +5669,8 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
     runtime.input_tensors.push_back(branch.input_tensors.front());
     runtime.output_tensors.push_back(branch.output_tensors.front());
     if (family == "cast") {
-      runtime.output_tensors.back().set_storage_address(static_cast<std::uint64_t>(packed_output_offset));
+      runtime.output_tensors.back().set_storage_address(
+          static_cast<std::uint64_t>(packed_output_offset));
     }
     if (!branch.input_shapes.empty()) {
       runtime.input_shapes.push_back(branch.input_shapes.front());
@@ -7314,8 +7316,7 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
     for (std::size_t i = 0; i < packed_input_sizes.size(); ++i) {
       auto desc = out.payload.input_tensors[i].descriptor();
       desc.storage.nbytes = packed_input_sizes[i];
-      if (i < ordered_subsets.size() &&
-          desc.layout_kind == SIMA_EV_LAYOUT_TILED) {
+      if (i < ordered_subsets.size() && desc.layout_kind == SIMA_EV_LAYOUT_TILED) {
         if (ordered_subsets[i].align_c16 || ordered_subsets[i].cblock) {
           const int c_axis = tensorsemantics::find_shape_axis(desc.shape, SIMA_EV_AXIS_C);
           const bool c16_exact_tiles =
@@ -8149,9 +8150,9 @@ build_processcvu_compiled_contract_from_facts(const ProcessCvuStagePayload& payl
   // before queries and target policy can observe inconsistent operation identities.
   // The operation, family and enum describe the same semantics; none may override
   // a contradictory explicit authority. Raw caller fields remain untouched.
-  const std::string operation(canonical_transform_operation(
-      compiled_payload.graph_name.empty() ? compiled_payload.graph_family
-                                          : compiled_payload.graph_name));
+  const std::string operation(canonical_transform_operation(compiled_payload.graph_name.empty()
+                                                                ? compiled_payload.graph_family
+                                                                : compiled_payload.graph_name));
   const std::string operation_family = canonical_family_name(operation);
   const std::string canonical_family = compiled_payload.graph_family.empty()
                                            ? operation_family

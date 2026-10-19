@@ -92,7 +92,6 @@ void glib_message_suppressor(const gchar* domain, GLogLevelFlags level, const gc
   g_log_default_handler(domain, level, message, user_data);
 }
 
-
 bool should_suppress_device_line(const std::string& line) {
   if (line.find("opening /dev/rpmsg_ctrl0") != std::string::npos)
     return true;
@@ -1089,7 +1088,6 @@ void prepend_env_list(const char* key, const std::string& value) {
   g_setenv(key, merged.c_str(), TRUE);
 }
 
-
 void validate_neat_factory_loaded(const char* factory, const char* plugin_dir) {
   GstElementFactory* f = gst_element_factory_find(factory);
   if (!f) {
@@ -1304,7 +1302,6 @@ void gst_init_once() {
       preload_third_party_allocator(third_party);
       enforce_third_party_allocator(third_party);
     }
-
 
     if (!third_party.empty() && env_bool("SIMA_GST_WRAP_SCANNER", true)) {
       const gchar* scanner_env = g_getenv("GST_PLUGIN_SCANNER");

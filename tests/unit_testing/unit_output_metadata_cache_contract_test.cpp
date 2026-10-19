@@ -312,8 +312,8 @@ void named_child_binding_and_logical_alias_are_distinct() {
     const std::vector<std::size_t> child_counts =
         compact ? std::vector<std::size_t>{2, 2, 3, 3, 2} : std::vector<std::size_t>{2, 2};
     for (std::size_t current = 0; current != child_counts.size(); ++current) {
-      std::vector<simaai::scheduler::testing::NamedOutputSegment> allocations = {
-          {"arena0", 64}, {"memory1", 64}};
+      std::vector<simaai::scheduler::testing::NamedOutputSegment> allocations = {{"arena0", 64},
+                                                                                 {"memory1", 64}};
       if (child_counts[current] == 3) {
         allocations.push_back({"unused_tail", 64});
       }
@@ -462,8 +462,7 @@ void shared_runtime_view_keeps_visible_bounds() {
       require(bool(reference.storage), context + ": source storage");
       // Deliberately retain Runtime's valid root extent as stale caller-side
       // metadata. The generic numeric helper must still obey the current window.
-      reference.storage->sima_segments = {
-          {admitted.segment_name(0), admitted.segment_size(0)}};
+      reference.storage->sima_segments = {{admitted.segment_name(0), admitted.segment_size(0)}};
       reference.dtype = neat::TensorDType::Int8;
       reference.shape = {static_cast<int64_t>(visible_size)};
       reference.strides_bytes = {1};

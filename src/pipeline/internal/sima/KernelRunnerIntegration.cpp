@@ -13,10 +13,13 @@ namespace {
 rt::Error invalid(const char* field, std::string message) {
   return {rt::ErrorCode::InvalidRequest, field, std::move(message)};
 }
-template<class T> auto retain_gst(T* value) {
-  return std::shared_ptr<T>(value, [](T* p) { if (p) gst_object_unref(p); });
+template <class T> auto retain_gst(T* value) {
+  return std::shared_ptr<T>(value, [](T* p) {
+    if (p)
+      gst_object_unref(p);
+  });
 }
-}
+} // namespace
 rt::Result<std::size_t> kernel_runner_output_pool_capacity(std::size_t execution_capacity,
                                                            std::size_t retained_sample_window) {
   // Runtime permits 4096 execution slots and its existing extra carrier. Core
@@ -32,15 +35,16 @@ rt::Result<std::size_t> kernel_runner_output_pool_capacity(std::size_t execution
   return execution_capacity + retained_sample_window + 1;
 }
 
-
 rt::Status wire_kernel_stage_factories(const KernelStageRecipe& recipe,
-                                     gs::TensorStageRequest& request) {
+                                       gs::TensorStageRequest& request) {
   if (request.frame_adapter_factory || request.members.size() != recipe.members.size())
-    return invalid("kernel-runner.instance", "fresh request with matching checked members required");
+    return invalid("kernel-runner.instance",
+                   "fresh request with matching checked members required");
   for (std::size_t i = 0; i < recipe.members.size(); ++i)
     if (recipe.members[i].resolve_factory || request.members[i].resolve_factory ||
         request.members[i].executable != recipe.members[i].executable)
-      return invalid("kernel-runner.instance", "recipe must contain immutable checked descriptors only");
+      return invalid("kernel-runner.instance",
+                     "recipe must contain immutable checked descriptors only");
   std::vector<bool> seen(recipe.members.size(), false);
   for (const auto& factory : recipe.resolver_factories) {
     if (factory.member >= seen.size() || seen[factory.member] || !factory.instantiate)
@@ -69,9 +73,9 @@ std::size_t kernel_runner_ev_device_lanes(std::span<const gs::TensorStageRequest
   return 1;
 }
 
-
 rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
-    std::span<const KernelRunnerStageRequest> requests, std::size_t a65_workers) {
+                                             std::span<const KernelRunnerStageRequest> requests,
+                                             std::size_t a65_workers) {
   if (!pipeline || !GST_IS_BIN(pipeline))
     return invalid("kernel-runner.graph", "a candidate graph bin is required");
   std::vector<std::shared_ptr<GstElement>> elements, sinks;
@@ -83,7 +87,10 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
   preparations.reserve(requests.size());
   auto manifest = std::shared_ptr<GstContext>(
       gst_element_get_context(pipeline, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-      [](GstContext* p) { if (p) gst_context_unref(p); });
+      [](GstContext* p) {
+        if (p)
+          gst_context_unref(p);
+      });
   for (const auto& request : requests) {
     if (request.capacity == 0 || request.capacity > 64)
       return invalid("kernel-runner.graph", "Core execution capacity must be between 1 and 64");
@@ -112,11 +119,13 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
       return invalid("kernel-runner.publication", std::move(error));
     if (auto failure = wire_kernel_stage_factories(recipe, prepared))
       return failure;
-    auto sink = retain_gst(request.compact_sink.empty() ? nullptr :
-        gst_bin_get_by_name(GST_BIN(pipeline), std::string(request.compact_sink).c_str()));
+    auto sink = retain_gst(
+        request.compact_sink.empty()
+            ? nullptr
+            : gst_bin_get_by_name(GST_BIN(pipeline), std::string(request.compact_sink).c_str()));
     preparations.push_back(prepared);
-    attachments.push_back({element.get(), std::move(prepared), recipe.image_publication,
-                           recipe.metrics, sink.get()});
+    attachments.push_back(
+        {element.get(), std::move(prepared), recipe.image_publication, recipe.metrics, sink.get()});
     elements.push_back(std::move(element));
     sinks.push_back(std::move(sink));
   }
@@ -126,6 +135,6 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
   // Scheduler owns stopped-topology checks, storage/session selection, fresh
   // factory admission and all-or-nothing context/coherency publication.
   return gs::prepare_and_attach_tensor_stages(pipeline, attachments, options,
-      gs::CompactFrameReaderContract::SourceValuesV3);
+                                              gs::CompactFrameReaderContract::SourceValuesV3);
 }
 } // namespace simaai::neat::pipeline_internal::sima

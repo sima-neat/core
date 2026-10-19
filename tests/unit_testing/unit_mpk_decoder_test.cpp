@@ -1383,7 +1383,8 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
   check(recipe.members.size() == frames.size(),
         "each BF16 carrier retains one fused DetessCast without a separate Cast member");
   for (std::size_t index = 0; index < frames.size(); ++index) {
-    const auto inspection = ::simaai::scheduler::client::inspect_kernel(recipe.members[index].executable);
+    const auto inspection =
+        ::simaai::scheduler::client::inspect_kernel(recipe.members[index].executable);
     check(std::holds_alternative<::simaai::scheduler::client::KernelInspection>(inspection),
           "checked fused executable is inspectable");
     const auto& info = std::get<::simaai::scheduler::client::KernelInspection>(inspection);

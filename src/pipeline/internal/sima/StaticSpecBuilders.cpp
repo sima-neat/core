@@ -170,18 +170,17 @@ build_physical_buffer_static_spec(int physical_index, int allocator_index, std::
   return physical;
 }
 
-PhysicalBufferStaticSpec build_physical_input_from_output(
-    const PhysicalBufferStaticSpec& output, const CompiledRuntimeContract& producer) {
+PhysicalBufferStaticSpec build_physical_input_from_output(const PhysicalBufferStaticSpec& output,
+                                                          const CompiledRuntimeContract& producer) {
   auto input = output;
   if (producer.frame_arena_role == FrameArenaRole::None)
     return input;
   if ((producer.frame_arena_role != FrameArenaRole::Allocate &&
        producer.frame_arena_role != FrameArenaRole::ReuseInput) ||
-      !producer.frame_arena_size_bytes || output.source_byte_offset < 0 ||
-      !output.size_bytes ||
+      !producer.frame_arena_size_bytes || output.source_byte_offset < 0 || !output.size_bytes ||
       static_cast<std::uint64_t>(output.source_byte_offset) > producer.frame_arena_size_bytes ||
-      output.size_bytes > producer.frame_arena_size_bytes -
-                              static_cast<std::uint64_t>(output.source_byte_offset))
+      output.size_bytes >
+          producer.frame_arena_size_bytes - static_cast<std::uint64_t>(output.source_byte_offset))
     throw std::invalid_argument("upstream output region exceeds its declared frame arena");
   // Region IDs select logical storage spans, not GstMemory slots. Keep the
   // arena offset here; the kernel port applies only its head-relative offset.

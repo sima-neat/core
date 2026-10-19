@@ -3319,7 +3319,8 @@ public:
     // these limits. Check every member before the caller converts even the first.
     for (std::size_t i = 0; i < inputs.size(); ++i) {
       validate_public_input(inputs[i], source_options_.at(i), InputStreamOptions{}, where);
-      validate_branch_geometry(describe_mat_geometry_or_throw(inputs[i], source_options_[i], where), i, where);
+      validate_branch_geometry(describe_mat_geometry_or_throw(inputs[i], source_options_[i], where),
+                               i, where);
     }
   }
 
@@ -3327,7 +3328,8 @@ public:
     require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "tensor inputs");
     for (std::size_t i = 0; i < inputs.size(); ++i) {
       validate_public_input(inputs[i], source_options_.at(i), InputStreamOptions{}, where);
-      validate_branch_geometry(describe_tensor_geometry_or_throw(inputs[i], source_options_[i], where), i, where);
+      validate_branch_geometry(
+          describe_tensor_geometry_or_throw(inputs[i], source_options_[i], where), i, where);
     }
   }
 
@@ -3338,14 +3340,18 @@ public:
       // Branch ingress is one logical tensor per input; inspect the retained
       // value directly rather than copying or mapping tensors_from_sample().
       const auto& sample = inputs[i];
-      const Tensor* tensor = sample.kind == SampleKind::Tensor && sample.tensor
-          ? &*sample.tensor : sample_has_tensor_list(sample) && sample.tensors.size() == 1
-          ? &sample.tensors.front() : nullptr;
+      const Tensor* tensor = sample.kind == SampleKind::Tensor && sample.tensor ? &*sample.tensor
+                             : sample_has_tensor_list(sample) && sample.tensors.size() == 1
+                                 ? &sample.tensors.front()
+                                 : nullptr;
       if (!uses_direct_tensor_set_route() && !tensor)
-        throw_model_error(error_codes::kInputShape, std::string(where) +
-            ": branch ingress requires one tensor per logical input", "Pass inputs in declared order.");
+        throw_model_error(error_codes::kInputShape,
+                          std::string(where) +
+                              ": branch ingress requires one tensor per logical input",
+                          "Pass inputs in declared order.");
       if (tensor)
-        validate_branch_geometry(describe_tensor_geometry_or_throw(*tensor, source_options_[i], where), i, where);
+        validate_branch_geometry(
+            describe_tensor_geometry_or_throw(*tensor, source_options_[i], where), i, where);
     }
   }
 
@@ -3507,23 +3513,28 @@ private:
       // Layout is only needed to preserve the public one-channel HW convenience
       // alias; never reconstruct the canonical shape from W/H/D projections.
       const auto layout = expected.layout == "HWC" || expected.layout == "NHWC" ? TensorLayout::HWC
-          : expected.layout == "CHW" || expected.layout == "NCHW" ? TensorLayout::CHW
-          : expected.layout == "HW" ? TensorLayout::HW : TensorLayout::Unknown;
+                          : expected.layout == "CHW" || expected.layout == "NCHW"
+                              ? TensorLayout::CHW
+                          : expected.layout == "HW" ? TensorLayout::HW
+                                                    : TensorLayout::Unknown;
       if (!input_geometry_matches_logical_shape(geometry, expected.logical_shape, layout))
-        throw_model_error(error_codes::kInputShape, std::string(where) + ": ingress[" +
-            std::to_string(i) + "] does not match canonical logical_shape",
+        throw_model_error(
+            error_codes::kInputShape,
+            std::string(where) + ": ingress[" + std::to_string(i) +
+                "] does not match canonical logical_shape",
             "Pass every logical axis, including non-unit batch, as declared by the model.");
       return;
     }
     const auto dims = geometry.shape.empty()
-        ? TensorCompatDims{geometry.width, geometry.height, geometry.depth}
-        : tensor_compat_dims_from_shape(geometry.shape, geometry.layout);
+                          ? TensorCompatDims{geometry.width, geometry.height, geometry.depth}
+                          : tensor_compat_dims_from_shape(geometry.shape, geometry.layout);
     if ((expected.width > 0 && dims.width != expected.width) ||
         (expected.height > 0 && dims.height != expected.height) ||
         (expected.depth > 0 && dims.depth != expected.depth))
-      throw_model_error(error_codes::kInputShape, std::string(where) + ": ingress[" +
-          std::to_string(i) + "] shape does not match the declared logical input",
-          "Pass inputs with their declared shapes before branch preprocessing.");
+      throw_model_error(error_codes::kInputShape,
+                        std::string(where) + ": ingress[" + std::to_string(i) +
+                            "] shape does not match the declared logical input",
+                        "Pass inputs with their declared shapes before branch preprocessing.");
   }
 
   bool uses_direct_tensor_set_route() const {
@@ -7114,20 +7125,21 @@ bool Model::Runner::push(const std::vector<cv::Mat>& inputs) {
   }
   if (tensor_input_opt_for_cv_.has_value()) {
     if (inputs.size() != ingress_names_.size()) {
-    std::vector<internal::IngressTensorContract> ingress_contracts;
-    ingress_contracts.reserve(ingress_names_.size());
-    for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
-      internal::IngressTensorContract ingress;
-      ingress.ingress_index = static_cast<int>(i);
-      ingress.source_tensor_name = ingress_names_[i];
-      ingress_contracts.push_back(std::move(ingress));
-    }
-    require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::push",
-                                "image inputs");
+      std::vector<internal::IngressTensorContract> ingress_contracts;
+      ingress_contracts.reserve(ingress_names_.size());
+      for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
+        internal::IngressTensorContract ingress;
+        ingress.ingress_index = static_cast<int>(i);
+        ingress.source_tensor_name = ingress_names_[i];
+        ingress_contracts.push_back(std::move(ingress));
+      }
+      require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::push",
+                                  "image inputs");
     }
     run_internal::validate_original_images(run_, inputs, "Model::Runner::push");
     for (const auto& input : inputs)
-      validate_public_input(input, *tensor_input_opt_for_cv_, InputStreamOptions{}, "Model::Runner::push");
+      validate_public_input(input, *tensor_input_opt_for_cv_, InputStreamOptions{},
+                            "Model::Runner::push");
     TensorList tensors;
     tensors.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -7181,20 +7193,21 @@ simaai::neat::TensorList Model::Runner::run(const std::vector<cv::Mat>& inputs, 
   }
   if (tensor_input_opt_for_cv_.has_value()) {
     if (inputs.size() != ingress_names_.size()) {
-    std::vector<internal::IngressTensorContract> ingress_contracts;
-    ingress_contracts.reserve(ingress_names_.size());
-    for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
-      internal::IngressTensorContract ingress;
-      ingress.ingress_index = static_cast<int>(i);
-      ingress.source_tensor_name = ingress_names_[i];
-      ingress_contracts.push_back(std::move(ingress));
-    }
-    require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::run",
-                                "image inputs");
+      std::vector<internal::IngressTensorContract> ingress_contracts;
+      ingress_contracts.reserve(ingress_names_.size());
+      for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
+        internal::IngressTensorContract ingress;
+        ingress.ingress_index = static_cast<int>(i);
+        ingress.source_tensor_name = ingress_names_[i];
+        ingress_contracts.push_back(std::move(ingress));
+      }
+      require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::run",
+                                  "image inputs");
     }
     run_internal::validate_original_images(run_, inputs, "Model::Runner::run");
     for (const auto& input : inputs)
-      validate_public_input(input, *tensor_input_opt_for_cv_, InputStreamOptions{}, "Model::Runner::run");
+      validate_public_input(input, *tensor_input_opt_for_cv_, InputStreamOptions{},
+                            "Model::Runner::run");
     TensorList tensors;
     tensors.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {

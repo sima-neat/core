@@ -36,7 +36,8 @@ struct Fixture {
   explicit Fixture(F format, std::span<const k::TensorSpec> specs)
       : plan(core::prepare_boxdecode_publication(format, specs)),
         output(plan.bytes + 16, std::byte{0x5a}) {
-    for (auto r : std::get<k::KernelInspection>(k::inspect_kernel(plan.executable)).input_requirements())
+    for (auto r :
+         std::get<k::KernelInspection>(k::inspect_kernel(plan.executable)).input_requirements())
       storage.emplace_back(r.storage_bytes, std::byte{0});
     for (const auto& bytes : storage)
       input.push_back({bytes.data(), bytes.size()});

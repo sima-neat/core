@@ -90,5 +90,4 @@ simaai::neat::Tensor tensor_view_from_sample_segment(const simaai::neat::Tensor&
                                                      bool keep_holder = true);
 std::shared_ptr<void> holder_from_tensor(const simaai::neat::Tensor& tensor);
 
-
 } // namespace simaai::neat::pipeline_internal

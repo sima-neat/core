@@ -794,10 +794,11 @@ bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledN
           const auto& dims = spec.shape;
           const auto name = "output_image_plane_" + std::to_string(i);
           auto logical = pipeline_internal::sima::specbuilders::build_logical_output_static_spec(
-              int(i), int(i), 0, int(i), int(i), dims, "UINT8", "HWC", name, name,
-              "output_image", plane.byte_offset, kernel.output_requirements()[i].storage_bytes);
+              int(i), int(i), 0, int(i), int(i), dims, "UINT8", "HWC", name, name, "output_image",
+              plane.byte_offset, kernel.output_requirements()[i].storage_bytes);
           logical.stride_bytes.resize(dims.size());
-          if (const auto* strided = std::get_if<::simaai::scheduler::client::Strided>(&spec.layout)) {
+          if (const auto* strided =
+                  std::get_if<::simaai::scheduler::client::Strided>(&spec.layout)) {
             std::copy_n(strided->strides_bytes.begin(), dims.size(), logical.stride_bytes.begin());
           } else {
             std::int64_t stride = 1;

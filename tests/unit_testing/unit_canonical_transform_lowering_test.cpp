@@ -214,10 +214,12 @@ void contract() {
   change_geometry(c.processcvu.input_tensors[0], [](auto& desc) { desc.storage.nbytes = 192; });
   reject(c); // Pre-batched span was never per-member metadata.
   c = config(recipes[0]);
-  change_geometry(c.processcvu.output_tensors[0], [](auto& desc) { desc.shape.axis_semantics[0] = SIMA_EV_AXIS_W; });
+  change_geometry(c.processcvu.output_tensors[0],
+                  [](auto& desc) { desc.shape.axis_semantics[0] = SIMA_EV_AXIS_W; });
   reject(c);
   c = config(recipes[6]);
-  change_geometry(c.processcvu.input_tensors[0], [](auto& desc) { desc.layout.tiled.flags = SIMA_EV_TILED_FLAG_NONE; });
+  change_geometry(c.processcvu.input_tensors[0],
+                  [](auto& desc) { desc.layout.tiled.flags = SIMA_EV_TILED_FLAG_NONE; });
   reject(c);
   // CBlock16 is not generally pixel-major. Only the proven INT8 degenerate
   // cases may reuse the existing native packet without a conversion or copy.
@@ -315,7 +317,9 @@ void contract() {
     bool rejected = false;
     try {
       core::AuthoredTensorDescriptor invalid(descriptor(SIMA_EV_DTYPE_BF16, false), annotation);
-    } catch (const std::invalid_argument&) { rejected = true; }
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
     check(rejected, "ambiguous/contradictory authored scalar was accepted");
   }
   // Equal legacy wire codes retain distinct numerical meanings through copies
@@ -327,8 +331,10 @@ void contract() {
   auto reordered = authored;
   std::swap(reordered[0], reordered[1]);
   check(take(lower::tensor_spec_from_model_descriptor(reordered[0])).dtype == rt::DType::Int16 &&
-            take(lower::tensor_spec_from_model_descriptor(reordered[1])).dtype == rt::DType::BFloat16 &&
-            take(lower::tensor_spec_from_model_descriptor(reordered[2])).dtype == rt::DType::Float32 &&
+            take(lower::tensor_spec_from_model_descriptor(reordered[1])).dtype ==
+                rt::DType::BFloat16 &&
+            take(lower::tensor_spec_from_model_descriptor(reordered[2])).dtype ==
+                rt::DType::Float32 &&
             authored[0].scalar() == rt::DType::BFloat16,
         "copy/reorder lost the scalar attached to an aliased descriptor wire");
   auto moved_geometry = reordered[1].descriptor();
@@ -339,8 +345,11 @@ void contract() {
         "storage relocation must preserve numerical meaning");
   moved_geometry.dtype = SIMA_EV_DTYPE_FP32;
   bool refused_type_rewrite = false;
-  try { (void)relocated.with_geometry(moved_geometry); }
-  catch (const std::invalid_argument&) { refused_type_rewrite = true; }
+  try {
+    (void)relocated.with_geometry(moved_geometry);
+  } catch (const std::invalid_argument&) {
+    refused_type_rewrite = true;
+  }
   check(refused_type_rewrite, "geometry-only rewrite changed numerical scalar");
   c = config(recipes[1]);
   c.processcvu.q_scale_list = {1.F, 2.F};

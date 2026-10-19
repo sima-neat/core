@@ -904,8 +904,7 @@ void numerical() {
 // Normalization is EV-only; the public terminal Cast provides a genuine checked
 // A65 consumer of that EV-produced BF16 surface, not a CPU output-map substitute.
 void mixed_ev_a65() {
-  const std::vector<Image> source{pattern(F::RGB, 36, 20, 1),
-                                  pattern(F::RGB, 18, 10, 2),
+  const std::vector<Image> source{pattern(F::RGB, 36, 20, 1), pattern(F::RGB, 18, 10, 2),
                                   pattern(F::RGB, 36, 20, 3)};
   ResizeOptions resize;
   resize.width = 18;
@@ -952,8 +951,7 @@ void mixed_ev_a65() {
           // Independent Preproc BF16 truncation followed by exact BF16->FP32
           // expansion. No runtime numerical helper participates in this oracle.
           const auto want = std::bit_cast<std::uint32_t>(normalized) & 0xffff0000U;
-          require(values[i] == want,
-                  "mixed chain pixel mismatch index=" + std::to_string(i));
+          require(values[i] == want, "mixed chain pixel mismatch index=" + std::to_string(i));
         }
         require(tensor.semantic.preprocess &&
                     tensor.semantic.preprocess->original_width == source[index].width &&
@@ -962,7 +960,8 @@ void mixed_ev_a65() {
         const auto& m = *tensor.semantic.preprocess;
         require(std::abs(m.affine_m00 - double(source[index].width) / 18) < 1e-12 &&
                     std::abs(m.affine_m11 - double(source[index].height) / 10) < 1e-12 &&
-                    m.affine_m01 == 0 && m.affine_m10 == 0 && m.affine_m02 == 0 && m.affine_m12 == 0,
+                    m.affine_m01 == 0 && m.affine_m10 == 0 && m.affine_m02 == 0 &&
+                    m.affine_m12 == 0,
                 "mixed chain lost output-to-original affine metadata");
       },
       true);

@@ -264,7 +264,8 @@ void single_head_expansion_keeps_matching_authority_and_copy_dedup() {
           frame(publication, {true, true}, static_cast<std::uint8_t>(31 + 73 * current)));
       const auto& input = inputs.back();
       const auto admitted = admitted_view(input.sample.get(), "single-head expansion authority");
-      require_equal(admitted.tensors().size(), 1U, "single-head expansion: canonical logical count");
+      require_equal(admitted.tensors().size(), 1U,
+                    "single-head expansion: canonical logical count");
       require_equal(admitted.tensors()[0].logical_index, 7,
                     "single-head expansion: canonical identity");
       internal::reset_tensor_io_stats();

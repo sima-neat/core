@@ -586,7 +586,6 @@ make_copy_prepare_with_attributes(const std::function<void(GstBuffer**)>& prepar
   };
 }
 
-
 std::function<void(GstBuffer**)>
 make_prepare_for_mat_spec(const SampleSpec& spec, const cv::Mat& contiguous, size_t input_bytes) {
   if (spec.kind == SampleMediaKind::RawVideo) {

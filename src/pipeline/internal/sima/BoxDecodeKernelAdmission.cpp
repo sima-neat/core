@@ -86,12 +86,12 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
           static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical)) {
         // Envelope materialization may compact a strided CPU view. Bind the
         // actual carrier's descriptor, not the pre-materialization strides.
-        const auto* layout = source->layout == SIMA_TENSOR_SET_LAYOUT_CHW_V1 ? "CHW"
+        const auto* layout = source->layout == SIMA_TENSOR_SET_LAYOUT_CHW_V1  ? "CHW"
                              : source->layout == SIMA_TENSOR_SET_LAYOUT_HW_V1 ? "HW"
-                                                                            : "HWC";
-        const auto linear = boxdecode_linear_storage(
-            source->shape, source->stride_bytes, layout,
-            si::specbuilders::dtype_size_bytes_from_token(logical.dtype));
+                                                                              : "HWC";
+        const auto linear =
+            boxdecode_linear_storage(source->shape, source->stride_bytes, layout,
+                                     si::specbuilders::dtype_size_bytes_from_token(logical.dtype));
         if (!linear || source->byte_offset < 0 ||
             static_cast<std::uint64_t>(source->byte_offset) > carrier_bytes ||
             linear->span_bytes > carrier_bytes - static_cast<std::uint64_t>(source->byte_offset))
@@ -100,9 +100,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
         logical.stride_bytes = linear->stride_bytes;
       }
       physical = si::specbuilders::build_physical_buffer_static_spec(
-          memory, memory,
-          carrier_bytes,
-          si::DeviceKind::Cpu, logical.segment_name);
+          memory, memory, carrier_bytes, si::DeviceKind::Cpu, logical.segment_name);
       binding->src_stage_index = -1;
       binding->src_stage_id.clear();
       binding->src_logical_output_index = -1;

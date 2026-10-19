@@ -21,8 +21,9 @@
 namespace {
 using namespace simaai::neat;
 template <class Fn> void rejects(Fn fn, const char* code) {
-  try { fn(); }
-  catch (const NeatError& e) {
+  try {
+    fn();
+  } catch (const NeatError& e) {
     require(e.report().error_code == code, "wrong structured rejection code");
     require(!e.report().repro_note.empty(), "rejection must carry diagnostic");
     return;
@@ -30,46 +31,60 @@ template <class Fn> void rejects(Fn fn, const char* code) {
   throw std::runtime_error("invalid input metadata was accepted");
 }
 void queue_contract() {
-  Tensor seed = make_color_tensor(64,48,ImageSpec::PixelFormat::RGB,0x4A);
+  Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x4A);
   InputOptions options;
-  options.payload_type=PayloadType::Image; options.format=FormatTag::RGB;
-  options.memory_policy=InputMemoryPolicy::SystemMemory;
-  options.max_width=96; options.max_height=96; options.max_depth=3;
+  options.payload_type = PayloadType::Image;
+  options.format = FormatTag::RGB;
+  options.memory_policy = InputMemoryPolicy::SystemMemory;
+  options.max_width = 96;
+  options.max_height = 96;
+  options.max_depth = 3;
   Graph graph;
-  graph.add(nodes::Input(options)); graph.add(nodes::Output(OutputOptions::EveryFrame(8)));
+  graph.add(nodes::Input(options));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(8)));
   RunOptions run_options;
-  run_options.queue_depth=1; run_options.overflow_policy=OverflowPolicy::KeepLatest;
-  run_options.advanced.copy_input=true;
-  Run run=graph.build(TensorList{seed},run_options);
-  require(run.try_push(TensorList{seed}),"warm input refused");
-  require(!run.pull_tensors(2000).empty(),"warm output missing");
-  auto core=std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
+  run_options.queue_depth = 1;
+  run_options.overflow_policy = OverflowPolicy::KeepLatest;
+  run_options.advanced.copy_input = true;
+  Run run = graph.build(TensorList{seed}, run_options);
+  require(run.try_push(TensorList{seed}), "warm input refused");
+  require(!run.pull_tensors(2000).empty(), "warm output missing");
+  auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
   std::unique_lock gate(core->latency_mu);
-  require(run.try_push(TensorList{seed}),"gate input refused");
-  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
-  bool parked=false;
-  while(std::chrono::steady_clock::now()<deadline) {
-    { std::lock_guard lock(core->pipeline.in_mu); parked=core->pipeline.in_queue.empty(); }
-    if(parked) break;
+  require(run.try_push(TensorList{seed}), "gate input refused");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  bool parked = false;
+  while (std::chrono::steady_clock::now() < deadline) {
+    {
+      std::lock_guard lock(core->pipeline.in_mu);
+      parked = core->pipeline.in_queue.empty();
+    }
+    if (parked)
+      break;
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
-  require(parked,"worker did not reach gate");
-  require(run.try_push(TensorList{seed}),"pending input refused");
-  const auto enqueued=core->inputs_enqueued.load();
-  const auto dropped=core->inputs_dropped.load();
-  cv::Mat oversized(48,97,CV_8UC3);
-  auto short_tensor=seed; short_tensor.storage=make_cpu_owned_storage(1);
-  rejects([&]{run.try_push(std::vector<cv::Mat>{oversized});},error_codes::kInputCapacity);
-  rejects([&]{run.try_push(TensorList{short_tensor});},error_codes::kInputShape);
-  rejects([&]{run.try_push(Sample{sample_from_tensors(TensorList{short_tensor})});},error_codes::kInputShape);
-  require(core->inputs_enqueued.load()==enqueued && core->inputs_dropped.load()==dropped,
+  require(parked, "worker did not reach gate");
+  require(run.try_push(TensorList{seed}), "pending input refused");
+  const auto enqueued = core->inputs_enqueued.load();
+  const auto dropped = core->inputs_dropped.load();
+  cv::Mat oversized(48, 97, CV_8UC3);
+  auto short_tensor = seed;
+  short_tensor.storage = make_cpu_owned_storage(1);
+  rejects([&] { run.try_push(std::vector<cv::Mat>{oversized}); }, error_codes::kInputCapacity);
+  rejects([&] { run.try_push(TensorList{short_tensor}); }, error_codes::kInputShape);
+  rejects([&] { run.try_push(Sample{sample_from_tensors(TensorList{short_tensor})}); },
+          error_codes::kInputShape);
+  require(core->inputs_enqueued.load() == enqueued && core->inputs_dropped.load() == dropped,
           "rejected input consumed queue admission or evicted valid input");
-  require(!core->stop_requested.load(),"caller rejection poisoned Run");
-  { std::lock_guard lock(core->pipeline.in_mu); require(core->pipeline.in_queue.size()==1,"pending work lost"); }
+  require(!core->stop_requested.load(), "caller rejection poisoned Run");
+  {
+    std::lock_guard lock(core->pipeline.in_mu);
+    require(core->pipeline.in_queue.size() == 1, "pending work lost");
+  }
   gate.unlock();
-  require(!run.pull_tensors(2000).empty(),"gate output missing after rejection");
-  require(!run.pull_tensors(2000).empty(),"pending output missing after rejection");
-  require(!run.run(TensorList{seed},2000).empty(),"same Run did not recover after rejection");
+  require(!run.pull_tensors(2000).empty(), "gate output missing after rejection");
+  require(!run.pull_tensors(2000).empty(), "pending output missing after rejection");
+  require(!run.run(TensorList{seed}, 2000).empty(), "same Run did not recover after rejection");
   run.stop();
 }
 
