@@ -3300,6 +3300,29 @@ public:
       ingress_contracts_.push_back(
           make_direct_mla_fallback_ingress_contract(plan_, joined_packed_segment_name_));
     }
+    if (direct_tensor_set_ingress_) {
+      const auto infer = internal::ModelAccess::build_infer_nodes(model_, false);
+      const auto manifest =
+          rendered_stage_query::rendered_manifest_from_nodes(infer, "ModelIngressRouteProcessor");
+      const auto* stage = manifest ? rendered_stage_query::find_mla_stage(*manifest) : nullptr;
+      direct_input_storage_bytes_.resize(ingress_contracts_.size(), 0U);
+      if (stage) {
+        for (const auto& input : stage->physical_inputs) {
+          if (input.source_physical_index < 0 || input.source_byte_offset < 0 ||
+              static_cast<std::size_t>(input.source_physical_index) >=
+                  direct_input_storage_bytes_.size()) {
+            throw std::runtime_error("direct MLA input has no exact public storage source");
+          }
+          const auto offset = static_cast<std::uint64_t>(input.source_byte_offset);
+          if (offset > std::numeric_limits<std::size_t>::max() ||
+              input.size_bytes > std::numeric_limits<std::size_t>::max() - offset) {
+            throw std::runtime_error("direct MLA input storage extent overflows");
+          }
+          auto& bytes = direct_input_storage_bytes_[input.source_physical_index];
+          bytes = std::max(bytes, static_cast<std::size_t>(offset + input.size_bytes));
+        }
+      }
+    }
     if (!uses_direct_tensor_set_route()) {
       // Legacy multi-ingress: spin up per-ingress branch sessions. The
       // bundled-appsrc fan-in path skips branch_sessions entirely; the
@@ -3614,6 +3637,8 @@ private:
       Tensor tensor = inputs[public_index];
       validate_single_tensor_ingress_expectation(ingress, input_info_from_tensor(tensor, false),
                                                  where);
+      tensor = internal::materialize_dense_ingress_tail(
+          std::move(tensor), direct_input_storage_bytes_.at(public_index));
       prepared.push_back(stamp_direct_mla_ingress_tensor(std::move(tensor), ingress, public_index));
     }
     return prepared;
@@ -3891,6 +3916,7 @@ private:
   // memory_index/physical_index/segment_name instead of coalescing them into
   // a packed parent (the firmware addresses each placeholder independently).
   bool consumer_keeps_distinct_physical_inputs_ = false;
+  std::vector<std::size_t> direct_input_storage_bytes_;
   // Whether this route is a multi-IO pre-MLA fan-in handled via the bundled
   // appsrc path (set by ctor, immutable thereafter). When true, ctor skips
   // branch_graphs_ construction and the four virtual overrides emit a
@@ -7652,6 +7678,47 @@ TensorList materialize_joined_ingress_tensors(
 
 Tensor ModelAccess::make_dummy_input(const InputOptions& options) {
   return make_dummy_tensor(options);
+}
+
+Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_bytes) {
+  const auto logical_bytes = tensor.dense_bytes_tight();
+  if (required_bytes <= logical_bytes) {
+    return tensor;
+  }
+  if (logical_bytes == 0U || !tensor.storage || tensor.byte_offset < 0) {
+    throw std::runtime_error("direct MLA allocation tail requires a valid dense input tensor");
+  }
+  const auto memory_index =
+      tensor.route.memory_index >= 0 ? tensor.route.memory_index : tensor.route.physical_index;
+  auto available = tensor.storage->size_bytes;
+  if (!tensor.storage->sima_segments.empty()) {
+    const auto index = memory_index >= 0 ? static_cast<std::size_t>(memory_index) : 0U;
+    available = index < tensor.storage->sima_segments.size()
+                    ? tensor.storage->sima_segments[index].size_bytes
+                    : 0U;
+  }
+  const auto offset = static_cast<std::uint64_t>(tensor.byte_offset);
+  if (tensor.is_contiguous() && offset <= available && required_bytes <= available - offset) {
+    return tensor;
+  }
+  if (required_bytes > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+    throw std::runtime_error("direct MLA allocation tail exceeds the carrier shape range");
+  }
+  std::vector<std::uint8_t> bytes(required_bytes, 0U);
+  if (!tensor.copy_dense_bytes_tight_to(bytes.data(), logical_bytes)) {
+    throw std::runtime_error("direct MLA allocation tail could not copy its logical input");
+  }
+  const auto memory = tensor.device.type == DeviceType::SIMA_MLA   ? TensorMemory::MLA
+                      : tensor.device.type == DeviceType::SIMA_CVU ? TensorMemory::EV74
+                                                                   : TensorMemory::CPU;
+  auto carrier = Tensor::from_vector(bytes, {static_cast<std::int64_t>(required_bytes)}, memory);
+  tensor.storage = std::move(carrier.storage);
+  tensor.device = carrier.device;
+  tensor.byte_offset = 0;
+  tensor.strides_bytes.clear();
+  tensor.route.memory_index = 0;
+  tensor.route.physical_index = -1;
+  return tensor;
 }
 
 const ModelPack& ModelAccess::pack(const Model& model) {

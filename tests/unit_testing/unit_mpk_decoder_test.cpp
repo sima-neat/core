@@ -1522,6 +1522,36 @@ void test_int8_mask_ifm_tail_padding() {
         "mask DMA contract includes physical tail without changing tensor geometry");
 }
 
+void test_direct_input_ifm_tail_padding() {
+  auto manifest = nlohmann::json::parse(qmla_padded_output_manifest());
+  manifest["input_nodes"][0]["size"] = 8;
+  auto& mla = manifest["plugins"][0];
+  mla["input_nodes"][0]["size"] = 8;
+  mla["config_params"]["input_types"] = {{{"scalar", "int8"}, {"shape", {1, 8}}}};
+  for (const auto& topology : {qmla_padded_topology(), monolithic_topology(16U, 109200U)}) {
+    const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
+    if (!decoded && decoded.error) {
+      std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
+    }
+    check(static_cast<bool>(decoded), "direct eight-byte INT8 input admits a 16-byte ELF extent");
+    const auto& plan = *decoded.plan;
+    const auto* value = plan.value(plan.model_inputs().front());
+    check(value->required_bytes == 8U && value->logical_shape == TensorShape({1, 8}) &&
+              value->storage_binding->kind == StorageBindingKind::External &&
+              value->storage_binding->physical_span == 16U,
+          "direct input keeps its logical geometry and declares the complete external extent");
+    const auto contract = project_single_mla(plan);
+    check(contract.physical_inputs.front().size_bytes == 16U &&
+              contract.input_bindings.front().src_physical_size_bytes == 16U,
+          "direct input projection binds the complete ELF reservation");
+  }
+  for (const auto bad_extent : {7U, 9U, 15U, 17U, 32U}) {
+    expect_error(manifest.dump(), monolithic_topology(bad_extent, 109200U),
+                 MpkDecodeErrorCode::ValueSizeMismatch,
+                 "direct input still rejects unproved ELF extents");
+  }
+}
+
 void test_compiler_version_does_not_restrict_admission() {
   const std::vector<nlohmann::json> versions = {nullptr,
                                                 true,
@@ -2964,6 +2994,7 @@ int main(const int argc, char** argv) {
   test_unpack_tiled_carriers_keep_storage_geometry();
   test_dense_ifm_tail_padding();
   test_int8_mask_ifm_tail_padding();
+  test_direct_input_ifm_tail_padding();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
   test_registered_detess_layout_is_preserved_through_dequant();

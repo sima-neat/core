@@ -2216,7 +2216,7 @@ MpkDecodeResult decode_impl(const std::string_view text,
       for (std::size_t index = 0; index < mla.inputs.size(); ++index) {
         const std::string symbol =
             topology.monolithic_ifm ? "data.ifm.b0" : topology.ifm_symbol_names.at(index);
-        const auto& value = data.values[mla.inputs[input_order[index]]];
+        auto& value = data.values[mla.inputs[input_order[index]]];
         const auto physical_extent = mla_elf_ifm_extent_bytes(topology, index);
         const auto transfer_bytes =
             value.storage_binding && value.storage_binding->channel_alignment > 1U
@@ -2233,6 +2233,16 @@ MpkDecodeResult decode_impl(const std::string_view text,
           result.proof.push_back({"MLA.IFM[" + std::to_string(index) + "].layout",
                                   "typed dense logical bytes and ELF extent prove exact 16-byte "
                                   "allocation tail padding"});
+          if (!value.storage_binding &&
+              std::find(data.model_inputs.begin(), data.model_inputs.end(), value.id) !=
+                  data.model_inputs.end()) {
+            StorageBinding binding;
+            binding.kind = StorageBindingKind::External;
+            binding.carrier_id = value.id;
+            binding.physical_span = physical_extent;
+            binding.access = StorageAccess::ReadOnly;
+            value.storage_binding = std::move(binding);
+          }
         }
         // MLA-RT can access the full ELF reservation, including a proved dense
         // allocation tail. Keep the MPK value logical, but reserve and project

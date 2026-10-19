@@ -1408,6 +1408,8 @@ bool attach_public_tensor_views(GstBuffer* buffer, const TensorList& tensors,
   if (!tensor_buffer_descriptor_from_tensors(tensors, &descriptor, err)) {
     return false;
   }
+  std::vector<simaai::gst::TensorBufferPhysicalBinding> bindings;
+  bindings.reserve(descriptor.tensors.size());
   for (std::size_t i = 0; i < descriptor.tensors.size(); ++i) {
     auto& view = descriptor.tensors[i];
     view.logical_index = static_cast<int>(i);
@@ -1418,8 +1420,22 @@ bool attach_public_tensor_views(GstBuffer* buffer, const TensorList& tensors,
     // Views of one memory share its segment identity, while their logical
     // names, offsets and extents remain independent.
     view.segment_name = "memory" + std::to_string(view.memory_index);
+    // Keep logical descriptors tight while publishing the actual readable
+    // carrier, including allocation tails. Never exceed the live GstMemory.
+    auto* memory = gst_buffer_peek_memory(buffer, view.memory_index);
+    const auto memory_bytes = memory ? gst_memory_get_sizes(memory, nullptr, nullptr) : 0U;
+    const auto carrier_bytes = std::min(memory_bytes, tensor_runtime_segment_size(tensors[i]));
+    if (view.byte_offset < 0 || static_cast<std::uint64_t>(view.byte_offset) >= carrier_bytes) {
+      if (err) {
+        *err = "public input view has no readable physical carrier";
+      }
+      return false;
+    }
+    bindings.push_back({view.memory_index, static_cast<std::uint64_t>(view.byte_offset),
+                        carrier_bytes - static_cast<std::uint64_t>(view.byte_offset)});
   }
-  return attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, err);
+  return attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, err) &&
+         simaai::gst::tensor_buffer_attach_physical_bindings(buffer, bindings, err);
 }
 
 bool try_collect_shared_bundle_backing(const Sample& bundle, GstBuffer** out_buffer,
