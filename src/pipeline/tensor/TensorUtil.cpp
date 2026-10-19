@@ -3,7 +3,7 @@
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/GraphOptions.h"
 
-#include <simaai/runtime/memory/segment.h>
+#include <simaai/scheduler/client/memory_access.h>
 
 #include "pipeline/internal/CpuVisibleSample.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
@@ -11,7 +11,7 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/SimaaiMemory.h"
-#include "simaai/neat/internal/dmabuf/DmaBuf.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/gst.h>
 #include <gst/allocators/gstdmabuf.h>
@@ -30,29 +30,77 @@
 #include <vector>
 
 namespace simaai::neat::pipeline_internal {
+namespace memory_client = ::simaai::scheduler::client;
+namespace dma_client = ::simaai::scheduler::client::dma;
 
 namespace {
 
-internal::dmabuf::CpuAccess dmabuf_cpu_access(MapMode mode) {
+dma_client::CpuAccess dmabuf_cpu_access(MapMode mode) {
   switch (mode) {
   case MapMode::Read:
-    return internal::dmabuf::CpuAccess::Read;
+    return dma_client::CpuAccess::Read;
   case MapMode::Write:
     // A Tensor can cover only part of a cache line. Preserve neighboring bytes.
-    return internal::dmabuf::CpuAccess::ReadWrite;
+    return dma_client::CpuAccess::ReadWrite;
   case MapMode::ReadWrite:
-    return internal::dmabuf::CpuAccess::ReadWrite;
+    return dma_client::CpuAccess::ReadWrite;
   }
-  return internal::dmabuf::CpuAccess::ReadWrite;
+  return dma_client::CpuAccess::ReadWrite;
 }
 
-void finish_segment_access(simaai::runtime::memory::Segment* segment) noexcept {
-  simaai::runtime::memory::Error error;
-  if (!segment->end(&error)) {
-    // Runtime quarantines a failed epoch; do not silently hide the cause.
-    g_warning("Tensor DMA-BUF CPU access completion failed: %s (%d)", error.operation.c_str(),
-              error.code);
+void finish_segment_access(memory_client::AccessCookie& cookie) noexcept {
+  memory_client::MemoryAccessError error;
+  if (!memory_client::finish_selected(cookie, error)) {
+    g_warning("Tensor DMA-BUF CPU access completion failed: %s (%d)", error.operation, error.code);
   }
+}
+
+memory_client::SelectedMemory select_runtime_segment(const GstMemory* memory,
+                                                     memory_client::SegmentSelector selector = {}) {
+  auto result = memory_client::select_segment(const_cast<GstMemory*>(memory), selector);
+  if (auto* selected = std::get_if<memory_client::SelectedMemory>(&result))
+    return std::move(*selected);
+  return {};
+}
+memory_client::SelectedMemory select_runtime_segment_at(const GstMemory* memory,
+                                                        std::size_t index) {
+  return select_runtime_segment(memory, {memory_client::SegmentSelector::Kind::Index, index});
+}
+memory_client::SelectedMemory select_runtime_segment_named(const GstMemory* memory,
+                                                           const char* name) {
+  return name && *name
+             ? select_runtime_segment(memory, {memory_client::SegmentSelector::Kind::Name, 0, name})
+             : select_runtime_segment(memory);
+}
+memory_client::MemoryDescription
+segment_description(const memory_client::SelectedMemory& selected) {
+  auto result = memory_client::describe(selected);
+  if (const auto* description = std::get_if<memory_client::MemoryDescription>(&result))
+    return *description;
+  return {};
+}
+Mapping map_selected_segment(const memory_client::SelectedMemory& selected, MapMode mode,
+                             std::size_t offset, std::size_t size, std::shared_ptr<void> holder) {
+  memory_client::AccessCookie cookie;
+  memory_client::MappedWindow window;
+  memory_client::MemoryAccessError error;
+  const auto access =
+      mode == MapMode::Read ? memory_client::CpuAccess::Read : memory_client::CpuAccess::ReadWrite;
+  if (!memory_client::begin_selected(selected, access, {offset, size}, cookie, window, error))
+    return {};
+  struct Guard {
+    memory_client::AccessCookie& cookie;
+    ~Guard() {
+      finish_segment_access(cookie);
+    }
+  } guard{cookie};
+  Mapping mapping;
+  mapping.data = window.data;
+  mapping.size_bytes = window.size;
+  mapping.keepalive = std::move(holder);
+  mapping.unmap = [cookie]() mutable { finish_segment_access(cookie); };
+  cookie = {};
+  return mapping;
 }
 
 struct CompositeHolder {
@@ -63,13 +111,8 @@ struct CompositeHolder {
 // Optional range capability for Core-owned storage. Only explicit internal
 // logical reads use it; public map/view semantics and TensorBuffer ABI stay
 // unchanged. Wrapped callbacks retain their existing mapping contract.
-struct DmaBufMapState {
-  std::mutex mutex;
-  std::optional<internal::dmabuf::CpuMapping> mapping;
-};
 struct DmaBufStorageMapper {
   std::shared_ptr<void> holder;
-  std::shared_ptr<DmaBufMapState> state;
   guint memory_index;
 
   Mapping operator()(MapMode mode) const;
@@ -102,14 +145,6 @@ std::shared_ptr<void> make_preprocess_meta_holder(GstBuffer* source) {
       gst_sample_ref(meta_sample), [](void* p) { gst_sample_unref(static_cast<GstSample*>(p)); });
   gst_sample_unref(meta_sample);
   return holder;
-}
-
-extern "C" {
-gsize gst_simaai_memory_get_segment_count(const GstMemory* memory);
-const gchar* gst_simaai_memory_get_segment_name_at(const GstMemory* memory, gsize index);
-gsize gst_simaai_memory_get_segment_size_at(const GstMemory* memory, gsize index);
-void* gst_simaai_memory_get_segment(const GstMemory* memory, const gchar* name);
-void* gst_simaai_memory_get_segment_at(const GstMemory* memory, gsize index);
 }
 
 bool buffer_memory_uses_segment_allocator(const GstMemory* memory) {
@@ -503,11 +538,11 @@ std::size_t find_runtime_segment_index(const std::vector<simaai::neat::Segment>&
   return static_cast<std::size_t>(-1);
 }
 
-std::size_t clamp_segment_span_to_live_handle(simaai::runtime::memory::Segment* segment_mem,
+std::size_t clamp_segment_span_to_live_handle(const memory_client::SelectedMemory& segment_mem,
                                               std::size_t metadata_size) {
   std::size_t span = metadata_size;
   if (segment_mem) {
-    const std::size_t live_size = segment_mem->size();
+    const std::size_t live_size = segment_description(segment_mem).authority_bytes;
     if (live_size > 0U && (span == 0U || live_size < span)) {
       span = live_size;
     }
@@ -537,12 +572,7 @@ Mapping DmaBufStorageMapper::operator()(MapMode mode) const {
   return map_range(mode, 0U, 0U);
 }
 
-Mapping DmaBufStorageMapper::map_range(MapMode mode, std::size_t offset,
-                                      std::size_t length) const {
-  std::lock_guard<std::mutex> lock(state->mutex);
-  if (state->mapping.has_value()) {
-    return {};
-  }
+Mapping DmaBufStorageMapper::map_range(MapMode mode, std::size_t offset, std::size_t length) const {
   auto* retained_sample = static_cast<GstSample*>(holder.get());
   GstBuffer* retained_buffer = retained_sample && GST_IS_SAMPLE(retained_sample)
                                    ? gst_sample_get_buffer(retained_sample)
@@ -551,44 +581,44 @@ Mapping DmaBufStorageMapper::map_range(MapMode mode, std::size_t offset,
     return {};
   }
   auto* memory = gst_buffer_peek_memory(retained_buffer, memory_index);
-  internal::dmabuf::Error error;
-  auto view = length != 0U
-                  ? internal::dmabuf::DmaBufView::fromGstMemory(memory, offset, length, &error)
-                  : internal::dmabuf::DmaBufView::fromGstMemory(memory, &error);
+  dma_client::Error error;
+  auto view = length != 0U ? dma_client::DmaBufView::fromGstMemory(memory, offset, length, &error)
+                           : dma_client::DmaBufView::fromGstMemory(memory, &error);
   if (!view) {
     return {};
   }
-  // Prepare the potentially allocating callback before opening a CPU epoch.
-  // Moving it into the Mapping below is noexcept, so allocation failure cannot
-  // leave state->mapping active without a corresponding public owner.
-  std::function<void()> finish = [dma_state = state]() {
-    std::lock_guard<std::mutex> lock(dma_state->mutex);
-    if (dma_state->mapping.has_value()) {
-      internal::dmabuf::Error error;
-      if (!dma_state->mapping->finish(&error)) {
-        g_warning("Tensor DMA-BUF CPU access completion failed: %s (%d)", error.operation.c_str(),
-                  error.code);
-      }
-      dma_state->mapping.reset();
+  // Each public Mapping owns its lower lease. Scheduler/Runner already share
+  // compatible readers and exclude writers by allocation identity; a Core-side
+  // active-map flag would reject legal aliases and duplicate that authority.
+  // Allocate the callback owner before START, so allocation failure cannot
+  // strand an admitted access. This is the public compatibility map path, not
+  // the allocation-free prepared-stage callback path.
+  auto scope = std::make_shared<std::optional<dma_client::CpuMapping>>();
+  std::function<void()> finish = [scope]() noexcept {
+    if (!scope->has_value())
+      return;
+    dma_client::Error error;
+    if (!scope->value().finish(&error)) {
+      g_warning("Tensor DMA-BUF CPU access completion failed: %s (%d)", error.operation.c_str(),
+                error.code);
     }
+    scope->reset();
   };
   auto mapped = view->map(dmabuf_cpu_access(mode), &error);
-  if (!mapped) {
+  if (!mapped)
     return {};
-  }
-  state->mapping.emplace(std::move(*mapped));
+  scope->emplace(std::move(*mapped));
 
   Mapping result;
-  result.data = state->mapping->data();
-  result.size_bytes = state->mapping->size();
+  result.data = scope->value().data();
+  result.size_bytes = scope->value().size();
   result.keepalive = holder;
   result.unmap = std::move(finish);
   return result;
 }
 
 void set_dmabuf_map_function(const std::shared_ptr<Storage>& storage, guint memory_index) {
-  storage->map_fn =
-      DmaBufStorageMapper{storage->holder, std::make_shared<DmaBufMapState>(), memory_index};
+  storage->map_fn = DmaBufStorageMapper{storage->holder, memory_index};
 }
 
 std::shared_ptr<simaai::neat::Storage> make_gst_sample_memory_storage(
@@ -637,48 +667,31 @@ std::shared_ptr<simaai::neat::Storage> make_gst_sample_memory_storage(
                                 route_segment_index != static_cast<std::size_t>(-1);
   if (use_segment_view) {
     const auto& segment = storage->sima_segments[route_segment_index];
-    auto* segment_mem = static_cast<simaai::runtime::memory::Segment*>(
-        gst_simaai_memory_get_segment_at(mem, route_segment_index));
+    const gsize admitted_children = gst_simaai_memory_get_segment_count(mem);
+    if (admitted_children > 1U && (offset != 0U || storage->size_bytes != maxsize))
+      throw std::runtime_error("tensor buffer binding: a partial GstMemory view of multiple "
+                               "Runtime child segments is not supported");
+    auto segment_mem = select_runtime_segment_at(mem, route_segment_index);
     if (segment_mem) {
       auto holder = storage->holder;
-      const gsize child_count = gst_simaai_memory_get_segment_count(mem);
-      if (child_count > 1U && (offset != 0U || storage->size_bytes != maxsize)) {
-        throw std::runtime_error("tensor buffer binding: a partial GstMemory view of multiple "
-                                 "Runtime child segments is not supported");
-      }
+      const gsize child_count = admitted_children;
       // Segment::mappedAddress already includes the Segment's allocation
       // offset. GstMemory share offsets are additional offsets relative to
       // that address, just as the installed allocator's mem_map_full applies.
       const std::size_t view_offset = child_count == 1U ? offset : 0U;
-      const std::size_t live_size = segment_mem->size();
+      const std::size_t live_size = segment_description(segment_mem).authority_bytes;
       if (view_offset > live_size) {
         throw std::runtime_error("tensor buffer binding: GstMemory view exceeds Runtime segment");
       }
       const std::size_t segment_size =
           std::min({segment.size_bytes, live_size - view_offset, storage->size_bytes});
       storage->size_bytes = segment_size;
-      storage->map_fn = [holder, segment_mem, segment_size,
-                         view_offset](simaai::neat::MapMode mode) {
+      storage->map_fn = [holder, segment_mem, segment_size](simaai::neat::MapMode mode) {
         if (mode != simaai::neat::MapMode::Read && mode != simaai::neat::MapMode::ReadWrite &&
             mode != simaai::neat::MapMode::Write) {
           return simaai::neat::Mapping{};
         }
-        // Runtime retains the allocation and owns cache synchronization. A view
-        // must acquire a CPU access scope; a metadata address is not authority.
-        if (!segment_mem->begin(dmabuf_cpu_access(mode))) {
-          return simaai::neat::Mapping{};
-        }
-        auto finish = &finish_segment_access;
-        std::unique_ptr<simaai::runtime::memory::Segment, decltype(finish)> access(segment_mem,
-                                                                                   finish);
-        auto* base = static_cast<std::uint8_t*>(segment_mem->mappedAddress());
-        simaai::neat::Mapping mapping;
-        mapping.data = base ? base + view_offset : nullptr;
-        mapping.size_bytes = segment_size;
-        mapping.keepalive = holder;
-        mapping.unmap = [segment_mem]() { finish_segment_access(segment_mem); };
-        (void)access.release();
-        return mapping;
+        return map_selected_segment(segment_mem, mode, 0U, segment_size, holder);
       };
       return storage;
     }
@@ -914,16 +927,15 @@ TensorBufferBindingResult tensor_buffer_current_segments(
         name = raw_name;
       }
       size = gst_simaai_memory_get_segment_size_at(parent, i);
-      const auto* live_segment = static_cast<simaai::runtime::memory::Segment*>(
-          gst_simaai_memory_get_segment_at(parent, i));
+      const auto live_segment = select_runtime_segment_at(parent, i);
       if (!live_segment) {
         return fail("tensor buffer binding: current Runtime child handle is missing");
       }
       const std::size_t view_offset = child_count == 1U ? parent->offset : 0U;
-      if (view_offset > live_segment->size()) {
+      if (view_offset > segment_description(live_segment).authority_bytes) {
         return fail("tensor buffer binding: GstMemory view exceeds Runtime segment");
       }
-      size = std::min(size, live_segment->size() - view_offset);
+      size = std::min(size, segment_description(live_segment).authority_bytes - view_offset);
       // Preserve the existing shared/packed single-root visible-span clamp.
       // Multiple independent children have no guessed aggregate offset math.
       if (child_count == 1U) {
@@ -1088,8 +1100,8 @@ simaai::neat::Mapping map_tensor_from_buffer_memory(GstBuffer* buffer, guint mem
 // Both entrypoints share route selection. An optional checked logical span may
 // optimize the final storage mapping, never override an earlier named segment.
 static simaai::neat::Mapping map_tensor_view_impl(const simaai::neat::Tensor& tensor,
-                                                simaai::neat::MapMode mode,
-                                                std::size_t logical_read_span) {
+                                                  simaai::neat::MapMode mode,
+                                                  std::size_t logical_read_span) {
   if (!tensor.storage || tensor.byte_offset < 0)
     return {};
   if (mode != simaai::neat::MapMode::Read) {
@@ -1129,8 +1141,7 @@ static simaai::neat::Mapping map_tensor_view_impl(const simaai::neat::Tensor& te
     }
     const std::string segment_name = resolve_tensor_runtime_segment_name(tensor);
     if (root_memory && buffer_memory_uses_segment_allocator(root_memory) && !segment_name.empty()) {
-      auto* segment_mem = static_cast<simaai::runtime::memory::Segment*>(
-          gst_simaai_memory_get_segment(root_memory, segment_name.c_str()));
+      auto segment_mem = select_runtime_segment_named(root_memory, segment_name.c_str());
       if (segment_mem) {
         std::size_t size = resolve_tensor_runtime_segment_size(tensor, segment_name);
         size = clamp_segment_span_to_live_handle(segment_mem, size);
@@ -1159,43 +1170,20 @@ static simaai::neat::Mapping map_tensor_view_impl(const simaai::neat::Tensor& te
                        dbg_state.has_cpu_dirty ? 1 : 0, dbg_state.cpu_dirty ? 1 : 0,
                        static_cast<void*>(buffer));
         }
-        if (!segment_mem->begin(internal::dmabuf::CpuAccess::Read)) {
-          return {};
+        auto keepalive = tensor.storage->holder ? tensor.storage->holder
+                                                : std::static_pointer_cast<void>(tensor.storage);
+        auto mapping = map_selected_segment(segment_mem, mode, offset, size, std::move(keepalive));
+        if (mapping.data && tensor_map_debug_enabled() && tensor.route.logical_index == 0) {
+          const auto* bytes = static_cast<const uint8_t*>(mapping.data);
+          std::fprintf(
+              stderr,
+              "[tensor-map][debug] segment-path logical=%d segment=%s offset=%zu size=%zu head=",
+              tensor.route.logical_index, segment_name.c_str(), offset, size);
+          for (std::size_t bi = 0; bi < std::min<std::size_t>(8U, size); ++bi)
+            std::fprintf(stderr, "%s%u", bi ? "," : "", static_cast<unsigned>(bytes[bi]));
+          std::fprintf(stderr, "\n");
         }
-        auto finish = &finish_segment_access;
-        std::unique_ptr<simaai::runtime::memory::Segment, decltype(finish)> access(segment_mem,
-                                                                                   finish);
-        void* base = segment_mem->mappedAddress();
-        if (base) {
-          if (tensor_map_debug_enabled() && tensor.route.logical_index == 0) {
-            const auto* bytes = static_cast<const uint8_t*>(base);
-            const std::size_t sample_count = std::min<std::size_t>(8U, size);
-            std::fprintf(
-                stderr,
-                "[tensor-map][debug] segment-path logical=%d segment=%s offset=%zu size=%zu head=",
-                tensor.route.logical_index, segment_name.c_str(), offset, size);
-            for (std::size_t bi = 0; bi < sample_count; ++bi) {
-              if (bi > 0U) {
-                std::fprintf(stderr, ",");
-              }
-              std::fprintf(stderr, "%u", static_cast<unsigned>(bytes[offset + bi]));
-            }
-            std::fprintf(stderr, "\n");
-          }
-          simaai::neat::Mapping mapping;
-          mapping.data = static_cast<uint8_t*>(base) + offset;
-          mapping.size_bytes = size;
-          mapping.keepalive = tensor.storage->holder
-                                  ? tensor.storage->holder
-                                  : std::static_pointer_cast<void>(tensor.storage);
-          mapping.unmap = [segment_mem]() { finish_segment_access(segment_mem); };
-          (void)access.release();
-          return mapping;
-        }
-      }
-      if (tensor_map_debug_enabled() && tensor.route.logical_index == 0) {
-        std::fprintf(stderr, "[tensor-map][debug] segment-path-miss logical=%d segment=%s\n",
-                     tensor.route.logical_index, segment_name.c_str());
+        return mapping;
       }
     }
   }
@@ -1307,18 +1295,18 @@ namespace {
 
 using OwnedBuffer = std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)>;
 
-internal::dmabuf::DmaBufMemory copy_output_storage(const std::shared_ptr<Storage>& source,
-                                                   GstSample* whole_sample = nullptr) {
-  internal::dmabuf::Error error;
-  internal::dmabuf::HeapAllocator allocator;
+dma_client::DmaBufMemory copy_output_storage(const std::shared_ptr<Storage>& source,
+                                             GstSample* whole_sample = nullptr) {
+  dma_client::Error error;
+  dma_client::HeapAllocator allocator;
   // A zero-length logical tensor still needs a valid transport allocation.
-  auto memory = allocator.allocate(internal::dmabuf::HeapKind::Cma,
+  auto memory = allocator.allocate(dma_client::HeapKind::Cma,
                                    std::max<std::size_t>(source->size_bytes, 1U), &error);
   if (!memory) {
     throw std::runtime_error("Owned output allocation failed: " + error.message());
   }
-  auto view = internal::dmabuf::DmaBufView::fromMemory(*memory, &error);
-  auto output = view ? view->map(internal::dmabuf::CpuAccess::Write, &error) : std::nullopt;
+  auto view = dma_client::DmaBufView::fromMemory(*memory, &error);
+  auto output = view ? view->map(dma_client::CpuAccess::Write, &error) : std::nullopt;
   if (!output) {
     throw std::runtime_error("Owned output mapping failed: " + error.message());
   }
@@ -1380,18 +1368,25 @@ public:
 private:
   struct SpanKey {
     const void* live_identity = nullptr;
-    std::optional<internal::dmabuf::DmaBufIdentity> dma_identity;
+    std::optional<dma_client::DmaBufIdentity> dma_identity;
     std::size_t offset = 0;
     std::size_t size = 0;
 
-    bool operator==(const SpanKey&) const = default;
+    memory_client::SelectedMemory selected_authority;
+    bool operator==(const SpanKey& other) const {
+      const bool authority_equal =
+          (!selected_authority && !other.selected_authority) ||
+          memory_client::same_authority(selected_authority, other.selected_authority);
+      return authority_equal && live_identity == other.live_identity &&
+             dma_identity == other.dma_identity && offset == other.offset && size == other.size;
+    }
   };
 
   struct Carrier {
     std::vector<SpanKey> spans;
     std::shared_ptr<Storage> source;
     GstSample* whole_sample = nullptr;
-    internal::dmabuf::DmaBufMemory destination;
+    dma_client::DmaBufMemory destination;
   };
 
   struct EnvelopeSlot {
@@ -1419,7 +1414,7 @@ private:
     GstSample* sample = nullptr;
     GstBuffer* buffer = nullptr;
     GstMemory* memory = nullptr;
-    simaai::runtime::memory::Segment* runtime_segment = nullptr;
+    memory_client::SelectedMemory runtime_segment;
     std::shared_ptr<Storage> source;
     std::size_t source_order = 0;
     bool whole_buffer = false;
@@ -1532,8 +1527,7 @@ private:
       }
       if (segmented) {
         selected.memory = gst_buffer_peek_memory(selected.buffer, 0U);
-        selected.runtime_segment = static_cast<simaai::runtime::memory::Segment*>(
-            gst_simaai_memory_get_segment(selected.memory, nullptr));
+        selected.runtime_segment = select_runtime_segment(selected.memory);
         std::size_t total = 0U;
         for (const auto& segment : live_segments) {
           if (segment.size_bytes > std::numeric_limits<std::size_t>::max() - total) {
@@ -1547,7 +1541,7 @@ private:
         // Runtime's allocator admits this packed root and maps/synchronizes the
         // whole range. Do not invent a layout by concatenating child segments.
         if (!selected.runtime_segment || offset != 0U || total != selected.source->size_bytes ||
-            selected.runtime_segment->size() != total) {
+            segment_description(selected.runtime_segment).authority_bytes != total) {
           throw std::runtime_error("Owned output: inconsistent packed Runtime whole authority");
         }
       }
@@ -1576,8 +1570,7 @@ private:
     if (segmented) {
       segment_name = live_segments[selected.source_order].name;
       selected.runtime_segment =
-          static_cast<simaai::runtime::memory::Segment*>(gst_simaai_memory_get_segment(
-              selected.memory, segment_name.empty() ? nullptr : segment_name.c_str()));
+          select_runtime_segment_named(selected.memory, segment_name.c_str());
       if (!selected.runtime_segment) {
         throw std::runtime_error("Owned output: missing selected Runtime segment");
       }
@@ -1609,8 +1602,8 @@ private:
     if (!gst_is_dmabuf_memory(memory)) {
       return {memory, std::nullopt, static_cast<std::size_t>(offset), size};
     }
-    internal::dmabuf::Error error;
-    auto view = internal::dmabuf::DmaBufView::fromGstMemory(memory, &error);
+    dma_client::Error error;
+    auto view = dma_client::DmaBufView::fromGstMemory(memory, &error);
     auto identity = view ? view->identity(&error) : std::nullopt;
     if (!identity) {
       throw std::runtime_error("Owned output carrier admission failed: " + error.message());
@@ -1631,7 +1624,7 @@ private:
         spans.push_back(memory_key(gst_buffer_peek_memory(selected.buffer, i)));
       }
     } else if (selected.runtime_segment) {
-      std::size_t offset = selected.runtime_segment->offset();
+      std::size_t offset = segment_description(selected.runtime_segment).allocation_offset;
       if (selected.memory && gst_simaai_memory_get_segment_count(selected.memory) == 1U) {
         gsize view_offset = 0U;
         gst_memory_get_sizes(selected.memory, &view_offset, nullptr);
@@ -1641,7 +1634,7 @@ private:
         offset += view_offset;
       }
       spans.push_back(
-          {selected.runtime_segment, std::nullopt, offset, selected.source->size_bytes});
+          {nullptr, std::nullopt, offset, selected.source->size_bytes, selected.runtime_segment});
     } else if (selected.memory) {
       spans.push_back(memory_key(selected.memory));
     } else {
@@ -2006,35 +1999,6 @@ std::shared_ptr<void> holder_from_tensor(const simaai::neat::Tensor& tensor) {
   if (!tensor.storage)
     return nullptr;
   return tensor.storage->holder;
-}
-
-bool copy_into_simaai_segment_memory(void* segment, const void* src, std::size_t bytes,
-                                     std::string* err) {
-  if (!segment || !src || bytes == 0U) {
-    if (err) {
-      *err = "copy_into_simaai_segment_memory: invalid argument";
-    }
-    return false;
-  }
-  auto* seg = static_cast<simaai::runtime::memory::Segment*>(segment);
-  if (bytes > seg->size()) {
-    if (err)
-      *err = "copy_into_simaai_segment_memory: destination is too small";
-    return false;
-  }
-  simaai::runtime::memory::Error error;
-  if (!seg->begin(internal::dmabuf::CpuAccess::ReadWrite, &error)) {
-    if (err)
-      *err = error.message();
-    return false;
-  }
-  std::memcpy(seg->mappedAddress(), src, bytes);
-  if (!seg->end(&error)) {
-    if (err)
-      *err = error.message();
-    return false;
-  }
-  return true;
 }
 
 } // namespace simaai::neat::pipeline_internal

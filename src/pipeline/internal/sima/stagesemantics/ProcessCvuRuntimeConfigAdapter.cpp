@@ -252,7 +252,7 @@ std::vector<int> processcvu_tile_shape_from_desc_runtime(const sima_ev_tensor_de
 }
 
 std::vector<std::vector<int>>
-processcvu_shapes_from_descs_runtime(const std::vector<sima_ev_tensor_desc>& descs) {
+processcvu_shapes_from_descs_runtime(const std::vector<AuthoredTensorDescriptor>& descs) {
   std::vector<std::vector<int>> shapes;
   shapes.reserve(descs.size());
   for (const auto& desc : descs) {
@@ -262,7 +262,7 @@ processcvu_shapes_from_descs_runtime(const std::vector<sima_ev_tensor_desc>& des
 }
 
 std::vector<std::vector<int>>
-processcvu_tile_shapes_from_descs_runtime(const std::vector<sima_ev_tensor_desc>& descs) {
+processcvu_tile_shapes_from_descs_runtime(const std::vector<AuthoredTensorDescriptor>& descs) {
   std::vector<std::vector<int>> shapes;
   shapes.reserve(descs.size());
   for (const auto& desc : descs) {
@@ -325,8 +325,8 @@ guint32 processcvu_resolve_tile_align_bytes_runtime(const int byte_align_flag) {
 }
 
 bool processcvu_build_runtime_tensor_descs(const CompiledProcessCvuRuntimeConfig& config,
-                                           std::vector<sima_ev_tensor_desc>* input_tensors,
-                                           std::vector<sima_ev_tensor_desc>* output_tensors,
+                                           std::vector<AuthoredTensorDescriptor>* input_tensors,
+                                           std::vector<AuthoredTensorDescriptor>* output_tensors,
                                            std::string* error_detail) {
   if (!input_tensors || !output_tensors) {
     if (error_detail)

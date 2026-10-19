@@ -160,6 +160,32 @@ std::optional<InputOptions> graph_ingress_input_for_endpoint(const runtime::RunC
   return runtime::pipeline_segment_ingress_input(*segment, index);
 }
 
+const InputOptions& declared_linear_input(const runtime::RunCore& core) {
+  static const InputOptions unspecified;
+  return core.pipeline.tensor_input_opt_for_cv ? *core.pipeline.tensor_input_opt_for_cv
+                                                : unspecified;
+}
+
+void validate_original_images(const runtime::RunCore& core, const std::vector<cv::Mat>& inputs,
+                              const runtime::PipelineSegmentPlan* segment, const char* where) {
+  const auto route = segment && segment->boundary_hints
+      ? segment->boundary_hints->input_route_processor : core.pipeline.input_route_processor;
+  if (route) {
+    route->validate_images(inputs, where);
+    return;
+  }
+  const auto& first = segment ? runtime::pipeline_segment_declared_ingress(*segment)
+                              : declared_linear_input(core);
+  if (first.payload_type != PayloadType::Tensor && inputs.size() != 1U)
+    pipeline_internal::error_util::throw_session_error(error_codes::kInputShape,
+        std::string(where) + ": raw-image ingress requires exactly one image per inference item");
+  for (std::size_t i = 0; i < inputs.size(); ++i) {
+    const auto& options = segment ? runtime::pipeline_segment_declared_ingress(*segment, i) : first;
+    validate_public_input(inputs[i], options,
+                          segment ? segment->stream_options : core.pipeline.stream_opt, where);
+  }
+}
+
 std::string available_input_names(const runtime::RunCore& core) {
   if (!core.graph_execution_) {
     return "[]";
@@ -271,7 +297,16 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
     }
   } public_push_guard{core};
 
+  const auto* segment = graph_input_segment_for_endpoint(core, endpoint);
   for (const auto& msg : msgs) {
+    if (segment) {
+      // Routed items have already been checked against their original source
+      // declaration. Do not apply that declaration to the transformed handoff.
+      const bool routed = segment->boundary_hints && segment->boundary_hints->input_route_processor;
+      static const InputOptions inferred;
+      validate_public_input(msg, routed ? inferred : runtime::pipeline_segment_declared_ingress(*segment),
+                            routed ? InputStreamOptions{} : segment->stream_options, "Run::push");
+    }
     enforce_public_sample_push_transferable(msg, "Run::push");
     Sample stamped = stamp_public_graph_ingress_sample(core, msg, endpoint_name);
     if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
@@ -303,7 +338,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
 }
 
 #if defined(SIMA_WITH_OPENCV)
-std::optional<cv::Mat> try_materialize_image_sample(const Sample& msg) {
+std::optional<Sample> try_materialize_image_sample(const Sample& msg) {
   if (!sample_has_tensor_list(msg) || msg.tensors.size() != 1U) {
     return std::nullopt;
   }
@@ -317,14 +352,22 @@ std::optional<cv::Mat> try_materialize_image_sample(const Sample& msg) {
     return std::nullopt;
   }
   const auto fmt = tensor.semantic.image->format;
+  cv::Mat pixels;
   if (auto view = tensor.map_cv_mat_view(fmt); view.has_value()) {
-    return view->mat.clone();
+    pixels = view->mat.clone();
+  } else {
+    try {
+      pixels = tensor.to_cv_mat_copy(fmt);
+    } catch (const std::exception&) {
+      return std::nullopt;
+    }
   }
-  try {
-    return tensor.to_cv_mat_copy(fmt);
-  } catch (const std::exception&) {
-    return std::nullopt;
-  }
+  Sample snapshot = msg;
+  snapshot.owned = true;
+  snapshot.tensors.front() = Tensor::from_cv_mat_view(pixels, fmt);
+  snapshot.tensors.front().semantic = tensor.semantic;
+  snapshot.tensors.front().route = tensor.route;
+  return snapshot;
 }
 #endif
 
@@ -403,6 +446,7 @@ bool push_mat_to_core(runtime::RunCore& core, const cv::Mat& input, bool block) 
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
+  validate_public_input(input, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
   auto* st = &core;
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
@@ -435,6 +479,7 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
+  validate_public_input(msg, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
   const bool timing = run_push_timing_enabled();
   const auto t0 =
       timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -505,8 +550,11 @@ bool push_sample_to_core(runtime::RunCore& core, const Sample& msg, bool block) 
   if (!input_prefers_device_storage(core) &&
       !input_options_expect_tensor_media(core.pipeline.tensor_input_opt_for_cv)) {
 #if defined(SIMA_WITH_OPENCV)
-    if (auto mat = try_materialize_image_sample(msg); mat.has_value()) {
-      return push_mat_to_core(core, *mat, block);
+    // Validate the original before a possible snapshot; the queue helper checks
+    // the new handoff. PreserveSample delegates directly to that helper instead.
+    validate_public_input(msg, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
+    if (auto snapshot = try_materialize_image_sample(msg); snapshot.has_value()) {
+      return push_message_to_core(core, *snapshot, block);
     }
 #endif
   }
@@ -514,6 +562,14 @@ bool push_sample_to_core(runtime::RunCore& core, const Sample& msg, bool block) 
 }
 
 } // namespace
+
+void run_internal::validate_original_images(const Run& run, const std::vector<cv::Mat>& inputs,
+                                           const char* where) {
+  const auto retained = run_internal::core(run);
+  if (!retained) throw std::runtime_error(std::string(where) + ": stream is closed");
+  ::simaai::neat::validate_original_images(*retained, inputs,
+                                          graph_default_input_segment(*retained), where);
+}
 
 void Run::require_async_mode(const char* where) const {
   if (core_ && core_->mode == RunMode::Sync) {
@@ -534,6 +590,7 @@ bool Run::push_impl(const cv::Mat& input, bool block) {
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
   auto st = core_;
+  validate_public_input(input, declared_linear_input(*st), st->pipeline.stream_opt, "Run::push");
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
@@ -567,6 +624,7 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
   auto st = core_;
+  validate_public_input(input, declared_linear_input(*st), st->pipeline.stream_opt, "Run::push");
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
@@ -638,6 +696,8 @@ bool Run::push_message_impl(const Sample& msg, bool block) {
   return push_message_to_core(*core_, msg, block);
 }
 bool Run::push_sample_impl(const Sample& msg, bool block) {
+  if (core_ && core_->graph_execution_)
+    return push_message_impl(msg, block);
   enforce_public_sample_push_transferable(msg, "Run::push");
   if (core_ && core_->push_sample_policy == runtime::PushSamplePolicy::PreserveSample) {
     return push_message_impl(msg, block);
@@ -645,8 +705,11 @@ bool Run::push_sample_impl(const Sample& msg, bool block) {
   if (core_ && !input_prefers_device_storage(*core_) &&
       !input_options_expect_tensor_media(core_->pipeline.tensor_input_opt_for_cv)) {
 #if defined(SIMA_WITH_OPENCV)
-    if (auto mat = try_materialize_image_sample(msg); mat.has_value()) {
-      return push_impl(*mat, block);
+    // A materialized image is a different handoff, not a duplicate admission.
+    validate_public_input(msg, declared_linear_input(*core_), core_->pipeline.stream_opt,
+                          "Run::push");
+    if (auto snapshot = try_materialize_image_sample(msg); snapshot.has_value()) {
+      return push_message_impl(*snapshot, block);
     }
 #endif
   }
@@ -656,6 +719,8 @@ bool Run::push_sample_impl(const Sample& msg, bool block) {
 bool Run::push(const std::vector<cv::Mat>& inputs) {
   require_async_mode("Run::push");
   validate_image_inputs(inputs, "Run::push");
+  if (!core_) throw std::runtime_error("Run::push: stream is closed");
+  validate_original_images(*core_, inputs, graph_default_input_segment(*core_), "Run::push");
   if (core_ && core_->graph_execution_) {
     TensorList tensors;
     tensors.reserve(inputs.size());
@@ -705,6 +770,7 @@ bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) 
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): stream is closed"));
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
+  validate_original_images(*core_, inputs, graph_input_segment_for_endpoint(*core_, endpoint), "Run::push(name)");
   TensorList tensors;
   tensors.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -734,6 +800,8 @@ bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) 
 bool Run::try_push(const std::vector<cv::Mat>& inputs) {
   require_async_mode("Run::try_push");
   validate_image_inputs(inputs, "Run::try_push");
+  if (!core_) throw std::runtime_error("Run::try_push: stream is closed");
+  validate_original_images(*core_, inputs, graph_default_input_segment(*core_), "Run::try_push");
   if (core_ && core_->graph_execution_) {
     TensorList tensors;
     tensors.reserve(inputs.size());
@@ -784,6 +852,7 @@ bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inpu
                                                       "Run::try_push(name): stream is closed"));
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
+  validate_original_images(*core_, inputs, graph_input_segment_for_endpoint(*core_, endpoint), "Run::try_push(name)");
   TensorList tensors;
   tensors.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {

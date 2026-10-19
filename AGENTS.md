@@ -22,6 +22,12 @@ When behavior or public API changes:
 - Update user-facing docs for workflow/configuration changes.
 - Update examples if API usage changed.
 
+For official documentation:
+
+- Keep pages focused on the reader's task, with prerequisites, steps, and examples where useful.
+- Update translations required by `sima-i18n*.json` in the same change; refresh source hashes after verifying content alignment.
+- Pass localization checks and the relevant docs build, and report any validation still pending.
+
 ## Runtime install contract
 
 When rebuilding Runner or Scheduler libraries/plugins consumed by Core:
@@ -76,7 +82,7 @@ A change is ready when:
 
 ## Source-first local builds
 
-- `build.sh` prepares Kernels, Runner, Scheduler, then Core using installed packages.
+- `build.sh` delegates dependency preparation and closure validation to Scheduler, then builds Core against the installed frontend. Scheduler coordinates Kernels, Runner and Codecs; retain exact receipts for the complete runtime stack.
 - `NEAT_KERNELS_SOURCE` / `NEAT_RUNNER_SOURCE` / `NEAT_SCHEDULER_SOURCE` select source roots; the corresponding
   `_PACKAGE_DIR` overrides select local package directories instead.
 - Do not silently fetch old Internals, replace failed source builds with artifacts,
@@ -88,9 +94,19 @@ A change is ready when:
 ## Canonical numerical preparation
 
 - Core owns numerical request construction, MPK/publication policy and dynamic image geometry.
-- Use the installed `SimaScheduler::kernel_preparation` facade; Scheduler forwards generic requests to Runner, and Runner delegates numerical admission to Kernels.
+- Use the installed `SimaScheduler::frontend` and `simaai::scheduler::client` APIs. Scheduler owns the compiled boundary; Runner delegates numerical admission to Kernels. Do not use the advanced lower-type alias facade from canonical Core code.
 - Do not restore the removed ProcessCVU prepared ABI, adapter or per-operation Scheduler dispatch.
 - Use generic `TensorStageRequest` publication/placement, immutable constants and the application-owned frame adapter. Constants are copied once at preparation, not uploaded per frame.
 - Reusable Core recipes retain immutable checked policy and executable descriptors only. Instantiate their resolver caches and Preproc adapters once per cold preparation, after topology validation and before Scheduler admission; never reset or share an active geometry/session cache between independent preparations. Preserve current frame loans and bounded immutable geometry caching.
 - Manifest contexts own metadata backing, not numerical recipes or sessions. Normalize canonical payloads to `NONE` before dropping recipe references; retain contexts while borrowing ABI pointers. Keep cold pipeline/context ownership under RAII until successful handoff.
 - The retained shared prepared context is for MLA/other nonnumerical compatibility, not numerical kernel requests.
+
+## Scheduler client boundary
+
+- Canonical Core must not include, find, link or invoke Runner, Kernels or Codecs development APIs. Scheduler-owned historical `runtime::gstreamer` ABI names remain valid; ownership is determined by the defining target, not namespace spelling.
+- Keep customer APIs, MPK interpretation, graph budgets, target/fusion policy and image geometry in Core. Forward generic checked numerical requests, not operation-specific Scheduler dispatch.
+- Treat checked executable, prepared selection, allocation identity and frame loan as different identities. Copy immutable authoring recipes; instantiate mutable adapters/resolvers only during whole-cohort cold admission.
+- Use Scheduler selected-memory access for the original authority and scope. Do not substitute broad Gst mapping, COW, raw FD reimport, copies or destruction-as-retirement. Borrowed access cookies must finish while their owner remains alive.
+- Keep host publication callbacks allocation-free on warmed success. Buffer views are call-scoped; error views must refer to immutable payload-owned strings or literals.
+- Core tests retain policy, numerical and publication assertions. Explicit `SimaScheduler::client_test_support` is test-only; it hides provider mechanics, not expected outputs or independent references.
+- Verify installed frontend consumers with lower development discovery/headers denied, plus actual shared/static consumers. Preserve existing workflows and GCC14. Separate host, board correctness and matched performance evidence.

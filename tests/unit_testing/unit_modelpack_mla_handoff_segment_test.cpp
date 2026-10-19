@@ -529,7 +529,7 @@ RUN_TEST(
                     canonical_tess.payload.output_dtype == "BF16" &&
                     canonical_tess.payload.input_tensors.size() == 1U &&
                     canonical_tess.payload.output_tensors.size() == 1U &&
-                    canonical_tess.payload.output_tensors.front().storage.nbytes ==
+                    canonical_tess.payload.output_tensors.front().descriptor().storage.nbytes ==
                         authored_mla->input_tensors.front().size_bytes,
                 "BF16 handoff must retain one fused FP32-to-BF16 CastTess outer boundary");
         require(!canonical_tess.exposed_view.primary_output_name.empty() &&

@@ -381,15 +381,15 @@ RuntimeConfig make_runtime_base(const NativeVisualSpec& spec) {
 
   runtime.input_tensors.reserve(spec.input_names.size());
   for (std::size_t i = 0; i < spec.input_names.size(); ++i) {
-    runtime.input_tensors.push_back(
+    runtime.input_tensors.emplace_back(
         build_contract_tensor_desc(transport_input_shapes[i], spec.input_dtypes[i],
-                                   spec.input_layouts[i], spec.graph_name.c_str()));
+                                   spec.input_layouts[i], spec.graph_name.c_str()), spec.input_dtypes[i]);
   }
   runtime.output_tensors.reserve(spec.runtime_output_names.size());
   for (std::size_t i = 0; i < spec.runtime_output_names.size(); ++i) {
-    runtime.output_tensors.push_back(
+    runtime.output_tensors.emplace_back(
         build_contract_tensor_desc(transport_output_shapes[i], spec.output_dtypes[i],
-                                   spec.output_layouts[i], spec.graph_name.c_str()));
+                                   spec.output_layouts[i], spec.graph_name.c_str()), spec.output_dtypes[i]);
   }
   return runtime;
 }

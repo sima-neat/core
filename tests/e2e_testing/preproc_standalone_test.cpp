@@ -6,7 +6,7 @@
 #include "gst/GstHelpers.h"
 #include "test_utils.h"
 #include <neat.h>
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include <optional>
 
 #include <opencv2/core.hpp>

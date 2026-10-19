@@ -3,8 +3,9 @@
 // metadata or a private prepared stage to the graph under test.
 #include <neat.h>
 #include "pipeline/runtime/RunCore.h"
-#include <gstsimaaitensorbuffer.h>
-#include <simaai/runtime/gstreamer/stage.h>
+#include <gstsimaaitensorbuffer_meta.h>
+#include <simaai/scheduler/testing/probe.h>
+#include <simaai/scheduler/client/tensor_buffer.h>
 #include <gst/gst.h>
 
 #include <algorithm>
@@ -56,14 +57,11 @@ void require_prepared_runners(Run& run, unsigned expected) {
     const auto* name = factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : "";
     if (g_str_equal(name, "neatkernelrunner")) {
       ++native;
-      auto* context = gst_element_get_context(instance, simaai::runtime::gstreamer::context_type);
-      auto stage = simaai::runtime::gstreamer::stage_from_context(context);
-      if (context)
-        gst_context_unref(context);
-      if (stage && stage->capacity > 0) {
+      const auto stage = simaai::scheduler::testing::inspect_stage(instance);
+      if (stage.valid && stage.capacity > 0) {
         ++prepared;
         std::cerr << "[cast admission] element=" << GST_OBJECT_NAME(instance)
-                  << " stage_capacity=" << stage->capacity << "\n";
+                  << " stage_capacity=" << stage.capacity << "\n";
       }
     }
     legacy += g_str_equal(name, "neatprocesscvu");
@@ -459,10 +457,10 @@ int main(int argc, char** argv) {
           gchar* caps = gst_caps_to_string(gst_sample_get_caps(observed));
           std::cerr << "CAPS " << (caps ? caps : "null") << '\n';
           g_free(caps);
-          simaai::gst::TensorBufferView raw;
+          simaai::scheduler::client::TensorBufferView raw;
           std::string error;
-          if (simaai::gst::tensor_buffer_create_view(observed, &raw, &error)) {
-            for (const auto& tensor : raw.tensors)
+          if (simaai::scheduler::client::tensor_buffer_create_view(observed, &raw, &error)) {
+            for (const auto& tensor : raw.tensors())
               std::cerr << "CANONICAL dtype=" << tensor.dtype << " bytes=" << tensor.size_bytes
                         << " logical=" << tensor.logical_index << " name=" << tensor.logical_name
                         << '\n';

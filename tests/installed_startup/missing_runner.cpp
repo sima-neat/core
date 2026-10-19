@@ -1,8 +1,8 @@
 // Executable-only negative control. Simulate a successful registration call
 // that did not register the required factory. Production has no test switch.
-#include <simaai/runtime/gstreamer/stage.h>
-namespace simaai::runtime::gstreamer {
-bool register_element(GstPlugin*) {
+#include <simaai/scheduler/client/capabilities.h>
+namespace simaai::scheduler::client {
+bool register_kernel_runner() {
   return true;
 }
-} // namespace simaai::runtime::gstreamer
+} // namespace simaai::scheduler::client

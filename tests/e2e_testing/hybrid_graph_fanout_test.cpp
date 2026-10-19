@@ -108,7 +108,7 @@ void require_pool_held(GstBufferPool* pool) {
 
 RUN_TEST("hybrid_graph_fanout_test", [] {
   simaai::neat::gst_init_once();
-  namespace dma = simaai::neat::internal::dmabuf;
+  namespace dma = simaai::scheduler::client::dma;
   dma::Error error;
   GstBufferPool* raw_pool =
       dma::createDmaBufPool(dma::HeapKind::Cma, 16 * 12 * 3, 1, 1, {}, &error);

@@ -30,7 +30,7 @@ def fixture(root):
         'scheduler.deb': 'simaai-scheduler',
         'runtime-compat.deb': 'simaai-runtime',
     }
-    for name in [*debs, 'pyneat-1-py3-none-any.whl', 'install_neat_framework.sh']:
+    for name in [*debs, 'pyneat-1-py3-none-any.whl', 'install_neat_framework.sh', 'install_sentinel.sh']:
         (root / name).write_bytes(name.encode())
     with zipfile.ZipFile(root / 'pyneat-1-py3-none-any.whl', 'w') as archive:
         archive.writestr('pyneat-1.dist-info/METADATA', 'Name: pyneat\nVersion: 1\n')
@@ -49,7 +49,7 @@ def fixture(root):
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
     base = [*debs, 'pyneat-1-py3-none-any.whl', 'manifest.json', 'resolved-deps-manifest.json',
-            'neat-install-manifest.txt', 'install_neat_framework.sh']
+            'neat-install-manifest.txt', 'install_neat_framework.sh', 'install_sentinel.sh']
     for name, resources, selectables in (
         ('metadata.json', base, [extras]), ('metadata-minimal.json', base, []),
         ('metadata-all.json', base + [extras], []), ('metadata-pyneat.json', ['pyneat-1-py3-none-any.whl'], []),
@@ -88,6 +88,8 @@ def test_golden_set_is_read_only(tmp_path):
 @pytest.mark.parametrize('mutation', [
     lambda r: (r / 'manifest.json').write_text('{}'),
     lambda r: (r / 'runner.deb').unlink(),
+    lambda r: (r / 'install_sentinel.sh').unlink(),
+    lambda r: (r / 'install_sentinel.sh').write_bytes(b'changed installer'),
     lambda r: (r / 'scheduler.deb').unlink(),
     lambda r: (r / 'runtime-compat.deb').unlink(),
     lambda r: (r / 'pyneat-1-py3-none-any.whl').write_bytes(b'corrupt'),

@@ -125,6 +125,38 @@ def test_generated_tutorial_links_respect_docusaurus_base_url(tmp_path: Path) ->
     )
 
 
+def test_flow_animation_labels_cpp_only_source() -> None:
+    module = tutorial_docs.TutorialModule(
+        folder="028_wrap_external_tensor_memory",
+        number=28,
+        slug="wrap_external_tensor_memory",
+        title="028 Wrap External Tensor Memory",
+        category="PCIe Co-Processing",
+        difficulty="Intermediate",
+        estimated_read_time="15 minutes",
+        labels=["PCIe"],
+        concept="Wrap external memory.",
+        process_steps=[],
+        run_section="",
+        in_practice="",
+        cpp_rel="run_external_tensor_memory.cpp",
+        cpp_rels=["run_external_tensor_memory.cpp"],
+        walkthrough_steps=[
+            tutorial_docs.WalkStep(
+                "inspect", "Inspect", "", cpp_snippet="inspect();"
+            ),
+            tutorial_docs.WalkStep(
+                "submit", "Submit", "", cpp_snippet="submit();"
+            ),
+        ],
+    )
+
+    svg = tutorial_docs.flow_animation_svg(module)
+
+    assert "run_external_tensor_memory.cpp" in svg
+    assert "0 standalone programs" not in svg
+
+
 def test_main_writes_completed_locale_manifest(tmp_path: Path, monkeypatch) -> None:
     module = _write_module(tmp_path, "001_run_a_model")
     _write_locale_support(tmp_path, [module])
@@ -140,6 +172,31 @@ def test_main_writes_completed_locale_manifest(tmp_path: Path, monkeypatch) -> N
         )
     )
     assert manifest == {"locales": ["ja"]}
+
+
+def test_cross_listed_tutorial_has_one_page_and_two_category_cards(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    module = _write_module(tmp_path, "029_run_genai_over_pcie")
+    for readme in (module / "README.md", module / "i18n/ja/README.md"):
+        text = readme.read_text(encoding="utf-8")
+        readme.write_text(text.replace("Models & Inference", "PCIe Co-Processing"), encoding="utf-8")
+    _write_locale_support(tmp_path, [module])
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["generate_tutorial_docs.py", "--repo-root", str(tmp_path)])
+
+    assert tutorial_docs.main() == 0
+    for root in (
+        tmp_path / "docs/develop-apps/tutorials",
+        tmp_path / "website/i18n/ja/docusaurus-plugin-content-docs/current/develop-apps/tutorials",
+    ):
+        pages = list(root.rglob("tutorial_029_run_genai_over_pcie.mdx"))
+        assert len(pages) == 1
+        assert pages[0].parent.name == "pcie"
+        for category in ("pcie", "genai"):
+            landing = (root / category / "index.md").read_text(encoding="utf-8")
+            assert 'href="/tutorials/run-genai-over-pcie"' in landing
+            assert landing.count('class="tutorial-card tutorial-difficulty-') == 1
 
 
 def test_rejects_partially_translated_locale(tmp_path: Path) -> None:
@@ -207,3 +264,39 @@ def test_rejects_translation_that_changes_protected_structure(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="changed link targets"):
         tutorial_docs._validate_localized_readme(source, localized)
+
+
+@pytest.mark.parametrize(
+    "translated_rows",
+    [
+        "| --- | --- | `A` | 一 | `B` | 二 |\n",
+        "| --- | --- |\n| `A` | 一 | 追加 |\n| `B` | 二 |\n",
+    ],
+)
+def test_rejects_changed_translation_table_shape(
+    tmp_path: Path, translated_rows: str,
+) -> None:
+    source = tmp_path / "README.md"
+    localized = tmp_path / "ja.md"
+    source.write_text(
+        "| Code | Meaning |\n| --- | --- |\n| `A` | First |\n| `B` | Second |\n",
+        encoding="utf-8",
+    )
+    localized.write_text("| コード | 意味 |\n" + translated_rows, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="changed table shapes"):
+        tutorial_docs._validate_localized_readme(source, localized)
+
+
+def test_accepts_translated_table_with_escaped_pipe(tmp_path: Path) -> None:
+    source = tmp_path / "README.md"
+    localized = tmp_path / "ja.md"
+    source.write_text(
+        "| Code | Meaning |\n| --- | --- |\n| `A` | First \\| alternative |\n",
+        encoding="utf-8",
+    )
+    localized.write_text(
+        "| コード | 意味 |\n| --- | --- |\n| `A` | 一 \\| 代替 |\n",
+        encoding="utf-8",
+    )
+    tutorial_docs._validate_localized_readme(source, localized)

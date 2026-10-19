@@ -4,6 +4,7 @@
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/function.h>
+#include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
@@ -35,6 +36,7 @@
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/VisualFrontend.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/HttpMjpegDecodedInput.h"
@@ -74,6 +76,7 @@
 #include "nodes/sima/PCIeSink.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/ExecutionPlan.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/NeatError.h"
@@ -106,6 +109,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+NB_MAKE_OPAQUE(simaai::neat::SampleAttributes);
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -390,6 +395,8 @@ const char* pixel_format_name(ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case ImageSpec::PixelFormat::NV16:
+    return "NV16";
   case ImageSpec::PixelFormat::I420:
     return "I420";
   case ImageSpec::PixelFormat::UNKNOWN:
@@ -652,9 +659,11 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 }
 
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
-  Tensor tensor = input;
+  const Tensor source_pin = input;
+  Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
-    tensor = tensor.cpu();
+    nb::gil_scoped_release release;
+    tensor = source_pin.cpu();
   }
   if (!tensor.is_dense()) {
     throw std::runtime_error("__dlpack__ only supports dense tensors");
@@ -675,9 +684,12 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
-  auto* owner = new DlpackExportOwner();
+  auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
-  owner->mapping = owner->tensor.map_read();
+  {
+    nb::gil_scoped_release release;
+    owner->mapping = owner->tensor.map_read();
+  }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
 
@@ -696,7 +708,7 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   owner->managed.dl_tensor.strides =
       owner->strides_elems.empty() ? nullptr : owner->strides_elems.data();
   owner->managed.dl_tensor.byte_offset = 0;
-  owner->managed.manager_ctx = owner;
+  owner->managed.manager_ctx = owner.get();
   owner->managed.deleter = delete_dlpack_managed;
 
   PyObject* capsule = PyCapsule_New(&owner->managed, "dltensor", [](PyObject* capsule_obj) {
@@ -709,8 +721,8 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
       managed_ptr->deleter(managed_ptr);
     }
   });
-  if (!capsule) {
-    delete owner;
+  if (capsule) {
+    (void)owner.release();
   }
   return capsule;
 }
@@ -820,7 +832,11 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
   bool chw_to_hwc_converted = false;
   out = maybe_convert_chw_image_to_hwc(std::move(out), &chw_to_hwc_converted);
 
-  if (copy) {
+  if (memory == TensorMemory::Auto) {
+    memory = TensorMemory::EV74;
+  }
+  const bool cpu_destination = memory == TensorMemory::CPU || memory == TensorMemory::A65;
+  if (copy && cpu_destination) {
     if (chw_to_hwc_converted) {
       out.read_only = false;
     } else {
@@ -832,17 +848,17 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
     }
   }
 
-  if (memory == TensorMemory::Auto) {
-    memory = TensorMemory::EV74;
-  }
-  if (memory == TensorMemory::CPU || memory == TensorMemory::A65) {
+  if (cpu_destination) {
     return out;
   }
-  if (memory == TensorMemory::EV74) {
-    return out.cvu();
-  }
-  if (memory == TensorMemory::MLA) {
-    return out.mla(true);
+  if (memory == TensorMemory::EV74 || memory == TensorMemory::MLA) {
+    Tensor placed;
+    {
+      // Keep the DLPack owner alive until Python ownership operations are safe again.
+      nb::gil_scoped_release release;
+      placed = memory == TensorMemory::EV74 ? out.cvu() : out.mla(true);
+    }
+    return placed;
   }
   throw std::runtime_error("unsupported TensorMemory placement for Python tensor import");
 }
@@ -1149,8 +1165,7 @@ python_preproc_images_to_cv_mats(const nb::object& images,
       throw std::runtime_error(
           "pyneat.stages.preproc: images must be packed HW or packed HWC after conversion");
     }
-    simaai::neat::Mapping mapping =
-        simaai::neat::pipeline_internal::map_dense_tensor_read(tensor);
+    simaai::neat::Mapping mapping = simaai::neat::pipeline_internal::map_dense_tensor_read(tensor);
     if (!mapping.data) {
       throw std::runtime_error("pyneat.stages.preproc: failed to map image tensor");
     }
@@ -1518,6 +1533,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("GRAY8", ImageSpec::PixelFormat::GRAY8)
       .value("NV12", ImageSpec::PixelFormat::NV12)
       .value("I420", ImageSpec::PixelFormat::I420)
+      .value("NV16", ImageSpec::PixelFormat::NV16)
       .value("UNKNOWN", ImageSpec::PixelFormat::UNKNOWN);
   m.attr("Memory") = m.attr("TensorMemory");
   m.attr("ImageType") = m.attr("PixelFormat");
@@ -2188,6 +2204,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("asr_task", &simaai::neat::genai::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
       .def_rw("enable_thinking", &simaai::neat::genai::GenerationRequest::enable_thinking)
+      .def_rw("reasoning_effort", &simaai::neat::genai::GenerationRequest::reasoning_effort)
       .def_prop_rw(
           "tools",
           [](const simaai::neat::genai::GenerationRequest& request) {
@@ -2538,6 +2555,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("port_name", &simaai::neat::InputDropInfo::port_name)
       .def_rw("reason", &simaai::neat::InputDropInfo::reason);
 
+  // The deprecated power profile helpers stay bound for compatibility.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   nb::class_<RunOptions>(m, "RunOptions")
       .def(nb::init<>())
       .def_rw("preset", &RunOptions::preset)
@@ -2571,6 +2591,7 @@ NB_MODULE(_pyneat_core, m) {
   m.def("modalix_dvt_power_monitor_options", &simaai::neat::modalix_dvt_power_monitor_options,
         "sample_interval_ms"_a = 100);
   m.def("power_monitor_profile_name", &simaai::neat::power_monitor_profile_name, "profile"_a);
+#pragma GCC diagnostic pop
 
   nb::class_<NodeLatencySummary>(m, "NodeLatencySummary")
       .def(nb::init<>())
@@ -2603,7 +2624,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("duration_ms", &MeasureOptions::duration_ms)
       .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
       .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
-      .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency)
+      .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency,
+              "Deprecated: plugin latency will be removed.")
       .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)
       .def_rw("include_edge_latency", &MeasureOptions::include_edge_latency)
       .def_rw("include_message_latency", &MeasureOptions::include_message_latency)
@@ -2720,6 +2742,17 @@ NB_MODULE(_pyneat_core, m) {
       .def("stop", &MeasureScope::stop)
       .def("stopped", &MeasureScope::stopped);
 
+  nb::class_<simaai::neat::ExecutionPlan>(m, "ExecutionPlan")
+      .def(nb::init<>())
+      .def("to_json", &simaai::neat::ExecutionPlan::to_json, "indent"_a = 2)
+      .def_prop_ro("schema_version", &simaai::neat::ExecutionPlan::schema_version);
+
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto run_start_measurement_bool =
+      static_cast<MeasureScope (Run::*)(bool)>(&Run::start_measurement);
+#pragma GCC diagnostic pop
   nb::class_<Run>(m, "Run")
       .def(nb::init<>())
       .def("__bool__", [](const Run& run) { return static_cast<bool>(run); })
@@ -2847,8 +2880,9 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("start_measurement", static_cast<MeasureScope (Run::*)(bool)>(&Run::start_measurement),
-           "include_plugin_latency"_a)
+      .def("start_measurement", run_start_measurement_bool, "include_plugin_latency"_a,
+           "Deprecated: use start_measurement(). True also collects plugin latency, which will be "
+           "removed.")
       .def("start_measurement",
            static_cast<MeasureScope (Run::*)(const MeasureOptions&)>(&Run::start_measurement),
            "options"_a = MeasureOptions{})
@@ -3605,6 +3639,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("dec_height", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_height)
       .def_rw("dec_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_fps)
       .def_rw("num_buffers", &simaai::neat::nodes::groups::RtspDecodedInputOptions::num_buffers)
+      .def_rw("decoder_input_buffers",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_input_buffers)
+      .def_rw("decoder_tuning",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_tuning)
+      .def_rw("decoder_memory_opt",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_memory_opt)
       .def_rw("use_videoconvert",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videoconvert)
       .def_rw("use_videoscale",
@@ -3642,6 +3682,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("level", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::level);
 
   nb::class_<simaai::neat::nodes::groups::VideoSenderOptions>(m, "VideoSenderOptions")
+      .def_static("from_raw", &simaai::neat::nodes::groups::VideoSenderOptions::FromRaw, "encode"_a)
       .def_static("h264_rtp_udp_from_raw",
                   &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
                   "height"_a, "fps"_a)
@@ -3873,6 +3914,24 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+  nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
+      .value("H264", simaai::neat::SimaEncodeType::H264)
+      .value("H265", simaai::neat::SimaEncodeType::H265)
+      .value("MJPEG", simaai::neat::SimaEncodeType::MJPEG);
+  m.attr("SimaEncodeType").attr("AVC") = m.attr("SimaEncodeType").attr("H264");
+  m.attr("SimaEncodeType").attr("HEVC") = m.attr("SimaEncodeType").attr("H265");
+  nb::class_<simaai::neat::SimaEncodeOptions>(m, "SimaEncodeOptions")
+      .def(nb::init<>())
+      .def_rw("type", &simaai::neat::SimaEncodeOptions::type)
+      .def_rw("fps", &simaai::neat::SimaEncodeOptions::fps)
+      .def_rw("bitrate_kbps", &simaai::neat::SimaEncodeOptions::bitrate_kbps)
+      .def_rw("rate_control", &simaai::neat::SimaEncodeOptions::rate_control)
+      .def_rw("profile", &simaai::neat::SimaEncodeOptions::profile)
+      .def_rw("level", &simaai::neat::SimaEncodeOptions::level)
+      .def_rw("gop_length", &simaai::neat::SimaEncodeOptions::gop_length)
+      .def_rw("idr_interval", &simaai::neat::SimaEncodeOptions::idr_interval)
+      .def_rw("quality", &simaai::neat::SimaEncodeOptions::quality)
+      .def_rw("num_buffers", &simaai::neat::SimaEncodeOptions::num_buffers);
   nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
       .value("H264", simaai::neat::SimaDecodeType::H264)
       .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
@@ -4186,7 +4245,7 @@ NB_MODULE(_pyneat_core, m) {
   // Already-bound config/summary types and the *_power_monitor_options factories are REUSED via
   // aliases (not rebound/relocated — relocation would break test_api_surface). format_power_summary
   // / power_summary_to_json (formatting helpers) are deferred.
-  nb::module_ power_mod = m.def_submodule("power", "Board power telemetry (PMBus rail readings).");
+  nb::module_ power_mod = m.def_submodule("power", "Board power telemetry read from Sentinel.");
   nb::class_<simaai::neat::PowerFieldReading>(power_mod, "PowerFieldReading")
       .def_ro("available", &simaai::neat::PowerFieldReading::available)
       .def_ro("raw", &simaai::neat::PowerFieldReading::raw)
@@ -4210,11 +4269,15 @@ NB_MODULE(_pyneat_core, m) {
       .def("summary", &simaai::neat::PowerMonitor::summary)
       .def("running", &simaai::neat::PowerMonitor::running);
   power_mod.def("read_power_snapshot", &simaai::neat::read_power_snapshot, "options"_a);
+  // The deprecated power profile helpers stay bound for compatibility.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   power_mod.def("default_modalix_som_power_rails", &simaai::neat::default_modalix_som_power_rails);
   power_mod.def("default_modalix_dvt_power_rails", &simaai::neat::default_modalix_dvt_power_rails);
   power_mod.def("detect_default_power_monitor_profile",
                 &simaai::neat::detect_default_power_monitor_profile);
   power_mod.def("power_rails_for_profile", &simaai::neat::power_rails_for_profile, "profile"_a);
+#pragma GCC diagnostic pop
   // Reuse already-bound config/summary types + option factories (S9: alias, don't relocate).
   power_mod.attr("PowerMonitorProfile") = m.attr("PowerMonitorProfile");
   power_mod.attr("PowerMonitorOptions") = m.attr("PowerMonitorOptions");
@@ -4501,6 +4564,13 @@ NB_MODULE(_pyneat_core, m) {
       .value("Postprocess", simaai::neat::Model::Stage::Postprocess)
       .value("Full", simaai::neat::Model::Stage::Full);
 
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto runner_start_measurement_bool =
+      static_cast<MeasureScope (simaai::neat::Model::Runner::*)(bool)>(
+          &simaai::neat::Model::Runner::start_measurement);
+#pragma GCC diagnostic pop
   nb::class_<simaai::neat::Model::Runner>(m, "ModelRunner")
       .def(nb::init<>())
       .def("__bool__", [](const simaai::neat::Model::Runner& r) { return static_cast<bool>(r); })
@@ -4567,10 +4637,9 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("start_measurement",
-           static_cast<MeasureScope (simaai::neat::Model::Runner::*)(bool)>(
-               &simaai::neat::Model::Runner::start_measurement),
-           "include_plugin_latency"_a)
+      .def("start_measurement", runner_start_measurement_bool, "include_plugin_latency"_a,
+           "Deprecated: use start_measurement(). True also collects plugin latency, which will be "
+           "removed.")
       .def("start_measurement",
            static_cast<MeasureScope (simaai::neat::Model::Runner::*)(const MeasureOptions&)>(
                &simaai::neat::Model::Runner::start_measurement),
@@ -4584,14 +4653,68 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("original_width", &simaai::neat::BenchmarkOptions::original_width)
       .def_rw("original_height", &simaai::neat::BenchmarkOptions::original_height)
       .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
-      .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency);
+      .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency)
+      .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms)
+      .def_rw("include_layer_stats", &simaai::neat::BenchmarkOptions::include_layer_stats);
+
+  nb::class_<simaai::neat::BenchmarkMetric>(m, "BenchmarkMetric")
+      .def(nb::init<>())
+      .def_ro("key", &simaai::neat::BenchmarkMetric::key)
+      .def_ro("label", &simaai::neat::BenchmarkMetric::label)
+      .def_ro("unit", &simaai::neat::BenchmarkMetric::unit)
+      .def_ro("samples", &simaai::neat::BenchmarkMetric::samples)
+      .def_ro("mean", &simaai::neat::BenchmarkMetric::mean)
+      .def_ro("minimum", &simaai::neat::BenchmarkMetric::minimum)
+      .def_ro("maximum", &simaai::neat::BenchmarkMetric::maximum);
+
+  nb::class_<simaai::neat::BenchmarkTelemetry>(m, "BenchmarkTelemetry")
+      .def(nb::init<>())
+      .def_ro("status", &simaai::neat::BenchmarkTelemetry::status)
+      .def_ro("trace_id", &simaai::neat::BenchmarkTelemetry::trace_id)
+      .def_ro("sentinel_version", &simaai::neat::BenchmarkTelemetry::sentinel_version)
+      .def_ro("sample_interval_ms", &simaai::neat::BenchmarkTelemetry::sample_interval_ms)
+      .def_ro("samples", &simaai::neat::BenchmarkTelemetry::samples)
+      .def_ro("power_som_watts", &simaai::neat::BenchmarkTelemetry::power_som_watts)
+      .def_ro("power_mla_watts", &simaai::neat::BenchmarkTelemetry::power_mla_watts)
+      .def_ro("power_rails_watts", &simaai::neat::BenchmarkTelemetry::power_rails_watts)
+      .def_ro("die_temperatures_c", &simaai::neat::BenchmarkTelemetry::die_temperatures_c)
+      .def_ro("die_temperature_max_c", &simaai::neat::BenchmarkTelemetry::die_temperature_max_c)
+      .def_ro("board_temperatures_c", &simaai::neat::BenchmarkTelemetry::board_temperatures_c)
+      .def_ro("cpu_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_usage_pct)
+      .def_ro("cpu_cores_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_cores_usage_pct)
+      .def_ro("mla_memory_mib", &simaai::neat::BenchmarkTelemetry::mla_memory_mib)
+      .def_ro("cma_memory_mib", &simaai::neat::BenchmarkTelemetry::cma_memory_mib)
+      .def_ro("linux_memory_used_mib", &simaai::neat::BenchmarkTelemetry::linux_memory_used_mib);
+
+  nb::class_<simaai::neat::LayerStats>(m, "LayerStats")
+      .def(nb::init<>())
+      .def_rw("name", &simaai::neat::LayerStats::name)
+      .def_rw("total_execution_time_us", &simaai::neat::LayerStats::total_execution_time_us)
+      .def_rw("stage_index", &simaai::neat::LayerStats::stage_index);
 
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
       .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
+      .def_rw("latency_p50_ms", &simaai::neat::BenchmarkReport::latency_p50_ms)
+      .def_rw("latency_p95_ms", &simaai::neat::BenchmarkReport::latency_p95_ms)
+      .def_rw("latency_p99_ms", &simaai::neat::BenchmarkReport::latency_p99_ms)
       .def_rw("fps", &simaai::neat::BenchmarkReport::fps)
       .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
-      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
+      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules)
+      .def_rw("peak_power_watts", &simaai::neat::BenchmarkReport::peak_power_watts)
+      .def_rw("throughput_samples", &simaai::neat::BenchmarkReport::throughput_samples)
+      .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
+      .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry)
+      .def_rw("layer_stats", &simaai::neat::BenchmarkReport::layer_stats)
+      .def(
+          "save",
+          [](const simaai::neat::BenchmarkReport& report, const std::filesystem::path& file_path) {
+            // Snapshot mutable Python fields before releasing the GIL for filesystem I/O.
+            const auto snapshot = report;
+            nb::gil_scoped_release release;
+            return snapshot.save(file_path);
+          },
+          "file_path"_a);
 
   // ── Phase 3: model / preprocess introspection (plan slice S1/S14) ────────────────────────────
   // Tiering per S1 ("advanced = by namespace, not by docs"): the diagnostic snapshots that are the
@@ -4613,6 +4736,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("GRAY8", simaai::neat::FormatTag::GRAY8)
       .value("NV12", simaai::neat::FormatTag::NV12)
       .value("I420", simaai::neat::FormatTag::I420)
+      .value("NV16", simaai::neat::FormatTag::NV16)
       .value("YUYV", simaai::neat::FormatTag::YUYV)
       .value("ENCODED", simaai::neat::FormatTag::ENCODED)
       .value("H264", simaai::neat::FormatTag::H264)
@@ -4838,6 +4962,13 @@ NB_MODULE(_pyneat_core, m) {
       .def("to_debug_string", &simaai::neat::ResolvedPreprocessPlan::to_debug_string)
       .def("__repr__", &simaai::neat::ResolvedPreprocessPlan::to_debug_string);
 
+  // The plugin-latency overload stays bound until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const auto model_benchmark_int_bool =
+      static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
+          &simaai::neat::Model::benchmark);
+#pragma GCC diagnostic pop
   nb::class_<simaai::neat::Model>(m, "Model")
       // std::filesystem::path, not std::string: the caster routes through PyOS_FSPath, so str and
       // os.PathLike both work. Same as the GenAI constructors above.
@@ -4919,6 +5050,31 @@ NB_MODULE(_pyneat_core, m) {
           "input"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
           "run_options"_a = RunOptions{}, "copy"_a = false)
       .def(
+          "execution_plan",
+          [](simaai::neat::Model& model, const simaai::neat::Model::RouteOptions& route_options,
+             const RunOptions& run_options) {
+            return model.execution_plan(route_options, run_options);
+          },
+          "route_options"_a = simaai::neat::Model::RouteOptions{}, "run_options"_a = RunOptions{},
+          nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "execution_plan",
+          [](simaai::neat::Model& model, nb::object input,
+             const simaai::neat::Model::RouteOptions& route_options, const RunOptions& run_options,
+             bool copy) {
+            reject_single_tensor_or_sample(input, "Model.execution_plan");
+            if (python_sequence_all_samples(input)) {
+              auto samples = sample_batch_from_python_input(input);
+              nb::gil_scoped_release release;
+              return model.execution_plan(samples, route_options, run_options);
+            }
+            auto tensors = tensor_batch_from_python_input(input, copy, std::nullopt, std::nullopt);
+            nb::gil_scoped_release release;
+            return model.execution_plan(tensors, route_options, run_options);
+          },
+          "input"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
+          "run_options"_a = RunOptions{}, "copy"_a = false)
+      .def(
           "run",
           [](simaai::neat::Model& model, nb::object input, int timeout_ms,
              bool copy) -> nb::object {
@@ -4941,11 +5097,9 @@ NB_MODULE(_pyneat_core, m) {
             return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
-      .def("benchmark",
-           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
-               &simaai::neat::Model::benchmark),
-           "num_samples"_a = 100, "include_plugin_latency"_a = false,
-           nb::call_guard<nb::gil_scoped_release>())
+      .def("benchmark", model_benchmark_int_bool, "num_samples"_a = 100,
+           "include_plugin_latency"_a = false, nb::call_guard<nb::gil_scoped_release>(),
+           "include_plugin_latency is deprecated and will be removed.")
       .def("benchmark",
            static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(
                const simaai::neat::BenchmarkOptions&)>(&simaai::neat::Model::benchmark),
@@ -4958,6 +5112,64 @@ NB_MODULE(_pyneat_core, m) {
   dequant_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
   detess_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
   detess_cast_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
+
+  nb::enum_<simaai::neat::ImageFormat>(m, "ImageFormat")
+      .value("RGB", simaai::neat::ImageFormat::RGB)
+      .value("BGR", simaai::neat::ImageFormat::BGR)
+      .value("GRAY8", simaai::neat::ImageFormat::GRAY8)
+      .value("NV12", simaai::neat::ImageFormat::NV12)
+      .value("I420", simaai::neat::ImageFormat::I420)
+      .value("NV16", simaai::neat::ImageFormat::NV16);
+  nb::enum_<simaai::neat::ResizeInterpolation>(m, "ResizeInterpolation")
+      .value("Nearest", simaai::neat::ResizeInterpolation::Nearest)
+      .value("Bilinear", simaai::neat::ResizeInterpolation::Bilinear)
+      .value("Bicubic", simaai::neat::ResizeInterpolation::Bicubic)
+      .value("BoxAverage", simaai::neat::ResizeInterpolation::BoxAverage);
+  nb::enum_<simaai::neat::ResizeFit>(m, "ResizeFit")
+      .value("Stretch", simaai::neat::ResizeFit::Stretch)
+      .value("Contain", simaai::neat::ResizeFit::Contain);
+  nb::enum_<simaai::neat::ImageColorMatrix>(m, "ImageColorMatrix")
+      .value("Bt601", simaai::neat::ImageColorMatrix::Bt601)
+      .value("Bt709", simaai::neat::ImageColorMatrix::Bt709);
+  nb::enum_<simaai::neat::ImageYuvRange>(m, "ImageYuvRange")
+      .value("Full", simaai::neat::ImageYuvRange::Full)
+      .value("Limited", simaai::neat::ImageYuvRange::Limited);
+  nb::enum_<simaai::neat::ImageChromaSiting>(m, "ImageChromaSiting")
+      .value("Centered", simaai::neat::ImageChromaSiting::Centered)
+      .value("Cosited", simaai::neat::ImageChromaSiting::Cosited);
+  nb::enum_<simaai::neat::ImageSurfaceLayout>(m, "ImageSurfaceLayout")
+      .value("Native", simaai::neat::ImageSurfaceLayout::Native)
+      .value("EncoderNv12", simaai::neat::ImageSurfaceLayout::EncoderNv12);
+  nb::class_<simaai::neat::ImageColorOptions>(m, "ImageColorOptions")
+      .def(nb::init<>())
+      .def_rw("matrix", &simaai::neat::ImageColorOptions::matrix)
+      .def_rw("range", &simaai::neat::ImageColorOptions::range)
+      .def_rw("input_siting", &simaai::neat::ImageColorOptions::input_siting)
+      .def_rw("output_siting", &simaai::neat::ImageColorOptions::output_siting);
+  nb::class_<simaai::neat::ResizeOptions>(m, "ResizeOptions")
+      .def(nb::init<>())
+      .def_rw("width", &simaai::neat::ResizeOptions::width)
+      .def_rw("height", &simaai::neat::ResizeOptions::height)
+      .def_rw("interpolation", &simaai::neat::ResizeOptions::interpolation)
+      .def_rw("fit", &simaai::neat::ResizeOptions::fit)
+      .def_rw("max_input_width", &simaai::neat::ResizeOptions::max_input_width)
+      .def_rw("max_input_height", &simaai::neat::ResizeOptions::max_input_height)
+      .def_rw("pad_value", &simaai::neat::ResizeOptions::pad_value)
+      .def_rw("yuv_padding", &simaai::neat::ResizeOptions::yuv_padding)
+      .def_rw("color", &simaai::neat::ResizeOptions::color)
+      .def_rw("surface", &simaai::neat::ResizeOptions::surface)
+      .def_rw("element_name", &simaai::neat::ResizeOptions::element_name);
+  nb::class_<simaai::neat::ColorConvertOptions>(m, "ColorConvertOptions")
+      .def(nb::init<>())
+      .def_rw("output_format", &simaai::neat::ColorConvertOptions::output_format)
+      .def_rw("color", &simaai::neat::ColorConvertOptions::color)
+      .def_rw("surface", &simaai::neat::ColorConvertOptions::surface)
+      .def_rw("element_name", &simaai::neat::ColorConvertOptions::element_name);
+  nb::class_<simaai::neat::NormalizationOptions>(m, "NormalizationOptions")
+      .def(nb::init<>())
+      .def_rw("mean", &simaai::neat::NormalizationOptions::mean)
+      .def_rw("stddev", &simaai::neat::NormalizationOptions::stddev)
+      .def_rw("element_name", &simaai::neat::NormalizationOptions::element_name);
 
   nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
       .def(nb::init<>())
@@ -5046,14 +5258,30 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("num_buffers_model", &simaai::neat::DetessDequantOptions::num_buffers_model)
       .def_rw("num_buffers_locked", &simaai::neat::DetessDequantOptions::num_buffers_locked);
 
+  nodes_mod.def("resize", &simaai::neat::nodes::Resize, "options"_a);
+  nodes_mod.def("color_convert", &simaai::neat::nodes::ColorConvert,
+                "options"_a = simaai::neat::ColorConvertOptions{});
+  nodes_mod.def("normalization", &simaai::neat::nodes::Normalization,
+                "options"_a = simaai::neat::NormalizationOptions{});
   nodes_mod.def("preproc", &simaai::neat::nodes::Preproc,
                 "options"_a = simaai::neat::PreprocOptions{});
   nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,
                 "options"_a = simaai::neat::QuantTessOptions{});
   nodes_mod.def("udp_output", &simaai::neat::nodes::UdpOutput,
                 "options"_a = simaai::neat::UdpOutputOptions{});
-  nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
-                "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
+  nodes_mod.def(
+      "h264_encode_sima",
+      [](int width, int height, int fps, int bitrate_kbps, std::string profile, std::string level) {
+        if (PyErr_WarnEx(PyExc_DeprecationWarning,
+                         "h264_encode_sima is deprecated; use sima_encode with SimaEncodeType.H264",
+                         1) < 0) {
+          throw nb::python_error();
+        }
+        return simaai::neat::nodes::H264EncodeSima(width, height, fps, bitrate_kbps,
+                                                   std::move(profile), std::move(level));
+      },
+      "width"_a, "height"_a, "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline",
+      "level"_a = "4.0");
   nodes_mod.def(
       "h264_decode",
       [](int sima_allocator_type, std::string out_format, std::string decoder_name, bool raw_output,
@@ -5066,6 +5294,8 @@ NB_MODULE(_pyneat_core, m) {
       "sima_allocator_type"_a = 2, "out_format"_a = "NV12", "decoder_name"_a = "",
       "raw_output"_a = false, "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1,
       "dec_fps"_a = -1, "num_buffers"_a = -1);
+  nodes_mod.def("sima_encode", &simaai::neat::nodes::SimaEncode,
+                "options"_a = simaai::neat::SimaEncodeOptions{});
   nodes_mod.def("sima_decode", &simaai::neat::nodes::SimaDecode,
                 "options"_a = simaai::neat::SimaDecodeOptions{});
   nodes_mod.def(

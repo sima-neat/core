@@ -16,7 +16,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/TensorAdapters.h"
 #include "nodes/io/Input.h"
-#include "simaai/neat/internal/dmabuf/DmaBuf.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
@@ -701,12 +701,12 @@ BuiltBuffer build_buffer_with_fill(
         st.reusable_buffer = nullptr;
         st.reusable_bytes = 0;
       }
-      st.reusable_buffer = allocate_input_buffer(st.alloc_bytes, st.src_opt, st.pool_guard, st.demand_coherency);
+      st.reusable_buffer = allocate_input_buffer(st.alloc_bytes, st.src_opt, st.pool_guard);
       st.reusable_bytes = st.alloc_bytes;
     }
     buf = st.reusable_buffer;
   } else {
-    buf = allocate_input_buffer(st.alloc_bytes, st.src_opt, st.pool_guard, st.demand_coherency);
+    buf = allocate_input_buffer(st.alloc_bytes, st.src_opt, st.pool_guard);
   }
   std::chrono::steady_clock::time_point t_alloc_end{};
   if (record_timings)
@@ -740,7 +740,7 @@ BuiltBuffer build_buffer_with_fill(
   }
 
   GstMapInfo mi{};
-  std::optional<internal::dmabuf::CpuMapping> dmabuf_mapping;
+  std::optional<::simaai::scheduler::client::dma::CpuMapping> dmabuf_mapping;
   std::uint8_t* write_data = nullptr;
   std::size_t write_size = 0U;
   bool gst_mapped = false;
@@ -765,10 +765,10 @@ BuiltBuffer build_buffer_with_fill(
       throw std::runtime_error(std::string(where) +
                                ": DMA-BUF pool returned an invalid payload span");
     }
-    internal::dmabuf::Error error;
+    ::simaai::scheduler::client::dma::Error error;
     auto view =
-        internal::dmabuf::DmaBufView::fromGstMemory(payload_memory, 0U, payload_bytes, &error);
-    dmabuf_mapping = view ? view->map(internal::dmabuf::CpuAccess::Write, &error) : std::nullopt;
+        ::simaai::scheduler::client::dma::DmaBufView::fromGstMemory(payload_memory, 0U, payload_bytes, &error);
+    dmabuf_mapping = view ? view->map(::simaai::scheduler::client::dma::CpuAccess::Write, &error) : std::nullopt;
     if (!dmabuf_mapping) {
       if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
         release_input_buffer(buf, (std::string(tag) + ":dmabuf_map_fail").c_str());
@@ -802,7 +802,7 @@ BuiltBuffer build_buffer_with_fill(
     if (gst_mapped) {
       gst_buffer_unmap(buf, &mi);
     } else if (dmabuf_mapping) {
-      internal::dmabuf::Error ignored;
+      ::simaai::scheduler::client::dma::Error ignored;
       (void)dmabuf_mapping->finish(&ignored);
       dmabuf_mapping.reset();
     }
@@ -814,7 +814,7 @@ BuiltBuffer build_buffer_with_fill(
   if (gst_mapped) {
     gst_buffer_unmap(buf, &mi);
   } else {
-    internal::dmabuf::Error error;
+    ::simaai::scheduler::client::dma::Error error;
     if (!dmabuf_mapping->finish(&error)) {
       // Drop the mapping (which makes one final best-effort END attempt)
       // before returning the physical slot to its pool.

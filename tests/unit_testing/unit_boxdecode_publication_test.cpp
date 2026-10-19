@@ -1,8 +1,9 @@
 #include "pipeline/internal/sima/BoxDecodePublication.h"
 #include "pipeline/FeatureTypes.h"
-#include <simaai/kernels/authoring.h>
+#include <simaai/scheduler/testing/probe.h>
 
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -11,7 +12,8 @@
 #include <vector>
 
 namespace {
-namespace k = simaai::kernels;
+namespace k = simaai::scheduler::client;
+namespace probe = simaai::scheduler::testing;
 namespace core = simaai::neat::pipeline_internal::sima;
 using F = core::BoxDecodeWireFormat;
 void require(bool condition, const char* message) {
@@ -29,20 +31,19 @@ template <class T> void write(std::byte* p, T value) {
 struct Fixture {
   core::BoxDecodePublication plan;
   std::vector<std::vector<std::byte>> storage;
-  std::vector<k::ConstHostBuffer> input;
+  std::vector<k::ConstBytes> input;
   std::vector<std::byte> output;
   explicit Fixture(F format, std::span<const k::TensorSpec> specs)
       : plan(core::prepare_boxdecode_publication(format, specs)),
         output(plan.bytes + 16, std::byte{0x5a}) {
-    for (auto r : plan.executable.state().contract->input_requirements)
+    for (auto r : std::get<k::KernelInspection>(k::inspect_kernel(plan.executable)).input_requirements())
       storage.emplace_back(r.storage_bytes, std::byte{0});
     for (const auto& bytes : storage)
       input.push_back({bytes.data(), bytes.size()});
   }
   k::Status run() {
-    const auto& e = plan.executable.state();
-    const std::array<k::HostBuffer, 1> out{{{output.data(), plan.bytes}}};
-    return e.execute_host(e.payload.get(), nullptr, input, out);
+    const std::array<k::MutableBytes, 1> out{{{output.data(), plan.bytes}}};
+    return probe::execute_host(plan.executable, input, out);
   }
   void check_guard() const {
     require(std::all_of(output.begin() + plan.bytes, output.end(),

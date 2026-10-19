@@ -153,13 +153,14 @@ RUN_TEST(
       inherited.preproc_single_output_handoff = true;
       inherited.payload.graph_name = "preproc";
       inherited.payload.batch_size = 1;
-      inherited.payload.input_tensors.resize(1);
-      inherited.payload.output_tensors.resize(1);
+      sima_ev_tensor_desc output_descriptor{};
       require(sima::tensorsemantics::build_dense_tensor_desc(
-                  {1, 2, 2, 3}, "UINT8", "NHWC", &inherited.payload.output_tensors[0], &error,
+                  {1, 2, 2, 3}, "UINT8", "NHWC", &output_descriptor, &error,
                   "empty", "rank", "dimension", "dtype", "stride"),
               error);
-      inherited.payload.output_tensors[0].storage.nbytes = 12;
+      output_descriptor.storage.nbytes = 12;
+      inherited.payload.input_tensors.emplace_back(output_descriptor, "UINT8");
+      inherited.payload.output_tensors.emplace_back(output_descriptor, "UINT8");
       auto& inherited_runtime = inherited.runtime_contract;
       inherited_runtime.logical_inputs.resize(1);
       inherited_runtime.physical_inputs.resize(1);

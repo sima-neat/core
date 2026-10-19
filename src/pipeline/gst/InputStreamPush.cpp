@@ -586,90 +586,6 @@ make_copy_prepare_with_attributes(const std::function<void(GstBuffer**)>& prepar
   };
 }
 
-SampleSpec derive_mat_spec_or_throw(const cv::Mat& contiguous, const InputOptions& relaxed) {
-  SampleSpec spec;
-  const bool float_input = contiguous.depth() == CV_32F && contiguous.channels() > 0;
-  const std::string relaxed_media = resolve_input_media_type(relaxed);
-  spec.media_type = relaxed_media.empty()
-                        ? (float_input ? "application/vnd.simaai.tensor" : "video/x-raw")
-                        : relaxed_media;
-  spec.required_bytes_actual = 0;
-  if (spec.media_type == "video/x-raw") {
-    spec.kind = SampleMediaKind::RawVideo;
-    std::string fmt = upper_copy(relaxed.format);
-    if (fmt.empty()) {
-      fmt = (contiguous.channels() == 1) ? "GRAY8" : "BGR";
-    }
-    if (fmt == "GRAY")
-      fmt = "GRAY8";
-    if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8") {
-      throw std::invalid_argument("InputStream::try_push: unsupported video format");
-    }
-    if ((fmt == "RGB" || fmt == "BGR") && contiguous.type() != CV_8UC3) {
-      throw std::invalid_argument("InputStream::try_push: expected CV_8UC3");
-    }
-    if (fmt == "GRAY8" && contiguous.type() != CV_8UC1) {
-      throw std::invalid_argument("InputStream::try_push: expected CV_8UC1");
-    }
-    if (fmt == "NV12" || fmt == "I420") {
-      throw std::invalid_argument(
-          "InputStream::try_push: planar video requires simaai::neat::Tensor planes");
-    }
-    spec.format = fmt;
-    spec.width = contiguous.cols;
-    spec.height = contiguous.rows;
-    spec.depth = contiguous.channels();
-    PlaneInfo plane;
-    plane.role = simaai::neat::PlaneRole::Unknown;
-    plane.width = spec.width;
-    plane.height = spec.height;
-    plane.stride_bytes = static_cast<int64_t>(contiguous.step[0]);
-    plane.offset_bytes = 0;
-    plane.size_bytes = static_cast<size_t>(plane.stride_bytes) * static_cast<size_t>(spec.height);
-    if (plane.size_bytes == 0) {
-      throw std::invalid_argument("InputStream::try_push: invalid video byte size");
-    }
-    spec.required_bytes_actual = plane.size_bytes;
-    spec.planes = {plane};
-    spec.dtype = TensorDType::UInt8;
-  } else if (spec.media_type == "application/vnd.simaai.tensor") {
-    spec.kind = SampleMediaKind::Tensor;
-    if (contiguous.depth() != CV_32F || contiguous.channels() <= 0) {
-      throw std::invalid_argument(
-          "InputStream::try_push: tensor input must be a non-empty CV_32F matrix");
-    }
-    const std::string requested_format =
-        normalize_caps_format_for_media("application/vnd.simaai.tensor", relaxed.format.str());
-    const std::string requested_up = upper_copy(requested_format);
-    const bool fp32_like = requested_up.empty() || requested_up == "FP32" ||
-                           requested_up == "FLOAT32" || requested_up == "EVXX_FLOAT32";
-    if (!fp32_like) {
-      throw std::invalid_argument(
-          "InputStream::try_push: cv::Mat tensor input supports FP32/EVXX_FLOAT32 only; "
-          "pass simaai::neat::Tensor for BF16 or quantized tensor ingress");
-    }
-    spec.required_bytes_actual = contiguous.total() * contiguous.elemSize();
-    spec.dtype = TensorDType::Float32;
-    spec.format = requested_format.empty() ? std::string("FP32") : requested_format;
-    spec.width = contiguous.cols;
-    spec.height = contiguous.rows;
-    spec.depth = contiguous.channels();
-    spec.layout = TensorLayout::Unknown;
-    if (spec.depth > 1) {
-      spec.shape = {spec.height, spec.width, spec.depth};
-    } else {
-      spec.shape = {spec.height, spec.width};
-    }
-  } else {
-    throw std::invalid_argument("InputStream::try_push: unsupported media_type");
-  }
-
-  spec.fps_n = relaxed.fps_n;
-  spec.fps_d = relaxed.fps_d;
-  spec.caps_key = capkey_from_spec(spec);
-  spec.caps_string = caps_string_from_spec(spec);
-  return spec;
-}
 
 std::function<void(GstBuffer**)>
 make_prepare_for_mat_spec(const SampleSpec& spec, const cv::Mat& contiguous, size_t input_bytes) {
@@ -764,12 +680,13 @@ bool complete_tight_video_spec_for_buffer(SampleSpec* spec, std::size_t buffer_b
     if (i == 0U) {
       plane.width = spec->width;
       plane.height = spec->height;
-      plane.role = (format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_I420)
+      plane.role = (format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_NV16 ||
+                    format == GST_VIDEO_FORMAT_I420)
                        ? PlaneRole::Y
                        : PlaneRole::Unknown;
-    } else if (format == GST_VIDEO_FORMAT_NV12) {
+    } else if (format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_NV16) {
       plane.width = spec->width;
-      plane.height = spec->height / 2;
+      plane.height = format == GST_VIDEO_FORMAT_NV16 ? spec->height : spec->height / 2;
       plane.role = PlaneRole::UV;
     } else {
       plane.width = spec->width / 2;
@@ -839,12 +756,13 @@ bool complete_video_spec_from_meta(SampleSpec* spec, GstBuffer* buffer, const Gs
     if (i == 0U) {
       plane.width = spec->width;
       plane.height = spec->height;
-      plane.role = (meta->format == GST_VIDEO_FORMAT_NV12 || meta->format == GST_VIDEO_FORMAT_I420)
+      plane.role = (meta->format == GST_VIDEO_FORMAT_NV12 ||
+                    meta->format == GST_VIDEO_FORMAT_NV16 || meta->format == GST_VIDEO_FORMAT_I420)
                        ? PlaneRole::Y
                        : PlaneRole::Unknown;
-    } else if (meta->format == GST_VIDEO_FORMAT_NV12) {
+    } else if (meta->format == GST_VIDEO_FORMAT_NV12 || meta->format == GST_VIDEO_FORMAT_NV16) {
       plane.width = spec->width;
-      plane.height = spec->height / 2;
+      plane.height = meta->format == GST_VIDEO_FORMAT_NV16 ? spec->height : spec->height / 2;
       plane.role = PlaneRole::UV;
     } else {
       plane.width = spec->width / 2;
@@ -2089,6 +2007,7 @@ bool InputStream::try_push(const cv::Mat& input) {
   if (input.empty()) {
     throw std::invalid_argument("InputStream::try_push: input frame is empty");
   }
+  validate_public_input(input, state_->src_opt, state_->opt, "InputStream::try_push(mat)");
   InputOptions relaxed = state_->src_opt;
   relaxed.width = -1;
   relaxed.height = -1;

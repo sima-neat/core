@@ -553,6 +553,25 @@ std::string readable_string_property(GObject* object, const char* property_name)
   return out;
 }
 
+// Caps the downstream peer accepts on `element`'s "src" pad, i.e. what the source was asked for.
+std::string requested_src_caps(GstElement* element) {
+  GstPad* pad = gst_element_get_static_pad(element, "src");
+  if (!pad)
+    return {};
+  GstCaps* caps = gst_pad_peer_query_caps(pad, nullptr);
+  gst_object_unref(pad);
+  if (!caps)
+    return {};
+  std::string out;
+  if (!gst_caps_is_any(caps) && !gst_caps_is_empty(caps)) {
+    gchar* text = gst_caps_to_string(caps);
+    out = truncate(text ? text : "", 512);
+    g_free(text);
+  }
+  gst_caps_unref(caps);
+  return out;
+}
+
 bool safe_production_reason(const std::string& reason) {
   if (reason.empty() || reason.size() > 240 || reason.find_first_of("\r\n=") != std::string::npos)
     return false;
@@ -710,8 +729,7 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
   // Access contention is not necessarily exhausted execution capacity. Preserve
   // the provider cause without guessing from its category; serialization is
   // failure-only, bounded and credential-redacted.
-  if (category == "invalid_request" || category == "invalid_binding" ||
-      category == "resource_busy")
+  if (category == "invalid_request" || category == "invalid_binding" || category == "resource_busy")
     add_fact(out, "Reason", sanitize_gst_diagnostic_text(out.raw.message));
   out.actions = {action};
   return out;
@@ -940,6 +958,27 @@ NormalizedDiagnostic camera_not_found(RawGstError raw) {
   out.actions = {
       "List the cameras available on the DevKit and pass one of the reported names.",
       "Remove the explicit camera name to use the default camera.",
+  };
+  return out;
+}
+
+// Keeps kMediaCaps, this failure's code before it got its own diagnostic.
+NormalizedDiagnostic camera_configuration_unsupported(RawGstError raw) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kMediaCaps, "gstreamer.camera_configuration_unsupported",
+           "The camera cannot produce the requested resolution or format.");
+  add_fact(
+      out, "Camera",
+      find_detail(out.raw, {"source-identity", "source_identity", "camera-name"}).value_or(""));
+  add_fact(out, "Requested caps",
+           find_detail(out.raw, {"requested-caps", "requested_caps"}).value_or(""));
+  out.actions = {
+      "Request a resolution and pixel format the camera offers. libcamerasrc reports an "
+      "unsupported resolution and an unsupported format with this same error.",
+      "For a camera-to-model graph, capture at a supported resolution and let model-managed CVU "
+      "preprocessing resize it for inference.",
+      "For other graphs, capture at a supported resolution and add a VideoScale Node followed by "
+      "a CapsRaw caps filter.",
   };
   return out;
 }
@@ -1198,6 +1237,9 @@ RawGstError parse_gst_error_message(GstMessage* message) {
           camera = readable_string_property(G_OBJECT(GST_MESSAGE_SRC(message)), "camera");
         if (!camera.empty())
           out.details.emplace("source-identity", std::move(camera));
+        std::string requested = requested_src_caps(GST_ELEMENT(GST_MESSAGE_SRC(message)));
+        if (!requested.empty())
+          out.details.emplace("requested-caps", std::move(requested));
       }
     }
   }
@@ -1333,6 +1375,10 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   if ((raw.factory_name == "libcamerasrc" || contains_ci(raw.factory_name, "camera")) &&
       contains_ci(text, "could not find a camera")) {
     return camera_not_found(std::move(raw));
+  }
+  // libcamerasrc fails negotiation when the camera does not offer the requested size or format.
+  if (raw.factory_name == "libcamerasrc" && contains_ci(text, "not-negotiated")) {
+    return camera_configuration_unsupported(std::move(raw));
   }
   if (raw.factory_name == "h264parse" && contains_ci(text, "no valid frames")) {
     return invalid_h264(std::move(raw));

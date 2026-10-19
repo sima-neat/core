@@ -1,9 +1,11 @@
+#include <simaai/scheduler/client/tensor_buffer.h>
 #include "support/processcvu_plan_fixture.h"
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/KernelRunnerIntegration.h"
 #include "pipeline/internal/sima/MpkContract.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
@@ -18,8 +20,9 @@
 #include <chrono>
 #include <gst/app/gstappsrc.h>
 #include <gst/app/gstappsink.h>
-#include <gstsimaaitensorbuffer.h>
-#include <simaai/neat/internal/dmabuf/DmaBufPool.h>
+#include <gstsimaaitensorbuffer_meta.h>
+#include <simaai/scheduler/testing/probe.h>
+#include <simaai/scheduler/client/dma_memory.h>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -27,10 +30,11 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/kernel.h>
 #include <string>
 #include <vector>
 
+namespace test = simaai::scheduler::testing;
 namespace {
 
 namespace ps = simaai::neat::pipeline_internal::sima;
@@ -164,26 +168,28 @@ void lower_recipes(ps::SimaPluginStaticManifest& manifest,
             "Core did not emit a canonical numerical recipe");
 }
 
-simaai::runtime::KernelInspection inspect_first(const ps::SimaPluginStaticManifest& manifest) {
-  const auto checked = simaai::scheduler::inspect_kernel(
+simaai::scheduler::client::KernelInspection
+inspect_first(const ps::SimaPluginStaticManifest& manifest) {
+  const auto checked = simaai::scheduler::client::inspect_kernel(
       manifest.stages.front().native_kernel->members.front().executable);
-  const auto* value = std::get_if<simaai::runtime::KernelInspection>(&checked);
+  const auto* value = std::get_if<simaai::scheduler::client::KernelInspection>(&checked);
   require(value, "canonical checked executable inspection failed");
   return *value;
 }
 
 void check_metadata_encoding(const std::filesystem::path& root, const bool padded) {
   std::string error;
-  const auto contract = ps::load_mpk_contract_from_pack_root(root.string(), &error);
-  require(contract.has_value(), "MPK encoding fixture should load: " + error);
+  const auto loaded = sc::MpkDecoder::load_package_root(root, &error);
+  require(loaded.has_value(), "MPK encoding fixture should load: " + error);
+  const auto* contract = &loaded->contract;
   require(contract->plugins[1].align_c16 == padded && !contract->plugins[1].cblock,
           "MPK padded/compact flags must remain distinct from CBlock16");
   const auto manifest = make_manifest(*contract);
   const auto& cfg = manifest.stages.front().processcvu;
   require(cfg.input_tensors.size() == 1U && cfg.output_tensors.size() == 1U,
           "metadata fixture must retain one input and one output descriptor");
-  const auto& input = cfg.input_tensors.front();
-  const auto& output = cfg.output_tensors.front();
+  const auto& input = cfg.input_tensors.front().descriptor();
+  const auto& output = cfg.output_tensors.front().descriptor();
   require(input.layout_kind == SIMA_EV_LAYOUT_TILED &&
               input.layout.tiled.flags == (padded ? SIMA_EV_TILED_FLAG_PADDED_HWC_C16
                                                   : SIMA_EV_TILED_FLAG_COMPACT_CHANNELS),
@@ -211,14 +217,14 @@ void check_metadata_encoding(const std::filesystem::path& root, const bool padde
 // never constructs numerical requests or substitutes its layouts/placement.
 void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, bool bf16,
                                unsigned batches, ExecutionMode mode, bool blocked = true) {
-  namespace dma = simaai::neat::internal::dmabuf;
+  namespace dma = simaai::scheduler::client::dma;
   namespace tr = simaai::gst;
-  namespace gs = simaai::runtime::gstreamer;
-  require(gs::register_element(), "native kernel element registration failed");
+  namespace gs = simaai::scheduler::client;
+  require(test::register_element(), "native kernel element registration failed");
   require(manifest.stages.size() == 1, "one compiled fixture stage required");
   const auto& authored = manifest.stages.front();
   const auto& recipe = *authored.native_kernel;
-  simaai::runtime::gstreamer::TensorStagePublication publication;
+  simaai::scheduler::client::TensorStagePublication publication;
   std::string publication_error;
   require(ps::build_kernel_stage_publication(authored, &publication, &publication_error),
           publication_error);
@@ -228,7 +234,7 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
   };
   phase("construct pipeline");
   require(authored.processcvu.requested_run_target == "EV74" &&
-              recipe.target == simaai::runtime::Hardware::EV74,
+              recipe.target == simaai::scheduler::client::Hardware::EV74,
           "fixture must explicitly request the EV backend through Core policy");
   auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new("core-blocked-contract"),
                                               [](GstElement* element) {
@@ -345,10 +351,10 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
   if (mode == ExecutionMode::Preflight) {
     // Exercise the exact publisher on ordinary memory as well as topology;
     // metadata prerequisites must fail here, not during a firmware trial.
-    gs::Buffer host(gst_buffer_new_allocate(nullptr, allocation_bytes, nullptr));
+    test::GstBufferOwner host(gst_buffer_new_allocate(nullptr, allocation_bytes, nullptr));
     require(bool(host), "cold fixture carrier allocation failed");
     attach_input_publication(host.get());
-    const auto rejected = ps::attach_kernel_runner_stages(pipeline.get(), {});
+    const auto rejected = gs::prepare_and_attach_tensor_stages(pipeline.get(), {});
     require(rejected && rejected->field == "kernel-runner.element" &&
                 rejected->message.find("no prepared stage") != std::string::npos,
             "Core candidate preflight must reject an unbound numerical element");
@@ -360,17 +366,17 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
       authored.element_name, authored.logical_stage_id, 1, 2, {}, &authored}};
   const auto attach = ps::prepare_and_attach_kernel_runners(pipeline.get(), requests);
   require(!attach, attach ? attach->field + ": " + attach->message : "");
-  auto context = std::shared_ptr<GstContext>(gst_element_get_context(runner, gs::context_type),
-                                             gst_context_unref);
-  const auto execution = gs::stage_from_context(context.get());
-  require(execution && !execution->members.empty(), "Core attachment did not prepare execution");
-  for (const auto& member : execution->members)
-    require(member.operation && member.operation->hardware() == simaai::runtime::Hardware::EV74,
+  const auto execution = test::inspect_stage(runner);
+  require(execution.valid && !execution.members.empty(),
+          "Core attachment did not prepare execution");
+  for (const auto& member : execution.members)
+    require(member.prepared && member.target == gs::Target::EV74,
             "fixture must qualify actual EV74 execution, not an A65 fallback");
 
   phase("allocate input");
   dma::Error error;
-  gs::Buffer input(dma::allocateDmaBufBuffer(dma::HeapKind::Cma, allocation_bytes, {}, &error));
+  test::GstBufferOwner input(
+      dma::allocateDmaBufBuffer(dma::HeapKind::Cma, allocation_bytes, {}, &error));
   require(bool(input), error.message());
   auto input_view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(input.get(), 0), 0,
                                                    allocation_bytes, &error);
@@ -420,10 +426,10 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
   }
   phase("retired output");
   auto* buffer = gst_sample_get_buffer(output.get());
-  tr::TensorBufferView tensors;
-  require(tr::tensor_buffer_create_view(buffer, nullptr, &tensors, &issue), issue);
-  require(tensors.tensors.size() == 1, "compiled output publication arity changed");
-  const auto& tensor = tensors.tensors.front();
+  gs::TensorBufferView tensors;
+  require(gs::tensor_buffer_create_view(buffer, nullptr, &tensors, &issue), issue);
+  require(tensors.tensors().size() == 1, "compiled output publication arity changed");
+  const auto& tensor = tensors.tensors().front();
   require(tensor.byte_offset >= 0 && tensor.size_bytes == expected.size() * sizeof(float),
           "compiled output publication extent changed");
   auto* memory = gst_buffer_peek_memory(buffer, tensor.memory_index);
@@ -527,6 +533,7 @@ ps::SimaPluginStaticManifest make_detessdequant_cblock_manifest(unsigned batches
     op.name = index == 0U ? "detess" : "dequant";
     op.kind = index == 0U ? sc::OpKind::Detessellate : sc::OpKind::Dequantize;
     op.processor = "EV74";
+    op.batch_count = batches;
     op.inputs = {index};
     op.outputs = {index + 1U};
     op.input_shapes = {shape};
@@ -579,10 +586,13 @@ void reject_malformed_canonical_alignment() {
   lower_recipes(valid);
   require(valid.stages.front().native_kernel->members.size() == 1U,
           "unaltered fused fixture must prepare before testing malformed alignment");
-  malformed.stages.front().processcvu.input_tensors.front().layout.tiled.tile_align_bytes = 0;
+  auto& malformed_input = malformed.stages.front().processcvu.input_tensors.front();
+  auto invalid_geometry = malformed_input.descriptor();
+  invalid_geometry.layout.tiled.tile_align_bytes = 0;
+  malformed_input = malformed_input.with_geometry(invalid_geometry);
   const auto failure = ps::prepare_kernel_stage_recipes(&malformed, std::nullopt, {}, {},
                                                         simaai::neat::NameTransform{});
-  require(failure && failure->code == simaai::runtime::ErrorCode::InvalidRequest &&
+  require(failure && failure->code == simaai::scheduler::client::ErrorCode::InvalidRequest &&
               failure->field == "inputs[0].tile_align_bytes",
           "malformed canonical input must report its exact alignment field: " +
               (failure ? failure->field + ": " + failure->message : "unexpected admission"));
@@ -590,8 +600,9 @@ void reject_malformed_canonical_alignment() {
           "failed admission must not publish a partial canonical recipe");
 }
 
-simaai::kernels::Layout
-authoritative_detessdequant_cblock_layout(ExecutionMode mode = ExecutionMode::None, unsigned batches = 1) {
+simaai::scheduler::client::Layout
+authoritative_detessdequant_cblock_layout(ExecutionMode mode = ExecutionMode::None,
+                                          unsigned batches = 1) {
   const auto input_bytes = std::size_t(batches) * 288U;
   const auto output_bytes = std::size_t(batches) * 792U;
   auto manifest = make_detessdequant_cblock_manifest(batches);
@@ -625,13 +636,19 @@ void verify_tiled_explicit_batch_axes() {
     std::array<std::uint8_t, 4> axes;
   };
   const std::array<Case, 3> cases{{
-      {"NHWC", {2, 4, 5, 3}, {1, 2, 5, 3},
+      {"NHWC",
+       {2, 4, 5, 3},
+       {1, 2, 5, 3},
        {SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W, SIMA_EV_AXIS_C}},
-      {"NCHW", {2, 3, 4, 5}, {1, 3, 2, 5},
+      {"NCHW",
+       {2, 3, 4, 5},
+       {1, 3, 2, 5},
        {SIMA_EV_AXIS_N, SIMA_EV_AXIS_C, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W}},
       // Do not invent N for an ambiguous four-axis HWC declaration. This
       // retains the established D/H/W/C interpretation, not a rank heuristic.
-      {"HWC", {2, 4, 5, 3}, {1, 2, 5, 3},
+      {"HWC",
+       {2, 4, 5, 3},
+       {1, 2, 5, 3},
        {SIMA_EV_AXIS_D, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W, SIMA_EV_AXIS_C}},
   }};
   for (const auto& test : cases) {
@@ -671,12 +688,12 @@ void verify_tiled_explicit_batch_axes() {
     config.input_dtype = config.output_dtype = "INT8";
     config.input_shapes = config.output_shapes = {test.shape};
     config.slice_shapes = {test.tile};
-    config.input_tensors = {descriptor};
-    config.output_tensors = {dense};
+    config.input_tensors = {{descriptor, "INT8"}};
+    config.output_tensors = {{dense, "INT8"}};
     const auto adapted = pss::build_processcvu_payload_from_runtime_config_internal(config);
     require(adapted.input_tensors.size() == 1U && adapted.output_tensors.size() == 1U &&
-                std::memcmp(&adapted.input_tensors.front(), &descriptor, sizeof(descriptor)) == 0 &&
-                std::memcmp(&adapted.output_tensors.front(), &dense, sizeof(dense)) == 0,
+                std::memcmp(&adapted.input_tensors.front().descriptor(), &descriptor, sizeof(descriptor)) == 0 &&
+                std::memcmp(&adapted.output_tensors.front().descriptor(), &dense, sizeof(dense)) == 0,
             "runtime adapter must preserve complete explicit dense and tiled descriptors");
     config.input_tensors.clear();
     config.output_tensors.clear();
@@ -685,8 +702,8 @@ void verify_tiled_explicit_batch_axes() {
       (void)pss::build_processcvu_payload_from_runtime_config_internal(config);
     } catch (const std::invalid_argument& failure) {
       rejected_missing_descriptors =
-          std::string(failure.what()).find("requires explicit typed input_tensors/output_tensors") !=
-          std::string::npos;
+          std::string(failure.what())
+              .find("requires explicit typed input_tensors/output_tensors") != std::string::npos;
     }
     require(rejected_missing_descriptors,
             "runtime adapter must not infer missing typed descriptors from shape strings");
@@ -702,8 +719,8 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
   const auto input_bytes = batches * (blocked ? 576U : 396U);
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
-  const auto add_value = [&](const std::string& name, const std::string& dtype,
-                             std::uint64_t bytes, bool tiled) {
+  const auto add_value = [&](const std::string& name, const std::string& dtype, std::uint64_t bytes,
+                             bool tiled) {
     const auto id = static_cast<sc::ValueId>(data.values.size());
     sc::ValueSpec value;
     value.id = id;
@@ -712,12 +729,16 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
     value.logical_dtype = dtype;
     value.logical_shape = logical;
     value.logical_layout = "NHWC";
-    value.representation = tiled ? sc::ValueRepresentation::Tessellated
-                                 : sc::ValueRepresentation::Dense;
+    value.representation =
+        tiled ? sc::ValueRepresentation::Tessellated : sc::ValueRepresentation::Dense;
     value.storage_binding = sc::StorageBinding{
         id == 0U ? sc::StorageBindingKind::External : sc::StorageBindingKind::Root,
-        id, 0U, bytes, {},
-        id == 0U ? sc::StorageAccess::ReadOnly : sc::StorageAccess::ReadWrite, std::nullopt};
+        id,
+        0U,
+        bytes,
+        {},
+        id == 0U ? sc::StorageAccess::ReadOnly : sc::StorageAccess::ReadWrite,
+        std::nullopt};
     data.carriers.push_back({id, bytes, 4096U, value.representation});
     data.values.push_back(std::move(value));
     return id;
@@ -733,6 +754,7 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
     detess.name = "detess";
     detess.kind = sc::OpKind::Detessellate;
     detess.processor = "EV74";
+    detess.batch_count = batches;
     detess.inputs = {input};
     detess.outputs = {scalar_input};
     detess.input_shapes = detess.output_shapes = {logical};
@@ -746,6 +768,7 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
   cast.name = "cast";
   cast.kind = sc::OpKind::Cast;
   cast.processor = "EV74";
+  cast.batch_count = batches;
   cast.inputs = {scalar_input};
   cast.outputs = {output_id};
   cast.input_shapes = cast.output_shapes = {logical};
@@ -789,7 +812,7 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
   const auto& authored = manifest.stages.front();
   const auto& recipe = *authored.native_kernel;
   const auto inspection = inspect_first(manifest);
-  simaai::runtime::gstreamer::TensorStagePublication publication;
+  simaai::scheduler::client::TensorStagePublication publication;
   require(ps::build_kernel_stage_publication(authored, &publication, &error), error);
   if (!blocked) {
     // The typed cohort records N=2. The canonical executable must still cover
@@ -804,19 +827,19 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
     const auto check_dense_tensor = [&](const auto& spec, auto dtype, std::int64_t width) {
       require(spec.dtype == dtype && spec.shape.size() == logical.size(),
               "canonical Cast changed the full tensor dtype or rank");
-      const auto* strides = std::get_if<simaai::kernels::Strided>(&spec.layout);
-      require(strides || std::holds_alternative<simaai::kernels::Contiguous>(spec.layout),
+      const auto* strides = std::get_if<simaai::scheduler::client::Strided>(&spec.layout);
+      require(strides || std::holds_alternative<simaai::scheduler::client::Contiguous>(spec.layout),
               "canonical Cast must preserve dense tensor storage");
       std::int64_t stride = width;
       for (std::size_t axis = logical.size(); axis-- > 0;) {
-        require(spec.shape.dimensions()[axis] == logical[axis] &&
+        require(spec.shape[axis] == logical[axis] &&
                     (!strides || strides->strides_bytes[axis] == stride),
                 "canonical Cast changed a full-N tensor dimension or stride");
         stride *= logical[axis];
       }
     };
-    check_dense_tensor(inspection.inputs().front(), simaai::runtime::DType::BFloat16, 2);
-    check_dense_tensor(inspection.outputs().front(), simaai::runtime::DType::Float32, 4);
+    check_dense_tensor(inspection.inputs().front(), simaai::scheduler::client::DType::BFloat16, 2);
+    check_dense_tensor(inspection.outputs().front(), simaai::scheduler::client::DType::Float32, 4);
     const auto& member = recipe.members.front();
     require(member.inputs.size() == 1U && member.outputs.size() == 1U &&
                 member.inputs.front().byte_offset == 0U &&
@@ -843,19 +866,21 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
               (authored.processcvu.opt_flags & (1U << 6)) != 0U &&
               inspection.inputs().size() == 1U && inspection.outputs().size() == 1U,
           "Core BF16 must retain compiler lane-split authority and one tensor pair");
-  require(std::holds_alternative<simaai::kernels::MlaCBlocked>(inspection.inputs().front().layout),
+  require(std::holds_alternative<simaai::scheduler::client::MlaCBlocked>(
+              inspection.inputs().front().layout),
           "canonical BF16 input must retain lane-split CBlocked storage, not a host repack");
   const auto& output = inspection.outputs().front();
   require(inspection.input_requirements().front().storage_bytes == batches * 576U &&
               inspection.output_requirements().front().storage_bytes == batches * 792U &&
-              output.dtype == simaai::runtime::DType::Float32 && output.shape.size() == 4U,
+              output.dtype == simaai::scheduler::client::DType::Float32 &&
+              output.shape.size() == 4U,
           "canonical BF16 must preserve every 576-byte input and 792-byte dense FP32 output batch");
   const std::array<std::int64_t, 4> dense_strides{792, 396, 132, 4};
-  const auto* strides = std::get_if<simaai::kernels::Strided>(&output.layout);
-  require(strides || std::holds_alternative<simaai::kernels::Contiguous>(output.layout),
+  const auto* strides = std::get_if<simaai::scheduler::client::Strided>(&output.layout);
+  require(strides || std::holds_alternative<simaai::scheduler::client::Contiguous>(output.layout),
           "canonical output must retain dense storage");
   for (std::size_t axis = 0; axis < logical.size(); ++axis) {
-    require(output.shape.dimensions()[axis] == logical[axis] &&
+    require(output.shape[axis] == logical[axis] &&
                 (!strides || strides->strides_bytes[axis] == dense_strides[axis]),
             "canonical BF16 output must retain exact dense FP32 shape and strides");
   }
@@ -905,10 +930,10 @@ int main(int argc, char** argv) {
     authoritative_bf16_contract(mode, true, 2);
     authoritative_bf16_contract(mode, false, 2);
     const auto cblock_n2 = authoritative_detessdequant_cblock_layout(mode, 2);
-    require(std::holds_alternative<simaai::kernels::MlaCBlocked>(cblock_n2),
+    require(std::holds_alternative<simaai::scheduler::client::MlaCBlocked>(cblock_n2),
             "N2 DetessDequant must preserve its full CBlock tensor in one executable");
     const auto cblock = authoritative_detessdequant_cblock_layout(mode);
-    require(std::holds_alternative<simaai::kernels::MlaCBlocked>(cblock),
+    require(std::holds_alternative<simaai::scheduler::client::MlaCBlocked>(cblock),
             "authoritative DetessDequant must retain canonical CBlock16");
     reject_malformed_canonical_alignment();
     check_metadata_encoding(write_mpk_fixture("padded_hwc", true, false, 576U), true);

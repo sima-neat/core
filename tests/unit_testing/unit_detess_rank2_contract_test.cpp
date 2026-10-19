@@ -1,7 +1,8 @@
+#include <simaai/scheduler/client/stage.h>
+#include "mpk_contract_test_utils.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
-#include <simaai/runtime/gstreamer/prepared_tensor_stage.h>
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "test_main.h"
 
@@ -19,7 +20,6 @@
 namespace {
 
 using simaai::neat::pipeline_internal::sima::detess_runtime_frame_shape;
-using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
 using simaai::neat::pipeline_internal::sima::MpkContract;
 using json = nlohmann::json;
 
@@ -127,14 +127,14 @@ std::filesystem::path write_detess_fixture(const std::string& name,
 
 const MpkContract load_fixture(const std::filesystem::path& root) {
   std::string error;
-  const auto contract = load_mpk_contract_from_pack_root(root.string(), &error);
+  const auto contract = load_test_mpk_contract(root.string(), &error);
   require(contract.has_value(), "detess fixture should load: " + error);
   return *contract;
 }
 
 std::string reject_fixture(const std::filesystem::path& root) {
   std::string error;
-  const auto contract = load_mpk_contract_from_pack_root(root.string(), &error);
+  const auto contract = load_test_mpk_contract(root.string(), &error);
   require(!contract.has_value(), "invalid detess fixture should be rejected");
   require(!error.empty(), "invalid detess fixture should report an actionable error");
   return error;
@@ -202,9 +202,10 @@ make_detess_manifest(const MpkContract& contract) {
   return manifest;
 }
 
-void require_metadata_geometry(
-    const std::filesystem::path& root, const std::vector<std::int64_t>& runtime_shape,
-    const std::vector<std::int64_t>& logical_shape, const std::uint64_t transport_bytes) {
+void require_metadata_geometry(const std::filesystem::path& root,
+                               const std::vector<std::int64_t>& runtime_shape,
+                               const std::vector<std::int64_t>& logical_shape,
+                               const std::uint64_t transport_bytes) {
   namespace ps = simaai::neat::pipeline_internal::sima;
   ensure_gst_ready();
   const auto contract = load_fixture(root);
@@ -216,9 +217,9 @@ void require_metadata_geometry(
   require(detess.output_tensors.size() == 1U &&
               tensor_desc_shape(detess.output_tensors.front()) == runtime_shape,
           "detess output descriptor should use resolved runtime geometry");
-  require(detess.input_tensors.front().storage.nbytes == transport_bytes,
+  require(detess.input_tensors.front().descriptor().storage.nbytes == transport_bytes,
           "detess input descriptor should preserve the packed MLA byte span");
-  simaai::runtime::gstreamer::TensorStagePublication publication;
+  simaai::scheduler::client::TensorStagePublication publication;
   std::string error;
   require(ps::build_kernel_stage_publication(manifest.stages.front(), &publication, &error),
           "detess metadata publication should build: " + error);
@@ -318,9 +319,8 @@ RUN_TEST(
                   two_head_outputs[1].size_bytes == 192U,
               "multi-output MLA boundaries should retain physical output order and byte spans");
 
-      require_metadata_geometry(
-          write_detess_fixture("prepared_nc", {1, 213}, 448U, 426U), {1, 1, 1, 213}, {1, 213},
-          448U);
+      require_metadata_geometry(write_detess_fixture("prepared_nc", {1, 213}, 448U, 426U),
+                                {1, 1, 1, 213}, {1, 213}, 448U);
       require_metadata_geometry(
           write_detess_fixture("prepared_hw", {2, 3}, 192U, 12U, true, true, {1, 1, 1}),
           {1, 2, 3, 1}, {2, 3}, 192U);

@@ -131,8 +131,6 @@ jobs:
               exit 1
             fi
 
-            ./scripts/fix_devkit_runtime.sh
-
             SANITIZER_MODE="${MODE}" \
               bash scripts/ci/run_sanitizer_gate.sh --test-dir "${TEST_DIR}"
           done

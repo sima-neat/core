@@ -25,7 +25,7 @@ slug: /reference/tutorial-assets
 
 教學指令仍然接受明確的參數。對於單次執行，建議使用 `--model <path>`；如果多個指令需要共享同一個成品，則使用環境變數。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
@@ -59,7 +59,7 @@ Neat 在執行模型封存檔之前會先解壓縮它們。這些變數主要用
 某些來源樹測試會使用 COCO 範例圖片，如果缺少圖片，則會自動下載。
 當您的環境需要使用本機鏡像時，請覆寫 URL：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 export SIMA_COCO_URL=https://example.com/path/to/coco_sample.jpg
 </ShellCommand>
 

@@ -1,3 +1,4 @@
+#include "mpk_contract_test_utils.h"
 #include "model_archive_test_utils.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "test_main.h"
@@ -119,13 +120,12 @@ std::filesystem::path resolve_pack_root() {
 
 RUN_TEST("unit_mpk_graph_dump_test", ([] {
            namespace fs = std::filesystem;
-           using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
 
            const fs::path root = resolve_pack_root();
            require(fs::exists(root), "pack root does not exist: " + root.string());
 
            std::string error;
-           const auto contract = load_mpk_contract_from_pack_root(root.string(), &error);
+           const auto contract = load_test_mpk_contract(root.string(), &error);
            require(contract.has_value(), "failed to load mpk contract: " + error);
            require(!contract->graph.nodes.empty(), "graph should contain nodes");
          }));

@@ -1,3 +1,4 @@
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 /**
  * @file SessionBuildInput.cpp
  * @brief Graph input-mode build/run methods.
@@ -179,6 +180,8 @@ TensorList tensor_list_from_mats(const std::vector<cv::Mat>& inputs, const Input
   TensorList out;
   out.reserve(inputs.size());
   const InputOptions normalized = pipeline_internal::normalize_shape_bounds(opt);
+  for (const auto& input : inputs)
+    validate_public_input(input, normalized, InputStreamOptions{}, where);
   for (const auto& input : inputs) {
     out.emplace_back(tensor_from_cv_mat(input, normalized, where));
   }
@@ -222,6 +225,13 @@ TensorList tensor_list_from_mats_for_connected_default(const std::vector<cv::Mat
   if (inputs.empty()) {
     throw std::runtime_error(std::string(where ? where : "Graph::build(inputs)") +
                              ": empty image list");
+  }
+  if (segment.boundary_hints && segment.boundary_hints->input_route_processor) {
+    segment.boundary_hints->input_route_processor->validate_images(inputs, where);
+  } else {
+    for (std::size_t i = 0; i < inputs.size(); ++i)
+      validate_public_input(inputs[i], runtime::pipeline_segment_declared_ingress(segment, i),
+                            segment.stream_options, where);
   }
   TensorList out;
   out.reserve(inputs.size());
@@ -672,6 +682,8 @@ std::string format_token_from_tensor(const Tensor& tensor) {
       return "GRAY8";
     case ImageSpec::PixelFormat::NV12:
       return "NV12";
+    case ImageSpec::PixelFormat::NV16:
+      return "NV16";
     case ImageSpec::PixelFormat::I420:
       return "I420";
     case ImageSpec::PixelFormat::UNKNOWN:
@@ -843,6 +855,8 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
   spec.width = ingress_spec.width;
   spec.height = ingress_spec.height;
   spec.depth = ingress_spec.depth;
+  spec.fps_num = ingress_spec.fps_n;
+  spec.fps_den = ingress_spec.fps_d;
   compile_input.ingress.ingress_spec = spec;
   compile_input.ingress.ingress_sample = ingress_sample;
   session_build_compile_contracts(build_result, *nodes, compile_input, where, nodes);
@@ -1202,7 +1216,8 @@ bool is_supported_raw_ingress_format(std::string fmt) {
     fmt = "GRAY8";
   if (fmt == "IYUV")
     fmt = "I420";
-  return fmt == "RGB" || fmt == "BGR" || fmt == "GRAY8" || fmt == "NV12" || fmt == "I420";
+  return fmt == "RGB" || fmt == "BGR" || fmt == "GRAY8" || fmt == "NV12" || fmt == "NV16" ||
+         fmt == "I420";
 }
 
 int raw_depth_for_format(std::string fmt) {
@@ -1294,6 +1309,8 @@ bool detect_allow_ingress_format_renegotiation(const std::vector<std::shared_ptr
   }
   if (!dynamic_preproc)
     return false;
+  if (internal::ImageTransformAccess::policy(*dynamic_preproc))
+    return false; // Typed image frontends fix the input format for the run.
 
   const auto& pre_opt = dynamic_preproc->options();
   if (pre_opt.output_width() <= 0 || pre_opt.output_height() <= 0 ||
@@ -1871,7 +1888,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
           : static_cast<std::size_t>(std::max(1, stream_opt.holder_loan_sample_window));
   auto output_budget = pipeline_internal::sima::kernel_runner_output_pool_capacity(
       br.kernel_runner_capacity, retained_samples);
-  if (const auto* error = std::get_if<simaai::runtime::Error>(&output_budget))
+  if (const auto* error = std::get_if<simaai::scheduler::client::Error>(&output_budget))
     throw std::runtime_error("Graph::build: " + error->field + ": " + error->message);
   br.kernel_runner_output_pool_capacity =
       std::max(br.kernel_runner_output_pool_capacity, std::get<std::size_t>(output_budget));
@@ -1904,6 +1921,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   enforce_mla_pipeline_guard("Graph::build(input)", last_pipeline, owner);
   validate_caps_override_or_throw(src_node->options(), "Graph::build(input)", last_pipeline);
 
+  session_build_record_segment_plan(br);
   GstElement* pipeline = session_build_parse_pipeline_or_throw(br, "Graph::build(input)");
   session_build_dump_pipeline_element_properties(pipeline);
   trace_step(Traits::trace_parsed());
@@ -2626,11 +2644,11 @@ void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Nod
   // boundary so this legacy materialization path cannot specialize from a
   // transient first sample; explicit source/caps Nodes still propagate facts.
   const bool has_specializer = std::any_of(nodes->begin(), nodes->end(), [](const auto& node) {
-    return node && dynamic_cast<const internal::InputSpecSpecializer*>(node.get());
+    return node && pipeline_internal::node_has_input_spec_specialization(*node);
   });
   if (has_specializer) {
     const auto context = pipeline_internal::discover_input_spec_specialization_context();
-    auto specialized = internal::specialize_nodes_for_input(*nodes, {}, context);
+    auto specialized = pipeline_internal::specialize_pipeline_nodes_for_input(*nodes, {}, context);
     *nodes = std::move(specialized.nodes);
   }
 }

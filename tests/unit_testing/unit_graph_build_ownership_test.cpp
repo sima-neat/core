@@ -1,15 +1,17 @@
+#include <gstsimaaitensorbuffer_meta.h>
 #include "pipeline/ErrorCodes.h"
 #include "gst/GstInit.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <gst/gst.h>
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/kernel.h>
 
 #include <array>
 #include <memory>
@@ -85,10 +87,15 @@ void assert_closed(bool context_expected) {
           "temporary and pipeline metadata-context references must both close");
 }
 
-void cold_rejection_releases_graph_and_recipe(bool reject_output_span) {
-  namespace rt = simaai::runtime;
-  namespace gs = rt::gstreamer;
-  namespace kernels = simaai::kernels;
+struct OriginalFactoryException final : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+
+void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
+                                             bool derived_exception = false) {
+  namespace rt = simaai::scheduler::client;
+  namespace gs = rt;
+  namespace kernels = simaai::scheduler::client;
   constexpr const char* failure = "owned cold resolver factory failed";
   std::weak_ptr<const si::KernelStageRecipe> observer;
   bool threw = false;
@@ -97,21 +104,36 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span) {
     build.pipeline_string += " fakesrc ! neatkernelrunner name=native ! fakesink";
     auto recipe = std::make_shared<si::KernelStageRecipe>();
     observer = recipe;
-    recipe->target = rt::Hardware::EV74;
+    recipe->target = rt::Target::EV74;
     const std::array inputs{rt::TensorSpec{{2}, rt::DType::Float32, kernels::Contiguous{}}};
     const std::array outputs{rt::TensorSpec{{2}, rt::DType::BFloat16, kernels::Contiguous{}}};
-    auto checked =
-        simaai::scheduler::check_kernel({"cast", kernels::Target::EV74, inputs, outputs, {}});
+    auto checked = simaai::scheduler::client::check_kernel(
+        {"cast", kernels::Target::EV74, inputs, outputs, {}});
     require(std::holds_alternative<rt::KernelExecutable>(checked),
             "real cold Cast checking must succeed before the factory failure test");
-    recipe->members.push_back({std::get<rt::KernelExecutable>(std::move(checked)),
+    auto executable = std::get<rt::KernelExecutable>(std::move(checked));
+    auto inspected = rt::inspect_kernel(executable);
+    require(std::holds_alternative<rt::KernelInspection>(inspected),
+            "real cold Cast inspection must succeed before constructing its placement");
+    const auto& inspection = std::get<rt::KernelInspection>(inspected);
+    require(inspection.input_requirements().size() == 1 &&
+                inspection.output_requirements().size() == 1,
+            "ownership fixture requires exactly one actual Cast input and output");
+    const auto input_requirement = inspection.input_requirements().front();
+    const auto output_requirement = inspection.output_requirements().front();
+    require(input_requirement.storage_bytes == 8 && output_requirement.storage_bytes == 4,
+            "ownership fixture must retain its FP32-to-BF16 checked extents");
+    recipe->members.push_back({std::move(executable),
                                {{0, 0, gs::TensorStagePortSource::Input}},
                                {{0, 0, gs::TensorStagePortSource::Output}},
                                {},
                                {}});
     if (!reject_output_span)
-      recipe->resolver_factories.push_back(
-          {0, [failure]() -> si::KernelStageRecipe::Resolver { throw std::runtime_error(failure); }});
+      recipe->resolver_factories.push_back({0, [failure, derived_exception]() -> si::KernelStageRecipe::Resolver {
+                                              if (derived_exception)
+                                                throw OriginalFactoryException(failure);
+                                              throw std::runtime_error(failure);
+                                            }});
     gs::TensorStagePublication publication;
     publication.input_caps = {gst_caps_new_empty_simple("application/vnd.simaai.tensor"),
                               gst_caps_unref};
@@ -136,7 +158,24 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span) {
     stage.element_name = stage.logical_stage_id = "native";
     stage.plugin_kind = "kernel";
     stage.native_kernel = recipe;
-    stage.input_bindings.push_back(si::InputBindingStaticSpec{.sink_pad_index = 0});
+    // Author the same real arena and checked routes as a compiled Core stage.
+    // Missing placement must not preempt the intended factory/span failures.
+    stage.frame_arena_size_bytes = 4096;
+    stage.frame_arena_role = si::FrameArenaRole::Allocate;
+    stage.frame_arena_storage_domain = si::static_contract::ArenaStorageDomain::Cma;
+    stage.frame_arena_provenance = si::static_contract::ArenaAllocationProvenance::CoreAllocated;
+    stage.frame_arena_required_device_access =
+        static_cast<std::uint32_t>(si::static_contract::ArenaDeviceAccess::Ev74);
+    stage.logical_inputs.push_back(si::specbuilders::build_logical_input_static_spec(
+        0, 0, 0, {2}, "FP32", "C", "input", "input", "input"));
+    stage.input_bindings.push_back(si::specbuilders::build_input_binding_static_spec(
+        0, 0, "input", "input"));
+    stage.physical_inputs.push_back(si::specbuilders::build_physical_buffer_static_spec(
+        0, 0, input_requirement.storage_bytes, si::DeviceKind::Cpu, "input", -1, 0,
+        input_requirement.alignment_bytes));
+    stage.physical_outputs.push_back(si::specbuilders::build_physical_buffer_static_spec(
+        0, 0, output_requirement.storage_bytes, si::DeviceKind::Cpu, "output", -1, 0,
+        output_requirement.alignment_bytes));
     try {
       std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
           session_build_parse_pipeline_or_throw(build, "ownership-factory-test"),
@@ -151,7 +190,10 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span) {
                          "cold span rejection must not be replaced by cleanup failure");
       } else {
         require(std::string(error.what()) == failure,
-                "the actual cold provider-factory exception must remain unchanged");
+                "the actual cold provider-factory exception must remain unchanged; actual=" +
+                    std::string(error.what()));
+        require(!derived_exception || dynamic_cast<const OriginalFactoryException*>(&error),
+                "the original cold factory exception dynamic type must survive cleanup");
       }
     }
     require(!observer.expired(), "the caller still deliberately owns its reusable recipe");
@@ -230,6 +272,8 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
            assert_closed(true);
            reset_observation();
            cold_rejection_releases_graph_and_recipe(false);
+           reset_observation();
+           cold_rejection_releases_graph_and_recipe(false, true);
            reset_observation();
            cold_rejection_releases_graph_and_recipe(true);
            reset_observation();

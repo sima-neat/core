@@ -1,9 +1,10 @@
 #include "pipeline/internal/sima/CanonicalGraphStageContract.h"
 
 #include <gst/SimaPluginStaticManifestAbi.h>
-#include <simaai/neat/internal/dmabuf/DmaBufPool.h>
-#include <simaai/runtime/gstreamer/prepared_tensor_stage.h>
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/dma_memory.h>
+#include <simaai/scheduler/client/stage.h>
+#include <simaai/scheduler/testing/route_probe.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <array>
 #include <iostream>
@@ -19,21 +20,21 @@ GST_DEBUG_CATEGORY(GST_CAT_DEFAULT);
 
 namespace {
 namespace ps = simaai::neat::pipeline_internal::sima;
-namespace rt = simaai::runtime;
-namespace gs = rt::gstreamer;
+namespace c = simaai::scheduler::client;
+namespace test = simaai::scheduler::testing;
 namespace tr = simaai::gst;
-namespace dma = simaai::neat::internal::dmabuf;
+namespace dma = c::dma;
 
 void require(bool condition, const char* message) {
   if (!condition)
     throw std::runtime_error(message);
 }
-template <class T> T take(rt::Result<T> result) {
-  if (const auto* error = std::get_if<rt::Error>(&result))
+template <class T> T take(c::Result<T> result) {
+  if (const auto* error = std::get_if<c::Error>(&result))
     throw std::runtime_error(error->field + ": " + error->message);
   return std::get<T>(std::move(result));
 }
-void okay(rt::Status status) {
+void okay(c::Status status) {
   if (status)
     throw std::runtime_error(status->field + ": " + status->message);
 }
@@ -52,10 +53,13 @@ ps::MpkTensorContract tensor(const char* name, const char* dtype, std::uint64_t 
 ps::StageStaticSpec complete(std::int64_t logical_offset, bool retained_physical) {
   ps::StageStaticSpec stage;
   stage.element_name = stage.logical_stage_id = "graph-cast";
-  stage.processcvu.input_tensors.resize(1);
-  stage.processcvu.output_tensors.resize(1);
-  stage.processcvu.input_tensors[0].storage.nbytes = 96;
-  stage.processcvu.output_tensors[0].storage.nbytes = 48;
+  sima_ev_tensor_desc input{}, output_descriptor{};
+  input.dtype = SIMA_EV_DTYPE_FP32;
+  input.storage.nbytes = 96;
+  output_descriptor.dtype = SIMA_EV_DTYPE_BF16;
+  output_descriptor.storage.nbytes = 48;
+  stage.processcvu.input_tensors = {{input, "FP32"}};
+  stage.processcvu.output_tensors = {{output_descriptor, "BF16"}};
   stage.frame_arena_size_bytes = 4096;
   stage.frame_arena_role = ps::FrameArenaRole::Allocate;
   stage.frame_arena_storage_domain = ps::static_contract::ArenaStorageDomain::Cma;
@@ -110,36 +114,17 @@ std::shared_ptr<const SimaPluginStageSpec> placement(const ps::StageStaticSpec& 
   return {std::move(context), projected};
 }
 
-// Observes the real provider's route coordinates without replacing allocation,
-// access scopes or current carrier loans. Certification is intentionally absent
-// so this fixture uses the standard noncached import path.
-class ObservedStorage final : public gs::Storage {
-public:
-  rt::Result<rt::BufferView> resolve(GstBuffer* carrier, GstMemory* memory, std::size_t offset,
-                                     std::size_t length, rt::Access access) const override {
-    if (access == rt::Access::Read) {
-      read_offsets.push_back(offset);
-      read_lengths.push_back(length);
-    }
-    return provider_->resolve(carrier, memory, offset, length, access);
-  }
-  mutable std::vector<std::size_t> read_offsets, read_lengths;
-
-private:
-  std::shared_ptr<const gs::Storage> provider_ = gs::make_storage();
-};
-
-gs::TensorStageRequest request(const ps::StageStaticSpec& stage,
-                               const std::shared_ptr<ObservedStorage>& storage) {
-  gs::TensorStageRequest result;
-  result.target = rt::Hardware::A65;
+// Scheduler's test-only probe observes the actual carrier provider; Core owns
+// only the graph facts and public request, not Storage/Frame implementation.
+c::TensorStageRequest request(const ps::StageStaticSpec& stage) {
+  c::TensorStageRequest result;
+  result.target = c::Hardware::A65;
   result.placement = placement(stage);
   result.options.capacity = 1;
-  result.options.storage = storage;
-  const std::array input{rt::TensorSpec{{2, 3, 4}, rt::DType::Float32}};
-  const std::array output{rt::TensorSpec{{2, 3, 4}, rt::DType::BFloat16}};
+  const std::array input{c::TensorSpec{{2, 3, 4}, c::DType::Float32}};
+  const std::array output{c::TensorSpec{{2, 3, 4}, c::DType::BFloat16}};
   auto executable =
-      take(simaai::scheduler::check_kernel({"cast", result.target, input, output, {}}));
+      take(c::check_kernel({"cast", result.target, input, output, {}}));
   result.members.push_back({std::move(executable), {{0, 0}}, {{0, 0}}, {}});
   auto publication = std::make_shared<tr::TensorBufferPublishContract>();
   publication->stage_key = stage.logical_stage_id;
@@ -184,14 +169,15 @@ void admitted_coordinates(std::int64_t logical_offset, bool retained_physical) {
               route.src_physical_size_bytes == 96 &&
               route.source_segment_name == physical.segment_name,
           "inferred binding contradicts authoritative carrier or relative logical offset");
-  auto storage = std::make_shared<ObservedStorage>();
-  const std::array requests{request(model, storage)};
-  auto stages = take(gs::prepare_tensor_stages(requests));
-  require(stages.size() == 1 && stages[0]->members.size() == 1, "cold Cast admission failed");
-  require(storage->read_offsets.empty(), "cold preparation imported a current input carrier");
+  const auto recipe = request(model);
+  test::RouteProbe probe;
+  okay(probe.prepare(recipe));
+  require(probe.member_count() == 1, "cold Cast admission failed");
+  require(probe.read_offsets().empty(), "cold preparation imported a current input carrier");
 
   dma::Error allocation_error;
-  gs::Buffer input(dma::allocateDmaBufBuffer(dma::HeapKind::Cma, 4096, {}, &allocation_error));
+  std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> input(
+      dma::allocateDmaBufBuffer(dma::HeapKind::Cma, 4096, {}, &allocation_error), gst_buffer_unref);
   require(bool(input), allocation_error.message().c_str());
   constexpr std::size_t runtime_base = 64;
   if (retained_physical) {
@@ -200,7 +186,7 @@ void admitted_coordinates(std::int64_t logical_offset, bool retained_physical) {
     tr::TensorBufferPublishContract publication;
     publication.stage_key = "producer";
     publication.physical_outputs.push_back({0, 4096, "source"});
-    auto logical = requests[0].publication.contract->logical_outputs[0];
+    auto logical = recipe.publication.contract->logical_outputs[0];
     logical.logical_name = logical.backend_name = logical.segment_name = "source";
     logical.dtype = SIMA_TENSOR_SET_DTYPE_FP32_V1;
     logical.byte_offset = runtime_base + physical.source_byte_offset + logical_offset;
@@ -215,26 +201,16 @@ void admitted_coordinates(std::int64_t logical_offset, bool retained_physical) {
     const bool attached = tr::tensor_buffer_attach_physical_bindings(input.get(), bindings, &error);
     require(attached, error.c_str());
   }
-  gs::Frame frame;
-  frame.members.resize(1);
-  const gs::Correlation correlation{17, 123, "route-test"};
-  okay(stages[0]->bridge->acquire(correlation, frame));
-  const std::array buffers{input.get()};
-  okay(stages[0]->bridge->bind(correlation, buffers, frame));
+  // No numerical member is submitted. The probe performs the original
+  // acquire/bind/retire sequence and releases its actual current producer loans.
+  okay(probe.bind_and_retire(input.get(), 17, 123, "route-test"));
   require(
-      storage->read_offsets ==
+      probe.read_offsets() ==
               std::vector<std::size_t>{std::size_t(physical.source_byte_offset + logical_offset) +
                                        (retained_physical ? runtime_base : 0)} &&
-          storage->read_lengths == std::vector<std::size_t>{96},
+          probe.read_lengths() == std::vector<std::size_t>{96},
       "actual Scheduler binding doubled the upstream base, lost the logical offset, or chose the "
       "wrong source ID");
-  // No numerical member was submitted. Release the validated binding and access
-  // scopes normally; this is carrier/admission coverage, not numerical or DMA qualification.
-  okay(stages[0]->bridge->retire(frame));
-  frame.members.clear();
-  frame.current_loans.clear();
-  frame.lease.reset();
-  frame.output.reset();
   require(gst_buffer_is_writable(input.get()),
           "unsubmitted route retained its current producer loan");
 }
@@ -242,12 +218,10 @@ void admitted_coordinates(std::int64_t logical_offset, bool retained_physical) {
 void rejects_double_base() {
   auto model = complete(64, false);
   model.input_bindings[0].src_physical_byte_offset = model.physical_inputs[0].source_byte_offset;
-  auto storage = std::make_shared<ObservedStorage>();
-  const std::array requests{request(model, storage)};
-  const auto result = gs::prepare_tensor_stages(requests);
-  const auto* error = std::get_if<rt::Error>(&result);
+  test::RouteProbe probe;
+  const auto error = probe.prepare(request(model));
   require(error && error->field == "input.routing", "old doubled-base route was not rejected cold");
-  require(storage->read_offsets.empty(), "invalid route acquired a current producer loan");
+  require(probe.read_offsets().empty(), "invalid route acquired a current producer loan");
 }
 } // namespace
 

@@ -54,7 +54,7 @@ Exposed Ports
 
 For automation and tool integrations, use JSON output:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat --json
 </ShellCommand>
 
@@ -63,7 +63,7 @@ neat --json
 To update the Neat Library runtime, `neat-insight`, and installed `sima-cli`
 playbooks from the detected channel, run:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update
 </ShellCommand>
 

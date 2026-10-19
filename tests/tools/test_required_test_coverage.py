@@ -155,6 +155,7 @@ def test_required_nonstrict_capability_registration_still_rejects_actual_skip(tm
 @pytest.mark.parametrize('name', [
     'test_perf_schema', 'test_perf_classifier', 'test_perf_comparator',
     'test_perf_matrix_failfast', 'test_graph_run_schema', 'test_graph_run_visualizer',
+    'test_perf_encoder_matrix',
 ])
 def test_exact_perf_host_contracts_resolve_registered_working_directory(name, tmp_path):
     script = ROOT / 'tests/perf/tools' / (name + '.py')
@@ -194,3 +195,187 @@ def test_inventory_workflow_uses_required_accounting_without_changing_selector()
     workflow = (ROOT / '.github/workflows/vulcan-ci.yml').read_text()
     assert 'COVERAGE_DIR=_work/coverage/package-inventory COVERAGE_PROFILE=required' in workflow
     assert '--label-regex "devkit-package-inventory"' in workflow
+
+
+def kernel_runner_host_selection():
+    candidate = selection([('LABELS', ['host', 'strict', 'unit', 'architecture'])])
+    candidate['tests'][0].update(
+        name='unit_kernel_runner_default_contract',
+        command=[sys.executable, str(ROOT / 'tests/tools/check_kernel_runner_default.py'),
+                 '--source-root', str(ROOT)],
+    )
+    return candidate
+
+
+def test_kernel_runner_host_contract_accepts_registered_source_root_form():
+    # Keep the positive fixture tied to the actual build-tree registration.
+    registration = (ROOT / 'tests/CMakeLists.txt').read_text().split(
+        'simaneat_add_test(NAME unit_kernel_runner_default_contract', 1)[1].split(')', 1)[0]
+    assert registration.split() == [
+        'COMMAND', '${Python3_EXECUTABLE}',
+        '${CMAKE_CURRENT_SOURCE_DIR}/tools/check_kernel_runner_default.py',
+        '--source-root', '${PROJECT_SOURCE_DIR}',
+    ]
+    candidate = kernel_runner_host_selection()
+    assert coverage.validate_selection(candidate, 'required', require_guarded=True, environment={}) == [
+        'unit_kernel_runner_default_contract']
+
+
+@pytest.mark.parametrize('change', [
+    'wrong_root', 'missing_root', 'relative_root', 'wrong_flag', 'extra_argument',
+    'missing_source_root_arguments', 'changed_script', 'wrong_interpreter',
+])
+def test_kernel_runner_host_contract_rejects_unreviewed_authority(tmp_path, change):
+    candidate = kernel_runner_host_selection()
+    command = candidate['tests'][0]['command']
+    if change == 'wrong_root':
+        command[3] = str(tmp_path)
+    elif change == 'missing_root':
+        command[3] = str(tmp_path / 'not-present')
+    elif change == 'relative_root':
+        command[3] = os.path.relpath(ROOT)
+    elif change == 'wrong_flag':
+        command[2] = '--other-root'
+    elif change == 'extra_argument':
+        command.append('--unreviewed')
+    elif change == 'missing_source_root_arguments':
+        del command[2:]
+    elif change == 'changed_script':
+        script = tmp_path / 'check_kernel_runner_default.py'
+        script.write_bytes(Path(command[1]).read_bytes() + b'\n# unreviewed change\n')
+        command[1] = str(script)
+    else:
+        interpreter = tmp_path / 'not-python'
+        interpreter.write_text('not the approved Python interpreter\n')
+        command[0] = str(interpreter)
+    with pytest.raises(coverage.CoverageError, match='not guarded'):
+        coverage.validate_selection(candidate, 'required', require_guarded=True, environment={})
+
+
+def test_source_root_arguments_do_not_authorize_other_host_scripts():
+    candidate = kernel_runner_host_selection()
+    candidate['tests'][0].update(name='unit_python_runtime_bootstrap')
+    candidate['tests'][0]['command'][1] = str(ROOT / 'tests/tools/test_python_runtime_bootstrap.py')
+    with pytest.raises(coverage.CoverageError, match='not guarded'):
+        coverage.validate_selection(candidate, 'required', require_guarded=True, environment={})
+
+
+def test_encoder_runtime_alias_uses_canonical_guarded_registration():
+    cmake = (ROOT / 'tests/CMakeLists.txt').read_text()
+    assert 'simaneat_add_test(NAME image_group_encoder_runtime_test' in cmake
+    assert '\n  add_test(NAME image_group_encoder_runtime_test' not in cmake
+    registration = cmake.split('simaneat_add_test(NAME image_group_encoder_runtime_test', 1)[1].split(')', 1)[0]
+    assert registration.split() == [
+        'COMMAND', 'unit_image_group_runtime_test', '${CMAKE_SOURCE_DIR}/test.jpg', '--encoder',
+    ]
+
+
+exact_spec = importlib.util.spec_from_file_location(
+    'exact_selection', ROOT / 'tools/ci/verify_ctest_exact_selection.py')
+exact_selection = importlib.util.module_from_spec(exact_spec)
+exact_spec.loader.exec_module(exact_selection)
+
+
+def exact_lane_regexes():
+    import re
+    source = (ROOT / 'scripts/ci/run_sanitizer_gate.sh').read_text()
+    lanes = {}
+    for name in ('asan_ubsan_tests', 'tsan_tests'):
+        match = re.search(r'(?ms)^' + name + r'=\(\n(.*?)^\)', source)
+        assert match is not None
+        lanes[name] = '^(' + '|'.join(match[1].split()) + ')$'
+    for workflow in ('test-crash-correctness-nightly', 'test-stress-nightly'):
+        source = (ROOT / '.github/workflows' / (workflow + '.yml')).read_text()
+        for variable, regex in re.findall(r"(?m)^\s*([A-Z_]*REGEX)='([^'\n]*)'$", source):
+            lanes[workflow + ':' + variable] = regex
+    assert len(lanes) == 6
+    return lanes
+
+
+@pytest.mark.parametrize('lane,regex', exact_lane_regexes().items())
+def test_every_exact_lane_id_is_required_once(lane, regex):
+    names = exact_selection.expected_ids(regex)
+    inventory = {'tests': [{'name': name} for name in names]}
+    assert exact_selection.validate_selection(regex, inventory) == names
+    for name in names:
+        missing = {'tests': [test for test in inventory['tests'] if test['name'] != name]}
+        with pytest.raises(ValueError, match='Exact test IDs differ'):
+            exact_selection.validate_selection(regex, missing)
+        duplicate = {'tests': inventory['tests'] + [{'name': name}]}
+        with pytest.raises(ValueError, match='Exact test IDs differ'):
+            exact_selection.validate_selection(regex, duplicate)
+        with pytest.raises(ValueError, match='Duplicate requested'):
+            exact_selection.expected_ids('^(' + '|'.join(names + [name]) + ')$')
+
+
+@pytest.mark.parametrize('regex', ['', '.*', '^unit_test$', '^(unit_.*)$', '^(first||last)$'])
+def test_exact_lane_rejects_nonliteral_selectors(regex):
+    with pytest.raises(ValueError, match='Exact-ID'):
+        exact_selection.expected_ids(regex)
+
+
+def test_exact_lane_rejects_disabled_and_unexpected_ids():
+    with pytest.raises(ValueError, match='Disabled requested'):
+        exact_selection.validate_selection('^(fixture)$', {'tests': [
+            {'name': 'fixture', 'properties': [{'name': 'DISABLED', 'value': True}]}]})
+    with pytest.raises(ValueError, match='Exact test IDs differ'):
+        exact_selection.validate_selection('^(fixture)$', {'tests': [
+            {'name': 'fixture'}, {'name': 'unexpected'}]})
+
+
+def test_exact_lane_cli_only_collects_registration(tmp_path, monkeypatch, capsys):
+    calls = []
+    def collect(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, json.dumps({'tests': [{'name': 'fixture'}]}), '')
+    monkeypatch.setattr(sys, 'argv', ['verify_ctest_exact_selection.py', '--test-dir', str(tmp_path),
+                                     '--regex', '^(fixture)$'])
+    monkeypatch.setattr(exact_selection.subprocess, 'run', collect)
+    assert exact_selection.main() == 0
+    assert calls == [['ctest', '--test-dir', str(tmp_path), '--show-only=json-v1',
+                      '--fixture-exclude-any', '.*', '-R', '^(fixture)$']]
+    assert json.loads(capsys.readouterr().out)['native_execution'] is False
+
+
+def test_exact_lane_gate_precedes_each_execution_and_preserves_scope():
+    sanitizer = (ROOT / 'scripts/ci/run_sanitizer_gate.sh').read_text()
+    guard = 'python3 tools/ci/verify_ctest_exact_selection.py --test-dir "${TEST_DIR}" --regex "${regex}"'
+    assert guard in sanitizer
+    assert sanitizer.index(guard) < sanitizer.index('ctest --test-dir "${TEST_DIR}"')
+    for name, variables in [('test-crash-correctness-nightly', ('CRITICAL_REGEX', 'REPEAT_REGEX')),
+                            ('test-stress-nightly', ('STRESS_REGEX', 'REPEAT_REGEX'))]:
+        workflow = (ROOT / '.github/workflows' / (name + '.yml')).read_text()
+        for variable in variables:
+            guard = 'python3 tools/ci/verify_ctest_exact_selection.py --test-dir "${TEST_DIR}" --regex "${' + variable + '}"'
+            assert workflow.count(guard) == 1
+            execution = workflow.index('-R "${' + variable + '}"')
+            assert workflow.index(guard) < execution
+        assert '--repeat "until-fail:${REPEAT_COUNT}"' in workflow
+        assert "github.event.inputs.repeat_count || '20'" in workflow
+    stress = (ROOT / '.github/workflows/test-stress-nightly.yml').read_text()
+    assert "github.event.inputs.stress_iters || '120'" in stress
+
+
+def test_exact_lane_ignores_automatic_fixture_ids_only_during_collection(tmp_path, monkeypatch):
+    (tmp_path / 'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.16)
+project(exact_ids NONE)
+enable_testing()
+add_test(NAME setup COMMAND never_execute_this_test)
+add_test(NAME selected COMMAND never_execute_this_test)
+add_test(NAME cleanup COMMAND never_execute_this_test)
+set_tests_properties(setup PROPERTIES FIXTURES_SETUP example)
+set_tests_properties(cleanup PROPERTIES FIXTURES_CLEANUP example)
+set_tests_properties(selected PROPERTIES FIXTURES_REQUIRED example)
+''')
+    build = tmp_path / 'build'
+    subprocess.run(['cmake', '-S', str(tmp_path), '-B', str(build)],
+                   check=True, capture_output=True)
+    command = ['ctest', '--test-dir', str(build), '--show-only=json-v1', '-R', '^(selected)$']
+    regular = json.loads(subprocess.check_output(command, text=True))
+    assert {test['name'] for test in regular['tests']} == {'setup', 'selected', 'cleanup'}
+    monkeypatch.setattr(sys, 'argv', ['verify_ctest_exact_selection.py', '--test-dir', str(build),
+                                     '--regex', '^(selected)$'])
+    assert exact_selection.main() == 0
+    # The preflight changed neither registration nor the real execution command.
+    after = json.loads(subprocess.check_output(command, text=True))
+    assert {test['name'] for test in after['tests']} == {'setup', 'selected', 'cleanup'}

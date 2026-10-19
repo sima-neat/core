@@ -89,7 +89,7 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   const auto& selected_output = runtime.logical_outputs.front();
   if (selected_output.backend_output_index != 0 || selected_output.physical_index != 0 ||
       runtime.physical_outputs.front().physical_index != 0 ||
-      payload.output_tensors.front().storage.nbytes == 0U ||
+      payload.output_tensors.front().descriptor().storage.nbytes == 0U ||
       (!selected_output.stride_bytes.empty() &&
        selected_output.stride_bytes.size() != selected_output.shape.size())) {
     throw std::invalid_argument("Preproc ROI-list: inconsistent admitted output descriptor/view");
@@ -99,13 +99,15 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   const auto source_bytes = multiply(frame_bytes, source_count);
   const std::vector<int> source_shape{source_count, height, width, channels};
   std::string detail;
+  sima_ev_tensor_desc source_descriptor{};
   if (!tensorsemantics::build_dense_tensor_desc(
-          source_shape, "UINT8", "NHWC", &payload.input_tensors.front(), &detail,
+          source_shape, "UINT8", "NHWC", &source_descriptor, &detail,
           "missing source descriptor", "invalid source rank", "invalid source dimension",
           "invalid source dtype", "invalid source stride")) {
     throw std::invalid_argument("Preproc ROI-list: " + detail);
   }
-  payload.input_tensors.front().storage.nbytes = source_bytes;
+  source_descriptor.storage.nbytes = source_bytes;
+  payload.input_tensors.front() = AuthoredTensorDescriptor(source_descriptor, "UINT8");
   // Public PreprocOptions keeps HWC positional accessors. N is explicit only
   // in the typed/logical source descriptor, not in its image-shape option.
   payload.input_shapes = {{height, width, channels}};
@@ -128,11 +130,11 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   runtime.physical_outputs.front().size_bytes = multiply(slot_bytes, roi_capacity);
   auto& output = runtime.logical_outputs.front();
   const auto output_axes =
-      tensorsemantics::host_axis_semantics_from_ev(payload.output_tensors.front().shape);
+      tensorsemantics::host_axis_semantics_from_ev(payload.output_tensors.front().descriptor().shape);
   const auto batch_axis = tensorsemantics::find_axis(output_axes, TensorAxisSemantic::N);
   if (batch_axis) {
     if (*batch_axis != 0U || *batch_axis >= output.shape.size() || output.shape[*batch_axis] != 1 ||
-        payload.output_tensors.front().shape.sizes[*batch_axis] != 1) {
+        payload.output_tensors.front().descriptor().shape.sizes[*batch_axis] != 1) {
       throw std::invalid_argument("Preproc ROI-list: output descriptor is not one member");
     }
     output.shape[*batch_axis] = roi_capacity;

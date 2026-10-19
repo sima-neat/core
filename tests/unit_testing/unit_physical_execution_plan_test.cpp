@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <chrono>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -79,10 +80,64 @@ void add_unary(sc::ModelExecutionPlanData& data, sc::OpKind kind, std::string na
   data.ops.push_back(std::move(op));
 }
 
+void test_padding_and_tessellation_have_distinct_cohorts() {
+  sc::ModelExecutionPlanData data;
+  for (sc::ValueId id = 0; id < 6U; ++id) {
+    data.values.push_back(value(id, "value_" + std::to_string(id), id < 2U ? "FP32" : "INT8"));
+  }
+  data.model_inputs = {0U, 1U};
+  sc::StorageBinding padded;
+  padded.carrier_id = 2U;
+  padded.physical_span = 16U;
+  padded.stride_bytes = {16, 16, 16, 1};
+  padded.channel_alignment = 16U;
+  data.values[2].storage_binding = padded;
+  data.values[4].representation = sc::ValueRepresentation::Tessellated;
+  add_unary(data, sc::OpKind::Quantize, "padded_quant", 0U, 2U,
+            sc::QuantizeOpConfig{"INT8", 8, "TONEAREST", {{0.25, -7}}});
+  add_unary(data, sc::OpKind::Quantize, "quant", 1U, 3U,
+            sc::QuantizeOpConfig{"INT8", 8, "TONEAREST", {{0.25, -7}}});
+  add_unary(data, sc::OpKind::Tessellate, "tess", 3U, 4U,
+            sc::TessellateOpConfig{{1, 1, 1, 16}, false, false, "INT8"});
+  sc::OpSpec mla;
+  mla.id = 3U;
+  mla.sequence = 4U;
+  mla.name = "mla";
+  mla.processor = "MLA";
+  mla.kind = sc::OpKind::Mla;
+  mla.inputs = {2U, 4U};
+  mla.outputs = {5U};
+  mla.config = sc::MlaOpConfig{"model.elf", 4};
+  data.ops.push_back(mla);
+  data.backend_ports = {
+      {0U, sc::BackendPortDirection::Input, 0U, "data.ifm.0", 2U, 16U, 4096U,
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly},
+      {0U, sc::BackendPortDirection::Input, 1U, "data.ifm.1", 4U, 16U, 4096U,
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly},
+      {0U, sc::BackendPortDirection::Output, 0U, "data.ofm.b0", 5U, 16U, 4096U,
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly}};
+  data.model_outputs = {{0U, "output", 5U}};
+  std::string error;
+  const auto semantic = sc::ModelExecutionPlan::create(std::move(data), &error);
+  require(semantic.has_value(), "mixed padding fixture is valid: " + error);
+  const auto physical = sc::PhysicalExecutionLowerer::lower(*semantic, &error);
+  require(physical.has_value(), "mixed padding fixture lowers: " + error);
+  std::vector<const sc::PhysicalCommand*> cvu;
+  for (const auto& command : physical->commands) {
+    if (command.engine == sc::PhysicalEngine::Cvu)
+      cvu.push_back(&command);
+  }
+  require(cvu.size() == 2U && cvu[0]->implementation_id == "quanttess" &&
+              cvu[1]->implementation_id == "quanttess" && cvu[0]->cohort_id != cvu[1]->cohort_id &&
+              cvu[0]->members.front().pad_output_channels !=
+                  cvu[1]->members.front().pad_output_channels,
+          "physical padding and semantic tessellation retain distinct render identities");
+}
+
 sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
                                        bool publish_first_intermediate = false,
                                        bool branch_first_intermediate = false,
-                                       bool malformed_first = false) {
+                                       bool malformed_first = false, std::uint32_t batch = 1U) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
   const bool ingress = family == FusedFamily::QuantTess || family == FusedFamily::CastTess;
@@ -211,6 +266,24 @@ sc::ModelExecutionPlan make_fused_plan(FusedFamily family, std::size_t lanes,
     add_unary(data, sc::OpKind::PassThrough, "branch", intermediates.front(), id,
               sc::PassThroughOpConfig{});
     data.model_outputs.push_back({data.model_outputs.size(), "branch_output", id});
+  }
+
+  if (batch > 1U) {
+    for (auto& tensor : data.values) {
+      tensor.required_bytes *= batch;
+      tensor.logical_shape->front() = batch;
+    }
+    for (auto& op : data.ops) {
+      op.batch_count = batch;
+      for (auto& shape : op.input_shapes)
+        shape.front() = batch;
+      for (auto& shape : op.output_shapes)
+        shape.front() = batch;
+      if (auto* detess = std::get_if<sc::DetessellateOpConfig>(&op.config))
+        detess->frame_shape.front() = batch;
+    }
+    for (auto& port : data.backend_ports)
+      port.physical_extent_bytes *= batch;
   }
 
   std::string error;
@@ -390,12 +463,15 @@ void verify_family_and_capacity(FusedFamily family, std::size_t lanes) {
   std::sort(fused.begin(), fused.end(), [](const auto* left, const auto* right) {
     return left->members.front().ordinal < right->members.front().ordinal;
   });
-  const auto expected_chunks = (lanes + 31U) / 32U;
+  require(!fused.empty() && fused.front()->maximum_members > 0U,
+          "provider supplies member capacity");
+  const auto capacity = fused.front()->maximum_members;
+  const auto expected_chunks = (lanes + capacity - 1U) / capacity;
   require(fused.size() == expected_chunks,
-          family_name(family) + " has exactly ceil(N/32) submissions");
+          family_name(family) + " has exactly the provider-capacity number of submissions");
   std::size_t seen = 0U;
   for (std::size_t chunk = 0; chunk < fused.size(); ++chunk) {
-    const auto expected = std::min<std::size_t>(32U, lanes - seen);
+    const auto expected = std::min<std::size_t>(capacity, lanes - seen);
     require(fused[chunk]->members.size() == expected,
             family_name(family) + " chunk has exact capacity split");
     const auto expected_role = family == FusedFamily::QuantTess || family == FusedFamily::CastTess
@@ -527,6 +603,106 @@ void test_dependency_tracker_chunk_failure() {
           "partial capacity completion cannot publish frame success");
 }
 
+void test_batch_lowering_performance_and_determinism() {
+  using Clock = std::chrono::steady_clock;
+  constexpr unsigned iterations = 100U;
+  for (const auto batches : {1U, 2U, 4U, 33U}) {
+    const auto semantic = make_fused_plan(FusedFamily::QuantTess, 1U, false, false, false, batches);
+    std::string error;
+    const auto expected = sc::PhysicalExecutionLowerer::lower(semantic, &error);
+    require(expected.has_value(), "performance fixture lowers: " + error);
+    double total_ms = 0.0;
+    double maximum_ms = 0.0;
+    for (unsigned iteration = 0U; iteration < iterations; ++iteration) {
+      const auto start = Clock::now();
+      const auto physical = sc::PhysicalExecutionLowerer::lower(semantic, &error);
+      const double elapsed =
+          std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+      require(physical && physical->deterministic_digest_material ==
+                              expected->deterministic_digest_material,
+              "repeated batch compilation preserves the complete physical plan");
+      total_ms += elapsed;
+      maximum_ms = std::max(maximum_ms, elapsed);
+    }
+    std::cout << "physical_lowering_performance batches=" << batches << " iterations=" << iterations
+              << " mean_ms=" << total_ms / iterations << " max_ms=" << maximum_ms << '\n';
+  }
+}
+
+void test_batch_samples_wait_for_all_chunks() {
+  std::string error;
+  const auto single =
+      sc::PhysicalExecutionLowerer::lower(make_fused_plan(FusedFamily::QuantTess, 1U), &error);
+  require(single.has_value(), "capacity query fixture lowers: " + error);
+  const auto prototype = commands(*single, "quanttess");
+  require(prototype.size() == 1U && prototype.front()->maximum_members > 0U,
+          "Kernels supplies the fused operation's member capacity");
+  const auto capacity = prototype.front()->maximum_members;
+  const auto semantic =
+      make_fused_plan(FusedFamily::QuantTess, capacity + 1U, false, false, false, 33U);
+  const auto physical = sc::PhysicalExecutionLowerer::lower(semantic, &error);
+  require(physical.has_value(), "batched fused fixture lowers: " + error);
+  auto fused = commands(*physical, "quanttess");
+  std::sort(fused.begin(), fused.end(), [](const auto* a, const auto* b) {
+    return a->members.front().ordinal < b->members.front().ordinal;
+  });
+  require(fused.size() == 2U && fused[0]->members.size() == capacity &&
+              fused[1]->members.size() == 1U,
+          "split independent tensor members, never expand batch into submissions");
+  const auto& mla = physical->commands.back();
+  require(mla.engine == sc::PhysicalEngine::Mla && mla.predecessors.size() == 2U,
+          "MLA waits for every whole-batch tensor chunk");
+  for (const auto* chunk : fused) {
+    require(chunk->batch_size == 33U && chunk->predecessors.empty(),
+            "each independent chunk retains the whole batch");
+    for (const auto& member : chunk->members) {
+      require(member.batch_index == 0U && member.batch_count == 1U,
+              "canonical member is not an artificial sample slice");
+      for (const auto origin : member.semantic_chain) {
+        require(physical->command_for_semantic_op[origin] == chunk->id &&
+                    physical->commands_for_semantic_op[origin] ==
+                        std::vector<sc::PhysicalCommandId>{chunk->id},
+                "semantic operations retain their single actual command owner");
+      }
+    }
+  }
+  auto tracker = sc::PhysicalExecutionTracker::create(*physical, &error);
+  require(tracker.has_value(), "whole-batch provenance is accepted: " + error);
+  require(tracker->claim(fused[0]->id) && tracker->complete(fused[0]->id) &&
+              !tracker->ready(mla.id),
+          "partial tensor chunk completion cannot submit MLA");
+  require(tracker->claim(fused[1]->id) && tracker->complete(fused[1]->id) && tracker->ready(mla.id),
+          "all whole-batch inputs make MLA ready");
+  tracker->reset();
+  require(tracker->claim(fused[0]->id) && tracker->complete(fused[0]->id) &&
+              tracker->claim(fused[1]->id) && tracker->fail(fused[1]->id) &&
+              tracker->state(mla.id) == sc::PhysicalCommandState::Blocked,
+          "a failed tensor chunk blocks MLA");
+  auto sliced = *physical;
+  sliced.commands[fused[0]->id].members.front().batch_index = 1U;
+  require(!sc::PhysicalExecutionTracker::create(sliced, &error),
+          "sample slicing cannot masquerade as an admitted whole-batch member");
+}
+
+void test_batched_detess_keeps_full_output_conversion() {
+  for (const auto family : {FusedFamily::DetessCast, FusedFamily::DetessDequant}) {
+    std::string error;
+    const auto plan = make_fused_plan(family, 1U, false, false, false, 2U);
+    const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
+    require(physical.has_value(), "batched Detess egress lowers: " + error);
+    const auto fused = commands(*physical, operation(family));
+    require(fused.size() == 1U && fused.front()->batch_size == 2U &&
+                fused.front()->members.size() == 1U &&
+                fused.front()->members.front().semantic_chain.size() == 2U &&
+                fused.front()->members.front().batch_count == 1U &&
+                commands(*physical, "detess").empty() &&
+                commands(*physical, family == FusedFamily::DetessCast ? "cast" : "dequant").empty(),
+            "whole-batch DetessCast/DetessDequant remain fused without intermediate storage");
+    require(sc::PhysicalExecutionTracker::create(*physical, &error).has_value(),
+            "fused egress retains complete command provenance: " + error);
+  }
+}
+
 void test_dependency_tracker_cross_engine_parallelism() {
   sc::PhysicalExecutionPlan plan;
   plan.commands = {
@@ -630,6 +806,7 @@ void test_exact_physical_role_placement_precedes_coarse_target() {
 } // namespace
 
 int main() {
+  test_padding_and_tessellation_have_distinct_cohorts();
   test_all_families_at_capacity_boundaries();
   test_public_and_branch_barriers_do_not_fuse_observed_edge();
   test_relation_transparency_rejects_offset_and_materialization();
@@ -637,6 +814,9 @@ int main() {
   test_overlapping_mandatory_pairs_reject_without_scan_order_choice();
   test_deterministic_repeat();
   test_dependency_tracker_chunk_failure();
+  test_batch_samples_wait_for_all_chunks();
+  test_batch_lowering_performance_and_determinism();
+  test_batched_detess_keeps_full_output_conversion();
   test_dependency_tracker_cross_engine_parallelism();
   test_exact_physical_role_placement_precedes_coarse_target();
   std::cout << "unit_physical_execution_plan_test: PASS\n";

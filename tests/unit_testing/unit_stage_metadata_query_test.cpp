@@ -146,6 +146,58 @@ RUN_TEST("unit_stage_metadata_query_test", ([] {
                        "authored_source",
                    "compiled input binding must supply the authored wire label");
 
+           // Retain MLA layout/dtype/size projection coverage using typed authority, not the
+           // retired top-level/nested configuration-JSON precedence rules.
+           auto chw_mla = mla;
+           chw_mla.runtime_contract.logical_inputs.front().shape = {1, 3, 112, 224};
+           chw_mla.runtime_contract.logical_inputs.front().layout = "NCHW";
+           chw_mla.runtime_contract.logical_inputs.front().dtype = "INT16";
+           chw_mla.runtime_contract.logical_inputs.front().size_bytes = 150528;
+           chw_mla.runtime_contract.physical_inputs.front().size_bytes = 150528;
+           const auto chw_input = query::mla_input_info_from_tensor(
+               query::mla_input_tensor_info_from_compiled_contract(chw_mla));
+           require(chw_input.layout == TensorLayout::CHW && chw_input.input_dtype == "INT16" &&
+                       chw_input.dims.width == 224 && chw_input.dims.height == 112 &&
+                       chw_input.dims.depth == 3 && chw_input.size_bytes == 150528,
+                   "typed CHW input projection must preserve logical dimensions and exact span");
+
+           contract::LogicalTensorStaticSpec output;
+           output.logical_index = 0;
+           output.physical_index = 0;
+           output.logical_name = "selected_output";
+           output.segment_name = "output_carrier";
+           output.shape = {1, 6, 40, 80};
+           output.layout = "NCHW";
+           output.dtype = "INT8";
+           output.size_bytes = 19200;
+           chw_mla.runtime_contract.logical_outputs = {output};
+           contract::PhysicalBufferStaticSpec carrier;
+           carrier.physical_index = 0;
+           carrier.segment_name = "output_carrier";
+           carrier.size_bytes = 32768;
+           chw_mla.runtime_contract.physical_outputs = {carrier};
+           contract::SimaPluginStaticManifest mla_manifest;
+           mla_manifest.stages.push_back(project_mla_stage_contract(chw_mla));
+           const auto outputs = query::mla_output_tensors_from_manifest(mla_manifest);
+           require(outputs.size() == 1U && outputs.front().name == "selected_output",
+                   "typed MLA output projection must retain selected logical identity");
+           const auto chw_output = query::mla_output_info_from_tensors(outputs);
+           require(chw_output.layout == TensorLayout::CHW && chw_output.data_type == "INT8" &&
+                       chw_output.dims.width == 80 && chw_output.dims.height == 40 &&
+                       chw_output.dims.depth == 6 && chw_output.size_bytes == 19200,
+                   "typed CHW output projection must not substitute physical carrier size");
+           auto& hwc_logical = mla_manifest.stages.front().logical_outputs.front();
+           hwc_logical.shape = {1, 48, 64, 5};
+           hwc_logical.layout = "NHWC";
+           hwc_logical.dtype = "INT16";
+           hwc_logical.size_bytes = 30720;
+           const auto hwc_output = query::mla_output_info_from_tensors(
+               query::mla_output_tensors_from_manifest(mla_manifest));
+           require(hwc_output.layout == TensorLayout::HWC && hwc_output.data_type == "INT16" &&
+                       hwc_output.dims.width == 64 && hwc_output.dims.height == 48 &&
+                       hwc_output.dims.depth == 5 && hwc_output.size_bytes == 30720,
+                   "typed HWC output projection must preserve dtype, dimensions and byte size");
+
            auto preproc = make_preproc_contract();
            const auto dense = query::preproc_output_info_from_compiled_contract(preproc);
            require(

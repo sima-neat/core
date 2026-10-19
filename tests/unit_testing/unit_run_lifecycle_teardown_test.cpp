@@ -290,7 +290,9 @@ void lazy_failure_after_completed_run_closes_on_assertion(bool explicit_close) {
   graph.connect(source, output);
   std::shared_ptr<const runtime::RunCore> observed;
   struct ClearHook {
-    ~ClearHook() { session_test::clear_composition_failure_for_test(); }
+    ~ClearHook() {
+      session_test::clear_composition_failure_for_test();
+    }
   } clear;
   bool caught_assertion = false;
   try {
@@ -388,7 +390,7 @@ void detached_stream_close_keeps_measurement_reads_safe() {
 
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x5C);
   Run run = sima_test::make_async_rgb_run(seed, 8, 8);
-  MeasureScope measurement = run.start_measurement(/*include_plugin_latency=*/false);
+  MeasureScope measurement = run.start_measurement();
   auto core = run_internal::core(run);
   GstElement* appsink = find_appsink(core->pipeline.stream.pipeline_handle());
   require(appsink != nullptr, "measurement teardown: missing appsink");
@@ -580,7 +582,7 @@ void composite_child_handoff_preserves_measurement_node_metrics() {
   graph.connect(source, sink);
 
   Run run = graph.build(TensorList{seed});
-  MeasureScope scope = run.start_measurement(/*include_plugin_latency=*/false);
+  MeasureScope scope = run.start_measurement();
   require(run.push("image", TensorList{seed}), "composite handoff: measured push failed");
   require(run.pull("output", 4000).has_value(), "composite handoff: measured pull failed");
 

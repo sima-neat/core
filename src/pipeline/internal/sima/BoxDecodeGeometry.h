@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 #include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
-#include <simaai/runtime/gstreamer/prepared_tensor_stage.h>
+#include <simaai/scheduler/client/stage.h>
 namespace simaai::neat::pipeline_internal::sima {
 // Install only on the numerical BoxDecode member. Explicit original-size
 // properties retain their precedence; otherwise each frame supplies geometry.

@@ -53,11 +53,11 @@ RUN_TEST("unit_cast_fanout_contract_test", ([] {
                          contracts.stages.front().transport.has_value(),
                      "strided Cast compile");
              const auto& cvu = *contracts.stages.front().transport->processcvu_payload;
-             require(cvu.input_tensors.front().layout_kind == SIMA_EV_LAYOUT_STRIDED &&
-                         cvu.input_tensors.front().storage.addr == 4 &&
-                         cvu.input_tensors.front().layout.strided.strides_bytes[1] == 8 &&
-                         cvu.output_tensors.front().storage.addr == 8 &&
-                         cvu.output_tensors.front().layout.strided.strides_bytes[1] == 16,
+             require(cvu.input_tensors.front().descriptor().layout_kind == SIMA_EV_LAYOUT_STRIDED &&
+                         cvu.input_tensors.front().descriptor().storage.addr == 4 &&
+                         cvu.input_tensors.front().descriptor().layout.strided.strides_bytes[1] == 8 &&
+                         cvu.output_tensors.front().descriptor().storage.addr == 8 &&
+                         cvu.output_tensors.front().descriptor().layout.strided.strides_bytes[1] == 16,
                      "Cast descriptor lost strided offsets");
              const auto& runtime = contracts.stages.front().transport->runtime_contract;
              require(runtime.physical_inputs.front().size_bytes >= 16 &&

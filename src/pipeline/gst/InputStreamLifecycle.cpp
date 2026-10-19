@@ -1,4 +1,3 @@
-#include "pipeline/internal/MemoryCoherencyPolicy.h"
 #include "InputStreamInternal.h"
 
 #include "pipeline/ErrorCodes.h"
@@ -57,8 +56,6 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
                                 std::shared_ptr<void> guard) {
   auto state = std::make_shared<State>();
   state->pipeline = pipeline;
-  state->demand_coherency = pipeline_internal::graph_memory_coherency_mode(pipeline) ==
-      pipeline_internal::MemoryCoherencyMode::DemandLocalV1;
   state->appsrc = appsrc;
   state->appsink = appsink;
   state->src_opt = src_opt;

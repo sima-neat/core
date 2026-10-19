@@ -801,15 +801,16 @@ bool Tensor::validate(std::string* err) const {
   if (semantic.image.has_value()) {
     const ImageSpec::PixelFormat fmt = semantic.image->format;
 
-    if (fmt == ImageSpec::PixelFormat::NV12 || fmt == ImageSpec::PixelFormat::I420) {
+    if (fmt == ImageSpec::PixelFormat::NV12 || fmt == ImageSpec::PixelFormat::NV16 ||
+        fmt == ImageSpec::PixelFormat::I420) {
       if (dtype != simaai::neat::TensorDType::UInt8) {
-        return fail("NV12/I420 tensors must use UInt8 dtype");
+        return fail("NV12/I420/NV16 tensors must use UInt8 dtype");
       }
       const int w = width();
       const int h = height();
       if (w > 0 && h > 0) {
-        if ((w % 2) != 0 || (h % 2) != 0) {
-          return fail("NV12/I420 tensors require even width/height");
+        if ((w % 2) != 0 || (fmt != ImageSpec::PixelFormat::NV16 && (h % 2) != 0)) {
+          return fail("YUV tensor dimensions violate the chroma sampling grid");
         }
       }
     }
@@ -822,9 +823,19 @@ bool Tensor::validate(std::string* err) const {
       return false;
     };
 
-    if (fmt == ImageSpec::PixelFormat::NV12) {
+    if (fmt == ImageSpec::PixelFormat::NV12 || fmt == ImageSpec::PixelFormat::NV16) {
       if (!has_role(PlaneRole::Y) || !has_role(PlaneRole::UV)) {
-        return fail("NV12 tensor missing Y/UV planes");
+        return fail("NV12/NV16 tensor missing Y/UV planes");
+      }
+      if (fmt == ImageSpec::PixelFormat::NV16) {
+        if (planes.size() != 2 || width() <= 0 || height() <= 0)
+          return fail("NV16 requires exactly two planes and positive geometry");
+        for (const auto& p : planes) {
+          const auto expected = p.role == PlaneRole::Y ? std::vector<int64_t>{height(), width()}
+                                                       : std::vector<int64_t>{height(), width()};
+          if (p.shape != expected)
+            return fail("NV16 plane shape differs from its full-height sampling grid");
+        }
       }
     } else if (fmt == ImageSpec::PixelFormat::I420) {
       if (!has_role(PlaneRole::Y) || !has_role(PlaneRole::U) || !has_role(PlaneRole::V)) {

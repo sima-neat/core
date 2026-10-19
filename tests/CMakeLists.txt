@@ -21,14 +21,14 @@ simaneat_add_test(NAME unit_python_runtime_bootstrap
 set_tests_properties(unit_python_runtime_bootstrap PROPERTIES
   TIMEOUT 10 LABELS "strict;unit;python;host")
 
-foreach(host_contract test_hardware_test_supervisor test_ci_dependency_materialization test_guarded_ctest_configuration test_boxrender_dependency test_platform_runtime_dependency)
+foreach(host_contract test_hardware_test_supervisor test_ci_dependency_materialization test_guarded_ctest_configuration test_boxrender_dependency)
   simaneat_add_test(NAME ${host_contract}
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/${host_contract}.py")
   set_tests_properties(${host_contract} PROPERTIES LABELS "unit;host;qualification-safety")
 endforeach()
 
-if (NOT TARGET SimaScheduler::kernel_preparation)
-  message(FATAL_ERROR "Kernel integration tests require SimaScheduler::kernel_preparation")
+if (NOT TARGET SimaScheduler::frontend)
+  message(FATAL_ERROR "Kernel integration tests require SimaScheduler::frontend")
 endif()
 # A separate executable owns an immutable reduced catalogue provider. It must not
 # link sima_neat: the test checks production planning/policy sources against that
@@ -47,7 +47,7 @@ add_executable(unit_boxdecode_publication_test
   unit_testing/unit_boxdecode_publication_test.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodePublication.cpp)
 target_link_libraries(unit_boxdecode_publication_test PRIVATE
-  sima_neat_internal_headers SimaScheduler::kernel_preparation)
+  sima_neat_internal_headers SimaScheduler::frontend)
 target_include_directories(unit_boxdecode_publication_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
 simaneat_add_test(NAME unit_boxdecode_publication_test COMMAND unit_boxdecode_publication_test)
 set_tests_properties(unit_boxdecode_publication_test PROPERTIES
@@ -60,8 +60,8 @@ add_executable(unit_boxdecode_kernel_recipe_test
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodePublication.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/StaticSpecBuilders.cpp)
 target_link_libraries(unit_boxdecode_kernel_recipe_test PRIVATE
-  sima_neat sima_neat_internal_headers SimaScheduler::kernel_preparation SimaScheduler::gstreamer
-  SimaKernels::executables)
+  sima_neat sima_neat_internal_headers SimaScheduler::frontend
+  SimaScheduler::ClientTestSupport)
 target_include_directories(unit_boxdecode_kernel_recipe_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
 simaneat_add_test(NAME unit_boxdecode_kernel_recipe_test COMMAND unit_boxdecode_kernel_recipe_test)
 set_tests_properties(unit_boxdecode_kernel_recipe_test PROPERTIES
@@ -70,8 +70,8 @@ set_tests_properties(unit_boxdecode_kernel_recipe_test PROPERTIES
 add_executable(unit_boxdecode_geometry_test
   unit_testing/unit_boxdecode_geometry_test.cpp)
 target_link_libraries(unit_boxdecode_geometry_test PRIVATE
-  sima_neat sima_neat_internal_headers SimaScheduler::gstreamer
-  SimaScheduler::kernel_preparation SimaScheduler::tensor_stage SimaKernels::executables)
+  sima_neat sima_neat_internal_headers SimaScheduler::frontend
+    SimaScheduler::ClientTestSupport)
 simaneat_add_test(NAME unit_boxdecode_geometry_test COMMAND unit_boxdecode_geometry_test)
 set_tests_properties(unit_boxdecode_geometry_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
@@ -79,11 +79,9 @@ set_tests_properties(unit_boxdecode_geometry_test PROPERTIES
 add_executable(unit_kernel_runner_integration_test
   unit_testing/unit_kernel_runner_integration_test.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/KernelRunnerIntegration.cpp)
-target_compile_definitions(unit_kernel_runner_integration_test PRIVATE
-  SIMA_CORE_DEMAND_COHERENCY_V1=$<BOOL:${SIMA_CORE_DEMAND_COHERENCY_V1}>)
 target_link_libraries(unit_kernel_runner_integration_test PRIVATE
-  sima_neat sima_neat_internal_headers SimaScheduler::gstreamer SimaScheduler::kernel_preparation
-  SimaScheduler::tensor_stage SimaKernels::executables)
+  sima_neat sima_neat_internal_headers SimaScheduler::frontend
+  SimaScheduler::ClientTestSupport)
 simaneat_add_test(NAME unit_kernel_runner_integration_test COMMAND unit_kernel_runner_integration_test)
 set_tests_properties(unit_kernel_runner_integration_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;runtime;gstreamer")
@@ -119,8 +117,8 @@ set(SIMA_TEST_NEAT_PLUGIN_DIR "${SIMANEAT_CTEST_NEAT_PLUGIN_DIR}" CACHE PATH
     "NEAT GStreamer plugin directory used by tests")
 if (NOT SIMA_TEST_NEAT_PLUGIN_DIR)
   set(_SIMA_DEFAULT_NEAT_PLUGIN_DIRS
-    "/usr/lib/aarch64-linux-gnu/neat/gst-plugins"
-    "/lib/aarch64-linux-gnu/neat/gst-plugins"
+    "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/neat/gst-plugins"
+    "/lib/${CMAKE_LIBRARY_ARCHITECTURE}/neat/gst-plugins"
     "/usr/lib/neat/gst-plugins"
     "/lib/neat/gst-plugins"
   )
@@ -137,8 +135,8 @@ set(_SIMA_TEST_NEAT_RUNTIME_DIR_CANDIDATES
   "${SIMA_TEST_NEAT_PLUGIN_DIR}"
   ${SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES}
   ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
-  "/usr/lib/aarch64-linux-gnu/neat/runtime"
-  "/lib/aarch64-linux-gnu/neat/runtime"
+  "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/neat/runtime"
+  "/lib/${CMAKE_LIBRARY_ARCHITECTURE}/neat/runtime"
   "/usr/lib/neat/runtime"
   "/lib/neat/runtime")
 set(_SIMA_TEST_NEAT_RUNTIME_DIRS "")
@@ -201,33 +199,22 @@ add_custom_target(prepare_perf_codec_fixtures
   VERBATIM
 )
 
-# Keep installer package-recovery and devkit-recovery behavior in the normal
-# CTest/DevKit gate. Copy every file the test sources below the build tests root
-# so the Vulcan extras path rebasing also makes this test self-contained on the
-# ARM64 runner, and pass each script path explicitly: the test cannot derive
-# them from its own location once it runs from the build tree.
+# Bundle the installers beside their test so installed extras can run them.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_install_neat_framework_native_restore.py"
   "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
   COPYONLY
 )
-configure_file(
-  "${CMAKE_SOURCE_DIR}/tools/install_neat_framework.sh"
-  "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
-  COPYONLY
-)
-configure_file(
-  "${CMAKE_SOURCE_DIR}/scripts/fix_devkit_runtime.sh"
-  "${CMAKE_CURRENT_BINARY_DIR}/tools/fix_devkit_runtime.sh"
-  COPYONLY
-)
+foreach(_installer install_neat_framework.sh install_sentinel.sh)
+  configure_file("${CMAKE_SOURCE_DIR}/tools/${_installer}"
+    "${CMAKE_CURRENT_BINARY_DIR}/tools/${_installer}" COPYONLY)
+endforeach()
 simaneat_add_test(
   NAME unit_install_neat_framework_native_restore_test
   COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
           --installer "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
-          --recovery "${CMAKE_CURRENT_BINARY_DIR}/tools/fix_devkit_runtime.sh"
 )
 set_tests_properties(
   unit_install_neat_framework_native_restore_test
@@ -412,7 +399,7 @@ set_property(TEST unit_000_devkit_package_inventory_test APPEND PROPERTY
 # No manual gst_init override, device submission, or legacy numerical plugin.
 foreach(_consumer unit_core_startup_contract_test unit_core_startup_missing_runner_test)
   add_executable(${_consumer} installed_startup/startup_consumer.cpp)
-  target_link_libraries(${_consumer} PRIVATE sima_neat SimaScheduler::kernel_preparation)
+  target_link_libraries(${_consumer} PRIVATE sima_neat SimaScheduler::frontend)
 endforeach()
 target_sources(unit_core_startup_missing_runner_test PRIVATE installed_startup/missing_runner.cpp)
 target_link_options(unit_core_startup_missing_runner_test PRIVATE -Wl,--export-dynamic)
@@ -485,6 +472,7 @@ set(UNIT_TESTS
   unit_graph_strict_sync_test
   unit_header_neat_compile_surface_test
   unit_realtime_link_options_test
+  unit_realtime_processcvu_input_queue_test
   unit_verbose_options_surface_test
   unit_gst_data_adapter_edge_test
   unit_groups_test
@@ -500,6 +488,8 @@ set(UNIT_TESTS
   unit_http_mjpeg_decoded_group_test
   unit_rtsp_encoded_input_group_test
   unit_input_policy_test
+  unit_input_metadata_geometry_test
+  unit_input_metadata_admission_test
   unit_input_planner_semantics_test
   unit_preprocess_meta_validation_test
   unit_preprocess_roi_meta_test
@@ -521,6 +511,9 @@ set(UNIT_TESTS
   unit_neattensor_cvmat_test
   unit_asset_utils_readable_model_tar_test
   unit_benchmark_measurement_contract_test
+  unit_benchmark_telemetry_test
+  unit_benchmark_report_test
+  unit_benchmark_layer_stats_test
   unit_measurement_consistency_test
   unit_lttng_plugin_percentiles_test
   unit_lttng_trace_identity_test
@@ -553,7 +546,7 @@ set(UNIT_TESTS
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
   unit_dmabuf_eligibility_test
-  unit_afe_mpk_v2_decoder_test
+  unit_mpk_decoder_test
   unit_physical_execution_plan_test
   unit_tvm_host_module_graph_test
   unit_modelpack_multi_mla_plan_test
@@ -564,6 +557,7 @@ set(UNIT_TESTS
   unit_modelpack_compact_extraction_path_test
   unit_outputspec_test
   unit_pcie_nodes_test
+  unit_pcie_output_capacity_test
   unit_jpeg_framing_nodes_test
   unit_rtp_jpeg_end_marker_test
   unit_multipart_header_capture_test
@@ -632,6 +626,8 @@ set(UNIT_TESTS
   unit_transport_output_nodes_test
   unit_nodes_test
   unit_visual_frontend_node_api_test
+  unit_image_transform_frontends_test
+  unit_image_transform_render_test
   unit_plugin_failure_messages_test
 )
 
@@ -666,13 +662,14 @@ simaneat_add_test(NAME unit_kernel_runner_instances_test
 simaneat_append_ctest_env(unit_kernel_runner_instances_test)
 set_tests_properties(unit_kernel_runner_instances_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
-target_link_libraries(unit_graph_build_ownership_test PRIVATE SimaScheduler::kernel_preparation)
+target_link_libraries(unit_graph_build_ownership_test PRIVATE SimaScheduler::frontend)
 target_link_libraries(unit_manifest_context_exception_test PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(unit_model_archive_loader_test PRIVATE ${CMAKE_DL_LIBS})
 
 # The MPK-derived publication regression directly invokes Scheduler's public
 # storage/admission API; do not rely on transitive Core DSO symbol leakage.
-target_link_libraries(unit_afe_mpk_v2_decoder_test PRIVATE
-  SimaScheduler::gstreamer SimaScheduler::tensor_stage)
+target_link_libraries(unit_mpk_decoder_test PRIVATE
+  SimaScheduler::frontend )
 
 target_sources(unit_output_metadata_cache_contract_test
   PRIVATE runtime_segment_allocator_fixture.cpp)
@@ -712,28 +709,28 @@ foreach(binding loan alias different-span broadcast whole-retain whole-mixed who
   set_tests_properties(${case_name} PROPERTIES LABELS "strict;unit;contracts" TIMEOUT 30)
 endforeach()
 
-# This fixture authors a typed Cast executable itself; it must not rely on a
-# factory symbol incidentally exported by the Core shared library.
+# This fixture uses Scheduler-owned test references; it must not rely on
+# factory symbols incidentally exported by the Core shared library.
 if (TARGET unit_fused_realtime_fast_path_options_test)
-  target_link_libraries(unit_fused_realtime_fast_path_options_test PRIVATE SimaKernels::cast)
+  target_link_libraries(unit_fused_realtime_fast_path_options_test PRIVATE SimaScheduler::ClientTestSupport)
 endif()
 
-foreach(canonical_test unit_canonical_transform_lowering_test unit_canonical_visual_lowering_test unit_preproc_frame_adapter_test)
+foreach(canonical_test unit_image_transform_render_test unit_image_transform_frontends_test unit_canonical_transform_lowering_test unit_canonical_visual_lowering_test unit_preproc_frame_adapter_test)
   target_link_libraries(${canonical_test} PRIVATE
-    SimaScheduler::kernel_preparation SimaScheduler::TensorBuffer SimaKernels::executables)
+    SimaScheduler::frontend  SimaScheduler::ClientTestSupport)
 endforeach()
 
 # Validate compiler carrier coordinates through real generic admission/binding.
 # No numerical submission, but production allocation still uses the device DMA heap.
 target_link_libraries(unit_canonical_graph_stage_admission_test PRIVATE
-  SimaScheduler::tensor_stage SimaScheduler::kernel_preparation SimaScheduler::DmaBufPool)
+  SimaScheduler::frontend  )
 set_tests_properties(unit_canonical_graph_stage_admission_test PROPERTIES
   LABELS "strict;unit;contracts;modalix" RESOURCE_LOCK "accelerator-device")
 
 # Check Core-authored canonical requests against the installed generic Scheduler.
 target_link_libraries(unit_processcvu_v2_mpk_encoding_test PRIVATE
-  SimaScheduler::kernel_preparation SimaScheduler::tensor_stage
-  SimaScheduler::DmaBufPool SimaScheduler::TensorBuffer)
+  SimaScheduler::frontend
+  )
 
 # Exercise mutable current-frame facts with both the default reader policy and
 # the explicit legacy static-preprocess shortcut. Compact facts always refresh.
@@ -747,6 +744,9 @@ if (TARGET unit_compact_core_decode_test)
   set_property(TEST unit_compact_core_decode_static_preproc_test APPEND PROPERTY ENVIRONMENT
     "SIMA_INPUTSTREAM_FAST_STATIC_PREPROC_META=1")
 endif()
+if (TARGET unit_benchmark_report_test AND TARGET PkgConfig::YAML)
+  target_link_libraries(unit_benchmark_report_test PRIVATE PkgConfig::YAML)
+endif()
 
 # Optional frozen-corpus gate. The normal unit target uses synthetic JSON/ELF
 # fixtures and is always available; this integration test is registered only
@@ -758,7 +758,7 @@ if (SIMANEAT_EVO_MPK_CORPUS_DIR)
     NAME integration_legacy_afe_evo_corpus_test
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_legacy_afe_evo_corpus_test.py
-      --validator $<TARGET_FILE:unit_afe_mpk_v2_decoder_test>
+      --validator $<TARGET_FILE:unit_mpk_decoder_test>
       --corpus "${SIMANEAT_EVO_MPK_CORPUS_DIR}"
   )
   simaneat_append_ctest_env(integration_legacy_afe_evo_corpus_test)
@@ -812,6 +812,16 @@ add_pipeline_test(
   ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_image_group_runtime_test.cpp
   ARGS ${CMAKE_SOURCE_DIR}/test.jpg
 )
+
+if (NOT unit_image_group_runtime_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_add_test(NAME image_group_encoder_runtime_test
+    COMMAND unit_image_group_runtime_test ${CMAKE_SOURCE_DIR}/test.jpg --encoder)
+  simaneat_append_ctest_env(image_group_encoder_runtime_test)
+  set_tests_properties(image_group_encoder_runtime_test PROPERTIES
+    LABELS "strict;e2e;codec;encoder"
+    RESOURCE_LOCK "accelerator-device"
+    TIMEOUT 60)
+endif()
 
 add_pipeline_test(
   unit_pipeline_io_test
@@ -876,17 +886,31 @@ endforeach()
 add_pipeline_test(canonical_visual_stage_test
   SOURCES e2e_testing/canonical_visual_stage_test.cpp LOCK_ACCELERATOR)
 target_link_libraries(canonical_visual_stage_test PRIVATE
-  SimaScheduler::kernel_preparation SimaScheduler::tensor_stage SimaScheduler::gstreamer
-  SimaScheduler::DmaBufPool SimaScheduler::TensorBuffer SimaKernels::executables)
+  SimaScheduler::frontend
+    SimaScheduler::ClientTestSupport)
 set_tests_properties(canonical_visual_stage_test PROPERTIES
   TIMEOUT 90 LABELS "strict;e2e;runtime;kernel-runner;modalix-only")
+
+# Actual EV74 image frontends; no provider skips or CPU numerical fallback.
+add_pipeline_test(image_transform_ev_test
+  SOURCES e2e_testing/image_transform_ev_test.cpp LOCK_ACCELERATOR)
+target_link_libraries(image_transform_ev_test PRIVATE
+  SimaScheduler::frontend  )
+target_compile_options(image_transform_ev_test PRIVATE -ffp-contract=off)
+set_tests_properties(image_transform_ev_test PROPERTIES
+  TIMEOUT 300 LABELS "strict;e2e;runtime;kernel-runner;modalix-only")
+simaneat_add_test(NAME image_transform_encoder_ev_test COMMAND image_transform_ev_test --encoder)
+simaneat_append_ctest_env(image_transform_encoder_ev_test)
+set_tests_properties(image_transform_encoder_ev_test PROPERTIES
+  TIMEOUT 90 LABELS "strict;e2e;runtime;kernel-runner;modalix-only;codec"
+  RESOURCE_LOCK "accelerator-device")
 
 add_pipeline_test(kernel_runner_preproc_retention_test
   SOURCES e2e_testing/kernel_runner_preproc_retention_test.cpp
   ARGS --legacy LOCK_ACCELERATOR)
 target_link_libraries(kernel_runner_preproc_retention_test PRIVATE
-  sima_neat_internal_headers SimaScheduler::tensor_stage SimaScheduler::kernel_preparation
-  SimaScheduler::DmaBufPool SimaScheduler::TensorBuffer)
+  sima_neat_internal_headers SimaScheduler::frontend
+  )
 simaneat_add_test(NAME unit_kernel_runner_preproc_contract_test
   COMMAND kernel_runner_preproc_retention_test --preflight-only)
 simaneat_append_ctest_env(unit_kernel_runner_preproc_contract_test)
@@ -906,7 +930,7 @@ endforeach()
 add_pipeline_test(kernel_runner_public_cast_test
   SOURCES e2e_testing/kernel_runner_public_cast_test.cpp
   ARGS native LOCK_ACCELERATOR)
-target_link_libraries(kernel_runner_public_cast_test PRIVATE SimaScheduler::gstreamer)
+target_link_libraries(kernel_runner_public_cast_test PRIVATE SimaScheduler::frontend)
 set_tests_properties(kernel_runner_public_cast_test PROPERTIES LABELS "strict;e2e;runtime;kernel-runner")
 foreach(mode compact)
   simaneat_add_test(NAME kernel_runner_public_preproc_${mode}_test COMMAND preproc_standalone_test ${mode})
@@ -950,6 +974,17 @@ if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLAC
   set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
     RESOURCE_LOCK "accelerator-device;udp")
   set_tests_properties(video_sender_adaptive_ingress_e2e_test PROPERTIES TIMEOUT 600)
+
+  foreach(encoder_case IN ITEMS h264 h265 mjpeg concurrent)
+    set(encoder_test_name "encoder_${encoder_case}_contract_test")
+    add_test(NAME ${encoder_test_name}
+      COMMAND video_sender_adaptive_ingress_e2e_test --scenario encoder_${encoder_case})
+    simaneat_append_ctest_env(${encoder_test_name})
+    set_tests_properties(${encoder_test_name} PROPERTIES
+      LABELS "strict;e2e;codec;encoder;video_sender"
+      RESOURCE_LOCK "accelerator-device;udp"
+      TIMEOUT 120)
+  endforeach()
 
   foreach(shape_case IN ITEMS "680;382" "672;384" "642;480")
     list(GET shape_case 0 shape_width)
@@ -1194,6 +1229,7 @@ endforeach()
 # Performance suites (binary metrics emitters; not default ctest)
 # ------------------------------------------------------------------------------
 set(PERF_TARGETS
+  perf_runtime_encoder_test
   perf_runtime_graph_sync_rgb_test
   perf_runtime_graph_async_rgb_test
   perf_runtime_graph_fanout_test
@@ -1227,7 +1263,8 @@ foreach(target ${PERF_TARGETS})
     )
   endif()
   if (target STREQUAL "perf_runtime_codec_h264_decode_test" OR
-      target STREQUAL "perf_runtime_codec_h265_decode_test")
+      target STREQUAL "perf_runtime_codec_h265_decode_test" OR
+      target STREQUAL "perf_runtime_encoder_test")
     add_dependencies(${target} prepare_perf_codec_fixtures)
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
@@ -1265,6 +1302,7 @@ set(PERF_PYTHON_TESTS
   test_perf_classifier
   test_perf_comparator
   test_perf_matrix_failfast
+  test_perf_encoder_matrix
   test_graph_run_schema
   test_graph_run_visualizer
 )
@@ -1283,6 +1321,11 @@ foreach(perf_tool ${PERF_PYTHON_TOOL_SOURCES})
     COPYONLY
   )
 endforeach()
+# The copied fail-stop test resolves its default profile from this build tree.
+# Materialize the unchanged required data alongside the copied tools, so it
+# reaches the mocked timeout rather than failing baseline admission first.
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/perf/baselines"
+  DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/perf")
 configure_file(
   "${CMAKE_SOURCE_DIR}/tools/visualize_graph_run.py"
   "${CMAKE_BINARY_DIR}/tools/visualize_graph_run.py"
@@ -2007,6 +2050,22 @@ if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLI
     RESOURCE_LOCK "perf-device;accelerator-device")
 endif()
 
+# The normal E2E CI lane selects this strict test via the e2e label. MIP profiling must
+# own an idle MLA, so also exclude every other CTest test while it runs.
+add_pipeline_test_strict(
+  yolov8_model_layer_stats_test
+  e2e_pipelines/obj_detection/yolov8_model_layer_stats_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+if (NOT yolov8_model_layer_stats_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(yolov8_model_layer_stats_test PROPERTIES
+    LABELS "strict;e2e;obj_detection;benchmark;layer-stats"
+    RUN_SERIAL TRUE
+    RESOURCE_LOCK "perf-device;accelerator-device"
+    TIMEOUT 240)
+endif()
+
 add_pipeline_test_long(
   yolov8_boxdecode_model_benchmark_test
   e2e_pipelines/obj_detection/yolov8_boxdecode_model_benchmark_test.cpp
@@ -2131,6 +2190,28 @@ if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  model_seeded_input_capacity_test
+  e2e_testing/model_seeded_input_capacity_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR} mat
+  LOCK_ACCELERATOR
+)
+if (NOT model_seeded_input_capacity_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(model_seeded_input_capacity_test PROPERTIES
+    LABELS "strict;e2e;model;preproc;regression"
+    TIMEOUT 180)
+  foreach(mode tensor sample defaults unseeded oversize_width oversize_height)
+    set(test_name model_seeded_input_capacity_${mode}_test)
+    add_test(NAME ${test_name}
+      COMMAND model_seeded_input_capacity_test ${CMAKE_SOURCE_DIR} ${mode})
+    simaneat_append_ctest_env(${test_name})
+    set_tests_properties(${test_name} PROPERTIES
+      LABELS "strict;e2e;model;preproc;regression"
+      RESOURCE_LOCK "accelerator-device"
+      TIMEOUT 180)
+  endforeach()
+endif()
+
+add_pipeline_test(
   seedless_yolov8_preproc_input_max_smoke_test
   e2e_pipelines/obj_detection/seedless_yolov8_preproc_input_max_smoke_test.cpp
   e2e_pipelines/e2e_utils.cpp
@@ -2234,6 +2315,15 @@ add_pipeline_test(
 
 if (NOT model_unique_names_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST model_unique_names_test APPEND PROPERTY LABELS "e2e;img_classification")
+endif()
+
+add_pipeline_test(
+  model_execution_plan_test
+  e2e_pipelines/obj_detection/model_execution_plan_test.cpp
+)
+
+if (NOT model_execution_plan_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST model_execution_plan_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -2394,7 +2484,7 @@ if (NOT decoder_multirun_admission_boundary_test IN_LIST PIPELINESESSION_TEST_BL
   set_tests_properties(decoder_multirun_admission_boundary_test PROPERTIES TIMEOUT 120)
 endif()
 
-add_pipeline_test_long(
+add_pipeline_test(
   codec_decode_accuracy_test
   e2e_testing/codec_decode_accuracy_test.cpp
 )
@@ -2581,6 +2671,7 @@ foreach(test
     graphpipes_yolo_metadata_sender_16stream_test
     model_resnet50_multi_test
     model_unique_names_test
+    model_execution_plan_test
     resnet50_modelpack_direct
     resnet50_modelpack_jpeg
     resnet50_modelpack_rtsp
@@ -2877,4 +2968,4 @@ foreach(_target yolov8_variant_route_matrix_test graph_migration_legacy_yolov8_v
 endforeach()
 
 # Native recipe assertions use the same public executable vocabulary as Core.
-target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::tensor_stage)
+target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::frontend)

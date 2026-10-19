@@ -28,7 +28,7 @@ sidebar_position: 2
 
 Встановіть поточну версію Neat SDK 2.1:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
@@ -56,7 +56,7 @@ sima-cli neat install sdk@release-2.1
 
 Відкрийте командний рядок Neat SDK за допомогою:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk neat
 </ShellCommand>
 
@@ -65,7 +65,7 @@ sima-cli sdk neat
 Neat Insight доступний у межах SDK і його можна відкрити в браузері.
 У межах оболонки SDK виконайте команду:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 neat
 </ShellCommand>
 
@@ -75,7 +75,7 @@ neat
 
 Ви можете отримати доступ до VS Code через браузер за допомогою інтерфейсу користувача SDK (SDK Code UI). Після завершення встановлення SDK `sima-cli` виводить URL-адресу інтерфейсу користувача (Code UI) як `codeUI`, наприклад:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 </ShellCommand>
 
@@ -89,14 +89,14 @@ codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 
 Щоб повторно встановити або оновити до поточної версії пакета SDK, повторно запустіть команду встановлення, наведену вище, на хості:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
 Щоб оновити Neat Library у межах наявного контейнера Neat SDK, запустіть Neat
 через командний рядок у середовищі контейнера:
 
-<ShellCommand prompt="username@neat-sdk-latest">
+<ShellCommand prompt="sdk">
 neat update
 </ShellCommand>
 
@@ -108,7 +108,7 @@ neat update
 
 Щоб видалити встановлений контейнер SDK, виконайте команду:
 
-<ShellCommand prompt="user-host-machine">
+<ShellCommand prompt="host">
 sima-cli sdk remove
 </ShellCommand>
 

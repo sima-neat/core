@@ -46,7 +46,7 @@ def test_detect_default_profile():
 
 
 def test_power_monitor_lifecycle_disabled():
-  # Default options are disabled (no I2C), so this is hardware-safe and deterministic.
+  # Default options are disabled (no Sentinel reads), so this is deterministic.
   monitor = pyneat.power.PowerMonitor()
   assert monitor.running() is False
   summary = monitor.summary()

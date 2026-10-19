@@ -135,7 +135,7 @@ Set detection decode options when the route should return decoded boxes, pose re
 | `decode_type` | You need Neat to attach a BoxDecode stage for a detection model. | `Unspecified`; no detection decode intent. |
 | `decode_type_option` | The detection head tensor ordering needs a specific variant. | `Auto`; let the model contract and route planner decide. |
 | `score_threshold` | You want to drop low-confidence candidates during decode. | `0`; keep candidates before later filtering. |
-| `nms_iou_threshold` | The decode path should apply non-max suppression. | `0`; NMS is disabled. |
+| `nms_iou_threshold` | The decode path should apply non-max suppression. | `0`; keep the model's packaged value. When none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box. |
 | `top_k` | You want a hard cap on detections per output. | `0`; no top-K cap. |
 | `num_classes` | The class-head depth cannot be inferred reliably, such as a single-class YOLO split head. | `0`; use MPK metadata or legacy inference. |
 
@@ -416,6 +416,42 @@ for warning in info.warnings:
 
 Treat route warnings as first-class evidence. If the route planner is telling you something odd, do not tune around it. Fix the contract or the options first.
 
+### See what the model executes
+
+Use `execution_plan()` to see the nodes a model runs, where each node runs, and the tensors that flow between them. `Model::execution_plan(...)` takes the same arguments as `build(...)`, builds the model without running a frame, and closes it after reading the plan, so it needs the device.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const simaai::neat::ExecutionPlan plan = model.execution_plan();
+std::cout << plan.to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+plan = model.execution_plan()
+print(plan.to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+The JSON lists the model's graph nodes in pipeline order and one edge between each pair of consecutive nodes.
+
+| Field | Meaning |
+| --- | --- |
+| `model` | Model name, `batch` (frames per MLA run), and `memory` (device memory per frame in flight) |
+| `nodes[].kind` | Node kind, such as `Input`, `Preproc`, `Quant`, `ModelFragment`, `Dequant`, `SimaBoxDecode`, or `Output` |
+| `nodes[].runs_on` | Where the node runs: `A65` (Arm cores), `EV74` (vision processor), or `MLA` |
+| `nodes[].kernel` | The kernel an `EV74` or `A65` node executes |
+| `nodes[].settings` | Resolved `Preproc` and `SimaBoxDecode` settings, named as in `PreprocOptions` and `BoxDecodeOptions` |
+| `edges[].tensors` | Tensors from one node to the next: batch-first `shape`, `dtype`, and `quant` (`scale`, `zero_point`) for quantized tensors |
+
+`SimaBoxDecode` settings show thresholds and `top_k` only when the model or your options set them; otherwise the decoder default applies. The schema is `schemas/execution_plan_v1.schema.json`.
+
 ## Use a model in a Graph
 
 For the common path, add the model directly between a public input and output.
@@ -683,9 +719,15 @@ runner = model.build([tensor], route_options=route)
 
 Use seeded build for evidence and early failure, not as a habit. If the default build already proves the contract, keep the example smaller.
 
+For image input, the seed supplies the current shape and pixel format; it does not
+replace `preprocess.input_max_width`, `input_max_height`, or `input_max_depth`.
+For example, a 640×640 seed with a declared 1920×1920 capacity accepts later
+800×800 and 1920×1080 frames on the same runner. Frames above the capacity are
+rejected. Omitting the limits keeps the same resolved capacity as an unseeded build.
+
 ## Measure model execution
 
-Use `model.benchmark(...)` for a quick synthetic model benchmark. It generates inputs from `input_specs()` and returns headline latency, throughput, and optional power fields. Use it to compare model/runtime changes, not to claim production application throughput.
+Use `model.benchmark(...)` for a quick synthetic model benchmark. It generates inputs from `input_specs()` and returns headline latency, throughput, power, and board telemetry. Use it to compare model/runtime changes, not to claim production application throughput.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -746,7 +788,67 @@ BoxDecode metadata. If you omit them, the benchmark infers geometry from the res
 and model input contracts. These per-run values take precedence over deprecated BoxDecode geometry
 hints in `ModelOptions`. Existing `benchmark(num_samples)` calls keep the same behavior.
 
-Read `avg_power_watts` and `energy_joules` only when the board power monitor produced samples. If power telemetry is unavailable for the board or rail configuration, those fields stay zero.
+### Run length
+
+The benchmark measures single-flight latency, then runs a separate throughput pass. Each pass
+continues until it has measured at least `num_samples` inputs and `min_duration_ms` has elapsed
+(10 s by default), so both passes stop by the same rule and the throughput pass's power and
+temperature readings cover several telemetry samples rather than a short burst. `latency_ms` is the
+mean latency of the latency pass, and `latency_p50_ms`, `latency_p95_ms`, and `latency_p99_ms` are
+its percentiles. `throughput_samples` and `throughput_duration_ms` report what the throughput pass
+measured. For a quick smoke check, set `min_duration_ms` to 0 to stop each pass after `num_samples`
+inputs:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.min_duration_ms = 0;
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.min_duration_ms = 0
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+### Power and board telemetry {#power-and-board-telemetry}
+
+Power and board telemetry come from [Sentinel](/tools/sentinel/), the DevKit telemetry daemon that
+the Neat installer sets up on the board. The benchmark records a Sentinel trace named
+`neat-benchmark-<UTC time>` around the throughput pass and keeps it, so you can open it later with
+Sentinel's own tools. `report.telemetry` summarizes the trace:
+
+| Field | Meaning |
+| --- | --- |
+| `avg_power_watts`, `peak_power_watts` | Mean and highest SoM input power during the throughput pass. |
+| `energy_joules` | Energy to process `num_samples` inputs: average power multiplied by the time the measured throughput needs for `num_samples` inputs. A longer pass does not increase it. |
+| `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA rail power, and every rail the board reports. Boards without an MLA rail report it with `samples == 0`. |
+| `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | On-die sensors at the MLA, APU, CVU, and TOP sites, and the hottest of them in each sample. |
+| `telemetry.board_temperatures_c` | SoM top-side and bottom-side sensors. |
+| `telemetry.cpu_usage_pct` | CPU utilization. Each sample averages the preceding interval, so `maximum` is the busiest interval. |
+| `telemetry.cpu_cores_usage_pct` | Utilization of each CPU core, in core order. A single busy core shows here even when `cpu_usage_pct`, the average over all cores, stays low. |
+| `telemetry.mla_memory_mib` | Memory allocated for the MLA, in MiB. The model allocates it when it loads, so with nothing else running this is the model's MLA memory. |
+| `telemetry.cma_memory_mib` | Used contiguous memory (CMA), in MiB. It includes the MLA memory pool, so do not add it to `mla_memory_mib`. At idle it also includes page cache that Linux borrows from CMA. |
+| `telemetry.linux_memory_used_mib` | Linux used memory, excluding page cache, in MiB. |
+
+Each metric reports `samples`, `mean`, `minimum`, and `maximum`, and `samples == 0` means the board
+did not report it. Memory values cover the whole board, including other running processes. Sentinel samples every 2 s, so a 10 s pass yields about 5 samples.
+
+When Sentinel is not running, another Sentinel trace is already recording, or the pass is too short
+to collect a sample, the benchmark still returns latency and FPS. The power fields stay zero,
+`telemetry.status` names the reason (it is `"ok"` otherwise), and the printed summary shows
+`Power: unavailable (<reason>)`.
+
+### Measure your own loop
 
 Use runner measurement when you own the input loop and want to measure that loop:
 

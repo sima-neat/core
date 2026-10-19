@@ -6,6 +6,8 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "test_utils.h"
+#include <simaai/scheduler/client/tensor_buffer.h>
+#include <algorithm>
 
 #include <atomic>
 #include <cstring>
@@ -19,6 +21,7 @@ namespace sima_test::output_contract {
 namespace neat = simaai::neat;
 namespace internal = neat::pipeline_internal;
 namespace transport = simaai::gst;
+namespace client = simaai::scheduler::client;
 
 template <typename Actual, typename Expected>
 inline void require_equal(const Actual& actual, const Expected& expected,
@@ -30,24 +33,33 @@ inline void require_equal(const Actual& actual, const Expected& expected,
 
 // The installed Runtime, not a hand-authored Core descriptor, is the authority
 // for the physical carrier and logical binding used by each regression oracle.
-inline transport::TensorBufferView admitted_view(GstSample* sample, const std::string& context) {
-  transport::TensorBufferView view;
+inline client::TensorBufferView admitted_view(GstSample* sample, const std::string& context) {
+  client::TensorBufferView view;
   std::string error;
-  require(transport::tensor_buffer_create_view(sample, &view, &error),
+  require(client::tensor_buffer_create_view(sample, &view, &error),
           context + ": Runtime admission: " + error);
   return view;
 }
 
+inline const transport::TensorBufferTensorView*
+find_logical(const client::TensorBufferView& view, int logical_index) {
+  const auto tensors = view.tensors();
+  const auto found = std::find_if(tensors.begin(), tensors.end(), [=](const auto& tensor) {
+    return tensor.logical_index == logical_index;
+  });
+  return found == tensors.end() ? nullptr : &*found;
+}
+
 inline void require_segment_table(const neat::Tensor& tensor,
-                                  const transport::TensorBufferView& admitted,
+                                  const client::TensorBufferView& admitted,
                                   const std::string& context) {
   require(bool(tensor.storage), context + ": missing storage");
-  require_equal(tensor.storage->sima_segments.size(), admitted.segments.size(),
+  require_equal(tensor.storage->sima_segments.size(), admitted.segment_count(),
                 context + ": physical segment count");
-  for (std::size_t i = 0; i != admitted.segments.size(); ++i) {
-    require_equal(tensor.storage->sima_segments[i].name, admitted.segments[i].name,
+  for (std::size_t i = 0; i != admitted.segment_count(); ++i) {
+    require_equal(tensor.storage->sima_segments[i].name, admitted.segment_name(i),
                   context + ": physical segment name " + std::to_string(i));
-    require_equal(tensor.storage->sima_segments[i].size_bytes, admitted.segments[i].size_bytes,
+    require_equal(tensor.storage->sima_segments[i].size_bytes, admitted.segment_size(i),
                   context + ": live physical segment size " + std::to_string(i));
   }
 }

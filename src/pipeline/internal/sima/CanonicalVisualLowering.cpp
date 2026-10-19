@@ -3,8 +3,8 @@
 #include <cstring>
 
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
-using namespace ::simaai::runtime;
-using ::simaai::scheduler::check_kernel;
+using namespace ::simaai::scheduler::client;
+using ::simaai::scheduler::client::check_kernel;
 namespace {
 Error invalid(const char* field, const char* message) {
   return {ErrorCode::InvalidRequest, field, message};
@@ -23,7 +23,7 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
   if (cfg.width <= 0 || cfg.height <= 0 || cfg.batch_size <= 0 || cfg.batch_size > 64)
     return invalid("image", "invalid prepared image geometry");
   const auto b = std::int64_t(cfg.batch_size);
-  const TensorSpec image{Shape{b, cfg.height, cfg.width, 1}, DType::UInt8};
+  const TensorSpec image{std::vector<std::int64_t>{b, cfg.height, cfg.width, 1}, DType::UInt8};
   auto result = std::make_shared<KernelStageRecipe>();
   result->target = Hardware::EV74;
   struct VisualMember {
@@ -49,19 +49,19 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
     result->members.push_back(std::move(compiled));
   };
   if (cfg.graph_name == "feature_histogram") {
-    const std::array inputs{image}, outputs{TensorSpec{Shape{b, 256}, DType::Int32}};
+    const std::array inputs{image}, outputs{TensorSpec{std::vector<std::int64_t>{b, 256}, DType::Int32}};
     append(check_kernel({"histogram", Hardware::EV74, inputs, outputs, {}}), {{0}, {0}, {}});
   } else if ((cfg.graph_name == "grider_fast") || (cfg.graph_name == "track_descriptor")) {
     if (cfg.max_features <= 0 || cfg.max_features > 65536)
       return invalid("max_features", "invalid packed feature capacity");
-    const TensorSpec features{Shape{b, 1 + 3 * std::int64_t(cfg.max_features)}, DType::Int32};
+    const TensorSpec features{std::vector<std::int64_t>{b, 1 + 3 * std::int64_t(cfg.max_features)}, DType::Int32};
     std::vector<TensorSpec> out{features};
     VisualMember member{{0}, {0}, {}};
     const bool brief = cfg.graph_name == "track_descriptor";
     if (brief) {
       if (cfg.descriptor_words != 8)
         return invalid("descriptor_words", "BRIEF descriptors require exactly eight Int32 words");
-      out.push_back({Shape{b, cfg.max_features, 8}, DType::Int32});
+      out.push_back({std::vector<std::int64_t>{b, cfg.max_features, 8}, DType::Int32});
       member.outputs.push_back(1);
     }
     const std::array inputs{image};
@@ -82,10 +82,10 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
     if (cfg.win_half < 0 || cfg.max_iters < 0 || cfg.max_level < 0)
       return invalid("tracker", "tracker iteration/window/level parameters must be nonnegative");
     const std::array tracker_inputs{image, image,
-                                    TensorSpec{Shape{b, cfg.num_points, 2}, DType::Int32},
-                                    TensorSpec{Shape{b, 1}, DType::Int32}};
-    const std::array tracker_outputs{TensorSpec{Shape{b, cfg.num_points, 2}, DType::Float32},
-                                     TensorSpec{Shape{b, cfg.num_points}, DType::Int32}};
+                                    TensorSpec{std::vector<std::int64_t>{b, cfg.num_points, 2}, DType::Int32},
+                                    TensorSpec{std::vector<std::int64_t>{b, 1}, DType::Int32}};
+    const std::array tracker_outputs{TensorSpec{std::vector<std::int64_t>{b, cfg.num_points, 2}, DType::Float32},
+                                     TensorSpec{std::vector<std::int64_t>{b, cfg.num_points}, DType::Int32}};
     const std::array<Parameter, 3> tracker_parameters{
         {{"window_half", std::uint32_t(cfg.win_half)},
          {"max_iterations", std::uint32_t(cfg.max_iters)},
@@ -98,7 +98,7 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
         return invalid("max_features", "invalid detection capacity");
       const std::array detection_inputs{image},
           detection_outputs{
-              TensorSpec{Shape{b, 1 + 3 * std::int64_t(cfg.max_features)}, DType::Int32}};
+              TensorSpec{std::vector<std::int64_t>{b, 1 + 3 * std::int64_t(cfg.max_features)}, DType::Int32}};
       const std::array<Parameter, 2> parameters{
           {{"threshold", cfg.fast_threshold}, {"output_encoding", "packed"}}};
       append(

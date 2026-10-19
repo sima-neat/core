@@ -1,6 +1,6 @@
 #include "pipeline/internal/InputPublicationMeasurement.h"
 
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <stdexcept>
 #include <utility>

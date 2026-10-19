@@ -7,18 +7,27 @@
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "gst/GstInit.h"
-#include <simaai/kernels/authoring.h>
+#include <simaai/scheduler/testing/probe.h>
 #include <iostream>
-#include <simaai/runtime/executor.h>
+#include <simaai/scheduler/client/kernel.h>
 #include <cmath>
 #include <cstring>
 #include <new>
 #include <stdexcept>
 
+namespace test = simaai::scheduler::testing;
+namespace c = simaai::scheduler::client;
 namespace {
+c::KernelInspection inspect(const c::KernelExecutable& value) {
+  auto result = c::inspect_kernel(value);
+  if (const auto* error = std::get_if<c::Error>(&result))
+    throw std::runtime_error(error->message);
+  return std::get<c::KernelInspection>(std::move(result));
+}
+
 using namespace simaai::neat;
 using namespace simaai::neat::pipeline_internal::sima;
-namespace gs = simaai::runtime::gstreamer;
+namespace gs = simaai::scheduler::client;
 void require(bool value, const char* message) {
   if (!value)
     throw std::runtime_error(message);
@@ -81,11 +90,11 @@ void families() {
     input(rcnn, side, side, 3);
   }
   const auto proposals = check(rcnn, {544, 544, 544, 544, ResizeMode::Letterbox});
-  const auto& specs = proposals.compiled.recipe->members[proposals.decode_member]
-                          .executable.state()
-                          .contract->output_specs;
-  require(specs.size() == 5 && specs[0].dtype == simaai::kernels::DType::Float32 &&
-              specs[0].shape == simaai::kernels::Shape({16, 4}),
+  const auto contract =
+      inspect(proposals.compiled.recipe->members[proposals.decode_member].executable);
+  const auto specs = contract.outputs();
+  require(specs.size() == 5 && specs[0].dtype == simaai::scheduler::client::DType::Float32 &&
+              specs[0].shape == std::vector<std::int64_t>({16, 4}),
           "RCNN needs four per-level capacities and unrounded FP32 coordinates");
 
   for (auto type : {BoxDecodeType::YoloV26, BoxDecodeType::YoloV6}) {
@@ -178,7 +187,7 @@ void auxiliary_tasks() {
 }
 
 void combined_task() {
-  namespace k = simaai::kernels;
+  namespace k = simaai::scheduler::client;
   for (const auto* dtype : {"BF16", "INT8", "FP32"}) {
     for (const int points : {1, 13, 17}) {
       for (const bool by_role : {false, true}) {
@@ -215,10 +224,11 @@ void combined_task() {
           require(r.decode_member == 0 && r.compiled.recipe->members.size() == 2,
                   "combined decode duplicated computation or introduced source copies");
           const auto& numerical = r.compiled.recipe->members.front();
-          const auto& specs = numerical.executable.state().contract->output_specs;
+          const auto contract = inspect(numerical.executable);
+          const auto specs = contract.outputs();
           require(numerical.inputs.size() == 13 && specs.size() == 6 &&
-                      specs[4].shape == k::Shape({4, 160, 160}) &&
-                      specs[5].shape == k::Shape({4, points, 3}),
+                      specs[4].shape == std::vector<std::int64_t>({4, 160, 160}) &&
+                      specs[5].shape == std::vector<std::int64_t>({4, points, 3}),
                   "combined canonical roles/output contract mismatch");
           require(r.compiled.runtime_contract.logical_outputs.front().size_bytes ==
                       4 + 4 * (24 + 160 * 160 + 204),
@@ -284,40 +294,13 @@ void combined_task() {
 
 // A real host allocation adapter, not a numerical mock. Runner executes the
 // canonical checked kernel and Core publication using ordinary retained leases.
-struct HostStorage final : simaai::runtime::BufferOwner {
-  std::shared_ptr<simaai::runtime::StorageIdentity> id =
-      std::make_shared<simaai::runtime::StorageIdentity>();
+struct HostStorage final {
   std::size_t size;
   std::shared_ptr<void> memory;
   explicit HostStorage(std::size_t bytes)
       : size(bytes), memory(::operator new(bytes, std::align_val_t{64}),
                             [](void* p) { ::operator delete(p, std::align_val_t{64}); }) {
     std::memset(memory.get(), 0, size);
-  }
-  std::shared_ptr<const simaai::runtime::StorageIdentity> identity() const noexcept override {
-    return id;
-  }
-  std::uint64_t storage_offset_bytes() const noexcept override {
-    return 0;
-  }
-  std::size_t size_bytes() const noexcept override {
-    return size;
-  }
-  bool permits(simaai::runtime::Access) const noexcept override {
-    return true;
-  }
-  bool supports_persistent_binding() const noexcept override {
-    // This fixture owns a fixed host allocation; resolve() retains that same
-    // allocation for every replay. It has no recyclable producer/frame loan.
-    return true;
-  }
-  simaai::runtime::Result<simaai::runtime::Mapping> resolve(simaai::runtime::Hardware hardware,
-                                                            simaai::runtime::Access) override {
-    if (hardware != simaai::runtime::Hardware::A65)
-      return simaai::runtime::Error{simaai::runtime::ErrorCode::InvalidRequest, "fixture",
-                                    "host storage is A65 only"};
-    return simaai::runtime::Mapping{
-        simaai::runtime::HostAddress{static_cast<std::byte*>(memory.get())}, size, memory, {}, {}};
   }
   template <class T> T read(std::size_t at) const {
     T value;
@@ -329,7 +312,7 @@ struct HostStorage final : simaai::runtime::BufferOwner {
   }
 };
 void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
-  namespace rt = simaai::runtime;
+  namespace rt = simaai::scheduler::client;
   const auto sigmoid = [](float x) { return 1.f / (1.f + std::exp(-x)); };
   auto s = source(BoxDecodeType::YoloXSegPose, 2);
   s.payload.pose_classes = {0};
@@ -377,13 +360,16 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
       tensor.strides_bytes = original.stride_bytes;
       if (planar && ingress_route == 1)
         tensor.strides_bytes.clear(); // Public Tensor means compact declared CHW, not HWC.
-      const auto linear = boxdecode_linear_storage(original.shape, original.stride_bytes,
-                                                   original.layout, 4);
+      const auto linear =
+          boxdecode_linear_storage(original.shape, original.stride_bytes, original.layout, 4);
       require(linear.has_value(), "fixture linear geometry invalid");
       tensor.storage = make_cpu_owned_storage(linear->span_bytes);
       tensor.route.logical_index = tensor.route.physical_index = tensor.route.route_slot = i;
-      const auto role = i == 12 ? "mask_proto" : i < 3 ? "bbox" : i < 6 ? "class"
-                                                    : i < 9 ? "mask_coeff" : "kpt";
+      const auto role = i == 12 ? "mask_proto"
+                        : i < 3 ? "bbox"
+                        : i < 6 ? "class"
+                        : i < 9 ? "mask_coeff"
+                                : "kpt";
       tensor.route.name = std::string(role) + "_" + std::to_string(i % 3);
       tensors.push_back(std::move(tensor));
       auto output = specbuilders::build_logical_output_static_spec(
@@ -393,8 +379,8 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
       output.size_bytes = linear->span_bytes;
       upstream.kernel->runtime_contract.logical_outputs.push_back(std::move(output));
       upstream.kernel->runtime_contract.physical_outputs.push_back(
-          specbuilders::build_physical_buffer_static_spec(
-              i, i, linear->span_bytes, DeviceKind::Cpu, tensors.back().route.name));
+          specbuilders::build_physical_buffer_static_spec(i, i, linear->span_bytes, DeviceKind::Cpu,
+                                                          tensors.back().route.name));
     }
     BoxDecodeStandaloneContractOverrides overrides;
     overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
@@ -414,8 +400,8 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
     s = stagesemantics::build_boxdecode_compiled_contract(finalized);
     for (std::size_t i = 0; i < grouped.size(); ++i) {
       const auto& original = authored_inputs[grouped[i]];
-      const auto expected = boxdecode_linear_storage(original.shape, original.stride_bytes,
-                                                     original.layout, 4);
+      const auto expected =
+          boxdecode_linear_storage(original.shape, original.stride_bytes, original.layout, 4);
       require(s.runtime_contract.logical_inputs[i].stride_bytes == expected->stride_bytes,
               "public sample/upstream extraction dropped physical strides");
     }
@@ -439,28 +425,30 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
     }
     for (std::size_t i = 0; i < grouped.size(); ++i) {
       const auto& physical = execution_inputs[grouped[i]];
-      const auto expected = boxdecode_linear_storage(physical.shape, physical.stride_bytes,
-                                                     physical.layout, 4);
+      const auto expected =
+          boxdecode_linear_storage(physical.shape, physical.stride_bytes, physical.layout, 4);
       require(admitted_recipe->runtime_contract.logical_inputs[i].stride_bytes ==
                   expected->stride_bytes,
               "admission did not preserve the actual envelope/upstream storage authority");
     }
   }
-  const auto recipe = admitted_recipe
-                          ? BoxDecodeKernelRecipeResult{std::move(*admitted_recipe), 0}
-                          : check(s, {640, 640, 640, 640, ResizeMode::Letterbox});
+  const auto recipe = admitted_recipe ? BoxDecodeKernelRecipeResult{std::move(*admitted_recipe), 0}
+                                      : check(s, {640, 640, 640, 640, ResizeMode::Letterbox});
   require(recipe.decode_member == 0 && recipe.compiled.recipe->members.size() == 2,
           "native FP32 execution gained an adapter or staging copy");
   const auto& members = recipe.compiled.recipe->members;
-  rt::Executor executor(rt::Hardware::A65);
+  test::OperationProbe executor, publisher;
   const auto take = []<class T>(rt::Result<T> result) -> T {
     if (const auto* error = std::get_if<rt::Error>(&result))
       throw std::runtime_error(error->field + ": " + error->message);
     return std::get<T>(std::move(result));
   };
-  auto base =
-      std::make_shared<const rt::PreparedOperation>(take(executor.prepare(members[0].executable)));
-  auto publication = take(executor.prepare(members[1].executable));
+  if (auto error = executor.prepare(members[0].executable))
+    throw std::runtime_error(error->message);
+  if (auto error = publisher.prepare(members[1].executable))
+    throw std::runtime_error(error->message);
+  const auto base = executor.operation();
+  const auto publication = publisher.operation();
   auto dynamic_recipe = *recipe.compiled.recipe;
   BoxDecodeGeometryOptions geometry{640, 640, 640, 640, ResizeMode::Letterbox};
   geometry.complete_geometry = true;
@@ -470,11 +458,11 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   if (!gst_meta_get_info("GstSimaMeta"))
     require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
             "combined execution metadata registration failed");
-  gs::Buffer carrier(gst_buffer_new());
+  test::GstBufferOwner carrier(gst_buffer_new());
   auto* metadata =
       gst_custom_meta_get_structure(gst_buffer_add_custom_meta(carrier.get(), "GstSimaMeta"));
   const std::array<GstBuffer*, 1> carriers{carrier.get()};
-  std::shared_ptr<const rt::PreparedOperation> previous;
+  rt::PreparedSelection previous;
   for (const bool rebind : {false, true}) {
     const float offset_x = rebind ? 14.f : 10.f;
     gst_structure_set(
@@ -483,27 +471,34 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
         "preproc_resize_mode", G_TYPE_STRING, "letterbox", "preproc_affine_scale_x", G_TYPE_DOUBLE,
         2., "preproc_affine_scale_y", G_TYPE_DOUBLE, 3., "preproc_affine_offset_x", G_TYPE_DOUBLE,
         double(offset_x), "preproc_affine_offset_y", G_TYPE_DOUBLE, -10., nullptr);
-    const auto numerical = take(resolve(executor, base, carriers));
-    require(
-        numerical != base && numerical != previous &&
-            simaai::kernels::same_contract_resources(numerical->executable(), base->executable()),
-        "actual changed-affine execution lost immutable resource reuse");
+    const auto numerical = take(resolve(executor.preparer(), carriers));
+    require(numerical != base && numerical != previous &&
+                c::same_kernel_contract_resources(numerical.executable(), base.executable()),
+            "actual changed-affine execution lost immutable resource reuse");
     previous = numerical;
     std::vector<std::shared_ptr<HostStorage>> inputs, results;
-    std::vector<rt::BufferView> in, out;
-    for (const auto requirement : members[0].executable.state().contract->input_requirements) {
+    std::vector<rt::ConstBytes> in;
+    std::vector<rt::MutableBytes> out;
+    std::vector<rt::ConstBytes> publication_inputs;
+    const auto contract = inspect(members[0].executable);
+    for (const auto requirement : contract.input_requirements()) {
       inputs.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
-      in.push_back({inputs.back(), 0, requirement.storage_bytes});
+      in.push_back(
+          {static_cast<const std::byte*>(inputs.back()->memory.get()), requirement.storage_bytes});
     }
-    for (const auto requirement : members[0].executable.state().contract->output_requirements) {
+    for (const auto requirement : contract.output_requirements()) {
       results.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
-      out.push_back({results.back(), 0, requirement.storage_bytes});
+      out.push_back(
+          {static_cast<std::byte*>(results.back()->memory.get()), requirement.storage_bytes});
+      publication_inputs.push_back({out.back().data, out.back().size_bytes});
     }
     const auto bytes = recipe.compiled.runtime_contract.logical_outputs.front().size_bytes;
     auto wire = std::make_shared<HostStorage>(bytes);
-    const std::array<rt::BufferView, 1> published{{{wire, 0, bytes}}};
-    auto numerical_binding = take(executor.bind(*numerical, in, out));
-    auto publication_binding = take(executor.bind(publication, out, published));
+    const std::array<rt::MutableBytes, 1> published{
+        {{static_cast<std::byte*>(wire->memory.get()), bytes}}};
+    auto numerical_binding = take(executor.bind_host(numerical, in, out));
+    auto publication_binding =
+        take(publisher.bind_host(publication, publication_inputs, published));
     for (std::size_t port : {1U, 5U, 9U})
       for (std::size_t element = 0; element < inputs[port_map[port]]->size / 4; ++element)
         inputs[port_map[port]]->set_float(element, -8.f);
@@ -517,11 +512,9 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
       const std::size_t channels = planar ? shape[0] : shape[2];
       const std::size_t width = planar ? shape[2] : shape[1];
       const std::size_t channel = element % channels, cell = element / channels;
-      const std::size_t offset = planar
-                                    ? channel * strides[0] + (cell / width) * strides[1] +
-                                          (cell % width) * strides[2]
-                                    : (cell / width) * strides[0] + (cell % width) * strides[1] +
-                                          channel * strides[2];
+      const std::size_t offset =
+          planar ? channel * strides[0] + (cell / width) * strides[1] + (cell % width) * strides[2]
+                 : (cell / width) * strides[0] + (cell % width) * strides[1] + channel * strides[2];
       inputs[port_map[port]]->set_float(offset / 4, value);
     };
     for (std::size_t pixel = 0; pixel < 160 * 160; ++pixel)
@@ -540,8 +533,8 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
       write(1, high_cell * 3 + 2, frame == 3 ? -8.f : 3.f);
       std::memset(wire->memory.get(), 0xa5, bytes);
       const auto decoded = executor.submit(numerical_binding);
-      const std::array dependencies{decoded};
-      const auto complete = executor.submit(publication_binding, dependencies);
+      const std::span<const test::Completion> dependencies{&decoded, 1};
+      auto complete = publisher.submit(publication_binding, dependencies);
       require(!complete.wait(), "Runner combined numerical/publication execution failed");
       require(wire->read<std::int32_t>(0) == expected_count,
               "combined survivor count or FP32 threshold precision changed");
@@ -602,10 +595,9 @@ void normalization() {
             "source offset lost");
     require(r.decode_member == 0, "dense heads acquired a hidden conversion");
     if (std::string(dtype) == "FP32")
-      require(
-          r.compiled.recipe->members.front().executable.state().contract->input_specs[0].dtype ==
-              simaai::kernels::DType::Float32,
-          "native FP32 precision was narrowed");
+      require(inspect(r.compiled.recipe->members.front().executable).inputs()[0].dtype ==
+                  simaai::scheduler::client::DType::Float32,
+              "native FP32 precision was narrowed");
   }
   auto rank6 = source(BoxDecodeType::YoloV26);
   input(rank6, 8, 8, 4);
@@ -677,14 +669,13 @@ void superpoint() {
       detector.quant = QuantStaticSpec{QuantGranularity::PerTensor, -1, {3.1}, {-3}};
     const auto prepared = check(padded);
     require(prepared.decode_member == 0, "padded SuperPoint must use the native dense reader");
-    const auto& numerical = prepared.compiled.recipe->members.front().executable.state();
-    const auto expected = detector.dtype == "INT8"   ? simaai::kernels::DType::Int8
-                          : detector.dtype == "BF16" ? simaai::kernels::DType::BFloat16
-                                                     : simaai::kernels::DType::Float32;
-    require(numerical.contract->input_specs[0].dtype == expected &&
-                numerical.contract->input_specs[0].shape.dimensions().back() == 65 &&
-                std::holds_alternative<simaai::kernels::Strided>(
-                    numerical.contract->input_specs[0].layout),
+    const auto numerical = inspect(prepared.compiled.recipe->members.front().executable);
+    const auto expected = detector.dtype == "INT8"   ? simaai::scheduler::client::DType::Int8
+                          : detector.dtype == "BF16" ? simaai::scheduler::client::DType::BFloat16
+                                                     : simaai::scheduler::client::DType::Float32;
+    require(numerical.inputs()[0].dtype == expected && numerical.inputs()[0].shape.back() == 65 &&
+                std::holds_alternative<simaai::scheduler::client::Strided>(
+                    numerical.inputs()[0].layout),
             "padded SuperPoint must retain its scalar dtype and explicit pixel stride");
   }
 }
@@ -711,9 +702,11 @@ void linear_metadata_contracts() {
   require(boxdecode_linear_storage({1, 4, 8, 6}, {}, "NCHW", 4)->stride_bytes ==
               std::vector<std::int64_t>{24, 4, 192},
           "singleton-batch CHW byte strides were not normalized once");
-  for (const auto& strides :
-       {std::vector<std::int64_t>{24, 4}, {24, -4, 4}, {24, 4, 6}, {24, 0, 4},
-        {INT64_MAX - 3, 16, 4}})
+  for (const auto& strides : {std::vector<std::int64_t>{24, 4},
+                              {24, -4, 4},
+                              {24, 4, 6},
+                              {24, 0, 4},
+                              {INT64_MAX - 3, 16, 4}})
     require(!boxdecode_linear_storage({8, 6, 4}, strides, "HWC", 4),
             "invalid linear byte strides accepted");
   require(!boxdecode_linear_storage({2, 4, 8, 6}, {}, "NCHW", 4),

@@ -102,14 +102,32 @@ bool is_dense_order_preserving_view(const ValueSpec& root, const ValueSpec& prev
   return stride == view.required_bytes;
 }
 
+// Native INT8 IFM storage may require a padded channel axis even when the
+// compiler authors only Quantize. Represent that physical conversion as the
+// existing QuantTess semantic operation, never a firmware graph ID. The
+// checked provider remains authoritative for the requested padded layout.
+bool quant_requires_channel_padding(const std::vector<OpId>& chain,
+                                    const ModelExecutionPlan& plan) {
+  if (chain.size() != 1U || chain.front() >= plan.ops().size())
+    return false;
+  const auto& op = plan.ops()[chain.front()];
+  if (op.kind != OpKind::Quantize || op.outputs.size() != 1U)
+    return false;
+  const auto* output = plan.value(op.outputs.front());
+  return output && output->storage_binding && output->storage_binding->channel_alignment == 16U;
+}
+
 std::optional<TransformOperationRule> cvu_rewrite_rule(const std::vector<OpId>& chain,
                                                        const ModelExecutionPlan& plan) {
   if (chain.empty() || chain.size() > 2U || chain.front() >= plan.ops().size() ||
       chain.back() >= plan.ops().size())
     return std::nullopt;
-  const auto* rule = transform_operation(
-      plan.ops()[chain.front()].kind,
-      chain.size() == 2U ? std::optional{plan.ops()[chain.back()].kind} : std::nullopt);
+  const auto* rule =
+      quant_requires_channel_padding(chain, plan)
+          ? transform_operation(OpKind::Quantize, OpKind::Tessellate)
+          : transform_operation(plan.ops()[chain.front()].kind,
+                                chain.size() == 2U ? std::optional{plan.ops()[chain.back()].kind}
+                                                   : std::nullopt);
   return rule ? std::optional{*rule} : std::nullopt;
 }
 
@@ -161,10 +179,7 @@ PhysicalEngine engine_for(const OpSpec& op) {
 }
 
 std::int64_t batch_for(const OpSpec& op) {
-  if (op.input_shapes.empty() || op.input_shapes.front().empty()) {
-    return 1;
-  }
-  return op.input_shapes.front().front();
+  return op.batch_count;
 }
 
 std::string canonical_dtype(std::string value) {
@@ -614,6 +629,7 @@ std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& 
     ReducedMember member;
     member.physical.ordinal = lane.ordinal;
     member.physical.semantic_chain = chain;
+    member.physical.pad_output_channels = quant_requires_channel_padding(chain, plan);
     member.physical.outer_inputs = first.inputs;
     member.physical.outer_outputs = last.outputs;
     member.rule = *rule;
@@ -631,7 +647,7 @@ std::optional<std::vector<ReducedMember>> reduce_lane(const ModelExecutionPlan& 
   return result;
 }
 
-using CohortKey = std::tuple<std::size_t, std::string, std::int64_t, std::string, bool, bool>;
+using CohortKey = std::tuple<std::size_t, std::string, std::int64_t, std::string, bool, bool, bool>;
 
 bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes,
                          const bool align_from_boundary_end, const PhysicalCommandRole role,
@@ -647,7 +663,8 @@ bool add_aligned_cohorts(const ModelExecutionPlan& plan, std::vector<Lane> lanes
       auto& member = (*reduced)[index];
       const auto boundary_distance = align_from_boundary_end ? reduced->size() - index - 1U : index;
       cohorts[{boundary_distance, std::string(member.rule.operation), member.batch,
-               member.processor, member.align_c16, member.cblock}]
+               member.processor, member.align_c16, member.cblock,
+               member.physical.pad_output_channels}]
           .push_back(std::move(member));
     }
   }
@@ -928,6 +945,7 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
       draft.maximum_members = rule->maximum_members;
     }
     draft.members = {{0U, {op.id}, op.inputs, op.outputs}};
+    draft.members.front().pad_output_channels = quant_requires_channel_padding({op.id}, semantic);
     claimed.emplace(op.id);
     drafts.push_back(std::move(draft));
   }
@@ -1033,6 +1051,7 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
 
   PhysicalExecutionPlan result;
   result.command_for_semantic_op.resize(ops.size());
+  result.commands_for_semantic_op.resize(ops.size());
   result.commands.resize(drafts.size());
   std::vector<PhysicalCommandId> command_id_for_draft(drafts.size());
   for (std::size_t index = 0; index < topological.size(); ++index) {
@@ -1059,6 +1078,7 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
                              member.outer_outputs.end());
       for (const auto op_id : member.semantic_chain) {
         result.command_for_semantic_op[op_id] = command.id;
+        result.commands_for_semantic_op[op_id] = {command.id};
       }
     }
     for (const auto predecessor : draft.predecessor_drafts) {
@@ -1073,7 +1093,7 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
            << static_cast<unsigned int>(command.role) << ':' << command.batch_size << ':'
            << command.implementation_id << ':' << command.maximum_members << ':';
     for (const auto& member : command.members) {
-      digest << '[' << member.ordinal << ':';
+      digest << '[' << member.ordinal << ':' << member.pad_output_channels << ':';
       for (const auto origin : member.semantic_chain) {
         digest << origin << ',';
       }
@@ -1122,7 +1142,7 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     return std::nullopt;
   }
   using CvuCohortContract =
-      std::tuple<PhysicalCommandRole, std::uint32_t, std::string, std::uint32_t>;
+      std::tuple<PhysicalCommandRole, std::uint32_t, std::string, std::uint32_t, bool>;
   std::unordered_map<PhysicalCohortId, CvuCohortContract> cvu_cohorts;
   for (std::size_t index = 0; index < plan.commands.size(); ++index) {
     const auto& command = plan.commands[index];
@@ -1144,7 +1164,8 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     }
     if (command.engine == PhysicalEngine::Cvu) {
       const CvuCohortContract contract{command.role, command.batch_size, command.implementation_id,
-                                       command.maximum_members};
+                                       command.maximum_members,
+                                       command.members.front().pad_output_channels};
       const auto [found, inserted] = cvu_cohorts.emplace(command.cohort_id, contract);
       if (!inserted && found->second != contract) {
         record_error(error, "physical execution tracker found an inconsistent CVU cohort");
@@ -1156,11 +1177,15 @@ PhysicalExecutionTracker::create(const PhysicalExecutionPlan& plan, std::string*
     std::unordered_set<OpId> semantic_origins;
     std::optional<std::uint32_t> previous_ordinal;
     for (const auto& member : command.members) {
-      if (member.semantic_chain.empty() ||
+      if (member.pad_output_channels != command.members.front().pad_output_channels ||
+          member.batch_index != 0U || member.batch_count != 1U || member.semantic_chain.empty() ||
           (previous_ordinal && member.ordinal <= *previous_ordinal) ||
           (command.engine == PhysicalEngine::Cvu &&
            (member.outer_inputs.size() != 1U || member.outer_outputs.size() != 1U ||
-            member.semantic_chain.size() != rule->semantic_pattern_length()))) {
+            member.semantic_chain.size() + (member.pad_output_channels ? 1U : 0U) !=
+                rule->semantic_pattern_length() ||
+            (member.pad_output_channels &&
+             (rule->operation != "quanttess" || member.semantic_chain.size() != 1U))))) {
         record_error(error, "physical execution tracker found an invalid physical member");
         return std::nullopt;
       }

@@ -46,22 +46,21 @@ Create a working directory for the example, then use the **Python / C++** tabs t
 
 2. Your working directory should look like this:
 
-   ```bash
+   ```text
    sima-neat-hello/
    └── hello_neat.py
    ```
 
 **Run:**
 
-* **On the DevKit**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 hello_neat.py
-  ```
-* **On the Neat SDK host**
-  ```bash
-  dk hello_neat.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 hello_neat.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk hello_neat.py
+</ShellCommand>
 
 :::note Python Runtime Location
 `pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Neat SDK container.
@@ -128,7 +127,7 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 
 3. Your working directory should look like this:
 
-   ```bash
+   ```text
    sima-neat-hello/
    ├── CMakeLists.txt
    └── main.cpp
@@ -136,21 +135,20 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 
 **Build the example:**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **Run:**
 
-* **On the DevKit**
-  ```bash
-  ./build/sima_neat_hello
-  ```
-* **On the Neat SDK host**
-  ```bash
-  dk build/sima_neat_hello
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_hello
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_hello
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

@@ -83,10 +83,11 @@ void test_dmabuf_logical_read_range(bool shared_memory) {
     gst_buffer_append_memory(buffer, memory);
   }
   GstCaps* caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "GRAY8", "width",
-                                    G_TYPE_INT, 8, "height", G_TYPE_INT, 8, nullptr);
+                                      G_TYPE_INT, 8, "height", G_TYPE_INT, 8, nullptr);
   GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
   gst_caps_unref(caps);
-  if (shared_memory) gst_buffer_unref(buffer);
+  if (shared_memory)
+    gst_buffer_unref(buffer);
   gst_buffer_unref(allocation);
   Tensor tensor = from_gst_sample(sample);
   gst_sample_unref(sample);
@@ -109,8 +110,12 @@ void test_dmabuf_logical_read_range(bool shared_memory) {
     require(static_cast<const uint8_t*>(logical.data)[0] == 7U &&
                 static_cast<const uint8_t*>(logical.data)[28] == 35U,
             "nested tensor/GstMemory offsets were not composed exactly once");
-    require(!pipeline_internal::map_dense_tensor_read(tensor).data,
-            "same mapper accepted an overlapping active mapping");
+    auto second = pipeline_internal::map_dense_tensor_read(tensor);
+    require(second.data && second.size_bytes == logical.size_bytes &&
+                std::memcmp(second.data, logical.data, logical.size_bytes) == 0,
+            "same allocation must admit compatible overlapping reads");
+    require(!tensor.storage->map(MapMode::Write).data,
+            "compatible readers must still exclude writers");
   }
   // Public map and view preserve the historically accessible storage tail.
   for (bool view : {false, true}) {
@@ -176,16 +181,16 @@ void test_dmabuf_logical_read_range(bool shared_memory) {
                 static_cast<const uint8_t*>(custom.data)[25] == 32U,
             "custom logical READ offset/span changed");
   }
-  require(sima_test::dmabuf_span(
-              gst_sample_get_buffer(static_cast<GstSample*>(tensor.storage->holder.get()))) ==
-              original_span,
+  require(sima_test::dmabuf_span(gst_sample_get_buffer(
+              static_cast<GstSample*>(tensor.storage->holder.get()))) == original_span,
           "exact logical READ replaced or copied its producer carrier");
 }
 
 void test_custom_logical_read_contract() {
   using namespace simaai::neat;
   std::array<uint8_t, 64> bytes{};
-  for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<uint8_t>(i);
+  for (std::size_t i = 0; i < bytes.size(); ++i)
+    bytes[i] = static_cast<uint8_t>(i);
   unsigned calls = 0, ends = 0;
   std::size_t exposed = bytes.size();
   auto storage = std::make_shared<Storage>();
@@ -237,9 +242,9 @@ void test_dmabuf_composite_read(bool nv12) {
   using namespace simaai::neat;
   GstBuffer* buffer = sima_test::allocate_cma_dmabuf(512U);
   const auto backing = sima_test::dmabuf_span(buffer);
-  GstCaps* caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING,
-                                    nv12 ? "NV12" : "I420", "width", G_TYPE_INT, 8,
-                                    "height", G_TYPE_INT, 6, nullptr);
+  GstCaps* caps =
+      gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, nv12 ? "NV12" : "I420", "width",
+                          G_TYPE_INT, 8, "height", G_TYPE_INT, 6, nullptr);
   GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
   gst_caps_unref(caps);
   gst_buffer_unref(buffer);
@@ -258,9 +263,10 @@ void test_dmabuf_composite_read(bool nv12) {
     require(plane && plane->shape.size() == 2U && plane->strides_bytes.size() == 2U,
             "DMA image plane geometry is incomplete");
     const auto offset = static_cast<std::size_t>(plane->byte_offset);
-    const auto last = offset + static_cast<std::size_t>(plane->shape[0] - 1) *
-                                   static_cast<std::size_t>(plane->strides_bytes[0]) +
-                     static_cast<std::size_t>(plane->shape[1] - 1);
+    const auto last = offset +
+                      static_cast<std::size_t>(plane->shape[0] - 1) *
+                          static_cast<std::size_t>(plane->strides_bytes[0]) +
+                      static_cast<std::size_t>(plane->shape[1] - 1);
     require(bytes == static_cast<const uint8_t*>(mapping.data) + offset,
             "DMA plane reader copied storage or changed its byte offset");
     require(last < mapping.size_bytes && bytes[0] == offset % 251U &&
@@ -283,18 +289,19 @@ void test_dmabuf_composite_read(bool nv12) {
       check_plane(mapped->mapping, mapped->view.v, PlaneRole::V);
     }
   };
-  for (unsigned i = 0; i < 3U; ++i) check_read();
+  for (unsigned i = 0; i < 3U; ++i)
+    check_read();
   auto original = std::move(tensor.storage->map_fn);
   unsigned callback_calls = 0;
   tensor.storage->map_fn = [original = std::move(original), &callback_calls](MapMode mode) {
     ++callback_calls;
     return original(mode);
   };
-  for (unsigned i = 0; i < 3U; ++i) check_read();
+  for (unsigned i = 0; i < 3U; ++i)
+    check_read();
   require(callback_calls == 3U, "composite DMA READ bypassed the custom storage callback");
-  require(sima_test::dmabuf_span(
-              gst_sample_get_buffer(static_cast<GstSample*>(tensor.storage->holder.get()))) ==
-              backing,
+  require(sima_test::dmabuf_span(gst_sample_get_buffer(
+              static_cast<GstSample*>(tensor.storage->holder.get()))) == backing,
           "composite DMA READ replaced its producer carrier");
 }
 
@@ -376,6 +383,94 @@ void test_dmabuf_mapping_lifetime(bool projected, bool logical_read) {
           "producer loan released before the real DMA CPU epoch finished");
 }
 
+void test_shared_dmabuf_read_views(bool release_first_view_first) {
+  using namespace simaai::neat;
+  namespace internal = pipeline_internal;
+  GstBuffer* buffer = sima_test::allocate_cma_dmabuf(128U);
+  GstCaps* caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "GRAY8", "width",
+                                      G_TYPE_INT, 8, "height", G_TYPE_INT, 8, nullptr);
+  GstSample* gst_sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+  gst_caps_unref(caps);
+  gst_buffer_unref(buffer);
+  Tensor first = from_gst_sample(gst_sample);
+  gst_sample_unref(gst_sample);
+  first.shape = {4, 8};
+  first.strides_bytes = {8, 1};
+  Tensor second = first;
+  second.byte_offset = 32;
+  {
+    auto write = first.storage->map(MapMode::Write);
+    require(write.data && write.size_bytes >= 64U, "shared DMA fixture write mapping failed");
+    std::memset(write.data, 0x25, 32U);
+    std::memset(static_cast<uint8_t*>(write.data) + 32U, 0x71, 32U);
+  }
+
+  auto producer_released = std::make_shared<bool>(false);
+  auto producer = std::shared_ptr<void>(new int(0), [producer_released](void* value) {
+    *producer_released = true;
+    delete static_cast<int*>(value);
+  });
+  auto gate = std::make_shared<internal::HolderLoanGate>(1);
+  Sample sample = sample_from_tensors(TensorList{first, second});
+  internal::mark_sample_producer_stream_lifetime(sample, producer);
+  require(internal::attach_zero_copy_loan_to_sample(sample, gate), "shared DMA loan failed");
+  producer.reset();
+  require(gate->inflight() == 1, "shared output storage must acquire only one producer loan");
+
+  Mapping first_read = first.map_read();
+  Mapping second_read = second.map_read();
+  require(first_read.data && second_read.data,
+          "different tensor views of one DMA-BUF must allow simultaneous read mappings");
+  require(first_read.size_bytes == first.storage->size_bytes &&
+              second_read.size_bytes == second.storage->size_bytes - 32U,
+          "shared read views must retain their offsets within the backing span");
+  // Two mappings of one DMA-BUF may have different virtual addresses. Check
+  // exact backing/offset authority rather than requiring one mmap address.
+  auto* backing = gst_sample_get_buffer(static_cast<GstSample*>(first.storage->holder.get()));
+  const auto identity = sima_test::dmabuf_span(backing);
+  require(identity.length == 128U && second.byte_offset == 32 && first.storage == second.storage,
+          "shared DMA reads must retain their original backing and offsets");
+  require(static_cast<const uint8_t*>(first_read.data)[0] == 0x25 &&
+              static_cast<const uint8_t*>(second_read.data)[31] == 0x71,
+          "shared DMA reads exposed incorrect tensor data");
+  require(!first.storage->map(MapMode::Write).data && !first.storage->map(MapMode::ReadWrite).data,
+          "active DMA readers must exclude writes and read-write mappings");
+  Mapping& released_first = release_first_view_first ? first_read : second_read;
+  Mapping& released_last = release_first_view_first ? second_read : first_read;
+  released_first.unmap();
+  released_first = {};
+  const uint8_t surviving_value = release_first_view_first ? 0x71 : 0x25;
+  require(static_cast<const uint8_t*>(released_last.data)[0] == surviving_value,
+          "releasing one shared reader invalidated the other reader");
+  require(!first.storage->map(MapMode::Write).data && !first.storage->map(MapMode::ReadWrite).data,
+          "remaining DMA reader must continue to exclude writers");
+  released_last = {};
+  for (MapMode mode : {MapMode::Write, MapMode::ReadWrite}) {
+    auto write = first.storage->map(mode);
+    require(write.data, "DMA write mapping must reopen after the final reader releases");
+    require(!first.storage->map(MapMode::Read).data && !first.storage->map(MapMode::Write).data &&
+                !first.storage->map(MapMode::ReadWrite).data,
+            "an active DMA writer must exclude all other mappings");
+  }
+
+  first_read = first.map_read();
+  second_read = second.map_read();
+  require(first_read.data && second_read.data, "shared DMA reads failed to reopen");
+  std::weak_ptr<Storage> storage = first.storage;
+  sample = {};
+  first = {};
+  second = {};
+  released_first = {};
+  require(!storage.expired() && gate->inflight() == 1 && !*producer_released,
+          "surviving DMA reader lost its storage or producer loan");
+  require(static_cast<const uint8_t*>(released_last.data)[31] == surviving_value,
+          "DMA output data must survive after its tensors and sibling reader are released");
+  released_last = {};
+  require(storage.expired() && gate->inflight() == 0 && gate->released() == 1U &&
+              *producer_released,
+          "final shared DMA reader must release storage and its producer loan exactly once");
+}
+
 } // namespace
 
 RUN_TEST("unit_tensor_image_mapping_test", ([] {
@@ -390,6 +485,8 @@ RUN_TEST("unit_tensor_image_mapping_test", ([] {
              test_dmabuf_mapping_lifetime(projected, true);
            }
            test_custom_logical_read_contract();
+           test_shared_dmabuf_read_views(true);
+           test_shared_dmabuf_read_views(false);
 
            // Reject malformed offsets before choosing direct or ordinary storage mapping.
            Tensor invalid_offset = make_i420_tensor(8, 6);

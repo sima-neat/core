@@ -12,6 +12,13 @@ co-processing applications:
 - logs: `/var/log/sima-neat/pcie/qN.log`
 - host plugin: `neatpciehost`
 
+The 3.0 transport requires matching card and host packages. The card builder
+reports its compiled output capacity during readiness; the host sizes the PCIe
+buffers automatically before the first input. Returned tensors view the received
+raw buffer at the runtime-provided offsets, without an extra reorder copy.
+
+Direct LLM, VLM and ASR APIs use one Core worker per model.
+
 ## Public API
 
 Public headers install under:
@@ -34,6 +41,17 @@ package; applications compiling against this API use `sima-pcie-host-dev`.
 `pcie::Model` serializes only the restricted PCIe model-options schema before
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
+
+The GenAI C++ API is `simaai/neat/pcie/genai/GenAIModel.h`; Python exposes
+`pyneatpcie.genai`. Pass a host model directory: absolute, or relative to the
+application's current working directory. Model files load as needed over PCIe;
+keep them readable and unchanged while the model is open. Use matching host/card
+GenAI packages. Callers supply explicit conversation history in each request.
+VLM requests accept in-memory RGB images; applications load image files themselves.
+Set `connection.card_id` to select the card; its default address is
+`10.0.<card_id>.2`. Set `connection.card_host` to override that address.
+For speculative decoding, pass the parent directory of a prepared target/draft
+pair. Both models load in one card session using their compiled configuration.
 
 ### Multi-model runtime
 
@@ -62,8 +80,12 @@ runtime.unload(model_id);
 A runtime represents one Modalix PCIe Card. Each loaded model still owns one
 physical PCIe queue; the runtime assigns queues automatically, beginning with
 the preferred `ConnectionOptions::queue`, and exposes only logical `ModelId`
-values. The Modalix EV74 supports at most four concurrent co-processing
-pipelines, using queues 0 through 3.
+values. Queues 0 through 5 are available. Concurrent pipelines share card
+compute and memory; available queues do not guarantee sufficient resources.
+
+For `max_inflight` values from 1 through 10, the host uses a 16-entry transport
+ring per queue. Larger values and plugin-managed depth (`0`) retain 256 entries.
+Transport entries also carry metadata and are distinct from logical in-flight requests.
 
 `load_models()` reserves all required queues and has batch semantics: if any
 model fails to load, every model created by that call is closed and its queue
@@ -82,7 +104,12 @@ completion.
 `unload()` stops accepting work for one model, waits for accepted work to
 complete up to its drain timeout, and then releases that model's queue without
 closing other models. `close()` cancels remaining work, is idempotent, and
-wakes blocked `retrieve()` calls.
+wakes blocked `retrieve()` calls. If remote cleanup fails, `close()` completes
+local shutdown, immediately retries once while destroying the affected model,
+and reports the first cleanup error. If that retry also fails, the closed
+runtime retains no delayed cleanup handle and later `close()` calls are no-ops;
+restore card connectivity and recover the remote builder and queue manually
+before reuse.
 
 `Runtime` provides the behavior needed by a thin OAAX C ABI adapter. It does
 not itself export the standardized OAAX `runtime_*` C symbols.
@@ -134,7 +161,7 @@ struct ConnectionOptions {
   std::string card_host;      // Optional explicit card IP/host for SSH/SCP.
   int card_id = 0;            // PCIe card/plugin index; default host is 10.0.<card_id>.2.
   std::string user = "sima";
-  int queue = 0;              // Supported co-processing queue, 0..3.
+  int queue = 0;              // Supported co-processing queue, 0..5.
   int max_inflight = 10;
   std::string card_env;
   std::string card_gst_debug; // Optional card-side GST_DEBUG spec for pcie-pipeline-builder.
@@ -292,6 +319,8 @@ followed by `pull()`. `run(...)`, `push(...)`, and `pull()` require a successful
 use, call `push(...)` and `pull()` directly. The host channel receives
 asynchronously from `appsink` and stores results in an internal queue.
 Drain all results submitted with `push(...)` before calling `run(...)`.
+`running()` reports only whether the model is in its successfully built
+lifecycle state. It does not probe host transport or remote pipeline health.
 
 During bring-up, `build()` keeps an internal five-second stabilization delay
 after the card status reaches `ready`, allowing the card-side pipeline to finish
@@ -335,6 +364,9 @@ model.close();
 ```
 
 ## Build
+
+PCIe host builds always include the GenAI APIs. The matching Internals host artifact
+supplies the required platform service headers; the host driver supplies the runtime library.
 
 The host PCIe plugin is consumed as a prebuilt artifact from the internals repo.
 By default `build.sh` uses `../deps/manifest.json`, resolves the `internals`
@@ -442,12 +474,11 @@ dist/install_pciehost.sh
 ```
 
 The installer looks for the PCIe host debs in the same directory as the script.
-It also uses `sima-cli playbooks install` to install the
-`neat-pcie-application-builder` skill for Codex and Claude from the
-`sima-neat/core` repository. Skill installation is best-effort: a missing
-`sima-cli`, unavailable GitHub source, or playbook installation failure emits a
-warning without failing the PCIe host package installation. Set
-`SIMAPCIE_SKILL_SOURCE` to override the default GitHub source.
+The runtime deb includes the `neat-pcie-application-builder` skill. The
+installer copies that package-matched version to the Codex and Claude skill
+directories, replacing an older copy on reinstall. Set
+`SIMAPCIE_INSTALL_CODEX_SKILL=OFF` or `SIMAPCIE_INSTALL_CLAUDE_SKILL=OFF` to
+skip a target, or set `SIMAPCIE_SKILL_DIR` to use a local skill directory.
 
 It runs `pcie-setup.sh` at the end. Setup is interactive by default
 and can prompt while provisioning passwordless SSH for `Model::build()`. Pass
@@ -525,6 +556,42 @@ applications do not need the NEAT core or internals source tree;
 `find_package(SimaPCIeHost)` rediscovers the local GStreamer link flags with
 `pkg-config` and the zlib target through CMake.
 
+## GenAI hardware tests
+
+Prepare the same LLM, VLM and Whisper fixtures used by Core's direct API tests
+(already compiled models; no model compilation or package installation):
+
+```bash
+pcie_host/scripts/prepare_pcie_genai_models.sh
+```
+
+The default download directory is `$HOME/workspace/models_genai`. Override
+`SIMAPCIE_GENAI_MODELS_PATH` to use a different cache. Model names use the same
+`SIMA_TEST_LLIMA_TEXT_MODEL`, `SIMA_TEST_LLIMA_VLM_MODEL` and
+`SIMA_TEST_LLIMA_ASR_MODEL` variables as the standalone tests.
+
+With matching host/card packages and no other job using the card:
+
+```bash
+export SIMAPCIE_CARD_HOST=10.0.0.2
+export SIMAPCIE_USER=sima
+ctest --test-dir <extras>/lib/sima-pcie-host/tests -L genai -j1 --output-on-failure
+~/pyneatpcie/bin/python -m pytest -v -s pcie_host/python/tests/test_genai_hardware.py
+```
+
+Model assets use the platform's default card receive directory, `/tmp`; no
+receive-directory option is needed in C++ or Python. Remove any previous
+`card_receive_directory` assignments when updating applications.
+
+The extras contain the preparation script and image/audio fixtures. Python tests
+use repository fixtures by default; `SIMAPCIE_GENAI_TEST_ASSETS` can select the
+extras' `genai-assets` directory for both languages. Tests cover generation,
+streaming, capability checks, ASR transcription/translation and in-memory audio,
+reuse and explicit close; LLM tests also cover history and cancellation. Cached
+images are not supported by the PCIe API and are intentionally excluded. Missing
+models fail an enabled hardware run; Python skips card access when
+`SIMAPCIE_CARD_HOST` is unset. Concurrent mixed-model stress is separate.
+
 ## V1 Scope
 
 Implemented in the initial PCIe host package:
@@ -542,6 +609,6 @@ Validated on a Modalix PCIe Card:
 
 - tensor-set metadata attachment and transport
 - packaged C++ and Python tensor, image, and boxdecode routes
-- simultaneous execution across four PCIe queues
+- simultaneous execution across six PCIe queues (0–5)
 - YOLOv8n and EVO50 model variants
 - `mla_only` against the default route, single- and multi-input archives

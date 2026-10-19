@@ -222,11 +222,11 @@ int main() {
               "preparation must preserve executable members and published logical outputs");
       for (std::size_t index = 0; index < prepared_stage.members.size(); ++index) {
         const auto& member = prepared_stage.members[index];
-        auto inspected = simaai::scheduler::inspect_kernel(member.executable);
-        require(std::holds_alternative<simaai::runtime::KernelInspection>(inspected),
+        auto inspected = simaai::scheduler::client::inspect_kernel(member.executable);
+        require(std::holds_alternative<simaai::scheduler::client::KernelInspection>(inspected),
                 "Dequant member must retain a checked executable");
-        const auto& checked = std::get<simaai::runtime::KernelInspection>(inspected);
-        require(checked.target() == simaai::runtime::Hardware::A65 &&
+        const auto& checked = std::get<simaai::scheduler::client::KernelInspection>(inspected);
+        require(checked.target() == simaai::scheduler::client::Hardware::A65 &&
                     checked.inputs().size() == 1 && checked.outputs().size() == 1 &&
                     checked.input_requirements().front().storage_bytes == input_size &&
                     checked.output_requirements().front().storage_bytes == output_size,
@@ -236,7 +236,7 @@ int main() {
                 "canonical Dequant members must retain independent backend port identities");
       }
       for (int i = 0; i < 6; ++i) {
-        require(native.processcvu.output_tensors[i].storage.addr == output_size * i,
+        require(native.processcvu.output_tensors[i].descriptor().storage.addr == output_size * i,
                 "native output descriptor must retain each packed byte offset");
         require(native.logical_inputs[i].backend_input_index == i &&
                     native.logical_outputs[i].backend_output_index == i,

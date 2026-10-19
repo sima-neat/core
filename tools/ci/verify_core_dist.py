@@ -204,7 +204,8 @@ def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=
     allowlist_path = resource(root, 'neat-install-manifest.txt')
     allowlist = [s.strip() for s in allowlist_path.read_text().splitlines() if s.strip() and not s.lstrip().startswith('#')]
     require(len(allowlist) == len(set(allowlist)) and set(allowlist) == installables, 'Installer allowlist differs')
-    base = installables | {'manifest.json', receipt_path.name, allowlist_path.name, 'install_neat_framework.sh'}
+    base = installables | {'manifest.json', receipt_path.name, allowlist_path.name,
+                           'install_neat_framework.sh', 'install_sentinel.sh'}
     expected_variants = {
         'metadata.json': (base, {extras.name}),
         'metadata-minimal.json': (base, set()),

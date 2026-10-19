@@ -754,7 +754,7 @@ bool overlay_processcvu_runtime_geometry_from_graph_local(const MpkGraphNode& no
     return false;
   }
 
-  const auto populate_shapes_from_descs = [](const std::vector<sima_ev_tensor_desc>& descs,
+  const auto populate_shapes_from_descs = [](const std::vector<AuthoredTensorDescriptor>& descs,
                                              std::vector<std::vector<int>>* out_shapes) {
     if (!out_shapes || !out_shapes->empty()) {
       return;
@@ -767,7 +767,7 @@ bool overlay_processcvu_runtime_geometry_from_graph_local(const MpkGraphNode& no
       }
     }
   };
-  const auto populate_tile_shapes_from_descs = [](const std::vector<sima_ev_tensor_desc>& descs,
+  const auto populate_tile_shapes_from_descs = [](const std::vector<AuthoredTensorDescriptor>& descs,
                                                   std::vector<std::vector<int>>* out_shapes) {
     if (!out_shapes || !out_shapes->empty()) {
       return;
@@ -1613,7 +1613,7 @@ void synthesize_preproc_payload_tensor_descs(ProcessCvuStagePayload* payload) {
       const std::string input_dtype =
           !payload->input_dtype.empty() ? payload->input_dtype : std::string("UINT8");
       if (build_dense_desc_processcvu_local(input_shape, input_dtype, input_layout, &input_desc)) {
-        payload->input_tensors = {input_desc};
+        payload->input_tensors = {{input_desc, input_dtype}};
         payload->num_in_tensor = 1;
       }
     }
@@ -1665,7 +1665,7 @@ void synthesize_preproc_payload_tensor_descs(ProcessCvuStagePayload* payload) {
       payload->output_tensors.clear();
       return;
     }
-    payload->output_tensors.push_back(output_desc);
+    payload->output_tensors.emplace_back(output_desc, output_dtype);
   }
 }
 
@@ -2522,9 +2522,9 @@ TensorStaticSpec synthesize_single_io_input_tensor(const ProcessCvuStagePayload&
   std::string layout = payload_input_layout_token_local(payload);
   std::vector<std::int64_t> shape;
   if (!payload.input_tensors.empty()) {
-    shape.assign(payload.input_tensors.front().shape.sizes,
-                 payload.input_tensors.front().shape.sizes +
-                     std::min<std::uint32_t>(payload.input_tensors.front().shape.rank,
+    shape.assign(payload.input_tensors.front().descriptor().shape.sizes,
+                 payload.input_tensors.front().descriptor().shape.sizes +
+                     std::min<std::uint32_t>(payload.input_tensors.front().descriptor().shape.rank,
                                              static_cast<std::uint32_t>(SIMA_EV_MAX_RANK)));
   } else if (!payload.input_shapes.empty()) {
     shape.assign(payload.input_shapes.front().begin(), payload.input_shapes.front().end());
@@ -2927,20 +2927,20 @@ std::uint64_t checked_preproc_packed_output_size_bytes(const ProcessCvuStagePayl
     checked_payload.resolved_exec_backend = "EVXX";
   }
   auto policy = kernel_lowering::PreprocFrameAdapter::check_policy(checked_payload);
-  if (const auto* failure = std::get_if<::simaai::runtime::Error>(&policy)) {
+  if (const auto* failure = std::get_if<::simaai::scheduler::client::Error>(&policy)) {
     throw std::invalid_argument("processcvu Preproc storage: " + failure->field + ": " +
                                 failure->message);
   }
   const auto& checked =
       *std::get<std::shared_ptr<const kernel_lowering::PreprocFrameAdapter::CheckedPolicy>>(policy);
-  auto inspection = ::simaai::scheduler::inspect_kernel(
+  auto inspection = ::simaai::scheduler::client::inspect_kernel(
       kernel_lowering::PreprocFrameAdapter::checked_executable(checked));
-  if (const auto* failure = std::get_if<::simaai::runtime::Error>(&inspection)) {
+  if (const auto* failure = std::get_if<::simaai::scheduler::client::Error>(&inspection)) {
     throw std::invalid_argument("processcvu Preproc storage: " + failure->field + ": " +
                                 failure->message);
   }
   const auto requirements =
-      std::get<::simaai::runtime::KernelInspection>(inspection).output_requirements();
+      std::get<::simaai::scheduler::client::KernelInspection>(inspection).output_requirements();
   if (requirements.size() != 1U || requirements.front().storage_bytes == 0U) {
     throw std::invalid_argument("processcvu Preproc storage requires one checked output");
   }
@@ -3688,10 +3688,10 @@ void enforce_packed_parent_input_views(
     binding.src_physical_size_bytes = size_bytes;
 
     if (i < out->payload.input_tensors.size()) {
-      out->payload.input_tensors[i].storage.addr = static_cast<std::uint64_t>(byte_offset);
-      if (size_bytes > 0U) {
-        out->payload.input_tensors[i].storage.nbytes = size_bytes;
-      }
+      auto descriptor = out->payload.input_tensors[i].descriptor();
+      descriptor.storage.addr = static_cast<std::uint64_t>(byte_offset);
+      if (size_bytes > 0U) descriptor.storage.nbytes = size_bytes;
+      out->payload.input_tensors[i] = out->payload.input_tensors[i].with_geometry(descriptor);
     }
 
     const std::uint64_t offset_u = static_cast<std::uint64_t>(byte_offset);
@@ -3994,7 +3994,7 @@ void apply_published_physical_view_to_payload_input_desc_local(
     return;
   }
 
-  auto& desc = out->payload.input_tensors[index];
+  auto desc = out->payload.input_tensors[index].descriptor();
   if (desc.layout_kind != SIMA_EV_LAYOUT_STRIDED) {
     // Tiled kernels already carry their physical transport layout in the
     // authored descriptor.  The routed-view fix is for strided tensor ABI
@@ -4024,6 +4024,7 @@ void apply_published_physical_view_to_payload_input_desc_local(
   if (storage_nbytes > 0U) {
     desc.storage.nbytes = storage_nbytes;
   }
+  out->payload.input_tensors[index] = out->payload.input_tensors[index].with_geometry(desc);
 }
 
 void override_payload_input_desc_from_published_view(ProcessCvuCanonicalCompileInputs* out,
@@ -4037,7 +4038,7 @@ void override_payload_input_desc_from_published_view(ProcessCvuCanonicalCompileI
     throw std::out_of_range(
         "processcvu payload input override index exceeds authored tensor descs");
   }
-  auto& desc = out->payload.input_tensors[index];
+  auto desc = out->payload.input_tensors[index].descriptor();
   if (desc.layout_kind != SIMA_EV_LAYOUT_STRIDED) {
     throw std::invalid_argument("processcvu payload input override requires strided descriptor");
   }
@@ -4047,8 +4048,9 @@ void override_payload_input_desc_from_published_view(ProcessCvuCanonicalCompileI
       desc, published_input, published_shape,
       [&](std::size_t axis, std::int64_t value) { desc.shape.sizes[axis] = value; },
       "processcvu payload input override shape rank mismatch");
+  out->payload.input_tensors[index] = out->payload.input_tensors[index].with_geometry(desc);
   apply_published_physical_view_to_payload_input_desc_local(out, index, published_input, dtype);
-  if (desc.storage.nbytes == 0U) {
+  if (out->payload.input_tensors[index].descriptor().storage.nbytes == 0U) {
     throw std::invalid_argument("processcvu payload input override requires concrete storage span");
   }
 }
@@ -4069,7 +4071,7 @@ void sync_payload_tensor_desc_offsets_from_facts(ProcessCvuStagePayload* payload
         throw std::invalid_argument(
             "processcvu payload input descriptor requires non-negative byte_offset");
       }
-      auto& desc = payload->input_tensors[i];
+      auto desc = payload->input_tensors[i].descriptor();
       desc.storage.addr = static_cast<std::uint64_t>(fact.byte_offset);
       // Phase 3a (Option A++): the runtime-config builder authors
       // `desc.storage.nbytes` as PER-FRAME storage (batch is carried as
@@ -4084,6 +4086,7 @@ void sync_payload_tensor_desc_offsets_from_facts(ProcessCvuStagePayload* payload
           facts.input_bindings[i].src_physical_size_bytes > 0U) {
         desc.storage.nbytes = facts.input_bindings[i].src_physical_size_bytes;
       }
+      payload->input_tensors[i] = payload->input_tensors[i].with_geometry(desc);
     }
   }
   if (!payload->output_tensors.empty()) {
@@ -4097,7 +4100,7 @@ void sync_payload_tensor_desc_offsets_from_facts(ProcessCvuStagePayload* payload
         throw std::invalid_argument(
             "processcvu payload output descriptor requires non-negative byte_offset");
       }
-      payload->output_tensors[i].storage.addr = static_cast<std::uint64_t>(fact.byte_offset);
+      payload->output_tensors[i].set_storage_address(static_cast<std::uint64_t>(fact.byte_offset));
     }
   }
 }
@@ -4410,8 +4413,7 @@ build_multi_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& paylo
     const std::string scalar_input_dtype =
         !payload.input_dtype.empty() ? payload.input_dtype : std::string("INT8");
     const std::string input_dtype = i < payload.input_tensors.size()
-                                        ? processcvu_dtype_token_from_ev_local(
-                                              payload.input_tensors[i].dtype, scalar_input_dtype)
+                                        ? payload.input_tensors[i].scalar_token()
                                         : scalar_input_dtype;
     facts.inputs.push_back(
         build_dense_processcvu_input_fact(static_cast<int>(i), static_cast<int>(i), input_name,
@@ -5338,8 +5340,8 @@ CompiledProcessCvuRuntimeConfig build_preadapter_cast_runtime_config_local(
     throw std::runtime_error(
         "processcvu MPK cast pre-adapter stage could not synthesize explicit typed tensors");
   }
-  runtime.input_tensors = {input_desc};
-  runtime.output_tensors = {output_desc};
+  runtime.input_tensors = {{input_desc, runtime.input_dtype}};
+  runtime.output_tensors = {{output_desc, runtime.output_dtype}};
   runtime.runtime_output_logical_index_list = {0};
   runtime.runtime_output_output_slot_list = {0};
   runtime.runtime_output_physical_index_list = {0};
@@ -5666,7 +5668,7 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
     runtime.input_tensors.push_back(branch.input_tensors.front());
     runtime.output_tensors.push_back(branch.output_tensors.front());
     if (family == "cast") {
-      runtime.output_tensors.back().storage.addr = static_cast<std::uint64_t>(packed_output_offset);
+      runtime.output_tensors.back().set_storage_address(static_cast<std::uint64_t>(packed_output_offset));
     }
     if (!branch.input_shapes.empty()) {
       runtime.input_shapes.push_back(branch.input_shapes.front());
@@ -5763,8 +5765,8 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
             : preferred_mpk_tensor_size_bytes_local(output_tensor_contract, runtime.output_dtype);
     if (family == "cast" && i < branch_runtimes.size() &&
         !branch_runtimes[i].output_tensors.empty() &&
-        branch_runtimes[i].output_tensors.front().storage.nbytes > 0U) {
-      output_size_bytes = branch_runtimes[i].output_tensors.front().storage.nbytes;
+        branch_runtimes[i].output_tensors.front().descriptor().storage.nbytes > 0U) {
+      output_size_bytes = branch_runtimes[i].output_tensors.front().descriptor().storage.nbytes;
     }
 
     ProcessCvuPackedRouteEntry entry;
@@ -6621,8 +6623,8 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_preadapter_compile_
       throw std::runtime_error(
           "processcvu MPK pre-adapter stage could not synthesize explicit typed tensors");
     }
-    runtime.input_tensors = {input_desc};
-    runtime.output_tensors = {output_desc};
+    runtime.input_tensors = {{input_desc, runtime.input_dtype}};
+    runtime.output_tensors = {{output_desc, runtime.output_dtype}};
     runtime.runtime_output_logical_layout_list.clear();
   }
   require_graph_processcvu_runtime_geometry_local(contract, family, exact_stage_name_or_id,
@@ -6664,7 +6666,7 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_preadapter_compile_
           if (packed_output_size_bytes != 0U) {
             output_desc.storage.nbytes = packed_output_size_bytes;
           }
-          runtime.output_tensors = {output_desc};
+          runtime.output_tensors = {{output_desc, runtime.output_dtype}};
         }
       }
       runtime.primary_output_transport_kind = ProcessCvuOutputTransportKind::Packed;
@@ -7246,8 +7248,8 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
       throw std::runtime_error(
           "processcvu MPK detesscast route could not synthesize explicit typed tensors");
     }
-    runtime.input_tensors.push_back(input_desc);
-    runtime.output_tensors.push_back(output_desc);
+    runtime.input_tensors.emplace_back(input_desc, frame_type);
+    runtime.output_tensors.emplace_back(output_desc, output_dtype);
     runtime.output_shapes.push_back(runtime_shape);
     runtime.runtime_output_logical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_output_slot_list.push_back(static_cast<int>(i));
@@ -7310,11 +7312,11 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
   }
   if (out.payload.input_tensors.size() == packed_input_sizes.size()) {
     for (std::size_t i = 0; i < packed_input_sizes.size(); ++i) {
-      out.payload.input_tensors[i].storage.nbytes = packed_input_sizes[i];
+      auto desc = out.payload.input_tensors[i].descriptor();
+      desc.storage.nbytes = packed_input_sizes[i];
       if (i < ordered_subsets.size() &&
-          out.payload.input_tensors[i].layout_kind == SIMA_EV_LAYOUT_TILED) {
+          desc.layout_kind == SIMA_EV_LAYOUT_TILED) {
         if (ordered_subsets[i].align_c16 || ordered_subsets[i].cblock) {
-          const auto& desc = out.payload.input_tensors[i];
           const int c_axis = tensorsemantics::find_shape_axis(desc.shape, SIMA_EV_AXIS_C);
           const bool c16_exact_tiles =
               c_axis >= 0 && c_axis < static_cast<int>(SIMA_EV_MAX_RANK) &&
@@ -7323,12 +7325,13 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
               (desc.shape.sizes[static_cast<std::uint32_t>(c_axis)] % 16) == 0 &&
               (desc.layout.tiled.tile_sizes[static_cast<std::uint32_t>(c_axis)] % 16) == 0;
           if (!c16_exact_tiles) {
-            out.payload.input_tensors[i].layout.tiled.flags &=
+            desc.layout.tiled.flags &=
                 ~static_cast<std::uint32_t>(SIMA_EV_TILED_FLAG_COMPACT_CHANNELS);
           }
-          out.payload.input_tensors[i].layout.tiled.tile_align_bytes = 16U;
+          desc.layout.tiled.tile_align_bytes = 16U;
         }
       }
+      out.payload.input_tensors[i] = out.payload.input_tensors[i].with_geometry(desc);
     }
   }
   out.facts = build_processcvu_packed_route_facts(packed_parent_input_name, "output_tensor",
@@ -7437,7 +7440,7 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_dense_unary_post_ro
       if (!build_tensor_dense_desc_processcvu_local(shape, specs[i].input_dtype, &desc)) {
         throw std::runtime_error(route_name + " route could not synthesize input typed tensor");
       }
-      runtime.input_tensors.push_back(desc);
+      runtime.input_tensors.emplace_back(desc, specs[i].input_dtype);
     }
   }
   if (runtime.output_tensors.size() != specs.size()) {
@@ -7454,7 +7457,7 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_dense_unary_post_ro
       if (!build_tensor_dense_desc_processcvu_local(shape, specs[i].output_dtype, &desc)) {
         throw std::runtime_error(route_name + " route could not synthesize output typed tensor");
       }
-      runtime.output_tensors.push_back(desc);
+      runtime.output_tensors.emplace_back(desc, specs[i].output_dtype);
     }
   }
   if (runtime.input_dtype.empty()) {
@@ -7984,8 +7987,8 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
                                       canonical_runtime_output_shape.end());
     const auto tensor_contract = plugin_contracts::build_detessdequant_tensor_descriptor_contract(
         head, canonical_runtime_output_shape);
-    runtime.input_tensors.push_back(tensor_contract.input);
-    runtime.output_tensors.push_back(tensor_contract.output);
+    runtime.input_tensors.emplace_back(tensor_contract.input, head.frame_type);
+    runtime.output_tensors.emplace_back(tensor_contract.output, output_dtype);
     runtime.output_shapes.push_back(output_shape_int);
     runtime.runtime_output_logical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_output_slot_list.push_back(static_cast<int>(i));

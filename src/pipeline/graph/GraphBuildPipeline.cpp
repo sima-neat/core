@@ -16,6 +16,7 @@
 #include "gst/internal/GstLaunchBindings.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
+#include "pipeline/internal/SegmentBuildPlan.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
@@ -36,6 +37,7 @@
 #include <cstring>
 #include <cstdio>
 #include <dlfcn.h>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -832,7 +834,7 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
         "Supply the required input context and correct the reported stage contract.",
         build.pipeline_string);
   }
-  const auto pipeline_string = session_build_select_kernel_cpu_visibility(build);
+  const auto& pipeline_string = build.pipeline_string;
   if (build.diag) {
     build.diag->pipeline_string = pipeline_string;
   }
@@ -1017,7 +1019,12 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
         "Migrate every semantic stage to compiled-contract render before building the pipeline.",
         pipeline_string);
   }
-  const auto throw_kernel_preparation_error = [&](const simaai::runtime::Error& failure) {
+  const auto throw_kernel_preparation_error = [&](const simaai::scheduler::client::Error& failure) {
+    // Application factories used to execute directly at this cold boundary.
+    // Preserve their original exception type and message across Scheduler's
+    // result API; declared validation/provider errors still use NeatError below.
+    if (failure.application_exception)
+      std::rethrow_exception(failure.application_exception);
     // Cold failures use the same canonical presentation as plugin bus errors.
     // Do not collapse malformed requests and absent capabilities into graph shape.
     pipeline_internal::RawGstError raw;
@@ -1025,8 +1032,8 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
     raw.source_name = where ? where : "Graph::build";
     raw.message = failure.field + ": " + failure.message;
     raw.details = {{"neat-diagnostic-id", "neatkernelrunner.failure"},
-                   {"runtime-category", simaai::runtime::error_code_name(failure.code)},
-                   {"runtime-phase", simaai::runtime::error_phase_name(failure.phase)},
+                   {"runtime-category", simaai::scheduler::client::error_code_name(failure.code)},
+                   {"runtime-phase", simaai::scheduler::client::error_phase_name(failure.phase)},
                    {"runtime-field", failure.field}};
     if (failure.kernel_code)
       raw.details.emplace("kernel-code", std::to_string(static_cast<int>(*failure.kernel_code)));
@@ -2757,6 +2764,17 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
 
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where) {
   return parse_pipeline_or_throw(build, where);
+}
+
+void session_build_record_segment_plan(const BuildResult& build) {
+  if (!build.diag) {
+    return;
+  }
+  auto plan = std::make_shared<pipeline_internal::SegmentBuildPlan>();
+  plan->name_transform = build.name_transform;
+  plan->node_reports = build.diag->node_reports;
+  plan->rendered_manifest = build.rendered_manifest;
+  build.diag->build_plan = std::move(plan);
 }
 
 void session_build_validate_explicit_launch_names_or_throw(

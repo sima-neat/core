@@ -12,7 +12,7 @@
 
 ## Concept
 
-A Modalix PCIe Card exposes queues 0 through 3. Each active `Model` owns one
+A Modalix PCIe Card exposes co-processing queues 0 through 5. Each active `Model` owns one
 queue, so independent models can execute concurrently by assigning a different
 `ConnectionOptions.queue` to each instance. This tutorial uses ResNet-50 on
 queue 0 and YOLOv8s on queue 1 without adding a global coordinator.

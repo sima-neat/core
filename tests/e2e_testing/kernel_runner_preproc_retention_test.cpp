@@ -3,19 +3,21 @@
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include <gst/SimaPluginStaticManifestAbi.h>
-#include <gstsimaaitensorbuffer.h>
-#include <simaai/neat/internal/dmabuf/DmaBufPool.h>
-#include <simaai/runtime/gstreamer/storage.h>
+#include <gstsimaaitensorbuffer_meta.h>
+#include <simaai/scheduler/client/dma_memory.h>
+#include <simaai/scheduler/testing/probe.h>
+#include <simaai/scheduler/client/tensor_buffer.h>
 #include <gst/video/video.h>
 #include <bit>
 #include <cmath>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
-namespace rt = simaai::runtime;
+namespace rt = simaai::scheduler::client;
+namespace probe = simaai::scheduler::testing;
 namespace tr = simaai::gst;
-namespace gs = rt::gstreamer;
-namespace dma = simaai::neat::internal::dmabuf;
+namespace gs = simaai::scheduler::client;
+namespace dma = simaai::scheduler::client::dma;
 namespace {
 void require(bool condition, const char* message) {
   if (!condition)
@@ -30,16 +32,6 @@ void okay(rt::Status status) {
   if (status)
     throw std::runtime_error(status->field + ": " + status->message);
 }
-rt::Completion submit_member(const gs::Member& member, const gs::Binding& binding) {
-  const auto& operation = binding.operation ? *binding.operation : *member.operation;
-  if (binding.admitted)
-    return member.executor->submit_admitted(operation, binding.admitted_inputs,
-                                            binding.admitted_outputs, binding.admitted_workspace);
-  if (binding.bound)
-    return member.executor->submit(*binding.bound);
-  return member.executor->submit(operation, binding.inputs, binding.outputs, binding.workspace);
-}
-
 sima_ev_tensor_desc descriptor(bool input) {
   sima_ev_tensor_desc result{};
   result.dtype = input ? SIMA_EV_DTYPE_FP32 : SIMA_EV_DTYPE_BF16;
@@ -119,17 +111,19 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   cfg.output_dtype = "BF16";
   cfg.channel_mean = {0.0, 0.0, 0.0};
   cfg.channel_stddev = {1.0, 1.0, 1.0};
-  cfg.input_tensors = {descriptor(true)};
-  cfg.output_tensors = {descriptor(false)};
-  cfg.input_tensors[0].dtype = SIMA_EV_DTYPE_INT8;
   for (unsigned output = 0; output < 2; ++output) {
-    auto& d = output ? cfg.output_tensors[0] : cfg.input_tensors[0];
+    auto d = descriptor(!output);
+    if (!output)
+      d.dtype = SIMA_EV_DTYPE_INT8;
     d.shape.sizes[0] = 8;
     d.shape.sizes[1] = 8;
     d.shape.sizes[2] = 3;
     d.layout.strided.strides_bytes[0] = 24 * (output ? 2 : 1);
     d.layout.strided.strides_bytes[1] = 3 * (output ? 2 : 1);
     d.layout.strided.strides_bytes[2] = output ? 2 : 1;
+    // Raw RGB pixels are unsigned bytes; the output is numerical BF16.
+    auto& tensors = output ? cfg.output_tensors : cfg.input_tensors;
+    tensors.emplace_back(d, output ? "BF16" : "UINT8");
   }
   cfg.default_input_name = "source";
   cfg.default_output_names = {"result"};
@@ -217,13 +211,17 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   gs::TensorStageRequest first_instance, second_instance;
   first_instance.members = original_recipe->members;
   second_instance.members = original_recipe->members;
-  okay(ps::instantiate_kernel_stage_state(*original_recipe, first_instance));
-  okay(ps::instantiate_kernel_stage_state(*original_recipe, second_instance));
-  require(first_instance.frame_adapter != second_instance.frame_adapter &&
-              first_instance.frame_adapter->session().size() == 0 &&
-              second_instance.frame_adapter->session().size() == 0,
-          "independent requests shared image state or opened a session during instantiation");
-  std::weak_ptr<gs::TensorStageFrameAdapter> released = first_instance.frame_adapter;
+  okay(ps::wire_kernel_stage_factories(*original_recipe, first_instance));
+  okay(ps::wire_kernel_stage_factories(*original_recipe, second_instance));
+  require(first_instance.frame_adapter_factory && second_instance.frame_adapter_factory,
+          "independent requests lost immutable image factories");
+  auto first_adapter = take(first_instance.frame_adapter_factory());
+  auto second_adapter = take(second_instance.frame_adapter_factory());
+  require(first_adapter != second_adapter,
+          "independent requests shared mutable image state");
+  std::weak_ptr<gs::TensorStageFrameAdapter> released = first_adapter;
+  first_adapter.reset();
+  second_adapter.reset();
   first_instance = {};
   second_instance = {};
   require(released.expired(), "retained recipe owns an instantiated image adapter");
@@ -238,18 +236,14 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   gs::TensorStageRequest request;
   request.target = recipe.target;
   request.members = recipe.members;
-  okay(ps::instantiate_kernel_stage_state(recipe, request));
+  okay(ps::wire_kernel_stage_factories(recipe, request));
   request.constant_data = recipe.constant_data;
   request.placement = std::shared_ptr<const SimaPluginStageSpec>(owner, &owner->stage);
   std::string error;
   require(ps::build_kernel_stage_publication(manifest.stages.front(), &request.publication, &error),
           error.c_str());
-  request.options.storage = gs::make_storage();
-  request.options.compact_publication = compact;
   request.options.capacity = 4;
-  const std::array requests{std::move(request)};
-  auto stages = take(gs::prepare_tensor_stages(requests));
-  auto stage = std::move(stages.front());
+  auto stage = take(probe::StageProbe::create(std::move(request), compact));
   // Three simultaneous outputs outlive the two-entry geometry cache. The
   // fourth output then returns to A, forcing a real preparation after eviction.
   struct Case {
@@ -276,10 +270,10 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   const auto check = [&](GstBuffer* output, std::size_t index) {
     const auto& expected = cases[index];
     std::string view_error;
-    tr::TensorBufferView view;
-    require(tr::tensor_buffer_create_view(output, nullptr, &view, &view_error), view_error.c_str());
-    require(view.tensors.size() == 1, "Preproc common reader tensor count");
-    const auto& tensor = view.tensors.front();
+    rt::TensorBufferView view;
+    require(rt::tensor_buffer_create_view(output, nullptr, &view, &view_error), view_error.c_str());
+    require(view.tensors().size() == 1, "Preproc common reader tensor count");
+    const auto& tensor = view.tensors().front();
     require(tensor.shape == std::vector<std::int64_t>({8, 8, 3}) &&
                 tensor.stride_bytes == std::vector<std::int64_t>({48, 6, 2}) &&
                 tensor.size_bytes == 384 && tensor.physical_span_bytes == 384 &&
@@ -300,7 +294,7 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
     const bool expected_full = full && index != 4;
     require(view_error.empty() && bool(current_frame) == expected_full,
             "Preproc full-frame/extension fallback selection");
-    gs::Buffer legacy_projection;
+    probe::GstBufferOwner legacy_projection;
     if (current_frame) {
       require(!gst_buffer_get_custom_meta(output, "GstSimaMeta") && current_frame->preprocess,
               "full Preproc serialized legacy facts or lost typed owner");
@@ -390,8 +384,8 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
       }
     require(mapped->finish(&error), error.message().c_str());
   };
-  std::vector<gs::Buffer> retained;
-  std::shared_ptr<const rt::PreparedOperation> first_operation;
+  std::vector<probe::GstBufferOwner> retained;
+  std::shared_ptr<const void> first_operation;
   for (std::size_t index = 0; index < cases.size(); ++index) {
     const auto& current = cases[index];
     auto caps = std::shared_ptr<GstCaps>(
@@ -399,9 +393,9 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
                             current.width, "height", G_TYPE_INT, current.height, "framerate",
                             GST_TYPE_FRACTION, 30, 1, nullptr),
         gst_caps_unref);
-    okay(stage->bridge->check_caps(0, caps.get()));
+    okay(stage.check_caps(0, caps.get()));
     dma::Error error;
-    gs::Buffer input(dma::allocateDmaBufBuffer(dma::HeapKind::Cma, 4096, {}, &error));
+    probe::GstBufferOwner input(dma::allocateDmaBufBuffer(dma::HeapKind::Cma, 4096, {}, &error));
     require(bool(input), error.message().c_str());
     auto image =
         dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(input.get(), 0), 0,
@@ -438,17 +432,12 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
         list(facts, "preproc_roi_batch_indices", {0});
       }
     }
-    auto correlation = take(stage->bridge->correlate(0, input.get()));
-    gs::Frame frame;
-    frame.members.resize(stage->members.size());
-    frame.publication_mode = full      ? gs::PublicationMode::CompactFrameV2
-                             : compact ? gs::PublicationMode::CompactTensorSetV1
-                                       : gs::PublicationMode::Legacy;
-    okay(stage->bridge->acquire(correlation, frame));
     const std::array inputs{input.get()};
-    okay(stage->bridge->bind(correlation, inputs, frame));
-    require(frame.members[0].admitted, "Preproc did not use admitted storage");
-    const auto& operation = frame.members[0].operation;
+    auto frame = take(stage.bind(inputs, full ? probe::PublicationMode::CompactFrameV2
+                                      : compact ? probe::PublicationMode::CompactTensorSetV1
+                                                : probe::PublicationMode::Legacy));
+    require(frame.admitted(0), "Preproc did not use admitted storage");
+    const auto operation = frame.operation_identity(0);
     require(bool(operation), "dynamic Preproc operation missing");
     if (index == 0)
       first_operation = operation;
@@ -457,13 +446,11 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
               "Preproc geometry changed or evicted without a new preparation");
     if (index == 3)
       first_operation.reset();
-    auto done = submit_member(stage->members[0], frame.members[0]);
-    okay(done.wait());
-    okay(stage->bridge->retire(frame));
-    okay(stage->bridge->finish(frame));
-    check(frame.output.get(), index);
+    okay(frame.execute());
+    okay(frame.finish());
+    check(frame.output(), index);
     if (index < 3)
-      retained.push_back(std::move(frame.output));
+      retained.push_back(frame.take_output());
     for (std::size_t previous = 0; previous < retained.size(); ++previous)
       check(retained[previous].get(), previous);
   }

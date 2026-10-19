@@ -2,7 +2,7 @@
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "nodes/io/Input.h"
-#include "simaai/neat/internal/dmabuf/DmaBuf.h"
+#include <simaai/scheduler/client/dma_memory.h>
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
@@ -94,10 +94,10 @@ int main() {
           simaai::neat::allocate_input_buffer(4096U, input_options, pool), gst_buffer_unref);
       require(buffer != nullptr && gst_buffer_n_memory(buffer.get()) == 1U,
               "Auto tensor ingress did not allocate one DMA-BUF memory");
-      auto memory = simaai::neat::internal::dmabuf::DmaBufMemory::retain(
+      auto memory = simaai::scheduler::client::dma::DmaBufMemory::retain(
           gst_buffer_peek_memory(buffer.get(), 0U));
       require(memory.has_value() &&
-                  memory->knownHeapKind() == simaai::neat::internal::dmabuf::HeapKind::MlaDms,
+                  memory->knownHeapKind() == simaai::scheduler::client::dma::HeapKind::MlaDms,
               "Auto tensor ingress must allocate from the resolved DMS heap");
     }
 

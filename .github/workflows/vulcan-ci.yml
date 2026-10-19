@@ -1,5 +1,4 @@
 name: Vulcan CI
-
 run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'production' }})
 
 on:
@@ -64,6 +63,31 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  documentation-localization:
+    name: Validate Documentation Localization
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install pinned i18n tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://artifacts.neat.sima.ai/i18n/main/ed10d3899a75/sima-neat-i18n-0.1.0-branch.main.ed10d3899a75.tgz \
+            -o "${RUNNER_TEMP}/sima-i18n.tgz"
+          echo "ec5a0158c4187414600e49b6891737bd663dd80823a082aa01e927c0518ae602  ${RUNNER_TEMP}/sima-i18n.tgz" | sha256sum --check --strict
+          npm install --global --ignore-scripts "${RUNNER_TEMP}/sima-i18n.tgz"
+          sima-i18n --version
+
+      - name: Validate committed translations
+        run: bash scripts/ci/check_documentation_localization.sh
+
   resolve-vulcan-config:
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
@@ -112,6 +136,7 @@ jobs:
             tests/tools/test_guarded_ctest_configuration.py \
             tests/tools/test_codec_stream_registration.py \
             tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_cpp_tidy_scope.py \
             tests/tools/test_vulcan_ci_notification.py
 
       - name: Resolve cache namespace and access
@@ -267,7 +292,6 @@ jobs:
       - name: Install code hygiene tools
         run: |
           ./scripts/ci/install_code_hygiene_deps.sh
-          ./build.sh --install-deps-only
 
       - name: Verify host C++ headers for clang-tidy
         run: |
@@ -277,6 +301,7 @@ jobs:
       - name: Run changed-code hygiene
         env:
           SIMANEAT_STRICT_WARNINGS: "ON"
+          TIDY_INSTALL_DEPS: "1"
         run: |
           ./scripts/ci/run_code_hygiene.sh --changed-only --format-verbose
 
@@ -388,6 +413,7 @@ jobs:
           -e NEAT_SYNC_SYSROOT="ON" \
           -e NEAT_CI_DEPENDENCY_MANIFEST="${{ vars.NEAT_CI_DEPENDENCY_MANIFEST || 'ci/dependencies.json' }}" \
           -e NEAT_GUARDED_HARDWARE_TESTS="ON" \
+          -e SIMANEAT_HOST_PYTHON=/usr/bin/python3 \
           -e SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK="${ALLOW_FUZZ_IN_NEAT_SDK}" \
           -e CORE_BUILD_ARGS="${CORE_BUILD_ARGS}" \
           "${sdk_container}" \
@@ -577,11 +603,18 @@ jobs:
 
           python_venv="${RUNNER_TEMP}/pyneatpcie-package-smoke"
           consumer_build="${RUNNER_TEMP}/sima-pcie-host-consumer"
+          skill_home="${RUNNER_TEMP}/sima-pcie-host-skill-smoke"
 
-          pcie_host/dist/install_pciehost.sh \
+          CODEX_HOME="${skill_home}/codex" \
+          CLAUDE_HOME="${skill_home}/claude" \
+            pcie_host/dist/install_pciehost.sh \
             --skip-setup \
             --python \
             --python-venv "${python_venv}"
+
+          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/SKILL.md"
+          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/agents/openai.yaml"
+          test -f "${skill_home}/claude/skills/neat-pcie-application-builder/SKILL.md"
 
           cmake \
             -S pcie_host/tests/package_smoke \
@@ -958,7 +991,7 @@ jobs:
       - publish-vulcan-artifacts
     runs-on:
       group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
-      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+      labels: [self-hosted, Linux, ARM64, modalix, rtsp, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
@@ -978,7 +1011,7 @@ jobs:
         run: |
           rm -rf _work
           mkdir -p _work
-          rm -f ./*-Linux-core.deb ./*-Linux-dev.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
+          rm -f ./*-Linux-core.deb ./*-Linux-dev.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./install_sentinel.sh ./neat-install-manifest.txt || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
       - name: Pre-install devkit storage cleanup
@@ -1001,6 +1034,8 @@ jobs:
       - name: Install test runtime from Vulcan artifact
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          # Benchmark telemetry is part of CI; fail when Sentinel cannot be installed.
+          NEAT_INSTALLER_SENTINEL_REQUIRED: "ON"
         run: |
           if ! command -v sima-cli >/dev/null 2>&1; then
             echo "sima-cli not found on test runner." >&2
@@ -1139,7 +1174,6 @@ jobs:
       - name: Verify devkit runtime after installation
         run: |
           set -euo pipefail
-          systemctl is-active --quiet simaai-appcomplex.service
           ev74_paths=()
           for remoteproc in /sys/class/remoteproc/remoteproc*; do
             [[ -r "${remoteproc}/name" ]] || continue
@@ -1171,7 +1205,7 @@ jobs:
           export LLIMA_MODELS_PATH="${LLIMA_MODELS_PATH:-/media/nvme/llima/models}"
           export SIMA_TEST_LLIMA_TEXT_MODEL="${SIMA_TEST_LLIMA_TEXT_MODEL:-Qwen2.5-0.5B-Instruct-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_VLM_MODEL="${SIMA_TEST_LLIMA_VLM_MODEL:-LFM2.5-VL-450M-Autoround-a16w4}"
-          export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8-layered-encoder}"
+          export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8}"
           export SIMA_TEST_LLIMA_REASONING_QWEN_MODEL="${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL:-Qwen3-0.6B-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL="${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL:-Gemma-4-E2B-it-TextOnly-GPTQ-a16w4}"
 
@@ -1473,13 +1507,17 @@ jobs:
             --prebuilt-tests-dir "${TEST_DIR}" \
             --results-dir "${GITHUB_WORKSPACE}/_work/perf-results" \
             "${PERF_MATRIX_ARGS[@]}"
+          python3 tests/perf/tools/run_perf_matrix.py \
+            --suite encoder \
+            --prebuilt-tests-dir "${TEST_DIR}" \
+            --results-dir "${GITHUB_WORKSPACE}/_work/perf-results/encoder"
 
       - name: Upload Modalix Performance Results
         if: ${{ always() }}
         uses: actions/upload-artifact@v6
         with:
           name: modalix-performance-results-${{ github.run_id }}-${{ github.run_attempt }}
-          path: _work/perf-results/*.json
+          path: _work/perf-results/
           if-no-files-found: error
           retention-days: 30
 
@@ -1696,14 +1734,13 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    # The available PCIe card runner does not have a 3.0.0 image yet.
-    if: ${{ false }}
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
       - publish-vulcan-artifacts
       - publish-pciehost-package
-    runs-on: [self-hosted, Linux, X64, pcie]
+    runs-on: [self-hosted, Linux, X64, pcie, 3.0.0-pcie-test]
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
@@ -1718,7 +1755,7 @@ jobs:
       SIMAPCIE_BURST_ITERATIONS: "20"
       SIMAPCIE_LIFECYCLE_CYCLES: "10"
       SIMAPCIE_LIFETIME_ITERATIONS: "20"
-      SIMAPCIE_STRESS_QUEUES: "0 1 2 3"
+      SIMAPCIE_STRESS_QUEUES: "0 1 2 3 4 5"
       SIMAPCIE_STRESS_ITERATIONS: "1000"
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
       SIMAPCIE_CARD_INSTALL_CMD: ${{ vars.SIMAPCIE_CARD_INSTALL_CMD }}
@@ -1753,6 +1790,25 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/preflight.sh
+
+      - name: Provision PCIe card SSH key
+        shell: bash
+        env:
+          SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./pcie_host/scripts/pcie-setup.sh \
+            --user "${SIMAPCIE_USER}" \
+            --key "${HOME}/.ssh/sima_neat_pcie_ed25519" \
+            --hosts "${SIMAPCIE_CARD_HOST}" \
+            --non-interactive \
+            --strict
+
+      - name: Prepare PCIe card CI prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/prepare_card_prerequisites.sh
 
       - name: Check PCIe card platform compatibility
         id: check_pcie_card_compatibility
@@ -1821,6 +1877,16 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/ci/pciehost/cleanup_queue.sh
+
+      - name: Prepare PCIe GenAI models
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/ci/pciehost/common.sh
+          load_state
+          timeout --signal=TERM --kill-after=30s 3600 \
+            "${TEST_DIR}/prepare_pcie_genai_models.sh"
 
       - name: Run PCIe host C++ CTest suite
         if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}

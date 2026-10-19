@@ -6,7 +6,7 @@
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/CanonicalKernelLowering.h"
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/kernel.h>
 
 #include <algorithm>
 #include <array>
@@ -17,8 +17,8 @@
 
 namespace simaai::neat {
 namespace {
-namespace rt = ::simaai::runtime;
-namespace scheduler = ::simaai::scheduler;
+namespace rt = ::simaai::scheduler::client;
+namespace scheduler = ::simaai::scheduler::client;
 namespace si = pipeline_internal::sima;
 namespace specs = si::specbuilders;
 rt::DType kernel_dtype(std::string token) {
@@ -161,7 +161,7 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
     auto recipe = std::make_shared<si::KernelStageRecipe>();
     for (std::size_t index = 0; index < upstream->logical_outputs.size(); ++index) {
       const auto& source = upstream->logical_outputs[index];
-      if (source.shape.empty() || source.shape.size() > rt::Shape::max_dimensions ||
+      if (source.shape.empty() || source.shape.size() > std::size(sima_ev_tensor_desc{}.shape.sizes) ||
           source.byte_offset < 0)
         throw std::invalid_argument("SimaArgMax requires a positive tensor rank of at most six");
       const auto rank = static_cast<int>(source.shape.size());
@@ -184,11 +184,11 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
           0, static_cast<int>(index), source.backend_name, source.segment_name,
           ingress ? -1 : source.logical_index, ingress ? -1 : source.output_slot,
           ingress ? -1 : source.physical_index, ingress ? 0 : physical->size_bytes, 0, true));
-      rt::TensorSpec in{rt::Shape(source.shape), kernel_dtype(source.dtype)};
+      rt::TensorSpec in{source.shape, kernel_dtype(source.dtype)};
       if (!source.stride_bytes.empty()) {
         if (source.stride_bytes.size() != source.shape.size())
           throw std::invalid_argument("SimaArgMax input strides do not match rank");
-        ::simaai::kernels::Strided strided;
+        ::simaai::scheduler::client::Strided strided;
         std::copy(source.stride_bytes.begin(), source.stride_bytes.end(),
                   strided.strides_bytes.begin());
         in.layout = strided;
@@ -206,15 +206,15 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
       if (legacy && source.backend_output_index >= 0 &&
           static_cast<std::size_t>(source.backend_output_index) < legacy->output_tensors.size()) {
         const auto& descriptor = legacy->output_tensors[source.backend_output_index];
-        if (descriptor.layout_kind == SIMA_EV_LAYOUT_TILED) {
+        if (descriptor.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED) {
           auto native = si::kernel_lowering::tensor_spec_from_model_descriptor(
-              descriptor, in.dtype == rt::DType::BFloat16 ? "BF16" : source.dtype);
+              descriptor);
           if (auto* failure = std::get_if<rt::Error>(&native))
             throw std::invalid_argument("SimaArgMax input: " + failure->message);
           in = std::get<rt::TensorSpec>(std::move(native));
         }
       }
-      if (!(in.shape == rt::Shape(source.shape)) || in.dtype != kernel_dtype(source.dtype))
+      if (!(in.shape == source.shape) || in.dtype != kernel_dtype(source.dtype))
         throw std::invalid_argument(
             "SimaArgMax logical view disagrees with producer tensor storage");
       auto shape = source.shape;
@@ -222,9 +222,9 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
         shape[axis] = 1;
       else
         shape.erase(shape.begin() + axis);
-      rt::TensorSpec out{rt::Shape(shape), rt::DType::Int32};
-      const std::array parameters{::simaai::kernels::Parameter{"axis", opt_.axis},
-                                  ::simaai::kernels::Parameter{"keepdims", opt_.keepdims}};
+      rt::TensorSpec out{shape, rt::DType::Int32};
+      const std::array parameters{::simaai::scheduler::client::Parameter{"axis", opt_.axis},
+                                  ::simaai::scheduler::client::Parameter{"keepdims", opt_.keepdims}};
       auto checked =
           scheduler::check_kernel({"argmax", rt::Hardware::A65, {&in, 1}, {&out, 1}, parameters});
       if (auto* failure = std::get_if<rt::Error>(&checked))

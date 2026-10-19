@@ -31,10 +31,10 @@ void unselected_dma_sibling_is_never_mapped() {
                   gst_sample_unref};
   require(bool(input.sample), "CPU subset fixture sample recreation");
   const auto admitted = admitted_view(input.sample.get(), "CPU subset Runtime authority");
-  const auto* admitted_scores = transport::tensor_buffer_find_logical(admitted, 7);
+  const auto* admitted_scores = find_logical(admitted, 7);
   require(admitted_scores != nullptr, "CPU subset Runtime authority: missing scores identity");
   require_equal(admitted_scores->memory_index, 1, "CPU subset Runtime authority: selected carrier");
-  require_equal(admitted.segments[1].name, "arena1", "CPU subset Runtime authority: physical name");
+  require_equal(admitted.segment_name(1), "arena1", "CPU subset Runtime authority: physical name");
   neat::OutputTensorOverride override;
   neat::OutputTensorOverrideEntry entry;
   entry.shape = {4, 4};
@@ -143,7 +143,7 @@ void admitted_binding_survives_projection(bool route_identity_only, bool compact
                              " policy=" + std::to_string(policy) +
                              " frame=" + std::to_string(current);
         const auto admitted = admitted_view(input.sample.get(), context);
-        const auto* head = transport::tensor_buffer_find_logical(admitted, 7);
+        const auto* head = find_logical(admitted, 7);
         require(head != nullptr, context + ": missing admitted scores identity");
         require_equal(head->physical_index, 17, context + ": fixture producer physical id");
         require_equal(head->memory_index, packed ? 0 : 1,
@@ -194,7 +194,7 @@ void admitted_binding_survives_projection(bool route_identity_only, bool compact
           require_equal(tensor.storage->sima_segments.size(), 1U,
                         context + ": destination segment count");
           require_equal(tensor.storage->sima_segments[0].name,
-                        admitted.segments[head->memory_index].name,
+                        admitted.segment_name(head->memory_index),
                         context + ": selected physical segment name");
           (void)sima_test::require_dma_owned_output(output, {}, context);
         }
@@ -233,7 +233,7 @@ void unmatched_projection_keeps_actual_name_precedence() {
     const auto& tensor = output.tensors[0];
     require_equal(tensor.route.memory_index, copy ? 0 : 1,
                   "unmatched actual name: destination selector");
-    require_equal(tensor.route.segment_name, admitted.segments[1].name,
+    require_equal(tensor.route.segment_name, admitted.segment_name(1),
                   "unmatched actual name: selected segment name");
     require_payload(tensor, input.seed, 1, 8, 16, "unmatched actual name: selected bytes");
   }
@@ -264,8 +264,8 @@ void single_head_expansion_keeps_matching_authority_and_copy_dedup() {
           frame(publication, {true, true}, static_cast<std::uint8_t>(31 + 73 * current)));
       const auto& input = inputs.back();
       const auto admitted = admitted_view(input.sample.get(), "single-head expansion authority");
-      require_equal(admitted.tensors.size(), 1U, "single-head expansion: canonical logical count");
-      require_equal(admitted.tensors[0].logical_index, 7,
+      require_equal(admitted.tensors().size(), 1U, "single-head expansion: canonical logical count");
+      require_equal(admitted.tensors()[0].logical_index, 7,
                     "single-head expansion: canonical identity");
       internal::reset_tensor_io_stats();
       outputs.push_back(neat::output_from_sample_stream(input.sample.get(), "single-head expansion",
@@ -289,7 +289,7 @@ void single_head_expansion_keeps_matching_authority_and_copy_dedup() {
       require_equal(matching.byte_offset, 8, "single-head expansion: matched composed offset");
       require_equal(matching.route.logical_index, 7,
                     "single-head expansion: matched logical identity");
-      require_equal(matching.route.segment_name, admitted.tensors[0].segment_name,
+      require_equal(matching.route.segment_name, admitted.tensors()[0].segment_name,
                     "single-head expansion: matched segment authority");
       for (const auto& tensor : output.tensors) {
         require_equal(tensor.route.memory_index, copy ? 0 : 1,
@@ -391,10 +391,10 @@ void broadcast_stride_publication_preserves_aliasing() {
   head.byte_offset = 4;
   head.size_bytes = 4; // Four logical elements use only two physical bytes.
   auto input = frame(publication, {true}, 53);
-  transport::TensorBufferView admitted;
+  client::TensorBufferView admitted;
   std::string admission_error;
-  require(transport::tensor_buffer_create_view(input.sample.get(), &admitted, &admission_error) &&
-              admitted.tensors.size() == 1 && admitted.tensors[0].physical_span_bytes == 2,
+  require(client::tensor_buffer_create_view(input.sample.get(), &admitted, &admission_error) &&
+              admitted.tensors().size() == 1 && admitted.tensors()[0].physical_span_bytes == 2,
           "Runtime broadcast admission must distinguish four logical from two physical bytes: " +
               admission_error);
   neat::InputStream::State state;

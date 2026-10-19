@@ -29,9 +29,9 @@
 
 ### 執行基準測試 {#step-run-benchmark}
 
-呼叫 `benchmark(samples)`。API 會預熱非同步模型執行器，測量非同步推送/拉取窗口，將摘要列印到標準輸出，並在 `BenchmarkReport` 中傳回相同的主要值。
+呼叫 `benchmark(samples)`。API 會預熱模型，測量單次執行（single-flight）延遲，接著在另一個非同步推送/拉取階段中測量吞吐量，將摘要列印到標準輸出，並在 `BenchmarkReport` 中傳回相同的主要值。
 
-樣本數量是測量的合成輸入的數量。對於更穩定的吞吐量和功耗數字，請使用較大的數量；當您只想進行快速的初步檢查時，請使用較小的數量。
+每個階段都會持續執行，直到至少測量了 `samples` 個輸入且已經過 10 秒，因此吞吐量階段的功耗和溫度讀數會涵蓋多個樣本。設定 `BenchmarkOptions::min_duration_ms` 可變更此下限；設為 0 則可進行快速的初步檢查，讓每個階段在測量 `samples` 個輸入後即停止。
 
 其路徑以 BoxDecode 結尾的檢測模型也可以使用 `BenchmarkOptions`。設定 `original_width`、`original_height` 和 `resize_mode`，以描述源圖像幾何形狀，BoxDecode 在將檢測映射到模型座標時使用該幾何形狀。合成張量仍然保持模型形狀：
 
@@ -48,9 +48,47 @@ Python 會透過 `pyneat.BenchmarkOptions` 公開相同的欄位。設定原始�
 
 ### 閱讀報告 {#step-read-report}
 
-傳回的報告僅保留大多數使用者需要的標題欄位：以毫秒為單位的平均端到端延遲、以每秒幀數為單位的吞吐量、如果有的話，以瓦特為單位的平均板載功耗，以及如果有的話，以焦耳為單位的測量能量。
+傳回的報告以大多數使用者需要的標題欄位開頭：以毫秒為單位的平均端到端延遲、以每秒幀數為單位的吞吐量、以瓦特為單位的平均與峰值 SoM 功耗，以及處理 `samples` 個輸入所需的能量（以焦耳為單位）。`throughput_duration_ms` 會回報吞吐量階段執行了多久。
 
-功耗遙測取決於板載支援。如果執行階段無法對當前目標進行功耗軌的取樣，基準測試仍會報告延遲和吞吐量，並將功耗欄位設定為零。
+功耗資料來自 Sentinel，也就是 Neat 安裝程式所設定的板子遙測常駐程式。`report.telemetry` 還包含吞吐量階段的電源軌功耗、晶粒與板子溫度、CPU 使用率以及 MLA 記憶體；各欄位說明請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。如果 Sentinel 未執行或正在記錄另一個追蹤，基準測試仍會報告延遲和吞吐量，將功耗欄位保持為零，並將 `report.telemetry.status` 設定為原因。
+
+### 進階：層統計資料 {#step-read-layer-stats}
+
+在任一教學命令中加入 `--include-layer-stats`，即可在基準測試報告中包含各層執行時間。此選項預設停用。透過 API 啟用的方式如下：
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_layer_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_layer_stats = True
+report = model.benchmark(options)
+```
+
+從 `report.layer_stats` 讀取每個已編譯 MLA 層的 `name`、從零開始的 `stage_index` 與 `total_execution_time_us`。執行時間為零的 no-op 項目也會保留。各層時間是在獨立的剖析執行中測量，因此總和不等於整體延遲。
+
+### 儲存報告 {#step-save-report}
+
+呼叫 `report.save(path)` 即可將完整報告寫入 YAML 或 JSON，包含已要求的各層統計資料：
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
+```
+
+副檔名 `.json` 選擇 JSON；`.yaml` 與其他結尾使用 YAML。檔名保持不變。
+
+請指定包含檔名的路徑。不存在的父目錄會自動建立，既有檔案會被取代，並傳回寫入的路徑。儲存需要明確呼叫；`benchmark()` 不會自動建立報告檔案。
+
+在任一教學命令後加入 `--report results/model/yolo_benchmark.yaml`。搭配 `--include-layer-stats`，即可同時儲存主要測量值與各層執行時間。
 
 ## Run
 
@@ -70,8 +108,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -81,14 +119,28 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 NEAT Benchmark
 Input: synthetic
 Samples: 100
-Latency:      12.4 ms
-FPS:          80.6
-Power avg:    2.3 W
-Energy:       2.8 J
-report_latency_ms=12.4
-report_fps=80.6
-report_avg_power_watts=2.3
-report_energy_joules=2.8
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 1.97 ms
+FPS:     1457.04 inferences/s
+Batch throughput: 1457.04 batches/s
+Throughput window: 30.09 s, 43849 inputs
+Power:         13.19 W avg, 13.81 W peak (SoM)
+MLA power:     3.05 W avg, 3.25 W max
+Energy:        0.91 J for 100 inputs
+Die temp:      46.34 °C avg, 47.56 °C max
+CPU usage:     12.38 % avg, 13.22 % max
+MLA memory:    29.65 MiB
+CMA used:      6035.02 MiB avg, 6044.38 MiB max
+Linux memory:  682.88 MiB avg, 697.41 MiB max
+Telemetry:     Sentinel, 15 samples, trace 20261014T144839.984Z-neat-benchmark-20261014t144839-905z
+report_latency_ms=1.96852
+report_fps=1457.04
+report_avg_power_watts=13.1875
+report_energy_joules=0.905085
+report_peak_power_watts=13.8125
+report_throughput_duration_ms=30094.5
+report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
 

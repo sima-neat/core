@@ -22,10 +22,13 @@ ps::MpkTensorContract tensor(const char* name, const char* dtype, std::uint64_t 
 ps::StageStaticSpec stage(std::uint64_t input_bytes) {
   ps::StageStaticSpec result;
   result.element_name = result.logical_stage_id = "canonical-projection";
-  result.processcvu.input_tensors.resize(1);
-  result.processcvu.output_tensors.resize(1);
-  result.processcvu.input_tensors.front().storage.nbytes = input_bytes;
-  result.processcvu.output_tensors.front().storage.nbytes = 792;
+  sima_ev_tensor_desc input{}, output{};
+  input.dtype = SIMA_EV_DTYPE_INT8;
+  output.dtype = SIMA_EV_DTYPE_FP32;
+  input.storage.nbytes = input_bytes;
+  output.storage.nbytes = 792;
+  result.processcvu.input_tensors.emplace_back(input, "INT8");
+  result.processcvu.output_tensors.emplace_back(output, "FP32");
   return result;
 }
 void inferred_extents() {

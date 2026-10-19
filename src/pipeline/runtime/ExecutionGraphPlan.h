@@ -215,6 +215,21 @@ struct PipelineSegmentPlan {
   std::vector<MaterializedNodeAttribution> materialized_node_attribution;
 };
 
+// Borrow the declared source contract for metadata-only public preflight. Unlike
+// media completion, this never infers a source size from a downstream model.
+inline const InputOptions& pipeline_segment_declared_ingress(
+    const PipelineSegmentPlan& segment, std::size_t index = 0) {
+  const auto* input = segment.nodes.empty() ? nullptr
+      : dynamic_cast<const Input*>(segment.nodes.front().get());
+  if (input && (input->options().payload_type != PayloadType::Auto ||
+                !input->options().caps_override.empty())) return input->options();
+  if (segment.boundary_hints && index < segment.boundary_hints->ingress_inputs.size())
+    return segment.boundary_hints->ingress_inputs[index];
+  if (input && segment.input_edges.empty()) return input->options();
+  static const InputOptions unspecified;
+  return unspecified;
+}
+
 // Source allocation is independent of media inference. Complete execution copies
 // without changing declarations or projecting a segment policy onto per-port hints.
 inline std::optional<InputOptions>
@@ -282,6 +297,23 @@ inline graph::NodeId attributed_runtime_node_for_segment_node(const PipelineSegm
     return segment.node_ids.front();
   }
   return graph::kInvalidNode;
+}
+
+// Index in `segment.nodes` of the node rendered for `segment.node_ids[local]`. Fusion can prepend
+// nodes owned by other segments, so provenance decides when positional pairing disagrees.
+inline std::size_t rendered_node_index_for_segment_id(const PipelineSegmentPlan& segment,
+                                                      std::size_t local) {
+  if (local >= segment.node_ids.size() || segment.provenance.size() != segment.nodes.size() ||
+      (local < segment.provenance.size() &&
+       segment.provenance[local].runtime_node == segment.node_ids[local])) {
+    return local;
+  }
+  for (std::size_t i = 0; i < segment.provenance.size(); ++i) {
+    if (segment.provenance[i].runtime_node == segment.node_ids[local]) {
+      return i;
+    }
+  }
+  return local;
 }
 
 inline std::vector<MaterializedNodeAttribution>

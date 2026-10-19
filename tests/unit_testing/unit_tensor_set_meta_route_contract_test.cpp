@@ -10,7 +10,7 @@
 
 #include "test_main.h"
 
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include <gst/gst.h>
 #include <gst/video/video.h>
 

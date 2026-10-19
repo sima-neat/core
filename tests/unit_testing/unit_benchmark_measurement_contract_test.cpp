@@ -140,14 +140,22 @@ simaai::neat::MeasureReport make_complete_measure_report(int samples, int logica
 
 bool throws_benchmark_projection_error(const simaai::neat::MeasureReport& latency,
                                        const simaai::neat::MeasureReport& throughput,
-                                       int expected_samples, const std::string& needle) {
+                                       int latency_samples, int throughput_samples,
+                                       const std::string& needle) {
   try {
-    (void)simaai::neat::internal::build_benchmark_report_from_measurements(latency, throughput,
-                                                                           expected_samples);
+    (void)simaai::neat::internal::build_benchmark_report_from_measurements(
+        latency, throughput, latency_samples, latency_samples, throughput_samples, {});
   } catch (const std::exception& e) {
     return std::string(e.what()).find(needle) != std::string::npos;
   }
   return false;
+}
+
+bool throws_benchmark_projection_error(const simaai::neat::MeasureReport& latency,
+                                       const simaai::neat::MeasureReport& throughput,
+                                       int expected_samples, const std::string& needle) {
+  return throws_benchmark_projection_error(latency, throughput, expected_samples, expected_samples,
+                                           needle);
 }
 
 void require_near(double actual, double expected, const std::string& label) {
@@ -193,16 +201,24 @@ void process_cpu_window_reports_cost_separately_from_utilization() {
 
 void benchmark_options_api_is_additive() {
   using namespace simaai::neat;
+  require(!BenchmarkOptions{}.include_layer_stats, "layer profiling must be opt-in");
   using OptionsOverload = BenchmarkReport (Model::*)(const BenchmarkOptions&);
+  using SamplesOverload = BenchmarkReport (Model::*)(int);
   using LegacyOverload = BenchmarkReport (Model::*)(int, bool);
   using BooleanOverload = BenchmarkReport (Model::*)(bool);
 
   require(static_cast<OptionsOverload>(&Model::benchmark) != nullptr,
           "BenchmarkOptions overload should be available");
+  require(static_cast<SamplesOverload>(&Model::benchmark) != nullptr,
+          "benchmark(int) overload should be available");
+  // The plugin-latency overloads are deprecated but remain until removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   require(static_cast<LegacyOverload>(&Model::benchmark) != nullptr,
           "legacy benchmark(int, bool) overload should remain available");
   require(static_cast<BooleanOverload>(&Model::benchmark) != nullptr,
           "legacy benchmark(bool) overload should remain available");
+#pragma GCC diagnostic pop
 }
 
 void benchmark_build_options_prefer_runtime_metadata() {
@@ -316,6 +332,16 @@ void benchmark_preprocess_meta_rejects_invalid_options() {
   } catch (const std::exception& e) {
     require(std::string(e.what()).find("must be > 0") != std::string::npos,
             "non-positive source geometry should produce an actionable error");
+  }
+
+  BenchmarkOptions negative_duration;
+  negative_duration.min_duration_ms = -1;
+  try {
+    (void)internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, negative_duration);
+    require(false, "negative benchmark min_duration_ms should fail");
+  } catch (const std::exception& e) {
+    require(std::string(e.what()).find("min_duration_ms must be >= 0") != std::string::npos,
+            "negative min_duration_ms should produce an actionable error");
   }
 }
 
@@ -535,31 +561,77 @@ void internal_graph_run_measurement_collects_e2e_latency_and_throughput() {
 void model_benchmark_projection_uses_same_window_reports() {
   using namespace simaai::neat;
 
-  MeasureReport latency = make_complete_measure_report(kSamples, /*logical_batch_size=*/4);
+  // Both windows ran past num_samples to satisfy the minimum duration.
+  constexpr int kLatencySamples = 2 * kSamples;
+  MeasureReport latency = make_complete_measure_report(kLatencySamples, /*logical_batch_size=*/4);
   latency.end_to_end.avg_ms = 7.5;
+  latency.end_to_end.p50_ms = 7.0;
+  latency.end_to_end.p95_ms = 9.0;
+  latency.end_to_end.p99_ms = 11.0;
   latency.throughput_batches_per_s = 1.0;
   latency.throughput_inferences_per_s = 4.0;
 
-  MeasureReport throughput = make_complete_measure_report(kSamples, /*logical_batch_size=*/4);
+  constexpr int kThroughputSamples = 3 * kSamples;
+  MeasureReport throughput =
+      make_complete_measure_report(kThroughputSamples, /*logical_batch_size=*/4);
+  throughput.elapsed_s = 31.5;
   throughput.throughput_batches_per_s = 12.5;
   throughput.throughput_inferences_per_s = 50.0;
   throughput.end_to_end.avg_ms = 99.0;
-  throughput.power.enabled = true;
-  throughput.power.samples = 3;
-  throughput.power.total_avg_watts = 8.25;
-  throughput.power.energy_joules = 1.5;
 
-  const BenchmarkReport report =
-      internal::build_benchmark_report_from_measurements(latency, throughput, kSamples);
+  BenchmarkTelemetry telemetry;
+  telemetry.status = "ok";
+  telemetry.samples = 3;
+  telemetry.power_som_watts.samples = 3;
+  telemetry.power_som_watts.mean = 8.25;
+  telemetry.power_som_watts.maximum = 9.5;
+
+  const BenchmarkReport report = internal::build_benchmark_report_from_measurements(
+      latency, throughput, kSamples, kLatencySamples, kThroughputSamples, telemetry);
 
   require(report.latency_ms == 7.5,
           "Model::benchmark projection must publish latency from latency measurement window");
+  require(report.latency_p50_ms == 7.0 && report.latency_p95_ms == 9.0 &&
+              report.latency_p99_ms == 11.0,
+          "Model::benchmark projection must publish latency percentiles from the same window");
   require(report.fps == 50.0,
           "Model::benchmark projection must publish logical inferences/s from throughput window");
-  require(report.avg_power_watts == 8.25,
-          "Model::benchmark projection should preserve measured throughput-window power");
-  require(report.energy_joules == 1.5,
-          "Model::benchmark projection should preserve measured throughput-window energy");
+  require(report.throughput_samples == kThroughputSamples,
+          "Model::benchmark projection must publish the measured throughput input count");
+  require_near(report.throughput_duration_ms, 31500.0, "throughput window length");
+  require(report.avg_power_watts == 8.25 && report.peak_power_watts == 9.5,
+          "Model::benchmark projection must publish Sentinel SoM power mean and peak");
+  // Energy covers num_samples batches at the measured batch rate, not logical inferences/s
+  // and not the longer window: 8.25 W * 4 batches / 12.5 batches/s.
+  require_near(report.energy_joules, 2.64, "energy for num_samples inputs");
+  require(report.telemetry.status == "ok" && report.telemetry.samples == 3,
+          "Model::benchmark projection must carry the Sentinel telemetry");
+
+  require(throws_benchmark_projection_error(latency, throughput, kSamples, kThroughputSamples,
+                                            "latency measured output count"),
+          "Model::benchmark projection must check the latency window against its own count");
+  require(throws_benchmark_projection_error(latency, throughput, kLatencySamples, kSamples,
+                                            "throughput measured output count"),
+          "Model::benchmark projection must check the throughput window against its own count");
+}
+
+void model_benchmark_projection_without_power_keeps_kpis() {
+  using namespace simaai::neat;
+
+  const MeasureReport latency = make_complete_measure_report(kSamples, /*logical_batch_size=*/1);
+  const MeasureReport throughput = make_complete_measure_report(kSamples, /*logical_batch_size=*/1);
+  BenchmarkTelemetry telemetry;
+  telemetry.status = "Sentinel is not reachable";
+
+  const BenchmarkReport report = internal::build_benchmark_report_from_measurements(
+      latency, throughput, kSamples, kSamples, kSamples, telemetry);
+  require(report.latency_ms > 0.0 && report.fps > 0.0,
+          "missing telemetry must not hide latency or FPS");
+  require(report.avg_power_watts == 0.0 && report.peak_power_watts == 0.0 &&
+              report.energy_joules == 0.0,
+          "missing telemetry must leave the power fields at zero");
+  require(report.telemetry.status == "Sentinel is not reachable",
+          "missing telemetry must report its reason");
 }
 
 void model_benchmark_projection_rejects_unreliable_correlation() {
@@ -602,7 +674,7 @@ void measurement_boolean_flags_make_profiling_explicit() {
 
   const Tensor seed = make_rgb_input(0);
   Run run = make_benchmark_style_rgb_run(seed);
-  MeasureScope scope = run.start_measurement(/*include_plugin_latency=*/false);
+  MeasureScope scope = run.start_measurement();
   require(run.push(TensorList{make_rgb_input(1)}), "e2e-only measured push should succeed");
   require_measured_output(run.pull(kTimeoutMs), "e2e-only measured pull");
   const MeasureReport report = scope.stop();
@@ -649,6 +721,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
                     internal_graph_run_measurement_collects_e2e_latency_and_throughput);
            run_case("model_benchmark_projection",
                     model_benchmark_projection_uses_same_window_reports);
+           run_case("model_benchmark_projection_without_power",
+                    model_benchmark_projection_without_power_keeps_kpis);
            run_case("model_benchmark_projection_rejects_unreliable_correlation",
                     model_benchmark_projection_rejects_unreliable_correlation);
            run_case("model_benchmark_projection_rejects_bad_batch_arithmetic",

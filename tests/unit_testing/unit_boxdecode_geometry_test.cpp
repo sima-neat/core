@@ -1,8 +1,8 @@
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include <simaai/kernels/authoring.h>
-#include <simaai/scheduler/kernel_preparation.h>
-#include <gstsimaaitensorbuffer.h>
+#include <simaai/scheduler/testing/probe.h>
+
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <array>
 #include <iostream>
@@ -10,10 +10,12 @@
 #include <stdexcept>
 
 namespace {
-namespace k = simaai::kernels;
-namespace rt = simaai::runtime;
+namespace k = simaai::scheduler::client;
+namespace probe = simaai::scheduler::testing;
+namespace rt = simaai::scheduler::client;
 namespace core = simaai::neat::pipeline_internal::sima;
-namespace gs = rt::gstreamer;
+struct BufferFree { void operator()(GstBuffer* p) const { if (p) gst_buffer_unref(p); } };
+using Buffer = std::unique_ptr<GstBuffer, BufferFree>;
 void require(bool condition, const char* message) {
   if (!condition)
     throw std::runtime_error(message);
@@ -23,7 +25,7 @@ template <class T> T take(rt::Result<T> result) {
     throw std::runtime_error(error->field + ": " + error->message);
   return std::get<T>(std::move(result));
 }
-k::Executable executable() {
+k::KernelExecutable executable() {
   std::vector<k::TensorSpec> inputs;
   k::ParameterRecords heads;
   for (int side : {80, 40, 20}) {
@@ -54,7 +56,7 @@ k::Executable executable() {
                               k::Parameter{"mask_basis_input", 12},
                               k::Parameter{"keypoints", 1}};
   return take(
-      simaai::scheduler::check_kernel({"boxdecode", k::Target::A65, inputs, outputs, parameters}));
+      k::check_kernel({"boxdecode", k::Target::A65, inputs, outputs, parameters}));
 }
 void set_geometry(GstStructure* meta, double offset = 10.) {
   gst_structure_remove_all_fields(meta);
@@ -91,16 +93,17 @@ simaai::gst::TensorBufferPublicationOwner compact_publication() {
   return result;
 }
 void geometry() {
-  rt::Executor executor(rt::Hardware::A65);
+  probe::OperationProbe executor;
   const auto checked = executable();
-  auto base = std::make_shared<const rt::PreparedOperation>(take(executor.prepare(checked)));
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
   core::KernelStageRecipe recipe;
   recipe.members.resize(1);
   recipe.members.front().executable = checked;
   core::BoxDecodeGeometryOptions options{640, 640, 640, 640, simaai::neat::ResizeMode::Letterbox};
   options.complete_geometry = true;
   core::attach_boxdecode_geometry_resolver(recipe, 0, options, true, true);
-  require(recipe.resolver_factories.size() == 1 && !recipe.members.front().resolve,
+  require(recipe.resolver_factories.size() == 1 && !recipe.members.front().resolve_factory,
           "complete geometry recipe owns live mutable state");
   auto resolve = recipe.resolver_factories.front().instantiate();
   auto independent = recipe.resolver_factories.front().instantiate();
@@ -108,27 +111,27 @@ void geometry() {
   if (!gst_meta_get_info("GstSimaMeta"))
     require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
             "metadata registration failed");
-  gs::Buffer first(gst_buffer_new()), second(gst_buffer_new());
+  Buffer first(gst_buffer_new()), second(gst_buffer_new());
   auto* a = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(first.get(), "GstSimaMeta"));
   auto* b = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(second.get(), "GstSimaMeta"));
   const std::array<GstBuffer*, 2> buffers{first.get(), second.get()};
   set_geometry(a);
   set_geometry(b);
-  const auto first_variant = take(resolve(executor, base, buffers));
-  require(first_variant != base && take(resolve(executor, base, buffers)) == first_variant,
+  const auto first_variant = take(resolve(executor.preparer(), buffers));
+  require(first_variant != base && take(resolve(executor.preparer(), buffers)) == first_variant,
           "complete geometry was not cached");
-  require(k::same_contract_resources(first_variant->executable(), checked),
+  require(k::same_kernel_contract_resources(first_variant.executable(), checked),
           "complete geometry rebuilt scratch or tensor contract");
-  require(take(independent(executor, base, buffers)) != first_variant,
+  require(take(independent(executor.preparer(), buffers)) != first_variant,
           "independent preparation shared mutable geometry cache");
   set_geometry(a, 12.);
   set_geometry(b, 12.);
-  const auto changed = take(resolve(executor, base, buffers));
+  const auto changed = take(resolve(executor.preparer(), buffers));
   require(changed != first_variant && changed != base,
           "same dimensions with changed affine reused stale geometry");
   set_geometry(a);
   set_geometry(b);
-  require(take(resolve(executor, base, buffers)) == first_variant,
+  require(take(resolve(executor.preparer(), buffers)) == first_variant,
           "immutable geometry snapshot was mutated");
   for (int failure = 0; failure < 8; ++failure) {
     set_geometry(a);
@@ -162,29 +165,29 @@ void geometry() {
                         "preproc_affine_offset_y", G_TYPE_DOUBLE, -10., nullptr);
       break;
     }
-    require(std::holds_alternative<rt::Error>(resolve(executor, base, buffers)),
+    require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), buffers)),
             "invalid complete geometry accepted");
   }
   set_geometry(a);
   set_geometry(b);
-  require(take(resolve(executor, base, buffers)) == first_variant,
+  require(take(resolve(executor.preparer(), buffers)) == first_variant,
           "invalid frame evicted a valid warmed snapshot");
   // Bound cache may evict, but old snapshots remain immutable and retain resources.
   for (int i = 0; i < 6; ++i) {
     set_geometry(a, 30. + i);
     set_geometry(b, 30. + i);
     require(
-        k::same_contract_resources(take(resolve(executor, base, buffers))->executable(), checked),
+        k::same_kernel_contract_resources(take(resolve(executor.preparer(), buffers)).executable(), checked),
         "geometry cache eviction changed resource identity");
   }
   set_geometry(a);
   set_geometry(b);
-  require(take(resolve(executor, base, buffers)) != first_variant &&
-              k::same_contract_resources(first_variant->executable(), checked),
+  require(take(resolve(executor.preparer(), buffers)) != first_variant &&
+              k::same_kernel_contract_resources(first_variant.executable(), checked),
           "eviction invalidated retained snapshot or cache was unbounded");
   // Compact producer facts must select exactly the same checked geometry as
   // the legacy boundary serializer, including the affine direction.
-  gs::Buffer compact(gst_buffer_new_allocate(nullptr, 4, nullptr));
+  Buffer compact(gst_buffer_new_allocate(nullptr, 4, nullptr));
   std::string error;
   require(
       simaai::gst::tensor_buffer_attach_publication(compact.get(), compact_publication(), &error),
@@ -203,17 +206,17 @@ void geometry() {
   require(simaai::gst::tensor_buffer_attach_frame_metadata(compact.get(), std::move(frame), &error),
           "compact facts attach failed");
   const std::array<GstBuffer*, 2> mixed{first.get(), compact.get()};
-  require(take(resolve(executor, base, mixed)) == take(resolve(executor, base, buffers)),
+  require(take(resolve(executor.preparer(), mixed)) == take(resolve(executor.preparer(), buffers)),
           "compact and legacy affine authorities differ");
   // Explicit extent does not suppress dynamic affine updates.
   core::KernelStageRecipe explicit_recipe;
   explicit_recipe.members = recipe.members;
   core::attach_boxdecode_geometry_resolver(explicit_recipe, 0, options, false, false);
   auto explicit_resolve = explicit_recipe.resolver_factories.front().instantiate();
-  require(take(explicit_resolve(executor, base, buffers)) != base,
+  require(take(explicit_resolve(executor.preparer(), buffers)) != base,
           "explicit image dimensions suppressed actual preprocessing affine");
   gst_structure_set(a, "preproc_original_width", G_TYPE_INT, 800, nullptr);
-  require(std::holds_alternative<rt::Error>(explicit_resolve(executor, base, buffers)),
+  require(std::holds_alternative<rt::Error>(explicit_resolve(executor.preparer(), buffers)),
           "affine source extent conflict accepted");
 }
 } // namespace

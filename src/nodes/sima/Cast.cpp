@@ -855,14 +855,14 @@ bool Cast::compile_node_contract(const ContractCompileInput& input, CompiledNode
         }
         descriptor.layout.strided.strides_bytes[axis] = tensor.stride_bytes[axis];
       }
-      tensors.push_back(descriptor);
+      tensors.emplace_back(descriptor, tensor.dtype);
       shapes.push_back(std::move(shape));
     };
     try {
       const auto append_checked = [&](const auto& tensor, auto& physicals, auto& tensors,
                                       auto& shapes) {
         append(tensor, tensors, shapes);
-        const auto& descriptor = tensors.back();
+        const auto& descriptor = tensors.back().descriptor();
         std::uint64_t span = runtime_dtype_bytes_local(tensor.dtype);
         for (std::size_t axis = 0; axis < tensor.shape.size(); ++axis) {
           const auto count = static_cast<std::uint64_t>(tensor.shape[axis] - 1);

@@ -230,8 +230,8 @@ SimaPluginStaticManifest processcvu_routing_manifest(InputBindingStaticSpec bind
   consumer.processcvu.output_dtype = "INT32";
   consumer.processcvu.out_dtype = "INT32";
   const auto input_shape = view_input ? std::vector<int>{1, 1, 1} : std::vector<int>{1, 4, 1};
-  consumer.processcvu.input_tensors = {dense_desc(input_shape, "INT32", "HWC")};
-  consumer.processcvu.output_tensors = {dense_desc(input_shape, "INT32", "HWC")};
+  consumer.processcvu.input_tensors = {{dense_desc(input_shape, "INT32", "HWC"), "INT32"}};
+  consumer.processcvu.output_tensors = {{dense_desc(input_shape, "INT32", "HWC"), "INT32"}};
   const std::uint64_t input_size = view_input ? 4U : 16U;
   const std::int64_t input_offset = view_input ? 4 : 0;
   consumer.physical_inputs.push_back(physical(0, input_size, "consumer_head1"));

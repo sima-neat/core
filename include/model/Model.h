@@ -21,15 +21,18 @@
 #include "model/PreprocessPlan.h"
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/ExecutionPlan.h"
 #include "pipeline/SuperPointTypes.h"
 #include "pipeline/YoloXSegPoseTypes.h"
 #include "pipeline/Run.h"
 #include "pipeline/TensorSpec.h"
 
+#include <filesystem>
 #include <cstddef>
 #include <array>
 #include <cstdint>
 #include <memory>
+
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -51,19 +54,115 @@ class Graph;
 using TensorSpec = TensorConstraint;
 
 /**
+ * @brief Hardware timing for one compiled MLA layer or segment.
+ *
+ * Names describe compiler-generated MLA operations, which may fuse or split ONNX operators.
+ * `total_execution_time_us` is the hardware `run_time` counter, not host wall-clock latency.
+ * Zero-time no-op entries are retained. `stage_index` identifies the containing executable stage
+ * in model execution order (zero-based, including A65 stages), not archive file order.
+ */
+struct LayerStats {
+  std::string name;
+  double total_execution_time_us = 0.0;
+  std::size_t stage_index = 0;
+};
+
+/**
+ * @brief One Sentinel metric summarized over the benchmark throughput window.
+ *
+ * `samples == 0` means the board did not report the metric during the window, and the
+ * statistics are then zero.
+ */
+struct BenchmarkMetric {
+  std::string key;   ///< Sentinel metric key, for example `power_current_watts`.
+  std::string label; ///< Sentinel display label.
+  std::string unit;  ///< Unit of the values.
+  int samples = 0;   ///< Telemetry samples that carried a value.
+  double mean = 0.0; ///< Mean over those samples.
+  double minimum = 0.0;
+  double maximum = 0.0;
+};
+
+/**
+ * @brief Board telemetry recorded by the Sentinel daemon during the throughput window.
+ *
+ * `Model::benchmark()` records a local-board Sentinel trace around the throughput pass. Sentinel
+ * samples every 2 s by default. Only samples timestamped after measurement starts and before the
+ * timer stops (after all required outputs complete) are summarized; trace setup and stop/drain
+ * tails are excluded. These sample-selection boundaries are contained within the model timer.
+ * Invalid timestamps or detected wall-clock discontinuities make telemetry unavailable. Remote
+ * or clock-translating telemetry proxies are not supported; no remote clock offset is inferred.
+ * `status` is `"ok"` when the window contains timestamped samples; otherwise it names why telemetry
+ * is missing and every metric has `samples == 0`. Memory values are board-wide, in MiB, and include
+ * whatever else is running.
+ */
+struct BenchmarkTelemetry {
+  std::string status;              ///< `"ok"`, or why telemetry is unavailable.
+  std::string trace_id;            ///< Saved Sentinel trace, for `simaai-sentinel` tooling.
+  std::string sentinel_version;    ///< Version of the Sentinel daemon that recorded the trace.
+  int sample_interval_ms = 0;      ///< Sentinel sampling interval.
+  int samples = 0;                 ///< Telemetry samples recorded in the window.
+  BenchmarkMetric power_som_watts; ///< Total SoM input power.
+  BenchmarkMetric power_mla_watts; ///< MLA rail power; not reported on boards without that rail.
+  std::vector<BenchmarkMetric> power_rails_watts;  ///< Every power rail the board reports.
+  std::vector<BenchmarkMetric> die_temperatures_c; ///< Die sensors at the MLA, APU, CVU, and TOP.
+  BenchmarkMetric die_temperature_max_c; ///< Hottest die sensor per sample, then summarized.
+  std::vector<BenchmarkMetric> board_temperatures_c; ///< SoM top-side and bottom-side sensors.
+  /// CPU utilization. Each sample averages the preceding interval, so `maximum` is the busiest
+  /// interval rather than an instantaneous peak. Selection uses the sample timestamp; its
+  /// preceding provider averaging interval can begin before the benchmark window.
+  BenchmarkMetric cpu_usage_pct;
+  /// Utilization of each CPU core, in core order, summarized like `cpu_usage_pct`. A single busy
+  /// core shows here even when the all-core average stays low.
+  std::vector<BenchmarkMetric> cpu_cores_usage_pct;
+  /// DMA buffers allocated for the MLA. The model allocates them when it loads, so with nothing
+  /// else running this is the model's MLA memory.
+  BenchmarkMetric mla_memory_mib;
+  /// Used contiguous memory (CMA). This includes the MLA memory pool, so never add it to
+  /// `mla_memory_mib`. At idle it also includes movable pages, such as page cache, that Linux
+  /// borrows from CMA.
+  BenchmarkMetric cma_memory_mib;
+  BenchmarkMetric linux_memory_used_mib; ///< Linux used memory, excluding page cache.
+};
+
+/**
  * @brief Headline result returned by `Model::benchmark()`.
  *
  * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
- * `latency_ms` is measured with a warmed-up single-flight push/pull loop. `fps` means logical
- * inferences per second from a separate async throughput run (for batched models this is
- * batches/sec multiplied by the compiled batch size). Power fields are populated when board power
- * telemetry is available during the throughput run.
+ * `latency_ms` is measured with a warmed-up single-flight push/pull loop; `latency_p50_ms`,
+ * `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same loop. `fps` means logical
+ * inferences per second from a separate async throughput pass (for batched models this is
+ * batches/sec multiplied by the compiled batch size). Each pass runs until it has measured at
+ * least `num_samples` inputs and `min_duration_ms` has elapsed.
+ *
+ * Power and board telemetry come from the Sentinel daemon. When Sentinel is unavailable, the
+ * power fields are zero and `telemetry.status` names the reason.
  */
 struct BenchmarkReport {
   double latency_ms = 0.0;
+  double latency_p50_ms = 0.0;
+  double latency_p95_ms = 0.0;
+  double latency_p99_ms = 0.0;
   double fps = 0.0;
-  double avg_power_watts = 0.0;
+  double avg_power_watts = 0.0; ///< Mean SoM power over the throughput window.
+  /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
+  /// measured throughput needs for `num_samples` inputs.
   double energy_joules = 0.0;
+  double peak_power_watts = 0.0;         ///< Highest SoM power sample in the throughput window.
+  int throughput_samples = 0;            ///< Inputs measured by the throughput pass.
+  double throughput_duration_ms = 0.0;   ///< Length of the throughput window.
+  BenchmarkTelemetry telemetry;          ///< Board telemetry for the throughput window.
+  std::vector<LayerStats> layer_stats{}; ///< Empty when layer profiling was not collected.
+
+  /**
+   * @brief Write the complete report as YAML or JSON to the exact destination filename.
+   *
+   * A `.json` extension selects JSON; `.yaml` and all other endings select YAML.
+   * Creates missing parent directories and atomically replaces an existing file. Returns
+   * `file_path` unchanged. Throws on invalid/non-finite values or filesystem/write failures.
+   * Saving is explicit: `benchmark()` does not create a report file automatically.
+   */
+  std::filesystem::path save(const std::filesystem::path& file_path) const;
 };
 
 /**
@@ -82,7 +181,16 @@ struct BenchmarkOptions {
   /// Resize policy used to map the source geometry to the model input. When omitted, use the
   /// resolved preprocess policy, or stretch when the model route has no resize stage.
   std::optional<ResizeMode> resize_mode;
-  bool include_plugin_latency = false; ///< Include per-plugin latency collection.
+  bool include_plugin_latency = false; ///< Deprecated: plugin latency will be removed.
+  /// Minimum length of each pass, latency and throughput, in milliseconds; must be zero or
+  /// greater. Each pass continues past `num_samples` inputs until this much time has elapsed, so
+  /// both passes follow the same rule and the throughput pass's power and temperature readings
+  /// cover several telemetry samples. Set it to 0 to stop each pass after `num_samples` inputs.
+  int min_duration_ms = 10000;
+  /// Advanced: collect compiled MLA layer timings in a separate offline pass. Default off.
+  /// Requires Scheduler's owned diagnostic provider and an idle DevKit with no other MLA
+  /// workloads. Unknown completion requires recovery before further device use.
+  bool include_layer_stats = false;
 };
 
 /**
@@ -550,7 +658,8 @@ public:
 
     /// Start observing caller-owned push/pull code without consuming outputs.
     simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
-    /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+    /// Deprecated: use `start_measurement()`. True also collects plugin latency.
+    [[deprecated("Plugin latency is deprecated and will be removed")]]
     simaai::neat::MeasureScope start_measurement(bool include_plugin_latency);
     /// Close input (sends EOS) and release the underlying Run.
     void close();
@@ -612,6 +721,40 @@ public:
                const simaai::neat::RunOptions& run_opt = default_run_options());
 #endif
 
+  /**
+   * @brief Describe what the matching `build(...)` executes.
+   *
+   * Builds the Model with the same arguments and startup preflight off, reads the plan that build
+   * recorded, and closes the pipeline. The plan lists the Model's nodes (preprocessing,
+   * quantization, EV74/A65 kernels, MLA), where each one runs, and the tensors between them.
+   * @throws NeatError on the errors `build(...)` raises.
+   */
+  simaai::neat::ExecutionPlan execution_plan();
+  /// Execution plan of `build(opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const RouteOptions& opt);
+  /// Execution plan of `build(run_opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const simaai::neat::RunOptions& run_opt);
+  /// Execution plan of `build(opt, run_opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const RouteOptions& opt,
+                                             const simaai::neat::RunOptions& run_opt);
+  /// Execution plan of `build(inputs, opt, run_opt)` for `Tensor` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const simaai::neat::TensorList& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+  /// Execution plan of `build(inputs, opt, run_opt)` for `Sample` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const simaai::neat::Sample& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+#if defined(SIMA_WITH_OPENCV)
+  /// Execution plan of `build(inputs, opt, run_opt)` for `cv::Mat` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const std::vector<cv::Mat>& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+#endif
+
   // ── One-shot execution (synchronous) ─────────────────────────────────────────────────────
   /**
    * @brief One-shot-style inference for the simplest applications.
@@ -637,11 +780,18 @@ public:
    * @brief Run a small synthetic benchmark for simple model execution.
    *
    * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
-   * measures single-flight latency and async logical-inference throughput separately, prints a
-   * compact summary, and returns headline metrics.
+   * measures single-flight latency and async logical-inference throughput separately, records
+   * board telemetry through Sentinel during the throughput pass, prints a compact summary, and
+   * returns headline metrics. Each pass lasts at least `BenchmarkOptions::min_duration_ms`
+   * (10 s by default).
    */
   BenchmarkReport benchmark(const BenchmarkOptions& options);
-  BenchmarkReport benchmark(int num_samples = 100, bool include_plugin_latency = false);
+  BenchmarkReport benchmark(int num_samples = 100);
+  /// Deprecated: use `benchmark(num_samples)`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
+  BenchmarkReport benchmark(int num_samples, bool include_plugin_latency);
+  /// Deprecated: use `benchmark()`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
   BenchmarkReport benchmark(bool include_plugin_latency);
 
 private:

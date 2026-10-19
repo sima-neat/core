@@ -28,12 +28,15 @@
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include <simaai/kernels/ops/cast.h>
+#include <simaai/scheduler/client/kernel.h>
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
+#include <set>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -163,7 +166,7 @@ std::vector<std::shared_ptr<simaai::neat::Node>> make_consumer_nodes() {
   nodes.push_back(std::make_shared<FragmentNode>(
       "ModelRoute", "neatkernelrunner", "preproc",
       " async=false ! neatprocessmla name=n0_mla async=false num-buffers=4 "
-      "defer-output-invalidate=true ! neatkernelrunner name=n0_boxdecode async=false ! appsink "
+      "! neatkernelrunner name=n0_boxdecode async=false ! appsink "
       "name=n0_output"));
   return nodes;
 }
@@ -174,7 +177,7 @@ simaai::neat::Graph make_composed_consumer_graph() {
   graph.add(std::make_shared<FragmentNode>(
       "ModelRoute", "neatkernelrunner", "preproc",
       " async=false ! neatprocessmla name=n1_mla async=false num-buffers=4 "
-      "defer-output-invalidate=true ! neatkernelrunner name=n1_boxdecode async=false"));
+      "! neatkernelrunner name=n1_boxdecode async=false"));
   graph.add(simaai::neat::nodes::Output("detections"));
   return graph;
 }
@@ -205,142 +208,8 @@ void mark_mini_object_finalized(gpointer data, GstMiniObject*) {
   *static_cast<bool*>(data) = true;
 }
 
-void typed_cpu_visibility() {
-  namespace neat = simaai::neat;
-  namespace si = neat::pipeline_internal::sima;
-  namespace rt = ::simaai::runtime;
-  const std::array inputs{rt::TensorSpec{{4}, rt::DType::Float32}};
-  const std::array outputs{rt::TensorSpec{{4}, rt::DType::BFloat16}};
-  auto checked = simaai::kernels::ops::cast::make_executable({inputs, outputs, {}},
-                                                             simaai::kernels::Target::A65);
-  require(std::holds_alternative<rt::KernelExecutable>(checked), "typed fixture kernel admission");
-  auto recipe = std::make_shared<si::KernelStageRecipe>();
-  recipe->members.push_back({std::get<rt::KernelExecutable>(checked), {{0, 0}}, {{0, 0}}, {}});
-  neat::BuildResult build;
-  build.pipeline_string = "neatprocessmla name=p defer-output-invalidate=true ! queue ! "
-                          "identity ! neatkernelrunner name=arbitrary_consumer ! appsink name=s";
-  build.rendered_manifest.emplace();
-  si::StageStaticSpec producer;
-  producer.element_name = "p";
-  producer.payload_kind = si::StagePayloadKind::ProcessMla;
-  producer.frame_arena_role = si::FrameArenaRole::Allocate;
-  producer.frame_arena_provenance = si::static_contract::ArenaAllocationProvenance::CoreAllocated;
-  producer.frame_arena_size_bytes = 4096;
-  producer.logical_outputs.resize(1);
-  producer.logical_outputs[0].logical_index = 0;
-  producer.logical_outputs[0].physical_index = 0;
-  producer.logical_outputs[0].size_bytes = 16;
-  producer.physical_outputs.resize(1);
-  producer.physical_outputs[0].physical_index = 0;
-  producer.physical_outputs[0].size_bytes = 16;
-  si::StageStaticSpec consumer;
-  consumer.element_name = "arbitrary_consumer";
-  consumer.native_kernel = recipe;
-  consumer.frame_arena_role = si::FrameArenaRole::Allocate;
-  consumer.frame_arena_provenance = si::static_contract::ArenaAllocationProvenance::CoreAllocated;
-  consumer.frame_arena_size_bytes = 4096;
-  consumer.logical_inputs.resize(1);
-  consumer.logical_inputs[0].logical_index = 0;
-  consumer.logical_inputs[0].backend_input_index = 0;
-  consumer.logical_inputs[0].physical_index = 0;
-  consumer.logical_inputs[0].size_bytes = 16;
-  consumer.physical_inputs = producer.physical_outputs;
-  consumer.input_bindings.resize(1);
-  consumer.input_bindings[0].src_stage_index = 0;
-  consumer.input_bindings[0].local_logical_input_index = 0;
-  consumer.input_bindings[0].src_logical_output_index = 0;
-  consumer.input_bindings[0].src_physical_output_index = 0;
-  build.rendered_manifest->stages = {producer, consumer};
-  const auto expect_visible = [&] {
-    const auto selected = neat::session_build_select_kernel_cpu_visibility(build);
-    require_contains(selected, "defer-output-invalidate=false",
-                     "typed A65 reader needs producer READ");
-    require_contains(selected, "output-read-handoff=true",
-                     "native readers must retire the epoch before upstream arena reuse");
-  };
-  const auto expect_deferred = [&] {
-    require(neat::session_build_select_kernel_cpu_visibility(build) == build.pipeline_string,
-            "unproven or shared writable route must keep original synchronization");
-  };
-  expect_visible(); // No operation-name or element-name classification.
-  build.rendered_manifest->stages[0].frame_arena_role = si::FrameArenaRole::ReuseInput;
-  expect_deferred(); // Core input/user pools have no proven unread-frame retirement hook.
-  auto upstream = producer;
-  upstream.element_name = "upstream";
-  upstream.payload_kind = si::StagePayloadKind::ProcessCvu;
-  build.rendered_manifest->stages.push_back(upstream);
-  build.rendered_manifest->stages[0].logical_inputs = consumer.logical_inputs;
-  build.rendered_manifest->stages[0].physical_inputs = consumer.physical_inputs;
-  build.rendered_manifest->stages[0].input_bindings = consumer.input_bindings;
-  build.rendered_manifest->stages[0].input_bindings[0].src_stage_index = 2;
-  const auto own_pool_pipeline = build.pipeline_string;
-  build.pipeline_string = "neatkernelrunner name=upstream ! " + own_pool_pipeline;
-  expect_visible(); // Shared Preproc arena has an authoritative native pool-return hook.
-  build.rendered_manifest->stages[2].frame_arena_provenance =
-      si::static_contract::ArenaAllocationProvenance::ExternalAdopted;
-  expect_deferred();
-  build.rendered_manifest->stages[2].frame_arena_provenance =
-      si::static_contract::ArenaAllocationProvenance::CoreAllocated;
-  build.pipeline_string = "neatprocessmla name=upstream ! " + own_pool_pipeline;
-  expect_deferred(); // Another MLA pool has not opted into this handoff.
-  build.pipeline_string = "appsrc name=upstream ! " + own_pool_pipeline;
-  expect_deferred(); // A Core/user input is not a native owning output pool.
-  build.pipeline_string = "neatkernelrunner name=upstream ! " + own_pool_pipeline;
-  build.rendered_manifest->stages[0].input_bindings[0].src_stage_index = 0;
-  expect_deferred(); // Carrier cycles cannot certify pool-return authority.
-  build.rendered_manifest->stages[0] = producer;
-  build.rendered_manifest->stages.pop_back();
-  build.pipeline_string = own_pool_pipeline;
-  expect_visible();
-  auto& stage = build.rendered_manifest->stages[1];
-  stage.frame_arena_role = si::FrameArenaRole::ReuseInput;
-  expect_deferred(); // Disjoint tensor regions still share an allocation-wide epoch.
-  stage.frame_arena_role = si::FrameArenaRole::Allocate;
-  stage.frame_arena_provenance = si::static_contract::ArenaAllocationProvenance::ExternalAdopted;
-  expect_deferred();
-  stage.frame_arena_provenance = si::static_contract::ArenaAllocationProvenance::CoreAllocated;
-  recipe->target = rt::Hardware::EV74;
-  expect_deferred();
-  recipe->target = rt::Hardware::A65;
-  recipe->members[0].inputs[0].source = rt::gstreamer::TensorStagePortSource::Output;
-  expect_deferred(); // A host stage that only reads its own intermediates is not a CPU boundary.
-  recipe->members[0].inputs[0].source = rt::gstreamer::TensorStagePortSource::Input;
-  stage.input_bindings[0].src_stage_index = -1;
-  expect_deferred(); // No adjacency-based guess for missing exact value authority.
-  stage.input_bindings[0].src_stage_index = 0;
-  const auto linear = build.pipeline_string;
-  build.pipeline_string = "neatprocessmla name=p defer-output-invalidate=true ! tee name=t "
-                          "t. ! neatkernelrunner name=arbitrary_consumer ! appsink name=s";
-  expect_deferred();
-  build.pipeline_string = linear;
-  build.pipeline_string.replace(build.pipeline_string.find("identity"), 8, "unknowncarrier");
-  expect_deferred();
-  build.pipeline_string = linear;
-  expect_visible();
-  for (const auto& transport : {"queue leaky=downstream", "queue leaky=1",
-                                "queue flush-on-eos=true", "queue2 use-buffering=true",
-                                "identity drop-probability=0.5", "identity signal-handoffs=true"}) {
-    build.pipeline_string = linear;
-    build.pipeline_string.replace(build.pipeline_string.find("identity"), 8, transport);
-    expect_deferred(); // A frame dropped before any reader cannot retire the handoff.
-  }
-  build.pipeline_string = linear;
-  build.pipeline_string.replace(build.pipeline_string.find("queue"), 5,
-                                "queue leaky=no max-size-buffers=4 max-size-bytes=0 "
-                                "max-size-time=0");
-  expect_visible();
-  build.pipeline_string = linear;
-  auto other = stage;
-  other.element_name = "second_reader";
-  build.rendered_manifest->stages.push_back(other);
-  expect_deferred(); // A second typed consumer is fanout even if launch syntax omits it.
-  build.rendered_manifest->stages.pop_back();
-  build.pipeline_string = linear + " ! identity name=p";
-  expect_deferred(); // Duplicate producer identities are not an ownership proof.
-  build.pipeline_string = linear;
-  build.rendered_manifest.reset();
-  expect_deferred();
-}
+// Memory-policy and allocation-provenance assertions belong to Scheduler and
+// Runner. This fixture checks only the graph options Core actually authors.
 
 void graph_worker_budget() {
   simaai::neat::GraphOptions options;
@@ -369,7 +238,6 @@ void graph_worker_budget() {
 RUN_TEST(
     "unit_fused_realtime_fast_path_options_test", ([] {
       graph_worker_budget();
-      typed_cpu_visibility();
       ScopedUnsetEnv cvu_kill_switch("SIMA_PROCESSCVU_ASYNC");
       ScopedUnsetEnv mla_kill_switch("SIMA_PROCESSMLA_SAFE_ASYNC");
       ScopedUnsetEnv legacy_queue_enable("SIMA_ENABLE_ASYNC_QUEUE2");
@@ -378,6 +246,37 @@ RUN_TEST(
       ScopedUnsetEnv rtsp_backpressure_override("SIMA_RTSP_ALLOW_BACKPRESSURE");
 
       simaai::neat::gst_init_once();
+
+      for (const std::string& cvu_segment :
+           {std::string("neatprocesscvu name=standalone async=true"),
+            std::string("neatprocesscvu name=standalone async=true num-buffers=1"),
+            std::string("neatprocesscvu name=standalone async=true num-buffers=4"),
+            std::string("neatprocesscvu name=standalone async=true num-buffers=5"),
+            std::string("neatprocesscvu name=standalone async=true num-buffers=7")}) {
+        simaai::neat::session_build_enforce_mla_num_buffers(
+            "appsrc ! " + cvu_segment + " ! appsink", "standalone CVU pool");
+      }
+      simaai::neat::session_build_enforce_mla_num_buffers(
+          "appsrc ! neatprocesscvu num-buffers=4 ! neatprocessmla num-buffers=4 ! appsink",
+          "valid MLA route pool");
+      for (const std::string& invalid_route :
+           {std::string("neatprocesscvu ! neatprocessmla num-buffers=4"),
+            std::string("neatprocesscvu num-buffers=5 ! neatprocessmla num-buffers=4"),
+            std::string("neatprocesscvu num-buffers=5 ! ( neatprocessmla num-buffers=4 )"),
+            std::string("neatprocesscvu num-buffers=4 ! neatprocessmla"),
+            std::string("neatprocesscvu num-buffers=4 ! neatprocessmla num-buffers=5")}) {
+        bool rejected = false;
+        try {
+          simaai::neat::session_build_enforce_mla_num_buffers(invalid_route, "invalid MLA pool");
+        } catch (const simaai::neat::NeatError& error) {
+          require_contains(error.what(), "num-buffers must be 4",
+                           "MLA route must retain its buffer-count diagnostic");
+          rejected = true;
+        }
+        require(rejected, "MLA routes must reject absent or mismatched MLA/CVU buffer counts");
+        simaai::neat::session_build_enforce_mla_num_buffers(
+            invalid_route, "sync route retains existing bypass", true);
+      }
 
       // Fused sources keep producers in per-stream branch node lists. Ensure
       // an RTSP producer there still applies the live-source appsink policy to
@@ -512,54 +411,51 @@ RUN_TEST(
       // pipeline fixtures use the current BoxDecode backend, neatkernelrunner.
       const std::string objectdecode_fragment =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
-              simaai::neat::session_build_select_terminal_objectdecode_cpu_visibility(
-                  simaai::neat::session_build_apply_fast_path_options_to_fragment(
-                      "neatprocessmla name=mla_1 defer-output-invalidate=true "
-                      "num-buffers=4 ! queue ! neatobjectdecode name=boxdecode_1 "
-                      "num-buffers=2",
-                      &options)));
+              simaai::neat::session_build_apply_fast_path_options_to_fragment(
+                  "neatprocessmla name=mla_1 "
+                  "num-buffers=4 ! queue ! neatobjectdecode name=boxdecode_1 "
+                  "num-buffers=2",
+                  &options));
       require_contains(objectdecode_fragment, "neatobjectdecode name=boxdecode_1 num-buffers=7",
                        "a declared terminal lane window must use the resolved MLA route depth");
       require_contains(pipeline, "neatkernelrunner name=n0_boxdecode async=true",
                        "rendered BoxDecode must use the current async kernel backend");
       require(count_occurrences(pipeline, "num-buffers=") == 1U,
               "only MLA declares a pool property; Runner capacity is prepared separately");
-      require_contains(pipeline, "defer-output-invalidate=true",
-                       "Runner owns its CPU access scopes; legacy ObjectDecode visibility "
-                       "must not be forced on an MLA-to-Runner route");
+      require(pipeline.find("defer-output-invalidate=") == std::string::npos &&
+                  pipeline.find("output-read-handoff=") == std::string::npos,
+              "Core must not emit retired memory tuning properties");
       require(pipeline.find("neatobjectdecode") == std::string::npos,
               "current model routes must not depend on the retired ObjectDecode plugin");
 
       const std::string scoped_visibility_fragment =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
-              simaai::neat::session_build_select_terminal_objectdecode_cpu_visibility(
-                  simaai::neat::session_build_apply_fast_path_options_to_fragment(
-                      "neatprocessmla name=device_mla ! queue ! neatkernelrunner "
-                      "name=device_consumer ! neatprocessmla name=terminal_mla "
-                      "defer-output-invalidate=true ! queue ! queue2 ! "
-                      "neatobjectdecode name=cpu_consumer num-buffers=2",
-                      &options)));
+              simaai::neat::session_build_apply_fast_path_options_to_fragment(
+                  "neatprocessmla name=device_mla ! queue ! neatkernelrunner "
+                  "name=device_consumer ! neatprocessmla name=terminal_mla "
+                  "! queue ! queue2 ! "
+                  "neatobjectdecode name=cpu_consumer num-buffers=2",
+                  &options));
       require_contains(scoped_visibility_fragment,
                        "neatprocessmla name=device_mla async=true num-buffers=7 "
-                       "defer-output-invalidate=true ! queue ! neatkernelrunner",
+                       "! queue ! neatkernelrunner",
                        "MLA-to-device routes must remain device-produced");
-      require_contains(
-          scoped_visibility_fragment,
-          "neatprocessmla name=terminal_mla defer-output-invalidate=false",
-          "only the nearest MLA across queue-only segments may own the CPU READ epoch");
+      require_contains(scoped_visibility_fragment,
+                       "neatprocessmla name=terminal_mla async=true num-buffers=7",
+                       "terminal MLA also leaves CPU access to Scheduler");
       require_contains(scoped_visibility_fragment,
                        "neatobjectdecode name=cpu_consumer num-buffers=7",
                        "the terminal consumer must share the producer lane window");
 
       const std::string generic_lane_window =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
-              "producer name=p num-buffers=4 defer-output-invalidate=false ! identity ! "
+              "neatprocessmla name=p num-buffers=4 ! identity ! "
               "genericterminal name=c num-buffers=2");
       require_contains(generic_lane_window, "genericterminal name=c num-buffers=4",
                        "lane propagation must depend on rendered contracts, not plugin names");
       const std::string undeclared_lane_window =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
-              "producer name=p num-buffers=4 defer-output-invalidate=false ! queue ! "
+              "neatprocessmla name=p num-buffers=4 ! queue ! "
               "unboundedterminal name=c");
       require(undeclared_lane_window.find("unboundedterminal name=c num-buffers=") ==
                   std::string::npos,
@@ -571,16 +467,25 @@ RUN_TEST(
       const std::vector<std::shared_ptr<simaai::neat::Node>> split_cpu_nodes{
           std::make_shared<FragmentNode>("Model", "identity", "model_fragment",
                                          " ! neatprocessmla name=split_terminal_mla "
-                                         "defer-output-invalidate=true"),
+                                         ""),
           std::make_shared<FragmentNode>("SimaBoxDecode", "neatobjectdecode", "split_boxdecode",
                                          " num-buffers=2")};
       const auto split_cpu_pipeline = simaai::neat::build_pipeline_full(
           split_cpu_nodes, false, "mysink", true, simaai::neat::NameTransform{}, &options);
-      require_contains(
-          split_cpu_pipeline.pipeline_string,
-          "neatprocessmla name=split_terminal_mla "
-          "defer-output-invalidate=false async=true num-buffers=7 ! queue ",
-          "final ordinary-pipeline pass must select CPU visibility across separate Nodes");
+      const auto check_mla_segment = [](const std::string& pipeline, const char* name) {
+        const auto start = pipeline.find(std::string("neatprocessmla name=") + name);
+        require(start != std::string::npos, "authored MLA producer missing");
+        const auto end = pipeline.find('!', start);
+        require(end != std::string::npos, "MLA successor missing");
+        const auto segment = pipeline.substr(start, end - start);
+        require_contains(segment, "async=true", "MLA async contract lost");
+        require_contains(segment, "num-buffers=7", "MLA lane contract lost");
+        require(segment.find("defer-output-invalidate") == std::string::npos &&
+                    segment.find("output-read-handoff") == std::string::npos,
+                "Core must not author a producer coherency selector");
+        require_contains(pipeline.substr(end), "! queue ", "inter-node queue missing");
+      };
+      check_mla_segment(split_cpu_pipeline.pipeline_string, "split_terminal_mla");
       require_contains(split_cpu_pipeline.pipeline_string,
                        "neatobjectdecode name=n1_split_boxdecode num-buffers=7",
                        "separate BoxDecode Node must share the exact route depth");
@@ -588,14 +493,11 @@ RUN_TEST(
       const std::vector<std::shared_ptr<simaai::neat::Node>> split_device_nodes{
           std::make_shared<FragmentNode>("Model", "identity", "device_model_fragment",
                                          " ! neatprocessmla name=split_device_mla "
-                                         "defer-output-invalidate=true"),
+                                         ""),
           std::make_shared<FragmentNode>("DevicePost", "neatkernelrunner", "split_device_post")};
       const auto split_device_pipeline = simaai::neat::build_pipeline_full(
           split_device_nodes, false, "mysink", true, simaai::neat::NameTransform{}, &options);
-      require_contains(split_device_pipeline.pipeline_string,
-                       "neatprocessmla name=split_device_mla "
-                       "defer-output-invalidate=true async=true num-buffers=7 ! queue ",
-                       "final ordinary-pipeline pass must keep MLA-to-CVU device-produced");
+      check_mla_segment(split_device_pipeline.pipeline_string, "split_device_mla");
 
       simaai::neat::GraphOptions queue_independent_options = options;
       queue_independent_options.processmla.output_pool_buffers = 0;
@@ -639,8 +541,8 @@ RUN_TEST(
                            " ! neatprocessmla",
                        "second fused queue must decouple ProcessCVU from ProcessMLA");
       require_contains(pipeline,
-                       "defer-output-invalidate=true ! queue name=queue_neat_fused_stage_2 " +
-                           queue_properties + " ! neatkernelrunner",
+                       "! queue name=queue_neat_fused_stage_2 " + queue_properties +
+                           " ! neatkernelrunner",
                        "third fused queue must preserve Runner-owned memory synchronization");
       require_contains(pipeline,
                        "neatkernelrunner name=n0_boxdecode async=true ! appsink name=n0_output",
@@ -1673,8 +1575,8 @@ RUN_TEST(
               "each H265 branch must render a uniquely named RTP packetizer");
       require(count_occurrences(h265_video_pipeline, "pt=98") >= 2U,
               "each H265 VideoSender branch must use payload type 98");
-      require(count_occurrences(h265_video_pipeline, "sleep-time=250") == 2U,
-              "each fused H265 VideoSender branch must pace RTP packets");
+      require(h265_video_pipeline.find("sleep-time") == std::string::npos,
+              "fused H265 VideoSender branches must not throttle packets with a fixed sleep");
       require(h265_video_pipeline.find("rtph265pay name=pay0") == std::string::npos,
               "fused H265 VideoSender branches must not retain the fixed pay0 name");
 
@@ -1749,6 +1651,172 @@ RUN_TEST(
                   async_video_plan.pipeline_segments.end(),
                   [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); }),
               "an async VideoSender UDP sink must keep realtime fan-in segmented");
+
+      // A Default decoder link needs no realtime mux: a synchronous encoded VideoSender
+      // branch is rendered behind a tee in the source/decoder pipeline (#985).
+      const auto compile_default_video_app = [&](bool video_async, bool decoder_stream_id,
+                                                 bool decoded_sender = false) {
+        simaai::neat::Graph app("default_link_encoded_video_app", outer_options);
+        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+        source_options.url = "rtsp://example.test/default-link";
+        source_options.insert_queue = false;
+        source_options.auto_caps_from_stream = false;
+        source_options.h264_fps = 20;
+        source_options.h264_width = 1280;
+        source_options.h264_height = 720;
+        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+        simaai::neat::Graph decoder("default_link_decoder");
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        simaai::neat::Graph consumer("default_link_consumer");
+        if (decoded_sender) {
+          auto raw_options =
+              simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(1280, 720, 20);
+          raw_options.host = "127.0.0.1";
+          raw_options.channel = 1;
+          consumer.add(simaai::neat::nodes::groups::VideoSender(raw_options));
+        } else {
+          consumer.add(simaai::neat::nodes::Output("default_link_frames"));
+        }
+        simaai::neat::GraphLinkOptions decoder_link;
+        if (decoder_stream_id) {
+          decoder_link.stream_id = "default_link_stream";
+        }
+        app.connect(source, decoder, decoder_link);
+        app.connect(decoder, consumer);
+        auto video_options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+            simaai::neat::nodes::groups::RtspCodec::H264);
+        video_options.host = "127.0.0.1";
+        video_options.async = video_async;
+        app.connect(source, simaai::neat::nodes::groups::VideoSender(video_options));
+        return simaai::neat::runtime::compile_public_graph(app, composed_run_options);
+      };
+      const auto find_encoded_tee = [](const auto& plan) -> const simaai::neat::Node* {
+        for (const auto& segment : plan.pipeline_segments) {
+          if (segment.consumed_by_fused_realtime_ingress) {
+            continue;
+          }
+          for (const auto& node : segment.nodes) {
+            if (node && node->kind() == "EncodedVideoSenderTee") {
+              return node.get();
+            }
+          }
+        }
+        return nullptr;
+      };
+      const auto has_open_fanout = [](const auto& plan) {
+        return std::any_of(plan.stage_nodes.begin(), plan.stage_nodes.end(), [](const auto& st) {
+          return st.node && st.node->kind() == "FanOut" && !st.consumed_by_fused_realtime_ingress;
+        });
+      };
+
+      const auto default_video_plan = compile_default_video_app(false, false);
+      std::size_t default_open_segments = 0;
+      const simaai::neat::runtime::PipelineSegmentPlan* default_merged = nullptr;
+      for (const auto& segment : default_video_plan.pipeline_segments) {
+        if (!segment.consumed_by_fused_realtime_ingress) {
+          ++default_open_segments;
+          default_merged = &segment;
+        }
+      }
+      require(default_open_segments == 1U && default_merged != nullptr &&
+                  default_merged->boundary.source_like && default_merged->input_edges.empty() &&
+                  !default_merged->fused_realtime_ingress.has_value() &&
+                  !has_open_fanout(default_video_plan),
+              "a Default-link encoded VideoSender fan-out must become one source pipeline");
+      const auto tee_it =
+          std::find_if(default_merged->nodes.begin(), default_merged->nodes.end(),
+                       [](const auto& node) { return node->kind() == "EncodedVideoSenderTee"; });
+      require(tee_it != default_merged->nodes.end() && tee_it + 1 != default_merged->nodes.end() &&
+                  (*(tee_it + 1))->kind() == "SimaDecode" &&
+                  default_merged->provenance.size() == default_merged->nodes.size(),
+              "the encoded tee must sit between the RTSP source and SimaDecode");
+      // Sender metrics and failures must stay attributed to the sender, not the generated FanOut.
+      const auto sender_segment =
+          std::find_if(default_video_plan.pipeline_segments.begin(),
+                       default_video_plan.pipeline_segments.end(), [](const auto& segment) {
+                         return segment.consumed_by_fused_realtime_ingress &&
+                                !segment.nodes.empty() &&
+                                segment.nodes.back()->kind() == "UdpOutput";
+                       });
+      require(sender_segment != default_video_plan.pipeline_segments.end() &&
+                  default_merged->provenance[tee_it - default_merged->nodes.begin()].runtime_node ==
+                      simaai::neat::runtime::attributed_runtime_node_for_segment_node(
+                          *sender_segment, sender_segment->nodes.size() - 1U),
+              "the encoded tee must be attributed to the VideoSender's UDP sink");
+      // Export pairs node_ids with nodes; the prepended source must not take the decoder's id.
+      const auto rendered_for = [&](std::size_t local) {
+        return simaai::neat::runtime::rendered_node_index_for_segment_id(*default_merged, local);
+      };
+      bool ids_follow_provenance = !default_merged->node_ids.empty();
+      for (std::size_t local = 0; local < default_merged->node_ids.size(); ++local) {
+        const std::size_t rendered = rendered_for(local);
+        ids_follow_provenance =
+            ids_follow_provenance && rendered < default_merged->nodes.size() &&
+            default_merged->provenance[rendered].runtime_node == default_merged->node_ids[local];
+      }
+      require(ids_follow_provenance &&
+                  default_merged->nodes[rendered_for(0)]->kind() == "SimaDecode",
+              "fused node ids must resolve to their own rendered nodes, not the prepended source");
+      const auto topology = nlohmann::json::parse(
+          simaai::neat::session_test::export_graph_topology_for_test(default_video_plan));
+      const auto decoder_index =
+          static_cast<std::size_t>(tee_it + 1 - default_merged->nodes.begin());
+      const auto decoder_id = default_merged->provenance[decoder_index].runtime_node;
+      for (const auto* view : {&topology, &topology.at("lowered_view")}) {
+        std::set<std::string> exported_ids;
+        bool found_decoder = false;
+        for (const auto& node : view->at("nodes")) {
+          require(exported_ids.insert(node.at("id").get<std::string>()).second,
+                  "encoded tee export duplicated a runtime node identity");
+          if (node.at("id") == "n" + std::to_string(decoder_id)) {
+            require(
+                node.at("kind") == "SimaDecode" && node.at("segment_local_index") == decoder_index,
+                "encoded tee export assigned the source identity to the decoder: " + node.dump());
+            found_decoder = true;
+          }
+        }
+        require(found_decoder, "encoded tee export omitted the decoder identity");
+      }
+      const std::string tee_fragment = (*tee_it)->backend_fragment(3);
+      const std::string main_queue_tail = " n3_encoded_tee. ! queue name=n3_encoded_tee_main_queue "
+                                          "max-size-buffers=1 max-size-bytes=0 max-size-time=0";
+      require(tee_fragment.rfind("tee name=n3_encoded_tee n3_encoded_tee. ! queue", 0) == 0 &&
+                  tee_fragment.find("h264parse") != std::string::npos &&
+                  tee_fragment.find("udpsink") != std::string::npos &&
+                  tee_fragment.find("leaky") == std::string::npos &&
+                  tee_fragment.size() > main_queue_tail.size() &&
+                  tee_fragment.compare(tee_fragment.size() - main_queue_tail.size(),
+                                       main_queue_tail.size(), main_queue_tail) == 0,
+              "the encoded tee must render a terminal sender branch and a lossless main queue");
+      const auto default_frames = default_video_plan.named_outputs.find("default_link_frames");
+      require(default_frames != default_video_plan.named_outputs.end() &&
+                  default_video_plan.output_endpoints.size() == 1U,
+              "the merged pipeline must keep only the consumer Output endpoint");
+
+      require(find_encoded_tee(compile_default_video_app(true, false)) == nullptr &&
+                  has_open_fanout(compile_default_video_app(true, false)),
+              "an async VideoSender must keep the Default-link FanOut");
+      require(find_encoded_tee(compile_default_video_app(false, true)) == nullptr,
+              "a stream id on the decoder link must keep the FanOut");
+
+      // A sender on the decoded branch joins the same pipeline, so payloader names must differ.
+      const auto decoded_sender_plan = compile_default_video_app(false, false, true);
+      std::vector<std::string> merged_names;
+      for (const auto& segment : decoded_sender_plan.pipeline_segments) {
+        if (segment.consumed_by_fused_realtime_ingress) {
+          continue;
+        }
+        for (std::size_t i = 0; i < segment.nodes.size(); ++i) {
+          const auto names = segment.nodes[i]->element_names(static_cast<int>(i));
+          merged_names.insert(merged_names.end(), names.begin(), names.end());
+        }
+      }
+      std::sort(merged_names.begin(), merged_names.end());
+      require(find_encoded_tee(decoded_sender_plan) != nullptr &&
+                  std::count(merged_names.begin(), merged_names.end(), "pay0") == 1 &&
+                  std::adjacent_find(merged_names.begin(), merged_names.end()) ==
+                      merged_names.end(),
+              "the encoded tee must not duplicate the decoded sender's payloader name");
 
       // Kind-based recognition must preserve a customer-configured parser's
       // caps/header behavior exactly.
@@ -1953,14 +2021,22 @@ RUN_TEST(
       simaai::neat::GraphOptions synchronous;
       synchronous.processcvu.async = false;
       synchronous.processmla.async = false;
-      synchronous.processmla.defer_output_invalidate = false;
       const std::string synchronous_pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
               make_consumer_nodes(), synchronous);
       require(synchronous_pipeline.find("async=true") == std::string::npos,
               "explicit public synchronous options must not enable fused async stages");
-      require_contains(synchronous_pipeline, "defer-output-invalidate=false",
-                       "explicit public cache-sync option must be preserved by fused rendering");
+      require(synchronous_pipeline.find("defer-output-invalidate=") == std::string::npos,
+              "synchronous execution also uses consumer-owned access");
+      synchronous.processmla.defer_output_invalidate = false;
+      bool eager_rejected = false;
+      try {
+        (void)simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+            make_consumer_nodes(), synchronous);
+      } catch (const std::invalid_argument& error) {
+        eager_rejected = std::string(error.what()).find("retired") != std::string::npos;
+      }
+      require(eager_rejected, "retired eager invalidation request must fail explicitly");
 
       const std::string clamped_sync_pipeline = simaai::neat::session_build_clamp_sync_pipeline(
           "neatprocessmla name=sync_mla num-buffers=8 ! "

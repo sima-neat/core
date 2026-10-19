@@ -29,9 +29,9 @@
 
 ### Запустіть тестування {#step-run-benchmark}
 
-Викличте `benchmark(samples)`. API запускає асинхронний запуск моделі, вимірює асинхронне вікно передачі/отримання, виводить зведену інформацію в stdout і повертає ті самі основні значення у `BenchmarkReport`.
+Викличте `benchmark(samples)`. API прогріває модель, вимірює затримку, подаючи вхідні дані по одному (single-flight), потім вимірює пропускну здатність в окремому асинхронному проході передачі/отримання (push/pull), виводить зведену інформацію в stdout і повертає ті самі основні значення у `BenchmarkReport`.
 
-Кількість зразків — це кількість виміряних синтетичних вхідних даних. Використовуйте більше число для більш стабільних показників пропускної здатності та споживання енергії; використовуйте менше число, якщо вам потрібна лише швидка перевірка.
+Кожен прохід триває, доки не виміряє щонайменше `samples` вхідних даних і не мине 10 секунд, тож показники потужності й температури проходу пропускної здатності охоплюють кілька зразків. Задайте `BenchmarkOptions::min_duration_ms`, щоб змінити цей мінімум, або встановіть 0 для швидкої перевірки, у якій кожен прохід зупиняється після `samples` вхідних даних.
 
 Моделі виявлення, маршрут яких закінчується на BoxDecode, також можуть використовувати `BenchmarkOptions`. Встановіть `original_width`, `original_height` і `resize_mode`, щоб описати геометрію вихідного зображення, яку
 BoxDecode використовує під час відображення виявлень з координат моделі. Синтетичний тензор залишається
@@ -51,9 +51,47 @@ Python надає доступ до тих самих полів через `pyn
 
 ### Ознайомтеся зі звітом {#step-read-report}
 
-У звіті, що повертається, зберігаються лише основні поля, які потрібні більшості користувачів: середня затримка від кінця до кінця в мілісекундах, пропускна здатність у кадрах за секунду, середня потужність плати у ватах (за наявності даних) та виміряна енергія в джоулях (за наявності даних).
+Звіт, що повертається, починається з основних полів, які потрібні більшості користувачів: середня затримка від кінця до кінця в мілісекундах, пропускна здатність у кадрах за секунду, середня й пікова потужність SoM у ватах та енергія в джоулях, потрібна для обробки `samples` вхідних даних. `throughput_duration_ms` показує, скільки тривав прохід вимірювання пропускної здатності.
 
-Телеметрія живлення залежить від підтримки плати. Якщо середовище виконання не може збирати дані про напругу живлення на поточній цільовій платформі, тест все одно надає інформацію про затримку та пропускну здатність, а поля, що стосуються живлення, встановлюються на нуль.
+Дані про потужність надходять від Sentinel — демона телеметрії плати, який налаштовує інсталятор Neat. `report.telemetry` також містить потужність шин живлення, температури кристала й плати, завантаження CPU та пам’ять MLA для проходу вимірювання пропускної здатності; опис кожного поля див. у розділі [Вимірювання виконання моделі](/develop-apps/development-workflow/model#power-and-board-telemetry). Якщо Sentinel не запущено або він записує іншу трасу, тест усе одно надає інформацію про затримку та пропускну здатність, залишає поля потужності нульовими та записує причину в `report.telemetry.status`.
+
+### Розширені можливості: статистика шарів {#step-read-layer-stats}
+
+Додайте `--include-layer-stats` до будь-якої команди прикладу, щоб включити час виконання шарів до звіту бенчмарку. Типово цю опцію вимкнено. Через API її можна ввімкнути так:
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_layer_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_layer_stats = True
+report = model.benchmark(options)
+```
+
+У `report.layer_stats` доступні `name`, `stage_index` із нульовою нумерацією та `total_execution_time_us` для кожного скомпільованого шару MLA. Зберігаються також no-op записи з нульовим часом. Час шарів вимірюється в окремих проходах профілювання, тому його сума не дорівнює загальній затримці.
+
+### Збереження звіту {#step-save-report}
+
+Викличте `report.save(path)`, щоб записати повний звіт у YAML або JSON, включно зі статистикою шарів, якщо її запитано:
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
+```
+
+Розширення `.json` вибирає JSON; `.yaml` та всі інші закінчення використовують YAML. Ім’я файлу зберігається.
+
+Укажіть шлях разом з іменем файлу. Відсутні батьківські каталоги створюються, наявний файл замінюється, а метод повертає шлях записаного файлу. Збереження виконується явно; `benchmark()` не створює файл звіту автоматично.
+
+До будь-якої команди прикладу додайте `--report results/model/yolo_benchmark.yaml`. Поєднайте з `--include-layer-stats`, щоб зберегти основні вимірювання та час виконання шарів.
 
 ## Run
 
@@ -73,8 +111,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -84,14 +122,28 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 NEAT Benchmark
 Input: synthetic
 Samples: 100
-Latency:      12.4 ms
-FPS:          80.6
-Power avg:    2.3 W
-Energy:       2.8 J
-report_latency_ms=12.4
-report_fps=80.6
-report_avg_power_watts=2.3
-report_energy_joules=2.8
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 1.97 ms
+FPS:     1457.04 inferences/s
+Batch throughput: 1457.04 batches/s
+Throughput window: 30.09 s, 43849 inputs
+Power:         13.19 W avg, 13.81 W peak (SoM)
+MLA power:     3.05 W avg, 3.25 W max
+Energy:        0.91 J for 100 inputs
+Die temp:      46.34 °C avg, 47.56 °C max
+CPU usage:     12.38 % avg, 13.22 % max
+MLA memory:    29.65 MiB
+CMA used:      6035.02 MiB avg, 6044.38 MiB max
+Linux memory:  682.88 MiB avg, 697.41 MiB max
+Telemetry:     Sentinel, 15 samples, trace 20261014T144839.984Z-neat-benchmark-20261014t144839-905z
+report_latency_ms=1.96852
+report_fps=1457.04
+report_avg_power_watts=13.1875
+report_energy_joules=0.905085
+report_peak_power_watts=13.8125
+report_throughput_duration_ms=30094.5
+report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
 

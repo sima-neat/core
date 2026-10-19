@@ -30,7 +30,7 @@ struct ConnectionOptions {
   int card_id = 0;
   /// SSH user used to launch the card-side runtime.
   std::string user = "sima";
-  /// PCIe queue assigned to the model. Supported queues are 0 through 3.
+  /// PCIe queue assigned to the model. Supported queues are 0 through 5.
   int queue = 0;
   /// Maximum accepted requests. Model permits 0 for plugin-managed depth; Runtime requires 1..256.
   int max_inflight = 10;
@@ -480,6 +480,8 @@ public:
   std::vector<TensorInfo> output_specs() const;
 
   void build(int readiness_timeout_ms = 180000);
+  /// Reports whether the model is in the successfully built lifecycle state.
+  /// This does not probe host transport or remote pipeline health.
   bool running() const;
   void close();
 

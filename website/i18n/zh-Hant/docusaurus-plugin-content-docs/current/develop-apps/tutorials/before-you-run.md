@@ -22,7 +22,7 @@ PCIe 教程在主機上執行，而不是在 SDK 容器內或直接在卡上執�
 
 請確保已安裝 [Neat Library](/getting-started/neat-library/install-or-update/)，然後從您希望放置教程套件的目錄中執行以下指令：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 sima-cli neat install core -t extras
 cd sima-neat-*-Linux-extras
 </ShellCommand>
@@ -65,7 +65,7 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 使用 Model Zoo 下載教學檔案中指定的模型。例如：
 
-<ShellCommand prompt="sdk-devkit-or-pcie-host">
+<ShellCommand prompt="sdk|devkit|pcie-host">
 sima-cli modelzoo get resnet_50
 sima-cli modelzoo get yolo_v8s
 </ShellCommand>
@@ -89,7 +89,7 @@ cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
 
 從提取的額外檔案的根目錄執行教學指令。確認其中包含建置輔助工具、預先建置的 C++ 程式碼，以及教學原始碼：
 
-<ShellCommand prompt="sdk-or-pcie-host">
+<ShellCommand prompt="sdk|pcie-host">
 test -x build.sh
 ls lib/*/tutorials/
 ls share/*/tutorials/

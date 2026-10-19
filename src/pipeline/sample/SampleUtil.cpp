@@ -1,3 +1,4 @@
+#include <simaai/scheduler/client/tensor_buffer.h>
 // src/pipeline/internal/SampleUtil.cpp
 #include "pipeline/internal/SampleUtil.h"
 #include "gst/GstSampleAttributes.h"
@@ -851,7 +852,7 @@ bool tensor_buffer_descriptor_from_tensors(const TensorList& tensors, TensorBuff
   return true;
 }
 
-bool tensor_buffer_view_from_runtime_view(simaai::gst::TensorBufferView view, TensorBufferView* out,
+bool tensor_buffer_view_from_runtime_view(simaai::scheduler::client::TensorBufferView view, TensorBufferView* out,
                                           std::string* err) {
   if (!out) {
     if (err) {
@@ -860,19 +861,19 @@ bool tensor_buffer_view_from_runtime_view(simaai::gst::TensorBufferView view, Te
     return false;
   }
   std::vector<Segment> admitted_segments;
-  admitted_segments.reserve(view.segments.size());
-  for (auto& segment : view.segments) {
-    admitted_segments.push_back(Segment{std::move(segment.name), segment.size_bytes});
+  admitted_segments.reserve(view.segment_count());
+  for (std::size_t i = 0; i < view.segment_count(); ++i) {
+    admitted_segments.push_back(Segment{std::move(view.segment_name(i)), view.segment_size(i)});
   }
   if (tensor_buffer_current_segments(out->buffer, admitted_segments, &out->segments, err) !=
       TensorBufferBindingResult::Current) {
     return false;
   }
-  out->stage_key = std::move(view.stage_key);
+  out->stage_key = std::move(view.stage_key());
   out->tensors.clear();
-  out->tensors.reserve(view.tensors.size());
+  out->tensors.reserve(view.tensors().size());
   out->required_segment_extents.assign(out->segments.size(), 0U);
-  for (auto& descriptor : view.tensors) {
+  for (auto& descriptor : view.tensors()) {
     if (descriptor.memory_index >= 0 &&
         static_cast<std::size_t>(descriptor.memory_index) < out->segments.size()) {
       const auto index = static_cast<std::size_t>(descriptor.memory_index);
@@ -971,8 +972,8 @@ bool tensor_buffer_view_from_tensors_impl(const TensorList& tensors, TensorBuffe
       out->sample = sample;
       out->buffer = buffer;
       out->caps = caps;
-      simaai::gst::TensorBufferView view;
-      if (!simaai::gst::tensor_buffer_create_view(sample, &view, err) ||
+      simaai::scheduler::client::TensorBufferView view;
+      if (!simaai::scheduler::client::tensor_buffer_create_view(sample, &view, err) ||
           !tensor_buffer_view_from_runtime_view(std::move(view), out, err)) {
         return false;
       }
@@ -1039,8 +1040,8 @@ bool tensor_buffer_descriptor_from_sample_impl(GstSample* sample, TensorBufferVi
   out->sample = sample;
   out->buffer = gst_sample_get_buffer(sample);
   out->caps = gst_sample_get_caps(sample);
-  simaai::gst::TensorBufferView view;
-  return simaai::gst::tensor_buffer_create_view(sample, &view, err) &&
+  simaai::scheduler::client::TensorBufferView view;
+  return simaai::scheduler::client::tensor_buffer_create_view(sample, &view, err) &&
          tensor_buffer_view_from_runtime_view(std::move(view), out, err);
 }
 
@@ -3500,11 +3501,13 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
     }
     if (sample_debug_enabled()) {
       std::string accessor_err;
-      auto accessor = simaai::gst::TensorBufferAccessor::create(sample_buf, nullptr, &accessor_err);
+      simaai::scheduler::client::TensorBufferView diagnostic_view;
+      const bool accessor_valid = simaai::scheduler::client::tensor_buffer_create_view(
+          sample_buf, nullptr, &diagnostic_view, &accessor_err);
       std::fprintf(stderr,
                    "[SAMPLE] tensor-set final buffer memories=%u bytes=%zu accessor_ok=%d err=%s\n",
                    static_cast<unsigned>(gst_buffer_n_memory(sample_buf)),
-                   static_cast<size_t>(gst_buffer_get_size(sample_buf)), accessor.valid() ? 1 : 0,
+                   static_cast<size_t>(gst_buffer_get_size(sample_buf)), accessor_valid ? 1 : 0,
                    accessor_err.empty() ? "<empty>" : accessor_err.c_str());
     }
   } else {

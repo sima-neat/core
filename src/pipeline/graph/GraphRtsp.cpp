@@ -34,7 +34,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 
-#include "simaai/neat/internal/dmabuf/DmaBufVideo.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/gst.h>
 #include <gst/gstdebugutils.h>
@@ -280,9 +280,9 @@ static gboolean push_frame_cb(gpointer user_data) {
     push_ctx_unref(pc);
     return G_SOURCE_CONTINUE;
   }
-  internal::dmabuf::Error error;
+  ::simaai::scheduler::client::dma::Error error;
   if (acquired != GST_FLOW_OK || !buf ||
-      !internal::dmabuf::convertEncoderInput(pc->converter, pc->source_info, pc->source_buffer,
+      !::simaai::scheduler::client::dma::convertEncoderInput(pc->converter, pc->source_info, pc->source_buffer,
                                              pc->surface_info, buf, &error)) {
     if (acquired != GST_FLOW_FLUSHING) {
       GST_ELEMENT_ERROR(appsrc, RESOURCE, WRITE, ("Cannot prepare RTSP encoder DMA input"),
@@ -584,11 +584,11 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
           pc->fps = impl->fps;
           pc->nv12 = impl->nv12_enc;
           pc->frame_duration_ns = gst_util_uint64_scale_int(GST_SECOND, 1, pc->fps);
-          internal::dmabuf::Error error;
+          ::simaai::scheduler::client::dma::Error error;
           gst_video_info_init(&pc->source_info);
           const bool valid_surface =
               gst_video_info_set_format(&pc->source_info, GST_VIDEO_FORMAT_NV12, pc->w, pc->h) &&
-              internal::dmabuf::encoderInputInfo(pc->source_info, &pc->surface_info, &error);
+              ::simaai::scheduler::client::dma::encoderInputInfo(pc->source_info, &pc->surface_info, &error);
           if (valid_surface) {
             // StillImageInput owns tight NV12, independent of GstVideoInfo's
             // generic four-byte row rounding for arbitrary even widths.
@@ -598,7 +598,7 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
             pc->source_info.size = pc->source_info.offset[1] * 3 / 2;
             pc->converter = gst_video_converter_new(&pc->source_info, &pc->surface_info, nullptr);
             pc->surface_pool =
-                internal::dmabuf::createEncoderInputPool(pc->surface_info, 2, 30, &error);
+                ::simaai::scheduler::client::dma::createEncoderInputPool(pc->surface_info, 2, 30, &error);
             if (pc->nv12) {
               // The shared image vector owns these immutable source bytes.
               // Only final DMA surfaces are ever submitted to appsrc.

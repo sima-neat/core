@@ -147,6 +147,7 @@ struct ImageSpec {
     NV12,    ///< 4:2:0 chroma with interleaved UV plane (camera-native on most chips).
     I420,    ///< 4:2:0 chroma with separate U and V planes.
     UNKNOWN,
+    NV16 = 6, ///< 4:2:2 chroma with a full-height interleaved UV plane.
   };
 
   PixelFormat format = PixelFormat::UNKNOWN; ///< Pixel format of the image data.

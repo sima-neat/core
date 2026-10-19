@@ -107,8 +107,11 @@ CATEGORY_TUTORIAL_ORDER = {
     "Graphs & Pipelines": [4, 8, 13, 14, 15, 12, 16, 17],
     "Cameras & Streaming": [18, 23],
     "GenAI": [21, 19, 20, 22],
-    "PCIe Co-Processing": [24, 25, 26],
+    "PCIe Co-Processing": [24, 25, 26, 27, 28],
 }
+
+# Cross-list cards without generating another copy of the tutorial page.
+TUTORIAL_CROSS_LISTINGS = {"029_run_genai_over_pcie": ["GenAI"]}
 
 
 def _category_flow_key(category: str, number: int) -> tuple:
@@ -907,10 +910,15 @@ def flow_animation_svg(module: TutorialModule) -> str:
     title = re.sub(r"\s+", " ", module.display_title).strip()
     subtitle = _first_sentence(module.concept or module.walkthrough_lead)
     py_sources = module.py_rels or ([module.py_rel] if module.py_rel else [])
+    sources = (
+        py_sources
+        or module.cpp_rels
+        or ([module.cpp_rel] if module.cpp_rel else [])
+    )
     source_label = (
-        pathlib.Path(py_sources[0]).name
-        if len(py_sources) == 1
-        else f"{len(py_sources)} standalone programs"
+        pathlib.Path(sources[0]).name
+        if len(sources) == 1
+        else f"{len(sources)} standalone programs"
     )
     return stepper_animation_svg(
         title, subtitle, source_label, data, interactive=True, anchors=anchors
@@ -1468,12 +1476,18 @@ def render_tutorial_doc(
     return "\n".join(lines)
 
 
-def _group_tutorials(modules: List[TutorialModule]) -> Dict[str, List[TutorialModule]]:
+def _group_tutorials(
+    modules: List[TutorialModule], *, cross_list: bool = False
+) -> Dict[str, List[TutorialModule]]:
     groups: Dict[str, List[TutorialModule]] = {
         label: [] for label, _, _, _ in CATEGORY_SUBDIRS
     }
     for module in modules:
         groups[module.category].append(module)
+        if cross_list:
+            for category in TUTORIAL_CROSS_LISTINGS.get(module.folder, []):
+                if category != module.category:
+                    groups[category].append(module)
     for key in groups:
         groups[key] = sorted(
             groups[key], key=lambda m: _category_flow_key(key, m.number)
@@ -1552,7 +1566,7 @@ def render_index(
     heading_body: str,
     ui: Dict[str, Any] = ENGLISH_UI,
 ) -> str:
-    groups = _group_tutorials(modules)
+    groups = _group_tutorials(modules, cross_list=True)
     lines: List[str] = [
         "---",
         f"title: {_ui(ui, 'title')}",
@@ -1655,6 +1669,11 @@ def _validate_localized_readme(source_path: pathlib.Path, localized_path: pathli
         "list markers": lambda text: re.findall(
             r"^[ \t]*(?:[-+*]|\d+[.)])[ \t]+", text, flags=re.M
         ),
+        "table shapes": lambda text: [
+            len(re.findall(r"(?<!\\)\|", line))
+            for line in text.splitlines()
+            if re.match(r"^\s*\|.*\|\s*$", line)
+        ],
     }
     for label, extract in checks.items():
         if extract(source) != extract(localized):
@@ -1757,6 +1776,7 @@ def generate_localized_tutorials(
         localized_modules = [
             module for label, _, _, _ in CATEGORY_SUBDIRS for module in groups[label]
         ]
+        card_groups = _group_tutorials(localized_modules, cross_list=True)
         out_root.mkdir(parents=True, exist_ok=True)
         expected_paths = {
             out_root / _category_subdir(module.category) / f"{module.doc_id}.mdx"
@@ -1780,7 +1800,7 @@ def generate_localized_tutorials(
                 encoding="utf-8",
             )
             (sub / "index.md").write_text(
-                render_category_index(label, slug, description, groups[label], ui),
+                render_category_index(label, slug, description, card_groups[label], ui),
                 encoding="utf-8",
             )
         for module in localized_modules:
@@ -1885,10 +1905,11 @@ def main() -> int:
             encoding="utf-8",
         )
 
+    card_groups = _group_tutorials(modules, cross_list=True)
     for label, slug, _, description in CATEGORY_SUBDIRS:
         out_path = docs_tutorials_dir / slug / "index.md"
         out_path.write_text(
-            render_category_index(label, slug, description, groups[label]),
+            render_category_index(label, slug, description, card_groups[label]),
             encoding="utf-8",
         )
 

@@ -7,6 +7,12 @@ CORE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/scripts/host-platform.sh"
 cd "${SCRIPT_DIR}"
 
+# Reject the retired unverified header override before dependency installation.
+if [[ -n "${SIMAPCIE_SVC_INCLUDE_DIR:-}" ]]; then
+  echo "ERROR: SIMAPCIE_SVC_INCLUDE_DIR is no longer accepted. Install Scheduler's pcie_service_headers component using a reviewed SIMA_SCHEDULER_PCIE_SERVICE_HEADERS_DEB (or explicit legacy header cohort), then set SimaScheduler_DIR to that installed host profile." >&2
+  exit 2
+fi
+
 BUILD_DIR="build"
 BUILD_TYPE="Release"
 BUILD_TESTS="OFF"
@@ -18,17 +24,7 @@ MAKE_DEB="ON"
 PACKAGE_DIR="${SCRIPT_DIR}/dist"
 INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
 INSTALLER_STAGE="${PACKAGE_DIR}/install_pciehost.sh"
-PLUGIN_NAME="libgstneatpciehost.so"
-TENSOR_META_HEADER="gst/SimaTensorSetMetaAbi.h"
 DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
-ARTIFACT_REPOSITORY="${SIMAPCIE_PCIE_HOST_ARTIFACT_REPOSITORY:-internals}"
-ARTIFACT_MANIFEST_KEY="internals"
-VULCAN_ENV="${SIMAPCIE_VULCAN_ENV:-${NEAT_VULCAN_ENV:-production}}"
-VULCAN_BASE_URL="${SIMAPCIE_VULCAN_BASE_URL:-${NEAT_VULCAN_BASE_URL:-}}"
-ARTIFACT_REQUESTED_REF=""
-ARTIFACT_RESOLVED_REF=""
-ARTIFACT_SNAP_POLICY="OFF"
-ARTIFACT_SNAP_TAG_POLICY="OFF"
 SIMAPCIE_PYTHON_EXECUTABLE="${SIMAPCIE_PYTHON_EXECUTABLE:-}"
 
 usage() {
@@ -166,115 +162,6 @@ done
 
 install_build_deps
 
-manifest_dependency_spec() {
-  local key="$1"
-  local file="$2"
-  python3 - "${key}" "${file}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-key = sys.argv[1]
-manifest_path = Path(sys.argv[2])
-data = json.loads(manifest_path.read_text(encoding="utf-8"))
-if key not in data:
-    raise SystemExit(f"ERROR: {manifest_path} must define '{key}'.")
-
-value = data[key]
-if isinstance(value, str):
-    print("__SNAP__" if not value.strip() else value.strip())
-    raise SystemExit(0)
-
-if isinstance(value, dict):
-    policy = str(value.get("policy", "")).strip().lower()
-    if policy == "snap":
-        print("__SNAP__")
-        raise SystemExit(0)
-    if policy:
-        raise SystemExit(f"ERROR: unsupported {key}.policy in {manifest_path}: {policy!r}")
-
-    spec = str(value.get("spec", "")).strip()
-    branch = str(value.get("branch", value.get("ref", ""))).strip()
-    if branch:
-        print(f"{branch}:{spec or 'latest'}")
-        raise SystemExit(0)
-
-raise SystemExit(
-    f"ERROR: {manifest_path} field '{key}' must be a string, "
-    "or an object with {'policy':'snap'} or {'branch':'...', 'spec':'...'}."
-)
-PY
-}
-
-current_core_branch() {
-  if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
-    printf '%s\n' "${GITHUB_HEAD_REF}"
-    return 0
-  fi
-  if [[ -n "${GITHUB_REF_NAME:-}" ]]; then
-    printf '%s\n' "${GITHUB_REF_NAME}"
-    return 0
-  fi
-  if command -v git >/dev/null 2>&1 &&
-     git -C "${CORE_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git -C "${CORE_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null
-    return 0
-  fi
-  printf '\n'
-}
-
-current_core_tag() {
-  if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
-    printf '%s\n' "${GITHUB_REF_NAME}"
-    return 0
-  fi
-  if command -v git >/dev/null 2>&1 &&
-     git -C "${CORE_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git -C "${CORE_ROOT}" describe --tags --exact-match HEAD 2>/dev/null || true
-    return 0
-  fi
-  printf '\n'
-}
-
-resolve_artifact_ref() {
-  ARTIFACT_SNAP_POLICY="OFF"
-  ARTIFACT_SNAP_TAG_POLICY="OFF"
-
-  if [[ ! -f "${DEPS_MANIFEST}" ]]; then
-    echo "ERROR: missing dependency manifest: ${DEPS_MANIFEST}" >&2
-    return 1
-  fi
-
-  local manifest_spec
-  if ! manifest_spec="$(manifest_dependency_spec "${ARTIFACT_MANIFEST_KEY}" "${DEPS_MANIFEST}")"; then
-    return 1
-  fi
-
-  local branch spec tag
-  if [[ "${manifest_spec}" == "__SNAP__" ]]; then
-    ARTIFACT_SNAP_POLICY="ON"
-    tag="$(current_core_tag)"
-    if [[ -n "${tag}" ]]; then
-      ARTIFACT_SNAP_TAG_POLICY="ON"
-      branch="${tag}"
-    else
-      branch="$(current_core_branch)"
-      if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
-        echo "Could not determine current branch for PCIe host artifact snap; using develop." >&2
-        branch="develop"
-      fi
-    fi
-  elif [[ "${manifest_spec}" == *":"* ]]; then
-    branch="${manifest_spec%%:*}"
-    spec="${manifest_spec#*:}"
-  else
-    branch="${manifest_spec}"
-  fi
-  spec="${spec:-latest}"
-
-  ARTIFACT_REQUESTED_REF="${branch}:${spec}"
-}
-
 detect_multiarch() {
   if command -v dpkg-architecture >/dev/null 2>&1; then
     dpkg-architecture -qDEB_HOST_MULTIARCH
@@ -333,74 +220,7 @@ resolve_python_executable() {
   command -v python3
 }
 
-artifact_available() {
-  [[ -f "${PLUGIN_SOURCE}" && -f "${HEADER_SOURCE}" ]]
-}
 
-install_artifact_from_vulcan_ref() {
-  local ref_spec="$1"
-  local ref="${ref_spec%%:*}"
-  local spec="${ref_spec#*:}"
-  local target="${ARTIFACT_REPOSITORY}/pcie-host/${HOST_DISTRO}/${HOST_MULTIARCH}@${ref}:${spec}"
-  local install_dir="${SCRIPT_DIR}/artifacts"
-  local sima_cli_args=(neat install --env "${VULCAN_ENV}" -d "${install_dir}")
-
-  if [[ -n "${VULCAN_BASE_URL}" ]]; then
-    sima_cli_args+=(--base-url "${VULCAN_BASE_URL}")
-  fi
-  sima_cli_args+=("${target}")
-
-  mkdir -p "${install_dir}"
-  rm -rf \
-    "${install_dir}/${HOST_MULTIARCH}" \
-    "${install_dir}/pcie-host-artifact-${HOST_MULTIARCH}" \
-    "${install_dir}/pcie-host-artifact-${HOST_MULTIARCH}.tar.gz"
-
-  echo "Installing PCIe host artifact ${target} from Vulcan env ${VULCAN_ENV}..."
-  if ! sima-cli "${sima_cli_args[@]}"; then
-    return 1
-  fi
-
-  if ! artifact_available; then
-    echo "ERROR: installed PCIe host artifact is incomplete under artifacts/${HOST_MULTIARCH}" >&2
-    echo "       expected ${PLUGIN_SOURCE}" >&2
-    echo "       expected ${HEADER_SOURCE}" >&2
-    return 1
-  fi
-
-  ARTIFACT_RESOLVED_REF="${ref}:${spec}"
-}
-
-ensure_artifact_downloaded() {
-  if ! command -v sima-cli >/dev/null 2>&1; then
-    echo "ERROR: sima-cli is required to install PCIe host artifacts." >&2
-    echo "       Install sima-cli before running this build." >&2
-    exit 1
-  fi
-
-  if ! resolve_artifact_ref; then
-    exit 1
-  fi
-
-  local requested_ref="${ARTIFACT_REQUESTED_REF}"
-  if install_artifact_from_vulcan_ref "${requested_ref}"; then
-    echo "Using PCIe host artifact ${ARTIFACT_RESOLVED_REF}."
-    return 0
-  fi
-
-  if [[ "${ARTIFACT_SNAP_POLICY}" == "ON" &&
-        "${ARTIFACT_SNAP_TAG_POLICY}" != "ON" &&
-        "${requested_ref}" != "develop:latest" ]]; then
-    echo "No PCIe host artifact found for '${requested_ref}'; retrying develop:latest." >&2
-    if install_artifact_from_vulcan_ref "develop:latest"; then
-      echo "Using PCIe host artifact ${ARTIFACT_RESOLVED_REF}."
-      return 0
-    fi
-  fi
-
-  echo "ERROR: failed to install PCIe host artifact for ${requested_ref}" >&2
-  exit 1
-}
 
 generate_package_metadata() {
   mkdir -p "${PACKAGE_DIR}"
@@ -626,12 +446,6 @@ case "${BUILD_DIR}" in
     BUILD_DIR_ABS="${SCRIPT_DIR}/${BUILD_DIR}"
     ;;
 esac
-PLUGIN_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/${PLUGIN_NAME}"
-HEADER_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/include/${TENSOR_META_HEADER}"
-PLUGIN_STAGE_DIR="${BUILD_DIR_ABS}/artifacts/neatpciehost/${HOST_MULTIARCH}"
-PLUGIN_STAGE="${PLUGIN_STAGE_DIR}/${PLUGIN_NAME}"
-INCLUDE_STAGE_DIR="${BUILD_DIR_ABS}/artifacts/neatpciehost/${HOST_MULTIARCH}/include"
-HEADER_STAGE="${INCLUDE_STAGE_DIR}/${TENSOR_META_HEADER}"
 
 echo "========================================"
 echo " SiMa NEAT PCIe host build configuration"
@@ -652,12 +466,6 @@ echo "Package version : ${PACKAGE_VERSION}"
 if [[ "${BUILD_PYTHON}" == "ON" ]]; then
   echo "Python exe      : ${PYTHON_EXECUTABLE}"
 fi
-echo "Artifact repo   : ${ARTIFACT_REPOSITORY}"
-echo "Vulcan env      : ${VULCAN_ENV}"
-echo "Plugin source   : ${PLUGIN_SOURCE}"
-echo "Plugin stage    : ${PLUGIN_STAGE}"
-echo "Header source   : ${HEADER_SOURCE}"
-echo "Header stage    : ${HEADER_STAGE}"
 echo "========================================"
 echo
 
@@ -666,29 +474,12 @@ if [[ "${CLEAN_BUILD}" == "ON" ]]; then
   rm -rf "${BUILD_DIR}"
 fi
 
-ensure_artifact_downloaded
-
-if [[ -f "${PLUGIN_SOURCE}" ]]; then
-  mkdir -p "${PLUGIN_STAGE_DIR}"
-  cp -f "${PLUGIN_SOURCE}" "${PLUGIN_STAGE}"
-elif [[ "${MAKE_DEB}" == "ON" ]]; then
-  echo "ERROR: missing neatpciehost plugin artifact: ${PLUGIN_SOURCE}" >&2
-  echo "       expected layout: artifacts/${HOST_MULTIARCH}/${PLUGIN_NAME}" >&2
-  exit 1
-else
-  echo "WARN: missing neatpciehost plugin artifact: ${PLUGIN_SOURCE}" >&2
-  PLUGIN_STAGE=""
+# Native Scheduler and platform service development packages are pre-provisioned
+# dependencies. Never download/repackage an Internals plugin inside Core.
+GENAI_CMAKE_ARGS=()
+if [[ -n "${SimaScheduler_DIR:-}" ]]; then
+  GENAI_CMAKE_ARGS+=("-DSimaScheduler_DIR=${SimaScheduler_DIR}")
 fi
-
-if [[ -f "${HEADER_SOURCE}" ]]; then
-  mkdir -p "$(dirname "${HEADER_STAGE}")"
-  cp -f "${HEADER_SOURCE}" "${HEADER_STAGE}"
-else
-  echo "ERROR: missing neatpciehost tensor metadata ABI header: ${HEADER_SOURCE}" >&2
-  echo "       expected layout: artifacts/${HOST_MULTIARCH}/include/${TENSOR_META_HEADER}" >&2
-  exit 1
-fi
-
 cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
   -DCMAKE_INSTALL_LIBDIR="lib/${HOST_MULTIARCH}" \
@@ -698,8 +489,7 @@ cmake -S . -B "${BUILD_DIR}" \
   -DSIMAPCIE_BUILD_TUTORIALS="${BUILD_TUTORIALS}" \
   -DSIMAPCIE_BUILD_PYTHON="${BUILD_PYTHON}" \
   -DPython_EXECUTABLE="${PYTHON_EXECUTABLE}" \
-  -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
-  -DSIMAPCIE_NEATPCIEHOST_INCLUDE_DIR="${INCLUDE_STAGE_DIR}"
+  "${GENAI_CMAKE_ARGS[@]}"
 
 cmake --build "${BUILD_DIR}" -j 2
 

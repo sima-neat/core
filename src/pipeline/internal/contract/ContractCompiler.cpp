@@ -3,6 +3,9 @@
 #include "builder/CompiledChildStageProvider.h"
 #include "model/internal/ModelPack.h"
 #include "builder/NodeContractProvider.h"
+#include "builder/OutputSpec.h"
+
+#include <exception>
 #include "nodes/io/Input.h"
 #include "nodes/common/Output.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
@@ -19,6 +22,43 @@ bool node_kind_requires_contract_provider(const std::string& kind) {
 std::string default_logical_stage_id(const Node& node, const std::string& element_name) {
   const std::string user_label = node.user_label();
   return user_label.empty() ? element_name : user_label;
+}
+
+// Only the new image publication path needs strict temporal authority. The
+// public best-effort OutputSpec walk deliberately keeps its legacy behavior.
+bool project_image_temporal_contract(std::span<const std::shared_ptr<Node>> upstream,
+                                     const ContractCompileInput& input, CompiledNodeContract* stage,
+                                     std::string* err) {
+  if (!stage->processcvu || !stage->processcvu->payload.image_transform)
+    return true;
+  auto boundary = input.ingress.ingress_spec.value_or(OutputSpec{});
+  try {
+    for (const auto& node : upstream) {
+      if (!node)
+        continue;
+      if (const auto* provider = dynamic_cast<const OutputSpecProvider*>(node.get())) {
+        boundary = provider->output_spec(boundary);
+      } else {
+        // Static/Dynamic caps behavior is not a temporal preservation promise.
+        // Preserve spatial facts, but do not carry a rate across an opaque node.
+        boundary.fps_num = 0;
+        boundary.fps_den = 1;
+      }
+    }
+  } catch (const std::exception& error) {
+    if (err)
+      *err = std::string("image framerate projection: ") + error.what();
+    return false;
+  }
+  if (boundary.fps_num > 0 && boundary.fps_den <= 0) {
+    if (err)
+      *err = "image framerate: a known rate requires a positive denominator";
+    return false;
+  }
+  auto& payload = stage->processcvu->payload;
+  payload.image_fps_num = boundary.fps_num > 0 ? boundary.fps_num : 0;
+  payload.image_fps_den = boundary.fps_num > 0 ? boundary.fps_den : 1;
+  return true;
 }
 
 bool compile_child_stage_contracts(const Node& node, const NodeContractDefinition& definition,
@@ -134,7 +174,10 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     // most specific one we have.
     std::string provider_err;
     if (provider->compile_node_contract(stage_input, &stage, &provider_err)) {
-      if (!internal::apply_model_fragment_contract_context(*node, stage_input, &stage,
+      if (!project_image_temporal_contract(
+              std::span<const std::shared_ptr<Node>>(nodes.data(), node_index), input, &stage,
+              &provider_err) ||
+          !internal::apply_model_fragment_contract_context(*node, stage_input, &stage,
                                                            &provider_err)) {
         stage.renderable = false;
         compiled.fully_renderable = false;

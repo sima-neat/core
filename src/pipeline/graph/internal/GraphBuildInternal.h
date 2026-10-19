@@ -77,16 +77,14 @@ std::string session_build_async_queue2_fragment(int requested_depth = 0,
                                                 std::string_view element_name = {});
 std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
                                                               const GraphOptions* sess_opt);
-// Final assembled-pipeline pass. This is the only place allowed to select the
-// producer-owned CPU visibility boundary because adjacent stages may be
-// rendered by distinct Nodes.
-std::string session_build_select_terminal_objectdecode_cpu_visibility(std::string pipeline);
-// Typed allocation-safe A65 READ handoff; unknown or shared writable routes stay deferred.
-std::string session_build_select_kernel_cpu_visibility(const BuildResult& build);
+// Cold live-source policy. Customer values win; retained framework origins
+// distinguish generated defaults from explicit count-only queues.
+std::string
+session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOptions& opt,
+                                           std::span<const LaunchNameOrigin> origins = {});
 // Propagate an authored producer lane window to its immediate terminal
-// consumer. Both endpoints opt in by rendering `num-buffers`; the producer is
-// selected by its CPU-visible handoff, so no consumer factory/plugin name is
-// encoded here.
+// consumer. Both endpoints declare `num-buffers`; memory visibility is not
+// selected here and no consumer factory/plugin name is encoded.
 std::string session_build_propagate_terminal_consumer_lane_window(std::string pipeline);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
@@ -107,8 +105,7 @@ std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num
 // Serial single-appsink retention is storage at the typed Allocate owner, not
 // execution depth at a downstream ReuseInput stage. Untyped routes keep legacy clamps.
 void session_build_initialize_kernel_runner_budget(BuildResult* build, const GraphOptions* options);
-std::string session_build_clamp_sync_build_result(BuildResult& build,
-                                                  int num_buffers_override);
+std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override);
 std::uint64_t session_build_estimate_frame_bytes_limit(const InputOptions& opt,
                                                        const SampleSpec& spec);
 std::vector<std::shared_ptr<Node>>
@@ -118,6 +115,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
+// Keep the pre-parse plan on the build's DiagCtx for Model::execution_plan().
+void session_build_record_segment_plan(const BuildResult& build);
 void session_build_validate_explicit_launch_names_or_throw(
     std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins = {});
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);

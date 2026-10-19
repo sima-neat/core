@@ -3,7 +3,7 @@
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/kernel.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -12,10 +12,10 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 namespace {
-namespace k = ::simaai::kernels;
-namespace rt = ::simaai::runtime;
-namespace gs = rt::gstreamer;
-namespace scheduler = ::simaai::scheduler;
+namespace k = ::simaai::scheduler::client;
+namespace rt = ::simaai::scheduler::client;
+namespace gs = ::simaai::scheduler::client;
+namespace scheduler = ::simaai::scheduler::client;
 namespace specs = specbuilders;
 [[noreturn]] void invalid(const std::string& message) {
   throw std::invalid_argument("BoxDecode kernel recipe: " + message);
@@ -59,7 +59,7 @@ std::size_t scalar_bytes(k::DType type) {
 }
 std::size_t dense_bytes(const k::TensorSpec& tensor) {
   std::size_t bytes = scalar_bytes(tensor.dtype);
-  for (auto dimension : tensor.shape.dimensions()) {
+  for (auto dimension : tensor.shape) {
     if (dimension <= 0 || static_cast<std::uint64_t>(dimension) > SIZE_MAX / bytes)
       invalid("tensor byte extent overflows");
     bytes *= static_cast<std::size_t>(dimension);
@@ -114,8 +114,8 @@ struct Builder {
     if (bytes != dense_bytes(tensor))
       invalid("private output projection differs from checked storage");
     const auto name = "kernel_private_" + std::to_string(index);
-    const std::vector<std::int64_t> shape(tensor.shape.dimensions().begin(),
-                                          tensor.shape.dimensions().end());
+    const std::vector<std::int64_t> shape(tensor.shape.begin(),
+                                          tensor.shape.end());
     recipe->private_outputs.push_back(specs::build_logical_output_static_spec(
         static_cast<int>(index), static_cast<int>(index), static_cast<int>(index),
         static_cast<int>(index), static_cast<int>(index), shape, dtype_name(tensor.dtype), "", name,
@@ -149,7 +149,7 @@ struct Builder {
     if (logical.byte_offset < 0)
       invalid("negative head byte offset");
     logical.backend_input_index = static_cast<int>(index);
-    Input in{{k::Shape(shape), dtype(logical.dtype)},
+    Input in{{std::vector<std::int64_t>(shape.begin(), shape.end()), dtype(logical.dtype)},
              {index, static_cast<std::size_t>(logical.byte_offset)},
              {}};
     const auto kind = source.payload.tensor_storage_kind.at(index);
@@ -188,7 +188,7 @@ struct Builder {
     // Kernels owns admission of the exact dtype and physical layout.
     auto narrowed = shape;
     narrowed[2] = logical_channels;
-    in.tensor.shape = k::Shape(narrowed);
+    in.tensor.shape.assign(narrowed.begin(), narrowed.end());
     if (std::holds_alternative<k::Contiguous>(in.tensor.layout) && shape[2] != logical_channels) {
       const auto width = static_cast<std::int64_t>(scalar_bytes(in.tensor.dtype));
       k::Strided strided;
@@ -307,7 +307,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   runtime.plugin_kind = "kernel";
   std::vector<Input> inputs;
   std::vector<k::TensorSpec> outputs;
-  k::Executable numerical;
+  k::KernelExecutable numerical;
   BoxDecodeWireFormat wire = BoxDecodeWireFormat::Boxes;
   if (p.decode_type == BoxDecodeType::SuperPoint) {
     if (count != 2 || p.tensor_roles.size() != 2)

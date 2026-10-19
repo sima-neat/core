@@ -1,0 +1,52 @@
+{
+  "scenario_id": "runtime_encoder_legacy_h264_dma",
+  "model_id": "synthetic_h264_1280x720",
+  "pipeline_id": "runtime_encoder_legacy_h264_dma",
+  "run_mode": "unpaced",
+  "iterations": 1000,
+  "metrics_thresholds": {
+    "throughput_min": 191.76065061658366,
+    "p50_max": 103.964851,
+    "p95_max": 104.725122,
+    "startup_max": 20000.0,
+    "rss_peak_kb_max": 1400000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  },
+  "encoder_reference": {
+    "workload": {
+      "height": 720,
+      "input_buffers": 4,
+      "input_fingerprint": {
+        "format": "sha256-length-prefixed-nv12-rows-v1",
+        "sequence_frames": 4,
+        "sha256": "d56aa45a900ccce2b65ac10ffcea34c2d64cd5b650eb42991362ed85ed5b1d51",
+        "layout": {
+          "uv_offset": 921600,
+          "uv_stride": 1280,
+          "y_offset": 0,
+          "y_stride": 1280
+        }
+      },
+      "input_fps": 30,
+      "pattern": "static-blocks-v1",
+      "warmup_frames": 200,
+      "width": 1280
+    },
+    "native_encoder_settings": {
+      "enc-bitrate": "4000",
+      "enc-bitrate-mode": "vbr",
+      "enc-fmt": "NV12",
+      "enc-frame-rate": "30",
+      "enc-gop-length": "0",
+      "enc-height": "720",
+      "enc-idr-interval": "0",
+      "enc-level": "4.0",
+      "enc-profile": "baseline",
+      "enc-type": "h264",
+      "enc-width": "1280",
+      "num-output-buffers": "4"
+    }
+  }
+}

@@ -8,7 +8,6 @@
 #include "test_utils.h"
 
 #include <gst/gst.h>
-#include <gstsimaaiallocator.h>
 
 #include <cstring>
 #include <iostream>

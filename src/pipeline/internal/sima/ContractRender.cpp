@@ -74,7 +74,8 @@ bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage, std::
     return false;
   }
 
-  if (payload.graph_name == "preproc" && payload.preproc_single_output_handoff) {
+  if (payload.graph_name == "preproc" && payload.preproc_single_output_handoff &&
+      !payload.image_transform) {
     if (stage->logical_outputs.size() != 1U || stage->output_order.size() != 1U) {
       if (error) {
         *error = "standalone Preproc direct route must expose exactly one output";
@@ -131,7 +132,7 @@ bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage, std::
   stage->frame_arena_allocation_policy =
       pipeline_internal::sima::static_contract::ArenaAllocationPolicy::RequiredDomain;
   stage->frame_arena_required_device_access = static_cast<std::uint32_t>(ArenaDeviceAccess::CpuA65);
-  if (payload.resolved_exec_backend == "EVXX") {
+  if (payload.resolved_exec_backend == "EVXX" || payload.resolved_exec_backend == "EV74") {
     stage->frame_arena_required_device_access |=
         static_cast<std::uint32_t>(ArenaDeviceAccess::Ev74);
   }
@@ -295,6 +296,14 @@ void normalize_cast_outputs_for_distinct_mla_boundary(StageStaticSpec* producer,
     return;
   }
 
+  // The physical execution plan already reconciled this boundary. Its arena
+  // placements, alignments, and binding identities are authoritative; the
+  // legacy normalization below would replace them with incomplete buffers.
+  if (producer->payload_kind == StagePayloadKind::ProcessCvu &&
+      producer->processcvu.dmabuf_plan_contract) {
+    return;
+  }
+
   std::vector<std::size_t> logical_by_physical(consumer.physical_inputs.size(),
                                                producer->logical_outputs.size());
   std::vector<bool> used(producer->logical_outputs.size(), false);
@@ -374,6 +383,10 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
   if (!payload) {
     return;
   }
+  // Typed image policy owns one image canvas separately from its numerical planes.
+  // Do not rewrite that canvas or descriptor selection from publication fanout.
+  if (payload->image_transform)
+    return;
   const bool preproc_graph = upper_copy_local(payload->graph_family) == "PREPROC";
   const bool preproc_single_output = preproc_graph && payload->preproc_single_output_handoff;
   // Payload runtime outputs describe the CM/runtime boundary, not the exposed
@@ -716,6 +729,7 @@ StageStaticSpec render_processcvu_stage(const CompiledProcessCvuContract& compil
     stage.processcvu.primary_output_name = compiled.exposed_view.primary_output_name;
   }
 
+  stage.image_publication = compiled.runtime_contract.image_publication;
   stage.logical_inputs = compiled.runtime_contract.logical_inputs;
   stage.input_bindings = compiled.runtime_contract.input_bindings;
   stage.physical_inputs = compiled.runtime_contract.physical_inputs;
@@ -753,6 +767,7 @@ StageStaticSpec render_processmla_stage(const CompiledMlaContract& compiled,
   stage.kernel_kind = "mla";
   stage.payload_kind = StagePayloadKind::ProcessMla;
   stage.processmla = compiled.payload;
+  stage.image_publication = compiled.runtime_contract.image_publication;
   stage.logical_inputs = compiled.runtime_contract.logical_inputs;
   stage.input_bindings = compiled.runtime_contract.input_bindings;
   stage.physical_inputs = compiled.runtime_contract.physical_inputs;
@@ -787,6 +802,7 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
   stage.logical_stage_id = compiled_stage.logical_stage_id;
   stage.plugin_kind = "kernel";
   stage.kernel_kind = compiled_stage.node_kind;
+  stage.image_publication = runtime.image_publication;
   stage.logical_inputs = runtime.logical_inputs;
   stage.input_bindings = runtime.input_bindings;
   stage.physical_inputs = runtime.physical_inputs;
@@ -816,7 +832,7 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
   stage.frame_arena_provenance = static_contract::ArenaAllocationProvenance::CoreAllocated;
   stage.frame_arena_required_device_access =
       static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::CpuA65);
-  if (compiled.recipe->target == ::simaai::runtime::Hardware::EV74)
+  if (compiled.recipe->target == ::simaai::scheduler::client::Hardware::EV74)
     stage.frame_arena_required_device_access |=
         static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::Ev74);
   stage.frame_arena_escape_policy = static_contract::ArenaEscapePolicy::CpuMappablePublic;
@@ -835,6 +851,7 @@ StageStaticSpec render_boxdecode_stage(const CompiledNodeContract& compiled_stag
   stage.kernel_kind = "boxdecode";
   stage.payload_kind = StagePayloadKind::BoxDecode;
   stage.boxdecode = compiled.payload;
+  stage.image_publication = compiled.runtime_contract.image_publication;
   stage.logical_inputs = compiled.runtime_contract.logical_inputs;
   stage.input_bindings = compiled.runtime_contract.input_bindings;
   stage.physical_inputs = compiled.runtime_contract.physical_inputs;
@@ -916,8 +933,8 @@ ProcessCvuStagePayload dequant_execution_payload(StageStaticSpec& stage) {
     // order. Logical identities and source bindings remain unchanged.
     input.backend_input_index = static_cast<int>(i);
     output.backend_output_index = static_cast<int>(i);
-    config.input_tensors.push_back(descriptor(input, output.shape));
-    config.output_tensors.push_back(descriptor(output, output.shape));
+    config.input_tensors.emplace_back(descriptor(input, output.shape), input.dtype);
+    config.output_tensors.emplace_back(descriptor(output, output.shape), output.dtype);
     config.q_scale_list.push_back(input.quant->scales.front());
     config.q_zp_list.push_back(input.quant->zero_points.front());
     config.published_output_names.push_back(output.logical_name);
@@ -957,6 +974,7 @@ StageStaticSpec render_dequant_stage(const CompiledNodeContract& compiled_stage)
                           : compiled.runtime_contract.plugin_kind;
   stage.kernel_kind = "dequant";
   stage.payload_kind = StagePayloadKind::ProcessCvu;
+  stage.image_publication = compiled.runtime_contract.image_publication;
   stage.logical_inputs = compiled.runtime_contract.logical_inputs;
   stage.input_bindings = compiled.runtime_contract.input_bindings;
   stage.physical_inputs = compiled.runtime_contract.physical_inputs;
@@ -980,6 +998,7 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
   stage.plugin_kind = compiled.plugin_kind;
   stage.kernel_kind = compiled.kernel_kind;
   stage.payload_kind = compiled.payload_kind;
+  stage.image_publication = compiled.runtime_contract.image_publication;
   stage.logical_inputs = compiled.runtime_contract.logical_inputs;
   stage.input_bindings = compiled.runtime_contract.input_bindings;
   stage.physical_inputs = compiled.runtime_contract.physical_inputs;

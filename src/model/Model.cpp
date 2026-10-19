@@ -1,5 +1,6 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
+#include "model/internal/ModelFormat.h"
 #include "model/internal/InputPlanner.h"
 #include "model/internal/ModelPack.h"
 #include "model/internal/ModelParser.h"
@@ -22,6 +23,7 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Tess.h"
 #include "pipeline/Graph.h"
+#include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -31,6 +33,9 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
+#include "pipeline/runtime/ExecutionPlanAssembly.h"
+#include "pipeline/runtime/RunCore.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
@@ -49,15 +54,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <mutex>
@@ -66,7 +72,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
-#include <thread>
 #include <unordered_set>
 #include <utility>
 
@@ -1105,6 +1110,8 @@ ImageSpec::PixelFormat pixel_format_from_string(const std::string& fmt) {
     return ImageSpec::PixelFormat::GRAY8;
   if (up == "NV12")
     return ImageSpec::PixelFormat::NV12;
+  if (up == "NV16")
+    return ImageSpec::PixelFormat::NV16;
   if (up == "I420")
     return ImageSpec::PixelFormat::I420;
   return ImageSpec::PixelFormat::UNKNOWN;
@@ -1115,41 +1122,8 @@ bool is_gray_format(const std::string& fmt) {
   return up == "GRAY" || up == "GRAY8";
 }
 
-std::string image_format_name(simaai::neat::ImageSpec::PixelFormat fmt) {
-  switch (fmt) {
-  case ImageSpec::PixelFormat::RGB:
-    return "RGB";
-  case ImageSpec::PixelFormat::BGR:
-    return "BGR";
-  case ImageSpec::PixelFormat::GRAY8:
-    return "GRAY8";
-  case ImageSpec::PixelFormat::NV12:
-    return "NV12";
-  case ImageSpec::PixelFormat::I420:
-    return "I420";
-  case ImageSpec::PixelFormat::UNKNOWN:
-    break;
-  }
-  return "";
-}
-
-std::string preprocess_color_format_name(PreprocessColorFormat fmt) {
-  switch (fmt) {
-  case PreprocessColorFormat::RGB:
-    return "RGB";
-  case PreprocessColorFormat::BGR:
-    return "BGR";
-  case PreprocessColorFormat::GRAY8:
-    return "GRAY8";
-  case PreprocessColorFormat::NV12:
-    return "NV12";
-  case PreprocessColorFormat::I420:
-    return "I420";
-  case PreprocessColorFormat::Auto:
-    break;
-  }
-  return "";
-}
+using internal::image_format_name;
+using internal::preprocess_color_format_name;
 
 std::string preprocess_graph_family_name(PreprocessGraphFamily family) {
   switch (family) {
@@ -1964,296 +1938,6 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   t.storage = make_cpu_owned_storage(bytes);
   t.strides_bytes = pipeline_internal::contiguous_strides_bytes(t.shape, 1);
   return t;
-}
-
-Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input_index) {
-  if (spec.shape.empty()) {
-    throw std::runtime_error("Model::benchmark: input_specs() entry has empty shape");
-  }
-  if (spec.dtypes.empty()) {
-    throw std::runtime_error("Model::benchmark: input_specs() entry has no dtype");
-  }
-  if (!spec.required_segments.empty() || !spec.required_segment_names.empty()) {
-    throw std::runtime_error(
-        "Model::benchmark: segmented input specs are not supported by the synthetic benchmark");
-  }
-  const TensorDType dtype = spec.dtypes.front();
-  const std::size_t elem = pipeline_internal::dtype_bytes(dtype);
-  if (elem == 0U) {
-    throw std::runtime_error("Model::benchmark: unsupported input dtype");
-  }
-
-  std::vector<int64_t> shape;
-  shape.reserve(spec.shape.size());
-  for (const int64_t dim : spec.shape) {
-    if (dim <= 0) {
-      throw std::runtime_error(
-          "Model::benchmark: input_specs() must provide concrete dimensions for synthetic model "
-          "benchmark input");
-    }
-    shape.push_back(dim);
-  }
-
-  if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
-      spec.image_format == ImageSpec::PixelFormat::I420) {
-    throw std::runtime_error(
-        "Model::benchmark: planar image input specs are not supported by the synthetic benchmark");
-  }
-
-  std::uint64_t element_count = 1;
-  for (const int64_t dim : shape) {
-    const auto udim = static_cast<std::uint64_t>(dim);
-    if (element_count > std::numeric_limits<std::uint64_t>::max() / udim) {
-      throw std::runtime_error("Model::benchmark: synthetic input shape is too large");
-    }
-    element_count *= udim;
-  }
-  if (element_count > std::numeric_limits<std::uint64_t>::max() / elem) {
-    throw std::runtime_error("Model::benchmark: synthetic input byte size is too large");
-  }
-  const auto bytes64 = element_count * static_cast<std::uint64_t>(elem);
-  if (bytes64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-    throw std::runtime_error("Model::benchmark: synthetic input byte size is too large");
-  }
-  const std::size_t bytes = static_cast<std::size_t>(bytes64);
-
-  auto storage = make_cpu_owned_storage(bytes);
-  auto map = storage->map(MapMode::Write);
-  if (!map.data && bytes != 0U) {
-    throw std::runtime_error("Model::benchmark: failed to map synthetic input storage");
-  }
-  auto* out = static_cast<std::uint8_t*>(map.data);
-  for (std::size_t i = 0; i < bytes; ++i) {
-    out[i] = static_cast<std::uint8_t>((i + input_index * 17U) & 0xffU);
-  }
-
-  Tensor tensor;
-  tensor.storage = std::move(storage);
-  tensor.dtype = dtype;
-  tensor.shape = std::move(shape);
-  tensor.strides_bytes = pipeline_internal::contiguous_strides_bytes(tensor.shape, elem);
-  tensor.device = {DeviceType::CPU, 0};
-  tensor.read_only = true;
-  if (spec.image_format.has_value()) {
-    tensor.semantic.image = ImageSpec{*spec.image_format, ""};
-    if (tensor.shape.size() == 2U) {
-      tensor.layout = TensorLayout::HW;
-      tensor.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
-    } else if (tensor.shape.size() == 3U) {
-      tensor.layout = TensorLayout::HWC;
-      tensor.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
-    }
-  }
-  return tensor.cvu();
-}
-
-struct BenchmarkInputGeometry {
-  int width = 0;
-  int height = 0;
-  explicit operator bool() const {
-    return width > 0 && height > 0;
-  }
-};
-
-int benchmark_dim(int64_t value) {
-  return (value > 0 && value <= static_cast<int64_t>(std::numeric_limits<int>::max()))
-             ? static_cast<int>(value)
-             : 0;
-}
-
-BenchmarkInputGeometry benchmark_tensor_geometry(const Tensor& tensor) {
-  auto wh = [](int w, int h) { return BenchmarkInputGeometry{w, h}; };
-  if (tensor.axis_semantics.size() == tensor.shape.size()) {
-    BenchmarkInputGeometry g;
-    for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
-      if (tensor.axis_semantics[i] == TensorAxisSemantic::W)
-        g.width = benchmark_dim(tensor.shape[i]);
-      else if (tensor.axis_semantics[i] == TensorAxisSemantic::H)
-        g.height = benchmark_dim(tensor.shape[i]);
-    }
-    if (g)
-      return g;
-  }
-
-  const auto& s = tensor.shape;
-  if (s.size() == 2U)
-    return wh(benchmark_dim(s[1]), benchmark_dim(s[0]));
-  if (s.size() == 3U) {
-    const bool chw = s[0] > 0 && s[0] <= 4 && s[1] > 4 && s[2] > 4;
-    return chw ? wh(benchmark_dim(s[2]), benchmark_dim(s[1]))
-               : wh(benchmark_dim(s[1]), benchmark_dim(s[0]));
-  }
-  if (s.size() == 4U) {
-    return (s[3] > 0 && s[3] <= 4) ? wh(benchmark_dim(s[2]), benchmark_dim(s[1]))
-                                   : wh(benchmark_dim(s[3]), benchmark_dim(s[2]));
-  }
-  return {};
-}
-
-BenchmarkInputGeometry benchmark_model_geometry(const Tensor& tensor,
-                                                const ResolvedPreprocessPlan& plan,
-                                                const PreprocessRuntimeMeta& meta) {
-  auto wh = [](int w, int h) { return BenchmarkInputGeometry{w, h}; };
-  for (const auto g :
-       {wh(meta.resized_width, meta.resized_height), wh(meta.scaled_width, meta.scaled_height),
-        wh(plan.effective.resize.width, plan.effective.resize.height),
-        wh(plan.mla_contract.width, plan.mla_contract.height)}) {
-    if (g)
-      return g;
-  }
-  for (const auto& c : plan.ingress_contracts) {
-    if (auto g = wh(c.width, c.height))
-      return g;
-  }
-  if (const BenchmarkInputGeometry tensor_geometry = benchmark_tensor_geometry(tensor);
-      tensor_geometry) {
-    return tensor_geometry;
-  }
-  return wh(meta.original_width, meta.original_height);
-}
-
-std::string benchmark_resize_mode(ResizeMode mode) {
-  switch (mode) {
-  case ResizeMode::Stretch:
-    return "stretch";
-  case ResizeMode::Letterbox:
-    return "letterbox";
-  case ResizeMode::Crop:
-    return "crop";
-  }
-  return "stretch";
-}
-
-std::string benchmark_input_color(const Tensor& tensor, const ResolvedPreprocessPlan& plan) {
-  if (tensor.semantic.image.has_value()) {
-    if (const std::string token = image_format_name(tensor.semantic.image->format); !token.empty())
-      return token;
-  }
-  const std::string planned =
-      preprocess_color_format_name(plan.effective.color_convert.input_format);
-  return planned.empty() ? "synthetic" : planned;
-}
-
-void validate_benchmark_options(const BenchmarkOptions& options) {
-  if (options.num_samples <= 0) {
-    throw std::runtime_error("Model::benchmark: num_samples must be > 0");
-  }
-  if (options.original_width.has_value() != options.original_height.has_value()) {
-    throw std::runtime_error(
-        "Model::benchmark: original_width and original_height must be provided together");
-  }
-  if (options.original_width.has_value() &&
-      (*options.original_width <= 0 || *options.original_height <= 0)) {
-    throw std::runtime_error("Model::benchmark: original_width and original_height must be > 0");
-  }
-}
-
-PreprocessRuntimeMeta
-resolve_benchmark_preprocess_meta_impl(const Tensor& tensor, const ResolvedPreprocessPlan& plan,
-                                       const internal::PreprocessContractFlags& flags,
-                                       const BenchmarkOptions& options) {
-  validate_benchmark_options(options);
-
-  const PreprocessRuntimeMeta existing =
-      tensor.semantic.preprocess.value_or(PreprocessRuntimeMeta{});
-  BenchmarkInputGeometry model_geometry = benchmark_model_geometry(tensor, plan, existing);
-  BenchmarkInputGeometry source_geometry{
-      options.original_width.value_or(existing.original_width),
-      options.original_height.value_or(existing.original_height)};
-  if (!source_geometry) {
-    source_geometry = model_geometry;
-  }
-  if (!model_geometry) {
-    model_geometry = source_geometry;
-  }
-  if (!source_geometry || !model_geometry) {
-    throw std::runtime_error(
-        "Model::benchmark: unable to infer synthetic source geometry required by BoxDecode");
-  }
-
-  const ResizeMode resize_mode = options.resize_mode.value_or(
-      plan.effective.resize.enable == AutoFlag::On ? plan.effective.resize.mode
-                                                   : ResizeMode::Stretch);
-
-  PreprocessMetaTemplate meta_template;
-  meta_template.enabled = true;
-  meta_template.target_width = model_geometry.width;
-  meta_template.target_height = model_geometry.height;
-  meta_template.scaled_width = model_geometry.width;
-  meta_template.scaled_height = model_geometry.height;
-  meta_template.resize_mode = benchmark_resize_mode(resize_mode);
-  meta_template.color_in = benchmark_input_color(tensor, plan);
-  meta_template.color_out =
-      preprocess_color_format_name(plan.effective.color_convert.output_format);
-  if (meta_template.color_out.empty()) {
-    meta_template.color_out = meta_template.color_in;
-  }
-  meta_template.axis_perm = plan.effective.layout_convert.perm;
-  meta_template.normalize = plan.effective.normalize.enable == AutoFlag::On;
-  meta_template.quantize = flags.quant_needed;
-  meta_template.tessellate = flags.tess_needed;
-
-  InputOptions input_options;
-  input_options.preprocess_meta = std::move(meta_template);
-  const auto meta = make_simaai_preprocess_meta_from_template(input_options, source_geometry.width,
-                                                              source_geometry.height);
-  if (!meta.has_value()) {
-    throw std::runtime_error(
-        "Model::benchmark: failed to create synthetic preprocess metadata for BoxDecode");
-  }
-  return *meta;
-}
-
-void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorList& inputs,
-                                                    const BenchmarkOptions& options) {
-  if (internal::ModelAccess::resolved_post_kind(model) != internal::PostRouteStageKind::BoxDecode)
-    return;
-
-  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
-  const internal::PreprocessContractFlags flags =
-      internal::ModelAccess::preprocess_contract_flags(model);
-  for (Tensor& tensor : inputs) {
-    tensor.semantic.preprocess =
-        internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, options);
-  }
-}
-
-TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOptions& options) {
-  const std::vector<TensorSpec> specs = model.input_specs();
-  if (specs.empty()) {
-    throw std::runtime_error("Model::benchmark: input_specs() returned no inputs");
-  }
-  TensorList inputs;
-  inputs.reserve(specs.size());
-  for (std::size_t i = 0; i < specs.size(); ++i) {
-    inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i));
-  }
-  attach_benchmark_preprocess_meta_for_boxdecode(model, inputs, options);
-  return inputs;
-}
-
-MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_size,
-                                              bool include_power, bool include_plugin_latency,
-                                              std::string title = "NEAT Benchmark") {
-  MeasureOptions opt;
-  opt.duration_ms = timeout_ms;
-  opt.warmup_ms = 0;
-  opt.timeout_ms = timeout_ms;
-  opt.include_plugin_latency = include_plugin_latency;
-  opt.include_edge_latency = false;
-  opt.include_message_latency = false;
-  opt.include_power = include_power;
-  opt.logical_batch_size = logical_batch_size > 0 ? logical_batch_size : 1;
-  opt.title = std::move(title);
-  opt.input = "synthetic";
-  return opt;
-}
-
-void require_benchmark_output(const simaai::neat::Sample& out, const char* where) {
-  if (out.empty()) {
-    throw std::runtime_error(std::string("Model::benchmark: ") + where + " pull timed out");
-  }
-  (void)tensors_from_sample(out, true);
 }
 
 simaai::neat::Sample make_bundle_from_tensors(const std::vector<Tensor>& inputs) {
@@ -3604,6 +3288,7 @@ public:
                              Model::RouteOptions route_opt)
       : model_(std::move(model)), plan_(std::move(plan)), route_opt_(std::move(route_opt)),
         ingress_contracts_(normalized_ingress_contracts(plan_.session_route_plan)),
+        source_options_(model_.input_appsrc_options_list(false)),
         joined_consumer_identities_(main_route_joined_input_identities(model_)),
         joined_packed_segment_name_(main_route_joined_input_segment_name(model_)),
         consumer_keeps_distinct_physical_inputs_(
@@ -3625,6 +3310,42 @@ public:
         branch_graphs_.push_back(build_ingress_branch_graph(model_, plan_, ingress, route_opt_));
       }
       branch_runners_.resize(ingress_contracts_.size());
+    }
+  }
+
+  void validate_images(const std::vector<cv::Mat>& inputs, const char* where) const override {
+    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "image inputs");
+    // The user-facing Preproc source contract, not the MLA resize output, owns
+    // these limits. Check every member before the caller converts even the first.
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      validate_public_input(inputs[i], source_options_.at(i), InputStreamOptions{}, where);
+      validate_branch_geometry(describe_mat_geometry_or_throw(inputs[i], source_options_[i], where), i, where);
+    }
+  }
+
+  void validate_tensors(const TensorList& inputs, const char* where) const {
+    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "tensor inputs");
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      validate_public_input(inputs[i], source_options_.at(i), InputStreamOptions{}, where);
+      validate_branch_geometry(describe_tensor_geometry_or_throw(inputs[i], source_options_[i], where), i, where);
+    }
+  }
+
+  void validate_samples(const Sample& inputs, const char* where) const {
+    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "sample inputs");
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      validate_public_input(inputs[i], source_options_.at(i), InputStreamOptions{}, where);
+      // Branch ingress is one logical tensor per input; inspect the retained
+      // value directly rather than copying or mapping tensors_from_sample().
+      const auto& sample = inputs[i];
+      const Tensor* tensor = sample.kind == SampleKind::Tensor && sample.tensor
+          ? &*sample.tensor : sample_has_tensor_list(sample) && sample.tensors.size() == 1
+          ? &sample.tensors.front() : nullptr;
+      if (!uses_direct_tensor_set_route() && !tensor)
+        throw_model_error(error_codes::kInputShape, std::string(where) +
+            ": branch ingress requires one tensor per logical input", "Pass inputs in declared order.");
+      if (tensor)
+        validate_branch_geometry(describe_tensor_geometry_or_throw(*tensor, source_options_[i], where), i, where);
     }
   }
 
@@ -3671,6 +3392,7 @@ public:
   }
 
   Sample process_tensors(const TensorList& inputs, const char* where) const override {
+    validate_tensors(inputs, where);
     if (uses_direct_tensor_set_route()) {
       return build_fan_in_sample(inputs, where);
     }
@@ -3726,6 +3448,7 @@ public:
   // the bundled multi-IO pre element can route per-binding via the
   // SIMA_TENSOR_SET_META descriptors. No branch processing, no join.
   Sample build_fan_in_sample(const TensorList& inputs, const char* where) const {
+    validate_tensors(inputs, where);
     if (direct_tensor_set_ingress_) {
       return build_direct_mla_tensor_set_sample(inputs, where);
     }
@@ -3746,6 +3469,7 @@ public:
   }
 
   Sample build_fan_in_sample_from_samples(const Sample& inputs, const char* where) const {
+    validate_samples(inputs, where);
     if (direct_tensor_set_ingress_) {
       return build_direct_mla_tensor_set_sample_from_samples(inputs, where);
     }
@@ -3771,6 +3495,37 @@ public:
   }
 
 private:
+  void validate_branch_geometry(const InputGeometry& geometry, std::size_t i,
+                                const char* where) const {
+    // Image/Preproc source dimensions are dynamic and constrained by the
+    // original source options, never by MLA's eventual resize output. Tensor
+    // route ingress, in contrast, already has an exact logical shape contract.
+    if (i >= ingress_contracts_.size() || source_options_[i].payload_type != PayloadType::Tensor)
+      return;
+    const auto& expected = ingress_contracts_[i];
+    if (!expected.logical_shape.empty()) {
+      // Layout is only needed to preserve the public one-channel HW convenience
+      // alias; never reconstruct the canonical shape from W/H/D projections.
+      const auto layout = expected.layout == "HWC" || expected.layout == "NHWC" ? TensorLayout::HWC
+          : expected.layout == "CHW" || expected.layout == "NCHW" ? TensorLayout::CHW
+          : expected.layout == "HW" ? TensorLayout::HW : TensorLayout::Unknown;
+      if (!input_geometry_matches_logical_shape(geometry, expected.logical_shape, layout))
+        throw_model_error(error_codes::kInputShape, std::string(where) + ": ingress[" +
+            std::to_string(i) + "] does not match canonical logical_shape",
+            "Pass every logical axis, including non-unit batch, as declared by the model.");
+      return;
+    }
+    const auto dims = geometry.shape.empty()
+        ? TensorCompatDims{geometry.width, geometry.height, geometry.depth}
+        : tensor_compat_dims_from_shape(geometry.shape, geometry.layout);
+    if ((expected.width > 0 && dims.width != expected.width) ||
+        (expected.height > 0 && dims.height != expected.height) ||
+        (expected.depth > 0 && dims.depth != expected.depth))
+      throw_model_error(error_codes::kInputShape, std::string(where) + ": ingress[" +
+          std::to_string(i) + "] shape does not match the declared logical input",
+          "Pass inputs with their declared shapes before branch preprocessing.");
+  }
+
   bool uses_direct_tensor_set_route() const {
     return is_fan_in_route_ || direct_tensor_set_ingress_;
   }
@@ -3996,6 +3751,7 @@ private:
   }
 
   Sample process_prepared_samples(const Sample& prepared, const char* where) const {
+    validate_samples(prepared, where);
     require_exact_ingress_count(prepared.size(), ingress_contracts_, where, "ingress inputs");
     Sample branch_outputs;
     branch_outputs.reserve(prepared.size());
@@ -4117,6 +3873,7 @@ private:
   internal::PreprocessPlannerResult plan_;
   Model::RouteOptions route_opt_;
   std::vector<internal::IngressTensorContract> ingress_contracts_;
+  const std::vector<InputOptions> source_options_;
   std::vector<internal::IngressConsumerTensorIdentity> joined_consumer_identities_;
   std::string joined_packed_segment_name_;
   // True when the MLA .elf is a multi-IFM compilation (no upstream pack stage).
@@ -4558,27 +4315,6 @@ build_preprocess_plan_with_verbosity(const std::string& tar_gz, const Model::Opt
 }
 
 } // namespace
-
-namespace internal {
-
-PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
-                                                        const ResolvedPreprocessPlan& plan,
-                                                        const PreprocessContractFlags& flags,
-                                                        const BenchmarkOptions& options) {
-  return resolve_benchmark_preprocess_meta_impl(tensor, plan, flags, options);
-}
-
-Model::Options benchmark_build_model_options(const Model::Options& model_options) {
-  Model::Options options = model_options;
-  // BenchmarkOptions describes a per-run buffer contract. Keep deprecated construction-time
-  // BoxDecode geometry from becoming authoritative element properties and masking that metadata.
-  options.boxdecode_original_width = 0;
-  options.boxdecode_original_height = 0;
-  options.boxdecode_resize_mode.reset();
-  return options;
-}
-
-} // namespace internal
 
 struct Model::Impl {
   std::string source_path;
@@ -5583,7 +5319,7 @@ DetessOptions make_detess_options_from_typed_adapter(const Model& model,
   }
   auto compiled =
       require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
-  compiled.runtime_contract.plugin_kind = "neatdetess";
+  compiled.runtime_contract.plugin_kind = "processcvu";
   opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
   lock_buffers_for_sync(&opt, sync);
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
@@ -5838,9 +5574,17 @@ std::size_t post_region_compiled_logical_output_count(const internal::ModelPack&
                                                       const internal::RouteRegion& region) {
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (region.op_kind) {
-  case GraphKind::Detess:
-    return require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess)
-        .runtime_contract.logical_outputs.size();
+  case GraphKind::Detess: {
+    (void)require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
+    std::unordered_set<pipeline_internal::sima::static_contract::OpId> origins;
+    for (const auto& stage : pack.execution_plan().post) {
+      if (stage.kind == internal::ExecutionStageKind::Detess) {
+        origins.insert(stage.execution_op_ids.begin(), stage.execution_op_ids.end());
+      }
+    }
+    // Physical batch members do not add semantic model outputs.
+    return origins.size();
+  }
   case GraphKind::DetessCast:
     return require_model_managed_postprocess_contract(pack,
                                                       internal::ExecutionStageKind::DetessCast)
@@ -6514,6 +6258,11 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
   if (popt.include_input) {
     if (input) {
       src_opt = appsrc_from_info(require_input_info(*input, tensor_mode));
+      // A seed supplies the current shape, not the model's input capacity.
+      const InputOptions capacity = pack.input_appsrc_options(tensor_mode);
+      src_opt.max_width = capacity.max_width;
+      src_opt.max_height = capacity.max_height;
+      src_opt.max_depth = capacity.max_depth;
     } else {
       src_opt = pack.input_appsrc_options(tensor_mode);
       const bool ingress_join = session_route_has_ingress_join(plan.session_route_plan);
@@ -7364,6 +7113,7 @@ bool Model::Runner::push(const std::vector<cv::Mat>& inputs) {
     throw std::runtime_error("Model::Runner::push: empty image list");
   }
   if (tensor_input_opt_for_cv_.has_value()) {
+    if (inputs.size() != ingress_names_.size()) {
     std::vector<internal::IngressTensorContract> ingress_contracts;
     ingress_contracts.reserve(ingress_names_.size());
     for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
@@ -7374,6 +7124,10 @@ bool Model::Runner::push(const std::vector<cv::Mat>& inputs) {
     }
     require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::push",
                                 "image inputs");
+    }
+    run_internal::validate_original_images(run_, inputs, "Model::Runner::push");
+    for (const auto& input : inputs)
+      validate_public_input(input, *tensor_input_opt_for_cv_, InputStreamOptions{}, "Model::Runner::push");
     TensorList tensors;
     tensors.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -7426,6 +7180,7 @@ simaai::neat::TensorList Model::Runner::run(const std::vector<cv::Mat>& inputs, 
     throw std::runtime_error("Model::Runner::run: empty image list");
   }
   if (tensor_input_opt_for_cv_.has_value()) {
+    if (inputs.size() != ingress_names_.size()) {
     std::vector<internal::IngressTensorContract> ingress_contracts;
     ingress_contracts.reserve(ingress_names_.size());
     for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
@@ -7436,6 +7191,10 @@ simaai::neat::TensorList Model::Runner::run(const std::vector<cv::Mat>& inputs, 
     }
     require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::run",
                                 "image inputs");
+    }
+    run_internal::validate_original_images(run_, inputs, "Model::Runner::run");
+    for (const auto& input : inputs)
+      validate_public_input(input, *tensor_input_opt_for_cv_, InputStreamOptions{}, "Model::Runner::run");
     TensorList tensors;
     tensors.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -7475,7 +7234,9 @@ Model::Runner::start_measurement(const simaai::neat::MeasureOptions& opt) {
 }
 
 simaai::neat::MeasureScope Model::Runner::start_measurement(bool include_plugin_latency) {
-  return run_.start_measurement(include_plugin_latency);
+  simaai::neat::MeasureOptions opt;
+  opt.include_plugin_latency = include_plugin_latency;
+  return run_.start_measurement(opt);
 }
 
 void Model::Runner::close() {
@@ -7671,6 +7432,9 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
       pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
     }
     const InputOptions src_opt = pack.input_appsrc_options(true);
+    require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::build", "image inputs");
+    for (const auto& input : inputs)
+      validate_public_input(input, src_opt, InputStreamOptions{}, "Model::build");
     TensorList tensors;
     tensors.reserve(inputs.size());
     for (const auto& input : inputs) {
@@ -7703,6 +7467,66 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
       run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
   Run run = p.build(inputs, effective_run_opt);
   return Runner(std::move(run));
+}
+#endif
+
+namespace {
+
+// Startup preflight pushes a frame through the pipeline; the plan needs only the build.
+simaai::neat::RunOptions plan_run_options(simaai::neat::RunOptions run_opt) {
+  run_opt.startup_preflight = false;
+  return run_opt;
+}
+
+// Reads the plan the build recorded; the Runner closes its pipeline when it goes out of scope.
+ExecutionPlan plan_of_build(Model::Runner runner, const std::string& model_name) {
+  const auto core = run_internal::core(internal::ModelAccess::run(runner));
+  const auto diag = core ? core->pipeline.stream.diag_ctx() : nullptr;
+  if (!diag || !diag->build_plan) {
+    throw std::runtime_error("Model::execution_plan: the build recorded no plan");
+  }
+  return internal::ExecutionPlanAccess::make(*diag->build_plan, model_name);
+}
+
+} // namespace
+
+ExecutionPlan Model::execution_plan() {
+  return execution_plan(Model::RouteOptions{}, simaai::neat::RunOptions{});
+}
+
+ExecutionPlan Model::execution_plan(const Model::RouteOptions& opt) {
+  return execution_plan(opt, simaai::neat::RunOptions{});
+}
+
+ExecutionPlan Model::execution_plan(const simaai::neat::RunOptions& run_opt) {
+  return execution_plan(Model::RouteOptions{}, run_opt);
+}
+
+ExecutionPlan Model::execution_plan(const Model::RouteOptions& opt,
+                                    const simaai::neat::RunOptions& run_opt) {
+  return plan_of_build(build(opt, plan_run_options(run_opt)), impl_->pack.logical_package_name());
+}
+
+ExecutionPlan Model::execution_plan(const simaai::neat::TensorList& inputs,
+                                    const Model::RouteOptions& opt,
+                                    const simaai::neat::RunOptions& run_opt) {
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
+}
+
+ExecutionPlan Model::execution_plan(const simaai::neat::Sample& inputs,
+                                    const Model::RouteOptions& opt,
+                                    const simaai::neat::RunOptions& run_opt) {
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
+}
+
+#if defined(SIMA_WITH_OPENCV)
+ExecutionPlan Model::execution_plan(const std::vector<cv::Mat>& inputs,
+                                    const Model::RouteOptions& opt,
+                                    const simaai::neat::RunOptions& run_opt) {
+  return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
+                       impl_->pack.logical_package_name());
 }
 #endif
 
@@ -7745,162 +7569,13 @@ simaai::neat::TensorList Model::run(const std::vector<cv::Mat>& inputs, int time
 #endif
 
 BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
-  validate_benchmark_options(options);
-  const int num_samples = options.num_samples;
-  const bool include_plugin_latency = options.include_plugin_latency;
+  return internal::run_benchmark(*this, options);
+}
 
-  constexpr int kWarmupSamples = 50;
-  constexpr int kTimeoutMs = 120000;
-  const TensorList inputs = make_synthetic_benchmark_inputs(*this, options);
-  const int logical_batch_size = compiled_batch_size();
-  const Model::Options benchmark_model_options =
-      internal::ModelAccess::resolved_post_kind(*this) == internal::PostRouteStageKind::BoxDecode
-          ? internal::benchmark_build_model_options(impl_->options)
-          : impl_->options;
-
-  RunOptions latency_run_options;
-  latency_run_options.startup_preflight = false;
-
-  MeasureReport latency_measured;
-  MeasureReport throughput_measured;
-  {
-    Runner latency_runner = build_with_model_options(inputs, Model::RouteOptions{},
-                                                     latency_run_options, benchmark_model_options);
-    for (int i = 0; i < kWarmupSamples; ++i) {
-      if (!latency_runner.push(inputs)) {
-        latency_runner.close();
-        throw std::runtime_error("Model::benchmark: latency warmup push failed");
-      }
-      Sample out = latency_runner.pull(kTimeoutMs);
-      require_benchmark_output(out, "latency warmup");
-    }
-
-    MeasureScope measure = latency_runner.start_measurement(
-        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, /*include_power=*/false,
-                                       include_plugin_latency, "NEAT Benchmark latency"));
-    for (int i = 0; i < num_samples; ++i) {
-      if (!latency_runner.push(inputs)) {
-        latency_runner.close();
-        throw std::runtime_error("Model::benchmark: latency measured push failed");
-      }
-      Sample out = latency_runner.pull(kTimeoutMs);
-      require_benchmark_output(out, "latency measured");
-    }
-
-    latency_measured = measure.stop();
-    latency_runner.close();
-  }
-
-  RunOptions throughput_run_options;
-  throughput_run_options.startup_preflight = false;
-  throughput_run_options.enable_board_power();
-
-  {
-    Runner runner = build_with_model_options(inputs, Model::RouteOptions{}, throughput_run_options,
-                                             benchmark_model_options);
-    const bool defer_eos_until_outputs_drained =
-        plan_uses_direct_mla_public_output_boundary(impl_->preprocess_plan);
-    for (int i = 0; i < kWarmupSamples; ++i) {
-      if (!runner.push(inputs)) {
-        runner.close();
-        throw std::runtime_error("Model::benchmark: throughput warmup push failed");
-      }
-      Sample out = runner.pull(kTimeoutMs);
-      require_benchmark_output(out, "throughput warmup");
-    }
-
-    MeasureScope measure = runner.start_measurement(
-        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, /*include_power=*/true,
-                                       include_plugin_latency, "NEAT Benchmark throughput"));
-    int pulled = 0;
-    std::exception_ptr pull_error;
-    std::thread pull_thread([&] {
-      try {
-        while (pulled < num_samples) {
-          Sample out = runner.pull(kTimeoutMs);
-          require_benchmark_output(out, "throughput measured");
-          ++pulled;
-        }
-      } catch (...) {
-        pull_error = std::current_exception();
-      }
-    });
-
-    try {
-      for (int i = 0; i < num_samples; ++i) {
-        if (!runner.push(inputs)) {
-          throw std::runtime_error("Model::benchmark: throughput measured push failed");
-        }
-      }
-      if (!defer_eos_until_outputs_drained) {
-        runner.close_input();
-      }
-      pull_thread.join();
-      if (defer_eos_until_outputs_drained) {
-        runner.close_input();
-      }
-    } catch (...) {
-      runner.close_input();
-      if (pull_thread.joinable()) {
-        pull_thread.join();
-      }
-      runner.close();
-      throw;
-    }
-    if (pull_error) {
-      runner.close();
-      std::rethrow_exception(pull_error);
-    }
-    if (pulled != num_samples) {
-      runner.close();
-      throw std::runtime_error("Model::benchmark: async measured output count mismatch");
-    }
-
-    throughput_measured = measure.stop();
-    runner.close();
-  }
-
-  const BenchmarkReport report = internal::build_benchmark_report_from_measurements(
-      latency_measured, throughput_measured, num_samples);
-  const double batch_throughput = throughput_measured.throughput_batches_per_s;
-  const bool power_available =
-      throughput_measured.power.enabled && throughput_measured.power.samples > 0;
-
-  const auto old_flags = std::cout.flags();
-  const auto old_precision = std::cout.precision();
-  std::cout << std::fixed << std::setprecision(2);
-  std::cout << "NEAT Benchmark\n";
-  std::cout << "Input: synthetic\n";
-  std::cout << "Samples: " << num_samples << "\n";
-  std::cout << "Compiled batch: " << logical_batch_size << "\n";
-  std::cout << "Measurement detail: "
-            << (include_plugin_latency ? "e2e+throughput+plugin-latency" : "e2e+throughput-only")
-            << "\n";
-  std::cout << "Latency: " << report.latency_ms << " ms\n";
-  std::cout << "FPS:     " << report.fps << " inferences/s\n";
-  std::cout << "Batch throughput: " << batch_throughput << " batches/s\n";
-  if (include_plugin_latency) {
-    std::cout << "Plugin latency latency-run: " << latency_measured.plugin_latency_source << "/"
-              << latency_measured.plugin_latency_status << " rows="
-              << (latency_measured.plugin_latency.size() +
-                  latency_measured.plugin_latency_unattributed.size())
-              << "\n";
-    std::cout << "Plugin latency throughput-run: " << throughput_measured.plugin_latency_source
-              << "/" << throughput_measured.plugin_latency_status << " rows="
-              << (throughput_measured.plugin_latency.size() +
-                  throughput_measured.plugin_latency_unattributed.size())
-              << "\n";
-  }
-  if (power_available) {
-    std::cout << "Power avg:    " << report.avg_power_watts << " W\n";
-    std::cout << "Energy:       " << report.energy_joules << " J\n";
-  } else {
-    std::cout << "Power: unavailable\n";
-  }
-  std::cout.flags(old_flags);
-  std::cout.precision(old_precision);
-
-  return report;
+BenchmarkReport Model::benchmark(int num_samples) {
+  BenchmarkOptions options;
+  options.num_samples = num_samples;
+  return benchmark(options);
 }
 
 BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
@@ -7911,107 +7586,12 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
 }
 
 BenchmarkReport Model::benchmark(bool include_plugin_latency) {
-  return benchmark(/*num_samples=*/100, include_plugin_latency);
+  BenchmarkOptions options;
+  options.include_plugin_latency = include_plugin_latency;
+  return benchmark(options);
 }
 
 namespace internal {
-
-namespace {
-
-void require_benchmark_measure_report_window(const MeasureReport& report, const char* label,
-                                             int expected_samples) {
-  if (expected_samples <= 0) {
-    throw std::runtime_error("Model::benchmark: expected_samples must be > 0");
-  }
-  const auto expected_u64 = static_cast<std::uint64_t>(expected_samples);
-  const auto expected_size = static_cast<std::size_t>(expected_samples);
-  if (report.counters.outputs_pulled != expected_u64) {
-    std::ostringstream oss;
-    oss << "Model::benchmark: " << label << " measured output count mismatch"
-        << " (expected=" << expected_samples
-        << ", outputs_pulled=" << report.counters.outputs_pulled << ")";
-    throw std::runtime_error(oss.str());
-  }
-  if (report.end_to_end.count != expected_size) {
-    std::ostringstream oss;
-    oss << "Model::benchmark: " << label << " measurement collected " << report.end_to_end.count
-        << " end-to-end samples for " << expected_samples
-        << " pulled outputs; cannot publish benchmark result";
-    throw std::runtime_error(oss.str());
-  }
-  if (report.graph_sample_timing_unkeyed != 0U || report.graph_sample_timing_misses != 0U) {
-    std::ostringstream oss;
-    oss << "Model::benchmark: " << label << " measurement has unreliable graph sample correlation"
-        << " (unkeyed=" << report.graph_sample_timing_unkeyed
-        << ", misses=" << report.graph_sample_timing_misses << ")";
-    throw std::runtime_error(oss.str());
-  }
-  if (report.counters.inputs_dropped != 0U || report.counters.outputs_dropped != 0U) {
-    std::ostringstream oss;
-    oss << "Model::benchmark: " << label << " measurement dropped inputs or outputs"
-        << " (inputs_dropped=" << report.counters.inputs_dropped
-        << ", outputs_dropped=" << report.counters.outputs_dropped << ")";
-    throw std::runtime_error(oss.str());
-  }
-}
-
-void require_finite_positive(double value, const char* field) {
-  if (!std::isfinite(value) || value <= 0.0) {
-    std::ostringstream oss;
-    oss << "Model::benchmark: " << field << " must be finite and positive; got " << value;
-    throw std::runtime_error(oss.str());
-  }
-}
-
-} // namespace
-
-BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& latency_report,
-                                                         const MeasureReport& throughput_report,
-                                                         int expected_samples) {
-  require_benchmark_measure_report_window(latency_report, "latency", expected_samples);
-  require_benchmark_measure_report_window(throughput_report, "throughput", expected_samples);
-
-  const int latency_batch =
-      latency_report.options.logical_batch_size > 0 ? latency_report.options.logical_batch_size : 1;
-  const int throughput_batch = throughput_report.options.logical_batch_size > 0
-                                   ? throughput_report.options.logical_batch_size
-                                   : 1;
-  if (latency_batch != throughput_batch) {
-    std::ostringstream oss;
-    oss << "Model::benchmark: latency and throughput measurement windows disagree on logical "
-           "batch size"
-        << " (latency=" << latency_batch << ", throughput=" << throughput_batch << ")";
-    throw std::runtime_error(oss.str());
-  }
-
-  require_finite_positive(latency_report.end_to_end.avg_ms, "latency_ms");
-  require_finite_positive(throughput_report.throughput_batches_per_s, "throughput_batches_per_s");
-  require_finite_positive(throughput_report.throughput_inferences_per_s,
-                          "throughput_inferences_per_s");
-
-  const double expected_inference_tput =
-      throughput_report.throughput_batches_per_s * static_cast<double>(throughput_batch);
-  const double tolerance = std::max(1e-9, std::abs(expected_inference_tput) * 1e-9);
-  if (std::abs(throughput_report.throughput_inferences_per_s - expected_inference_tput) >
-      tolerance) {
-    std::ostringstream oss;
-    oss << "Model::benchmark: throughput_inferences_per_s must equal batches/s multiplied by "
-           "logical batch size"
-        << " (batches_per_s=" << throughput_report.throughput_batches_per_s
-        << ", logical_batch_size=" << throughput_batch
-        << ", inferences_per_s=" << throughput_report.throughput_inferences_per_s << ")";
-    throw std::runtime_error(oss.str());
-  }
-
-  BenchmarkReport out;
-  out.latency_ms = latency_report.end_to_end.avg_ms;
-  out.fps = throughput_report.throughput_inferences_per_s;
-  if (throughput_report.power.enabled && throughput_report.power.samples > 0) {
-    out.avg_power_watts = throughput_report.power.total_avg_watts;
-    out.energy_joules = throughput_report.power.energy_joules;
-  }
-  return out;
-}
 
 Tensor remap_tensor_to_consumer_identity(Tensor tensor,
                                          const IngressConsumerTensorIdentity& identity) {
@@ -8115,12 +7695,22 @@ const Run& ModelAccess::run(const Model::Runner& runner) {
   return runner.run_;
 }
 
+Model::Runner ModelAccess::build_benchmark_runner(Model& model, const TensorList& inputs,
+                                                  const RunOptions& run_options,
+                                                  const Model::Options& model_options) {
+  return model.build_with_model_options(inputs, Model::RouteOptions{}, run_options, model_options);
+}
+
 Model::Options ModelAccess::options(const Model& model) {
   return model.impl_->options;
 }
 
 Model ModelAccess::clone_with_options(const Model& model, const Model::Options& opt) {
   return Model(model.impl_->source_path, opt);
+}
+
+bool ModelAccess::uses_direct_mla_public_output_boundary(const Model& model) {
+  return plan_uses_direct_mla_public_output_boundary(model.impl_->preprocess_plan);
 }
 
 PostRouteStageKind ModelAccess::resolved_post_kind(const Model& model) {
@@ -8230,7 +7820,7 @@ DetessOptions ModelAccess::build_detess_stage_options(const Model& model, bool s
   }
   auto compiled =
       require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
-  compiled.runtime_contract.plugin_kind = "neatdetess";
+  compiled.runtime_contract.plugin_kind = "processcvu";
   opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
   const auto plan = pack.execution_plan();
   if (!plan.infer.empty()) {

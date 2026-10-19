@@ -15,7 +15,8 @@ and `build()` have intentionally different responsibilities.
    idempotent.
 
 `run()`, `push()`, and `pull()` require a successful `build()`. `running()` reports whether the
-model is currently built and active.
+model is in its successfully built lifecycle state; it does not probe host transport or remote
+pipeline health.
 
 ## Synchronous Requests
 
@@ -82,6 +83,13 @@ Maintain an application-side count or FIFO so every accepted push has exactly on
 for one `Model` arrive in submission order. Drain all pushed work before calling `run()` on the same
 model.
 
+For a performance-sensitive tensor pipeline, keep a bounded ring of reusable contiguous input
+buffers, normally sized to the intended in-flight window. Wrap each slot with
+`Tensor::from_external()` in C++ or `Tensor.from_numpy(..., copy=False)` in Python. Move a slot to
+the in-flight FIFO only after `push()` accepts it, leave its bytes unchanged while in flight, and
+recycle it only after the corresponding ordered result is pulled. The packaged
+`028_wrap_external_tensor_memory` tutorial is the reference C++ implementation.
+
 A timeout from `run()` or an empty result from timed `pull()` stops waiting; it does not cancel an
 input already accepted by the card. After a timeout, either drain the outstanding result with
 `pull()` or close the model before beginning a new request sequence.
@@ -89,7 +97,7 @@ input already accepted by the card. After a timeout, either drain the outstandin
 ## Multiple Models
 
 Multiple independent `Model` objects can execute concurrently. Assign each active model a distinct
-queue from 0 through 3. Build errors should identify the model and queue, and a partially built set
+queue from 0 through 5. Build errors should identify the model and queue, and a partially built set
 must close every model that was successfully built.
 
 Do not introduce `pcie::Runtime` to coordinate these models. Separate `Model` instances and

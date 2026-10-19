@@ -158,6 +158,9 @@ int main() {
                 1024U * 1024U, 4U * 1024U * 1024U, 6U * 1024U * 1024U) == 6U * 1024U * 1024U,
             "transport buffer must include the first submitted payload");
     bool rejected_oversized_transport = false;
+    require(pcie_internal::HostPcieChannel::required_transport_buffer_size(
+                1024, 4096, 8192, 8U * 1024U * 1024U) == 8U * 1024U * 1024U,
+            "transport buffer must include the card's physical output bound");
     try {
       (void)pcie_internal::HostPcieChannel::required_transport_buffer_size(
           1024, 2048, 128U * 1024U * 1024U + 1U);
@@ -165,6 +168,14 @@ int main() {
       rejected_oversized_transport = true;
     }
     require(rejected_oversized_transport, "transport payload above 128 MiB must be rejected");
+    rejected_oversized_transport = false;
+    try {
+      (void)pcie_internal::HostPcieChannel::required_transport_buffer_size(
+          1024, 2048, 4096, 128U * 1024U * 1024U + 1U);
+    } catch (const std::runtime_error&) {
+      rejected_oversized_transport = true;
+    }
+    require(rejected_oversized_transport, "card output bound above 128 MiB must be rejected");
 
     pcie_internal::HostPcieChannel channel;
     GstBuffer* buffer = gst_buffer_new();

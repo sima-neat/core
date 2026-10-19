@@ -193,7 +193,7 @@ def _assert_outputs_match_metadata(outputs: list[pcie.Tensor], expected: list[pc
 
 
 def _stress_queues() -> list[int]:
-  queues = _env("SIMAPCIE_STRESS_QUEUES", "0 1 2 3").split()
+  queues = _env("SIMAPCIE_STRESS_QUEUES", "0 1 2 3 4 5").split()
   assert queues, "SIMAPCIE_STRESS_QUEUES must contain at least one queue"
   return [int(queue) for queue in queues]
 
@@ -404,7 +404,7 @@ def test_tensor_latency_yolov8():
   runtime = None
   warmup = 100
   iterations = 3000
-  max_mean_latency_ms = 15.0
+  max_mean_latency_ms = 12.0
 
   try:
     runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())
@@ -441,7 +441,7 @@ def test_tensor_throughput_yolov8():
   runtime = None
   warmup = 100
   iterations = 3000
-  min_throughput_fps = 380.0
+  min_throughput_fps = 450.0
 
   try:
     runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())

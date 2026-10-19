@@ -1360,6 +1360,10 @@ bool can_fuse_detess_and_dequant_regions(const RouteRegion& detess, const RouteR
   if (detess.op_kind != GraphKind::Detess || dequant.op_kind != GraphKind::Dequantize) {
     return false;
   }
+  const auto batched = [](const auto& contract) { return contract.batch > 1; };
+  if (std::any_of(detess.egress_contracts.begin(), detess.egress_contracts.end(), batched) ||
+      std::any_of(dequant.egress_contracts.begin(), dequant.egress_contracts.end(), batched))
+    return false;
   if (detess.kind != dequant.kind) {
     return false;
   }
@@ -1383,6 +1387,10 @@ bool can_fuse_detess_and_cast_regions(const RouteRegion& detess, const RouteRegi
   if (detess.op_kind != GraphKind::Detess || cast.op_kind != GraphKind::Cast) {
     return false;
   }
+  const auto batched = [](const auto& contract) { return contract.batch > 1; };
+  if (std::any_of(detess.egress_contracts.begin(), detess.egress_contracts.end(), batched) ||
+      std::any_of(cast.egress_contracts.begin(), cast.egress_contracts.end(), batched))
+    return false;
   if (detess.kind != cast.kind) {
     return false;
   }

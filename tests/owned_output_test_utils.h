@@ -4,7 +4,7 @@
 #include "gst/GstInit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorMath.h"
-#include "simaai/neat/internal/dmabuf/DmaBuf.h"
+#include <simaai/scheduler/client/dma_memory.h>
 #include "test_utils.h"
 
 #include <algorithm>
@@ -147,7 +147,7 @@ inline GstBuffer* require_dma_owned_output(const simaai::neat::Sample& sample,
 
 inline std::vector<std::vector<std::uint8_t>> read_dma_carrier(GstBuffer* buffer,
                                                                const std::string& context) {
-  namespace dma = simaai::neat::internal::dmabuf;
+  namespace dma = simaai::scheduler::client::dma;
   std::vector<std::vector<std::uint8_t>> bytes;
   require(buffer && gst_buffer_n_memory(buffer) > 0, context + ": empty DMA carrier");
   for (guint i = 0; i < gst_buffer_n_memory(buffer); ++i) {
@@ -374,7 +374,7 @@ public:
           continue;
         }
         inspected.push_back(binding);
-        namespace dma = simaai::neat::internal::dmabuf;
+        namespace dma = simaai::scheduler::client::dma;
         dma::Error error;
         auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(buffer, index), &error);
         require(view.has_value(),

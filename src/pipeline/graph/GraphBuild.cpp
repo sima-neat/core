@@ -62,7 +62,7 @@
 #include <gst/base/gstbasetransform.h>
 #include <gst/sdp/sdp.h>
 #include <gst/video/video.h>
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include <glib.h>
 
 #include <algorithm>
@@ -1857,30 +1857,29 @@ static bool fragment_segment_uses_factory(std::string_view segment, std::string_
 }
 
 static void set_fragment_segment_property(std::string* segment, std::string_view property,
-                                          std::string_view value) {
+                                          std::string_view value, bool replace_existing = true) {
   if (!segment) {
     return;
   }
   const std::string key = std::string(property) + "=";
-  std::size_t search = 0;
-  while (search < segment->size()) {
-    const std::size_t pos = segment->find(key, search);
-    if (pos == std::string::npos) {
-      break;
-    }
-    const bool token_start =
-        pos == 0 || std::isspace(static_cast<unsigned char>((*segment)[pos - 1])) != 0;
-    if (!token_start) {
-      search = pos + key.size();
+  const auto parsed = gst::launch::analyze(*segment);
+  if (!parsed.complete) {
+    throw std::invalid_argument("cannot configure an incomplete launch fragment");
+  }
+  for (const auto& assignment : parsed.assignments) {
+    if (assignment.key != property) {
       continue;
     }
-    const std::size_t value_start = pos + key.size();
-    std::size_t value_end = value_start;
-    while (value_end < segment->size() &&
-           std::isspace(static_cast<unsigned char>((*segment)[value_end])) == 0) {
-      ++value_end;
+    if (replace_existing) {
+      const gst::launch::AssignmentValueReplacement replacement{
+          assignment.value_span, std::string(value), assignment.quote};
+      auto rewritten =
+          gst::launch::rewrite_assignment_values(*segment, parsed, std::span(&replacement, 1U));
+      if (!rewritten.complete) {
+        throw std::invalid_argument("cannot replace a launch property value");
+      }
+      *segment = std::move(rewritten.text);
     }
-    segment->replace(value_start, value_end - value_start, value);
     return;
   }
 
@@ -1892,373 +1891,79 @@ static void set_fragment_segment_property(std::string* segment, std::string_view
   segment->insert(insert_pos, " " + key + std::string(value));
 }
 
-static std::string set_property_for_factory_segments(std::string fragment, std::string_view factory,
-                                                     std::string_view property,
-                                                     std::string_view value) {
-  std::size_t segment_start = 0;
-  while (segment_start <= fragment.size()) {
-    const std::size_t separator = fragment.find('!', segment_start);
-    const std::size_t segment_end = separator == std::string::npos ? fragment.size() : separator;
-    std::string segment = fragment.substr(segment_start, segment_end - segment_start);
-    if (fragment_segment_uses_factory(segment, factory)) {
-      set_fragment_segment_property(&segment, property, value);
-      fragment.replace(segment_start, segment_end - segment_start, segment);
-      if (separator != std::string::npos) {
-        segment_start += segment.size() + 1U;
-        continue;
-      }
-      break;
-    }
-    if (separator == std::string::npos) {
-      break;
-    }
-    segment_start = separator + 1U;
+static std::vector<gst::launch::ByteSpan> fragment_segments(std::string_view fragment) {
+  const auto parsed = gst::launch::analyze(fragment);
+  if (!parsed.complete) {
+    throw std::invalid_argument("cannot configure an incomplete launch fragment");
   }
-  return fragment;
-}
-
-std::string session_build_select_terminal_objectdecode_cpu_visibility(std::string fragment) {
-  struct SegmentRange {
-    std::size_t begin;
-    std::size_t end;
-  };
-  std::vector<SegmentRange> segments;
-  bool single_quoted = false;
-  bool double_quoted = false;
-  bool escaped = false;
+  std::vector<gst::launch::ByteSpan> segments;
+  segments.reserve(parsed.links.size() + 1U);
   std::size_t begin = 0U;
-  for (std::size_t i = 0U; i < fragment.size(); ++i) {
-    const char c = fragment[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (c == '\\' && (single_quoted || double_quoted)) {
-      escaped = true;
-      continue;
-    }
-    if (c == '\'' && !double_quoted) {
-      single_quoted = !single_quoted;
-      continue;
-    }
-    if (c == '"' && !single_quoted) {
-      double_quoted = !double_quoted;
-      continue;
-    }
-    if (c == '!' && !single_quoted && !double_quoted) {
-      segments.push_back({begin, i});
-      begin = i + 1U;
-    }
+  for (const auto& link : parsed.links) {
+    segments.push_back({begin, link.begin});
+    begin = link.end;
   }
   segments.push_back({begin, fragment.size()});
-
-  std::vector<std::size_t> selected;
-  for (std::size_t i = 0U; i < segments.size(); ++i) {
-    const auto current =
-        std::string_view(fragment).substr(segments[i].begin, segments[i].end - segments[i].begin);
-    if (!fragment_segment_uses_factory(current, "neatprocessmla")) {
-      continue;
-    }
-    std::size_t next = i + 1U;
-    while (next < segments.size()) {
-      const auto between = std::string_view(fragment).substr(
-          segments[next].begin, segments[next].end - segments[next].begin);
-      if (!fragment_segment_uses_factory(between, "queue") &&
-          !fragment_segment_uses_factory(between, "queue2")) {
-        break;
-      }
-      ++next;
-    }
-    if (next >= segments.size()) {
-      continue;
-    }
-    const auto consumer = std::string_view(fragment).substr(
-        segments[next].begin, segments[next].end - segments[next].begin);
-    if (fragment_segment_uses_factory(consumer, "neatobjectdecode")) {
-      selected.push_back(i);
-    }
-  }
-
-  // Edit from right to left so stored source ranges remain valid. This is an
-  // exact graph-rendering decision; plugins never infer adjacency from names,
-  // factories, qdata, or runtime pad topology.
-  for (auto it = selected.rbegin(); it != selected.rend(); ++it) {
-    const SegmentRange range = segments[*it];
-    std::string segment = fragment.substr(range.begin, range.end - range.begin);
-    set_fragment_segment_property(&segment, "defer-output-invalidate", "false");
-    fragment.replace(range.begin, range.end - range.begin, segment);
-  }
-  return fragment;
+  return segments;
 }
 
-std::string session_build_select_kernel_cpu_visibility(const BuildResult& build) {
-  namespace sima = pipeline_internal::sima;
-  namespace runtime = ::simaai::runtime;
-  using sima::FrameArenaRole;
-  using sima::static_contract::ArenaAllocationProvenance;
-  if (!build.rendered_manifest) {
-    return build.pipeline_string;
-  }
-  const auto launch = gst::launch::analyze(build.pipeline_string);
-  auto elements = sima::parse_pipeline_elements(build.pipeline_string);
-  // A producer READ epoch is allocation-wide. Do not infer ownership through
-  // fanout, pad references, bins, or an unknown carrier-preserving element.
-  if (!launch.complete || launch.has_nontrivial_topology_syntax || !launch.references.empty() ||
-      std::any_of(elements.begin(), elements.end(), [](const auto& element) {
-        return element.plugin == "tee" || element.plugin == "input-selector" ||
-               element.plugin == "output-selector";
-      })) {
-    return build.pipeline_string;
-  }
-  const auto& manifest = *build.rendered_manifest;
-  auto rendered_index = [&](const auto& stage) -> std::optional<std::size_t> {
-    const auto name = apply_name_transform(build.name_transform, stage.element_name);
-    std::optional<std::size_t> found;
-    for (std::size_t i = 0; i < elements.size(); ++i) {
-      if (!name.empty() && elements[i].element_name == name) {
-        if (found) {
-          return std::nullopt;
+static std::string
+set_property_for_factory_segments(std::string fragment, std::string_view factory,
+                                  std::string_view property, std::string_view value,
+                                  bool replace_existing = true,
+                                  std::span<const std::string_view> default_names = {}) {
+  // Reverse edits preserve the shared lexer's byte spans. Caps, URLs and
+  // assignment values stay opaque. This is cold graph preparation only.
+  const auto segments = fragment_segments(fragment);
+  for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
+    std::string segment = fragment.substr(it->begin, it->end - it->begin);
+    if (fragment_segment_uses_factory(segment, factory)) {
+      // A framework-authored default is not a customer override. Use the
+      // retained origin, never an element-name prefix, to identify that case.
+      bool replace_default = false;
+      if (!default_names.empty()) {
+        const auto parsed = gst::launch::analyze(segment);
+        bool owned = false;
+        bool zero_default = false;
+        for (const auto& assignment : parsed.assignments) {
+          if (assignment.key == "name") {
+            owned = std::find(default_names.begin(), default_names.end(),
+                              assignment.canonical_value) != default_names.end();
+          } else if (assignment.key == property) {
+            zero_default = assignment.canonical_value == "0";
+          }
         }
-        found = i;
+        replace_default = owned && zero_default;
       }
+      set_fragment_segment_property(&segment, property, value, replace_existing || replace_default);
+      fragment.replace(it->begin, it->end - it->begin, segment);
     }
-    return found;
-  };
-  const auto preserves_frames = [](const auto& element) {
-    const auto& plugin = element.plugin;
-    if (plugin != "queue" && plugin != "queue2" && plugin != "identity" && plugin != "capsfilter") {
-      return false;
-    }
-    const auto properties = gst::launch::analyze(element.fragment);
-    if (!properties.complete) {
-      return false;
-    }
-    // A dropped frame never acquires a reader lease to retire its handoff.
-    // Admit only the non-dropping transport properties authored by Core;
-    // user callbacks and unknown properties need an explicit lifetime proof.
-    for (const auto& property : properties.assignments) {
-      if (property.key == "name") {
-        continue;
-      }
-      if ((plugin == "queue" || plugin == "queue2") &&
-          (property.key == "max-size-buffers" || property.key == "max-size-bytes" ||
-           property.key == "max-size-time")) {
-        continue;
-      }
-      if (plugin == "queue" && property.key == "leaky" &&
-          (property.canonical_value == "no" || property.canonical_value == "0")) {
-        continue;
-      }
-      if ((plugin == "identity" && property.key == "silent") ||
-          (plugin == "capsfilter" && property.key == "caps")) {
-        continue;
-      }
-      return false;
-    }
-    return true;
-  };
-  const auto has_pool_retirement = [&](std::size_t producer) {
-    std::vector<bool> visiting(manifest.stages.size(), false);
-    std::function<std::optional<std::size_t>(std::size_t)> origin =
-        [&](std::size_t index) -> std::optional<std::size_t> {
-      const auto& stage = manifest.stages[index];
-      const auto position = rendered_index(stage);
-      if (visiting[index] || !position || stage.frame_arena_size_bytes == 0U ||
-          stage.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated) {
-        return std::nullopt;
-      }
-      if (stage.frame_arena_role == FrameArenaRole::Allocate) {
-        // Native published pools always install return-time READ retirement.
-        // Only this MLA's own pool gains it from the handoff selected below.
-        if (elements[*position].plugin == "neatkernelrunner" ||
-            (index == producer && elements[*position].plugin == "neatprocessmla")) {
-          return index;
-        }
-        return std::nullopt;
-      }
-      if (stage.frame_arena_role != FrameArenaRole::ReuseInput) {
-        return std::nullopt;
-      }
-      visiting[index] = true;
-      std::string error;
-      const auto edges =
-          sima::edgecontract::resolve_consumer_edge_contracts_exact(manifest, index, &error);
-      if (!error.empty() || edges.empty() || edges.size() != stage.input_bindings.size()) {
-        return std::nullopt;
-      }
-      std::optional<std::size_t> owner;
-      for (const auto& edge : edges) {
-        const auto upstream_position = rendered_index(manifest.stages[edge.producer_stage_index]);
-        if (!upstream_position || *upstream_position >= *position) {
-          return std::nullopt;
-        }
-        const auto upstream = origin(edge.producer_stage_index);
-        if (!upstream || (owner && owner != upstream)) {
-          return std::nullopt;
-        }
-        owner = upstream;
-      }
-      visiting[index] = false;
-      return owner;
-    };
-    return origin(producer).has_value();
-  };
-  bool changed = false;
-  for (std::size_t index = 0; index < manifest.stages.size(); ++index) {
-    const auto& consumer = manifest.stages[index];
-    const auto& recipe = consumer.native_kernel;
-    // Checked A65 members read Input ports and write Output ports. Require a
-    // separate, Core-owned output arena: ReuseInput would write under the
-    // producer's READ lease, even when logical tensor spans do not overlap.
-    if (!recipe || recipe->target != runtime::Hardware::A65 || recipe->members.empty() ||
-        consumer.frame_arena_role != FrameArenaRole::Allocate ||
-        consumer.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated ||
-        consumer.frame_arena_size_bytes == 0U) {
-      continue;
-    }
-    bool reads_input = false;
-    bool valid = true;
-    for (const auto& member : recipe->members) {
-      valid = valid && static_cast<bool>(member.executable);
-      for (const auto& port : member.inputs) {
-        if (port.source == runtime::gstreamer::TensorStagePortSource::Input) {
-          reads_input = true;
-          valid = valid && std::any_of(consumer.logical_inputs.begin(),
-                                       consumer.logical_inputs.end(), [&](const auto& input) {
-                                         return input.backend_input_index >= 0 &&
-                                                static_cast<std::size_t>(
-                                                    input.backend_input_index) == port.tensor;
-                                       });
-        }
-      }
-    }
-    if (!valid || !reads_input) {
-      continue;
-    }
-    std::string error;
-    const auto edges =
-        sima::edgecontract::resolve_consumer_edge_contracts_exact(manifest, index, &error);
-    if (!error.empty() || edges.empty() || edges.size() != consumer.input_bindings.size()) {
-      continue;
-    }
-    const auto producer_index = edges.front().producer_stage_index;
-    if (std::any_of(edges.begin(), edges.end(), [&](const auto& edge) {
-          return edge.producer_stage_index != producer_index;
-        })) {
-      continue;
-    }
-    const auto& producer = manifest.stages[producer_index];
-    if (producer.payload_kind != sima::StagePayloadKind::ProcessMla ||
-        !has_pool_retirement(producer_index)) {
-      continue;
-    }
-    bool exclusive_consumer = true;
-    for (std::size_t other = 0; other < manifest.stages.size(); ++other) {
-      if (other == index) {
-        continue;
-      }
-      const auto other_edges =
-          sima::edgecontract::resolve_consumer_edge_contracts_exact(manifest, other);
-      exclusive_consumer =
-          exclusive_consumer &&
-          std::none_of(other_edges.begin(), other_edges.end(), [&](const auto& edge) {
-            return edge.producer_stage_index == producer_index;
-          });
-    }
-    if (!exclusive_consumer) {
-      continue;
-    }
-    const auto from = rendered_index(producer);
-    const auto to = rendered_index(consumer);
-    if (!from || !to || *to <= *from || elements[*from].plugin != "neatprocessmla" ||
-        elements[*to].plugin != "neatkernelrunner") {
-      continue;
-    }
-    bool adjacent = true;
-    for (std::size_t between = *from + 1U; between < *to; ++between) {
-      adjacent = adjacent && preserves_frames(elements[between]);
-    }
-    if (!adjacent) {
-      continue;
-    }
-    set_fragment_segment_property(&elements[*from].fragment, "defer-output-invalidate", "false");
-    // Transfer this exact CPU handoff to Runtime's counted readers. A retained
-    // producer epoch would block an upstream writer when MLA reuses its arena.
-    set_fragment_segment_property(&elements[*from].fragment, "output-read-handoff", "true");
-    changed = true;
   }
-  if (!changed) {
-    return build.pipeline_string;
-  }
-  std::string result;
-  for (const auto& element : elements) {
-    if (!result.empty()) {
-      result += " ! ";
-    }
-    result += element.fragment;
-  }
-  return result;
+  return fragment;
 }
 
 std::string session_build_propagate_terminal_consumer_lane_window(std::string fragment) {
-  struct SegmentRange {
-    std::size_t begin;
-    std::size_t end;
-  };
-  std::vector<SegmentRange> segments;
-  bool single_quoted = false;
-  bool double_quoted = false;
-  bool escaped = false;
-  std::size_t begin = 0U;
-  for (std::size_t i = 0U; i < fragment.size(); ++i) {
-    const char c = fragment[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (c == '\\' && (single_quoted || double_quoted)) {
-      escaped = true;
-      continue;
-    }
-    if (c == '\'' && !double_quoted) {
-      single_quoted = !single_quoted;
-      continue;
-    }
-    if (c == '"' && !single_quoted) {
-      double_quoted = !double_quoted;
-      continue;
-    }
-    if (c == '!' && !single_quoted && !double_quoted) {
-      segments.push_back({begin, i});
-      begin = i + 1U;
-    }
+  // Lexical link spans do not prove adjacency across bins, separate chains or
+  // all-pad links. Only ordinary generated chains admit this lane projection.
+  const auto parsed = gst::launch::analyze(fragment);
+  if (!parsed.complete) {
+    throw std::invalid_argument("cannot inspect an incomplete launch fragment");
   }
-  segments.push_back({begin, fragment.size()});
+  if (parsed.has_nontrivial_topology_syntax) {
+    return fragment;
+  }
+  const auto segments = fragment_segments(fragment);
 
   auto property_value = [](std::string_view segment,
                            std::string_view property) -> std::optional<std::string> {
-    const std::string key = std::string(property) + "=";
-    std::size_t search = 0U;
-    while (search < segment.size()) {
-      const std::size_t pos = segment.find(key, search);
-      if (pos == std::string_view::npos) {
-        return std::nullopt;
+    const auto parsed = gst::launch::analyze(segment);
+    if (!parsed.complete) {
+      throw std::invalid_argument("cannot inspect an incomplete launch fragment");
+    }
+    for (const auto& assignment : parsed.assignments) {
+      if (assignment.key == property) {
+        return assignment.canonical_value;
       }
-      if (pos != 0U && std::isspace(static_cast<unsigned char>(segment[pos - 1U])) == 0) {
-        search = pos + key.size();
-        continue;
-      }
-      std::size_t value_begin = pos + key.size();
-      std::size_t value_end = value_begin;
-      while (value_end < segment.size() &&
-             std::isspace(static_cast<unsigned char>(segment[value_end])) == 0 &&
-             segment[value_end] != '!') {
-        ++value_end;
-      }
-      if (value_end == value_begin) {
-        return std::nullopt;
-      }
-      return std::string(segment.substr(value_begin, value_end - value_begin));
     }
     return std::nullopt;
   };
@@ -2273,9 +1978,9 @@ std::string session_build_propagate_terminal_consumer_lane_window(std::string fr
   for (std::size_t i = 0U; i < segments.size(); ++i) {
     const auto producer =
         std::string_view(fragment).substr(segments[i].begin, segments[i].end - segments[i].begin);
-    const auto cpu_visible = property_value(producer, "defer-output-invalidate");
     const auto producer_window = property_value(producer, "num-buffers");
-    if (!cpu_visible.has_value() || *cpu_visible != "false" || !producer_window.has_value()) {
+    if (!fragment_segment_uses_factory(producer, "neatprocessmla") ||
+        !producer_window.has_value()) {
       continue;
     }
     const bool positive_window =
@@ -2324,7 +2029,7 @@ std::string session_build_propagate_terminal_consumer_lane_window(std::string fr
   std::sort(selected.begin(), selected.end(),
             [](const auto& lhs, const auto& rhs) { return lhs.first > rhs.first; });
   for (const auto& [index, window] : selected) {
-    const SegmentRange range = segments[index];
+    const auto range = segments[index];
     std::string segment = fragment.substr(range.begin, range.end - range.begin);
     set_fragment_segment_property(&segment, "num-buffers", window);
     fragment.replace(range.begin, range.end - range.begin, segment);
@@ -2365,10 +2070,37 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
     fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla",
                                                  "num-buffers", route_depth);
   }
-  fragment = set_property_for_factory_segments(
-      std::move(fragment), "neatprocessmla", "defer-output-invalidate",
-      sess_opt->processmla.defer_output_invalidate ? "true" : "false");
+  if (!sess_opt->processmla.defer_output_invalidate) {
+    throw std::invalid_argument("processmla.defer_output_invalidate=false is retired; CPU "
+                                "visibility is managed by Scheduler access tickets");
+  }
   return fragment;
+}
+
+std::string session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOptions& opt,
+                                                       std::span<const LaunchNameOrigin> origins) {
+  if (opt.preset != RunPreset::Realtime) {
+    return pipeline;
+  }
+  // KernelRunner is a bounded-slot GstElement, not a GstAggregator: live
+  // upstream latency cannot grow its accepted-job capacity. Only an existing
+  // queue may hold unsent buffers. Bound its default media-time depth without
+  // creating a second queue or changing its count bound/leak/reliability policy.
+  // Customer time limits (including QueueOptions' explicit count-only zero)
+  // remain authoritative. Framework async queues render a default zero before
+  // RunOptions are known; their retained origins allow this cold policy to
+  // distinguish defaults without parsing name conventions or changing nodes.
+  // This is a queue-size policy, not a deadline or DMA cancellation authority.
+  std::vector<std::string_view> generated_queues;
+  for (const auto& origin : origins) {
+    if (origin.kind == LaunchNameOrigin::Kind::Queue) {
+      generated_queues.push_back(origin.name);
+    }
+  }
+  constexpr std::uint64_t kRealtimeMaxQueueTimeNs = 20'000'000;
+  return set_property_for_factory_segments(std::move(pipeline), "queue", "max-size-time",
+                                           std::to_string(kRealtimeMaxQueueTimeNs),
+                                           /*replace_existing=*/false, generated_queues);
 }
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b);
 
@@ -2419,6 +2151,7 @@ SampleSpec infer_input_spec(const InputOptions& opt, const cv::Mat& input, const
     if (input.empty()) {
       throw std::invalid_argument(std::string(tag) + ": input frame is empty");
     }
+    validate_public_input(input, opt, InputStreamOptions{}, tag);
     cv::Mat contiguous = input;
     if (!contiguous.isContinuous()) {
       contiguous = input.clone();
@@ -2812,13 +2545,15 @@ void enforce_mla_num_buffers(const std::string& pipeline, const char* context,
   if (allow_one) {
     return;
   }
-  const int required = 4;
   const bool has_mla = (pipeline.find("neatprocessmla") != std::string::npos);
-  const int alt = allow_one ? 1 : -1;
-  if (has_mla) {
-    dump_num_buffers_for_plugin(pipeline, "neatprocessmla", context);
-    enforce_num_buffers_for_plugin(pipeline, "neatprocessmla", required, context, alt);
+  // The four-buffer invariant belongs only to routes containing MLA.
+  if (!has_mla) {
+    return;
   }
+  const int required = 4;
+  const int alt = allow_one ? 1 : -1;
+  dump_num_buffers_for_plugin(pipeline, "neatprocessmla", context);
+  enforce_num_buffers_for_plugin(pipeline, "neatprocessmla", required, context, alt);
   dump_num_buffers_for_plugin(pipeline, "neatprocesscvu", context);
   enforce_num_buffers_for_plugin(pipeline, "neatprocesscvu", required, context, alt);
 }
@@ -3481,8 +3216,7 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     }
   }
 
-  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(
-      session_build_select_terminal_objectdecode_cpu_visibility(ss.str()));
+  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(ss.str());
   br.pipeline_string = br.diag->pipeline_string;
   session_build_initialize_kernel_runner_budget(&br, sess_opt);
   return br;

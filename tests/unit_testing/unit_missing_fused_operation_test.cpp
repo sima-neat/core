@@ -1,7 +1,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/kernel.h>
 
 #include <array>
 #include <iostream>
@@ -10,28 +10,29 @@
 // This executable deliberately links an immutable restricted catalogue provider,
 // not the production request resolver. No registry mutation or production test
 // hook is involved. Both standalone implementations exist; their fusion does not.
-namespace simaai::kernels {
-std::span<const OperationInfo> operations() noexcept {
+namespace simaai::scheduler::client {
+std::span<const KernelOperationInfo> kernel_operations() {
   static constexpr std::array targets{Target::A65, Target::EV74};
-  static const std::array entries{OperationInfo{"detess", targets}, OperationInfo{"cast", targets}};
+  static const std::array entries{KernelOperationInfo{"detess", targets},
+                                  KernelOperationInfo{"cast", targets}};
   return entries;
 }
-const OperationInfo* find_operation(std::string_view name) noexcept {
-  for (const auto& operation : operations())
+const KernelOperationInfo* find_kernel_operation(std::string_view name) {
+  for (const auto& operation : kernel_operations())
     if (operation.name == name)
       return &operation;
   return nullptr;
 }
-} // namespace simaai::kernels
+} // namespace simaai::scheduler::client
 
 namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 namespace sima = simaai::neat::pipeline_internal::sima;
 
 int main() {
   try {
-    if (!simaai::scheduler::find_kernel_operation("detess") ||
-        !simaai::scheduler::find_kernel_operation("cast") ||
-        simaai::scheduler::find_kernel_operation("detesscast"))
+    if (!simaai::scheduler::client::find_kernel_operation("detess") ||
+        !simaai::scheduler::client::find_kernel_operation("cast") ||
+        simaai::scheduler::client::find_kernel_operation("detesscast"))
       throw std::runtime_error("restricted catalogue fixture is not exact");
 
     sc::ModelExecutionPlanData data;

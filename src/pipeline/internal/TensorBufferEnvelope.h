@@ -8,7 +8,7 @@
 
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "gst/SimaPluginStaticManifestAbi.h"
-#include "gstsimaaitensorbuffer.h"
+#include "gstsimaaitensorbuffer_meta.h"
 
 #include <cstddef>
 #include <cstdint>

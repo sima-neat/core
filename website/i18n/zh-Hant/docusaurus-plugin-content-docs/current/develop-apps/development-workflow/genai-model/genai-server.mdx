@@ -57,7 +57,7 @@ finally:
 </CodeTabs>
 
 在 C++ 中，使用 `serve()` 來建立一個同步的前端伺服器。當您的 C++ 或 Python 應用程式管理伺服器的生命週期時，請使用 `start()` 和 `stop()`。
-當預設主機或連接埠不適用時，請設定 `GenAIServerOptions`。
+當預設主機或連接埠不適用時，請設定 `GenAIServerOptions`。在開始接聽之前，伺服器會為每個已註冊的模型執行一次靜默的暖機推論，讓第一個客戶端請求不必承擔完整的初始化成本。暖機不會輸出生成的文字或效能統計資料。
 呼叫 `stop()` 也能移除所有已註冊的模型；在重新啟動相同的伺服器物件之前，請再次新增這些模型。
 
 `GenAIServer` 不提供驗證或 TLS 終止功能，並且允許來自任何來源的 CORS 請求。僅將其繫結到受信任的介面，或將其置於提供所需存取控制和加密的網路層之後。
@@ -186,6 +186,12 @@ curl http://<modalix-ip>:9998/api/chat \
 `/api/chat` 會在 `message.thinking` 中回傳推理過程，並在 `message.content` 中回傳最終答案。`/api/generate` 接受相同的頂層 `think` 欄位，並在頂層 `thinking` 中回傳推理過程，以及在 `response` 中回傳答案。
 
 如果推理欄位為空，則會省略該欄位。這些欄位僅用於輸出：傳入的 `reasoning_content` 或 `thinking` 欄位不會作為對話歷史重現。
+
+### 推理程度
+
+對於 GPT-OSS，請將 `reasoning_effort` 設為 `low`（預設）、`medium` 或 `high`；其他值會傳回 HTTP 400。`enable_thinking` 控制是否傳回推理內容。
+
+`reasoning_effort` 也可在 `chat_template_kwargs` 中指定，其值優先於頂層欄位。
 
 ## 語音請求
 

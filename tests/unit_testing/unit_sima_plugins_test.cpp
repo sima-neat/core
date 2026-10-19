@@ -13,7 +13,7 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 
 #include "test_utils.h"
@@ -379,7 +379,7 @@ int main() {
       auto manifest =
           simaai::neat::render_manifest_from_compiled_contracts(pipeline, input, &diagnostics);
       require(manifest && diagnostics.errors.empty(), "ArgMax native scalar manifest failed");
-      simaai::runtime::gstreamer::TensorStagePublication publication;
+      simaai::scheduler::client::TensorStagePublication publication;
       require(si::build_kernel_stage_publication(manifest->stages[0], &publication, &error),
               "ArgMax scalar publication: " + error);
       require(publication.contract->logical_outputs.size() == 1 &&

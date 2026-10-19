@@ -10,7 +10,7 @@
 
 #include "test_main.h"
 
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
@@ -68,7 +68,7 @@ using GstBufferPtr = std::unique_ptr<GstBuffer, GstBufferUnref>;
 
 void mixed_dmabuf_envelope_preserves_pool_loan_and_cpu_packing() {
   using namespace simaai::neat;
-  namespace dma = internal::dmabuf;
+  namespace dma = simaai::scheduler::client::dma;
   dma::Error error;
   const auto pool_unref = [](GstBufferPool* pool) {
     (void)gst_buffer_pool_set_active(pool, FALSE);

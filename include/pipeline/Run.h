@@ -74,7 +74,8 @@ MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
  * @ingroup pipeline
  */
 enum class RunPreset {
-  Realtime, ///< Low-latency; small queues; KeepLatest overflow.
+  Realtime, ///< Low-latency; small queues; KeepLatest overflow. Existing Gst queues
+            ///< default to a 20 ms media-time limit unless explicitly configured.
   Balanced, ///< Default; moderate queues; Block overflow.
   Reliable, ///< Lossless; deeper queues; Block overflow.
 };
@@ -188,26 +189,15 @@ struct RunOptions {
    */
   bool startup_preflight = true;
   RunAdvancedOptions advanced{};       ///< Advanced tuning (rarely needed).
-  PowerMonitorOptions power_monitor{}; ///< Optional board rail power telemetry.
+  PowerMonitorOptions power_monitor{}; ///< Optional board power telemetry from Sentinel.
   RunAutoExportOptions run_export{};   ///< Optional build-time Run/graph JSON export.
   /// Backward-compatible spelling for the previous graph-run export field.
   RunAutoExportOptions graph_run_export{};
 
   /**
-   * @brief Enable board power monitoring using built-in auto-detect.
+   * @brief Enable board power monitoring, read from Sentinel.
    *
-   * This is the preferred no-env path for capturing latency, throughput, and power
-   * together from any Run.
-   */
-  RunOptions& enable_board_power(int sample_interval_ms = 100) {
-    power_monitor = board_power_monitor_options(sample_interval_ms);
-    return *this;
-  }
-
-  /**
-   * @brief Enable default Modalix SOM PMIC rail power monitoring for this Run.
-   *
-   * Prefer `enable_board_power()` unless you need to force the SOM profile:
+   * Captures power together with latency and throughput from any Run:
    *
    * @code
    * RunOptions opt;
@@ -217,18 +207,24 @@ struct RunOptions {
    * // push/pull workload
    * auto report = scope.stop();
    * @endcode
+   *
+   * `sample_interval_ms` is deprecated and ignored.
    */
-  RunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
-    power_monitor = modalix_som_power_monitor_options(sample_interval_ms);
+  RunOptions& enable_board_power(int sample_interval_ms = 100) {
+    power_monitor = board_power_monitor_options(sample_interval_ms);
     return *this;
   }
 
-  /**
-   * @brief Enable the built-in Modalix DVT PMIC table for this Run.
-   */
+  /// Same as `enable_board_power()`.
+  [[deprecated("Use enable_board_power()")]]
+  RunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
+    return enable_board_power(sample_interval_ms);
+  }
+
+  /// Same as `enable_board_power()`.
+  [[deprecated("Use enable_board_power()")]]
   RunOptions& enable_modalix_dvt_power(int sample_interval_ms = 100) {
-    power_monitor = modalix_dvt_power_monitor_options(sample_interval_ms);
-    return *this;
+    return enable_board_power(sample_interval_ms);
   }
 
   /**
@@ -286,16 +282,15 @@ enum class MetricsTraceSource {
  *
  * Default construction is the production-safe/customer path: public E2E latency and throughput
  * only.  It does not start plugin tracing, message tracing, graph queue probes, or measurement-
- * local power monitoring.  Set `include_plugin_latency=true` only when you intentionally want
- * deeper per-plugin/kernel profiling.
+ * local power monitoring.
  */
 struct MeasureOptions {
   int duration_ms = 10000; ///< Timed measurement window.
   int warmup_ms = 1000;    ///< Warmup window excluded from latency/metrics results.
   int timeout_ms = 5000;   ///< Per-output pull timeout.
-  /// Capture per-plugin/kernel execution latency through the LTTng metrics collector.
+  /// Deprecated: capture per-plugin execution latency through LTTng. It will be removed.
   bool include_plugin_latency = false;
-  /// Backend used for plugin execution latency.
+  /// Deprecated with `include_plugin_latency`: backend used for plugin execution latency.
   MetricsTraceSource plugin_latency_source = MetricsTraceSource::Lttng;
   /// Include low-overhead inter-plugin/edge/queue diagnostics in the report.
   bool include_edge_latency = false;
@@ -721,14 +716,16 @@ public:
 
   /// Start observing a caller-owned push/pull interval without consuming outputs.
   MeasureScope start_measurement(const MeasureOptions& opt = {});
-  /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+  /// Deprecated: use `start_measurement()`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
   MeasureScope start_measurement(bool include_plugin_latency);
   /// Returns the most recent runtime error string (empty if no error occurred).
   std::string last_error() const;
 
-  /// Stop the pipeline immediately (transitions to NULL). After stop, the Run is no longer running.
+  /// Stop execution and initiate pipeline teardown.
+  /// Resource release may complete asynchronously after this returns.
   void stop();
-  /// Alias for `stop()`. Releases resources.
+  /// Alias for `stop()`. Resource release may complete asynchronously.
   void close();
 
 private:

@@ -53,32 +53,27 @@ struct GraphRunOptions {
   PowerMonitorOptions power_monitor; ///< Optional graph-level board power monitor.
 
   /**
-   * @brief Enable one graph-level board power monitor using built-in auto-detect.
+   * @brief Enable one graph-level board power monitor, read from Sentinel.
    *
-   * This is the preferred API for graph-level power because one graph can contain
-   * multiple pipeline segments and per-segment monitors would double-count board rails.
+   * Use this for graph-level power: one graph can contain several pipeline segments,
+   * and per-segment monitors would count the board rails more than once.
+   * `sample_interval_ms` is deprecated and ignored.
    */
   GraphRunOptions& enable_board_power(int sample_interval_ms = 100) {
     power_monitor = board_power_monitor_options(sample_interval_ms);
     return *this;
   }
 
-  /**
-   * @brief Enable one graph-level Modalix SOM power monitor.
-   *
-   * Prefer `enable_board_power()` unless you need to force the SOM profile.
-   */
+  /// Same as `enable_board_power()`.
+  [[deprecated("Use enable_board_power()")]]
   GraphRunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
-    power_monitor = modalix_som_power_monitor_options(sample_interval_ms);
-    return *this;
+    return enable_board_power(sample_interval_ms);
   }
 
-  /**
-   * @brief Enable one graph-level Modalix DVT power monitor.
-   */
+  /// Same as `enable_board_power()`.
+  [[deprecated("Use enable_board_power()")]]
   GraphRunOptions& enable_modalix_dvt_power(int sample_interval_ms = 100) {
-    power_monitor = modalix_dvt_power_monitor_options(sample_interval_ms);
-    return *this;
+    return enable_board_power(sample_interval_ms);
   }
 
   /// Disable graph-level power monitoring after it was enabled/configured.
@@ -380,7 +375,8 @@ public:
   std::string describe() const;
   /// Start observing this internal graph run's caller-owned push/pull interval.
   simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
-  /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+  /// Deprecated: use `start_measurement()`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
   simaai::neat::MeasureScope start_measurement(bool include_plugin_latency);
 
   /// Stop the underlying runtime. Idempotent.

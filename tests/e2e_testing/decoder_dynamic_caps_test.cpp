@@ -281,6 +281,8 @@ int main() {
     if (total_frames == 0) {
       throw std::runtime_error("no frames decoded");
     }
+    require(dims_seen.count({kW1, kH1}) && dims_seen.count({kW2, kH2}),
+            "decoded output did not include both resolutions");
     const std::uint64_t caps_changes =
         decoder_name.empty() ? 0 : caps_changes_for(runner, decoder_name);
     for (const auto& d : dims_seen) {

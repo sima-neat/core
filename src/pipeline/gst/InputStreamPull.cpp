@@ -1,3 +1,4 @@
+#include <simaai/scheduler/client/tensor_buffer.h>
 #include "InputStreamInternal.h"
 
 #include "gst/GstSampleAttributes.h"
@@ -24,6 +25,8 @@ static std::string image_format_name(simaai::neat::ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case simaai::neat::ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case simaai::neat::ImageSpec::PixelFormat::NV16:
+    return "NV16";
   case simaai::neat::ImageSpec::PixelFormat::I420:
     return "I420";
   case simaai::neat::ImageSpec::PixelFormat::UNKNOWN:
@@ -744,8 +747,6 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   if (!buffer)
     return;
 
-  restore_sample_timing_from_gst_buffer(buffer, out);
-
   std::string compact_error;
   const auto* frame = simaai::gst::tensor_buffer_frame_metadata(buffer, &compact_error);
   if (!compact_error.empty())
@@ -765,12 +766,15 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
       if (out->route_slot < 0)
         out->route_slot = out->logical_output_index;
     }
+    restore_sample_timing_from_gst_buffer(buffer, out);
     return;
   }
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (!s)
+  if (!s) {
+    restore_sample_timing_from_gst_buffer(buffer, out);
     return;
+  }
 
   gst_internal::read_attributes_from_structure(s, &out->attributes);
 
@@ -784,21 +788,7 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   const char* stream_id = gst_structure_get_string(s, "stream-id");
   const char* buffer_name = gst_structure_get_string(s, "buffer-name");
   const char* orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
-  gboolean sample_frame_valid = FALSE;
-  const bool has_sample_frame =
-      gst_structure_get_boolean(s, "sample-frame-id-valid", &sample_frame_valid) == TRUE;
-  if (has_sample_frame) {
-    gint64 sample_frame_id = -1;
-    if (sample_frame_valid == TRUE &&
-        gst_structure_get_int64(s, "sample-frame-id", &sample_frame_id) == TRUE &&
-        sample_frame_id >= 0) {
-      out->frame_id = sample_frame_id;
-    } else {
-      out->frame_id = -1;
-    }
-  } else if (frame_id >= 0) {
-    out->frame_id = frame_id;
-  }
+  if (frame_id >= 0) out->frame_id = frame_id;
   if (has_input_seq && input_seq >= 0) {
     out->input_seq = input_seq;
   } else if (has_orig_input_seq && orig_input_seq >= 0) {
@@ -823,74 +813,13 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   if (buffer_name)
     out->segment_name = buffer_name;
   fill_output_routing_from_legacy_meta(s, out);
+  restore_sample_timing_from_gst_buffer(buffer, out);
 }
 
 static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out) {
-  if (!sample || !out)
-    return;
-  GstBuffer* buffer = gst_sample_get_buffer(sample);
-  if (!buffer)
-    return;
-
-  restore_sample_timing_from_gst_buffer(buffer, out);
-
-  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
-  GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (!s)
-    return;
-
-  gst_internal::read_attributes_from_structure(s, &out->attributes);
-
-  gint64 frame_id = -1;
-  gboolean sample_frame_valid = FALSE;
-  const bool has_sample_frame =
-      gst_structure_get_boolean(s, "sample-frame-id-valid", &sample_frame_valid) == TRUE;
-  gint64 sample_frame_id = -1;
-  if (has_sample_frame) {
-    if (sample_frame_valid == TRUE &&
-        gst_structure_get_int64(s, "sample-frame-id", &sample_frame_id) == TRUE &&
-        sample_frame_id >= 0) {
-      out->frame_id = sample_frame_id;
-    } else {
-      out->frame_id = -1;
-    }
-  } else if (gst_structure_get_int64(s, "frame-id", &frame_id) == TRUE && frame_id >= 0) {
-    out->frame_id = frame_id;
-  }
-
-  gint64 input_seq = -1;
-  gint64 orig_input_seq = -1;
-  const bool has_input_seq = (gst_structure_get_int64(s, "input-seq", &input_seq) == TRUE);
-  const bool has_orig_input_seq =
-      (gst_structure_get_int64(s, "orig-input-seq", &orig_input_seq) == TRUE);
-  if (has_input_seq && input_seq >= 0) {
-    out->input_seq = input_seq;
-  } else if (has_orig_input_seq && orig_input_seq >= 0) {
-    out->input_seq = orig_input_seq;
-  }
-  if (has_orig_input_seq && orig_input_seq >= 0) {
-    out->orig_input_seq = orig_input_seq;
-  } else if (out->input_seq >= 0) {
-    out->orig_input_seq = out->input_seq;
-  }
-
-  const char* stream_id = gst_structure_get_string(s, "stream-id");
-  const char* buffer_name = gst_structure_get_string(s, "buffer-name");
-  const char* orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
-  if (orig_stream_id && *orig_stream_id) {
-    if (!stream_id || !*stream_id || (buffer_name && std::string(stream_id) == buffer_name)) {
-      out->stream_id = orig_stream_id;
-    } else {
-      out->stream_id = stream_id;
-    }
-  } else if (stream_id) {
-    out->stream_id = stream_id;
-  }
-  if (buffer_name) {
-    out->stream_label = buffer_name;
-    out->segment_name = buffer_name;
-  }
-  fill_output_routing_from_legacy_meta(s, out);
+  // One checked authority and one source-value precedence policy for all output
+  // ownership modes; minimal used to omit compact frame routing entirely.
+  fill_output_meta_from_sample(sample, out);
 }
 
 static Sample output_from_sample_stream_inner(GstSample* sample, const char* where,
@@ -1792,16 +1721,16 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
     // frame's physical binding or capacity. Let Runtime resolve and validate
     // the current segments; never reuse first-frame bounds or duplicate its
     // checked physical-span arithmetic in Core.
-    simaai::gst::TensorBufferView current_view;
+    simaai::scheduler::client::TensorBufferView current_view;
     std::string error;
-    if (!simaai::gst::tensor_buffer_create_view(sample, &current_view, &error)) {
+    if (!simaai::scheduler::client::tensor_buffer_create_view(sample, &current_view, &error)) {
       throw std::runtime_error("InputStream::pull: legacy current storage: " + error);
     }
-    if (current_view.tensors.size() != cache.tensor_templates.size()) {
+    if (current_view.tensors().size() != cache.tensor_templates.size()) {
       return std::nullopt;
     }
-    for (std::size_t i = 0; i < current_view.tensors.size(); ++i) {
-      const auto& current = current_view.tensors[i];
+    for (std::size_t i = 0; i < current_view.tensors().size(); ++i) {
+      const auto& current = current_view.tensors()[i];
       const auto& cached = cache.tensor_templates[i].route;
       if (current.logical_index != cached.logical_index ||
           current.physical_index != cached.physical_index ||
@@ -1813,9 +1742,9 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
         return std::nullopt;
       }
     }
-    current_runtime_segments.reserve(current_view.segments.size());
-    for (auto& segment : current_view.segments) {
-      current_runtime_segments.push_back(Segment{std::move(segment.name), segment.size_bytes});
+    current_runtime_segments.reserve(current_view.segment_count());
+    for (std::size_t i = 0; i < current_view.segment_count(); ++i) {
+      current_runtime_segments.push_back(Segment{std::move(current_view.segment_name(i)), current_view.segment_size(i)});
     }
     if (pipeline_internal::tensor_buffer_current_segments(
             gst_sample_get_buffer(sample), current_runtime_segments, &current_runtime_segments,

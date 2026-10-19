@@ -2,7 +2,7 @@
 #include "pipeline/internal/SampleUtil.h"
 #include "test_main.h"
 
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <cstdint>
 #include <limits>
@@ -186,6 +186,71 @@ void check_current_frame_routing(const TensorBufferPreparedMetaTemplate& prepare
   check_routing(decode(compact_cached, invalid.get(), 0, false), -1, -1,
                 "rejected compact frame left stale routing");
 }
+void check_source_values(const TensorBufferPublicationOwner& owner) {
+  using V = TensorBufferSourceValues;
+  struct Case { const char* name; V source; int64_t id, pts, dts, duration; };
+  V zero; zero.present = V::AllFields; zero.valid = V::ValidityFields;
+  V invalid = zero; invalid.valid = 0;
+  V missing = zero; missing.present = V::ValidityFields;
+  V numeric = zero; numeric.present = V::AllFields & ~V::ValidityFields;
+  V range = zero; range.frame_id = -2;
+  range.pts_ns = range.dts_ns = range.duration_ns = std::numeric_limits<uint64_t>::max();
+  V maximum = zero; maximum.frame_id = std::numeric_limits<int64_t>::max();
+  maximum.pts_ns = maximum.dts_ns = maximum.duration_ns = uint64_t(maximum.frame_id);
+  const Case cases[] = {
+      {"absent", {}, 71, 101, 102, 103},
+      {"valid zero", zero, 0, 0, 0, 0},
+      {"explicit invalidity", invalid, -1, -1, -1, -1},
+      {"validity without numeric", missing, -1, 101, 102, 103},
+      {"numeric without validity", numeric, 71, 101, 102, 103},
+      {"out of public range", range, -1, 101, 102, 103},
+      {"maximum public value", maximum, maximum.frame_id, maximum.frame_id,
+       maximum.frame_id, maximum.frame_id},
+  };
+  InputStream::State reused;
+  reused.opt.copy_output = false;
+  const auto check_values = [](const Sample& sample, const Case& expected) {
+    require(sample.frame_id == expected.id && sample.pts_ns == expected.pts &&
+                sample.dts_ns == expected.dts && sample.duration_ns == expected.duration,
+            std::string(expected.name) + ": source public policy differs");
+    require(sample.input_seq == 53 && sample.orig_input_seq == 54,
+            "source identity overwrote stage correlation");
+  };
+  std::string error;
+  for (int repetition = 0; repetition != 2; ++repetition) {
+    for (const auto& test : cases) {
+      auto compact = buffer();
+      GST_BUFFER_PTS(compact.get()) = 101;
+      GST_BUFFER_DTS(compact.get()) = 102;
+      GST_BUFFER_DURATION(compact.get()) = 103;
+      require(tensor_buffer_attach_publication(compact.get(), owner, &error), error);
+      TensorBufferFrameMetadata stage;
+      stage.frame_id = 71; stage.timestamp = 777;
+      stage.input_sequence = 53; stage.original_sequence = 54;
+      require(tensor_buffer_attach_frame_metadata(compact.get(), stage, test.source, &error), error);
+      InputStream::State cold;
+      cold.opt.copy_output = false;
+      check_values(decode(cold, compact.get(), 0, false), test);
+      check_values(decode(reused, compact.get(), 0, false), test);
+      auto legacy = std::shared_ptr<GstBuffer>(tensor_buffer_clone_envelope(compact.get(), &error),
+                                               gst_buffer_unref);
+      require(legacy && tensor_buffer_materialize_frame_metadata(legacy.get(), &error), error);
+      check_values(decode(reused, legacy.get(), 0, false), test);
+      // A wrong-typed numeric behaves as absent, not as zero; an absent or
+      // wrong-typed validity leaves stage/header fallback unchanged.
+      auto* fields = gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
+      gst_structure_set(fields,
+          "sample-frame-id-valid", G_TYPE_BOOLEAN, TRUE,
+          "sample-frame-id", G_TYPE_STRING, "not-an-id",
+          "sample-pts-valid", G_TYPE_BOOLEAN, TRUE,
+          "sample-pts-ns", G_TYPE_STRING, "not-a-time",
+          "sample-dts-valid", G_TYPE_STRING, "not-a-bool",
+          "sample-duration-valid", G_TYPE_STRING, "not-a-bool", nullptr);
+      check_values(decode(reused, legacy.get(), 0, false),
+                   {"legacy wrong types", {}, -1, 101, 102, 103});
+    }
+  }
+}
 } // namespace
 
 RUN_TEST(
@@ -203,6 +268,7 @@ RUN_TEST(
       auto owner = tensor_buffer_freeze_publication(prepared, &error);
       require(bool(owner), error);
       check_current_frame_routing(prepared, owner);
+      check_source_values(owner);
       InputStream::State state;
       state.opt.copy_output = false;
       auto legacy = buffer();

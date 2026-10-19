@@ -1,17 +1,17 @@
 ---
-title: "SIMA 플러그인 JSON 진실성 맵 (과거 기록)"
-description: "2026년 2월 모델 파이프라인 SIMA 단계의 JSON 필드 사용 기록"
+title: SIMA 플러그인 JSON 사용 맵 (과거 기록)
+description: 모델 파이프라인 SIMA 단계의 2026년 2월 JSON 필드 사용 기록
 sidebar_position: 2
 slug: /develop-apps/contribute/sima_plugin_json_truth_map
 ---
 
-# SIMA 플러그인 JSON 진실성 맵 (과거 기록)
+# SIMA 플러그인 JSON 사용 맵 (과거 기록)
 
 _스냅샷 날짜: 2026-02-17_
 
-이 문서는 2026년 2월 당시 모델 파이프라인 SIMA 단계의 JSON 필드 사용 현황을 보존합니다. 아래에서 "현재"라고 표현한 내용은 해당 시점의 상태를 뜻합니다.
+이 문서는 모델 파이프라인 SIMA 단계의 2026년 2월 JSON 필드 사용 조사 결과를 보존합니다. 아래의 "현재" 동작은 해당 스냅샷 시점을 가리킵니다.
 
-> **과거 계약:** 아래 플러그인 이름과 필수 JSON 필드는 Platform 3.0.0의 배포 계약이 아닙니다. 일반 BoxDecode는 현재 `neatobjectdecode`를 사용하며, 타입이 지정된 매니페스트 단계와 런타임 속성으로 구성됩니다. 아래의 이전 `simaaiboxdecode` 요구 사항은 애플리케이션 측 구성 요구 사항을 정의하지 않습니다. 현재 구성 및 호환 패키지 요구 사항은 [SIMA 정적 매니페스트 컨텍스트 계약](../start-here/architecture.md)을 참조하세요.
+> **과거 계약:** 아래의 플러그인 이름과 필수 JSON 필드는 Platform 3.0.0 배포 계약이 아닙니다. 일반 BoxDecode는 이제 타입 지정 매니페스트 단계와 런타임 속성으로 구성되는 `neatobjectdecode`를 사용합니다. 아래의 이전 `simaaiboxdecode` 요구사항은 이 플러그인의 애플리케이션 구성을 정의하지 않습니다. 활성 구성과 패키지 호환 요구사항은 [현재 SIMA 정적 매니페스트 컨텍스트 계약](../start-here/architecture.md#sima-static-manifest-context-contract)을 참조하십시오.
 
 ## 1. 고정 범위 및 플러그인 매트릭스
 

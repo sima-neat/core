@@ -1,7 +1,7 @@
 #include "pipeline/graph/GraphDetail.h"
 #include "test_main.h"
 
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <limits>
 

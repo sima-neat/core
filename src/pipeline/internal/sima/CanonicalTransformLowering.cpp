@@ -6,10 +6,10 @@
 #include <limits>
 
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
-using namespace ::simaai::runtime;
-namespace kernels = ::simaai::kernels;
-using ::simaai::scheduler::check_kernel;
-using ::simaai::scheduler::inspect_kernel;
+using namespace ::simaai::scheduler::client;
+namespace kernels = ::simaai::scheduler::client;
+using ::simaai::scheduler::client::check_kernel;
+using ::simaai::scheduler::client::inspect_kernel;
 namespace {
 Error invalid(const char* field, const char* message) {
   return {ErrorCode::InvalidRequest, field, message};
@@ -29,81 +29,35 @@ constexpr std::array families{Family{"cast", Family::None},
                               Family{"detess", Family::None}};
 
 Result<DType> dtype(std::string_view meaning, std::uint32_t wire) {
-  // Normalize only at the external/legacy boundary. The typed executable owns
-  // DType thereafter; width alone cannot distinguish the BF16/INT16 wire alias.
-  const auto matches = [meaning](std::string_view canonical) {
-    if (meaning.size() != canonical.size())
-      return false;
-    for (std::size_t i = 0; i < meaning.size(); ++i) {
-      const char c = meaning[i];
-      if ((c >= 'a' && c <= 'z' ? char(c - 'a' + 'A') : c) != canonical[i])
-        return false;
-    }
-    return true;
-  };
-  if (matches("BF16") || matches("BFLOAT16") || matches("EVXX_BFLOAT16")) {
-    if (wire == SIMA_EV_DTYPE_BF16)
-      return DType::BFloat16;
-  } else if (matches("INT16") || matches("EVXX_INT16")) {
-    if (wire == SIMA_EV_DTYPE_INT16)
-      return DType::Int16;
-  } else if (matches("FP16") || matches("FLOAT16") || matches("EVXX_FLOAT16")) {
-    if (wire == SIMA_EV_DTYPE_FP16)
-      return DType::Float16;
-  } else if (matches("FP32") || matches("FLOAT32") || matches("EVXX_FLOAT32")) {
-    if (wire == SIMA_EV_DTYPE_FP32)
-      return DType::Float32;
-  } else if (matches("INT8") || matches("EVXX_INT8")) {
-    if (wire == SIMA_EV_DTYPE_INT8)
-      return DType::Int8;
-  } else if (matches("INT32") || matches("EVXX_INT32")) {
-    if (wire == SIMA_EV_DTYPE_INT32)
-      return DType::Int32;
-  } else if (meaning.empty()) {
-    // Only unambiguous encodings may omit the semantic annotation.
-    switch (wire) {
-    case SIMA_EV_DTYPE_INT8:
-      return DType::Int8;
-    case SIMA_EV_DTYPE_INT32:
-      return DType::Int32;
-    case SIMA_EV_DTYPE_FP32:
-      return DType::Float32;
-    case SIMA_EV_DTYPE_FP16:
-      return DType::Float16;
-    }
-  }
+  if (const auto scalar = scalar_from_model_descriptor(meaning, wire)) return *scalar;
   return Error{ErrorCode::InvalidRequest, "dtype",
                "missing, ambiguous or contradictory scalar type: name='" + std::string(meaning) +
                    "', wire=" + std::to_string(wire)};
 }
 
-Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, std::string_view meaning,
+Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, DType scalar,
                           bool blocked_bf16 = false) {
-  if (desc.shape.rank == 0 || desc.shape.rank > Shape::max_dimensions)
+  if (desc.shape.rank == 0 || desc.shape.rank > std::size(desc.shape.sizes))
     return invalid("shape.rank", "legacy tensor rank must be in [1,6]");
-  auto scalar = dtype(meaning, desc.dtype);
-  if (const auto* error = std::get_if<Error>(&scalar))
-    return *error;
-  std::array<std::int64_t, Shape::max_dimensions> dimensions{};
+  TensorSpec result{std::vector<std::int64_t>(desc.shape.rank),
+                    scalar};
   // Packed wire fields may be unaligned. Copy values rather than binding spans
   // or references into their storage.
   for (std::size_t i = 0; i < desc.shape.rank; ++i)
-    dimensions[i] = desc.shape.sizes[i];
-  TensorSpec result{Shape(std::span<const std::int64_t>{dimensions.data(), desc.shape.rank}),
-                    std::get<DType>(scalar)};
+    result.shape[i] = desc.shape.sizes[i];
   if (desc.layout_kind == SIMA_EV_LAYOUT_STRIDED) {
     kernels::Strided strides;
     std::int64_t dense =
-        result.dtype == DType::Int8
+        (result.dtype == DType::Int8 || result.dtype == DType::UInt8)
             ? 1
             : (result.dtype == DType::Float32 || result.dtype == DType::Int32 ? 4 : 2);
     bool contiguous = true;
     for (std::size_t i = desc.shape.rank; i-- > 0;) {
       strides.strides_bytes[i] = desc.layout.strided.strides_bytes[i];
-      if (dimensions[i] <= 0 || (dimensions[i] > 1 && strides.strides_bytes[i] != dense))
+      if (result.shape[i] <= 0 || (result.shape[i] > 1 && strides.strides_bytes[i] != dense))
         contiguous = false;
-      if (dimensions[i] > 0 && dense <= std::numeric_limits<std::int64_t>::max() / dimensions[i])
-        dense *= dimensions[i];
+      if (result.shape[i] > 0 && dense <= std::numeric_limits<std::int64_t>::max() / result.shape[i])
+        dense *= result.shape[i];
       else
         contiguous = false;
     }
@@ -171,12 +125,12 @@ Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, std::string_view mean
     const auto rank = static_cast<int>(desc.shape.rank);
     if (rank < 3 || tiled.axes[1] != rank - 3 || tiled.axes[2] != rank - 2 ||
         tiled.axes[3] != rank - 1 ||
-        (tiled.axes[0] >= 0 && (dimensions[tiled.axes[0]] != 1 || tiled.tile_shape[0] != 1)))
+        (tiled.axes[0] >= 0 && (result.shape[tiled.axes[0]] != 1 || tiled.tile_shape[0] != 1)))
       return invalid("layout.axes",
                      "blocked transport requires trailing HWC and untiled outer axes");
     const auto extent = [&](int component) {
       const auto axis = tiled.axes[component];
-      return axis < 0 ? std::int64_t(1) : std::min(dimensions[axis], tiled.tile_shape[component]);
+      return axis < 0 ? std::int64_t(1) : std::min(result.shape[axis], tiled.tile_shape[component]);
     };
     // Retain the established fast route only where byte identity is proved.
     // BF16 block-local byte planes are never covered by this INT8 proof.
@@ -192,23 +146,21 @@ Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, std::string_view mean
   return result;
 }
 
-std::string_view meaning(const std::vector<std::string>& per_member, const std::string& fallback,
-                         std::size_t i) {
-  return i < per_member.size() ? per_member[i] : fallback;
-}
 } // namespace
 
 Result<TensorSpec> tensor_spec_from_model_descriptor(const sima_ev_tensor_desc& descriptor,
                                                      std::string_view meaning) {
-  return tensor(descriptor, meaning);
+  auto scalar = dtype(meaning, descriptor.dtype);
+  if (const auto* error = std::get_if<Error>(&scalar)) return *error;
+  return tensor(descriptor, std::get<DType>(scalar));
+}
+
+Result<TensorSpec> tensor_spec_from_model_descriptor(const AuthoredTensorDescriptor& authored) {
+  return tensor(authored.descriptor(), authored.scalar());
 }
 
 Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStaticSpec& stage) {
   const auto& cfg = stage.processcvu;
-  std::vector<std::string> input_dtypes;
-  for (const auto& logical : stage.logical_inputs)
-    input_dtypes.push_back(logical.dtype);
-  const auto& output_dtypes = cfg.runtime_output_dtype_list;
   const auto family = std::find_if(families.begin(), families.end(), [&](const Family& f) {
     return f.canonical == canonical_transform_operation(cfg.graph_name);
   });
@@ -226,7 +178,7 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
       cfg.resolved_exec_backend != "EVXX")
     return invalid("target", "Core must resolve the backend before preparation");
   const auto exact = [count](const auto& array) { return array.empty() || array.size() == count; };
-  if (!exact(input_dtypes) || !exact(output_dtypes) || !exact(cfg.q_scale_list) ||
+  if (!exact(cfg.q_scale_list) ||
       !exact(cfg.dq_scale_list) || !exact(cfg.q_zp_list) || !exact(cfg.dq_zp_list))
     return invalid("parameters", "per-member arrays must be empty or match tensor count");
   const auto same_float_values = [](const auto& left, const auto& right) {
@@ -256,20 +208,20 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
   inputs.reserve(count);
   outputs.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    const auto& legacy_input = cfg.input_tensors[i];
-    const auto& legacy_output = cfg.output_tensors[i];
+    const auto& legacy_input = cfg.input_tensors[i].descriptor();
+    const auto& legacy_output = cfg.output_tensors[i].descriptor();
     if (legacy_input.shape.rank != legacy_output.shape.rank ||
-        legacy_input.shape.rank > Shape::max_dimensions)
+        legacy_input.shape.rank > std::size(legacy_input.shape.sizes))
       return invalid("shape", "transform input/output ranks differ");
     for (std::size_t axis = 0; axis < legacy_input.shape.rank; ++axis)
       if (legacy_input.shape.sizes[axis] != legacy_output.shape.sizes[axis] ||
           legacy_input.shape.axis_semantics[axis] != legacy_output.shape.axis_semantics[axis])
         return invalid("shape", "transform input/output logical axes differ");
-    auto in = tensor(cfg.input_tensors[i], meaning(input_dtypes, cfg.input_dtype, i),
+    auto in = tensor(cfg.input_tensors[i], cfg.input_tensors[i].scalar(),
                      family->canonical == "detesscast" && (cfg.opt_flags & (1U << 6)) != 0);
     auto out = tensor(
         cfg.output_tensors[i],
-        meaning(output_dtypes, cfg.output_dtype.empty() ? cfg.out_dtype : cfg.output_dtype, i));
+        cfg.output_tensors[i].scalar());
     const auto at_port = [&](Error error, const char* port) {
       error.field = std::string(port) + "[" + std::to_string(i) + "]." + error.field;
       error.message = cfg.graph_name + ": " + error.message;
@@ -351,8 +303,8 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
     const auto matches = [](std::uint64_t declared, std::size_t span) {
       return declared == 0 || declared == span;
     };
-    if (!matches(cfg.input_tensors[i].storage.nbytes, in_bytes) ||
-        !matches(cfg.output_tensors[i].storage.nbytes, out_bytes))
+    if (!matches(cfg.input_tensors[i].descriptor().storage.nbytes, in_bytes) ||
+        !matches(cfg.output_tensors[i].descriptor().storage.nbytes, out_bytes))
       return invalid("storage", "legacy span differs from canonical physical storage");
     for (std::size_t batch = 0; batch < batches; ++batch) {
       gs::TensorStageMember member;

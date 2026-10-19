@@ -62,7 +62,8 @@ receipts must agree on target/compiler, kernel contracts and consumed build
 configuration. The canonical package workflow also requires the exact consumed
 Kernels payload identity. Rebuild the Runner package against the selected SDK
 after a Kernels package change, even when Runner source does not change. Core
-then relinks against the matching Kernels archives.
+then relinks against the matching Scheduler client implementation; Scheduler
+consumes the lower numerical packages.
 Core's source-first DEBs pin the selected Scheduler and numerical SDK versions.
 Runner pins Kernels; Scheduler pins Runner, Kernels and its enabled codec backend.
 The build composes metadata-only `simaai-runtime` compatibility with exact Runner
@@ -93,8 +94,9 @@ copied into Scheduler or fetched by this workflow:
 - Set `NEAT_CODECS_PACKAGE_DIR` to the separately built Codecs package directory.
   When Scheduler enables codecs, this directory must contain the exact installed
   `usr/` prefix it consumed and the matching `neat-codecs` and `neat-codecs-dev`
-  Debian packages. Core verifies their payloads, ownership and dependency controls,
-  then includes both archives in the final distribution. It does not build Codecs
+  Debian packages. Scheduler's dependency coordinator verifies their payloads,
+  ownership and dependency controls; Core retains the validated closure and
+  includes both archives in the final distribution. It does not build Codecs
   or substitute another version.
 - Use the SDK's matching MLA Runtime, rendering and tracing/logging libraries.
 - When SDK paths need explicit selection, pass CMake definitions through
@@ -112,15 +114,47 @@ Core-owned dependency builds and packages live under `deps/backend/`, separate
 from each repository's standalone build directory. CMake builds incrementally;
 `--clean` cleans the selected local dependency builds and Core's build.
 
-Before linking, the build verifies installed kernel headers against their
-receipt and checks Runner's consumed contract and Scheduler's exact Runner input. Before staging deployment
+Before linking, Scheduler's dependency coordinator verifies installed kernel
+headers against their receipt and checks Runner's consumed contract and
+Scheduler's exact Runner input. Before staging deployment
 packages, it verifies each Debian package's `/usr` payload matches the selected
 installed tree. Old Internals packages are not selected or downloaded.
 
-Core consumes explicit installed CMake packages, not sibling source includes.
+Core consumes the installed `SimaScheduler` client component, not sibling source
+includes or lower development interfaces. Lower runtime identities remain in the
+validated dependency closure.
 The generated dependency selection is recorded in `build/resolved_manifest.json`
 and `build/buildinfo.json`. Only a complete build reaches final installation;
 this is not a transactional rollback guarantee for SDK or device installation.
+
+Package build info is provisional before CMake configuration. After compilation,
+`build.sh` refreshes it from that build's CMake cache, configured compiler, target
+Python headers and built extension, before install checks or packaging. Target
+Python ABI flags must agree with the extension suffix; the host Python version
+is not used. Python-disabled builds record that profile without a Python ABI.
+
+`compatibility.host_sdk` describes the build host's observed SDK release;
+`compatibility.target_sdk` describes the selected sysroot and compiler. A missing
+target SDK release remains unavailable, even when the host has an SDK release.
+The manifest's platform version is a separate compatibility requirement, not a
+replacement for an unobserved SDK version. `ELXR_SDK_RELEASE_FILE` selects the
+host release file. `NEAT_TARGET_SDK_RELEASE_FILE` can explicitly supply the target
+release file, but must agree with a release file in the selected sysroot.
+`NEAT_BUILDINFO_TOOLCHAIN` preserves an explicit display label alongside, not in
+place of, the configured compiler identity.
+
+The metadata check rejects conflicting compile sysroots, headers and extension
+ABI tags. Separate compile/link sysroots and additional CMake compiler
+argument/target/toolchain contexts are not supported by this metadata path;
+it fails rather than reporting an unverified target identity. Marker-qualified
+NumPy requirements are retained verbatim from `pyproject.toml`, not reduced to
+one unconditional minimum.
+
+The source record uses the actual checkout commit and dirty status. It records
+tracked changes and nonignored untracked file/symlink identities separately;
+ignored build products are not a source snapshot. The metadata output itself is
+excluded from the untracked-content digest to avoid self-reference. A dirty local
+candidate is not identified as a clean published artifact.
 
 For header-only analysis, `--install-deps-only` requires local package overrides.
 It copies headers without building or executing A65/EV code. Documentation-only

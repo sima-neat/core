@@ -180,7 +180,7 @@ make_test_tensor_without_mpk_shape(const std::string& name, const std::string& d
 namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 
 std::vector<std::int64_t> dense_test_strides(const sc::TensorShape& shape,
-                                           const std::string& dtype) {
+                                             const std::string& dtype) {
   std::vector<std::int64_t> strides(shape.size());
   std::int64_t stride = dtype_size_bytes_for_test(dtype);
   for (std::size_t i = shape.size(); i-- > 0;) {
@@ -201,12 +201,10 @@ sc::TensorShape single_batch_op_shape(sc::TensorShape shape) {
 // These are explicit compiler-owned fixtures, not a second MPK interpreter.
 // Public rank changes are authored address-only operations; equal byte counts
 // alone never authorize a view or a fused chain.
-sc::ModelExecutionPlanData make_detess_scalar_plan(const sc::TensorShape& frame,
-                                                  const sc::TensorShape& publication,
-                                                  const sc::TensorShape& tile,
-                                                  const std::string& dtype,
-                                                  std::uint64_t packed_bytes,
-                                                  bool align_c16, bool cblock) {
+sc::ModelExecutionPlanData
+make_detess_scalar_plan(const sc::TensorShape& frame, const sc::TensorShape& publication,
+                        const sc::TensorShape& tile, const std::string& dtype,
+                        std::uint64_t packed_bytes, bool align_c16, bool cblock) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
   const auto dense_bytes = packed_tensor_bytes_for_test(frame, dtype);
@@ -222,13 +220,18 @@ sc::ModelExecutionPlanData make_detess_scalar_plan(const sc::TensorShape& frame,
       value.logical_layout = "HWC";
     value.required_bytes = packed_tensor_bytes_for_test(shape, scalar);
     value.representation = representation;
-    value.storage_binding = sc::StorageBinding{
-        value.id == 0U ? sc::StorageBindingKind::External : sc::StorageBindingKind::Root,
-        value.id, 0U, span, {}, sc::StorageAccess::ReadWrite, std::nullopt};
+    value.storage_binding = sc::StorageBinding{value.id == 0U ? sc::StorageBindingKind::External
+                                                              : sc::StorageBindingKind::Root,
+                                               value.id,
+                                               0U,
+                                               span,
+                                               {},
+                                               sc::StorageAccess::ReadWrite,
+                                               std::nullopt};
     data.values.push_back(std::move(value));
   };
-  const auto add_op = [&](sc::OpKind kind, std::string name, sc::ValueId input,
-                          sc::ValueId output, sc::OpConfig config) {
+  const auto add_op = [&](sc::OpKind kind, std::string name, sc::ValueId input, sc::ValueId output,
+                          sc::OpConfig config) {
     sc::OpSpec op;
     op.id = static_cast<sc::OpId>(data.ops.size());
     op.sequence = op.id + 1U;
@@ -253,8 +256,7 @@ sc::ModelExecutionPlanData make_detess_scalar_plan(const sc::TensorShape& frame,
     data.values.back().storage_binding.reset();
     data.values.back().read_expression =
         sc::ReadExpression{1U, 0U, dense_test_strides(publication, dtype)};
-    add_op(sc::OpKind::Reshape, "singleton_view", 1U, 2U,
-           sc::ReshapeOpConfig{publication});
+    add_op(sc::OpKind::Reshape, "singleton_view", 1U, 2U, sc::ReshapeOpConfig{publication});
     scalar_input = 2U;
   }
   add_value("published", publication, "FP32", packed_tensor_bytes_for_test(publication, "FP32"),
@@ -278,8 +280,8 @@ simaai::neat::CompiledProcessCvuContract make_selected_post_cast_contract() {
     const auto& shape = id < 4U ? inputs[id % 2U] : outputs[id % 2U];
     const std::string dtype = id < 2U || id >= 6U ? "FP32" : "BF16";
     data.values.push_back(sc::ValueSpec{id, "value_" + std::to_string(id),
-                                         packed_tensor_bytes_for_test(shape, dtype), dtype, shape,
-                                         "HWC"});
+                                        packed_tensor_bytes_for_test(shape, dtype), dtype, shape,
+                                        "HWC"});
   }
   data.model_inputs = {0U, 1U};
   for (sc::OpId id = 0U; id < 5U; ++id) {
@@ -305,16 +307,14 @@ simaai::neat::CompiledProcessCvuContract make_selected_post_cast_contract() {
     data.ops.push_back(std::move(op));
   }
   for (std::size_t i = 0U; i < 2U; ++i) {
-    data.backend_ports.push_back({0U, sc::BackendPortDirection::Input, i,
-                                   "ifm" + std::to_string(i), static_cast<sc::ValueId>(i + 2U),
-                                   data.values[i + 2U].required_bytes, 4096U,
-                                   sc::BackendPortAlignmentAuthority::Contract,
-                                   sc::BackendPortAccess::ReadOnly});
-    data.backend_ports.push_back({0U, sc::BackendPortDirection::Output, i,
-                                   "ofm" + std::to_string(i), static_cast<sc::ValueId>(i + 4U),
-                                   data.values[i + 4U].required_bytes, 4096U,
-                                   sc::BackendPortAlignmentAuthority::Contract,
-                                   sc::BackendPortAccess::WriteOnly});
+    data.backend_ports.push_back(
+        {0U, sc::BackendPortDirection::Input, i, "ifm" + std::to_string(i),
+         static_cast<sc::ValueId>(i + 2U), data.values[i + 2U].required_bytes, 4096U,
+         sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::ReadOnly});
+    data.backend_ports.push_back(
+        {0U, sc::BackendPortDirection::Output, i, "ofm" + std::to_string(i),
+         static_cast<sc::ValueId>(i + 4U), data.values[i + 4U].required_bytes, 4096U,
+         sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::WriteOnly});
     data.model_outputs.push_back({i, "head" + std::to_string(i), static_cast<sc::ValueId>(i + 6U)});
   }
   std::string error;
@@ -335,7 +335,8 @@ simaai::neat::CompiledProcessCvuContract make_selected_post_cast_contract() {
   }
   require(post_commands.size() == 1U, "post-MLA casts must share one physical command cohort");
   const auto& post = physical->commands.at(post_commands.front());
-  require(post.members.size() == 2U && post.members[0].semantic_chain == std::vector<sc::OpId>{3U} &&
+  require(post.members.size() == 2U &&
+              post.members[0].semantic_chain == std::vector<sc::OpId>{3U} &&
               post.members[1].semantic_chain == std::vector<sc::OpId>{4U},
           "only the two exact post-MLA semantic casts may be selected");
   const auto result = sc::build_dmabuf_plan_processcvu_command_contract(
@@ -376,7 +377,6 @@ void require_runtime_packed_logical_input_shape(
   require(compiled.runtime_contract.logical_inputs.front().shape == expected, expectation);
 }
 
-
 void verify_canonical_identity_boundary() {
   using namespace simaai::neat::pipeline_internal::sima;
   using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
@@ -406,8 +406,7 @@ void verify_canonical_identity_boundary() {
                    ProcessCvuGraphFamily::VisualFrontend},
       IdentityCase{"track_descriptor", "track_descriptor", "track_descriptor",
                    ProcessCvuGraphFamily::VisualFrontend},
-      IdentityCase{"track_klt", "track_klt", "track_klt",
-                   ProcessCvuGraphFamily::VisualFrontend}};
+      IdentityCase{"track_klt", "track_klt", "track_klt", ProcessCvuGraphFamily::VisualFrontend}};
   ProcessCvuCanonicalFacts facts;
   facts.physical_input_names = {"source"};
   facts.physical_output_names = {"result"};
@@ -456,16 +455,17 @@ void verify_canonical_identity_boundary() {
                   actual.supported_placement_mask == 0U && actual.allowed_frame_patch_mask == 0U,
               "canonical contracts must not retain legacy numerical identity fields");
       require(actual.canonical_contract == completed && payload.graph_id == 236 &&
-                  payload.graph_name == test.source && payload.graph_family_enum ==
-                                                          ProcessCvuGraphFamily::Unknown,
+                  payload.graph_name == test.source &&
+                  payload.graph_family_enum == ProcessCvuGraphFamily::Unknown,
               "identity finalization must preserve completion evidence and raw caller state");
-      require(actual.batch_size == payload.batch_size && actual.input_shapes == payload.input_shapes &&
-                  actual.output_shapes == payload.output_shapes &&
-                  actual.slice_shapes == payload.slice_shapes && actual.q_scale == payload.q_scale &&
-                  actual.q_zp == payload.q_zp &&
-                  compiled.runtime_contract.logical_outputs.front().size_bytes == output.size_bytes &&
-                  compiled.exposed_view.exposed_logical_outputs.front().shape == output.shape,
-              "identity finalization must preserve geometry, quantization and publication");
+      require(
+          actual.batch_size == payload.batch_size && actual.input_shapes == payload.input_shapes &&
+              actual.output_shapes == payload.output_shapes &&
+              actual.slice_shapes == payload.slice_shapes && actual.q_scale == payload.q_scale &&
+              actual.q_zp == payload.q_zp &&
+              compiled.runtime_contract.logical_outputs.front().size_bytes == output.size_bytes &&
+              compiled.exposed_view.exposed_logical_outputs.front().shape == output.shape,
+          "identity finalization must preserve geometry, quantization and publication");
       const auto repeated = build_processcvu_compiled_contract_from_facts(actual, facts);
       require(repeated.payload.graph_name == actual.graph_name &&
                   repeated.payload.graph_family_enum == actual.graph_family_enum &&
@@ -719,12 +719,12 @@ RUN_TEST(
                          [](const auto& value) { return value.backend_output_index == 1; });
         require(view != publication.physical_views.end() &&
                     view->relation ==
-                        ::simaai::runtime::gstreamer::TensorStagePublicationRelation::SingletonAxes,
+                        ::simaai::scheduler::client::TensorStagePublicationRelation::SingletonAxes,
                 "canonical Scheduler request must preserve the semantic status view");
         for (const auto& value : publication.physical_views) {
           if (value.backend_output_index != 1)
             require(value.relation ==
-                        ::simaai::runtime::gstreamer::TensorStagePublicationRelation::Identity,
+                        ::simaai::scheduler::client::TensorStagePublicationRelation::Identity,
                     "canonical lowering must not authorize unrelated output reshapes");
         }
 
@@ -737,7 +737,7 @@ RUN_TEST(
         for (const auto& value :
              unauthorised.stages.front().native_kernel->publication->physical_views)
           require(value.relation ==
-                      ::simaai::runtime::gstreamer::TensorStagePublicationRelation::Identity,
+                      ::simaai::scheduler::client::TensorStagePublicationRelation::Identity,
                   "kernel inspection must not manufacture shape-view permission");
       }
 
@@ -1053,18 +1053,18 @@ RUN_TEST(
       require(!direct_inputs.payload.output_tensors.empty() &&
                   std::any_of(direct_inputs.payload.output_tensors.begin(),
                               direct_inputs.payload.output_tensors.end(),
-                              [](const auto& t) { return t.layout_kind == SIMA_EV_LAYOUT_TILED; }),
+                              [](const auto& t) { return t.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED; }),
               "direct preproc compile inputs should synthesize tiled typed output descriptor");
       {
         const auto tiled_it =
             std::find_if(direct_inputs.payload.output_tensors.begin(),
                          direct_inputs.payload.output_tensors.end(),
-                         [](const auto& t) { return t.layout_kind == SIMA_EV_LAYOUT_TILED; });
+                         [](const auto& t) { return t.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED; });
         require(tiled_it != direct_inputs.payload.output_tensors.end(),
                 "direct preproc compile inputs should include a tiled output descriptor");
-        require(sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_H, 0) == 32 &&
-                    sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_W, 0) == 128 &&
-                    sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_C, 0) == 3,
+        require(sima_ev_tensor_tile_axis_size(&tiled_it->descriptor(), SIMA_EV_AXIS_H, 0) == 32 &&
+                    sima_ev_tensor_tile_axis_size(&tiled_it->descriptor(), SIMA_EV_AXIS_W, 0) == 128 &&
+                    sima_ev_tensor_tile_axis_size(&tiled_it->descriptor(), SIMA_EV_AXIS_C, 0) == 3,
                 "direct preproc compile inputs should preserve typed output tile geometry");
       }
       {
@@ -1174,8 +1174,8 @@ RUN_TEST(
             packed_tess_runtime.output_shapes.front(), packed_tess_runtime.slice_shapes.front(),
             packed_tess_runtime.output_dtype, "HWC", 16U, &output_desc,
             "packed tess runtime should synthesize typed output tensor");
-        packed_tess_runtime.input_tensors = {input_desc};
-        packed_tess_runtime.output_tensors = {output_desc};
+        packed_tess_runtime.input_tensors = {{input_desc, packed_tess_runtime.input_dtype}};
+        packed_tess_runtime.output_tensors = {{output_desc, packed_tess_runtime.output_dtype}};
       }
       const std::uint64_t packed_tess_expected_bytes = 639616U * dtype_size_bytes_for_test("BF16");
 
@@ -1301,7 +1301,7 @@ RUN_TEST(
                 "quanttess runtime config logical outputs should stay faithful to the semantic MPK "
                 "output shape");
         require(exact_quanttess_runtime.output_tensors.size() == 1U &&
-                    exact_quanttess_runtime.output_tensors.front().storage.nbytes == 638976U,
+                    exact_quanttess_runtime.output_tensors.front().descriptor().storage.nbytes == 638976U,
                 "quanttess runtime config should preserve the MPK packed output byte count instead "
                 "of using fixed full-tile slots");
 
@@ -1313,8 +1313,6 @@ RUN_TEST(
             extract_quanttess_contract_subset_from_stage(exact_quanttess_stage);
         require(rank3_quanttess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
                 "quanttess subset extraction should preserve the MPK-authored rank-3 input shape");
-
-
       }
 
       CompiledProcessCvuRuntimeConfig invalid_runtime;
@@ -1403,8 +1401,10 @@ RUN_TEST(
         require_build_dense_test_tensor(
             packed_multi_runtime.output_shapes.front(), packed_multi_runtime.output_dtype, "HW",
             &output_desc, "packed multi runtime should synthesize typed output tensor");
-        packed_multi_runtime.input_tensors = {input_desc0, input_desc1};
-        packed_multi_runtime.output_tensors = {output_desc, output_desc};
+        packed_multi_runtime.input_tensors = {{input_desc0, packed_multi_runtime.input_dtype},
+                                             {input_desc1, packed_multi_runtime.input_dtype}};
+        packed_multi_runtime.output_tensors = {{output_desc, packed_multi_runtime.output_dtype},
+                                              {output_desc, packed_multi_runtime.output_dtype}};
       }
       packed_multi_runtime.q_scale_list = {0.5, 0.25};
       packed_multi_runtime.q_zp_list = {-7, 9};
@@ -1422,19 +1422,21 @@ RUN_TEST(
 
       {
         const auto fixture = sima_test::compile_processcvu_fixture(
-            make_detess_scalar_plan({1, 1, 1, 1000}, {1, 1000}, {1, 1, 1000}, "INT8",
-                                    1008U, true, true), "detessdequant");
+            make_detess_scalar_plan({1, 1, 1, 1000}, {1, 1000}, {1, 1, 1000}, "INT8", 1008U, true,
+                                    true),
+            "detessdequant");
         const auto& compiled = fixture.contract;
         require(compiled.payload.input_tensors.size() == 1U &&
                     compiled.payload.output_tensors.size() == 1U,
                 "ResNet scalar chain must retain one fused descriptor pair");
         require(tensor_desc_shape_for_test(compiled.payload.input_tensors.front()) ==
-                    std::vector<std::int64_t>({1, 1, 1, 1000}) &&
+                        std::vector<std::int64_t>({1, 1, 1, 1000}) &&
                     tensor_desc_shape_for_test(compiled.payload.output_tensors.front()) ==
-                    std::vector<std::int64_t>({1, 1, 1, 1000}),
+                        std::vector<std::int64_t>({1, 1, 1, 1000}),
                 "fused execution must retain the explicit Detess frame geometry");
         require(compiled.payload.output_shapes == std::vector<std::vector<int>>{{1, 1000}} &&
-                    compiled.payload.runtime_output_logical_shapes == std::vector<std::vector<int>>{{1, 1000}} &&
+                    compiled.payload.runtime_output_logical_shapes ==
+                        std::vector<std::vector<int>>{{1, 1000}} &&
                     compiled.runtime_contract.logical_outputs.size() == 1U &&
                     compiled.runtime_contract.logical_outputs.front().shape ==
                         std::vector<std::int64_t>({1, 1000}) &&
@@ -1449,17 +1451,83 @@ RUN_TEST(
       }
 
       {
+        // Identical rank-two dimensions do not identify a legacy NC/HW grammar.
+        // Typed recipes own trailing W,C axes even with the canonical HWC label.
+        for (const std::string layout : {std::string{}, std::string{"HWC"}}) {
+          auto typed =
+              make_detess_scalar_plan({1, 16}, {1, 16}, {1, 16}, "INT8", 16U, false, false);
+          typed.ops.front().kernel = "typed_detess_alias";
+          for (auto& value : typed.values)
+            value.logical_layout = layout;
+          const auto fixture =
+              sima_test::compile_processcvu_fixture(std::move(typed), "detessdequant");
+          for (const auto* descriptor : {&fixture.contract.payload.input_tensors.front(),
+                                         &fixture.contract.payload.output_tensors.front()}) {
+            require(tensor_desc_shape_for_test(*descriptor) == sc::TensorShape({1, 16}) &&
+                        tensor_desc_axes_for_test(*descriptor) ==
+                            std::vector<std::uint8_t>({SIMA_EV_AXIS_W, SIMA_EV_AXIS_C}),
+                    "typed rank-two geometry must not enter legacy NC/HW inference");
+          }
+        }
+
+        struct LegacyGeometryCase {
+          sc::TensorShape frame;
+          sc::TensorShape tile;
+          std::uint64_t packed_bytes;
+          sc::TensorShape execution;
+        };
+        for (const auto& test : {LegacyGeometryCase{{1, 7}, {7}, 16U, {1, 1, 1, 7}},
+                                 LegacyGeometryCase{{2, 3}, {1, 1, 1}, 96U, {1, 2, 3, 1}}}) {
+          auto legacy = make_detess_scalar_plan(test.frame, test.frame, test.tile, "INT8",
+                                                test.packed_bytes, true, true);
+          std::get<sc::DetessellateOpConfig>(legacy.ops.front().config).frame_shape_semantics =
+              sc::DetessFrameShapeSemantics::LegacyMpk;
+          for (auto& value : legacy.values)
+            value.logical_layout = "HWC";
+          const auto fixture =
+              sima_test::compile_processcvu_fixture(std::move(legacy), "detessdequant");
+          require(tensor_desc_shape_for_test(fixture.contract.payload.input_tensors.front()) ==
+                          test.execution &&
+                      tensor_desc_shape_for_test(fixture.contract.payload.output_tensors.front()) ==
+                          test.execution &&
+                      fixture.contract.payload.input_tensors.front().descriptor().storage.nbytes ==
+                          test.packed_bytes &&
+                      fixture.contract.runtime_contract.logical_outputs.front().shape == test.frame,
+                  "legacy rank-two NC/HW keeps its exact transport proof and public shape");
+        }
+        for (const auto semantics : {sc::DetessFrameShapeSemantics::LegacyMpk,
+                                     static_cast<sc::DetessFrameShapeSemantics>(255)}) {
+          auto ambiguous =
+              make_detess_scalar_plan({1, 16}, {1, 16}, {1, 16}, "INT8", 16U, false, false);
+          std::get<sc::DetessellateOpConfig>(ambiguous.ops.front().config).frame_shape_semantics =
+              semantics;
+          bool rejected = false;
+          try {
+            (void)sima_test::compile_processcvu_fixture(std::move(ambiguous), "detessdequant");
+          } catch (const std::invalid_argument& error) {
+            const std::string detail = error.what();
+            rejected = detail.find(semantics == sc::DetessFrameShapeSemantics::LegacyMpk
+                                       ? "ambiguous between NC and HW"
+                                       : "unknown frame-shape semantics") != std::string::npos;
+          }
+          require(rejected, "ambiguous or unknown legacy rank-two geometry must fail closed");
+        }
+      }
+
+      {
         constexpr std::uint64_t packed_bytes = 365408U;
         constexpr std::uint64_t output_bytes = 601U * 601U * sizeof(float);
         const auto fixture = sima_test::compile_processcvu_fixture(
-            make_detess_scalar_plan({601, 601}, {1, 601, 601}, {67, 601}, "INT8",
-                                    packed_bytes, true, true), "detessdequant");
+            make_detess_scalar_plan({601, 601}, {1, 601, 601}, {67, 601}, "INT8", packed_bytes,
+                                    true, true),
+            "detessdequant");
         const auto& compiled = fixture.contract;
-        require(compiled.payload.input_tensors.size() == 1U && compiled.payload.output_tensors.size() == 1U &&
+        require(compiled.payload.input_tensors.size() == 1U &&
+                    compiled.payload.output_tensors.size() == 1U &&
                     compiled.runtime_contract.logical_outputs.size() == 1U,
                 "WC fixture must retain exactly one fused input/output/public view");
-        const auto& input = compiled.payload.input_tensors.front();
-        const auto& output = compiled.payload.output_tensors.front();
+        const auto& input = compiled.payload.input_tensors.front().descriptor();
+        const auto& output = compiled.payload.output_tensors.front().descriptor();
         require(tensor_desc_shape_for_test(input) == std::vector<std::int64_t>({601, 601}) &&
                     tensor_desc_shape_for_test(output) == std::vector<std::int64_t>({601, 601}),
                 "explicit WC frames must remain rank-2 throughout fused execution");
@@ -1483,24 +1551,26 @@ RUN_TEST(
                     compiled.runtime_contract.logical_outputs.front().size_bytes == output_bytes,
                 "explicit public singleton axis and FP32 byte span must survive lowering");
         const auto padded = sima_test::compile_processcvu_fixture(
-            make_detess_scalar_plan({601, 601}, {1, 601, 601}, {67, 601}, "INT8",
-                                    packed_bytes, true, false), "detessdequant");
-        require(padded.contract.payload.input_tensors.front().layout.tiled.flags ==
+            make_detess_scalar_plan({601, 601}, {1, 601, 601}, {67, 601}, "INT8", packed_bytes,
+                                    true, false),
+            "detessdequant");
+        require(padded.contract.payload.input_tensors.front().descriptor().layout.tiled.flags ==
                     SIMA_EV_TILED_FLAG_PADDED_HWC_C16,
                 "align_c16 without cblock must retain padded-HWC encoding");
       }
 
       {
         const auto fixture = sima_test::compile_processcvu_fixture(
-            make_detess_scalar_plan({1, 1, 1, 213}, {1, 213}, {1, 1, 64}, "INT8",
-                                    224U, true, false), "detessdequant");
+            make_detess_scalar_plan({1, 1, 1, 213}, {1, 213}, {1, 1, 64}, "INT8", 224U, true,
+                                    false),
+            "detessdequant");
         const auto& compiled = fixture.contract;
         require(tensor_desc_shape_for_test(compiled.payload.output_tensors.front()) ==
                     std::vector<std::int64_t>({1, 1, 1, 213}),
                 "execution geometry must not be reconstructed from the rank-2 public view");
         require(compiled.payload.output_shapes == std::vector<std::vector<int>>{{1, 213}} &&
                     compiled.payload.runtime_output_logical_shapes.front() ==
-                    std::vector<int>({1, 213}) &&
+                        std::vector<int>({1, 213}) &&
                     compiled.runtime_contract.logical_outputs.front().shape ==
                         std::vector<std::int64_t>({1, 213}),
                 "rank-2 publication must preserve the explicit private reshape");
@@ -1508,17 +1578,18 @@ RUN_TEST(
 
       {
         for (const auto& shape : {sc::TensorShape{1, 213}, sc::TensorShape{1, 1, 1, 213}}) {
-          const auto tile = shape.size() == 2U ? sc::TensorShape{1, 213}
-                                              : sc::TensorShape{1, 1, 213};
+          const auto tile =
+              shape.size() == 2U ? sc::TensorShape{1, 213} : sc::TensorShape{1, 1, 213};
           const auto fixture = sima_test::compile_processcvu_fixture(
-              make_detess_scalar_plan(shape, shape, tile, "BF16", 448U, true, false),
-              "detesscast");
+              make_detess_scalar_plan(shape, shape, tile, "BF16", 448U, true, false), "detesscast");
           const auto& compiled = fixture.contract;
           require(tensor_desc_shape_for_test(compiled.payload.input_tensors.front()) == shape &&
-                      tensor_desc_shape_for_test(compiled.payload.output_tensors.front()) == shape &&
+                      tensor_desc_shape_for_test(compiled.payload.output_tensors.front()) ==
+                          shape &&
                       compiled.runtime_contract.logical_outputs.front().shape == shape,
                   "rank-2 and rank-4 DetessCast must preserve exact typed execution/public shapes");
-          require(compiled.payload.input_dtype == "BF16" && compiled.payload.output_dtype == "FP32" &&
+          require(compiled.payload.input_dtype == "BF16" &&
+                      compiled.payload.output_dtype == "FP32" &&
                       compiled.runtime_contract.logical_outputs.front().size_bytes == 852U,
                   "fused DetessCast must preserve BF16->FP32 type and exact published size");
         }
@@ -1526,20 +1597,27 @@ RUN_TEST(
 
       {
         const auto fixture = sima_test::compile_processcvu_fixture(
-            make_detess_scalar_plan({1, 1, 1, 213}, {1, 213}, {1, 1, 213}, "BF16",
-                                    448U, true, false), "detesscast");
+            make_detess_scalar_plan({1, 1, 1, 213}, {1, 213}, {1, 1, 213}, "BF16", 448U, true,
+                                    false),
+            "detesscast");
         const auto& compiled = fixture.contract;
-        require(compiled.payload.input_tensors.size() == 1U && compiled.payload.output_tensors.size() == 1U &&
-                    tensor_desc_shape_for_test(compiled.payload.input_tensors.front()) == sc::TensorShape{1, 1, 1, 213} &&
-                    tensor_desc_shape_for_test(compiled.payload.output_tensors.front()) == sc::TensorShape{1, 1, 1, 213},
+        require(compiled.payload.input_tensors.size() == 1U &&
+                    compiled.payload.output_tensors.size() == 1U &&
+                    tensor_desc_shape_for_test(compiled.payload.input_tensors.front()) ==
+                        sc::TensorShape{1, 1, 1, 213} &&
+                    tensor_desc_shape_for_test(compiled.payload.output_tensors.front()) ==
+                        sc::TensorShape{1, 1, 1, 213},
                 "BF16 private reshape must not change fused DetessCast execution geometry");
-        require(compiled.payload.output_shapes == std::vector<std::vector<int>>{{1, 213}} &&
-                    compiled.payload.runtime_output_logical_shapes == std::vector<std::vector<int>>{{1, 213}} &&
-                    compiled.runtime_contract.logical_outputs.size() == 1U &&
-                    compiled.runtime_contract.logical_outputs.front().shape == sc::TensorShape{1, 213} &&
-                    compiled.runtime_contract.logical_outputs.front().publication_relation ==
-                        simaai::neat::pipeline_internal::sima::PublicationViewRelation::SingletonAxes,
-                "BF16 rank-2 publication needs exact private singleton relation authority");
+        require(
+            compiled.payload.output_shapes == std::vector<std::vector<int>>{{1, 213}} &&
+                compiled.payload.runtime_output_logical_shapes ==
+                    std::vector<std::vector<int>>{{1, 213}} &&
+                compiled.runtime_contract.logical_outputs.size() == 1U &&
+                compiled.runtime_contract.logical_outputs.front().shape ==
+                    sc::TensorShape{1, 213} &&
+                compiled.runtime_contract.logical_outputs.front().publication_relation ==
+                    simaai::neat::pipeline_internal::sima::PublicationViewRelation::SingletonAxes,
+            "BF16 rank-2 publication needs exact private singleton relation authority");
       }
 
       {
@@ -1547,13 +1625,15 @@ RUN_TEST(
         require(compiled.payload.input_dtype == "BF16" && compiled.payload.output_dtype == "FP32",
                 "semantic command selection must select post-MLA BF16->FP32, not pre-MLA casts");
         require(compiled.payload.num_in_tensor == 2 && compiled.payload.input_shapes.size() == 2U &&
-                    compiled.payload.input_shapes == std::vector<std::vector<int>>{{12, 52, 45}, {3, 13, 4}},
+                    compiled.payload.input_shapes ==
+                        std::vector<std::vector<int>>{{12, 52, 45}, {3, 13, 4}},
                 "selected post-MLA command cohort must preserve both heads and their geometry");
-        require(compiled.runtime_contract.logical_outputs.size() == 2U &&
-                    compiled.runtime_contract.logical_outputs[0].shape == sc::TensorShape{12, 52, 45} &&
-                    compiled.runtime_contract.logical_outputs[1].shape == sc::TensorShape{3, 13, 4} &&
-                    compiled.runtime_contract.output_order.size() == 2U,
-                "selected post-MLA casts must expose both exact routed output heads");
+        require(
+            compiled.runtime_contract.logical_outputs.size() == 2U &&
+                compiled.runtime_contract.logical_outputs[0].shape == sc::TensorShape{12, 52, 45} &&
+                compiled.runtime_contract.logical_outputs[1].shape == sc::TensorShape{3, 13, 4} &&
+                compiled.runtime_contract.output_order.size() == 2U,
+            "selected post-MLA casts must expose both exact routed output heads");
         for (std::size_t i = 0; i < 2U; ++i) {
           const auto& route = compiled.runtime_contract.output_order[i];
           const auto& output = compiled.runtime_contract.logical_outputs[i];

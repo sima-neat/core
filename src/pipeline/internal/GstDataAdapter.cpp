@@ -858,18 +858,18 @@ bool attach_video_meta(GstBuffer** buffer, const SampleSpec& spec, std::string* 
   }
 
   const std::string fmt_name = upper_copy(spec.format);
-  if (fmt_name == "NV12") {
+  if (fmt_name == "NV12" || fmt_name == "NV16") {
     if (spec.planes.size() != 2) {
       if (err)
-        *err = "video meta: NV12 requires 2 planes";
+        *err = "video meta: " + fmt_name + " requires 2 planes";
       return false;
     }
     const PlaneInfo& y = spec.planes[0];
     const PlaneInfo& uv = spec.planes[1];
     if (y.width != spec.width || y.height != spec.height || uv.width != spec.width ||
-        uv.height != spec.height / 2) {
+        uv.height != (fmt_name == "NV16" ? spec.height : spec.height / 2)) {
       if (err)
-        *err = "video meta: NV12 plane dims mismatch";
+        *err = "video meta: " + fmt_name + " plane dims mismatch";
       return false;
     }
   } else if (fmt_name == "I420") {

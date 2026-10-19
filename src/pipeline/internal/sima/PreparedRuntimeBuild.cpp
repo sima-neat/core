@@ -9,6 +9,7 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/sima/MpkContract.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
 #include "gst/SimaPreparedRuntimeAbi.h"
@@ -2119,6 +2120,10 @@ bool processcvu_build_stage_tensor_descs_local(const StageStaticSpec& stage,
     cfg->num_in_tensor = static_cast<int32_t>(cfg->input_tensors.size());
     return true;
   }
+  if (!payload.input_tensors.empty() || !payload.output_tensors.empty()) {
+    if (error_message) *error_message = "processcvu stage has incomplete authored tensor ports";
+    return false;
+  }
   cfg->input_tensors.clear();
   cfg->output_tensors.clear();
   for (const auto& logical : stage.logical_inputs) {
@@ -2127,7 +2132,7 @@ bool processcvu_build_stage_tensor_descs_local(const StageStaticSpec& stage,
                                                   logical.size_bytes, &desc, error_message)) {
       return false;
     }
-    cfg->input_tensors.push_back(desc);
+    cfg->input_tensors.emplace_back(desc, logical.dtype);
   }
   for (const auto& logical : stage.logical_outputs) {
     sima_ev_tensor_desc desc{};
@@ -2135,7 +2140,7 @@ bool processcvu_build_stage_tensor_descs_local(const StageStaticSpec& stage,
                                                   logical.size_bytes, &desc, error_message)) {
       return false;
     }
-    cfg->output_tensors.push_back(desc);
+    cfg->output_tensors.emplace_back(desc, logical.dtype);
   }
   if (cfg->input_tensors.empty() || cfg->output_tensors.empty()) {
     if (error_message) {
@@ -2241,8 +2246,8 @@ bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
                                                          error_message)) {
       return false;
     }
-    cfg->input_tensors.push_back(input_desc);
-    cfg->output_tensors.push_back(output_desc);
+    cfg->input_tensors.emplace_back(input_desc, input_dtype);
+    cfg->output_tensors.emplace_back(output_desc, output_dtype);
   }
   cfg->num_in_tensor = static_cast<int32_t>(cfg->input_tensors.size());
   return true;
@@ -4058,12 +4063,12 @@ load_graph_contract_from_manifest_local(const SimaPluginStaticManifest& manifest
       continue;
     }
     std::string load_error;
-    auto contract = load_mpk_contract_from_pack_root(pack_root->string(), &load_error);
-    if (contract.has_value()) {
+    auto loaded = static_contract::MpkDecoder::load_package_root(*pack_root, &load_error);
+    if (loaded.has_value()) {
       if (pack_root_out) {
         *pack_root_out = *pack_root;
       }
-      return contract;
+      return std::move(loaded->contract);
     }
     prepared_runtime_debug_log_local("graph overlay pack_root load failed root=%s error=%s",
                                      pack_root->string().c_str(), load_error.c_str());
@@ -4103,12 +4108,12 @@ std::optional<MpkContract> load_graph_contract_from_pipeline_elements_local(
       continue;
     }
     std::string load_error;
-    auto contract = load_mpk_contract_from_pack_root(pack_root->string(), &load_error);
-    if (contract.has_value()) {
+    auto loaded = static_contract::MpkDecoder::load_package_root(*pack_root, &load_error);
+    if (loaded.has_value()) {
       if (pack_root_out) {
         *pack_root_out = *pack_root;
       }
-      return contract;
+      return std::move(loaded->contract);
     }
     prepared_runtime_debug_log_local(
         "graph overlay pipeline pack_root load failed root=%s error=%s",
@@ -4175,8 +4180,7 @@ bool prepared_runtime_graph_dump_enabled_local() {
     return raw && *raw && std::strcmp(raw, "0") != 0;
   };
   const char* explicit_path = std::getenv("SIMA_PREPARED_RUNTIME_GRAPH_OUTPUT_PATH");
-  return (explicit_path && *explicit_path) || enabled("SIMA_PREPARED_RUNTIME_GRAPH_DUMP") ||
-         enabled("SIMA_MPK_GRAPH_DUMP");
+  return (explicit_path && *explicit_path) || enabled("SIMA_PREPARED_RUNTIME_GRAPH_DUMP");
 }
 
 std::string runtime_graph_token_local(std::string raw) {
@@ -4200,16 +4204,6 @@ prepared_runtime_graph_output_path_local(const std::filesystem::path& pack_root,
                                          const MpkContract& contract) {
   if (const char* raw = std::getenv("SIMA_PREPARED_RUNTIME_GRAPH_OUTPUT_PATH"); raw && *raw) {
     return std::filesystem::path(raw);
-  }
-  if (const char* raw = std::getenv("SIMA_MPK_GRAPH_OUTPUT_PATH"); raw && *raw) {
-    std::filesystem::path graph_path(raw);
-    const std::string stem = graph_path.stem().string();
-    std::string runtime_stem = stem;
-    if (runtime_stem.size() > 6U && runtime_stem.rfind("_graph") == runtime_stem.size() - 6U) {
-      runtime_stem.erase(runtime_stem.size() - 6U);
-    }
-    runtime_stem += "_runtime_graph";
-    return graph_path.parent_path() / (runtime_stem + graph_path.extension().string());
   }
   std::string base_name;
   if (!contract.model_name.empty()) {
@@ -4424,13 +4418,35 @@ void overlay_processmla_runtime_graph_node_local(
   }
 }
 
-::simaai::runtime::Status lower_kernel_stage_local(StageStaticSpec* stage) {
-  namespace rt = ::simaai::runtime;
-  namespace gs = ::simaai::runtime::gstreamer;
+bool image_publication_matches_local(
+    const std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication>& authored,
+    const std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication>&
+        checked) {
+  if (!authored || !checked)
+    return !authored && !checked;
+  if (authored->format != checked->format || authored->width != checked->width ||
+      authored->height != checked->height || authored->planes.size() != checked->planes.size())
+    return false;
+  for (std::size_t i = 0; i < authored->planes.size(); ++i) {
+    const auto& a = authored->planes[i];
+    const auto& b = checked->planes[i];
+    if (a.backend_output_index != b.backend_output_index || a.byte_offset != b.byte_offset ||
+        a.stride != b.stride || a.visible_rows != b.visible_rows ||
+        a.visible_row_bytes != b.visible_row_bytes)
+      return false;
+  }
+  return true;
+}
+
+::simaai::scheduler::client::Status lower_kernel_stage_local(StageStaticSpec* stage) {
+  namespace rt = ::simaai::scheduler::client;
+  namespace gs = ::simaai::scheduler::client;
   const auto invalid = [](std::string field, std::string message) -> rt::Status {
     return rt::Error{rt::ErrorCode::InvalidRequest, std::move(field), std::move(message)};
   };
   auto& payload = stage->processcvu;
+  if (payload.image_transform && payload.image_fps_num > 0 && payload.image_fps_den <= 0)
+    return invalid("stage.framerate", "a known image rate requires a positive denominator");
   if (payload.requested_run_target.empty())
     payload.requested_run_target = payload.run_target;
   if (payload.run_target.empty())
@@ -4463,7 +4479,12 @@ void overlay_processmla_runtime_graph_node_local(
     recipe->target = rt::Hardware::EV74;
     gs::TensorStageMember member;
     member.executable = kernel_lowering::PreprocFrameAdapter::checked_executable(*policy);
-    member.outputs.push_back({0, 0, gs::TensorStagePortSource::Output});
+    recipe->image_publication =
+        kernel_lowering::PreprocFrameAdapter::checked_image_publication(*policy);
+    const auto output_count =
+        recipe->image_publication ? recipe->image_publication->planes.size() : 1;
+    for (std::size_t i = 0; i < output_count; ++i)
+      member.outputs.push_back({i, 0, gs::TensorStagePortSource::Output});
     recipe->members.push_back(std::move(member));
     recipe->frame_adapter_factory =
         [policy = std::move(policy)]() -> rt::Result<std::shared_ptr<gs::TensorStageFrameAdapter>> {
@@ -4481,11 +4502,15 @@ void overlay_processmla_runtime_graph_node_local(
       return *failure;
     recipe = std::get<std::shared_ptr<KernelStageRecipe>>(std::move(checked));
   }
+  if (!image_publication_matches_local(stage->image_publication, recipe->image_publication))
+    return invalid("stage.image_publication",
+                   "authored image publication differs from the checked output contract");
+  recipe->image_publication = stage->image_publication;
   auto contract = std::make_shared<simaai::gst::TensorBufferPublishContract>();
   if (!build_publish_contract_from_manifest_stage_local(*stage, contract.get(), &error))
     return invalid("stage.publication", error);
   attach_processcvu_dequant_qparams_to_publish_contract_local(*stage, payload, contract.get());
-  if (image) {
+  if (image && !recipe->image_publication) {
     const simaai::gst::TensorBufferPublishLogicalOutput* selected = nullptr;
     for (const auto& logical : contract->logical_outputs) {
       const bool named = logical.logical_name == payload.primary_output_name ||
@@ -4526,7 +4551,7 @@ void overlay_processmla_runtime_graph_node_local(
       input.shape = stage->logical_inputs.front().shape;
     }
     if (input.shape.empty() && !payload.input_tensors.empty())
-      input.shape = shape_vector_from_ev_shape_local(payload.input_tensors.front().shape);
+      input.shape = shape_vector_from_ev_shape_local(payload.input_tensors.front().descriptor().shape);
     input.dtype = processcvu_caps_format_from_dtype_local(input.dtype, payload.input_dtype);
     if (!input.shape.empty())
       sink = processmla_make_tensor_caps_from_tensor_local(input, input.dtype, false);
@@ -4534,7 +4559,44 @@ void overlay_processmla_runtime_graph_node_local(
   publication.input_caps =
       std::shared_ptr<GstCaps>(sink ? sink : make_generic_tensor_set_caps_local(), gst_caps_unref);
   GstCaps* source = nullptr;
-  if (!processcvu_primary_output_uses_packed_caps_from_payload_local(payload) &&
+  if (recipe->image_publication) {
+    const auto& published = *recipe->image_publication;
+    source = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING,
+                                 gst_video_format_to_string(published.format), "width", G_TYPE_INT,
+                                 gint(published.width), "height", G_TYPE_INT,
+                                 gint(published.height), nullptr);
+    if (payload.image_fps_num > 0)
+      gst_caps_set_simple(source, "framerate", GST_TYPE_FRACTION, payload.image_fps_num,
+                          payload.image_fps_den, nullptr);
+    if (payload.image_transform && published.planes.size() > 1) {
+      GstVideoColorimetry color{};
+      color.range = payload.image_transform->color.range == ImageYuvRange::Full
+                        ? GST_VIDEO_COLOR_RANGE_0_255
+                        : GST_VIDEO_COLOR_RANGE_16_235;
+      color.matrix = payload.image_transform->color.matrix == ImageColorMatrix::Bt601
+                         ? GST_VIDEO_COLOR_MATRIX_BT601
+                         : GST_VIDEO_COLOR_MATRIX_BT709;
+      gchar* name = gst_video_colorimetry_to_string(&color);
+      if (name) {
+        gst_caps_set_simple(source, "colorimetry", G_TYPE_STRING, name, nullptr);
+        g_free(name);
+      }
+      const auto& siting = payload.image_transform->color.output_siting;
+      auto site = GST_VIDEO_CHROMA_SITE_UNKNOWN;
+      if (siting[0] == ImageChromaSiting::Cosited)
+        site = GstVideoChromaSite(site | GST_VIDEO_CHROMA_SITE_H_COSITED);
+      if (siting[1] == ImageChromaSiting::Cosited)
+        site = GstVideoChromaSite(site | GST_VIDEO_CHROMA_SITE_V_COSITED);
+      if (site == GST_VIDEO_CHROMA_SITE_UNKNOWN)
+        site = GST_VIDEO_CHROMA_SITE_NONE;
+      gchar* chroma = gst_video_chroma_site_to_string(site);
+      if (chroma) {
+        gst_caps_set_simple(source, "chroma-site", G_TYPE_STRING, chroma, nullptr);
+        g_free(chroma);
+      }
+    }
+  }
+  if (!source && !processcvu_primary_output_uses_packed_caps_from_payload_local(payload) &&
       contract->logical_outputs.size() == 1 && contract->output_order.size() <= 1) {
     const auto& logical = contract->logical_outputs.front();
     auto output = caps_tensor_from_publish_logical_output_local(logical);
@@ -4554,7 +4616,7 @@ void overlay_processmla_runtime_graph_node_local(
       source ? source : make_generic_tensor_set_caps_local(), gst_caps_unref);
   std::set<std::size_t> layouts;
   for (const auto& member : recipe->members) {
-    auto inspected = ::simaai::scheduler::inspect_kernel(member.executable);
+    auto inspected = ::simaai::scheduler::client::inspect_kernel(member.executable);
     if (const auto* failure = std::get_if<rt::Error>(&inspected))
       return *failure;
     const auto& checked = std::get<rt::KernelInspection>(inspected);
@@ -4592,6 +4654,25 @@ void overlay_processmla_runtime_graph_node_local(
       }
     }
   }
+  if (recipe->image_publication) {
+    auto image_view = std::make_shared<gs::TensorStageImagePublication>(*recipe->image_publication);
+    for (auto& plane : image_view->planes) {
+      const auto logical = std::find_if(
+          stage->logical_outputs.begin(), stage->logical_outputs.end(), [&](const auto& value) {
+            return value.backend_output_index == plane.backend_output_index;
+          });
+      if (logical == stage->logical_outputs.end() || logical->byte_offset < 0)
+        return invalid("stage.image", "raw image plane lacks an exact publication route");
+      const auto physical = std::find_if(
+          stage->physical_outputs.begin(), stage->physical_outputs.end(),
+          [&](const auto& value) { return value.physical_index == logical->physical_index; });
+      if (physical == stage->physical_outputs.end() || physical->source_byte_offset < 0)
+        return invalid("stage.image", "raw image plane lacks an allocation route");
+      plane.byte_offset =
+          std::uint64_t(physical->source_byte_offset) + std::uint64_t(logical->byte_offset);
+    }
+    recipe->image_publication = std::move(image_view);
+  }
   recipe->publication = std::move(publication);
   stage->native_kernel = std::move(recipe);
   return {};
@@ -4625,7 +4706,7 @@ bool resolve_graph_processcvu_tiled_channel_encoding(const std::string& canonica
 }
 
 bool build_kernel_stage_publication(const StageStaticSpec& stage,
-                                    ::simaai::runtime::gstreamer::TensorStagePublication* output,
+                                    ::simaai::scheduler::client::TensorStagePublication* output,
                                     std::string* error) {
   if (output && stage.native_kernel && stage.native_kernel->publication) {
     *output = *stage.native_kernel->publication;
@@ -4687,11 +4768,12 @@ bool build_kernel_stage_publication(const StageStaticSpec& stage,
   return true;
 }
 
-::simaai::runtime::Status complete_kernel_input_routes(SimaPluginStaticManifest* manifest,
-                                                       std::size_t stage_index) {
-  const auto invalid = [](std::string message) -> ::simaai::runtime::Status {
-    return ::simaai::runtime::Error{::simaai::runtime::ErrorCode::InvalidRequest,
-                                    "stage.input_routes", std::move(message)};
+::simaai::scheduler::client::Status complete_kernel_input_routes(SimaPluginStaticManifest* manifest,
+                                                                 std::size_t stage_index) {
+  const auto invalid = [](std::string message) -> ::simaai::scheduler::client::Status {
+    return ::simaai::scheduler::client::Error{
+        ::simaai::scheduler::client::ErrorCode::InvalidRequest, "stage.input_routes",
+        std::move(message)};
   };
   if (!manifest || stage_index >= manifest->stages.size())
     return invalid("input route completion requires an existing manifest stage");
@@ -4750,13 +4832,13 @@ bool build_kernel_stage_publication(const StageStaticSpec& stage,
   return {};
 }
 
-::simaai::runtime::Status
+::simaai::scheduler::client::Status
 prepare_kernel_stage_recipes(SimaPluginStaticManifest* manifest,
                              const std::optional<SimaPluginStaticManifest>& original_manifest,
                              const std::vector<PipelineElementSpec>& pipeline_elements,
                              const std::vector<std::string>& model_source_paths,
                              const NameTransform& name_transform) {
-  namespace rt = ::simaai::runtime;
+  namespace rt = ::simaai::scheduler::client;
   const auto invalid = [](std::string message) -> rt::Status {
     return rt::Error{rt::ErrorCode::InvalidRequest, "stage.contract", std::move(message)};
   };

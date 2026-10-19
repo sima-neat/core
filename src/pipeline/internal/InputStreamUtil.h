@@ -3,6 +3,8 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include <array>
+#include <span>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -28,6 +30,7 @@ namespace simaai::neat {
 struct InputOptions;
 struct Sample;
 struct SampleSpec;
+struct InputStreamOptions;
 
 struct Status {
   std::string message;
@@ -128,7 +131,7 @@ struct TensorCompatDims {
 
 std::vector<int64_t> tensor_shape_from_compat_dims(int width, int height, int depth,
                                                    TensorLayout layout);
-TensorCompatDims tensor_compat_dims_from_shape(const std::vector<int64_t>& shape,
+TensorCompatDims tensor_compat_dims_from_shape(std::span<const int64_t> shape,
                                                TensorLayout layout);
 
 CapKey capkey_from_spec(const SampleSpec& spec);
@@ -156,6 +159,43 @@ struct SampleSpec {
   CapKey caps_key;
   std::string caps_string;
 };
+
+// Borrowed metadata only: no mapping, payload ownership, caps or heap allocation.
+// Shape borrows the input and therefore must not outlive the call's input value.
+struct InputGeometry {
+  SampleMediaKind kind = SampleMediaKind::Tensor;
+  std::string_view media_type;
+  std::string_view format;
+  TensorDType dtype = TensorDType::UInt8;
+  TensorLayout layout = TensorLayout::Unknown;
+  std::span<const int64_t> shape;
+  int width = -1, height = -1, depth = -1;
+  struct Planes {
+    std::array<PlaneInfo, 3> values{};
+    std::size_t count = 0;
+    void clear() noexcept { count = 0; }
+    void push_back(const PlaneInfo& plane) { values.at(count++) = plane; }
+    auto begin() const noexcept { return values.begin(); }
+    auto end() const noexcept { return values.begin() + count; }
+  } planes;
+  size_t tensor_view_bytes_actual = 0;
+  size_t required_bytes_actual = 0;
+};
+// Exact tensor contract matching with the existing unit-batch projection and
+// single-channel HW convenience view; non-unit axes/batches never disappear.
+bool input_geometry_matches_logical_shape(const InputGeometry&,
+    std::span<const std::int64_t> expected, TensorLayout expected_layout) noexcept;
+InputGeometry describe_tensor_geometry_or_throw(const Tensor&, const InputOptions&, const char*);
+InputGeometry describe_mat_geometry_or_throw(const cv::Mat&, const InputOptions&, const char*);
+SampleSpec derive_mat_spec_or_throw(const cv::Mat&, const InputOptions&);
+// Caller rejection is synchronous and never mutates Run terminal/error state.
+void validate_public_input(const cv::Mat&, const InputOptions&, const InputStreamOptions&,
+                           const char*);
+void validate_public_input(const Tensor&, const InputOptions&, const InputStreamOptions&,
+                           const char*);
+void validate_public_input(const Sample&, const InputOptions&, const InputStreamOptions&,
+                           const char*);
+
 
 Expected<SampleSpec, Status> derive_sample_spec_or_error(const Sample& sample);
 SampleSpec derive_sample_spec_or_throw(const Sample& sample);
@@ -215,8 +255,7 @@ SampleTimingOverrides sample_timing_overrides_from_sample(const Sample& sample);
 
 GstCaps* caps_from_spec(const SampleSpec& spec);
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
-                                 InputBufferPoolGuard& guard,
-                                 bool demand_coherency = false);
+                                 InputBufferPoolGuard& guard);
 int64_t next_input_frame_id();
 bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptions& opt);
 void maybe_update_simaai_meta_name(GstBuffer* buffer, const std::string& name);

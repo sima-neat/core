@@ -50,7 +50,6 @@ cd website && yarn start           # preview the site
 | `route_refactor_validation.sh` | 특정 경로 계획 기능에 대한 회귀 테스트를 수행합니다 (CI에서 호출). |
 | `install_neat_plugins.sh` | 프레임워크의 GStreamer 플러그인을 시스템 플러그인 디렉터리에 설치합니다. |
 | `install_codex_skill.sh` | Codex CLI의 NEAT 스킬을 설치합니다(개발 편의를 위한 기능). |
-| `fix_devkit_runtime.sh` | 새로 설치된 개발 키트의 런타임 라이브러리/경로를 수정하고 코프로세서를 재시작합니다. `simaai-appcomplex.service`가 실행 중일 때만 M4를 부팅합니다. |
 | `sync_neatdecoder.sh` / `use_neatdecoder.sh` | 번들된 디코더 빌드와 외부 디코더 빌드 간에 전환합니다. |
 
 ### `core/scripts/ci/`, `core/scripts/dev/`, `core/scripts/release/`

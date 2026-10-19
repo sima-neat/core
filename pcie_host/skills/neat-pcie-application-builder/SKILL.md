@@ -1,65 +1,76 @@
 ---
 name: neat-pcie-application-builder
-description: Use when building host-side C++ or Python applications that run compiled Neat models on a connected Modalix PCIe Card through simaai::neat::pcie::Model or pyneatpcie.Model. Do not use for pcie::Runtime, DevKit-local Neat applications, model compilation, or PCIe package maintenance.
+description: Build host-side C++ or Python applications for model inference and GenAI on a connected Modalix PCIe Card using the public Neat PCIe Model or GenAIModel APIs. Do not use for pcie::Runtime, DevKit-local applications, model preparation, or PCIe package maintenance.
 ---
 
 # Neat PCIe Application Builder
 
 ## Overview
 
-Build native host applications against the installed Neat PCIe `Model` API. Treat the installed
+Build native host applications against the installed Neat PCIe application APIs. Treat the installed
 PCIe header, Python module, and packaged tutorials as the source of truth. This is a separate API
 from the Neat Library used inside the SDK or directly on a DevKit.
 
-## Workflow
+The expected input is an MPK model archive or a prepared LLiMa model directory and the requested
+C++ or Python host application behavior. Follow explicit user requirements when they are compatible
+with the installed public API; treat the defaults below as guidance.
 
-1. Confirm that the application runs on an Ubuntu host connected to a Modalix PCIe Card.
-2. Establish the installed API surface by reading `references/source-of-truth.md`.
-3. Read `references/model-lifecycle.md` for every application. Choose synchronous `run()` or
-   pipelined `push()`/`pull()` and preserve the required build and close lifecycle.
-4. Read `references/tensors-and-images.md` when constructing inputs, consuming outputs, handling
-   multiple inputs, or choosing tensor mode versus image mode.
-5. Read `references/model-options.md` when configuring a card, queue, preprocessing, or object
-   decode behavior.
-6. Before claiming success, read `references/build-and-validation.md` and run the checks possible
-   on the current host. Distinguish compile/import validation from connected-card validation.
+## Choose References
+
+- Read `references/source-of-truth.md` when generating or reviewing API use, inspecting an
+  installed release, or resolving version differences.
+- For MPK model archives, use `pcie::Model`. Read `references/model-lifecycle.md` when implementing
+  build, inference, pipelining, cleanup, or multiple-model behavior.
+- For `pcie::Model`, read `references/tensors-and-images.md` when constructing inputs, consuming
+  outputs, handling multiple inputs, or choosing tensor mode versus image mode.
+- For `pcie::Model`, read `references/model-options.md` when configuring a card, queue, preprocessing,
+  MLA-only mode, or object decode behavior.
+- For prepared LLiMa model directories (LLM, VLM, or ASR), use `pcie::genai::GenAIModel`
+  and read `references/genai.md`. Do not apply the MPK build or queue workflow.
+- Read `references/build-and-validation.md` when building, testing, or reporting validation. Do not
+  claim connected-card execution from compile or import checks alone.
 
 ## Defaults
 
-- In C++, include `<simaai/neat/pcie/Model.h>` and use the
-  `simaai::neat::pcie` namespace.
-- In Python, import `pyneatpcie as pcie` from the PCIe host Python environment.
-- In tensor mode, inspect `model.info()` before allocating or naming model-ready inputs. In image
+- For `pcie::Model` in C++, include `<simaai/neat/pcie/Model.h>` and use `simaai::neat::pcie`.
+  For GenAI, include `<simaai/neat/pcie/genai/GenAIModel.h>` and use `simaai::neat::pcie::genai`.
+- In Python, use `pyneatpcie as pcie` for `Model` or `from pyneatpcie import genai` for GenAI
+  from the PCIe host Python environment.
+- In `pcie::Model` tensor mode, inspect `model.info()` before allocating or naming model-ready inputs. In image
   mode, treat that information as the card-side preprocessing output contract, not the submitted
   image contract.
-- Enable `mla_only` only when the application owns the model's dtype conversion; then
+- For `pcie::Model`, enable `mla_only` only when the application owns the model's dtype conversion; then
   `model.info()` is the MLA's own contract and, for INT8 tensors, its `quant` parameters are the
   only valid source for the conversion.
-- Use `run()` for ordinary request/response inference. Use `push()` and `pull()` only when the
-  application benefits from bounded pipelining.
-- Use finite build and inference timeouts in applications that must fail predictably.
-- Close every successfully built model on normal and error paths. Prefer a Python context manager.
-- Keep generated applications runnable with explicit dependency, build, and run commands.
+- Use `run()` for ordinary request/response inference. Use `pcie::Model` `push()`/`pull()` for bounded
+  pipelining, or GenAI `stream()` for incremental output and cancellation.
+- For performance-sensitive `pcie::Model` tensor pipelines, prefer a bounded ring of reusable contiguous input
+  buffers. Wrap C++ storage with `Tensor::from_external()` or Python arrays with
+  `Tensor.from_numpy(..., copy=False)`, and recycle a buffer only after its matching result is
+  pulled. Use simpler owning or copying constructors when reuse and staging overhead do not matter.
+- Use finite startup and inference timeouts in applications that must fail predictably.
+- Close every opened model on normal and error paths. Prefer a Python context manager.
+
+## Completion
+
+For implementation requests, provide runnable source, required dependency and build commands, a
+concrete run command, and the validation level reached. State clearly when connected-card behavior
+was not exercised.
 
 ## Boundaries
 
-- Use `pcie::Model` and the supporting public types declared by `Model.h` only.
+- Use `pcie::Model` or `pcie::genai::GenAIModel` and their supporting public types.
 - Do not include `Runtime.h` or generate code using `pcie::Runtime`, `ModelConfig`, `ModelId`,
   `RequestId`, `Completion`, `load()`, `try_enqueue()`, or `retrieve()`.
-- Multiple models are allowed as independent `Model` objects assigned to distinct physical queues.
+- `pcie::Model` objects need distinct physical queues. GenAI models use separate handles without
+  `pcie::Model` queue numbers; mixed workloads are subject to card resources.
 - Do not substitute the regular Neat `Model`, `Graph`, `Node`, or `Run` APIs. They are not part of
   the PCIe host application surface.
 - Do not use PCIe implementation headers, construct raw GStreamer pipelines, or launch
-  `pcie-pipeline-builder` directly.
-- Do not add model compilation or Model SDK workflows. The input is an already compiled Neat model
-  archive.
+  `pcie-pipeline-builder` or GenAI workers directly.
+- Do not invent PCIe task-specific GenAI handles, HTTP serving, graph fragments, LoRA switching,
+  or cached-image reuse when the installed API does not expose them.
+- Model compilation and preparation are outside this skill. Start with an MPK model archive
+  or a prepared LLiMa model directory.
 - Verify behavior against the installed release instead of guessing from memory or another Neat
   environment.
-
-## References
-
-- `references/source-of-truth.md`
-- `references/model-lifecycle.md`
-- `references/tensors-and-images.md`
-- `references/model-options.md`
-- `references/build-and-validation.md`

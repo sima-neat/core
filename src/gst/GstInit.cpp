@@ -1,4 +1,4 @@
-#include <simaai/runtime/memory/coherency.h>
+#include <simaai/scheduler/client/capabilities.h>
 // src/gst/GstInit.cpp
 #include "gst/GstInit.h"
 
@@ -10,9 +10,9 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/UxLogging.h"
 
-#include <simaai/runtime/gstreamer/stage.h>
+#include <simaai/scheduler/client/dma_memory.h>
 
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include <gst/gst.h>
 #include <glib.h>
 
@@ -1162,14 +1162,7 @@ void gst_init_once() {
   std::int64_t post_init_us = 0;
   std::call_once(once, [&]() {
     did_init = true;
-#if defined(SIMA_CORE_DEMAND_COHERENCY_V1) && SIMA_CORE_DEMAND_COHERENCY_V1
-    // Before GStreamer/filter/runtime owners. The cold probe tolerates unrelated
-    // constructor threads; cached refusal keeps graph selection Legacy.
-    internal::dmabuf::Error coherency_error;
-    if (!internal::dmabuf::initializeLocalCoherencyV1(&coherency_error))
-      g_warning("Demand CPU coherency unavailable; retaining Legacy: %s",
-                coherency_error.message().c_str());
-#endif
+
     const auto setup_start = pipeline_internal::build_timing_now();
     int argc = 0;
     char** argv = nullptr;
@@ -1352,7 +1345,7 @@ void gst_init_once() {
     if (!register_latest_by_stream_mux()) {
       throw std::runtime_error("Failed to register Neat latest-by-stream mux");
     }
-    if (!simaai::runtime::gstreamer::register_element()) {
+    if (!simaai::scheduler::client::register_kernel_runner()) {
       throw std::runtime_error("Failed to register Runtime neatkernelrunner");
     }
     if (env_bool("SIMA_GST_SUPPRESS_JSON_WARNINGS", true)) {

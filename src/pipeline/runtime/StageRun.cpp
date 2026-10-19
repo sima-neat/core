@@ -1,3 +1,4 @@
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/FeatureTypes.h"
 
@@ -693,6 +694,8 @@ std::string image_format_name(simaai::neat::ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case simaai::neat::ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case simaai::neat::ImageSpec::PixelFormat::NV16:
+    return "NV16";
   case simaai::neat::ImageSpec::PixelFormat::I420:
     return "I420";
   case simaai::neat::ImageSpec::PixelFormat::UNKNOWN:
@@ -1448,6 +1451,8 @@ clone_preproc_group_with_roi_capacity(const std::vector<std::shared_ptr<Node>>& 
   bool patched = false;
   for (const auto& node : group) {
     if (const auto* preproc = dynamic_cast<const simaai::neat::Preproc*>(node.get())) {
+      if (internal::ImageTransformAccess::policy(*preproc))
+        throw std::invalid_argument("Image frontends do not support model ROI-list cloning");
       PreprocOptions opt = preproc->options();
       if (!opt.compiled_contract) {
         throw std::runtime_error("Preproc ROI-list: model has no admitted preprocessing contract");
@@ -2974,6 +2979,13 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   key.kind = StageKind::Postprocess;
   key.model_id = simaai::neat::internal::ModelAccess::stage_cache_identity(model);
   key.input = make_input_key(src_opt, &wire_input.tensor);
+  const auto box_model_opt = simaai::neat::internal::ModelAccess::options(model);
+  key.box_opt.decode_type = box_model_opt.decode_type;
+  key.box_opt.detection_threshold = box_model_opt.score_threshold;
+  key.box_opt.nms_iou_threshold = box_model_opt.nms_iou_threshold;
+  key.box_opt.top_k = box_model_opt.top_k;
+  key.box_opt.superpoint = box_model_opt.superpoint;
+  key.box_opt.yolox_seg_pose.pose_classes = box_model_opt.yolox_seg_pose.pose_classes;
 
   const auto geometry_policy =
       simaai::neat::internal::ModelAccess::stage_cache_has_dynamic_boxdecode_geometry(model)

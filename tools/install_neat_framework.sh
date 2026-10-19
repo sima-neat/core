@@ -21,6 +21,8 @@ set -euo pipefail
 #   neat-install-packages folder for paired DevKit sync.
 # - In eLxr SDK mode, exposes the sysroot-installed neat command at
 #   /usr/local/bin/neat for convenient use inside the SDK container.
+# - In Modalix board mode, installs python3-venv with apt when python3 lacks
+#   ensurepip (Platform 3.0.0 images ship without it).
 # - On devices with writable /media/nvme, creates the venv at /media/nvme/pyneat and
 #   exposes it via $HOME/pyneat for consistent activation instructions.
 # - On devices without /media/nvme, creates the venv directly at $HOME/pyneat.
@@ -32,8 +34,14 @@ set -euo pipefail
 #   - neat-install-manifest.txt when installed from a packaged release
 #
 # Environment overrides:
+# - FORCE_INSTALL: set to 1 to skip platform compatibility checks and request the
+#   EV74 kernel-build compatibility override, including on a paired DevKit.
+#   Set by sima-cli neat install -f; other values do not force. Requires an
+#   override-aware firmware package; does not establish runtime compatibility.
+#   Firmware integrity, ownership, DMA safety, and package safeguards still apply.
 # - PYNEAT_VENV_DIR: Python virtualenv path
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
+#   Also passed to the Sentinel installer.
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
 # - ELXR_SDK_RELEASE_FILE: SDK release metadata path (default: /etc/sdk-release)
@@ -41,7 +49,7 @@ set -euo pipefail
 # - NEAT_BUILDINFO_FILE: DevKit build metadata path (default: /etc/buildinfo)
 # - NEAT_PACKAGE_MANIFEST: package manifest filename/path (default: manifest.json)
 # - NEAT_INSTALLER_SKIP_PLATFORM_CHECK: ON/OFF (default: OFF) explicit escape hatch
-#   for development installs on nonstandard images.
+#   for development installs on nonstandard images; does not override EV74 checks.
 # - DEVKIT_SYNC_DEVKIT_IP: paired DevKit IP for SDK->DevKit artifact sync
 # - DEVKIT_DEPLOY_USER: DevKit SSH user (default: sima)
 # - DEVKIT_SYNC_REQUIRED: ON/OFF (default: ON) fail hard if paired DevKit sync fails
@@ -62,6 +70,9 @@ set -euo pipefail
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
 #   staged EV74 firmware after board package replacement.
+# - NEAT_INSTALLER_SENTINEL_REQUIRED: ON/OFF (default: OFF) fail the board
+#   install when Sentinel, the telemetry daemon Model::benchmark() reads,
+#   cannot be installed. OFF warns and continues; CI sets ON.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -75,12 +86,15 @@ NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL="${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL:-OFF}"
 NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
+NEAT_INSTALLER_SENTINEL_REQUIRED="${NEAT_INSTALLER_SENTINEL_REQUIRED:-OFF}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 NEAT_OS_RELEASE_FILE="${NEAT_OS_RELEASE_FILE:-/etc/os-release}"
 NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
 NEAT_PACKAGE_MANIFEST="${NEAT_PACKAGE_MANIFEST:-manifest.json}"
 NEAT_INSTALLER_SKIP_PLATFORM_CHECK="${NEAT_INSTALLER_SKIP_PLATFORM_CHECK:-OFF}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
+# Installs the Sentinel telemetry daemon on boards; ships next to this installer.
+SENTINEL_INSTALLER_PATH="$(dirname "${INSTALLER_SCRIPT_PATH}")/install_sentinel.sh"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
@@ -101,6 +115,18 @@ Options:
   --local      Install only into the current environment from artifacts in cwd.
                Disables paired SDK->DevKit sync behavior.
   -h, --help   Show this help.
+
+Environment:
+  FORCE_INSTALL=1  Skip platform compatibility checks and request the EV74
+                   kernel-build compatibility override (also on a paired DevKit).
+                   Set automatically by sima-cli neat install core -f.
+                   Requires an override-aware firmware package. A mismatched
+                   runtime may be unsafe; force does not establish compatibility.
+                   Firmware integrity, ownership, DMA safety, and package
+                   dependency/removal checks still apply.
+
+Example:
+  FORCE_INSTALL=1 bash install_neat_framework.sh --local
 EOF
 }
 
@@ -436,25 +462,29 @@ run_sudo() {
   exit 1
 }
 
-configure_board_i2c_access() {
-  if ! getent group i2c >/dev/null 2>&1; then
-    if ! (run_sudo groupadd --system i2c); then
-      log "WARNING: Failed to create the i2c group; benchmark power telemetry may be unavailable."
-      return 0
-    fi
+require_sentinel_installer() {
+  if [[ ! -f "${SENTINEL_INSTALLER_PATH}" ]]; then
+    echo "Missing ${SENTINEL_INSTALLER_PATH}; it ships with this installer and installs the Sentinel telemetry daemon." >&2
+    return 1
   fi
+}
 
-  if id -nG sima 2>/dev/null | grep -qw i2c; then
-    log "sima is already in the i2c group; skipping."
+# Model::benchmark() reads board telemetry from the Sentinel daemon but runs
+# without it, so a failed Sentinel install only warns unless
+# NEAT_INSTALLER_SENTINEL_REQUIRED=ON. Run the script through bash because
+# downloads may drop its executable bit. Sentinel's installer reads the sudo
+# password from SUDO_PASSWORD, which may hold the DEVKIT_PASSWORD value.
+install_board_sentinel() {
+  if require_sentinel_installer &&
+    SUDO_PASSWORD="${SUDO_PASSWORD}" bash "${SENTINEL_INSTALLER_PATH}"; then
     return 0
   fi
 
-  if ! (run_sudo usermod -aG i2c sima); then
-    log "WARNING: Failed to add sima to the i2c group; benchmark power telemetry may be unavailable."
-    return 0
+  if [[ "${NEAT_INSTALLER_SENTINEL_REQUIRED}" == "ON" ]]; then
+    echo "Sentinel installation failed and NEAT_INSTALLER_SENTINEL_REQUIRED=ON." >&2
+    exit 1
   fi
-
-  log "Added sima to the i2c group; log out and back in before running benchmark power measurements."
+  log "WARNING: Sentinel is not installed. Model::benchmark() reports power and board telemetry as unavailable until you run 'sima-cli neat install sentinel'."
 }
 
 read_metadata_field() {
@@ -658,6 +688,10 @@ read_devkit_platform_version() {
 }
 
 ensure_platform_compatible() {
+  if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
+    log "FORCE_INSTALL=1; skipping platform compatibility check. Package may not work on this platform."
+    return 0
+  fi
   if [[ "${NEAT_INSTALLER_SKIP_PLATFORM_CHECK}" == "ON" ]]; then
     log "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON; skipping platform compatibility check."
     return 0
@@ -838,13 +872,16 @@ sysroot_neat_install_packages_dir() {
 
 ensure_sima_lmm_sysroot_deps() {
   local sysroot="$1"
-  local -a dependencies=("usr/include/nlohmann/json.hpp:nlohmann-json3-dev")
+  # libsima_neat.so links cpp-httplib, which links brotli.
+  local -a dependencies=(
+    "usr/include/nlohmann/json.hpp:nlohmann-json3-dev"
+    "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
+    "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
+  )
   if compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
     dependencies+=(
       "usr/lib/aarch64-linux-gnu/libfmt.so.10:libfmt10:arm64"
       "usr/lib/aarch64-linux-gnu/libspdlog.so.1.15:libspdlog1.15:arm64"
-      "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
-      "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
       "usr/lib/aarch64-linux-gnu/libfftw3.so.3:libfftw3-double3:arm64"
       "usr/lib/aarch64-linux-gnu/libavcodec.so.61:libavcodec61:arm64"
       "usr/lib/aarch64-linux-gnu/libavformat.so.61:libavformat61:arm64"
@@ -912,7 +949,8 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}"/*.whl \
     "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}/${NEAT_PACKAGE_MANIFEST}" \
-    "${cache_dir}"/install_neat_framework.sh
+    "${cache_dir}"/install_neat_framework.sh \
+    "${cache_dir}"/install_sentinel.sh
 
   local file
   for file in "${DEBS[@]}"; do
@@ -935,6 +973,9 @@ cache_install_artifacts_in_sysroot() {
   fi
   run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
   run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
+  require_sentinel_installer || exit 1
+  run_sudo cp -f "${SENTINEL_INSTALLER_PATH}" "${cache_dir}/install_sentinel.sh"
+  run_sudo chmod 0755 "${cache_dir}/install_sentinel.sh"
 }
 
 collect_cached_devkit_deploy_files() {
@@ -957,6 +998,7 @@ collect_cached_devkit_deploy_files() {
   collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
   collect_wheel_files "${cache_dir}" CACHED_WHEELS
   local cached_installer="${cache_dir}/install_neat_framework.sh"
+  local cached_sentinel_installer="${cache_dir}/install_sentinel.sh"
   local cached_manifest="${cache_dir}/${NEAT_INSTALL_MANIFEST}"
   local cached_package_manifest="${cache_dir}/${NEAT_PACKAGE_MANIFEST}"
 
@@ -976,10 +1018,13 @@ collect_cached_devkit_deploy_files() {
     echo "No cached PyNeat wheel found for paired DevKit sync in: ${cache_dir}" >&2
     exit 1
   fi
-  if [[ ! -f "${cached_installer}" ]]; then
-    echo "Cached installer script not found for paired DevKit sync: ${cached_installer}" >&2
-    exit 1
-  fi
+  local script
+  for script in "${cached_installer}" "${cached_sentinel_installer}"; do
+    if [[ ! -f "${script}" ]]; then
+      echo "Cached installer script not found for paired DevKit sync: ${script}" >&2
+      exit 1
+    fi
+  done
 
   CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}")
   if [[ -f "${cached_manifest}" ]]; then
@@ -988,7 +1033,7 @@ collect_cached_devkit_deploy_files() {
   if [[ -f "${cached_package_manifest}" ]]; then
     CACHED_DEPLOY_FILES+=("${cached_package_manifest}")
   fi
-  CACHED_DEPLOY_FILES+=("${cached_installer}")
+  CACHED_DEPLOY_FILES+=("${cached_installer}" "${cached_sentinel_installer}")
 }
 
 apt_package_database_is_healthy() {
@@ -1050,88 +1095,18 @@ deb_package_is_installed() {
   dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii '
 }
 
-simaai_ota_command_path() {
-  command -v simaai-ota 2>/dev/null || true
-}
-
-# Resolve only the executable declared by the installed Palette package. New
-# platform cohorts may omit OTA entirely; a declared but missing tool is broken.
-resolve_direct_palette_ota() {
-  local palette_files command_path resolved candidate candidate_resolved owner owner_package
-  local -a declared=()
-  if ! deb_package_is_installed simaai-palette-modalix; then
-    echo "simaai-palette-modalix is not installed." >&2
-    return 1
-  fi
-  palette_files="$(dpkg-query -L simaai-palette-modalix)" || return 1
-  while IFS= read -r candidate; do
-    if [[ "${candidate}" == /* && "${candidate##*/}" == simaai-ota ]]; then
-      declared+=("${candidate}")
-    fi
-  done <<<"${palette_files}"
-  command_path="$(simaai_ota_command_path)"
-  if [[ "${#declared[@]}" == 0 && -z "${command_path}" ]]; then
-    return 0
-  fi
-  if [[ "${#declared[@]}" == 0 || "${command_path}" != /* || ! -x "${command_path}" ]]; then
-    echo "Palette OTA declaration does not match an available executable." >&2
-    return 1
-  fi
-  resolved="$(readlink -e "${command_path}")" || return 1
-  [[ -f "${resolved}" ]] || return 1
-  for candidate in "${declared[@]}"; do
-    candidate_resolved="$(readlink -e "${candidate}")" || return 1
-    if [[ "${candidate_resolved}" == "${resolved}" ]]; then
-      owner="$(dpkg-query -S "${resolved}" 2>/dev/null)" || return 1
-      owner_package="${owner%%: /*}"
-      if [[ ! "${owner_package}" =~ ^simaai-palette-modalix(:[a-z0-9-]+)?$ ||
-            "${owner}" != "${owner_package}: ${resolved}" ]]; then
-        echo "OTA executable is not owned by simaai-palette-modalix: ${resolved}." >&2
-        return 1
-      fi
-      printf '%s\n' "${resolved}"
-      return 0
-    fi
-  done
-  echo "OTA command is not the Palette-declared executable." >&2
-  return 1
-}
-
-verify_canonical_palette_and_ota_installation() {
-  if ! board_runtime_is_legacy; then
-    resolve_direct_palette_ota >/dev/null
-    return $?
-  fi
-  local ota_path ota_owner
+verify_canonical_palette_installation() {
   if ! deb_package_is_installed simaai-palette-modalix; then
     echo "simaai-palette-modalix is not installed after the native Modalix transaction." >&2
     return 1
   fi
-  ota_path="$(simaai_ota_command_path)"
-  if [[ "${ota_path}" != "/usr/bin/simaai-ota" || ! -x /usr/bin/simaai-ota ]]; then
-    echo "Canonical simaai-ota is missing after the native Modalix transaction: ${ota_path:-<missing>}." >&2
-    return 1
-  fi
-  ota_owner="$(dpkg-query -S /usr/bin/simaai-ota 2>/dev/null || true)"
-  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "/usr/bin/simaai-ota is not owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
-    return 1
-  fi
 }
 
-# Direct-runtime installs preserve native Palette and OTA identity rather than
-# performing legacy Palette recovery. Absence is captured explicitly.
+# Preserve the native platform package identity across direct-runtime installs.
+# Palette 3 no longer promises an OTA executable; do not discover or invoke one.
 capture_direct_platform_identity() {
-  local ota_path
-  ota_path="$(resolve_direct_palette_ota)" || return 1
   dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${Status}\n' \
-    simaai-palette-modalix || return 1
-  if [[ -n "${ota_path}" ]]; then
-    printf 'OTA_PRESENT %s\n' "${ota_path}"
-    sha256sum "${ota_path}" || return 1
-  else
-    printf 'OTA_ABSENT\n'
-  fi
+    simaai-palette-modalix
 }
 
 remove_installed_local_deb_packages() {
@@ -1212,7 +1187,6 @@ stop_board_runtime_before_install() {
   local svc
   for svc in \
       simaai-pipeline-manager.service \
-      simaai-appcomplex.service \
       rctd.service \
       encoder.service \
       decoder.service \
@@ -1222,92 +1196,23 @@ stop_board_runtime_before_install() {
       run_sudo systemctl reset-failed "${svc}" >/dev/null 2>&1 || true
     fi
   done
-
-  if [[ -x /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex ]]; then
-    run_sudo /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex || true
-  else
-    run_sudo pkill -TERM -x mlashmcomplex >/dev/null 2>&1 || true
-    sleep 0.5
-    run_sudo pkill -KILL -x mlashmcomplex >/dev/null 2>&1 || true
-  fi
-
-  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
 }
 
 activate_board_runtime_after_install() {
-  if ! board_runtime_is_legacy; then
-    if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
-          -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
-      log "Activating staged EV74 firmware."
-      run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
-    else
-      log "EV74 firmware activation skipped."
-    fi
-    return 0
-  fi
-  if ! command -v systemctl >/dev/null 2>&1; then
-    return 0
-  fi
-
-  # These files are recreated by simaai-appcomplex.service.  Remove stale IPC
-  # before the post-install MLA init/reset path so clients cannot observe an
-  # old dispatcher lifetime after package replacement.
-  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
-  # Package configuration intentionally does not restart services.  Reload
-  # systemd here so the owned maintenance window starts services from the unit
-  # files that were just unpacked.
-  run_sudo systemctl daemon-reload || true
-
   if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
         -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
-    log "Activating staged EV74 firmware and resetting runtime state."
-    run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
-  else
-    log "EV74 firmware activation skipped; starting simaai-appcomplex.service directly."
-    if systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
-      run_sudo systemctl restart simaai-appcomplex.service || true
+    local force_install=0
+    if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
+      force_install=1
     fi
+    log "Activating staged EV74 firmware."
+    # Scope the normalized override to activation, after sudo environment filtering.
+    # Do not preserve unrelated caller variables or expand SKIP_PLATFORM_CHECK.
+    run_sudo env "FORCE_INSTALL=${force_install}" /usr/libexec/sima-neat-firmware/install.sh --activate
+  else
+    log "EV74 firmware activation skipped."
   fi
 }
-
-verify_board_runtime_services() {
-  if ! board_runtime_is_legacy; then
-    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
-    return 0
-  fi
-  local service="simaai-appcomplex.service"
-
-  if ! command -v systemctl >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if ! systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
-    return 0
-  fi
-
-  # The Debian maintainer script is intentionally generated through debhelper,
-  # and deb-systemd-invoke treats service start failures as non-fatal so package
-  # transactions can still complete.  For this installer the runtime is not
-  # usable without the MLA shared-memory dispatcher, so make readiness explicit:
-  # try one start/restart if the unit is inactive, then fail with the unit status
-  # instead of leaving users with later "Connecting to server failed" errors.
-  if ! systemctl is-active --quiet "${service}"; then
-    log "${service} is not active after package install; attempting to start it once."
-    run_sudo systemctl start "${service}" || true
-    sleep 1
-  fi
-
-  if ! systemctl is-active --quiet "${service}"; then
-    echo "${service} is not active after NEAT package installation." >&2
-    run_sudo systemctl --no-pager --full status "${service}" >&2 || true
-    run_sudo journalctl -u "${service}" --no-pager -n 80 >&2 || true
-    run_sudo bash -c 'for f in /sys/class/remoteproc/remoteproc*/name /sys/class/remoteproc/remoteproc*/state; do [ -e "$f" ] && printf "%s: " "$f" && cat "$f"; done' >&2 || true
-    exit 1
-  fi
-
-  log "Verified ${service} is active."
-}
-
 
 restart_board_codec_services() {
   if ! board_runtime_is_legacy; then
@@ -1682,15 +1587,14 @@ complete_board_install_after_packages() {
   fi
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
-  verify_canonical_palette_and_ota_installation
+  verify_canonical_palette_installation
   activate_board_runtime_after_install
   restart_board_codec_services
   verify_board_codec_services
-  verify_board_runtime_services
   if [[ -n "${direct_platform_before}" ]]; then
     direct_platform_after="$(capture_direct_platform_identity)" || return 1
     if [[ "${direct_platform_after}" != "${direct_platform_before}" ]]; then
-      echo "Native Palette/OTA identity changed during direct-runtime installation." >&2
+      echo "Native platform identity changed during direct-runtime installation." >&2
       return 1
     fi
   fi
@@ -1927,9 +1831,11 @@ install_debs_on_board() {
     board_install_specs+=("${board_heal_specs[@]}")
   fi
 
+  # File ownership transitions must be declared by the packages' Breaks/Replaces
+  # metadata. Removal simulation alone cannot detect undeclared file collisions;
+  # keep dpkg's ownership rejection enabled for the real transaction.
   local -a apt_install_args=(
     apt-get install -y --fix-broken --allow-downgrades --reinstall
-    -o Dpkg::Options::=--force-overwrite
   )
 
   local simulation_log
@@ -1972,7 +1878,8 @@ install_debs_on_board() {
     log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
   fi
 
-  run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
+  # Opting into maintenance fallback does not waive file ownership checks.
+  run_sudo dpkg -i "${DEBS[@]}"
   run_sudo apt-get check
   complete_board_install_after_packages "${direct_platform_before}"
 }
@@ -1988,7 +1895,19 @@ remove_stale_global_sima_lmm_pip_install() {
   fi
 }
 
+ensure_python_venv_support() {
+  python3 -c 'import ensurepip' >/dev/null 2>&1 && return 0
+
+  log "Python venv support (ensurepip) is missing; installing python3-venv with apt."
+  refresh_apt_metadata_for_board_install
+  if ! run_sudo apt-get install -y python3-venv; then
+    echo "Failed to install python3-venv. Run 'sudo apt-get update && sudo apt-get install -y python3-venv', then rerun this installer." >&2
+    exit 1
+  fi
+}
+
 install_python_environment() {
+  ensure_python_venv_support
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
   remove_stale_global_sima_lmm_pip_install
@@ -2228,6 +2147,8 @@ deploy_artifacts_to_paired_devkit_if_configured() {
   remote_install_cmd="set -euo pipefail
 remote_dir=$(printf '%q' "${remote_dir}")
 installer_name=$(printf '%q' "${installer_basename}")
+export FORCE_INSTALL=$(printf '%q' "${FORCE_INSTALL:-0}")
+export NEAT_INSTALLER_SENTINEL_REQUIRED=$(printf '%q' "${NEAT_INSTALLER_SENTINEL_REQUIRED}")
 cleanup_remote_artifacts() {
   rm -rf \"\${remote_dir}\"
 }
@@ -2256,11 +2177,13 @@ install_for_environment() {
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     modalix-board)
-      # Preserve the established board ordering: provision PyNeat before the
-      # board-specific package recovery and runtime restart transaction.
+      # Sentinel comes first so a required Sentinel that fails to install
+      # leaves the installed Neat packages untouched. Then preserve the
+      # established board ordering: provision PyNeat before the board-specific
+      # package recovery and runtime restart transaction.
+      install_board_sentinel
       install_python_environment
       install_debs_on_board
-      configure_board_i2c_access
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     *)

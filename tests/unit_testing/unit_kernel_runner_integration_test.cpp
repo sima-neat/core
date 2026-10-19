@@ -1,19 +1,13 @@
 #include "pipeline/internal/sima/KernelRunnerIntegration.h"
-#include "pipeline/internal/MemoryCoherencyPolicy.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
-#include <simaai/kernels/authoring.h>
-#include <gstsimaaitensorbuffer.h>
+#include <simaai/scheduler/testing/probe.h>
+#include <gstsimaaitensorbuffer_meta.h>
+#include <simaai/scheduler/testing/route_probe.h>
 
-#include <simaai/runtime/gstreamer/prepared_tensor_stage.h>
-#include <simaai/runtime/gstreamer/memory_coherency.h>
-#include <simaai/runtime/gstreamer/tensor_bridge.h>
-#include <simaai/runtime/kernel_preparation.h>
-#include <simaai/scheduler/kernel_preparation.h>
-#include <simaai/kernels/ops/cast.h>
 
 #include <array>
 #include <bit>
@@ -28,8 +22,9 @@
 
 namespace {
 namespace integration = simaai::neat::pipeline_internal::sima;
-namespace rt = simaai::runtime;
-namespace gs = rt::gstreamer;
+namespace rt = simaai::scheduler::client;
+namespace probe = simaai::scheduler::testing;
+namespace gs = simaai::scheduler::client;
 void require(bool condition, const char* message) {
   if (!condition)
     throw std::runtime_error(message);
@@ -104,65 +99,94 @@ void ev_service_capacity() {
         2);
 }
 
-std::shared_ptr<const gs::Stage> cast_stage(std::size_t input_pads = 1) {
-  const std::array inputs{rt::TensorSpec{{2}, rt::DType::Float32, simaai::kernels::Contiguous{}}};
-  const std::array outputs{rt::TensorSpec{{2}, rt::DType::BFloat16, simaai::kernels::Contiguous{}}};
-  auto checked = simaai::kernels::ops::cast::make_executable({inputs, outputs, {}},
-                                                             simaai::kernels::Target::A65);
+gs::TensorStageRequest cast_request(std::size_t input_pads = 1) {
+  namespace specs = integration::specbuilders;
+  const std::array inputs{rt::TensorSpec{{2}, rt::DType::Float32}};
+  const std::array outputs{rt::TensorSpec{{2}, rt::DType::BFloat16}};
+  auto checked = rt::check_kernel({"cast", rt::Hardware::A65, inputs, outputs, {}});
   require(std::holds_alternative<rt::KernelExecutable>(checked), "real Cast admission failed");
-  const std::array executables{std::get<rt::KernelExecutable>(std::move(checked))};
-  auto result = rt::prepare_kernels(executables);
-  require(std::holds_alternative<rt::KernelSession>(result), "real Cast preparation failed");
-  auto session = std::get<rt::KernelSession>(std::move(result));
-  auto stage = std::make_shared<gs::Stage>();
-  stage->input_pads = input_pads;
-  stage->output_caps = {gst_caps_from_string("application/x-sima-tensor"), gst_caps_unref};
-  gs::TensorBridgeOptions bridge;
+  auto executable = std::get<rt::KernelExecutable>(std::move(checked));
+  auto inspected = rt::inspect_kernel(executable);
+  require(std::holds_alternative<rt::KernelInspection>(inspected), "real Cast inspection failed");
+  const auto& inspection = std::get<rt::KernelInspection>(inspected);
+  const auto in = inspection.input_requirements().front();
+  const auto out = inspection.output_requirements().front();
+  integration::StageStaticSpec stage;
+  stage.element_name = stage.logical_stage_id = "cast-fixture";
+  stage.plugin_kind = "kernel";
+  stage.frame_arena_size_bytes = 4096;
+  stage.frame_arena_role = integration::FrameArenaRole::Allocate;
+  stage.frame_arena_storage_domain = integration::static_contract::ArenaStorageDomain::Cma;
+  stage.frame_arena_provenance = integration::static_contract::ArenaAllocationProvenance::CoreAllocated;
+  stage.frame_arena_required_device_access =
+      static_cast<std::uint32_t>(integration::static_contract::ArenaDeviceAccess::CpuA65);
+  gs::TensorStageRequest request;
+  request.target = rt::Hardware::A65;
+  auto publication = std::make_shared<simaai::gst::TensorBufferPublishContract>();
+  publication->stage_key = stage.logical_stage_id;
   for (std::size_t pad = 0; pad < input_pads; ++pad) {
-    stage->members.push_back({session.executor(0), session.operation(0), {}});
-    bridge.input_caps.push_back(stage->output_caps);
-    bridge.members.push_back({{{pad, 0}}, {pad}, {}});
+    const auto index = static_cast<int>(pad);
+    const auto input = "input" + std::to_string(pad), output = "output" + std::to_string(pad);
+    stage.logical_inputs.push_back(specs::build_logical_input_static_spec(
+        index, index, index, {2}, "FP32", "C", input, input, input));
+    stage.input_bindings.push_back(specs::build_input_binding_static_spec(index, index, input, input));
+    stage.physical_inputs.push_back(specs::build_physical_buffer_static_spec(
+        index, index, in.storage_bytes, integration::DeviceKind::Cpu, input, -1, 0, in.alignment_bytes));
+    stage.physical_outputs.push_back(specs::build_physical_buffer_static_spec(
+        index, index, out.storage_bytes, integration::DeviceKind::Cpu, output, -1,
+        static_cast<std::int64_t>(pad * 64), out.alignment_bytes));
+    request.members.push_back({executable, {{pad, 0}}, {{pad, 0}}, {}});
+    publication->physical_outputs.push_back({index, out.storage_bytes, output});
+    simaai::gst::TensorBufferPublishLogicalOutput tensor;
+    tensor.logical_index = tensor.physical_index = tensor.memory_index = index;
+    tensor.backend_output_index = tensor.route_slot = index;
+    tensor.logical_name = tensor.backend_name = tensor.segment_name = output;
+    tensor.size_bytes = out.storage_bytes;
+    tensor.dtype = SIMA_TENSOR_SET_DTYPE_BF16_V1;
+    tensor.shape = {2}; tensor.stride_bytes = {2};
+    publication->logical_outputs.push_back(std::move(tensor));
   }
-  // This test validates cold integration only; no numerical work is submitted.
-  stage->bridge = gs::make_tensor_bridge(std::move(bridge));
-  return stage;
+  std::shared_ptr<GstElement> owner(gst_pipeline_new(nullptr), gst_object_unref);
+  integration::SimaPluginStaticManifest manifest; manifest.stages.push_back(std::move(stage));
+  std::string error;
+  require_fixture(integration::attach_manifest_context(owner.get(), manifest, &error),
+                  "serialize Cast placement", error);
+  auto context = std::shared_ptr<GstContext>(
+      gst_element_get_context(owner.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE), gst_context_unref);
+  const auto* accessor = sima_plugin_manifest_context_accessor(context.get());
+  require(accessor && accessor->stage_by_index, "Cast placement accessor unavailable");
+  const auto* placement = accessor->stage_by_index(accessor->user_data, 0);
+  require(placement, "Cast placement missing");
+  request.placement = {std::move(context), placement};
+  request.publication.contract = std::move(publication);
+  request.publication.output_name = "output0";
+  request.publication.input_caps = {gst_caps_from_string("application/x-sima-tensor"), gst_caps_unref};
+  request.publication.output_caps = {gst_caps_from_string("application/x-sima-tensor"), gst_caps_unref};
+  return request;
 }
 void memory_coherency_candidate_policy() {
-  namespace policy = simaai::neat::pipeline_internal;
-  const auto check = [](const char* launch, bool participant) {
+  for (const char* launch : {"appsrc ! queue ! appsink",
+      "appsrc ! tee name=t t. ! queue ! appsink t. ! queue ! appsink",
+      "appsrc ! identity signal-handoffs=false ! appsink",
+      "appsrc ! identity signal-handoffs=true ! appsink", "appsrc ! fakesink"}) {
     GError* error = nullptr;
     auto* pipeline = gst_parse_launch(launch, &error);
     require(pipeline && !error, "coherency transport fixture could not be parsed");
-    require(policy::graph_memory_coherency_mode(pipeline) == policy::MemoryCoherencyMode::Legacy,
-            "candidate inherited an unadmitted memory mode");
-    require(policy::graph_participates_in_demand_coherency(pipeline) == participant,
-            "actual graph participation gate changed");
     require(!integration::prepare_and_attach_kernel_runners(pipeline, {}),
             "transport-only cohort rejected");
-    const auto expected = participant && policy::demand_coherency_available()
-        ? policy::MemoryCoherencyMode::DemandLocalV1 : policy::MemoryCoherencyMode::Legacy;
-    require(policy::graph_memory_coherency_mode(pipeline) == expected,
-            "whole-bin participation selection differs from explicit build mode");
+    require(!g_object_get_qdata(G_OBJECT(pipeline),
+                g_quark_from_static_string("sima-core-admitted-memory-coherency-v1")),
+            "Core must not install graph-wide coherency selection");
     GstState state = GST_STATE_VOID_PENDING;
     gst_element_get_state(pipeline, &state, nullptr, 0);
-    require(state == GST_STATE_NULL, "coherency admission started pipeline execution");
+    require(state == GST_STATE_NULL, "cold admission started pipeline execution");
     gst_object_unref(pipeline);
-  };
-  check("appsrc ! queue ! appsink", true);
-  check("appsrc ! tee name=t t. ! queue ! appsink t. ! queue ! appsink", true);
-  check("appsrc ! identity signal-handoffs=false ! appsink", true);
-  check("appsrc ! identity signal-handoffs=true ! appsink", false);
-  check("appsrc ! fakesink", false); // Unknown callback/writer ownership: entirely Legacy.
-  require(!policy::participates_in_demand_coherency("neatdecoder") &&
-              !policy::participates_in_demand_coherency("neatboxrender") &&
-              !policy::participates_in_demand_coherency("custom-writer"),
-          "opaque consumers acquired demand policy");
+  }
 }
 // Exercise Core's real request -> installed Scheduler/Runner path, not an
 // empty request vector or the name of a helper in a source file. The MLA
 // producer remains stopped: this tests policy commit, not accelerator jobs.
 void real_request_memory_policy_transaction(bool opaque_consumer) {
-  namespace policy = simaai::neat::pipeline_internal;
   namespace specs = integration::specbuilders;
   using integration::DeviceKind;
   std::shared_ptr<GstElement> pipeline(gst_pipeline_new("coherency-transaction"),
@@ -183,22 +207,18 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
     require(pad, "request fixture input pad unavailable");
     gst_object_unref(pad);
   }
-  // Non-default producer flags make partial policy mutation observable.
-  g_object_set(mla, "memory-coherency-mode", "legacy", "defer-output-invalidate", FALSE,
-               "output-read-handoff", TRUE, nullptr);
-  const auto check_policy = [&](bool committed) {
+  const auto check_policy = [&]() {
     gchar* mode = nullptr;
-    gboolean deferred = FALSE, handoff = FALSE;
+    gboolean deferred = FALSE, handoff = TRUE;
     g_object_get(mla, "memory-coherency-mode", &mode, "defer-output-invalidate", &deferred,
                  "output-read-handoff", &handoff, nullptr);
-    const bool matches = g_strcmp0(mode, committed ? "demand-local-v1" : "legacy") == 0 &&
-                         deferred == committed && handoff == !committed;
+    const bool matches = g_strcmp0(mode, "demand-local-v1") == 0 && deferred && !handoff;
     g_free(mode);
-    require(matches, "MLA flags were partially committed or selected the wrong graph mode");
-    require(policy::graph_memory_coherency_mode(pipeline.get()) ==
-                (committed ? policy::MemoryCoherencyMode::DemandLocalV1
-                           : policy::MemoryCoherencyMode::Legacy),
-            "Core ingress mode disagrees with the committed producer mode");
+    require(matches, "MLA default prepared-access contract changed");
+    for (const char* name : {"memory-coherency-mode", "defer-output-invalidate", "output-read-handoff"}) {
+      auto* prop = g_object_class_find_property(G_OBJECT_GET_CLASS(mla), name);
+      require(prop && !(prop->flags & G_PARAM_WRITABLE), "obsolete coherency selector is writable");
+    }
     for (auto* element : {pipeline.get(), mla, first, second}) {
       GstState state = GST_STATE_VOID_PENDING;
       gst_element_get_state(element, &state, nullptr, 0);
@@ -222,8 +242,7 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
     auto recipe = std::make_shared<integration::KernelStageRecipe>();
     const std::array inputs{rt::TensorSpec{{2}, rt::DType::Float32}};
     const std::array outputs{rt::TensorSpec{{2}, rt::DType::BFloat16}};
-    auto executable = simaai::kernels::ops::cast::make_executable(
-        {inputs, outputs, {}}, simaai::kernels::Target::A65);
+    auto executable = rt::check_kernel({"cast", rt::Hardware::A65, inputs, outputs, {}});
     require(std::holds_alternative<rt::KernelExecutable>(executable),
             "canonical request fixture admission failed");
     auto checked = std::get<rt::KernelExecutable>(std::move(executable));
@@ -291,20 +310,15 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
     request.members = native.members;
     request.publication = *native.publication;
     request.placement = {context, placement};
-    request.options.storage = gs::make_storage_with_memory_v1(gs::MemoryCoherencyMode::Legacy);
-    const std::array first_only{request};
-    auto prepared = gs::prepare_tensor_stages_with_memory_v1(
-        first_only, {}, gs::MemoryCoherencyMode::Legacy);
-    if (const auto* failure = std::get_if<rt::Error>(&prepared))
+    probe::RouteProbe prepared;
+    const auto failure = prepared.prepare(request);
+    if (failure)
       throw std::runtime_error("valid first request rejected: " + failure->field + ": " +
                                failure->message);
-    const auto& stages =
-        std::get<std::vector<std::shared_ptr<const gs::Stage>>>(prepared);
-    require(stages.size() == 1 && stages[0] && stages[0]->members.size() == 1 &&
-                stages[0]->input_pads == 1 && stages[0]->bridge,
+    require(prepared.member_count() == 1 && prepared.input_pads() == 1 && prepared.has_bridge(),
             "valid first request did not retain its canonical prepared stage");
   }
-  check_policy(false);
+  check_policy();
   auto malformed = manifest.stages[1];
   auto malformed_recipe = std::make_shared<integration::KernelStageRecipe>(*malformed.native_kernel);
   auto malformed_publication = std::make_shared<simaai::gst::TensorBufferPublishContract>(
@@ -322,29 +336,26 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
               rejected->message == "kernel output exceeds its logical execution descriptor",
           "malformed second request did not reach its checked logical output extent");
   for (auto* element : {first, second}) {
-    auto* context = gst_element_get_context(element, gs::context_type);
-    if (context) gst_context_unref(context);
-    require(!context, "a rejected cohort partially attached a prepared stage");
+    require(!probe::inspect_stage(element).valid,
+            "a rejected cohort partially attached a prepared stage");
   }
-  check_policy(false);
+  check_policy();
   requests[1].native_stage = &manifest.stages[1];
   const auto accepted = integration::prepare_and_attach_kernel_runners(pipeline.get(), requests);
   if (accepted)
     throw std::runtime_error("real cohort rejected: " + accepted->field + ": " + accepted->message);
   for (auto* element : {first, second}) {
-    auto* context = gst_element_get_context(element, gs::context_type);
-    auto stage = context ? gs::stage_from_context(context) : nullptr;
-    if (context) gst_context_unref(context);
-    require(stage && stage->members.size() == 1 && stage->input_pads == 1 && stage->bridge,
+    const auto stage = probe::inspect_stage(element);
+    require(stage.valid && stage.members.size() == 1 && stage.input_pads == 1 && stage.bridge,
             "real canonical request was not prepared and retained by its element");
   }
-  check_policy(policy::demand_coherency_available() && !opaque_consumer);
+  check_policy();
 }
 
 void empty_candidate_bindings() {
   auto* pipeline = gst_pipeline_new("empty-candidate");
   require(pipeline, "candidate pipeline is unavailable");
-  require(!integration::attach_kernel_runner_stages(pipeline, {}),
+  require(!gs::prepare_and_attach_tensor_stages(pipeline, {}),
           "plain candidate bin rejected without kernel bindings");
   require(!integration::prepare_and_attach_kernel_runners(pipeline, {}),
           "plain candidate bin required numerical preparation");
@@ -353,11 +364,11 @@ void empty_candidate_bindings() {
   require(runner && gst_bin_add(GST_BIN(pipeline), runner), "candidate runner is unavailable");
   require(g_object_class_find_property(G_OBJECT_GET_CLASS(runner), "config") == nullptr,
           "kernel runner must not expose a legacy standalone JSON config property");
-  require(bool(integration::attach_kernel_runner_stages(pipeline, {})),
+  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, {})),
           "empty bindings bypassed unbound runner validation");
   require(bool(integration::prepare_and_attach_kernel_runners(pipeline, {})),
           "empty preparation requests bypassed unbound runner validation");
-  require(!gst_element_get_context(runner, gs::context_type),
+  require(!probe::inspect_stage(runner).valid,
           "rejected unbound runner received a prepared context");
   GstState state = GST_STATE_VOID_PENDING;
   gst_element_get_state(runner, &state, nullptr, 0);
@@ -369,30 +380,30 @@ void multi_input_candidate_pads() {
   auto* runner = gst_element_factory_make("neatkernelrunner", "multi-input");
   require(pipeline && runner && gst_bin_add(GST_BIN(pipeline), runner),
           "multi-input candidate is unavailable");
-  const std::array bindings{integration::KernelRunnerStageBinding{runner, cast_stage(2)}};
+  const std::array bindings{gs::StageAttachment{runner, cast_request(2)}};
   // Request order is not port identity. Both sink_0 and sink_1 are required,
   // even when sink_1 is created first.
   auto* second = gst_element_request_pad_simple(runner, "sink_1");
   require(second, "second input pad request failed");
-  require(bool(integration::attach_kernel_runner_stages(pipeline, bindings)),
+  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, bindings)),
           "multi-input candidate accepted a missing first pad");
-  require(!gst_element_get_context(runner, gs::context_type),
+  require(!probe::inspect_stage(runner).valid,
           "missing input partly attached a context");
   auto* first = gst_element_request_pad_simple(runner, "sink_0");
   auto* extra = gst_element_request_pad_simple(runner, "sink_2");
   require(first && extra, "input pad requests failed");
-  require(bool(integration::attach_kernel_runner_stages(pipeline, bindings)),
+  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, bindings)),
           "multi-input candidate accepted an undeclared input pad");
-  require(!gst_element_get_context(runner, gs::context_type),
+  require(!probe::inspect_stage(runner).valid,
           "undeclared input partly attached a context");
   gst_element_release_request_pad(runner, extra);
   gst_object_unref(extra);
-  require(!integration::attach_kernel_runner_stages(pipeline, bindings),
+  require(!gs::prepare_and_attach_tensor_stages(pipeline, bindings),
           "complete multi-input candidate rejected out-of-order pad creation");
-  auto* context = gst_element_get_context(runner, gs::context_type);
-  require(context && gs::stage_from_context(context) == bindings[0].stage,
+  const auto admitted = probe::inspect_stage(runner);
+  require(admitted.valid && admitted.bridge && admitted.input_pads == 2 &&
+              admitted.members.size() == 2 && admitted.members[0].prepared && admitted.members[1].prepared,
           "multi-input candidate retained the wrong stage");
-  gst_context_unref(context);
   gst_object_unref(first);
   gst_object_unref(second);
   gst_object_unref(pipeline);
@@ -405,120 +416,121 @@ void candidate_attachment() {
   gst_bin_add_many(GST_BIN(pipeline), first, second, nullptr);
   auto* first_pad = gst_element_request_pad_simple(first, "sink_%u");
   auto* second_pad = gst_element_request_pad_simple(second, "sink_%u");
-  auto stage = cast_stage();
-  std::weak_ptr<const gs::Stage> retained = stage;
-  std::array bindings{integration::KernelRunnerStageBinding{first, stage},
-                      integration::KernelRunnerStageBinding{second, stage}};
+  std::array bindings{gs::StageAttachment{first, cast_request()},
+                      gs::StageAttachment{second, cast_request()}};
+  std::array<std::weak_ptr<const void>, 2> retained;
   bindings[1].element = first;
-  require(bool(integration::attach_kernel_runner_stages(pipeline, bindings)),
+  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, bindings)),
           "duplicate attachment accepted");
-  require(!gst_element_get_context(first, gs::context_type),
+  require(!probe::inspect_stage(first).valid,
           "failed validation partly attached a context");
   bindings[1].element = second;
-  require(bool(integration::attach_kernel_runner_stages(pipeline, std::span{bindings}.first(1))),
+  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, std::span{bindings}.first(1))),
           "unbound candidate element accepted");
-  require(!gst_element_get_context(first, gs::context_type), "whole-bin preflight was not atomic");
+  require(!probe::inspect_stage(first).valid, "whole-bin preflight was not atomic");
   gst_element_release_request_pad(second, second_pad);
   gst_object_unref(second_pad);
-  require(bool(integration::attach_kernel_runner_stages(pipeline, bindings)),
+  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, bindings)),
           "missing required pad accepted");
   second_pad = gst_element_request_pad_simple(second, "sink_%u");
-  require(!integration::attach_kernel_runner_stages(pipeline, bindings),
+  require(!gs::prepare_and_attach_tensor_stages(pipeline, bindings),
           "candidate attachment failed");
+  std::size_t index = 0;
   for (auto* element : {first, second}) {
-    auto* context = gst_element_get_context(element, gs::context_type);
-    require(context && gs::stage_from_context(context) == stage,
+    const auto stage = probe::inspect_stage(element);
+    require(stage.valid && stage.bridge && stage.input_pads == 1 &&
+                stage.members.size() == 1 && stage.members[0].prepared,
             "element retained the wrong Runtime stage");
-    gst_context_unref(context);
+    retained[index++] = probe::stage_lifetime(element);
   }
   bindings = {};
-  stage.reset();
-  require(!retained.expired(), "element context failed to retain Runtime stage");
+  require(!retained[0].expired() && !retained[1].expired(), "element context failed to retain Runtime stage");
   gst_object_unref(first_pad);
   gst_object_unref(second_pad);
   gst_object_unref(pipeline);
-  require(retained.expired(), "candidate Runtime stage leaked after destruction");
+  require(retained[0].expired() && retained[1].expired(), "candidate Runtime stage leaked after destruction");
 }
 void immutable_recipe_instances() {
-  // Factory observation/failure controls only; no numerical executable or
-  // transport is admitted by this cold ownership test.
+  // Core wiring is pure immutable recipe authoring. Actual instance creation
+  // belongs to Scheduler's whole-cohort transaction, after complete checking.
   integration::KernelStageRecipe recipe;
-  recipe.members.resize(2);
+  auto request = cast_request(2);
+  recipe.members = request.members;
   unsigned constructions = 0;
   bool fail = true;
   std::vector<std::weak_ptr<std::byte>> instances;
-  recipe.resolver_factories.push_back(
-      {0, [&] {
-         ++constructions;
-         auto state = std::make_shared<std::byte>();
-         instances.push_back(state);
-         return integration::KernelStageRecipe::Resolver{
-             [state](const rt::Executor&, const std::shared_ptr<const rt::PreparedOperation>& base,
-                     std::span<GstBuffer* const>)
-                 -> rt::Result<std::shared_ptr<const rt::PreparedOperation>> { return base; }};
-       }});
-  recipe.resolver_factories.push_back(
-      {1, [&]() -> integration::KernelStageRecipe::Resolver {
-         if (fail)
-           throw std::runtime_error("injected cold instance failure");
-         return [](const rt::Executor&, const std::shared_ptr<const rt::PreparedOperation>& base,
-                   std::span<GstBuffer* const>)
-                    -> rt::Result<std::shared_ptr<const rt::PreparedOperation>> { return base; };
-       }});
-  gs::TensorStageRequest request;
-  request.members = recipe.members;
-  bool threw = false;
-  try {
-    (void)integration::instantiate_kernel_stage_state(recipe, request);
-  } catch (const std::runtime_error& error) {
-    threw = std::string_view(error.what()) == "injected cold instance failure";
-  }
-  require(threw && !request.members[0].resolve && !request.members[1].resolve &&
-              instances[0].expired(),
-          "factory exception was reclassified or committed/retained partial instance state");
+  recipe.resolver_factories.push_back({0, [&] {
+    ++constructions;
+    auto state = std::make_shared<std::byte>();
+    instances.push_back(state);
+    return integration::KernelStageRecipe::Resolver{
+      [state](const rt::VariantPreparer& preparer, std::span<GstBuffer* const>)
+          -> rt::Result<rt::PreparedSelection> { return preparer.base(); }};
+  }});
+  recipe.resolver_factories.push_back({1, [&]() -> integration::KernelStageRecipe::Resolver {
+    if (fail) throw std::runtime_error("injected cold instance failure");
+    return [](const rt::VariantPreparer& preparer, std::span<GstBuffer* const>)
+        -> rt::Result<rt::PreparedSelection> { return preparer.base(); };
+  }});
+  require(!integration::wire_kernel_stage_factories(recipe, request) && constructions == 0,
+          "cold wiring instantiated live mutable state");
+  const auto rejected = probe::StageProbe::create(request);
+  const auto* failure = std::get_if<rt::Error>(&rejected);
+  require(failure && failure->origin == rt::ErrorOrigin::Application &&
+              failure->message == "injected cold instance failure" && instances[0].expired(),
+          ("factory exception lost provenance or retained partial instance state; actual=" +
+              (failure ? std::string(rt::error_code_name(failure->code)) + ":" +
+                             rt::error_phase_name(failure->phase) + ":" + failure->field + ":" +
+                             failure->message + "; origin=" +
+                             std::to_string(static_cast<int>(failure->origin))
+                       : std::string("unexpected successful preparation")) +
+              "; constructed=" + std::to_string(constructions) +
+              "; retained=" + std::to_string(!instances.empty() && !instances[0].expired())).c_str());
   fail = false;
-  require(!integration::instantiate_kernel_stage_state(recipe, request) && constructions == 2,
+  auto prepared = probe::StageProbe::create(request);
+  require(std::holds_alternative<probe::StageProbe>(prepared) && constructions == 2,
           "fresh retry failed to instantiate exactly once");
   auto copy = request;
-  require(bool(integration::instantiate_kernel_stage_state(recipe, copy)) && constructions == 2,
-          "a copied admission was silently reset or instantiated twice");
-  auto independent = gs::TensorStageRequest{};
-  independent.members = recipe.members;
-  require(!integration::instantiate_kernel_stage_state(recipe, independent) && constructions == 3,
+  require(bool(integration::wire_kernel_stage_factories(recipe, copy)) && constructions == 2,
+          "already-wired request was silently rewritten or instantiated twice");
+  // Copying immutable authoring starts a new cold admission, never shares a cache.
+  auto independent = probe::StageProbe::create(copy);
+  require(std::holds_alternative<probe::StageProbe>(independent) && constructions == 3,
           "independent request did not instantiate new state");
   const auto source_recipe = recipe;
   request = {};
-  require(!instances[1].expired(), "request copy did not retain its own admission state");
   copy = {};
+  require(!instances[1].expired(), "clearing authoring released admitted state");
+  std::get<probe::StageProbe>(prepared).reset();
   require(instances[1].expired() && !instances[2].expired(),
           "reusable recipe retained live state or releasing A invalidated B");
-  independent = {};
-  require(instances[2].expired() && !source_recipe.members[0].resolve,
+  std::get<probe::StageProbe>(independent).reset();
+  require(instances[2].expired() && !source_recipe.members[0].resolve_factory,
           "copied reusable recipe acquired execution state");
   auto invalid = recipe;
   invalid.resolver_factories.push_back(invalid.resolver_factories.front());
-  gs::TensorStageRequest rejected;
-  rejected.members = invalid.members;
-  require(bool(integration::instantiate_kernel_stage_state(invalid, rejected)) &&
-              constructions == 3,
+  auto malformed = cast_request(2);
+  require(bool(integration::wire_kernel_stage_factories(invalid, malformed)) && constructions == 3,
           "invalid factory list constructed state before validation");
-  integration::KernelStageRecipe image;
-  image.members.resize(1);
+
+  auto image = cast_request();
+  image.members.front().inputs.clear();
   image.frame_adapter_factory = []() -> rt::Result<std::shared_ptr<gs::TensorStageFrameAdapter>> {
-    return rt::Error{rt::ErrorCode::ResourceBusy, "test.factory", "declared construction failure"};
+    return rt::Error{rt::ErrorCode::ResourceBusy, "test.factory", "declared construction failure",
+                     {}, {}, rt::ErrorPhase::ImplementationAdmission, "test.rule",
+                     rt::ErrorOrigin::Application};
   };
-  gs::TensorStageRequest image_request;
-  image_request.members = image.members;
-  const auto declared = integration::instantiate_kernel_stage_state(image, image_request);
-  require(declared && declared->code == rt::ErrorCode::ResourceBusy &&
-              declared->field == "test.factory" &&
-              declared->message == "declared construction failure" && !image_request.frame_adapter,
+  const auto declared = probe::StageProbe::create(image);
+  const auto* error = std::get_if<rt::Error>(&declared);
+  require(error && error->code == rt::ErrorCode::ResourceBusy && error->field == "test.factory" &&
+              error->message == "declared construction failure" && error->rule_id == "test.rule" &&
+              error->origin == rt::ErrorOrigin::Application,
           "declared factory failure was reclassified or committed partial state");
   std::cout << "immutable recipe: independent admission, retry and ownership PASS\n";
 }
 
 void boxdecode_geometry_variants() {
-  namespace k = simaai::kernels;
+  namespace k = simaai::scheduler::client;
   const std::array inputs{k::TensorSpec{{1, 1, 4}, k::DType::Int8},
                           k::TensorSpec{{1, 1, 2}, k::DType::Int8}};
   const std::array outputs{
@@ -539,38 +551,43 @@ void boxdecode_geometry_variants() {
       k::Parameter{"nms_iou_threshold", .5f},
       k::Parameter{"score_activation", "sigmoid"}};
   auto checked =
-      simaai::scheduler::check_kernel({"boxdecode", k::Target::A65, inputs, outputs, parameters});
-  require(std::holds_alternative<k::Executable>(checked), "BoxDecode geometry fixture rejected");
-  rt::Executor executor(rt::Hardware::A65);
-  auto admitted = executor.prepare(std::get<k::Executable>(std::move(checked)));
-  require(std::holds_alternative<rt::PreparedOperation>(admitted),
+      rt::check_kernel({"boxdecode", k::Target::A65, inputs, outputs, parameters});
+  require(std::holds_alternative<rt::KernelExecutable>(checked), "BoxDecode geometry fixture rejected");
+  probe::OperationProbe executor;
+  require(!executor.prepare(std::get<rt::KernelExecutable>(std::move(checked))),
           "BoxDecode geometry admission failed");
-  auto base = std::make_shared<const rt::PreparedOperation>(
-      std::get<rt::PreparedOperation>(std::move(admitted)));
+  const auto base = executor.operation();
   integration::KernelStageRecipe recipe;
   recipe.members.resize(1);
-  recipe.members.front().executable = base->executable();
+  recipe.members.front().executable = base.executable();
   integration::attach_boxdecode_geometry_resolver(
       recipe, 0, {8, 8, 8, 8, simaai::neat::ResizeMode::Letterbox}, true, true);
+  struct Instance {
+    struct Member { rt::KernelExecutable executable; rt::VariantResolver resolve; };
+    rt::TensorStageRequest request;
+    std::vector<Member> members;
+  };
   const auto instantiate = [&] {
-    gs::TensorStageRequest request;
-    request.members = recipe.members;
-    require(!integration::instantiate_kernel_stage_state(recipe, request),
-            "fresh checked BoxDecode instance failed");
-    return request;
+    Instance result;
+    result.request.members = recipe.members;
+    require(!integration::wire_kernel_stage_factories(recipe, result.request),
+            "fresh checked BoxDecode factory wiring failed");
+    for (const auto& member : result.request.members)
+      result.members.push_back({member.executable, member.resolve_factory()});
+    return result;
   };
   auto instance = instantiate();
   auto& member = instance.members.front();
-  require(!recipe.members.front().resolve && recipe.resolver_factories.size() == 1,
+  require(!recipe.members.front().resolve_factory && recipe.resolver_factories.size() == 1,
           "reusable recipe acquired a live resolver");
-  require(bool(integration::instantiate_kernel_stage_state(recipe, instance)),
+  require(bool(integration::wire_kernel_stage_factories(recipe, instance.request)),
           "active resolver instance was reset by a second instantiation");
   if (!gst_meta_get_info("GstSimaMeta")) {
     const gchar* tags[] = {nullptr};
     require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
             "register preprocess fixture metadata");
   }
-  gs::Buffer first(gst_buffer_new()), second(gst_buffer_new());
+  probe::GstBufferOwner first(gst_buffer_new()), second(gst_buffer_new());
   auto* meta =
       gst_custom_meta_get_structure(gst_buffer_add_custom_meta(first.get(), "GstSimaMeta"));
   auto* other =
@@ -583,40 +600,41 @@ void boxdecode_geometry_variants() {
   const std::array<GstBuffer*, 2> buffers{first.get(), second.get()};
   geometry(meta, 16, "letterbox");
   geometry(other, 16, "letterbox");
-  auto selected = member.resolve(executor, base, buffers);
-  require(std::holds_alternative<std::shared_ptr<const rt::PreparedOperation>>(selected),
+  auto selected = member.resolve(executor.preparer(), buffers);
+  require(std::holds_alternative<rt::PreparedSelection>(selected),
           "checked geometry variant rejected");
-  const auto variant = std::get<std::shared_ptr<const rt::PreparedOperation>>(selected);
+  const auto variant = std::get<rt::PreparedSelection>(selected);
   require(variant != base &&
-              variant->executable().state().contract == base->executable().state().contract &&
-              variant->executable().state().resource == base->executable().state().resource,
+              rt::same_kernel_contract_resources(variant.executable(), base.executable()),
           "geometry rebuilt tensor contract or numerical scratch");
-  auto repeated = member.resolve(executor, base, buffers);
-  require(std::get<std::shared_ptr<const rt::PreparedOperation>>(repeated) == variant,
+  auto repeated = member.resolve(executor.preparer(), buffers);
+  require(std::get<rt::PreparedSelection>(repeated) == variant,
           "warm geometry did not reuse immutable variant");
   // Actual cold factory path: one reusable recipe must not share caches even
   // when preparations use the same Runtime domain or execute concurrently.
   auto sibling = instantiate();
-  const auto sibling_base = std::make_shared<const rt::PreparedOperation>(
-      std::get<rt::PreparedOperation>(executor.prepare(member.executable)));
-  const auto sibling_variant = std::get<std::shared_ptr<const rt::PreparedOperation>>(
-      sibling.members.front().resolve(executor, sibling_base, buffers));
-  require(sibling_variant != variant && std::get<std::shared_ptr<const rt::PreparedOperation>>(
-                                            member.resolve(executor, base, buffers)) == variant,
+  probe::OperationProbe sibling_executor;
+  require(!sibling_executor.prepare(member.executable, {.domain = executor.context()}),
+          "sibling preparation in shared domain failed");
+  const auto sibling_base = sibling_executor.operation();
+  const auto sibling_variant = std::get<rt::PreparedSelection>(
+      sibling.members.front().resolve(sibling_executor.preparer(), buffers));
+  require(sibling_variant != variant && std::get<rt::PreparedSelection>(
+                                            member.resolve(executor.preparer(), buffers)) == variant,
           "A/B/A in one Runtime domain discarded A's warmed variant");
-  rt::Executor independent_executor(rt::Hardware::A65);
-  const auto independent_base = std::make_shared<const rt::PreparedOperation>(
-      std::get<rt::PreparedOperation>(independent_executor.prepare(member.executable)));
+  probe::OperationProbe independent_executor;
+  require(!independent_executor.prepare(member.executable), "independent preparation failed");
+  const auto independent_base = independent_executor.operation();
   auto independent = instantiate();
-  const auto independent_variant = std::get<std::shared_ptr<const rt::PreparedOperation>>(
-      independent.members.front().resolve(independent_executor, independent_base, buffers));
+  const auto independent_variant = std::get<rt::PreparedSelection>(
+      independent.members.front().resolve(independent_executor.preparer(), buffers));
   std::atomic<bool> isolated{true};
-  const auto warm = [&](gs::TensorStageRequest& request, const rt::Executor& exec,
-                        const std::shared_ptr<const rt::PreparedOperation>& original,
-                        const std::shared_ptr<const rt::PreparedOperation>& expected) {
+  const auto warm = [&](Instance& request, const probe::OperationProbe& exec,
+                        const rt::PreparedSelection&,
+                        const rt::PreparedSelection& expected) {
     for (unsigned i = 0; i < 64; ++i) {
-      auto result = request.members.front().resolve(exec, original, buffers);
-      const auto* value = std::get_if<std::shared_ptr<const rt::PreparedOperation>>(&result);
+      auto result = request.members.front().resolve(exec.preparer(), buffers);
+      const auto* value = std::get_if<rt::PreparedSelection>(&result);
       if (!value || *value != expected)
         isolated = false;
     }
@@ -628,77 +646,72 @@ void boxdecode_geometry_variants() {
   b.join();
   require(isolated, "independent execution domains shared or rebuilt warmed cache state");
   auto copied_admission = instance;
-  require(std::get<std::shared_ptr<const rt::PreparedOperation>>(
-              copied_admission.members.front().resolve(executor, base, buffers)) == variant,
+  require(std::get<rt::PreparedSelection>(
+              copied_admission.members.front().resolve(executor.preparer(), buffers)) == variant,
           "copies within one admission unexpectedly cloned live state");
   copied_admission = {};
   geometry(other, 32, "letterbox");
   require(std::holds_alternative<rt::Error>(
-              independent.members.front().resolve(independent_executor, independent_base, buffers)),
+              independent.members.front().resolve(independent_executor.preparer(), buffers)),
           "independent instance accepted disagreeing split-head geometry");
   geometry(other, 16, "letterbox");
-  require(std::get<std::shared_ptr<const rt::PreparedOperation>>(
-              member.resolve(executor, base, buffers)) == variant &&
-              std::get<std::shared_ptr<const rt::PreparedOperation>>(
-                  independent.members.front().resolve(independent_executor, independent_base,
+  require(std::get<rt::PreparedSelection>(
+              member.resolve(executor.preparer(), buffers)) == variant &&
+              std::get<rt::PreparedSelection>(
+                  independent.members.front().resolve(independent_executor.preparer(),
                                                       buffers)) == independent_variant,
           "failed B frame evicted A or B's warmed immutable variant");
   sibling = {};
   independent = {};
-  require(!recipe.members.front().resolve,
+  require(!recipe.members.front().resolve_factory,
           "reusable recipe acquired execution state through its factory");
   for (const int width : {24, 40, 48, 56, 64}) {
     geometry(meta, width, "letterbox");
     geometry(other, width, "letterbox");
-    auto evicting = member.resolve(executor, base, buffers);
-    require(std::holds_alternative<std::shared_ptr<const rt::PreparedOperation>>(evicting),
+    auto evicting = member.resolve(executor.preparer(), buffers);
+    require(std::holds_alternative<rt::PreparedSelection>(evicting),
             "bounded geometry cache rejected a valid replacement");
-    const auto& operation = std::get<std::shared_ptr<const rt::PreparedOperation>>(evicting);
-    require(operation->executable().state().contract == base->executable().state().contract &&
-                operation->executable().state().resource == base->executable().state().resource,
+    const auto& operation = std::get<rt::PreparedSelection>(evicting);
+    require(rt::same_kernel_contract_resources(operation.executable(), base.executable()),
             "geometry eviction changed checked storage or scratch authority");
   }
   geometry(meta, 16, "letterbox");
   geometry(other, 16, "letterbox");
-  const auto rebuilt = std::get<std::shared_ptr<const rt::PreparedOperation>>(
-      member.resolve(executor, base, buffers));
+  const auto rebuilt = std::get<rt::PreparedSelection>(
+      member.resolve(executor.preparer(), buffers));
   require(rebuilt != variant &&
-              variant->executable().state().contract == base->executable().state().contract &&
-              variant->executable().state().resource == base->executable().state().resource,
+              rt::same_kernel_contract_resources(variant.executable(), base.executable()),
           "eviction invalidated a retained geometry snapshot or grew the bounded cache");
-  rt::Executor other_executor(rt::Hardware::A65);
-  auto other_admitted = other_executor.prepare(member.executable);
-  require(std::holds_alternative<rt::PreparedOperation>(other_admitted),
-          "second geometry execution domain failed admission");
-  const auto other_base = std::make_shared<const rt::PreparedOperation>(
-      std::get<rt::PreparedOperation>(std::move(other_admitted)));
-  const auto other_variant = std::get<std::shared_ptr<const rt::PreparedOperation>>(
-      member.resolve(other_executor, other_base, buffers));
+  probe::OperationProbe other_executor;
+  require(!other_executor.prepare(member.executable), "second geometry execution domain failed admission");
+  const auto other_base = other_executor.operation();
+  const auto other_variant = std::get<rt::PreparedSelection>(
+      member.resolve(other_executor.preparer(), buffers));
   require(other_variant != rebuilt && other_variant != variant && other_variant != other_base,
           "geometry cache reused another execution domain's admitted operation");
-  const auto returned = std::get<std::shared_ptr<const rt::PreparedOperation>>(
-      member.resolve(executor, base, buffers));
+  const auto returned = std::get<rt::PreparedSelection>(
+      member.resolve(executor.preparer(), buffers));
   require(returned != other_variant,
           "geometry cache retained the wrong execution domain after returning to the first base");
   geometry(other, 32, "letterbox");
-  require(std::holds_alternative<rt::Error>(member.resolve(executor, base, buffers)),
+  require(std::holds_alternative<rt::Error>(member.resolve(executor.preparer(), buffers)),
           "inconsistent split-head geometry accepted");
   geometry(meta, 32, "letterbox");
-  auto changed = member.resolve(executor, base, buffers);
-  require(std::holds_alternative<std::shared_ptr<const rt::PreparedOperation>>(changed) &&
-              std::get<std::shared_ptr<const rt::PreparedOperation>>(changed) != variant,
+  auto changed = member.resolve(executor.preparer(), buffers);
+  require(std::holds_alternative<rt::PreparedSelection>(changed) &&
+              std::get<rt::PreparedSelection>(changed) != variant,
           "new image size mutated a retained variant");
   geometry(meta, 8, "stretch");
   geometry(other, 8, "stretch");
-  require(std::holds_alternative<rt::Error>(member.resolve(executor, base, buffers)),
+  require(std::holds_alternative<rt::Error>(member.resolve(executor.preparer(), buffers)),
           "changed resize contract accepted");
   geometry(meta, 8, "letterbox");
   geometry(other, 8, "letterbox");
-  require(std::get<std::shared_ptr<const rt::PreparedOperation>>(
-              member.resolve(executor, base, buffers)) == base,
+  require(std::get<rt::PreparedSelection>(
+              member.resolve(executor.preparer(), buffers)) == base,
           "base geometry not reused");
   gst_structure_remove_field(meta, "preproc_original_width");
-  require(std::holds_alternative<rt::Error>(member.resolve(executor, base, buffers)),
+  require(std::holds_alternative<rt::Error>(member.resolve(executor.preparer(), buffers)),
           "partial image-size metadata accepted");
   integration::KernelStageRecipe explicit_recipe;
   explicit_recipe.members = recipe.members;
@@ -706,18 +719,18 @@ void boxdecode_geometry_variants() {
       explicit_recipe, 0, {8, 8, 8, 8, simaai::neat::ResizeMode::Letterbox}, false, true);
   gs::TensorStageRequest explicit_request;
   explicit_request.members = explicit_recipe.members;
-  require(!integration::instantiate_kernel_stage_state(explicit_recipe, explicit_request),
+  require(!integration::wire_kernel_stage_factories(explicit_recipe, explicit_request),
           "explicit-size instance failed");
-  auto& explicit_size = explicit_request.members.front();
+  auto explicit_size = explicit_request.members.front().resolve_factory();
   geometry(meta, 16, "letterbox");
   geometry(other, 32, "letterbox");
-  require(std::get<std::shared_ptr<const rt::PreparedOperation>>(
-              explicit_size.resolve(executor, base, buffers)) == base,
+  require(std::get<rt::PreparedSelection>(
+              explicit_size(executor.preparer(), buffers)) == base,
           "explicit original dimensions lost precedence over conflicting frame dimensions");
   geometry(other, 32, "stretch");
-  require(std::holds_alternative<rt::Error>(explicit_size.resolve(executor, base, buffers)),
+  require(std::holds_alternative<rt::Error>(explicit_size(executor.preparer(), buffers)),
           "explicit image size bypassed resize provenance validation");
-  gs::Buffer bare(gst_buffer_new_allocate(nullptr, 4, nullptr));
+  probe::GstBufferOwner bare(gst_buffer_new_allocate(nullptr, 4, nullptr));
   std::string bare_error;
   const bool bare_attached = simaai::gst::tensor_buffer_attach_frame_metadata(
       bare.get(), simaai::gst::TensorBufferFrameMetadata{}, &bare_error);
@@ -725,8 +738,8 @@ void boxdecode_geometry_variants() {
               bare_error.find("writable canonical compact envelope") != std::string::npos,
           "bare geometry carrier accepted frame facts without a static publication");
   const auto compact_owner = compact_geometry_publication();
-  gs::Buffer compact_first(gst_buffer_new_allocate(nullptr, 4, nullptr));
-  gs::Buffer compact_second(gst_buffer_new_allocate(nullptr, 4, nullptr));
+  probe::GstBufferOwner compact_first(gst_buffer_new_allocate(nullptr, 4, nullptr));
+  probe::GstBufferOwner compact_second(gst_buffer_new_allocate(nullptr, 4, nullptr));
   const auto attach_compact = [&compact_owner](GstBuffer* buffer, int width) {
     std::string error;
     const bool published =
@@ -751,10 +764,10 @@ void boxdecode_geometry_variants() {
   attach_compact(compact_first.get(), 16);
   attach_compact(compact_second.get(), 32);
   const std::array<GstBuffer*, 2> compact_buffers{compact_first.get(), compact_second.get()};
-  require(std::get<std::shared_ptr<const rt::PreparedOperation>>(
-              explicit_size.resolve(executor, base, compact_buffers)) == base,
+  require(std::get<rt::PreparedSelection>(
+              explicit_size(executor.preparer(), compact_buffers)) == base,
           "compact frame facts overrode explicit original dimensions");
-  require(std::holds_alternative<rt::Error>(member.resolve(executor, base, compact_buffers)),
+  require(std::holds_alternative<rt::Error>(member.resolve(executor.preparer(), compact_buffers)),
           "metadata-driven geometry ignored compact carrier disagreement");
   integration::KernelStageRecipe fixed;
   fixed.members = recipe.members;
@@ -782,27 +795,27 @@ struct NumericalResult {
   float score;
 };
 NumericalResult invoke(const CompiledKernelContract& compiled, float logit = 0.f) {
-  namespace k = simaai::kernels;
-  const auto& executable = compiled.recipe->members.front().executable.state();
-  require(executable.contract->input_specs.size() == 2 &&
-              executable.contract->input_requirements.size() == 2 &&
-              executable.contract->output_requirements.size() == 4 && executable.resource &&
-              executable.execute_host,
+  namespace k = simaai::scheduler::client;
+  const auto& checked = compiled.recipe->members.front().executable;
+  auto inspected = rt::inspect_kernel(checked);
+  require(std::holds_alternative<rt::KernelInspection>(inspected), "numerical inspection failed");
+  const auto& executable = std::get<rt::KernelInspection>(inspected);
+  require(executable.inputs().size() == 2 && executable.input_requirements().size() == 2 &&
+              executable.output_requirements().size() == 4,
           "numerical fixture must retain its two checked heads and context");
-  auto created = executable.resource->create(executable.resource->owner.get(), {});
-  require(std::holds_alternative<std::shared_ptr<void>>(created), "numerical context rejected");
-  const auto resource = std::get<std::shared_ptr<void>>(std::move(created));
+  probe::OperationProbe operation;
+  require(!operation.prepare(checked), "numerical context rejected");
   // Typed words guarantee eight-byte alignment; publish only each checked
   // byte capacity, not the allocator's rounded-up storage extent.
   std::vector<std::vector<std::uint64_t>> storage, results;
-  std::vector<k::ConstHostBuffer> inputs;
-  std::vector<k::HostBuffer> outputs;
-  for (auto requirement : executable.contract->input_requirements) {
+  std::vector<k::ConstBytes> inputs;
+  std::vector<k::MutableBytes> outputs;
+  for (auto requirement : executable.input_requirements()) {
     require(requirement.alignment_bytes <= alignof(std::uint64_t),
             "fixture input alignment changed");
     storage.emplace_back((requirement.storage_bytes + 7) / 8);
   }
-  for (auto requirement : executable.contract->output_requirements) {
+  for (auto requirement : executable.output_requirements()) {
     require(requirement.alignment_bytes <= alignof(std::uint64_t),
             "fixture output alignment changed");
     results.emplace_back((requirement.storage_bytes + 7) / 8);
@@ -819,11 +832,11 @@ NumericalResult invoke(const CompiledKernelContract& compiled, float logit = 0.f
   put(reinterpret_cast<std::byte*>(storage[1].data()) + 2, -1000.f);
   for (std::size_t i = 0; i < storage.size(); ++i)
     inputs.push_back({reinterpret_cast<const std::byte*>(storage[i].data()),
-                      executable.contract->input_requirements[i].storage_bytes});
+                      executable.input_requirements()[i].storage_bytes});
   for (std::size_t i = 0; i < results.size(); ++i)
     outputs.push_back({reinterpret_cast<std::byte*>(results[i].data()),
-                       executable.contract->output_requirements[i].storage_bytes});
-  require(!executable.execute_host(executable.payload.get(), resource.get(), inputs, outputs),
+                       executable.output_requirements()[i].storage_bytes});
+  require(!operation.execute_host(operation.operation(), inputs, outputs),
           "lowered numerical fixture failed execution");
   NumericalResult result{};
   std::memcpy(&result.count, results[3].data(), sizeof(result.count));
@@ -898,7 +911,7 @@ int main(int argc, char** argv) {
     immutable_recipe_instances();
     if (argc == 2 && std::string_view(argv[1]) == "--instance-only")
       return 0;
-    require(gs::register_element(), "register native candidate plugin");
+    require(probe::register_element(), "register native candidate plugin");
     output_carrier_budget();
     ev_service_capacity();
     memory_coherency_candidate_policy();

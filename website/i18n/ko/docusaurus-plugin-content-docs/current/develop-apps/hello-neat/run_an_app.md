@@ -35,13 +35,17 @@ mdx:
 :::
 
 1. **모델과 입력 이미지에 대한 자산 디렉터리를 만듭니다.**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
-    ```
+    </ShellCommand>
+
 2. **모델을 다운로드하세요:**
-    ```bash
+
+    <ShellCommand prompt="sdk|devkit">
     sima-cli modelzoo -v 2.0.0 get yolo_v8s
-    ```
+    </ShellCommand>
+
     :::note sima-cli 모델 다운로드
     만약 `sima-cli` 모델을 지정된 위치가 아닌 다른 곳에 기록합니다. `assets` 디렉터리, 해당 파일을 복사하여 `assets/yolo_v8s_mpk.tar.gz`.
     :::
@@ -356,15 +360,14 @@ if __name__ == "__main__":
 
 **실행:**
 
-* **DevKit에서**
-  ```bash
-  source ~/pyneat/bin/activate
-  python3 app.py
-  ```
-* **Neat SDK 호스트에서**
-  ```bash
-  dk app.py
-  ```
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+python3 app.py
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk app.py
+</ShellCommand>
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
@@ -468,21 +471,20 @@ int main() {
 
 **구축:**
 
-```bash
+<ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
+</ShellCommand>
 
 **실행:**
 
-* **DevKit에서**
-  ```bash
-  ./build/sima_neat_app
-  ```
-* **Neat SDK 호스트에서**
-  ```bash
-  dk build/sima_neat_app
-  ```
+<ShellCommand prompt="devkit">
+./build/sima_neat_app
+</ShellCommand>
+
+<ShellCommand prompt="sdk">
+dk build/sima_neat_app
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>

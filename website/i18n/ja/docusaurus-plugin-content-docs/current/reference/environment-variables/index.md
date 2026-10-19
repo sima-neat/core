@@ -95,8 +95,8 @@ slug: /reference/environment-variables
 - `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 自動復旧ディスパッチャー（デフォルトは有効）。
 - `SIMA_ASYNC_TPUT_DIAG=1` — 非同期スループット診断。
 - `SIMA_ASYNC_WARMUP=<n>` — 非同期ウォームアップフレーム。
-- `SIMA_PERF_POWER=1` — パフォーマンス測定のシナリオで、SOM PMICレールへの電力供給を有効にします。
-- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 電力サンプリング間隔（デフォルトは100）。
+- `SIMA_PERF_POWER=1` — パフォーマンス測定のシナリオで、Sentinel からのボード電力の取得を有効にします。
+- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 非推奨で、無視されます。Sentinel は 2 秒ごとにサンプリングします。
 - `SIMA_PULL_TIMEOUT_DIAG=0/1` — プル操作のタイムアウトに関するレポートを出力します（デフォルトは有効）。
 - `SIMA_STAGE_DEBUG=1` — StageRun のデバッグログ。
 

@@ -1,4 +1,6 @@
+#include <simaai/scheduler/client/capabilities.h>
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
@@ -23,6 +25,230 @@ namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 namespace sima = simaai::neat::pipeline_internal::sima;
 
 namespace {
+
+void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
+  sc::ModelExecutionPlanData data;
+  data.contract_version = "2.1.0";
+  data.model_inputs = {0U};
+  for (std::uint32_t id = 0U; id < 2U; ++id) {
+    sc::ValueSpec tensor;
+    tensor.id = id;
+    tensor.name = id == 0U ? "input" : "output";
+    tensor.required_bytes = id == 0U ? 56U : 28U;
+    tensor.logical_dtype = id == 0U ? "float32" : "bfloat16";
+    tensor.logical_shape = sc::TensorShape{2, 1, 1, 7};
+    tensor.logical_layout = "HWC";
+    if (id == 0U && input_tail_padding) {
+      sc::StorageBinding storage;
+      storage.kind = sc::StorageBindingKind::External;
+      storage.carrier_id = id;
+      storage.physical_span = 64U;
+      storage.access = sc::StorageAccess::ReadOnly;
+      tensor.storage_binding = storage;
+    }
+    if (id == 1U) {
+      sc::StorageBinding storage;
+      storage.carrier_id = id;
+      storage.physical_span = 30U;
+      storage.stride_bytes = {16, 14, 14, 2};
+      tensor.storage_binding = storage;
+    }
+    data.values.push_back(std::move(tensor));
+  }
+  sc::OpSpec cast;
+  cast.id = 0U;
+  cast.sequence = 1U;
+  cast.name = "cast";
+  cast.batch_count = 2U;
+  cast.kind = sc::OpKind::Cast;
+  cast.processor = "EV74";
+  cast.inputs = {0U};
+  cast.outputs = {1U};
+  cast.input_shapes = {{2, 1, 1, 7}};
+  cast.output_shapes = cast.input_shapes;
+  cast.config = sc::CastOpConfig{"bfloat16"};
+  data.ops = {cast};
+  data.model_outputs = {{0U, "output", 1U}};
+  std::string error;
+  const auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
+  require(plan.has_value(), "pitched batch fixture is valid: " + error);
+  const auto physical = sc::PhysicalExecutionLowerer::lower(*plan, &error);
+  require(physical.has_value(), "pitched batch lowers: " + error);
+  const auto arena =
+      sc::FrameSlotArenaPlan::compile(*plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+                                      sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
+  require(arena.has_value(), "pitched batch arena compiles: " + error);
+  const std::array<sc::PhysicalCommandId, 1U> commands{0U};
+  const auto contract =
+      sc::build_dmabuf_plan_processcvu_command_contract(*plan, *physical, commands, *arena, &error);
+  require(contract.has_value(), "whole-batch contract compiles: " + error);
+  require(plan->model_inputs().size() == 1U && plan->model_outputs().size() == 1U &&
+              plan->value(1U)->logical_shape == sc::TensorShape({2, 1, 1, 7}),
+          "physical samples do not change public semantic tensors");
+  require(contract->payload.batch_size == 1 && contract->payload.input_tensors.size() == 1U &&
+              contract->payload.output_tensors.size() == 1U,
+          "one descriptor carries the complete batch; it is not submitted twice");
+  const auto& input = contract->payload.input_tensors.front().descriptor();
+  const auto& output = contract->payload.output_tensors.front().descriptor();
+  const auto& runtime = contract->runtime_contract;
+  require(input.shape.sizes[0] == 2 && output.shape.sizes[0] == 2 && input.storage.nbytes == 56U &&
+              runtime.physical_inputs.front().size_bytes == (input_tail_padding ? 64U : 56U) &&
+              output.storage.nbytes == 30U && output.layout.strided.strides_bytes[0] == 16U &&
+              runtime.physical_inputs.size() == 1U && runtime.physical_outputs.size() == 1U &&
+              runtime.physical_inputs.front().source_physical_index == 0 &&
+              runtime.physical_inputs.front().source_byte_offset == 0U &&
+              runtime.physical_outputs.front().source_byte_offset == arena->region(1U)->byte_offset,
+          "full-batch descriptors retain the real pitched span and original carrier identity");
+}
+
+void test_single_child_batch_pack() {
+  for (const std::uint32_t batch : {2U, 4U}) {
+    sc::ModelExecutionPlanData data;
+    for (sc::ValueId id = 0U; id < 3U; ++id) {
+      sc::ValueSpec value;
+      value.id = id;
+      value.name = "single_pack_" + std::to_string(id);
+      value.required_bytes = batch * 16U;
+      value.logical_dtype = "float32";
+      value.logical_shape = sc::TensorShape{batch, 4};
+      value.representation =
+          id == 2U ? sc::ValueRepresentation::Packed : sc::ValueRepresentation::Dense;
+      sc::StorageBinding binding;
+      binding.kind = id == 0U ? sc::StorageBindingKind::External : sc::StorageBindingKind::Root;
+      binding.carrier_id = id == 0U ? 0U : 2U;
+      binding.physical_span = value.required_bytes;
+      binding.stride_bytes = {16, 4};
+      binding.access = id == 0U ? sc::StorageAccess::ReadOnly : sc::StorageAccess::ReadWrite;
+      value.storage_binding = binding;
+      data.values.push_back(std::move(value));
+    }
+    data.model_inputs = {0U};
+    sc::OpSpec cast;
+    cast.id = 0U;
+    cast.sequence = 1U;
+    cast.processor = "EV74";
+    cast.name = "cast";
+    cast.kind = sc::OpKind::Cast;
+    cast.inputs = {0U};
+    cast.outputs = {1U};
+    cast.config = sc::CastOpConfig{"float32"};
+    sc::OpSpec pack;
+    pack.id = 1U;
+    pack.sequence = 2U;
+    pack.processor = "EV74";
+    pack.name = "pack";
+    pack.kind = sc::OpKind::Pack;
+    pack.inputs = {1U};
+    pack.outputs = {2U};
+    pack.dependencies = {0U};
+    sc::PackOpConfig config;
+    config.batch_count = batch;
+    config.parent_required_bytes = batch * 16U;
+    for (std::uint32_t sample = 0U; sample < batch; ++sample) {
+      config.spans.push_back({1U, sample, sample * 16U, sample * 16U, 16U, 16U, "none"});
+    }
+    pack.config = config;
+    data.ops = {cast, pack};
+    data.model_outputs = {{0U, "output", 2U}};
+    std::string error;
+    const auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
+    require(plan.has_value(),
+            "single-child batched Pack preserves contiguous sample placement: " + error);
+  }
+}
+
+void test_batched_backend_ports() {
+  for (const std::uint32_t batches : {2U, 4U}) {
+    sc::ModelExecutionPlanData data;
+    data.contract_version = "2.1.0";
+    const auto span = (batches - 1U) * 4096U + 4U;
+    for (const sc::ValueId id : {0U, 1U}) {
+      sc::ValueSpec value{id, id == 0U ? "input" : "output", batches * 4U};
+      value.logical_dtype = "float32";
+      value.logical_shape = sc::TensorShape{batches, 1};
+      value.logical_layout = "normal";
+      value.storage_binding = sc::StorageBinding{
+          id == 0U ? sc::StorageBindingKind::External : sc::StorageBindingKind::Root,
+          id,
+          0U,
+          span,
+          {4096, 4},
+          id == 0U ? sc::StorageAccess::ReadOnly : sc::StorageAccess::ReadWrite,
+          std::nullopt};
+      data.values.push_back(std::move(value));
+    }
+    data.model_inputs = {0U};
+    data.model_outputs = {{0U, "output", 1U}};
+    sc::OpSpec mla;
+    mla.name = "MLA_0";
+    mla.sequence = 1U;
+    mla.kind = sc::OpKind::Mla;
+    mla.processor = "MLA";
+    mla.inputs = {0U};
+    mla.outputs = {1U};
+    sc::MlaOpConfig config{"model.elf", 4};
+    config.batch_count = batches;
+    mla.config = config;
+    data.ops.push_back(std::move(mla));
+    for (const sc::ValueId id : {0U, 1U}) {
+      for (std::uint32_t batch = 0U; batch < batches; ++batch) {
+        data.backend_ports.push_back(sc::BackendPortSpec{
+            0U, id == 0U ? sc::BackendPortDirection::Input : sc::BackendPortDirection::Output,
+            batch, std::string(id == 0U ? "data.ifm.b" : "data.ofm.b") + std::to_string(batch), id,
+            4U, 4096U, sc::BackendPortAlignmentAuthority::LegacyPolicy,
+            id == 0U ? sc::BackendPortAccess::ReadOnly : sc::BackendPortAccess::WriteOnly, 0U,
+            batch, batch * 4096U});
+      }
+    }
+    std::string error;
+    const auto plan = sc::ModelExecutionPlan::create(data, &error);
+    require(plan.has_value(), "sample ports must preserve one logical batch: " + error);
+    require(plan->backend_ports(0U, sc::BackendPortDirection::Output).size() == batches &&
+                plan->model_outputs().size() == 1U && plan->carrier(1U)->required_bytes == span,
+            "physical samples share the correctly sized logical carrier");
+    const auto sources = sc::resolve_mla_input_physical_sources(*plan, {}, &error);
+    require(sources.has_value() && sources->size() == batches,
+            "direct MLA samples share their proved public carrier: " + error);
+    require(std::all_of(sources->begin(), sources->end(),
+                        [](const auto& source) { return source.source_physical_index == 0; }),
+            "direct MLA batch samples retain the public input index");
+    sima::MlaStaticContract projected;
+    sima::PhysicalBufferStaticSpec input;
+    input.physical_index = 0;
+    input.size_bytes = batches * 4U;
+    input.segment_name = "input";
+    projected.physical_inputs.push_back(input);
+    sima::PhysicalBufferStaticSpec output = input;
+    output.segment_name = "output";
+    projected.dispatcher_physical_outputs.push_back(output);
+    sima::TensorStaticSpec logical_input;
+    logical_input.tensor_index = 0;
+    projected.logical_inputs.push_back(logical_input);
+    require(sc::apply_dmabuf_plan_contract_projection(*plan, &projected, *sources, &error),
+            "direct MLA samples project complete offset bindings: " + error);
+    require(projected.input_bindings.size() == batches, "all sample bindings survive projection");
+    for (std::uint32_t sample = 0; sample < batches; ++sample) {
+      require(projected.input_bindings[sample].src_physical_output_index == 0 &&
+                  projected.input_bindings[sample].src_physical_byte_offset == sample * 4096U &&
+                  projected.input_bindings[sample].src_physical_size_bytes == 4U,
+              "sample bindings retain the proved carrier, offset and transfer extent");
+    }
+    auto invalid = data;
+    invalid.backend_ports.back().batch_index = 0U;
+    require(!sc::ModelExecutionPlan::create(invalid, &error), "duplicate samples must fail");
+    invalid = data;
+    invalid.backend_ports.back().value_byte_offset = 0U;
+    require(!sc::ModelExecutionPlan::create(invalid, &error),
+            "overlapping sample writes must fail");
+    invalid = data;
+    invalid.backend_ports.front().value_byte_offset = 4096U;
+    require(!sc::ModelExecutionPlan::create(invalid, &error),
+            "wrong sample input offset must fail");
+    invalid = data;
+    invalid.backend_ports.pop_back();
+    require(!sc::ModelExecutionPlan::create(invalid, &error), "missing samples must fail");
+  }
+}
 
 sc::ModelExecutionPlan make_plan() {
   sc::ModelExecutionPlanData data;
@@ -1229,13 +1455,18 @@ sc::ModelExecutionPlan make_grouped_padded_cast_plan() {
   return std::move(*plan);
 }
 
-sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
-                                                 const sc::OpKind second_kind,
-                                                 const std::size_t members,
-                                                 const std::uint64_t input_offset = 0U) {
+sc::ModelExecutionPlan
+make_fused_transform_plan(const sc::OpKind first_kind, const sc::OpKind second_kind,
+                          const std::size_t members, const std::uint64_t input_offset = 0U,
+                          const sc::TensorShape shape = {1, 2, 2, 16},
+                          const std::string layout = "HWC", const std::uint32_t batch_count = 1U,
+                          const bool c16_packed = true) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
-  const sc::TensorShape shape{1, 2, 2, 16};
+  std::uint64_t elements = 1U;
+  for (const auto dim : shape) {
+    elements *= static_cast<std::uint64_t>(dim);
+  }
   const sc::TensorShape tile{1, 1, 1, 16};
   const auto dtype_bytes = [](const std::string& dtype) {
     return dtype == "FP32" ? 4U : dtype == "BF16" ? 2U : 1U;
@@ -1254,9 +1485,9 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
     const auto input_id = static_cast<sc::ValueId>(data.values.size());
     const auto middle_id = input_id + 1U;
     const auto output_id = input_id + 2U;
-    const auto input_bytes = 64U * dtype_bytes(input_dtype);
-    const auto middle_bytes = 64U * dtype_bytes(middle_dtype);
-    const auto output_bytes = 64U * dtype_bytes(output_dtype);
+    const auto input_bytes = elements * dtype_bytes(input_dtype);
+    const auto middle_bytes = elements * dtype_bytes(middle_dtype);
+    const auto output_bytes = elements * dtype_bytes(output_dtype);
     const auto input_carrier = static_cast<sc::CarrierId>(data.carriers.size());
     data.carriers.push_back(
         {input_carrier, input_offset + input_bytes, 64U, sc::ValueRepresentation::Dense});
@@ -1271,7 +1502,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
                                         input_bytes,
                                         input_dtype,
                                         shape,
-                                        "HWC",
+                                        layout,
                                         {},
                                         sc::ValueRepresentation::Dense,
                                         std::nullopt,
@@ -1287,7 +1518,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
                                         middle_bytes,
                                         middle_dtype,
                                         shape,
-                                        "HWC",
+                                        layout,
                                         {},
                                         sc::ValueRepresentation::Dense,
                                         std::nullopt,
@@ -1303,7 +1534,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
                                         output_bytes,
                                         output_dtype,
                                         shape,
-                                        "HWC",
+                                        layout,
                                         {},
                                         output_representation,
                                         std::nullopt,
@@ -1326,6 +1557,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
       op.name = "transform_" + std::to_string(op.id);
       op.kind = kind;
       op.processor = "EV74";
+      op.batch_count = batch_count;
       op.inputs = {input};
       op.outputs = {output};
       op.input_shapes = {shape};
@@ -1341,7 +1573,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
             : sc::OpConfig{sc::DetessellateOpConfig{tile, shape, true, true, input_dtype}};
     sc::OpConfig second_config =
         second_kind == sc::OpKind::Tessellate
-            ? sc::OpConfig{sc::TessellateOpConfig{tile, true, true, middle_dtype}}
+            ? sc::OpConfig{sc::TessellateOpConfig{tile, c16_packed, c16_packed, middle_dtype}}
         : second_kind == sc::OpKind::Dequantize
             ? sc::OpConfig{sc::DequantizeOpConfig{"INT8", {{0.25, 0}}}}
             : sc::OpConfig{sc::CastOpConfig{"FP32"}};
@@ -1361,7 +1593,7 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
                                         64U,
                                         "INT8",
                                         shape,
-                                        "HWC",
+                                        layout,
                                         {},
                                         sc::ValueRepresentation::BackendNative,
                                         std::nullopt,
@@ -1400,6 +1632,83 @@ sc::ModelExecutionPlan make_fused_transform_plan(const sc::OpKind first_kind,
   auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
   require(plan.has_value(), "fused transform plan must be valid: " + error);
   return std::move(*plan);
+}
+
+void test_casttess_hwc_execution_view() {
+  struct Case {
+    sc::TensorShape shape;
+    std::string layout;
+    std::uint32_t batch;
+    std::uint32_t execution_rank;
+    bool c16_packed;
+  };
+  const std::array<Case, 5U> cases{{
+      {{1, 2, 2, 16}, "HWC", 1U, 4U, false},
+      {{1, 2, 2, 16}, "HWC", 1U, 4U, true},
+      {{2, 2, 16}, "HWC", 1U, 3U, true},
+      {{2, 2, 2, 16}, "HWC", 1U, 4U, true},
+      {{2, 2, 2, 16}, "NHWC", 2U, 4U, true},
+  }};
+  for (const auto& test : cases) {
+    const auto plan =
+        make_fused_transform_plan(sc::OpKind::Cast, sc::OpKind::Tessellate, 1U, 64U, test.shape,
+                                  test.layout, test.batch, test.c16_packed);
+    std::string error;
+    const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
+    require(physical.has_value(), "CastTess execution view lowers: " + error);
+    const auto arena =
+        sc::FrameSlotArenaPlan::compile(plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+                                        sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
+    require(arena.has_value(), "CastTess execution view arena compiles: " + error);
+    std::vector<sc::PhysicalCommandId> commands;
+    for (const auto& command : physical->commands) {
+      if (command.engine == sc::PhysicalEngine::Cvu && command.implementation_id == "casttess") {
+        commands.push_back(command.id);
+      }
+    }
+    const auto contract = sc::build_dmabuf_plan_processcvu_command_contract(
+        plan, *physical, commands, *arena, &error);
+    require(contract.has_value(), "CastTess execution view projects: " + error);
+    require(plan.value(0U)->logical_shape == test.shape &&
+                plan.value(2U)->logical_shape == test.shape && contract->payload.batch_size == 1 &&
+                contract->payload.input_tensors.size() == 1U &&
+                contract->payload.output_tensors.size() == 1U,
+            "canonical execution retains rank and the complete batch in one descriptor");
+    {
+      constexpr std::size_t member = 0;
+      const auto& input = contract->payload.input_tensors[member].descriptor();
+      const auto& output = contract->payload.output_tensors[member].descriptor();
+      const auto hwc = test.execution_rank - 3U;
+      require(input.shape.rank == test.execution_rank && output.shape.rank == test.execution_rank &&
+                  input.shape.axis_semantics[hwc] == SIMA_EV_AXIS_H &&
+                  input.shape.axis_semantics[hwc + 1U] == SIMA_EV_AXIS_W &&
+                  input.shape.axis_semantics[hwc + 2U] == SIMA_EV_AXIS_C &&
+                  input.shape.sizes[hwc] == 2 && input.shape.sizes[hwc + 1U] == 2 &&
+                  input.shape.sizes[hwc + 2U] == 16 &&
+                  input.layout.strided.strides_bytes[hwc] == 128 &&
+                  input.layout.strided.strides_bytes[hwc + 1U] == 64 &&
+                  input.layout.strided.strides_bytes[hwc + 2U] == 4 &&
+                  output.layout.tiled.tile_sizes[hwc] == 1 &&
+                  output.layout.tiled.tile_sizes[hwc + 1U] == 1 &&
+                  output.layout.tiled.tile_sizes[hwc + 2U] == 16 &&
+                  output.layout.tiled.tile_align_bytes == 16U &&
+                  ((output.layout.tiled.flags & SIMA_EV_TILED_FLAG_COMPACT_CHANNELS) == 0U) ==
+                      test.c16_packed,
+              "execution geometry retains H/W/C strides, tiles and channel padding");
+      for (std::uint32_t axis = 0U; axis < input.shape.rank; ++axis) {
+        require(input.shape.sizes[axis] == output.shape.sizes[axis] &&
+                    input.shape.axis_semantics[axis] == output.shape.axis_semantics[axis],
+                "CastTess input and output execution views match");
+      }
+      const auto input_bytes = plan.value(0U)->required_bytes;
+      const auto output_bytes = plan.value(2U)->required_bytes;
+      require(input.storage.nbytes == input_bytes && output.storage.nbytes == output_bytes &&
+                  contract->runtime_contract.physical_inputs[member].source_byte_offset == 0U &&
+                  contract->runtime_contract.physical_outputs[member].source_byte_offset ==
+                      arena->region(2U)->byte_offset + 32U,
+              "execution views preserve whole-batch spans without fabricated sample offsets");
+    }
+  }
 }
 
 sc::ModelExecutionPlan make_model_managed_preproc_absorption_plan() {
@@ -1640,10 +1949,159 @@ sc::ModelExecutionPlan make_model_managed_tess_preproc_absorption_plan(
   return std::move(*plan);
 }
 
+void test_cast_preproc_absorption_uses_explicit_image_layout() {
+  const std::string manifest = R"json({
+    "name":"cast-preproc","input_nodes":[{"name":"input","size":48}],
+    "plugins":[
+      {"name":"cast_in","sequence":1,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+         "kernel":"cast_transform","params":{"in_dtype":"float32","out_dtype":"bfloat16",
+           "input_shapes":[[1,2,2,3]],"output_shapes":[[1,2,2,3]]}},
+       "input_nodes":[{"name":"input","size":48}],
+       "output_nodes":[{"name":"cast_in","size":24}]},
+      {"name":"MLA_0","sequence":2,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,"number_of_quads_to_user":4},
+       "resources":{"executable":"synthetic.elf"},
+       "input_nodes":[{"name":"cast_in","size":24}],
+       "output_nodes":[{"name":"mla_out","size":8}]},
+      {"name":"cast_out","sequence":3,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+         "kernel":"cast_transform","params":{"in_dtype":"bfloat16","out_dtype":"float32",
+           "input_shapes":[[1,4]],"output_shapes":[[1,4]]}},
+       "input_nodes":[{"name":"mla_out","size":8}],
+       "output_nodes":[{"name":"output","size":16}]}
+    ]})json";
+  sima::MlaElfIoTopology topology;
+  topology.valid = true;
+  topology.monolithic_ifm = true;
+  topology.monolithic_ofm = true;
+  topology.monolithic_ifm_extent_bytes = 24U;
+  topology.monolithic_ofm_extent_bytes = 8U;
+  topology.source_path = "synthetic.elf";
+  const auto decoded = sc::MpkDecoder{}.decode_json(manifest, topology);
+  require(static_cast<bool>(decoded),
+          "synthetic Cast ingress must decode: " +
+              (decoded.error ? decoded.error->json_path + ": " + decoded.error->detail : ""));
+  const auto& plan = *decoded.plan;
+  const auto target_id = plan.backend_ports(0U, sc::BackendPortDirection::Input).front().value_id;
+  const auto* target = plan.value(target_id);
+  require(target && !target->logical_layout && target->logical_dtype == "bfloat16" &&
+              target->logical_shape == sc::TensorShape({1, 2, 2, 3}) &&
+              target->required_bytes == 24U,
+          "decoded Cast target must retain exact tensor facts without image layout");
+  std::string error;
+  const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
+  require(physical.has_value(), "Cast ingress must lower: " + error);
+  const auto detached = sc::detached_mla_output_roots(plan, *physical);
+  const auto arena =
+      sc::FrameSlotArenaPlan::compile(plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
+                                      sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
+                                      sc::kModalixProductionArenaDmsPolicy, detached);
+  require(arena.has_value(), "Cast ingress arena must compile: " + error);
+
+  simaai::neat::PreprocOptions options;
+  options.model_managed_contract = true;
+  options.input_shape = {2, 2, 3};
+  options.output_shape = {2, 2, 3};
+  options.scaled_height = 2;
+  options.scaled_width = 2;
+  options.input_img_type = "NV12";
+  options.output_img_type = "RGB";
+  options.output_dtype = "BF16";
+  options.tessellate = false;
+  const auto original =
+      sima::stagesemantics::build_processcvu_compiled_contract_from_options(options);
+  auto contract = original;
+  std::vector<sc::PhysicalCommandId> absorbed;
+  require(sc::project_model_managed_preproc_contract(plan, *physical, *arena, &contract, &absorbed,
+                                                     &error),
+          "explicit graph-200 image layout must absorb generic Cast ingress: " + error);
+  require(absorbed.size() == 1U &&
+              physical->commands[absorbed.front()].members.front().semantic_chain ==
+                  std::vector<sc::OpId>{plan.ops().front().id} &&
+              contract.payload.graph_name == "preproc" &&
+              contract.payload.output_tensors.size() == 1U,
+          "graph-200 must replace only the leading Cast command");
+  const auto& output = contract.payload.output_tensors.front().descriptor();
+  const std::array<std::uint8_t, 4> axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
+                                         SIMA_EV_AXIS_C};
+  require(output.dtype == SIMA_EV_DTYPE_BF16 && output.shape.rank == 4U &&
+              output.storage.nbytes == 24U && output.layout_kind == SIMA_EV_LAYOUT_STRIDED,
+          "graph-200 descriptor must preserve exact target rank, precision and bytes");
+  for (std::size_t axis = 0; axis < axes.size(); ++axis) {
+    require(output.shape.sizes[axis] == target->logical_shape->at(axis) &&
+                output.shape.axis_semantics[axis] == axes[axis],
+            "graph-200 supplies explicit NHWC descriptor axes without changing dimensions");
+  }
+  require(contract.payload.runtime_output_logical_layout_list == std::vector<std::string>{"HWC"} &&
+              contract.runtime_contract.logical_outputs.size() == 1U &&
+              contract.exposed_view.exposed_logical_outputs.size() == 1U,
+          "graph-200 must publish one explicit image layout");
+  for (const auto* logical : {&contract.runtime_contract.logical_outputs.front(),
+                              &contract.exposed_view.exposed_logical_outputs.front()}) {
+    require(logical->layout == "HWC" && logical->dtype == "BF16" &&
+                logical->shape == *target->logical_shape && logical->size_bytes == 24U,
+            "runtime and exposed graph-200 outputs must retain exact BF16 image semantics");
+  }
+  require(!target->logical_layout && !plan.value(plan.model_inputs().front())->logical_layout,
+          "graph-200 projection must not invent layout inside the immutable Cast plan");
+
+  const auto reject = [&](const sc::ModelExecutionPlan& candidate_plan, auto candidate,
+                          const std::string& diagnostic) {
+    std::vector<sc::PhysicalCommandId> rejected_commands;
+    error.clear();
+    require(!sc::project_model_managed_preproc_contract(candidate_plan, *physical, *arena,
+                                                        &candidate, &rejected_commands, &error) &&
+                error.find(diagnostic) != std::string::npos,
+            "invalid graph-200 evidence must fail with the contract diagnostic: " + error);
+  };
+  for (const auto& defect : {"missing-layout", "unknown-layout", "shape", "dtype"}) {
+    auto invalid = original;
+    auto selected =
+        std::find_if(invalid.runtime_contract.logical_outputs.begin(),
+                     invalid.runtime_contract.logical_outputs.end(), [&](const auto& logical) {
+                       return logical.logical_name == invalid.payload.primary_output_name;
+                     });
+    require(selected != invalid.runtime_contract.logical_outputs.end(),
+            "graph-200 must have its named primary output before negative mutation");
+    const std::string kind = defect;
+    if (kind == "missing-layout") {
+      selected->layout.clear();
+    } else if (kind == "unknown-layout") {
+      selected->layout = "unknown";
+    } else if (kind == "shape") {
+      selected->shape = {1, 3, 2, 2};
+    } else {
+      selected->dtype = "FP32";
+    }
+    reject(plan, std::move(invalid),
+           kind.ends_with("layout") ? "no explicit image layout"
+                                    : "contradicts the exact first-MLA");
+  }
+  sc::ModelExecutionPlanData conflicting_data{plan.contract_version(),
+                                              plan.values(),
+                                              plan.carriers(),
+                                              plan.model_inputs(),
+                                              plan.ops(),
+                                              plan.backend_ports(),
+                                              plan.model_outputs(),
+                                              {}};
+  conflicting_data.values[target_id].logical_layout = "CHW";
+  const auto conflicting = sc::ModelExecutionPlan::create(std::move(conflicting_data), &error);
+  require(conflicting.has_value(), "explicit conflicting layout fixture must form a valid plan");
+  reject(*conflicting, original, "contradicts the exact first-MLA");
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_dmabuf_plan_contract_projection_test", ([] {
+      test_cvu_whole_batch_projection();
+      test_cvu_whole_batch_projection(true);
+      test_single_child_batch_pack();
+      test_batched_backend_ports();
+      test_cast_preproc_absorption_uses_explicit_image_layout();
+      test_casttess_hwc_execution_view();
       const auto plan = make_plan();
       auto contract = make_projection(plan);
       std::string error;
@@ -1838,11 +2296,11 @@ RUN_TEST(
               "grouped padded-Cast contract must build: " + error);
       require(padded_cast_contract->payload.input_tensors.size() == 2U &&
                   padded_cast_contract->runtime_contract.physical_inputs.size() == 2U &&
-                  padded_cast_contract->payload.input_tensors[0].storage.nbytes == 9800U &&
-                  padded_cast_contract->payload.input_tensors[1].storage.nbytes == 2450U &&
-                  padded_cast_contract->payload.input_tensors[0].layout.strided.strides_bytes[0] ==
+                  padded_cast_contract->payload.input_tensors[0].descriptor().storage.nbytes == 9800U &&
+                  padded_cast_contract->payload.input_tensors[1].descriptor().storage.nbytes == 2450U &&
+                  padded_cast_contract->payload.input_tensors[0].descriptor().layout.strided.strides_bytes[0] ==
                       9808 &&
-                  padded_cast_contract->payload.input_tensors[1].layout.strided.strides_bytes[0] ==
+                  padded_cast_contract->payload.input_tensors[1].descriptor().layout.strided.strides_bytes[0] ==
                       2464 &&
                   padded_cast_contract->runtime_contract.physical_inputs[0].size_bytes == 9808U &&
                   padded_cast_contract->runtime_contract.physical_inputs[1].size_bytes == 2464U,
@@ -1901,9 +2359,9 @@ RUN_TEST(
         for (const auto& descriptor : fused_case.first == sc::OpKind::Detessellate
                                           ? fused_contract->payload.input_tensors
                                           : fused_contract->payload.output_tensors) {
-          require(descriptor.layout_kind == SIMA_EV_LAYOUT_TILED &&
-                      descriptor.layout.tiled.flags == SIMA_EV_TILED_FLAG_CBLOCK16 &&
-                      descriptor.layout.tiled.tile_align_bytes == 16U,
+          require(descriptor.descriptor().layout_kind == SIMA_EV_LAYOUT_TILED &&
+                      descriptor.descriptor().layout.tiled.flags == SIMA_EV_TILED_FLAG_CBLOCK16 &&
+                      descriptor.descriptor().layout.tiled.tile_align_bytes == 16U,
                   "physical cohort projection lost authored CBlock16 encoding");
         }
         require(fused_contract->runtime_contract.frame_arena_role ==
@@ -2238,8 +2696,11 @@ RUN_TEST(
       grouped_quant.graph_family_enum = sima::ProcessCvuGraphFamily::Quant;
       grouped_quant.graph_name = "quant";
       grouped_quant.graph_family = "quantize";
-      grouped_quant.input_tensors.resize(2U);
-      grouped_quant.output_tensors.resize(2U);
+      sima_ev_tensor_desc quant_input{}, quant_output{};
+      quant_input.dtype = SIMA_EV_DTYPE_FP32;
+      quant_output.dtype = SIMA_EV_DTYPE_INT8;
+      grouped_quant.input_tensors.assign(2U, {quant_input, "FP32"});
+      grouped_quant.output_tensors.assign(2U, {quant_output, "INT8"});
       grouped_quant.runtime_output_physical_index_list.resize(2U, -1);
       simaai::neat::CompiledRuntimeContract grouped_runtime;
       grouped_runtime.logical_inputs.resize(2U);
@@ -2585,7 +3046,7 @@ RUN_TEST(
       require(detesscast_contract->payload.input_tensors.size() == kGroupedUnpackMembers &&
                   std::all_of(detesscast_contract->payload.input_tensors.begin(),
                               detesscast_contract->payload.input_tensors.end(),
-                              [](const auto& input) { return input.dtype == SIMA_EV_DTYPE_BF16; }),
+                              [](const auto& input) { return input.scalar() == ::simaai::scheduler::client::DType::BFloat16; }),
               "graph225 must retain BF16 consumer descriptors independently of MLA carrier "
               "publication dtype");
       require(
@@ -3026,17 +3487,17 @@ RUN_TEST(
                 graph200_contract.payload.dmabuf_plan_contract &&
                 graph200_contract.payload.input_tensors.size() == 1U &&
                 graph200_contract.payload.output_tensors.size() == 1U &&
-                graph200_contract.payload.input_tensors.front().shape.rank == 3U &&
-                graph200_contract.payload.input_tensors.front().shape.sizes[0] == 2 &&
-                graph200_contract.payload.input_tensors.front().shape.sizes[1] == 2 &&
-                graph200_contract.payload.input_tensors.front().shape.sizes[2] == 3 &&
-                graph200_contract.payload.input_tensors.front().layout_kind ==
+                graph200_contract.payload.input_tensors.front().descriptor().shape.rank == 3U &&
+                graph200_contract.payload.input_tensors.front().descriptor().shape.sizes[0] == 2 &&
+                graph200_contract.payload.input_tensors.front().descriptor().shape.sizes[1] == 2 &&
+                graph200_contract.payload.input_tensors.front().descriptor().shape.sizes[2] == 3 &&
+                graph200_contract.payload.input_tensors.front().descriptor().layout_kind ==
                     SIMA_EV_LAYOUT_STRIDED &&
-                graph200_contract.payload.input_tensors.front().layout.strided.strides_bytes[0] ==
+                graph200_contract.payload.input_tensors.front().descriptor().layout.strided.strides_bytes[0] ==
                     6 &&
-                graph200_contract.payload.input_tensors.front().layout.strided.strides_bytes[1] ==
+                graph200_contract.payload.input_tensors.front().descriptor().layout.strided.strides_bytes[1] ==
                     3 &&
-                graph200_contract.payload.input_tensors.front().layout.strided.strides_bytes[2] ==
+                graph200_contract.payload.input_tensors.front().descriptor().layout.strided.strides_bytes[2] ==
                     1 &&
                 graph200_contract.payload.default_output_names ==
                     std::vector<std::string>{"output_rgb_image"} &&
@@ -3207,7 +3668,7 @@ RUN_TEST(
                     packed_recipe->publication->physical_views.size() == 1U &&
                     packed_recipe->publication->physical_views.front().backend_output_index == 0 &&
                     packed_recipe->publication->physical_views.front().relation ==
-                        ::simaai::runtime::gstreamer::TensorStagePublicationRelation::PackedStorage,
+                        ::simaai::scheduler::client::TensorStagePublicationRelation::PackedStorage,
                 "canonical request must carry only compiler-authored packed view authority");
 
         // A padded tile carrier is not the dense image byte count. Exercise
@@ -3252,7 +3713,7 @@ RUN_TEST(
             require(
                 logical.size_bytes == 64U && published.size_bytes == logical.size_bytes &&
                     runtime.physical_outputs.front().size_bytes == 64U &&
-                    padded.payload.output_tensors.front().storage.nbytes == 64U &&
+                    padded.payload.output_tensors.front().descriptor().storage.nbytes == 64U &&
                     published.shape == logical.shape &&
                     published.publication_relation == logical.publication_relation &&
                     published.physical_index == logical.physical_index &&
@@ -3283,8 +3744,9 @@ RUN_TEST(
                         recipe->publication->contract->logical_outputs.size() == 1U,
                     "padded Preproc must publish one canonical member without an intermediate");
             const auto inspection =
-                ::simaai::runtime::inspect_kernel(recipe->members.front().executable);
-            const auto* checked = std::get_if<::simaai::runtime::KernelInspection>(&inspection);
+                ::simaai::scheduler::client::inspect_kernel(recipe->members.front().executable);
+            const auto* checked =
+                std::get_if<::simaai::scheduler::client::KernelInspection>(&inspection);
             require(checked && checked->output_requirements().size() == 1U &&
                         checked->output_requirements().front().storage_bytes == 64U &&
                         recipe->publication->contract->logical_outputs.front().size_bytes ==
@@ -3334,16 +3796,29 @@ RUN_TEST(
           require(!lowered, "malformed publication fixture canonical executable: " +
                                 (lowered ? lowered->message : std::string{}));
           const auto& recipe = *manifest.stages.front().native_kernel;
-          ::simaai::runtime::gstreamer::TensorStageRequest request;
+          ::simaai::scheduler::client::TensorStageRequest request;
           request.target = recipe.target;
           request.members = recipe.members;
           request.publication = *recipe.publication;
           request.placement = std::make_shared<SimaPluginStageSpec>();
-          const auto state = sima::instantiate_kernel_stage_state(recipe, request);
+          const auto state = sima::wire_kernel_stage_factories(recipe, request);
           require(!state,
                   "cold frame-adapter instantiation: " + (state ? state->message : std::string{}));
-          const auto admitted = ::simaai::runtime::gstreamer::prepare_tensor_stages({&request, 1});
-          const auto* rejected = std::get_if<::simaai::runtime::Error>(&admitted);
+          gst_init(nullptr, nullptr);
+          require(::simaai::scheduler::client::register_kernel_runner(),
+                  "Scheduler kernel runner registration required");
+          auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new(nullptr), gst_object_unref);
+          auto* element = gst_element_factory_make("neatkernelrunner", "malformed_span");
+          require(element && gst_bin_add(GST_BIN(pipeline.get()), element),
+                  "malformed span candidate element required");
+          auto* pad = gst_element_request_pad_simple(element, "sink_0");
+          require(pad != nullptr, "malformed span candidate input required");
+          gst_object_unref(pad);
+          const ::simaai::scheduler::client::StageAttachment attachment{element,
+                                                                        std::move(request)};
+          const auto admitted = ::simaai::scheduler::client::prepare_and_attach_tensor_stages(
+              pipeline.get(), {&attachment, 1});
+          const auto* rejected = admitted ? &*admitted : nullptr;
           require(rejected && rejected->field == "output.span" &&
                       rejected->message.find(delta < 0 ? "exceeds" : "unwritten") !=
                           std::string::npos,
@@ -3382,7 +3857,7 @@ RUN_TEST(
               require(exposed.size_bytes == required_bytes && exposed.shape == expected_shape &&
                           exposed.layout == "HWC" &&
                           (batch == 1 ||
-                           compiled.payload.output_tensors.front().shape.axis_semantics[0] ==
+                           compiled.payload.output_tensors.front().descriptor().shape.axis_semantics[0] ==
                                SIMA_EV_AXIS_N) &&
                           compiled.runtime_contract.physical_outputs.at(exposed.physical_index)
                                   .size_bytes == required_bytes,
@@ -3397,8 +3872,9 @@ RUN_TEST(
                                     (failure ? failure->message : std::string{}));
               const auto& recipe = manifest.stages.front().native_kernel;
               const auto inspection =
-                  ::simaai::runtime::inspect_kernel(recipe->members.front().executable);
-              const auto* checked = std::get_if<::simaai::runtime::KernelInspection>(&inspection);
+                  ::simaai::scheduler::client::inspect_kernel(recipe->members.front().executable);
+              const auto* checked =
+                  std::get_if<::simaai::scheduler::client::KernelInspection>(&inspection);
               require(checked && checked->output_requirements().size() == 1U &&
                           checked->output_requirements().front().storage_bytes == required_bytes &&
                           recipe->publication->contract->logical_outputs.front().size_bytes ==
@@ -3495,7 +3971,8 @@ RUN_TEST(
       require(encoder.frame_arena_role == sima::FrameArenaRole::Allocate &&
                   decoder.frame_arena_role == sima::FrameArenaRole::Allocate &&
                   decoder.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms &&
-                  decoder.frame_arena_allocation_policy == sc::ArenaAllocationPolicy::RequiredDomain &&
+                  decoder.frame_arena_allocation_policy ==
+                      sc::ArenaAllocationPolicy::RequiredDomain &&
                   decoder.frame_arena_size_bytes == 4096U &&
                   decoder.physical_inputs[0].source_physical_index == 0 &&
                   decoder.physical_inputs[0].source_byte_offset == 0 &&

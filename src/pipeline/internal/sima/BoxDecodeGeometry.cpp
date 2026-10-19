@@ -1,7 +1,7 @@
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include <gstsimaaitensorbuffer.h>
-#include <simaai/scheduler/kernel_preparation.h>
+#include <gstsimaaitensorbuffer_meta.h>
+#include <simaai/scheduler/client/kernel.h>
 #include <array>
 #include <cmath>
 #include <mutex>
@@ -10,8 +10,8 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 namespace {
-namespace rt = ::simaai::runtime;
-namespace scheduler = ::simaai::scheduler;
+namespace rt = ::simaai::scheduler::client;
+namespace scheduler = ::simaai::scheduler::client;
 using Transform = std::array<float, 4>;
 struct Geometry {
   int width = 0, height = 0, model_width = 0, model_height = 0;
@@ -123,11 +123,11 @@ struct Cache {
   struct Entry {
     int width = 0, height = 0;
     std::optional<Transform> transform;
-    std::shared_ptr<const rt::PreparedOperation> operation;
+    rt::PreparedSelection operation;
   };
   // Per-admission bounded cache. Entries retain values, never metadata views.
   std::mutex mutex;
-  std::shared_ptr<const rt::PreparedOperation> base;
+  rt::PreparedSelection base;
   std::array<Entry, 4> variants;
   std::size_t next = 0;
 };
@@ -157,10 +157,10 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
        [variant = std::move(variant), options, original_size_from_metadata,
         require_resize_metadata]() -> KernelStageRecipe::Resolver {
          return [cache = std::make_shared<Cache>(), variant, options, original_size_from_metadata,
-                 require_resize_metadata](const rt::Executor& executor,
-                                          const std::shared_ptr<const rt::PreparedOperation>& base,
+                 require_resize_metadata](const rt::VariantPreparer& preparer,
                                           std::span<GstBuffer* const> buffers)
-                    -> rt::Result<std::shared_ptr<const rt::PreparedOperation>> {
+                    -> rt::Result<rt::PreparedSelection> {
+           const auto& base = preparer.base();
            if (!base || buffers.empty())
              return invalid("prepared operation and input buffers are required");
            Geometry selected;
@@ -240,24 +240,19 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
              if (entry.operation && entry.width == selected.width &&
                  entry.height == selected.height && entry.transform == selected.transform)
                return entry.operation;
-           std::array<std::optional<::simaai::kernels::ParameterValue>, 2> values{
-               ::simaai::kernels::ParameterValue{
-                   ::simaai::kernels::ParameterArray{selected.width, selected.height}},
+           std::array<std::optional<::simaai::scheduler::client::ParameterValue>, 2> values{
+               ::simaai::scheduler::client::ParameterValue{
+                   ::simaai::scheduler::client::ParameterArray{selected.width, selected.height}},
                {}};
            if (selected.transform) {
              const auto& t = *selected.transform;
-             values[1] = ::simaai::kernels::ParameterArray{t[0], t[1], t[2], t[3]};
+             values[1] = ::simaai::scheduler::client::ParameterArray{t[0], t[1], t[2], t[3]};
            }
-           auto checked = scheduler::apply_kernel_variant(
+           auto prepared = preparer.prepare(
                *variant, {{}, {}, {values.data(), options.complete_geometry ? 2U : 1U}});
-           if (const auto* error = std::get_if<rt::Error>(&checked))
-             return *error;
-           auto prepared =
-               executor.prepare(std::get<::simaai::kernels::Executable>(std::move(checked)), *base);
            if (const auto* error = std::get_if<rt::Error>(&prepared))
              return *error;
-           auto operation = std::make_shared<const rt::PreparedOperation>(
-               std::get<rt::PreparedOperation>(std::move(prepared)));
+           auto operation = std::get<rt::PreparedSelection>(std::move(prepared));
            cache->variants[cache->next] = {selected.width, selected.height, selected.transform,
                                            operation};
            cache->next = (cache->next + 1) % cache->variants.size();

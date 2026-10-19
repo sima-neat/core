@@ -45,7 +45,6 @@ cd website && yarn start           # preview the site
 | `route_refactor_validation.sh` | 一個針對路線規劃器的回歸測試（由 CI 觸發）。|
 | `install_neat_plugins.sh` | 將框架的 GStreamer 外掛程式安裝到系統外掛程式目錄中。|
 | `install_codex_skill.sh` | 安裝 Codex CLI 的 NEAT 技能（方便開發者使用）。|
-| `fix_devkit_runtime.sh` | 修補全新開發工具包的執行階段函式庫/路徑，並重新啟動協處理器。只有在 `simaai-appcomplex.service` 服務正在執行時，才會啟動 M4。|
 | `sync_neatdecoder.sh` / `use_neatdecoder.sh` | 在內建和外部解碼器版本之間切換。|
 
 ### `core/scripts/ci/`, `core/scripts/dev/`, `core/scripts/release/`

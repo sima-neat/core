@@ -120,13 +120,13 @@ tensor_rank=3
 - `advanced.max_input_bytes`: обмеження зростання буфера вхідних даних.
 - `advanced.copy_input`: примусове створення захисних копій вхідних даних.
 
-Використовуйте `Run::start_measurement()`, щоб перевірити затримку, пропускну здатність, лічильники вхідних даних, час роботи плагінів/модулів, а також необов’язкову телеметрію живлення PMIC плати в одному виміряному вікні.
+Використовуйте `Run::start_measurement()`, щоб перевірити затримку, пропускну здатність, лічильники вхідних даних, час роботи плагінів/модулів, а також необов’язкову телеметрію живлення плати в одному виміряному вікні.
 
 Щоб включити дані про живлення плати, увімкніть цю функцію в коді (не потрібна змінна середовища) та зчитайте її зі звіту про вимірювання:
 
 ```cpp
 simaai::neat::RunOptions run_opt;
-run_opt.enable_board_power(); // default 100 ms sampling, auto-detects built-in profile
+run_opt.enable_board_power(); // reads board power from Sentinel
 auto run = graph.build(inputs, run_opt);
 auto scope = run.start_measurement();
 run.push(inputs);
@@ -136,7 +136,7 @@ auto report = scope.stop();
 
 ```python
 run_opt = neat.RunOptions()
-run_opt.enable_board_power()  # default 100 ms sampling, auto-detects built-in profile
+run_opt.enable_board_power()  # reads board power from Sentinel
 run = graph.build(tensor, run_opt)
 scope = run.start_measurement()
 run.push(tensor)
@@ -144,7 +144,7 @@ _ = run.pull_tensors(5000)
 report = scope.stop()
 ```
 
-`Model::build(run_opt)`, `Model::build(route_opt, run_opt)` та `Graph::build(run_opt)` передають одні й ті самі параметри середовища виконання до базового `Run`, тому використовується один монітор живлення на рівні графа, замість повторного збору даних для кожного конвеєра. Якщо вам потрібно примусово встановити певний вбудований профіль, залишаються доступними спеціальні функції для конкретної плати: `enable_modalix_som_power()`, `enable_modalix_dvt_power()`.
+`Model::build(run_opt)`, `Model::build(route_opt, run_opt)` та `Graph::build(run_opt)` передають одні й ті самі параметри середовища виконання до базового `Run`, тому використовується один монітор живлення на рівні графа, замість повторного збору даних для кожного конвеєра.
 
 ## Вихідні файли
 - C++: `tutorials/004_build_inference_pipeline/build_inference_pipeline.cpp`

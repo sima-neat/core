@@ -1,5 +1,7 @@
 #include "support/yolov8_variant_fixture.h"
 #include "support/cold_contract_gst_init.h"
+#include "mpk_contract_test_utils.h"
+#include "asset_utils.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
@@ -34,8 +36,8 @@ std::filesystem::path core_root() {
   return sima_test::test_source_root();
 }
 
-using sima_test::Yolov8VariantFixture;
 using sima_test::resolve_yolov8_variant_fixture;
+using sima_test::Yolov8VariantFixture;
 
 const Yolov8VariantFixture& yolov8_int8_fixture() {
   static const Yolov8VariantFixture fixture =
@@ -67,16 +69,14 @@ std::string yolov8_bf16_unpack_root() {
 
 simaai::neat::pipeline_internal::sima::MpkContract load_yolov8_int8_contract() {
   std::string error;
-  const auto contract = simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root(
-      yolov8_int8_unpack_root(), &error);
+  const auto contract = load_test_mpk_contract(yolov8_int8_unpack_root(), &error);
   require(contract.has_value(), "expected YOLOv8 INT8 MPK contract: " + error);
   return *contract;
 }
 
 simaai::neat::pipeline_internal::sima::MpkContract load_yolov8_bf16_contract() {
   std::string error;
-  const auto contract = simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root(
-      yolov8_bf16_unpack_root(), &error);
+  const auto contract = load_test_mpk_contract(yolov8_bf16_unpack_root(), &error);
   require(contract.has_value(), "expected YOLOv8 BF16 MPK contract: " + error);
   return *contract;
 }
@@ -569,7 +569,8 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
     require(from_fact.payload.input_shapes == expected_shapes,
             label + " physical preprocess input must preserve the exact authored MPK geometry");
     require(from_fact.payload.output_shapes == expected_shapes,
-            label + " shape-preserving fused input transform must retain the exact authored geometry");
+            label +
+                " shape-preserving fused input transform must retain the exact authored geometry");
     // Batch is authored beside params, independently of the normalized semantic subset.
     std::ifstream mpk_stream(mpk.mpk_json_path);
     require(mpk_stream.is_open(), label + " requires the authoritative MPK manifest");
@@ -578,7 +579,8 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
     const auto authored_scalar =
         std::find_if(plugins.begin(), plugins.end(),
                      [&](const auto& plugin) { return plugin.at("name") == scalar->name; });
-    require(authored_scalar != plugins.end(), label + " requires the authored scalar conversion stage");
+    require(authored_scalar != plugins.end(),
+            label + " requires the authored scalar conversion stage");
     const auto& config = authored_scalar->at("config_params");
     const int desired_batch_size = config.at("desired_batch_size").get<int>();
     require(desired_batch_size == 1 && config.at("actual_batch_size").get<int>() == 1,
@@ -597,7 +599,7 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
             label + " fused operation must bind only the outer input and tessellated output");
     const auto* mla = pipeline_internal::sima::get_mla_stage_io_contract(mpk);
     require(mla && mla->input_tensors.size() == 1U &&
-                from_fact.payload.output_tensors.front().storage.nbytes ==
+                from_fact.payload.output_tensors.front().descriptor().storage.nbytes ==
                     mla->input_tensors.front().size_bytes &&
                 from_fact.runtime_contract.logical_outputs.front().size_bytes ==
                     mla->input_tensors.front().size_bytes,

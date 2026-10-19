@@ -276,11 +276,9 @@ struct ProcessMlaOptions {
   /// downstream stages still hold previous tensor-set outputs.
   int output_pool_buffers = 0;
 
-  /// Defer producer-side CPU visibility for device-produced DMA-BUF outputs.
-  /// This does not remove synchronization: a CPU consumer still acquires READ
-  /// access before touching the data. Graph planning can select producer-side
-  /// visibility for a qualified linear CPU handoff with counted readers and
-  /// return-time retirement. Raw legacy CPU readers need immediate visibility.
+  /// Compatibility field: must remain true. Scheduler always defers CPU
+  /// visibility to the actual consumer through Runner prepared access. False
+  /// is rejected; graph topology no longer selects producer-side READ epochs.
   bool defer_output_invalidate = true;
 };
 
@@ -397,7 +395,6 @@ struct GraphOptions {
   /// Created only for graphs with A65 kernels and parked without CPU use while
   /// idle. The bounded pool is retained across frame submission and flushes.
   int kernel_runner_a65_workers = 2;
-
 
   /// Preferred jargon-free execution surface. Folded into the legacy fields above by
   /// `resolve_advanced_execution()` (called from the Graph constructor). Default is all-unset,
@@ -735,6 +732,8 @@ struct Sample {
       return "GRAY8";
     case ImageSpec::PixelFormat::NV12:
       return "NV12";
+    case ImageSpec::PixelFormat::NV16:
+      return "NV16";
     case ImageSpec::PixelFormat::I420:
       return "I420";
     case ImageSpec::PixelFormat::UNKNOWN:

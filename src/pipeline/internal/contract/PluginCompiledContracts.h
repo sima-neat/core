@@ -18,6 +18,8 @@ struct ModelFragmentPlanSource;
 
 struct CompiledRuntimeContract {
   std::string plugin_kind;
+  // Checked image semantics are independent of later executable preparation.
+  std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication> image_publication;
   std::vector<pipeline_internal::sima::LogicalInputStaticSpec> logical_inputs;
   std::vector<pipeline_internal::sima::InputBindingStaticSpec> input_bindings;
   std::vector<pipeline_internal::sima::PhysicalBufferStaticSpec> physical_inputs;

@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/host_task.h>
 
 namespace simaai::neat::pipeline_internal::sima {
 
@@ -18,8 +18,8 @@ enum class BoxDecodeWireFormat {
   LegacyFeaturePointsV0
 };
 struct BoxDecodePublication {
-  ::simaai::kernels::Executable executable;
-  ::simaai::kernels::TensorSpec output;
+  ::simaai::scheduler::client::KernelExecutable executable;
+  ::simaai::scheduler::client::TensorSpec output;
   std::size_t bytes = 0;
 };
 
@@ -29,6 +29,6 @@ struct BoxDecodePublication {
 // Throws invalid_argument for incompatible canonical tensor contracts.
 BoxDecodePublication
 prepare_boxdecode_publication(BoxDecodeWireFormat,
-                              std::span<const ::simaai::kernels::TensorSpec> inputs);
+                              std::span<const ::simaai::scheduler::client::TensorSpec> inputs);
 
 } // namespace simaai::neat::pipeline_internal::sima

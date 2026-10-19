@@ -122,8 +122,19 @@ def reject_tokens(text, tokens, path):
             raise ValueError(f"{path}: forbidden architecture dependency {token}")
 
 
+def validate_client_boundary(root):
+    # This supplements actual installed compile/dependency-file isolation; it
+    # cannot replace that gate. Match preprocessing directives, not comments.
+    forbidden = re.compile(r'^\s*#\s*include\s*[<"](?:simaai/(?:kernels/|codecs/|runtime/(?!gstreamer/))|neat/video_frame_layout\.h)', re.MULTILINE)
+    for directory in ("src", "include"):
+        for path in (root / directory).rglob("*"):
+            if path.suffix in (".h", ".cpp", ".inc") and forbidden.search(path.read_text()):
+                raise ValueError(f"{path}: lower development header bypasses Scheduler client")
+
+
 def validate_layering(root):
     validate_source_root(root)
+    validate_client_boundary(root)
     for files, forbidden in (
         (GUARDED_FILES, FORBIDDEN_TOKENS),
         (PROCESSCVU_HELPER_GUARDED_FILES, PROCESSCVU_HELPER_FORBIDDEN_TOKENS),
@@ -165,6 +176,21 @@ def validate_renderer_startup(text):
 class KernelRunnerDefaultContract(unittest.TestCase):
     def test_unique_layering_boundaries(self):
         validate_layering(ROOT)
+
+    def test_client_boundary_rejects_each_lower_header(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "src").mkdir()
+            (root / "include").mkdir()
+            source = root / "src/probe.cpp"
+            for header in ("simaai/kernels/types.h", "simaai/runtime/executor.h",
+                           "simaai/runtime/memory/segment_types.h", "simaai/codecs/decoder.h",
+                           "neat/video_frame_layout.h"):
+                source.write_text('#include <' + header + '>\n')
+                with self.subTest(header=header), self.assertRaisesRegex(ValueError, "lower development header"):
+                    validate_client_boundary(root)
+            source.write_text('#include <simaai/scheduler/client/kernel.h>\n')
+            validate_client_boundary(root)
 
     def test_explicit_incomplete_source_root_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -311,20 +337,20 @@ class KernelRunnerDefaultContract(unittest.TestCase):
         self.assertNotIn("--kernel-runner", (ROOT / "build.sh").read_text())
 
     def test_installed_scheduler_contract_is_required(self):
-        for path in (ROOT / "CMakeLists.txt", ROOT / "cmake/SimaNeatConfig.cmake.in"):
-            text = path.read_text()
-            with self.subTest(path=path.name):
-                components = re.search(r"foreach\(_component\s+([^)]*)\)", text)
-                self.assertIsNotNone(components)
-                self.assertEqual(set(components.group(1).split()),
-                                 {"elements", "gstreamer", "tensor_stage", "PreparedRuntimeBridge",
-                                  "kernel_preparation"})
-                self.assertIn("NOT TARGET SimaScheduler::${_component}", text)
+        text = (ROOT / "CMakeLists.txt").read_text()
+        config = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text()
+        self.assertIn("find_package(SimaScheduler CONFIG REQUIRED COMPONENTS frontend)", text)
+        self.assertIn("find_dependency(SimaScheduler CONFIG COMPONENTS frontend)", config)
+        self.assertIn("NOT TARGET SimaScheduler::frontend", config)
+        for contents in (text, config):
+            self.assertNotRegex(contents, r"find_(?:package|dependency)\((?:SimaRunner|SimaKernels|SimaCodecs|NeatInternals)\b")
+
 
     def test_core_uses_generic_cold_preparation(self):
-        # Canonical tensor/error types remain shared. Only numerical factories
-        # and their operation/provider authoring interfaces leave Core.
-        forbidden = (r"simaai/kernels/(?:ops|a65|detail)/", r"simaai/kernels/authoring\.h",
+        # Client tensor/error types preserve the generic vocabulary, while every
+        # lower provider header and numerical implementation remains outside Core.
+        forbidden = (r"simaai/kernels/", r"simaai/runtime/(?!gstreamer/)",
+                     r"simaai/codecs/", r"neat/video_frame_layout\.h",
                      r"kernels::ops::", r"::make_executable\(", r"::with_image_size\(")
         for directory in (ROOT / "src", ROOT / "include"):
             for path in directory.rglob("*"):
@@ -339,7 +365,7 @@ class KernelRunnerDefaultContract(unittest.TestCase):
         recipe = (ROOT / "src/pipeline/internal/sima/BoxDecodeKernelRecipe.cpp").read_text()
         self.assertIn("scheduler::check_kernel(", recipe)
         self.assertIn("scheduler::inspect_kernel(", recipe)
-        for operation in ('"cast"', '"detess"', '"boxdecode"', '"superpoint"'):
+        for operation in ('"detess"', '"boxdecode"', '"superpoint"'):
             self.assertIn(operation, recipe)
 
     def test_no_legacy_prepared_numerical_abi(self):
@@ -356,7 +382,7 @@ class KernelRunnerDefaultContract(unittest.TestCase):
         integration = (ROOT / "src/pipeline/internal/sima/KernelRunnerIntegration.cpp").read_text()
         # Supplemental dependency lint only. Linked integration tests verify mode
         # forwarding and transactional attachment through this versioned facade.
-        self.assertIn("gs::prepare_tensor_stages_with_memory_v1(", integration)
+        self.assertIn("gs::prepare_and_attach_tensor_stages(", integration)
         self.assertNotIn("std::visit(", integration)
         serializer = (ROOT / "src/pipeline/internal/sima/SimaPluginStaticManifest.cpp").read_text()
         # Canonical transport is normalized before recipes are dropped; the
@@ -369,44 +395,47 @@ class KernelRunnerDefaultContract(unittest.TestCase):
         self.assertIn("manifest_(metadata_snapshot(std::move(manifest)))", serializer)
         for name in ("CanonicalTransformLowering.cpp", "CanonicalVisualLowering.cpp", "PreprocFrameAdapter.cpp"):
             text = (ROOT / "src/pipeline/internal/sima" / name).read_text()
-            self.assertTrue(re.search(r"scheduler::check_kernel(?:\(|;)", text), f"{name} bypasses Scheduler preparation")
+            self.assertTrue(re.search(r"(?:scheduler::|scheduler::client::)check_kernel(?:\(|;)", text), f"{name} bypasses Scheduler preparation")
 
     def test_factory_link_ownership_is_explicit(self):
         text = (ROOT / "CMakeLists.txt").read_text()
-        self.assertIn("find_package(SimaScheduler CONFIG REQUIRED)", text)
+        self.assertIn("find_package(SimaScheduler CONFIG REQUIRED COMPONENTS frontend)", text)
         links = text[text.index("foreach(_target sima_neat_objects sima_neat sima_neat_static)"):]
         links = links[:links.index("endforeach()")]
-        self.assertIn("SimaScheduler::kernel_preparation", links)
+        self.assertIn("SimaScheduler::frontend", links)
         self.assertNotIn("SimaKernels::", links)
-        self.assertIn("find_dependency(SimaScheduler CONFIG)",
+        self.assertIn("find_dependency(SimaScheduler CONFIG COMPONENTS frontend)",
                       (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text())
         internal_links = re.search(
             r"target_link_libraries\(sima_neat_internal_headers\s+INTERFACE([^)]*)\)", text)
         self.assertIsNotNone(internal_links)
-        self.assertIn("SimaScheduler::kernel_preparation", internal_links.group(1))
-        # Static consumers may legitimately receive kernel archives transitively.
-        # This is source/factory ownership, not a prohibition on final link inputs.
+        self.assertIn("SimaScheduler::frontend", internal_links.group(1))
+        # Static Core clients still use the one shared Scheduler provider; they
+        # do not acquire lower development archives through Core usage.
 
     def test_geometry_resolves_capability_before_streaming(self):
         text = (ROOT / "src/pipeline/internal/sima/BoxDecodeGeometry.cpp").read_text()
         self.assertLess(text.index("scheduler::bind_kernel_variant("),
                         text.index("recipe.resolver_factories.push_back"))
         self.assertLess(text.index("for (const auto& entry : cache->variants)"),
-                        text.index("scheduler::apply_kernel_variant("))
+                        text.index("preparer.prepare("))
         self.assertIn("std::array<Entry, 4> variants", text)
-        self.assertIn("executor.prepare(", text)
+        self.assertIn("preparer.prepare(", text)
+        self.assertNotIn("rt::Executor", text)
         self.assertNotIn("scheduler::check_kernel(", text)
 
     def test_public_wire_remains_core_owned_host_work(self):
         text = (ROOT / "src/pipeline/internal/sima/BoxDecodePublication.cpp").read_text()
-        self.assertIn("<simaai/scheduler/host_task.h>", text)
-        self.assertIn("host::make_contract(", text)
-        self.assertIn("host::stateless_host<WirePlan, publish>", text)
+        self.assertIn("<simaai/scheduler/client/host_task.h>", text)
+        self.assertIn("k::make_host_task(request)", text)
+        self.assertIn("request.payload = std::shared_ptr<const WirePlan>", text)
+        self.assertIn("request.callback = +[]", text)
+        self.assertIn("return publish(*static_cast<const WirePlan*>(payload), buffers)", text)
 
     def test_runner_registration_precedes_startup_validation(self):
         text = (ROOT / "src/gst/GstInit.cpp").read_text()
         body = text[text.index("void gst_init_once()") :]
-        self.assertLess(body.index("simaai::runtime::gstreamer::register_element()"),
+        self.assertLess(body.index("simaai::scheduler::client::register_kernel_runner()"),
                         body.index("validate_neat_startup_contract("))
         contract = text[text.index("void validate_neat_startup_contract(") :
                         text.index("} // namespace", text.index("void validate_neat_startup_contract("))]

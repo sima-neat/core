@@ -60,11 +60,7 @@ sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
 
 설치 프로그램은 C++ API와 `~/pyneatpcie`에 있는 Python 환경을 포함하여 Neat PCIe 호스트 애플리케이션을 개발하고 실행하는 데 필요한 모든 것을 추가합니다.
 
-또한 `sima-neat/core` 저장소에서 Codex 및 Claude용 코딩 에이전트 기술인 `neat-pcie-application-builder`를 설치합니다. 기술 설치는 최선을 다하는 방식으로 진행되므로 임시 GitHub 또는 코딩 에이전트 구성 문제로 인해 PCIe 호스트 패키지가 차단되지 않습니다. 경고가 표시되면 다음을 사용하여 다시 시도하십시오.
-
-<ShellCommand prompt="pcie-host">
-sima-cli playbooks install gh:sima-neat/core/pcie_host/skills/neat-pcie-application-builder
-</ShellCommand>
+패키지에 포함된 Codex 및 Claude용 코딩 에이전트 스킬 `neat-pcie-application-builder`도 설치합니다. PCIe 호스트 패키지를 다시 설치하면 설치된 스킬도 해당 패키지 버전에 맞게 업데이트됩니다.
 
 처음 설치하는 동안 SSH 프로비저닝은 카드에 대한 `sima` 계정의 비밀번호를 요청할 수 있습니다. 그런 다음 `~/.ssh/sima_neat_pcie_ed25519`를 생성하거나 재사용하고 해당 공개 키를 카드에 설치합니다. 이후 일반적인 PCIe 작동은 카드 측 모델 설정을 위해 비밀번호 없는 SSH를 사용합니다.
 

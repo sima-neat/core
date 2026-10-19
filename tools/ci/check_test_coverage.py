@@ -30,7 +30,7 @@ def is_host_contract(test):
     """Only explicitly reviewed source-only contracts bypass native admission.
 
     A label or Python-looking command alone is not authority: require the same
-    interpreter and exact checked-in script bytes, with no extra arguments.
+    interpreter, exact checked-in script bytes and the reviewed argv shape.
     """
     scripts = {
         'unit_kernel_runner_default_contract': 'tests/tools/check_kernel_runner_default.py',
@@ -39,14 +39,29 @@ def is_host_contract(test):
         'test_perf_classifier': 'tests/perf/tools/test_perf_classifier.py',
         'test_perf_comparator': 'tests/perf/tools/test_perf_comparator.py',
         'test_perf_matrix_failfast': 'tests/perf/tools/test_perf_matrix_failfast.py',
+        'test_perf_encoder_matrix': 'tests/perf/tools/test_perf_encoder_matrix.py',
         'test_graph_run_schema': 'tests/perf/tools/test_graph_run_schema.py',
         'test_graph_run_visualizer': 'tests/perf/tools/test_graph_run_visualizer.py',
     }
     expected = scripts.get(test.get('name'))
     command = test.get('command', [])
-    if expected is None or len(command) != 2:
+    if expected is None:
         return False
-    source = Path(__file__).resolve().parents[2] / expected
+    source_root = Path(__file__).resolve().parents[2]
+    if test.get('name') == 'unit_kernel_runner_default_contract':
+        # This is a build-tree source gate, not an installed runtime test.
+        # Never let a caller redirect its source inspection to another tree.
+        if (len(command) != 4 or command[2] != '--source-root'
+                or not Path(command[3]).is_absolute()):
+            return False
+        try:
+            if Path(command[3]).resolve(strict=True) != source_root:
+                return False
+        except OSError:
+            return False
+    elif len(command) != 2:
+        return False
+    source = source_root / expected
     script = Path(command[1])
     if not script.is_absolute():
         props = {p['name']: p['value'] for p in test.get('properties', [])}

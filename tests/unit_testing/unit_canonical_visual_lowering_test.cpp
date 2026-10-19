@@ -1,36 +1,33 @@
 #include "pipeline/internal/sima/CanonicalKernelLowering.h"
-#include <simaai/kernels/authoring.h>
-#include <simaai/kernels/ops/histogram.h>
-#include <simaai/kernels/ops/fast.h>
-#include <simaai/kernels/ops/fast_brief.h>
-#include <simaai/kernels/ops/tracker.h>
+#include <simaai/scheduler/testing/reference.h>
 #include <array>
+namespace test = simaai::scheduler::testing;
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
-namespace rt = simaai::runtime;
-namespace k = simaai::kernels;
-namespace op = k::ops;
+namespace rt = simaai::scheduler::client;
+namespace k = simaai::scheduler::client;
 namespace core = simaai::neat::pipeline_internal::sima;
 namespace lower = core::kernel_lowering;
 void require(bool value) {
   if (!value)
     throw std::runtime_error("visual cold typed parity");
 }
-void compare(const k::Executable& actual, k::Result<k::Executable> reference) {
-  require(std::holds_alternative<k::Executable>(reference));
-  const auto& expected = std::get<k::Executable>(reference).state();
-  const auto& state = actual.state();
-  require(state.packet.entry == expected.packet.entry &&
-          state.packet.payload == expected.packet.payload);
+void compare(const k::KernelExecutable& actual, k::Result<k::KernelExecutable> reference) {
+  require(std::holds_alternative<k::KernelExecutable>(reference));
+  const auto& expected = std::get<k::KernelExecutable>(reference);
+  const auto a = test::packet_snapshot(actual), b = test::packet_snapshot(expected);
+  require(a.entry == b.entry && a.payload == b.payload);
   const auto ports = [](const auto& a, const auto& b) {
     require(a.size() == b.size());
     for (std::size_t i = 0; i < a.size(); ++i)
       require(a[i].shape == b[i].shape && a[i].dtype == b[i].dtype &&
               a[i].layout.index() == b[i].layout.index());
   };
-  ports(state.contract->input_specs, expected.contract->input_specs);
-  ports(state.contract->output_specs, expected.contract->output_specs);
+  const auto ai = std::get<k::KernelInspection>(k::inspect_kernel(actual));
+  const auto bi = std::get<k::KernelInspection>(k::inspect_kernel(expected));
+  ports(ai.inputs(), bi.inputs());
+  ports(ai.outputs(), bi.outputs());
 }
 int main() {
   try {
@@ -67,22 +64,20 @@ int main() {
           if (graph == 235) {
             const std::array outputs{k::TensorSpec{{batch, 256}, k::DType::Int32}};
             compare(actual.members[0].executable,
-                    op::histogram::make_executable({inputs, outputs, {}}, k::Target::EV74));
+                    test::reference_visual("histogram", k::Target::EV74, inputs, outputs));
           }
           if (graph == 236) {
             const std::array outputs{k::TensorSpec{{batch, 49}, k::DType::Int32}};
-            compare(
-                actual.members[0].executable,
-                op::fast::make_executable({inputs, outputs, {19, op::fast::OutputEncoding::Packed}},
-                                          k::Target::EV74));
+            compare(actual.members[0].executable,
+                    test::reference_visual("fast", k::Target::EV74, inputs, outputs,
+                                           {.threshold = 19}));
           }
           if (graph == 237) {
             const std::array outputs{k::TensorSpec{{batch, 49}, k::DType::Int32},
                                      k::TensorSpec{{batch, 16, 8}, k::DType::Int32}};
             compare(actual.members[0].executable,
-                    op::fast_brief::make_executable(
-                        {inputs, outputs, {19, op::fast_brief::OutputEncoding::Packed}},
-                        k::Target::EV74));
+                    test::reference_visual("fastbrief", k::Target::EV74, inputs, outputs,
+                                           {.threshold = 19}));
           }
           if (graph == 238) {
             const std::array ins{image, image, k::TensorSpec{{batch, 8, 2}, k::DType::Int32},
@@ -90,20 +85,19 @@ int main() {
             const std::array outs{k::TensorSpec{{batch, 8, 2}, k::DType::Float32},
                                   k::TensorSpec{{batch, 8}, k::DType::Int32}};
             compare(actual.members[0].executable,
-                    op::tracker::make_executable({ins, outs, {3, 7, 0}}, k::Target::EV74));
+                    test::reference_visual("tracker", k::Target::EV74, ins, outs,
+                                           {.win_half = 3, .max_iters = 7, .max_level = 0}));
             std::vector<std::int32_t> counts(batch);
             require(actual.constant_data.size() == counts.size() * sizeof(std::int32_t));
             std::memcpy(counts.data(), actual.constant_data.data(), actual.constant_data.size());
             require(counts == std::vector<std::int32_t>(batch, 8));
-            require(actual.members[0].inputs.back().source ==
-                    rt::gstreamer::TensorStagePortSource::Constant);
+            require(actual.members[0].inputs.back().source == rt::TensorStagePortSource::Constant);
             require(actual.members.size() == (detect ? 2U : 1U));
             if (detect) {
               const std::array outputs{k::TensorSpec{{batch, 49}, k::DType::Int32}};
-              compare(
-                  actual.members[1].executable,
-                  op::fast::make_executable(
-                      {inputs, outputs, {21, op::fast::OutputEncoding::Packed}}, k::Target::EV74));
+              compare(actual.members[1].executable,
+                      test::reference_visual("fast", k::Target::EV74, inputs, outputs,
+                                             {.threshold = 21}));
               require(actual.members[1].dependencies == std::vector<std::size_t>{0});
             }
           }

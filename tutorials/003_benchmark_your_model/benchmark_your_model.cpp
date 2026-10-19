@@ -2,6 +2,7 @@
 //
 // Usage:
 //   tutorial_003_benchmark_your_model --model /path/to/model.tar.gz [--samples 100]
+//   [--report results/model/yolo_benchmark.yaml] [--include-layer-stats]
 
 #include "neat.h"
 
@@ -10,6 +11,14 @@
 #include <string>
 
 namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i])
+      return true;
+  }
+  return false;
+}
 
 bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
   for (int i = 1; i + 1 < argc; ++i) {
@@ -34,7 +43,8 @@ int main(int argc, char** argv) {
   try {
     std::string model_path;
     if (!get_arg(argc, argv, "--model", model_path)) {
-      std::cerr << "Usage: tutorial_003_benchmark_your_model --model <path> [--samples <n>]\n";
+      std::cerr << "Usage: tutorial_003_benchmark_your_model --model <path> [--samples <n>] "
+                   "[--report <file>] [--include-layer-stats]\n";
       return 1;
     }
     const int samples = parse_int_arg(argc, argv, "--samples", 100);
@@ -45,7 +55,10 @@ int main(int argc, char** argv) {
     // END STEP
 
     // STEP run-benchmark
-    simaai::neat::BenchmarkReport report = model.benchmark(samples);
+    simaai::neat::BenchmarkOptions options;
+    options.num_samples = samples;
+    options.include_layer_stats = has_flag(argc, argv, "--include-layer-stats");
+    simaai::neat::BenchmarkReport report = model.benchmark(options);
     if (report.latency_ms <= 0.0 || report.fps <= 0.0)
       throw std::runtime_error("benchmark produced no measured latency/fps");
     // END STEP
@@ -55,6 +68,25 @@ int main(int argc, char** argv) {
     std::cout << "report_fps=" << report.fps << "\n";
     std::cout << "report_avg_power_watts=" << report.avg_power_watts << "\n";
     std::cout << "report_energy_joules=" << report.energy_joules << "\n";
+    std::cout << "report_peak_power_watts=" << report.peak_power_watts << "\n";
+    std::cout << "report_throughput_duration_ms=" << report.throughput_duration_ms << "\n";
+    std::cout << "report_telemetry_status=" << report.telemetry.status << "\n";
+    // END STEP
+    // STEP read-layer-stats
+    if (options.include_layer_stats) {
+      std::cout << "Layer stats (execution time in microseconds):\n";
+      for (const auto& layer : report.layer_stats) {
+        std::cout << "  stage_index=" << layer.stage_index << " name=" << layer.name
+                  << " total_execution_time_us=" << layer.total_execution_time_us << "\n";
+      }
+    }
+    // END STEP
+
+    // STEP save-report
+    std::string report_path;
+    if (get_arg(argc, argv, "--report", report_path)) {
+      std::cout << "report_path=" << report.save(report_path).string() << "\n";
+    }
     // END STEP
     // END CORE LOGIC
 

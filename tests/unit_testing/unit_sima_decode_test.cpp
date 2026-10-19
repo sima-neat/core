@@ -184,6 +184,26 @@ void check_mjpeg_system_memory_output() {
   require(out.memory == "SystemMemory", "raw_output=false should advertise SystemMemory output");
 }
 
+void check_decoder_controls() {
+  simaai::neat::SimaDecodeOptions options;
+  const auto defaults = simaai::neat::SimaDecode(options).backend_fragment(0);
+  for (const auto* property : {"dec-ip-cnt=", "num-buffers=", "decoder-tuning=", "memory-opt="}) {
+    require_not_contains(defaults, property, "unset control should use the plugin default");
+  }
+  options.input_buffers = 2;
+  options.num_buffers = 4;
+  for (const auto* tuning : {"default", "auto", "low-memory", "throughput-low-latency"}) {
+    options.decoder_tuning = tuning;
+    const auto fragment = simaai::neat::SimaDecode(options).backend_fragment(0);
+    require_contains(fragment, "dec-ip-cnt=2", "compressed input override missing");
+    require_contains(fragment, "num-buffers=4", "output override missing");
+    require_contains(fragment, std::string("decoder-tuning=") + tuning, "tuning override missing");
+  }
+  options.out_format = simaai::neat::FormatTag::I420;
+  require_contains(simaai::neat::SimaDecode(options).backend_fragment(0), "zero-copy-output=false",
+                   "I420 must select decoder conversion");
+}
+
 void check_invalid_options() {
   simaai::neat::SimaDecodeOptions invalid_codec;
   invalid_codec.type = static_cast<simaai::neat::SimaDecodeType>(999);
@@ -245,6 +265,7 @@ int main() {
     check_h265_aliases_use_canonical_backend_name();
     check_jpeg_raw_output_options();
     check_mjpeg_system_memory_output();
+    check_decoder_controls();
     check_invalid_options();
     check_h264_decode_wrapper_compatibility();
 

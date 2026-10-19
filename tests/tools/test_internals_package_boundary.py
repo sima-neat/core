@@ -33,20 +33,17 @@ def shell_function(name: str) -> str:
 
 
 class InternalsPackageBoundaryTest(unittest.TestCase):
-    def test_internals_is_located_without_a_derived_version(self) -> None:
+    def test_scheduler_frontend_is_located_without_a_derived_version(self) -> None:
         text = cmake()
-        self.assertIn("find_package(NeatInternals CONFIG REQUIRED)", text)
-        self.assertNotIn(
-            "find_package(NeatInternals ${SIMANEAT_PLATFORM_VERSION}", text
-        )
-        exported_config = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("find_dependency(NeatInternals CONFIG REQUIRED)", exported_config)
-        self.assertNotIn(
-            "find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@",
-            exported_config,
-        )
+        self.assertIn("find_package(SimaScheduler CONFIG REQUIRED COMPONENTS frontend)", text)
+        exported = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text()
+        self.assertIn("find_dependency(SimaScheduler CONFIG COMPONENTS frontend)", exported)
+        for contents in (text, exported):
+            self.assertNotIn("SimaScheduler ${SIMANEAT_PLATFORM_VERSION}", contents)
+            for lower in ("SimaRunner", "SimaKernels", "SimaCodecs", "NeatInternals"):
+                self.assertNotIn("find_package(" + lower, contents)
+                self.assertNotIn("find_dependency(" + lower, contents)
+
 
     def test_internals_abi_headers_have_one_package_owner(self) -> None:
         text = cmake()
@@ -73,36 +70,16 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         )
         self.assertNotIn('"neat-internals-dev"', text)
 
-    def test_public_header_discovery_searches_an_empty_cache(self) -> None:
+    def test_client_headers_have_no_adhoc_sdk_fallback(self) -> None:
+        # The old empty-cache workaround belonged to removed Core header
+        # discovery. Producer frontend usage now owns every support include.
         text = cmake()
-        start = text.index("\nset(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT\n")
-        end = text.index("\nset(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB", start)
-        discovery = text[start:end]
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            headers = root / "headers"
-            (headers / "gst").mkdir(parents=True)
-            (headers / "gst/SimaPreparedRuntimeAbi.h").touch()
-            for explicit in (False, True):
-                with self.subTest(explicit=explicit):
-                    selected = root / "explicit" if explicit else headers
-                    initial = selected.as_posix() if explicit else ""
-                    script = root / "discover.cmake"
-                    script.write_text(
-                        'set(SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE ON)\n'
-                        f'set(SIMANEAT_LOCAL_DEP_HEADER_ROOT "{headers.as_posix()}")\n'
-                        f'set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT "{initial}" CACHE PATH "")\n'
-                        + discovery
-                        + f'\nif(NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT STREQUAL "{selected.as_posix()}")\n'
-                        '  message(FATAL_ERROR "Wrong public header root: ${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")\n'
-                        'endif()\n',
-                        encoding="utf-8",
-                    )
-                    result = subprocess.run(
-                        ["cmake", "-P", str(script)],
-                        check=False, text=True, capture_output=True,
-                    )
-                    self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("find_package(SimaScheduler CONFIG REQUIRED COMPONENTS frontend)", text)
+        for removed in ("find_path(SIMANEAT_NEAT_", "find_library(SIMANEAT_NEAT_",
+                        "../internals/include", "../internals/gst_plugins/include",
+                        "NeatInternals::"):
+            self.assertNotIn(removed, text)
+
 
     def test_actual_header_install_leaves_scheduler_contracts_to_scheduler(self) -> None:
         text = cmake()
@@ -135,8 +112,9 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "neat-internals-dev (<<",
         ):
             self.assertNotIn(removed, text, removed)
-        for kept in ('"simaai-scheduler"', '"simaai-kernels-dev"'):
+        for kept in ('"simaai-scheduler"',):
             self.assertIn(kept, text, kept)
+        self.assertNotIn('"simaai-kernels-dev"', text)
 
     def test_llima_is_consumed_without_a_version_policy(self) -> None:
         text = cmake()
@@ -209,6 +187,13 @@ ensure_neat_llima
         self.assertIn("VERSION ${SIMANEAT_PACKAGE_BASE_VERSION}", text)
         self.assertNotIn("VERSION ${SIMANEAT_PLATFORM_VERSION}", text)
 
+    def test_manifest_tracks_only_immediate_execution_dependencies(self) -> None:
+        manifest = json.loads((ROOT / "deps/manifest.json").read_text())
+        self.assertIn("scheduler", manifest)
+        self.assertIn("llima", manifest)  # GenAI intentionally bypasses vision execution.
+        for retired_or_transitive in ("internals", "runner", "kernels", "codecs"):
+            self.assertNotIn(retired_or_transitive, manifest)
+
     def test_manifest_has_no_platform_package_pin(self) -> None:
         manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
         self.assertNotIn("platform-package-version", manifest)
@@ -252,7 +237,7 @@ function(pkg_check_modules prefix)
 endfunction()
 """)
             (root / "SimaSchedulerConfig.cmake").write_text("""
-foreach(component elements gstreamer tensor_stage PreparedRuntimeBridge kernel_preparation)
+foreach(component frontend)
   if(NOT TARGET SimaScheduler::${component})
     add_library(SimaScheduler::${component} INTERFACE IMPORTED)
   endif()
@@ -283,6 +268,9 @@ project(CustomerPackage NONE)
 list(PREPEND CMAKE_MODULE_PATH "${{CMAKE_SOURCE_DIR}}")
 list(PREPEND CMAKE_PREFIX_PATH "${{CMAKE_SOURCE_DIR}}")
 set(CMAKE_DISABLE_FIND_PACKAGE_NeatInternals TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaRunner TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaKernels TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaCodecs TRUE)
 set(CMAKE_DISABLE_FIND_PACKAGE_SimaLMM TRUE)
 set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)
 set(SIMANEAT_CONFIG_WITH_LLIMA TRUE)
@@ -309,18 +297,24 @@ endif()
                                     text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             runtime_config = root / "SimaSchedulerConfig.cmake"
-            runtime_config.write_text(runtime_config.read_text().replace(" tensor_stage", ""))
-            missing = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "missing-carrier")],
+            saved = runtime_config.read_text()
+            runtime_config.write_text(saved.replace("foreach(component frontend)", "foreach(component missing)"))
+            missing = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "missing-frontend")],
                                      text=True, capture_output=True)
             self.assertNotEqual(missing.returncode, 0)
-            self.assertIn("SimaScheduler::tensor_stage", missing.stdout + missing.stderr)
-            runtime_config.write_text(runtime_config.read_text().replace("gstreamer PreparedRuntimeBridge", "gstreamer tensor_stage PreparedRuntimeBridge"))
-            runtime_config.write_text(runtime_config.read_text().replace(" kernel_preparation", ""))
-            missing_factories = subprocess.run(
-                ["cmake", "-S", str(root), "-B", str(root / "missing-factories")],
-                text=True, capture_output=True)
-            self.assertNotEqual(missing_factories.returncode, 0)
-            self.assertIn("SimaScheduler::kernel_preparation", missing_factories.stdout + missing_factories.stderr)
+            self.assertIn("SimaScheduler::frontend", missing.stdout + missing.stderr)
+            runtime_config.write_text(saved)
+            (root / "FindZLIB.cmake").write_text("set(ZLIB_FOUND TRUE)\n")
+            (root / "SimaNeatStaticTargets.cmake").write_text("add_library(SimaNeat::sima_neat_static INTERFACE IMPORTED)\n")
+            top = root / "CMakeLists.txt"
+            top.write_text(top.read_text().replace("set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)", "")
+                           .replace("set(SIMANEAT_CONFIG_WITH_LLIMA TRUE)", "set(SIMANEAT_CONFIG_WITH_LLIMA FALSE)"))
+            child = root / "first/CMakeLists.txt"
+            child.write_text(child.read_text() + "\nfind_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)\n"
+                             "if(NOT TARGET SimaNeat::sima_neat_static)\nmessage(FATAL_ERROR \"Missing explicit static target\")\nendif()\n")
+            static = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "static-no-lower-dev")],
+                                    text=True, capture_output=True)
+            self.assertEqual(static.returncode, 0, static.stdout + static.stderr)
 
 
 

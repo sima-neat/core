@@ -21,6 +21,15 @@ def job_block(name: str) -> str:
 
 
 class VulcanCiDocsOnlyTests(unittest.TestCase):
+    def test_localization_runs_independently_of_docs_only_detection(self) -> None:
+        localization = job_block("documentation-localization")
+
+        self.assertNotIn("needs:", localization)
+        self.assertNotIn("if:", localization)
+        self.assertIn(
+            "run: bash scripts/ci/check_documentation_localization.sh", localization
+        )
+
     def test_protected_branch_pushes_are_never_docs_only(self) -> None:
         detect = job_block("detect-changes")
 
@@ -47,6 +56,34 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         self.assertIn(
             "needs.detect-changes.outputs.docs_only != 'true'", build_pcie
         )
+
+    def test_pcie_hardware_reprovisions_ssh_before_card_checks(self) -> None:
+        pcie_hardware = job_block("test-pciehost-hardware")
+
+        provision_step = pcie_hardware.index(
+            "- name: Provision PCIe card SSH key"
+        )
+        prerequisites_step = pcie_hardware.index(
+            "- name: Prepare PCIe card CI prerequisites"
+        )
+        compatibility_step = pcie_hardware.index(
+            "- name: Check PCIe card platform compatibility"
+        )
+
+        self.assertLess(provision_step, prerequisites_step)
+        self.assertLess(prerequisites_step, compatibility_step)
+        self.assertIn(
+            "SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}",
+            pcie_hardware,
+        )
+        self.assertIn("./pcie_host/scripts/pcie-setup.sh", pcie_hardware)
+        self.assertIn(
+            "./scripts/ci/pciehost/prepare_card_prerequisites.sh",
+            pcie_hardware,
+        )
+        self.assertIn('--hosts "${SIMAPCIE_CARD_HOST}"', pcie_hardware)
+        self.assertIn("--non-interactive", pcie_hardware)
+        self.assertIn("--strict", pcie_hardware)
 
 
 if __name__ == "__main__":

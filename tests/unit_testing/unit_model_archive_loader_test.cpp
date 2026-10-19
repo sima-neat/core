@@ -9,10 +9,75 @@
 #include <fstream>
 #include <functional>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <dlfcn.h>
 #include <limits>
 #include <string>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <thread>
 #include <vector>
+
+namespace {
+
+// Executable-local free-space double, not an inflater replacement or production hook.
+// Only the calling thread's unique staging directory is affected; all other queries
+// retain libc behavior. The hook uses no allocating/throwing operations across C ABI.
+struct StagingSpaceProbe {
+  std::string prefix;
+  std::uint64_t reserve = 0;
+  std::uint64_t initial_room = 0;
+  std::uint64_t refreshed_room = 0;
+  std::uint64_t written_at_refresh = 0;
+  unsigned queries = 0;
+  bool observed_staging_file = false;
+};
+thread_local StagingSpaceProbe* staging_space_probe = nullptr;
+
+class ScopedStagingSpaceProbe {
+public:
+  explicit ScopedStagingSpaceProbe(StagingSpaceProbe& probe) : previous_(staging_space_probe) {
+    staging_space_probe = &probe;
+  }
+  ~ScopedStagingSpaceProbe() {
+    staging_space_probe = previous_;
+  }
+
+private:
+  StagingSpaceProbe* previous_;
+};
+
+} // namespace
+
+extern "C" int statvfs(const char* path, struct statvfs* result) noexcept {
+  using Query = int (*)(const char*, struct statvfs*);
+  static const auto query = reinterpret_cast<Query>(dlsym(RTLD_NEXT, "statvfs"));
+  if (!query)
+    std::abort();
+  const int status = query(path, result);
+  auto* probe = staging_space_probe;
+  if (status != 0 || !probe || std::strncmp(path, probe->prefix.c_str(), probe->prefix.size()) != 0)
+    return status;
+
+  ++probe->queries;
+  if (probe->queries > 1) {
+    char staged_path[4096];
+    const int length = std::snprintf(staged_path, sizeof(staged_path), "%s/archive.tar", path);
+    struct stat staged {};
+    if (length > 0 && static_cast<std::size_t>(length) < sizeof(staged_path) &&
+        ::stat(staged_path, &staged) == 0 && staged.st_size > 0) {
+      probe->observed_staging_file = true;
+      probe->written_at_refresh = static_cast<std::uint64_t>(staged.st_size);
+    }
+  }
+  result->f_bsize = result->f_frsize = 1;
+  result->f_bavail = result->f_bfree =
+      probe->reserve + (probe->queries == 1 ? probe->initial_room : probe->refreshed_room);
+  result->f_blocks = result->f_bavail;
+  return status;
+}
 
 namespace {
 
@@ -299,17 +364,13 @@ RUN_TEST(
                 "loader should leave no archive staging directories behind");
       }
 
-      // The reserve must be refused before the write, not noticed after it. The margin has to
-      // stay below the 10 KiB the fixture inflates to, so only a per-chunk budget can reject it.
+      // The reserve must be refused before the write, not noticed after it. The reserve exceeds
+      // any filesystem, so the result cannot depend on what parallel tests free on /tmp.
       {
         const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_reserve");
         const std::string out = sima_test::make_temp_dir("model_archive_loader_reserve_out");
-        constexpr std::uint64_t kWritableMargin = 9216ULL;
-        const auto available = static_cast<std::uint64_t>(fs::space(private_tmp).available);
-        require(available > kWritableMargin, "test needs a temp filesystem with free space");
-
         ModelArchiveLoaderOptions reserved;
-        reserved.min_output_free_bytes = available - kWritableMargin;
+        reserved.min_output_free_bytes = std::numeric_limits<std::uint64_t>::max() / 2ULL;
         sima_test::ScopedEnvVar tmpdir("TMPDIR", private_tmp);
 
         // Matching the message pins this to the inflation budget: the extraction-root check
@@ -322,8 +383,66 @@ RUN_TEST(
         }
         require_contains(reported, "insufficient free space inflating model archive",
                          "inflating past the free-space reserve should be refused before the "
-                         "write, by the per-chunk budget");
+                         "write, by the inflation budget");
         require(fs::is_empty(private_tmp), "a refused inflation should leave no staging copy");
+      }
+
+      // Unlike the impossible-reserve check above, this must write a complete chunk
+      // before the next chunk exhausts the budget. Real filesystem free space cannot
+      // make this deterministic when other processes write/free files concurrently.
+      {
+        constexpr std::uint64_t kWindowBytes = 1024ULL * 1024ULL;
+        const std::string archive_root = sima_test::make_temp_dir("model_archive_chunk_input");
+        const std::string staging_root = sima_test::make_temp_dir("model_archive_chunk_stage");
+        const std::string output_root = sima_test::make_temp_dir("model_archive_chunk_output");
+        const fs::path archive = fs::path(archive_root) / "multi_chunk.tar.gz";
+        const auto member = read_file_bytes(valid);
+        {
+          std::ofstream out(archive, std::ios::binary);
+          // Repeated valid gzip members exceed two inflater chunks. The first tar
+          // remains valid; the loader must inflate all members before inspecting it.
+          for (unsigned i = 0; i < 512; ++i)
+            out.write(member.data(), static_cast<std::streamsize>(member.size()));
+          require(out.good(), "writing multi-chunk gzip fixture should succeed");
+        }
+        ModelArchiveLoaderOptions options;
+        options.staging_base = staging_root;
+        options.min_output_free_bytes = 16ULL * kWindowBytes;
+        StagingSpaceProbe probe{staging_root + "/.sima_mpk_stage_", options.min_output_free_bytes,
+                                kWindowBytes, 0};
+        std::string reported;
+        bool rejected = false;
+        {
+          ScopedStagingSpaceProbe scoped(probe);
+          try {
+            (void)ModelArchiveLoader::extract(archive.string(), output_root, options);
+          } catch (const ModelArchiveError& error) {
+            require(error.code() == ModelArchiveErrorClass::OutputStorageUnavailable,
+                    "later-chunk reserve failure must preserve its storage error class");
+            reported = error.what();
+            rejected = true;
+          }
+        }
+        require(rejected, "later chunk must not cross the refreshed free-space reserve");
+        require_contains(reported, "insufficient free space inflating model archive",
+                         "later-chunk failure must come from the real inflation budget");
+        require(probe.queries == 2, "budget exhaustion must remeasure staging space once");
+        require(probe.observed_staging_file && probe.written_at_refresh > 0 &&
+                    probe.written_at_refresh <= kWindowBytes,
+                "independent stat must observe real prior writes within the initial budget");
+        require(fs::is_empty(staging_root), "later-chunk rejection must remove its staging copy");
+        require(fs::is_empty(output_root), "rejected inflation must not publish an extraction");
+        require(staging_space_probe == nullptr, "free-space double must be disarmed after failure");
+
+        const auto recovered = ModelArchiveLoader::extract(archive.string(), output_root, options);
+        require(extracted_file_set(recovered.package_root) ==
+                    extracted_file_set(first.package_root),
+                "same multi-chunk archive must recover with genuine filesystem free space");
+        for (const auto& rel : extracted_file_set(first.package_root))
+          require(read_file_bytes(fs::path(recovered.package_root) / rel) ==
+                      read_file_bytes(fs::path(first.package_root) / rel),
+                  "recovered multi-chunk extraction changed contents for " + rel);
+        require(fs::is_empty(staging_root), "successful retry must also remove its staging copy");
       }
 
       // A relative TMPDIR still has to survive a callback that changes the working directory:

@@ -10,6 +10,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / '.github/workflows/vulcan-ci.yml'
+HYGIENE_INSTALLER = 'scripts/ci/install_code_hygiene_deps.sh'
 
 
 def job(name):
@@ -53,11 +54,63 @@ def test_same_run_artifact_and_validator_precede_analysis():
     assert 'name: neat-core-dist' in body
     assert 'run-id:' not in body and 'repository:' not in body
     assert body.index('bash scripts/ci/verify_core_dist.sh') < body.index("python3 - <<'PY'")
-    assert body.index("python3 - <<'PY'") < body.index('./build.sh --install-deps-only')
-    assert body.index('./build.sh --install-deps-only') < body.index('./scripts/ci/run_code_hygiene.sh')
+    # Matched target dependencies come from the verified same-run artifact.
+    # The later installer supplies host analysis tools, not a second cohort.
+    assert body.index("python3 - <<'PY'") < body.index('./' + HYGIENE_INSTALLER)
+    assert body.index('./' + HYGIENE_INSTALLER) < body.index('./scripts/ci/run_code_hygiene.sh')
     assert 'test_ci_hygiene_cohort.py' in job('resolve-compiler-cache')
     assert 'materialize_dependencies.py' not in body
+    assert './build.sh' not in body
     compile(transport(), str(WORKFLOW), 'exec')
+
+
+@pytest.mark.parametrize('profile', ['ready', 'broken-headers-root', 'missing-tool-unprivileged'])
+def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
+    """Exercise the real installer with shell doubles; never install packages."""
+    tools = tmp_path / 'bin'
+    tools.mkdir()
+    calls = tmp_path / 'calls'
+    headers = tmp_path / 'headers'
+
+    def tool(name, body='exit 0\n'):
+        path = tools / name
+        path.write_text('#!/bin/sh\n'
+                        'printf "%s %s\\n" "${0##*/}" "$*" >> "$TEST_CALLS"\n' + body)
+        path.chmod(0o755)
+
+    for name in ('clang-format', 'clang-tidy', 'run-clang-tidy', 'rg', 'g++'):
+        if name != 'g++' or profile != 'missing-tool-unprivileged':
+            tool(name)
+    tool('clang++', 'while IFS= read -r line; do\n'
+                   '  printf "%s\\n" "$line" >> "$TEST_HEADERS"\n'
+                   'done\n'
+                   f'exit {1 if profile == "broken-headers-root" else 0}\n')
+    tool('id', f'echo {1000 if profile == "missing-tool-unprivileged" else 0}\n')
+    tool('sudo', 'exit 1\n')
+    tool('apt-get')
+    result = subprocess.run(
+        ['/bin/bash', str(ROOT / HYGIENE_INSTALLER)],
+        env={'PATH': str(tools), 'TEST_CALLS': str(calls), 'TEST_HEADERS': str(headers)},
+        text=True, capture_output=True, check=False,
+    )
+    observed = calls.read_text().splitlines()
+    clang_probe = 'clang++ -std=c++20 -x c++ - -fsyntax-only'
+    if profile == 'ready':
+        assert result.returncode == 0, result.stderr
+        assert observed == [clang_probe]
+        assert 'already installed' in result.stdout
+    elif profile == 'broken-headers-root':
+        assert result.returncode == 0, result.stderr
+        assert observed == [clang_probe, 'id -u', 'apt-get update',
+                            'apt-get install -y build-essential gcc-12 g++-12 libstdc++-12-dev '
+                            'clang clang-format clang-tidy ripgrep']
+    else:
+        assert result.returncode == 1
+        assert observed == ['id -u', 'sudo -n true']
+        assert 'cannot install without passwordless sudo' in result.stderr
+        assert not headers.exists()
+    if profile != 'missing-tool-unprivileged':
+        assert headers.read_text() == '#include <memory>\n'
 
 
 def execute_fixture(tmp_path, monkeypatch, roles, *, reject_receipt=False):

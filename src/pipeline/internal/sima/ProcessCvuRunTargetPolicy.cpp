@@ -1,6 +1,6 @@
 #include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
 #include "pipeline/internal/sima/CanonicalStageIdentity.h"
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/kernel.h>
 
 #include <algorithm>
 #include <cctype>
@@ -234,16 +234,16 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
     name = "fast_brief";
   else if (name == "track_klt")
     name = "tracker";
-  const auto supports = [](std::string_view operation, ::simaai::kernels::Target target) {
-    const auto* info = ::simaai::scheduler::find_kernel_operation(operation);
+  const auto supports = [](std::string_view operation, ::simaai::scheduler::client::Target target) {
+    const auto* info = ::simaai::scheduler::client::find_kernel_operation(operation);
     return info &&
            std::find(info->targets.begin(), info->targets.end(), target) != info->targets.end();
   };
-  caps.supports_ev74 = supports(name, ::simaai::kernels::Target::EV74);
-  caps.supports_a65 = supports(name, ::simaai::kernels::Target::A65);
+  caps.supports_ev74 = supports(name, ::simaai::scheduler::client::Target::EV74);
+  caps.supports_a65 = supports(name, ::simaai::scheduler::client::Target::A65);
   if (name == "tracker" && payload.detect_new_features > 0) {
-    caps.supports_ev74 = caps.supports_ev74 && supports("fast", ::simaai::kernels::Target::EV74);
-    caps.supports_a65 = caps.supports_a65 && supports("fast", ::simaai::kernels::Target::A65);
+    caps.supports_ev74 = caps.supports_ev74 && supports("fast", ::simaai::scheduler::client::Target::EV74);
+    caps.supports_a65 = caps.supports_a65 && supports("fast", ::simaai::scheduler::client::Target::A65);
   }
   // Preserve EV-preferred ingress and A65-preferred terminal-post placement.
   caps.auto_run_target = caps.supports_ev74 ? "EV74" : "A65";

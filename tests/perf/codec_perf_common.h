@@ -560,9 +560,9 @@ inline void emit_codec_metrics_json(const CodecPerfConfig& config, int iteration
             << "  \"measure_report\": {\n"
             << "    \"schema\": \"sima.neat.codec_perf_phase_report\",\n"
             << "    \"memory_path\": {\n"
-            << "      \"encoded_input\": \"plugin_input_pool_copy\",\n"
+            << "      \"encoded_input\": \"codec_input_pool_copy\",\n"
             << "      \"core_output\": \"zero_copy_gst_sample\",\n"
-            << "      \"daemon_zero_copy_output\": true\n"
+            << "      \"decoder_zero_copy_output\": true\n"
             << "    },\n"
             << "    \"throughput\": " << throughput_report.to_json(4);
   if (latency_report != nullptr) {

@@ -345,6 +345,8 @@ fragment = neat.genai.graphs.vision_language(model, options, "vlm")
 Використовуйте E2B/E4B, щоб увімкнути логічні міркування. У повних результатах логічні міркування зберігаються в `GenerationResult.reasoning`, а остаточна відповідь – у `GenerationResult.text`;
 потокові об’єкти `TokenSample` також використовують `reasoning` та `text`.
 
+Для GPT-OSS `GenerationRequest.reasoning_effort` задає `low` (за замовчуванням), `medium` або `high`; інші значення відхиляються. `enable_thinking` визначає, чи повертати міркування.
+
 Ці правила дозволяють Neat швидко завершувати роботу з чіткою помилкою запиту, замість того щоб надсилати неоднозначний запит до середовища виконання.
 
 ## Наступні кроки

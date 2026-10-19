@@ -6,6 +6,8 @@
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
+#include <simaai/scheduler/client/stage.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -16,6 +18,7 @@
 #include <memory>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -496,6 +499,20 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
   j["plugin_kind"] = spec.plugin_kind;
   j["kernel_kind"] = spec.kernel_kind;
   j["name_table"] = spec.name_table;
+  if (spec.image_publication) {
+    const auto& image = *spec.image_publication;
+    auto planes = nlohmann::json::array();
+    for (const auto& plane : image.planes)
+      planes.push_back({{"backend_output_index", plane.backend_output_index},
+                        {"byte_offset", plane.byte_offset},
+                        {"stride", plane.stride},
+                        {"visible_rows", plane.visible_rows},
+                        {"visible_row_bytes", plane.visible_row_bytes}});
+    j["image_publication"] = {{"format", gst_video_format_to_string(image.format)},
+                              {"width", image.width},
+                              {"height", image.height},
+                              {"planes", std::move(planes)}};
+  }
   if (spec.frame_arena_size_bytes != 0U) {
     j["frame_arena_size_bytes"] = spec.frame_arena_size_bytes;
     j["frame_arena_role"] = static_cast<int>(spec.frame_arena_role);
@@ -673,6 +690,57 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
     read_string_key(stage_j, "logical_stage_id", stage.logical_stage_id);
     read_string_key(stage_j, "plugin_kind", stage.plugin_kind);
     read_string_key(stage_j, "kernel_kind", stage.kernel_kind);
+    if (stage_j.contains("image_publication")) {
+      try {
+        // This is metadata only: no executable or numerical policy is restored.
+        // Preserve the ordered physical-relative descriptor exactly. Admission
+        // rechecks it against the independently checked numerical contract.
+        const auto& value = stage_j.at("image_publication");
+        const auto integer = [](const nlohmann::json& object, const char* key,
+                                std::uint64_t maximum, bool positive) {
+          const auto& number = object.at(key);
+          if (!number.is_number_integer() ||
+              (!number.is_number_unsigned() && number.get<std::int64_t>() < 0))
+            throw std::invalid_argument("image publication integer is negative or non-integral");
+          const auto result = number.get<std::uint64_t>();
+          if (result > maximum || (positive && result == 0))
+            throw std::invalid_argument("image publication integer is out of range");
+          return result;
+        };
+        auto image = std::make_shared<::simaai::scheduler::client::TensorStageImagePublication>();
+        image->format = gst_video_format_from_string(value.at("format").get<std::string>().c_str());
+        if (image->format == GST_VIDEO_FORMAT_UNKNOWN || image->format == GST_VIDEO_FORMAT_ENCODED)
+          throw std::invalid_argument("image publication requires a raw video format");
+        image->width = integer(value, "width", std::numeric_limits<guint>::max(), true);
+        image->height = integer(value, "height", std::numeric_limits<guint>::max(), true);
+        const auto& planes = value.at("planes");
+        if (!planes.is_array() || planes.empty() || planes.size() > GST_VIDEO_MAX_PLANES)
+          throw std::invalid_argument("image publication requires bounded nonempty planes");
+        for (const auto& entry : planes) {
+          ::simaai::scheduler::client::TensorStageImagePlane plane;
+          plane.backend_output_index =
+              integer(entry, "backend_output_index", std::numeric_limits<int>::max(), false);
+          plane.byte_offset =
+              integer(entry, "byte_offset", std::numeric_limits<gsize>::max(), false);
+          plane.stride = integer(entry, "stride", std::numeric_limits<gint>::max(), true);
+          plane.visible_rows =
+              integer(entry, "visible_rows", std::numeric_limits<guint>::max(), true);
+          plane.visible_row_bytes =
+              integer(entry, "visible_row_bytes", std::numeric_limits<guint>::max(), true);
+          if (plane.visible_row_bytes > static_cast<guint>(plane.stride) ||
+              std::any_of(image->planes.begin(), image->planes.end(), [&](const auto& prior) {
+                return prior.backend_output_index == plane.backend_output_index;
+              }))
+            throw std::invalid_argument("image publication has an invalid or duplicate plane");
+          image->planes.push_back(plane);
+        }
+        stage.image_publication = std::move(image);
+      } catch (const std::exception& ex) {
+        if (error_message)
+          *error_message = std::string("manifest image_publication: ") + ex.what();
+        return std::nullopt;
+      }
+    }
     if (stage_j.contains("frame_arena_size_bytes") &&
         stage_j["frame_arena_size_bytes"].is_number_unsigned()) {
       stage.frame_arena_size_bytes = stage_j["frame_arena_size_bytes"].get<std::uint64_t>();
@@ -1854,12 +1922,14 @@ private:
           static_cast<guint>(out.processcvu_q_zp_array.size());
 
       out.spec.payload.processcvu.num_in_tensor = stage.processcvu.num_in_tensor;
-      out.processcvu_input_tensors = stage.processcvu.input_tensors;
+      out.processcvu_input_tensors.assign(stage.processcvu.input_tensors.begin(),
+                                            stage.processcvu.input_tensors.end());
       out.spec.payload.processcvu.input_tensors =
           out.processcvu_input_tensors.empty() ? nullptr : out.processcvu_input_tensors.data();
       out.spec.payload.processcvu.input_tensors_len =
           static_cast<guint>(out.processcvu_input_tensors.size());
-      out.processcvu_output_tensors = stage.processcvu.output_tensors;
+      out.processcvu_output_tensors.assign(stage.processcvu.output_tensors.begin(),
+                                            stage.processcvu.output_tensors.end());
       out.spec.payload.processcvu.output_tensors =
           out.processcvu_output_tensors.empty() ? nullptr : out.processcvu_output_tensors.data();
       out.spec.payload.processcvu.output_tensors_len =
@@ -2081,6 +2151,7 @@ private:
                                                     : out.boxdecode_tensor_storage_kind.data();
       out.spec.payload.boxdecode.tensor_storage_kind_len =
           static_cast<guint>(out.boxdecode_tensor_storage_kind.size());
+
       out.spec.payload.boxdecode.superpoint = nullptr;
       if (stage.boxdecode.decode_type == BoxDecodeType::SuperPoint) {
         const auto& sp = stage.boxdecode.superpoint;

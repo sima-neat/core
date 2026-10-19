@@ -7,6 +7,64 @@
 
 namespace pcie_internal = simaai::neat::pcie::internal;
 
+namespace {
+
+void require(const bool condition, const std::string& message) {
+  if (!condition) {
+    throw std::runtime_error(message);
+  }
+}
+
+void test_child_cleanup_shell() {
+  const std::string cleanup = pcie_internal::RemoteRuntime::child_cleanup_shell_function();
+  const auto normal = pcie_internal::SshRunner::run(
+      {"/bin/bash", "-c",
+       cleanup + "sleep 30 & launched_pid=$!; owner_pid=$$; "
+                 "terminate_launched; rc=$?; "
+                 "kill -0 \"$owner_pid\" >/dev/null 2>&1 || exit 21; exit $rc"},
+      5);
+  require(normal.exit_code == 0 && !normal.timed_out,
+          "normal launched child was not terminated and reaped");
+
+  const auto ignores_term = pcie_internal::SshRunner::run(
+      {"/bin/bash", "-c",
+       cleanup + "( trap \"\" TERM; exec sleep 30 ) & launched_pid=$!; "
+                 "sleep 0.1; terminate_launched"},
+      5);
+  require(ignores_term.exit_code == 0 && !ignores_term.timed_out,
+          "SIGTERM-ignoring child was not killed and reaped");
+
+  const auto preserves_owner = pcie_internal::SshRunner::run(
+      {"/bin/bash", "-c",
+       cleanup + "sleep 30 & owner_pid=$!; sleep 30 & launched_pid=$!; "
+                 "terminate_launched; rc=$?; "
+                 "kill -0 \"$owner_pid\" >/dev/null 2>&1 || exit 22; "
+                 "kill -TERM \"$owner_pid\"; wait \"$owner_pid\" 2>/dev/null; "
+                 "exit $rc"},
+      5);
+  require(preserves_owner.exit_code == 0 && !preserves_owner.timed_out,
+          "launched-child cleanup affected the existing owner");
+}
+
+void test_start_failure_cleanup_classification() {
+  for (const int exit_code : {9, 10, 11, 12, 14, 15, 16}) {
+    require(pcie_internal::RemoteRuntime::start_failure_cleanup_safe(exit_code, false),
+            "known cleanup-safe start failure was not classified as safe");
+  }
+  for (const int exit_code : {1, 17, 18, 255}) {
+    require(!pcie_internal::RemoteRuntime::start_failure_cleanup_safe(exit_code, false),
+            "ambiguous start failure was classified as cleanup-safe");
+  }
+  require(!pcie_internal::RemoteRuntime::start_failure_cleanup_safe(9, true),
+          "timed-out start was classified as cleanup-safe");
+
+  const pcie_internal::RemoteStartError error("cleanup failed", false, 1234);
+  require(!error.cleanup_safe() && error.launched_pid() == 1234,
+          "remote start failure did not preserve its launched PID");
+}
+
+} // namespace
+
 int main() {
   try {
     const std::string escaped = pcie_internal::SshRunner::shell_escape("ab'cd");
@@ -66,6 +124,8 @@ int main() {
         throw std::runtime_error("unsafe remote upload path accepted: " + path);
       }
     }
+    test_child_cleanup_shell();
+    test_start_failure_cleanup_classification();
     std::cout << "[PASS] ssh runner\n";
     return 0;
   } catch (const std::exception& e) {

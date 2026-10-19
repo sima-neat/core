@@ -17,6 +17,7 @@ slug: /develop-apps/contribute/mpk_contract
 - `src/model/ModelArchiveLoader.cpp`
 - `src/model/internal/ModelArchiveLoader.h`
 - `src/pipeline/internal/sima/MpkContract.cpp`
+- `src/pipeline/internal/sima/static_contract/MpkDecoder.cpp`
 
 ## 接受的檔案封存格式
 
@@ -44,6 +45,10 @@ slug: /develop-apps/contribute/mpk_contract
 - MPK 推理合約 (`mpk.json` 或 `*_mpk.json`)
 - 執行階段所需的載入器端階段/設定 JSON
 - 至少一個模型二進位成品 (`*.elf` 或 `*.so`)
+
+## MPK 資訊清單載入
+
+模型載入、預備執行階段建置與 PCIe 主機都透過 `MpkDecoder::load` 讀取 `mpk.json`。它只讀取一次資訊清單，以這些位元組建立語意 `MpkContract`，並在套件內解析每個階段的執行檔：MLA 執行檔依序從 `share/`、`lib/`、套件根目錄尋找；A65 模組依序從 `lib/`、套件根目錄、`share/` 尋找。執行接納流程與 PCIe 主機會以執行檔的 ELF 與 GraphExecutor 證據解碼同一份位元組，因此計畫與合約來自同一份位元組。
 
 ## 解壓縮安全規則
 

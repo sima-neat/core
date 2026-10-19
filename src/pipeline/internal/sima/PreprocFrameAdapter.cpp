@@ -1,8 +1,9 @@
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
-#include <simaai/runtime/testing/test_trace.h>
+#include <simaai/scheduler/client/diagnostics.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <simaai/scheduler/client/video_layout.h>
 
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
 struct PreprocFrameAdapter::CheckedPolicy {
@@ -10,6 +11,9 @@ struct PreprocFrameAdapter::CheckedPolicy {
   KernelExecutable initial_executable;
   std::optional<KernelVariant> geometry_variant;
   TensorSpec output;
+  std::vector<TensorSpec> outputs;
+  std::array<std::size_t, 3> storage_rows{};
+  std::shared_ptr<const gstreamer::TensorStageImagePublication> image_publication;
   bool identity_interpolation = false;
   Geometry envelope, initial_geometry;
   PaddingPlacement padding = PaddingPlacement::Center;
@@ -23,7 +27,12 @@ const KernelExecutable& PreprocFrameAdapter::checked_executable(const CheckedPol
   return policy.initial_executable;
 }
 
-using namespace ::simaai::runtime;
+std::shared_ptr<const gstreamer::TensorStageImagePublication>
+PreprocFrameAdapter::checked_image_publication(const CheckedPolicy& policy) {
+  return policy.image_publication;
+}
+
+using namespace ::simaai::scheduler::client;
 namespace {
 
 Error invalid(const char* field, std::string message) {
@@ -390,18 +399,6 @@ PreprocFrameAdapter::describe_geometry(Geometry geometry, std::size_t width, std
   return geometry;
 }
 
-Result<std::shared_ptr<PreprocFrameAdapter>>
-PreprocFrameAdapter::create(std::shared_ptr<const ProcessCvuStagePayload> prepared,
-                            KernelSessionOptions options) {
-  auto checked = check(std::move(prepared));
-  if (auto* failure = std::get_if<Error>(&checked))
-    return *failure;
-  auto result = std::get<std::shared_ptr<PreprocFrameAdapter>>(std::move(checked));
-  if (auto failure = result->prepare(std::move(options)))
-    return *failure;
-  return result;
-}
-
 Result<std::shared_ptr<const PreprocFrameAdapter::CheckedPolicy>>
 PreprocFrameAdapter::check_policy(std::shared_ptr<const ProcessCvuStagePayload> prepared) {
   if (!prepared)
@@ -454,23 +451,16 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   }
   if (selected >= cfg.output_tensors.size())
     return invalid("output", "selected descriptor is missing");
-  std::string meaning = cfg.output_dtype.empty() ? cfg.out_dtype : cfg.output_dtype;
-  if (selected < cfg.runtime_output_dtype_list.size())
-    meaning = cfg.runtime_output_dtype_list[selected];
-  const bool unsigned_output = upper(meaning) == "UINT8";
-  auto output = tensor_spec_from_model_descriptor(cfg.output_tensors[selected],
-                                                  unsigned_output ? "INT8" : meaning);
+  auto output = tensor_spec_from_model_descriptor(cfg.output_tensors[selected]);
   if (auto* error = std::get_if<Error>(&output))
     return *error;
   policy->output = std::get<TensorSpec>(std::move(output));
-  if (unsigned_output)
-    policy->output.dtype = DType::UInt8;
   if (cfg.normalize != 1 && policy->output.dtype == DType::Int8) {
     // Legacy raw INT8 names byte-preserving [0,255] storage, not signed math.
     // Native UInt8 explicitly preserves those bytes in dense or tiled storage.
     policy->output.dtype = DType::UInt8;
   }
-  const auto& output_descriptor = cfg.output_tensors[selected];
+  const auto& output_descriptor = cfg.output_tensors[selected].descriptor();
   const auto output_batch = axis(output_descriptor, SIMA_EV_AXIS_N);
   if (output_batch != 0) {
     // The legacy contract may describe one output member even when its public
@@ -481,28 +471,86 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
         (output_batch != 1 && output_batch != cfg.batch_size))
       return invalid("output.shape",
                      "output batch must be leading and match capacity or one member");
-    auto shape = policy->output.shape.dimensions();
+    auto shape = policy->output.shape;
     std::vector<std::int64_t> dimensions(shape.begin(), shape.end());
     dimensions[0] = cfg.batch_size;
-    policy->output.shape = Shape(dimensions);
+    policy->output.shape = std::move(dimensions);
   } else {
-    auto shape = policy->output.shape.dimensions();
-    if (shape.size() == Shape::max_dimensions)
+    auto shape = policy->output.shape;
+    if (shape.size() == std::size(output_descriptor.shape.sizes))
       return invalid("output.shape", "batch exceeds six axes");
     std::vector<std::int64_t> dimensions{cfg.batch_size};
     dimensions.insert(dimensions.end(), shape.begin(), shape.end());
-    policy->output.shape = Shape(dimensions);
-    if (auto* tile = std::get_if<kernels::MlaTiled>(&policy->output.layout)) {
+    policy->output.shape = std::move(dimensions);
+    if (auto* tile = std::get_if<::simaai::scheduler::client::MlaTiled>(&policy->output.layout)) {
       for (auto& value : tile->axes)
         if (value >= 0)
           ++value;
-    } else if (auto* strides = std::get_if<kernels::Strided>(&policy->output.layout)) {
+    } else if (auto* strides = std::get_if<::simaai::scheduler::client::Strided>(&policy->output.layout)) {
       auto previous = strides->strides_bytes;
       for (std::size_t i = shape.size(); i > 0; --i)
         strides->strides_bytes[i] = previous[i - 1];
       strides->strides_bytes[0] = previous[0] * shape[0];
     }
   }
+  if (cfg.image_transform) {
+    if (cfg.batch_size != 1 || cfg.output_shapes.empty() || cfg.output_shapes[0].size() < 2)
+      return invalid("output.shape",
+                     "image frontends require one frame with explicit output geometry");
+    const auto h = cfg.output_shapes[0][0], w = cfg.output_shapes[0][1];
+    const auto output_format = upper(cfg.output_img_type);
+    const auto format =
+        gst_video_format_from_string(output_format == "GRAY" ? "GRAY8" : output_format.c_str());
+    if (h <= 0 || w <= 0 || format_name(format).empty())
+      return invalid("output.shape", "invalid image output geometry or format");
+    const bool yuv = planes(format) > 1;
+    if (yuv && ((w & 1) || (format != GST_VIDEO_FORMAT_NV16 && (h & 1))))
+      return invalid("output.shape", "YUV output violates its chroma sampling grid");
+    policy->output = {std::vector<std::int64_t>{1, h, w, std::int64_t(channels(format))},
+                      cfg.image_transform->raw_output() ? DType::UInt8 : DType::BFloat16,
+                      ::simaai::scheduler::client::Contiguous{}};
+    if (cfg.image_transform->raw_output()) {
+      auto publication = std::make_shared<gstreamer::TensorStageImagePublication>();
+      publication->format = format;
+      publication->width = w;
+      publication->height = h;
+      VideoLayout encoder;
+      if (cfg.image_transform->surface == ImageSurfaceLayout::EncoderNv12) {
+        if (format != GST_VIDEO_FORMAT_NV12)
+          return invalid("output.surface", "encoder surface requires NV12");
+        auto layout = encoder_nv12_layout(w, h);
+        if (auto* error = std::get_if<Error>(&layout))
+          return *error;
+        encoder = std::get<VideoLayout>(std::move(layout));
+      }
+      for (std::size_t i = 0; i < planes(format); ++i) {
+        const auto rows = i && format != GST_VIDEO_FORMAT_NV16 ? h / 2 : h;
+        const auto columns = i ? w / 2 : w;
+        const auto c = i ? (format == GST_VIDEO_FORMAT_I420 ? 1 : 2) : channels(format);
+        const auto row_bytes = std::size_t(columns) * c;
+        // Kernel DMA and same-owner range checks use explicit positive pitches.
+        std::size_t pitch = yuv ? (row_bytes + 15) & ~std::size_t{15} : row_bytes;
+        std::size_t storage_rows = rows;
+        if (cfg.image_transform->surface == ImageSurfaceLayout::EncoderNv12) {
+          pitch = encoder.planes[i].stride;
+          storage_rows = i ? (encoder.allocation_size - encoder.planes[1].offset) / pitch
+                           : encoder.planes[1].offset / pitch;
+        }
+        if (pitch > G_MAXINT || storage_rows > SIZE_MAX / pitch)
+          return invalid("output.surface", "image surface extent overflows");
+        policy->storage_rows[i] = storage_rows;
+        Layout layout = ::simaai::scheduler::client::Contiguous{};
+        if (yuv)
+          layout = ::simaai::scheduler::client::Strided{
+              {std::int64_t(pitch * storage_rows), std::int64_t(pitch), std::int64_t(c), 1}};
+        policy->outputs.push_back({std::vector<std::int64_t>{1, rows, columns, std::int64_t(c)}, DType::UInt8, layout});
+        publication->planes.push_back({int(i), 0, gint(pitch), guint(rows), guint(row_bytes)});
+      }
+      policy->image_publication = std::move(publication);
+    }
+  }
+  if (policy->outputs.empty())
+    policy->outputs.push_back(policy->output);
   auto initial_geometry = describe_geometry(policy->envelope, width, height);
   if (auto* error = std::get_if<Error>(&initial_geometry))
     return *error;
@@ -547,15 +595,34 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   for (std::size_t i = 0; i < values.size(); ++i)
     if (values[i])
       parameters.push_back({names[i], std::move(*values[i])});
-  auto checked = ::simaai::scheduler::check_kernel({"preproc",
-                                                    Hardware::EV74,
+  auto checked = ::simaai::scheduler::client::check_kernel({"preproc", Hardware::EV74,
                                                     std::get<std::vector<TensorSpec>>(specs),
-                                                    {&policy->output, 1},
-                                                    parameters});
+                                                    policy->outputs, parameters});
   if (auto* error = std::get_if<Error>(&checked))
     return *error;
   policy->initial_executable = std::get<KernelExecutable>(std::move(checked));
-  auto bound = ::simaai::scheduler::bind_kernel_variant(policy->initial_executable, "geometry");
+  if (policy->image_publication) {
+    auto inspected = ::simaai::scheduler::client::inspect_kernel(policy->initial_executable);
+    if (auto* error = std::get_if<Error>(&inspected))
+      return *error;
+    const auto requirements = std::get<KernelInspection>(inspected).output_requirements();
+    auto publication =
+        std::make_shared<gstreamer::TensorStageImagePublication>(*policy->image_publication);
+    std::size_t offset = 0;
+    for (std::size_t i = 0; i < publication->planes.size(); ++i) {
+      if (offset > SIZE_MAX - 63)
+        return invalid("output.surface", "plane alignment overflows");
+      offset = (offset + 63) & ~std::size_t{63};
+      publication->planes[i].byte_offset = offset;
+      const auto pitch = std::size_t(publication->planes[i].stride);
+      const auto bytes = std::max(requirements[i].storage_bytes, pitch * policy->storage_rows[i]);
+      if (bytes > SIZE_MAX - offset)
+        return invalid("output.surface", "plane span overflows");
+      offset += bytes;
+    }
+    policy->image_publication = std::move(publication);
+  }
+  auto bound = ::simaai::scheduler::client::bind_kernel_variant(policy->initial_executable, "geometry");
   if (auto* error = std::get_if<Error>(&bound))
     return *error;
   policy->geometry_variant = std::get<KernelVariant>(std::move(bound));
@@ -587,17 +654,17 @@ PreprocFrameAdapter::check(std::shared_ptr<const ProcessCvuStagePayload> prepare
   return instantiate(std::get<std::shared_ptr<const CheckedPolicy>>(std::move(checked)));
 }
 
-Status PreprocFrameAdapter::prepare(KernelSessionOptions options) {
+Status PreprocFrameAdapter::admitted(const VariantPreparer& preparer) {
   if (preparation_started_.exchange(true, std::memory_order_acq_rel))
     return invalid("preproc.preparation", "image recipe must be prepared exactly once");
-  auto session = prepare_kernels({&policy_->initial_executable, 1}, std::move(options));
-  if (auto* failure = std::get_if<Error>(&session))
-    return *failure;
-  session_ = std::get<KernelSession>(std::move(session));
+  if (!preparer || !preparer.base() ||
+      preparer.base().executable() != policy_->initial_executable)
+    return invalid("preproc.preparation", "admission does not match the checked image recipe");
+  preparer_ = preparer;
   auto& initial = variants_[0];
   const bool roi_capacity = std::size_t(policy_->prepared->batch_size) != initial.geometry.batch;
   if (!roi_capacity) {
-    initial.operation = session_.operation(0);
+    initial.operation = preparer_.base();
     auto publication = prepare_publication(initial.geometry, policy_->initial_executable, nullptr);
     if (auto* failure = std::get_if<Error>(&publication))
       return *failure;
@@ -624,9 +691,9 @@ Result<std::vector<TensorSpec>> PreprocFrameAdapter::input_specs(const Geometry&
         geometry.frame_bytes > std::size_t(INT64_MAX))
       return invalid("input.stride", "image stride is not representable");
     result.push_back(
-        {Shape{std::int64_t(geometry.batch), std::int64_t(h), std::int64_t(w), std::int64_t(c)},
+        {std::vector<std::int64_t>{std::int64_t(geometry.batch), std::int64_t(h), std::int64_t(w), std::int64_t(c)},
          DType::UInt8,
-         kernels::Strided{{std::int64_t(geometry.frame_bytes), std::int64_t(geometry.strides[i]),
+         ::simaai::scheduler::client::Strided{{std::int64_t(geometry.frame_bytes), std::int64_t(geometry.strides[i]),
                            std::int64_t(c), 1}}});
   }
   return result;
@@ -634,7 +701,7 @@ Result<std::vector<TensorSpec>> PreprocFrameAdapter::input_specs(const Geometry&
 
 Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
   const auto& cfg = *policy_->prepared;
-  const auto dims = policy_->output.shape.dimensions();
+  const auto dims = policy_->output.shape;
   if (dims.size() < 3)
     return invalid("output.shape", "PreprocFrameAdapter output needs HWC axes");
   const auto h = dims[dims.size() - 3], w = dims[dims.size() - 2];
@@ -662,6 +729,12 @@ Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
     output_format_value = "bgr";
   else if (output_format == "GRAY" || output_format == "GRAY8")
     output_format_value = "gray";
+  else if (cfg.image_transform && output_format == "NV12")
+    output_format_value = "nv12";
+  else if (cfg.image_transform && output_format == "I420")
+    output_format_value = "i420";
+  else if (cfg.image_transform && output_format == "NV16")
+    output_format_value = "nv16";
   else
     return invalid("output_img_type", "unknown output color format");
   const auto input_format = format_name(policy_->envelope.format);
@@ -670,6 +743,35 @@ Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
   result.push_back({"interpolation", interpolation_value});
   result.push_back({"input_format", input_format});
   result.push_back({"output_format", output_format_value});
+  if (cfg.image_transform) {
+    const auto& p = *cfg.image_transform;
+    result.push_back(
+        {"color_matrix", p.color.matrix == ImageColorMatrix::Bt601 ? "bt601_full" : "bt709_full"});
+    if (output_format_value == "nv12" || output_format_value == "i420" ||
+        output_format_value == "nv16") {
+      result.push_back({"yuv_range", p.color.range == ImageYuvRange::Full ? "full" : "limited"});
+      const auto siting = [](ImageChromaSiting s) {
+        return s == ImageChromaSiting::Centered ? "centered" : "cosited";
+      };
+      result.push_back({"input_chroma_x", siting(p.color.input_siting[0])});
+      result.push_back({"input_chroma_y", siting(p.color.input_siting[1])});
+      result.push_back({"output_chroma_x", siting(p.color.output_siting[0])});
+      result.push_back({"output_chroma_y", siting(p.color.output_siting[1])});
+      result.push_back({"output_padding_mode", p.surface == ImageSurfaceLayout::EncoderNv12
+                                                   ? "initialize_storage"
+                                                   : "preserve_holes"});
+      ParameterArray rows;
+      for (const auto value : policy_->storage_rows)
+        rows.emplace_back(std::uint64_t(value));
+      result.push_back({"output_storage_rows", std::move(rows)});
+      if (p.yuv_padding) {
+        ParameterArray values;
+        for (const auto value : *p.yuv_padding)
+          values.emplace_back(std::uint64_t(value));
+        result.push_back({"yuv_padding", std::move(values)});
+      }
+    }
+  }
   ParameterArray offsets, multipliers;
   if (policy_->output.dtype == DType::Int8 && (!cfg.has_q_scale || !cfg.has_q_zp))
     return invalid("quantization", "INT8 PreprocFrameAdapter requires multiplier and zero point");
@@ -701,7 +803,7 @@ Result<PreprocFrameAdapter::GeometryParameters>
 PreprocFrameAdapter::parameters(const Geometry& geometry, const GstStructure* meta,
                                 const IntegerList* checked_indices) const {
   const auto& cfg = *policy_->prepared;
-  const auto dims = policy_->output.shape.dimensions();
+  const auto dims = policy_->output.shape;
   const auto h = dims[dims.size() - 3], w = dims[dims.size() - 2];
   GeometryParameters result;
   const bool identity = policy_->identity_interpolation;
@@ -779,7 +881,10 @@ PreprocFrameAdapter::parameters(const Geometry& geometry, const GstStructure* me
   const auto& d = std::get<Rectangle>(placed);
   result[Destination] = ParameterArray{std::int32_t(d[0]), std::int32_t(d[1]), std::int32_t(d[2]),
                                        std::int32_t(d[3])};
-  int pad = cfg.pad_value;
+  const bool raw_yuv = cfg.image_transform && (upper(cfg.output_img_type) == "NV12" ||
+                                               upper(cfg.output_img_type) == "NV16" ||
+                                               upper(cfg.output_img_type) == "I420");
+  int pad = raw_yuv ? 0 : cfg.pad_value;
   if (meta)
     gst_structure_get_int(meta, "preproc_roi_pad_value", &pad);
   if (pad < 0 || pad > 255)
@@ -797,6 +902,44 @@ Result<GstVideoInfo> PreprocFrameAdapter::parse_caps(const GstCaps* caps) const 
       std::size_t(info.width) > policy_->envelope.width ||
       std::size_t(info.height) > policy_->envelope.height)
     return invalid("input.caps", "video caps exceed the prepared format/capacity envelope");
+  if (policy_->prepared->image_transform && !policy_->prepared->image_transform->dynamic_input() &&
+      (std::size_t(info.width) != policy_->initial_geometry.width ||
+       std::size_t(info.height) != policy_->initial_geometry.height))
+    return invalid("input.caps",
+                   "ColorConvert/Normalization dimensions are fixed per run; reprepare");
+  if (policy_->prepared->image_transform) {
+    const auto* structure = gst_caps_get_structure(caps, 0);
+    if (const auto* mode = gst_structure_get_string(structure, "interlace-mode");
+        mode && std::string_view(mode) != "progressive")
+      return invalid("input.caps", "image frontends require progressive video");
+    if (planes(info.finfo->format) > 1) {
+      const auto& authored = policy_->prepared->image_transform->color;
+      if (const auto* text = gst_structure_get_string(structure, "colorimetry")) {
+        GstVideoColorimetry color{};
+        if (!gst_video_colorimetry_from_string(&color, text))
+          return invalid("input.colorimetry", "malformed explicit video colorimetry");
+        const auto range = authored.range == ImageYuvRange::Full ? GST_VIDEO_COLOR_RANGE_0_255
+                                                                 : GST_VIDEO_COLOR_RANGE_16_235;
+        const auto matrix = authored.matrix == ImageColorMatrix::Bt601
+                                ? GST_VIDEO_COLOR_MATRIX_BT601
+                                : GST_VIDEO_COLOR_MATRIX_BT709;
+        if ((color.range != GST_VIDEO_COLOR_RANGE_UNKNOWN && color.range != range) ||
+            (color.matrix != GST_VIDEO_COLOR_MATRIX_UNKNOWN && color.matrix != matrix))
+          return invalid("input.colorimetry",
+                         "explicit source range/matrix contradicts image policy");
+      }
+      if (const auto* text = gst_structure_get_string(structure, "chroma-site")) {
+        const auto site = gst_video_chroma_site_from_string(text);
+        if (site == GST_VIDEO_CHROMA_SITE_UNKNOWN || (site & GST_VIDEO_CHROMA_SITE_ALT_LINE) ||
+            bool(site & GST_VIDEO_CHROMA_SITE_H_COSITED) !=
+                (authored.input_siting[0] == ImageChromaSiting::Cosited) ||
+            bool(site & GST_VIDEO_CHROMA_SITE_V_COSITED) !=
+                (authored.input_siting[1] == ImageChromaSiting::Cosited))
+          return invalid("input.chroma-site",
+                         "unsupported or contradictory explicit source chroma siting");
+      }
+    }
+  }
   return info;
 }
 
@@ -821,40 +964,27 @@ Status PreprocFrameAdapter::check_caps(const GstCaps* caps) const {
 }
 
 Status
-PreprocFrameAdapter::bind(GstBuffer* buffer, const gstreamer::Storage& storage,
-                          gstreamer::Binding& binding, GstStructure* out, bool fresh_metadata,
-                          simaai::gst::TensorBufferPreprocessFactsOwner* compact_facts) const {
-  struct StorageImport {
-    GstBuffer* buffer;
-    const gstreamer::Storage& storage;
-  } source{buffer, storage};
-  return bind(
-      buffer,
-      PlaneResolver{&source,
-                    [](const void* context, std::size_t, GstMemory* memory, std::size_t offset,
-                       std::size_t bytes, gstreamer::Binding& binding) -> Status {
-                      const auto& source = *static_cast<const StorageImport*>(context);
-                      auto view = source.storage.resolve(source.buffer, memory, offset, bytes,
-                                                         Access::Read);
-                      if (auto* error = std::get_if<Error>(&view))
-                        return *error;
-                      binding.inputs.push_back(std::get<BufferView>(std::move(view)));
-                      return {};
-                    }},
-      binding, out, fresh_metadata, compact_facts);
-}
-
-Status
-PreprocFrameAdapter::bind(GstBuffer* buffer, PlaneResolver resolver, gstreamer::Binding& binding,
+PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding,
                           GstStructure* out, bool fresh_metadata,
                           simaai::gst::TensorBufferPreprocessFactsOwner* compact_facts) const {
-  if (!resolver.append)
-    return invalid("input.resolver", "missing input-plane resolver");
-  SIMA_TRACE_CURRENT(PreprocCheckBegin);
+  if (!preparer_)
+    return invalid("preproc.preparation", "image policy has not been admitted");
+  SIMA_SCHEDULER_TRACE_CURRENT(PreprocCheckBegin);
   std::lock_guard lock(mutex_);
   Geometry geometry = default_geometry_;
   auto* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
-  const auto* meta = custom ? gst_custom_meta_get_structure(custom) : nullptr;
+  const auto* source_meta = custom ? gst_custom_meta_get_structure(custom) : nullptr;
+  // Legacy ROI fields on an upstream result are facts, not instructions to apply a second crop.
+  const auto* meta = policy_->prepared->image_transform ? nullptr : source_meta;
+  if (policy_->prepared->image_transform && source_meta) {
+    if (roi_list_enabled(source_meta))
+      return invalid("input.preprocess", "image frontends require one frame, not an ROI list");
+    gboolean roi = FALSE;
+    if (gst_structure_get_boolean(source_meta, "preproc_roi_enable", &roi) && roi &&
+        !gst_structure_has_field(source_meta, "preproc_affine_m00"))
+      return invalid("input.preprocess", "image frontends do not accept ROI crop requests; "
+                                         "complete spatial provenance is required");
+  }
   gboolean scalar_roi = FALSE;
   if (meta)
     gst_structure_get_boolean(meta, "preproc_roi_enable", &scalar_roi);
@@ -901,6 +1031,8 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, PlaneResolver resolver, gstreamer::
     geometry.frame_bytes = row_stride * height;
   }
   if (auto* video = gst_buffer_get_video_meta(buffer)) {
+    if (policy_->prepared->image_transform && (video->flags & GST_VIDEO_FRAME_FLAG_INTERLACED))
+      return invalid("input.video-meta", "image frontends require progressive video");
     if (video->format != geometry.format || video->n_planes != planes(geometry.format))
       return invalid("input.video-meta", "plane format differs from negotiated caps");
     if ((has_override("preproc_roi_source_width", "roi_source_width") && width != video->width) ||
@@ -926,6 +1058,9 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, PlaneResolver resolver, gstreamer::
           std::max(geometry.frame_bytes, geometry.offsets[i] + geometry.strides[i] * rows);
     }
   }
+  if (policy_->prepared->image_transform && !policy_->prepared->image_transform->dynamic_input() &&
+      (geometry.width != policy_->envelope.width || geometry.height != policy_->envelope.height))
+    return invalid("input.video-meta", "ColorConvert/Normalization geometry is fixed per run");
   std::optional<IntegerList> inferred_indices;
   if (roi_metadata(meta)) {
     int batch = 0;
@@ -960,12 +1095,12 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, PlaneResolver resolver, gstreamer::
     selected = 1 - selected;
     cached = matches(selected);
   }
-  auto operation = cached ? variants_[selected].operation : nullptr;
+  auto operation = cached ? variants_[selected].operation : PreparedSelection{};
   const bool prepared_now = !operation;
   if (cached)
-    SIMA_TRACE_CURRENT(PreprocVariantHit);
+    SIMA_SCHEDULER_TRACE_CURRENT(PreprocVariantHit);
   else
-    SIMA_TRACE_CURRENT(PreprocVariantMiss);
+    SIMA_SCHEDULER_TRACE_CURRENT(PreprocVariantMiss);
   if (prepared_now) {
     auto params = parameters(geometry, meta, inferred_indices ? &*inferred_indices : nullptr);
     if (auto* error = std::get_if<Error>(&params))
@@ -973,22 +1108,17 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, PlaneResolver resolver, gstreamer::
     auto specs = input_specs(geometry);
     if (auto* error = std::get_if<Error>(&specs))
       return *error;
-    SIMA_TRACE_CURRENT(PreprocPrepare);
-    auto checked = ::simaai::scheduler::apply_kernel_variant(
-        *policy_->geometry_variant, {std::get<std::vector<TensorSpec>>(specs),
-                                     {&policy_->output, 1},
+    SIMA_SCHEDULER_TRACE_CURRENT(PreprocPrepare);
+    auto prepared = preparer_.prepare(
+        *policy_->geometry_variant, {std::get<std::vector<TensorSpec>>(specs), policy_->outputs,
                                      std::get<GeometryParameters>(params)});
-    if (auto* error = std::get_if<Error>(&checked))
-      return *error;
-    auto prepared = session_.executor(0)->prepare(std::get<KernelExecutable>(std::move(checked)));
     if (auto* error = std::get_if<Error>(&prepared))
       return *error;
-    operation =
-        std::make_shared<const PreparedOperation>(std::get<PreparedOperation>(std::move(prepared)));
+    operation = std::get<PreparedSelection>(std::move(prepared));
   }
-  SIMA_TRACE_CURRENT(PreprocCheckEnd);
-  for (std::size_t i = 0; i < operation->input_count(); ++i) {
-    const auto bytes = operation->input_requirements(i).storage_bytes;
+  SIMA_SCHEDULER_TRACE_CURRENT(PreprocCheckEnd);
+  for (std::size_t i = 0; i < operation.input_count(); ++i) {
+    const auto bytes = operation.input_requirements(i).storage_bytes;
     guint memory_index = 0, memory_count = 0;
     gsize skip = 0;
     if (!gst_buffer_find_memory(buffer, geometry.offsets[i], bytes, &memory_index, &memory_count,
@@ -996,25 +1126,85 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, PlaneResolver resolver, gstreamer::
         memory_count != 1)
       return invalid("input.plane", "a plane must have one authoritative contiguous memory span");
     auto* memory = gst_buffer_peek_memory(buffer, memory_index);
-    if (auto error = resolver.append(resolver.context, i, memory, skip, bytes, binding))
+    if (auto error = binding.append_input(i, memory, skip, bytes))
       return error;
   }
   if (!out && !compact_facts)
     return invalid("output.meta", "missing preprocessing publication destination");
-  SIMA_TRACE_CURRENT(PreprocPublishBegin);
+  SIMA_SCHEDULER_TRACE_CURRENT(PreprocPublishBegin);
   Publication publication;
   if (prepared_now) {
-    auto facts = prepare_publication(geometry, operation->executable(), meta);
+    auto facts = prepare_publication(geometry, operation.executable(), meta);
     if (auto* error = std::get_if<Error>(&facts))
       return *error;
     publication = std::get<Publication>(std::move(facts));
   }
-  const auto& facts = prepared_now ? publication : variants_[selected].publication;
+  auto facts = prepared_now ? publication : variants_[selected].publication;
+  if (policy_->prepared->image_transform && source_meta) {
+    constexpr std::array names{"preproc_affine_m00", "preproc_affine_m01", "preproc_affine_m02",
+                               "preproc_affine_m10", "preproc_affine_m11", "preproc_affine_m12"};
+    const bool transformed = std::any_of(names.begin(), names.end(), [&](const char* name) {
+      return gst_structure_has_field(source_meta, name);
+    });
+    if (transformed) {
+      std::array<double, 6> a{};
+      for (std::size_t i = 0; i < a.size(); ++i)
+        if (!gst_structure_get_double(source_meta, names[i], &a[i]) || !std::isfinite(a[i]))
+          return invalid("input.preprocess", "incomplete or nonfinite upstream spatial transform");
+      int original_w = 0, original_h = 0;
+      if (!gst_structure_get_int(source_meta, "preproc_original_width", &original_w) ||
+          !gst_structure_get_int(source_meta, "preproc_original_height", &original_h) ||
+          original_w <= 0 || original_h <= 0)
+        return invalid("input.preprocess",
+                       "upstream transform requires original source dimensions");
+      gboolean upstream_roi = FALSE;
+      gst_structure_get_boolean(source_meta, "preproc_roi_enable", &upstream_roi);
+      std::array<int, 4> roi{};
+      if (upstream_roi) {
+        constexpr std::array roi_names{"preproc_roi_x", "preproc_roi_y", "preproc_roi_width",
+                                       "preproc_roi_height"};
+        for (std::size_t i = 0; i < roi_names.size(); ++i)
+          if (!gst_structure_get_int(source_meta, roi_names[i], &roi[i]) || roi[i] < 0 ||
+              (i >= 2 && roi[i] == 0))
+            return invalid("input.preprocess", "malformed upstream ROI provenance");
+      }
+      const auto* color_value = gst_structure_get_string(source_meta, "preproc_color_in");
+      const std::string_view color = color_value ? color_value : "";
+      auto& cache = composed_[selected];
+      if (cache.base == facts && cache.upstream == a && cache.original_width == original_w &&
+          cache.original_height == original_h && cache.has_roi == bool(upstream_roi) &&
+          cache.roi == roi && cache.color_in == color) {
+        facts = cache.result;
+      } else {
+        auto composed = *simaai::gst::tensor_buffer_preprocess_facts(facts);
+        const auto b = composed.affine;
+        composed.affine = {a[0] * b[0] + a[1] * b[3],        a[0] * b[1] + a[1] * b[4],
+                           a[0] * b[2] + a[1] * b[5] + a[2], a[3] * b[0] + a[4] * b[3],
+                           a[3] * b[1] + a[4] * b[4],        a[3] * b[2] + a[4] * b[5] + a[5]};
+        if (upstream_roi) {
+          std::copy(roi.begin(), roi.end(), composed.primary.begin());
+          composed.has_roi = true;
+        }
+        composed.original_width = original_w;
+        composed.original_height = original_h;
+        if (!color.empty())
+          composed.color_in = color;
+        std::string error;
+        auto frozen =
+            simaai::gst::tensor_buffer_freeze_preprocess_facts(std::move(composed), &error);
+        if (!frozen)
+          return invalid("output.preprocess", std::move(error));
+        cache = {
+            facts, frozen, a, roi, original_w, original_h, bool(upstream_roi), std::string(color)};
+        facts = std::move(frozen);
+      }
+    }
+  }
   if (compact_facts)
     *compact_facts = facts;
   if (out)
     simaai::gst::tensor_buffer_write_preprocess_facts(out, facts, fresh_metadata);
-  SIMA_TRACE_CURRENT(PreprocPublishEnd);
+  SIMA_SCHEDULER_TRACE_CURRENT(PreprocPublishEnd);
   if (prepared_now) {
     // Commit only after both current storage and publication validate. Failed
     // frames must not evict a usable checked variant. An uncacheable foreign
@@ -1027,8 +1217,7 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, PlaneResolver resolver, gstreamer::
   } else {
     current_variant_ = selected;
   }
-  binding.operation = std::move(operation);
-  return {};
+  return binding.select(operation);
 }
 
 Result<PreprocFrameAdapter::Publication>
@@ -1036,12 +1225,12 @@ PreprocFrameAdapter::prepare_publication(const Geometry& geometry,
                                          const KernelExecutable& executable,
                                          const GstStructure* source) const {
   const auto& cfg = *policy_->prepared;
-  const auto dims = policy_->output.shape.dimensions();
+  const auto dims = policy_->output.shape;
   const auto h = dims[dims.size() - 3], w = dims[dims.size() - 2];
   const bool list = roi_list_enabled(source);
   // Decode operation-owned facts only while freezing a new publication. A warm
   // frame uses the cached immutable publication and performs no fact lookup.
-  auto inspected = ::simaai::scheduler::inspect_kernel(executable);
+  auto inspected = ::simaai::scheduler::client::inspect_kernel(executable);
   if (const auto* error = std::get_if<Error>(&inspected))
     return *error;
   const auto& inspection = std::get<KernelInspection>(inspected);
@@ -1133,7 +1322,7 @@ PreprocFrameAdapter::prepare_publication(const Geometry& geometry,
   publication.source_stride = geometry.strides[0];
   publication.normalize = cfg.normalize == 1;
   publication.quantize = policy_->output.dtype == DType::Int8;
-  publication.tessellate = std::holds_alternative<kernels::MlaTiled>(policy_->output.layout);
+  publication.tessellate = std::holds_alternative<::simaai::scheduler::client::MlaTiled>(policy_->output.layout);
   publication.resize_mode = cfg.aspect_ratio == 1 ? "letterbox" : "stretch";
   publication.color_in = cfg.input_img_type;
   publication.color_out = cfg.output_img_type;

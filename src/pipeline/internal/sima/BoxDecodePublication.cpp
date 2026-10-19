@@ -1,10 +1,12 @@
 #include "pipeline/internal/sima/BoxDecodePublication.h"
 #include "pipeline/FeatureTypes.h"
 
-#include <simaai/scheduler/host_task.h>
+#include <simaai/scheduler/client/host_task.h>
 
 #include <algorithm>
+#if defined(__aarch64__)
 #include <arm_neon.h>
+#endif
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -14,8 +16,16 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 namespace {
-namespace k = ::simaai::kernels;
-namespace host = ::simaai::scheduler::host;
+namespace k = ::simaai::scheduler::client;
+// Wire encoding is IEEE binary16 on both host-contract and A65 builds. Keep
+// the A65 conversion type unchanged; this is not a numerical kernel fallback.
+#if defined(__aarch64__)
+using WireFloat16 = float16_t;
+#else
+using WireFloat16 = _Float16;
+#endif
+static_assert(sizeof(WireFloat16) == 2);
+
 struct WirePlan {
   BoxDecodeWireFormat format;
   std::size_t capacity = 0, bytes = 0, auxiliary_row = 0;
@@ -52,7 +62,7 @@ std::size_t scalar_bytes(k::DType dtype) {
 }
 void require_spec(const k::TensorSpec& spec, k::DType dtype,
                   std::initializer_list<std::int64_t> shape) {
-  if (spec.dtype != dtype || spec.shape != k::Shape(shape) ||
+  if (spec.dtype != dtype || spec.shape != std::vector<std::int64_t>(shape) ||
       !std::holds_alternative<k::Contiguous>(spec.layout))
     throw std::invalid_argument("BoxDecode wire input does not match canonical output contract");
 }
@@ -68,31 +78,41 @@ bool overlaps(const void* a, std::size_t na, const void* b, std::size_t nb) {
   const auto aa = reinterpret_cast<std::uintptr_t>(a), bb = reinterpret_cast<std::uintptr_t>(b);
   return aa <= bb ? bb - aa < na : aa - bb < nb;
 }
-k::Status publish(const WirePlan& plan, std::span<const k::ConstHostBuffer> inputs,
-                  std::span<const k::HostBuffer> outputs) {
-  if (inputs.size() != plan.inputs.size() || outputs.size() != 1)
-    return k::Error{k::ErrorCode::InvalidArity, "ports", "wire publication port count changed"};
-  if (!outputs[0].data || outputs[0].size_bytes < plan.bytes)
-    return k::Error{k::ErrorCode::BufferTooSmall, "output", "wire publication output is too small"};
-  if (reinterpret_cast<std::uintptr_t>(outputs[0].data) > UINTPTR_MAX - plan.bytes)
-    return k::Error{k::ErrorCode::SizeOverflow, "output",
-                    "wire publication output address overflows"};
-  for (std::size_t i = 0; i < inputs.size(); ++i) {
+k::HostStatus publish(const WirePlan& plan, k::HostBuffers buffers) {
+  if (buffers.input_count() != plan.inputs.size() || buffers.input_count() > 6 ||
+      buffers.output_count() != 1)
+    return k::HostError{k::ProviderErrorCode::InvalidArity, "ports",
+                        "wire publication port count changed"};
+  // Resolve the borrowed port descriptors once. The packing loops remain
+  // local arithmetic and loads/stores, not a DSO call per scalar or row.
+  std::array<k::ConstBytes, 6> inputs{};
+  const auto input_count = buffers.input_count();
+  for (std::size_t i = 0; i < input_count; ++i)
+    inputs[i] = buffers.input(i);
+  const auto target = buffers.output(0);
+  if (!target.data || target.size_bytes < plan.bytes)
+    return k::HostError{k::ProviderErrorCode::BufferTooSmall, "output",
+                        "wire publication output is too small"};
+  if (reinterpret_cast<std::uintptr_t>(target.data) > UINTPTR_MAX - plan.bytes)
+    return k::HostError{k::ProviderErrorCode::SizeOverflow, "output",
+                        "wire publication output address overflows"};
+  for (std::size_t i = 0; i < input_count; ++i) {
     const auto bytes = plan.inputs[i].storage_bytes;
     if (!inputs[i].data || inputs[i].size_bytes < bytes)
-      return k::Error{k::ErrorCode::BufferTooSmall, "input", "wire publication input is too small"};
+      return k::HostError{k::ProviderErrorCode::BufferTooSmall, "input",
+                          "wire publication input is too small"};
     if (reinterpret_cast<std::uintptr_t>(inputs[i].data) > UINTPTR_MAX - bytes)
-      return k::Error{k::ErrorCode::SizeOverflow, "input",
-                      "wire publication input address overflows"};
-    if (overlaps(inputs[i].data, bytes, outputs[0].data, plan.bytes))
-      return k::Error{k::ErrorCode::AliasedBuffers, "output",
-                      "wire publication input/output spans overlap"};
+      return k::HostError{k::ProviderErrorCode::SizeOverflow, "input",
+                          "wire publication input address overflows"};
+    if (overlaps(inputs[i].data, bytes, target.data, plan.bytes))
+      return k::HostError{k::ProviderErrorCode::AliasedBuffers, "output",
+                          "wire publication input/output spans overlap"};
   }
   const auto count = load<std::int32_t>(inputs[3].data);
   if (count < 0 || static_cast<std::size_t>(count) > plan.capacity)
-    return k::Error{k::ErrorCode::InvalidParameter, "count",
-                    "numerical result count exceeds capacity"};
-  auto* output = outputs[0].data;
+    return k::HostError{k::ProviderErrorCode::InvalidParameter, "count",
+                        "numerical result count exceeds capacity"};
+  auto* output = target.data;
   const auto n = static_cast<std::size_t>(count);
   if (plan.format == BoxDecodeWireFormat::RcnnProposals) {
     const auto per_level = plan.capacity / 4;
@@ -103,8 +123,8 @@ k::Status publish(const WirePlan& plan, std::span<const k::ConstHostBuffer> inpu
     for (std::size_t i = 0; i < n; ++i) {
       const auto level = load<std::int32_t>(inputs[4].data + i * 4);
       if (level < 0 || level >= 4 || ++counts[level] > static_cast<std::int32_t>(per_level))
-        return k::Error{k::ErrorCode::InvalidParameter, "levels",
-                        "RCNN proposal level or per-level count is invalid"};
+        return k::HostError{k::ProviderErrorCode::InvalidParameter, "levels",
+                            "RCNN proposal level or per-level count is invalid"};
     }
     std::memset(output, 0, plan.bytes);
     for (std::size_t level = 0; level < 4; ++level)
@@ -119,7 +139,7 @@ k::Status publish(const WirePlan& plan, std::span<const k::ConstHostBuffer> inpu
           load<float>(inputs[1].data + i * 4), 0.f, x, y, x + load<float>(from + 8),
           y + load<float>(from + 12)};
       for (std::size_t field = 0; field < values.size(); ++field)
-        store(row + field * 2, static_cast<float16_t>(values[field]));
+        store(row + field * 2, static_cast<WireFloat16>(values[field]));
     }
     return {};
   }
@@ -152,8 +172,8 @@ k::Status publish(const WirePlan& plan, std::span<const k::ConstHostBuffer> inpu
       const auto x = load<float>(inputs[0].data + i * 8);
       const auto y = load<float>(inputs[0].data + i * 8 + 4);
       if (!std::isfinite(x) || !std::isfinite(y))
-        return k::Error{k::ErrorCode::InvalidParameter, "coordinates",
-                        "nonfinite feature coordinate"};
+        return k::HostError{k::ProviderErrorCode::InvalidParameter, "coordinates",
+                            "nonfinite feature coordinate"};
     }
     store(output, count);
     for (std::size_t i = 0; i < n; ++i) {
@@ -175,8 +195,8 @@ k::Status publish(const WirePlan& plan, std::span<const k::ConstHostBuffer> inpu
       for (std::size_t axis = 0; axis < 2; ++axis) {
         const float value = load<float>(inputs[plan.pose_input].data + (i * 3 + axis) * 4);
         if (!std::isfinite(value) || value < 0.f || double(value) > UINT32_MAX)
-          return k::Error{k::ErrorCode::InvalidParameter, "coordinates",
-                          "pose coordinate cannot be encoded"};
+          return k::HostError{k::ProviderErrorCode::InvalidParameter, "coordinates",
+                              "pose coordinate cannot be encoded"};
       }
   }
   store(output, count);
@@ -227,7 +247,7 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
                                     : 4u) ||
       inputs[0].shape.size() != 2)
     throw std::invalid_argument("BoxDecode wire format or port count is invalid");
-  const auto capacity = inputs[0].shape.dimensions()[0];
+  const auto capacity = inputs[0].shape[0];
   if (capacity < 1 || capacity > 65536)
     throw std::invalid_argument("BoxDecode wire capacity must be 1..65536");
   auto plan = std::make_shared<WirePlan>();
@@ -240,7 +260,7 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
   if (features) {
     if (inputs[2].shape.size() != 2)
       throw std::invalid_argument("SuperPoint descriptors must have shape [K,D]");
-    const auto dim = inputs[2].shape.dimensions()[1];
+    const auto dim = inputs[2].shape[1];
     if (dim < 1 || dim > UINT16_MAX ||
         (inputs[2].dtype != k::DType::Int8 && inputs[2].dtype != k::DType::BFloat16 &&
          inputs[2].dtype != k::DType::Float32))
@@ -279,7 +299,7 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
       const auto& points = inputs[plan->pose_input];
       if (points.shape.size() != 3)
         throw std::invalid_argument("BoxDecode keypoints must have shape [K,P,3]");
-      const auto count = points.shape.dimensions()[1];
+      const auto count = points.shape[1];
       if (count < 1 || count > 17 || (!combined && count != 17))
         throw std::invalid_argument("BoxDecode wire requires 1..17 combined or 17 pose points");
       require_spec(points, k::DType::Float32, {capacity, count, 3});
@@ -288,7 +308,7 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
     if (masks) {
       if (inputs[4].shape.size() != 3)
         throw std::invalid_argument("BoxDecode masks must have shape [K,H,W]");
-      const auto shape = inputs[4].shape.dimensions();
+      const auto shape = inputs[4].shape;
       if (shape[1] < 1 || shape[2] < 1 || (combined && (shape[1] != 160 || shape[2] != 160)))
         throw std::invalid_argument(
             "BoxDecode mask extents must be positive; combined wire requires 160x160");
@@ -307,7 +327,7 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
   }
   for (const auto& input : inputs) {
     auto bytes = scalar_bytes(input.dtype);
-    for (const auto dim : input.shape.dimensions())
+    for (const auto dim : input.shape)
       bytes = checked_mul(bytes, dim);
     plan->inputs.push_back({bytes, scalar_bytes(input.dtype)});
   }
@@ -315,13 +335,20 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
     throw std::invalid_argument("BoxDecode wire shape exceeds int64");
   const k::TensorSpec output{{static_cast<std::int64_t>(plan->bytes)}, k::DType::UInt8};
   const std::array<k::TensorRequirements, 1> requirements{{{plan->bytes, 1}}};
-  auto contract = host::make_contract(inputs, std::span(&output, 1), plan->inputs, requirements);
-  if (const auto* error = std::get_if<k::Error>(&contract))
-    throw std::invalid_argument(error->message);
   const auto bytes = plan->bytes;
-  auto executable = host::stateless_host<WirePlan, publish>(
-      std::shared_ptr<const WirePlan>(std::move(plan)),
-      std::get<std::shared_ptr<const host::Contract>>(std::move(contract)), {.elements = bytes});
-  return {std::move(executable), output, bytes};
+  k::HostTaskRequest request;
+  request.inputs = inputs;
+  request.outputs = std::span(&output, 1);
+  request.input_requirements = plan->inputs;
+  request.output_requirements = requirements;
+  request.elements = bytes;
+  request.payload = std::shared_ptr<const WirePlan>(std::move(plan));
+  request.callback = +[](const void* payload, k::HostBuffers buffers) -> k::HostStatus {
+    return publish(*static_cast<const WirePlan*>(payload), buffers);
+  };
+  auto checked = k::make_host_task(request);
+  if (const auto* error = std::get_if<k::Error>(&checked))
+    throw std::invalid_argument(error->message);
+  return {std::get<k::KernelExecutable>(std::move(checked)), output, bytes};
 }
 } // namespace simaai::neat::pipeline_internal::sima

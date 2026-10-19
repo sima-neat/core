@@ -1,7 +1,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/InputPublicationMeasurement.h"
 #include "pipeline/runtime/LttngMetricsCollector.h"
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <gst/gst.h>
 

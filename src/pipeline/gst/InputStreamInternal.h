@@ -17,7 +17,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/HolderLoanGate.h"
 
-#include <gstsimaaitensorbuffer.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
@@ -89,7 +89,6 @@ struct CachedTensorSetOutputDecode {
 };
 
 struct InputStream::State {
-  bool demand_coherency = false;
   GstElement* pipeline = nullptr;
   GstElement* appsrc = nullptr;
   GstElement* appsink = nullptr;

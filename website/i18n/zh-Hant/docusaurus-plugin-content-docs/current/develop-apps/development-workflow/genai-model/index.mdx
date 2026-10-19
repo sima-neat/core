@@ -7,7 +7,7 @@ slug: /develop-apps/development-workflow/genai-model
 
 # GenAI 模型
 
-Neat 使用 GenAI API，適用於使用 LLiMa 準備的 LLM、VLM 和 ASR 模型。這是 [`Model`](/develop-apps/development-workflow/model) 的生成式模型對應版本：載入已部署的模型目錄，建立請求，然後在您的應用程式中執行或透過 HTTP 提供服務。
+Neat 使用 GenAI API，適用於使用 LLiMa 準備的 LLM、VLM 和 ASR 模型。這是 [`Model`](/develop-apps/development-workflow/model) 的生成式模型對應版本：載入已部署的模型目錄，建立請求，然後在您的應用程式中執行或透過 HTTP 提供服務。若應用程式在連接 Modalix PCIe Card 的主機上執行，請使用 [PCIe GenAI API](/develop-apps/development-workflow/genai-model/pcie-api)。
 
 當您的應用程式要求模型生成文字、回答有關影像的問題、呼叫工具或轉錄音訊時，請使用這些 API。對於固定形狀的判別模型（例如分類、檢測、分割或嵌入模型），請使用傳統的 `Model` API。
 
@@ -16,7 +16,7 @@ Neat 使用 GenAI API，適用於使用 LLiMa 準備的 LLM、VLM 和 ASR 模型
 GenAI 的流程與 Neat 的其餘部分具有相同的整體結構：
 
 1. 準備或下載用於 Modalix 的模型成品。
-2. 將模型放置在目標位置，通常位於 `/media/nvme/llima/models/` 下。
+2. 將模型放在目標裝置上，通常位於 `/media/nvme/llima/models/`；若透過 PCIe 執行，則將模型保留在主機上。
 3. 從您的 C++ 或 Python 應用程式中載入模型。
 4. 直接發送請求，或透過 `GenAIServer` 公開模型。
 5. 讀取完整的結果或使用串流輸出。
@@ -48,6 +48,7 @@ Neat 負責應用程式介面的 API 和執行階段整合，一旦模型在您�
 
 ## 後續步驟
 
+- 使用 [PCIe GenAI API](/develop-apps/development-workflow/genai-model/pcie-api) 從主機執行模型。
 - 請參考 [部署生成式 AI 模型](/tutorials/serve-genai-models)，以獲取完整的 HTTP 伺服器範例。
 - 請參考 [使用直接 API 執行 LLM](/tutorials/run-an-llm)，以了解如何在同一個程序中執行。
 - 使用 [搭配 LLiMa 的生成式 AI](/genai-llima/) 準備和基準測試模型。

@@ -12,8 +12,7 @@
 
 ## Concept
 
-A Modalix PCIe 카드는 0번부터 3번까지의 큐를 노출합니다. 활성화된 각 큐는 `Model` 하나를 소유하고, 큐를 사용하므로 독립적인 모델은 서로 다른 모델에 할당하여 동시에 실행할 수 있습니다.
-`ConnectionOptions.queue` 각 인스턴스에 대해. 이 튜토리얼에서는 전역 코디네이터를 추가하지 않고 큐 0에 ResNet-50을, 큐 1에 YOLOv8s를 사용합니다.
+Modalix PCIe 카드는 0번부터 5번까지의 공동 처리 큐를 제공합니다. 각 활성 `Model`은 하나의 큐를 소유하므로, 각 인스턴스에 서로 다른 `ConnectionOptions.queue`를 할당하면 독립적인 모델을 동시에 실행할 수 있습니다. 이 튜토리얼에서는 전역 코디네이터를 추가하지 않고 큐 0에 ResNet-50을, 큐 1에 YOLOv8s를 사용합니다.
 
 ## Walkthrough
 

@@ -1,4 +1,5 @@
 #include "tensor_output_contract_fixtures.h"
+#include <simaai/scheduler/testing/segment_allocator.h>
 #include "runtime_segment_allocator_fixture.h"
 #include "test_main.h"
 
@@ -216,7 +217,7 @@ void current_segment_table_and_capacity_are_not_cached_payload_facts() {
         require_segment_table(tensor, admitted, context);
         require_equal(tensor.storage->sima_segments[i].size_bytes, capacity,
                       context + ": current visible capacity");
-        require_equal(tensor.route.physical_index, admitted.tensors[i].physical_index,
+        require_equal(tensor.route.physical_index, admitted.tensors()[i].physical_index,
                       context + ": producer physical identity");
         require(selected_memory(tensor, context) == gst_buffer_peek_memory(input.buffer.get(), i),
                 context + ": cached metadata retained a previous frame's carrier");
@@ -235,33 +236,19 @@ void current_segment_table_and_capacity_are_not_cached_payload_facts() {
   }
 }
 
-struct RuntimeWriteMap {
-  const transport::TensorBufferSegmentView* segment = nullptr;
-  transport::TensorBufferMappedMutableSegment mapped;
-  ~RuntimeWriteMap() {
-    if (segment) {
-      transport::tensor_buffer_unmap_segment_write(*segment, &mapped);
-    }
-  }
-};
-
 Frame named_frame(const transport::TensorBufferPublishContract& publication,
-                  const std::vector<transport::TensorBufferAllocationSegment>& allocations,
+                  const std::vector<simaai::scheduler::testing::NamedOutputSegment>& allocations,
                   std::uint8_t seed, bool compact = false,
                   const transport::TensorBufferPublicationOwner* frozen_owner = nullptr) {
   neat::gst_init_once();
   require(initialize_runtime_segment_allocator_fixture(),
           "Runtime named allocator fixture: namespaced segment allocator is unavailable");
-  transport::TensorBufferOutputAllocationRequest request;
-  request.stage_key = publication.stage_key;
-  request.storage = transport::TensorBufferOutputStorage::SegmentAllocator;
-  request.target = transport::TensorBufferOutputMemoryTarget::Host;
-  request.segments = allocations;
   std::string error;
   Frame result;
   result.seed = seed;
   result.released = std::make_shared<std::atomic<bool>>(false);
-  auto* buffer = transport::tensor_buffer_output_buffer_new(request, &error);
+  auto* buffer =
+      simaai::scheduler::testing::allocate_named_output(publication.stage_key, allocations, &error);
   require(buffer != nullptr, "Runtime named allocator fixture: " + error);
   result.buffer = {buffer, gst_buffer_unref};
   require_equal(gst_buffer_n_memory(result.buffer.get()), 1U,
@@ -287,21 +274,14 @@ Frame named_frame(const transport::TensorBufferPublishContract& publication,
                                 gst_caps_unref);
   result.sample = typed_tensor_sample(result.buffer.get(), caps.get(), "named fixture");
   const auto admitted = admitted_view(result.sample.get(), "named fixture fill");
-  require_equal(admitted.segments.size(), allocations.size(),
+  require_equal(admitted.segment_count(), allocations.size(),
                 "named fixture Runtime child admission count");
-  for (std::size_t i = 0; i != admitted.segments.size(); ++i) {
-    require_equal(admitted.segments[i].size_bytes, allocations[i].size_bytes,
+  for (std::size_t i = 0; i != admitted.segment_count(); ++i) {
+    require_equal(admitted.segment_size(i), allocations[i].size_bytes,
                   "named fixture checked physical extent " + std::to_string(i));
-    RuntimeWriteMap mapping;
-    require(
-        transport::tensor_buffer_map_segment_write(admitted.segments[i], &mapping.mapped, &error),
-        "named fixture checked Runtime map: " + error);
-    mapping.segment = &admitted.segments[i];
-    require(mapping.mapped.data != nullptr, "named fixture checked map returned no address");
-    for (std::size_t j = 0; j != allocations[i].size_bytes; ++j) {
-      mapping.mapped.data[j] = static_cast<std::uint8_t>(seed + 64 * i + j);
-    }
   }
+  require(simaai::scheduler::testing::fill_output_segments(result.sample.get(), seed, &error),
+          "named fixture checked Runtime map: " + error);
   return result;
 }
 
@@ -332,8 +312,8 @@ void named_child_binding_and_logical_alias_are_distinct() {
     const std::vector<std::size_t> child_counts =
         compact ? std::vector<std::size_t>{2, 2, 3, 3, 2} : std::vector<std::size_t>{2, 2};
     for (std::size_t current = 0; current != child_counts.size(); ++current) {
-      std::vector<transport::TensorBufferAllocationSegment> allocations = {{"arena0", 64},
-                                                                           {"memory1", 64}};
+      std::vector<simaai::scheduler::testing::NamedOutputSegment> allocations = {
+          {"arena0", 64}, {"memory1", 64}};
       if (child_counts[current] == 3) {
         allocations.push_back({"unused_tail", 64});
       }
@@ -343,14 +323,14 @@ void named_child_binding_and_logical_alias_are_distinct() {
       const auto context =
           "named children compact=" + std::to_string(compact) + " frame=" + std::to_string(current);
       const auto admitted = admitted_view(input.sample.get(), context);
-      require_equal(admitted.segments.size(), child_counts[current],
+      require_equal(admitted.segment_count(), child_counts[current],
                     context + ": fixture actual admitted child count");
       if (compact) {
         require(transport::tensor_buffer_publication(input.buffer.get()) == frozen,
                 context + ": fixture must preserve compact warm publication identity");
       }
-      require_equal(admitted.segments[1].name, "memory1", context + ": actual allocator name");
-      require_equal(admitted.tensors[1].segment_name, scores.segment_name,
+      require_equal(admitted.segment_name(1), "memory1", context + ": actual allocator name");
+      require_equal(admitted.tensors()[1].segment_name, scores.segment_name,
                     context + ": fixture logical alias");
       internal::reset_tensor_io_stats();
       outputs.push_back(neat::output_from_sample_stream(input.sample.get(), "named children", false,
@@ -381,16 +361,16 @@ void named_child_binding_and_logical_alias_are_distinct() {
         const auto& tensor = outputs.back().tensors[i];
         require_retained_sample_storage(tensor, input.sample.get(), context);
         require_segment_table(tensor, admitted, context);
-        require_equal(tensor.route.memory_index, admitted.tensors[i].memory_index,
+        require_equal(tensor.route.memory_index, admitted.tensors()[i].memory_index,
                       context + ": child selector is not GstMemory parent ordinal");
-        require_equal(tensor.route.physical_index, admitted.tensors[i].physical_index,
+        require_equal(tensor.route.physical_index, admitted.tensors()[i].physical_index,
                       context + ": producer physical identity");
-        require_equal(tensor.route.segment_name, admitted.tensors[i].segment_name,
+        require_equal(tensor.route.segment_name, admitted.tensors()[i].segment_name,
                       context + ": admitted logical alias");
         require_equal(tensor.storage->size_bytes, 64U, context + ": selected child extent");
-        require_equal(tensor.byte_offset, admitted.tensors[i].byte_offset,
+        require_equal(tensor.byte_offset, admitted.tensors()[i].byte_offset,
                       context + ": admitted logical offset");
-        require_equal(tensor.route.physical_byte_offset, admitted.tensors[i].byte_offset,
+        require_equal(tensor.route.physical_byte_offset, admitted.tensors()[i].byte_offset,
                       context + ": producer physical offset");
         if (fresh_output) {
           const auto& reference = fresh_output->tensors[i];
@@ -475,15 +455,15 @@ void shared_runtime_view_keeps_visible_bounds() {
                     context + ": fixture actual visible span");
       require_equal(actual_offset, offset, context + ": fixture actual view offset");
       const auto admitted = admitted_view(sample, context);
-      require_equal(admitted.segments.size(), 1U, context + ": Runtime root count");
-      require_equal(admitted.segments[0].size_bytes, 64U, context + ": Runtime root extent");
+      require_equal(admitted.segment_count(), 1U, context + ": Runtime root count");
+      require_equal(admitted.segment_size(0), 64U, context + ": Runtime root extent");
       neat::Tensor reference;
       reference.storage = internal::make_gst_sample_storage(sample);
       require(bool(reference.storage), context + ": source storage");
       // Deliberately retain Runtime's valid root extent as stale caller-side
       // metadata. The generic numeric helper must still obey the current window.
       reference.storage->sima_segments = {
-          {admitted.segments[0].name, admitted.segments[0].size_bytes}};
+          {admitted.segment_name(0), admitted.segment_size(0)}};
       reference.dtype = neat::TensorDType::Int8;
       reference.shape = {static_cast<int64_t>(visible_size)};
       reference.strides_bytes = {1};
@@ -519,8 +499,8 @@ void shared_runtime_view_keeps_visible_bounds() {
       require_equal(gst_memory_get_sizes(visible, &base_offset, nullptr), 32U,
                     "shared fixture actual visible GstMemory span");
       require_equal(base_offset, share_offset, "shared fixture base offset");
-      require_equal(admitted.segments.size(), 1U, "shared fixture Runtime root segment count");
-      require_equal(admitted.segments[0].size_bytes, 64U,
+      require_equal(admitted.segment_count(), 1U, "shared fixture Runtime root segment count");
+      require_equal(admitted.segment_size(0), 64U,
                     "shared fixture must distinguish allocator root capacity");
       for (const bool warm : {false, true}) {
         neat::InputStream::State fresh;
@@ -538,7 +518,7 @@ void shared_runtime_view_keeps_visible_bounds() {
                         "shared view: current selected visible extent");
           require_equal(tensor.storage->sima_segments[0].size_bytes, 32U,
                         "shared view: physical table clipped to visible extent");
-          require_equal(tensor.route.physical_index, admitted.tensors[0].physical_index,
+          require_equal(tensor.route.physical_index, admitted.tensors()[0].physical_index,
                         "shared view: producer physical identity");
         }
         require_payload(output.tensors[0], original.seed, 0, share_offset, 16,
@@ -577,9 +557,9 @@ void shared_runtime_view_keeps_visible_bounds() {
                         "shared Owned: compact selected physical table");
           require_equal(tensor.storage->sima_segments[0].size_bytes, 32U,
                         "shared Owned: selected physical table extent");
-          require_equal(tensor.byte_offset, admitted.tensors[i].byte_offset,
+          require_equal(tensor.byte_offset, admitted.tensors()[i].byte_offset,
                         "shared Owned: logical view offset");
-          require_equal(tensor.route.physical_index, admitted.tensors[i].physical_index,
+          require_equal(tensor.route.physical_index, admitted.tensors()[i].physical_index,
                         "shared Owned: producer physical identity");
           require_payload(tensor, original.seed, 0, share_offset + 16 * i, 16,
                           "shared Owned current bytes");
@@ -604,7 +584,7 @@ void shared_runtime_view_keeps_visible_bounds() {
       // enforce the current visible GstMemory window before ownership maps/copies.
       const auto short_admitted =
           admitted_view(short_view.get(), "short shared root-capacity control");
-      require_equal(short_admitted.tensors.size(), 2U, "short shared Runtime admission control");
+      require_equal(short_admitted.tensors().size(), 2U, "short shared Runtime admission control");
       for (const bool warm : {false, true}) {
         neat::InputStream::State fresh;
         auto* selected_state = warm ? &state : &fresh;
@@ -659,8 +639,8 @@ void multiple_runtime_child_parents_fail_before_payload_access() {
                                           "nested Runtime fixture");
   const auto admitted = admitted_view(sample.get(), "nested Runtime fixture");
   require_equal(gst_buffer_n_memory(nested.get()), 2U, "nested fixture parent count");
-  require_equal(admitted.segments.size(), 4U, "nested fixture admitted flat child count");
-  require_equal(admitted.tensors[1].memory_index, 3, "nested fixture flat child selector");
+  require_equal(admitted.segment_count(), 4U, "nested fixture admitted flat child count");
+  require_equal(admitted.tensors()[1].memory_index, 3, "nested fixture flat child selector");
   for (const bool warm : {false, true}) {
     neat::InputStream::State state;
     if (warm) {
@@ -711,11 +691,11 @@ void multiple_runtime_child_parents_fail_before_payload_access() {
                             "partial multi-child fixture");
     const auto root_admitted =
         admitted_view(offset_sample.get(), "partial multi-child Runtime root admission");
-    require_equal(root_admitted.segments.size(), 2U,
+    require_equal(root_admitted.segment_count(), 2U,
                   "partial multi-child Runtime admitted child count");
-    require_equal(root_admitted.segments[0].size_bytes, 64U,
+    require_equal(root_admitted.segment_size(0), 64U,
                   "partial multi-child Runtime first root child extent");
-    require_equal(root_admitted.segments[1].size_bytes, 64U,
+    require_equal(root_admitted.segment_size(1), 64U,
                   "partial multi-child Runtime second root child extent");
     for (const bool warm : {false, true}) {
       neat::InputStream::State state;

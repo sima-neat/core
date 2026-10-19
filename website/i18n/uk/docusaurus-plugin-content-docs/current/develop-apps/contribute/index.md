@@ -54,7 +54,6 @@ slug: /develop-apps/contribute/
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/contribute/mpk_contract/"><strong>Контракт MPK</strong><span>Зрозумійте правила щодо завантаження, перевірки та безпеки даних в архіві моделі.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>Плагін «JSON Truth Map»</strong><span>Перегляньте заморожену JSON-схему контракту для плагіна SIMA.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/appcomplex_workspace_packaging/"><strong>Складна упаковка застосунків.</strong><span>Створіть і встановіть пакет служб для захищеного комплексного робочого середовища застосунку.</span></a></li>
     </ul>
   </section>
 

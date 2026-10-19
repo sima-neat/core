@@ -106,6 +106,8 @@ SYSTEM_DEPS_LINUX=(
   libglib2.0-dev
   libopencv-dev
   nlohmann-json3-dev
+  libcpp-httplib-dev
+  libyaml-cpp-dev
   clang
   clang-format
   ripgrep
@@ -126,6 +128,8 @@ SYSTEM_DEPS_MAC=(
   glib
   opencv
   nlohmann-json
+  cpp-httplib
+  yaml-cpp
 )
 
 SELECTED_SYSTEM_DEPS_LINUX=()
@@ -629,6 +633,7 @@ select_system_deps() {
       curl
       doxygen
       graphviz
+      nlohmann-json3-dev
     )
     SELECTED_SYSTEM_DEPS_MAC=(
       cmake
@@ -636,10 +641,16 @@ select_system_deps() {
       git
       doxygen
       graphviz
+      nlohmann-json
     )
   else
     SELECTED_SYSTEM_DEPS_LINUX=("${SYSTEM_DEPS_LINUX[@]}")
     SELECTED_SYSTEM_DEPS_MAC=("${SYSTEM_DEPS_MAC[@]}")
+  fi
+
+  # libjpeg sampling for the short decoder accuracy fixtures.
+  if [[ "${BUILD_TESTS}" == "ON" ]]; then
+    SELECTED_SYSTEM_DEPS_LINUX+=(python3-pil)
   fi
 
   # Python runtime is required for docs helper scripts and wheel builds.
@@ -686,6 +697,27 @@ run_privileged() {
   fi
 
   return 1
+}
+
+ensure_core_yaml_sdk_deps() {
+  if [[ "${ELXR_SDK}" != "ON" || "${DOCS_ONLY}" == "ON" ]]; then
+    return
+  fi
+  if [[ -f "${SYSROOT}/usr/include/yaml-cpp/yaml.h" &&
+        -f "${SYSROOT}/usr/lib/aarch64-linux-gnu/pkgconfig/yaml-cpp.pc" &&
+        -e "${SYSROOT}/usr/lib/aarch64-linux-gnu/libyaml-cpp.so" ]]; then
+    return
+  fi
+  local yaml_stage
+  yaml_stage="$(mktemp -d /tmp/sima-neat-yaml-deps-XXXXXX)"
+  (cd "${yaml_stage}" && apt-get download libyaml-cpp-dev:arm64 libyaml-cpp0.8:arm64)
+  local yaml_deb
+  for yaml_deb in "${yaml_stage}"/*.deb; do
+    if ! dpkg-deb -x "${yaml_deb}" "${SYSROOT}" 2>/dev/null; then
+      run_privileged dpkg-deb -x "${yaml_deb}" "${SYSROOT}"
+    fi
+  done
+  rm -rf "${yaml_stage}"
 }
 
 ensure_llima_sdk_sysroot_deps() {
@@ -1673,6 +1705,20 @@ configure_cmake() {
   cmake "${cmake_args[@]}"
 }
 
+ensure_fixture_python_dependencies() {
+  [[ "${BUILD_TESTS}" == "ON" ]] || return 0
+  local fixture_python
+  fixture_python="$(sed -n 's/^_Python3_EXECUTABLE:INTERNAL=//p' "${BUILD_DIR}/CMakeCache.txt")"
+  if [[ ! -x "${fixture_python}" ]]; then
+    echo "ERROR: Cannot find the configured fixture Python in ${BUILD_DIR}/CMakeCache.txt." >&2
+    return 1
+  fi
+  if ! "${fixture_python}" -c 'from PIL import Image' >/dev/null 2>&1; then
+    echo "Installing Pillow for fixture Python: ${fixture_python}"
+    "${fixture_python}" -m pip install 'Pillow>=10.0.0'
+  fi
+}
+
 build_docs_site() {
   # Shared docs pipeline used by both --doc and --all/--no-doc flows.
   cd "${REPO_ROOT}"
@@ -1813,11 +1859,32 @@ generate_package_buildinfo_json() {
   package_version="$(compute_neat_package_version)"
   platform_version="$(compute_neat_platform_version)"
 
-  # Best-effort cross-toolchain version string for the compatibility block.
-  local toolchain_version=""
-  local cxx_bin="${ELXR_CXX:-aarch64-linux-gnu-g++}"
-  if command -v "${cxx_bin}" >/dev/null 2>&1; then
-    toolchain_version="$("${cxx_bin}" --version 2>/dev/null | head -1 | sed 's/(.*) //')"
+  local phase="${1:?buildinfo phase is required}"
+  local -a selected_args=(--phase "${phase}" --python-enabled "${BUILD_PYTHON,,}"
+                          --sdk-release-file "${ELXR_SDK_RELEASE_FILE}")
+  if [[ "${ELXR_SDK}" == "ON" && -n "${SYSROOT:-}" ]]; then
+    selected_args+=(--sysroot "${SYSROOT}")
+    if [[ "${BUILD_PYTHON}" == "ON" && -n "${ELXR_TARGET_PYTHON_INCLUDE_DIR}" ]]; then
+      selected_args+=(--python-include-dir "${ELXR_TARGET_PYTHON_INCLUDE_DIR}")
+    fi
+  fi
+  if [[ -n "${NEAT_TARGET_SDK_RELEASE_FILE:-}" ]]; then
+    selected_args+=(--target-sdk-release-file "${NEAT_TARGET_SDK_RELEASE_FILE}")
+  fi
+  if [[ -n "${NEAT_BUILDINFO_TOOLCHAIN:-}" ]]; then
+    selected_args+=(--toolchain "${NEAT_BUILDINFO_TOOLCHAIN}")
+  fi
+  if [[ "${phase}" == "final" ]]; then
+    selected_args+=(--cmake-cache "${BUILD_DIR}/CMakeCache.txt")
+    if [[ "${BUILD_PYTHON}" == "ON" ]]; then
+      local -a extensions=()
+      mapfile -d '' -t extensions < <(find "${BUILD_DIR}/python" -maxdepth 1 -type f -name '_pyneat_core*.so' -print0)
+      if [[ "${#extensions[@]}" != "1" ]]; then
+        echo "ERROR: Final buildinfo requires exactly one built Python extension." >&2
+        return 1
+      fi
+      selected_args+=(--python-extension "${extensions[0]}")
+    fi
   fi
 
   python3 scripts/build/generate_package_buildinfo.py \
@@ -1828,7 +1895,7 @@ generate_package_buildinfo_json() {
     --platform-version "${platform_version}" \
     --vulcan-env "${NEAT_VULCAN_ENV}" \
     --llima-ref "${NEAT_LLIMA_RESOLVED_REF}" \
-    --toolchain "${toolchain_version}"
+    "${selected_args[@]}"
   if [[ -f "${NEAT_BACKEND_DIR}/resolved_manifest.json" ]]; then
     python3 - "${output_path}" "${NEAT_BACKEND_DIR}/resolved_manifest.json" <<'PYINFO'
 import json, sys
@@ -2151,6 +2218,7 @@ stage_package_artifacts_to_dist() {
     dist/*.deb \
     dist/*-Linux-extras.tar.gz \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
+    dist/install_sentinel.sh \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
     dist/manifest.json \
@@ -2184,15 +2252,16 @@ stage_package_artifacts_to_dist() {
   fi
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
-    cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
-    chmod +x "dist/install_neat_framework.sh"
+    # install_neat_framework.sh runs install_sentinel.sh from its own directory.
+    cp -f "tools/install_neat_framework.sh" "tools/install_sentinel.sh" dist/
+    chmod +x "dist/install_neat_framework.sh" "dist/install_sentinel.sh"
     staged_any=ON
   fi
 
   if [[ "${staged_any}" == "ON" ]]; then
     echo
     echo "Moved package artifacts into dist/:"
-    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh dist/manifest.json 2>/dev/null || true
+    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh dist/install_sentinel.sh dist/manifest.json 2>/dev/null || true
   fi
 }
 
@@ -2443,7 +2512,7 @@ generate_package_metadata_if_requested() {
     --exclude ".json" \
     --variant extras
 
-  WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
+  WHEEL_BASENAME="$(basename "${wheel_path}")" NEAT_BUILDINFO_JSON="${NEAT_PACKAGE_BUILDINFO_JSON}" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -2451,10 +2520,17 @@ from pathlib import Path
 metadata_path = Path("dist/metadata-pyneat.json")
 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 wheel_name = os.environ["WHEEL_BASENAME"]
+buildinfo = json.loads(Path(os.environ["NEAT_BUILDINFO_JSON"]).read_text(encoding="utf-8"))
+pyneat = buildinfo["compatibility"]["pyneat"]
+if buildinfo.get("metadata_phase") != "final" or pyneat.get("status") != "observed":
+    raise SystemExit("Wheel installation instructions require final selected-target ABI metadata")
+wheel_tags = wheel_name.removesuffix(".whl").rsplit("-", 3)
+if len(wheel_tags) != 4 or wheel_tags[1:3] != [f"cp{pyneat['major']}{pyneat['minor']}", pyneat["abi_tag"]]:
+    raise SystemExit("Wheel tags contradict final selected-target ABI metadata")
 metadata.setdefault("installation", {})["post-message"] = (
     "[bold]PyNeat wheel downloaded.[/bold]\n"
     f"The PyNeat wheel has been downloaded to this directory: {wheel_name}\n"
-    "Install it into a Python 3.11 virtual environment with:\n"
+    f"Install it into a {pyneat['python_abi']} virtual environment with:\n"
     f"  pip install ./{wheel_name}\n\n"
     "PyNeat requires the matching Neat Library runtime packages on this system. "
     "If they are not already installed, run:\n"
@@ -2617,6 +2693,7 @@ deploy_artifacts_to_devkit_if_requested() {
   local -a deploy_files=()
   collect_install_artifact_files deploy_files
   local installer_path="${REPO_ROOT}/tools/install_neat_framework.sh"
+  local sentinel_installer_path="${REPO_ROOT}/tools/install_sentinel.sh"
   local installer_basename
   installer_basename="$(basename "${installer_path}")"
 
@@ -2624,7 +2701,7 @@ deploy_artifacts_to_devkit_if_requested() {
     echo "No deployable .deb or .whl artifacts found."
     return 0
   fi
-  deploy_files+=("${installer_path}")
+  deploy_files+=("${installer_path}" "${sentinel_installer_path}")
 
   echo
   echo "Deploying artifacts to ${ssh_target}:${remote_dir}"
@@ -2663,6 +2740,7 @@ main() {
   install_system_deps
   ensure_node22_for_docs
   activate_elxr_build_env_if_needed
+  ensure_core_yaml_sdk_deps
   detect_elxr_host_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
@@ -2698,10 +2776,17 @@ main() {
   print_build_config
   clean_build_dir_if_requested
   write_resolved_dependencies_manifest
-  generate_package_buildinfo_json
+  # CMake needs the install source path at configure time. This first document
+  # is provisional: never infer a target ABI from the Python running this script.
+  generate_package_buildinfo_json provisional
   configure_cmake
+  ensure_fixture_python_dependencies
   build_docs_only_if_requested
   build_targets
+  # Mandatory refresh from this configured build and its actual extension before
+  # normal-build install, packaging or compatibility-document consumers.
+  # The separate docs-only path exits earlier and may retain provisional data.
+  generate_package_buildinfo_json final
   copy_test_images
   build_docs_if_requested
   run_install_sanity_check

@@ -28,6 +28,7 @@ if (NOT nanobind_FOUND)
 endif()
 
 nanobind_add_module(_pyneatpcie_core
+  NB_DOMAIN pyneatpcie
   ${CMAKE_CURRENT_SOURCE_DIR}/src/module.cpp
 )
 

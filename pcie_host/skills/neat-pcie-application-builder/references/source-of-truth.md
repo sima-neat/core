@@ -5,15 +5,18 @@ from the regular Neat Library, so SDK headers and examples can describe a differ
 
 ## Preferred Order
 
-1. Installed C++ header:
-   `/usr/include/simaai/neat/pcie/Model.h`
+1. Installed C++ header for the selected API:
+   - `pcie::Model`: `/usr/include/simaai/neat/pcie/Model.h`
+   - GenAI: `/usr/include/simaai/neat/pcie/genai/GenAIModel.h`
 2. Installed Python module in the selected Python environment:
    `pyneatpcie`
 3. Packaged PCIe tutorials, when the PCIe extras bundle is available:
    `share/sima-pcie-host/tutorials/`
 4. In a Neat core source checkout only:
    - `pcie_host/include/simaai/neat/pcie/Model.h`
+   - `pcie_host/include/simaai/neat/pcie/genai/GenAIModel.h`
    - `docs/develop-apps/development-workflow/pcie-model.mdx`
+   - `docs/develop-apps/development-workflow/genai-model/pcie-api.mdx`
    - `pcie_host/tutorials/`
 
 Do not use the regular core `include/model/Model.h`, `pyneat.Model`, or DevKit tutorials to infer
@@ -21,13 +24,18 @@ PCIe host behavior.
 
 ## Public Surface
 
-The intended application surface is the content of `Model.h`:
+The `pcie::Model` application surface is the content of `Model.h`:
 
 - `ConnectionOptions`
 - `ModelOptions` and its preprocessing/decode enums
 - `Tensor`, `TensorList`, `TensorInfo`, and `ModelInfo`
 - `TensorDType`, `TensorLayout`, image formats, planes, and routes
 - `Model`
+
+The GenAI surface is declared by `genai/GenAIModel.h`: its own `ConnectionOptions`,
+`GenerationRequest`, `ChatMessage`, `GenAIModel`, and `GenerationStream`, plus shared
+result types. Python exposes these through `pyneatpcie.genai`. Read `genai.md` for
+this lifecycle; the `pcie::Model` contract guidance below does not apply.
 
 `Runtime.h` is deliberately outside this skill. Do not use symbols that happen to be exported by
 the Python extension if they belong to `Runtime.h`.
@@ -49,10 +57,13 @@ For Python, use the interpreter that owns the installed wheel. The PCIe package 
   'import pyneatpcie as p; print(p.__version__); print(p.Model); print(p.Tensor)'
 ```
 
+For GenAI, inspect `genai/GenAIModel.h` instead and import `pyneatpcie.genai`.
+Older installed releases may not include GenAI; do not silently substitute local Core APIs.
+
 Nanobind callables do not always expose useful `inspect.signature()` output. Prefer `help()`,
 `dir()`, the installed header, and a minimal import/run check.
 
-## Model Contract
+## Model API Contract
 
 Use `Model::info()` or `Model.info()` to obtain the inference tensor names, dtypes, shapes, and byte
 sizes recorded in the model archive. `ModelInfo` does not incorporate runtime preprocessing or

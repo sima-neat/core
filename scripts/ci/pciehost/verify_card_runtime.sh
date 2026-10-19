@@ -8,6 +8,6 @@ sanitize_path
 
 ssh_card "set -e; \
   command -v pcie-pipeline-builder; \
-  gst-inspect-1.0 neatpciesrc >/dev/null; \
-  gst-inspect-1.0 neatpciesink >/dev/null"
+  sima-neat-run gst-inspect-1.0 neatpciesrc >/dev/null; \
+  sima-neat-run gst-inspect-1.0 neatpciesink >/dev/null"
 echo "PCIe card runtime verified."

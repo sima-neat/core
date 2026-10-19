@@ -10,7 +10,9 @@
 #include <tuple>
 #include <vector>
 #include <thread>
-namespace rt = simaai::runtime;
+#include <simaai/scheduler/testing/probe.h>
+namespace rt = simaai::scheduler::client;
+namespace probe = simaai::scheduler::testing;
 namespace core = simaai::neat::pipeline_internal::sima;
 namespace lower = core::kernel_lowering;
 namespace tr = simaai::gst;
@@ -28,45 +30,61 @@ void okay(rt::Status result) {
   if (result)
     throw std::runtime_error(result->field + ": " + result->message);
 }
-// Infrastructure-only transport: capture the real kernel-produced control
-// packet, never emulate pixels or claim an EV numerical qualification.
-struct Capture : rt::Ev74Transport {
-  rt::Ev74Packet packet;
-  std::uint32_t maximum_abi = 4;
-  bool supports(std::string_view, std::uint32_t abi, std::size_t) const noexcept override {
-    return abi <= maximum_abi;
+// Scheduler test support uses a real admitted executor and records the real
+// provider control packet. No EV pixel implementation is emulated here.
+using Capture = probe::Capture;
+using Owner = probe::Owner;
+using Storage = probe::Storage;
+class PreprocProbe : public probe::AdapterProbe {
+  std::shared_ptr<lower::PreprocFrameAdapter> adapter_;
+
+public:
+  using CheckedPolicy = lower::PreprocFrameAdapter::CheckedPolicy;
+  using PlaneResolver = probe::PlaneResolver;
+  explicit PreprocProbe(std::shared_ptr<lower::PreprocFrameAdapter> adapter)
+      : probe::AdapterProbe(adapter, adapter->initial_executable()), adapter_(std::move(adapter)) {}
+  static auto check_policy(std::shared_ptr<const core::ProcessCvuStagePayload> p) {
+    return lower::PreprocFrameAdapter::check_policy(std::move(p));
   }
-  rt::Status submit(const rt::Ev74Packet& p, Retired retired) noexcept override {
-    packet = p;
-    retired({});
-    return {};
+  static const auto& checked_executable(const CheckedPolicy& p) {
+    return lower::PreprocFrameAdapter::checked_executable(p);
   }
-};
-struct Owner : rt::BufferOwner {
-  std::shared_ptr<rt::StorageIdentity> id = std::make_shared<rt::StorageIdentity>();
-  std::size_t bytes;
-  std::uint64_t address;
-  Owner(std::size_t n, std::uint64_t a) : bytes(n), address(a) {}
-  std::shared_ptr<const rt::StorageIdentity> identity() const noexcept override {
-    return id;
+  static rt::Result<std::shared_ptr<PreprocProbe>>
+  instantiate(std::shared_ptr<const CheckedPolicy> p) {
+    auto result = lower::PreprocFrameAdapter::instantiate(std::move(p));
+    if (auto* e = std::get_if<rt::Error>(&result))
+      return *e;
+    return std::make_shared<PreprocProbe>(
+        std::get<std::shared_ptr<lower::PreprocFrameAdapter>>(std::move(result)));
   }
-  std::uint64_t storage_offset_bytes() const noexcept override {
-    return 0;
+  static rt::Result<std::shared_ptr<PreprocProbe>>
+  check(std::shared_ptr<const core::ProcessCvuStagePayload> p) {
+    auto result = check_policy(std::move(p));
+    if (auto* e = std::get_if<rt::Error>(&result))
+      return *e;
+    return instantiate(std::get<std::shared_ptr<const CheckedPolicy>>(std::move(result)));
   }
-  std::size_t size_bytes() const noexcept override {
-    return bytes;
+  static rt::Result<std::shared_ptr<PreprocProbe>>
+  create(std::shared_ptr<const core::ProcessCvuStagePayload> p, probe::Options options) {
+    auto result = check(std::move(p));
+    if (auto* e = std::get_if<rt::Error>(&result))
+      return *e;
+    auto value = std::get<std::shared_ptr<PreprocProbe>>(std::move(result));
+    if (auto e = value->prepare(std::move(options)))
+      return *e;
+    return value;
   }
-  bool permits(rt::Access) const noexcept override {
-    return true;
+  const auto& initial_executable() const {
+    return adapter_->initial_executable();
   }
-  rt::Result<rt::Mapping> resolve(rt::Hardware, rt::Access) override {
-    return rt::Mapping{rt::Ev74Address{address}, bytes, id, {}, {}};
+  auto check_caps(const GstCaps* caps) const {
+    return adapter_->check_caps(caps);
   }
-};
-struct Storage : rt::gstreamer::Storage {
-  rt::Result<rt::BufferView> resolve(GstBuffer*, GstMemory*, std::size_t, std::size_t length,
-                                     rt::Access) const override {
-    return rt::BufferView{std::make_shared<Owner>(length, 0x100000), 0, length};
+  auto accepts_caps(const GstCaps* caps) const {
+    return adapter_->accepts_caps(caps);
+  }
+  static bool owns_publication_field(GQuark q) noexcept {
+    return lower::PreprocFrameAdapter::owns_publication_field(q);
   }
 };
 sima_ev_tensor_desc descriptor(bool input) {
@@ -104,11 +122,11 @@ std::shared_ptr<core::ProcessCvuStagePayload> config(int capacity = 1, bool quan
   c.has_q_scale = c.has_q_zp = true;
   c.q_scale = 31.75F;
   c.q_zp = -7;
-  c.input_tensors = {descriptor(true)};
-  c.output_tensors = {descriptor(!quantized ? false : true)};
+  c.input_tensors = {{descriptor(true), "UINT8"}};
+  c.output_tensors = {{descriptor(!quantized ? false : true), c.output_dtype}};
   return p;
 }
-float word(const rt::Ev74Packet& p, std::size_t offset) {
+float word(const probe::Packet& p, std::size_t offset) {
   require(p.payload.size() >= offset + 4, "short native packet");
   float value;
   std::memcpy(&value, p.payload.data() + offset, 4);
@@ -137,10 +155,10 @@ int integer(GstStructure* s, const char* name) {
 }
 void cold_generic_preparation() {
   // Checking and fact readback require neither a transport nor a live device.
-  auto checked = take(lower::PreprocFrameAdapter::check(config(3)));
+  auto checked = take(PreprocProbe::check(config(3)));
   const auto inspection = take(rt::inspect_kernel(checked->initial_executable()));
   require(inspection.inputs().size() == 1 && inspection.outputs().size() == 1 &&
-              inspection.outputs()[0].shape.dimensions()[0] == 3,
+              inspection.outputs()[0].shape[0] == 3,
           "cold check lost the materialized ROI output capacity");
   const auto capability = take(rt::bind_kernel_variant(checked->initial_executable(), "geometry"));
   require(capability.contract_policy() == rt::KernelVariantPolicy::FullRecheck &&
@@ -158,7 +176,7 @@ void cold_generic_preparation() {
   std::array<std::optional<rt::ParameterValue>, 4> values{
       std::nullopt, std::nullopt, rt::ParameterArray{0, 0, 8, 8}, rt::ParameterArray{0, 0, 0}};
   auto output = inspection.outputs()[0];
-  output.shape = rt::Shape{1, 8, 8, 3};
+  output.shape = std::vector<std::int64_t>{1, 8, 8, 3};
   const auto ordinary =
       take(rt::apply_kernel_variant(capability, {inspection.inputs(), {&output, 1}, values}));
   require(take(rt::inspect_kernel(ordinary)).preparation_facts().empty(),
@@ -167,28 +185,28 @@ void cold_generic_preparation() {
           "full geometry recheck incorrectly claimed same admitted resources");
   // Retained checked state and readback outlive the caller's preparation holder.
   checked.reset();
-  require(inspection.outputs()[0].shape.dimensions()[0] == 3 &&
+  require(inspection.outputs()[0].shape[0] == 3 &&
               std::get<rt::ParameterRecords>(accepted->value.value).empty(),
           "checked facts borrowed request or preparation-holder lifetime");
 }
 void immutable_policy_instances() {
   auto authored = config(3);
-  const auto policy = take(lower::PreprocFrameAdapter::check_policy(authored));
-  const auto executable = lower::PreprocFrameAdapter::checked_executable(*policy);
+  const auto policy = take(PreprocProbe::check_policy(authored));
+  const auto executable = PreprocProbe::checked_executable(*policy);
   // An application alias is not authority to mutate already checked policy.
   authored->input_img_type = "invalid-after-check";
   authored->batch_size = -1;
   authored->channel_mean.clear();
-  std::array<std::shared_ptr<lower::PreprocFrameAdapter>, 8> instances;
+  std::array<std::shared_ptr<PreprocProbe>, 8> instances;
   std::array<std::thread, 8> workers;
   std::array<rt::Status, 8> errors;
   for (std::size_t i = 0; i < workers.size(); ++i)
     workers[i] = std::thread([&, i] {
-      auto result = lower::PreprocFrameAdapter::instantiate(policy);
+      auto result = PreprocProbe::instantiate(policy);
       if (const auto* error = std::get_if<rt::Error>(&result))
         errors[i] = *error;
       else
-        instances[i] = std::get<std::shared_ptr<lower::PreprocFrameAdapter>>(std::move(result));
+        instances[i] = std::get<std::shared_ptr<PreprocProbe>>(std::move(result));
     });
   for (auto& worker : workers)
     worker.join();
@@ -201,23 +219,21 @@ void immutable_policy_instances() {
       require(instances[i] != instances[j], "concurrent policy instantiation shared mutable state");
   }
   auto capture = std::make_shared<Capture>();
-  rt::RuntimeContextOptions limits;
-  limits.ev74 = capture;
-  rt::KernelSessionOptions options;
-  options.context = std::make_shared<rt::RuntimeContext>(limits);
-  std::weak_ptr<rt::RuntimeContext> domain = options.context;
+  probe::Options options;
+  options.domain = std::make_shared<probe::Domain>(capture);
+  std::weak_ptr<probe::Domain> domain = options.domain;
   okay(instances[0]->prepare(options));
   okay(instances[1]->prepare(options));
   require(instances[0]->session().context() == instances[1]->session().context() &&
-              instances[0]->session().operation(0)->executable() == executable,
+              instances[0]->session().operation(0).executable() == executable,
           "fresh instances lost shared Runtime domain or exact checked executable identity");
   require(bool(instances[0]->prepare(options)), "admitted instance was prepared twice");
-  options.context.reset();
+  options.domain.reset();
   instances[0].reset();
   require(!domain.expired(), "closing A stopped or released B's shared domain");
   instances[1].reset();
   require(domain.expired(), "immutable policy retained the last execution session");
-  std::weak_ptr<lower::PreprocFrameAdapter> expired = instances[2];
+  std::weak_ptr<PreprocProbe> expired = instances[2];
   instances[2].reset();
   require(expired.expired(), "checked policy retained an instantiated adapter");
 
@@ -225,16 +241,14 @@ void immutable_policy_instances() {
   // is cheap and must retain the same numerical checked identity.
   auto unsupported = std::make_shared<Capture>();
   unsupported->maximum_abi = 0;
-  limits.ev74 = unsupported;
-  options.context = std::make_shared<rt::RuntimeContext>(limits);
-  auto failed = take(lower::PreprocFrameAdapter::instantiate(policy));
+  options.domain = std::make_shared<probe::Domain>(unsupported);
+  auto failed = take(PreprocProbe::instantiate(policy));
   require(bool(failed->prepare(options)), "unsupported transport unexpectedly admitted policy");
-  limits.ev74 = capture;
-  options.context = std::make_shared<rt::RuntimeContext>(limits);
+  options.domain = std::make_shared<probe::Domain>(capture);
   const auto repeated = failed->prepare(options);
   require(repeated && repeated->field == "preproc.preparation",
           "failed instance was reset for a later admission");
-  auto retried = take(lower::PreprocFrameAdapter::instantiate(policy));
+  auto retried = take(PreprocProbe::instantiate(policy));
   okay(retried->prepare(options));
   require(retried->initial_executable() == executable,
           "retry rechecked or changed immutable numerical policy");
@@ -243,13 +257,13 @@ void immutable_policy_instances() {
 void contract() {
   for (bool quantized : {false, true}) {
     auto capture = std::make_shared<Capture>();
-    rt::KernelSessionOptions options;
-    options.runtime.ev74 = capture;
+    probe::Options options;
+    options.capture = capture;
     auto cfg = config(1, quantized);
-    auto p = take(lower::PreprocFrameAdapter::create(cfg, options));
+    auto p = take(PreprocProbe::create(cfg, options));
     auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
     auto* out = gst_structure_new_empty("test");
-    rt::gstreamer::Binding binding;
+    probe::Binding binding;
     okay(p->bind(input, Storage{}, binding, out));
     const auto bytes = binding.operation->output_requirements(0).storage_bytes;
     binding.outputs.push_back({std::make_shared<Owner>(bytes, 0x200000), 0, bytes});
@@ -271,9 +285,9 @@ void contract() {
     gst_buffer_unref(input);
   }
   auto capture = std::make_shared<Capture>();
-  rt::KernelSessionOptions options;
-  options.runtime.ev74 = capture;
-  auto p = take(lower::PreprocFrameAdapter::create(config(3), options));
+  probe::Options options;
+  options.capture = capture;
+  auto p = take(PreprocProbe::create(config(3), options));
   auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
   auto* custom = gst_buffer_add_custom_meta(input, "GstSimaMeta");
   require(custom, "custom meta");
@@ -282,7 +296,7 @@ void contract() {
   set_list(meta, "preproc_roi_rects", {0, 0, 8, 4, 0, 0, 0, 4, -1, 1, 4, 8});
   set_list(meta, "preproc_roi_batch_indices", {0, 0, 0});
   auto* out = gst_structure_new_empty("test");
-  rt::gstreamer::Binding binding;
+  probe::Binding binding;
   okay(p->bind(input, Storage{}, binding, out));
   require(integer(out, "preproc_roi_input_batch_size") == 1,
           "ROI output capacity is not source batch");
@@ -299,12 +313,12 @@ void contract() {
   require(g_value_get_double(gst_value_list_get_value(affines, 8)) == -3.0,
           "second ROI destination differs");
   set_list(meta, "preproc_roi_batch_indices", {INT_MAX, 0, 0});
-  rt::gstreamer::Binding bad;
+  probe::Binding bad;
   require(bool(p->bind(input, Storage{}, bad, out)), "unbounded inferred batch admitted");
   gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 0, nullptr);
   set_list(meta, "preproc_roi_rects", {});
   set_list(meta, "preproc_roi_batch_indices", {});
-  rt::gstreamer::Binding empty;
+  probe::Binding empty;
   okay(p->bind(input, Storage{}, empty, out));
   require(integer(out, "preproc_roi_count") == 0 &&
               gst_value_list_get_size(gst_structure_get_value(out, "preproc_roi_affines")) == 0,
@@ -315,12 +329,12 @@ void contract() {
   auto raw = config(1, true);
   raw->normalize = 0;
   auto raw_capture = std::make_shared<Capture>();
-  rt::KernelSessionOptions raw_options;
-  raw_options.runtime.ev74 = raw_capture;
-  auto raw_op = take(lower::PreprocFrameAdapter::create(raw, raw_options));
+  probe::Options raw_options;
+  raw_options.capture = raw_capture;
+  auto raw_op = take(PreprocProbe::create(raw, raw_options));
   auto* raw_input = gst_buffer_new_allocate(nullptr, 192, nullptr);
   auto* raw_meta = gst_structure_new("test", "preproc_roi_count", G_TYPE_INT, 99, nullptr);
-  rt::gstreamer::Binding raw_binding;
+  probe::Binding raw_binding;
   okay(raw_op->bind(raw_input, Storage{}, raw_binding, raw_meta));
   require(!gst_structure_has_field(raw_meta, "preproc_roi_count"),
           "stale ROI-list metadata retained");
@@ -336,7 +350,7 @@ void contract() {
           "raw byte path must use native UInt8 identity affine");
   gst_structure_free(raw_meta);
   gst_buffer_unref(raw_input);
-  auto& tile = raw->output_tensors[0];
+  auto tile = raw->output_tensors[0].descriptor();
   tile.layout_kind = SIMA_EV_LAYOUT_TILED;
   tile.layout.tiled = {};
   tile.layout.tiled.tile_align_bytes = 16;
@@ -344,17 +358,18 @@ void contract() {
   tile.layout.tiled.tile_sizes[0] = 8;
   tile.layout.tiled.tile_sizes[1] = 8;
   tile.layout.tiled.tile_sizes[2] = 3;
+  raw->output_tensors[0] = raw->output_tensors[0].with_geometry(tile);
   auto old_firmware = std::make_shared<Capture>();
-  old_firmware->maximum_abi = 3;
+  old_firmware->maximum_abi = 4;
   auto old_options = raw_options;
-  old_options.runtime.ev74 = old_firmware;
-  require(std::holds_alternative<rt::Error>(lower::PreprocFrameAdapter::create(raw, old_options)) &&
+  old_options.capture = old_firmware;
+  require(std::holds_alternative<rt::Error>(PreprocProbe::create(raw, old_options)) &&
               old_firmware->packet.empty(),
-          "ABI3 firmware must reject ABI4 before submission");
-  auto tiled = take(lower::PreprocFrameAdapter::create(raw, raw_options));
+          "ABI4 firmware must reject ABI5 before submission");
+  auto tiled = take(PreprocProbe::create(raw, raw_options));
   auto* tiled_input = gst_buffer_new_allocate(nullptr, 192, nullptr);
   auto* tiled_meta = gst_structure_new_empty("test");
-  rt::gstreamer::Binding tiled_binding;
+  probe::Binding tiled_binding;
   okay(tiled->bind(tiled_input, Storage{}, tiled_binding, tiled_meta));
   const auto tiled_bytes = tiled_binding.operation->output_requirements(0).storage_bytes;
   tiled_binding.outputs.push_back({std::make_shared<Owner>(tiled_bytes, 0x200000), 0, tiled_bytes});
@@ -365,21 +380,22 @@ void contract() {
   std::uint32_t encoding = 0;
   std::memcpy(&dtype, raw_capture->packet.payload.data() + 20, 4);
   std::memcpy(&encoding, raw_capture->packet.payload.data() + 116, 4);
-  require(dtype == 0 && encoding == 1 && raw_capture->packet.abi == 4,
-          "raw tiled bytes must advertise native UInt8 ABI4");
+  require(dtype == 0 && encoding == 1 && raw_capture->packet.abi == 5,
+          "raw tiled bytes must advertise native UInt8 ABI5");
   gst_structure_free(tiled_meta);
   gst_buffer_unref(tiled_input);
 
   auto crop = config();
   crop->scaling_type = "NO_SCALING";
-  auto& cropped = crop->output_tensors[0];
+  auto cropped = crop->output_tensors[0].descriptor();
   cropped.shape.sizes[0] = 4;
   cropped.shape.sizes[1] = 6;
   cropped.layout.strided.strides_bytes[0] = 36;
-  auto crop_op = take(lower::PreprocFrameAdapter::create(crop, raw_options));
+  crop->output_tensors[0] = crop->output_tensors[0].with_geometry(cropped);
+  auto crop_op = take(PreprocProbe::create(crop, raw_options));
   auto* crop_input = gst_buffer_new_allocate(nullptr, 192, nullptr);
   auto* crop_meta = gst_structure_new_empty("test");
-  rt::gstreamer::Binding crop_binding;
+  probe::Binding crop_binding;
   okay(crop_op->bind(crop_input, Storage{}, crop_binding, crop_meta));
   require(integer(crop_meta, "preproc_scaled_width") == 6 &&
               integer(crop_meta, "preproc_scaled_height") == 4,
@@ -394,7 +410,7 @@ void contract() {
   gst_structure_set(crop_source, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_x",
                     G_TYPE_INT, -1, "preproc_roi_y", G_TYPE_INT, -2, "preproc_roi_width",
                     G_TYPE_INT, 8, "preproc_roi_height", G_TYPE_INT, 8, nullptr);
-  rt::gstreamer::Binding virtual_crop;
+  probe::Binding virtual_crop;
   okay(crop_op->bind(crop_input, Storage{}, virtual_crop, crop_meta));
   require(integer(crop_meta, "preproc_roi_x") == -1 &&
               integer(crop_meta, "preproc_roi_width") == 6 &&
@@ -431,21 +447,22 @@ void typed_format_mapping() {
       c.output_img_type = format.video == GST_VIDEO_FORMAT_GRAY8 ? "GRAY8" : "BGR";
       c.scaling_type = interpolation[mode];
       if (format.video == GST_VIDEO_FORMAT_GRAY8) {
-        auto& output = c.output_tensors[0];
+        auto output = c.output_tensors[0].descriptor();
         output.shape.sizes[2] = 1;
         output.layout.strided.strides_bytes[0] = 16;
         output.layout.strided.strides_bytes[1] = 2;
+        c.output_tensors[0] = c.output_tensors[0].with_geometry(output);
       }
       auto capture = std::make_shared<Capture>();
-      rt::KernelSessionOptions options;
-      options.runtime.ev74 = capture;
-      auto stage = take(lower::PreprocFrameAdapter::create(cfg, options));
+      probe::Options options;
+      options.capture = capture;
+      auto stage = take(PreprocProbe::create(cfg, options));
       GstVideoInfo info;
       gst_video_info_init(&info);
       require(gst_video_info_set_format(&info, format.video, 8, 8), "format geometry");
       auto* input = gst_buffer_new_allocate(nullptr, info.size, nullptr);
       auto* meta = gst_structure_new_empty("test");
-      rt::gstreamer::Binding binding;
+      probe::Binding binding;
       okay(stage->bind(input, Storage{}, binding, meta));
       const auto bytes = binding.operation->output_requirements(0).storage_bytes;
       binding.outputs.push_back({std::make_shared<Owner>(bytes, 0x200000), 0, bytes});
@@ -470,8 +487,80 @@ void typed_format_mapping() {
   std::cout << "Preproc typed format/interpolation mappings PASS\n";
 }
 
+// Decoder display geometry and allocated rows are independent. Exercise the
+// historical pitched NV12 cases through the actual installed preparation path;
+// this test observes binding/admission, not EV pixel execution.
+void decoder_storage_geometry() {
+  for (const auto& [visible_height, storage_height] :
+       {std::pair{512, 512}, std::pair{576, 576}, std::pair{480, 512}}) {
+    constexpr std::size_t width = 640, pitch = 768;
+    const std::size_t uv_offset = pitch * storage_height;
+    const std::size_t y_span = pitch * (visible_height - 1) + width;
+    const std::size_t uv_span = pitch * (visible_height / 2 - 1) + width;
+    const std::size_t bytes = uv_offset + pitch * (storage_height / 2);
+    auto cfg = config();
+    cfg->input_img_type = "NV12";
+    auto input_descriptor = cfg->input_tensors[0].descriptor();
+    input_descriptor.shape.sizes[0] = 576;
+    input_descriptor.shape.sizes[1] = width;
+    input_descriptor.layout.strided.strides_bytes[0] = width * 3;
+    cfg->input_tensors[0] = cfg->input_tensors[0].with_geometry(input_descriptor);
+    probe::Options options;
+    options.capture = std::make_shared<Capture>();
+    auto stage = take(PreprocProbe::create(cfg, options));
+    std::unique_ptr<GstStructure, decltype(&gst_structure_free)> published(
+        gst_structure_new_empty("test"), gst_structure_free);
+    const auto make_input = [&](std::size_t length) {
+      std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> result(
+          gst_buffer_new_allocate(nullptr, length, nullptr), gst_buffer_unref);
+      gsize offsets[GST_VIDEO_MAX_PLANES]{0, uv_offset};
+      gint strides[GST_VIDEO_MAX_PLANES]{pitch, pitch};
+      require(gst_buffer_add_video_meta_full(result.get(), GST_VIDEO_FRAME_FLAG_NONE,
+                                             GST_VIDEO_FORMAT_NV12, width, visible_height, 2,
+                                             offsets, strides),
+              "decoder NV12 metadata allocation failed");
+      return result;
+    };
+    auto input = make_input(bytes);
+    struct ExactStorage final : Storage {
+      GstBuffer* carrier = nullptr;
+      std::shared_ptr<Owner> owner;
+      rt::Result<probe::Buffer> resolve(GstBuffer* buffer, GstMemory* memory, std::size_t offset,
+                                        std::size_t length, probe::Access access) const override {
+        require(buffer == carrier && memory == gst_buffer_peek_memory(carrier, 0) &&
+                    access == probe::Access::Read,
+                "decoder binding introduced a copy or lost original memory identity");
+        return probe::Buffer{owner, offset, length};
+      }
+    } storage;
+    storage.carrier = input.get();
+    storage.owner = std::make_shared<Owner>(bytes, 0x100000);
+    probe::Binding binding;
+    okay(stage->bind(input.get(), storage, binding, published.get()));
+    require(binding.inputs.size() == 2 && binding.inputs[0].offset_bytes == 0 &&
+                binding.inputs[1].offset_bytes == uv_offset &&
+                binding.inputs[0].length_bytes == y_span &&
+                binding.inputs[1].length_bytes == uv_span &&
+                binding.operation->input_requirements(0).storage_bytes == y_span &&
+                binding.operation->input_requirements(1).storage_bytes == uv_span,
+            "decoder pitch/plane offset/visible extent lost at preparation boundary");
+    require(integer(published.get(), "preproc_original_width") == int(width) &&
+                integer(published.get(), "preproc_original_height") == visible_height,
+            "decoder allocated rows incorrectly became visible image geometry");
+    auto short_input = make_input(uv_offset + uv_span - 1);
+    probe::Binding rejected;
+    require(stage->bind(short_input.get(), Storage{}, rejected, published.get()).has_value(),
+            "cached NV12 geometry admitted a one-byte-short current allocation");
+    probe::Binding replay;
+    okay(stage->bind(input.get(), storage, replay, published.get()));
+    require(replay.operation == binding.operation,
+            "rejected NV12 backing displaced the valid prepared geometry");
+  }
+  std::cout << "Decoder explicit pitch, storage rows and visible NV12 geometry PASS\n";
+}
+
 void checked_plane_resolver() {
-  using Preproc = lower::PreprocFrameAdapter;
+  using Preproc = PreprocProbe;
   struct Format {
     const char* name;
     GstVideoFormat video;
@@ -482,8 +571,8 @@ void checked_plane_resolver() {
         Format{"I420", GST_VIDEO_FORMAT_I420, 3}}) {
     auto cfg = config();
     cfg->input_img_type = format.name;
-    rt::KernelSessionOptions options;
-    options.runtime.ev74 = std::make_shared<Capture>();
+    probe::Options options;
+    options.capture = std::make_shared<Capture>();
     auto stage = take(Preproc::create(cfg, options));
     auto* input = gst_buffer_new();
     gsize offsets[GST_VIDEO_MAX_PLANES]{};
@@ -512,10 +601,9 @@ void checked_plane_resolver() {
       std::size_t reject = SIZE_MAX;
       std::array<std::shared_ptr<Owner>, 3> owners{};
       bool collect_separately = false;
-      mutable std::vector<rt::BufferView> collected;
+      mutable std::vector<probe::Buffer> collected;
       static rt::Status append(const void* context, std::size_t plane, GstMemory* memory,
-                               std::size_t offset, std::size_t bytes,
-                               rt::gstreamer::Binding& binding) {
+                               std::size_t offset, std::size_t bytes, probe::Binding& binding) {
         const auto& self = *static_cast<const Imports*>(context);
         require(plane == self.calls++, "plane callback lost logical port order");
         require(plane < self.owners.size() && self.owners[plane], "unexpected plane import");
@@ -535,7 +623,7 @@ void checked_plane_resolver() {
     const Preproc::PlaneResolver resolver{&imports, &Imports::append};
     const auto bind = [&] {
       imports.calls = 0;
-      rt::gstreamer::Binding result;
+      probe::Binding result;
       okay(stage->bind(input, resolver, result, published));
       require(imports.calls == format.planes && result.inputs.size() == format.planes,
               "cached preparation bypassed current plane admission");
@@ -552,7 +640,7 @@ void checked_plane_resolver() {
     // admission records. Preproc must not depend on temporary Binding views.
     imports.collect_separately = true;
     imports.calls = 0;
-    rt::gstreamer::Binding indexed;
+    probe::Binding indexed;
     okay(stage->bind(input, resolver, indexed, published));
     require(indexed.inputs.empty() && indexed.operation == pitched &&
                 imports.collected.size() == format.planes,
@@ -572,7 +660,7 @@ void checked_plane_resolver() {
     video->stride[0] = 10;
     imports.calls = 0;
     imports.reject = 1;
-    rt::gstreamer::Binding rejected;
+    probe::Binding rejected;
     const auto error = stage->bind(input, resolver, rejected, published);
     require(error && error->field == "input.loan" && imports.calls == 2,
             "plane admission failure was swallowed");
@@ -592,7 +680,7 @@ void checked_plane_resolver() {
 
     imports.calls = 0;
     video->stride[0] = -1;
-    rt::gstreamer::Binding invalid;
+    probe::Binding invalid;
     require(bool(stage->bind(input, resolver, invalid, published)) && imports.calls == 0,
             "invalid authoritative pitch reached allocation admission");
     video->stride[0] = 8;
@@ -606,13 +694,11 @@ void checked_plane_resolver() {
 
 void dynamic_preparation_cache() {
   auto capture = std::make_shared<Capture>();
-  rt::RuntimeContextOptions limits;
-  limits.ev74 = capture;
-  rt::KernelSessionOptions options;
-  options.context = std::make_shared<rt::RuntimeContext>(limits);
-  const auto policy = take(lower::PreprocFrameAdapter::check_policy(config(3)));
-  auto first_stage = take(lower::PreprocFrameAdapter::instantiate(policy));
-  auto stage = take(lower::PreprocFrameAdapter::instantiate(policy));
+  probe::Options options;
+  options.domain = std::make_shared<probe::Domain>(capture);
+  const auto policy = take(PreprocProbe::check_policy(config(3)));
+  auto first_stage = take(PreprocProbe::instantiate(policy));
+  auto stage = take(PreprocProbe::instantiate(policy));
   okay(first_stage->prepare(options));
   okay(stage->prepare(options));
   require(first_stage->session().context() == stage->session().context(),
@@ -625,7 +711,7 @@ void dynamic_preparation_cache() {
   set_list(meta, "preproc_roi_batch_indices", {0});
   auto* published = gst_structure_new_empty("test");
   const auto bind = [&] {
-    rt::gstreamer::Binding result;
+    probe::Binding result;
     okay(stage->bind(input, Storage{}, result, published));
     return result;
   };
@@ -668,7 +754,7 @@ void dynamic_preparation_cache() {
   }
   gst_structure_set_value(meta, "preproc_roi_rects", &wide_rects);
   g_value_unset(&wide_rects);
-  rt::gstreamer::Binding invalid_type;
+  probe::Binding invalid_type;
   require(bool(stage->bind(input, Storage{}, invalid_type, published)),
           "numerically equal wrong-typed ROI list bypassed admission through cache");
   set_list(meta, "preproc_roi_rects", {0, 0, 8, 4});
@@ -690,13 +776,13 @@ void dynamic_preparation_cache() {
     }
   }
   struct RejectingStorage : Storage {
-    rt::Result<rt::BufferView> resolve(GstBuffer*, GstMemory*, std::size_t, std::size_t,
-                                       rt::Access) const override {
+    rt::Result<probe::Buffer> resolve(GstBuffer*, GstMemory*, std::size_t, std::size_t,
+                                      probe::Access) const override {
       return rt::Error{rt::ErrorCode::InvalidRequest, "storage", "rejected test loan"};
     }
   };
   set_list(meta, "preproc_roi_rects", {2, 0, 4, 8});
-  rt::gstreamer::Binding rejected_storage;
+  probe::Binding rejected_storage;
   require(bool(stage->bind(input, RejectingStorage{}, rejected_storage, published)),
           "failed storage import unexpectedly admitted");
   set_list(meta, "preproc_roi_rects", {0, 0, 8, 4});
@@ -717,7 +803,7 @@ void dynamic_preparation_cache() {
     gst_structure_set(bad_meta, "preproc_roi_count", G_TYPE_INT, 1, nullptr);
     set_list(bad_meta, "preproc_roi_rects", {1, 0, 4, 8});
     set_list(bad_meta, "preproc_roi_batch_indices", {0});
-    rt::gstreamer::Binding bad_storage;
+    probe::Binding bad_storage;
     require(bool(stage->bind(bad_input, Storage{}, bad_storage, published)),
             split_plane ? "cached plane crossed independent memory spans"
                         : "cached geometry admitted insufficient current storage");
@@ -730,21 +816,21 @@ void dynamic_preparation_cache() {
   auto* video_meta = gst_buffer_add_video_meta_full(
       input, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_RGB, 8, 8, 1, offsets, strides);
   require(video_meta, "add authoritative video metadata");
-  rt::gstreamer::Binding invalid_pitch;
+  probe::Binding invalid_pitch;
   require(bool(stage->bind(input, Storage{}, invalid_pitch, published)),
           "authoritative pitched image exceeded current storage");
   require(gst_buffer_remove_meta(input, &video_meta->meta), "remove video metadata");
   require(bind().operation == moved.operation,
           "invalid per-frame video geometry replaced a valid variant");
   gst_structure_set(meta, "preproc_roi_count", G_TYPE_STRING, "invalid", nullptr);
-  rt::gstreamer::Binding invalid;
+  probe::Binding invalid;
   require(bool(stage->bind(input, Storage{}, invalid, published)),
           "malformed changed signature escaped admission");
   gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 1, nullptr);
   require(bind().operation == moved.operation, "failed admission evicted the valid cached variant");
   for (int pad : {-1, 256}) {
     gst_structure_set(meta, "preproc_roi_pad_value", G_TYPE_INT, pad, nullptr);
-    rt::gstreamer::Binding rejected_pad;
+    probe::Binding rejected_pad;
     require(bool(stage->bind(input, Storage{}, rejected_pad, published)),
             "typed translation narrowed out-of-range padding before admission");
   }
@@ -803,14 +889,14 @@ void dynamic_preparation_cache() {
 // Defaults are CAPS-owned, while each current frame can carry independent
 // geometry/pitch. Returning to defaults must never reuse an override as a base.
 void default_geometry_and_padding() {
-  rt::KernelSessionOptions options;
-  options.runtime.ev74 = std::make_shared<Capture>();
+  probe::Options options;
+  options.capture = std::make_shared<Capture>();
   for (const auto& [name, x, y] :
        {std::tuple{"center", 2, 2}, std::tuple{"topleft", 0, 0}, std::tuple{"topright", 4, 0},
         std::tuple{"bottomleft", 0, 4}, std::tuple{"bottomright", 4, 4}}) {
     auto cfg = config();
     cfg->padding_type = name;
-    auto stage = take(lower::PreprocFrameAdapter::create(cfg, options));
+    auto stage = take(PreprocProbe::create(cfg, options));
     auto* input = gst_buffer_new_allocate(nullptr, 256, nullptr);
     auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
     auto* out = gst_structure_new_empty("test");
@@ -818,7 +904,7 @@ void default_geometry_and_padding() {
                       0, "preproc_roi_y", G_TYPE_INT, 0, "preproc_roi_width", G_TYPE_INT, 4,
                       "preproc_roi_height", G_TYPE_INT, 8, nullptr);
     const auto bind = [&] {
-      rt::gstreamer::Binding result;
+      probe::Binding result;
       okay(stage->bind(input, Storage{}, result, out));
       return result;
     };
@@ -859,7 +945,7 @@ void default_geometry_and_padding() {
                         nullptr);
     gst_structure_set(dirty, "preproc_roi_count", G_TYPE_INT, 99, "preproc_roi_affines", G_TYPE_INT,
                       99, nullptr);
-    rt::gstreamer::Binding fresh_binding, dirty_binding;
+    probe::Binding fresh_binding, dirty_binding;
     okay(stage->bind(input, Storage{}, fresh_binding, fresh, true));
     okay(stage->bind(input, Storage{}, dirty_binding, dirty));
     require(gst_structure_is_equal(fresh, dirty),
@@ -867,16 +953,15 @@ void default_geometry_and_padding() {
     gst_structure_free(fresh);
     gst_structure_free(dirty);
     for (gint i = 0; i < gst_structure_n_fields(out); ++i)
-      require(lower::PreprocFrameAdapter::owns_publication_field(
+      require(PreprocProbe::owns_publication_field(
                   g_quark_from_string(gst_structure_nth_field_name(out, i))),
               "publication field missing from ownership set");
     require(
-        !lower::PreprocFrameAdapter::owns_publication_field(
-            g_quark_from_string("preproc_vendor_extension")) &&
-            !lower::PreprocFrameAdapter::owns_publication_field(g_quark_from_string("frame-id")) &&
-            !lower::PreprocFrameAdapter::owns_publication_field(0),
+        !PreprocProbe::owns_publication_field(g_quark_from_string("preproc_vendor_extension")) &&
+            !PreprocProbe::owns_publication_field(g_quark_from_string("frame-id")) &&
+            !PreprocProbe::owns_publication_field(0),
         "publisher claimed unknown extension or correlation metadata");
-    require(lower::PreprocFrameAdapter::owns_publication_field(
+    require(PreprocProbe::owns_publication_field(
                 g_quark_from_string("preproc_roi_source_stride_bytes")),
             "conditionally cleared field missing from publication ownership");
     gst_structure_free(out);
@@ -884,21 +969,21 @@ void default_geometry_and_padding() {
   }
   auto bad = config();
   bad->padding_type = "unknown";
-  require(std::holds_alternative<rt::Error>(lower::PreprocFrameAdapter::create(bad, options)),
+  require(std::holds_alternative<rt::Error>(PreprocProbe::create(bad, options)),
           "invalid fixed padding policy escaped preparation");
 }
 
 void borrowed_roi_indices() {
-  rt::KernelSessionOptions options;
-  options.runtime.ev74 = std::make_shared<Capture>();
-  auto stage = take(lower::PreprocFrameAdapter::create(config(3), options));
+  probe::Options options;
+  options.capture = std::make_shared<Capture>();
+  auto stage = take(PreprocProbe::create(config(3), options));
   auto* input = gst_buffer_new_allocate(nullptr, 384, nullptr);
   auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
   auto* out = gst_structure_new_empty("test");
   gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 2, nullptr);
   set_list(meta, "preproc_roi_rects", {0, 0, 4, 4, 0, 0, 4, 4});
   const auto bind = [&] {
-    rt::gstreamer::Binding result;
+    probe::Binding result;
     return stage->bind(input, Storage{}, result, out);
   };
   for (bool array : {false, true}) {
@@ -936,9 +1021,9 @@ void borrowed_roi_indices() {
 }
 
 void publication_ownership_and_replacement() {
-  rt::KernelSessionOptions options;
-  options.runtime.ev74 = std::make_shared<Capture>();
-  auto stage = take(lower::PreprocFrameAdapter::create(config(), options));
+  probe::Options options;
+  options.capture = std::make_shared<Capture>();
+  auto stage = take(PreprocProbe::create(config(), options));
   auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
   auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
   gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 1, nullptr);
@@ -947,14 +1032,14 @@ void publication_ownership_and_replacement() {
   auto* out =
       gst_structure_new("test", "preproc_customer_extension", G_TYPE_STRING, "keep", nullptr);
   const auto bind = [&] {
-    rt::gstreamer::Binding binding;
+    probe::Binding binding;
     okay(stage->bind(input, Storage{}, binding, out));
   };
   bind();
   auto* retained = gst_structure_copy(out);
   auto* held = gst_structure_new_empty("test");
   {
-    rt::gstreamer::Binding binding;
+    probe::Binding binding;
     okay(stage->bind(input, Storage{}, binding, held));
   }
   // Replacing fields on one emitted envelope must not affect the immutable
@@ -1009,13 +1094,12 @@ void publication_ownership_and_replacement() {
 void maximum_roi_admission() {
   constexpr int requested = 4096;
   auto capture = std::make_shared<Capture>();
-  rt::KernelSessionOptions options;
-  options.runtime.ev74 = capture;
-  require(
-      std::holds_alternative<rt::Error>(lower::PreprocFrameAdapter::create(config(51), options)),
-      "output ROI capacity greater than 50 admitted");
+  probe::Options options;
+  options.capture = capture;
+  require(std::holds_alternative<rt::Error>(PreprocProbe::create(config(51), options)),
+          "output ROI capacity greater than 50 admitted");
   for (const int capacity : {50, 3}) {
-    auto stage = take(lower::PreprocFrameAdapter::create(config(capacity), options));
+    auto stage = take(PreprocProbe::create(config(capacity), options));
     auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
     auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
     auto* published = gst_structure_new_empty("test");
@@ -1030,7 +1114,7 @@ void maximum_roi_admission() {
     set_list(meta, "preproc_roi_rects", rects);
     set_list(meta, "preproc_roi_batch_indices", indices);
     const auto bind = [&] {
-      rt::gstreamer::Binding result;
+      probe::Binding result;
       okay(stage->bind(input, Storage{}, result, published));
       return result;
     };
@@ -1071,7 +1155,7 @@ void maximum_roi_admission() {
     set_list(meta, "preproc_roi_rects", rects);
     set_list(meta, "preproc_roi_batch_indices", indices);
     gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, requested + 1, nullptr);
-    rt::gstreamer::Binding rejected;
+    probe::Binding rejected;
     const auto error = stage->bind(input, Storage{}, rejected, published);
     require(error && error->field == "preproc_roi_count",
             "4097 incoming ROIs did not fail bounded admission");
@@ -1112,14 +1196,15 @@ void benchmark_preparation() {
     const bool list = route.starts_with("list-");
     const auto pattern = list ? route.substr(5) : route;
     auto capture = std::make_shared<Capture>();
-    rt::KernelSessionOptions options;
-    options.runtime.ev74 = capture;
+    probe::Options options;
+    options.capture = capture;
     auto cfg = config(3);
-    auto& source = cfg->input_tensors[0];
+    auto source = cfg->input_tensors[0].descriptor();
     source.shape.sizes[0] = 480;
     source.shape.sizes[1] = 640;
     source.layout.strided.strides_bytes[0] = 640 * 3;
-    auto stage = take(lower::PreprocFrameAdapter::create(cfg, options));
+    cfg->input_tensors[0] = cfg->input_tensors[0].with_geometry(source);
+    auto stage = take(PreprocProbe::create(cfg, options));
     auto* input = gst_buffer_new_allocate(nullptr, 640 * 480 * 3, nullptr);
     auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
     if (list) {
@@ -1142,7 +1227,7 @@ void benchmark_preparation() {
       else
         gst_structure_set(meta, "preproc_roi_x", G_TYPE_INT, x, "preproc_roi_y", G_TYPE_INT, y,
                           nullptr);
-      rt::gstreamer::Binding binding;
+      probe::Binding binding;
       const auto start = std::chrono::steady_clock::now();
       const auto error = stage->bind(input, Storage{}, binding, published);
       const auto end = std::chrono::steady_clock::now();
@@ -1165,6 +1250,150 @@ void benchmark_preparation() {
   }
 }
 
+void image_frontend_metadata_and_bounds() {
+  auto cfg = config();
+  auto policy = std::make_shared<simaai::neat::internal::ImageTransformPolicy>();
+  policy->mode = simaai::neat::internal::ImageTransformMode::Normalization;
+  cfg->image_transform = policy;
+  cfg->output_shapes = {{8, 8, 3}};
+  cfg->scaling_type = "NO_SCALING";
+  cfg->aspect_ratio = 0;
+  probe::Options options;
+  options.capture = std::make_shared<Capture>();
+  auto adapter = take(PreprocProbe::create(cfg, options));
+  auto* smaller = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGB", "width",
+                                      G_TYPE_INT, 4, "height", G_TYPE_INT, 4, nullptr);
+  require(adapter->accepts_caps(smaller).has_value(), "normalization accepted dynamic geometry");
+  gst_caps_unref(smaller);
+  auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
+  auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
+  gst_structure_set(meta, "preproc_original_width", G_TYPE_INT, 100, "preproc_original_height",
+                    G_TYPE_INT, 50, "preproc_affine_m00", G_TYPE_DOUBLE, 2.0, "preproc_affine_m01",
+                    G_TYPE_DOUBLE, 0.0, "preproc_affine_m02", G_TYPE_DOUBLE, 7.0,
+                    "preproc_affine_m10", G_TYPE_DOUBLE, 0.0, "preproc_affine_m11", G_TYPE_DOUBLE,
+                    3.0, "preproc_affine_m12", G_TYPE_DOUBLE, 11.0, "preproc_roi_enable",
+                    G_TYPE_BOOLEAN, TRUE, "preproc_roi_x", G_TYPE_INT, 7, "preproc_roi_y",
+                    G_TYPE_INT, 11, "preproc_roi_width", G_TYPE_INT, 16, "preproc_roi_height",
+                    G_TYPE_INT, 24, nullptr);
+  auto* published = gst_structure_new_empty("test");
+  probe::Binding binding;
+  tr::TensorBufferPreprocessFactsOwner held, repeated, changed;
+  okay(adapter->bind(input, Storage{}, binding, published, false, &held));
+  probe::Binding again;
+  okay(adapter->bind(input, Storage{}, again, published, false, &repeated));
+  require(held == repeated, "steady upstream spatial signature allocated new facts");
+  double x = 0, y = 0;
+  require(gst_structure_get_double(published, "preproc_affine_m02", &x) && x == 7.0 &&
+              gst_structure_get_double(published, "preproc_affine_m12", &y) && y == 11.0,
+          "normalization replaced instead of composing upstream coordinates");
+  int width = 0, roi = 0;
+  require(gst_structure_get_int(published, "preproc_original_width", &width) && width == 100 &&
+              gst_structure_get_int(published, "preproc_roi_x", &roi) && roi == 7,
+          "upstream scalar ROI provenance was lost");
+  // An invalid request-like ROI above is provenance: numerical source remains the whole current
+  // image.
+  const auto checked = take(rt::inspect_kernel(binding.operation->executable()));
+  require(checked.inputs()[0].shape[1] == 8, "result ROI was replayed as a crop request");
+  gst_structure_set(meta, "preproc_affine_m02", G_TYPE_DOUBLE, 9.0, nullptr);
+  probe::Binding moved;
+  okay(adapter->bind(input, Storage{}, moved, published, false, &changed));
+  require(changed != held && tr::tensor_buffer_preprocess_facts(held)->affine[2] == 7.0 &&
+              tr::tensor_buffer_preprocess_facts(changed)->affine[2] == 9.0,
+          "cached metadata mutation changed a held output");
+  gsize offsets[GST_VIDEO_MAX_PLANES]{};
+  gint strides[GST_VIDEO_MAX_PLANES]{12};
+  auto* mismatched = gst_buffer_add_video_meta_full(
+      input, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_RGB, 4, 4, 1, offsets, strides);
+  probe::Binding wrong_geometry;
+  require(adapter->bind(input, Storage{}, wrong_geometry, published).has_value(),
+          "authoritative video metadata bypassed fixed geometry");
+  gst_buffer_remove_meta(input, &mismatched->meta);
+  gst_structure_set(meta, "preproc_affine_m00", G_TYPE_STRING, "bad", nullptr);
+  probe::Binding bad;
+  require(adapter->bind(input, Storage{}, bad, published).has_value(),
+          "malformed upstream transform accepted");
+  gst_structure_free(published);
+  gst_buffer_unref(input);
+}
+
+void image_frontend_input_rejections() {
+  auto cfg = config();
+  auto policy = std::make_shared<simaai::neat::internal::ImageTransformPolicy>();
+  policy->mode = simaai::neat::internal::ImageTransformMode::ColorConvert;
+  cfg->image_transform = policy;
+  cfg->input_img_type = cfg->output_img_type = "NV12";
+  cfg->output_shapes = {{8, 8, 1}};
+  cfg->output_dtype = "UINT8";
+  cfg->output_tensors = {{descriptor(true), "UINT8"}};
+  cfg->normalize = cfg->aspect_ratio = 0;
+  cfg->scaling_type = "NO_SCALING";
+  probe::Options options;
+  options.capture = std::make_shared<Capture>();
+  auto adapter = take(PreprocProbe::create(cfg, options));
+  const auto caps = [](const char* key = nullptr, const char* value = nullptr) {
+    auto* result = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width",
+                                       G_TYPE_INT, 8, "height", G_TYPE_INT, 8, nullptr);
+    if (key)
+      gst_caps_set_simple(result, key, G_TYPE_STRING, value, nullptr);
+    return std::unique_ptr<GstCaps, decltype(&gst_caps_unref)>(result, gst_caps_unref);
+  };
+  const auto rejects_caps = [&](const char* key, const char* value, const char* field) {
+    const auto input = caps(key, value);
+    const auto error = adapter->accepts_caps(input.get());
+    require(error && error->field == field, "typed image accepted contradictory source caps");
+  };
+  okay(adapter->accepts_caps(caps().get())); // Missing interpretation defers to authored policy.
+  okay(adapter->accepts_caps(caps("chroma-site", "jpeg").get()));
+  GstVideoColorimetry color{};
+  color.range = GST_VIDEO_COLOR_RANGE_0_255;
+  color.matrix = GST_VIDEO_COLOR_MATRIX_BT601;
+  const auto color_caps = [&]() {
+    std::unique_ptr<gchar, decltype(&g_free)> text(gst_video_colorimetry_to_string(&color), g_free);
+    require(bool(text), "explicit colorimetry construction failed");
+    return caps("colorimetry", text.get());
+  };
+  okay(adapter->accepts_caps(color_caps().get()));
+  color.range = GST_VIDEO_COLOR_RANGE_16_235;
+  require(adapter->accepts_caps(color_caps().get()).has_value(), "contradictory range accepted");
+  color.range = GST_VIDEO_COLOR_RANGE_0_255;
+  color.matrix = GST_VIDEO_COLOR_MATRIX_BT709;
+  require(adapter->accepts_caps(color_caps().get()).has_value(), "contradictory matrix accepted");
+  rejects_caps("colorimetry", "not-colorimetry", "input.colorimetry");
+  rejects_caps("chroma-site", "mpeg2", "input.chroma-site");
+  rejects_caps("chroma-site", "dv", "input.chroma-site");
+  rejects_caps("interlace-mode", "interleaved", "input.caps");
+
+  std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> input(
+      gst_buffer_new_allocate(nullptr, 96, nullptr), gst_buffer_unref);
+  gsize offsets[GST_VIDEO_MAX_PLANES]{0, 64};
+  gint strides[GST_VIDEO_MAX_PLANES]{8, 8};
+  auto* video = gst_buffer_add_video_meta_full(input.get(), GST_VIDEO_FRAME_FLAG_INTERLACED,
+                                               GST_VIDEO_FORMAT_NV12, 8, 8, 2, offsets, strides);
+  require(video != nullptr, "typed image video metadata fixture failed");
+  std::unique_ptr<GstStructure, decltype(&gst_structure_free)> published(
+      gst_structure_new_empty("test"), gst_structure_free);
+  const auto rejects_binding = [&](const char* field) {
+    probe::Binding binding;
+    const auto error = adapter->bind(input.get(), Storage{}, binding, published.get());
+    require(error && error->field == field, "typed image accepted unsupported source metadata");
+  };
+  rejects_binding("input.video-meta");
+  video->flags = GST_VIDEO_FRAME_FLAG_NONE;
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input.get(), "GstSimaMeta"));
+  gst_structure_set(meta, "preproc_roi_list_enable", G_TYPE_BOOLEAN, TRUE, nullptr);
+  rejects_binding("input.preprocess");
+  gst_structure_remove_field(meta, "preproc_roi_list_enable");
+  gst_structure_set(meta, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_x", G_TYPE_INT,
+                    0, "preproc_roi_y", G_TYPE_INT, 0, "preproc_roi_width", G_TYPE_INT, 8,
+                    "preproc_roi_height", G_TYPE_INT, 8, nullptr);
+  rejects_binding("input.preprocess");
+  gst_structure_remove_field(meta, "preproc_roi_enable");
+  probe::Binding valid;
+  okay(adapter->bind(input.get(), Storage{}, valid, published.get()));
+  std::cout << "Image frontend explicit color, interlace and ROI rejection PASS\n";
+}
+
 } // namespace
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
@@ -1173,11 +1402,14 @@ int main(int argc, char** argv) {
     gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr);
   }
   try {
+    image_frontend_metadata_and_bounds();
+    image_frontend_input_rejections();
     cold_generic_preparation();
     immutable_policy_instances();
     contract();
     typed_format_mapping();
     checked_plane_resolver();
+    decoder_storage_geometry();
     dynamic_preparation_cache();
     maximum_roi_admission();
     publication_ownership_and_replacement();

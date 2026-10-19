@@ -90,11 +90,5 @@ simaai::neat::Tensor tensor_view_from_sample_segment(const simaai::neat::Tensor&
                                                      bool keep_holder = true);
 std::shared_ptr<void> holder_from_tensor(const simaai::neat::Tensor& tensor);
 
-// Copy `bytes` from `src` into the simaai segment memory pointed to by `segment`
-// (an opaque Runtime memory::Segment*). Copies within a checked CPU-write scope.
-// Used by the bundled-input multi-IO path to materialize user CPU tensors into
-// device-accessible segments addressed via the SimaaiSegmentAllocator.
-bool copy_into_simaai_segment_memory(void* segment, const void* src, std::size_t bytes,
-                                     std::string* err);
 
 } // namespace simaai::neat::pipeline_internal

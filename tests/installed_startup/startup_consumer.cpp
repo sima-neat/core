@@ -1,7 +1,7 @@
 // Installed-header consumer. Cold startup/admission only: no pipeline, model,
 // allocator allocation, numerical submission, or device retirement claim.
 #include <gst/GstInit.h>
-#include <simaai/scheduler/kernel_preparation.h>
+#include <simaai/scheduler/client/kernel.h>
 #include <gst/gst.h>
 
 #include <algorithm>
@@ -18,9 +18,9 @@
 
 namespace {
 namespace fs = std::filesystem;
-namespace scheduler = simaai::scheduler;
-namespace rt = simaai::runtime;
-namespace k = simaai::kernels;
+namespace scheduler = simaai::scheduler::client;
+namespace rt = simaai::scheduler::client;
+namespace k = simaai::scheduler::client;
 
 void require(bool value, const std::string& message) {
   if (!value)
