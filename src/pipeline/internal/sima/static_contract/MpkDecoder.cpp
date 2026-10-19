@@ -456,7 +456,7 @@ bool mla_input_extent_matches(const ValueSpec& value, const std::uint64_t physic
                                  ? dense_bytes(*value.logical_shape, *value.logical_dtype)
                                  : std::nullopt;
   const auto aligned_bytes = align_up_16(value.required_bytes);
-  // Allocation tail padding does not enlarge the logical input transfer.
+  // Allocation tail padding does not enlarge the logical tensor payload.
   return transfer_bytes == value.required_bytes &&
          value.representation == ValueRepresentation::Dense && !value.read_expression &&
          value.logical_shape && !value.logical_shape->empty() &&
@@ -2234,8 +2234,11 @@ MpkDecodeResult decode_impl(const std::string_view text,
                                   "typed dense logical bytes and ELF extent prove exact 16-byte "
                                   "allocation tail padding"});
         }
+        // MLA-RT can access the full ELF reservation, including a proved dense
+        // allocation tail. Keep the MPK value logical, but reserve and project
+        // that complete readable range through the producer's frame carrier.
         data.backend_ports.push_back({stage_index, BackendPortDirection::Input, index, symbol,
-                                      value.id, transfer_bytes, kLegacyEvoCmaRegionAlignmentBytes,
+                                      value.id, physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
                                       BackendPortAlignmentAuthority::LegacyPolicy,
                                       BackendPortAccess::ReadOnly});
         data.backend_ports.back().logical_port_index = input_order[index];

@@ -540,6 +540,12 @@ Single-input, batch-one models with normal spatial storage can use automatic
 input channel padding. Applications keep the model's logical tensor shape;
 custom spatial storage padding is outside this support scope.
 
+For dense batch-one inputs, Core also reconciles an ELF reservation rounded up
+to 16 bytes with the exact MPK tensor payload. The producer's frame carrier and
+MLA physical input cover that reservation; the logical shape, transform element
+count, and application input remain unchanged. Allocation tail bytes do not add
+model elements or prompt slots.
+
 An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
 by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
 without loading it into the host process, proves its section topology, and

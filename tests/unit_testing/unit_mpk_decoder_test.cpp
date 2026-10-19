@@ -1446,21 +1446,24 @@ void test_dense_ifm_tail_padding() {
   const auto& port = plan.backend_ports(0U, BackendPortDirection::Input).front();
   const auto* value = plan.value(port.value_id);
   check(value->required_bytes == 14U && value->logical_shape == TensorShape({1, 7}) &&
-            port.physical_extent_bytes == 14U,
-        "IFM allocation tail does not enlarge the MPK transfer");
+            port.physical_extent_bytes == 16U,
+        "IFM allocation tail enlarges the physical reservation without changing the MPK payload");
+  const auto* carrier = plan.carrier(value->storage_binding->carrier_id);
+  check(carrier && carrier->required_bytes == 16U,
+        "producer carrier covers the complete MLA-readable allocation tail");
   const auto contract = project_single_mla(plan);
-  check(contract.physical_inputs.front().size_bytes == 14U &&
-            contract.input_bindings.front().src_physical_size_bytes == 14U,
-        "IFM arena projection binds exactly the MPK bytes");
+  check(contract.physical_inputs.front().size_bytes == 16U &&
+            contract.input_bindings.front().src_physical_size_bytes == 16U,
+        "IFM arena projection binds the complete ELF reservation");
   for (const auto bad_extent : {13U, 15U, 17U, 32U}) {
     topology.ifm_extent_bytes = {bad_extent};
     expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                  "undersized, unaligned, and excessive IFM extents remain rejected");
   }
   const auto monolithic = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 8U));
-  check(static_cast<bool>(monolithic), "monolithic allocation tail preserves MPK transfer length");
-  check(project_single_mla(*monolithic.plan).physical_inputs.front().size_bytes == 14U,
-        "monolithic transfer is not rounded to the ELF reservation");
+  check(static_cast<bool>(monolithic), "monolithic allocation tail preserves MPK payload length");
+  check(project_single_mla(*monolithic.plan).physical_inputs.front().size_bytes == 16U,
+        "monolithic physical input covers the ELF reservation");
   auto spatial = manifest;
   spatial["input_nodes"][0]["size"] = 420;
   spatial["plugins"][0]["input_nodes"][0]["size"] = 420;
@@ -1471,9 +1474,9 @@ void test_dense_ifm_tail_padding() {
   const auto c7 = MpkDecoder{}.decode_json(spatial.dump(), monolithic_topology(224U, 8U));
   check(static_cast<bool>(c7), "C7 BF16 HWC input admits 210-byte MPK transfer with 224-byte ELF");
   const auto c7_contract = project_single_mla(*c7.plan);
-  check(c7_contract.physical_inputs.front().size_bytes == 210U &&
-            c7_contract.input_bindings.front().src_physical_size_bytes == 210U,
-        "C7 BF16 HWC projection retains exactly 210 bytes");
+  check(c7_contract.physical_inputs.front().size_bytes == 224U &&
+            c7_contract.input_bindings.front().src_physical_size_bytes == 224U,
+        "C7 BF16 HWC projection reserves the complete 224-byte ELF input");
   for (const auto bad_extent : {209U, 211U, 223U, 225U, 256U}) {
     expect_error(spatial.dump(), monolithic_topology(bad_extent, 8U),
                  MpkDecodeErrorCode::ValueSizeMismatch,
@@ -1489,6 +1492,34 @@ void test_dense_ifm_tail_padding() {
   cast["config_params"]["params"]["output_shapes"] = {{7, 1}};
   expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                "logical leading dimension must also prove batch one");
+}
+
+void test_int8_mask_ifm_tail_padding() {
+  auto manifest = nlohmann::json::parse(valid_manifest());
+  manifest["input_nodes"][0]["size"] = 32;
+  auto& quant = manifest["plugins"][0];
+  quant["input_nodes"][0]["size"] = 32;
+  quant["output_nodes"][0]["size"] = 8;
+  quant["config_params"]["kernel"] = "quantization_transform";
+  quant["config_params"]["params"] = {{"channel_params", {{0.01, 0}}}, {"num_bits", 8},
+                                      {"rounding", "TONEAREST"},       {"output_data_type", "int8"},
+                                      {"input_shapes", {{1, 8}}},      {"output_shapes", {{1, 8}}}};
+  const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 8U));
+  check(static_cast<bool>(decoded), "eight-element INT8 mask admits a 16-byte MLA reservation");
+  const auto& plan = *decoded.plan;
+  const auto& port = plan.backend_ports(0U, BackendPortDirection::Input).front();
+  const auto* value = plan.value(port.value_id);
+  check(plan.value(plan.model_inputs().front())->required_bytes == 32U &&
+            value->required_bytes == 8U && value->logical_shape == TensorShape({1, 8}) &&
+            value->logical_dtype == "int8" && port.physical_extent_bytes == 16U,
+        "eight FP32 application values remain eight INT8 mask elements");
+  const auto* carrier = plan.carrier(value->storage_binding->carrier_id);
+  check(carrier && carrier->required_bytes == 16U,
+        "mask producer reserves the complete MLA-readable range");
+  const auto contract = project_single_mla(plan);
+  check(contract.physical_inputs.front().size_bytes == 16U &&
+            contract.input_bindings.front().src_physical_size_bytes == 16U,
+        "mask DMA contract includes physical tail without changing tensor geometry");
 }
 
 void test_compiler_version_does_not_restrict_admission() {
@@ -2932,6 +2963,7 @@ int main(const int argc, char** argv) {
   test_detess_byte_carrier_keeps_logical_frame();
   test_unpack_tiled_carriers_keep_storage_geometry();
   test_dense_ifm_tail_padding();
+  test_int8_mask_ifm_tail_padding();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
   test_registered_detess_layout_is_preserved_through_dequant();
