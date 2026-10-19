@@ -1177,3 +1177,65 @@ def test_vulcan_buildinfo_selects_core_update_environment(tmp_path: Path) -> Non
     assert "https://artifacts.neat.paconsultings.com/core/feat%2Fx/abcdef123456/metadata-minimal.json" in calls.read_text(
         encoding="utf-8"
     )
+
+
+def test_code_server_access_text_and_json_preserve_legacy_compatibility(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    sdk_release = tmp_path / "sdk-release"
+    sdk_release.write_text("SDK Version = 10.0.0.244\n", encoding="utf-8")
+    server_dir = tmp_path / "code-server"
+    (server_dir / "bin").mkdir(parents=True)
+    port_map = tmp_path / "ports.json"
+    port_map.write_text(json.dumps({"codeUIHttps": {"host": 28760, "container": 10000}}))
+    env.update({
+        "ELXR_SDK_RELEASE_FILE": str(sdk_release),
+        "NEAT_PORT_MAP_FILE": str(port_map),
+        "CODE_SERVER_DIR": str(server_dir),
+        "CODE_SERVER_PASSWORD": 'test-"password',
+        "CODE_SERVER_HTTPS_PORT": "10000",
+        "OPENVSCODE_SERVER_HTTPS_PORT": "10000",
+        "OPENVSCODE_SERVER_TOKEN": "legacy-token",
+        "CONTAINER_HOST_IP": "192.0.2.10",
+    })
+
+    # The CLI sends both contracts to older images: password presence alone
+    # must not switch an OpenVSCode image to code-server behavior.
+    legacy = run_neat(tmp_path, ["--offline", "--json"], env)
+    assert legacy.returncode == 0, legacy.stderr
+    legacy_access = json.loads(legacy.stdout)["codeUI"]
+    assert legacy_access["backend"] == "openvscode"
+    assert "tkn=legacy-token" in legacy_access["localUrl"]
+    assert legacy_access["password"] is None
+
+    write_exe(server_dir / "bin" / "code-server", "#!/bin/sh\nexit 0\n")
+    for password, without_password in [('test-"password', "0"), ("", "0"), ('test-"password', "1")]:
+        env["CODE_SERVER_PASSWORD"] = password
+        env["CODE_SERVER_WITHOUT_PASSWORD"] = without_password
+        proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
+        assert proc.returncode == 0, proc.stderr
+        assert "https://127.0.0.1:28760/?folder=/workspace" in proc.stdout
+        assert "https://192.0.2.10:28760/?folder=/workspace" in proc.stdout
+        assert "tkn=" not in proc.stdout
+        assert "URLs contain an access token" not in proc.stdout
+        result = run_neat(tmp_path, ["--offline", "--json"], env)
+        assert result.returncode == 0, result.stderr
+        access = json.loads(result.stdout)["codeUI"]
+        assert access["backend"] == "code-server"
+        assert "tkn=" not in access["localUrl"]
+        if without_password == "1":
+            assert access["auth"] == "none"
+            assert access["password"] is None
+            assert "VS Code password" not in proc.stdout
+        else:
+            assert access["auth"] == "password"
+            assert access["password"] == (password or "legacy-token")
+            assert "Enter this password when prompted by code-server." in proc.stdout
+
+    env["CODE_SERVER_PASSWORD"] = ""
+    env["OPENVSCODE_SERVER_TOKEN"] = ""
+    env["CODE_SERVER_WITHOUT_PASSWORD"] = "0"
+    proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert "CODE_SERVER_PASSWORD is not available" in proc.stdout

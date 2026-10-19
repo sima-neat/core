@@ -16,6 +16,10 @@ slug: /reference/environment-variables
 
 ## Веб-доступ до SDK.
 
+В образах SDK із code-server команда `sima-cli sdk setup` задає `CODE_SERVER_PASSWORD` у середовищі контейнера. Повторно запустіть `neat`, щоб переглянути пароль, і введіть його на запит code-server. URL не містять пароля чи токена. `neat --json` додає `codeUI` з полями `backend`, `auth`, `password`, `localUrl` і `remoteUrl`; цей вивід містить облікові дані. Опублікований порт `codeUIHttps.host` із карти портів SDK має пріоритет над портом контейнера.
+
+Поведінка визначається встановленим виконуваним файлом code-server; саме лише встановлення `CODE_SERVER_PASSWORD` не змінює поведінку старого OpenVSCode. `CODE_SERVER_HTTPS_PORT` і `CODE_SERVER_WORKSPACE` мають пріоритет над старими змінними. За `CODE_SERVER_WITHOUT_PASSWORD=1` повертається `auth: "none"` без значення пароля. Старі образи OpenVSCode зберігають URL із токенами.
+
 - `NFS_SERVER_HOST_IP=<address>` — адреса хоста SDK, яка використовується для побудови віддаленого з’єднання.
   Insight та URL-адреси VS Code, що відкриваються в браузері. Зазвичай це надається за допомогою `sima-cli sdk setup`.
 - `CONTAINER_HOST_IP=<address>` — застарілий механізм для визначення адреси віддаленого хоста.

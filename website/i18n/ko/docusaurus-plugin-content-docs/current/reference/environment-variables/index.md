@@ -17,6 +17,10 @@ slug: /reference/environment-variables
 
 ## SDK 웹 액세스
 
+code-server SDK 이미지에서는 `sima-cli sdk setup`이 컨테이너 환경에 `CODE_SERVER_PASSWORD`를 설정합니다. `neat`를 다시 실행하여 비밀번호를 확인하고 code-server에서 요청하면 입력하세요. URL에는 비밀번호나 토큰이 포함되지 않습니다. `neat --json`은 `backend`, `auth`, `password`, `localUrl`, `remoteUrl`을 포함하는 `codeUI`를 추가합니다. 이 출력은 인증 정보로 취급하세요. SDK 포트 맵의 공개 포트 `codeUIHttps.host`가 컨테이너 포트보다 우선합니다.
+
+설치된 code-server 실행 파일을 기준으로 동작을 선택합니다. `CODE_SERVER_PASSWORD`만 설정해도 기존 OpenVSCode 동작은 바뀌지 않습니다. `CODE_SERVER_HTTPS_PORT`와 `CODE_SERVER_WORKSPACE`는 기존 변수보다 우선합니다. `CODE_SERVER_WITHOUT_PASSWORD=1`이면 `auth: "none"`을 반환하고 비밀번호 값을 생략합니다. 기존 OpenVSCode 이미지는 토큰 URL을 유지합니다.
+
 - `NFS_SERVER_HOST_IP=<address>` — 원격 주소를 구성하는 데 사용되는 SDK 호스트 주소입니다.
   Insight 및 브라우저 기반 VS Code URL입니다. 일반적으로 `sima-cli sdk setup`에서 제공됩니다.
 - `CONTAINER_HOST_IP=<address>` — 원격 호스트 주소에 대한 이전 버전의 대체 방식입니다.

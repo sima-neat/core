@@ -881,15 +881,62 @@ format_insight_service_state() {
   printf 'status=%s%s%s' "${state_color}" "${INSIGHT_SERVICE_STATE}" "${RESET}"
 }
 
+resolve_code_ui_access() {
+  CODE_UI_BACKEND=openvscode
+  CODE_UI_AUTH=token
+  CODE_UI_PASSWORD=""
+  CODE_UI_TOKEN="${OPENVSCODE_SERVER_TOKEN:-}"
+  CODE_UI_PORT="${OPENVSCODE_SERVER_HTTPS_PORT:-}"
+  CODE_UI_WORKSPACE="${OPENVSCODE_WORKSPACE:-/workspace}"
+  CODE_UI_LOCAL_URL=""
+  CODE_UI_REMOTE_URL=""
+  local without_auth="${OPENVSCODE_SERVER_WITHOUT_TOKEN:-0}"
+  local query="" network_host="${NFS_SERVER_HOST_IP:-${CONTAINER_HOST_IP:-}}"
+  local mapped_port=""
+
+  # New CLIs pass both environment contracts, even to legacy images. Detect
+  # the installed server rather than inferring the backend from the password.
+  if [[ -x "${CODE_SERVER_DIR:-/opt/code-server}/bin/code-server" ]]; then
+    CODE_UI_BACKEND=code-server
+    CODE_UI_AUTH=password
+    CODE_UI_TOKEN=""
+    CODE_UI_PASSWORD="${CODE_SERVER_PASSWORD:-${OPENVSCODE_SERVER_TOKEN:-}}"
+    CODE_UI_PORT="${CODE_SERVER_HTTPS_PORT:-${OPENVSCODE_SERVER_HTTPS_PORT:-10000}}"
+    CODE_UI_WORKSPACE="${CODE_SERVER_WORKSPACE:-${OPENVSCODE_WORKSPACE:-/workspace}}"
+    without_auth="${CODE_SERVER_WITHOUT_PASSWORD:-${OPENVSCODE_SERVER_WITHOUT_TOKEN:-0}}"
+  fi
+  if [[ "${without_auth}" == "1" && ( "${CODE_UI_BACKEND}" == code-server || -z "${CODE_UI_TOKEN}" ) ]]; then
+    CODE_UI_AUTH=none
+    CODE_UI_PASSWORD=""
+    CODE_UI_TOKEN=""
+  fi
+  if [[ -z "${CODE_UI_PORT}" || "${ENV_MODE}" != "elxr-sdk" ]]; then
+    return 0
+  fi
+  mapped_port="$(json_file_field "${PORT_MAP_FILE}" codeUIHttps.host)"
+  CODE_UI_PORT="${mapped_port:-${CODE_UI_PORT}}"
+  if [[ "${CODE_UI_AUTH}" == token ]]; then
+    [[ -n "${CODE_UI_TOKEN}" ]] || return 0
+    query="?tkn=${CODE_UI_TOKEN}"
+  fi
+  if [[ -n "${CODE_UI_WORKSPACE}" ]]; then
+    if [[ -n "${query}" ]]; then
+      query="${query}&folder=${CODE_UI_WORKSPACE}"
+    else
+      query="?folder=${CODE_UI_WORKSPACE}"
+    fi
+  fi
+  CODE_UI_LOCAL_URL="https://127.0.0.1:${CODE_UI_PORT}/${query}"
+  if [[ -n "${network_host}" && "${network_host}" != 127.0.0.1 ]]; then
+    CODE_UI_REMOTE_URL="https://${network_host}:${CODE_UI_PORT}/${query}"
+  fi
+}
+
 print_web_access_urls() {
   local insight_web_ui_port="$1"
   local network_host="${NFS_SERVER_HOST_IP:-${CONTAINER_HOST_IP:-}}"
-  local vscode_port="${OPENVSCODE_SERVER_HTTPS_PORT:-}"
-  local vscode_token="${OPENVSCODE_SERVER_TOKEN:-}"
-  local vscode_workspace="${OPENVSCODE_WORKSPACE:-/workspace}"
-  local vscode_query=""
-
-  if [[ -z "${insight_web_ui_port}" && -z "${vscode_port}" ]]; then
+  resolve_code_ui_access
+  if [[ -z "${insight_web_ui_port}" && -z "${CODE_UI_PORT}" ]]; then
     return 0
   fi
 
@@ -905,28 +952,23 @@ print_web_access_urls() {
     fi
   fi
 
-  if [[ -n "${vscode_port}" ]]; then
-    if [[ -n "${vscode_token}" ]]; then
-      vscode_query="?tkn=${vscode_token}"
-    elif [[ "${OPENVSCODE_SERVER_WITHOUT_TOKEN:-0}" != "1" ]]; then
-      printf '  %s%-18s%s %sOPENVSCODE_SERVER_TOKEN is not available in this shell%s\n' \
-        "${BOLD}" "VS Code" "${RESET}" "${YELLOW}" "${RESET}"
-      return 0
+  if [[ -n "${CODE_UI_LOCAL_URL}" ]]; then
+    print_colored_kv "VS Code (local)" "${CODE_UI_LOCAL_URL}" "${GREEN}"
+    if [[ -n "${CODE_UI_REMOTE_URL}" ]]; then
+      print_colored_kv "VS Code (remote)" "${CODE_UI_REMOTE_URL}" "${GREEN}"
     fi
-    if [[ -n "${vscode_workspace}" ]]; then
-      if [[ -n "${vscode_query}" ]]; then
-        vscode_query="${vscode_query}&folder=${vscode_workspace}"
+    if [[ "${CODE_UI_AUTH}" == password ]]; then
+      if [[ -n "${CODE_UI_PASSWORD}" ]]; then
+        print_colored_kv "VS Code password" "${CODE_UI_PASSWORD}" "${GREEN}"
+        printf '  Enter this password when prompted by code-server.\n'
       else
-        vscode_query="?folder=${vscode_workspace}"
+        printf '  CODE_SERVER_PASSWORD is not available in this shell.\n'
       fi
-    fi
-    print_colored_kv "VS Code (local)" "https://127.0.0.1:${vscode_port}/${vscode_query}" "${GREEN}"
-    if [[ -n "${network_host}" && "${network_host}" != "127.0.0.1" ]]; then
-      print_colored_kv "VS Code (remote)" "https://${network_host}:${vscode_port}/${vscode_query}" "${GREEN}"
-    fi
-    if [[ -n "${vscode_token}" ]]; then
+    elif [[ "${CODE_UI_AUTH}" == token ]]; then
       printf '  %sVS Code URLs contain an access token; do not share them.%s\n' "${DIM}" "${RESET}"
     fi
+  elif [[ -n "${CODE_UI_PORT}" ]]; then
+    printf '  OPENVSCODE_SERVER_TOKEN is not available in this shell\n'
   fi
 }
 
@@ -1028,7 +1070,13 @@ print_status_json() {
     fi
   fi
 
+  resolve_code_ui_access
   env \
+    NEAT_JSON_CODE_UI_BACKEND="${CODE_UI_BACKEND}" \
+    NEAT_JSON_CODE_UI_AUTH="${CODE_UI_AUTH}" \
+    NEAT_JSON_CODE_UI_PASSWORD="${CODE_UI_PASSWORD}" \
+    NEAT_JSON_CODE_UI_LOCAL_URL="${CODE_UI_LOCAL_URL}" \
+    NEAT_JSON_CODE_UI_REMOTE_URL="${CODE_UI_REMOTE_URL}" \
     NEAT_JSON_ENV_MODE="${ENV_MODE}" \
     NEAT_JSON_ENV_LABEL="${ENV_LABEL}" \
     NEAT_JSON_SYSROOT="${SYSROOT_PATH}" \
@@ -1252,6 +1300,13 @@ payload = {
         "venv": optional(env("NEAT_JSON_INSIGHT_VENV_DIR")),
         "webUiUrl": insight_web_ui_url,
     },
+    "codeUI": {
+        "backend": env("NEAT_JSON_CODE_UI_BACKEND"),
+        "auth": env("NEAT_JSON_CODE_UI_AUTH"),
+        "password": optional(env("NEAT_JSON_CODE_UI_PASSWORD")),
+        "localUrl": optional(env("NEAT_JSON_CODE_UI_LOCAL_URL")),
+        "remoteUrl": optional(env("NEAT_JSON_CODE_UI_REMOTE_URL")),
+    } if env("NEAT_JSON_CODE_UI_LOCAL_URL") else None,
     "exposedPorts": ports,
 }
 update_failures = [

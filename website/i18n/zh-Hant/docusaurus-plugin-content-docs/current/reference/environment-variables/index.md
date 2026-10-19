@@ -16,6 +16,10 @@ slug: /reference/environment-variables
 
 ## SDK 網路存取
 
+在 code-server SDK 映像中，`sima-cli sdk setup` 會在容器環境中設定 `CODE_SERVER_PASSWORD`。再次執行 `neat` 即可查看密碼，並在 code-server 提示時輸入。URL 不包含密碼或權杖。`neat --json` 會新增包含 `backend`、`auth`、`password`、`localUrl` 和 `remoteUrl` 的 `codeUI`；請將此輸出視為含有認證資訊的資料。SDK 連接埠對應中的公開連接埠 `codeUIHttps.host` 優先於容器連接埠。
+
+此行為依已安裝的 code-server 執行檔選擇；僅設定 `CODE_SERVER_PASSWORD` 不會改變舊版 OpenVSCode 的行為。`CODE_SERVER_HTTPS_PORT` 和 `CODE_SERVER_WORKSPACE` 優先於對應的舊版變數。設定 `CODE_SERVER_WITHOUT_PASSWORD=1` 時會回報 `auth: "none"` 並省略密碼值。舊版 OpenVSCode 映像仍使用權杖 URL。
+
 - `NFS_SERVER_HOST_IP=<address>` — 用於建構遠端連線的 SDK 主機位址。
   Insight 和瀏覽器中的 VS Code URL。這通常由 `sima-cli sdk setup` 提供。
 - `CONTAINER_HOST_IP=<address>` — 舊版備援方案，用於取得遠端主機的位址。
