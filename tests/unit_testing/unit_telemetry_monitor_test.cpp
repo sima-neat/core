@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -265,15 +266,24 @@ void telemetry_saves_and_prints_the_same_yaml() {
 
 // --- Monitor ------------------------------------------------------------------------------
 
-/// Sentinel's timestamp `ms` after 08:00 UTC on the test day, such as
-/// `2026-10-19T08:00:00.050000Z`.
-std::string timestamp_at(std::int64_t ms) {
-  const std::int64_t of_day = 8 * 3600 * 1000 + ms;
-  char text[40];
-  std::snprintf(text, sizeof(text), "2026-10-19T%02d:%02d:%02d.%06dZ",
-                static_cast<int>(of_day / 3600000), static_cast<int>(of_day / 60000 % 60),
-                static_cast<int>(of_day / 1000 % 60), static_cast<int>(of_day % 1000 * 1000));
+/// Sentinel's timestamp for a wall-clock time, such as `2026-10-19T12:00:00.000000Z`.
+std::string timestamp_of(std::chrono::system_clock::time_point time) {
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch());
+  const std::time_t seconds = ms.count() / 1000;
+  std::tm utc{};
+  ::gmtime_r(&seconds, &utc);
+  char text[64];
+  std::snprintf(text, sizeof(text), "%04d-%02d-%02dT%02d:%02d:%02d.%06dZ", utc.tm_year + 1900,
+                utc.tm_mon + 1, utc.tm_mday, utc.tm_hour, utc.tm_min, utc.tm_sec,
+                static_cast<int>(ms.count() % 1000 * 1000));
   return text;
+}
+
+/// Sentinel's timestamp `ms` after the fake's origin, ten minutes before the test started, so
+/// the fake's samples predate every `stop()` in the test.
+std::string timestamp_at(std::int64_t ms) {
+  static const auto origin = std::chrono::system_clock::now() - 10min;
+  return timestamp_of(origin + std::chrono::milliseconds(ms));
 }
 
 /// Sentinel on a Unix socket. The test takes its samples; each is `kIntervalMs` after the
@@ -325,6 +335,12 @@ public:
   void take_sample(double power, std::string timestamp = {}) {
     std::lock_guard<std::mutex> lock(mu_);
     append(power, std::move(timestamp));
+  }
+
+  /// Take no sample for this many intervals, like Sentinel stalling.
+  void skip_intervals(int intervals) {
+    std::lock_guard<std::mutex> lock(mu_);
+    next_ms_ += intervals * kIntervalMs;
   }
 
   /// Take these samples at once, faster than the monitor asks for them.
@@ -393,11 +409,12 @@ private:
   std::thread thread_;
 };
 
-/// A running fake Sentinel that already holds two samples, so the monitor learns its interval.
+/// A running fake Sentinel whose cache already holds enough samples to show its interval.
 struct RunningSentinel : FakeSentinel {
   explicit RunningSentinel(std::size_t cache_size = 240) : FakeSentinel(cache_size) {
-    take_sample(100.0);
-    take_sample(100.0);
+    for (int i = 0; i < 4; ++i) {
+      take_sample(100.0);
+    }
     start();
   }
 };
@@ -540,6 +557,35 @@ void monitor_counts_a_sample_after_the_clock_moves_back() {
   require(monitor.stop().power_som_watts.last == 2.0, "an earlier timestamp is a new sample");
 }
 
+void a_stall_before_start_does_not_change_the_interval() {
+  RunningSentinel sentinel;
+  sentinel.skip_intervals(7); // The newest cached sample came eight intervals late.
+  sentinel.take_sample(100.0);
+  TelemetryMonitor monitor = sentinel.monitor();
+  monitor.start();
+  take_samples_over_time(sentinel, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+  wait_for_samples(monitor, 6);
+  const Telemetry t = monitor.stop();
+  require(t.sample_interval_ms == kIntervalMs,
+          "the interval is the typical gap in the cache, not the stalled one; got " +
+              std::to_string(t.sample_interval_ms));
+  require(t.samples == 6 && t.power_som_watts.mean == 3.5, "every sample after the stall counts");
+}
+
+void stop_ignores_samples_taken_after_it() {
+  FakeSentinel sentinel;
+  sentinel.take_sample(100.0);
+  sentinel.start();
+  TelemetryMonitor monitor = sentinel.monitor();
+  monitor.start(); // With one cached sample, the worker first asks after Sentinel's 2 s default.
+  sentinel.take_sample(1.0);
+  // Stamped after stop(), like a sample Sentinel publishes while stop() asks for its newest one.
+  sentinel.take_sample(9.0, timestamp_of(std::chrono::system_clock::now() + 1h));
+  const Telemetry t = monitor.stop();
+  require(t.samples == 1 && t.power_som_watts.maximum == 1.0,
+          "stop() counts only the samples Sentinel took before it");
+}
+
 void monitor_restart_begins_a_new_window() {
   RunningSentinel sentinel;
   TelemetryMonitor monitor = sentinel.monitor();
@@ -649,7 +695,7 @@ void old_sentinel_gets_an_upgrade_hint() {
           "a missing endpoint asks for an upgrade; got " + t.status);
 }
 
-void interval_falls_back_until_sentinel_has_two_samples() {
+void interval_falls_back_until_the_cache_shows_it() {
   FakeSentinel sentinel;
   sentinel.take_sample(100.0);
   sentinel.start();
@@ -657,10 +703,11 @@ void interval_falls_back_until_sentinel_has_two_samples() {
   monitor.start();
   require(monitor.read().sample_interval_ms == 2000,
           "with one cached sample the interval is Sentinel's 2 s default");
-  take_samples_over_time(sentinel, {1.0, 2.0});
-  wait_for_samples(monitor, 2);
+  take_samples_over_time(sentinel, {1.0, 2.0, 3.0});
+  wait_for_samples(monitor, 3);
   const Telemetry t = monitor.stop();
-  require(t.sample_interval_ms == kIntervalMs, "the interval comes from counted samples");
+  require(t.sample_interval_ms == kIntervalMs,
+          "the interval comes from the cache once it holds three gaps");
 }
 
 } // namespace
@@ -687,6 +734,8 @@ RUN_TEST("unit_telemetry_monitor_test", ([] {
                     monitor_counts_only_the_newest_after_a_gap_longer_than_the_cache);
            run_case("stall_warns_once", a_sentinel_that_stops_sampling_warns_once);
            run_case("clock_moves_back", monitor_counts_a_sample_after_the_clock_moves_back);
+           run_case("stall_before_start", a_stall_before_start_does_not_change_the_interval);
+           run_case("stop_boundary", stop_ignores_samples_taken_after_it);
            run_case("restart", monitor_restart_begins_a_new_window);
            run_case("lifecycle", monitor_lifecycle);
            run_case("destructor_stops", destroying_a_running_monitor_stops_it);
@@ -694,7 +743,7 @@ RUN_TEST("unit_telemetry_monitor_test", ([] {
            run_case("missing_sentinel", missing_sentinel_warns_once_and_never_throws);
            run_case("sentinel_starts_later", sentinel_that_starts_later_is_counted);
            run_case("old_sentinel", old_sentinel_gets_an_upgrade_hint);
-           run_case("interval_fallback", interval_falls_back_until_sentinel_has_two_samples);
+           run_case("interval_fallback", interval_falls_back_until_the_cache_shows_it);
 
            std::string message =
                std::to_string(failures.size()) + " telemetry monitor check(s) failed:";

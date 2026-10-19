@@ -129,8 +129,8 @@ public:
   void start();
   /// The summary so far, without stopping or contacting Sentinel. After `stop()`, its result.
   Telemetry read() const;
-  /// Stop the window, count Sentinel's newest sample, and return the final summary.
-  /// When already stopped, returns the previous result.
+  /// Stop the window and return the final summary, including Sentinel's newest sample taken
+  /// before this call. When already stopped, returns the previous result.
   Telemetry stop();
   /// True between `start()` and `stop()`.
   bool running() const;

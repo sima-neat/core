@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -34,6 +35,7 @@ constexpr int kDieSensorCount = 7; // rtsn_0..6; rtsn_7..13 are trip channels fo
 constexpr milliseconds kDefaultInterval{2000}; // Sentinel's interval in its systemd unit.
 constexpr milliseconds kLongestInterval{60000};
 constexpr std::chrono::seconds kRequestTimeout{1};
+constexpr std::size_t kIntervalGaps = 3; // Cached gaps needed before the interval is known.
 
 constexpr const char* kNotStarted = "not started";
 constexpr const char* kWaiting = "waiting for the first Sentinel sample";
@@ -162,6 +164,31 @@ std::optional<milliseconds> interval_between(const std::string& earlier, const s
   return milliseconds(*to - *from);
 }
 
+/// Sentinel's sample interval: the median gap between consecutive cached samples, so a stall or
+/// clock jump between two of them does not change it. Unknown until the cache shows enough gaps.
+std::optional<milliseconds> cached_interval(const json& samples) {
+  std::vector<milliseconds> gaps;
+  for (std::size_t i = 1; i < samples.size(); ++i) {
+    if (const auto gap =
+            interval_between(text(samples[i - 1], "timestamp"), text(samples[i], "timestamp"))) {
+      gaps.push_back(*gap);
+    }
+  }
+  if (gaps.size() < kIntervalGaps) {
+    return std::nullopt;
+  }
+  const auto middle = gaps.begin() + static_cast<std::ptrdiff_t>(gaps.size() / 2);
+  std::nth_element(gaps.begin(), middle, gaps.end());
+  return *middle;
+}
+
+/// Milliseconds since the epoch, on the clock Sentinel stamps its samples with.
+std::int64_t wall_clock_ms() {
+  return std::chrono::duration_cast<milliseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
 } // namespace
 
 Telemetry internal::telemetry_layout(const json& metrics) {
@@ -229,7 +256,8 @@ std::ostream& operator<<(std::ostream& out, const Telemetry& telemetry) {
  * due, then every tenth of an interval until it arrives. A new sample is counted directly when
  * its timestamp is one interval after the last counted one. Otherwise a sample may have been
  * missed, or the clock jumped, so the worker counts every sample after the last counted one, by
- * position, from Sentinel's cache of its latest 240 samples.
+ * position, from Sentinel's cache of its latest 240 samples. The interval is the median gap in
+ * that cache. `stop()` counts no sample stamped after it was called.
  */
 class TelemetryMonitor::Impl {
 public:
@@ -253,6 +281,7 @@ public:
       summary_.status = kWaiting;
       start_time_ = Clock::now();
       end_time_ = {};
+      stop_ms_.reset();
       stop_requested_ = false;
     }
     connected_ = false;
@@ -281,6 +310,7 @@ public:
       {
         std::lock_guard<std::mutex> lock(mu_);
         end_time_ = Clock::now();
+        stop_ms_ = wall_clock_ms();
         stop_requested_ = true;
       }
       wake_.notify_all();
@@ -361,13 +391,7 @@ private:
     if (!samples.empty()) {
       last_timestamp_ = text(samples.back(), "timestamp");
     }
-    if (samples.size() >= 2) {
-      if (const auto interval =
-              interval_between(text(samples[samples.size() - 2], "timestamp"), last_timestamp_)) {
-        interval_ = *interval;
-        interval_known_ = true;
-      }
-    }
+    learn_interval(samples);
     last_seen_ = Clock::now();
     connected_ = true;
     std::lock_guard<std::mutex> lock(mu_);
@@ -394,6 +418,7 @@ private:
       summary_.sentinel_version = text(cache, "version");
     }
     const json& samples = cache.at("samples");
+    learn_interval(samples);
     auto first_new = samples.begin();
     if (!last_timestamp_.empty()) {
       const auto last = std::find_if(samples.rbegin(), samples.rend(), [&](const json& sample) {
@@ -402,7 +427,6 @@ private:
       if (last == samples.rend()) {
         warn("Sentinel's cache no longer holds the last counted sample, so the samples since "
              "then are missing");
-        last_timestamp_.clear(); // Not consecutive: `latest` must not set the interval.
         count(latest);
         return;
       }
@@ -411,16 +435,22 @@ private:
     std::for_each(first_new, samples.end(), [this](const json& sample) { count(sample); });
   }
 
+  /// Take Sentinel's interval from its cache once the cache shows it.
+  void learn_interval(const json& samples) {
+    if (const auto interval = cached_interval(samples)) {
+      interval_ = *interval;
+      interval_known_ = true;
+    }
+  }
+
   void count(const json& sample) {
     const std::string timestamp = text(sample, "timestamp");
-    if (!interval_known_ && !last_timestamp_.empty()) {
-      if (const auto interval = interval_between(last_timestamp_, timestamp)) {
-        interval_ = *interval;
-        interval_known_ = true;
-      }
+    std::lock_guard<std::mutex> lock(mu_);
+    const auto taken_ms = timestamp_ms(timestamp);
+    if (stop_ms_ && taken_ms && *taken_ms > *stop_ms_) {
+      return; // Sentinel took it after stop().
     }
     last_timestamp_ = timestamp;
-    std::lock_guard<std::mutex> lock(mu_);
     internal::count_sample(summary_, sample);
     summary_.status = "ok";
     summary_.sample_interval_ms = static_cast<int>(interval_.count());
@@ -455,6 +485,7 @@ private:
   Telemetry summary_;
   Clock::time_point start_time_{};
   Clock::time_point end_time_{};
+  std::optional<std::int64_t> stop_ms_; // Wall-clock time of stop(), as Sentinel stamps it.
 
   // Owned by whichever of start(), the worker, and stop() runs; they never overlap.
   bool connected_ = false;
