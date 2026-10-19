@@ -50,7 +50,9 @@ struct GraphRunOptions {
   int pull_timeout_ms = 50; ///< Poll timeout (ms) for internal pop/pull loops.
   VerboseOptions verbose;   ///< Verbosity for graph build/runtime progress logs.
   RunOptions pipeline; ///< Underlying pipeline-runtime options forwarded to GStreamer-side runs.
-  PowerMonitorOptions power_monitor; ///< Optional graph-level board power monitor.
+  /// Optional graph-level board power monitor.
+  /// @deprecated Use `TelemetryMonitor` around the measured work.
+  PowerMonitorOptions power_monitor;
 
   /**
    * @brief Enable one graph-level board power monitor, read from Sentinel.
@@ -58,25 +60,31 @@ struct GraphRunOptions {
    * Use this for graph-level power: one graph can contain several pipeline segments,
    * and per-segment monitors would count the board rails more than once.
    * `sample_interval_ms` is deprecated and ignored.
+   * @deprecated Use `TelemetryMonitor` around the measured work; it also records
+   * temperatures, CPU usage, and memory.
    */
+  [[deprecated("Use TelemetryMonitor")]]
   GraphRunOptions& enable_board_power(int sample_interval_ms = 100) {
     power_monitor = board_power_monitor_options(sample_interval_ms);
     return *this;
   }
 
   /// Same as `enable_board_power()`.
-  [[deprecated("Use enable_board_power()")]]
+  [[deprecated("Use TelemetryMonitor")]]
   GraphRunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
-    return enable_board_power(sample_interval_ms);
+    power_monitor = board_power_monitor_options(sample_interval_ms);
+    return *this;
   }
 
   /// Same as `enable_board_power()`.
-  [[deprecated("Use enable_board_power()")]]
+  [[deprecated("Use TelemetryMonitor")]]
   GraphRunOptions& enable_modalix_dvt_power(int sample_interval_ms = 100) {
-    return enable_board_power(sample_interval_ms);
+    power_monitor = board_power_monitor_options(sample_interval_ms);
+    return *this;
   }
 
   /// Disable graph-level power monitoring after it was enabled/configured.
+  /// @deprecated Use `TelemetryMonitor`.
   GraphRunOptions& disable_power_monitor() {
     power_monitor = PowerMonitorOptions{};
     return *this;

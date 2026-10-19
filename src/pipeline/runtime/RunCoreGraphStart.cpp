@@ -1457,8 +1457,11 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
     }
 
     if (core->graph_options.power_monitor.enabled) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
       core->power_monitor =
           std::make_unique<simaai::neat::PowerMonitor>(core->graph_options.power_monitor);
+#pragma GCC diagnostic pop
       core->power_monitor->start();
     }
 

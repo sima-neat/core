@@ -50,7 +50,7 @@ Pythonは、`pyneat.BenchmarkOptions`を通じて、同じフィールドを公�
 
 返されるレポートは、ほとんどのユーザーが必要とする主要なフィールドから始まります。これには、ミリ秒単位の平均エンドツーエンドのレイテンシ、1秒あたりのフレーム数で表されるスループット、ワット単位のSoMの平均電力とピーク電力、および`samples`個の入力の処理に必要なジュール単位のエネルギーが含まれます。`throughput_duration_ms`は、スループット測定パスの実行時間を示します。
 
-電力は、NeatのインストーラーがセットアップするボードのテレメトリデーモンであるSentinelから取得されます。`report.telemetry`には、スループット測定パスのレール電力、ダイとボードの温度、CPU使用率、MLAメモリも含まれます。各フィールドについては、[モデルの実行を測定する](/develop-apps/development-workflow/model#power-and-board-telemetry)を参照してください。Sentinelが実行されていない場合や別のトレースを記録中の場合でも、ベンチマークはレイテンシとスループットを報告し、電力フィールドをゼロのままにして、`report.telemetry.status`にその理由を設定します。
+電力は、NeatのインストーラーがセットアップするボードのテレメトリデーモンであるSentinelから取得されます。`report.telemetry`には、スループット測定パスのレール電力、ダイとボードの温度、CPU使用率、MLAメモリも含まれます。各フィールドについては、[モデルの実行を測定する](/develop-apps/development-workflow/model#power-and-board-telemetry)を参照してください。Sentinelが実行されていない場合でも、ベンチマークはレイテンシとスループットを報告し、電力フィールドをゼロのままにして、`report.telemetry.status`にその理由を設定します。
 
 ### 上級: レイヤー統計 {#step-read-layer-stats}
 
@@ -133,7 +133,7 @@ CPU usage:     12.38 % avg, 13.22 % max
 MLA memory:    29.65 MiB
 CMA used:      6035.02 MiB avg, 6044.38 MiB max
 Linux memory:  682.88 MiB avg, 697.41 MiB max
-Telemetry:     Sentinel, 15 samples, trace 20261014T144839.984Z-neat-benchmark-20261014t144839-905z
+Telemetry:     Sentinel main:766066b74f49, 15 samples
 report_latency_ms=1.96852
 report_fps=1457.04
 report_avg_power_watts=13.1875

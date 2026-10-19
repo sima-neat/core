@@ -307,7 +307,10 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   std::string error;
   std::optional<PullError> terminal_error_detail;
   std::string diag_sysinfo;
-  std::unique_ptr<PowerMonitor> power_monitor;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  std::unique_ptr<PowerMonitor> power_monitor; // Deprecated RunOptions::power_monitor.
+#pragma GCC diagnostic pop
   std::shared_ptr<void> graph_verbose_guard;
   std::atomic<bool> graph_output_rate_reported{false};
   std::atomic<bool> graph_sched_reported{false};

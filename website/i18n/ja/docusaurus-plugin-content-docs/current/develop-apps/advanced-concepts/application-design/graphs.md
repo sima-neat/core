@@ -677,14 +677,7 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 
 エクスポート機能は、現在の実行状況のスナップショットを記録します。実行を停止することはありません。有限のワークロードの最終的な数値が必要な場合は、保存する前に、`run.close_input()` を呼び出して出力を処理するか、`run.stop()` を呼び出してください。
 
-ボードの電力に関するテレメトリデータを含めるには：
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power();
-
-neat::Run run = app.build(opt);
-```
+非推奨の `RunOptions::enable_board_power()` は、エクスポートにボードの電力を追加します。新しいコードでは、[`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) でボードの電力、温度、CPU 使用率、メモリを記録し、その `Telemetry` をエクスポートと並べて保存してください。
 
 JSONスキーマは、バージョン`1`の`sima.neat.graph_run`です。スキーマは`schemas/graph_run_v1.schema.json`に、CIバリデーターは`tests/perf/tools/graph_run_schema.py`にあります。
 

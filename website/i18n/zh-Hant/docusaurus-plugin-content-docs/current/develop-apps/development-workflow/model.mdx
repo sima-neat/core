@@ -796,7 +796,7 @@ report = model.benchmark(options)
 
 ### 功耗與板子遙測 {#power-and-board-telemetry}
 
-功耗與板子遙測資料來自 [Sentinel](/tools/sentinel/)，也就是 Neat 安裝程式在板子上設定的 DevKit 遙測常駐程式。基準測試會在吞吐量階段前後記錄一個名為 `neat-benchmark-<UTC time>` 的 Sentinel 追蹤並予以保留，讓您之後可以使用 Sentinel 本身的工具開啟它。`report.telemetry` 會彙整此追蹤：
+功耗與板子遙測資料來自 [Sentinel](/tools/sentinel/)，也就是 Neat 安裝程式在板子上設定的 DevKit 遙測常駐程式。基準測試會在吞吐量階段前後使用 [`TelemetryMonitor`](#record-board-telemetry) 記錄這些資料，並由 `report.telemetry` 加以彙整：
 
 | 欄位 | 意義 |
 | --- | --- |
@@ -811,9 +811,9 @@ report = model.benchmark(options)
 | `telemetry.cma_memory_mib` | 已使用的連續記憶體（CMA，MiB）。它包含 MLA 記憶體池，因此請勿將其與 `mla_memory_mib` 相加。閒置時，它也包含 Linux 從 CMA 借用的頁面快取。 |
 | `telemetry.linux_memory_used_mib` | Linux 已使用的記憶體（不含頁面快取，MiB）。 |
 
-每項指標都會回報 `samples`、`mean`、`minimum` 與 `maximum`，而 `samples == 0` 表示板子未回報該項指標。記憶體數值涵蓋整個板子，包括其他正在執行的程序。Sentinel 每 2 秒取樣一次，因此 10 秒的階段約可取得 5 個樣本。
+每項指標都會回報 `samples`、`mean`、`minimum`、`maximum` 與 `last`，而 `samples == 0` 表示板子未回報該項指標。Sentinel 每 2 秒取樣一次，因此 10 秒的階段約可取得 5 個樣本。所有數值都涵蓋整個板子，包括其他正在執行的程序。
 
-當 Sentinel 未執行、已有另一個 Sentinel 追蹤正在記錄，或階段太短而無法收集到樣本時，基準測試仍會傳回延遲與 FPS。功耗欄位會保持為零，`telemetry.status` 會指出原因（否則為 `"ok"`），而列印的摘要會顯示 `Power: unavailable (<reason>)`。
+當 Sentinel 未執行或階段太短而無法收集到樣本時，基準測試仍會傳回延遲與 FPS。功耗欄位會保持為零，`telemetry.status` 會指出原因（否則為 `"ok"`），而列印的摘要會顯示 `Power: unavailable (<reason>)`。
 
 ### 測量您自己的迴圈
 
@@ -852,6 +852,54 @@ runner.close()
 </CodeTabs>
 
 不要將一次性的煙霧測試與經過預熱的可重複使用的執行器進行比較。這兩者回答的是不同的問題。
+
+### 記錄板子遙測 {#record-board-telemetry}
+
+使用 `TelemetryMonitor` 在您選擇的任何視窗（例如您自己的推論迴圈）記錄功耗、溫度、CPU 使用率與記憶體。它會從 [Sentinel](/tools/sentinel/) 讀取這些資料，並傳回與 `report.telemetry` 相同的 `Telemetry` 摘要：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::TelemetryMonitor monitor;
+monitor.start();
+
+for (const auto& input : inputs) {
+  (void)runner.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+}
+
+simaai::neat::Telemetry telemetry = monitor.stop();
+std::cout << telemetry;            // YAML
+telemetry.save("telemetry.json");  // .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+monitor = pyneat.TelemetryMonitor()
+monitor.start()
+
+for tensor in tensors:
+    runner.run([tensor], timeout_ms=2000)
+
+telemetry = monitor.stop()
+print(telemetry)                 # YAML
+print(telemetry.power_som_watts.mean)
+telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+</CodeTabs>
+
+- `start()` 會開始一個新的視窗。只有 Sentinel 在此之後取得的樣本才會計入，而 Sentinel 每 2 秒取樣一次，因此短於此長度的視窗可能沒有任何樣本；此時 `status` 會指出這一點。
+- `read()` 會傳回目前為止的摘要，而不會停止監控。每項測量的 `last` 是其最新的數值，而 `mean`、`minimum` 與 `maximum` 涵蓋目前為止的視窗。
+- `stop()` 會傳回最終摘要。再次呼叫會傳回相同的結果。
+- 摘要中每項測量只保留一個項目，因此無論視窗持續多久，記憶體用量都維持不變。
+- 多個監控器（無論位於同一個程序或多個程序中）可以彼此同時執行，也可以與 `Model::benchmark()` 同時執行。
+- 所有數值都涵蓋整個板子，包括 Sentinel、監控器本身與其他程序。每個功耗數值來自每個樣本的一次 250 毫秒讀數，因此讀數之間的短暫尖峰不會顯示出來。
+- 當 Sentinel 未執行時，監控器會列印一則警告，`status` 會說明如何安裝或啟動 Sentinel，而監控器會在 Sentinel 回應後開始計入樣本。它絕不會因 Sentinel 的問題而拋出例外。
+- 在 Python 中，`start()`、`read()` 與 `stop()` 在等待期間會釋放 GIL。
 
 ## 解碼輸出
 

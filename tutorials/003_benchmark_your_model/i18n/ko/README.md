@@ -50,7 +50,7 @@ Python은 `pyneat.BenchmarkOptions`를 통해 동일한 필드를 노출합니�
 
 반환되는 보고서는 대부분의 사용자가 필요로 하는 주요 필드로 시작합니다. 즉, 평균 엔드투엔드 지연 시간(밀리초), 초당 프레임 단위의 처리량, 평균 및 최대 SoM 전력(와트), `samples`개의 입력을 처리하는 데 필요한 에너지(줄)입니다. `throughput_duration_ms`는 처리량 패스가 실행된 시간을 보고합니다.
 
-전력 값은 Neat 설치 프로그램이 설정하는 보드 텔레메트리 데몬인 Sentinel에서 제공됩니다. `report.telemetry`에는 처리량 패스 동안의 레일 전력, 다이 및 보드 온도, CPU 사용률, MLA 메모리도 포함됩니다. 각 필드에 대해서는 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오. Sentinel이 실행 중이 아니거나 다른 트레이스를 기록 중인 경우에도 벤치마크는 지연 시간과 처리량을 보고하고, 전력 필드를 0으로 두며, `report.telemetry.status`에 그 이유를 설정합니다.
+전력 값은 Neat 설치 프로그램이 설정하는 보드 텔레메트리 데몬인 Sentinel에서 제공됩니다. `report.telemetry`에는 처리량 패스 동안의 레일 전력, 다이 및 보드 온도, CPU 사용률, MLA 메모리도 포함됩니다. 각 필드에 대해서는 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오. Sentinel이 실행 중이 아닌 경우에도 벤치마크는 지연 시간과 처리량을 보고하고, 전력 필드를 0으로 두며, `report.telemetry.status`에 그 이유를 설정합니다.
 
 ### 고급: 레이어 통계 {#step-read-layer-stats}
 
@@ -133,7 +133,7 @@ CPU usage:     12.38 % avg, 13.22 % max
 MLA memory:    29.65 MiB
 CMA used:      6035.02 MiB avg, 6044.38 MiB max
 Linux memory:  682.88 MiB avg, 697.41 MiB max
-Telemetry:     Sentinel, 15 samples, trace 20261014T144839.984Z-neat-benchmark-20261014t144839-905z
+Telemetry:     Sentinel main:766066b74f49, 15 samples
 report_latency_ms=1.96852
 report_fps=1457.04
 report_avg_power_watts=13.1875

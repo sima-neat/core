@@ -126,7 +126,7 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
                                                          const MeasureReport& throughput_report,
                                                          int num_samples, int latency_samples,
                                                          int throughput_samples,
-                                                         BenchmarkTelemetry telemetry);
+                                                         Telemetry telemetry);
 
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,

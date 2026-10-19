@@ -298,7 +298,10 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
     st->diag_sysinfo = collect_system_info();
   }
   if (opt.power_monitor.enabled) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     st->power_monitor = std::make_unique<PowerMonitor>(opt.power_monitor);
+#pragma GCC diagnostic pop
     st->power_monitor->start();
   }
 

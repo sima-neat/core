@@ -422,7 +422,7 @@ set(UNIT_TESTS
   unit_tensorbuffer_strided_parent_view_materialize_test
   unit_asset_utils_readable_model_tar_test
   unit_benchmark_measurement_contract_test
-  unit_benchmark_telemetry_test
+  unit_telemetry_monitor_test
   unit_benchmark_report_test
   unit_benchmark_layer_stats_test
   unit_measurement_consistency_test
@@ -554,6 +554,10 @@ endforeach()
 
 if (TARGET unit_benchmark_report_test AND TARGET PkgConfig::YAML)
   target_link_libraries(unit_benchmark_report_test PRIVATE PkgConfig::YAML)
+endif()
+
+if (TARGET unit_telemetry_monitor_test AND TARGET PkgConfig::YAML)
+  target_link_libraries(unit_telemetry_monitor_test PRIVATE PkgConfig::YAML)
 endif()
 
 # Optional frozen-corpus gate. The normal unit target uses synthetic JSON/ELF

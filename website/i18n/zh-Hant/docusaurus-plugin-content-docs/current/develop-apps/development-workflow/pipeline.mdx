@@ -1048,40 +1048,42 @@ run.close()
 - C++ 的 `run_to_json(...)` 和 `save_run_json(...)` 會在執行完成後匯出執行結果。
 - Python 的 `run.json(...)` 和 `run.save_json(...)` 會匯出相同類型的證據。
 
-在用於建置執行的 `RunOptions` 中啟用電力遙測功能：
+使用 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) 在同一個視窗內記錄板子電力、溫度、CPU 使用率與記憶體：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RunOptions options;
-options.enable_board_power();
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
+auto scope = run.start_measurement();
 
-auto run = graph.build(options);
+// Push and pull here.
 
-simaai::neat::MeasureOptions measure_options;
-measure_options.include_power = true;
-auto scope = run.start_measurement(measure_options);
+simaai::neat::MeasureReport report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.RunOptions()
-options.enable_board_power()
+telemetry_monitor = pyneat.TelemetryMonitor()
+telemetry_monitor.start()
+scope = run.start_measurement()
 
-run = graph.build(options)
+# Push and pull here.
 
-measure_options = pyneat.MeasureOptions()
-measure_options.include_power = True
-scope = run.start_measurement(measure_options)
+report = scope.stop()
+telemetry = telemetry_monitor.stop()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-電力資料來自 Sentinel，它每 2 秒取樣一次板載電壓軌，因此短於約 2 秒的測量視窗可能沒有電力樣本。使用數字記錄測量設置；當電壓軌未啟用時，請勿使電力資料看起來像是可攜帶的。
+遙測資料來自 Sentinel，它每 2 秒對板子取樣一次，因此短於約 2 秒的測量視窗可能沒有樣本。使用數字記錄測量設置；當電壓軌未啟用時，請勿使電力資料看起來像是可攜帶的。
+
+`RunOptions::enable_board_power()`、`RunOptions::power_monitor` 和 `MeasureOptions::include_power` 已棄用，請改用 `TelemetryMonitor`。它們仍可繼續運作。
 
 編譯時的匯出功能回答了「Neat 建置了什麼？」；執行完成後的匯出功能回答了「在執行過程中發生了什麼？」。
 

@@ -134,7 +134,7 @@ struct RunAutoExportOptions {
   std::string path;  ///< Empty disables build-time export.
   std::string label; ///< Optional label; empty uses the exporter default.
   bool include_metrics = true;
-  bool include_power = true;
+  bool include_power = true;              ///< @deprecated Use `TelemetryMonitor`.
   bool include_node_metrics = true;       ///< Include node-level latency rows.
   bool include_plugin_metrics = true;     ///< Include plugin/kernel latency rows when available.
   bool include_empty_node_metrics = true; ///< Keep attributed node rows even before samples arrive.
@@ -191,47 +191,44 @@ struct RunOptions {
    * `pull()`.
    */
   bool startup_preflight = true;
-  RunAdvancedOptions advanced{};       ///< Advanced tuning (rarely needed).
-  PowerMonitorOptions power_monitor{}; ///< Optional board power telemetry from Sentinel.
-  RunAutoExportOptions run_export{};   ///< Optional build-time Run/graph JSON export.
+  RunAdvancedOptions advanced{}; ///< Advanced tuning (rarely needed).
+  /// Optional board power telemetry from Sentinel.
+  /// @deprecated Use `TelemetryMonitor` around the measured work.
+  PowerMonitorOptions power_monitor{};
+  RunAutoExportOptions run_export{}; ///< Optional build-time Run/graph JSON export.
   /// Backward-compatible spelling for the previous graph-run export field.
   RunAutoExportOptions graph_run_export{};
 
   /**
    * @brief Enable board power monitoring, read from Sentinel.
    *
-   * Captures power together with latency and throughput from any Run:
-   *
-   * @code
-   * RunOptions opt;
-   * opt.enable_board_power();
-   * auto run = graph.build(inputs, opt);
-   * auto scope = run.start_measurement();
-   * // push/pull workload
-   * auto report = scope.stop();
-   * @endcode
-   *
    * `sample_interval_ms` is deprecated and ignored.
+   * @deprecated Use `TelemetryMonitor` around the measured work; it also records
+   * temperatures, CPU usage, and memory.
    */
+  [[deprecated("Use TelemetryMonitor")]]
   RunOptions& enable_board_power(int sample_interval_ms = 100) {
     power_monitor = board_power_monitor_options(sample_interval_ms);
     return *this;
   }
 
   /// Same as `enable_board_power()`.
-  [[deprecated("Use enable_board_power()")]]
+  [[deprecated("Use TelemetryMonitor")]]
   RunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
-    return enable_board_power(sample_interval_ms);
+    power_monitor = board_power_monitor_options(sample_interval_ms);
+    return *this;
   }
 
   /// Same as `enable_board_power()`.
-  [[deprecated("Use enable_board_power()")]]
+  [[deprecated("Use TelemetryMonitor")]]
   RunOptions& enable_modalix_dvt_power(int sample_interval_ms = 100) {
-    return enable_board_power(sample_interval_ms);
+    power_monitor = board_power_monitor_options(sample_interval_ms);
+    return *this;
   }
 
   /**
    * @brief Disable power monitoring after it was enabled/configured.
+   * @deprecated Use `TelemetryMonitor`.
    */
   RunOptions& disable_power_monitor() {
     power_monitor = PowerMonitorOptions{};
@@ -305,7 +302,9 @@ struct MeasureOptions {
   bool retain_metrics_trace = false;
   /// Optional parent/output directory for retained or temporary metrics traces.
   std::string metrics_trace_dir;
-  bool include_power = false; ///< Include power telemetry when enabled on the Run.
+  /// Include power telemetry when enabled on the Run.
+  /// @deprecated Use `TelemetryMonitor` around the measured window.
+  bool include_power = false;
 
   /// Optional report metadata.  Model-owned wrappers/examples can fill these in so the
   /// standardized report is informative without custom formatting code.
@@ -532,7 +531,7 @@ struct MeasureReport {
 
   std::uint64_t graph_sample_timing_unkeyed = 0;
   std::uint64_t graph_sample_timing_misses = 0;
-  PowerSummary power{};
+  PowerSummary power{}; ///< @deprecated Use `TelemetryMonitor` around the measured window.
 
   /// Render a compact customer-facing terminal report.
   std::string to_text() const;

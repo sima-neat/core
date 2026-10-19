@@ -556,7 +556,7 @@ void model_benchmark_projection_uses_same_window_reports() {
   throughput.throughput_inferences_per_s = 50.0;
   throughput.end_to_end.avg_ms = 99.0;
 
-  BenchmarkTelemetry telemetry;
+  Telemetry telemetry;
   telemetry.status = "ok";
   telemetry.samples = 3;
   telemetry.power_som_watts.samples = 3;
@@ -597,7 +597,7 @@ void model_benchmark_projection_without_power_keeps_kpis() {
 
   const MeasureReport latency = make_complete_measure_report(kSamples, /*logical_batch_size=*/1);
   const MeasureReport throughput = make_complete_measure_report(kSamples, /*logical_batch_size=*/1);
-  BenchmarkTelemetry telemetry;
+  Telemetry telemetry;
   telemetry.status = "Sentinel is not reachable";
 
   const BenchmarkReport report = internal::build_benchmark_report_from_measurements(

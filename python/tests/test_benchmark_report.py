@@ -47,11 +47,11 @@ def test_report_round_trip(tmp_path, filename):
 
   def metric(value):
     return {field: getattr(value, field)
-            for field in ("key", "label", "unit", "samples", "mean", "minimum", "maximum")}
+            for field in ("key", "label", "unit", "samples", "mean", "minimum", "maximum", "last")}
 
   expected_telemetry = {field: getattr(report.telemetry, field)
-                        for field in ("status", "trace_id", "sentinel_version",
-                                      "sample_interval_ms", "samples")}
+                        for field in ("status", "sentinel_version", "sample_interval_ms",
+                                      "samples", "duration_ms")}
   for field in ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
                 "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib"):
     expected_telemetry[field] = metric(getattr(report.telemetry, field))

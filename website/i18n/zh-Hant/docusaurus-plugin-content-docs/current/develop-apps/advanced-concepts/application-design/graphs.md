@@ -678,14 +678,7 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 
 匯出者會擷取目前執行的狀態快照；它不會停止執行。如果您需要有限工作負載的最終數值，請在儲存之前呼叫 `run.close_input()` 並清空輸出，或呼叫 `run.stop()`。
 
-若要包含板卡功耗遙測資料：
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power();
-
-neat::Run run = app.build(opt);
-```
+已棄用的 `RunOptions::enable_board_power()` 會將板子功耗加入匯出內容。對於新程式碼，請使用 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) 記錄板子功耗、溫度、CPU 使用率與記憶體，並將其 `Telemetry` 與匯出內容一併儲存。
 
 JSON 結構的 `sima.neat.graph_run` 版本為 `1`。該結構位於 `schemas/graph_run_v1.schema.json`，而 CI 驗證器則位於 `tests/perf/tools/graph_run_schema.py`。
 
