@@ -71,8 +71,12 @@ def acquire(cli, component, branch, spec, environment, output, *, package_path="
     repository = component + ('/' + package_path if package_path else '')
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
+    # Vulcan stores immutable publications under twelve-character commit IDs.
+    # Shorten only the lookup key; retain the caller's complete selector below
+    # when checking the publisher's full commit, including collision tails.
+    lookup_spec = spec if spec == 'latest' else spec[:12]
     text = subprocess.check_output([str(cli), 'neat', 'install', '--env', environment,
-                                    f'{repository}@{branch}:{spec}', '--json'], text=True)
+                                    f'{repository}@{branch}:{lookup_spec}', '--json'], text=True)
     selected = json.loads(text[text.index('{'):])
     revision = selected.get('resolved_spec', '')
     if (selected.get('repository') != component or selected.get('package_path', '') != package_path

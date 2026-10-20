@@ -73,6 +73,27 @@ def test_resolve_once_then_download_immutable(publication):
     assert (publication[0] / 'out/candidate.json').is_file()
 
 
+@pytest.mark.parametrize('length', [12, 20, 40])
+def test_pinned_commit_uses_short_lookup_and_preserves_full_authority(publication, length):
+    root, _, _, _, calls = publication
+    receipt = transport.acquire('fixture-cli', 'scheduler', 'topic', 'a' * length,
+                                'production', root / 'out')
+    assert calls[0][5] == 'scheduler@topic:' + 'a' * 12
+    assert calls[1][3] == 'scheduler@topic:' + 'a' * 12
+    assert receipt['commit'] == 'a' * 40
+
+
+def test_full_commit_with_same_short_prefix_but_different_tail_is_rejected(publication):
+    root, _, manifest, _, calls = publication
+    manifest['commit'] = 'a' * 12 + 'b' * 28
+    with pytest.raises(ValueError, match='Publisher identity'):
+        transport.acquire('fixture-cli', 'scheduler', 'topic', 'a' * 40,
+                          'production', root / 'out')
+    assert calls[0][5] == 'scheduler@topic:' + 'a' * 12
+    assert len(calls) == 1
+    assert not (root / 'out/download').exists()
+
+
 @pytest.mark.parametrize('field,value', [('repository', 'other'), ('ref', 'develop'),
                                          ('environment', 'dev'), ('resolved_spec', 'latest')])
 def test_different_resolution_fails_before_download(publication, field, value):
