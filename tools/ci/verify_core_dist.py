@@ -263,6 +263,12 @@ def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=
     with tarfile.open(extras) as archive:
         entries = archive.getmembers()
         members = {str(PurePosixPath(m.name)): m for m in entries}
+        for name in members:
+            path = PurePosixPath(name)
+            require('CMakeFiles' not in path.parts
+                    and path.name not in {'CMakeCache.txt', 'cmake_install.cmake'}
+                    and path.suffix not in {'.o', '.obj'},
+                    f'Extras contains generated build internals: {name}')
         for tree in ('tests', 'tutorials'):
             name = f'lib/sima-neat/{tree}/CTestTestfile.cmake'
             require(sum(str(PurePosixPath(m.name)) == name for m in entries) == 1

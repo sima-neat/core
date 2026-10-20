@@ -5,8 +5,10 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import copy
+import re
 import shutil
 import subprocess
 import tarfile
@@ -136,6 +138,85 @@ def test_missing_extras_tree(tmp_path):
         change(tmp_path, name, update)
     with patch.object(verifier, 'control', controls), pytest.raises(verifier.ContractError, match='CTest tree'):
         run(tmp_path)
+
+
+@pytest.mark.parametrize('name', [
+    'lib/sima-neat/tutorials/CMakeFiles/tutorial.dir/example.cpp.o',
+    'lib/sima-neat/tutorials/CMakeFiles',
+    'lib/sima-neat/tutorials/CMakeCache.txt',
+    'lib/sima-neat/tutorials/cmake_install.cmake',
+    'lib/sima-neat/tests/fixture.obj',
+])
+def test_extras_rejects_generated_build_internals(tmp_path, name):
+    controls = fixture(tmp_path)
+    extras = tmp_path / 'sima-neat-1-Linux-extras.tar.gz'
+    with tarfile.open(extras, 'w:gz') as archive:
+        for member_name in ('lib/sima-neat/tests/CTestTestfile.cmake',
+                            'lib/sima-neat/tutorials/CTestTestfile.cmake', name):
+            member = tarfile.TarInfo(member_name)
+            archive.addfile(member, io.BytesIO())
+    for metadata in ('metadata.json', 'metadata-all.json', 'metadata-extras.json'):
+        def update(value):
+            if extras.name in value['resources-checksum']:
+                value['resources-checksum'][extras.name] = verifier.digest(extras)
+            for entry in value['selectable-resources']:
+                entry['checksum'] = verifier.digest(extras)
+        change(tmp_path, metadata, update)
+    with patch.object(verifier, 'control', controls), pytest.raises(
+            verifier.ContractError, match='generated build internals'):
+        run(tmp_path)
+
+
+def test_actual_tutorial_install_rules_preserve_targets_without_build_internals(tmp_path):
+    """Exercise the real CMake rules, with tiny native sources, never run tutorials."""
+    source = tmp_path / 'source'; source.mkdir()
+    tutorials = source / 'tutorials'; tutorials.mkdir()
+    rules = (ROOT / 'tutorials/CMakeLists.txt').read_text()
+    (tutorials / 'CMakeLists.txt').write_text(rules)
+    targets = dict(re.findall(r'add_tutorial\((\w+)\s+(\S+\.cpp)', rules))
+    assert targets
+    for relative in targets.values():
+        path = tutorials / relative; path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('extern "C" int dependency(); int main() { return dependency(); }\n')
+    for relative in ('cmake/NeatGuardedTests.cmake', 'tools/hardware_test_supervisor.py',
+                     'tutorials/build.sh', 'tutorials/run_with_modelzoo.sh'):
+        path = source / relative; path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, path)
+    (tutorials / 'fixture.jpg').write_bytes(b'asset-preservation-control')
+    (source / 'dependency.cpp').write_text('extern "C" int dependency() { return 0; }\n')
+    (source / 'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.16)
+project(TutorialInstallContract LANGUAGES CXX)
+enable_testing()
+add_library(sima_neat SHARED dependency.cpp)
+add_library(opencv_videoio INTERFACE)
+set(CMAKE_INSTALL_RPATH "$ORIGIN/../runtime")
+add_subdirectory(tutorials)
+''')
+    env = os.environ.copy()
+    for key in ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'CPATH',
+                'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'LD_LIBRARY_PATH', 'LD_PRELOAD',
+                'CMAKE_TOOLCHAIN_FILE', 'CMAKE_PREFIX_PATH', 'DESTDIR'):
+        env.pop(key, None)
+    build = tmp_path / 'build'; installed = tmp_path / 'installed'
+    def command(*args):
+        return subprocess.check_output(list(map(str, args)), env=env, text=True,
+                                       stderr=subprocess.STDOUT)
+    command('cmake', '-S', source, '-B', build, '-DCMAKE_CXX_COMPILER=/usr/bin/c++',
+            '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_INSTALL_PREFIX=' + str(installed))
+    command('cmake', '--build', build, '--parallel', '4')
+    command('cmake', '--install', build, '--component', 'extras')
+    runtime = installed / 'lib/sima-neat/tutorials'
+    assert {p.name for p in runtime.iterdir()} == set(targets) | {'CTestTestfile.cmake'}
+    assert (installed / 'share/sima-neat/tutorials/fixture.jpg').read_bytes() == b'asset-preservation-control'
+    for target in targets:
+        path = runtime / target
+        assert path.read_bytes().startswith(b'\x7fELF')
+        assert os.access(path, os.X_OK)
+        dynamic = command('readelf', '-d', path)
+        assert '$ORIGIN/../runtime' in dynamic
+        assert str(tmp_path) not in dynamic
+    assert not any(p.name in {'CMakeFiles', 'CMakeCache.txt', 'cmake_install.cmake'}
+                   or p.suffix in {'.o', '.obj'} for p in installed.rglob('*'))
 
 
 def test_raising_cli_validator_is_called(tmp_path):

@@ -26,8 +26,6 @@ set(SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER "/tmp" CACHE PATH
   "Directory passed to tutorials/build.sh --model-target-folder for Model Zoo downloads"
 )
 
-set(PIPELINESESSION_TUTORIAL_TARGETS "")
-
 function(add_tutorial exe source)
   set(options NO_TEST)
   set(oneValueArgs MODEL)
@@ -73,7 +71,8 @@ function(add_tutorial exe source)
     )
   endif()
 
-  list(APPEND PIPELINESESSION_TUTORIAL_TARGETS ${exe})
+  install(TARGETS ${exe}
+    RUNTIME DESTINATION lib/sima-neat/tutorials COMPONENT extras)
 endfunction()
 
 # Tutorials are added as they are implemented.
@@ -268,12 +267,6 @@ install(FILES "${SIMANEAT_HARDWARE_SUPERVISOR_SOURCE}"
   DESTINATION share/sima-neat/tutorials/tools COMPONENT extras)
 
 install(
-  TARGETS ${PIPELINESESSION_TUTORIAL_TARGETS}
-  RUNTIME DESTINATION lib/sima-neat/tutorials
-  COMPONENT extras
-)
-
-install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
   DESTINATION share/sima-neat/tutorials
   COMPONENT extras
@@ -317,14 +310,11 @@ if (EXISTS "${SIMANEAT_TUTORIALS_MANIFEST}")
   )
 endif()
 
-# Install built tutorial binaries from the build tree (for extras packaging)
+# CTest metadata is the only generated tutorial file shipped alongside targets.
 install(
-  DIRECTORY ${CMAKE_BINARY_DIR}/tutorials/
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake
   DESTINATION lib/sima-neat/tutorials
   COMPONENT extras
-  USE_SOURCE_PERMISSIONS
-  FILES_MATCHING
-    PATTERN "*"
 )
 
 target_link_libraries(tutorial_018_consume_rtsp_stream PRIVATE opencv_videoio)
