@@ -154,14 +154,11 @@ BenchmarkInputGeometry benchmark_tensor_geometry(const Tensor& tensor) {
   return {};
 }
 
-BenchmarkInputGeometry benchmark_model_geometry(const Tensor& tensor,
-                                                const ResolvedPreprocessPlan& plan,
-                                                const PreprocessRuntimeMeta& meta) {
+// Model input size: the resize target, then the MLA input, then the ingress contract.
+BenchmarkInputGeometry benchmark_plan_geometry(const ResolvedPreprocessPlan& plan) {
   auto wh = [](int w, int h) { return BenchmarkInputGeometry{w, h}; };
-  for (const auto g :
-       {wh(meta.resized_width, meta.resized_height), wh(meta.scaled_width, meta.scaled_height),
-        wh(plan.effective.resize.width, plan.effective.resize.height),
-        wh(plan.mla_contract.width, plan.mla_contract.height)}) {
+  for (const auto g : {wh(plan.effective.resize.width, plan.effective.resize.height),
+                       wh(plan.mla_contract.width, plan.mla_contract.height)}) {
     if (g)
       return g;
   }
@@ -169,11 +166,31 @@ BenchmarkInputGeometry benchmark_model_geometry(const Tensor& tensor,
     if (auto g = wh(c.width, c.height))
       return g;
   }
-  if (const BenchmarkInputGeometry tensor_geometry = benchmark_tensor_geometry(tensor);
-      tensor_geometry) {
-    return tensor_geometry;
+  return {};
+}
+
+// Image preprocessing routes take an HW/HWC source image; tensor routes take the model tensor.
+bool benchmark_takes_source_image(const ResolvedPreprocessPlan& plan, bool has_image_format,
+                                  std::size_t rank) {
+  return plan.enabled && plan.resolved_kind == InputKind::Image && has_image_format &&
+         (rank == 2U || rank == 3U);
+}
+
+// Source image size: the requested original size, then the source image's own size, then the
+// model input size, then the input tensor's size.
+BenchmarkInputGeometry benchmark_source_geometry(BenchmarkInputGeometry input, bool source_image,
+                                                 const ResolvedPreprocessPlan& plan,
+                                                 const BenchmarkOptions& options) {
+  if (options.original_width.has_value() && options.original_height.has_value()) {
+    return {*options.original_width, *options.original_height};
   }
-  return wh(meta.original_width, meta.original_height);
+  if (source_image && input) {
+    return input;
+  }
+  if (const BenchmarkInputGeometry model = benchmark_plan_geometry(plan); model) {
+    return model;
+  }
+  return input;
 }
 
 std::string benchmark_resize_mode(ResizeMode mode) {
@@ -222,21 +239,18 @@ resolve_benchmark_preprocess_meta_impl(const Tensor& tensor, const ResolvedPrepr
                                        const BenchmarkOptions& options) {
   validate_benchmark_options(options);
 
-  const PreprocessRuntimeMeta existing =
-      tensor.semantic.preprocess.value_or(PreprocessRuntimeMeta{});
-  BenchmarkInputGeometry model_geometry = benchmark_model_geometry(tensor, plan, existing);
-  BenchmarkInputGeometry source_geometry{
-      options.original_width.value_or(existing.original_width),
-      options.original_height.value_or(existing.original_height)};
+  const BenchmarkInputGeometry tensor_geometry = benchmark_tensor_geometry(tensor);
+  const BenchmarkInputGeometry source_geometry = benchmark_source_geometry(
+      tensor_geometry,
+      benchmark_takes_source_image(plan, tensor.semantic.image.has_value(), tensor.shape.size()),
+      plan, options);
   if (!source_geometry) {
-    source_geometry = model_geometry;
-  }
-  if (!model_geometry) {
-    model_geometry = source_geometry;
-  }
-  if (!source_geometry || !model_geometry) {
     throw std::runtime_error(
         "Model::benchmark: unable to infer synthetic source geometry required by BoxDecode");
+  }
+  BenchmarkInputGeometry model_geometry = benchmark_plan_geometry(plan);
+  if (!model_geometry) {
+    model_geometry = tensor_geometry ? tensor_geometry : source_geometry;
   }
 
   const ResizeMode resize_mode = options.resize_mode.value_or(
@@ -272,12 +286,13 @@ resolve_benchmark_preprocess_meta_impl(const Tensor& tensor, const ResolvedPrepr
   return *meta;
 }
 
-void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorList& inputs,
+void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model,
+                                                    const ResolvedPreprocessPlan& plan,
+                                                    TensorList& inputs,
                                                     const BenchmarkOptions& options) {
   if (internal::ModelAccess::resolved_post_kind(model) != internal::PostRouteStageKind::BoxDecode)
     return;
 
-  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
   const internal::PreprocessContractFlags flags =
       internal::ModelAccess::preprocess_contract_flags(model);
   for (Tensor& tensor : inputs) {
@@ -298,7 +313,7 @@ TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOp
     inputs.push_back(make_synthetic_benchmark_tensor(
         internal::resolve_benchmark_input_spec(specs[i], plan, options), i));
   }
-  attach_benchmark_preprocess_meta_for_boxdecode(model, inputs, options);
+  attach_benchmark_preprocess_meta_for_boxdecode(model, plan, inputs, options);
   return inputs;
 }
 
@@ -331,16 +346,15 @@ namespace internal {
 
 TensorSpec resolve_benchmark_input_spec(TensorSpec spec, const ResolvedPreprocessPlan& plan,
                                         const BenchmarkOptions& options) {
-  if (!plan.enabled || plan.resolved_kind != InputKind::Image || !spec.image_format ||
-      (spec.shape.size() != 2U && spec.shape.size() != 3U)) {
+  if (!benchmark_takes_source_image(plan, spec.image_format.has_value(), spec.shape.size())) {
     return spec;
   }
-  // Image ingress specs are HW/HWC; tensor routes must retain their model shape.
-  const auto geometry = benchmark_model_geometry(Tensor{}, plan, {});
-  spec.shape[0] = options.original_height.value_or(spec.shape[0] > 0 ? benchmark_dim(spec.shape[0])
-                                                                     : geometry.height);
-  spec.shape[1] = options.original_width.value_or(spec.shape[1] > 0 ? benchmark_dim(spec.shape[1])
-                                                                    : geometry.width);
+  const BenchmarkInputGeometry spec_geometry{benchmark_dim(spec.shape[1]),
+                                             benchmark_dim(spec.shape[0])};
+  const BenchmarkInputGeometry source =
+      benchmark_source_geometry(spec_geometry, true, plan, options);
+  spec.shape[0] = source.height;
+  spec.shape[1] = source.width;
   return spec;
 }
 

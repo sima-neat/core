@@ -216,31 +216,67 @@ void benchmark_build_options_prefer_runtime_metadata() {
           "benchmark builds should preserve unrelated model options");
 }
 
-void benchmark_input_geometry_only_resizes_image_preprocessing() {
+simaai::neat::TensorSpec make_benchmark_image_spec(std::vector<int64_t> shape) {
   using namespace simaai::neat;
-  ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
-  plan.resolved_kind = InputKind::Image;
   TensorSpec spec;
-  spec.shape = {-1, -1, 3};
+  spec.shape = std::move(shape);
   spec.dtypes = {TensorDType::UInt8};
   spec.image_format = ImageSpec::PixelFormat::RGB;
-  BenchmarkOptions options;
-  options.original_width = 1280;
-  options.original_height = 720;
-  require(internal::resolve_benchmark_input_spec(spec, plan, options).shape ==
-              std::vector<int64_t>({720, 1280, 3}),
+  return spec;
+}
+
+simaai::neat::BenchmarkOptions make_benchmark_source_options(int width, int height) {
+  simaai::neat::BenchmarkOptions options;
+  options.original_width = width;
+  options.original_height = height;
+  return options;
+}
+
+void benchmark_image_input_uses_requested_source_size() {
+  using namespace simaai::neat;
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const TensorSpec spec = make_benchmark_image_spec({-1, -1, 3});
+  const TensorSpec resolved =
+      internal::resolve_benchmark_input_spec(spec, plan, make_benchmark_source_options(1280, 720));
+  require(resolved.shape == std::vector<int64_t>({720, 1280, 3}),
           "image preprocessing benchmark should allocate the requested source image");
+}
+
+void benchmark_image_input_defaults_to_model_size() {
+  using namespace simaai::neat;
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const TensorSpec spec = make_benchmark_image_spec({-1, -1, 3});
   require(internal::resolve_benchmark_input_spec(spec, plan, {}).shape ==
               std::vector<int64_t>({640, 640, 3}),
           "image preprocessing benchmark should default to the resolved model geometry");
+}
 
+void benchmark_tensor_input_keeps_model_shape() {
+  using namespace simaai::neat;
+  ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
   plan.resolved_kind = InputKind::Tensor;
-  spec.image_format.reset();
+  TensorSpec spec;
   spec.shape = {1, 640, 640, 3};
   spec.dtypes = {TensorDType::Float32};
-  const auto tensor_spec = internal::resolve_benchmark_input_spec(spec, plan, options);
-  require(tensor_spec.shape == spec.shape && tensor_spec.dtypes == spec.dtypes,
+  const TensorSpec resolved =
+      internal::resolve_benchmark_input_spec(spec, plan, make_benchmark_source_options(1280, 720));
+  require(resolved.shape == spec.shape && resolved.dtypes == spec.dtypes,
           "source geometry must not resize or change the dtype of a quant/tensor input");
+}
+
+void benchmark_preprocess_meta_matches_allocated_image_size() {
+  using namespace simaai::neat;
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const TensorSpec spec = make_benchmark_image_spec({480, 640, 3});
+  require(internal::resolve_benchmark_input_spec(spec, plan, {}).shape == spec.shape,
+          "a concrete image spec should keep its own size");
+
+  const Tensor image = make_color_tensor(640, 480, ImageSpec::PixelFormat::RGB);
+  const PreprocessRuntimeMeta meta =
+      internal::resolve_benchmark_preprocess_meta(image, plan, {}, BenchmarkOptions{});
+  require(meta.original_width == 640 && meta.original_height == 480,
+          "BoxDecode metadata should describe the allocated 640x480 image, got " +
+              std::to_string(meta.original_width) + "x" + std::to_string(meta.original_height));
 }
 
 void benchmark_preprocess_meta_defaults_to_model_geometry() {
@@ -736,8 +772,14 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
                     benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",
                     benchmark_preprocess_meta_defaults_to_model_geometry);
-           run_case("benchmark_input_geometry_only_resizes_image_preprocessing",
-                    benchmark_input_geometry_only_resizes_image_preprocessing);
+           run_case("benchmark_image_input_uses_requested_source_size",
+                    benchmark_image_input_uses_requested_source_size);
+           run_case("benchmark_image_input_defaults_to_model_size",
+                    benchmark_image_input_defaults_to_model_size);
+           run_case("benchmark_tensor_input_keeps_model_shape",
+                    benchmark_tensor_input_keeps_model_shape);
+           run_case("benchmark_preprocess_meta_matches_allocated_image_size",
+                    benchmark_preprocess_meta_matches_allocated_image_size);
            run_case("benchmark_preprocess_meta_explicit_geometry",
                     benchmark_preprocess_meta_supports_explicit_geometry);
            run_case("benchmark_preprocess_meta_invalid_options",
