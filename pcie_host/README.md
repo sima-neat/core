@@ -367,9 +367,10 @@ model.close();
 
 Build on an Ubuntu 22.04 or Ubuntu 24.04 host, outside the Palette SDK.
 `build.sh` uses native GCC14 and acquires Scheduler's native PCIe host profile
-through sima-cli. This profile supplies the plugin and reviewed platform service
-headers. Its distribution carries the Platform-owned runtime DEB separately;
-Scheduler does not own the PCIe driver implementation.
+through sima-cli. This profile supplies the plugin and verifies the Platform-owned
+service headers. Its distribution carries the unchanged, checksum-pinned Platform
+source package for private userspace builds. Scheduler does not own the PCIe
+driver or runtime implementation.
 
 PCIe host builds always include the GenAI APIs. They do not acquire the device
 Scheduler profile, Runner, Kernels or Codecs.
@@ -394,9 +395,11 @@ scheduler/pcie-host-ubuntu24-arm64
 Other host distributions are rejected because the prebuilt plugin may depend
 on distribution-specific glibc, GLib, and GStreamer versions.
 
-The selected Scheduler helper validates and installs its native packages.
-Core configures against `/usr/lib/<multiarch>/cmake/SimaScheduler`; it does not
-include headers from a sibling lower-layer checkout. To use a particular
+The selected Scheduler helper validates and stages its native packages into a
+private prefix. It builds only the official Platform userspace library there,
+without running package maintainer scripts, installing a driver or starting
+daemons. Core configures against that prefix's installed `SimaScheduler` package;
+it does not include headers from a sibling lower-layer checkout. To use a particular
 published revision, pass `--scheduler-spec <commit>`. Use
 `--scheduler-environment <name>` to select another publication environment.
 
@@ -414,6 +417,13 @@ profile instead of downloading a publication.
 `build.sh` installs its host build dependencies, including
 `nlohmann-json3-dev`, which provides `nlohmann/json.hpp`. Use
 the same build command on a fresh host and for subsequent rebuilds.
+
+Before installing the resulting packages on a PCIe host, provision the matching
+Platform host package through its official installer. The Neat installer verifies
+the installed Platform version, driver dependency, headers and userspace ABI.
+It installs only the Scheduler/Core package set and ordinary missing dependencies;
+it rejects transactions that would change Platform or the driver. A private
+build does not qualify PCIe hardware execution.
 
 `build.sh` writes the locally built packages and a copy of the installer into
 `dist/`:

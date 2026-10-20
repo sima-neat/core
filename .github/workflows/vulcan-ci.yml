@@ -563,31 +563,36 @@ jobs:
         env:
           DEB_ARCH: ${{ matrix.deb_arch }}
 
-      - name: Smoke test installed PCIe host packages
+      - name: Smoke test staged PCIe host packages and wheel
         shell: bash
         run: |
           set -euo pipefail
 
           python_venv="${RUNNER_TEMP}/pyneatpcie-package-smoke"
           consumer_build="${RUNNER_TEMP}/sima-pcie-host-consumer"
-          skill_home="${RUNNER_TEMP}/sima-pcie-host-skill-smoke"
+          prefix="${RUNNER_TEMP}/sima-pcie-host-stage"
+          python3 pcie_host/dist/pcie_delivery.py stage \
+            --directory pcie_host/dist --destination "${prefix}"
+          # The clean build runner has no Platform driver installation. Test
+          # the real installed exports after relocation, not a root/DKMS install.
+          mv "${prefix}" "${prefix}-relocated"
+          prefix="${prefix}-relocated"
+          multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+          export LD_LIBRARY_PATH="${prefix}/usr/lib/${multiarch}/neat/runtime:${prefix}/usr/lib"
+          skill_root="${prefix}/usr/share/sima-pcie-host/skills/neat-pcie-application-builder"
+          test -f "${skill_root}/SKILL.md"
+          test -f "${skill_root}/agents/openai.yaml"
+          test -f "${skill_root}/references/build-and-validation.md"
 
-          CODEX_HOME="${skill_home}/codex" \
-          CLAUDE_HOME="${skill_home}/claude" \
-            pcie_host/dist/install_pciehost.sh \
-            --skip-setup \
-            --python \
-            --python-venv "${python_venv}"
-
-          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/SKILL.md"
-          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/agents/openai.yaml"
-          test -f "${skill_home}/claude/skills/neat-pcie-application-builder/SKILL.md"
+          python3 -m venv "${python_venv}"
+          "${python_venv}/bin/python" -m pip install pcie_host/dist/pyneatpcie-*.whl
 
           cmake \
             -S pcie_host/tests/package_smoke \
             -B "${consumer_build}" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=g++-14
+            -DCMAKE_CXX_COMPILER=g++-14 \
+            -DCMAKE_PREFIX_PATH="${prefix}/usr"
           cmake --build "${consumer_build}" --parallel
           file "${consumer_build}/sima_pcie_host_package_smoke"
           "${consumer_build}/sima_pcie_host_package_smoke"
