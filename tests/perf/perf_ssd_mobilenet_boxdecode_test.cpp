@@ -141,7 +141,10 @@ int main(int argc, char** argv) {
 
     std::vector<double> latencies_ms;
     latencies_ms.reserve(static_cast<std::size_t>(iterations));
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     PowerMonitor power_monitor(sima_perf::power_options_from_env());
+#pragma GCC diagnostic pop
     power_monitor.start();
     const auto run_t0 = sima_perf::Clock::now();
     for (int i = 0; i < iterations; ++i) {

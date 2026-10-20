@@ -8,6 +8,9 @@ The format is based on Keep a Changelog and follows semantic versioning.
 
 ### Added
 - Release hygiene framework for Phase 1 (governance docs, CI policy scripts, release-gate workflow).
+- `TelemetryMonitor` records board power, temperatures, CPU usage, and memory from Sentinel over
+  a window the caller chooses, in C++ and Python. `Telemetry::save()` writes YAML or JSON, and a
+  `Telemetry` prints as YAML. `Model::benchmark()` uses it for `BenchmarkReport::telemetry`.
 
 ### Changed
 - Canonical naming contract docs and migration guidance.
@@ -31,6 +34,9 @@ The format is based on Keep a Changelog and follows semantic versioning.
   `mpk/*` headers and `pyneat.mpk` inspection/extraction bindings were removed.
 
 ### Deprecated
+- `PowerMonitor`, `read_power_snapshot()`, `RunOptions::enable_board_power()`,
+  `RunOptions::power_monitor`, and `MeasureOptions::include_power`; use `TelemetryMonitor`. They
+  keep working.
 - `PowerMonitorOptions::sample_interval_ms`, `profile`, and `rails`, the `PowerRailConfig` I2C
   fields, the built-in power rail tables and profile helpers, `enable_modalix_som_power()`,
   `enable_modalix_dvt_power()`, and `modalix_som/dvt_power_monitor_options()`; they are ignored.

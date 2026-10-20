@@ -706,14 +706,10 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 The exporter snapshots the current run; it does not stop the run. If you need final numbers for a
 finite workload, call `run.close_input()` and drain outputs, or call `run.stop()`, before saving.
 
-To include board power telemetry:
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power();
-
-neat::Run run = app.build(opt);
-```
+The deprecated `RunOptions::enable_board_power()` adds board power to the export. For new code,
+record board power, temperatures, CPU usage, and memory with a
+[`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) and save its
+`Telemetry` next to the export.
 
 The JSON schema is `sima.neat.graph_run` version `1`. The schema lives at
 `schemas/graph_run_v1.schema.json` and the CI validator lives at

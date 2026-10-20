@@ -1051,40 +1051,42 @@ run.close()
 - C++の`run_to_json(...)`と`save_run_json(...)`は、実行後にその結果をエクスポートします。
 - Pythonの`run.json(...)`と`run.save_json(...)`は、同じ種類の証拠をエクスポートします。
 
-実行に使用する`RunOptions`で、電力計測機能を有効にします。
+[`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) を使用して、同じウィンドウにわたってボードの電力、温度、CPU 使用率、メモリを記録します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RunOptions options;
-options.enable_board_power();
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
+auto scope = run.start_measurement();
 
-auto run = graph.build(options);
+// Push and pull here.
 
-simaai::neat::MeasureOptions measure_options;
-measure_options.include_power = true;
-auto scope = run.start_measurement(measure_options);
+simaai::neat::MeasureReport report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.RunOptions()
-options.enable_board_power()
+telemetry_monitor = pyneat.TelemetryMonitor()
+telemetry_monitor.start()
+scope = run.start_measurement()
 
-run = graph.build(options)
+# Push and pull here.
 
-measure_options = pyneat.MeasureOptions()
-measure_options.include_power = True
-scope = run.start_measurement(measure_options)
+report = scope.stop()
+telemetry = telemetry_monitor.stop()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-電力データは Sentinel から取得されます。Sentinel はボードの電源レールを 2 秒ごとにサンプリングするため、約 2 秒より短い測定ウィンドウでは電力サンプルが得られない場合があります。測定設定を数値で記録し、電源レールが接続されていない場合に、電力の数値がポータブルなものに見えないようにしてください。
+テレメトリは Sentinel から取得されます。Sentinel はボードを 2 秒ごとにサンプリングするため、約 2 秒より短い測定ウィンドウではサンプルが得られない場合があります。測定設定を数値で記録し、電源レールが接続されていない場合に、電力の数値がポータブルなものに見えないようにしてください。
+
+`RunOptions::enable_board_power()`、`RunOptions::power_monitor`、`MeasureOptions::include_power` は非推奨となり、`TelemetryMonitor` に置き換えられました。これらは引き続き動作します。
 
 ビルド時のエクスポートは、「Neat は何をビルドしたのか？」という問いに答えます。実行後のエクスポートは、「実行中に何が起こったのか？」という問いに答えます。
 

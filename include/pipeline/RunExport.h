@@ -27,6 +27,7 @@ struct RunExportOptions {
   /// Include runtime counters, latency, power, and per-segment pipeline strings.
   bool include_metrics = true;
   /// Include board power summary when enabled on the Run.
+  /// @deprecated Use `TelemetryMonitor` for board telemetry.
   bool include_power = true;
   /// Include node-level latency metrics.
   bool include_node_metrics = true;

@@ -369,7 +369,10 @@ struct MeasureScope::Impl {
       linear_input_measurement->discard(measurement_epoch);
   }
   std::vector<std::string> trace_plugin_instances;
-  std::unique_ptr<PowerMonitor> power_monitor;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  std::unique_ptr<PowerMonitor> power_monitor; // Deprecated MeasureOptions::include_power.
+#pragma GCC diagnostic pop
   std::vector<std::string> warnings;
   std::string plugin_latency_status = "off";
   std::string plugin_latency_source = "none";
@@ -802,7 +805,10 @@ MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::Ru
   if (opt.include_power) {
     const PowerMonitorOptions power_opt = measurement_power_options_for_core(impl->core);
     if (power_opt.enabled) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
       impl->power_monitor = std::make_unique<PowerMonitor>(power_opt);
+#pragma GCC diagnostic pop
       impl->power_monitor->start();
     }
   }

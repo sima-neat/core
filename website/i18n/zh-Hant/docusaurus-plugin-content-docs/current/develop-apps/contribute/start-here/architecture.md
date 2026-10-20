@@ -138,9 +138,11 @@ input Sample/Tensor
 
 `Model::execution_plan(...)` 會傳回以相同引數呼叫 `build(...)` 時將執行的內容：依管線順序列出模型的圖節點、每個節點的執行位置（`A65`、`EV74` 或 `MLA`），以及節點之間邊上的張量。它會在關閉啟動預檢的情況下呼叫 `build(...)`，讀取建置在 GStreamer 剖析之前記錄於 `DiagCtx` 的計畫，然後關閉管線，因此需要與 `build(...)` 相同的裝置。這是公開的診斷檢視，與下文所述的內部 `ModelExecutionPlan` 不同。其 JSON 合約為 `schemas/execution_plan_v1.schema.json`；`schema_version` 只會在變更破壞現有讀取端時才會改變。
 
-### 基準測試遙測
+### 板子遙測
 
-`Model::benchmark()` 會透過 `/run/simaai-sentinel/api.sock` 上的 HTTP API，從板子遙測常駐程式 Sentinel 讀取功耗與板子遙測資料；基準測試不會由 Core 直接讀取電源監控晶片。基準測試會在吞吐量階段期間記錄名為 `neat-benchmark-<UTC time>` 的 Sentinel 追蹤，只停止該追蹤，並保留它供 Sentinel 自身的工具使用。Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `BenchmarkOptions::min_duration_ms`（預設為 10 秒）。延遲階段也遵循相同的下限，因此兩個階段依相同規則停止。當 Sentinel 未執行、另一個追蹤正在記錄，或量測期間沒有樣本時，基準測試仍會傳回延遲與 FPS；功耗欄位為零，並由 `telemetry.status` 說明原因。`tools/install_neat_framework.sh` 的板子模式會安裝 Sentinel，或將其升級至最新的正式版建置。若安裝失敗，安裝程式會發出警告並繼續；之後可執行 `sima-cli neat install sentinel`，或像 CI 一樣設定 `NEAT_INSTALLER_SENTINEL_REQUIRED=ON`，讓失敗中止安裝。`Run` 的功耗（`RunOptions::power_monitor`）同樣來自 Sentinel：Core 會輪詢其最新樣本，不會透過 I2C 讀取電源監控晶片。
+`TelemetryMonitor` 會透過 `/run/simaai-sentinel/api.sock` 上的 HTTP API，從板子遙測常駐程式 Sentinel 讀取功耗與板子遙測資料；Core 不會直接讀取電源監控晶片。`start()` 會讀取 Sentinel 的樣本快取一次，以取得指標定義、取樣間隔與最新樣本；該樣本早於視窗開始，因此不會計入。接著，一個工作執行緒會在每個樣本預定產生前不久要求最新樣本，並依時間戳記識別每個新樣本，將其只計入一次持續更新的摘要。當某個時間戳記與上一個已計入的時間戳記相差不是一個間隔時，工作執行緒會從快取中計入遺漏的樣本；該快取保存 Sentinel 最新的 240 個樣本。監控器不會在 Sentinel 中建立任何東西，因此可以同時執行任意數量的監控器，而被終止的程序也不會留下任何殘留。
+
+`Model::benchmark()` 會在吞吐量階段前後執行一個 `TelemetryMonitor`。Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `BenchmarkOptions::min_duration_ms`（預設為 10 秒）。延遲階段也遵循相同的下限，因此兩個階段依相同規則停止。當 Sentinel 未執行或量測期間沒有樣本時，基準測試仍會傳回延遲與 FPS；功耗欄位為零，並由 `telemetry.status` 說明原因。`tools/install_neat_framework.sh` 的板子模式會安裝 Sentinel，或將其升級至最新的正式版建置。若安裝失敗，安裝程式會發出警告並繼續；之後可執行 `sima-cli neat install sentinel`，或像 CI 一樣設定 `NEAT_INSTALLER_SENTINEL_REQUIRED=ON`，讓失敗中止安裝。已棄用的 `Run` 電源監控器（`RunOptions::power_monitor`）的資料同樣來自 Sentinel：Core 會輪詢其最新樣本，不會透過 I2C 讀取電源監控晶片。
 
 各層剖析透過 `BenchmarkOptions::include_layer_stats` 明確啟用，預設為 false。延遲與吞吐量執行器關閉後，Core 會使用已解壓縮模型的 MLA 執行檔與編譯器統計 YAML，在獨立程序中呼叫 `mla-rt`。Core 負責驗證、子程序逾時與暫存檔清理；MLA-RT 負責硬體剖析，以及將控制權交回核心執行路徑。剖析不得與其他 MLA 工作負載重疊。
 

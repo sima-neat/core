@@ -25,6 +25,7 @@
 #include "pipeline/SuperPointTypes.h"
 #include "pipeline/YoloXSegPoseTypes.h"
 #include "pipeline/Run.h"
+#include "pipeline/TelemetryMonitor.h"
 #include "pipeline/TensorSpec.h"
 
 #include <filesystem>
@@ -68,64 +69,6 @@ struct LayerStats {
 };
 
 /**
- * @brief One Sentinel metric summarized over the benchmark throughput window.
- *
- * `samples == 0` means the board did not report the metric during the window, and the
- * statistics are then zero.
- */
-struct BenchmarkMetric {
-  std::string key;   ///< Sentinel metric key, for example `power_current_watts`.
-  std::string label; ///< Sentinel display label.
-  std::string unit;  ///< Unit of the values.
-  int samples = 0;   ///< Telemetry samples that carried a value.
-  double mean = 0.0; ///< Mean over those samples.
-  double minimum = 0.0;
-  double maximum = 0.0;
-};
-
-/**
- * @brief Board telemetry recorded by the Sentinel daemon during the throughput window.
- *
- * `Model::benchmark()` records a local-board Sentinel trace around the throughput pass. Sentinel
- * samples every 2 s by default. Only samples timestamped after measurement starts and before the
- * timer stops (after all required outputs complete) are summarized; trace setup and stop/drain
- * tails are excluded. These sample-selection boundaries are contained within the model timer.
- * Invalid timestamps or detected wall-clock discontinuities make telemetry unavailable. Remote
- * or clock-translating telemetry proxies are not supported; no remote clock offset is inferred.
- * `status` is `"ok"` when the window contains timestamped samples; otherwise it names why telemetry
- * is missing and every metric has `samples == 0`. Memory values are board-wide, in MiB, and include
- * whatever else is running.
- */
-struct BenchmarkTelemetry {
-  std::string status;              ///< `"ok"`, or why telemetry is unavailable.
-  std::string trace_id;            ///< Saved Sentinel trace, for `simaai-sentinel` tooling.
-  std::string sentinel_version;    ///< Version of the Sentinel daemon that recorded the trace.
-  int sample_interval_ms = 0;      ///< Sentinel sampling interval.
-  int samples = 0;                 ///< Telemetry samples recorded in the window.
-  BenchmarkMetric power_som_watts; ///< Total SoM input power.
-  BenchmarkMetric power_mla_watts; ///< MLA rail power; not reported on boards without that rail.
-  std::vector<BenchmarkMetric> power_rails_watts;  ///< Every power rail the board reports.
-  std::vector<BenchmarkMetric> die_temperatures_c; ///< Die sensors at the MLA, APU, CVU, and TOP.
-  BenchmarkMetric die_temperature_max_c; ///< Hottest die sensor per sample, then summarized.
-  std::vector<BenchmarkMetric> board_temperatures_c; ///< SoM top-side and bottom-side sensors.
-  /// CPU utilization. Each sample averages the preceding interval, so `maximum` is the busiest
-  /// interval rather than an instantaneous peak. Selection uses the sample timestamp; its
-  /// preceding provider averaging interval can begin before the benchmark window.
-  BenchmarkMetric cpu_usage_pct;
-  /// Utilization of each CPU core, in core order, summarized like `cpu_usage_pct`. A single busy
-  /// core shows here even when the all-core average stays low.
-  std::vector<BenchmarkMetric> cpu_cores_usage_pct;
-  /// DMA buffers allocated for the MLA. The model allocates them when it loads, so with nothing
-  /// else running this is the model's MLA memory.
-  BenchmarkMetric mla_memory_mib;
-  /// Used contiguous memory (CMA). This includes the MLA memory pool, so never add it to
-  /// `mla_memory_mib`. At idle it also includes movable pages, such as page cache, that Linux
-  /// borrows from CMA.
-  BenchmarkMetric cma_memory_mib;
-  BenchmarkMetric linux_memory_used_mib; ///< Linux used memory, excluding page cache.
-};
-
-/**
  * @brief Headline result returned by `Model::benchmark()`.
  *
  * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
@@ -135,8 +78,13 @@ struct BenchmarkTelemetry {
  * batches/sec multiplied by the compiled batch size). Each pass runs until it has measured at
  * least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
- * Power and board telemetry come from the Sentinel daemon. When Sentinel is unavailable, the
- * power fields are zero and `telemetry.status` names the reason.
+ * Power and board telemetry come from the Sentinel daemon, recorded by a `TelemetryMonitor`
+ * around the throughput pass. Its sample window is armed after measurement starts
+ * and sealed after the last required output, before measurement stops. Preparation,
+ * worker teardown and final reads are outside the timer. Invalid UTC timestamps or
+ * detected clock discontinuities make benchmark telemetry unavailable, without
+ * changing standalone monitor cache-order recovery. When Sentinel is unavailable,
+ * the power fields are zero and `telemetry.status` names the reason.
  */
 struct BenchmarkReport {
   double latency_ms = 0.0;
@@ -151,7 +99,7 @@ struct BenchmarkReport {
   double peak_power_watts = 0.0;         ///< Highest SoM power sample in the throughput window.
   int throughput_samples = 0;            ///< Inputs measured by the throughput pass.
   double throughput_duration_ms = 0.0;   ///< Length of the throughput window.
-  BenchmarkTelemetry telemetry;          ///< Board telemetry for the throughput window.
+  Telemetry telemetry;                   ///< Board telemetry for the throughput window.
   std::vector<LayerStats> layer_stats{}; ///< Empty when layer profiling was not collected.
 
   /**

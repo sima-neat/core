@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 對於吞吐量／延遲／功耗報告，建議使用圖表執行結果的 JSON 匯出格式：
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 匯出的內容會明確指定範圍：
 
-- `run.graph_metrics.throughput_fps` 和 `run.graph_metrics.power` 是圖層級的標題。
+- `run.graph_metrics.throughput_fps` 是圖層級的標題。`run.graph_metrics.power` 僅由已棄用的 `RunOptions::enable_board_power()` 填入；請改用 `TelemetryMonitor`。
 - `run.node_metrics[]` 僅包含節點/外掛程式的延遲資訊；節點/外掛程式的耗電量資訊則刻意省略。
 - `latency_semantics` 和 `aggregation` 告訴您，這些值是代表整個執行期間的資料，還是代表特定時間窗口內的增量變化。
 - `plugin_metrics_unattributed[]` 會保留無法明確對應到單一節點的「核心/外掛」資料列。

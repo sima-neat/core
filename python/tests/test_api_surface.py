@@ -330,7 +330,8 @@ def test_run_export_api_surface():
 
   run_opt = pyneat.RunOptions()
   run_opt.run_export = auto_opt
-  run_opt.enable_board_power()
+  with pytest.warns(DeprecationWarning, match="enable_board_power.* use pyneat.TelemetryMonitor"):
+    run_opt.enable_board_power()
   assert not hasattr(run_opt, "enable_metrics")
   assert run_opt.power_monitor.enabled is True
   run_opt.disable_power_monitor()
@@ -481,14 +482,16 @@ def test_benchmark_report_exposes_telemetry():
   assert report.throughput_samples == 0
 
   telemetry = report.telemetry
-  assert isinstance(telemetry, pyneat.BenchmarkTelemetry)
+  assert isinstance(telemetry, pyneat.Telemetry)
   assert telemetry.status == ""
   assert telemetry.samples == 0
+  assert telemetry.duration_ms == 0.0
   for field in ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
                 "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib"):
     metric = getattr(telemetry, field)
-    assert isinstance(metric, pyneat.BenchmarkMetric), field
-    assert (metric.samples, metric.mean, metric.minimum, metric.maximum) == (0, 0.0, 0.0, 0.0)
+    assert isinstance(metric, pyneat.TelemetryStats), field
+    assert (metric.samples, metric.mean, metric.minimum, metric.maximum, metric.last) == (
+        0, 0.0, 0.0, 0.0, 0.0)
   for field in ("power_rails_watts", "die_temperatures_c", "board_temperatures_c",
                 "cpu_cores_usage_pct"):
     assert getattr(telemetry, field) == [], field

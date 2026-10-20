@@ -52,6 +52,14 @@ Release notes for the SiMa.ai Neat Library.
   `PowerRailConfig` I2C fields, `enable_modalix_som_power()`,
   `enable_modalix_dvt_power()`, and `modalix_som_power_monitor_options()` /
   `modalix_dvt_power_monitor_options()` are deprecated and ignored.
+- `TelemetryMonitor` records board power, temperatures, CPU usage, and memory
+  from Sentinel between `start()` and `stop()`, in C++ and Python. `read()`
+  returns the summary so far, and a `Telemetry` prints as YAML and saves as
+  YAML or JSON. `Model::benchmark()` uses it for `BenchmarkReport::telemetry`.
+  `PowerMonitor`, `read_power_snapshot()`, `RunOptions::enable_board_power()`,
+  `RunOptions::power_monitor`, and `MeasureOptions::include_power` are
+  deprecated in favor of `TelemetryMonitor` and keep working. See
+  [Record board telemetry](/develop-apps/development-workflow/model#record-board-telemetry).
 - Plugin latency is deprecated and will be removed. This covers
   `MeasureOptions::include_plugin_latency` and `plugin_latency_source`,
   `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)`, and

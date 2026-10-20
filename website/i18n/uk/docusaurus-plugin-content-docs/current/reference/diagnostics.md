@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 Для звітування про пропускну здатність/затримку/споживання енергії, надавайте перевагу експорту даних у форматі JSON, отриманих під час виконання графа:
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 Експортований модуль зберігає чітке визначення областей видимості:
 
-- `run.graph_metrics.throughput_fps` та `run.graph_metrics.power` – це заголовки на рівні графа.
+- `run.graph_metrics.throughput_fps` – це заголовок на рівні графа. `run.graph_metrics.power` заповнюється лише застарілим `RunOptions::enable_board_power()`; натомість використовуйте `TelemetryMonitor`.
 - `run.node_metrics[]` містить лише дані про затримку вузла/плагіна; інформація про енергоспоживання вузла/плагіна навмисно відсутня.
 - `latency_semantics` та `aggregation` показують, чи є значення змінами, обчисленими протягом усього часу роботи, чи змінами, виміряними протягом певного проміжку часу.
 - `plugin_metrics_unattributed[]` зберігає рядки з таблиць kernel/plugin, які не вдалося однозначно зіставити з жодним вузлом.

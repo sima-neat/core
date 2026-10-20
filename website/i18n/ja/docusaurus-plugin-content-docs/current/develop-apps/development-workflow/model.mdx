@@ -797,7 +797,7 @@ report = model.benchmark(options)
 
 ### 電力とボードのテレメトリ {#power-and-board-telemetry}
 
-電力とボードのテレメトリは、Neat のインストーラーがボードにセットアップする DevKit のテレメトリデーモンである [Sentinel](/tools/sentinel/) から取得されます。ベンチマークは、スループット測定パスの間に `neat-benchmark-<UTC time>` という名前の Sentinel トレースを記録して保持するため、後で Sentinel 自体のツールで開けます。`report.telemetry` はこのトレースを要約します。
+電力とボードのテレメトリは、Neat のインストーラーがボードにセットアップする DevKit のテレメトリデーモンである [Sentinel](/tools/sentinel/) から取得されます。ベンチマークは、スループット測定パスの間 [`TelemetryMonitor`](#record-board-telemetry) でこれらを記録し、`report.telemetry` がそれを要約します。
 
 | フィールド | 意味 |
 | --- | --- |
@@ -812,9 +812,9 @@ report = model.benchmark(options)
 | `telemetry.cma_memory_mib` | 使用中の連続メモリ（CMA、MiB 単位）です。MLA のメモリプールを含むため、`mla_memory_mib` に加算しないでください。アイドル時には、Linux が CMA から借りているページキャッシュも含まれます。 |
 | `telemetry.linux_memory_used_mib` | ページキャッシュを除いた Linux の使用メモリ（MiB 単位）です。 |
 
-各メトリクスは `samples`、`mean`、`minimum`、`maximum` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。メモリの値はボード全体のもので、実行中の他のプロセスも含みます。Sentinel は 2 秒ごとにサンプリングするため、10 秒のパスでは約 5 個のサンプルが得られます。
+各メトリクスは `samples`、`mean`、`minimum`、`maximum`、`last` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。Sentinel は 2 秒ごとにサンプリングするため、10 秒のパスでは約 5 個のサンプルが得られます。すべての値はボード全体のもので、実行中の他のプロセスも含みます。
 
-Sentinel が実行されていない場合、別の Sentinel トレースがすでに記録中の場合、またはパスが短すぎてサンプルを収集できない場合でも、ベンチマークはレイテンシーと FPS を返します。電力フィールドはゼロのままになり、`telemetry.status` にその理由が示され（それ以外の場合は `"ok"`）、出力される概要には `Power: unavailable (<reason>)` と表示されます。
+Sentinel が実行されていない場合、またはパスが短すぎてサンプルを収集できない場合でも、ベンチマークはレイテンシーと FPS を返します。電力フィールドはゼロのままになり、`telemetry.status` にその理由が示され（それ以外の場合は `"ok"`）、出力される概要には `Power: unavailable (<reason>)` と表示されます。
 
 ### 独自のループを測定する
 
@@ -853,6 +853,54 @@ runner.close()
 </CodeTabs>
 
 一度限りのスモークテストと、事前に起動させて再利用するテスト環境を比較しないでください。それらは異なる目的のために行われます。
+
+### ボードのテレメトリを記録する {#record-board-telemetry}
+
+`TelemetryMonitor` を使用すると、独自の推論ループなど、任意のウィンドウにわたって電力、温度、CPU 使用率、メモリを記録できます。これらは [Sentinel](/tools/sentinel/) から読み取られ、`report.telemetry` と同じ `Telemetry` サマリーとして返されます。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::TelemetryMonitor monitor;
+monitor.start();
+
+for (const auto& input : inputs) {
+  (void)runner.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+}
+
+simaai::neat::Telemetry telemetry = monitor.stop();
+std::cout << telemetry;            // YAML
+telemetry.save("telemetry.json");  // .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+monitor = pyneat.TelemetryMonitor()
+monitor.start()
+
+for tensor in tensors:
+    runner.run([tensor], timeout_ms=2000)
+
+telemetry = monitor.stop()
+print(telemetry)                 # YAML
+print(telemetry.power_som_watts.mean)
+telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+</CodeTabs>
+
+- `start()` は新しいウィンドウを開始します。その後に Sentinel が取得したサンプルだけが集計されます。Sentinel は 2 秒ごとにサンプリングするため、それより短いウィンドウではサンプルが 1 つもない場合があり、その場合は `status` がそのことを示します。
+- `read()` は、停止せずにその時点までのサマリーを返します。各測定値の `last` は最新の値で、`mean`、`minimum`、`maximum` はその時点までのウィンドウを対象とします。
+- `stop()` は最終的なサマリーを返します。再度呼び出しても同じ結果を返します。
+- サマリーは測定値ごとに 1 つのエントリだけを保持するため、ウィンドウがどれだけ長くてもメモリ使用量は変わりません。
+- 複数のモニタは、1 つのプロセス内でも複数のプロセスにまたがっても、互いに、また `Model::benchmark()` と同時に実行できます。
+- すべての値はボード全体のもので、Sentinel、モニタ自体、その他のプロセスを含みます。各電力値はサンプルごとに 1 回の 250 ms の読み取りから得られるため、読み取りの間に発生する短いスパイクは表れません。
+- Sentinel が実行されていない場合、モニタは警告を 1 回出力し、`status` が Sentinel のインストール方法または起動方法を説明します。Sentinel が応答するようになると、モニタはサンプルの集計を始めます。Sentinel の問題で例外をスローすることはありません。
+- Python では、`start()`、`read()`、`stop()` は待機中に GIL を解放します。
 
 ## 出力結果を解読する
 

@@ -1,3 +1,6 @@
+// Covers the deprecated PowerMonitor API, which keeps working until it is removed.
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/internal/PowerTelemetryInternal.h"
 #include "test_main.h"

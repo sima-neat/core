@@ -1,10 +1,10 @@
 #include "model/Model.h"
-#include "model/internal/BenchmarkTelemetry.h"
 #include "model/internal/MlaLayerStats.h"
 #include "model/internal/ModelPack.h"
 #include "model/internal/ModelFormat.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/TelemetryMonitorInternal.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include <glib.h>
@@ -412,9 +412,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     latency_runner.close();
   }
 
-  const std::string trace_note =
-      std::filesystem::path(ModelAccess::source_path(model)).filename().string();
-  BenchmarkTelemetry telemetry;
+  Telemetry telemetry;
 
   RunOptions throughput_run_options;
   throughput_run_options.startup_preflight = false;
@@ -434,10 +432,11 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       require_benchmark_output(out, "throughput warmup");
     }
 
-    internal::SentinelTrace trace(trace_note);
+    TelemetryMonitor telemetry_monitor;
+    internal::TelemetryMonitorAccess::prepare_benchmark(telemetry_monitor);
     MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
         kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark throughput"));
-    const auto telemetry_begin = internal::BenchmarkTelemetryBoundary::now();
+    internal::TelemetryMonitorAccess::arm_benchmark(telemetry_monitor);
     const auto min_end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
 
@@ -522,11 +521,11 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
-    // All required outputs are complete. Capture the telemetry cutoff before
-    // stopping the model timer, then exclude Sentinel's slower stop/drain tail.
-    const auto telemetry_end = internal::BenchmarkTelemetryBoundary::now();
+    // Seal without joining or contacting Sentinel while the model timer runs.
+    // The final poll and worker teardown belong after the throughput window.
+    internal::TelemetryMonitorAccess::seal_benchmark(telemetry_monitor);
     throughput_measured = measure.stop();
-    telemetry = trace.finish({telemetry_begin, telemetry_end});
+    telemetry = telemetry_monitor.stop();
     runner.close();
   }
 
@@ -537,7 +536,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     report.layer_stats = collect_mla_layer_stats(profile_stages);
   }
   const double batch_throughput = throughput_measured.throughput_batches_per_s;
-  const BenchmarkTelemetry& board = report.telemetry;
+  const Telemetry& board = report.telemetry;
 
   const auto old_flags = std::cout.flags();
   const auto old_precision = std::cout.precision();
@@ -568,7 +567,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
                   throughput_measured.plugin_latency_unattributed.size())
               << "\n";
   }
-  const auto print_metric = [](const char* label, const BenchmarkMetric& metric, const char* unit) {
+  const auto print_metric = [](const char* label, const TelemetryStats& metric, const char* unit) {
     if (metric.samples == 0) {
       return;
     }
@@ -594,8 +593,8 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     print_metric("MLA memory:    ", board.mla_memory_mib, "MiB");
     print_metric("CMA used:      ", board.cma_memory_mib, "MiB");
     print_metric("Linux memory:  ", board.linux_memory_used_mib, "MiB");
-    std::cout << "Telemetry:     Sentinel, " << board.samples << " samples, trace "
-              << board.trace_id << "\n";
+    std::cout << "Telemetry:     Sentinel " << board.sentinel_version << ", " << board.samples
+              << " samples\n";
   }
   std::cout.flags(old_flags);
   std::cout.precision(old_precision);
@@ -658,7 +657,7 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
                                                          const MeasureReport& throughput_report,
                                                          int num_samples, int latency_samples,
                                                          int throughput_samples,
-                                                         BenchmarkTelemetry telemetry) {
+                                                         Telemetry telemetry) {
   require_benchmark_measure_report_window(latency_report, "latency", latency_samples);
   require_benchmark_measure_report_window(throughput_report, "throughput", throughput_samples);
 

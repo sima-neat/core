@@ -143,18 +143,21 @@ Recommended support bundle:
 For throughput/latency/power reporting, prefer the graph-run JSON export:
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 The export keeps scopes explicit:
 
-- `run.graph_metrics.throughput_fps` and `run.graph_metrics.power` are graph-level headlines.
+- `run.graph_metrics.throughput_fps` is the graph-level headline. `run.graph_metrics.power` is
+  filled only by the deprecated `RunOptions::enable_board_power()`; use `TelemetryMonitor` instead.
 - `run.node_metrics[]` contains node/plugin latency only; node/plugin power is intentionally absent.
 - `latency_semantics` and `aggregation` tell you whether values are run-lifetime or measured-window deltas.
 - `plugin_metrics_unattributed[]` preserves kernel/plugin rows that could not be mapped to exactly one node.

@@ -106,6 +106,7 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -429,6 +430,13 @@ void warn_deprecated_use_simaai_pool_python_once() {
       throw nb::python_error();
     }
   });
+}
+
+void warn_use_telemetry_monitor(const char* api) {
+  const std::string msg = std::string(api) + " is deprecated; use pyneat.TelemetryMonitor";
+  if (PyErr_WarnEx(PyExc_DeprecationWarning, msg.c_str(), 1) < 0) {
+    throw nb::python_error();
+  }
 }
 
 void warn_deprecated_h264_decode_python() {
@@ -2571,12 +2579,27 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("run_export", &RunOptions::run_export)
       .def_rw("graph_run_export", &RunOptions::graph_run_export)
       .def_rw("on_input_drop", &RunOptions::on_input_drop)
-      .def("enable_board_power", &RunOptions::enable_board_power, "sample_interval_ms"_a = 100,
-           nb::rv_policy::reference_internal)
-      .def("enable_modalix_som_power", &RunOptions::enable_modalix_som_power,
-           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
-      .def("enable_modalix_dvt_power", &RunOptions::enable_modalix_dvt_power,
-           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def(
+          "enable_board_power",
+          [](RunOptions& self, int sample_interval_ms) -> RunOptions& {
+            warn_use_telemetry_monitor("RunOptions.enable_board_power()");
+            return self.enable_board_power(sample_interval_ms);
+          },
+          "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def(
+          "enable_modalix_som_power",
+          [](RunOptions& self, int sample_interval_ms) -> RunOptions& {
+            warn_use_telemetry_monitor("RunOptions.enable_modalix_som_power()");
+            return self.enable_modalix_som_power(sample_interval_ms);
+          },
+          "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def(
+          "enable_modalix_dvt_power",
+          [](RunOptions& self, int sample_interval_ms) -> RunOptions& {
+            warn_use_telemetry_monitor("RunOptions.enable_modalix_dvt_power()");
+            return self.enable_modalix_dvt_power(sample_interval_ms);
+          },
+          "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
       .def("disable_power_monitor", &RunOptions::disable_power_monitor,
            nb::rv_policy::reference_internal);
 
@@ -4260,18 +4283,29 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("rails", &simaai::neat::PowerSnapshot::rails)
       .def_ro("total_watts", &simaai::neat::PowerSnapshot::total_watts)
       .def_ro("rails_with_power", &simaai::neat::PowerSnapshot::rails_with_power);
+  // The deprecated power monitor and profile helpers stay bound for compatibility.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   nb::class_<simaai::neat::PowerMonitor>(power_mod, "PowerMonitor")
-      .def(nb::init<simaai::neat::PowerMonitorOptions>(),
-           "options"_a = simaai::neat::PowerMonitorOptions{})
+      .def(
+          "__init__",
+          [](simaai::neat::PowerMonitor* self, simaai::neat::PowerMonitorOptions options) {
+            warn_use_telemetry_monitor("pyneat.power.PowerMonitor");
+            new (self) simaai::neat::PowerMonitor(std::move(options));
+          },
+          "options"_a = simaai::neat::PowerMonitorOptions{})
       .def("start", &simaai::neat::PowerMonitor::start)
       .def("stop", &simaai::neat::PowerMonitor::stop)
       .def("sample_once", &simaai::neat::PowerMonitor::sample_once)
       .def("summary", &simaai::neat::PowerMonitor::summary)
       .def("running", &simaai::neat::PowerMonitor::running);
-  power_mod.def("read_power_snapshot", &simaai::neat::read_power_snapshot, "options"_a);
-  // The deprecated power profile helpers stay bound for compatibility.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  power_mod.def(
+      "read_power_snapshot",
+      [](const simaai::neat::PowerMonitorOptions& options) {
+        warn_use_telemetry_monitor("pyneat.power.read_power_snapshot()");
+        return simaai::neat::read_power_snapshot(options);
+      },
+      "options"_a);
   power_mod.def("default_modalix_som_power_rails", &simaai::neat::default_modalix_som_power_rails);
   power_mod.def("default_modalix_dvt_power_rails", &simaai::neat::default_modalix_dvt_power_rails);
   power_mod.def("detect_default_power_monitor_profile",
@@ -4657,34 +4691,58 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms)
       .def_rw("include_layer_stats", &simaai::neat::BenchmarkOptions::include_layer_stats);
 
-  nb::class_<simaai::neat::BenchmarkMetric>(m, "BenchmarkMetric")
+  using simaai::neat::Telemetry;
+  using simaai::neat::TelemetryMonitor;
+  using simaai::neat::TelemetryStats;
+  nb::class_<TelemetryStats>(m, "TelemetryStats")
       .def(nb::init<>())
-      .def_ro("key", &simaai::neat::BenchmarkMetric::key)
-      .def_ro("label", &simaai::neat::BenchmarkMetric::label)
-      .def_ro("unit", &simaai::neat::BenchmarkMetric::unit)
-      .def_ro("samples", &simaai::neat::BenchmarkMetric::samples)
-      .def_ro("mean", &simaai::neat::BenchmarkMetric::mean)
-      .def_ro("minimum", &simaai::neat::BenchmarkMetric::minimum)
-      .def_ro("maximum", &simaai::neat::BenchmarkMetric::maximum);
+      .def_ro("key", &TelemetryStats::key)
+      .def_ro("label", &TelemetryStats::label)
+      .def_ro("unit", &TelemetryStats::unit)
+      .def_ro("samples", &TelemetryStats::samples)
+      .def_ro("mean", &TelemetryStats::mean)
+      .def_ro("minimum", &TelemetryStats::minimum)
+      .def_ro("maximum", &TelemetryStats::maximum)
+      .def_ro("last", &TelemetryStats::last);
 
-  nb::class_<simaai::neat::BenchmarkTelemetry>(m, "BenchmarkTelemetry")
+  nb::class_<Telemetry>(m, "Telemetry")
       .def(nb::init<>())
-      .def_ro("status", &simaai::neat::BenchmarkTelemetry::status)
-      .def_ro("trace_id", &simaai::neat::BenchmarkTelemetry::trace_id)
-      .def_ro("sentinel_version", &simaai::neat::BenchmarkTelemetry::sentinel_version)
-      .def_ro("sample_interval_ms", &simaai::neat::BenchmarkTelemetry::sample_interval_ms)
-      .def_ro("samples", &simaai::neat::BenchmarkTelemetry::samples)
-      .def_ro("power_som_watts", &simaai::neat::BenchmarkTelemetry::power_som_watts)
-      .def_ro("power_mla_watts", &simaai::neat::BenchmarkTelemetry::power_mla_watts)
-      .def_ro("power_rails_watts", &simaai::neat::BenchmarkTelemetry::power_rails_watts)
-      .def_ro("die_temperatures_c", &simaai::neat::BenchmarkTelemetry::die_temperatures_c)
-      .def_ro("die_temperature_max_c", &simaai::neat::BenchmarkTelemetry::die_temperature_max_c)
-      .def_ro("board_temperatures_c", &simaai::neat::BenchmarkTelemetry::board_temperatures_c)
-      .def_ro("cpu_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_usage_pct)
-      .def_ro("cpu_cores_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_cores_usage_pct)
-      .def_ro("mla_memory_mib", &simaai::neat::BenchmarkTelemetry::mla_memory_mib)
-      .def_ro("cma_memory_mib", &simaai::neat::BenchmarkTelemetry::cma_memory_mib)
-      .def_ro("linux_memory_used_mib", &simaai::neat::BenchmarkTelemetry::linux_memory_used_mib);
+      .def_ro("status", &Telemetry::status)
+      .def_ro("sentinel_version", &Telemetry::sentinel_version)
+      .def_ro("sample_interval_ms", &Telemetry::sample_interval_ms)
+      .def_ro("samples", &Telemetry::samples)
+      .def_ro("duration_ms", &Telemetry::duration_ms)
+      .def_ro("power_som_watts", &Telemetry::power_som_watts)
+      .def_ro("power_mla_watts", &Telemetry::power_mla_watts)
+      .def_ro("power_rails_watts", &Telemetry::power_rails_watts)
+      .def_ro("die_temperatures_c", &Telemetry::die_temperatures_c)
+      .def_ro("die_temperature_max_c", &Telemetry::die_temperature_max_c)
+      .def_ro("board_temperatures_c", &Telemetry::board_temperatures_c)
+      .def_ro("cpu_usage_pct", &Telemetry::cpu_usage_pct)
+      .def_ro("cpu_cores_usage_pct", &Telemetry::cpu_cores_usage_pct)
+      .def_ro("mla_memory_mib", &Telemetry::mla_memory_mib)
+      .def_ro("cma_memory_mib", &Telemetry::cma_memory_mib)
+      .def_ro("linux_memory_used_mib", &Telemetry::linux_memory_used_mib)
+      .def("save", &Telemetry::save, "file_path"_a, nb::call_guard<nb::gil_scoped_release>())
+      .def("__str__",
+           [](const Telemetry& telemetry) {
+             std::ostringstream text;
+             text << telemetry;
+             return text.str();
+           })
+      .def("__repr__", [](const Telemetry& telemetry) {
+        return nb::str("<Telemetry status={!r} samples={} duration_ms={:.1f} "
+                       "power_som_watts.mean={:.2f}>")
+            .format(telemetry.status, telemetry.samples, telemetry.duration_ms,
+                    telemetry.power_som_watts.mean);
+      });
+
+  nb::class_<TelemetryMonitor>(m, "TelemetryMonitor")
+      .def(nb::init<>())
+      .def("start", &TelemetryMonitor::start, nb::call_guard<nb::gil_scoped_release>())
+      .def("read", &TelemetryMonitor::read, nb::call_guard<nb::gil_scoped_release>())
+      .def("stop", &TelemetryMonitor::stop, nb::call_guard<nb::gil_scoped_release>())
+      .def("running", &TelemetryMonitor::running);
 
   nb::class_<simaai::neat::LayerStats>(m, "LayerStats")
       .def(nb::init<>())

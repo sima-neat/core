@@ -120,31 +120,35 @@ tensor_rank=3
 - `advanced.max_input_bytes`: обмеження зростання буфера вхідних даних.
 - `advanced.copy_input`: примусове створення захисних копій вхідних даних.
 
-Використовуйте `Run::start_measurement()`, щоб перевірити затримку, пропускну здатність, лічильники вхідних даних, час роботи плагінів/модулів, а також необов’язкову телеметрію живлення плати в одному виміряному вікні.
+Використовуйте `Run::start_measurement()`, щоб перевірити затримку, пропускну здатність, лічильники вхідних даних і час роботи плагінів/модулів в одному виміряному вікні.
 
-Щоб включити дані про живлення плати, увімкніть цю функцію в коді (не потрібна змінна середовища) та зчитайте її зі звіту про вимірювання:
+Щоб записати потужність плати, температури, завантаження CPU та пам’ять за те саме вікно, запустіть навколо нього `TelemetryMonitor`. Він читає ці дані із Sentinel — демона телеметрії плати:
 
 ```cpp
-simaai::neat::RunOptions run_opt;
-run_opt.enable_board_power(); // reads board power from Sentinel
 auto run = graph.build(inputs, run_opt);
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
 auto scope = run.start_measurement();
 run.push(inputs);
 (void)run.pull_tensors(5000);
 auto report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
+std::cout << telemetry; // YAML summary
 ```
 
 ```python
-run_opt = neat.RunOptions()
-run_opt.enable_board_power()  # reads board power from Sentinel
 run = graph.build(tensor, run_opt)
+telemetry_monitor = neat.TelemetryMonitor()
+telemetry_monitor.start()
 scope = run.start_measurement()
 run.push(tensor)
 _ = run.pull_tensors(5000)
 report = scope.stop()
+telemetry = telemetry_monitor.stop()
+print(telemetry)  # YAML summary
 ```
 
-`Model::build(run_opt)`, `Model::build(route_opt, run_opt)` та `Graph::build(run_opt)` передають одні й ті самі параметри середовища виконання до базового `Run`, тому використовується один монітор живлення на рівні графа, замість повторного збору даних для кожного конвеєра.
+Sentinel збирає зразки кожні 2 с, тож коротше вікно може не мати жодного зразка; тоді про це повідомляє `telemetry.status`. Див. [Записуйте телеметрію плати](/develop-apps/development-workflow/model#record-board-telemetry).
 
 ## Вихідні файли
 - C++: `tutorials/004_build_inference_pipeline/build_inference_pipeline.cpp`

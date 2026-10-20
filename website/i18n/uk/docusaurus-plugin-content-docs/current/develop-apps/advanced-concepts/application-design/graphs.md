@@ -681,14 +681,7 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 
 Експортер робить знімок поточної сесії; він не зупиняє її. Якщо вам потрібні остаточні дані для завершеного набору завдань, викличте `run.close_input()` і очистіть вихідні дані, або викличте `run.stop()`, перш ніж зберегти.
 
-Щоб включити телеметрію живлення плати:
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power();
-
-neat::Run run = app.build(opt);
-```
+Застарілий `RunOptions::enable_board_power()` додає до експорту потужність плати. У новому коді записуйте потужність плати, температури, завантаження CPU та пам’ять за допомогою [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) і зберігайте його `Telemetry` поруч з експортом.
 
 Схема JSON має версію `sima.neat.graph_run` `1`. Схема розміщена за адресою `schemas/graph_run_v1.schema.json`, а інструмент перевірки CI – за адресою `tests/perf/tools/graph_run_schema.py`.
 

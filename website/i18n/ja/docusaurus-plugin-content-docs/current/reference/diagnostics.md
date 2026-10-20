@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 スループット、レイテンシー、電力に関するレポートを作成する際は、グラフ形式で出力される JSON 形式の使用を推奨します。
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 エクスポートは、スコープを明確に保ちます。
 
-- `run.graph_metrics.throughput_fps`と`run.graph_metrics.power`は、グラフ全体の主要な指標です。
+- `run.graph_metrics.throughput_fps`は、グラフ全体の主要な指標です。`run.graph_metrics.power`は、非推奨の`RunOptions::enable_board_power()`を使用した場合にのみ値が設定されます。代わりに`TelemetryMonitor`を使用してください。
 - `run.node_metrics[]` には、ノード/プラグインの遅延のみが含まれており、ノード/プラグインの消費電力は意図的に含まれていません。
 - `latency_semantics`と`aggregation`は、値がプログラム実行期間全体の値であるか、測定された特定の時間間隔における変化量であるかを示します。
 - `plugin_metrics_unattributed[]` は、正確に1つのノードにマッピングできなかったカーネル/プラグインの行を保持します。

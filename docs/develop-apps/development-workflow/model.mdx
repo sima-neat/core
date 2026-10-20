@@ -823,9 +823,13 @@ report = model.benchmark(options)
 ### Power and board telemetry {#power-and-board-telemetry}
 
 Power and board telemetry come from [Sentinel](/tools/sentinel/), the DevKit telemetry daemon that
-the Neat installer sets up on the board. The benchmark records a Sentinel trace named
-`neat-benchmark-<UTC time>` around the throughput pass and keeps it, so you can open it later with
-Sentinel's own tools. `report.telemetry` summarizes the trace:
+the Neat installer sets up on the board. The benchmark records them with a
+[`TelemetryMonitor`](#record-board-telemetry) around the throughput pass. It selects samples
+after measurement starts and before measurement stops, after all required outputs complete.
+Preparation, joining the monitor worker, and the final Sentinel read do not extend the timed
+workload. Invalid sample timestamps or detected clock discontinuities make benchmark telemetry
+unavailable rather than selecting an unrelated window. `report.telemetry`
+summarizes them:
 
 | Field | Meaning |
 | --- | --- |
@@ -840,13 +844,13 @@ Sentinel's own tools. `report.telemetry` summarizes the trace:
 | `telemetry.cma_memory_mib` | Used contiguous memory (CMA), in MiB. It includes the MLA memory pool, so do not add it to `mla_memory_mib`. At idle it also includes page cache that Linux borrows from CMA. |
 | `telemetry.linux_memory_used_mib` | Linux used memory, excluding page cache, in MiB. |
 
-Each metric reports `samples`, `mean`, `minimum`, and `maximum`, and `samples == 0` means the board
-did not report it. Memory values cover the whole board, including other running processes. Sentinel samples every 2 s, so a 10 s pass yields about 5 samples.
+Each metric reports `samples`, `mean`, `minimum`, `maximum`, and `last`, and `samples == 0` means
+the board did not report it. Sentinel samples every 2 s, so a 10 s pass yields about 5 samples.
+Every value covers the whole board, including other running processes.
 
-When Sentinel is not running, another Sentinel trace is already recording, or the pass is too short
-to collect a sample, the benchmark still returns latency and FPS. The power fields stay zero,
-`telemetry.status` names the reason (it is `"ok"` otherwise), and the printed summary shows
-`Power: unavailable (<reason>)`.
+When Sentinel is not running or the pass is too short to collect a sample, the benchmark still
+returns latency and FPS. The power fields stay zero, `telemetry.status` names the reason (it is
+`"ok"` otherwise), and the printed summary shows `Power: unavailable (<reason>)`.
 
 ### Measure your own loop
 
@@ -885,6 +889,64 @@ runner.close()
 </CodeTabs>
 
 Do not compare a one-shot smoke test against a warmed reusable runner. Those answer different questions.
+
+### Record board telemetry {#record-board-telemetry}
+
+Use `TelemetryMonitor` to record power, temperatures, CPU usage, and memory over any window you
+choose, such as your own inference loop. It reads them from [Sentinel](/tools/sentinel/) and
+returns the same `Telemetry` summary as `report.telemetry`:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::TelemetryMonitor monitor;
+monitor.start();
+
+for (const auto& input : inputs) {
+  (void)runner.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+}
+
+simaai::neat::Telemetry telemetry = monitor.stop();
+std::cout << telemetry;            // YAML
+telemetry.save("telemetry.json");  // .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+monitor = pyneat.TelemetryMonitor()
+monitor.start()
+
+for tensor in tensors:
+    runner.run([tensor], timeout_ms=2000)
+
+telemetry = monitor.stop()
+print(telemetry)                 # YAML
+print(telemetry.power_som_watts.mean)
+telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+</CodeTabs>
+
+- `start()` begins a new window. Only samples Sentinel takes after it count, and Sentinel samples
+  every 2 s, so a window shorter than that can have none; `status` then says so.
+- `read()` returns the summary so far without stopping. Each measurement's `last` is its newest
+  value, and `mean`, `minimum`, and `maximum` cover the window so far.
+- `stop()` returns the final summary. Calling it again returns the same result.
+- The summary keeps one entry per measurement, so memory use stays the same however long the
+  window runs.
+- Several monitors, in one process or many, can run at the same time as each other and as
+  `Model::benchmark()`.
+- Every value covers the whole board, including Sentinel, the monitor, and other processes. Each
+  power value comes from one 250 ms reading per sample, so short spikes between readings do not
+  show.
+- When Sentinel is not running, the monitor prints one warning, `status` explains how to install
+  or start Sentinel, and the monitor counts samples once Sentinel answers. It never throws for
+  Sentinel problems.
+- In Python, `start()`, `read()`, and `stop()` release the GIL while they wait.
 
 ## Decode output
 

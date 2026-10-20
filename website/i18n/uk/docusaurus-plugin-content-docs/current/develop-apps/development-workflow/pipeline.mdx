@@ -1051,40 +1051,42 @@ run.close()
 - C++ `run_to_json(...)` та `save_run_json(...)` експортують результати виконання після завершення процесу.
 - Python `run.json(...)` та `run.save_json(...)` експортують один і той самий тип даних.
 
-Увімкніть збір даних про енергоспоживання для `RunOptions`, які використовуються для запуску процесу:
+Записуйте потужність плати, температури, завантаження CPU та пам’ять за те саме вікно за допомогою [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry):
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RunOptions options;
-options.enable_board_power();
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
+auto scope = run.start_measurement();
 
-auto run = graph.build(options);
+// Push and pull here.
 
-simaai::neat::MeasureOptions measure_options;
-measure_options.include_power = true;
-auto scope = run.start_measurement(measure_options);
+simaai::neat::MeasureReport report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.RunOptions()
-options.enable_board_power()
+telemetry_monitor = pyneat.TelemetryMonitor()
+telemetry_monitor.start()
+scope = run.start_measurement()
 
-run = graph.build(options)
+# Push and pull here.
 
-measure_options = pyneat.MeasureOptions()
-measure_options.include_power = True
-scope = run.start_measurement(measure_options)
+report = scope.stop()
+telemetry = telemetry_monitor.stop()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-Дані про живлення надходять від Sentinel, який опитує лінії живлення плати кожні 2 с, тому вікно вимірювання, коротше приблизно за 2 с, може не містити жодного зразка живлення. Задокументуйте налаштування вимірювання, вказавши відповідні значення; не слід подавати дані про споживання енергії таким чином, щоб вони виглядали як переносні, якщо живлення не забезпечується належним чином.
+Телеметрія надходить від Sentinel, який опитує плату кожні 2 с, тому вікно вимірювання, коротше приблизно за 2 с, може не містити жодного зразка. Задокументуйте налаштування вимірювання, вказавши відповідні значення; не слід подавати дані про споживання енергії таким чином, щоб вони виглядали як переносні, якщо живлення не забезпечується належним чином.
+
+`RunOptions::enable_board_power()`, `RunOptions::power_monitor` і `MeasureOptions::include_power` застаріли; замість них використовуйте `TelemetryMonitor`. Вони й надалі працюють.
 
 Експорт під час збірки відповідає на запитання: «Що створив Neat?». Експорт після завершення роботи відповідає на запитання: «Що відбулося під час роботи?».
 

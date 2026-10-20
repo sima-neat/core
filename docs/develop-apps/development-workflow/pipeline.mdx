@@ -1070,40 +1070,43 @@ Use run export for evidence:
 - C++ `run_to_json(...)` and `save_run_json(...)` export a run after it has executed.
 - Python `run.json(...)` and `run.save_json(...)` export the same kind of evidence.
 
-Enable power telemetry on the `RunOptions` that builds the run:
+Record board power, temperatures, CPU usage, and memory over the same window with a
+[`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry):
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RunOptions options;
-options.enable_board_power();
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
+auto scope = run.start_measurement();
 
-auto run = graph.build(options);
+// Push and pull here.
 
-simaai::neat::MeasureOptions measure_options;
-measure_options.include_power = true;
-auto scope = run.start_measurement(measure_options);
+simaai::neat::MeasureReport report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.RunOptions()
-options.enable_board_power()
+telemetry_monitor = pyneat.TelemetryMonitor()
+telemetry_monitor.start()
+scope = run.start_measurement()
 
-run = graph.build(options)
+# Push and pull here.
 
-measure_options = pyneat.MeasureOptions()
-measure_options.include_power = True
-scope = run.start_measurement(measure_options)
+report = scope.stop()
+telemetry = telemetry_monitor.stop()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-Power comes from Sentinel, which samples the board rails every 2 s, so a measurement window shorter than about 2 s can have no power samples. Document the measurement setup with the numbers; do not make power numbers look portable when the rails are not.
+Telemetry comes from Sentinel, which samples the board every 2 s, so a measurement window shorter than about 2 s can have no samples. Document the measurement setup with the numbers; do not make power numbers look portable when the rails are not.
+
+`RunOptions::enable_board_power()`, `RunOptions::power_monitor`, and `MeasureOptions::include_power` are deprecated in favor of `TelemetryMonitor`. They keep working.
 
 Build-time export answers “what did Neat build?” After-run export answers “what happened while it ran?”
 

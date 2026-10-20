@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 처리량/지연 시간/전력 보고를 위해 그래프 실행 JSON 내보내기를 사용하는 것이 좋습니다.
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 내보내기는 범위를 명확하게 유지합니다.
 
-- `run.graph_metrics.throughput_fps` 및 `run.graph_metrics.power`는 그래프 수준의 주요 지표입니다.
+- `run.graph_metrics.throughput_fps`는 그래프 수준의 주요 지표입니다. `run.graph_metrics.power`는 더 이상 사용되지 않는 `RunOptions::enable_board_power()`를 사용할 때만 채워집니다. 대신 `TelemetryMonitor`를 사용하십시오.
 - `run.node_metrics[]`에는 노드/플러그인의 지연 시간만 포함되며, 노드/플러그인의 전력 소비량은 의도적으로 포함되지 않습니다.
 - `latency_semantics`와 `aggregation`은 값이 프로그램 실행 기간 동안의 값인지, 아니면 특정 시간 간격 동안 측정된 값인지 알려줍니다.
 - `plugin_metrics_unattributed[]`는 정확히 하나의 노드에 매핑되지 않은 커널/플러그인 행을 보존합니다.
