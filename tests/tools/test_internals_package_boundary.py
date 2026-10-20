@@ -532,6 +532,25 @@ endif()
                 )
                 self.assertEqual(calls, [])
 
+    def test_master_firmware_manifest_selects_exact_sysroot(self) -> None:
+        result, calls = run_sync(
+            {"platform-version": "3.0.0", "elxr_version": "3.0.0_master_B2263"},
+            "3.0.0",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("update 3.0.0~pre2263", calls)
+
+    def test_firmware_manifest_rejects_mismatch_and_ambiguous_daily_receipt(self) -> None:
+        for manifest in (
+            {"platform-version": "3.0.0", "elxr_version": "2.0.0_master_B2263"},
+            {"platform-version": "3.0.0", "elxr_version": "3.0.0_develop_B2263"},
+            {"platform-version": "3.0.0", "elxr_version": "3.0.0_master_B2263",
+             "sysroot-version": "3.0.0~pre2262"},
+        ):
+            result, calls = run_sync(manifest, "3.0.0")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(calls, [])
+
     def test_invalid_sysroot_receipts_fail_closed(self) -> None:
         base = "2.1.3"
         receipt = f"{base}~pre9999"

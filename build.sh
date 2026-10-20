@@ -1479,8 +1479,20 @@ sync_sysroot_from_internals_manifest() {
 import json, re, sys
 artifact = json.load(open(sys.argv[1], encoding="utf-8"))
 consumer = json.load(open(sys.argv[2], encoding="utf-8"))
-receipt = artifact["sysroot-version"]
 consumer_base = consumer["platform-version"]
+firmware = artifact.get("elxr_version")
+if firmware is not None:
+    match = re.fullmatch(r"([0-9]+[.][0-9]+[.][0-9]+)_(master|develop)_B([1-9][0-9]*)", firmware)
+    if not match or match[1] != consumer_base or artifact.get("platform-version") != consumer_base:
+        raise ValueError("Internals elxr_version does not match platform-version")
+    if match[2] != "master":
+        raise ValueError("Daily Internals firmware requires an exact resolved sysroot receipt")
+    # Master build numbers map directly to immutable APT pre-release versions.
+    receipt = f"{match[1]}~pre{match[3]}"
+    if "sysroot-version" in artifact and artifact["sysroot-version"] != receipt:
+        raise ValueError("Internals firmware and sysroot receipt disagree")
+else:
+    receipt = artifact["sysroot-version"]
 if not isinstance(receipt, str) or (
     receipt and not re.fullmatch(
         r"[0-9]+(?:[.][0-9]+){2}(?:~(?:pre[0-9]+|git[0-9]{12}[.][a-f0-9]+-[0-9]+))?",
