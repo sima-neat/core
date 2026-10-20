@@ -66,6 +66,12 @@ then relinks against the matching Scheduler client implementation; Scheduler
 consumes the lower numerical packages.
 Core's source-first DEBs pin the selected Scheduler and numerical SDK versions.
 Runner pins Kernels; Scheduler pins Runner, Kernels and its enabled codec backend.
+Test-enabled Core builds also require Scheduler's separate
+`simaai-scheduler-client-test-dev` package from that exact producer. Source builds
+request it with `--client-test-support`; package builds select the adjacent
+`client-test-support/` directory or `NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR`.
+The coordinator checks its production receipt, source, payload and archive before
+exposing the test-only CMake component. Runtime-only builds do not require it.
 The build composes metadata-only `simaai-runtime` compatibility with exact Runner
 and Scheduler dependencies. Canonical packages own their files once; Runner alone
 owns the existing loader configuration. Always
@@ -156,9 +162,15 @@ ignored build products are not a source snapshot. The metadata output itself is
 excluded from the untracked-content digest to avoid self-reference. A dirty local
 candidate is not identified as a clean published artifact.
 
-For header-only analysis, `--install-deps-only` requires local package overrides.
-It copies headers without building or executing A65/EV code. Documentation-only
-builds do not prepare native dependencies.
+For header-only dependency preparation, `--install-deps-only` requires local
+package overrides. It copies headers without building or executing A65/EV code.
+For native clang-tidy analysis, use `scripts/run_cpp_tidy.sh` with the selected
+package overrides and Scheduler prefix. `TIDY_INSTALL_DEPS=1` installs native host
+analysis prerequisites and invokes the installed Scheduler coordinator in
+headers-only mode; it does not activate or modify an SDK sysroot. LLiMa-backed
+GenAI implementation files remain outside this host-only analysis profile.
+The script does not substitute an ambient SDK LLiMa package for the selected
+build's dependency. Documentation-only builds do not prepare native dependencies.
 
 EV device builds remain a separate licensed workflow. None of these commands
 implicitly invokes MetaWare, replaces firmware, or qualifies a firmware change.

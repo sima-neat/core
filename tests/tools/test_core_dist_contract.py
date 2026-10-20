@@ -584,3 +584,42 @@ def test_platform_capture_rejects_undeclared_ota_on_path():
     rows = ''.join('\t'.join(row.values()) + '\n' for row in expected['packages'].values())
     with patch.object(verifier.subprocess, 'check_output', side_effect=[rows, '/usr/bin/simaai-pdiff\n']), patch.object(verifier.shutil, 'which', return_value='/other/simaai-ota'), patch.object(verifier.Path, 'resolve', return_value=Path('/other/simaai-ota')), pytest.raises(verifier.ContractError, match='not the Palette-declared'):
         verifier.platform_inventory()
+
+
+def test_client_test_support_is_exact_optional_development_input(tmp_path):
+    controls = fixture(tmp_path)
+    name = 'simaai-scheduler-client-test-dev.deb'
+    (tmp_path / name).write_bytes(b'closed development archive fixture')
+    receipt_path = tmp_path / 'resolved-deps-manifest.json'
+    receipt = json.loads(receipt_path.read_text())
+    entry = {'Package': 'simaai-scheduler-client-test-dev', 'Version': '1', 'Architecture': 'arm64',
+             'deb_sha256': verifier.digest(tmp_path / name)}
+    receipt['client_test_support'] = {'debian_package': entry}
+    receipt_path.write_text(json.dumps(receipt))
+    allowlist = tmp_path / 'neat-install-manifest.txt'
+    allowlist.write_text(allowlist.read_text() + name + '\n')
+    for path in tmp_path.glob('metadata*.json'):
+        metadata = json.loads(path.read_text())
+        if receipt_path.name not in metadata['resources']:
+            continue
+        metadata['resources'].append(name)
+        metadata['resources-checksum'] = {p: verifier.digest(tmp_path / p) for p in metadata['resources']}
+        path.write_text(json.dumps(metadata))
+    actual_control = {key: entry[key] for key in ('Package', 'Version', 'Architecture')}
+    def control(path):
+        if Path(path).name == name:
+            return actual_control
+        return controls(path)
+    with patch.object(verifier, 'control', control):
+        assert 'simaai-scheduler-client-test-dev' in run(tmp_path)['dependency_roles']
+        for field, invalid in [('Version', 'wrong'), ('Architecture', 'amd64'), ('deb_sha256', '0' * 64)]:
+            original = entry[field]
+            entry[field] = invalid
+            receipt_path.write_text(json.dumps(receipt))
+            with pytest.raises(verifier.ContractError, match='Client test-support'):
+                run(tmp_path)
+            entry[field] = original
+        receipt.pop('client_test_support')
+        receipt_path.write_text(json.dumps(receipt))
+        with pytest.raises(verifier.ContractError, match='Foreign DEB'):
+            run(tmp_path)

@@ -82,7 +82,7 @@ def prepare(args):
                                                      str(dist)], environment)))
     environment.update(selected)
     # Exercise the real wrapper/coordinator command, not removed Python APIs.
-    coordinator(core, ['prepare', '--headers-only', '--output', str(output / 'audit')], environment)
+    coordinator(core, ['prepare', '--headers-only', '--client-test-support', '--output', str(output / 'audit')], environment)
     selected['CMAKE_PREFIX_PATH'] = str(Path(selected['NEAT_SCHEDULER_PACKAGE_DIR']) / 'usr')
     info = archive_json(cores[0], 'usr/share/sima-neat/buildinfo.json')
     llima = info.get('dependencies', {}).get('llima')

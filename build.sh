@@ -2751,6 +2751,7 @@ main() {
     detect_build_jobs
     local -a dependency_args=()
     [[ "${DO_CLEAN}" == "ON" ]] && dependency_args+=(--clean)
+    [[ "${BUILD_TESTS}" == "ON" ]] && dependency_args+=(--client-test-support)
     python3 tools/build_dependencies.py prepare --core "${REPO_ROOT}" \
       --output "${NEAT_BACKEND_DIR}" --jobs "${BUILD_JOBS}" "${dependency_args[@]}"
   fi

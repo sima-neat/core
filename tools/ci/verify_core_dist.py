@@ -167,6 +167,17 @@ def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=
         expected_roles[role] = entry['Version']
         require(role in controls and digest(debs[controls[role][0]]) == entry['sha256'],
                 f'Codecs archive differs from consumed receipt: {role}')
+    test_support = receipt.get('client_test_support')
+    if test_support is not None:
+        entry = test_support.get('debian_package', {})
+        role = 'simaai-scheduler-client-test-dev'
+        require(entry.get('Package') == role and entry.get('Architecture') == 'arm64'
+                and entry.get('Version') == receipt['scheduler']['debian_version'],
+                'Client test-support differs from selected Scheduler version/architecture')
+        require(role in controls and controls[role][1]['Version'] == entry['Version']
+                and digest(debs[controls[role][0]]) == entry.get('deb_sha256'),
+                'Client test-support archive differs from consumed receipt')
+        expected_roles[role] = entry['Version']
     provider_roles = set()
     for entry in composed_provider_controls(receipt):
         require(isinstance(entry, dict) and all(isinstance(entry.get(key), str) and entry[key]

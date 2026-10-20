@@ -71,7 +71,7 @@ def test_same_run_artifact_and_validator_precede_analysis():
     assert 'dependencies.prepare(' not in helper and 'dependencies.find_config(' not in helper
 
 
-@pytest.mark.parametrize('profile', ['ready', 'broken-headers-root', 'missing-tool-unprivileged'])
+@pytest.mark.parametrize('profile', ['ready', 'broken-headers-root', 'missing-tool-unprivileged', 'missing-native-module-root', 'apt-failure'])
 def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
     """Exercise the real installer with shell doubles; never install packages."""
     tools = tmp_path / 'bin'
@@ -85,39 +85,52 @@ def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
                         'printf "%s %s\\n" "${0##*/}" "$*" >> "$TEST_CALLS"\n' + body)
         path.chmod(0o755)
 
-    for name in ('clang-format', 'clang-tidy', 'run-clang-tidy', 'rg', 'g++'):
+    for name in ('clang-format', 'clang-tidy', 'run-clang-tidy', 'rg', 'g++', 'cmake', 'python3', 'git'):
         if name != 'g++' or profile != 'missing-tool-unprivileged':
             tool(name)
     tool('clang++', 'while IFS= read -r line; do\n'
                    '  printf "%s\\n" "$line" >> "$TEST_HEADERS"\n'
                    'done\n'
-                   f'exit {1 if profile == "broken-headers-root" else 0}\n')
+                   f'exit {1 if profile in ("broken-headers-root", "apt-failure") else 0}\n')
     tool('id', f'echo {1000 if profile == "missing-tool-unprivileged" else 0}\n')
     tool('sudo', 'exit 1\n')
-    tool('apt-get')
+    tool('pkg-config', 'test -z "${SYSROOT}${SDKTARGETSYSROOT}${PKG_CONFIG_SYSROOT_DIR}${PKG_CONFIG_PATH}${PKG_CONFIG_LIBDIR}" || exit 90\n'
+         + f'exit {1 if profile == "missing-native-module-root" else 0}\n')
+    tool('apt-get', 'exit 47\n' if profile == 'apt-failure' else 'exit 0\n')
     result = subprocess.run(
         ['/bin/bash', str(ROOT / HYGIENE_INSTALLER)],
-        env={'PATH': str(tools), 'TEST_CALLS': str(calls), 'TEST_HEADERS': str(headers)},
+        env={'PATH': str(tools), 'TEST_CALLS': str(calls), 'TEST_HEADERS': str(headers),
+             'SYSROOT': '/poison-sdk', 'SDKTARGETSYSROOT': '/poison-sdk',
+             'PKG_CONFIG_SYSROOT_DIR': '/poison-sdk', 'PKG_CONFIG_PATH': '/poison-sdk',
+             'PKG_CONFIG_LIBDIR': '/poison-sdk'},
         text=True, capture_output=True, check=False,
     )
     observed = calls.read_text().splitlines()
     clang_probe = 'clang++ -std=c++20 -x c++ - -fsyntax-only'
+    module_probe = 'pkg-config --exists gstreamer-1.0 >= 1.22 gstreamer-allocators-1.0 gstreamer-app-1.0 gstreamer-video-1.0 gstreamer-sdp-1.0 gstreamer-rtsp-server-1.0 glib-2.0 opencv4 cpp-httplib yaml-cpp zlib'
     if profile == 'ready':
         assert result.returncode == 0, result.stderr
-        assert observed == [clang_probe]
+        assert observed == [module_probe, clang_probe]
         assert 'already installed' in result.stdout
-    elif profile == 'broken-headers-root':
+    elif profile in ('broken-headers-root', 'missing-native-module-root'):
         assert result.returncode == 0, result.stderr
-        assert observed == [clang_probe, 'id -u', 'apt-get update',
+        probe = [module_probe] + ([clang_probe] if profile == 'broken-headers-root' else [])
+        assert observed == probe + ['id -u', 'apt-get update',
                             'apt-get install -y build-essential gcc-12 g++-12 libstdc++-12-dev '
-                            'clang clang-format clang-tidy ripgrep']
+                            'clang clang-format clang-tidy ripgrep cmake pkg-config python3 git '
+                            'libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstrtspserver-1.0-dev '
+                            'libopencv-dev nlohmann-json3-dev libcpp-httplib-dev libyaml-cpp-dev zlib1g-dev']
+    elif profile == 'apt-failure':
+        assert result.returncode == 47
+        assert observed == [module_probe, clang_probe, 'id -u', 'apt-get update']
     else:
         assert result.returncode == 1
         assert observed == ['id -u', 'sudo -n true']
         assert 'cannot install without passwordless sudo' in result.stderr
         assert not headers.exists()
-    if profile != 'missing-tool-unprivileged':
-        assert headers.read_text() == '#include <memory>\n'
+    assert all(':arm64' not in row and 'dpkg' not in row for row in observed)
+    if profile not in ('missing-tool-unprivileged', 'missing-native-module-root'):
+        assert headers.read_text() == '#include <memory>\n#include <nlohmann/json.hpp>\n'
 
 
 def installed_dispatch_fixture(tmp_path):
@@ -175,6 +188,18 @@ def test_hygiene_has_no_second_mutable_llima_resolution():
     assert 'develop:latest' not in helper and "'latest'" not in helper
     assert "selected['CMAKE_PREFIX_PATH']" in helper
     assert "selected['NEAT_SCHEDULER_PACKAGE_DIR']" in helper
+
+
+def test_full_core_build_explicitly_requires_same_producer_test_component():
+    driver = (ROOT / 'build.sh').read_text()
+    assert '[[ "${BUILD_TESTS}" == "ON" ]] && dependency_args+=(--client-test-support)' in driver
+    helper = (ROOT / 'tools/ci/prepare_hygiene_cohort.py').read_text()
+    assert "['prepare', '--headers-only', '--client-test-support'" in helper
+    tidy = (ROOT / 'scripts/run_cpp_tidy.sh').read_text()
+    assert '--headers-only --client-test-support' in tidy
+    assert '-C "$build_dir/dependencies/dependencies.cmake"' in tidy
+    assert './build.sh --install-deps-only' not in tidy
+    assert '/opt/toolchain' not in tidy
 
 
 GATE_IDS = {
