@@ -293,8 +293,10 @@ TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOp
   }
   TensorList inputs;
   inputs.reserve(specs.size());
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
   for (std::size_t i = 0; i < specs.size(); ++i) {
-    inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i));
+    inputs.push_back(make_synthetic_benchmark_tensor(
+        internal::resolve_benchmark_input_spec(specs[i], plan, options), i));
   }
   attach_benchmark_preprocess_meta_for_boxdecode(model, inputs, options);
   return inputs;
@@ -326,6 +328,21 @@ void require_benchmark_output(const simaai::neat::Sample& out, const char* where
 } // namespace
 
 namespace internal {
+
+TensorSpec resolve_benchmark_input_spec(TensorSpec spec, const ResolvedPreprocessPlan& plan,
+                                        const BenchmarkOptions& options) {
+  if (!plan.enabled || plan.resolved_kind != InputKind::Image || !spec.image_format ||
+      (spec.shape.size() != 2U && spec.shape.size() != 3U)) {
+    return spec;
+  }
+  // Image ingress specs are HW/HWC; tensor routes must retain their model shape.
+  const auto geometry = benchmark_model_geometry(Tensor{}, plan, {});
+  spec.shape[0] = options.original_height.value_or(spec.shape[0] > 0 ? benchmark_dim(spec.shape[0])
+                                                                     : geometry.height);
+  spec.shape[1] = options.original_width.value_or(spec.shape[1] > 0 ? benchmark_dim(spec.shape[1])
+                                                                    : geometry.width);
+  return spec;
+}
 
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,

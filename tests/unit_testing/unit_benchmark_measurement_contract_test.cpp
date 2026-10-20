@@ -216,6 +216,33 @@ void benchmark_build_options_prefer_runtime_metadata() {
           "benchmark builds should preserve unrelated model options");
 }
 
+void benchmark_input_geometry_only_resizes_image_preprocessing() {
+  using namespace simaai::neat;
+  ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  plan.resolved_kind = InputKind::Image;
+  TensorSpec spec;
+  spec.shape = {-1, -1, 3};
+  spec.dtypes = {TensorDType::UInt8};
+  spec.image_format = ImageSpec::PixelFormat::RGB;
+  BenchmarkOptions options;
+  options.original_width = 1280;
+  options.original_height = 720;
+  require(internal::resolve_benchmark_input_spec(spec, plan, options).shape ==
+              std::vector<int64_t>({720, 1280, 3}),
+          "image preprocessing benchmark should allocate the requested source image");
+  require(internal::resolve_benchmark_input_spec(spec, plan, {}).shape ==
+              std::vector<int64_t>({640, 640, 3}),
+          "image preprocessing benchmark should default to the resolved model geometry");
+
+  plan.resolved_kind = InputKind::Tensor;
+  spec.image_format.reset();
+  spec.shape = {1, 640, 640, 3};
+  spec.dtypes = {TensorDType::Float32};
+  const auto tensor_spec = internal::resolve_benchmark_input_spec(spec, plan, options);
+  require(tensor_spec.shape == spec.shape && tensor_spec.dtypes == spec.dtypes,
+          "source geometry must not resize or change the dtype of a quant/tensor input");
+}
+
 void benchmark_preprocess_meta_defaults_to_model_geometry() {
   using namespace simaai::neat;
   const Tensor tensor = make_color_tensor(640, 640, ImageSpec::PixelFormat::RGB);
@@ -709,6 +736,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
                     benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",
                     benchmark_preprocess_meta_defaults_to_model_geometry);
+           run_case("benchmark_input_geometry_only_resizes_image_preprocessing",
+                    benchmark_input_geometry_only_resizes_image_preprocessing);
            run_case("benchmark_preprocess_meta_explicit_geometry",
                     benchmark_preprocess_meta_supports_explicit_geometry);
            run_case("benchmark_preprocess_meta_invalid_options",
