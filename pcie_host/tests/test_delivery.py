@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Core composition tests use a provider seam, not copied Scheduler policy."""
 import importlib.util
+import io
 import json
 import subprocess
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,6 +13,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('delivery', ROOT / 'scripts/pcie_delivery.py')
 delivery = importlib.util.module_from_spec(spec); spec.loader.exec_module(delivery)
+spec = importlib.util.spec_from_file_location('native_acquisition', ROOT / 'scripts/acquire_scheduler.py')
+acquisition = importlib.util.module_from_spec(spec); spec.loader.exec_module(acquisition)
 
 
 class Delivery(unittest.TestCase):
@@ -28,12 +32,44 @@ class Delivery(unittest.TestCase):
         self.assertIn('NativePackageGuard.cmake', source)
         self.assertIn('CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14', source)
 
-    def test_acquisition_native_only(self):
-        source = (ROOT / 'scripts/acquire_scheduler.py').read_text()
-        self.assertIn("package_path=f'pcie-host/{args.distro}/{args.arch}'", source)
-        self.assertIn("receipt['commit']", source)
-        self.assertNotIn('internals', source)
-        self.assertNotIn('runner@', source)
+    def test_acquisition_selects_exact_native_profile_and_stages_verified_commit(self):
+        commit = 'a' * 40
+        for distro in ('ubuntu22', 'ubuntu24'):
+            for arch in ('amd64', 'arm64'):
+                with self.subTest(distro=distro, arch=arch), tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp) / 'selected'
+                    candidate = root / 'candidate'
+
+                    def acquire(*args, **kwargs):
+                        # The transport seam represents an already hash-verified
+                        # publication; the real entry point must stage its commit.
+                        candidate.mkdir()
+                        (candidate / 'host-candidate.json').write_text('{}')
+                        (candidate / 'native_artifacts.py').write_text(
+                            'import hashlib, json\n'
+                            'def sha(path):\n'
+                            '    return hashlib.sha256(path.read_bytes()).hexdigest()\n'
+                            'def stage(candidate, prefix, distro, arch, commit):\n'
+                            '    prefix.mkdir()\n'
+                            '    (prefix / "arguments.json").write_text(json.dumps([distro, arch, commit]))\n'
+                            '    return {"packages": {"runtime": {"payload": {"control": {"Version": "0.1.0"}}}}}\n')
+                        return {'commit': commit}
+
+                    argv = ['acquire_scheduler.py', '--cli', 'test-cli', '--branch', 'feature/native',
+                            '--spec', 'latest', '--environment', 'production', '--distro', distro,
+                            '--arch', arch, '--output', str(root)]
+                    with patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', io.StringIO()), \
+                         patch.object(acquisition, 'acquire', side_effect=acquire) as transport:
+                        acquisition.main()
+                    transport.assert_called_once_with(
+                        'test-cli', 'scheduler', 'feature/native', 'latest', 'production', candidate,
+                        package_path=f'pcie-host-{distro}-{arch}')
+                    self.assertEqual(json.loads((root / 'prefix/arguments.json').read_text()),
+                                     [distro, arch, commit])
+                    selection = json.loads((root / 'selection.json').read_text())
+                    self.assertEqual((selection['distro'], selection['architecture'], selection['commit']),
+                                     (distro, arch, commit))
+                    self.assertEqual(selection['package_version'], '0.1.0')
 
     def test_selected_environment_reaches_native_acquisition(self):
         source = (ROOT / 'build.sh').read_text()

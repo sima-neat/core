@@ -94,8 +94,39 @@ def test_changed_download_not_executed(publication):
     with pytest.raises(ValueError, match='differs from publisher'): acquire(publication)
 
 
-def test_explicit_native_package_path(publication):
-    path = 'pcie-host/ubuntu24/amd64'
+@pytest.mark.parametrize('distro', ['ubuntu22', 'ubuntu24'])
+@pytest.mark.parametrize('arch', ['amd64', 'arm64'])
+def test_explicit_native_package_path(publication, distro, arch):
+    path = f'pcie-host-{distro}-{arch}'
+    publication[2]['artifact_folder'] = path
+    publication[3]['package_path'] = path
+    result = acquire(publication, package_path=path)
+    assert result['package_path'] == path
+    assert publication[-1][0][5] == 'scheduler/' + path + '@topic:latest'
+    assert publication[-1][1][3] == 'scheduler/' + path + '@topic:' + 'a' * 12
+
+
+@pytest.mark.parametrize('distro', ['ubuntu22', 'ubuntu24'])
+@pytest.mark.parametrize('arch', ['amd64', 'arm64'])
+@pytest.mark.parametrize('mismatch', ['device', 'nested', 'other-architecture'])
+def test_native_manifest_must_match_selected_profile(publication, distro, arch, mismatch):
+    path = f'pcie-host-{distro}-{arch}'
+    other_arch = 'arm64' if arch == 'amd64' else 'amd64'
+    publication[3]['package_path'] = path
+    publication[2]['artifact_folder'] = {
+        'device': '',
+        'nested': f'pcie-host/{distro}/{arch}',
+        'other-architecture': f'pcie-host-{distro}-{other_arch}',
+    }[mismatch]
+    with pytest.raises(ValueError, match='Publisher identity'):
+        acquire(publication, package_path=path)
+    # Wrong profiles never reach the CLI payload download or provider execution.
+    assert len(publication[-1]) == 1
+    assert not (publication[0] / 'out/download').exists()
+
+
+def test_generic_nested_package_path_remains_supported(publication):
+    path = 'pciehost/ubuntu24/amd64'
     publication[2]['artifact_folder'] = path
     publication[3]['package_path'] = path
     result = acquire(publication, package_path=path)

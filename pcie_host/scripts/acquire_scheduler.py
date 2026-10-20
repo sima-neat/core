@@ -25,7 +25,7 @@ def main():
     root = args.output.resolve(); root.mkdir(parents=True, exist_ok=False)
     candidate = root / 'candidate'
     receipt = acquire(args.cli, 'scheduler', args.branch, args.spec, args.environment, candidate,
-                      package_path=f'pcie-host/{args.distro}/{args.arch}')
+                      package_path=f'pcie-host-{args.distro}-{args.arch}')
     # Execution begins only after shared transport verifies every publisher hash.
     spec = importlib.util.spec_from_file_location('scheduler_native_artifacts', candidate / 'native_artifacts.py')
     provider = importlib.util.module_from_spec(spec); spec.loader.exec_module(provider)
