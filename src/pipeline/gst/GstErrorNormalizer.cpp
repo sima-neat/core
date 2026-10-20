@@ -4,8 +4,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <iomanip>
 #include <optional>
 #include <sstream>
@@ -831,6 +834,320 @@ bool dispatcher_specific_context(const RawGstError& raw) {
       .has_value();
 }
 
+struct ModelPathLimit {
+  std::uint64_t observed_bytes = 0;
+  std::uint64_t maximum_bytes = 0;
+};
+
+bool parse_unsigned(std::string_view text, std::size_t& cursor, std::uint64_t& value) {
+  const char* begin = text.data() + cursor;
+  const char* end = text.data() + text.size();
+  const auto [parsed_end, error] = std::from_chars(begin, end, value);
+  if (error != std::errc{} || parsed_end == begin)
+    return false;
+  cursor = static_cast<std::size_t>(parsed_end - text.data());
+  return true;
+}
+
+std::optional<ModelPathLimit> parse_model_path_limit(std::string_view text) {
+  constexpr std::string_view prefix = "MLASHM model path length ";
+  constexpr std::string_view separator = " exceeds maximum ";
+  constexpr std::string_view suffix = " bytes; shorten the extracted model path";
+  if (!text.starts_with(prefix))
+    return std::nullopt;
+
+  ModelPathLimit limit;
+  std::size_t cursor = prefix.size();
+  if (!parse_unsigned(text, cursor, limit.observed_bytes) ||
+      text.substr(cursor, separator.size()) != separator) {
+    return std::nullopt;
+  }
+  cursor += separator.size();
+  if (!parse_unsigned(text, cursor, limit.maximum_bytes) || text.substr(cursor) != suffix ||
+      limit.observed_bytes <= limit.maximum_bytes) {
+    return std::nullopt;
+  }
+  return limit;
+}
+
+struct LegacyFieldSpec {
+  std::string_view marker;
+  bool quoted = true;
+};
+
+bool parses_ordered_legacy_fields(std::string_view text, const LegacyFieldSpec* fields,
+                                  std::size_t field_count) {
+  constexpr std::size_t kMaxLegacyFieldBytes = 4096;
+  if (text.size() > kMaxLegacyFieldBytes)
+    return false;
+
+  std::vector<std::int8_t> memo((text.size() + 1) * (field_count + 1), -1);
+  std::function<bool(std::size_t, std::size_t)> parse = [&](std::size_t cursor,
+                                                            std::size_t minimum_field) -> bool {
+    while (cursor < text.size() && std::isspace(static_cast<unsigned char>(text[cursor]))) {
+      ++cursor;
+    }
+    if (cursor == text.size())
+      return true;
+
+    std::int8_t& cached = memo[cursor * (field_count + 1) + minimum_field];
+    if (cached != -1)
+      return cached != 0;
+
+    for (std::size_t index = minimum_field; index < field_count; ++index) {
+      const LegacyFieldSpec& field = fields[index];
+      if (!text.substr(cursor).starts_with(field.marker))
+        continue;
+
+      const std::size_t value_begin = cursor + field.marker.size();
+      if (!field.quoted) {
+        std::size_t value_end = value_begin;
+        while (value_end < text.size() &&
+               std::isdigit(static_cast<unsigned char>(text[value_end]))) {
+          ++value_end;
+        }
+        if (value_end > value_begin && parse(value_end, index + 1))
+          return cached = 1;
+        continue;
+      }
+
+      std::size_t value_end = value_begin;
+      while ((value_end = text.find('\'', value_end)) != std::string_view::npos) {
+        if (parse(value_end + 1, index + 1))
+          return cached = 1;
+        ++value_end;
+      }
+    }
+    return cached = 0;
+  };
+  return parse(0, 0);
+}
+
+bool dispatcher_follows_matching_model_path(std::string_view debug, std::size_t dispatcher_pos,
+                                            const ModelPathLimit& limit) {
+  constexpr std::string_view marker = "model_path='";
+  constexpr std::string_view matching_diagnostic_prefix =
+      "diagnostic_id='neatprocessmla.model_path_too_long' plugin='neatprocessmla' ";
+  constexpr LegacyFieldSpec intervening_fields[] = {{"graph_id=", false}, {"frame_id=", false}};
+
+  // Quotes are not escaped in the legacy format, so a quote immediately before dispatcher_err is
+  // not a boundary by itself, and a path can forge a matching byte count. Require the fixed leading
+  // producer diagnostic and plugin identity before using the count to locate model_path's closing
+  // quote. Between that boundary and dispatcher_err, accept only numeric fields, whose boundaries
+  // are unambiguous.
+  std::size_t search_pos = 0;
+  while (true) {
+    const std::size_t model_pos = debug.find(marker, search_pos);
+    if (model_pos == std::string_view::npos || model_pos >= dispatcher_pos)
+      return false;
+    search_pos = model_pos + marker.size();
+    const std::string_view prefix = debug.substr(0, model_pos);
+    if (prefix != matching_diagnostic_prefix) {
+      continue;
+    }
+
+    const std::size_t value_begin = model_pos + marker.size();
+    if (value_begin > dispatcher_pos || limit.observed_bytes > dispatcher_pos - value_begin)
+      continue;
+    const std::size_t value_end = value_begin + static_cast<std::size_t>(limit.observed_bytes);
+    if (value_end >= dispatcher_pos || debug[value_end] != '\'')
+      continue;
+    if (parses_ordered_legacy_fields(debug.substr(value_end + 1, dispatcher_pos - value_end - 1),
+                                     intervening_fields, std::size(intervening_fields))) {
+      return true;
+    }
+  }
+}
+
+// Legacy SIMAAI_GST_FATAL messages carried this context only in the producer's exact
+// space-delimited key='value' debug format. Keep this parser local and strict so arbitrary debug
+// text cannot become a production-facing diagnosis.
+std::optional<std::string_view> find_legacy_quoted_debug_field(std::string_view debug,
+                                                               std::string_view key,
+                                                               bool prefer_last = false) {
+  const std::string marker = std::string(key) + "='";
+  std::size_t pos = 0;
+  std::optional<std::string_view> found;
+  while ((pos = debug.find(marker, pos)) != std::string::npos) {
+    const bool starts_field = pos == 0 ||
+                              std::isspace(static_cast<unsigned char>(debug[pos - 1])) ||
+                              debug[pos - 1] == '|';
+    const std::size_t value_begin = pos + marker.size();
+    if (!starts_field) {
+      pos = value_begin;
+      continue;
+    }
+
+    const std::size_t value_end = debug.find('\'', value_begin);
+    if (value_end == std::string::npos)
+      return std::nullopt;
+    const std::size_t field_end = value_end + 1;
+    if (field_end != debug.size() && !std::isspace(static_cast<unsigned char>(debug[field_end])) &&
+        debug[field_end] != '|') {
+      pos = field_end;
+      continue;
+    }
+    found = debug.substr(value_begin, value_end - value_begin);
+    if (!prefer_last)
+      return found;
+    pos = field_end;
+  }
+  return found;
+}
+
+std::optional<std::string_view> find_legacy_dispatcher_error(std::string_view debug,
+                                                             bool trusted_neatprocessmla_source) {
+  constexpr std::string_view marker = "dispatcher_err='";
+  constexpr std::string_view plugin_prefix = "plugin='neatprocessmla' ";
+  constexpr std::string_view matching_diagnostic_prefix =
+      "diagnostic_id='neatprocessmla.model_path_too_long' plugin='neatprocessmla' ";
+  constexpr LegacyFieldSpec numeric_context_fields[] = {{"graph_id=", false}, {"frame_id=", false}};
+  constexpr LegacyFieldSpec trailing_fields[] = {
+      {"hint='", true},          {"stage_key='", true},      {"source_used='", true},
+      {"missing_field='", true}, {"fallback_chain='", true}, {"detail='", true}};
+
+  std::size_t search_pos = 0;
+  std::optional<std::string_view> found;
+  while (true) {
+    const std::size_t pos = debug.find(marker, search_pos);
+    if (pos == std::string::npos)
+      break;
+    const std::size_t value_begin = pos + marker.size();
+    const std::size_t value_end = debug.find('\'', value_begin);
+    if (value_end == std::string::npos)
+      return std::nullopt;
+
+    const std::string_view value = debug.substr(value_begin, value_end - value_begin);
+    const std::optional<ModelPathLimit> limit = parse_model_path_limit(value);
+    const std::string_view prefix = debug.substr(0, pos);
+    const bool has_plugin_prefix = prefix.starts_with(plugin_prefix);
+    const bool has_matching_diagnostic_prefix = prefix.starts_with(matching_diagnostic_prefix);
+    const std::size_t pathless_context_begin =
+        has_matching_diagnostic_prefix ? matching_diagnostic_prefix.size() : plugin_prefix.size();
+    const bool has_unambiguous_pathless_prefix =
+        trusted_neatprocessmla_source && (has_plugin_prefix || has_matching_diagnostic_prefix) &&
+        parses_ordered_legacy_fields(prefix.substr(pathless_context_begin), numeric_context_fields,
+                                     std::size(numeric_context_fields));
+    const bool has_valid_source_boundary =
+        pos == 0 ||
+        (limit.has_value() && (dispatcher_follows_matching_model_path(debug, pos, *limit) ||
+                               has_unambiguous_pathless_prefix));
+    const bool has_field_terminator =
+        value_end + 1 == debug.size() ||
+        std::isspace(static_cast<unsigned char>(debug[value_end + 1])) ||
+        debug[value_end + 1] == '|';
+    const bool has_valid_tail =
+        (limit.has_value() && has_field_terminator) ||
+        parses_ordered_legacy_fields(debug.substr(value_end + 1), trailing_fields,
+                                     std::size(trailing_fields));
+    if (has_valid_source_boundary && has_valid_tail)
+      found = value;
+    search_pos = value_end + 1;
+  }
+  return found;
+}
+
+std::string capture_gst_debug(std::string value, std::string_view factory_name) {
+  constexpr std::size_t kMaxDebugBytes = 4096;
+  constexpr std::size_t kMaxPreservedDispatcherErrorBytes = 512;
+  constexpr std::string_view kTruncationMarker = "...<truncated>";
+  const auto truncate_debug = [=](std::string debug) {
+    return truncate(std::move(debug), kMaxDebugBytes - kTruncationMarker.size());
+  };
+
+  const std::optional<std::string_view> original_plugin =
+      find_legacy_quoted_debug_field(value, "plugin");
+  const bool factory_is_neatprocessmla = lower_copy(std::string(factory_name)) == "neatprocessmla";
+  const bool plugin_is_neatprocessmla =
+      original_plugin.has_value() && lower_copy(std::string(*original_plugin)) == "neatprocessmla";
+  const std::optional<std::string_view> original_dispatcher_error =
+      find_legacy_dispatcher_error(value, factory_is_neatprocessmla || plugin_is_neatprocessmla);
+  const std::optional<std::string> dispatcher_error =
+      original_dispatcher_error.has_value() ? std::optional<std::string>(*original_dispatcher_error)
+                                            : std::nullopt;
+  value = redact_uri_credentials(std::move(value));
+  if (value.size() <= kMaxDebugBytes)
+    return value;
+
+  // Historical neatprocessmla messages put dispatcher_err after optional context paths. Preserve
+  // that bounded field so the actionable cause survives when preceding context exceeds the
+  // ordinary debug capture limit. Validate field boundaries against the original message, then
+  // redact the full value before either portion is retained.
+  if ((!factory_is_neatprocessmla && !plugin_is_neatprocessmla) || !dispatcher_error.has_value()) {
+    return truncate_debug(std::move(value));
+  }
+
+  const std::string redacted_dispatcher_error = redact_uri_credentials(*dispatcher_error);
+  if (redacted_dispatcher_error.size() > kMaxPreservedDispatcherErrorBytes)
+    return truncate_debug(std::move(value));
+  const std::string suffix = "...<truncated> | dispatcher_err='" + redacted_dispatcher_error + "'";
+  if (suffix.size() >= kMaxDebugBytes)
+    return truncate_debug(std::move(value));
+
+  std::size_t boundary = kMaxDebugBytes - suffix.size();
+  while (boundary > 0 && (static_cast<unsigned char>(value[boundary]) & 0xC0U) == 0x80U) {
+    --boundary;
+  }
+  value.resize(boundary);
+  value += suffix;
+  return value;
+}
+
+bool neatprocessmla_source(const RawGstError& raw) {
+  const std::optional<std::string> structured_plugin = find_structured_detail(raw, {"plugin"});
+  const std::optional<std::string_view> legacy_plugin =
+      find_legacy_quoted_debug_field(raw.debug, "plugin");
+
+  // The actual element factory is authoritative. Legacy fields are unescaped key='value' text,
+  // so a quoted marker inside a user-controlled model path can look like a top-level field.
+  if (!raw.factory_name.empty())
+    return lower_copy(raw.factory_name) == "neatprocessmla";
+  if (structured_plugin.has_value())
+    return lower_copy(*structured_plugin) == "neatprocessmla";
+  return legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) == "neatprocessmla";
+}
+
+std::optional<ModelPathLimit> find_model_path_limit(const RawGstError& raw) {
+  if (!neatprocessmla_source(raw) || raw.domain_name != "gst-resource-error-quark" ||
+      raw.code != GST_RESOURCE_ERROR_FAILED || raw.message != "Unable to load model") {
+    return std::nullopt;
+  }
+
+  std::optional<std::string> dispatcher_error =
+      find_structured_detail(raw, {"dispatcher-error", "legacy-dispatcher-error"});
+  if (!dispatcher_error.has_value()) {
+    if (const std::optional<std::string_view> legacy =
+            find_legacy_dispatcher_error(raw.debug, true)) {
+      dispatcher_error = std::string(*legacy);
+    }
+  }
+  if (!dispatcher_error.has_value())
+    return std::nullopt;
+
+  return parse_model_path_limit(*dispatcher_error);
+}
+
+// The legacy SIMAAI_GST_FATAL context writes diagnostic_id as its first quoted field, ahead of the
+// user-controlled node, config, and model paths. Accept a legacy ID only in that position so a
+// marker embedded in a path cannot override the validated path-limit payload.
+std::optional<std::string> model_path_precedence_id(const RawGstError& raw) {
+  if (std::optional<std::string> structured = find_structured_detail(
+          raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"})) {
+    return structured;
+  }
+
+  constexpr std::string_view marker = "diagnostic_id='";
+  const std::optional<std::string_view> legacy =
+      find_legacy_quoted_debug_field(raw.debug, "diagnostic_id");
+  if (!legacy.has_value())
+    return std::nullopt;
+  const std::size_t field_begin =
+      static_cast<std::size_t>(legacy->data() - raw.debug.data()) - marker.size();
+  if (std::string_view(raw.debug).substr(0, field_begin).find("='") != std::string_view::npos)
+    return std::nullopt;
+  return std::string(*legacy);
+}
+
 bool device_memory_context(const RawGstError& raw) {
   if (accelerator_plugin_name(raw))
     return true;
@@ -1032,6 +1349,17 @@ NormalizedDiagnostic accelerator_failed(RawGstError raw) {
   return out;
 }
 
+NormalizedDiagnostic model_path_too_long(RawGstError raw, const ModelPathLimit& limit) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kRuntimeElementFailed, "neatprocessmla.model_path_too_long",
+           "The MLA model could not be loaded because its extracted path is too long.");
+  add_fact(out, "Operation", "Model loading");
+  add_fact(out, "Path length", std::to_string(limit.observed_bytes) + " bytes");
+  add_fact(out, "Maximum path length", std::to_string(limit.maximum_bytes) + " bytes");
+  out.actions = {"Extract or install the model under a shorter directory and retry."};
+  return out;
+}
+
 NormalizedDiagnostic media_caps(RawGstError raw) {
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kMediaCaps, "gstreamer.caps_incompatible",
@@ -1198,7 +1526,19 @@ RawGstError parse_gst_error_message(GstMessage* message) {
     out.message = truncate(error->message ? error->message : "");
     g_error_free(error);
   }
-  out.debug = truncate(debug ? debug : "");
+  const std::string_view debug_view = debug ? std::string_view(debug) : std::string_view{};
+  const std::optional<std::string_view> legacy_plugin =
+      find_legacy_quoted_debug_field(debug_view, "plugin");
+  const bool trusted_neatprocessmla_source =
+      lower_copy(out.factory_name) == "neatprocessmla" ||
+      (legacy_plugin.has_value() && lower_copy(std::string(*legacy_plugin)) == "neatprocessmla");
+  const std::optional<std::string_view> legacy_dispatcher_error =
+      find_legacy_dispatcher_error(debug_view, trusted_neatprocessmla_source);
+  if (legacy_dispatcher_error.has_value() &&
+      parse_model_path_limit(*legacy_dispatcher_error).has_value()) {
+    out.details.emplace("legacy-dispatcher-error", *legacy_dispatcher_error);
+  }
+  out.debug = capture_gst_debug(debug ? debug : "", out.factory_name);
   g_free(debug);
 
   const GstStructure* details = nullptr;
@@ -1253,6 +1593,16 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       ((raw.code == GST_RESOURCE_ERROR_BUSY &&
         (accelerator_plugin_name(raw) || dispatcher_specific_context(raw))) ||
        (raw.code == GST_RESOURCE_ERROR_NOT_FOUND && dispatcher_specific_context(raw)));
+
+  // A legacy model path is user-controlled and can contain text recognized by the broad fallback
+  // heuristics below, including diagnostic-ID markers. Prefer the fully validated producer payload
+  // when no explicit ID exists or when the producer supplies this matching ID; never override a
+  // different explicit ID.
+  const std::string producer_id = model_path_precedence_id(raw).value_or("");
+  if (producer_id.empty() || producer_id == "neatprocessmla.model_path_too_long") {
+    if (const std::optional<ModelPathLimit> limit = find_model_path_limit(raw))
+      return model_path_too_long(std::move(raw), *limit);
+  }
 
   if (diagnostic_id == "neatprocesscvu.input_envelope_exceeded" ||
       contains_ci(text, "envelope violation")) {
@@ -1508,10 +1858,16 @@ std::string render_diagnostic_body(const NormalizedDiagnostic& diagnostic,
 }
 
 int diagnostic_priority(const NormalizedDiagnostic& diagnostic) {
-  if (find_detail(diagnostic.raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"})
-          .has_value()) {
+  // A path-limit diagnosis carries the user-controlled model path in its debug text, so only a
+  // producer-positioned ID may grant it explicit-ID priority.
+  const bool explicit_id =
+      diagnostic.diagnostic_id == "neatprocessmla.model_path_too_long"
+          ? model_path_precedence_id(diagnostic.raw).has_value()
+          : find_detail(diagnostic.raw,
+                        {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"})
+                .has_value();
+  if (explicit_id)
     return 200;
-  }
 
   if (diagnostic.error_code.rfind("resource.", 0) == 0 ||
       diagnostic.error_code.rfind("io.", 0) == 0 || diagnostic.error_code.rfind("codec.", 0) == 0 ||
