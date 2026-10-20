@@ -296,8 +296,11 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
       !(p.decode_type == BoxDecodeType::YoloXSegPose && geometry.model_to_original))
     invalid("crop geometry is not supported by the numerical recipe");
-  if (p.topk <= 0 || p.topk > 65536)
-    invalid("output capacity must be 1..65536");
+  if (p.topk == 0)
+    invalid("top_k is unresolved: set a positive output capacity for standalone bounding-box "
+            "decoding, or inherit a positive Model capacity with a model-bound node");
+  if (p.topk < 0 || p.topk > 65536)
+    invalid("top_k output capacity must be 1..65536");
   if (p.decode_type != BoxDecodeType::SuperPoint && (p.num_classes < 1 || p.num_classes > 336))
     invalid("class count must be 1..336 before profile-specific validation");
   Builder build;

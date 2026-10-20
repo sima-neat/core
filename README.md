@@ -118,7 +118,10 @@ Contributor and agent quality guidance is documented in `AGENTS.md` at the repos
 
 ### Build related repositories together
 
-`./build.sh --all --install` builds local sibling Kernels and Runner sources in
-dependency order before Core. Local package overrides support mixed-source
-development; remote Kernels/Runner artifact downloads remain TODO. See
-[local dependency builds](docs/develop-apps/contribute/build-test/local-dependencies.md).
+From the Core checkout, `./build.sh --all --install` delegates dependency
+preparation to Scheduler, then builds Core against the installed Scheduler
+frontend. Scheduler prepares the matching Kernels, Runner and Codecs providers.
+Local source and package selections support mixed-source development; CI uses
+`tools/ci/acquire_scheduler.py` for explicit published dependency acquisition.
+See `docs/develop-apps/contribute/build-test/local-dependencies.md` for details.
+Use `./build.sh --doc` to generate documentation without runtime providers.

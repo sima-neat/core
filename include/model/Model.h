@@ -321,7 +321,9 @@ public:
     float score_threshold = 0.0f;
     /// BoxDecode NMS IoU threshold. Zero skips YOLO26 NMS; other NMS profiles still suppress.
     float nms_iou_threshold = 0.0f;
-    int top_k = 0; ///< BoxDecode output cap; bounding-box decoding requires a positive value.
+    /// BoxDecode output cap. Bounding-box routes require a positive resolved value;
+    /// SuperPoint resolves zero to its profile default. Unused by other model routes.
+    int top_k = 0;
     SuperPointOptions
         superpoint; ///< SuperPoint profile/output options when decode_type is SuperPoint.
     /// Number of classes produced by detection heads. Set this for detection MPKs whose raw

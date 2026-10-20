@@ -336,11 +336,13 @@ USAGE
 select_and_normalize_local_artifact_paths() {
   local variable_name artifact_dir
   local selected
-  local -a selection_args=()
-  [[ "${DOCS_ONLY}" == "ON" ]] || selection_args+=(--require)
-  [[ "${INSTALL_DEPS_ONLY}" == "ON" ]] && selection_args+=(--headers-only)
-  selected="$(python3 tools/build_dependencies.py select --core "${REPO_ROOT}" "${selection_args[@]}")"
-  eval "${selected}"
+  # Source documentation does not compile or package the runtime closure.
+  if [[ "${DOCS_ONLY}" != "ON" ]]; then
+    local -a selection_args=(--require)
+    [[ "${INSTALL_DEPS_ONLY}" == "ON" ]] && selection_args+=(--headers-only)
+    selected="$(python3 tools/build_dependencies.py select --core "${REPO_ROOT}" "${selection_args[@]}")"
+    eval "${selected}"
+  fi
 
   for variable_name in NEAT_LLIMA_ARTIFACT_DIR; do
     artifact_dir="${!variable_name}"
@@ -1608,6 +1610,7 @@ configure_cmake() {
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
     -DSIMANEAT_BUILD_DOCS="${BUILD_DOCS}"
+    -DSIMANEAT_DOCS_ONLY_CONFIGURE="${DOCS_ONLY}"
     -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}"
     -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}"
     -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}"
@@ -1644,7 +1647,6 @@ configure_cmake() {
     # installed, so do not make those runtime libraries configure-time
     # requirements for docs-only builds.
     cmake_args+=(
-      -DSIMANEAT_DOCS_ONLY_CONFIGURE=ON
       -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
       -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
     )

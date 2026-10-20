@@ -61,7 +61,7 @@ opt.top_k = 100;
 | `decode_type` | Model family/head format, such as `BoxDecodeType::YoloV8` or `BoxDecodeType::YoloX`. Required. |
 | `detection_threshold` | Minimum score required to keep a detection. Use a model-appropriate value such as `0.25`. |
 | `nms_iou_threshold` | IoU threshold used by non-maximum suppression. `0` keeps the model's packaged value; when none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box. Set a model-appropriate value such as `0.45`. |
-| `top_k` | Maximum number of detections to keep. `0` uses the backend/model default. |
+| `top_k` | Maximum output count. Raw bounding-box decoding needs an explicit positive cap. On a model-bound node, `0` inherits the resolved Model cap. SuperPoint uses its profile default for `0`. |
 | `original_width`, `original_height` | Source image size for coordinate mapping when using the raw-geometry constructor. |
 | `model_width`, `model_height` | Model input size override. With the `Model` constructor this changes spatial decode knobs, not the packaged tensor contract. |
 | `resize_mode_override` | Use only when no upstream `Preproc` stage writes resize metadata and you need to specify stretch/letterbox/crop behavior explicitly. |
@@ -274,7 +274,11 @@ recover a packaged threshold.
 | Model-bound node `top_k` | `> 0` | Override the maximum kept detections. |
 
 Bounding-box decoding requires a positive resolved `top_k`; zero does not request
-unbounded output storage. A zero score gate permits zero-valued scores, but does
+unbounded output storage. For raw heads without a bound `Model`, set `top_k` before
+building the graph. A model-bound node can inherit a positive Model cap by leaving
+its own `top_k` at zero. These controls do not change the separate result-reader
+helpers: their `top_k=0` means no additional cap on an already bounded output.
+A zero score gate permits zero-valued scores, but does
 not bypass geometry validation, background exclusion, NMS or the output cap.
 At NMS IoU zero, YOLO26 skips NMS. Other NMS-enabled YOLO and SSD profiles still
 apply their quantized-IoU suppression. Positive YOLO26 thresholds enable NMS.

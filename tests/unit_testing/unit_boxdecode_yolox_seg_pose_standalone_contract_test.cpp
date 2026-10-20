@@ -73,10 +73,10 @@ BoxDecodeStaticContract extract(const TensorList& tensors, const std::string& la
 }
 
 // The standalone node route always passes num_classes=0 (SimaBoxDecode.cpp).
-BoxDecodeStaticContract finalize(const BoxDecodeStaticContract& contract) {
+BoxDecodeStaticContract finalize(const BoxDecodeStaticContract& contract, int topk = 100) {
   return finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloXSegPose, std::nullopt,
                                             std::nullopt, BoxDecodeTypeOption::Auto, 0.40, 0.45,
-                                            100, /*num_classes=*/0, {});
+                                            topk, /*num_classes=*/0, {});
 }
 
 CompiledNodeContract upstream_from(const CompiledBoxDecodeContract& decoded) {
@@ -128,6 +128,24 @@ RUN_TEST(
               "unnamed heads must normalize to the grouped-by-role layout");
       require(finalized.num_classes == kExpectedClasses,
               "unnamed heads must resolve num_classes=36");
+
+      // Zero is an unresolved authoring sentinel, not an unbounded output request.
+      // The very same sample-derived physical contract must admit explicit capacity.
+      const BoxDecodeGeometryOptions geometry{640, 640, 640, 640, ResizeMode::Letterbox};
+      require(prepare_boxdecode_kernel(build_boxdecode_compiled_contract(finalized), geometry)
+                      .compiled.recipe != nullptr,
+              "positive standalone capacity must pass canonical preparation");
+      bool unresolved_rejected = false;
+      try {
+        const auto unresolved = build_boxdecode_compiled_contract(finalize(generic, 0));
+        require(unresolved.payload.topk == 0, "standalone finalization invented an output cap");
+        (void)prepare_boxdecode_kernel(unresolved, geometry);
+      } catch (const std::invalid_argument& error) {
+        unresolved_rejected =
+            std::string(error.what()).find("top_k is unresolved") != std::string::npos;
+      }
+      require(unresolved_rejected,
+              "unresolved standalone capacity must fail specifically, not on unrelated admission");
 
       // Each prototype carries its own storage dtype; the route summary must
       // not overwrite it with the first detection head's dtype or qparams.

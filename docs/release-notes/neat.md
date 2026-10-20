@@ -23,6 +23,11 @@ Release notes for the SiMa.ai Neat Library.
 - The unreleased package version remains **0.6.0**. `Model::Options` and
   `BoxDecodeOptions` now carry `yolox_seg_pose.pose_classes`; these public layout
   additions require ABI 6 consumers. Do not use ABI compatibility symlinks.
+  Preview releases can also change public types such as `GraphOptions`, which
+  now includes `kernel_runner_a65_workers`. Rebuild applications, plugins and
+  Python extensions against the matching runtime and development packages when
+  updating a 0.6.0 preview. Do not mix binaries from different previews merely
+  because both use ABI 6.
 
 ### Runtime changes
 

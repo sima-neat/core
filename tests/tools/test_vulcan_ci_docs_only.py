@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -21,6 +25,49 @@ def job_block(name: str) -> str:
 
 
 class VulcanCiDocsOnlyTests(unittest.TestCase):
+    def test_docs_only_configures_without_runtime_but_real_analysis_requires_it(self) -> None:
+        # These are real source configurations, not an empty stand-in project
+        # or an imported Scheduler stub. Keep host checks out of the SDK's
+        # cross-compiler environment; the product build remains unchanged.
+        cmake = shutil.which("cmake")
+        compiler = shutil.which("c++")
+        self.assertIsNotNone(cmake, "Host tooling tests require CMake")
+        self.assertIsNotNone(compiler, "Host tooling tests require a C++ compiler")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env = {"PATH": os.environ["PATH"], "HOME": temporary, "LANG": "C"}
+            # Reuse the exact tree in both directions: CMake caches mode options.
+            build = root / "reused-build"
+            for iteration, docs_only in enumerate((True, False, True)):
+                with self.subTest(docs_only=docs_only):
+                    result = subprocess.run(
+                        [cmake, "-S", str(ROOT), "-B", str(build),
+                         "-G", "Unix Makefiles", f"-DCMAKE_CXX_COMPILER={compiler}",
+                         "-DSIMANEAT_BUILD_DOCS=ON",
+                         f"-DSIMANEAT_DOCS_ONLY_CONFIGURE={'ON' if docs_only else 'OFF'}",
+                         f"-DSIMANEAT_CPP_TIDY={'OFF' if docs_only else 'ON'}",
+                         "-DSIMANEAT_BUILD_TESTS=OFF",
+                         "-DSIMANEAT_BUILD_TUTORIALS=OFF",
+                         "-DCMAKE_DISABLE_FIND_PACKAGE_SimaScheduler=TRUE",
+                         "-DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE"],
+                        env=env, text=True, capture_output=True)
+                    if docs_only:
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        targets = subprocess.run(
+                            [cmake, "--build", str(build), "--target", "help"],
+                            env=env, text=True, capture_output=True)
+                        self.assertEqual(targets.returncode, 0, targets.stderr)
+                        self.assertNotIn("sima_neat", targets.stdout)
+                        if iteration == 0:
+                            self.assertNotIn("... package", targets.stdout)
+                        # CMake may retain a package target from the intervening
+                        # failed configure's CPackConfig.cmake. Docs mode never
+                        # invokes it; no runtime build targets may survive.
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("SimaScheduler", result.stderr)
+                        self.assertIn("REQUIRED", result.stderr)
+
     def test_localization_runs_independently_of_docs_only_detection(self) -> None:
         localization = job_block("documentation-localization")
 

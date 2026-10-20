@@ -679,6 +679,50 @@ void superpoint() {
             "padded SuperPoint must retain its scalar dtype and explicit pixel stride");
   }
 }
+void output_capacity() {
+  // Prove the same physical heads and geometry are admitted with explicit capacity,
+  // so another input-admission error cannot satisfy the negative cases below.
+  auto s = source(BoxDecodeType::YoloV26);
+  input(s, 8, 8, 4);
+  input(s, 8, 8, 2);
+  for (int capacity : {1, 4}) {
+    s.payload.topk = capacity;
+    const auto prepared = check(s);
+    const auto numerical =
+        inspect(prepared.compiled.recipe->members[prepared.decode_member].executable);
+    require(numerical.outputs()[0].shape.front() == capacity,
+            "explicit output capacity was replaced by a default");
+  }
+  for (int capacity : {0, -1, 65537}) {
+    s.payload.topk = capacity;
+    bool rejected = false;
+    try {
+      check(s);
+    } catch (const std::invalid_argument& error) {
+      const std::string message = error.what();
+      rejected = capacity == 0
+                     ? message.find("top_k is unresolved") != std::string::npos &&
+                           message.find("positive output capacity") != std::string::npos
+                     : message.find("top_k output capacity must be 1..65536") != std::string::npos;
+    }
+    require(rejected, "invalid output capacity did not produce its specific diagnostic");
+  }
+
+  auto rcnn = source(BoxDecodeType::RcnnStage1, 1);
+  for (int side : {136, 68, 34, 17, 9}) {
+    input(rcnn, side, side, 12);
+    input(rcnn, side, side, 3);
+  }
+  check(rcnn, {544, 544, 544, 544, ResizeMode::Letterbox});
+  rcnn.payload.topk = 16385;
+  bool rejected = false;
+  try {
+    check(rcnn, {544, 544, 544, 544, ResizeMode::Letterbox});
+  } catch (const std::invalid_argument& error) {
+    rejected = std::string(error.what()).find("RCNN topk is per level") != std::string::npos;
+  }
+  require(rejected, "RCNN per-level capacity bound was lost");
+}
 void rejects() {
   auto s = source(BoxDecodeType::YoloV26);
   input(s, 8, 8, 4, "INT8");
@@ -753,6 +797,7 @@ int main(int argc, char** argv) {
     }
     normalization();
     superpoint();
+    output_capacity();
     rejects();
     std::cout << "BoxDecode recipe families, normalization, roles and rejection contracts passed\n";
     return 0;

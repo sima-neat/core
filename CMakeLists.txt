@@ -279,6 +279,30 @@ if (SIMANEAT_BOUNDARY_VIOLATIONS)
 endif()
 
 # ------------------------------------------------------------------------------
+# Docs (Doxygen)
+# ------------------------------------------------------------------------------
+if (SIMANEAT_BUILD_DOCS)
+  find_package(Doxygen QUIET)
+  if (DOXYGEN_FOUND)
+    set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/doxygen/Doxyfile)
+    add_custom_target(docs
+      COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_IN}
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Generating Doxygen documentation"
+      VERBATIM
+    )
+  else()
+    message(STATUS "Doxygen not found: 'docs' target will be unavailable.")
+  endif()
+endif()
+
+# The existing docs-only entry point reads source headers; do not configure
+# runtime libraries, test executables or installable packages without providers.
+if (SIMANEAT_DOCS_ONLY_CONFIGURE)
+  return()
+endif()
+
+# ------------------------------------------------------------------------------
 # Dependencies
 # ------------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
@@ -1029,21 +1053,3 @@ set(CPACK_INSTALL_CMAKE_PROJECTS
 )
 
 include(CPack)
-
-# ------------------------------------------------------------------------------
-# Docs (Doxygen)
-# ------------------------------------------------------------------------------
-if (SIMANEAT_BUILD_DOCS)
-  find_package(Doxygen QUIET)
-  if (DOXYGEN_FOUND)
-    set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/doxygen/Doxyfile)
-    add_custom_target(docs
-      COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_IN}
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-      COMMENT "Generating Doxygen documentation"
-      VERBATIM
-    )
-  else()
-    message(STATUS "Doxygen not found: 'docs' target will be unavailable.")
-  endif()
-endif()

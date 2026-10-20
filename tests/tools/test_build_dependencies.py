@@ -69,8 +69,65 @@ class BuildDependenciesTest(unittest.TestCase):
             DEPENDENCIES.scheduler_coordinator(self.core,{'NEAT_SCHEDULER_SOURCE':str(broken),'NEAT_SCHEDULER_PACKAGE_DIR':'unused'})
 
     def test_missing_scheduler_does_not_fetch(self):
-        with self.assertRaisesRegex(ValueError,'TODO: remote artifact'):
-            DEPENDENCIES.scheduler_coordinator(self.core,{})
+        with self.assertRaisesRegex(ValueError, 'No local Scheduler source/package') as error:
+            DEPENDENCIES.scheduler_coordinator(self.core, {})
+        self.assertIn('NEAT_SCHEDULER_SOURCE', str(error.exception))
+        self.assertIn('NEAT_SCHEDULER_PACKAGE_DIR', str(error.exception))
+        self.assertIn('tools/ci/acquire_scheduler.py', str(error.exception))
+
+    def test_docs_only_skips_runtime_selection_but_normal_build_requires_it(self):
+        # Exercise the real CLI parsing and pre-bootstrap shell selection, with
+        # no sibling Scheduler, package override, or fake coordinator.
+        tools = self.core / 'tools'
+        tools.mkdir()
+        (tools / 'build_dependencies.py').write_text(
+            (ROOT / 'tools/build_dependencies.py').read_text())
+        functions = shell_function('parse_args') + '\n' + shell_function(
+            'select_and_normalize_local_artifact_paths')
+        script = 'set -euo pipefail\n' + functions + '\n'
+        script += f'REPO_ROOT={shlex.quote(str(self.core))}\n'
+        script += 'DOCS_ONLY=OFF\nINSTALL_DEPS_ONLY=OFF\nNEAT_LLIMA_ARTIFACT_DIR=\n'
+        script += 'parse_args "$@"\nselect_and_normalize_local_artifact_paths\n'
+        script += 'printf "selected:%s" "$DOCS_ONLY"\n'
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith('NEAT_')}
+        for arguments, expected_success in [(['--doc', '--clean'], True), ([], False)]:
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    ['bash', '-c', script, 'selection-test', *arguments],
+                    cwd=self.core, env=env, text=True, capture_output=True)
+                if expected_success:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, 'selected:ON')
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('No local Scheduler source/package', result.stderr)
+
+    def test_cmake_always_receives_the_selected_docs_only_mode(self):
+        values = {name: 'OFF' for name in (
+            'BUILD_TESTS', 'BUILD_TUTORIALS', 'BUILD_PYTHON', 'STRICT_WARNINGS',
+            'SIMA_ENABLE_ASAN', 'SIMA_ENABLE_UBSAN', 'SIMA_ENABLE_TSAN',
+            'SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS', 'BUILD_FUZZ',
+            'SKIP_NEAT_LLIMA', 'ELXR_SDK', 'SIMANEAT_SCCACHE_ACTIVE')}
+        values.update(BUILD_DIR=str(self.root / 'reused-build'), BUILD_TYPE='Release',
+                      BUILD_DOCS='ON', NEAT_PACKAGE_BUILDINFO_JSON='',
+                      NEAT_BACKEND_DIR=str(self.root / 'dependencies'))
+        script = 'set -euo pipefail\n' + shell_function('configure_cmake') + '\n'
+        script += '\n'.join(f'{key}={shlex.quote(value)}' for key, value in values.items())
+        # Capture the real wrapper's argv; actual CMake reused-tree behavior is
+        # covered in test_vulcan_ci_docs_only.py without provider stubs.
+        script += '\ncmake() { printf "%s\\n" "$@"; }\n'
+        script += 'DOCS_ONLY="$1"\nconfigure_cmake\n'
+        for mode in ('ON', 'OFF'):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    ['bash', '-c', script, 'cmake-arguments-test', mode],
+                    text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                arguments = result.stdout.splitlines()
+                selected = [arg for arg in arguments
+                            if arg.startswith('-DSIMANEAT_DOCS_ONLY_CONFIGURE=')]
+                self.assertEqual(selected, [f'-DSIMANEAT_DOCS_ONLY_CONFIGURE={mode}'])
 
     def test_actual_cli_preserves_arguments_and_failure(self):
         producer=self.producer()

@@ -38,6 +38,18 @@ RUN_TEST(
           auto extracted = build_boxdecode_static_contract_from_sample(
               sample_from_tensors(heads), BoxDecodeType::SuperPoint, std::nullopt, {}, &message);
           require(extracted.has_value(), "mixed SuperPoint source extraction: " + message);
+          for (const auto profile : {SuperPointProfile::A65V1, SuperPointProfile::LightGlueV1,
+                                     SuperPointProfile::MagicLeapDemoV1}) {
+            auto profiled = *extracted;
+            profiled.superpoint.profile = profile;
+            for (int requested : {0, 17}) {
+              const auto resolved = stagesemantics::finalize_boxdecode_static_contract(
+                  profiled, BoxDecodeType::SuperPoint, std::nullopt, std::nullopt,
+                  BoxDecodeTypeOption::Auto, 0., 0., requested, 0, {});
+              require(resolved.topk == (requested == 0 ? 600 : requested),
+                      "SuperPoint zero must retain its existing profile cap; explicit cap wins");
+            }
+          }
           require(extracted->tensors[0].data_type == (integer_port == 0 ? "INT8" : "BF16") &&
                       extracted->tensors[1].data_type == (integer_port == 1 ? "INT8" : "FP32"),
                   "SuperPoint input dtypes were homogenized");

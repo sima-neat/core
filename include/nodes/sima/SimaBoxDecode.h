@@ -136,7 +136,9 @@ public:
    * @param decode_type          Decoder variant (see `BoxDecodeType`).
    * @param detection_threshold  Score threshold; boxes below are dropped. Zero permits zero scores.
    * @param nms_iou_threshold    NMS IoU threshold; zero skips YOLO26 NMS, not other NMS profiles.
-   * @param top_k                Positive output cap for bounding-box decoding.
+   * @param top_k                Positive output cap for bounding-box decoding. Zero is
+   *                             unspecified and must be resolved before build; it does not
+   *                             request unlimited output. SuperPoint uses its profile default.
    * @param element_name         Optional GStreamer element name.
    * @param original_width       Width of the unscaled source frame (used for box rescaling).
    * @param original_height      Height of the unscaled source frame.

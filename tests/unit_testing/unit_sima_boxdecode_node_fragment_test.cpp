@@ -415,6 +415,24 @@ RUN_TEST(
       precedence_opt.nms_iou_threshold = .30f;
       precedence_opt.top_k = 7;
       simaai::neat::Model precedence_model(tar_path, precedence_opt);
+      const auto resolved_precedence_contract =
+          simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(precedence_model,
+                                                                              false);
+      require(resolved_precedence_contract.payload.topk == precedence_opt.top_k &&
+                  resolved_precedence_contract.payload.topk > 0,
+              "inheritance fixture must resolve the explicitly selected positive Model cap");
+      const auto check_inherited_capacity = [&](const std::shared_ptr<simaai::neat::Node>& node) {
+        const auto* box = dynamic_cast<const simaai::neat::SimaBoxDecode*>(node.get());
+        require(box && box->top_k_internal() == resolved_precedence_contract.payload.topk,
+                "omitted or zero node capacity must inherit the resolved Model cap");
+      };
+      check_inherited_capacity(simaai::neat::nodes::SimaBoxDecode(
+          precedence_model, simaai::neat::BoxDecodeType::YoloV8Seg));
+      check_inherited_capacity(simaai::neat::nodes::SimaBoxDecode(
+          precedence_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0., 0., 0));
+      check_inherited_capacity(simaai::neat::nodes::SimaBoxDecode(
+          precedence_model,
+          simaai::neat::BoxDecodeOptions{simaai::neat::BoxDecodeType::YoloV8Seg}));
       auto explicit_node = simaai::neat::nodes::SimaBoxDecode(
           precedence_model, simaai::neat::BoxDecodeType::YoloV8Seg, .25, .55, 120,
           "explicit_geometry", std::nullopt, std::nullopt, 640, 360, 640, 640,
