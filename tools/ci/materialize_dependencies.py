@@ -67,7 +67,16 @@ def extract_bundle(archive, destination):
                         if not parts: raise ValueError('Escaping package bundle link')
                         parts.pop()
                     elif part not in ('.', ''): parts.append(part)
-        bundle.extractall(destination, filter='data')
+        links = {PurePosixPath(entry.name) for entry in bundle.getmembers() if entry.issym()}
+        if any(any(parent in links for parent in PurePosixPath(entry.name).parents)
+               for entry in bundle.getmembers()):
+            raise ValueError('Package bundle member traverses symlink')
+        for entry in bundle.getmembers():
+            if entry.mode & 0o7000:
+                raise ValueError('Privileged package bundle mode')
+            bundle.extract(entry, destination, filter='data')
+            if entry.isfile():
+                (destination / entry.name).chmod(entry.mode & 0o777)
 
 
 def materialize(manifest, output_root):

@@ -112,6 +112,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install native build-tooling prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential file nlohmann-json3-dev python3-venv
+
       - name: Run build-tooling tests
         shell: bash
         run: |
@@ -133,6 +138,8 @@ jobs:
             tests/tools/test_ci_weekly_preparation.py \
             tests/tools/test_docs_native_prerequisites.py \
             tests/tools/test_ci_hygiene_cohort.py \
+            tests/tools/test_published_artifact.py \
+            tests/tools/test_ci_dependency_setup.py \
             tests/tools/test_guarded_ctest_configuration.py \
             tests/tools/test_codec_stream_registration.py \
             tests/tools/test_vulcan_ci_docs_only.py \
@@ -209,6 +216,7 @@ jobs:
     name: Code Hygiene
     if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
+      - resolve-vulcan-config
       - detect-changes
       - build
     runs-on: ubuntu-latest
@@ -239,55 +247,10 @@ jobs:
           # Transport this run's verified producer bytes; no independent resolver,
           # host installation, native execution, or retired Internals fallback.
           bash scripts/ci/verify_core_dist.sh --dist _work/hygiene-dist
-          python3 - <<'PY'
-          import importlib.util
-          import os
-          from pathlib import Path
-          import shutil
-          import subprocess
-
-          spec = importlib.util.spec_from_file_location('dependencies', 'tools/build_dependencies.py')
-          dependencies = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(dependencies)
-          root = Path('_work/hygiene-dependencies').resolve()
-          root.mkdir(parents=True, exist_ok=False)
-          roles = {'simaai-kernels-dev': 'kernels', 'simaai-runner': 'runner',
-                   'simaai-scheduler': 'scheduler', 'simaai-runtime': 'runtime_compat',
-                   'neat-codecs': 'codecs', 'neat-codecs-dev': 'codecs'}
-          seen = set()
-          for archive in sorted(Path('_work/hygiene-dist').glob('*.deb')):
-              role = subprocess.check_output(['dpkg-deb', '-f', str(archive), 'Package'], text=True).strip()
-              if role not in roles:
-                  continue
-              if role in seen:
-                  raise ValueError('Duplicate matched dependency role: ' + role)
-              seen.add(role)
-              destination = root / roles[role]
-              destination.mkdir(exist_ok=True)
-              subprocess.run(['dpkg-deb', '-x', str(archive), str(destination)], check=True)
-              shutil.copy2(archive, destination / archive.name)
-          if not {'simaai-kernels-dev', 'simaai-runner', 'simaai-scheduler', 'simaai-runtime'} <= seen:
-              raise ValueError('Missing mandatory matched analysis dependencies')
-          if seen & {'neat-codecs', 'neat-codecs-dev'} not in (set(), {'neat-codecs', 'neat-codecs-dev'}):
-              raise ValueError('Incomplete matched Codecs pair')
-          selected = {name: {'kind': 'package', 'path': str(root / name)} for name in ('kernels', 'runner', 'scheduler', 'runtime_compat')}
-          if (root / 'codecs').exists():
-              os.environ['NEAT_CODECS_PACKAGE_DIR'] = str(root / 'codecs')
-          # Existing receipt/payload/cohort validators are the only authority.
-          packages = dependencies.prepare(Path.cwd(), root / 'audit', selected, 1, True)
-          values = {'NEAT_' + name.upper() + '_PACKAGE_DIR': item['package']
-                    for name, item in packages.items()}
-          values['CMAKE_PREFIX_PATH'] = ':'.join(item['config'] for item in packages.values())
-          values['CMAKE_INCLUDE_PATH'] = str(root / 'runner/usr/include/simaai')
-          if (root / 'codecs').exists():
-              values['NEAT_CODECS_PACKAGE_DIR'] = str(root / 'codecs')
-              values['CMAKE_PREFIX_PATH'] += ':' + str(dependencies.find_config(root / 'codecs', 'SimaCodecs'))
-          with open(os.environ['GITHUB_ENV'], 'a') as output:
-              for name, value in values.items():
-                  if '\n' in value or '\r' in value:
-                      raise ValueError('Invalid analysis dependency path')
-                  output.write(name + '=' + value + '\n')
-          PY
+          python3 tools/ci/prepare_hygiene_cohort.py \
+            --dist _work/hygiene-dist --output _work/hygiene-dependencies \
+            --environment "${{ needs.resolve-vulcan-config.outputs.vulcan_env }}" \
+            --github-env "$GITHUB_ENV"
 
       - name: Install code hygiene tools
         run: |
@@ -379,15 +342,17 @@ jobs:
           ALLOW_FUZZ_IN_NEAT_SDK=OFF
         fi
 
-        sdk_container="$(docker ps --filter 'ancestor=ghcr.io/sima-neat/sdk:latest' --format '{{.Names}}' | head -n 1)"
-        if [[ -z "${sdk_container}" ]]; then
-          sdk_container="$(docker ps --filter 'name=sdk' --format '{{.Names}}' | head -n 1)"
-        fi
-        if [[ -z "${sdk_container}" ]]; then
-          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-          echo "Could not find running SDK container." >&2
-          exit 1
-        fi
+        sdk_containers=()
+        while IFS= read -r id; do
+          if docker exec "$id" test -f /etc/sdk-release; then sdk_containers+=("$id"); fi
+        done < <(docker ps --format '{{.ID}}')
+        [[ ${#sdk_containers[@]} == 1 ]] || { echo 'Expected exactly one running SDK container' >&2; exit 1; }
+        sdk_container="${sdk_containers[0]}"
+        mapfile -t sdk_images < <(docker images --format '{{.Repository}}:{{.Tag}}' |
+          awk '/^ghcr[.]io\/sima-neat\/sdk/ && $0 !~ /:<none>$/ { print }')
+        [[ ${#sdk_images[@]} == 1 ]]
+        sdk_image_id=$(docker image inspect --format '{{.Id}}' "${sdk_images[0]}")
+        [[ "$(docker inspect --format '{{.Image}}' "$sdk_container")" == "$sdk_image_id" ]]
 
         docker exec \
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
@@ -410,8 +375,6 @@ jobs:
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
           -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Palette Neat" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
-          -e NEAT_SYNC_SYSROOT="ON" \
-          -e NEAT_CI_DEPENDENCY_MANIFEST="${{ vars.NEAT_CI_DEPENDENCY_MANIFEST || 'ci/dependencies.json' }}" \
           -e NEAT_GUARDED_HARDWARE_TESTS="ON" \
           -e SIMANEAT_HOST_PYTHON=/usr/bin/python3 \
           -e SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK="${ALLOW_FUZZ_IN_NEAT_SDK}" \
@@ -426,13 +389,14 @@ jobs:
             sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
             cd /workspace
-            case "${NEAT_CI_DEPENDENCY_MANIFEST}" in
-              /*|*..*) echo "Dependency manifest must be a reviewed repository-relative path" >&2; exit 1;;
-            esac
-            test -f "${NEAT_CI_DEPENDENCY_MANIFEST}"
-            eval "$(python3 tools/ci/materialize_dependencies.py \
-              --manifest "${NEAT_CI_DEPENDENCY_MANIFEST}" \
-              --output-root "${RUNNER_TEMP:-/tmp}/core-dependencies-${GITHUB_SHA}")"
+            dependency_root="${RUNNER_TEMP:-/tmp}/core-dependencies-${GITHUB_SHA}"
+            dependency_exports=$(python3 tools/ci/acquire_scheduler.py \
+              --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+              --environment "${NEAT_VULCAN_ENV}" --output "$dependency_root")
+            eval "$dependency_exports"
+            sdk_exports=$(bash scripts/ci/prepare_scheduler_sdk.sh "$dependency_root/platform-debs")
+            eval "$sdk_exports"
+            source /opt/bin/simaai-init-build-env modalix >/dev/null
             ./build.sh ${CORE_BUILD_ARGS}
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
               (
@@ -528,8 +492,10 @@ jobs:
         run: |
           set -euo pipefail
           cd pcie_host
-          ./build.sh --clean --all
+          ./build.sh --clean --all --scheduler-spec "${SCHEDULER_NATIVE_SPEC:-latest}" \
+            --scheduler-environment "${NEAT_VULCAN_ENV}"
         env:
+          SCHEDULER_NATIVE_SPEC: ${{ vars.SCHEDULER_NATIVE_SPEC }}
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
       - name: Run PCIe host unit tests
@@ -619,8 +585,10 @@ jobs:
           cmake \
             -S pcie_host/tests/package_smoke \
             -B "${consumer_build}" \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-14
           cmake --build "${consumer_build}" --parallel
+          file "${consumer_build}/sima_pcie_host_package_smoke"
           "${consumer_build}/sima_pcie_host_package_smoke"
 
           "${python_venv}/bin/python" - <<'PY'
@@ -666,8 +634,13 @@ jobs:
             pcie_host/dist/*-extras.tar.gz \
             pcie_host/dist/*-extras.tar.gz.sha256 \
             pcie_host/dist/pyneatpcie-*.whl \
-            pcie_host/dist/pyneatpcie-*.whl.sha256; do
+            pcie_host/dist/pyneatpcie-*.whl.sha256 \
+            pcie_host/dist/*.json \
+            pcie_host/dist/*.py \
+            pcie_host/dist/*.sh; do
             name="$(basename "${path}")"
+            # Metadata becomes visible only after the aggregate closure audit.
+            case "$name" in metadata*.json) name="${name}.pending" ;; esac
             case "${name}" in
               *.deb) content_type="application/vnd.debian.binary-package" ;;
               *.tar.gz) content_type="application/gzip" ;;
@@ -732,247 +705,25 @@ jobs:
           PY
           )"
           short_sha="${GITHUB_SHA:0:12}"
-          install_script_source="pcie_host/scripts/install_pciehost.sh"
-
           s3_args=(--sse aws:kms)
           if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
-
           for distro in ubuntu22 ubuntu24; do
             for deb_arch in amd64 arm64; do
               prefix="core/${branch_key}/${short_sha}/pciehost/${distro}/${deb_arch}"
               work_dir="_vulcan/pciehost/${distro}/${deb_arch}"
-              resources_tsv="${work_dir}/resources.tsv"
-              install_script="${work_dir}/install_pciehost.sh"
-
-              rm -rf "${work_dir}"
-              mkdir -p "${work_dir}/checksums"
-              : > "${resources_tsv}"
-              install -m 0755 "${install_script_source}" "${install_script}"
-
-              mapfile -t package_keys < <(aws s3api list-objects-v2 \
-                --bucket "${ARTIFACT_BUCKET}" \
-                --prefix "${prefix}/" \
-                --query 'Contents[].Key' \
-                --output text \
-                | tr '\t' '\n' \
-                | grep -E '(\.deb|-extras\.tar\.gz|pyneatpcie-.*\.whl)$' \
-                | sort)
-
-              if [[ "${#package_keys[@]}" -ne 4 ]]; then
-                echo "Expected two PCIe host debs, one extras tarball, and one pyneatpcie wheel under s3://${ARTIFACT_BUCKET}/${prefix}/" >&2
-                printf 'found (%s):\n' "${#package_keys[@]}" >&2
-                printf '  %s\n' "${package_keys[@]}" >&2 || true
-                exit 1
-              fi
-
-              for key in "${package_keys[@]}"; do
-                size_bytes="$(aws s3api head-object \
-                  --bucket "${ARTIFACT_BUCKET}" \
-                  --key "${key}" \
-                  --query ContentLength \
-                  --output text)"
-                checksum_path="${work_dir}/checksums/$(basename "${key}").sha256"
-                aws s3 cp \
-                  "s3://${ARTIFACT_BUCKET}/${key}.sha256" \
-                  "${checksum_path}" \
-                  >/dev/null
-                checksum="$(awk '{print $1; exit}' "${checksum_path}")"
-                resource="${key#${prefix}/}"
-                printf '%s\t%s\t%s\n' "${resource}" "${checksum}" "${size_bytes}" \
-                  >> "${resources_tsv}"
+              python3 pcie_host/scripts/verify_published.py \
+                --bucket "$ARTIFACT_BUCKET" --prefix "$prefix" --distro "$distro" \
+                --arch "$deb_arch" --commit "$GITHUB_SHA" --output "$work_dir"
+              for name in metadata.json metadata-extras.json metadata-pyneatpcie.json; do
+                aws s3 cp "$work_dir/$name" "s3://${ARTIFACT_BUCKET}/${prefix}/${name}" \
+                  --content-type application/json "${s3_args[@]}"
               done
-
-              install_script_size="$(stat -c '%s' "${install_script}")"
-              install_script_checksum="$(sha256sum "${install_script}" | awk '{print $1}')"
-              printf '%s\t%s\t%s\n' \
-                "install_pciehost.sh" \
-                "${install_script_checksum}" \
-                "${install_script_size}" \
-                >> "${resources_tsv}"
-
-              export PREFIX="${prefix}"
-              export DISTRO="${distro}"
-              export DEB_ARCH="${deb_arch}"
-              export RESOURCES_TSV="${resources_tsv}"
-              export METADATA_PATH="${work_dir}/metadata.json"
-              export EXTRAS_METADATA_PATH="${work_dir}/metadata-extras.json"
-              export PYNEATPCIE_METADATA_PATH="${work_dir}/metadata-pyneatpcie.json"
-              python3 - <<'PY'
-          import json
-          import os
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          distro = os.environ["DISTRO"]
-          deb_arch = os.environ["DEB_ARCH"]
-          resources = []
-          resource_checksums = {}
-          resource_sizes = {}
-          total_size_bytes = 0
-          wheel_resources = []
-          extras_resources = []
-          for line in Path(os.environ["RESOURCES_TSV"]).read_text(
-              encoding="utf-8").splitlines():
-              resource, checksum, size_bytes = line.split("\t")
-              resources.append(resource)
-              resource_checksums[resource] = checksum
-              resource_sizes[resource] = int(size_bytes)
-              total_size_bytes += resource_sizes[resource]
-              if resource.startswith("pyneatpcie-") and resource.endswith(".whl"):
-                  wheel_resources.append(resource)
-              if resource.startswith("sima-pcie-host-") and resource.endswith("-extras.tar.gz"):
-                  extras_resources.append(resource)
-
-          if len(wheel_resources) != 1:
-              raise SystemExit(f"expected exactly one pyneatpcie wheel, got {wheel_resources!r}")
-          if len(extras_resources) != 1:
-              raise SystemExit(f"expected exactly one PCIe host extras archive, got {extras_resources!r}")
-
-          metadata = {
-              "name": f"gh:sima-neat/pciehost/{distro}/{deb_arch}",
-              "version": os.environ["GITHUB_SHA"][:12],
-              "release": "",
-              "description": (
-                  "SiMa.ai NEAT PCIe host runtime, development, and Python packages "
-                  f"({distro}, {deb_arch})"
-              ),
-              "platforms": [
-                  {
-                      "type": "host",
-                      "os": ["linux"],
-                      "arch": [deb_arch],
-                  }
-              ],
-              "resources": resources,
-              "resources-checksum": resource_checksums,
-              "selectable-resources": [],
-              "installation": {
-                  "script": "bash ./install_pciehost.sh --python",
-                  "post-message": "[bold]sima-pcie-host and pyneatpcie installed successfully.[/bold]\n"
-                                  "Activate pyneatpcie with: source ~/pyneatpcie/bin/activate\n",
-              },
-              "artifact": {
-                  "type": "debian-packages",
-                  "repository": "core",
-                  "package_path": f"pciehost/{distro}/{deb_arch}",
-                  "distro": distro,
-                  "arches": [deb_arch],
-              },
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "branch": os.environ["REF_NAME"],
-              "commit": os.environ["GITHUB_SHA"],
-              "commit_folder": os.environ["GITHUB_SHA"][:12],
-              "published_at_utc": datetime.now(timezone.utc).isoformat(),
-              "size": {
-                  "download": f"{max(1, (total_size_bytes + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-                  "install": f"{max(1, (total_size_bytes + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-              },
-          }
-          Path(os.environ["METADATA_PATH"]).write_text(
-              json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-
-          extras = extras_resources[0]
-          extracted_dir = extras.removesuffix(".tar.gz")
-          extras_metadata = dict(metadata)
-          extras_metadata.update({
-              "description": (
-                  "SiMa.ai NEAT PCIe host tutorial extras "
-                  f"({distro}, {deb_arch})"
-              ),
-              "resources": [extras],
-              "resources-checksum": {extras: resource_checksums[extras]},
-              "selectable-resources": [],
-              "installation": {
-                  "script": ":",
-                  "post-message": "[bold]PCIe host tutorial extras downloaded and extracted.[/bold]\n"
-                                  f"Enter the tutorial directory with: cd {extracted_dir}\n"
-                                  "The matching PCIe host package must already be installed.\n",
-              },
-              "artifact": {
-                  "type": "tutorial-extras",
-                  "repository": "core",
-                  "package_path": f"pciehost/{distro}/{deb_arch}",
-                  "distro": distro,
-                  "arches": [deb_arch],
-              },
-              "size": {
-                  "download": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-                  "install": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-              },
-          })
-          Path(os.environ["EXTRAS_METADATA_PATH"]).write_text(
-              json.dumps(extras_metadata, indent=2) + "\n", encoding="utf-8")
-
-          wheel = wheel_resources[0]
-          pyneatpcie_metadata = dict(metadata)
-          pyneatpcie_metadata.update({
-              "name": f"gh:sima-neat/pyneatpcie/{distro}/{deb_arch}",
-              "description": (
-                  "pyneatpcie wheel for SiMa.ai NEAT PCIe host "
-                  f"({distro}, {deb_arch})"
-              ),
-              "resources": [wheel],
-              "resources-checksum": {wheel: resource_checksums[wheel]},
-              "installation": {
-                  "script": ":",
-                  "post-message": "[bold]pyneatpcie wheel downloaded.[/bold]\n"
-                                  f"Install it with: python3 -m pip install ./{wheel}\n"
-                                  "pyneatpcie requires the matching sima-pcie-host runtime package. "
-                                  "If it is not installed yet, run: sima-cli neat install "
-                                  f"core/pciehost/{distro}/{deb_arch}\n",
-              },
-              "artifact": {
-                  "type": "python-wheel",
-                  "repository": "core",
-                  "package_path": f"pciehost/{distro}/{deb_arch}",
-                  "distro": distro,
-                  "arches": [deb_arch],
-              },
-              "size": {
-                  "download": f"{max(1, (resource_sizes[wheel] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-                  "install": "1MB",
-              },
-          })
-          Path(os.environ["PYNEATPCIE_METADATA_PATH"]).write_text(
-              json.dumps(pyneatpcie_metadata, indent=2) + "\n", encoding="utf-8")
-          PY
-
-              aws s3 cp \
-                "${install_script}" \
-                "s3://${ARTIFACT_BUCKET}/${prefix}/install_pciehost.sh" \
-                --content-type text/x-shellscript \
-                "${s3_args[@]}"
-
-              aws s3 cp \
-                "${work_dir}/metadata.json" \
-                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata.json" \
-                --content-type application/json \
-                "${s3_args[@]}"
-
-              aws s3 cp \
-                "${work_dir}/metadata-extras.json" \
-                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata-extras.json" \
-                --content-type application/json \
-                "${s3_args[@]}"
-
-              aws s3 cp \
-                "${work_dir}/metadata-pyneatpcie.json" \
-                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata-pyneatpcie.json" \
-                --content-type application/json \
-                "${s3_args[@]}"
-
               if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
                 aws cloudfront create-invalidation \
-                  --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-                  --paths "/${prefix}/metadata.json" "/${prefix}/metadata-extras.json" "/${prefix}/metadata-pyneatpcie.json" "/${prefix}/install_pciehost.sh"
+                  --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths "/${prefix}/*"
               fi
-
-              cat "${work_dir}/metadata.json"
-              cat "${work_dir}/metadata-extras.json"
-              cat "${work_dir}/metadata-pyneatpcie.json"
-              echo "Published PCIe host ${distro} ${deb_arch} metadata under s3://${ARTIFACT_BUCKET}/${prefix}/"
             done
           done
         env:

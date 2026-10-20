@@ -86,7 +86,9 @@ A change is ready when:
 - `NEAT_KERNELS_SOURCE` / `NEAT_RUNNER_SOURCE` / `NEAT_SCHEDULER_SOURCE` select source roots; the corresponding
   `_PACKAGE_DIR` overrides select local package directories instead.
 - Do not silently fetch old Internals, replace failed source builds with artifacts,
-  or deploy from child builds. Remote Kernels/Runner/Scheduler pulling is explicitly TODO.
+  or deploy from child builds. Explicit `tools/ci/acquire_scheduler.py` acquisition
+  resolves one same-branch immutable Scheduler publication and lets its installed
+  coordinator validate the delivered cohort; `build.sh` never silently fetches it.
 - Preserve the selected package receipts and contract checks. Rebuild consumers
   after ABI changes; numerical source-only changes do not require Runner/Scheduler source edits, but static consumers must relink to consume new Kernels artifacts.
 - See `docs/develop-apps/contribute/build-test/local-dependencies.md`.

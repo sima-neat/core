@@ -51,8 +51,12 @@ int main(int argc, char**) {
 }
 ''')
     binary = root / 'probe'
-    subprocess.run(['c++', '-std=c++20', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'tests'),
-                    str(source), '-o', str(binary)], check=True, capture_output=True)
+    command = ['c++', '-std=c++20', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'tests'),
+               str(source), '-o', str(binary)]
+    result = subprocess.run(command, text=True, capture_output=True)
+    assert result.returncode == 0, (
+        f'Native platform probe compile failed: {command!r}\n'
+        f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}')
     host_elf(binary)
     return binary
 

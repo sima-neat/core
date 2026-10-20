@@ -163,26 +163,38 @@ builds do not prepare native dependencies.
 EV device builds remain a separate licensed workflow. None of these commands
 implicitly invokes MetaWare, replaces firmware, or qualifies a firmware change.
 
-## Immutable CI materialization
+## Published CI dependencies
 
-`tools/ci/materialize_dependencies.py` transports a reviewed repository-relative
-`NEAT_CI_DEPENDENCY_MANIFEST` into a fresh workspace and emits explicit producer
-selection variables. The Vulcan build defaults the path to `ci/dependencies.json`
-and fails closed if that reviewed manifest has not been provided. No public
-artifact location or unpromoted private commit is invented by the build.
+The normal Vulcan build resolves the Scheduler policy in `deps/manifest.json`
+through `sima-cli` once, then downloads that immutable publication. A snap policy
+selects the current branch; an unpublished branch fails instead of falling back
+to another branch. `tools/ci/acquire_scheduler.py` verifies publisher hashes before
+running Scheduler's bootstrap. The installed Scheduler coordinator partitions and
+validates the bundled Runner, Kernels and Codecs archives. Core does not resolve
+those repositories independently.
 
-Manifest schema1 requires exactly `kernels`, `runner`, `scheduler` and `codecs` under `inputs`:
+The selected Scheduler package installs its exact SDK policy. In the disposable
+CI SDK container, `scripts/ci/prepare_scheduler_sdk.sh` uses the official sysroot
+setup command for that revision and retains downloaded platform archives. The
+coordinator checks the real GCC14 version/target and target SDK identities, then
+selects the exact Runner-consumed MLA/TVM archives through
+`NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`. Native ARM64 and cross-compilers need not
+have identical executable bytes. Their target ABI and selected platform must
+match. No device installation or firmware qualification happens in this step.
 
-- Kernels/Runner/Scheduler: `kind: "git"`, credential-free HTTPS `repository`, immutable
-  full `commit`; or `kind: "package-bundle"`, HTTPS `url`, SHA256 `sha256`.
-- Codecs: an independent `package-bundle` with the exact installed prefix and
-  matching runtime/development DEBs. It is not another source-build dependency.
+Local source/package overrides remain authoritative. CI acquisition is explicit;
+a failed local source build never downloads a substitute. The existing
+`tools/ci/materialize_dependencies.py --manifest ... --output-root ...` command
+remains an optional transport for a separately reviewed immutable manifest. It is
+not the default workflow and there is no implicit `ci/dependencies.json`.
 
-The materializer performs no device installation and no fallback/latest
-selection. Core's existing dependency adapter still verifies installed receipts,
-payloads, architecture, exact dependencies and package composition. Immutable
-transport is not qualification: publish/promote only after the selected cohort
-passes the required hardware gates.
+Code hygiene downloads this run's `neat-core-dist`, verifies it, and invokes the
+real Core delegate and installed Scheduler coordinator in headers-only mode.
+The coordinator checks the same lower packages and platform archives used by the
+build. Only Scheduler's frontend prefix is exposed to Core analysis. LLiMa remains
+a direct Core dependency: analysis downloads the exact development archive named
+by the Core build receipt, not a second mutable latest. This is host tooling
+validation, not target execution.
 
 See [Hardware test ownership](./hardware-test-safety.md) for the target-side
 supervisor required by the guarded performance lane.

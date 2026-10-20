@@ -68,8 +68,9 @@ class MaterializationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):m.extract_bundle(archive,Path(tmp)/'new')
     def test_workflow_passes_portable_inputs_and_guarded_tests(self):
         workflow=(ROOT/'.github/workflows/vulcan-ci.yml').read_text()
-        self.assertIn('NEAT_CI_DEPENDENCY_MANIFEST',workflow)
-        self.assertIn('tools/ci/materialize_dependencies.py',workflow)
+        self.assertNotIn('NEAT_CI_DEPENDENCY_MANIFEST',workflow)
+        self.assertIn('tools/ci/acquire_scheduler.py',workflow)
+        self.assertIn('scripts/ci/prepare_scheduler_sdk.sh',workflow)
         self.assertIn('-e NEAT_GUARDED_HARDWARE_TESTS="ON"',workflow)
         self.assertNotIn('kernel-device-qualification-',workflow)
         self.assertNotIn('internals-migration',workflow)

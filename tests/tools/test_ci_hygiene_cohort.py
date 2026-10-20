@@ -25,10 +25,14 @@ def needs(name):
     return re.findall(r'- ([\w-]+)', block[1]) if block else []
 
 
-def transport():
-    body = job('code-hygiene')
-    block = body.split("          python3 - <<'PY'\n", 1)[1].split('\n          PY', 1)[0]
-    return textwrap.dedent(block)
+def load_preparation():
+    import importlib.util
+    import sys
+    sys.path.insert(0, str(ROOT / 'tools/ci'))
+    spec = importlib.util.spec_from_file_location('prepare_hygiene_cohort', ROOT / 'tools/ci/prepare_hygiene_cohort.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_dependency_dag_and_publication_gate():
@@ -53,15 +57,18 @@ def test_same_run_artifact_and_validator_precede_analysis():
     assert 'uses: actions/download-artifact@v5' in body
     assert 'name: neat-core-dist' in body
     assert 'run-id:' not in body and 'repository:' not in body
-    assert body.index('bash scripts/ci/verify_core_dist.sh') < body.index("python3 - <<'PY'")
+    assert body.index('bash scripts/ci/verify_core_dist.sh') < body.index('python3 tools/ci/prepare_hygiene_cohort.py')
     # Matched target dependencies come from the verified same-run artifact.
     # The later installer supplies host analysis tools, not a second cohort.
-    assert body.index("python3 - <<'PY'") < body.index('./' + HYGIENE_INSTALLER)
+    assert body.index('python3 tools/ci/prepare_hygiene_cohort.py') < body.index('./' + HYGIENE_INSTALLER)
     assert body.index('./' + HYGIENE_INSTALLER) < body.index('./scripts/ci/run_code_hygiene.sh')
     assert 'test_ci_hygiene_cohort.py' in job('resolve-compiler-cache')
     assert 'materialize_dependencies.py' not in body
     assert './build.sh' not in body
-    compile(transport(), str(WORKFLOW), 'exec')
+    helper = (ROOT / 'tools/ci/prepare_hygiene_cohort.py').read_text()
+    assert 'tools/build_dependencies.py' in helper
+    assert "['prepare', '--headers-only'" in helper
+    assert 'dependencies.prepare(' not in helper and 'dependencies.find_config(' not in helper
 
 
 @pytest.mark.parametrize('profile', ['ready', 'broken-headers-root', 'missing-tool-unprivileged'])
@@ -113,78 +120,61 @@ def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
         assert headers.read_text() == '#include <memory>\n'
 
 
-def execute_fixture(tmp_path, monkeypatch, roles, *, reject_receipt=False):
-    """Tiny deliberately non-DEB fixtures exercise transport control flow only."""
-    monkeypatch.chdir(tmp_path)
-    tools = tmp_path / 'tools'
-    tools.mkdir()
-    (tools / 'build_dependencies.py').write_text('''
-import os
-def prepare(core, output, selected, jobs, headers_only):
-    assert headers_only is True and jobs == 1
-    assert set(selected) == {'kernels', 'runner', 'scheduler', 'runtime_compat'}
-    assert all(v['kind'] == 'package' for v in selected.values())
-    if os.environ.get('TEST_REJECT_RECEIPT') == '1':
-        raise ValueError('test receipt/payload rejection')
-    return {k: dict(package=v['path'], config=v['path']+'/usr/lib/cmake/'+k)
-            for k,v in selected.items()}
-def find_config(root, name):
-    return root/'usr/lib/cmake'/name
-''')
-    dist = tmp_path / '_work/hygiene-dist'
-    dist.mkdir(parents=True)
-    for index, role in enumerate(roles):
-        (dist / f'fixture-{index}.deb').write_text(role)
-    output = tmp_path / 'github.env'
-    monkeypatch.setenv('GITHUB_ENV', str(output))
-    monkeypatch.delenv('NEAT_CODECS_PACKAGE_DIR', raising=False)
-    monkeypatch.setenv('TEST_REJECT_RECEIPT', '1' if reject_receipt else '0')
-    def control(argv, **kwargs):
-        assert argv[:2] == ['dpkg-deb', '-f'] and argv[-1] == 'Package'
-        return Path(argv[2]).read_text()
-    def extract(argv, **kwargs):
-        assert argv[:2] == ['dpkg-deb', '-x'] and kwargs['check'] is True
-        (Path(argv[-1]) / 'usr/include').mkdir(parents=True, exist_ok=True)
-        return subprocess.CompletedProcess(argv, 0)
-    with mock.patch('subprocess.check_output', side_effect=control), \
-         mock.patch('subprocess.run', side_effect=extract):
-        exec(compile(transport(), str(WORKFLOW), 'exec'), {})
-    return dict(line.split('=', 1) for line in output.read_text().splitlines())
+def installed_dispatch_fixture(tmp_path):
+    """Receipt-bound CLI transport double, not a pretend Scheduler validator.
+
+    Producer's real installed coordinator/DEB integration is separately exercised
+    by Scheduler client_cohort_ingestion_test.py and the actual hygiene command.
+    This test protects Core's actual exec delegate and its own receipt gate.
+    """
+    import hashlib
+    import json
+    import shutil
+    core = tmp_path / 'core'
+    (core / 'tools').mkdir(parents=True)
+    shutil.copy2(ROOT / 'tools/build_dependencies.py', core / 'tools/build_dependencies.py')
+    package = tmp_path / 'scheduler'
+    tool = package / 'usr/share/SimaScheduler/tools/client_dependencies.py'
+    tool.parent.mkdir(parents=True)
+    tool.write_text('import sys\nprint("CLI:" + " ".join(sys.argv[1:]))\n')
+    info = {'component': 'scheduler', 'installed_files': {
+        'share/SimaScheduler/tools/client_dependencies.py': {
+            'kind': 'file', 'sha256': hashlib.sha256(tool.read_bytes()).hexdigest(),
+            'mode': tool.stat().st_mode & 0o7777}}}
+    info['package_sha256'] = hashlib.sha256(json.dumps(info, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    (tool.parent.parent / 'buildinfo.json').write_text(json.dumps(info))
+    return core, package, tool
 
 
-def test_transport_reuses_installed_contracts_and_selected_headers(tmp_path, monkeypatch):
-    env = execute_fixture(tmp_path, monkeypatch, ['simaai-kernels-dev', 'simaai-runner', 'simaai-scheduler', 'simaai-runtime',
-                                                 'neat-codecs', 'neat-codecs-dev', 'sima-neat'])
-    assert set(env) == {'NEAT_KERNELS_PACKAGE_DIR', 'NEAT_RUNNER_PACKAGE_DIR',
-                        'NEAT_SCHEDULER_PACKAGE_DIR', 'NEAT_RUNTIME_COMPAT_PACKAGE_DIR',
-                        'NEAT_CODECS_PACKAGE_DIR', 'CMAKE_PREFIX_PATH', 'CMAKE_INCLUDE_PATH'}
-    assert env['CMAKE_INCLUDE_PATH'] == env['NEAT_RUNNER_PACKAGE_DIR'] + '/usr/include/simaai'
-    assert all(env[k] in env['CMAKE_PREFIX_PATH'] for k in
-               ('NEAT_KERNELS_PACKAGE_DIR', 'NEAT_RUNNER_PACKAGE_DIR', 'NEAT_CODECS_PACKAGE_DIR'))
-    assert not (tmp_path / '_work/hygiene-dependencies/core').exists()
+def test_hygiene_calls_real_core_exec_delegate(tmp_path):
+    core, package, _ = installed_dispatch_fixture(tmp_path)
+    output = load_preparation().coordinator(core, ['prepare', '--headers-only', '--output', str(tmp_path / 'audit')],
+                                           {**os.environ, 'NEAT_SCHEDULER_PACKAGE_DIR': str(package)})
+    assert output == f'CLI:prepare --headers-only --output {tmp_path / "audit"} --core {core}\n'
 
 
-def test_no_external_codec_provider_is_not_fabricated(tmp_path, monkeypatch):
-    env = execute_fixture(tmp_path, monkeypatch, ['simaai-kernels-dev', 'simaai-runner', 'simaai-scheduler', 'simaai-runtime'])
-    assert 'NEAT_CODECS_PACKAGE_DIR' not in env
+def test_real_delegate_rejects_changed_installed_coordinator(tmp_path):
+    core, package, tool = installed_dispatch_fixture(tmp_path)
+    tool.write_text(tool.read_text() + '# tampered\n')
+    with pytest.raises(subprocess.CalledProcessError):
+        load_preparation().coordinator(core, ['select', '--require'],
+                                       {**os.environ, 'NEAT_SCHEDULER_PACKAGE_DIR': str(package)})
 
 
-@pytest.mark.parametrize('roles', [
-    ['simaai-kernels-dev'],
-    ['simaai-kernels-dev', 'simaai-runner', 'simaai-scheduler', 'simaai-runtime', 'simaai-runtime'],
-    ['simaai-kernels-dev', 'simaai-runner', 'simaai-scheduler', 'simaai-runtime', 'neat-codecs'],
-])
-def test_incomplete_or_duplicate_transport_fails_without_env(tmp_path, monkeypatch, roles):
+@pytest.mark.parametrize('text', ['import os', 'export OTHER=x', 'export NEAT_X=one\nexport NEAT_X=two',
+                                 'export NEAT_X="line\nline"'])
+def test_invalid_coordinator_output_is_not_executed(text):
     with pytest.raises(ValueError):
-        execute_fixture(tmp_path, monkeypatch, roles)
-    assert not (tmp_path / 'github.env').exists()
+        load_preparation().shell_exports(text)
 
 
-def test_receipt_rejection_is_not_suppressed(tmp_path, monkeypatch):
-    with pytest.raises(ValueError, match='receipt/payload rejection'):
-        execute_fixture(tmp_path, monkeypatch, ['simaai-kernels-dev', 'simaai-runner', 'simaai-scheduler', 'simaai-runtime'],
-                        reject_receipt=True)
-    assert not (tmp_path / 'github.env').exists()
+def test_hygiene_has_no_second_mutable_llima_resolution():
+    helper = (ROOT / 'tools/ci/prepare_hygiene_cohort.py').read_text()
+    assert "info.get('dependencies', {}).get('llima')" in helper
+    assert "llima['ref'], llima['spec']" in helper
+    assert 'develop:latest' not in helper and "'latest'" not in helper
+    assert "selected['CMAKE_PREFIX_PATH']" in helper
+    assert "selected['NEAT_SCHEDULER_PACKAGE_DIR']" in helper
 
 
 GATE_IDS = {

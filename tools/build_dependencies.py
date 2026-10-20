@@ -45,8 +45,23 @@ def scheduler_coordinator(core: Path, environment: dict[str, str]) -> Path:
                 entry.get("kind") != "file" or entry.get("sha256") != hashlib.sha256(tool.read_bytes()).hexdigest() or
                 entry.get("mode") != (tool.stat().st_mode & 0o7777)):
             raise ValueError("Selected Scheduler coordinator differs from its package receipt")
+        # Installed coordinator modules are executable inputs too. Validate the
+        # producer-owned tooling subtree generically, without naming lower APIs.
+        tools_root = prefix / 'share/SimaScheduler/tools'
+        expected_tools = {name: item for name, item in info.get('installed_files', {}).items()
+                          if name.startswith('share/SimaScheduler/tools/')}
+        actual_tools = {}
+        for path in tools_root.rglob('*'):
+            name = path.relative_to(prefix).as_posix()
+            if path.is_symlink():
+                actual_tools[name] = {'kind': 'link', 'target': os.readlink(path)}
+            elif path.is_file():
+                actual_tools[name] = {'kind': 'file', 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                                      'mode': path.stat().st_mode & 0o7777}
+        if not expected_tools or actual_tools != expected_tools:
+            raise ValueError('Selected Scheduler tooling differs from its package receipt')
     else:
-        raise ValueError("No local Scheduler source/package. Set NEAT_SCHEDULER_SOURCE or NEAT_SCHEDULER_PACKAGE_DIR. TODO: remote artifact pulling is not implemented.")
+        raise ValueError("No local Scheduler source/package. Set NEAT_SCHEDULER_SOURCE or NEAT_SCHEDULER_PACKAGE_DIR. Use tools/ci/acquire_scheduler.py for explicit published CI acquisition.")
     if not tool.is_file():
         raise ValueError(f"Selected Scheduler lacks its client dependency coordinator: {tool}; rebuild that producer")
     return tool
@@ -58,6 +73,7 @@ def main() -> int:
     args, _ = parser.parse_known_args()
     try:
         tool = scheduler_coordinator(args.core.resolve(), dict(os.environ))
+        os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
         os.execv(sys.executable, [sys.executable, str(tool), *sys.argv[1:]])
     except (ValueError, OSError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

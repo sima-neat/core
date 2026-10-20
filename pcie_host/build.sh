@@ -26,6 +26,9 @@ INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
 INSTALLER_STAGE="${PACKAGE_DIR}/install_pciehost.sh"
 DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
 SIMAPCIE_PYTHON_EXECUTABLE="${SIMAPCIE_PYTHON_EXECUTABLE:-}"
+SCHEDULER_SPEC="latest"
+SCHEDULER_ENVIRONMENT="production"
+SCHEDULER_SELECTION=""
 
 usage() {
   cat <<'EOF'
@@ -38,6 +41,8 @@ Options:
   --with-examples     Build PCIe host C++ examples
   --python            Build Python bindings and package a Python wheel
   --no-deb            Skip DEB package generation
+  --scheduler-spec <sha|latest> Select same-branch native Scheduler publication
+  --scheduler-environment <name> Publication environment (default: production)
   --build-dir <dir>   Build directory (default: build)
   --debug             Build type Debug (default: Release)
   -h, --help          Show this help
@@ -75,6 +80,8 @@ install_build_deps() {
 
   local packages=(
     build-essential
+    gcc-14
+    g++-14
     ca-certificates
     cmake
     curl
@@ -103,7 +110,15 @@ install_build_deps() {
     )
   fi
 
+  # Ubuntu22 needs the native toolchain repository; never load a device SDK.
+  source /etc/os-release
+  [[ "$ID" == ubuntu && ( "$VERSION_ID" == 22.04 || "$VERSION_ID" == 24.04 ) ]]
   run_privileged apt-get update
+  if [[ "$VERSION_ID" == 22.04 ]] && ! apt-cache show gcc-14 >/dev/null 2>&1; then
+    run_privileged apt-get install -y --no-install-recommends software-properties-common
+    run_privileged add-apt-repository -y ppa:ubuntu-toolchain-r/test
+    run_privileged apt-get update
+  fi
   run_privileged apt-get install -y --no-install-recommends "${packages[@]}"
 }
 
@@ -144,6 +159,12 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
+    --scheduler-spec|--scheduler-environment)
+      option="$1"
+      [[ -n "${2:-}" ]] || { echo "ERROR: $option requires a value" >&2; exit 2; }
+      if [[ "$option" == --scheduler-spec ]]; then SCHEDULER_SPEC="$2"; else SCHEDULER_ENVIRONMENT="$2"; fi
+      shift 2
+      ;;
     --debug)
       BUILD_TYPE="Debug"
       shift
@@ -160,7 +181,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Refuse inherited SDK flags rather than silently mixing host and target ABIs.
+for name in CC CXX CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CMAKE_TOOLCHAIN_FILE PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_LIBDIR PKG_CONFIG_PATH CMAKE_LIBRARY_PATH CMAKE_INCLUDE_PATH CMAKE_PREFIX_PATH CMAKE_FIND_ROOT_PATH LIBRARY_PATH CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH; do
+  [[ -z "${!name:-}" ]] || { echo "ERROR: native PCIe build requires clean host environment ($name is set)" >&2; exit 2; }
+done
 install_build_deps
+[[ $(gcc-14 -dumpversion) == 14 && $(g++-14 -dumpversion) == 14 ]]
+
+current_core_branch() {
+  printf '%s\n' "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-$(git -C "$CORE_ROOT" branch --show-current)}}"
+}
 
 detect_multiarch() {
   if command -v dpkg-architecture >/dev/null 2>&1; then
@@ -290,7 +320,10 @@ extras_tars = sorted(package_dir.glob(f"sima-pcie-host-*-Linux-{deb_arch}-extras
 wheels = sorted(package_dir.glob("pyneatpcie-*.whl"))
 installer = package_dir / "install_pciehost.sh"
 
-full_paths = runtime_debs + dev_debs + extras_tars + wheels
+selection = json.loads((package_dir / "scheduler-native-selection.json").read_text())
+native_paths = [package_dir / name for name in selection["resources"]]
+full_paths = runtime_debs + dev_debs + extras_tars + wheels + native_paths + [
+    package_dir / "scheduler-native-selection.json", package_dir / "pcie_delivery.py"]
 if installer.is_file():
     full_paths.append(installer)
 
@@ -474,14 +507,27 @@ if [[ "${CLEAN_BUILD}" == "ON" ]]; then
   rm -rf "${BUILD_DIR}"
 fi
 
-# Native Scheduler and platform service development packages are pre-provisioned
-# dependencies. Never download/repackage an Internals plugin inside Core.
+# Core acquires one same-branch Scheduler native publication, not lower repos.
+# An explicitly installed local component remains usable for a no-DEB build.
 GENAI_CMAKE_ARGS=()
-if [[ -n "${SimaScheduler_DIR:-}" ]]; then
+if [[ "$MAKE_DEB" == OFF && -n "${SimaScheduler_DIR:-}" ]]; then
   GENAI_CMAKE_ARGS+=("-DSimaScheduler_DIR=${SimaScheduler_DIR}")
+else
+  native_root="$(mktemp -d "${TMPDIR:-/tmp}/core-native-scheduler.XXXXXX")"
+  python3 scripts/acquire_scheduler.py --branch "$(current_core_branch)" \
+    --spec "$SCHEDULER_SPEC" --environment "$SCHEDULER_ENVIRONMENT" \
+    --distro "$HOST_DISTRO" --arch "$DEB_ARCH" --output "$native_root/selected"
+  SCHEDULER_SELECTION="$native_root/selected/selection.json"
+  candidate="$native_root/selected/candidate"
+  run_privileged python3 "$candidate/native_artifacts.py" install --candidate "$candidate" \
+    --distro "$HOST_DISTRO" --arch "$DEB_ARCH"
+  native_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["package_version"])' "$SCHEDULER_SELECTION")"
+  GENAI_CMAKE_ARGS+=("-DSimaScheduler_DIR=/usr/lib/${HOST_MULTIARCH}/cmake/SimaScheduler"
+                    "-DSIMAPCIE_SCHEDULER_PACKAGE_VERSION=${native_version}")
 fi
 cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+  -DCMAKE_CXX_COMPILER=g++-14 \
   -DCMAKE_INSTALL_LIBDIR="lib/${HOST_MULTIARCH}" \
   -DSIMAPCIE_BUILD_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_HARDWARE_TESTS="${BUILD_TESTS}" \
@@ -498,9 +544,12 @@ if [[ "${MAKE_DEB}" == "ON" ]]; then
   echo "Building DEB packages..."
   mkdir -p "${PACKAGE_DIR}"
   cpack --config "${BUILD_DIR}/CPackConfig.cmake" -G DEB -B "${PACKAGE_DIR}"
+  python3 scripts/pcie_delivery.py compose --selection "$SCHEDULER_SELECTION" --output "$PACKAGE_DIR"
+  python3 scripts/pcie_delivery.py verify --directory "$PACKAGE_DIR"
 fi
 
 if [[ -f "${INSTALLER_SOURCE}" ]]; then
+  mkdir -p "${PACKAGE_DIR}"
   cp -f "${INSTALLER_SOURCE}" "${INSTALLER_STAGE}"
   chmod 0755 "${INSTALLER_STAGE}"
 fi
@@ -562,7 +611,7 @@ if [[ "${BUILD_PYTHON}" == "ON" ]]; then
   sha256sum "${wheel_path}" > "${wheel_path}.sha256"
 fi
 
-generate_package_metadata
+if [[ "$MAKE_DEB" == ON ]]; then generate_package_metadata; fi
 
 echo
 echo "========================================"

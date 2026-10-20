@@ -15,6 +15,10 @@ endif()
 
 project(SimaPCIeHost VERSION ${SIMAPCIE_PACKAGE_VERSION} LANGUAGES CXX)
 
+if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR
+   CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14 OR NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 15)
+  message(FATAL_ERROR "Native PCIe host requires GCC14; select g++-14 without a device toolchain")
+endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -198,6 +202,8 @@ install(
 
 if (SIMAPCIE_BUILD_TESTS)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME pcie_host_delivery_contract
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_delivery.py")
   add_test(NAME pcie_host_service_header_contract
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_service_header_contract.py")
   enable_testing()
@@ -346,10 +352,21 @@ set(CPACK_COMPONENT_RUNTIME_DISPLAY_NAME "SiMa PCIe host runtime")
 set(CPACK_COMPONENT_DEVELOPMENT_DISPLAY_NAME "SiMa PCIe host development files")
 set(CPACK_COMPONENT_DEVELOPMENT_DEPENDS Runtime)
 
+set(SIMAPCIE_SCHEDULER_PACKAGE_VERSION "" CACHE STRING "Exact selected native Scheduler DEB version")
+set(_native_package_guard "message(FATAL_ERROR \"Native Core packaging requires its selected Scheduler DEB version\")")
+set(_scheduler_runtime "simaai-scheduler-pcie-host")
+set(_scheduler_dev "simaai-scheduler-pcie-host-dev")
+if(SIMAPCIE_SCHEDULER_PACKAGE_VERSION MATCHES "^[0-9][0-9A-Za-z.+:~-]*$")
+  set(_scheduler_runtime "simaai-scheduler-pcie-host (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})")
+  set(_scheduler_dev "simaai-scheduler-pcie-host-dev (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})")
+  set(_native_package_guard "")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/NativePackageGuard.cmake" "${_native_package_guard}\n")
+set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/NativePackageGuard.cmake")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_NAME "sima-pcie-host")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_SECTION "libs")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_DEPENDS
-  "simaai-scheduler-pcie-host, openssh-client, libgstreamer-plugins-base1.0-0, libglib2.0-0"
+  "${_scheduler_runtime}, libstdc++6 (>= 14), openssh-client, libgstreamer-plugins-base1.0-0, libglib2.0-0"
 )
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_RECOMMENDS "sshpass")
 set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
@@ -358,7 +375,7 @@ set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_NAME "sima-pcie-host-dev")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_SECTION "libdevel")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_DEPENDS
-  "sima-pcie-host (= ${PROJECT_VERSION}), simaai-scheduler-pcie-host-dev, pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, libopencv-dev, zlib1g-dev, nlohmann-json3-dev"
+  "sima-pcie-host (= ${PROJECT_VERSION}), ${_scheduler_dev}, pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, libopencv-dev, zlib1g-dev, nlohmann-json3-dev"
 )
 set(CPACK_DEBIAN_DEVELOPMENT_DESCRIPTION
   "Headers, static library, and CMake package files for the NEAT PCIe host API.")

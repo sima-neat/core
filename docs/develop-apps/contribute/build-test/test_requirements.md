@@ -233,3 +233,12 @@ unselected native package presence or absence, retired-package absence, and OTA
 availability and identity. Continue to compile the installed-header examples
 separately; package presence is not proof that a
 consumer compiles or that a backend executed correctly.
+
+### Native build-tooling prerequisites
+
+On Ubuntu, install `build-essential`, `file`, `nlohmann-json3-dev` and
+`python3-venv` before running the build-tooling pytest selection from
+`.github/workflows/vulcan-ci.yml`. The platform-baseline probe compiles its real
+shared C++ contract with `-Werror`; a missing compiler/header is a test setup
+failure, not a skipped check. Compiler stdout/stderr are included on failure, and
+`file` verifies the native executable before it runs.

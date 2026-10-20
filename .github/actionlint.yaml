@@ -7,6 +7,8 @@ self-hosted-runner:
     - elxr-sdk
     - modalix
     - pcie
+    - rtsp
+    - 3.0.0-pcie-test
     - vulcan-dev
     - vulcan-stg
     - vulcan-staging
