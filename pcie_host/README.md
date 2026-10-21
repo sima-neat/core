@@ -366,8 +366,10 @@ model.close();
 ## Build
 
 Build on an Ubuntu 22.04 or Ubuntu 24.04 host, outside the Palette SDK.
-`build.sh` uses native GCC14 and acquires Scheduler's native PCIe host profile
-through sima-cli. This profile supplies the plugin and verifies the Platform-owned
+`build.sh` installs `build-essential`, uses the host's default C++20 compiler and
+acquires Scheduler's native PCIe host profile through sima-cli. It does not add a
+compiler repository or use the SDK's device toolchain. This profile supplies the
+plugin and verifies the Platform-owned
 service headers. Its distribution carries the unchanged, checksum-pinned Platform
 source package for private userspace builds. Scheduler does not own the PCIe
 driver or runtime implementation.

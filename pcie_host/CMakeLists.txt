@@ -15,10 +15,6 @@ endif()
 
 project(SimaPCIeHost VERSION ${SIMAPCIE_PACKAGE_VERSION} LANGUAGES CXX)
 
-if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR
-    CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14 OR NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 15)
-  message(FATAL_ERROR "Native PCIe host requires GCC14; select g++-14 without a device toolchain")
-endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -366,7 +362,7 @@ set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/NativePackageGuard.cm
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_NAME "sima-pcie-host")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_SECTION "libs")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_DEPENDS
-  "${_scheduler_runtime}, libstdc++6 (>= 14), openssh-client, libgstreamer-plugins-base1.0-0, libglib2.0-0"
+  "${_scheduler_runtime}, libstdc++6, openssh-client, libgstreamer-plugins-base1.0-0, libglib2.0-0"
 )
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_RECOMMENDS "sshpass")
 set(CPACK_DEBIAN_RUNTIME_DESCRIPTION

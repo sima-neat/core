@@ -162,14 +162,13 @@ run_host_sudo ./pcie_host/build.sh --python --install-deps-only
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); commands = root / 'bin'; commands.mkdir()
             log = root / 'commands.log'
-            for name in ('apt-get', 'apt-cache', 'gcc-14', 'g++-14', 'sudo',
+            for name in ('apt-get', 'apt-cache', 'gcc-14', 'g++-14', 'add-apt-repository', 'sudo',
                          'cmake', 'python3', 'sima-cli', 'git', 'rm'):
                 script = commands / name
                 script.write_text('''#!/bin/bash
 printf '%s %s\\n' "${0##*/}" "$*" >> "$COMMAND_LOG"
 case "${0##*/}" in
   apt-get|apt-cache) exit 0 ;;
-  gcc-14|g++-14) printf '%s\\n' "${FIXTURE_GCC_VERSION:-14}" ;;
   sudo) exec "$@" ;;
   *) echo 'unexpected post-bootstrap command' >&2; exit 99 ;;
 esac
@@ -186,17 +185,16 @@ esac
             self.assertTrue((preserved / 'keep').is_file())
             calls = log.read_text()
             self.assertIn('apt-get update', calls)
-            self.assertIn('gcc-14 g++-14', calls)
+            self.assertIn('apt-get install -y --no-install-recommends build-essential', calls)
             self.assertIn('python3-venv', calls)
-            self.assertIn('gcc-14 -dumpversion', calls)
-            self.assertIn('g++-14 -dumpversion', calls)
+            self.assertNotIn('gcc-14', calls)
+            self.assertNotIn('g++-14', calls)
+            self.assertNotIn('add-apt-repository', calls)
+            self.assertNotIn('software-properties-common', calls)
             executed = {line.split()[0] for line in calls.splitlines()}
             self.assertFalse(executed.intersection({'cmake', 'python3', 'sima-cli', 'git', 'rm'}))
             self.assertNotIn('dkms', calls)
             self.assertNotIn('simaai-pcie', calls)
-            result = subprocess.run(argv, env={**env, 'FIXTURE_GCC_VERSION': '13'},
-                                    text=True, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
             log.unlink()
             result = subprocess.run(argv, env={**env, 'CXXFLAGS': '-target-sdk-flag'},
                                     text=True, capture_output=True)
@@ -343,7 +341,32 @@ GENAI_CMAKE_ARGS=()
         self.assertIn('simaai-scheduler-pcie-host (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})', source)
         self.assertIn('simaai-scheduler-pcie-host-dev (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})', source)
         self.assertIn('NativePackageGuard.cmake', source)
-        self.assertIn('CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14', source)
+        self.assertIn('set(CMAKE_CXX_STANDARD 20)', source)
+        self.assertIn('set(CMAKE_CXX_STANDARD_REQUIRED ON)', source)
+        self.assertNotIn('libstdc++6 (>= 14)', source)
+
+    def test_default_native_compiler_reaches_required_scheduler_component(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = root / 'scheduler'; package.mkdir()
+            (package / 'SimaSchedulerConfig.cmake').write_text(
+                'if(NOT SimaScheduler_FIND_COMPONENTS STREQUAL "pcie_host;pcie_service_headers")\n'
+                '  message(FATAL_ERROR "wrong Scheduler component selection")\n'
+                'endif()\n'
+                'message(FATAL_ERROR "native compiler reached required Scheduler components")\n')
+            # Exercise real CMake/compiler discovery without inherited SDK flags.
+            # The component seam stops configuration before any provider loading.
+            result = subprocess.run(
+                ['cmake', '-S', str(ROOT), '-B', str(root / 'build'),
+                 '-DSimaScheduler_DIR=' + str(package)],
+                env={'PATH': '/usr/bin:/bin', 'HOME': str(root)},
+                text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('native compiler reached required Scheduler components',
+                          result.stdout + result.stderr)
+            source = (ROOT / 'build.sh').read_text()
+            self.assertNotIn('-DCMAKE_CXX_COMPILER=', source)
+            self.assertNotIn('ppa:ubuntu-toolchain-r/test', source)
 
     def test_acquisition_selects_exact_native_profile_and_stages_verified_commit(self):
         commit = 'a' * 40

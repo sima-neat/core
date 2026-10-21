@@ -6,17 +6,22 @@ description: 執行加速器測試時，不將逾時視為 DMA 已安全結束
 # 硬體測試擁有權
 
 測試期限是判定失敗的期限，不是終止 DMA 擁有者的許可。
-硬體驗證會在 DevKit 上使用 `tools/hardware_test_supervisor.py`。
+受監督的硬體驗證會在 DevKit 上使用 `tools/hardware_test_supervisor.py`。
 常駐監督程式擁有實際的加速器程序。CTest、SSH 與 Python 客戶端僅擁有回報連線。
 
-## 設定與准入
+## 選擇受監督的驗證模式
+
+標準 CI 直接執行 CTest 與效能子程序，不需要監督程式或通訊端。
+必要覆蓋範圍檢查仍會拒絕選取測試中的缺漏、停用、略過或失敗結果。
+以下程序是明確選用的驗證模式，不是標準 CI 的先決條件。
 
 以 `NEAT_GUARDED_HARDWARE_TESTS=ON` 建置 Core，或使用
 `SIMANEAT_GUARDED_HARDWARE_TESTS=ON` 設定 CMake。原生 CTest 目標會成為回報代理；
 測試引數、環境、標籤、資源鎖與現有的 `TIMEOUT` 屬性維持不變。
-已安裝的額外元件提供相同的監督程式客戶端。效能矩陣需要
-`SIMA_HARDWARE_SUPERVISOR_SOCKET`。`SIMA_PERF_HOST_FIXTURES_ONLY=1` 僅供非 AArch64
-測試固定資料使用，無法啟用未受保護的 AArch64 矩陣執行。
+已安裝的額外元件提供相同的監督程式客戶端。設定
+`SIMA_HARDWARE_SUPERVISOR_SOCKET`，即可讓效能矩陣選用相同的受監督驗證模式。
+若通訊端為空、無法使用或請求遭拒，執行會失敗，絕不退回直接執行。
+在 DevKit 上以一般子程序方式執行效能測試時，請勿設定此變數。
 
 具權限的驗證擁有者提供全新、私用且僅使用一次的狀態資料夾與設定。
 監督程式會拒絕舊的准入／失敗停止資料夾。設定會固定下列項目：

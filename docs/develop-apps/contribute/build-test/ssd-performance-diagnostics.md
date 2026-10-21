@@ -58,9 +58,10 @@ For a separate diagnostic run, use the existing controls:
 
 Run the matrix **on the DevKit**, inside a fresh admitted hardware-test scope
 with the correct installed providers and firmware. Configure these environment
-values before admission; do not modify a live pinned qualification scope. The
-matrix requires its existing persistent supervisor and does not obtain board
-ownership or authorize firmware changes itself.
+values before admission; do not modify a live pinned qualification scope. This
+guarded diagnostic procedure opts into the persistent supervisor through
+`SIMA_HARDWARE_SUPERVISOR_SOCKET`; standard CI does not require it. The matrix
+does not obtain board ownership or authorize firmware changes itself.
 
 For example, from the target Core checkout, after selecting the installed test
 directory and admitting the diagnostic environment:

@@ -377,7 +377,6 @@ jobs:
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
           -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Palette Neat" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
-          -e NEAT_GUARDED_HARDWARE_TESTS="ON" \
           -e SIMANEAT_HOST_PYTHON=/usr/bin/python3 \
           -e SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK="${ALLOW_FUZZ_IN_NEAT_SDK}" \
           -e CORE_BUILD_ARGS="${CORE_BUILD_ARGS}" \
@@ -592,7 +591,6 @@ jobs:
             -S pcie_host/tests/package_smoke \
             -B "${consumer_build}" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=g++-14 \
             -DCMAKE_PREFIX_PATH="${prefix}/usr"
           cmake --build "${consumer_build}" --parallel
           file "${consumer_build}/sima_pcie_host_package_smoke"
@@ -753,7 +751,6 @@ jobs:
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
-      SIMA_HARDWARE_SUPERVISOR_SOCKET: ${{ vars.SIMA_HARDWARE_SUPERVISOR_SOCKET }}
 
     steps:
       - name: Checkout code

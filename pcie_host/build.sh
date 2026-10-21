@@ -82,8 +82,6 @@ install_build_deps() {
 
   local packages=(
     build-essential
-    gcc-14
-    g++-14
     ca-certificates
     cmake
     curl
@@ -112,15 +110,10 @@ install_build_deps() {
     )
   fi
 
-  # Ubuntu22 needs the native toolchain repository; never load a device SDK.
+  # Match the native profiles before making any package changes.
   source /etc/os-release
   [[ "$ID" == ubuntu && ( "$VERSION_ID" == 22.04 || "$VERSION_ID" == 24.04 ) ]]
   run_privileged apt-get update
-  if [[ "$VERSION_ID" == 22.04 ]] && ! apt-cache show gcc-14 >/dev/null 2>&1; then
-    run_privileged apt-get install -y --no-install-recommends software-properties-common
-    run_privileged add-apt-repository -y ppa:ubuntu-toolchain-r/test
-    run_privileged apt-get update
-  fi
   run_privileged apt-get install -y --no-install-recommends "${packages[@]}"
 }
 
@@ -192,7 +185,6 @@ for name in CC CXX CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CMAKE_TOOLCHAIN_FILE PKG_CON
   [[ -z "${!name:-}" ]] || { echo "ERROR: native PCIe build requires clean host environment ($name is set)" >&2; exit 2; }
 done
 install_build_deps
-[[ $(gcc-14 -dumpversion) == 14 && $(g++-14 -dumpversion) == 14 ]]
 if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
   echo "Native PCIe host build prerequisites are ready; no PCIe package or device installation requested."
   exit 0
@@ -538,7 +530,6 @@ else
 fi
 cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-  -DCMAKE_CXX_COMPILER=g++-14 \
   -DCMAKE_INSTALL_LIBDIR="lib/${HOST_MULTIARCH}" \
   -DSIMAPCIE_BUILD_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_HARDWARE_TESTS="${BUILD_TESTS}" \

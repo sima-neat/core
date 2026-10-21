@@ -11,7 +11,6 @@ import argparse
 import json
 import math
 import os
-import platform
 import subprocess
 import sys
 import tempfile
@@ -35,6 +34,8 @@ SKIP_RETURN_CODE = 77
 
 
 def hardware_runner():
+    if not os.environ.get("SIMA_HARDWARE_SUPERVISOR_SOCKET"):
+        raise RuntimeError("Explicit guarded hardware supervisor socket required")
     # Source and installed extras have different roots, but both ship the same
     # reviewed supervisor module. Never resolve it from arbitrary PYTHONPATH.
     for root in (THIS_DIR.parents[2] / "tools", THIS_DIR.parents[1] / "tools"):
@@ -356,7 +357,9 @@ def run_encoder_scenario(
                 command += ["--median-fps", repr(median_fps)]
             record = {"phase": phase, "command": command}
             metadata["runs"].append(record)
-            if os.environ.get("SIMA_HARDWARE_SUPERVISOR_SOCKET"):
+            # Normal CI uses develop's subprocess path. An explicitly supplied
+            # socket opts into qualification ownership and must never fall back.
+            if "SIMA_HARDWARE_SUPERVISOR_SOCKET" in os.environ:
                 owned = hardware_runner()(command=command, cwd=repo_root, env=env,
                                           deadline_sec=max(timeout_sec, 300))
                 record["supervisor"] = owned
@@ -370,12 +373,8 @@ def run_encoder_scenario(
                     return finish(schema.FailureClass.ENV_BROKEN,
                                   schema.ReasonCode.ENV_TIMEOUT if owned["status"] == "timeout"
                                   else schema.ReasonCode.ENV_RUNTIME_CRASH)
-            elif platform.machine() not in ("aarch64", "arm64") and os.environ.get("SIMA_PERF_HOST_FIXTURES_ONLY") == "1":
-                proc = run_cmd(command, cwd=repo_root, timeout_sec=max(timeout_sec, 300), env=env)
             else:
-                metadata["hardware_fail_stop"] = True
-                metadata["error"] = "Hardware matrix requires an admitted persistent supervisor"
-                return finish(schema.FailureClass.ENV_BROKEN, schema.ReasonCode.ENV_RUNTIME_CRASH)
+                proc = run_cmd(command, cwd=repo_root, timeout_sec=max(timeout_sec, 300), env=env)
             record["exit_code"] = proc.returncode
             (artifacts / f"{phase}.stdout.json").write_text(proc.stdout or "", encoding="utf-8")
             (artifacts / f"{phase}.stderr.log").write_text(proc.stderr or "", encoding="utf-8")
@@ -547,7 +546,9 @@ def _run_scenario(
     env["SIMA_PERF_ITERS"] = str(scenario_iters)
 
     try:
-        if os.environ.get("SIMA_HARDWARE_SUPERVISOR_SOCKET"):
+        # Use the same direct execution on every architecture unless guarded
+        # qualification was explicitly requested, including an invalid socket.
+        if "SIMA_HARDWARE_SUPERVISOR_SOCKET" in os.environ:
             owned = hardware_runner()(command=[str(exe_path), *spec.args], cwd=repo_root, env=env,
                                       deadline_sec=timeout_sec)
             capture.update(stdout=owned.get("stdout", ""), stderr=owned.get("stderr", ""),
@@ -563,10 +564,8 @@ def _run_scenario(
                     run_meta={"phase": "run", "executable": str(exe_path), "timeout_sec": timeout_sec,
                               "hardware_fail_stop": True, "supervisor": owned})
             proc = subprocess.CompletedProcess([str(exe_path), *spec.args], owned["returncode"], owned["stdout"], owned["stderr"])
-        elif platform.machine() not in ("aarch64", "arm64") and os.environ.get("SIMA_PERF_HOST_FIXTURES_ONLY") == "1":
-            proc = run_cmd([str(exe_path), *spec.args], cwd=repo_root, timeout_sec=timeout_sec, env=env)
         else:
-            raise RuntimeError("Hardware matrix requires an admitted persistent supervisor")
+            proc = run_cmd([str(exe_path), *spec.args], cwd=repo_root, timeout_sec=timeout_sec, env=env)
     except (RuntimeError, OSError, ValueError) as exc:
         return build_result(
             scenario_id=spec.scenario_id, modalix_profile_id=profile.modalix_profile_id,

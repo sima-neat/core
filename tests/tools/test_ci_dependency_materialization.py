@@ -66,12 +66,13 @@ class MaterializationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 archive=Path(tmp)/'bundle.tar.gz';archive.write_bytes(payload)
                 with self.assertRaises(ValueError):m.extract_bundle(archive,Path(tmp)/'new')
-    def test_workflow_passes_portable_inputs_and_guarded_tests(self):
+    def test_workflow_passes_portable_inputs_without_external_supervisor(self):
         workflow=(ROOT/'.github/workflows/vulcan-ci.yml').read_text()
         self.assertNotIn('NEAT_CI_DEPENDENCY_MANIFEST',workflow)
         self.assertIn('tools/ci/acquire_scheduler.py',workflow)
         self.assertIn('scripts/ci/prepare_scheduler_sdk.sh',workflow)
-        self.assertIn('-e NEAT_GUARDED_HARDWARE_TESTS="ON"',workflow)
+        self.assertNotIn('NEAT_GUARDED_HARDWARE_TESTS',workflow)
+        self.assertNotIn('SIMA_HARDWARE_SUPERVISOR_SOCKET',workflow)
         self.assertNotIn('kernel-device-qualification-',workflow)
         self.assertNotIn('internals-migration',workflow)
 

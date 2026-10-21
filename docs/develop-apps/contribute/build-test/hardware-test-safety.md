@@ -6,19 +6,25 @@ description: Run accelerator tests without treating a timeout as DMA retirement
 # Hardware test ownership
 
 A test deadline is a failure deadline, not permission to kill a DMA owner.
-Hardware qualification uses `tools/hardware_test_supervisor.py` on the DevKit.
+Guarded hardware qualification uses `tools/hardware_test_supervisor.py` on the DevKit.
 The persistent supervisor owns the actual accelerator process. CTest, SSH and
 Python clients own reporting connections only.
 
-## Configure and admit
+## Choose guarded qualification
+
+Standard CI uses direct CTest and performance subprocess execution; it does not
+require a supervisor or socket. Required-coverage accounting still rejects
+missing, disabled, skipped or failed selected tests. The following procedure is
+an explicit qualification mode, not a prerequisite for standard CI.
 
 Build Core with `NEAT_GUARDED_HARDWARE_TESTS=ON`, or configure CMake with
 `SIMANEAT_GUARDED_HARDWARE_TESTS=ON`. Native CTest targets become reporting
 proxies; test arguments, environment, labels, resource locks and existing
 `TIMEOUT` properties remain unchanged. Installed extras ship the same supervisor
-client. The performance matrix requires `SIMA_HARDWARE_SUPERVISOR_SOCKET`.
-`SIMA_PERF_HOST_FIXTURES_ONLY=1` is exclusively for non-AArch64 test fixtures;
-it cannot enable unguarded AArch64 matrix execution.
+client. Set `SIMA_HARDWARE_SUPERVISOR_SOCKET` to opt the performance matrix into
+the same guarded qualification mode. An empty, unavailable or refused socket
+fails the run; it never falls back to direct execution. Leave the variable
+unset for ordinary performance subprocess execution on the DevKit.
 
 A privileged qualification owner supplies a new private, single-use state
 folder and configuration. The supervisor refuses old admission/fail-stop folders.

@@ -18,11 +18,8 @@ class EncoderMatrixTest(unittest.TestCase):
     def setUp(self):
         fixture_env = dict(runner.os.environ)
         fixture_env.pop("SIMA_HARDWARE_SUPERVISOR_SOCKET", None)
-        fixture_env.update(SIMA_PERF_ENCODER_QUALIFICATION="0", SIMA_PERF_HOST_FIXTURES_ONLY="1")
+        fixture_env.update(SIMA_PERF_ENCODER_QUALIFICATION="0")
         env = patch.dict(runner.os.environ, fixture_env, clear=True)
-        architecture = patch.object(runner.platform, "machine", return_value="x86_64")
-        architecture.start()
-        self.addCleanup(architecture.stop)
         env.start()
         self.addCleanup(env.stop)
         self.spec = next(s for s in runner.ENCODER_SCENARIOS if s.scenario_id ==
@@ -179,15 +176,59 @@ class EncoderMatrixTest(unittest.TestCase):
                 self.assertEqual((Path(result.run_meta["artifacts"])/"unpaced-1.stderr.log").read_text(),
                                  "retained owner")
 
-    def test_arm_without_admission_never_launches_locally(self):
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(runner.platform, "machine", return_value="aarch64"), \
-             patch.object(runner, "run_cmd", side_effect=AssertionError("local target execution")):
-            result = runner.run_encoder_scenario(
-                repo_root=Path(tmp), executable_dir=Path(tmp), results_dir=Path(tmp)/"results",
-                profile=self.profile, spec=self.spec, baseline=self.baseline, timeout_sec=10)
-        self.assertEqual(result.status, schema.ResultStatus.FAIL)
-        self.assertTrue(result.run_meta["hardware_fail_stop"])
+    def test_direct_execution_without_socket_keeps_four_runs_on_every_architecture(self):
+        for architecture in ("x86_64", "aarch64", "arm64"):
+            with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                marker = root / "children.jsonl"
+                executable = root / self.spec.target
+                payloads = [self.payload(rate) for rate in (120, 100, 110)]
+                payloads.append(self.payload(payloads[2]["throughput"] * .90, True))
+                # Real subprocesses emit synthetic control-flow fixtures, never encoder work.
+                executable.write_text(
+                    "#!/usr/bin/env python3\nimport json, os, pathlib, sys\n"
+                    f"marker = pathlib.Path({str(marker)!r})\n"
+                    "index = len(marker.read_text().splitlines()) if marker.exists() else 0\n"
+                    "with marker.open('a') as stream:\n"
+                    "    stream.write(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(), "
+                    "'iterations': os.environ.get('SIMA_PERF_ITERS')}) + '\\n')\n"
+                    f"print(json.dumps({payloads!r}[index]))\n"
+                )
+                executable.chmod(0o755)
+                environment = {"PATH": runner.os.environ["PATH"], "SIMA_PERF_ITERS": "999"}
+                with patch("platform.machine", return_value=architecture), \
+                     patch.dict(runner.os.environ, environment, clear=True), \
+                     patch.object(runner, "hardware_runner", side_effect=AssertionError("unexpected guard")), \
+                     patch.object(runner, "run_cmd", wraps=runner.run_cmd) as launch:
+                    result = runner.run_encoder_scenario(
+                        repo_root=root, executable_dir=root, results_dir=root / "results",
+                        profile=self.profile, spec=self.spec, baseline=self.baseline, timeout_sec=10)
+                self.assertEqual(result.status, schema.ResultStatus.PASS, result.run_meta)
+                self.assertEqual(launch.call_count, 4)
+                children = [json.loads(line) for line in marker.read_text().splitlines()]
+                self.assertEqual(len(children), 4)
+                self.assertEqual(children[-1]["args"][-2], "--median-fps")
+                self.assertEqual(float(children[-1]["args"][-1]), payloads[2]["throughput"])
+                self.assertEqual(children[0]["args"][-2], "--capture")
+                for child, call in zip(children, launch.call_args_list):
+                    self.assertEqual(child["args"][:len(self.spec.args)], list(self.spec.args))
+                    self.assertEqual(child["cwd"], str(root))
+                    self.assertIsNone(child["iterations"])
+                    self.assertEqual(call.kwargs["timeout_sec"], 300)
+
+    def test_explicit_invalid_guard_never_falls_back_to_direct_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for endpoint in ("", str(Path(tmp) / "missing.sock")):
+                with self.subTest(endpoint=endpoint), \
+                     patch.dict(runner.os.environ, {"SIMA_HARDWARE_SUPERVISOR_SOCKET": endpoint}), \
+                     patch.object(runner, "run_cmd") as launch:
+                    result = runner.run_encoder_scenario(
+                        repo_root=Path(tmp), executable_dir=Path(tmp), results_dir=Path(tmp)/"results",
+                        profile=self.profile, spec=self.spec, baseline=self.baseline, timeout_sec=10)
+                launch.assert_not_called()
+                self.assertEqual(result.failure_class, schema.FailureClass.ENV_BROKEN)
+                self.assertTrue(result.run_meta["hardware_fail_stop"])
+                self.assertEqual(len(result.run_meta["runs"]), 1)
 
     def test_failed_and_timed_out_processes_retain_diagnostics(self):
         with tempfile.TemporaryDirectory() as tmp:

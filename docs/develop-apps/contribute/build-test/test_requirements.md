@@ -123,9 +123,11 @@ Source-level skip-reference counts are advisory, not counts of skipped tests.
 
 `cmake/NeatGuardedTests.cmake` registers tests and tutorials through the existing
 hardware supervisor when `SIMANEAT_GUARDED_HARDWARE_TESTS=ON`. This does not create
-hardware admission. Acquire the configured device ownership and admission before
-running native lanes. The result validator checks registration policy; it does
-not replace the supervisor or authorize hardware execution.
+hardware admission. Guarded qualification is opt-in; standard CI uses direct
+execution without a supervisor socket. Acquire the configured device ownership
+and admission before running guarded native lanes. The result validator checks
+registration policy; it does not replace the supervisor or authorize hardware
+execution.
 
 Python lanes record selected and explicitly deselected node IDs. Required setup,
 call and teardown outcomes must all pass. Configure optional coverage before

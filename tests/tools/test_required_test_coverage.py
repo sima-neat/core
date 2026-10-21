@@ -114,11 +114,90 @@ def test_pytest_actual_node_accounting(tmp_path, body, expected):
         assert len(report['deselected']) == 1
 
 
-def test_manual_gate_reuses_canonical_guarded_lane():
+def test_manual_gate_reuses_canonical_lane_without_forcing_guarded_execution():
     manual = (ROOT / '.github/workflows/zero-skip.yml').read_text()
     wrapper = (ROOT / 'scripts/ci/run_zero_skip_gate.sh').read_text()
     assert 'uses: ./.github/workflows/vulcan-ci.yml' in manual
-    assert 'cmake --build' not in wrapper and '--require-guarded' in wrapper
+    assert 'cmake --build' not in wrapper and '--require-guarded' not in wrapper
+
+
+def direct_ctest_fixture(tmp_path, *, returncode=0, properties='LABELS "strict" TIMEOUT "17"'):
+    """Use real CTest and a resource-free Python script, not a substitute checker."""
+    script = tmp_path / 'fixture.py'
+    marker = tmp_path / 'executed.json'
+    script.write_text(
+        'import json, pathlib, sys\n'
+        f'pathlib.Path({str(marker)!r}).write_text(json.dumps(sys.argv[1:]))\n'
+        f'raise SystemExit({returncode})\n'
+    )
+    (tmp_path / 'CTestTestfile.cmake').write_text(
+        f'add_test(fixture "{sys.executable}" "{script}" "--unchanged" "two words")\n'
+        f'set_tests_properties(fixture PROPERTIES {properties})\n'
+        f'add_test(not_selected "{sys.executable}" "-c" "raise SystemExit(99)")\n'
+    )
+    env = dict(os.environ)
+    for key in ('SIMA_HARDWARE_SUPERVISOR_SOCKET', 'SIMA_TEST_IS_LONG'):
+        env.pop(key, None)
+    env.update(COVERAGE_DIR=str(tmp_path / 'coverage'), COVERAGE_PROFILE='strict')
+    command = ['ctest', '--test-dir', str(tmp_path), '-R', '^fixture$',
+               '--output-on-failure', '--timeout', '23', '-j', '1']
+    return env, command, marker
+
+
+def test_actual_ci_wrapper_runs_direct_registration_and_keeps_accounting(tmp_path):
+    env, command, marker = direct_ctest_fixture(tmp_path)
+    result = subprocess.run(['bash', str(ROOT / 'scripts/ci/run_zero_skip_gate.sh'), *command],
+                            env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(marker.read_text()) == ['--unchanged', 'two words']
+    output = Path(env['COVERAGE_DIR'])
+    assert json.loads((output / 'execution.json').read_text())['argv'] == command
+    selected = json.loads((output / 'selection.json').read_text())['tests']
+    assert [test['name'] for test in selected] == ['fixture']
+    properties = {item['name']: item['value'] for item in selected[0]['properties']}
+    assert properties['TIMEOUT'] == 17
+    assert json.loads((output / 'coverage.json').read_text()) == {
+        'status': 'PASS', 'selected': 1, 'passed': 1, 'skipped': 0,
+    }
+    marker.unlink()
+    reused = subprocess.run(['bash', str(ROOT / 'scripts/ci/run_zero_skip_gate.sh'), *command],
+                            env=env, text=True, capture_output=True)
+    assert reused.returncode != 0
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize('case,returncode,properties,ran', [
+    ('failure', 1, 'LABELS "strict"', True),
+    ('actual_skip', 77, 'LABELS "long" SKIP_RETURN_CODE "77"', True),
+    ('disabled', 0, 'LABELS "strict" DISABLED "TRUE"', False),
+    ('strict_skip_escape', 0, 'LABELS "strict" SKIP_RETURN_CODE "77"', False),
+    ('empty_selection', 0, 'LABELS "strict"', False),
+])
+def test_actual_ci_wrapper_still_rejects_missing_or_nonpass_coverage(
+        tmp_path, case, returncode, properties, ran):
+    env, command, marker = direct_ctest_fixture(tmp_path, returncode=returncode, properties=properties)
+    if case == 'actual_skip':
+        env['COVERAGE_PROFILE'] = 'required'
+    elif case == 'empty_selection':
+        command[command.index('^fixture$')] = '^missing$'
+    result = subprocess.run(['bash', str(ROOT / 'scripts/ci/run_zero_skip_gate.sh'), *command],
+                            env=env, text=True, capture_output=True)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert '[required-coverage] FAIL:' in result.stderr
+    assert marker.exists() is ran
+    assert not (Path(env['COVERAGE_DIR']) / 'coverage.json').exists()
+
+
+def test_explicit_guarded_accounting_rejects_direct_registration_without_execution(tmp_path):
+    env, command, marker = direct_ctest_fixture(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'), '--require-guarded',
+         '--output-dir', env['COVERAGE_DIR'], '--', *command],
+        env=env, text=True, capture_output=True,
+    )
+    assert result.returncode != 0
+    assert 'Native registration is not guarded: fixture' in result.stderr
+    assert not marker.exists()
 
 
 def test_host_label_is_not_native_admission():

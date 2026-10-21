@@ -17,8 +17,6 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 import perf_schema as schema  # noqa: E402
-os.environ["SIMA_PERF_HOST_FIXTURES_ONLY"] = "1"
-
 import run_perf_matrix  # noqa: E402
 
 
@@ -97,17 +95,12 @@ def write_fake_exit(executable: Path, return_code: int) -> None:
 class PerfMatrixFailfastTest(unittest.TestCase):
     def setUp(self) -> None:
         # These unit scenarios launch only generated Python fake fixtures, never
-        # accelerator binaries. Isolate them from a target CI supervisor socket
-        # and simulate the explicit native-host fixture branch on every host.
+        # accelerator binaries. Isolate them from a target qualification socket.
         fixture_env = dict(os.environ)
         fixture_env.pop("SIMA_HARDWARE_SUPERVISOR_SOCKET", None)
-        fixture_env["SIMA_PERF_HOST_FIXTURES_ONLY"] = "1"
         environment = mock.patch.dict(os.environ, fixture_env, clear=True)
-        architecture = mock.patch.object(run_perf_matrix.platform, "machine", return_value="x86_64")
         environment.start()
-        architecture.start()
         self.addCleanup(environment.stop)
-        self.addCleanup(architecture.stop)
 
     def artifact_scenario(self, root: Path):
         executable = root / "fixture"
@@ -119,6 +112,84 @@ class PerfMatrixFailfastTest(unittest.TestCase):
             baseline=replace(component_baseline(), component_latency_thresholds={}),
             timeout_sec=10, iterations_override=None,
         )
+
+    def test_direct_execution_without_socket_preserves_command_on_every_architecture(self) -> None:
+        for architecture in ("x86_64", "aarch64", "arm64"):
+            with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                arguments = self.artifact_scenario(root)
+                arguments["spec"] = replace(arguments["spec"], args=("--unchanged", "two words"))
+                write_fake_perf(root / "fixture", passing_payload())
+                marker = root / "child.json"
+                with (root / "fixture").open("a") as script:
+                    script.write(
+                        "import os, pathlib, sys\n"
+                        f"pathlib.Path({str(marker)!r}).write_text(json.dumps({{"
+                        "'args': sys.argv[1:], 'cwd': os.getcwd(), "
+                        "'iterations': os.environ['SIMA_PERF_ITERS']}))\n"
+                    )
+                # The executable is a generated Python fixture, never an ARM ELF.
+                with mock.patch("platform.machine", return_value=architecture), \
+                     mock.patch.dict(os.environ, {"PATH": os.environ["PATH"]}, clear=True), \
+                     mock.patch.object(run_perf_matrix, "hardware_runner", side_effect=AssertionError("unexpected guard")), \
+                     mock.patch.object(run_perf_matrix, "run_cmd", wraps=run_perf_matrix.run_cmd) as launch:
+                    result = run_perf_matrix.run_scenario(**arguments)
+                self.assertEqual(result.status, schema.ResultStatus.PASS)
+                launch.assert_called_once()
+                self.assertEqual(launch.call_args.args[0], [str(root / "fixture"), "--unchanged", "two words"])
+                self.assertEqual(launch.call_args.kwargs["cwd"], root)
+                self.assertEqual(launch.call_args.kwargs["timeout_sec"], 10)
+                self.assertEqual(launch.call_args.kwargs["env"]["SIMA_PERF_ITERS"], "1000")
+                self.assertEqual(json.loads(marker.read_text()), {
+                    "args": ["--unchanged", "two words"], "cwd": str(root), "iterations": "1000",
+                })
+
+    def test_direct_subprocess_timeout_remains_a_failed_scenario(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            arguments = self.artifact_scenario(root)
+            executable = root / "fixture"
+            executable.write_text("#!/usr/bin/env python3\nimport time\nprint('partial', flush=True)\ntime.sleep(5)\n")
+            executable.chmod(0o755)
+            arguments["timeout_sec"] = 0.2
+            result = run_perf_matrix.run_scenario(**arguments)
+            self.assertEqual(result.status, schema.ResultStatus.FAIL)
+            self.assertEqual(result.reason_code, schema.ReasonCode.ENV_TIMEOUT)
+            self.assertIn("partial", Path(result.run_meta["artifacts"]["stdout"]).read_text())
+            self.assertNotIn("hardware_fail_stop", result.run_meta)
+
+    def test_explicit_invalid_guard_never_falls_back_to_direct_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for endpoint in ("", str(root / "missing.sock")):
+                with self.subTest(endpoint=endpoint), \
+                     mock.patch.dict(os.environ, {"SIMA_HARDWARE_SUPERVISOR_SOCKET": endpoint}), \
+                     mock.patch.object(run_perf_matrix, "run_cmd") as launch:
+                    result = run_perf_matrix.run_scenario(**self.artifact_scenario(root))
+                launch.assert_not_called()
+                self.assertEqual(result.failure_class, schema.FailureClass.ENV_BROKEN)
+                self.assertTrue(result.run_meta["hardware_fail_stop"])
+
+    def test_failed_preflight_never_launches_direct_scenarios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "results"
+            repo = Path(__file__).resolve().parents[3]
+            arguments = ["run_perf_matrix.py", "--repo-root", str(repo),
+                         "--prebuilt-tests-dir", str(root), "--results-dir", str(results)]
+            with mock.patch.object(sys, "argv", arguments), \
+                 mock.patch.object(run_perf_matrix, "run_cmd", return_value=
+                     subprocess.CompletedProcess([], 1, "", "missing required plugin")) as launch, \
+                 mock.patch.object(run_perf_matrix, "hardware_runner") as guarded:
+                self.assertEqual(run_perf_matrix.main(), 1)
+            launch.assert_called_once_with(
+                ["ctest", "--test-dir", str(root), "--output-on-failure", "-R",
+                 "^unit_modalix_contract_preflight_test$"], cwd=repo)
+            guarded.assert_not_called()
+            for scenario in run_perf_matrix.STANDARD_SCENARIOS:
+                result = json.loads((results / f"{scenario.scenario_id}.json").read_text())
+                self.assertEqual(result["status"], "FAIL")
+                self.assertEqual(result["run_meta"]["phase"], "modalix_preflight")
 
     def test_full_output_and_actual_trace_identity_survive_comparison(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
