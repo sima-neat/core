@@ -2011,17 +2011,150 @@ complete_board_install_after_packages "$before"
 
 class PlatformAdmissionBoundaryTest(unittest.TestCase):
     def test_dpkg_completion_signal_uses_machine_phases_not_dependency_health(self) -> None:
-        for phases, expected in (("installed\nnot-installed\nconfig-files", 0),
-                                 ("installed\nunpacked", 1), ("half-installed", 1),
-                                 ("triggers-pending", 1), ("unknown-phase", 1)):
-            with self.subTest(phases=phases):
-                result = run_bash('source "$1"\ndpkg-query() { printf "%s\\n" "' + phases +
+        for states, expected in (("install ok installed\nunknown ok not-installed\ndeinstall ok config-files", 0),
+                                 ("hold ok installed", 0), ("install ok installed\ninstall ok unpacked", 1),
+                                 ("install reinstreq half-installed", 1), ("install ok triggers-pending", 1),
+                                 ("install reinstreq installed", 1), ("deinstall ok installed", 1),
+                                 ("install ok unknown-phase", 1)):
+            with self.subTest(states=states):
+                result = run_bash('source "$1"\ndpkg-query() { printf "%s\\n" "' + states +
                                   '"; }\ndpkg_package_database_is_configured\n')
                 self.assertEqual(result.returncode, expected, result.stderr)
         failed = run_bash('source "$1"\ndpkg-query() { echo "query failed" >&2; return 17; }\n'
                           'dpkg_package_database_is_configured\n')
         self.assertEqual(failed.returncode, 2)
         self.assertIn("query failed", failed.stderr)
+
+    def test_only_interim_completion_allows_normal_pending_triggers(self) -> None:
+        for state in ("install ok triggers-pending", "install ok triggers-awaited",
+                      "hold ok triggers-pending", "deinstall ok triggers-awaited",
+                      "install reinstreq triggers-pending", "install ok unpacked",
+                      "install ok half-configured", "install reinstreq installed"):
+            for mode in ("", "before-reinstall"):
+                with self.subTest(state=state, mode=mode):
+                    result = run_bash('source "$1"\ndpkg-query() { '
+                        '[[ "$*" == \'-W -f=${Status}\\n\' ]] || return 17; '
+                        'printf "%s\\n" "' + state + '"; }\n'
+                        'dpkg_package_database_is_configured ' + mode + '\n')
+                    allowed = mode == "before-reinstall" and state in (
+                        "install ok triggers-pending", "install ok triggers-awaited")
+                    self.assertEqual(result.returncode, 0 if allowed else 1, result.stderr)
+        failed = run_bash('source "$1"\ndpkg-query() { return 17; }\n'
+                          'dpkg_package_database_is_configured before-reinstall\n')
+        self.assertEqual(failed.returncode, 2)
+
+    @staticmethod
+    def trigger_resume_probe(interim: str, final: str = "install ok installed", *,
+                             handler_fails: bool = False) -> subprocess.CompletedProcess[str]:
+        # Real shell flow/classifier; external APT and producer decisions are
+        # controlled doubles. Scheduler tests own real trigger/plan admission.
+        return run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cd "${tmp}"
+DEBS=(./candidate.deb)
+APPLIES=0
+prepare_board_platform_admission() { :; }
+verify_board_platform_admission() { echo PLATFORM; }
+verify_board_platform_plan() { :; }
+verify_simulated_package_removals() { :; }
+verify_scheduler_transaction() { shift; echo "ADMISSION $*"; }
+board_runtime_is_legacy() { return 0; }
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+board_has_scheduler_cohort() { return 0; }
+apt_package_database_is_healthy() { return 0; }
+collect_exact_deb_install_specs() { local -n specs="$1"; specs=(./candidate.deb candidate:arm64=1); }
+collect_board_heal_specs() { :; }
+complete_board_install_after_packages() { echo COMPLETE; }
+remove_installed_local_deb_packages() { echo UNEXPECTED_REMOVAL; }
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=ON
+dpkg-query() {
+  [[ "$*" == '-W -f=${Status}\n' || "$*" == '-W -f=${db:Status-Status}\n' ]] || return 17
+  local phase_only=0
+  [[ "$*" != '-W -f=${db:Status-Status}\n' ]] || phase_only=1
+  local state
+  case "${APPLIES}" in
+    0) state='install ok triggers-pending' ;;
+    1) [[ "${INTERIM}" != QUERY_FAILED ]] || return 17; state="${INTERIM}" ;;
+    *) [[ "${FINAL}" != QUERY_FAILED ]] || return 17; state="${FINAL}" ;;
+  esac
+  [[ "${phase_only}" != 1 ]] || state="${state##* }"
+  printf '%s\n' "${state}"
+}
+python3() {
+  [[ "$1" == -B && "$2" == "${SCHEDULER_PLATFORM_ADMISSION_PATH}" && "$3" == retirements ]]
+}
+run_sudo() {
+  printf '%s\n' "$*" >> commands
+  if [[ " $* " == *' --simulate '* ]]; then
+    # The first resume is a no-op with queued triggers; only the mandatory
+    # strict reinstall must plan all selected package Inst/Conf actions.
+    if [[ " $* " == *' --reinstall '* ]]; then
+      echo 'Inst candidate (1 local-deb [arm64])'
+      echo 'Conf candidate (1 local-deb [arm64])'
+    fi
+    return 0
+  fi
+  if [[ "$1 $2" == 'apt-get install' ]]; then
+    APPLIES=$((APPLIES + 1))
+    echo "APPLY ${APPLIES}"
+    if [[ "${APPLIES}" == 2 && "${HANDLER_FAILS}" == 1 ]]; then
+      echo 'dpkg trigger handler failed' >&2
+      return 100
+    fi
+    return 0
+  fi
+  [[ "$*" == 'apt-get check' ]]
+}
+''' + f"INTERIM='{interim}'; FINAL='{final}'; HANDLER_FAILS={int(handler_fails)}\n" + r'''
+if install_debs_on_board; then result=0; else result=$?; fi
+cat commands
+exit "${result}"
+''')
+
+    def test_trigger_only_resume_still_requires_strict_reinstall(self) -> None:
+        for state in ("install ok triggers-pending", "install ok triggers-awaited"):
+            with self.subTest(state=state):
+                result = self.trigger_resume_probe(state)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("APPLY 1\n", result.stdout)
+                self.assertIn("APPLY 2\n", result.stdout)
+                self.assertIn("ADMISSION --repair-incomplete --resume-incomplete\n", result.stdout)
+                self.assertIn("ADMISSION --repair-incomplete\n", result.stdout)
+                self.assertIn("COMPLETE\n", result.stdout)
+                commands = [s for s in result.stdout.splitlines() if s.startswith("apt-get install")]
+                self.assertEqual(len(commands), 4)
+                for index, command in enumerate(commands):
+                    self.assertIn("--no-remove", command)
+                    self.assertEqual("--reinstall" in command, index >= 2)
+                    self.assertIn("./candidate.deb candidate:arm64=1", command)
+
+    def test_nontrigger_interim_states_cannot_reach_strict_reinstall(self) -> None:
+        for state in ("install ok unpacked", "install ok half-configured", "hold ok triggers-pending",
+                      "install reinstreq triggers-pending", "install reinstreq installed", "QUERY_FAILED"):
+            with self.subTest(state=state):
+                result = self.trigger_resume_probe(state)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("APPLY 1\n", result.stdout)
+                for forbidden in ("APPLY 2", "COMPLETE", "UNEXPECTED_REMOVAL", "dpkg -i", "--reinstall"):
+                    self.assertNotIn(forbidden, result.stdout)
+
+    def test_final_pending_state_or_trigger_handler_failure_prevents_completion(self) -> None:
+        for state, fails in (("install ok triggers-pending", False), ("install ok triggers-awaited", False),
+                             ("install ok half-configured", False), ("install reinstreq installed", False),
+                             ("QUERY_FAILED", False), ("install ok installed", True)):
+            with self.subTest(state=state, handler_fails=fails):
+                result = self.trigger_resume_probe("install ok triggers-pending", state, handler_fails=fails)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("APPLY 2\n", result.stdout)
+                for forbidden in ("COMPLETE", "UNEXPECTED_REMOVAL", "dpkg -i"):
+                    self.assertNotIn(forbidden, result.stdout)
+                if fails:
+                    self.assertIn("dpkg trigger handler failed", result.stderr)
+                    self.assertIn("Final recovery reinstall failed", result.stderr)
 
     def test_unhealthy_apt_diagnostic_is_preserved_before_temporary_log_cleanup(self) -> None:
         for status in (0, 100):
@@ -2155,8 +2288,8 @@ run_sudo() {
   return 99
 }
 dpkg-query() {
-  if [[ "$2" == '-f=${db:Status-Status}\n' ]]; then
-    echo triggers-pending
+  if [[ "$2" == '-f=${Status}\n' ]]; then
+    echo 'install ok triggers-pending'
     return 0
   fi
 ''' + ("  echo 'Read-only diagnostic failed' >&2; return 17\n" if query_fails else

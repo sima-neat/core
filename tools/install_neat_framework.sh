@@ -1109,16 +1109,20 @@ apt_package_database_is_healthy() {
 }
 
 # apt-get check validates dependencies, not completion of unpack/configure.
-# This is only a mode signal; Scheduler owns pending-cohort eligibility.
+# Scheduler owns pending-cohort eligibility. Only the intermediate recovery
+# check permits normal queued triggers; final installation must drain them.
 dpkg_package_database_is_configured() {
-  local phases phase
-  phases="$(dpkg-query -W -f='${db:Status-Status}\n')" || return 2
-  while IFS= read -r phase; do
-    case "${phase}" in
-      installed|not-installed|config-files|"") ;;
+  local states state
+  states="$(dpkg-query -W -f='${Status}\n')" || return 2
+  while IFS= read -r state; do
+    case "${state}" in
+      "install ok installed"|"hold ok installed"|*" not-installed"|*" config-files"|"") ;;
+      "install ok triggers-pending"|"install ok triggers-awaited")
+        [[ "${1:-}" == before-reinstall ]] || return 1
+        ;;
       *) return 1 ;;
     esac
-  done <<< "${phases}"
+  done <<< "${states}"
 }
 
 apt_package_lists_are_populated() {
@@ -2024,7 +2028,8 @@ install_debs_on_board() {
   stop_board_runtime_before_install
 
   # Only the authenticated split coordinator may admit continuation of its own
-  # incomplete product cohort. It must reject every unrelated pending package.
+  # incomplete product cohort. Scheduler distinguishes normal deferred triggers
+  # from unrelated unfinished package installation/configuration.
   local repair_incomplete=0
   if ! apt_package_database_is_healthy; then
     repair_incomplete=1
@@ -2116,11 +2121,11 @@ install_debs_on_board() {
       # reuse retirement selectors or the permissive resume admission for the
       # final exact-byte reinstall of every selected package.
       apt_package_database_is_healthy || return 1
-      dpkg_package_database_is_configured || return 1
+      dpkg_package_database_is_configured before-reinstall || return 1
       verify_board_platform_admission || return 1
       collect_exact_deb_install_specs board_install_specs || return 1
       apt_install_args=(apt-get install -y --fix-broken --allow-downgrades --reinstall --no-remove)
-      log "Recovered package configuration; requiring a fresh strict full-cohort reinstall."
+      log "Resumed package transaction; requiring a fresh strict full-cohort reinstall."
       if ! run_sudo "${apt_install_args[@]}" --simulate "${board_install_specs[@]}" \
           >"${simulation_log}" 2>&1; then
         cat "${simulation_log}" >&2
