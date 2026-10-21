@@ -2085,7 +2085,8 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
     return out;
   }
 
-  throw std::invalid_argument(tag + ": unsupported media_type: " + std::string(geometry.media_type));
+  throw std::invalid_argument(tag +
+                              ": unsupported media_type: " + std::string(geometry.media_type));
 }
 
 namespace {
