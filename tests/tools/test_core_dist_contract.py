@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import venv
 import zipfile
 from unittest.mock import patch
 
@@ -21,6 +22,127 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('verify_core_dist', ROOT / 'tools/ci/verify_core_dist.py')
 verifier = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verifier)
+
+
+@pytest.fixture
+def cli_launcher_layout(tmp_path):
+    tools = tmp_path / 'tools'; tools.mkdir()
+    for name in ('dirname', 'readlink'):
+        (tools / name).symlink_to(shutil.which(name))
+    cache = tmp_path / 'portable cache'
+    selected = cache / '.sima-cli/.venv'
+    venv.EnvBuilder(with_pip=False).create(selected)
+    entry = selected / 'bin/sima-cli'
+    entry.write_text('#!/usr/bin/env python3\n')
+    entry.chmod(0o755)
+    launcher = cache / 'bin/sima-cli'; launcher.parent.mkdir()
+    # The installed Vulcan cache launcher's path-relative interpreter binding.
+    launcher.write_text('''#!/usr/bin/env bash
+set -euo pipefail
+wrapper_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cache_root="$(CDPATH= cd -- "${wrapper_dir}/.." && pwd)"
+exec "${cache_root}/.sima-cli/.venv/bin/python" "${cache_root}/.sima-cli/.venv/bin/sima-cli" "$@"
+''')
+    launcher.chmod(0o755)
+    env = {key: value for key, value in os.environ.items()
+           if key not in ('SIMA_CLI_BIN', 'SIMA_CLI_PYTHON', 'PYTHONPATH', 'PYTHONHOME')}
+    env['PATH'] = str(tools)
+    return selected, entry, launcher, env
+
+
+def resolve_cli_python(layout, **overrides):
+    _, _, launcher, env = layout
+    # Run the actual resolver with a relocated cache path; never create or
+    # mutate the real /mnt/vulcan installation in a host test.
+    script = (ROOT / 'scripts/ci/verify_core_dist.sh').read_text()
+    assert '${1:-/mnt/vulcan/bin/sima-cli}' in script
+    resolver = script.split('\nroot=', 1)[0]
+    return subprocess.run(['/bin/bash', '-c', resolver + '\nresolve_sima_cli_python "$1"',
+                           'test', str(launcher)], env={**env, **overrides}, text=True, capture_output=True)
+
+
+@pytest.mark.parametrize('selection', ['venv', 'path', 'symlink', 'portable', 'portable_path', 'fallback'])
+def test_verifier_selects_python_from_installed_cli_layout(cli_launcher_layout, selection, tmp_path):
+    selected, entry, launcher, env = cli_launcher_layout
+    if selection == 'symlink':
+        alias = tmp_path / 'sima-cli'; alias.symlink_to(entry)
+        overrides = {'SIMA_CLI_BIN': str(alias)}
+    elif selection in ('path', 'portable_path'):
+        directory = entry.parent if selection == 'path' else launcher.parent
+        overrides = {'PATH': str(directory) + os.pathsep + env['PATH']}
+    elif selection == 'fallback':
+        overrides = {}
+    else:
+        overrides = {'SIMA_CLI_BIN': str(entry if selection == 'venv' else launcher)}
+    result = resolve_cli_python(cli_launcher_layout, **overrides)
+    assert result.returncode == 0, result.stderr
+    python = Path(result.stdout.strip())
+    assert python.samefile(selected / 'bin/python')
+    # Preserve venv identity, not just the underlying system executable.
+    probe = subprocess.run([str(python), '-c', 'import sys; print(sys.prefix)'],
+                           env=env, text=True, capture_output=True, check=True)
+    assert Path(probe.stdout.strip()).resolve() == selected.resolve()
+    if selection != 'fallback':
+        help_result = subprocess.run(['/bin/bash', str(ROOT / 'scripts/ci/verify_core_dist.sh'), '--help'],
+                                     env={**env, **overrides}, text=True, capture_output=True)
+        assert help_result.returncode == 0, help_result.stderr
+        assert '--expected-receipt' in help_result.stdout
+
+
+def test_verifier_honors_explicit_python_without_cli(cli_launcher_layout):
+    selected, _, _, env = cli_launcher_layout
+    overrides = {'SIMA_CLI_PYTHON': str(selected / 'bin/python'), 'SIMA_CLI_BIN': '/missing/cli'}
+    result = resolve_cli_python(cli_launcher_layout, **overrides)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(selected / 'bin/python')
+    result = subprocess.run(['/bin/bash', str(ROOT / 'scripts/ci/verify_core_dist.sh'), '--invalid-option'],
+                            env={**env, **overrides}, text=True, capture_output=True)
+    assert result.returncode == 2  # The real verifier's argparse failure is not masked.
+    assert 'unrecognized arguments' in result.stderr
+
+
+@pytest.mark.parametrize('override', ['SIMA_CLI_BIN', 'SIMA_CLI_PYTHON'])
+def test_verifier_missing_explicit_selection_never_falls_back(cli_launcher_layout, override):
+    result = resolve_cli_python(cli_launcher_layout, **{override: '/missing/selected'})
+    assert result.returncode != 0
+    assert f'explicit {override}' in result.stderr
+    assert not result.stdout
+
+
+@pytest.mark.parametrize('missing', ['pyvenv.cfg', 'bin/python', 'bin/sima-cli'])
+def test_verifier_rejects_incomplete_portable_cli(cli_launcher_layout, missing):
+    selected, _, launcher, _ = cli_launcher_layout
+    (selected / missing).unlink()
+    result = resolve_cli_python(cli_launcher_layout, SIMA_CLI_BIN=str(launcher))
+    assert result.returncode != 0
+    assert 'Python belonging to selected sima-cli' in result.stderr
+    assert not result.stdout
+
+
+def test_verifier_missing_cli_has_actionable_error(cli_launcher_layout):
+    _, _, launcher, _ = cli_launcher_layout
+    launcher.unlink()
+    result = resolve_cli_python(cli_launcher_layout)
+    assert result.returncode != 0
+    assert 'Cannot locate sima-cli on PATH' in result.stderr
+    assert not result.stdout
+
+
+def test_verifier_unknown_explicit_layout_never_uses_other_cache(cli_launcher_layout, tmp_path):
+    unrelated = tmp_path / 'other-cli'
+    unrelated.write_text('#!/bin/sh\nexit 0\n'); unrelated.chmod(0o755)
+    result = resolve_cli_python(cli_launcher_layout, SIMA_CLI_BIN=str(unrelated))
+    assert result.returncode != 0
+    assert 'Python belonging to selected sima-cli' in result.stderr
+    assert not result.stdout
+
+
+def test_verifier_missing_selected_schema_does_not_use_ambient_python(cli_launcher_layout, tmp_path):
+    _, entry, _, env = cli_launcher_layout
+    result = subprocess.run(['/bin/bash', str(ROOT / 'scripts/ci/verify_core_dist.sh'), '--dist', str(tmp_path)],
+                            env={**env, 'SIMA_CLI_BIN': str(entry)}, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert "No module named 'sima_cli'" in result.stderr
 
 
 def fixture(root, metadata_name='sima-neat'):
