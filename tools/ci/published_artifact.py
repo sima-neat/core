@@ -7,6 +7,7 @@ execution of downloaded code occurs until every publisher resource is verified.
 from pathlib import Path, PurePosixPath
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -75,8 +76,11 @@ def acquire(cli, component, branch, spec, environment, output, *, package_path="
     # Shorten only the lookup key; retain the caller's complete selector below
     # when checking the publisher's full commit, including collision tails.
     lookup_spec = spec if spec == 'latest' else spec[:12]
+    # Keep the selected CLI stable across resolution and download. Its updater
+    # must not replace that tool or prompt in an unattended acquisition child.
+    cli_env = {**os.environ, 'SIMA_CLI_CHECK_FOR_UPDATE': '0'}
     text = subprocess.check_output([str(cli), 'neat', 'install', '--env', environment,
-                                    f'{repository}@{branch}:{lookup_spec}', '--json'], text=True)
+                                    f'{repository}@{branch}:{lookup_spec}', '--json'], text=True, env=cli_env)
     selected = json.loads(text[text.index('{'):])
     revision = selected.get('resolved_spec', '')
     if (selected.get('repository') != component or selected.get('package_path', '') != package_path
@@ -125,7 +129,8 @@ def acquire(cli, component, branch, spec, environment, output, *, package_path="
     if resource_pattern is None:
         wanted = set(resources) | ({'candidate.json', 'SHA256SUMS'} & set(entries))
         subprocess.run([str(cli), 'neat', 'download', f'{repository}@{branch}:{revision}',
-                        '--env', environment, '-d', str(output / 'download')], check=True, stdout=sys.stderr)
+                        '--env', environment, '-d', str(output / 'download')], check=True, stdout=sys.stderr,
+                       env=cli_env)
     else:
         # LLiMa publishes build-tree artifacts alongside its root resources. Use
         # its exact declared dev resource, not a made-up metadata-dev variant or
@@ -136,7 +141,7 @@ def acquire(cli, component, branch, spec, environment, output, *, package_path="
         for name in wanted:
             basename(name)
             subprocess.run([str(cli), 'download', urljoin(url, quote(name, safe='')), '-d', str(output / 'download')],
-                           check=True, stdout=sys.stderr)
+                           check=True, stdout=sys.stderr, env=cli_env)
     for name in sorted(wanted):
         basename(name)
         entry = entries[name]

@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -72,6 +73,68 @@ def test_resolve_once_then_download_immutable(publication):
     assert len(publication[-1]) == 2
     assert publication[-1][1][1:4] == ['neat', 'download', 'scheduler@topic:' + 'a' * 12]
     assert (publication[0] / 'out/candidate.json').is_file()
+
+
+@pytest.mark.parametrize('inherited', [None, '0', '1'])
+@pytest.mark.parametrize('resource_pattern', [None, r'runtime\.deb'])
+def test_selected_cli_children_disable_updates_without_changing_parent(
+        publication, monkeypatch, inherited, resource_pattern):
+    if inherited is None:
+        monkeypatch.delenv('SIMA_CLI_CHECK_FOR_UPDATE', raising=False)
+    else:
+        monkeypatch.setenv('SIMA_CLI_CHECK_FOR_UPDATE', inherited)
+    monkeypatch.setenv('SIMA_CLI_TRANSPORT_TEST', 'preserved caller value')
+    parent = dict(os.environ)
+    output, run = transport.subprocess.check_output, transport.subprocess.run
+    children = []
+
+    def check_child(argv, kwargs):
+        assert kwargs['env'] == {**parent, 'SIMA_CLI_CHECK_FOR_UPDATE': '0'}
+        children.append(argv)
+
+    def selected_output(argv, **kwargs):
+        check_child(argv, kwargs)
+        return output(argv, **kwargs)
+
+    def selected_run(argv, **kwargs):
+        if argv[0] == 'git':
+            assert 'env' not in kwargs
+        else:
+            check_child(argv, kwargs)
+        return run(argv, **kwargs)
+
+    with mock.patch.object(transport.subprocess, 'check_output', side_effect=selected_output), \
+         mock.patch.object(transport.subprocess, 'run', side_effect=selected_run):
+        receipt = acquire(publication, resource_pattern=resource_pattern)
+    assert receipt['commit'] == 'a' * 40
+    assert len(children) == 2
+    assert dict(os.environ) == parent
+
+
+@pytest.mark.parametrize('phase', ['resolution', 'bundle', 'resource'])
+def test_selected_cli_failure_is_not_retried_or_hidden(publication, monkeypatch, phase):
+    monkeypatch.setenv('SIMA_CLI_CHECK_FOR_UPDATE', '1')
+    parent = dict(os.environ)
+    run = transport.subprocess.run
+    failed = []
+
+    def fail(argv, **kwargs):
+        assert kwargs['env'] == {**parent, 'SIMA_CLI_CHECK_FOR_UPDATE': '0'}
+        failed.append(argv)
+        raise subprocess.CalledProcessError(29, argv)
+
+    def selected_run(argv, **kwargs):
+        return run(argv, **kwargs) if argv[0] == 'git' else fail(argv, **kwargs)
+
+    method = 'check_output' if phase == 'resolution' else 'run'
+    with mock.patch.object(transport.subprocess, method,
+                           side_effect=fail if phase == 'resolution' else selected_run):
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            acquire(publication, resource_pattern=r'runtime\.deb' if phase == 'resource' else None)
+    assert error.value.returncode == 29
+    assert len(failed) == 1
+    assert not (publication[0] / 'out/acquisition.json').exists()
+    assert dict(os.environ) == parent
 
 
 @pytest.mark.parametrize('length', [12, 20, 40])
