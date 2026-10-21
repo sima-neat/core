@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 import sys
@@ -20,9 +21,94 @@ acquisition = importlib.util.module_from_spec(spec); spec.loader.exec_module(acq
 spec = importlib.util.spec_from_file_location(
     'cpu_package_tests', ROOT.parent / 'scripts/ci/pciehost/run_cpu_package_tests.py')
 cpu_tests = importlib.util.module_from_spec(spec); spec.loader.exec_module(cpu_tests)
+spec = importlib.util.spec_from_file_location(
+    'cpu_package_preparation', ROOT.parent / 'scripts/ci/pciehost/prepare_cpu_package.py')
+cpu_prepare = importlib.util.module_from_spec(spec); spec.loader.exec_module(cpu_prepare)
 
 
 class Delivery(unittest.TestCase):
+    def test_dependency_bootstrap_reuses_existing_host_privilege_helper(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); commands = root / 'bin'; commands.mkdir()
+            log = root / 'commands.log'
+            (commands / 'id').write_text('#!/bin/bash\nprintf "1000\\n"\n')
+            (commands / 'sudo').write_text('''#!/bin/bash
+printf '%s\\n' "$*" >> "$COMMAND_LOG"
+if [[ "$1" == -n ]]; then exit "$REQUIRE_PASSWORD"; fi
+if [[ "$1" == -S ]]; then
+  IFS= read -r password
+  [[ "$password" == "$SUDO_PASSWORD" ]] || exit 99
+  printf 'existing host secret received on stdin\\n' >> "$COMMAND_LOG"
+fi
+''')
+            for path in commands.iterdir():
+                path.chmod(0o755)
+            script = '''set -euo pipefail
+source scripts/ci/pciehost/common.sh
+[[ ! -e "$COMMAND_LOG" ]]
+run_host_sudo ./pcie_host/build.sh --python --install-deps-only
+'''
+            for password_required in (False, True):
+                with self.subTest(password_required=password_required):
+                    log.unlink(missing_ok=True)
+                    env = {'PATH': str(commands) + ':/usr/bin:/bin', 'HOME': str(root),
+                           'GITHUB_WORKSPACE': str(ROOT.parent), 'COMMAND_LOG': str(log),
+                           'REQUIRE_PASSWORD': str(int(password_required)),
+                           'SUDO_PASSWORD': 'test-only-existing-host-secret'}
+                    result = subprocess.run(['bash', '-c', script], cwd=ROOT.parent,
+                                            env=env, text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    expected = ['-n true']
+                    command = './pcie_host/build.sh --python --install-deps-only'
+                    expected += (['-S -p  ' + command, 'existing host secret received on stdin']
+                                 if password_required else [command])
+                    self.assertEqual(log.read_text().splitlines(), expected)
+
+    def test_dependency_only_mode_uses_existing_bootstrap_and_stops_before_build(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); commands = root / 'bin'; commands.mkdir()
+            log = root / 'commands.log'
+            for name in ('apt-get', 'apt-cache', 'gcc-14', 'g++-14', 'sudo',
+                         'cmake', 'python3', 'sima-cli', 'git', 'rm'):
+                script = commands / name
+                script.write_text('''#!/bin/bash
+printf '%s %s\\n' "${0##*/}" "$*" >> "$COMMAND_LOG"
+case "${0##*/}" in
+  apt-get|apt-cache) exit 0 ;;
+  gcc-14|g++-14) printf '%s\\n' "${FIXTURE_GCC_VERSION:-14}" ;;
+  sudo) exec "$@" ;;
+  *) echo 'unexpected post-bootstrap command' >&2; exit 99 ;;
+esac
+''')
+                script.chmod(0o755)
+            preserved = root / 'existing-build'; preserved.mkdir()
+            (preserved / 'keep').write_text('must not clean in dependency-only mode')
+            env = {'PATH': str(commands) + ':/usr/bin:/bin', 'HOME': str(root),
+                   'COMMAND_LOG': str(log)}
+            argv = ['bash', str(ROOT / 'build.sh'), '--python', '--install-deps-only',
+                    '--clean', '--build-dir', str(preserved)]
+            result = subprocess.run(argv, env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((preserved / 'keep').is_file())
+            calls = log.read_text()
+            self.assertIn('apt-get update', calls)
+            self.assertIn('gcc-14 g++-14', calls)
+            self.assertIn('python3-venv', calls)
+            self.assertIn('gcc-14 -dumpversion', calls)
+            self.assertIn('g++-14 -dumpversion', calls)
+            executed = {line.split()[0] for line in calls.splitlines()}
+            self.assertFalse(executed.intersection({'cmake', 'python3', 'sima-cli', 'git', 'rm'}))
+            self.assertNotIn('dkms', calls)
+            self.assertNotIn('simaai-pcie', calls)
+            result = subprocess.run(argv, env={**env, 'FIXTURE_GCC_VERSION': '13'},
+                                    text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            log.unlink()
+            result = subprocess.run(argv, env={**env, 'CXXFLAGS': '-target-sdk-flag'},
+                                    text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(log.exists(), 'SDK environment must fail before dependency installation')
+
     def test_installer_one_transaction_and_runtime_subset(self):
         source = (ROOT / 'scripts/install_pciehost.sh').read_text()
         self.assertIn('pcie_delivery.py', source)
@@ -145,7 +231,7 @@ GENAI_CMAKE_ARGS=()
                     delivery.stage('/dist', destination)
                 provider.assert_not_called()
 
-    def test_ci_stages_packages_but_hardware_still_installs(self):
+    def test_ci_stages_packages_without_device_installation(self):
         workflow = (ROOT.parent / '.github/workflows/vulcan-ci.yml').read_text()
         smoke = workflow.split('- name: Smoke test staged PCIe host packages and wheel', 1)[1]
         smoke = smoke.split('- name: Configure AWS credentials', 1)[0]
@@ -155,7 +241,8 @@ GENAI_CMAKE_ARGS=()
         self.assertIn('import pyneatpcie', smoke)
         self.assertNotIn('install_pciehost.sh', smoke)
         hardware = workflow.split('  test-pciehost-hardware:', 1)[1]
-        self.assertIn('./scripts/ci/pciehost/run_ctest.sh', hardware)
+        self.assertIn('scripts/ci/pciehost/prepare_cpu_package.py', hardware)
+        self.assertNotIn('./scripts/ci/pciehost/install_host_package.sh', hardware)
 
     def test_exact_cmake_dependency_guard(self):
         source = (ROOT / 'CMakeLists.txt').read_text()
@@ -249,6 +336,147 @@ GENAI_CMAKE_ARGS=()
                 with self.assertRaises(ValueError): delivery.compose(path, root / 'out')
 
 
+class CpuPackagePreparation(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.source = self.root / 'published'; self.source.mkdir()
+        self.commit = 'a' * 40
+        self.branch = 'feature/cpu'
+        self.selector = f'core/pciehost/ubuntu22/amd64@{self.branch}:{self.commit[:12]}'
+        self.selection = {'distro': 'ubuntu22', 'architecture': 'amd64', 'branch': self.branch,
+                          'resources': {'native_artifacts.py': {'sha256': 'fixture-only'}}}
+        names = ['native_artifacts.py', 'scheduler-native-selection.json', 'pcie_delivery.py',
+                 'install_pciehost.sh', 'sima-pcie-host_1_amd64.deb', 'sima-pcie-host-dev_1_amd64.deb',
+                 'sima-pcie-host-1-extras.tar.gz', 'pyneatpcie-1.whl']
+        for name in names: (self.source / name).write_bytes(b'not executable fixture data')
+        (self.source / 'scheduler-native-selection.json').write_text(json.dumps(self.selection))
+        self.metadata = {
+            'name': 'gh:sima-neat/pciehost/ubuntu22/amd64', 'repository': 'sima-neat/core',
+            'branch': self.branch, 'commit': self.commit, 'commit_folder': self.commit[:12],
+            'artifact': {'repository': 'core', 'package_path': 'pciehost/ubuntu22/amd64',
+                         'distro': 'ubuntu22', 'arches': ['amd64']},
+            'resources': names, 'resources-checksum': {
+                name: cpu_prepare.digest(self.source / name) for name in names}}
+        self.selected = {'repository': 'core', 'package_path': 'pciehost/ubuntu22/amd64',
+                         'ref': self.branch, 'environment': 'production',
+                         'requested_spec': self.commit[:12], 'resolved_spec': self.commit[:12],
+                         'base_url': 'https://artifacts.neat.sima.ai',
+                         'metadata_url': f'https://artifacts.neat.sima.ai/core/feature%252Fcpu/{self.commit[:12]}/pciehost/ubuntu22/amd64/metadata.json'}
+        self.host_distro = 'ubuntu22'; self.host_arch = 'amd64'
+        self.calls = []; self.mutation = None
+        def output(argv, **kwargs):
+            if argv[0] == 'bash': return self.host_distro + '\n'
+            if argv[0] == 'dpkg': return self.host_arch + '\n'
+            self.calls.append(argv)
+            return 'CLI notice\n' + json.dumps(self.selected)
+        original_run = subprocess.run
+        def run(argv, **kwargs):
+            if argv[0] == 'git': return original_run(argv, **kwargs)
+            self.calls.append(argv)
+            destination = Path(argv[argv.index('-d') + 1])
+            for name in self.metadata['resources']:
+                path = self.source / name
+                if path.exists(): shutil.copy2(path, destination / name, follow_symlinks=False)
+            if self.mutation: self.mutation(destination)
+            return subprocess.CompletedProcess(argv, 0)
+        def fetch(url, target):
+            self.assertEqual(url, self.selected['metadata_url'])
+            Path(target).write_text(json.dumps(self.metadata))
+        for target, method, replacement in (
+                (cpu_prepare.subprocess, 'check_output', output),
+                (cpu_prepare.subprocess, 'run', run),
+                (cpu_prepare, 'download', fetch)):
+            patcher = patch.object(target, method, side_effect=replacement)
+            patcher.start(); self.addCleanup(patcher.stop)
+        patcher = patch.object(cpu_prepare, 'stage')
+        self.stage = patcher.start(); self.addCleanup(patcher.stop)
+
+    def acquire(self):
+        return cpu_prepare.prepare('fixture-cli', self.branch, self.commit, 'prod',
+                                   self.root / 'distribution', self.root / 'prefix')
+
+    def test_exact_native_download_then_trusted_private_stage_without_install(self):
+        result = self.acquire()
+        self.assertFalse(result['hardware_qualified'])
+        self.assertEqual(result['resources'], 8)
+        self.assertEqual(self.calls, [
+            ['fixture-cli', 'neat', 'download', self.selector, '--env', 'production', '--json'],
+            ['fixture-cli', 'neat', 'download', self.selector, '--env', 'production',
+             '-d', str(self.root / 'distribution')]])
+        self.stage.assert_called_once_with(self.root / 'distribution', self.root / 'prefix')
+
+    def test_wrong_cli_identity_never_downloads_or_stages(self):
+        for key, value in [('repository', 'scheduler'), ('package_path', 'pciehost/ubuntu24/amd64'),
+                           ('ref', 'develop'), ('resolved_spec', 'latest'), ('requested_spec', 'b' * 12),
+                           ('environment', 'staging'), ('base_url', 'https://example.org'),
+                           ('metadata_url', 'https://example.org/metadata.json')]:
+            with self.subTest(key=key), patch.dict(self.selected, {key: value}):
+                with self.assertRaisesRegex(ValueError, 'different native Core publication'): self.acquire()
+        self.stage.assert_not_called()
+        self.assertFalse((self.root / 'distribution').exists())
+
+    def test_incompatible_host_never_resolves_native_publication(self):
+        for distro, arch in [('elxr', 'amd64'), ('ubuntu22', 'arm64')]:
+            with self.subTest(distro=distro, arch=arch):
+                self.host_distro, self.host_arch = distro, arch
+                with self.assertRaisesRegex(ValueError, 'original Ubuntu x64'): self.acquire()
+        self.assertEqual(self.calls, [])
+        self.stage.assert_not_called()
+
+    def test_full_commit_collision_tail_is_checked_before_download(self):
+        self.metadata['commit'] = self.commit[:12] + 'b' * 28
+        with self.assertRaisesRegex(ValueError, 'selected Core commit/host'): self.acquire()
+        self.assertEqual(len(self.calls), 1)
+        self.stage.assert_not_called()
+
+    def test_changed_downloaded_helper_rejected_before_import(self):
+        self.mutation = lambda directory: (directory / 'native_artifacts.py').write_text('tampered')
+        with self.assertRaisesRegex(ValueError, 'differs from metadata'): self.acquire()
+        self.stage.assert_not_called()
+
+    def test_symlink_download_rejected_before_import(self):
+        def mutate(directory):
+            helper = directory / 'native_artifacts.py'; helper.unlink()
+            helper.symlink_to(self.source / 'native_artifacts.py')
+        self.mutation = mutate
+        with self.assertRaisesRegex(ValueError, 'differs from metadata'): self.acquire()
+        self.stage.assert_not_called()
+
+    def test_changed_metadata_rejected_before_import(self):
+        self.mutation = lambda directory: (directory / 'metadata.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'differs from metadata'): self.acquire()
+        self.stage.assert_not_called()
+
+    def test_missing_payload_rejected_before_import(self):
+        self.mutation = lambda directory: (directory / 'pyneatpcie-1.whl').unlink()
+        with self.assertRaisesRegex(ValueError, 'differs from metadata'): self.acquire()
+        self.stage.assert_not_called()
+
+    def test_unsafe_resource_rejected_before_cli_download(self):
+        self.metadata['resources'] = ['../escape']
+        self.metadata['resources-checksum'] = {'../escape': 'a' * 64}
+        with self.assertRaisesRegex(ValueError, 'Unsafe published resource'): self.acquire()
+        self.assertEqual(len(self.calls), 1)
+        self.stage.assert_not_called()
+
+    def test_incomplete_original_inventory_is_not_a_smaller_cpu_package(self):
+        name = 'pyneatpcie-1.whl'
+        self.metadata['resources'].remove(name); del self.metadata['resources-checksum'][name]
+        with self.assertRaisesRegex(ValueError, 'Expected one native Core resource'): self.acquire()
+        self.stage.assert_not_called()
+
+    def test_provider_rejection_is_not_replaced_by_ambient_packages(self):
+        self.stage.side_effect = ValueError('actual provider rejected')
+        with self.assertRaisesRegex(ValueError, 'actual provider rejected'): self.acquire()
+
+    def test_existing_output_is_not_reused(self):
+        (self.root / 'distribution').mkdir()
+        with self.assertRaises(FileExistsError): self.acquire()
+        self.stage.assert_not_called()
+
+
 class CpuPackageCoverage(unittest.TestCase):
     def test_explicit_models_require_no_authentication_or_download(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -314,17 +542,34 @@ class CpuPackageCoverage(unittest.TestCase):
                 count += cases
         self.assertEqual(count, 36)
 
-    def test_workflow_keeps_cpu_coverage_in_existing_smoke_and_excludes_physical_job(self):
+    def test_workflow_keeps_cpu_coverage_on_develop_host_without_physical_actions(self):
         workflow = (ROOT.parent / '.github/workflows/vulcan-ci.yml').read_text()
         smoke = workflow.split('      - name: Smoke test staged PCIe host packages and wheel\n', 1)[1]
         smoke = smoke.split('\n      - name:', 1)[0]
-        self.assertIn('pcie_host/dist/pyneatpcie-*.whl pytest', smoke)
-        self.assertIn('"${python_venv}/bin/python" scripts/ci/pciehost/run_cpu_package_tests.py', smoke)
-        self.assertIn('--distribution pcie_host/dist', smoke)
-        # Read the top-level condition, not a nested shell or step condition.
-        hardware = workflow.split('\n  test-pciehost-hardware:\n', 1)[1]
-        self.assertEqual(next(line.strip() for line in hardware.splitlines()
-                              if line.startswith('    if:')), 'if: ${{ false }}')
+        self.assertIn('pcie_host/dist/pyneatpcie-*.whl', smoke)
+        self.assertNotIn('run_cpu_package_tests.py', smoke)
+        self.assertNotIn('pytest', smoke)
+        cpu = workflow.split('\n  test-pciehost-hardware:\n', 1)[1].split('\n  promote-latest-tag:', 1)[0]
+        self.assertIn('name: Test PCIe Host CPU Coverage', cpu)
+        self.assertIn('runs-on: [self-hosted, Linux, X64, pcie, 3.0.0-pcie-test]', cpu)
+        self.assertIn('prepare_cpu_package.py', cpu)
+        self.assertIn('--commit "${GITHUB_SHA}"', cpu)
+        self.assertIn('"${python_venv}/bin/python" scripts/ci/pciehost/run_cpu_package_tests.py', cpu)
+        self.assertIn('/usr/bin/python3 -m venv', cpu)
+        self.assertIn('source scripts/ci/pciehost/common.sh', cpu)
+        self.assertIn('run_host_sudo ./pcie_host/build.sh --python --install-deps-only', cpu)
+        self.assertIn('SUDO_PASSWORD: ${{ secrets.PCIEHOST_SUDO_PASSWORD }}', cpu)
+        self.assertEqual(cpu.count('secrets.'), 1)
+        self.assertEqual(cpu.count('run_host_sudo '), 1)
+        self.assertIn('LD_LIBRARY_PATH=', cpu)
+        for forbidden in ('preflight.sh', 'pcie-setup.sh', 'prepare_card_prerequisites.sh',
+                          'check_card_compatibility.sh', 'install_host_package.sh',
+                          'install_host_test_deps.sh', 'install_card_runtime.sh', 'cleanup_queue.sh',
+                          'verify_card_runtime.sh', 'prepare_pcie_genai_models.sh', 'run_ctest.sh',
+                          'run_pytest.sh', 'DEVKIT_PASSWORD', 'SIMAPCIE_CARD_'):
+            with self.subTest(physical_action=forbidden):
+                self.assertNotIn(forbidden, cpu)
+        self.assertEqual(workflow.count('scripts/ci/pciehost/run_cpu_package_tests.py'), 1)
 
     def test_models_are_required_even_when_original_tests_would_skip(self):
         with tempfile.TemporaryDirectory() as temporary:

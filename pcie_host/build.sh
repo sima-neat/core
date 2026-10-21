@@ -20,6 +20,7 @@ BUILD_PYTHON="OFF"
 BUILD_EXAMPLES="OFF"
 BUILD_TUTORIALS="ON"
 CLEAN_BUILD="OFF"
+INSTALL_DEPS_ONLY="OFF"
 MAKE_DEB="ON"
 PACKAGE_DIR="${SCRIPT_DIR}/dist"
 INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
@@ -40,6 +41,7 @@ Options:
   --with-tests        Build unit and hardware tests
   --with-examples     Build PCIe host C++ examples
   --python            Build Python bindings and package a Python wheel
+  --install-deps-only  Install native build prerequisites, then exit without building
   --no-deb            Skip DEB package generation
   --scheduler-spec <sha|latest> Select same-branch native Scheduler publication
   --scheduler-environment <name> Publication environment (default: production)
@@ -147,6 +149,10 @@ while [[ $# -gt 0 ]]; do
       BUILD_PYTHON="ON"
       shift
       ;;
+    --install-deps-only)
+      INSTALL_DEPS_ONLY="ON"
+      shift
+      ;;
     --no-deb)
       MAKE_DEB="OFF"
       shift
@@ -187,6 +193,10 @@ for name in CC CXX CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CMAKE_TOOLCHAIN_FILE PKG_CON
 done
 install_build_deps
 [[ $(gcc-14 -dumpversion) == 14 && $(g++-14 -dumpversion) == 14 ]]
+if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
+  echo "Native PCIe host build prerequisites are ready; no PCIe package or device installation requested."
+  exit 0
+fi
 
 current_core_branch() {
   printf '%s\n' "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-$(git -C "$CORE_ROOT" branch --show-current)}}"

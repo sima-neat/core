@@ -38,8 +38,8 @@ def validate_models(environment):
 
 def resolve_models(workspace, work, environment):
     if not all(environment.get(name) for name in MODEL_VARIABLES):
-        # Fresh hosted runners must have an authorized Developer Portal session;
-        # diagnose its absence with the existing bounded check, not a hidden
+        # The persistent CI account must have its existing Developer Portal
+        # session; diagnose its absence with the bounded check, not a hidden
         # interactive login inside modelzoo. Explicit offline fixtures need none.
         subprocess.run(['bash', str(workspace / 'scripts/ci/check_sima_cli_session.sh')],
                        env=environment, cwd=workspace, check=True)

@@ -104,33 +104,22 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
             "needs.detect-changes.outputs.docs_only != 'true'", build_pcie
         )
 
-    def test_pcie_hardware_reprovisions_ssh_before_card_checks(self) -> None:
-        pcie_hardware = job_block("test-pciehost-hardware")
+    def test_pcie_cpu_job_preserves_docs_condition_without_card_actions(self) -> None:
+        pcie_cpu = job_block("test-pciehost-hardware")
 
-        provision_step = pcie_hardware.index(
-            "- name: Provision PCIe card SSH key"
-        )
-        prerequisites_step = pcie_hardware.index(
-            "- name: Prepare PCIe card CI prerequisites"
-        )
-        compatibility_step = pcie_hardware.index(
-            "- name: Check PCIe card platform compatibility"
-        )
-
-        self.assertLess(provision_step, prerequisites_step)
-        self.assertLess(prerequisites_step, compatibility_step)
-        self.assertIn(
-            "SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}",
-            pcie_hardware,
-        )
-        self.assertIn("./pcie_host/scripts/pcie-setup.sh", pcie_hardware)
-        self.assertIn(
-            "./scripts/ci/pciehost/prepare_card_prerequisites.sh",
-            pcie_hardware,
-        )
-        self.assertIn('--hosts "${SIMAPCIE_CARD_HOST}"', pcie_hardware)
-        self.assertIn("--non-interactive", pcie_hardware)
-        self.assertIn("--strict", pcie_hardware)
+        self.assertIn("needs.detect-changes.outputs.docs_only != 'true'", pcie_cpu)
+        self.assertIn("runs-on: [self-hosted, Linux, X64, pcie, 3.0.0-pcie-test]", pcie_cpu)
+        self.assertIn("prepare_cpu_package.py", pcie_cpu)
+        self.assertIn("run_cpu_package_tests.py", pcie_cpu)
+        for physical_action in (
+            "Provision PCIe card SSH key", "Prepare PCIe card CI prerequisites",
+            "Check PCIe card platform compatibility", "pcie-setup.sh",
+            "prepare_card_prerequisites.sh", "install_host_package.sh",
+            "install_card_runtime.sh", "verify_card_runtime.sh", "cleanup_queue.sh",
+            "run_ctest.sh", "run_pytest.sh", "DEVKIT_PASSWORD", "SIMAPCIE_CARD_HOST",
+        ):
+            with self.subTest(physical_action=physical_action):
+                self.assertNotIn(physical_action, pcie_cpu)
 
 
 if __name__ == "__main__":
