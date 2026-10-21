@@ -211,8 +211,9 @@ find_verified_bundled_replacement() {
   return 1
 }
 
-# Runner/Scheduler replace the retired 0.4/0.5/0.6.0 monolithic implementation
-# packages, not their legacy API. Prove bounded retirement without fake Provides.
+# Scheduler declares retirement of the monolithic runtime/plugin files. Runner
+# supplies execution in the same cohort, not ownership of Scheduler's old files.
+# Prove bounded retirement without claiming compatibility with the legacy API.
 find_verified_runner_retirement() {
   local removed_package="$1" installed_version="$2"
   shift 2
@@ -237,7 +238,15 @@ PYRETIRE
   for deb in "$@"; do
     [[ -f "${deb}" ]] || continue
     role="$(dpkg-deb -f "${deb}" Package 2>/dev/null)"
-    case "${role}" in simaai-runner|simaai-scheduler) ;; *) continue ;; esac
+    case "${role}" in
+      simaai-runner)
+        [[ -z "${runner}" ]] || return 1
+        runner="${deb}"
+        continue
+        ;;
+      simaai-scheduler) ;;
+      *) continue ;;
+    esac
     admitted=1
     for field in Breaks Replaces; do
       relations="$(dpkg-deb -f "${deb}" "${field}" 2>/dev/null | tr ',' '\n' |
@@ -249,17 +258,13 @@ PYRETIRE
       fi
     done
     if [[ "${admitted}" == 1 ]]; then
-      if [[ "${role}" == simaai-runner ]]; then
-        [[ -z "${runner}" ]] || return 1
-        runner="${deb}"
-      else
-        [[ -z "${scheduler}" ]] || return 1
-        scheduler="${deb}"
-      fi
+      [[ -z "${scheduler}" ]] || return 1
+      scheduler="${deb}"
     fi
   done
-  # The old support payload is split across both providers. Metadata-only
-  # SimaRuntime cannot prove replacement of either implementation.
+  # The complete runtime still requires both real providers. Authenticated
+  # cohort and transaction admission separately bind exact dependencies and
+  # every transferred file; Runner need not retire an upper package to install.
   if [[ "${removed_package}" == neat-runtime && -n "${runner}" && -n "${scheduler}" ]]; then
     printf '%s + %s\n' "$(basename "${runner}")" "$(basename "${scheduler}")"
     return 0

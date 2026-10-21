@@ -97,7 +97,10 @@ On Platform 3.0, the complete split cohort also retires the monolithic
 0.6.0 package lines, including development builds. Retirement requires matching
 bounded `Breaks` and `Replaces` declarations from the incoming owners; versions
 at or above `0.6.1~` are not covered. This does not authorize unrelated package
-removal or claim compatibility with the retired APIs.
+removal or claim compatibility with the retired APIs. Scheduler declares the
+runtime/plugin file transfers; the complete runtime still requires the matching
+Runner execution dependency. Installing Runner alone does not retire the
+monolithic 0.6.0 packages.
 
 Firmware activation uses only the unique incoming package that delivers the
 activation helper. The installed package identity, helper ownership, executable

@@ -1593,7 +1593,7 @@ repair_global_sima_neat_lib_links
 
 
 class RunnerRetirementTest(unittest.TestCase):
-    def test_retirement_requires_both_bounded_relationships_from_each_owner(self):
+    def test_retirement_requires_relationships_from_file_owner_not_execution_provider(self):
         for removed in ("neat-runtime", "neat-gst-plugins"):
             for missing_owner in ("runner", "scheduler"):
                 if removed == "neat-gst-plugins" and missing_owner == "runner":
@@ -1619,7 +1619,8 @@ dpkg-deb() {{
 }}
 verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb" "$tmp/scheduler.deb"
 ''')
-                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertEqual(result.returncode == 0, missing_owner == "runner",
+                                         result.stdout + result.stderr)
 
     def test_only_bounded_native_retirement_is_allowed(self):
         cases = [
@@ -1644,6 +1645,7 @@ verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb" "$tmp/sche
             ("neat-gst-plugins", "0.5.0+preview.arbitrary", "3.0.0", "simaai-scheduler", "<< 0.6~", True),
             ("neat-gst-plugins", "0.6.0", "3.0.0", "simaai-scheduler", "<< 0.6~", False),
             ("neat-runtime", "0.5.0", "3.0.0", "simaai-runner", "<< 0.6.1~", False),
+            ("neat-runtime", "0.6.0", "3.0.0", "simaai-scheduler", "<< 0.6.1~", False),
             ("neat-gst-plugins", "0.5.0", "3.0.0", "simaai-scheduler", "<< 9.0", False),
         ])
         for removed, version, platform, package, bound, accepted in cases:
@@ -1687,7 +1689,11 @@ dpkg-query() { printf '%s' '0.5.0'; }
 dpkg-deb() {
   case "$3" in
     Package) if [[ "$2" == *scheduler.deb ]]; then printf simaai-scheduler; else printf simaai-runner; fi ;;
-    Breaks|Replaces) printf '%s' 'neat-runtime (<< 0.6.1~)' ;;
+    Breaks|Replaces)
+      # Runner supplies execution, not the old Scheduler-owned files. Its
+      # presence must suffice even without a legacy retirement declaration.
+      [[ "$2" == *scheduler.deb ]] || return 1
+      printf '%s' 'neat-runtime (<< 0.6.1~)' ;;
     *) return 1 ;;
   esac
 }
