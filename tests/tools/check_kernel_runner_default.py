@@ -2,6 +2,7 @@
 """Guard the Core -> Scheduler -> Runner cold numerical boundary."""
 from pathlib import Path
 import argparse
+import py_compile
 import tempfile
 import unittest
 import re
@@ -149,6 +150,11 @@ def validate_layering(root):
             if not path.is_file() or path.relative_to(root).as_posix() == \
                     "tests/tools/check_kernel_runner_default.py":
                 continue
+            # Bytecode is generated, not source, and can contain this checker's
+            # own forbidden-token constants. Keep checking real source even in
+            # cache directories; do not exclude entire trees or ignored files.
+            if path.suffix in (".pyc", ".pyo"):
+                continue
             # Preserve the former guard's complete tree coverage, including .inc
             # fragments and extensionless support files. Decode fixture bytes
             # permissively: an unrelated binary is not a source decoding failure.
@@ -240,6 +246,35 @@ class KernelRunnerDefaultContract(unittest.TestCase):
             with self.subTest(token=token):
                 with self.assertRaisesRegex(ValueError, "forbidden architecture dependency"):
                     reject_tokens("before " + token + " after", (token,), "mutated.cpp")
+
+    def test_layering_ignores_bytecode_but_checks_source_in_cache_directories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative in ("CMakeLists.txt", "tests/CMakeLists.txt", "src/gst/GstInit.cpp",
+                             *GUARDED_FILES, *PROCESSCVU_HELPER_GUARDED_FILES,
+                             *WRAPPER_ADAPTER_GUARDED_FILES):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            (root / "include").mkdir()
+            checker = root / "tests/tools/check_kernel_runner_default.py"
+            checker.parent.mkdir(parents=True)
+            checker.write_text("forbidden = " + repr(DELETED_WRAPPER_TOKENS) + "\n")
+            bytecode = Path(py_compile.compile(str(checker), doraise=True)).read_bytes()
+            self.assertIn(DELETED_WRAPPER_TOKENS[0].encode(), bytecode)
+            for directory in ("src", "include", "tests"):
+                cache = root / directory / "__pycache__"
+                cache.mkdir(exist_ok=True)
+                for relative in ("__pycache__/probe.pyc", "probe.pyc", "probe.pyo"):
+                    (root / directory / relative).write_bytes(bytecode)
+                validate_layering(root)
+                for name in ("probe.py", "probe.cpp", "probe.inc", "extensionless-support"):
+                    source = cache / name
+                    source.write_text(DELETED_WRAPPER_TOKENS[0])
+                    with self.subTest(directory=directory, source=name), \
+                            self.assertRaisesRegex(ValueError, "forbidden architecture dependency"):
+                        validate_layering(root)
+                    source.unlink()
 
     def test_renderer_uses_public_cold_initialization(self):
         text = (ROOT / "tests/e2e_pipelines/obj_detection/"
