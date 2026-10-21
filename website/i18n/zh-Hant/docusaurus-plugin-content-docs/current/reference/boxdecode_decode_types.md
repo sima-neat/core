@@ -371,7 +371,7 @@ masks = seg.masks.to_numpy()
 
 ## 升級
 
-新選項會改變 C++ 物件佈局。Core 使用 ABI 7、`libsima_neat.so.7`。請使用相符的標頭與函式庫，重新建置 C++ 應用程式、外掛程式及 Python 繫結。請勿透過相容性符號連結將 ABI 5 或 ABI 6 二進位檔連接至 ABI 7。
+新選項會改變 C++ 物件佈局。Core 使用 ABI 6、`libsima_neat.so.6`。請使用相符的標頭與函式庫，重新建置 C++ 應用程式、外掛程式及 Python 繫結。請勿透過相容性符號連結將 ABI 5 二進位檔連接至 ABI 6。
 
 
 ### 組合 YOLOX 輸入准入

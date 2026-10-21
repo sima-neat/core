@@ -1370,7 +1370,8 @@ remove_installed_local_deb_packages
     ('lib64', 'lib/x86_64-linux-gnu/neat/runtime', 'lib/x86_64-linux-gnu/neat/gst-plugins'),
     ('lib/core', 'support/runtime', 'plugins/frontend'),
 ])
-def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir, runtime_dir, plugin_dir):
+@pytest.mark.parametrize('legacy_abi', ['5', '7'])
+def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir, runtime_dir, plugin_dir, legacy_abi):
     """Compile the production target properties; static clients own their path.
 
     These are explicit native host doubles, not cross-target execution. Both
@@ -1381,8 +1382,10 @@ def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir,
     manifest = json.loads((ROOT / 'deps/manifest.json').read_text())
     abi = manifest['abi-version']
     platform_version = manifest['platform-version']
-    # Distributed ABI 6 previews used the smaller public ArgMax options/class.
-    assert int(abi) > 6
+    # Released Core 0.5.0 uses ABI 5. ABI 6 is the unreleased 0.6.0 line;
+    # older same-ABI previews still require rebuilt consumers, not loader isolation.
+    assert int(abi) > 5
+    assert legacy_abi != abi
     properties = re.search(r'set_target_properties\(sima_neat PROPERTIES.*?\n\)',
                            production, re.DOTALL).group(0)
     static_properties = re.search(r'set_target_properties\(sima_neat_static PROPERTIES.*?\n\)',
@@ -1456,14 +1459,14 @@ install(TARGETS shared_client static_client static_without_path DESTINATION bin)
             '-DCMAKE_INSTALL_LIBDIR=' + libdir, '-DCMAKE_INSTALL_PREFIX=' + str(installed))
     command('cmake', '--build', build, '--parallel', '4')
     command('cmake', '--install', build)
-    legacy = tmp_path / 'abi6'
+    legacy = tmp_path / ('abi' + legacy_abi)
     (legacy / libdir).mkdir(parents=True)
     (legacy / 'bin').mkdir()
     (source / 'legacy.cpp').write_text('extern "C" int fixture_core() { return 42; }\n')
     command('/usr/bin/c++', '-shared', '-fPIC', source / 'legacy.cpp',
-            '-Wl,-soname,libsima_neat.so.6', '-o', legacy / libdir / 'libsima_neat.so.6')
+            f'-Wl,-soname,libsima_neat.so.{legacy_abi}', '-o', legacy / libdir / f'libsima_neat.so.{legacy_abi}')
     old_client = legacy / 'bin/legacy_client'
-    command('/usr/bin/c++', source / 'main.cpp', legacy / libdir / 'libsima_neat.so.6',
+    command('/usr/bin/c++', source / 'main.cpp', legacy / libdir / f'libsima_neat.so.{legacy_abi}',
             '-Wl,-rpath,$ORIGIN/../' + libdir, '-o', old_client)
     assert 'x86-64' in command('file', old_client).stdout
     command(old_client)  # The old consumer works with its actual old ABI provider.
@@ -1480,7 +1483,7 @@ install(TARGETS shared_client static_client static_without_path DESTINATION bin)
         dynamic = command('readelf', '-d', prefix / libdir / f'libsima_neat.so.{platform_version}').stdout
         assert f'Library soname: [libsima_neat.so.{abi}]' in dynamic
         assert (prefix / libdir / 'libsima_neat.so').readlink().name == f'libsima_neat.so.{abi}'
-        assert not (prefix / libdir / 'libsima_neat.so.6').exists()
+        assert not (prefix / libdir / f'libsima_neat.so.{legacy_abi}').exists()
         assert '[' + expected_rpath + ']' in dynamic
         assert str(tmp_path) not in dynamic
         assert 'libfixture_plugin' in dynamic and 'libfixture_runtime' in dynamic
@@ -1488,7 +1491,7 @@ install(TARGETS shared_client static_client static_without_path DESTINATION bin)
         assert 'libfixture_plugin' in runtime_dynamic
         needed = command('readelf', '-d', prefix / 'bin/shared_client').stdout
         assert f'Shared library: [libsima_neat.so.{abi}]' in needed
-        assert 'Shared library: [libsima_neat.so.6]' in command(
+        assert f'Shared library: [libsima_neat.so.{legacy_abi}]' in command(
             'readelf', '-d', prefix / 'bin/legacy_client').stdout
         for client in ('shared_client', 'static_client', 'static_without_path', 'legacy_client'):
             executable = prefix / 'bin' / client
@@ -1497,7 +1500,7 @@ install(TARGETS shared_client static_client static_without_path DESTINATION bin)
             result = command(executable, check=False)
             assert (result.returncode == 0) == (client in ('shared_client', 'static_client')), result.stderr
             if client == 'legacy_client':
-                assert 'libsima_neat.so.6' in result.stderr
+                assert f'libsima_neat.so.{legacy_abi}' in result.stderr
         static_dynamic = command('readelf', '-d', prefix / 'bin/static_client').stdout
         assert 'Shared library: [libsima_neat' not in static_dynamic
         assert 'libfixture_plugin' in static_dynamic and 'libfixture_runtime' in static_dynamic
@@ -1545,7 +1548,7 @@ message(STATUS "selected-rpath=${{result}}")
         assert 'selected-rpath=$ORIGIN/neat/runtime;$ORIGIN/neat/gst-plugins' in result.stdout
 
 
-@pytest.mark.parametrize('installed_abi', ['6', 'selected'])
+@pytest.mark.parametrize('installed_abi', ['5', '7', 'selected'])
 def test_install_smoke_requires_selected_manifest_abi(tmp_path, installed_abi):
     manifest = json.loads((ROOT / 'deps/manifest.json').read_text())
     expected = manifest['abi-version']
