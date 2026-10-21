@@ -236,6 +236,14 @@ void execute_argmax_graph(bool scalar) {
     require(actual &&
                 (scalar ? actual[0] == 3 + second : actual[0] == first && actual[1] == second),
             "Core ArgMax numerical result disagrees with the submitted frame");
+    const auto bytes = outputs[0].copy_dense_bytes_tight();
+    const auto cloned = outputs[0].clone();
+    require(bytes.size() == (scalar ? 1U : 2U) * sizeof(std::int32_t) &&
+                std::memcmp(bytes.data(), actual, bytes.size()) == 0 &&
+                outputs[0].copy_payload_bytes() == bytes && cloned.shape == expected_shape &&
+                cloned.byte_offset == 0 && cloned.copy_dense_bytes_tight() == bytes &&
+                cloned.storage != outputs[0].storage,
+            "Core ArgMax public copy/clone lost the reduction result or scalar rank");
   }
   run.close();
 }

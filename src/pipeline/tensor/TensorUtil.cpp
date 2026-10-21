@@ -1232,7 +1232,8 @@ simaai::neat::Mapping map_dense_tensor_read(const simaai::neat::Tensor& tensor) 
       (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())) {
     return {};
   }
-  const auto span = dense_tensor_physical_span_bytes(tensor);
+  const auto span = is_bound_dense_scalar(tensor) ? tensor_dtype_bytes(tensor.dtype)
+                                                  : dense_tensor_physical_span_bytes(tensor);
   if (span == 0U) {
     return {};
   }
@@ -1421,9 +1422,10 @@ private:
     bool dmabuf = false;
   };
 
-  static std::size_t checked_span(const std::vector<int64_t>& shape,
-                                  const std::vector<int64_t>& strides, std::size_t element) {
-    if (shape.empty()) {
+  static std::size_t checked_span(const Tensor& tensor, std::size_t element) {
+    const auto& shape = tensor.shape;
+    const auto& strides = tensor.strides_bytes;
+    if (shape.empty() && !is_bound_dense_scalar(tensor)) {
       return 0U; // Opaque/encoded storage need not describe a dense tensor.
     }
     if (!strides.empty() && strides.size() != shape.size()) {
@@ -1471,7 +1473,7 @@ private:
     };
     const std::size_t element = tensor_dtype_bytes(tensor.dtype);
     if (tensor.is_dense()) {
-      check(tensor.byte_offset, checked_span(tensor.shape, tensor.strides_bytes, element));
+      check(tensor.byte_offset, checked_span(tensor, element));
     } else {
       if (tensor.byte_offset != 0) {
         throw std::runtime_error("Owned output: composite tensor has nonzero byte offset");

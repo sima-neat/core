@@ -254,15 +254,7 @@ std::size_t tensor_bytes_tight(const simaai::neat::Tensor& input) {
     }
     return total;
   }
-  if (!input.is_dense() || input.shape.empty())
-    return 0;
-  std::size_t total = dtype_bytes_for_copy(input.dtype);
-  for (const auto dim : input.shape) {
-    if (dim <= 0)
-      return 0;
-    total *= static_cast<std::size_t>(dim);
-  }
-  return total;
+  return input.dense_bytes_tight();
 }
 
 bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor, uint8_t* dst, std::size_t dst_bytes,

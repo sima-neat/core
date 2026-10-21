@@ -68,6 +68,15 @@ bool drop_tensor_holder(const simaai::neat::Tensor& tensor);
 simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
                                       simaai::neat::MapMode mode);
 
+// A bound, dense numerical rank-zero Tensor describes one dtype element. Empty
+// shape alone does not turn an unbound/default Tensor or an explicitly opaque
+// carrier into a scalar. Geometry/bounds remain separate admission checks: a
+// malformed scalar must fail them rather than fall back to whole-carrier access.
+inline bool is_bound_dense_scalar(const simaai::neat::Tensor& tensor) noexcept {
+  return tensor.storage && tensor.is_dense() && tensor.shape.empty() && !tensor.semantic.encoded &&
+         !tensor.semantic.byte_stream && !tensor.semantic.tess && !tensor.semantic.text;
+}
+
 // Internal checked dense READ for shape-bounded consumers. Returns the exact
 // reachable tensor span (including positive stride gaps), with byte_offset
 // applied once. Invalid/unsupported geometry or insufficient authority returns

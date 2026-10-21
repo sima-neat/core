@@ -33,6 +33,15 @@ Examples:
 
 A `Tensor` carries its segment alongside the triple, so the framework knows whether a peek/poke from CPU code is valid.
 
+With bound storage, a dense numeric `Tensor` with shape `{}` is a rank-zero
+scalar: its dense size is one `dtype` element. It differs from a zero-extent shape
+such as `{0,256}`, whose dense size is zero. Tight byte copies and `clone()`
+preserve the scalar value while checking the view offset and storage bounds. A
+default, unbound Tensor reports zero from `dense_bytes_tight()`; tight copying
+and cloning reject it. Explicit encoded, byte-stream, tessellated and text
+carriers retain their carrier-byte semantics. This does not change the byte
+extent returned by public `map()`.
+
 ## Cache coherence
 
 Scheduler prepares CPU/device access through Runner's shared memory authority,

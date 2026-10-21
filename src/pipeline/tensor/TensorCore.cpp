@@ -142,9 +142,7 @@ void log_mapfail_once(const char* label, const Tensor& t, const Mapping& mapping
  * Returns 0 on invalid dims or overflow.
  */
 std::size_t dense_size_bytes_checked(const std::vector<int64_t>& shape, std::size_t elem_bytes) {
-  if (shape.empty())
-    return 0;
-
+  // The empty product is one element (rank-zero numerical tensor).
   std::size_t total = elem_bytes;
   for (int64_t dim : shape) {
     if (dim <= 0)
@@ -311,6 +309,8 @@ std::shared_ptr<Storage> make_cpu_external_storage(void* data, std::size_t size_
 //==============================================================================
 
 Tensor Tensor::clone() const {
+  if (!storage)
+    throw std::runtime_error("Tensor::clone: missing source storage");
   const std::size_t elem = dtype_bytes(dtype);
   if (elem == 0)
     throw std::runtime_error("Tensor::clone: unknown element size");
@@ -319,7 +319,7 @@ Tensor Tensor::clone() const {
   // Dense tensor clone (tight contiguous copy)
   // --------------------------
   if (is_dense()) {
-    const std::size_t bytes = dense_size_bytes_checked(shape, elem);
+    const std::size_t bytes = dense_bytes_tight();
     if (!shape.empty() && bytes == 0) {
       throw std::runtime_error("Tensor::clone: invalid/overflowing dense shape");
     }
@@ -612,7 +612,7 @@ Mapping Tensor::view(MapMode mode) const {
 //==============================================================================
 
 std::size_t Tensor::dense_bytes_tight() const {
-  if (!is_dense())
+  if (!is_dense() || (shape.empty() && !pipeline_internal::is_bound_dense_scalar(*this)))
     return 0;
   const std::size_t elem = dtype_bytes(dtype);
   if (elem == 0)
@@ -630,7 +630,7 @@ bool Tensor::copy_dense_bytes_tight_to(uint8_t* dst, std::size_t dst_size) const
   if (elem == 0)
     return false;
 
-  const std::size_t bytes = dense_size_bytes_checked(shape, elem);
+  const std::size_t bytes = dense_bytes_tight();
   if (bytes == 0 || dst_size < bytes)
     return false;
 
