@@ -1128,12 +1128,22 @@ remove_installed_local_deb_packages
     assert ('MUTATION' in result.stdout) == allowed
 
 
-@pytest.mark.parametrize('libdir', ['lib', 'lib64', 'lib/aarch64-linux-gnu'])
-def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir):
+@pytest.mark.parametrize('libdir,runtime_dir,plugin_dir', [
+    ('lib', 'lib/neat/runtime', 'lib/neat/gst-plugins'),
+    ('lib64', 'lib64/neat/runtime', 'lib64/neat/gst-plugins'),
+    ('lib/aarch64-linux-gnu', 'lib/aarch64-linux-gnu/neat/runtime',
+     'lib/aarch64-linux-gnu/neat/gst-plugins'),
+    ('lib', 'lib/aarch64-linux-gnu/neat/runtime', 'lib/aarch64-linux-gnu/neat/gst-plugins'),
+    ('lib/aarch64-linux-gnu', 'lib/neat/runtime', 'lib/neat/gst-plugins'),
+    ('lib64', 'lib/x86_64-linux-gnu/neat/runtime', 'lib/x86_64-linux-gnu/neat/gst-plugins'),
+    ('lib/core', 'support/runtime', 'plugins/frontend'),
+])
+def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir, runtime_dir, plugin_dir):
     """Compile the production target properties; static clients own their path.
 
     These are explicit native host doubles, not cross-target execution. Both
     private DSOs are direct dependencies, matching Scheduler's frontend support.
+    Core and Scheduler independently select their install directories.
     """
     production = (ROOT / 'CMakeLists.txt').read_text()
     manifest = json.loads((ROOT / 'deps/manifest.json').read_text())
@@ -1145,11 +1155,14 @@ def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir)
                            production, re.DOTALL).group(0)
     static_properties = re.search(r'set_target_properties\(sima_neat_static PROPERTIES.*?\n\)',
                                   production, re.DOTALL).group(0)
-    assert 'INSTALL_RPATH "$ORIGIN/neat/runtime;$ORIGIN/neat/gst-plugins"' in properties
+    assert 'INSTALL_RPATH "${SIMANEAT_SCHEDULER_INSTALL_RPATH}"' in properties
+    assert 'include(cmake/SchedulerInstallRpath.cmake)' in production
+    assert 'simaneat_scheduler_install_rpath(SIMANEAT_SCHEDULER_INSTALL_RPATH)' in production
     assert 'RPATH' not in static_properties
     assert not re.search(r'set\(CMAKE_INSTALL_RPATH', production)
     source = tmp_path / 'source'; source.mkdir()
-    (source / 'runtime.cpp').write_text('extern "C" int fixture_runtime() { return 20; }\n')
+    (source / 'runtime.cpp').write_text('extern "C" int fixture_plugin();\n'
+                                      'extern "C" int fixture_runtime() { return fixture_plugin() - 2; }\n')
     (source / 'plugin.cpp').write_text('extern "C" int fixture_plugin() { return 22; }\n')
     (source / 'core.cpp').write_text('extern "C" int fixture_runtime();\n'
                                     'extern "C" int fixture_plugin();\n'
@@ -1159,17 +1172,34 @@ def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir)
     (source / 'CMakeLists.txt').write_text("""cmake_minimum_required(VERSION 3.16)
 project(CoreInstalledLoaderFixture LANGUAGES CXX)
 include(GNUInstallDirs)
-""" + f'set(SIMANEAT_PLATFORM_VERSION {platform_version})\nset(SIMANEAT_ABI_VERSION {abi})\n' + """
+""" + f'''set(SIMANEAT_PLATFORM_VERSION {platform_version})
+set(SIMANEAT_ABI_VERSION {abi})
+# The namespaced exports retain the selected staging prefix even when a
+# transitive dependency has overwritten CMake's ambient PACKAGE_PREFIX_DIR.
+# No receipt file is required for this declared-layout calculation.
+set(SimaScheduler_BUILD_RECEIPT "{tmp_path}/selected scheduler/share/SimaScheduler/buildinfo.json")
+set(SimaScheduler_RUNTIME_DIR "{tmp_path}/selected scheduler/{runtime_dir}")
+set(SimaScheduler_PLUGIN_DIR "{tmp_path}/selected scheduler/{plugin_dir}")
+set(PACKAGE_PREFIX_DIR "{tmp_path}/unrelated-dependency")
+include("{ROOT}/cmake/SchedulerInstallRpath.cmake")
+simaneat_scheduler_install_rpath(SIMANEAT_SCHEDULER_INSTALL_RPATH)
+set(PROVIDER_RUNTIME_DIR "{runtime_dir}")
+set(PROVIDER_PLUGIN_DIR "{plugin_dir}")
+''' + """
 add_library(fixture_runtime SHARED runtime.cpp)
 add_library(fixture_plugin SHARED plugin.cpp)
+target_link_libraries(fixture_runtime PRIVATE fixture_plugin)
+""" + f'''set_target_properties(fixture_runtime PROPERTIES INSTALL_RPATH
+  "$ORIGIN;$ORIGIN/{os.path.relpath(plugin_dir, runtime_dir)}")
+''' + """
 add_library(sima_neat SHARED core.cpp)
 add_library(sima_neat_static STATIC core.cpp)
 """ + properties + '\n' + static_properties + """
 target_link_libraries(sima_neat PRIVATE fixture_runtime fixture_plugin)
 target_link_libraries(sima_neat_static PRIVATE fixture_runtime fixture_plugin)
 install(TARGETS sima_neat sima_neat_static DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(TARGETS fixture_runtime DESTINATION ${CMAKE_INSTALL_LIBDIR}/neat/runtime)
-install(TARGETS fixture_plugin DESTINATION ${CMAKE_INSTALL_LIBDIR}/neat/gst-plugins)
+install(TARGETS fixture_runtime DESTINATION ${PROVIDER_RUNTIME_DIR})
+install(TARGETS fixture_plugin DESTINATION ${PROVIDER_PLUGIN_DIR})
 add_executable(shared_client main.cpp)
 target_link_libraries(shared_client PRIVATE sima_neat)
 set_target_properties(shared_client PROPERTIES INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
@@ -1177,7 +1207,7 @@ add_executable(static_client main.cpp)
 target_link_libraries(static_client PRIVATE sima_neat_static)
 # This belongs to the final static consumer, not Core's archive/interface.
 set_target_properties(static_client PROPERTIES INSTALL_RPATH
-  "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/neat/runtime;$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/neat/gst-plugins")
+  "$ORIGIN/../${PROVIDER_RUNTIME_DIR};$ORIGIN/../${PROVIDER_PLUGIN_DIR}")
 add_executable(static_without_path main.cpp)
 target_link_libraries(static_without_path PRIVATE sima_neat_static)
 install(TARGETS shared_client static_client static_without_path DESTINATION bin)
@@ -1211,13 +1241,19 @@ install(TARGETS shared_client static_client static_without_path DESTINATION bin)
     # Remove the original directory name from lookup, proving relocation rather
     # than accidentally finding the original installation or build tree.
     installed.rename(tmp_path / 'original-install-not-at-its-old-path')
+    shutil.rmtree(build)
+    expected_rpath = ':'.join('$ORIGIN/' + os.path.relpath(directory, libdir)
+                              for directory in (runtime_dir, plugin_dir))
     for prefix in (tmp_path / 'original-install-not-at-its-old-path', relocated):
         dynamic = command('readelf', '-d', prefix / libdir / f'libsima_neat.so.{platform_version}').stdout
         assert f'Library soname: [libsima_neat.so.{abi}]' in dynamic
         assert (prefix / libdir / 'libsima_neat.so').readlink().name == f'libsima_neat.so.{abi}'
         assert not (prefix / libdir / 'libsima_neat.so.6').exists()
-        assert '[$ORIGIN/neat/runtime:$ORIGIN/neat/gst-plugins]' in dynamic
+        assert '[' + expected_rpath + ']' in dynamic
         assert str(tmp_path) not in dynamic
+        assert 'libfixture_plugin' in dynamic and 'libfixture_runtime' in dynamic
+        runtime_dynamic = command('readelf', '-d', prefix / runtime_dir / 'libfixture_runtime.so').stdout
+        assert 'libfixture_plugin' in runtime_dynamic
         needed = command('readelf', '-d', prefix / 'bin/shared_client').stdout
         assert f'Shared library: [libsima_neat.so.{abi}]' in needed
         assert 'Shared library: [libsima_neat.so.6]' in command(
@@ -1233,6 +1269,48 @@ install(TARGETS shared_client static_client static_without_path DESTINATION bin)
         static_dynamic = command('readelf', '-d', prefix / 'bin/static_client').stdout
         assert 'Shared library: [libsima_neat' not in static_dynamic
         assert 'libfixture_plugin' in static_dynamic and 'libfixture_runtime' in static_dynamic
+
+
+@pytest.mark.parametrize('overrides,error', [
+    ({'SimaScheduler_BUILD_RECEIPT': ''}, 'absolute SimaScheduler_BUILD_RECEIPT'),
+    ({'SimaScheduler_BUILD_RECEIPT': 'share/SimaScheduler/buildinfo.json'},
+     'absolute SimaScheduler_BUILD_RECEIPT'),
+    ({'SimaScheduler_BUILD_RECEIPT': '/selected/share/other/buildinfo.json'},
+     'receipt must use share/SimaScheduler/buildinfo.json'),
+    ({'SimaScheduler_RUNTIME_DIR': ''}, 'absolute SimaScheduler_RUNTIME_DIR'),
+    ({'SimaScheduler_PLUGIN_DIR': 'lib/neat/gst-plugins'}, 'absolute SimaScheduler_PLUGIN_DIR'),
+    ({'SimaScheduler_RUNTIME_DIR': '/selected/../other/runtime'},
+     'SimaScheduler_RUNTIME_DIR must remain within'),
+    ({'SimaScheduler_PLUGIN_DIR': '/selected-sibling/plugins'},
+     'SimaScheduler_PLUGIN_DIR must remain within'),
+    ({'CMAKE_INSTALL_LIBDIR': '../lib'}, 'CMAKE_INSTALL_LIBDIR must remain within'),
+    ({'CMAKE_INSTALL_LIBDIR': '/other/lib'}, 'CMAKE_INSTALL_LIBDIR must remain within'),
+    ({'CMAKE_INSTALL_LIBDIR': ''}, 'CMAKE_INSTALL_LIBDIR must not be empty'),
+    ({'CMAKE_INSTALL_LIBDIR': '/core/lib'}, None),
+    ({'SimaScheduler_RUNTIME_DIR': '/selected/lib/../lib/neat/runtime'}, None),
+])
+def test_scheduler_install_rpath_uses_confined_declared_layout(tmp_path, overrides, error):
+    variables = {
+        'CMAKE_INSTALL_PREFIX': '/core', 'CMAKE_INSTALL_LIBDIR': 'lib',
+        'SimaScheduler_BUILD_RECEIPT': '/selected/share/SimaScheduler/buildinfo.json',
+        'SimaScheduler_RUNTIME_DIR': '/selected/lib/neat/runtime',
+        'SimaScheduler_PLUGIN_DIR': '/selected/lib/neat/gst-plugins',
+        'PACKAGE_PREFIX_DIR': '/unrelated-dependency',
+        **overrides,
+    }
+    script = tmp_path / 'layout.cmake'
+    script.write_text('\n'.join(f'set({key} "{value}")' for key, value in variables.items()) + f'''
+include("{ROOT}/cmake/SchedulerInstallRpath.cmake")
+simaneat_scheduler_install_rpath(result)
+message(STATUS "selected-rpath=${{result}}")
+''')
+    result = subprocess.run(['cmake', '-P', str(script)], text=True, capture_output=True)
+    assert (result.returncode != 0) == bool(error), result.stdout + result.stderr
+    if error:
+        assert error in result.stderr
+        assert 'selected-rpath=' not in result.stdout
+    else:
+        assert 'selected-rpath=$ORIGIN/neat/runtime;$ORIGIN/neat/gst-plugins' in result.stdout
 
 
 @pytest.mark.parametrize('installed_abi', ['6', 'selected'])

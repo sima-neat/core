@@ -390,6 +390,8 @@ endif()
 # no sibling/SDK lower-header or ad hoc library fallback is admitted.
 find_package(SimaScheduler CONFIG REQUIRED COMPONENTS frontend)
 include(cmake/SchedulerRenderCapability.cmake)
+include(cmake/SchedulerInstallRpath.cmake)
+simaneat_scheduler_install_rpath(SIMANEAT_SCHEDULER_INSTALL_RPATH)
 set(SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES "${SimaScheduler_RUNTIME_DIR}")
 set(SIMANEAT_NEAT_ALLOCATOR_DIR "${SimaScheduler_PLUGIN_DIR}")
 set(SIMANEAT_NEAT_BUFFERPOOL_DIR "${SimaScheduler_PLUGIN_DIR}")
@@ -483,9 +485,9 @@ set_target_properties(sima_neat PROPERTIES
   # independently versioned public C++ ABI that consumers record in DT_NEEDED.
   VERSION "${SIMANEAT_PLATFORM_VERSION}"
   SOVERSION "${SIMANEAT_ABI_VERSION}"
-  # Frontend support DSOs are private siblings of the installed Core library.
-  # Keep the consumer relocatable without advertising plugin paths globally.
-  INSTALL_RPATH "$ORIGIN/neat/runtime;$ORIGIN/neat/gst-plugins"
+  # Core and its selected frontend may use different install libdirs. Keep the
+  # composed prefix relocatable without advertising plugin paths globally.
+  INSTALL_RPATH "${SIMANEAT_SCHEDULER_INSTALL_RPATH}"
 )
 
 add_library(sima_neat_static STATIC
