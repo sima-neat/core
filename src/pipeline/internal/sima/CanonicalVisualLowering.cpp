@@ -67,8 +67,11 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
       member.outputs.push_back(1);
     }
     const std::array inputs{image};
-    const std::array<Parameter, 2> parameters{
-        {{"threshold", cfg.threshold}, {"output_encoding", "packed"}}};
+    const std::array<Parameter, 5> parameters{{{"threshold", cfg.threshold},
+                                               {"output_encoding", "packed"},
+                                               {"grid_columns", cfg.grid_x},
+                                               {"grid_rows", cfg.grid_y},
+                                               {"minimum_distance", cfg.min_px_dist}}};
     append(check_kernel({brief ? "fast_brief" : "fast", Hardware::EV74, inputs, out, parameters}),
            std::move(member));
   } else if (cfg.graph_name == "track_klt") {
@@ -102,8 +105,11 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
       const std::array detection_inputs{image},
           detection_outputs{TensorSpec{
               std::vector<std::int64_t>{b, 1 + 3 * std::int64_t(cfg.max_features)}, DType::Int32}};
-      const std::array<Parameter, 2> parameters{
-          {{"threshold", cfg.fast_threshold}, {"output_encoding", "packed"}}};
+      const std::array<Parameter, 5> parameters{{{"threshold", cfg.fast_threshold},
+                                                 {"output_encoding", "packed"},
+                                                 {"grid_columns", cfg.grid_x},
+                                                 {"grid_rows", cfg.grid_y},
+                                                 {"minimum_distance", cfg.min_px_dist}}};
       append(
           check_kernel({"fast", Hardware::EV74, detection_inputs, detection_outputs, parameters}),
           {{1}, {2}, {0}});
