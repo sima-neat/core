@@ -585,7 +585,7 @@ jobs:
           test -f "${skill_root}/references/build-and-validation.md"
 
           python3 -m venv "${python_venv}"
-          "${python_venv}/bin/python" -m pip install pcie_host/dist/pyneatpcie-*.whl
+          "${python_venv}/bin/python" -m pip install pcie_host/dist/pyneatpcie-*.whl pytest
 
           cmake \
             -S pcie_host/tests/package_smoke \
@@ -607,6 +607,11 @@ jobs:
           assert pyneatpcie.Completion
           assert pyneatpcie.Tensor
           PY
+
+          "${python_venv}/bin/python" scripts/ci/pciehost/run_cpu_package_tests.py \
+            --workspace "${GITHUB_WORKSPACE}" \
+            --distribution pcie_host/dist \
+            --work-directory "${RUNNER_TEMP}/sima-pcie-host-cpu-tests"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -1491,7 +1496,9 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    # Physical PCIe qualification is excluded; CPU coverage runs in all four
+    # existing installed-package smoke profiles above.
+    if: ${{ false }}
     needs:
       - detect-changes
       - resolve-vulcan-config

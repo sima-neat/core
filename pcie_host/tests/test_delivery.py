@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Core composition tests use a provider seam, not copied Scheduler policy."""
+import ast
 import importlib.util
 import io
 import json
@@ -16,6 +17,9 @@ spec = importlib.util.spec_from_file_location('delivery', ROOT / 'scripts/pcie_d
 delivery = importlib.util.module_from_spec(spec); spec.loader.exec_module(delivery)
 spec = importlib.util.spec_from_file_location('native_acquisition', ROOT / 'scripts/acquire_scheduler.py')
 acquisition = importlib.util.module_from_spec(spec); spec.loader.exec_module(acquisition)
+spec = importlib.util.spec_from_file_location(
+    'cpu_package_tests', ROOT.parent / 'scripts/ci/pciehost/run_cpu_package_tests.py')
+cpu_tests = importlib.util.module_from_spec(spec); spec.loader.exec_module(cpu_tests)
 
 
 class Delivery(unittest.TestCase):
@@ -243,6 +247,132 @@ GENAI_CMAKE_ARGS=()
             with patch.object(delivery, 'load_provider') as provider:
                 provider.return_value.verify.return_value = {'resources': resources}
                 with self.assertRaises(ValueError): delivery.compose(path, root / 'out')
+
+
+class CpuPackageCoverage(unittest.TestCase):
+    def test_selection_preserves_cpu_modules_and_only_two_mixed_file_cases(self):
+        self.assertEqual(cpu_tests.CPU_TESTS, (
+            'test_api_surface.py', 'test_genai_tutorials.py', 'test_genai_values.py',
+            'test_metadata.py', 'test_wheel_metadata.py',
+            'test_hardware_smoke.py::test_async_test_runner_cancels_blocked_peer',
+            'test_hardware_smoke.py::test_metadata_yolov8'))
+        for node in cpu_tests.CPU_TESTS:
+            self.assertTrue((ROOT / 'python/tests' / node.split('::')[0]).is_file())
+
+    def test_current_selected_source_preserves_all_36_audited_cpu_cases(self):
+        # Audit today's coverage, without a fixed-count gate in the CI runner.
+        count = 0
+        for node in cpu_tests.CPU_TESTS:
+            filename, _, selected_function = node.partition('::')
+            tree = ast.parse((ROOT / 'python/tests' / filename).read_text())
+            functions = [item for item in tree.body if isinstance(item, ast.FunctionDef)
+                         and item.name.startswith('test_')
+                         and (not selected_function or item.name == selected_function)]
+            self.assertTrue(functions, node)
+            for function in functions:
+                cases = 1
+                for decorator in function.decorator_list:
+                    if (isinstance(decorator, ast.Call)
+                            and isinstance(decorator.func, ast.Attribute)
+                            and decorator.func.attr == 'parametrize'):
+                        cases *= len(ast.literal_eval(decorator.args[1]))
+                count += cases
+        self.assertEqual(count, 36)
+
+    def test_workflow_keeps_cpu_coverage_in_existing_smoke_and_excludes_physical_job(self):
+        workflow = (ROOT.parent / '.github/workflows/vulcan-ci.yml').read_text()
+        smoke = workflow.split('      - name: Smoke test staged PCIe host packages and wheel\n', 1)[1]
+        smoke = smoke.split('\n      - name:', 1)[0]
+        self.assertIn('pcie_host/dist/pyneatpcie-*.whl pytest', smoke)
+        self.assertIn('"${python_venv}/bin/python" scripts/ci/pciehost/run_cpu_package_tests.py', smoke)
+        self.assertIn('--distribution pcie_host/dist', smoke)
+        # Read the top-level condition, not a nested shell or step condition.
+        hardware = workflow.split('\n  test-pciehost-hardware:\n', 1)[1]
+        self.assertEqual(next(line.strip() for line in hardware.splitlines()
+                              if line.startswith('    if:')), 'if: ${{ false }}')
+
+    def test_models_are_required_even_when_original_tests_would_skip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            model = Path(temporary) / 'actual-model-path'
+            model.write_bytes(b'fixture-only path validation, not a model oracle')
+            environment = {name: str(model) for name in cpu_tests.MODEL_VARIABLES}
+            cpu_tests.validate_models(environment)
+            for name in cpu_tests.MODEL_VARIABLES:
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
+                    cpu_tests.validate_models({**environment, name: '/missing/model'})
+            model.write_bytes(b'')
+            with self.assertRaisesRegex(ValueError, 'required CPU metadata model'):
+                cpu_tests.validate_models(environment)
+
+    def test_installed_tutorials_must_match_current_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            extras = Path(temporary)
+            target = extras / 'share/sima-pcie-host/tutorials/029_run_genai_over_pcie'
+            target.mkdir(parents=True)
+            for name in ('run_llm.py', 'run_vlm.py', 'run_whisper.py'):
+                (target / name).write_bytes(
+                    (ROOT / 'tutorials/029_run_genai_over_pcie' / name).read_bytes())
+            cpu_tests.verify_tutorials(ROOT.parent, extras)
+            (target / 'run_vlm.py').write_text('stale installed tutorial')
+            with self.assertRaisesRegex(ValueError, 'run_vlm.py'):
+                cpu_tests.verify_tutorials(ROOT.parent, extras)
+
+    def test_collection_matches_executed_parameterized_inventory(self):
+        collected = cpu_tests.collected_tests(
+            'pcie_host/python/tests/test_api_surface.py::test_options_surface\n'
+            'pcie_host/python/tests/test_metadata.py::test_load[BF16]\n\n2 tests collected\n')
+        self.assertEqual(len(collected), 2)
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / 'report.xml'
+            cases = ('<testcase classname="pcie_host.python.tests.test_api_surface" '
+                     'name="test_options_surface"/>',
+                     '<testcase classname="pcie_host.python.tests.test_metadata" '
+                     'name="test_load[BF16]"/>')
+            report.write_text('<testsuites><testsuite>' + ''.join(cases) + '</testsuite></testsuites>')
+            cpu_tests.verify_python_report(collected, report)
+            for changed in (cases[:1], (*cases, cases[0])):
+                report.write_text('<testsuites><testsuite>' + ''.join(changed) + '</testsuite></testsuites>')
+                with self.subTest(cases=len(changed)), self.assertRaisesRegex(ValueError, 'inventory'):
+                    cpu_tests.verify_python_report(collected, report)
+            for tag in ('skipped', 'failure', 'error'):
+                report.write_text('<testsuites><testsuite>' + cases[0] +
+                                 cases[1].replace('/>', f'><{tag}/></testcase>') +
+                                 '</testsuite></testsuites>')
+                with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, 'skip, failure or error'):
+                    cpu_tests.verify_python_report(collected, report)
+
+    def test_collection_never_accepts_empty_or_duplicate_inventory(self):
+        node = 'pcie_host/python/tests/test_metadata.py::test_load'
+        for output in ('no tests collected', node + '\n' + node):
+            with self.subTest(output=output), self.assertRaisesRegex(ValueError, 'empty or duplicated'):
+                cpu_tests.collected_tests(output)
+
+    def test_parameter_ids_preserve_path_and_node_separators(self):
+        for parameter in ('/nonexistent/neat-model', 'path/file.py::value[inner]'):
+            with self.subTest(parameter=parameter), tempfile.TemporaryDirectory() as temporary:
+                node = f'pcie_host/python/tests/test_genai_values.py::test_host_model_path_validation[{parameter}]'
+                expected = f'pcie_host.python.tests.test_genai_values.test_host_model_path_validation[{parameter}]'
+                collected = cpu_tests.collected_tests(node)
+                self.assertEqual(collected, {expected})
+                report = Path(temporary) / 'report.xml'
+                report.write_text('<testsuite><testcase classname="pcie_host.python.tests.test_genai_values" '
+                                  f'name="test_host_model_path_validation[{parameter}]"/></testsuite>')
+                cpu_tests.verify_python_report(collected, report)
+
+    def test_cpp_metadata_report_never_accepts_missing_extra_or_skipped_cases(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / 'metadata.xml'
+            case = '<testcase name="test_metadata"/>'
+            report.write_text('<testsuite>' + case + '</testsuite>')
+            cpu_tests.verify_metadata_report(report)
+            for changed in ('', case * 2, '<testcase name="test_tensor_run"/>'):
+                report.write_text('<testsuite>' + changed + '</testsuite>')
+                with self.subTest(cases=changed), self.assertRaisesRegex(ValueError, 'inventory'):
+                    cpu_tests.verify_metadata_report(report)
+            for tag in ('skipped', 'failure', 'error'):
+                report.write_text('<testsuite>' + case.replace('/>', f'><{tag}/></testcase>') + '</testsuite>')
+                with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, 'skip, failure or error'):
+                    cpu_tests.verify_metadata_report(report)
 
 
 if __name__ == '__main__': unittest.main()
