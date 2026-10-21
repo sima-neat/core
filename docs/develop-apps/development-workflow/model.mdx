@@ -931,6 +931,12 @@ telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
 </CodeTab>
 </CodeTabs>
 
+By default, the monitor reads `/run/simaai-sentinel/api.sock`. To use a Sentinel Unix socket
+mounted at another path, pass its path to `TelemetryMonitor(socket_path)` in C++ or
+`pyneat.TelemetryMonitor(socket_path="...")` in Python. This selects the endpoint for that monitor
+only; it does not change `Model::benchmark()` or start Sentinel. Construction does not contact
+the socket.
+
 - `start()` begins a new window. Only samples Sentinel takes after it count, and Sentinel samples
   every 2 s, so a window shorter than that can have none; `status` then says so.
 - `read()` returns the summary so far without stopping. Each measurement's `last` is its newest

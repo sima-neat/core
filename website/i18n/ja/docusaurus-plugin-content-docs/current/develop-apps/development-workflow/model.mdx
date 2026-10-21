@@ -894,6 +894,8 @@ telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
 </CodeTab>
 </CodeTabs>
 
+モニターは既定で `/run/simaai-sentinel/api.sock` を読み取ります。別のパスにマウントした Sentinel の Unix ソケットを使う場合は、C++ では `TelemetryMonitor(socket_path)`、Python では `pyneat.TelemetryMonitor(socket_path="...")` にそのパスを渡してください。この指定はそのモニターの接続先だけを選び、`Model::benchmark()` を変更したり Sentinel を起動したりしません。構築時にはソケットへ接続しません。
+
 - `start()` は新しいウィンドウを開始します。その後に Sentinel が取得したサンプルだけが集計されます。Sentinel は 2 秒ごとにサンプリングするため、それより短いウィンドウではサンプルが 1 つもない場合があり、その場合は `status` がそのことを示します。
 - `read()` は、停止せずにその時点までのサマリーを返します。各測定値の `last` は最新の値で、`mean`、`minimum`、`maximum` はその時点までのウィンドウを対象とします。
 - `stop()` は最終的なサマリーを返します。再度呼び出しても同じ結果を返します。

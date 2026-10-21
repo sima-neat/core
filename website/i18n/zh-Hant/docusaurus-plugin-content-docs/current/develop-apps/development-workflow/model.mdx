@@ -902,6 +902,8 @@ telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
 </CodeTab>
 </CodeTabs>
 
+監控器預設讀取 `/run/simaai-sentinel/api.sock`。若要使用掛載於其他路徑的 Sentinel Unix 通訊端，請在 C++ 中將路徑傳入 `TelemetryMonitor(socket_path)`，或在 Python 中使用 `pyneat.TelemetryMonitor(socket_path="...")`。這只會選擇該監控器的端點，不會變更 `Model::benchmark()` 或啟動 Sentinel。建構時不會連線至通訊端。
+
 - `start()` 會開始一個新的視窗。只有 Sentinel 在此之後取得的樣本才會計入，而 Sentinel 每 2 秒取樣一次，因此短於此長度的視窗可能沒有任何樣本；此時 `status` 會指出這一點。
 - `read()` 會傳回目前為止的摘要，而不會停止監控。每項測量的 `last` 是其最新的數值，而 `mean`、`minimum` 與 `maximum` 涵蓋目前為止的視窗。
 - `stop()` 會傳回最終摘要。再次呼叫會傳回相同的結果。

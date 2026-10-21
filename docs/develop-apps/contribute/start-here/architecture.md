@@ -450,6 +450,10 @@ the last counted one, the worker counts the missed samples from the cache, which
 latest 240 samples. The monitor creates nothing in Sentinel, so any number of monitors can run at
 once and a killed process leaves nothing behind.
 
+The default monitor uses the socket above. An explicit `TelemetryMonitor(socket_path)` selects
+another Sentinel Unix socket for that instance only; `Model::benchmark()` retains the default
+endpoint.
+
 `Model::benchmark()` uses this same monitor, not a second trace engine. It cold-prepares the
 connection and waiting worker before the throughput timer, arms the window after measurement
 starts, and seals it after all required outputs complete but before stopping measurement.

@@ -694,9 +694,11 @@ private:
   std::set<std::string> warned_;
 };
 
-TelemetryMonitor::TelemetryMonitor()
-    : impl_(std::make_unique<Impl>(pipeline_internal::SentinelClient(
-          pipeline_internal::kSentinelSocketPath, kRequestTimeout))) {}
+TelemetryMonitor::TelemetryMonitor() : TelemetryMonitor(pipeline_internal::kSentinelSocketPath) {}
+
+TelemetryMonitor::TelemetryMonitor(std::string socket_path)
+    : impl_(std::make_unique<Impl>(
+          pipeline_internal::SentinelClient(std::move(socket_path), kRequestTimeout))) {}
 
 TelemetryMonitor::~TelemetryMonitor() = default;
 TelemetryMonitor::TelemetryMonitor(TelemetryMonitor&&) noexcept = default;
@@ -731,10 +733,7 @@ void internal::TelemetryMonitorAccess::seal_benchmark(TelemetryMonitor& monitor)
 }
 
 TelemetryMonitor internal::TelemetryMonitorAccess::make(std::string sentinel_socket_path) {
-  TelemetryMonitor monitor;
-  monitor.impl_ = std::make_unique<TelemetryMonitor::Impl>(
-      pipeline_internal::SentinelClient(std::move(sentinel_socket_path), kRequestTimeout));
-  return monitor;
+  return TelemetryMonitor(std::move(sentinel_socket_path));
 }
 
 } // namespace simaai::neat

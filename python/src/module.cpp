@@ -4741,6 +4741,7 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<TelemetryMonitor>(m, "TelemetryMonitor")
       .def(nb::init<>())
+      .def(nb::init<std::string>(), "socket_path"_a)
       .def("start", &TelemetryMonitor::start, nb::call_guard<nb::gil_scoped_release>())
       .def("read", &TelemetryMonitor::read, nb::call_guard<nb::gil_scoped_release>())
       .def("stop", &TelemetryMonitor::stop, nb::call_guard<nb::gil_scoped_release>())

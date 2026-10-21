@@ -423,7 +423,7 @@ public:
   }
 
   TelemetryMonitor monitor() const {
-    return TelemetryMonitorAccess::make(path_);
+    return TelemetryMonitor(path_);
   }
 
 private:
@@ -515,6 +515,29 @@ void take_samples_over_time(FakeSentinel& sentinel, const std::vector<double>& p
     std::this_thread::sleep_for(std::chrono::milliseconds(kIntervalMs));
     sentinel.take_sample(power);
   }
+}
+
+void explicit_monitor_endpoints_are_independent() {
+  TelemetryMonitor default_monitor;
+  require(!default_monitor.running() && default_monitor.read().status == "not started",
+          "the default constructor remains stopped and contacts nothing");
+  RunningSentinel first;
+  RunningSentinel second;
+  auto first_monitor = first.monitor();
+  auto second_monitor = second.monitor();
+  require(first.requests("/v1/cache") == 0 && second.requests("/v1/cache") == 0,
+          "explicit endpoint constructors contact nothing");
+  first_monitor.start();
+  require(first.requests("/v1/cache") == 1 && second.requests("/v1/cache") == 0,
+          "a monitor contacts only its selected endpoint");
+  second_monitor.start();
+  take_samples_over_time(first, {3.0});
+  take_samples_over_time(second, {11.0});
+  wait_for_samples(first_monitor, 1);
+  wait_for_samples(second_monitor, 1);
+  require(first_monitor.stop().power_som_watts.mean == 3.0 &&
+              second_monitor.stop().power_som_watts.mean == 11.0,
+          "separate endpoints keep their own telemetry values");
 }
 
 void monitor_counts_each_new_sample_once() {
@@ -962,6 +985,7 @@ RUN_TEST("unit_telemetry_monitor_test", ([] {
            run_case("summary_without_mla_rail", summary_without_mla_rail);
            run_case("summary_size", summary_size_does_not_grow_with_the_window);
            run_case("save_and_print", telemetry_saves_and_prints_the_same_yaml);
+           run_case("explicit_endpoints", explicit_monitor_endpoints_are_independent);
            run_case("counts_each_sample_once", monitor_counts_each_new_sample_once);
            run_case("burst_from_cache", monitor_counts_a_burst_of_samples_from_the_cache);
            run_case("catches_up_after_errors", monitor_catches_up_after_sentinel_errors);
