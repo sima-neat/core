@@ -13,11 +13,13 @@ sidebar_position: 5
 записує діагностику постачальника у стандартний потік помилок. Вивід JSON
 зберігає наявну схему й повідомляє недоступні версії як `null`.
 
+Розділена інсталяція показує `simaai-runner` і `simaai-scheduler`. На DevKit версії беруться з бази встановлених пакетів, у SDK — з керувальних метаданих кешованих DEB. Рядки застарілих `neat-runtime` і `neat-gst-plugins` залишаються видимими, якщо ці пакети присутні або жодного розділеного компонента не виявлено. JSON додає `components.runner` і `components.scheduler`, зберігаючи старі ключі `runtime` та `gstPlugins`; відсутні версії залишаються `null`.
+
 <ShellCommand prompt="sdk-or-devkit">
 neat
 </ShellCommand>
 
-Приклад виводу:
+Приклад виводу застарілої інсталяції:
 
 ```text
 Neat Environment

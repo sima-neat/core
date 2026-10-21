@@ -12,11 +12,13 @@ sidebar_position: 5
 `unknown`，且 `neat` 會將提供者的診斷寫入標準錯誤。
 JSON 輸出保持現有結構描述，並將無法取得的版本回報為 `null`。
 
+拆分安裝會顯示 `simaai-runner` 與 `simaai-scheduler`。DevKit 從已安裝套件資料庫讀取版本；SDK 從快取 DEB 的控制中繼資料讀取版本。當舊版 `neat-runtime` 與 `neat-gst-plugins` 套件存在，或未偵測到拆分元件時，仍顯示其列。JSON 新增 `components.runner` 與 `components.scheduler`，並保留舊版 `runtime`、`gstPlugins` 鍵；不存在的版本仍為 `null`。
+
 <ShellCommand prompt="sdk-or-devkit">
 neat
 </ShellCommand>
 
-範例輸出：
+舊版安裝的輸出範例：
 
 ```text
 Neat Environment

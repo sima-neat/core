@@ -13,11 +13,13 @@ PyNeat 또는 Insight가 설치되어 있지 않아도 상태 보고는 계속�
 표준 오류에 기록합니다. JSON 출력은 기존 스키마를 유지하며 사용할 수 없는
 버전은 `null`로 보고합니다.
 
+분할 설치에서는 `simaai-runner`와 `simaai-scheduler`를 표시합니다. DevKit에서는 설치된 패키지 데이터베이스, SDK에서는 캐시된 DEB 제어 메타데이터에서 버전을 읽습니다. 레거시 `neat-runtime`과 `neat-gst-plugins` 행은 해당 패키지가 있거나 분할 컴포넌트가 감지되지 않을 때 표시됩니다. JSON은 기존 `runtime`, `gstPlugins` 키를 유지하면서 `components.runner`, `components.scheduler`를 추가합니다. 없는 버전은 계속 `null`입니다.
+
 <ShellCommand prompt="sdk-or-devkit">
 neat
 </ShellCommand>
 
-예시 출력:
+레거시 설치의 출력 예:
 
 ```text
 Neat Environment

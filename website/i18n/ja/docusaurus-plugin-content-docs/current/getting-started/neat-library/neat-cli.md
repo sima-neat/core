@@ -10,11 +10,13 @@ SDKでは、ステータス出力に、`$HOME/.insight-config/neat-port-map.json
 
 PyNeat または Insight がインストールされていなくても、ステータスは報告できます。バージョンの照会に失敗した場合、コンポーネントには `unknown` が表示され、`neat` はプロバイダーの診断を標準エラーに出力します。JSON 出力は既存のスキーマを維持し、取得できないバージョンを `null` として報告します。
 
+分割構成のインストールでは `simaai-runner` と `simaai-scheduler` を表示します。DevKit のバージョンはインストール済みパッケージデータベースから、SDK のバージョンはキャッシュされた DEB の制御メタデータから取得します。従来の `neat-runtime` と `neat-gst-plugins` の行は、それらが存在する場合、または分割コンポーネントが検出されない場合に表示します。JSON には `components.runner` と `components.scheduler` を追加し、既存の `runtime` と `gstPlugins` キーを維持します。存在しないバージョンは引き続き `null` です。
+
 <ShellCommand prompt="sdk-or-devkit">
 neat
 </ShellCommand>
 
-例：
+従来の構成での出力例:
 
 ```text
 Neat Environment

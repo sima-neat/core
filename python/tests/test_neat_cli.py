@@ -44,7 +44,7 @@ def base_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
     tools.mkdir()
     for name in (
         "awk", "basename", "bash", "cat", "dirname", "env", "find", "grep",
-        "head", "mkdir", "mktemp", "python3", "rm", "sed", "sort", "tail", "tr",
+        "head", "mkdir", "mktemp", "python3", "rm", "sed", "sort", "tail", "tar", "tr",
     ):
         executable = shutil.which(name, path="/usr/bin:/bin")
         assert executable is not None, f"required CLI test tool is missing: {name}"
@@ -894,6 +894,105 @@ def test_devkit_status_uses_dpkg_and_pyneat_venv(tmp_path: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["environment"]["mode"] == "modalix-board"
     assert payload["environment"]["devkitBuildVersion"] == "2.0.0_master_B827"
+
+
+@pytest.mark.parametrize("mode", ["devkit", "sdk"])
+@pytest.mark.parametrize("cohort", ["split", "runner-only", "scheduler-only", "legacy", "mixed"])
+def test_status_reports_actual_split_and_legacy_components(
+    tmp_path: Path, mode: str, cohort: str
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    versions = {}
+    if cohort in ("split", "runner-only", "mixed"):
+        versions["simaai-runner"] = "0.1.0+runner.fixture"
+    if cohort in ("split", "scheduler-only", "mixed"):
+        versions["simaai-scheduler"] = "0.2.0+scheduler.fixture"
+    if cohort in ("legacy", "mixed"):
+        versions["neat-runtime"] = "0.5.0+legacy.fixture"
+        versions["neat-gst-plugins"] = "0.5.0+legacy.fixture"
+    if mode == "devkit":
+        buildinfo = tmp_path / "buildinfo"
+        buildinfo.write_text("DISTRO = eLxr\nMACHINE = modalix\n", encoding="utf-8")
+        env["NEAT_BUILDINFO_FILE"] = str(buildinfo)
+        cases = "\n".join(f"{name}) printf '%s' '{version}' ;;" for name, version in versions.items())
+        write_exe(
+            bin_dir / "dpkg-query",
+            f'#!/usr/bin/env bash\ncase "${{@: -1}}" in\n{cases}\n*) exit 1 ;;\nesac\n',
+        )
+    else:
+        release = tmp_path / "sdk-release"
+        release.write_text("SDK Version = fixture\n", encoding="utf-8")
+        env["ELXR_SDK_RELEASE_FILE"] = str(release)
+        cache = tmp_path / "sysroot" / "neat-install-packages"
+        cache.mkdir(parents=True)
+        env["SYSROOT"] = str(cache.parent)
+        (bin_dir / "dpkg-deb").symlink_to(shutil.which("dpkg-deb", path="/usr/bin:/bin"))
+        for name, version in versions.items():
+            if name.startswith("simaai-"):
+                write_status_deb(tmp_path, cache / f"{name}.deb", name, version)
+            else:
+                (cache / f"{name}_{version}_arm64.deb").write_text("", encoding="utf-8")
+
+    text = run_neat(tmp_path, ["status", "--offline", "--color=never"], env)
+    result = run_neat(tmp_path, ["status", "--offline", "--json"], env)
+    assert text.returncode == result.returncode == 0, text.stderr + result.stderr
+    components = json.loads(result.stdout)["components"]
+    split = "simaai-runner" in versions or "simaai-scheduler" in versions
+    for key, name in (
+        ("runtime", "neat-runtime"), ("gstPlugins", "neat-gst-plugins"),
+        ("runner", "simaai-runner"), ("scheduler", "simaai-scheduler"),
+    ):
+        assert components[key] == {"name": name, "version": versions.get(name)}
+        visible = split if key in ("runner", "scheduler") else name in versions or not split
+        if visible:
+            assert versions.get(name, "not installed") in component_line(text.stdout, name)
+        else:
+            assert name not in text.stdout
+
+
+def write_status_deb(tmp_path: Path, archive: Path, name: str, version: str) -> None:
+    package = tmp_path / ("package-" + archive.name)
+    control = package / "DEBIAN"
+    control.mkdir(parents=True)
+    (control / "control").write_text(
+        f"Package: {name}\nVersion: {version}\nArchitecture: all\n"
+        "Maintainer: Test <test@example.invalid>\nDescription: status fixture\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["/usr/bin/dpkg-deb", "--build", "--root-owner-group", str(package), str(archive)],
+        check=True, capture_output=True, text=True,
+    )
+
+
+def test_sdk_split_status_uses_control_identity_not_filename(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    release = tmp_path / "sdk-release"
+    release.write_text("SDK Version = fixture\n", encoding="utf-8")
+    env["ELXR_SDK_RELEASE_FILE"] = str(release)
+    cache = tmp_path / "sysroot with spaces" / "neat-install-packages"
+    cache.mkdir(parents=True)
+    env["SYSROOT"] = str(cache.parent)
+    (bin_dir / "dpkg-deb").symlink_to(shutil.which("dpkg-deb", path="/usr/bin:/bin"))
+    write_status_deb(tmp_path, cache / "simaai-runner.deb", "unrelated-package", "9.9.9")
+    write_status_deb(tmp_path, cache / "runner renamed.deb", "simaai-runner", "0.1.0+actual")
+    write_status_deb(tmp_path, cache / "simaai-scheduler_9.9.9_arm64.deb", "simaai-scheduler", "0.2.0+actual")
+    (cache / "simaai-scheduler.deb").write_text("not a package", encoding="utf-8")
+    result = run_neat(tmp_path, ["status", "--offline", "--json"], env)
+    assert result.returncode == 0, result.stderr
+    components = json.loads(result.stdout)["components"]
+    assert components["runner"]["version"] == "0.1.0+actual"
+    assert components["scheduler"]["version"] == "0.2.0+actual"
+    # An ambiguous cache is not evidence for either version being selected.
+    write_status_deb(tmp_path, cache / "conflicting runner.deb", "simaai-runner", "0.1.0+other")
+    result = run_neat(tmp_path, ["status", "--offline", "--json"], env)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["components"]["runner"]["version"] is None
+    assert "conflicting cached versions of simaai-runner" in result.stderr
 
 
 def test_update_yes_dispatches_core_and_insight_commands(tmp_path: Path) -> None:
