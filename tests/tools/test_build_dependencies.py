@@ -77,7 +77,7 @@ int main() {
 }
 ''')
 
-    def configure(self, sdk_mode='ON', cxx=None):
+    def configure(self, sdk_mode='ON', cxx=None, *, real_cmake=False, sdk=None):
         values = {name: 'OFF' for name in (
             'BUILD_TESTS', 'BUILD_TUTORIALS', 'BUILD_PYTHON', 'STRICT_WARNINGS',
             'SIMA_ENABLE_ASAN', 'SIMA_ENABLE_UBSAN', 'SIMA_ENABLE_TSAN',
@@ -85,7 +85,7 @@ int main() {
             'SKIP_NEAT_LLIMA', 'SIMANEAT_SCCACHE_ACTIVE', 'BUILD_DOCS', 'DOCS_ONLY')}
         values.update(BUILD_DIR=str(self.root / 'build'), BUILD_TYPE='Release',
                       NEAT_PACKAGE_BUILDINFO_JSON='', NEAT_BACKEND_DIR=str(self.root / 'deps'),
-                      ELXR_SDK=sdk_mode, SYSROOT=str(self.sdk),
+                      ELXR_SDK=sdk_mode, SYSROOT=str(self.sdk if sdk is None else sdk),
                       CXX=self.compiler if cxx is None else cxx,
                       CXXFLAGS='-DKEEP_CALLER_FLAG=1', ELXR_HOST_PYTHON_EXECUTABLE=sys.executable,
                       ELXR_TARGET_PYTHON_INCLUDE_DIR=str(self.sdk / 'usr/include/python3.13'),
@@ -93,8 +93,14 @@ int main() {
         script = 'set -euo pipefail\n' + shell_function('configure_cmake') + '\n'
         script += '\n'.join(f'{key}={shlex.quote(value)}' for key, value in values.items())
         script += '\nelxr_ext_platform_triplet() { echo aarch64-linux-gnu; }\n'
-        script += 'cmake() { printf "%s\\n" "$CXXFLAGS"; }\nconfigure_cmake\n'
-        return subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+        if not real_cmake:
+            script += 'cmake() { printf "%s\\n" "$CXXFLAGS"; }\n'
+        script += 'export CXX CXXFLAGS\nconfigure_cmake\n'
+        # Never inherit the surrounding developer container's cross toolchain.
+        env = {key: value for key, value in os.environ.items()
+               if key in ('PATH', 'HOME', 'LANG')}
+        return subprocess.run(['bash', '-c', script], cwd=self.root, env=env,
+                              capture_output=True, text=True)
 
     def compile(self, flags):
         # Compile only: no target executable or floating-point test is run.
@@ -163,6 +169,212 @@ os.execv({self.compiler!r}, [{self.compiler!r}, *sys.argv[1:]])
         malformed = self.configure(cxx='"unterminated compiler')
         self.assertNotEqual(malformed.returncode, 0)
         self.assertEqual(malformed.stdout, '')
+
+    def cmake_project(self):
+        # Real native --sysroot fixture: copy the selected C++ wrappers above,
+        # and make the actual host libc header closure available separately.
+        for parent, destination in ((Path('/usr/include'), self.sdk / 'usr/include'),
+                                    (Path('/usr/include') / self.target, self.target_headers)):
+            for entry in parent.iterdir():
+                target = destination / entry.name
+                if not target.exists():
+                    target.symlink_to(entry)
+        (self.root / 'CMakeLists.txt').write_text(
+            'cmake_minimum_required(VERSION 3.16)\n'
+            'project(SdkCacheProbe LANGUAGES CXX)\n'
+            'add_library(wrappers OBJECT wrappers.cpp)\n')
+        dependencies = self.root / 'deps'
+        dependencies.mkdir()
+        (dependencies / 'dependencies.cmake').write_text(
+            'set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)\n')
+
+    def seed_cache(self, flags, *, native=False, cxx=None):
+        env = {key: value for key, value in os.environ.items()
+               if key in ('PATH', 'HOME', 'LANG')}
+        env.update(CXX=self.compiler if cxx is None else cxx, CXXFLAGS=flags)
+        args = ['cmake', '-S', str(self.root), '-B', str(self.root / 'build'),
+                '-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY']
+        if not native:
+            args.append(f'-DCMAKE_SYSROOT={self.sdk}')
+        result = subprocess.run(args, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def cached_flags(self):
+        return next(line.split('=', 1)[1] for line in
+                    (self.root / 'build/CMakeCache.txt').read_text().splitlines()
+                    if line.startswith('CMAKE_CXX_FLAGS:STRING='))
+
+    def build_probe(self):
+        # Object target only: compile actual wrappers, never execute a target.
+        return subprocess.run(['cmake', '--build', str(self.root / 'build'), '--verbose'],
+                              capture_output=True, text=True)
+
+    def test_nonclean_sdk_cache_migrates_without_losing_caller_flags_or_growing(self):
+        self.cmake_project()
+        caller = "-DKEEP_CACHED_FLAG=1  '-DQUOTED_VALUE=two words'"
+        sentinel = self.root / 'must-not-be-created'
+        caller += ' ' + shlex.quote(f'-DLITERAL=$(touch {sentinel})')
+        legacy = caller + ' ' + shlex.join([
+            '-isystem' + str(self.cpp), '-isystem',
+            str(self.target_headers / 'c++' / self.major)])
+        self.seed_cache(legacy)
+        before = self.build_probe()
+        self.assertNotEqual(before.returncode, 0)
+        self.assertIn('fenv_t', before.stdout + before.stderr)
+        original = self.cached_flags()
+        selected = self.configure(real_cmake=True)
+        self.assertEqual(selected.returncode, 0, selected.stdout + selected.stderr)
+        migrated = self.cached_flags()
+        self.assertTrue(migrated.startswith(original + ' '))
+        self.assertIn(caller, migrated)
+        self.assertNotIn('KEEP_CALLER_FLAG', migrated)
+        after = self.build_probe()
+        self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
+        selected = self.configure(real_cmake=True)
+        self.assertEqual(selected.returncode, 0, selected.stdout + selected.stderr)
+        self.assertEqual(self.cached_flags(), migrated)
+        self.assertEqual(shlex.split(migrated).count('-nostdinc++'), 1)
+        self.assertFalse(sentinel.exists())
+
+    def test_fresh_sdk_cmake_preserves_environment_flags(self):
+        self.cmake_project()
+        selected = self.configure(real_cmake=True)
+        self.assertEqual(selected.returncode, 0, selected.stdout + selected.stderr)
+        self.assertIn('-DKEEP_CALLER_FLAG=1', self.cached_flags())
+        self.assertIn('-nostdinc++', self.cached_flags())
+        result = self.build_probe()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_nonclean_native_cmake_leaves_cached_flags_untouched(self):
+        self.cmake_project()
+        self.seed_cache('-DKEEP_CACHED_FLAG=1', native=True)
+        original = self.cached_flags()
+        selected = self.configure(sdk_mode='OFF', real_cmake=True)
+        self.assertEqual(selected.returncode, 0, selected.stdout + selected.stderr)
+        self.assertEqual(self.cached_flags(), original)
+        result = self.build_probe()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_changed_sdk_or_compiler_rejects_before_changing_cache(self):
+        self.cmake_project()
+        self.seed_cache('-DKEEP_CACHED_FLAG=1')
+        cache = self.root / 'build/CMakeCache.txt'
+        original = cache.read_bytes()
+        other_sdk = self.root / 'other sdk'
+        (other_sdk / 'usr').mkdir(parents=True)
+        (other_sdk / 'usr/include').symlink_to(self.sdk / 'usr/include')
+        wrapper = self.root / 'different compiler'
+        wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(self.compiler)} "$@"\n')
+        wrapper.chmod(0o755)
+        for arguments, diagnostic in (({'sdk': other_sdk}, 'sysroot differs'),
+                                      ({'cxx': shlex.quote(str(wrapper))}, 'compiler differs'),
+                                      ({'cxx': shlex.join([self.compiler, '-DNEW_ARGUMENT=1'])},
+                                       'compiler differs')):
+            with self.subTest(arguments=arguments):
+                selected = self.configure(real_cmake=True, **arguments)
+                self.assertNotEqual(selected.returncode, 0)
+                self.assertIn(diagnostic, selected.stderr)
+                self.assertIn('--clean', selected.stderr)
+                self.assertEqual(cache.read_bytes(), original)
+
+    def test_preloaded_compiler_identity_and_quoted_arguments_remain_supported(self):
+        self.cmake_project()
+        wrapper = self.root / 'compiler with spaces'
+        wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(self.compiler)} "$@"\n')
+        wrapper.chmod(0o755)
+        cxx = shlex.join([str(wrapper), '-DKEEP_COMPILER_ARGUMENT=1'])
+        self.seed_cache('-DKEEP_CACHED_FLAG=1', cxx=cxx)
+        # Toolchain/preload selection can leave only the generated compiler
+        # record, rather than a CMAKE_CXX_COMPILER cache entry (real SDK case).
+        cache = self.root / 'build/CMakeCache.txt'
+        cache.write_text('\n'.join(line for line in cache.read_text().splitlines()
+                                   if line != '//CXX compiler'
+                                   and not line.startswith('CMAKE_CXX_COMPILER:')) + '\n')
+        selected = self.configure(cxx=cxx, real_cmake=True)
+        self.assertEqual(selected.returncode, 0, selected.stdout + selected.stderr)
+        result = self.build_probe()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_incompatible_cached_sdk_header_order_is_not_silently_rewritten(self):
+        self.cmake_project()
+        self.seed_cache(shlex.join(['-isystem', str(self.sdk / 'usr/include')]))
+        cache = self.root / 'build/CMakeCache.txt'
+        original = cache.read_bytes()
+        selected = self.configure(real_cmake=True)
+        self.assertNotEqual(selected.returncode, 0)
+        self.assertIn('cached SDK header order', selected.stderr)
+        self.assertIn('--clean', selected.stderr)
+        self.assertEqual(cache.read_bytes(), original)
+
+    def test_changed_or_missing_compiler_record_requires_clean(self):
+        self.cmake_project()
+        self.seed_cache('-DKEEP_CACHED_FLAG=1')
+        record = next((self.root / 'build/CMakeFiles').glob('*/CMakeCXXCompiler.cmake'))
+        original_record = record.read_text()
+        cache = self.root / 'build/CMakeCache.txt'
+        original_cache = cache.read_bytes()
+        version_line = next(line for line in original_record.splitlines()
+                            if line.startswith('set(CMAKE_CXX_COMPILER_VERSION '))
+        changed = original_record.replace(
+            version_line, f'set(CMAKE_CXX_COMPILER_VERSION "{int(self.major) + 1}.0.0")')
+        for text, diagnostic in ((changed, 'compiler differs'), ('', 'record is incomplete')):
+            with self.subTest(diagnostic=diagnostic):
+                record.write_text(text)
+                selected = self.configure(real_cmake=True)
+                self.assertNotEqual(selected.returncode, 0)
+                self.assertIn(diagnostic, selected.stderr)
+                self.assertIn('--clean', selected.stderr)
+                self.assertEqual(cache.read_bytes(), original_cache)
+
+    def test_prior_nonclean_sysroot_update_cannot_hide_old_sdk_headers(self):
+        self.cmake_project()
+        flags = '-DKEEP_CACHED_FLAG=1 ' + shlex.join([
+            '-isystem', str(self.cpp), '-isystem',
+            str(self.target_headers / 'c++' / self.major)])
+        self.seed_cache(flags)
+        other_sdk = self.root / 'later sdk'
+        (other_sdk / 'usr').mkdir(parents=True)
+        (other_sdk / 'usr/include').symlink_to(self.sdk / 'usr/include')
+        # Reproduce the real historical sequence, not a fabricated cache:
+        # CMake updates its explicit sysroot but ignores new CXXFLAGS.
+        changed = subprocess.run([
+            'cmake', '-S', str(self.root), '-B', str(self.root / 'build'),
+            f'-DCMAKE_SYSROOT={other_sdk}'], capture_output=True, text=True)
+        self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+        self.assertEqual(self.cached_flags(), flags)
+        cache = self.root / 'build/CMakeCache.txt'
+        original = cache.read_bytes()
+        selected = self.configure(sdk=other_sdk, real_cmake=True)
+        self.assertNotEqual(selected.returncode, 0)
+        self.assertIn('header cohort differs', selected.stderr)
+        self.assertIn('--clean', selected.stderr)
+        self.assertEqual(cache.read_bytes(), original)
+
+    def test_foreign_cpp_major_rejected_but_unrelated_user_includes_preserved(self):
+        self.cmake_project()
+        caller_headers = self.root / 'caller headers'
+        caller_headers.mkdir()
+        flags = '-DKEEP_CACHED_FLAG=1 ' + shlex.join(['-isystem', str(caller_headers)])
+        self.seed_cache(flags)
+        selected = self.configure(real_cmake=True)
+        self.assertEqual(selected.returncode, 0, selected.stdout + selected.stderr)
+        self.assertTrue(self.cached_flags().startswith(flags + ' '))
+        foreign = self.sdk / 'usr/include/c++' / str(int(self.major) + 1)
+        self.seed_cache(flags + ' ' + shlex.join(['-isystem', str(foreign)]))
+        # A new CXXFLAGS environment is intentionally ignored by CMake, so set
+        # this explicit caller cache option through CMake for the negative case.
+        changed = subprocess.run([
+            'cmake', '-S', str(self.root), '-B', str(self.root / 'build'),
+            '-DCMAKE_CXX_FLAGS=' + flags + ' ' + shlex.join(['-isystem', str(foreign)])],
+            capture_output=True, text=True)
+        self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+        cache = self.root / 'build/CMakeCache.txt'
+        original = cache.read_bytes()
+        selected = self.configure(real_cmake=True)
+        self.assertNotEqual(selected.returncode, 0)
+        self.assertIn('header cohort differs', selected.stderr)
+        self.assertIn('--clean', selected.stderr)
+        self.assertEqual(cache.read_bytes(), original)
 
 
 class BuildDependenciesTest(unittest.TestCase):

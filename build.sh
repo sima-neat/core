@@ -1718,6 +1718,95 @@ PY
     local cpp_header_flags
     printf -v cpp_header_flags ' -isystem %q' "${cpp_header_dirs[@]}"
     export CXXFLAGS="${CXXFLAGS:-} -nostdinc++${cpp_header_flags}"
+    if [[ -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
+      # CXXFLAGS only initializes a new cache. Preserve cached caller flags and
+      # add missing SDK policy in place; never silently retarget an old tree.
+      local cached_cxx_flags
+      cached_cxx_flags="$(python3 - "${BUILD_DIR}" "${SYSROOT}" \
+        "${CXX:-aarch64-linux-gnu-g++}" "${cross_gcc_major}" "${cpp_header_dirs[@]}" <<'PYSDKCACHE'
+from pathlib import Path
+import re
+import shlex
+import shutil
+import sys
+
+build, sysroot, command, major, *directories = sys.argv[1:]
+
+def reject(reason):
+    raise SystemExit(f"ERROR: {reason}; rerun build.sh with --clean to select the SDK/compiler safely.")
+
+cache = {}
+for line in (Path(build) / "CMakeCache.txt").read_text().splitlines():
+    match = re.fullmatch(r"([^#/:][^:]*):[^=]+=(.*)", line)
+    if match:
+        cache[match[1]] = match[2]
+if not cache.get("CMAKE_SYSROOT") or Path(cache["CMAKE_SYSROOT"]).resolve() != Path(sysroot).resolve():
+    reject("The cached CMake sysroot differs from the selected SDK")
+
+# CMAKE_CXX_COMPILER can be a normal (not cache) variable when supplied by a
+# preload/toolchain. CMake's generated compiler record remains authoritative.
+def scalar(text, key):
+    match = re.search(r'^set\(' + key + r' "((?:[^"\\]|\\.)*)"\)$', text, re.MULTILINE)
+    return re.sub(r'\\([\\"])', r'\1', match[1]) if match else None
+
+records = set()
+for path in Path(build).glob("CMakeFiles/*/CMakeCXXCompiler.cmake"):
+    text = path.read_text()
+    records.add(tuple(scalar(text, key) for key in
+                      ("CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_ARG1", "CMAKE_CXX_COMPILER_VERSION")))
+if len(records) != 1:
+    reject("Cannot identify the cached CMake C++ compiler")
+compiler, arguments, version = records.pop()
+if not compiler or arguments is None or not version:
+    reject("The cached CMake C++ compiler record is incomplete")
+selected = shlex.split(command)
+selected_path = shutil.which(selected[0])
+if (not selected_path or Path(compiler).resolve() != Path(selected_path).resolve()
+        or shlex.split(arguments) != selected[1:] or version.split(".")[0] != major):
+    reject("The cached CMake C++ compiler differs from the selected compiler")
+if cache.get("CMAKE_CXX_COMPILER") and Path(cache["CMAKE_CXX_COMPILER"]).resolve() != Path(compiler).resolve():
+    reject("The cached CMake C++ compiler authorities disagree")
+if "CMAKE_CXX_COMPILER_ARG1" in cache and shlex.split(cache["CMAKE_CXX_COMPILER_ARG1"]) != shlex.split(arguments):
+    reject("The cached CMake C++ compiler argument authorities disagree")
+if "CMAKE_CXX_FLAGS" not in cache:
+    reject("The cached CMake C++ flags are missing")
+
+flags = cache["CMAKE_CXX_FLAGS"]
+try:
+    tokens = shlex.split(flags)
+except ValueError:
+    reject("The cached CMake C++ flags cannot be parsed safely")
+# Inspect without reconstructing caller text, quoting or option order. Existing
+# -isystemDIR and -isystem DIR spellings both count as present.
+includes = []
+for index, token in enumerate(tokens):
+    if token == "-isystem" and index + 1 < len(tokens):
+        includes.append(tokens[index + 1])
+    elif token.startswith("-isystem"):
+        includes.append(token[len("-isystem"):])
+# Older non-clean configures could update CMAKE_SYSROOT while retaining flags
+# from the previous SDK. Reject only recognizable foreign libstdc++ cohorts;
+# unrelated caller include directories remain untouched.
+target = Path(directories[1]).parts[-3]
+for directory in includes:
+    cohort = re.fullmatch(r"(.*)/usr/include/(?:([^/]+)/)?c\+\+/([0-9]+)(?:/backward)?",
+                          str(Path(directory)))
+    if cohort and (Path(cohort[1] or "/").resolve() != Path(sysroot).resolve()
+                   or cohort[3] != major or cohort[2] not in (None, target)):
+        reject("The cached C++ header cohort differs from the selected SDK/compiler")
+missing = [] if "-nostdinc++" in tokens else ["-nostdinc++"]
+for directory in directories:
+    if directory not in includes:
+        missing.extend(("-isystem", directory))
+        includes.append(directory)
+ordered = list(dict.fromkeys(path for path in includes if path in directories))
+if ordered != directories:
+    reject("The cached SDK header order cannot be preserved by appending missing flags")
+print(flags + (" " + shlex.join(missing) if missing else ""))
+PYSDKCACHE
+)"
+      cmake_args+=("-DCMAKE_CXX_FLAGS=${cached_cxx_flags}")
+    fi
 
     cmake_args+=(
       -DCMAKE_SYSROOT="${SYSROOT}"
