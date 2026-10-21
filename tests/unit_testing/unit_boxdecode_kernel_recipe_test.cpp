@@ -10,6 +10,7 @@
 #include <simaai/scheduler/testing/probe.h>
 #include <iostream>
 #include <simaai/scheduler/client/kernel.h>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -147,15 +148,61 @@ void families() {
     input(eff, n, n, 32);
   }
   check(eff, {256, 256, 256, 256, ResizeMode::Letterbox});
-  auto ssd = source(BoxDecodeType::Ssd, 81);
-  ssd.payload.ssd_recipe_id = stagesemantics::SsdRecipeId::Ssd300V1;
-  ssd.payload.score_activation = BoxDecodeScoreActivation::Softmax;
-  const int dims[]{38, 19, 10, 5, 3, 1}, anchors[]{4, 6, 6, 6, 4, 4};
-  for (int i = 0; i < 6; ++i)
-    input(ssd, dims[i], dims[i], anchors[i] * 4);
-  for (int i = 0; i < 6; ++i)
-    input(ssd, dims[i], dims[i], anchors[i] * 81);
-  check(ssd, {300, 300, 300, 300, ResizeMode::Stretch});
+  struct SsdFixture {
+    stagesemantics::SsdRecipeId id;
+    int side, classes;
+    std::array<int, 6> dims, anchors;
+    BoxDecodeScoreActivation activation;
+  };
+  // Independent model signatures: production obtains these facts from the
+  // descriptor registry, while this oracle must not read that same registry.
+  for (const auto& fixture : std::array{SsdFixture{stagesemantics::SsdRecipeId::Ssd300V1,
+                                                   300,
+                                                   81,
+                                                   {38, 19, 10, 5, 3, 1},
+                                                   {4, 6, 6, 6, 4, 4},
+                                                   BoxDecodeScoreActivation::Softmax},
+                                        SsdFixture{stagesemantics::SsdRecipeId::SsdMobile300V1,
+                                                   300,
+                                                   91,
+                                                   {19, 10, 5, 3, 2, 1},
+                                                   {3, 6, 6, 6, 6, 6},
+                                                   BoxDecodeScoreActivation::Sigmoid},
+                                        SsdFixture{stagesemantics::SsdRecipeId::SsdMobile320V1,
+                                                   320,
+                                                   91,
+                                                   {20, 10, 5, 3, 2, 1},
+                                                   {3, 6, 6, 6, 6, 6},
+                                                   BoxDecodeScoreActivation::Sigmoid},
+                                        SsdFixture{stagesemantics::SsdRecipeId::SsdLiteMobile320V1,
+                                                   320,
+                                                   91,
+                                                   {20, 10, 5, 3, 2, 1},
+                                                   {6, 6, 6, 6, 6, 6},
+                                                   BoxDecodeScoreActivation::Softmax}}) {
+    auto ssd = source(BoxDecodeType::Ssd, fixture.classes);
+    ssd.payload.ssd_recipe_id = fixture.id;
+    ssd.payload.score_activation = fixture.activation;
+    for (std::size_t i = 0; i < fixture.dims.size(); ++i)
+      input(ssd, fixture.dims[i], fixture.dims[i], fixture.anchors[i] * 4);
+    for (std::size_t i = 0; i < fixture.dims.size(); ++i)
+      input(ssd, fixture.dims[i], fixture.dims[i], fixture.anchors[i] * fixture.classes);
+    const auto compiled =
+        check(ssd, {fixture.side, fixture.side, fixture.side, fixture.side, ResizeMode::Stretch});
+    const auto native =
+        inspect(compiled.compiled.recipe->members[compiled.decode_member].executable);
+    require(native.inputs().size() == 2 * fixture.dims.size(), "SSD input arity changed");
+    for (std::size_t i = 0; i < fixture.dims.size(); ++i) {
+      const auto& loc = native.inputs()[i];
+      const auto& conf = native.inputs()[i + fixture.dims.size()];
+      require(loc.shape == std::vector<std::int64_t>{fixture.dims[i], fixture.dims[i],
+                                                     fixture.anchors[i] * 4},
+              "SSD localization geometry changed");
+      require(conf.shape == std::vector<std::int64_t>{fixture.dims[i], fixture.dims[i],
+                                                      fixture.anchors[i] * fixture.classes},
+              "SSD confidence geometry changed");
+    }
+  }
 }
 void auxiliary_tasks() {
   for (auto type : {BoxDecodeType::YoloV26Pose, BoxDecodeType::YoloV8Pose}) {

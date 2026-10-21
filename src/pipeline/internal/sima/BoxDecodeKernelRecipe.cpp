@@ -2,6 +2,7 @@
 #include "pipeline/internal/sima/BoxDecodePublication.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
 #include <simaai/scheduler/client/kernel.h>
 #include <algorithm>
@@ -449,8 +450,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
                                                : hwc(input.shape, input.layout)[2];
     };
     std::vector<int> channels(count);
-    std::array<int, 6> ssd_anchors{};
-    int ssd_classes = 0;
+    const stagesemantics::SsdRecipeDescriptor* ssd_descriptor = nullptr;
     std::string_view ssd_recipe = "none";
     int decoded_anchors = 1;
     bool decoded_objectness = false;
@@ -460,37 +460,30 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       switch (p.ssd_recipe_id) {
       case stagesemantics::SsdRecipeId::Ssd300V1:
         ssd_recipe = "ssd300";
-        ssd_anchors = {4, 6, 6, 6, 4, 4};
-        ssd_classes = 81;
         break;
       case stagesemantics::SsdRecipeId::SsdMobile300V1:
         ssd_recipe = "mobilenet300";
-        ssd_anchors = {3, 6, 6, 6, 6, 6};
-        ssd_classes = 91;
         break;
       case stagesemantics::SsdRecipeId::SsdMobile320V1:
         ssd_recipe = "mobilenet320";
-        ssd_anchors = {3, 6, 6, 6, 6, 6};
-        ssd_classes = 91;
         break;
       case stagesemantics::SsdRecipeId::SsdLiteMobile320V1:
         ssd_recipe = "torchvision_lite320";
-        ssd_anchors = {6, 6, 6, 6, 6, 6};
-        ssd_classes = 91;
         break;
       default:
         invalid("SSD recipe is unresolved");
       }
-      if (heads != 6)
-        invalid("SSD requires six localization/confidence pairs");
+      ssd_descriptor = stagesemantics::find_ssd_recipe_descriptor(p.ssd_recipe_id);
+      if (!ssd_descriptor || heads != ssd_descriptor->ordered_levels.size())
+        invalid("SSD head count does not match the selected recipe");
     }
     for (std::size_t h = 0; h < heads; ++h) {
       std::size_t boxes = port(h, 0), scores = combined ? boxes : port(h, x ? 2 : 1);
       std::optional<std::size_t> extra;
       int anchors = (combined || rcnn)                      ? 3
                     : selected_profile == "efficientdet_v1" ? 9
-                    : ssd                                   ? ssd_anchors[h]
-                                                            : 1;
+                    : ssd ? ssd_descriptor->ordered_levels[h].localization_channels / 4
+                          : 1;
       if (center) {
         scores = port(h, 0);
         boxes = port(h, 1);
@@ -531,7 +524,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
                                                             : (split_extents ? 2 : 4) * anchors;
       if (!combined)
         channels[scores] =
-            ssd ? anchors * ssd_classes
+            ssd ? ssd_descriptor->ordered_levels[h].confidence_channels
             : selected_profile == "detr_v1"
                 ? p.num_classes + 1
                 : anchors * (p.num_classes + (seg_pose || (decoded && decoded_objectness) ? 1 : 0));
