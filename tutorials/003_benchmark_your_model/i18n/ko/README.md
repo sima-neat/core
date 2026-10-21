@@ -54,7 +54,14 @@ Python은 `pyneat.BenchmarkOptions`를 통해 동일한 필드를 노출합니�
 
 ### 고급: 레이어 통계 {#step-read-layer-stats}
 
-튜토리얼 명령에 `--include-layer-stats`를 추가하면 벤치마크 보고서에 레이어 실행 시간이 포함됩니다. 기본값은 비활성화입니다. API에서는 다음과 같이 활성화합니다.
+튜토리얼 명령에 `--include-layer-stats`를 추가하면 벤치마크 보고서에 레이어 실행 시간이
+포함됩니다. 기본값은 비활성화입니다. 다른 MLA 작업이 겹치지 않는 유휴 DevKit과,
+소유권을 관리하는 오프라인 프로파일링 프로토콜을 지원하는 Scheduler/공급자 조합을 사용하세요.
+기존 `mla-rt` 명령만 설치하는 것으로는 충분하지 않습니다. 프로파일링이 완료 여부를
+알 수 없는 상태로 보고하면 다른 작업을 실행하기 전에 디바이스를 복구하세요.
+시간 초과는 하드웨어가 멈췄다는 뜻이 아닙니다.
+
+API에서는 다음과 같이 활성화합니다:
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
@@ -155,5 +162,6 @@ report_telemetry_status=ok
 `Model::benchmark()`는 구체적인 `input_specs()` 차원을 필요로 합니다. 입력 모양이 동적이거나 구체적이지 않은 경우, 벤치마크는 추측하는 대신 명확하게 실패합니다.
 
 ## 소스 파일
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

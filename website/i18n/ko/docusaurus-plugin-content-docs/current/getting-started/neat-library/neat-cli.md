@@ -8,7 +8,12 @@ sidebar_position: 5
 
 SDK에서 상태 출력에는 `$HOME/.insight-config/neat-port-map.json`의 Insight 호스트-포트 매핑 정보도 포함됩니다.
 
-<ShellCommand prompt="sdk|devkit">
+PyNeat 또는 Insight가 설치되어 있지 않아도 상태 보고는 계속됩니다. 버전 조회가
+실패하면 해당 구성 요소는 `unknown`으로 표시되고, `neat`는 공급자의 진단을
+표준 오류에 기록합니다. JSON 출력은 기존 스키마를 유지하며 사용할 수 없는
+버전은 `null`로 보고합니다.
+
+<ShellCommand prompt="sdk-or-devkit">
 neat
 </ShellCommand>
 
@@ -56,6 +61,13 @@ neat --json
 
 <ShellCommand prompt="sdk|devkit">
 neat update
+</ShellCommand>
+
+Insight나 플레이북을 조회하거나 업데이트하지 않고 Neat Library 런타임만
+업데이트하려면 다음 명령을 실행하세요.
+
+<ShellCommand prompt="sdk-or-devkit">
+neat update --core-only
 </ShellCommand>
 
 ## 다음 단계

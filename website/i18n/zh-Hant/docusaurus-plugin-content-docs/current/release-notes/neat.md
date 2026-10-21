@@ -15,6 +15,13 @@ SiMa.ai Neat Library 的版本資訊。
 - Neat Library 的 C++ ABI 現在為 6，共用函式庫 SONAME 為 `libsima_neat.so.6`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，`GraphLinkOptions` 包含即時接納限制，而 `BenchmarkOptions` 與 `BenchmarkReport` 新增了欄位。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。
 - 即時圖組合現在使用 `GraphLinkOptions`、`Graph::connect()` 和 `Graph::build()`。預覽版 API `RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()` / `build_fused_realtime_source()` 和 `RealtimeEveryFrameByStream` 已移除。包含 `realtime_every_frame_by_stream` 的已儲存圖必須使用受支援的原則重新建立；請參閱[連接即時片段](/develop-apps/development-workflow/graph/#connect-live-fragments)。
 
+- 尚未發行的套件版本仍為 **0.6.0**。`Model::Options` 與 `BoxDecodeOptions`
+  現在包含 `yolox_seg_pose.pose_classes`；這些公開佈局新增欄位需要 ABI 6 使用元件。
+  不要使用 ABI 相容性符號連結。預覽版本也可能變更公開型別，例如目前包含
+  `kernel_runner_a65_workers` 的 `GraphOptions`。更新 0.6.0 預覽版本時，
+  請使用相符的執行階段與開發套件重新建置應用程式、外掛程式及 Python 擴充模組。
+  不要僅因不同預覽版本都使用 ABI 6，就混用它們的二進位檔案。
+
 ### 執行階段變更
 
 - `Model::benchmark()` 會從 [Sentinel](/tools/sentinel/) 讀取板子遙測資料，而不再自行取樣電源軌功耗。延遲階段與吞吐量階段現在都會持續執行，直到各自測量了 `num_samples` 個輸入且至少已經過 `BenchmarkOptions::min_duration_ms`（預設為 10 秒），讓功耗與溫度讀數涵蓋多個 Sentinel 樣本。若要使用先前以輸入數量為準的計時方式，請將 `min_duration_ms` 設為 0。`BenchmarkReport` 新增 `latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms`、`peak_power_watts`、`throughput_samples`、`throughput_duration_ms`，以及包含電源軌功耗、晶粒與板子溫度、整體與各核心的 CPU 使用率，以及 MLA、CMA 與 Linux 記憶體的 `telemetry`。`avg_power_watts` 與 `energy_joules` 的意義不變；`energy_joules` 為 `num_samples` 個輸入的能耗。Sentinel 無法使用時，仍會回報延遲與 FPS，並由 `telemetry.status` 說明原因。DevKit 安裝程式會透過 `sima-cli neat install sentinel` 安裝 Sentinel；若執行中的版本不是最新的正式版建置，則會將其升級。請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。

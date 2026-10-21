@@ -232,7 +232,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-У виробничому ланцюгу слід використовувати `libcamerasrc`, `neatcamerabridge`, коли ввімкнено резервний режим, `neatprocesscvu`, `neatprocessmla` та `appsink`. Для маршрутів BoxDecode також перевірте, чи токен `--decode` і порогові значення відповідають архіву моделі.
+У виробничому ланцюгу слід використовувати `libcamerasrc`, `neatcamerabridge`, коли ввімкнено резервний режим, `neatkernelrunner`, `neatprocessmla` та `appsink`. Для маршрутів BoxDecode також перевірте, чи токен `--decode` і порогові значення відповідають архіву моделі.
 :::
 
 ### 16. Пропускна здатність графа низька, або втрачаються поточні кадри.

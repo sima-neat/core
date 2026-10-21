@@ -54,7 +54,9 @@ Pythonは、`pyneat.BenchmarkOptions`を通じて、同じフィールドを公�
 
 ### 上級: レイヤー統計 {#step-read-layer-stats}
 
-チュートリアルのコマンドに `--include-layer-stats` を追加すると、ベンチマークレポートにレイヤーの実行時間が含まれます。既定では無効です。API では次のように有効にします。
+チュートリアルのコマンドに `--include-layer-stats` を追加すると、ベンチマークレポートにレイヤーの実行時間が含まれます。既定では無効です。他の MLA ワークロードが重ならないアイドル状態の DevKit と、所有権管理されたオフラインプロファイリングのプロトコルに対応する Scheduler／プロバイダーの組み合わせを使ってください。従来の `mla-rt` コマンドをインストールするだけでは不十分です。プロファイリングで完了不明が報告された場合は、別のワークロードを実行する前にデバイスを復旧してください。タイムアウトは、ハードウェアが停止したことを意味しません。
+
+API では次のように有効にします。
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
@@ -155,5 +157,6 @@ report_telemetry_status=ok
 `Model::benchmark()`には、具体的な`input_specs()`の次元が必要です。入力の形状が動的であるか、または具体的なものでない場合、ベンチマークは形状を推測するのではなく、明確に失敗します。
 
 ## ソースファイル
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

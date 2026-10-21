@@ -54,7 +54,12 @@ Python 會透過 `pyneat.BenchmarkOptions` 公開相同的欄位。設定原始�
 
 ### 進階：層統計資料 {#step-read-layer-stats}
 
-在任一教學命令中加入 `--include-layer-stats`，即可在基準測試報告中包含各層執行時間。此選項預設停用。透過 API 啟用的方式如下：
+在任一教學命令中加入 `--include-layer-stats`，即可在基準測試報告中包含各層執行時間。
+此選項預設停用。請使用沒有重疊 MLA 工作負載的閒置 DevKit，以及支援具擁有權的
+離線剖析通訊協定的 Scheduler／提供者組合。僅安裝舊版 `mla-rt` 命令並不足夠。
+若剖析回報無法確認完成，請先復原裝置再執行其他工作負載；逾時不代表硬體已停止。
+
+透過 API 啟用的方式如下：
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
@@ -155,5 +160,6 @@ report_telemetry_status=ok
 `Model::benchmark()` 需要具體的 `input_specs()` 尺寸。如果輸入形狀是動態或非具體的，基準測試將明確失敗，而不是猜測一個形狀。
 
 ## 原始程式碼檔案
+
 - C++：`tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python：`tutorials/003_benchmark_your_model/benchmark_your_model.py`

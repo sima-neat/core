@@ -8,7 +8,11 @@ sidebar_position: 5
 
 在 SDK 中，狀態輸出還包含來自 `$HOME/.insight-config/neat-port-map.json` 的 Insight 主機與埠的對應關係。
 
-<ShellCommand prompt="sdk|devkit">
+缺少 PyNeat 或 Insight 安裝不會妨礙狀態回報。若版本探查失敗，元件會顯示
+`unknown`，且 `neat` 會將提供者的診斷寫入標準錯誤。
+JSON 輸出保持現有結構描述，並將無法取得的版本回報為 `null`。
+
+<ShellCommand prompt="sdk-or-devkit">
 neat
 </ShellCommand>
 
@@ -56,6 +60,12 @@ neat --json
 
 <ShellCommand prompt="sdk|devkit">
 neat update
+</ShellCommand>
+
+若只要更新 Neat Library 執行階段，不檢查或更新 Insight 與操作手冊，請執行：
+
+<ShellCommand prompt="sdk-or-devkit">
+neat update --core-only
 </ShellCommand>
 
 ## 下一步

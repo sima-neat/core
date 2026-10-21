@@ -8,7 +8,9 @@ sidebar_position: 5
 
 SDKでは、ステータス出力に、`$HOME/.insight-config/neat-port-map.json` から取得した Insight のホストとポートのマッピングも含まれます。
 
-<ShellCommand prompt="sdk|devkit">
+PyNeat または Insight がインストールされていなくても、ステータスは報告できます。バージョンの照会に失敗した場合、コンポーネントには `unknown` が表示され、`neat` はプロバイダーの診断を標準エラーに出力します。JSON 出力は既存のスキーマを維持し、取得できないバージョンを `null` として報告します。
+
+<ShellCommand prompt="sdk-or-devkit">
 neat
 </ShellCommand>
 
@@ -56,6 +58,12 @@ neat --json
 
 <ShellCommand prompt="sdk|devkit">
 neat update
+</ShellCommand>
+
+Insight やプレイブックの確認・更新を行わず、Neat Library ランタイムだけを更新するには、次を実行します。
+
+<ShellCommand prompt="sdk-or-devkit">
+neat update --core-only
 </ShellCommand>
 
 ## 次のステップ

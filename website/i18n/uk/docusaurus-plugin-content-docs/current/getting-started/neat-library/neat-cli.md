@@ -8,7 +8,12 @@ sidebar_position: 5
 
 У SDK вивід статусу також містить відображення хост-портів Insight з файлу `$HOME/.insight-config/neat-port-map.json`.
 
-<ShellCommand prompt="sdk|devkit">
+Відсутність установлених PyNeat або Insight не заважає звітуванню про стан.
+Якщо перевірка версії завершується помилкою, компонент показує `unknown`, а `neat`
+записує діагностику постачальника у стандартний потік помилок. Вивід JSON
+зберігає наявну схему й повідомляє недоступні версії як `null`.
+
+<ShellCommand prompt="sdk-or-devkit">
 neat
 </ShellCommand>
 
@@ -56,6 +61,13 @@ neat --json
 
 <ShellCommand prompt="sdk|devkit">
 neat update
+</ShellCommand>
+
+Щоб оновити лише середовище виконання Neat Library, не перевіряючи й не
+оновлюючи Insight або сценарії, виконайте:
+
+<ShellCommand prompt="sdk-or-devkit">
+neat update --core-only
 </ShellCommand>
 
 ## Наступний крок

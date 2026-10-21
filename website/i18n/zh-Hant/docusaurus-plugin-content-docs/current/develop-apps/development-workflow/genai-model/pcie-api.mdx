@@ -70,6 +70,11 @@ with genai.GenAIModel("./models/Qwen3-0.6B-Autoround-a16w4", connection) as mode
 
 若要使用推測解碼，請傳入已準備好的目標／草稿模型配對的父目錄，例如包含 `target/` 和 `draft/` 的 `./models/speculative-pair`。編譯後的設定會識別目標和草稿角色。兩個模型會在同一卡端工作階段中載入，不需要額外的請求選項。請預留足夠的卡端記憶體以容納兩個模型。
 
+產生文字時，請將 `request.reasoning_effort` 設為 `"low"`（預設值）、
+`"medium"` 或 `"high"`。它與控制是否傳回推理內容的 `request.enable_thinking` 無關。
+請使用相符的主機與卡端套件：GenAI 通訊協定修訂版 3 會拒絕較舊的對端，
+而不是暗中忽略要求的推理強度。更新套件後，請重新建置 C++ 主機應用程式。
+
 ## 串流、媒體與多個模型
 
 - 使用 `model.stream(request)` 並逐一讀取 `TokenSample` 值來串流輸出。在重複使用模型之前，呼叫 `cancel()` 並讀取終止樣本。每個模型同時只能有一個作用中的請求。

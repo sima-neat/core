@@ -15,6 +15,16 @@ sidebar_position: 3
 - C++ ABI Neat Library тепер має версію 6, а SONAME динамічної бібліотеки — `libsima_neat.so.6`. Тензори тепер містять семантичні метадані екстрактора ознак, публічні типи запитів/результатів GenAI містять метадані завдання ASR, мови та проби, `GraphLinkOptions` містить обмеження приймання в реальному часі, а `BenchmarkOptions` і `BenchmarkReport` отримали нові поля. Перезберіть застосунки C++ і плагіни та встановіть відповідні пакети середовища виконання й розробки Core.
 - Тепер для створення графа в реальному часі використовуються `GraphLinkOptions`, `Graph::connect()` та `Graph::build()`. API для попереднього перегляду `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()` та `RealtimeEveryFrameByStream` було видалено. Збережені графи, що містять `realtime_every_frame_by_stream`, необхідно відтворити з використанням підтримуваної політики; див. [З’єднайте фрагменти в реальному часі.](/develop-apps/development-workflow/graph/#connect-live-fragments).
 
+- Невипущена версія пакета залишається **0.6.0**. `Model::Options` і
+  `BoxDecodeOptions` тепер містять `yolox_seg_pose.pose_classes`; ці доповнення
+  публічного розміщення потребують споживачів ABI 6. Не використовуйте символічні
+  посилання для сумісності ABI. Попередні випуски також можуть змінювати публічні
+  типи, як-от `GraphOptions`, що тепер містить `kernel_runner_a65_workers`.
+  Оновлюючи попередній випуск 0.6.0, перебудовуйте застосунки, зовнішні модулі
+  та розширення Python з відповідними пакетами середовища виконання й розробки.
+  Не змішуйте двійкові файли різних попередніх випусків лише тому, що обидва
+  використовують ABI 6.
+
 ### Зміни під час роботи (в середовищі виконання)
 
 - `Model::benchmark()` читає телеметрію плати з [Sentinel](/tools/sentinel/), а не опитує шини живлення самостійно. Проходи вимірювання затримки й пропускної здатності тепер кожен тривають, доки не виміряють `num_samples` вхідних даних і не мине щонайменше `BenchmarkOptions::min_duration_ms` (типово 10 с), тож показники потужності й температури охоплюють кілька зразків Sentinel. Щоб повернути попереднє вимірювання за кількістю вхідних даних, встановіть `min_duration_ms` на 0. `BenchmarkReport` отримав `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `peak_power_watts`, `throughput_samples`, `throughput_duration_ms` і `telemetry` з потужністю шин живлення, температурами кристала й плати, загальним і поядерним завантаженням CPU та пам’яттю MLA, CMA і Linux. `avg_power_watts` і `energy_joules` зберігають свій зміст; `energy_joules` — це енергія для `num_samples` вхідних даних. Коли Sentinel недоступний, затримка та FPS усе одно повідомляються, а `telemetry.status` називає причину. Інсталятор DevKit встановлює Sentinel за допомогою `sima-cli neat install sentinel` або оновлює його, якщо запущена версія не є останньою виробничою збіркою. Див. [Вимірювання виконання моделі](/develop-apps/development-workflow/model#power-and-board-telemetry).

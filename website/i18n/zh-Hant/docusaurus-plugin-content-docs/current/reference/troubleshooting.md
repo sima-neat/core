@@ -232,7 +232,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-生產流程應包含 `libcamerasrc`、`neatcamerabridge`（當啟用回退機制時）、`neatprocesscvu`、`neatprocessmla` 和 `appsink`。對於 BoxDecode 路由，還請確認 `--decode` 標記和閾值與模型封存檔相符。
+生產流程應包含 `libcamerasrc`、`neatcamerabridge`（當啟用回退機制時）、`neatkernelrunner`、`neatprocessmla` 和 `appsink`。對於 BoxDecode 路由，還請確認 `--decode` 標記和閾值與模型封存檔相符。
 :::
 
 ### 16. 圖的處理速度慢，或者即時影格會遺失。

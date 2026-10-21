@@ -233,7 +233,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-프로덕션 경로는 폴백이 활성화된 경우 `libcamerasrc`, `neatcamerabridge`, `neatprocesscvu`, `neatprocessmla` 및 `appsink`를 포함해야 합니다. BoxDecode 경로의 경우, `--decode` 토큰과 임계값이 모델 아카이브와 일치하는지 확인하십시오.
+프로덕션 경로는 폴백이 활성화된 경우 `libcamerasrc`, `neatcamerabridge`, `neatkernelrunner`, `neatprocessmla` 및 `appsink`를 포함해야 합니다. BoxDecode 경로의 경우, `--decode` 토큰과 임계값이 모델 아카이브와 일치하는지 확인하십시오.
 :::
 
 ### 16. 그래프 처리량이 낮거나 실시간 프레임이 누락됩니다.

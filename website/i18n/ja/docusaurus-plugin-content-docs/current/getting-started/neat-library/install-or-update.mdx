@@ -22,7 +22,7 @@ Neatアプリケーションをビルドまたは実行する環境から、イ�
 
 ## C++ 開発パッケージ
 
-最小インストールには、ランタイムと `sima-neat-dev` が含まれます。デフォルトのインストールでは、チュートリアルとテストを追加できます。`all` は両方を含みます。共有ライブラリを使用するアプリケーションには、Core の公開ヘッダーと GStreamer、OpenCV、JSON の開発ファイルが必要です。Internals、memory-library、heap、LLiMa の開発パッケージは不要ですが、それらのランタイムライブラリは引き続き必要です。
+最小インストールにはランタイムと `sima-neat-dev` が含まれます。デフォルトのインストールではチュートリアルとテストを追加オプションとして選択でき、`all` ではそれらも含まれます。共有ライブラリアプリケーションには、Core の公開ヘッダー、対応する Scheduler フロントエンド、および GStreamer、OpenCV、JSON の開発ファイルが必要です。廃止された Internals 統合パッケージや、Runner、Kernels、Codecs、メモリライブラリ、ヒープ、LLiMa の開発 API は不要です。選択したパッケージが必要なランタイム依存関係を提供します。
 
 インストール済みの共有ターゲットを使用します。
 
@@ -31,14 +31,14 @@ find_package(SimaNeat CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
-静的アーカイブは引き続き `sima-neat-dev` に含まれます。既存の静的リンクを使用する側は、`COMPONENTS Static` を追加し、互換性のある `neat-internals-dev`、`simaai-memory-lib-dev`、`zlib1g-dev`、`libcpp-httplib-dev` を用意する必要があります。LLiMa を有効にしたビルドでは、`sima-lmm-dev` とその依存関係も必要です。
+静的アーカイブは引き続き `sima-neat-dev` に含まれます。`COMPONENTS Static` を使い、対応する `simaai-scheduler` パッケージをインストールしたままにしてください。`zlib1g-dev`、`libcpp-httplib-dev`、LLiMa 有効ビルドの場合は `sima-lmm-dev` を、それぞれの依存関係とともに用意します。Core はインストール済み Scheduler フロントエンドを使用します。アプリケーションに Internals や下位ライブラリの開発ターゲットを追加しないでください。
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
 ```
 
-静的な Core も、実装の共有ライブラリを使用します。Core をソースからビルドする場合にも、実装の開発パッケージが必要です。
+静的 Core も共有実装ライブラリを使用します。Core をソースからビルドする場合も同じ Scheduler フロントエンド境界を使い、ほかの依存関係の開発ファイルが必要です。LLiMa が有効な場合は、その開発ファイルも含まれます。
 
 ## 前提条件
 
@@ -63,8 +63,8 @@ curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && e
 
 ## Neat Library をインストールします。
 
-:::note パッケージの互換性
-インストーラーは、選択されたコア・アーティファクトにリストされているすべての Debian パッケージを使用し、異なる Internals や LLiMa のバージョンは選択しません。インストールされたプラットフォームは、そのアーティファクトに含まれていない依存関係を満たす必要があります。APT がプラットフォーム・パッケージを削除してインストールを完了しようとした場合、インストーラーは停止します。コアまたは LLiMa でパッケージを置き換えるのではなく、プラットフォームを更新してください。
+:::note パッケージ互換性
+インストーラーは選択した Core アーティファクトに記載された Debian パッケージをすべて使用し、別の Scheduler または LLiMa バージョンを選びません。そのアーティファクトで配布されない依存関係は、インストール済みプラットフォームが満たす必要があります。インストール完了のために APT がプラットフォームパッケージを削除しようとする場合、インストーラーは停止します。Core や LLiMa 内でパッケージを差し替えず、プラットフォームを更新してください。
 :::
 
 インストーラーを実行する前に、作業ディレクトリを選択してください。DevKitでは、ルートファイルシステムがいっぱいにならないように、`/media/nvme`にインストールしてください。SDKコンテナー内では、`$HOME/neat`のようなコンテナーローカルのパスを使用してください。

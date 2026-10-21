@@ -100,6 +100,7 @@ print("graph outputs:", classifier.outputs())
 | 連接即時 Graph 片段 | `GraphLinkOptions` 與 `RealtimeLatestByStream` | 在限制已解碼影格傳輸量的同時，讓每個串流保持最新。 |
 | 限制回調工作 | `callback_timeout_ms` | 與 C++ 回調樣式的輸出消耗一起使用，以防止緩慢的回調掩蓋圖問題。 |
 | 調整高級執行 | `advanced_execution` | 僅在預設圖具有可測量的基準之後使用。 |
+| 限制 A65 核心執行緒 | `kernel_runner_a65_workers` | 預設 `2`；接受 `1`–`64`。適用於圖的數值 A65 階段，不適用於 EV74 或 MLA。 |
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -138,6 +139,77 @@ graph.add(pyneat.nodes.output(
 `Latest()` 會保留最新的結果，即使應用程式無法提取所有輸出。當每個輸出都很重要時，請使用 `EveryFrame(...)`。當輸出必須遵循管線時鐘時，請使用 `Clocked(...)`。
 
 `RunOptions::queue_depth` 控制圖的輸入和內部執行階段佇列。它不會取代公用 `Output` 的佇列合約：`OutputOptions::max_buffers` 和 `drop` 控制該終端佇列，並優先使用。框架建立的輸出佇列會回退到 `RunOptions` 的預設值。
+
+### 讓影格重疊執行，而不使佇列無限增長
+
+非同步提交可讓一個影格在裝置執行時，由 CPU 準備或使用另一個影格。
+只建置一次圖並重複使用，且維持有界數量的獨立輸入同時在途。
+推送後立即拉取會使可用影格始終只有一個，即使圖支援非同步執行也一樣。
+
+各控制項的職責不同：
+
+| 控制項 | 限制的對象 |
+| --- | --- |
+| 應用程式在途視窗 | 已接受、但應用程式尚未使用其輸出的輸入。在推送／拉取迴圈中管理此視窗。 |
+| `advanced_execution.internal_queue_depth` | 內部插入的佇列與數值 Runner 執行容量。Runner 容量限制於 `1`–`64`；未設定／預設深度會選擇一個 Runner 槽位。 |
+| `advanced_execution.inference_output_buffers` | MLA 階段緩衝。變更應用程式或執行階段佇列深度不會取代此設定。 |
+| `RunOptions::queue_depth` | 框架輸入與內部執行階段佇列，而非加速器容量。 |
+| `OutputOptions` | 公開輸出緩衝與丟棄行為。量測不丟棄影格的完成工作量時，請使用 `EveryFrame(...)`。 |
+
+非同步 MLA 執行預設啟用。吞吐量工作請保持啟用；不要為了取得重疊執行而加入
+快取同步執行緒或停用記憶體同步。裝置完成與 CPU 可見性是兩項獨立需求。
+執行階段會同時保留兩者，並允許獨立影格推進。
+
+一次調整一種工作負載：
+
+1. 完成圖建構與暖機後，量測一個在途影格作為序列基準。
+2. 逐步增加應用程式視窗。為並行影格提供不同的可寫入輸入分配，並及時釋放輸出。
+3. 僅在目前限制妨礙有效重疊時，才增加內部或 MLA 緩衝。保留的零複製輸出仍占用
+   產生端集區；集區大小不保證每個槽位都能供應用程式使用。
+4. 吞吐量不再改善時就停止增加視窗。額外排隊的影格可能增加延遲與保留記憶體，
+   卻不會完成更多工作。
+
+只要已接受的工作仍可能讀取輸入分配，就不要覆寫它。重用不可變的輸入與回收其儲存
+空間供下一個攝影機影格使用是不同的事。兩種情況都必須遵守既有的擁有權契約。
+
+比較**每個完成影格的 CPU 時間**，而不只是 CPU 百分比。在相同量測視窗中，
+將程序使用者加系統 CPU 時間除以完成輸出數；再將該 CPU 時間除以經過的實際時間，
+即可得到平均忙碌 CPU 核心數。較高吞吐量可能在一段時間內使用更多核心，而沒有增加
+每影格 CPU 工作量。排除設定、暖機與結束清理；每次比較都應包含相同的輸出擷取與
+釋放工作。另行回報影格延遲：`1 / FPS` 是吞吐量間隔，不是單一影格延遲。
+程序 CPU 不含計入其他核心工作執行緒的工作，也不能量測能耗。
+
+### 設定 A65 工作執行緒預算
+
+建置圖前先設定 `GraphOptions.kernel_runner_a65_workers`。預設為 `2`；
+使用 `1` 可將數值 A65 執行限制為一個工作執行緒，或在獨立 A65 階段可重疊時提高預算。
+無效值會在圖準備期間失敗，而不會被暗中截限。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphOptions options;
+options.kernel_runner_a65_workers = 2;
+simaai::neat::Graph graph("camera", options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.GraphOptions()
+options.kernel_runner_a65_workers = 2
+graph = pyneat.Graph("camera", options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+該圖的 A65 核心階段共用此工作執行緒集區，且只在需要時建立。
+閒置執行緒會休眠而不輪詢，並在多次提交間重用。
+此設定不會變更影格佇列深度、覆寫核心資源限制，或設定 EV74、MLA、GStreamer 執行緒。
+更多工作執行緒不一定更快：變更預設值前，先比較工作負載的延遲、吞吐量與 CPU 使用情況。
 
 ## 在建構之前進行驗證
 

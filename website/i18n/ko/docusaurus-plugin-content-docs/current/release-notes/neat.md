@@ -15,6 +15,14 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 - Neat Library C++ ABI는 이제 버전 6이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.6`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함되며, `BenchmarkOptions`와 `BenchmarkReport`에 필드가 추가되었습니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다.
 - 실시간 그래프 구성은 이제 `GraphLinkOptions`, `Graph::connect()` 및 `Graph::build()`를 사용합니다. 미리보기 API인 `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()` 및 `RealtimeEveryFrameByStream`은 제거되었습니다. `realtime_every_frame_by_stream`을 포함하는 저장된 그래프는 지원되는 정책으로 다시 생성해야 합니다. 자세한 내용은 [라이브 프래그먼트 연결](/develop-apps/development-workflow/graph/#connect-live-fragments)을 참조하십시오.
 
+- 미출시 패키지 버전은 **0.6.0**으로 유지됩니다. `Model::Options`와
+  `BoxDecodeOptions`에 `yolox_seg_pose.pose_classes`가 추가되었습니다. 이러한 공개
+  레이아웃 추가 사항에는 ABI 6 소비자가 필요합니다. ABI 호환성 심볼릭 링크를 사용하지 마세요.
+  프리뷰 릴리스에서는 `kernel_runner_a65_workers`가 추가된 `GraphOptions`와 같은
+  공개 타입도 변경될 수 있습니다. 0.6.0 프리뷰를 업데이트할 때는 일치하는 런타임 및
+  개발 패키지를 사용하여 애플리케이션, 플러그인 및 Python 확장을 다시 빌드하세요.
+  둘 다 ABI 6을 사용한다는 이유만으로 서로 다른 프리뷰의 바이너리를 혼용하지 마세요.
+
 ### 런타임 변경 사항
 
 - `Model::benchmark()`는 전력 레일을 직접 샘플링하는 대신 [Sentinel](/tools/sentinel/)에서 보드 텔레메트리를 읽습니다. 이제 지연 시간 패스와 처리량 패스는 각각 `num_samples`개의 입력을 측정하고 최소 `BenchmarkOptions::min_duration_ms`(기본값 10초)가 경과할 때까지 실행되므로, 전력 및 온도 측정값이 여러 Sentinel 샘플에 걸쳐 수집됩니다. 이전의 입력 개수 기반 측정을 사용하려면 `min_duration_ms`를 0으로 설정하십시오. `BenchmarkReport`에는 `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `peak_power_watts`, `throughput_samples`, `throughput_duration_ms`, 그리고 레일 전력, 다이 및 보드 온도, 전체 및 코어별 CPU 사용률, MLA·CMA·Linux 메모리를 포함하는 `telemetry`가 추가되었습니다. `avg_power_watts`와 `energy_joules`의 의미는 그대로이며, `energy_joules`는 `num_samples`개 입력에 대한 에너지입니다. Sentinel을 사용할 수 없는 경우에도 지연 시간과 FPS는 보고되며, `telemetry.status`에 그 이유가 표시됩니다. DevKit 설치 프로그램은 `sima-cli neat install sentinel`로 Sentinel을 설치하며, 실행 중인 버전이 최신 프로덕션 빌드가 아니면 업그레이드합니다. 자세한 내용은 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오.

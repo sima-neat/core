@@ -151,3 +151,35 @@ slug: /reference/environment-variables
 ## 測試／內部鉤子
 
 - `SIMA_TENSOR_MAPFAIL_DEBUG=1` — 記錄張量映射失敗的情況。
+
+## 核心中繼資料驗證
+
+ProcessCVU 階段預設透過 Runtime 的 `neatkernelrunner` 執行。
+沒有任何建置選項或環境變數可選擇舊的 ProcessCVU 外掛程式。
+
+- `SIMA_CORE_COMPACT_METADATA=1` — 在能力協議完成後，允許於具擁有權的
+  runner 直連 appsink 邊界使用精簡 TensorSet 與具型別的目前影格中繼資料。
+  不可存在不相容的邊界、偵錯或流程觀察器。標準的具擁有權階段／元件計時仍然啟用，
+  並支援兩種表示法。無法表示的擴充仍保留舊式動態中繼資料。
+
+不要將只支援舊式格式的探查掛到精簡邊界上。未達成能力協議時，Runtime 會為未知
+使用者與觀察器保留舊式中繼資料；執行仍使用 `neatkernelrunner`。
+此中繼資料選項不保證延遲或吞吐量。
+
+## 套件與每週驗證（僅供測試）
+
+- `SIMA_TEST_PACKAGE_INVENTORY=<absolute-path>` — 由
+  `tools/ci/verify_core_dist.py --write-package-inventory` 根據選定且已驗證的
+  發行封存檔產生的預期套件控制資料與負載身分。已安裝 DevKit 的套件清單測試需要它。
+  它不會將 `dpkg` 重新導向私用前綴，也不是安裝結果報告。
+- `SIMA_TEST_PLATFORM_BASELINE=<absolute-path>` — 使用
+  `tools/ci/verify_core_dist.py --capture-platform-baseline` **在安裝前**擷取的
+  原生平台套件存在／不存在狀態、套件身分與 OTA 可用性／身分。已安裝 DevKit 的
+  套件清單測試需要它與所選套件清單。不要從安裝後狀態重新產生此基準。
+- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 選擇執行長時間 MNIST 前處理準確度測試。
+  請在測試固定資料驗證後，從 `tools/ci/prepare_weekly_fixtures.py` 取得此值，
+  而不是只為避免略過而手動設定。本機啟動程式使用 `--environment-json`；
+  CI 則透過 `--github-env` 使用相同的對應資料。
+
+測試固定資料群組選擇與已安裝套件設定組合，請參閱
+[測試需求](../../develop-apps/contribute/build-test/test_requirements.md)。
