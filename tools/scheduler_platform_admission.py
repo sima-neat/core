@@ -112,6 +112,27 @@ def authenticate_tool(prefix, selected):
     return tool
 
 
+def firmware_control(result):
+    """Validate the authenticated owner's firmware declaration, not its policy."""
+    firmware = result.get('firmware')
+    require(isinstance(firmware, dict) and isinstance(firmware.get('required'), bool)
+            and 'debian_package' in firmware, 'Missing or invalid Scheduler firmware classification')
+    control = firmware['debian_package']
+    if not firmware['required']:
+        require(control is None, 'Unexpected firmware control for a non-EV cohort')
+        return None
+    require(isinstance(control, dict)
+            and isinstance(control.get('Package'), str)
+            and re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', control['Package'])
+            and isinstance(control.get('Version'), str)
+            and re.fullmatch(r'[0-9][A-Za-z0-9.+:~\-]*', control['Version'])
+            and control.get('Architecture') == 'arm64'
+            and isinstance(control.get('deb_sha256'), str)
+            and re.fullmatch(r'[0-9a-f]{64}', control['deb_sha256']),
+            'Invalid required firmware package identity')
+    return control
+
+
 def invoke(directory, action, *, installed=False, simulation=None, repair_incomplete=False,
            resume_incomplete=False):
     require(not installed or action == 'check', 'Installed verification requires check')
@@ -158,6 +179,7 @@ def invoke(directory, action, *, installed=False, simulation=None, repair_incomp
         result = json.loads(subprocess.check_output(command, text=True, env=env))
     require(isinstance(result, dict) and result.get('schema_version') == 1,
             'Invalid Scheduler Platform admission response')
+    firmware_control(result)
     return result
 
 
@@ -183,7 +205,7 @@ def optional_admission(directory, action, **options):
     require(not options.get('repair_incomplete'),
             'Unhealthy APT state requires an authenticated split Scheduler cohort')
     return {'schema_version': 1, 'platform_packages': {}, 'packages': {}, 'providers': {},
-            'split_cohort': False}
+            'split_cohort': False, 'firmware': {'required': False, 'debian_package': None}}
 
 
 def optional_board_check(directory, *, installed=False):
@@ -194,6 +216,9 @@ def same_providers(before, after):
     for key in ('platform_packages', 'packages', 'providers'):
         require(isinstance(before.get(key), dict) and before.get(key) == after.get(key),
                 'Admitted Platform provider identity changed: ' + key)
+    firmware_control(before)
+    firmware_control(after)
+    require(before['firmware'] == after['firmware'], 'Admitted firmware identity changed')
 
 
 def verify_plan(admission, simulation):

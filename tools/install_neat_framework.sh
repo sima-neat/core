@@ -189,6 +189,21 @@ relation_field_provides_exact_version() {
   return 1
 }
 
+relation_field_matches_version() {
+  local field="$1" expected_package="$2" installed_version="$3"
+  local relation
+  local pattern="^${expected_package} \((<<|<=|=|>=|>>) ([^[:space:]()]+)\)$"
+  while IFS= read -r relation; do
+    relation="$(printf '%s' "${relation}" |
+      sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
+    if [[ "${relation}" =~ ${pattern} ]] &&
+       dpkg --compare-versions "${installed_version}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; then
+      return 0
+    fi
+  done < <(printf '%s\n' "${field}" | tr ',' '\n')
+  return 1
+}
+
 find_verified_bundled_replacement() {
   local removed_package="$1"
   local installed_version="$2"
@@ -276,6 +291,37 @@ PYRETIRE
   return 1
 }
 
+# Firmware replacement is retirement, not compatibility with the legacy image.
+# Admit only the selected authenticated native owner and its bounded relations;
+# Scheduler separately checks the full transaction and transferred file owners.
+find_verified_firmware_retirement() {
+  local removed_package="$1" installed_version="$2"
+  shift 2
+  [[ "${removed_package}" == neat-ev74-firmware ]] || return 1
+  local required_control deb replaces breaks conflicts identity archive_sha
+  required_control="$(required_board_firmware_control)" || return 1
+  [[ -n "${required_control}" ]] || return 1
+  for deb in "$@"; do
+    [[ -f "${deb}" ]] || continue
+    archive_sha="$(sha256sum "${deb}")" || return 1
+    printf -v identity '%s\t%s\t%s\t%s' \
+      "$(dpkg-deb -f "${deb}" Package)" "$(dpkg-deb -f "${deb}" Version)" \
+      "$(dpkg-deb -f "${deb}" Architecture)" "${archive_sha%% *}"
+    [[ "${identity}" == "${required_control}" ]] || continue
+    replaces="$(dpkg-deb -f "${deb}" Replaces)" || return 1
+    breaks="$(dpkg-deb -f "${deb}" Breaks)" || return 1
+    conflicts="$(dpkg-deb -f "${deb}" Conflicts)" || return 1
+    relation_field_matches_version "${replaces}" "${removed_package}" "${installed_version}" || return 1
+    if ! relation_field_matches_version "${breaks}" "${removed_package}" "${installed_version}" &&
+       ! relation_field_matches_version "${conflicts}" "${removed_package}" "${installed_version}"; then
+      return 1
+    fi
+    basename "${deb}"
+    return 0
+  done
+  return 1
+}
+
 verify_simulated_package_removals() {
   local simulation_log="$1"
   shift
@@ -310,6 +356,10 @@ verify_simulated_package_removals() {
     fi
     if [[ -z "${replacement_deb}" && -n "${installed_version}" ]]; then
       replacement_deb="$(find_verified_runner_retirement \
+        "${package_name}" "${installed_version}" "${install_specs[@]}" || true)"
+    fi
+    if [[ -z "${replacement_deb}" && -n "${installed_version}" ]]; then
+      replacement_deb="$(find_verified_firmware_retirement \
         "${package_name}" "${installed_version}" "${install_specs[@]}" || true)"
     fi
     if [[ -n "${replacement_deb}" ]]; then
@@ -1306,6 +1356,8 @@ activate_board_runtime_after_install() {
   # left behind by a previously installed runtime or a different cohort.
   local helper=/usr/libexec/sima-neat-firmware/install.sh
   local deb listing selected="" package version architecture installed expected owner staged
+  local required_control=""
+  required_control="$(required_board_firmware_control)" || return 1
   for deb in "${DEBS[@]}"; do
     if ! listing="$(dpkg-deb --fsys-tarfile "${deb}" | tar -tf -)"; then
       echo "Cannot inspect selected DEB firmware payload: ${deb}" >&2
@@ -1321,6 +1373,10 @@ activate_board_runtime_after_install() {
     fi
   done
   if [[ -z "${selected}" ]]; then
+    if [[ -n "${required_control}" ]]; then
+      echo "Required native EV74 firmware package does not deliver the activation helper." >&2
+      return 1
+    fi
     log "EV74 firmware activation skipped: no selected package delivers the helper."
     return 0
   fi
@@ -1329,6 +1385,15 @@ activate_board_runtime_after_install() {
   version="$(dpkg-deb -f "${selected}" Version)" || return 1
   architecture="$(dpkg-deb -f "${selected}" Architecture)" || return 1
   [[ -n "${package}" && -n "${version}" && -n "${architecture}" ]] || return 1
+  if [[ -n "${required_control}" ]]; then
+    local selected_sha
+    selected_sha="$(sha256sum "${selected}")" || return 1
+    printf -v expected '%s\t%s\t%s\t%s' "${package}" "${version}" "${architecture}" "${selected_sha%% *}"
+    if [[ "${required_control}" != "${expected}" ]]; then
+      echo "Selected EV74 firmware differs from the authenticated Scheduler cohort." >&2
+      return 1
+    fi
+  fi
   installed="$(dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${db:Status-Abbrev}' "${package}")" || return 1
   printf -v expected '%s\t%s\t%s\tii ' "${package}" "${version}" "${architecture}"
   owner="$(dpkg-query -S "${helper}")" || return 1
@@ -1993,6 +2058,26 @@ import json, sys
 with open(sys.argv[1]) as stream:
     raise SystemExit(0 if json.load(stream).get('split_cohort') is True else 1)
 PYSPLIT
+}
+
+required_board_firmware_control() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
+  # This declaration comes from the authenticated incoming Scheduler tooling.
+  # Scheduler owns EV/platform selection and firmware image/cohort validation.
+  python3 - "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" <<'PYFIRMWARE'
+import json, sys
+with open(sys.argv[1]) as stream:
+    admission = json.load(stream)
+if admission.get('split_cohort') is True:
+    firmware = admission['firmware']
+    if not isinstance(firmware.get('required'), bool):
+        raise SystemExit('Invalid authenticated firmware requirement')
+    if firmware['required']:
+        control = firmware['debian_package']
+        print('\t'.join(control[key] for key in ('Package', 'Version', 'Architecture', 'deb_sha256')))
+    elif firmware['debian_package'] is not None:
+        raise SystemExit('Unexpected firmware package for a non-EV cohort')
+PYFIRMWARE
 }
 
 verify_board_platform_admission() {

@@ -78,7 +78,7 @@ def scheduler_platform_description(root):
 
 
 def composed_provider_controls(receipt, root):
-    """Use the authenticated owner for both Platform and historical providers.
+    """Use the authenticated owner for providers and required native firmware.
 
     The actual incoming Scheduler receipt is checked before any classification;
     stripping an untrusted declaration cannot select a weaker legacy path.
@@ -87,6 +87,15 @@ def composed_provider_controls(receipt, root):
     incoming = {control(path)['Package'] for path in Path(root).glob('*.deb')}
     require(not incoming.intersection(classification['platform_packages']),
             'Platform-owned provider DEB is present in the install set')
+    firmware = classification.get('firmware')
+    require(isinstance(firmware, dict) and isinstance(firmware.get('required'), bool)
+            and 'debian_package' in firmware, 'Missing Scheduler firmware classification')
+    if firmware['required']:
+        package = firmware['debian_package']
+        require(isinstance(package, dict) and package.get('Architecture') == 'arm64',
+                'Missing/mismatched required firmware package control')
+        return [*classification['redistributed_provider_controls'], package]
+    require(firmware['debian_package'] is None, 'Unexpected firmware control for a non-EV cohort')
     return classification['redistributed_provider_controls']
 
 

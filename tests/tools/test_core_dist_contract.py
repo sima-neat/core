@@ -11,6 +11,7 @@ import platform
 import copy
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -204,7 +205,8 @@ def run(root, **kwargs):
     # Artifact-shape fixtures inject only the producer-owned description. Real
     # DEB extraction/authentication/delegation is exercised independently below.
     description = getattr(verifier.control, 'fixture_description', {
-        'schema_version': 1, 'redistributed_provider_controls': [], 'platform_packages': {}})
+        'schema_version': 1, 'redistributed_provider_controls': [], 'platform_packages': {},
+        'firmware': {'required': False, 'debian_package': None}})
     with patch.object(verifier, 'scheduler_platform_description', return_value=description) as describe:
         result = verifier.verify(root, validate_metadata=lambda _: None, **kwargs)
         describe.assert_called_once_with(root)
@@ -501,7 +503,8 @@ def test_raising_cli_validator_is_called(tmp_path):
         raise RuntimeError('CLI-owned schema rejection')
     with patch.object(verifier, 'control', controls), patch.object(
             verifier, 'scheduler_platform_description', return_value={
-                'schema_version': 1, 'platform_packages': {}, 'redistributed_provider_controls': []}), \
+                'schema_version': 1, 'platform_packages': {}, 'redistributed_provider_controls': [],
+                'firmware': {'required': False, 'debian_package': None}}), \
             pytest.raises(RuntimeError, match='CLI-owned'):
         verifier.verify(tmp_path, validate_metadata=reject)
 
@@ -574,12 +577,13 @@ def provider_fixture(tmp_path, architecture='arm64'):
     def controls(path):
         return actual_control(path) if Path(path).name.startswith('fixture-') else base_controls(path)
     controls.fixture_description = {'schema_version': 1, 'platform_packages': {},
-                                    'redistributed_provider_controls': [backend, draw, draw_dev]}
+                                    'redistributed_provider_controls': [backend, draw, draw_dev],
+                                    'firmware': {'required': False, 'debian_package': None}}
     return root, controls, package
 
 
-def refresh_provider_metadata(root):
-    providers = sorted(p.name for p in root.glob('fixture-*.deb'))
+def refresh_provider_metadata(root, extra=()):
+    providers = sorted({p.name for p in root.glob('fixture-*.deb')} | set(extra))
     install = root / 'neat-install-manifest.txt'
     entries = set(install.read_text().splitlines()) | set(providers)
     install.write_text('\n'.join(sorted(entries)) + '\n')
@@ -598,6 +602,60 @@ def test_consumed_provider_archives_are_admitted_read_only(tmp_path, architectur
         result = run(root)
     assert {'fixture-backend', 'fixture-renderer', 'fixture-renderer-dev'} <= set(result['dependency_roles'])
     assert before == {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.iterdir()}
+
+
+def firmware_distribution_fixture(tmp_path):
+    # Scheduler owns the deep firmware seal/cohort check. This boundary fixture
+    # supplies its authenticated description and exercises Core's real DEB
+    # control/hash, complete metadata and allowlist accounting.
+    root, base_controls, package = provider_fixture(tmp_path)
+    entry = package('simaai-kernels-firmware')
+    actual_control = verifier.control
+
+    def controls(path):
+        if Path(path).name == 'simaai-kernels-firmware.deb':
+            return actual_control(path)
+        return base_controls(path)
+
+    controls.fixture_description = copy.deepcopy(base_controls.fixture_description)
+    controls.fixture_description['firmware'] = {'required': True, 'debian_package': entry}
+    refresh_provider_metadata(root, ['simaai-kernels-firmware.deb'])
+    return root, controls, entry
+
+
+def test_required_firmware_is_part_of_the_complete_read_only_distribution(tmp_path):
+    root, controls, _ = firmware_distribution_fixture(tmp_path)
+    before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.iterdir()}
+    with patch.object(verifier, 'control', controls):
+        result = run(root)
+    assert 'simaai-kernels-firmware' in result['dependency_roles']
+    assert before == {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.iterdir()}
+
+
+@pytest.mark.parametrize('mutation', [
+    'missing', 'tampered', 'version', 'architecture', 'no-classification', 'undeclared', 'allowlist'])
+def test_required_firmware_distribution_cannot_be_incomplete_or_substituted(tmp_path, mutation):
+    root, controls, entry = firmware_distribution_fixture(tmp_path)
+    archive = root / 'simaai-kernels-firmware.deb'
+    if mutation == 'missing':
+        archive.unlink()
+    elif mutation == 'tampered':
+        # A still-readable DEB with different archive bytes must not qualify.
+        with archive.open('ab') as stream:
+            stream.write(b'changed after producer admission')
+    elif mutation == 'version':
+        entry['Version'] = '2'
+    elif mutation == 'architecture':
+        entry['Architecture'] = 'all'
+    elif mutation == 'no-classification':
+        controls.fixture_description.pop('firmware')
+    elif mutation == 'undeclared':
+        controls.fixture_description['firmware'] = {'required': False, 'debian_package': None}
+    else:
+        path = root / 'neat-install-manifest.txt'
+        path.write_text(path.read_text().replace(archive.name + '\n', ''))
+    with patch.object(verifier, 'control', controls), pytest.raises(verifier.ContractError):
+        run(root)
 
 
 @pytest.mark.parametrize('mutation,diagnostic', [
@@ -646,6 +704,27 @@ def test_selected_profile_inventory_is_expected_data_from_real_debs(tmp_path, pr
     if profile != 'core-codecs-llima':
         assert 'sima-lmm-core' not in inventory['packages']
     assert 'simaai-memory-lib' not in inventory['packages']
+
+
+def test_firmware_non_host_elf_is_hashed_as_owned_data_not_executed(tmp_path):
+    root = inventory_fixture(tmp_path)
+    source = tmp_path / 'firmware-package'
+    (source / 'DEBIAN').mkdir(parents=True)
+    (source / 'DEBIAN/control').write_text(
+        'Package: simaai-kernels-firmware\nVersion: 1\nArchitecture: arm64\n'
+        'Maintainer: Fixture <fixture@example.invalid>\nDescription: firmware data fixture\n')
+    image = source / 'usr/share/sima-neat-firmware/modalix-cvu-fw'
+    image.parent.mkdir(parents=True)
+    # A minimal EM_ARCV2 ELF header, with no host dynamic loader or executable
+    # code. readelf can inspect this foreign architecture without running it.
+    payload = (b'\x7fELF' + bytes([1, 1, 1, 0]) + bytes(8)
+               + struct.pack('<HHIIIIIHHHHHH', 2, 195, 1, 0, 0, 0, 0, 52, 0, 0, 0, 0, 0))
+    image.write_bytes(payload)
+    subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(source),
+                    str(root / 'simaai-kernels-firmware.deb')], check=True, capture_output=True)
+    inventory = verifier.package_inventory(root, profile='core')
+    assert inventory['payload']['/usr/share/sima-neat-firmware/modalix-cvu-fw'] == {
+        'package': 'simaai-kernels-firmware', 'sha256': hashlib.sha256(payload).hexdigest()}
 
 
 def test_profile_cannot_be_satisfied_by_missing_roles(tmp_path):
@@ -998,12 +1077,14 @@ admission_spec.loader.exec_module(admission)
 
 
 def admission_fixture(tmp_path, *, transaction_error=None, empty_platform=False,
-                      retirements=None, retirement_error=None, final_transaction_error=None):
+                      retirements=None, retirement_error=None, final_transaction_error=None,
+                      firmware=None, omit_firmware=False):
     root = tmp_path / 'admission-dist'; root.mkdir()
     source = tmp_path / 'scheduler-source'
     prefix = source / 'usr'
     tool_dir = prefix / 'share/SimaScheduler/tools'; tool_dir.mkdir(parents=True)
     marker = tmp_path / 'executed'
+    firmware = firmware if firmware is not None else {'required': False, 'debian_package': None}
     tool = tool_dir / 'platform_admission.py'
     tool.write_text('''import json, pathlib, sys
 from fixture_policy import RESULT
@@ -1026,7 +1107,7 @@ if 'PlatformRuntime' not in receipt.get('external_dependencies', {}):
 if sys.argv[1] == 'retirements':
     print(json.dumps(''' + repr({'schema_version': 1, 'status': 'PASS',
         'scope': 'read-only-package-retirement-proposal', 'repair_incomplete': True,
-        'incomplete_packages': [], 'retirements': retirements or {}}) + '''))
+        'incomplete_packages': [], 'retirements': retirements or {}, 'firmware': firmware}) + '''))
 else:
     print(json.dumps(RESULT))
 ''')
@@ -1036,6 +1117,8 @@ else:
                                                 'Architecture': 'arm64'}},
               'providers': {'libfixture.so': {'package': 'fixture-platform',
                                             'path': '/usr/lib/libfixture.so', 'sha256': 'a' * 64}}}
+    if not omit_firmware:
+        result['firmware'] = firmware
     if empty_platform:
         for key in ('platform_packages', 'packages', 'providers'):
             result[key] = {}
@@ -1072,6 +1155,46 @@ def test_installed_scheduler_tool_is_authenticated_and_read_only(tmp_path):
     assert marker.read_text() == 'executed'
     assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
     assert not list(source.rglob('__pycache__'))
+
+
+def test_authenticated_firmware_requirement_is_forwarded_without_reclassification(tmp_path):
+    firmware = {'required': True, 'debian_package': {
+        'Package': 'simaai-kernels-firmware', 'Version': '1.2+cohort',
+        'Architecture': 'arm64', 'deb_sha256': 'b' * 64}}
+    root, _, _, _, expected, _ = admission_fixture(tmp_path, firmware=firmware)
+    result = admission.optional_board_check(root)
+    assert result == {**expected, 'split_cohort': True}
+    assert admission.firmware_control(result) == firmware['debian_package']
+    # A later provider check must retain the exact firmware package identity.
+    changed = copy.deepcopy(result)
+    changed['firmware']['debian_package']['deb_sha256'] = 'c' * 64
+    with pytest.raises(admission.AdmissionError, match='firmware identity changed'):
+        admission.same_providers(result, changed)
+
+
+@pytest.mark.parametrize('firmware', [
+    {}, {'required': 'false', 'debian_package': None},
+    {'required': False, 'debian_package': {}},
+    {'required': True, 'debian_package': None},
+    {'required': True, 'debian_package': {'Package': '../firmware', 'Version': '1',
+                                       'Architecture': 'arm64', 'deb_sha256': 'a' * 64}},
+    {'required': True, 'debian_package': {'Package': 'firmware', 'Version': '1\nother',
+                                       'Architecture': 'arm64', 'deb_sha256': 'a' * 64}},
+    {'required': True, 'debian_package': {'Package': 'firmware', 'Version': '1',
+                                       'Architecture': 'all', 'deb_sha256': 'a' * 64}},
+    {'required': True, 'debian_package': {'Package': 'firmware', 'Version': '1',
+                                       'Architecture': 'arm64', 'deb_sha256': 'missing'}},
+])
+def test_authenticated_split_response_cannot_omit_or_malformed_firmware_policy(tmp_path, firmware):
+    root, _, _, _, _, _ = admission_fixture(tmp_path, firmware=firmware)
+    with pytest.raises(admission.AdmissionError, match='firmware'):
+        admission.optional_board_check(root)
+
+
+def test_old_split_tooling_cannot_silently_omit_firmware_requirement(tmp_path):
+    root, _, _, _, _, _ = admission_fixture(tmp_path, omit_firmware=True)
+    with pytest.raises(admission.AdmissionError, match='firmware classification'):
+        admission.invoke(root, 'describe')
 
 
 @pytest.mark.parametrize('repair,resume', [(False, False), (True, False), (True, True)])
@@ -1194,7 +1317,8 @@ def test_verifier_uses_genuine_authenticated_scheduler_description(tmp_path):
 def test_delegated_platform_package_cannot_be_redistributed(tmp_path):
     controls = fixture(tmp_path)
     controls.fixture_description = {'schema_version': 1, 'redistributed_provider_controls': [],
-                                    'platform_packages': {'simaai-runner': 'arm64'}}
+                                    'platform_packages': {'simaai-runner': 'arm64'},
+                                    'firmware': {'required': False, 'debian_package': None}}
     with patch.object(verifier, 'control', controls), pytest.raises(
             verifier.ContractError, match='Platform-owned provider DEB'):
         run(tmp_path)

@@ -102,11 +102,17 @@ runtime/plugin file transfers; the complete runtime still requires the matching
 Runner execution dependency. Installing Runner alone does not retire the
 monolithic 0.6.0 packages.
 
+EV-enabled Modalix distributions require the matching `simaai-kernels-firmware`
+package selected by Scheduler. Missing or mismatched firmware fails admission.
+Replacing an older `neat-ev74-firmware` package requires that exact selected
+firmware package to declare version-matched `Replaces` and `Breaks` or `Conflicts`;
+the normal transaction and removal checks still apply.
 Firmware activation uses only the unique incoming package that delivers the
 activation helper. The installed package identity, helper ownership, executable
-mode, and bytes must match that selected package. If the package set delivers no
-helper, installation leaves existing firmware alone rather than invoking a helper
-left by an earlier installation. A selected but mismatched helper fails installation.
+mode, and bytes must match that selected package. A selected but mismatched helper
+fails installation. For distributions that do not require EV74 firmware, a missing
+helper leaves existing firmware unchanged. The installer never uses a helper
+left by an earlier installation.
 
 If installation on the DevKit was interrupted, rerun the complete verified distribution. The
 installer can recover incomplete packages only when they belong to that incoming

@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import hashlib
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -626,7 +628,7 @@ install_ros2_sdk_tvm_runtime
 class ForceInstallTest(unittest.TestCase):
     def run_activation_fixture(
         self, script: str, exit_code: int = 0, *, selected: bool = True,
-        invalid: str = "", package: str = "neat-ev74-firmware",
+        invalid: str = "", package: str = "neat-ev74-firmware", required: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         # Redirect only the fixed firmware path in a temporary installer copy;
         # never create or execute firmware under the host's /usr/libexec.
@@ -642,8 +644,9 @@ class ForceInstallTest(unittest.TestCase):
             payload = root / "package"
             control = payload / "DEBIAN" / "control"
             control.parent.mkdir(parents=True)
+            package_architecture = "arm64" if required else "all"
             control.write_text(
-                f"Package: {package}\nVersion: 0.6.0+fixture\nArchitecture: all\n"
+                f"Package: {package}\nVersion: 0.6.0+fixture\nArchitecture: {package_architecture}\n"
                 "Maintainer: Test <test@example.invalid>\nDescription: inert activation fixture\n"
             )
             packaged_helper = payload / firmware.relative_to("/")
@@ -662,6 +665,18 @@ class ForceInstallTest(unittest.TestCase):
             archive = root / "firmware.deb"
             subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
                            check=True, capture_output=True, text=True)
+            required_identity = {
+                "Package": package, "Version": "0.6.0+fixture",
+                "Architecture": package_architecture,
+                "deb_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            }
+            if invalid == "required-archive":
+                (payload / "changed-payload").write_text("changed after admission")
+                subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
+                               check=True, capture_output=True, text=True)
+            for field in ("Package", "Version", "Architecture", "deb_sha256"):
+                if invalid == "required-" + field:
+                    required_identity[field] = "different"
             if invalid == "archive":
                 archive.write_bytes(b"not a Debian archive")
             if invalid == "missing":
@@ -675,7 +690,7 @@ class ForceInstallTest(unittest.TestCase):
             elif invalid == "mode":
                 firmware.chmod(0o700)
             version = "0.5.0" if invalid == "version" else "0.6.0+fixture"
-            architecture = "arm64" if invalid == "architecture" else "all"
+            architecture = ("all" if required else "arm64") if invalid == "architecture" else package_architecture
             status = "iU " if invalid == "status" else "ii "
             owner = "unrelated-package" if invalid == "owner" else package
             debs = f'"{archive}"' if selected else ""
@@ -690,6 +705,14 @@ dpkg-query() {{
   esac
 }}
 """
+            if required:
+                admission_dir = root / "admission"
+                admission_dir.mkdir()
+                (admission_dir / "before.json").write_text(json.dumps({
+                    "split_cohort": True,
+                    "firmware": {"required": True, "debian_package": required_identity},
+                }))
+                fixture += f'BOARD_PLATFORM_ADMISSION_DIR="{admission_dir}"\n'
             if invalid == "extraction":
                 fixture += 'dpkg-deb() { [[ "$1" != -x ]] || return 72; command dpkg-deb "$@"; }\n'
             installer = root / "installer.sh"
@@ -743,6 +766,40 @@ activate_board_runtime_after_install
 """, package="other-product", invalid="unselected-payload")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("EV74 firmware activation skipped", result.stdout)
+        self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_required_native_firmware_activates_only_the_admitted_package(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { env -i PATH="$PATH" "$@"; }
+activate_board_runtime_after_install
+""", package="simaai-kernels-firmware", required=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("FIRMWARE_FORCE=0 ARG=--activate", result.stdout)
+
+    def test_required_native_firmware_cannot_be_missing_or_substituted(self) -> None:
+        for invalid in ("unselected-payload", "required-Package", "required-Version",
+                        "required-Architecture", "required-deb_sha256", "required-archive"):
+            with self.subTest(invalid=invalid):
+                result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+FORCE_INSTALL=1
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", package="simaai-kernels-firmware", required=True, invalid=invalid)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", required=True, selected=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Required native EV74 firmware", result.stderr)
         self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
 
     def test_selected_payload_owner_can_be_renamed(self) -> None:
@@ -1590,6 +1647,78 @@ repair_global_sima_neat_lib_links
             "Packaged libsima_neat SONAME does not match its package manifest",
             result.stderr,
         )
+
+
+class FirmwareRetirementTest(unittest.TestCase):
+    def test_retirement_requires_admitted_archive_and_matching_versioned_relations(self):
+        cases = (
+            ("conflicts", True), ("breaks", True), ("narrower-bound", True),
+            ("missing-replaces", False), ("missing-conflict", False),
+            ("unbounded-replaces", False), ("unbounded-conflict", False),
+            ("future-version", False), ("mismatched-bound", False),
+            ("unrelated-removal", False), ("non-ev", False),
+            ("missing-admission", False), ("wrong-identity", False),
+            ("changed-archive", False), ("unselected-archive", False),
+        )
+        for case, accepted in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                payload = root / "payload"
+                (payload / "DEBIAN").mkdir(parents=True)
+                bound = "0.6.1~" if case == "narrower-bound" else "0.7.0"
+                if case == "mismatched-bound":
+                    bound = "0.6.0"
+                relation = f"neat-ev74-firmware (<< {bound})"
+                fields = {
+                    "Package": "simaai-kernels-firmware", "Version": "0.1.0+fixture",
+                    "Architecture": "arm64", "Maintainer": "Test <test@example.invalid>",
+                    "Description": "inert firmware retirement fixture",
+                    "Replaces": relation, "Breaks" if case == "breaks" else "Conflicts": relation,
+                }
+                if case == "missing-replaces":
+                    del fields["Replaces"]
+                elif case == "missing-conflict":
+                    del fields["Conflicts"]
+                elif case == "unbounded-replaces":
+                    fields["Replaces"] = "neat-ev74-firmware"
+                elif case == "unbounded-conflict":
+                    fields["Conflicts"] = "neat-ev74-firmware"
+                (payload / "DEBIAN/control").write_text(
+                    "".join(f"{key}: {value}\n" for key, value in fields.items()))
+                archive = root / "firmware.deb"
+                subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
+                               check=True, capture_output=True)
+                control = {key: fields[key] for key in ("Package", "Version", "Architecture")}
+                control["deb_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+                if case == "wrong-identity":
+                    control["Package"] = "other-firmware"
+                if case == "changed-archive":
+                    (payload / "changed").write_text("different selected bytes")
+                    subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
+                                   check=True, capture_output=True)
+                (root / "before.json").write_text(json.dumps({
+                    "split_cohort": True,
+                    "firmware": {"required": case != "non-ev",
+                                 "debian_package": None if case == "non-ev" else control},
+                }))
+                removed = "unrelated-package" if case == "unrelated-removal" else "neat-ev74-firmware"
+                version = "0.7.0" if case == "future-version" else "0.6.0+develop.ce6b01ccdc94"
+                (root / "simulation").write_text(f"Remv {removed} [{version}]\n")
+                admission = "" if case == "missing-admission" else str(root)
+                selected = "" if case == "unselected-archive" else str(archive)
+                result = run_bash(f'''
+source "$1"
+BOARD_PLATFORM_ADMISSION_DIR="{admission}"
+FORCE_INSTALL=1
+SKIP_PLATFORM_CHECK=ON
+dpkg-query() {{ printf '%s' '{version}'; }}
+verify_simulated_package_removals "{root / 'simulation'}" "{selected}"
+''')
+                self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
+                if accepted:
+                    self.assertIn("neat-ev74-firmware=" + version, result.stdout)
+                else:
+                    self.assertIn("Refusing to install", result.stderr)
 
 
 class RunnerRetirementTest(unittest.TestCase):
